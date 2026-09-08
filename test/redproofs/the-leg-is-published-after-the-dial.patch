@@ -1,12 +1,13 @@
 --- a/internal/server/delivery.go
 +++ b/internal/server/delivery.go
-@@ -938,8 +938,8 @@
- 		// ender and anyone an earlier run reached — so counting it would number this leg against a
- 		// denominator it is not drawn from and show "4 of 2".
- 		attempt++
--		endLeg := s.beginLeg(rec.ID, party.Fingerprint, party.Label, attempt, walked)
- 		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, shared)
-+		endLeg := s.beginLeg(rec.ID, party.Fingerprint, party.Label, attempt, walked)
+@@ -1046,9 +1046,9 @@
+ 	// were still represented by.
+ 	walkLegs(ctx, deliveryRoundWidth, len(tasks), func(i int) {
+ 		t := tasks[i]
+-		endLeg := s.beginLeg(rec.ID, t.party.Fingerprint, t.party.Label, t.attempt, walked)
+ 		derr := s.deliverToParty(ctx, v, t.inv, t.party.Fingerprint,
+ 			addrs[strings.ToLower(t.party.Fingerprint)], cert, key, myFP, payload, shared)
++		endLeg := s.beginLeg(rec.ID, t.party.Fingerprint, t.party.Label, t.attempt, walked)
  		endLeg()
  		if derr != nil {
- 			res.Reason = derr.Error()
+ 			// One party's failure does not end the round; the re-run reaches them.

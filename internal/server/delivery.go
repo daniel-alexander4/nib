@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"nib/internal/atomicfile"
@@ -962,8 +963,26 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		defer closeShared()
 	}
 
+	// ── The walk is PLANNED serially and RUN concurrently (/pending 376) ────────────────
+	//
+	// The plan pass decides every skip, mints every per-party invitation and assigns every
+	// attempt number, in roster order, exactly as the serial round did. Only the dial is
+	// concurrent. Two reasons it is split this way rather than parallelising the whole loop:
+	//
+	//   - **The attempt number and the outcome order must not depend on who finishes first.**
+	//     "3 of 12" numbered at launch time under concurrency is a number that changes between
+	//     two runs of the same round, and the outcome list is what the convener reads.
+	//   - **`convenerInvitationFor` reads the vault**, and a plan pass keeps that serial without
+	//     anyone having to reason about whether it is safe to do otherwise.
 	attempt := 0
 	out := make([]deliveryOutcome, 0, len(rec.Roster))
+	type legTask struct {
+		slot    int
+		party   ceremony.Party
+		inv     ceremony.Invitation
+		attempt int
+	}
+	var tasks []legTask
 	for _, party := range rec.Roster {
 		if strings.EqualFold(party.Fingerprint, me) {
 			continue // the convener already holds it
@@ -1014,27 +1033,86 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		// ender and anyone an earlier run reached — so counting it would number this leg against a
 		// denominator it is not drawn from and show "4 of 2".
 		attempt++
-		endLeg := s.beginLeg(rec.ID, party.Fingerprint, party.Label, attempt, walked)
-		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, shared)
+		tasks = append(tasks, legTask{slot: len(out), party: party, inv: inv, attempt: attempt})
+		out = append(out, res)
+	}
+
+	// ── Run them, at most `deliveryRoundWidth` in flight ───────────────────────────────
+	//
+	// Each task writes into its OWN slot of `out`, so no lock is needed for the results and the
+	// list stays in roster order however the legs interleave. `s.legs` is keyed on
+	// `(ceremony, party)` since v1.128.35 — it was keyed on the ceremony alone, which is unique
+	// only while the walk is serial, and the first leg to finish deleted the row its siblings
+	// were still represented by.
+	walkLegs(ctx, deliveryRoundWidth, len(tasks), func(i int) {
+		t := tasks[i]
+		endLeg := s.beginLeg(rec.ID, t.party.Fingerprint, t.party.Label, t.attempt, walked)
+		derr := s.deliverToParty(ctx, v, t.inv, t.party.Fingerprint,
+			addrs[strings.ToLower(t.party.Fingerprint)], cert, key, myFP, payload, shared)
 		endLeg()
 		if derr != nil {
-			res.Reason = derr.Error()
-			out = append(out, res)
-			continue // one party's failure does not end the round; the re-run reaches them
+			// One party's failure does not end the round; the re-run reaches them.
+			out[t.slot].Reason = derr.Error()
+			return
 		}
-		if err := markDelivered(rec.ID, party.Fingerprint); err != nil {
+		if err := markDelivered(rec.ID, t.party.Fingerprint); err != nil {
 			// **Delivered but not RECORDED, and the honest report is not "delivered".** A re-run
 			// will deliver to them again, which the deterministic filename makes harmless — the
 			// alternative, reporting success on an unrecorded leg, makes C10's "exactly one file
-			// per party" depend on a write that failed.
-			res.Reason = "delivered, but this machine could not record it: " + err.Error()
-			out = append(out, res)
-			continue
+			// per party" depend on a write that failed. Concurrency-safe as it stands: the marker
+			// is one file per party and `MkdirAll` is idempotent.
+			out[t.slot].Reason = "delivered, but this machine could not record it: " + err.Error()
+			return
 		}
-		res.Delivered = true
-		out = append(out, res)
-	}
+		out[t.slot].Delivered = true
+	})
 	return out, nil
+}
+
+// walkLegs runs `n` tasks with at most `width` in flight, and returns when every one has finished.
+//
+// # Why a helper rather than an inline errgroup
+//
+// It is the only genuinely new logic the concurrent round introduces, and it is the only part that
+// can be driven without a network. `runDeliveryRound` needs four processes and a DHT to exercise;
+// this needs neither, so the properties that matter — the bound is honoured, every task runs
+// exactly once, and a cancelled round stops starting new ones — are assertable at tier 1 against
+// the real function rather than a re-implementation of it.
+//
+// **It does not collect errors, and that is deliberate.** A delivery leg's failure is an OUTCOME
+// recorded against that party's own row, never a reason to end the round: one unreachable party
+// delaying everyone else's copy is the exact complaint /pending 376 was filed about, and an
+// errgroup that cancelled its siblings on the first failure would reintroduce it in a worse form.
+//
+// **Cancellation stops new starts and does not abandon running ones.** A leg already in flight
+// owns a connection and a `beginLeg` row; dropping it would leave the row set and the peer mid
+// exchange. The legs themselves take `ctx` and fail fast on it — see the round's own `ctx.Err()`
+// note — so this only has to refuse to START more.
+func walkLegs(ctx context.Context, width, n int, run func(i int)) {
+	if width < 1 {
+		width = 1
+	}
+	sem := make(chan struct{}, width)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int) {
+			// `safe.Recover` is deferred FIRST so it runs LAST: on a panic the semaphore is
+			// released and the WaitGroup decremented as the stack unwinds, and only then is the
+			// panic swallowed. Deferring it last would recover before those ran, so one panicking
+			// leg would hold a slot and hang `wg.Wait()` — a round that never returns, which is
+			// worse than the crash.
+			defer safe.Recover("delivery leg")
+			defer wg.Done()
+			defer func() { <-sem }()
+			run(i)
+		}(i)
+	}
+	wg.Wait()
 }
 
 // deliverToParty runs one leg: derive the delivery rendezvous, race the tiers to reach the party,

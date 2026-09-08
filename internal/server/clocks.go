@@ -75,6 +75,33 @@ const (
 	// refusals a user cannot act on (ADR-005's own warning).
 	maxConcurrentDials = 8
 
+	// deliveryRoundWidth is how many delivery legs the round runs at once (/pending 376).
+	//
+	// **The complaint it answers is measured, not asserted.** One party that is not listening
+	// burns `connectDeadline` — 300 s — before the next leg starts, and at `ceremony.MaxRoster`
+	// of 32 that is 31 legs and a ceiling of over two hours on one POST. One unreachable party
+	// therefore delayed EVERY other party's copy.
+	//
+	// **Four, and the number is bounded by what the grill could not measure rather than by what
+	// it could.** Three objections the item was filed with are refuted at the line and are
+	// recorded here so the figure is not re-litigated from the same wrong premises:
+	//
+	//   - *"W UDP sockets and W DHT servers"* is stale. Since the endpoint hoist the round opens
+	//     ONE endpoint and lends it to every leg, so this machine's DHT-server count does not
+	//     scale with W at all.
+	//   - *"maxConcurrentDials 8 against a peer's 16 handshakes is breached at W>=3"* reads the
+	//     margin as a per-machine total. It is per PEER, and W legs go to W different parties, so
+	//     each peer still sees at most 8.
+	//   - *"W legs x 3,000 punch packets"* is what D33 prescribes rather than a breach: the law's
+	//     unit is the HOP by explicit amendment, and each leg is a different hop. Concurrency
+	//     changes the rate, not the total, and the destinations differ.
+	//
+	// What is left is genuinely unmeasured: the shared `rate.NewLimiter(250, 64)` inside the one
+	// lent rendezvous is now a contention point W legs share. Four is small enough that the
+	// serial behaviour is recognisably preserved and large enough to turn the two-hour ceiling
+	// into a bit over half an hour. It is a tuning figure, not a law — unlike the two above it.
+	deliveryRoundWidth = 4
+
 	// maxCandidatesPerSource bounds what ONE tier may spend of the race's budget.
 	//
 	// `maxRaceCandidates` above is the law and stays; this is what stops one source

@@ -166,6 +166,15 @@ type Stats struct {
 	// an empty fetch legible**: zero means the record's absence is not evidence of
 	// anything, because we reached nobody who could have had it. Non-zero with
 	// FetchEmpty means the DHT is reachable and the peer has not published yet.
+	//
+	// **"Last" means last to FINISH, and since /pending 376 a delivery round runs several legs
+	// against one Server, so it is not necessarily the last one STARTED.** That was filed as a
+	// defect on the grounds that `diagnose` reads this field; it does not, and deliberately —
+	// `diagnosis.go` says the ladder distinguishes "no DHT at all" from "DHT answered, peer
+	// silent" by the CUMULATIVE `Responses`, "never the last-fetch-only FetchNodes". The only
+	// readers are `internal/cli`'s printout, where a last-to-finish figure is what the line
+	// already claims to show. Recorded here rather than fixed, because a per-call return value
+	// rippling to every caller buys nothing a terminal diagnostic needs.
 	FetchNodes uint64
 	// FetchAborted is lookups that did not finish — the caller cancelled, or the budget
 	// expired. **Split from FetchEmpty deliberately**: an unfinished lookup says nothing
