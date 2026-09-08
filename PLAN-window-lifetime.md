@@ -200,13 +200,63 @@ The three acceptance clauses are covered by three different guards, deliberately
 at tier 3. The scan cannot see a binary that ignores its environment; the unit test cannot see a
 harness that stopped setting the variable.
 
-#### P01.S04 — the grace timer and its two cancels
+#### P01.S04 — the grace timer and its two cancels *(done 2026-09-08, v1.128.40)*
 Scope: last stream closes → grace → exit; cancelled by a new window or an inbound hand-off, counted
 per cause. Refs: D4, D6, D7.
 Acceptance:
 - A reload does not exit Nib; the reconnect is measured against the grace rather than assumed.
 - A hand-off during grace cancels the exit and the file opens.
 - Exit runs D6's teardown for the new `last-window` cause exactly as for a signal.
+Tasks: *(written at slice-grill time, 2026-09-08, after a deepdive of `run()`'s exit path)*
+1. T01 — the grace arms on the 1→0 window TRANSITION, never on "the count is zero". At startup the
+   count is zero before the first window connects, and arming there exits Nib during boot;
+   `handleWindow`'s `left := Add(-1)` is the transition and makes the initial zero unreachable.
+   Armed only when `IdleExitArmed()` (S03, D2).
+2. T02 — cancel one: a new window connecting during the grace cancels it. Counted only when a timer
+   was actually pending, or every ordinary connect would count a cancel that did not happen.
+3. T03 — cancel two: an inbound hand-off cancels it, through `handleHandoff`. Counted SEPARATELY
+   from T02 (D4: "they are counted separately because they fail differently") — this is the race
+   the grill surfaced, where a file is handed to a process that is already exiting.
+4. T04 — a third arm on `run()`'s `select`, and nothing else. D6's teardown is four steps and only
+   two are explicit: `DisarmSession()` and `srv.Close()` inline, then the LIFO defers `stop()` and
+   `instance.Remove(cfgDir)`. A third *cause* must not become a third *teardown* (ADR-009).
+5. T05 — the server sends an explicit SSE `retry:`, so the reconnect gap is Nib's number and not
+   the browser's default. This is what makes the first acceptance clause a property rather than a
+   hope: both sides of "measured against the grace" are then ours, and the margin is stated.
+6. T06 — the cancel logs its ELAPSED time, so a reload's reconnect is measured against the grace
+   rather than asserted to be under it. Stable literals, as S01's are.
+7. T07 — tier-1 tests for the state machine (arm, both cancels, the counters, the transition rule)
+   and tier-3 for the real reload; seam inventory rows for the grace and its two cancel causes.
+
+**Divergence from the task list, recorded rather than absorbed (2026-09-08).** Two changes outside
+T01–T07, both product defects the tasks did not name and both found by RUNNING:
+
+- **`handleWindow` cancels BEFORE it increments.** Incrementing first left a window in which the
+  count says a window is here and the grace is still running — a state the server is never actually
+  in, visible to anything that reads the count and then the grace. Measured at **5 of 12** runs red
+  with the original ordering and **0 of 12** with the fix; it presented as a flaky test, which is
+  how it would have presented in the field with nothing to go on.
+- **`armIdleExitGrace` re-checks the count under the lock.** The arming caller has already
+  decremented, but a new window can connect between that decrement and the lock — cancelling a
+  grace that does not exist yet and then being counted. Arming on the caller's stale view would
+  leave a grace running with a window open, and the process would exit under it one grace later.
+  Driven directly rather than by racing: the interleaving is rare enough that a concurrent test
+  would pass on a broken build most of the time.
+
+**And the first acceptance clause moved tiers, which is a finding about the plan.** It reads "a
+reload does not exit Nib; the reconnect is measured against the grace" and reads as a tier-3 clause.
+**Tier 3 structurally cannot show it**: every harness runs `NIB_NO_BROWSER=1`, so `IdleExitArmed()`
+is false there and no grace is ever armed — S03's guard working, not a gap, because an armed harness
+would exit mid-run. A tier-3 test asserting "the grace was cancelled" would assert a line that tier
+can never emit, and one asserting "nib survived the reload" would pass against a build with no grace
+at all. So the arithmetic is driven through the real route at tier 1 and tier 3 asserts the one
+thing only a browser adds — that a reload really does drop and re-open the stream. The composition
+is the argument and the seam inventory records it rather than claiming an end-to-end.
+
+**A third finding, from `inventorycheck` rather than from a person**: P01.S02 had shipped a day
+earlier with **no inventory section at all**. It is the measurement slice and has no seams, but "no
+rows" and "no section" are different facts and only the second is invisible to a pass over rows.
+Written as a section with an explicit empty table.
 
 #### P01.S05 — the close prompt
 Scope: `beforeunload` armed only for an armed/running ceremony or unsaved changes. Refs: D5, D8.

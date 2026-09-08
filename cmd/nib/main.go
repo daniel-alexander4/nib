@@ -221,6 +221,13 @@ func run() int {
 	case err := <-serveErr:
 		log.Printf("server error: %v", err)
 		code = 1
+	// **The third exit CAUSE, and deliberately not a third teardown** (P01.S04, D6). The teardown
+	// below is four steps and only two of them are visible here: `DisarmSession()` and
+	// `srv.Close()` run inline, then the LIFO defers `stop()` and `instance.Remove(cfgDir)` — which
+	// is the whole reason `main()` is `os.Exit(run())`. A cause that tore down for itself would be
+	// a second copy of that order, and the failure that prevents is the stale instance record
+	// returning by a new door (ADR-009).
+	case <-s.IdleExit():
 	}
 	s.DisarmSession() // tear down any armed co-signing listener before exiting
 	_ = srv.Close()
