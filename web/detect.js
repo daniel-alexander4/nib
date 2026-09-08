@@ -58,6 +58,11 @@ export function buildTextRows(items) {
   return rows;
 }
 
+export function pixelsOf(canvas) {
+  const W = canvas.width, H = canvas.height;
+  return { data: canvas.getContext('2d').getImageData(0, 0, W, H).data, W, H };
+}
+
 // snapChoices refines choice boxes (canvas px) to the actual rendered glyphs.
 // Sub-item text position is estimated from font metrics and drifts after a long
 // underscore run, so when the real ink in the choice band resolves into exactly
@@ -65,13 +70,8 @@ export function buildTextRows(items) {
 // count doesn't match (multi-word choices, touching glyphs), keep the estimate.
 // `pixels` is optional and is the whole performance point: the caller loops over choice
 // groups, and reading the full canvas per group costs a ~13 MB getImageData each time for
-// a picture that has not changed. pixelsOf() below reads it once; passing nothing keeps
+// a picture that has not changed. pixelsOf() above reads it once; passing nothing keeps
 // the old self-contained behaviour for any other caller.
-export function pixelsOf(canvas) {
-  const W = canvas.width, H = canvas.height;
-  return { data: canvas.getContext('2d').getImageData(0, 0, W, H).data, W, H };
-}
-
 export function snapChoices(canvas, choices, marker, pixels) {
   if (choices.length < 2) return choices;
   const px = pixels || pixelsOf(canvas);
