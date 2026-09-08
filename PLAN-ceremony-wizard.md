@@ -570,8 +570,9 @@ written at phase-firming, before the deepdive established that the end state **i
 the convener already mints and delivers. S03 exists to CONSUME one. The clause's real content was
 always about leaving — that a local act must not mint an attestation, and must not act on somebody
 else's — and that half is intact and tested. The corrected form keeps both protections and names the
-verification the end-state path owes. **Flagged for Dan to reverse**: this is a criterion I wrote,
-corrected by me, and the correction is at rung 2 rather than rung 1.
+verification the end-state path owes. **Put to Dan and RATIFIED 2026-09-07 via
+`/discuss`** — flagged because it is a criterion I wrote and then corrected, which is the shape exit
+criteria exist to prevent, so it does not stand on my own say-so.
 
 **Sequenced AFTER P04 rather than before it**, because P04 is the rail at a full roster and this
 phase changes what the rail has to say. Its slices are sketches until phase-open.

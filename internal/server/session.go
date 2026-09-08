@@ -279,6 +279,17 @@ func (se *session) armedLocked() bool {
 // one door, and the guard now requires all three sites rather than the two it could see.
 func (se *session) collidesLocked(kind armKind) bool { return se.arms[kind] != nil }
 
+// slotTaken is `collidesLocked` for a caller that does not hold the lock — so a door can ask before
+// it opens a socket rather than after (`/pending 381`).
+//
+// **A check, never a lock.** The slot can be taken between this answering and `armIn` running, so
+// every arm door keeps its own refusal; this removes the ordinary case, not the race.
+func (se *session) slotTaken(kind armKind) bool {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	return se.collidesLocked(kind)
+}
+
 // armIn is the ONE mutator that installs an arm (ADR-009). Both doors route through it, and so
 // will the delivery round's (P08.S05d).
 //
