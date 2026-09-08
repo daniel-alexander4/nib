@@ -97,7 +97,12 @@ const (
 	// port could be either transport, and guessing is exactly the defect the field
 	// was added to remove. Nib has no users and forbids compatibility shims, so
 	// there is no version-1 speaker to keep working.
-	version = 2
+	//
+	// **3 since the hop, and it is ADR-010's own correction one level up.** A version-2
+	// announcement's port could be either ARM — a hop arm or a delivery arm, on one machine,
+	// pinned to the same peer — and guessing between them is the defect the field was added to
+	// remove. The same "no shims" position applies, so a version-2 speaker is refused too.
+	version = 3
 
 	// nonceLen is the per-instance self-recognition nonce.
 	nonceLen = 8
@@ -119,10 +124,11 @@ const (
 	offVersion   = len(magic)
 	offTransport = offVersion + 1
 	offPort      = offTransport + 1
-	offNonce     = offPort + 2
+	offHop       = offPort + 2
+	offNonce     = offHop + 2
 	offNameLen   = offNonce + nonceLen
 
-	// headerLen is magic + version + transport + port + nonce + name length.
+	// headerLen is magic + version + transport + port + hop + nonce + name length.
 	headerLen = offNameLen + 1
 )
 
@@ -153,6 +159,20 @@ var (
 // p2p, vault or sign — that guard is what makes L1 structural instead of remembered —
 // so the wire encoding is owned here and `internal/server` maps between the two at the
 // layer that holds both. A shared constant would be a shared import.
+// HopNone marks an announcement from an arm that carries no ceremony — the manual and LAN
+// receive paths, which have no hop to serve.
+//
+// **It is not zero, and that is the point.** Hop 0 is a real, ordinary hop (the convener's own
+// index), so a zero value cannot mean "none" the way `TransportTCP` can. On the wire it is
+// `hopNoneWire`, the all-ones uint16, which `check` refuses to confuse with a real hop.
+const HopNone = -1
+
+// hopNoneWire is HopNone's encoding, and maxHop is the largest hop that fits beside it.
+const (
+	hopNoneWire = 0xFFFF
+	maxHop      = hopNoneWire - 1
+)
+
 type Transport uint8
 
 const (
@@ -173,6 +193,25 @@ func (t Transport) String() string {
 	}
 }
 
+// hopWire and hopFromWire are the ONE mapping between the field and its encoding.
+//
+// Written as a pair next to each other because that is the shape the offsets block one screen up
+// already argues for: the encoder and the parser must not drift into disagreeing about what a
+// value means, and a sentinel translated in two places is exactly how they would.
+func hopWire(hop int) uint16 {
+	if hop == HopNone || hop < 0 || hop > maxHop {
+		return hopNoneWire
+	}
+	return uint16(hop)
+}
+
+func hopFromWire(w uint16) int {
+	if w == hopNoneWire {
+		return HopNone
+	}
+	return int(w)
+}
+
 // valid reports whether t is a transport this version of the format defines.
 func (t Transport) valid() bool { return t == TransportTCP || t == TransportQUIC }
 
@@ -190,6 +229,24 @@ type Announcement struct {
 	// Transport is the socket that port belongs to. A UDP port and a TCP port with
 	// the same number are different endpoints, so this travels WITH the port.
 	Transport Transport
+	// Hop is the ceremony hop this arm serves, or HopNone when the arm carries no
+	// ceremony at all (the manual and LAN receive paths).
+	//
+	// # Why a port and a transport are still not an address (the sequel to ADR-010)
+	//
+	// ADR-010 added the transport because "a port without its transport is not an address":
+	// the same number meant two different sockets and a QUIC-armed peer was dialled over TCP.
+	// **A port without its ARM is not an address either, for the same reason one level up.** A
+	// machine can hold a hop arm and a delivery arm at once, both pinned to the same peer, both
+	// announcing a bare port — and they do exactly opposite things. The delivery arm confirms the
+	// spoken check without a human and cannot co-sign; the hop arm is the only one that can serve
+	// a party's stored contribution back after a restart. A dialer that picked between them by
+	// racing got the wrong one about a third of the time, and in production got it wrong every
+	// time, because only the delivery arm is restored automatically.
+	//
+	// The rendezvous path never had this problem: its targets are already keyed per (ceremony,
+	// hop). This is the link path catching up.
+	Hop int
 	// Nonce identifies the sending PROCESS, so it can discard its own copies.
 	Nonce [nonceLen]byte
 }
@@ -205,6 +262,7 @@ func (a Announcement) Encode() ([]byte, error) {
 	out = append(out, version)
 	out = append(out, byte(a.Transport))
 	out = binary.BigEndian.AppendUint16(out, a.Port)
+	out = binary.BigEndian.AppendUint16(out, hopWire(a.Hop))
 	out = append(out, a.Nonce[:]...)
 	out = append(out, byte(len(a.Name)))
 	out = append(out, a.Name...)
@@ -221,6 +279,11 @@ func (a Announcement) check() error {
 	// function exists so the encoder and the parser cannot drift into disagreeing
 	// about what is legal, and a transport validated only on parse would let this
 	// Nib emit an announcement it would itself refuse.
+	// In `check` and therefore on BOTH sides, exactly as the transport is: a hop validated only
+	// on parse would let this Nib emit an announcement it would itself refuse.
+	if a.Hop != HopNone && (a.Hop < 0 || a.Hop > maxHop) {
+		return fmt.Errorf("%w: hop %d is outside the range this format carries", ErrMalformed, a.Hop)
+	}
 	if !a.Transport.valid() {
 		return fmt.Errorf("%w: unknown transport %d", ErrMalformed, uint8(a.Transport))
 	}
@@ -274,6 +337,7 @@ func Parse(b []byte) (Announcement, error) {
 	}
 	a.Transport = Transport(b[offTransport])
 	a.Port = binary.BigEndian.Uint16(b[offPort : offPort+2])
+	a.Hop = hopFromWire(binary.BigEndian.Uint16(b[offHop : offHop+2]))
 	copy(a.Nonce[:], b[offNonce:offNonce+nonceLen])
 	n := int(b[offNameLen])
 	i := headerLen

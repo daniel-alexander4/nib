@@ -58,7 +58,7 @@ func TestABrowseStopsOnceTheLinkGoesQuiet(t *testing.T) {
 	}
 
 	start := time.Now()
-	got := browsePeers(b, pins, window)
+	got := browsePeers(b, pins, window, discovery.HopNone)
 	elapsed := time.Since(start)
 
 	// STIMULUS: the candidate really was collected. A browse that returned nothing
@@ -122,7 +122,7 @@ func TestAnAnnouncerOffsetByOnePeriodIsStillHeard(t *testing.T) {
 			"window (%v), so it would be heard with or without the reset", 2*offset, browseQuiet)
 	}
 
-	got := browsePeers(b, pins, 5*time.Second)
+	got := browsePeers(b, pins, 5*time.Second, discovery.HopNone)
 
 	if len(got) != 3 {
 		t.Fatalf("browse returned %d candidates, want 3 — the announcers were %v apart, which "+

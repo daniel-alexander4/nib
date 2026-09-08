@@ -101,7 +101,7 @@ func TestAQUICArmedPeerIsDialledOverQUIC(t *testing.T) {
 	c, ok := resolve(pins, discovery.Seen{
 		Announcement: parsed,
 		From:         &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: discovery.Port},
-	})
+	}, discovery.HopNone)
 	if !ok {
 		t.Fatal("setup: the announcement did not resolve against Bob's pin")
 	}

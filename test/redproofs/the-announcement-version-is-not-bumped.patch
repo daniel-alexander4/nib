@@ -1,0 +1,13 @@
+diff --git a/internal/discovery/announce.go b/internal/discovery/announce.go
+index 21130d6..d094574 100644
+--- a/internal/discovery/announce.go
++++ b/internal/discovery/announce.go
+@@ -102,7 +102,7 @@ const (
+ 	// announcement's port could be either ARM — a hop arm or a delivery arm, on one machine,
+ 	// pinned to the same peer — and guessing between them is the defect the field was added to
+ 	// remove. The same "no shims" position applies, so a version-2 speaker is refused too.
+-	version = 3
++	version = 2
+ 
+ 	// nonceLen is the per-instance self-recognition nonce.
+ 	nonceLen = 8

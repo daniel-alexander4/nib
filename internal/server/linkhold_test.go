@@ -49,7 +49,7 @@ func TestTheSightingIsReportedBeforeTheAnswerRateLimit(t *testing.T) {
 	}()
 
 	var sightings, answers int
-	answerLoop(ctx, br, pins, func() time.Time { return base }, nil, nil,
+	answerLoop(ctx, br, pins, discovery.HopNone, func() time.Time { return base }, nil, nil,
 		func(time.Time) { sightings++ },
 		func(candidate) bool { answers++; return true })
 
@@ -160,7 +160,7 @@ func TestTheDHTHoldRenewsOnEvidenceAndLapsesWithout(t *testing.T) {
 			cancel()
 		}()
 		base := time.Now()
-		answerLoop(ctx, br, []vault.PinnedPeer{{Fingerprint: myFP, Label: "Convener"}},
+		answerLoop(ctx, br, []vault.PinnedPeer{{Fingerprint: myFP, Label: "Convener"}}, discovery.HopNone,
 			func() time.Time { return base }, nil, nil,
 			cer.noteLinkSighting, func(candidate) bool { return true })
 

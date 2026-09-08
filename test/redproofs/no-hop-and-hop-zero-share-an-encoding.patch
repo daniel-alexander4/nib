@@ -1,0 +1,13 @@
+diff --git a/internal/discovery/announce.go b/internal/discovery/announce.go
+index 21130d6..45e8f7b 100644
+--- a/internal/discovery/announce.go
++++ b/internal/discovery/announce.go
+@@ -169,7 +169,7 @@ const HopNone = -1
+ 
+ // hopNoneWire is HopNone's encoding, and maxHop is the largest hop that fits beside it.
+ const (
+-	hopNoneWire = 0xFFFF
++	hopNoneWire = 0
+ 	maxHop      = hopNoneWire - 1
+ )
+ 

@@ -4732,3 +4732,42 @@ compile, and a compile break is exactly what `redproof.sh`'s three-outcome rule 
 from a real red — it is indistinguishable from a deleted check.
 
 `recorded` 382 → 385.
+
+## A port without its ARM is not an address (announcement v3, /pending 385, v1.128.30)
+
+ADR-010 added the transport byte because *"a port without its transport is not an address"* — the
+same number meant two different sockets and a QUIC-armed peer was dialled over TCP. This is that
+sentence one level up. A machine can hold a **hop arm** and a **delivery arm** at once, pinned to
+the same peer, both announcing a bare port, and they do opposite things: the hop arm can co-sign and
+serve a party's stored contribution back after a restart; the delivery arm confirms the spoken check
+without a human (`autoVerifier`, `delivery.go:60`) and can do neither, because `ReceiveDocument`
+never reaches `coSignExchange`. The racer dialled both and kept whichever answered first.
+
+| Row | Reader | Token |
+|---|---|---|
+| `a-sighting-for-another-arm-is-still-a-candidate` | `TestABrowseWithBothArmsUpReturnsOnlyTheOneAsked`, tier 1 | "want exactly 1" |
+| `the-hop-is-not-carried-on-the-wire` | `TestTheHopSurvivesTheWire`, tier 1 | "a dialer would be sent to the wrong arm" |
+| `no-hop-and-hop-zero-share-an-encoding` | `TestHopZeroIsNotTheSameAsNoHop`, tier 1 | "encode identically" |
+| `the-announcement-version-is-not-bumped` | `TestAVersionTwoAnnouncementIsRefused`, tier 1 | "a version-2 announcement parsed" |
+
+**The sentinel is not the zero value, and that is the row worth reading.** `TransportTCP` is
+deliberately 0 so the zero `Announcement` is a TCP one. `Hop` cannot follow that pattern: **hop 0 is
+the convener's own index**, a real arm a real dial will match, so "no ceremony" had to be a distinct
+value (`HopNone`, the all-ones uint16 on the wire). A producer that forgets the field does not
+announce "no arm" — it announces itself as the convener's hop.
+
+**Which is why there is a fifth guard and it found a bug on its first run.**
+`TestEveryAnnouncerNamesItsHop` is an AST walk requiring every `discovery.Announcement` literal in
+non-test code to name `Hop` — modelled on `TestEveryCandidateProducerNamesItsSource`, which this
+repo wrote after an unset `Source` accounted every producer to the typed tier, *"a split that is
+present, green, and wrong"*. On its first run it named `discover.go:528`, the network-test
+announcer, which would have advertised hop 0. Same trap, same family, caught by the same shape of
+guard.
+
+**The reader for the first row drives the real scenario rather than a per-sighting unit** — one
+peer, two announcements, two ports, and a browse told only what it wants. That is deliberate:
+ADR-010's own defect stayed latent because `pairrepro.sh` passed `-F transport=` to **both** sides,
+so tier 4 was configured past the disagreement it existed to find. A test handed the answer proves
+nothing about a dialer that has to choose.
+
+`recorded` 385 → 389.

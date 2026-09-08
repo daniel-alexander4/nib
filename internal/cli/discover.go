@@ -127,7 +127,8 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 	}
 	fmt.Fprintf(out, "announcing as %q (a throwaway identity; it matches nobody's pin)\n\n", name)
 
-	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce}
+	// HopNone: the CLI's discovery probe announces a machine, not an arm.
+	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce, Hop: discovery.HopNone}
 	deadline := time.Now().Add(listen)
 	// Stopped and JOINED before the socket closes. Without the join the goroutine can
 	// wake past the deadline, call Announce on a closed socket, and print "announce
