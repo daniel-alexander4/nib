@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -863,6 +864,28 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		}
 		walked++
 	}
+	// **ONE endpoint for the whole round, lent to every leg (/pending 376).**
+	//
+	// Opened here rather than inside `deliverToParty` because the endpoint is an artifact of where
+	// it was created, not a property of a leg: a socket, a QUIC transport and a whole DHT server
+	// per party — each with its own `rate.NewLimiter(250, 64)`, so the machine's aggregate DHT send
+	// rate scaled with the roster and nothing bounded the total. `Publish`/`Fetch` take their seed
+	// and salt per call and a transport dials many peers, so one of each is all a round ever
+	// needed.
+	//
+	// **A failure here is not fatal and each leg falls back to its own.** The round is the thing
+	// the user asked for; a socket this machine could not open for the round is one it can still
+	// open one at a time, and refusing the whole round over it would trade every party's copy for a
+	// resource decision.
+	shared, closeShared, serr := openSharedRendezvous("0.0.0.0:0", s.configDir)
+	if serr != nil {
+		log.Printf("delivery round %s: could not open one endpoint for the round (%v) — each leg "+
+			"will open its own, which is what it did before this was shared", rec.ID, serr)
+		shared = nil
+	} else {
+		defer closeShared()
+	}
+
 	attempt := 0
 	out := make([]deliveryOutcome, 0, len(rec.Roster))
 	for _, party := range rec.Roster {
@@ -916,7 +939,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		// denominator it is not drawn from and show "4 of 2".
 		attempt++
 		endLeg := s.beginLeg(rec.ID, party.Label, attempt, walked)
-		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload)
+		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, shared)
 		endLeg()
 		if derr != nil {
 			res.Reason = derr.Error()
@@ -940,7 +963,12 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 
 // deliverToParty runs one leg: derive the delivery rendezvous, race the tiers to reach the party,
 // and hand over the document through the unattended gates.
-func (s *Server) deliverToParty(ctx context.Context, v *vault.Vault, inv ceremony.Invitation, partyFP, addr string, cert, key, myFP, pdf []byte) error {
+// **`shared` is the round's endpoint, and a leg borrows it rather than opening its own
+// (/pending 376).** Nil means "open one for this leg", which is what a caller outside a round
+// passes. See `borrowedEndpoint`: one socket, one QUIC transport and one DHT server serve every
+// leg, because `Publish`/`Fetch` take their seed and salt per call and a transport dials many
+// peers. Per-leg endpoints were W sockets and W DHT servers, each with its own send limiter.
+func (s *Server) deliverToParty(ctx context.Context, v *vault.Vault, inv ceremony.Invitation, partyFP, addr string, cert, key, myFP, pdf []byte, shared *sharedRendezvous) error {
 	peerFP, err := hex.DecodeString(partyFP)
 	if err != nil || len(peerFP) != sha256.Size {
 		return errors.New("that party's fingerprint is not a fingerprint")
@@ -950,7 +978,9 @@ func (s *Server) deliverToParty(ctx context.Context, v *vault.Vault, inv ceremon
 		return err
 	}
 	defer cer.close()
-	if err := cer.setupSharedEndpoint("0.0.0.0:0", s.configDir); err != nil {
+	if shared != nil {
+		cer.borrowEndpoint(shared.end, shared.rz)
+	} else if err := cer.setupSharedEndpoint("0.0.0.0:0", s.configDir); err != nil {
 		return err
 	}
 	// **An optional typed address, and it is the same escape hatch `/api/session/initiate` has.**

@@ -1,0 +1,13 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 82ca3df..b7f051c 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -589,7 +589,7 @@ func (c *ceremonyID) setupSharedEndpoint(bind, configDir string) error {
+ 		end.Close()
+ 		return err
+ 	}
+-	c.end, c.rz = end, rz
++	c.end, c.rz, c.borrowedEndpoint = end, rz, true
+ 	return nil
+ }
+ 

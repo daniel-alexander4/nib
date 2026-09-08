@@ -4697,3 +4697,38 @@ transport is the constraint. `ErrEndStateTooBig` is the distinction, and `ErrCan
 same one, one file over.
 
 `recorded` 378 → 382.
+
+## One endpoint per ROUND, not one per leg (/pending 376, v1.128.28)
+
+`deliverToParty` called `setupSharedEndpoint` itself, so a delivery round opened a UDP socket, a
+QUIC transport and **a whole DHT server per party** — each with its own `rate.NewLimiter(250, 64)`,
+which `rendezvous.Open` creates per server. The machine's aggregate DHT send rate therefore scaled
+with the roster with **nothing bounding the total**, and that is what made "make the round
+concurrent" read as a widening needing a security review: W legs meant W×250/s leaving one host.
+That limiter's own comment records what draining a shared burst did the last time — a ping between
+two of Nib's own servers timed out with the receiving mux showing the query had arrived.
+
+**It was never necessary.** `Publish` and `Fetch` take their seed and salt **per call**, so one
+rendezvous server already serves many targets, and one QUIC transport dials many peers. The per-leg
+endpoint was an artifact of where the call sat: `deliveryCeremony` builds a `ceremonyID` out of
+identity alone — invitation, hop, gate, two fingerprints, keys — and the socket was bolted on
+afterwards.
+
+| Row | Reader | Token |
+|---|---|---|
+| `a-borrowed-endpoint-is-torn-down-by-its-borrower` | `TestABorrowedEndpointOutlivesTheLegThatUsedIt`, tier 1 | "will not send" |
+| `an-owned-endpoint-is-never-released` | `TestAnOwnedEndpointIsStillTornDown`, tier 1 | "marked as borrowing it" |
+| `the-round-opens-an-endpoint-per-leg` | `TestTheDeliveryRoundOpensOneEndpointForTheWholeWalk`, tier 1 | "no longer hands its shared endpoint" |
+
+**The first row's reader was vacuous and the mutation proved it.** It compared `LocalAddr()` before
+and after the borrowing leg closed — and a closed socket still reports the address it was bound to,
+so removing the ownership guard left it **green**. The observable had to be a WRITE, not an
+identity: it sends a datagram, which is what the next leg would do, and the mutation now names
+itself — `use of closed network connection`. This is the second time in one sweep that an assertion
+compared a value that does not change on the event it was watching for.
+
+**And the third row's mutation carries a `_ = shared` on purpose.** Passing `nil` alone does not
+compile, and a compile break is exactly what `redproof.sh`'s three-outcome rule exists to separate
+from a real red — it is indistinguishable from a deleted check.
+
+`recorded` 382 → 385.

@@ -1,0 +1,21 @@
+diff --git a/internal/server/delivery.go b/internal/server/delivery.go
+index 4bf64a5..2c4d9a6 100644
+--- a/internal/server/delivery.go
++++ b/internal/server/delivery.go
+@@ -886,6 +886,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
+ 		defer closeShared()
+ 	}
+ 
++	_ = shared
+ 	attempt := 0
+ 	out := make([]deliveryOutcome, 0, len(rec.Roster))
+ 	for _, party := range rec.Roster {
+@@ -939,7 +940,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
+ 		// denominator it is not drawn from and show "4 of 2".
+ 		attempt++
+ 		endLeg := s.beginLeg(rec.ID, party.Label, attempt, walked)
+-		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, shared)
++		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, nil)
+ 		endLeg()
+ 		if derr != nil {
+ 			res.Reason = derr.Error()

@@ -1,8 +1,8 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index f9c3b64..970b989 100644
+index ad0a7a0..48f4ae2 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1464,24 +1464,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+@@ -2914,37 +2914,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
  				"the request was shown and went unanswered, so nothing was signed")
  			return
  		}
@@ -20,8 +20,21 @@ index f9c3b64..970b989 100644
 -			return
 -		}
 -		if errors.Is(err, p2p.ErrVerificationTimedOut) {
--			httpError(w, http.StatusConflict, "the safety words went unconfirmed on the other "+
--				"side in time, so nothing was signed")
+-			// **It was THIS machine's gate that went unanswered, not the other side's, and the
+-			// sentence used to say the opposite (/pending 385).**
+-			//
+-			// `ErrVerificationTimedOut` has no wire code — `p2p/verify.go` says so where it is
+-			// declared, and it appears in neither `refusalCode` nor `errorForCode` — so it can only
+-			// ever be produced by the `Verifier` running in THIS process. Blaming "the other side"
+-			// for a local timeout is not a wording nicety: it cost a tier-4d investigation its
+-			// first hour, sending it to read the peer's code for a gate the peer never had.
+-			//
+-			// The peer's own failure to confirm arrives as a closed connection, deliberately — see
+-			// `ErrVerificationDeclined`'s doc on why the two must stay indistinguishable on the
+-			// wire — so there is no error here that could honestly name the far end.
+-			httpError(w, http.StatusConflict, "nobody confirmed the safety words on THIS machine in "+
+-				"time, so nothing was signed. The words were shown here and went unanswered; if you "+
+-				"were not at the screen, that is why.")
 -			return
 -		}
  		// **A contribution refusal is not a connect failure either (P07.S03b).** The three

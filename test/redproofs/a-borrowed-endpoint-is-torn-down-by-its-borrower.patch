@@ -1,0 +1,14 @@
+diff --git a/internal/server/ceremonyid.go b/internal/server/ceremonyid.go
+index 82ca3df..4acfe8c 100644
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -623,9 +623,6 @@ func (c *ceremonyID) close() {
+ 	// panic the process — any that closes the mux while the DHT server is still reading it — so an
+ 	// endpoint with two potential closers is a panic waiting for a schedule. Ownership is recorded
+ 	// once, at the point it is lent, and only the owner closes.
+-	if c.borrowedEndpoint {
+-		return
+-	}
+ 	if mapper != nil {
+ 		mapper.close()
+ 	}

@@ -1277,13 +1277,42 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 	// ordering; recorded here so a later reader does not re-add the key looking for it.
 	sv.saw.mark() // the spoken check is on screen
 	defer sv.s.sess.clearVerifyIf(pv)
+
+	// **The gate's LIFETIME is logged, and until this nothing recorded it at all (/pending 385).**
+	//
+	// `setVerify` and `clearVerifyIf` carried no logging, so the one thing a diagnosis of "the
+	// safety words went unconfirmed" needs — *when did the words go up, and how long did anyone
+	// have to answer them* — was unobservable from outside the process. A tier-4d failure was
+	// therefore indistinguishable between three quite different stories: the words never went up;
+	// they went up and nobody was watching; or they went up after whoever was watching had already
+	// given up. Those want opposite fixes and the run could not tell them apart.
+	//
+	// The pair is deliberately a PARK line and a RESOLVE line rather than one line at the end: the
+	// interesting quantity is the interval between them, and a single line written at the end
+	// cannot be read by anything watching the log while the gate is still open — which is exactly
+	// the window that matters.
+	started := time.Now()
+	who := "an unnamed ceremony"
+	if sv.cer != nil {
+		who = sv.cer.inv.ID
+	}
+	log.Printf("ceremony %s: spoken check ON SCREEN, waiting up to %s for an answer",
+		who, sessionConsentTimeout)
 	select {
 	case ok := <-ch:
 		// Presented either way: the user saw the words and said whether they matched. A refusal and
 		// a confirmation are both answers, and only one of them leads to a signature.
+		log.Printf("ceremony %s: spoken check answered after %s (matched=%t)",
+			who, time.Since(started).Round(time.Millisecond), ok)
 		sv.noteVerification(true, ok)
 		return ok, nil
 	case <-time.After(sessionConsentTimeout):
+		// **The elapsed time is logged even though it is the timeout by construction**, because the
+		// line's value is the START time it lets a reader compute: a watcher that gave up at 60 s
+		// against a gate that went up at 70 s produces exactly this, and the two are otherwise
+		// indistinguishable in the run's output.
+		log.Printf("ceremony %s: spoken check went UNANSWERED after %s — it was on screen from %s",
+			who, time.Since(started).Round(time.Millisecond), started.Format("15:04:05.000"))
 		// **Presented and NOT confirmed, which is the third state and half the reason this note
 		// exists.** Nobody was at the machine. It leaves no signature, so nothing signed could ever
 		// carry it — see `ceremony.Verification`'s doc.
@@ -2899,8 +2928,21 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, p2p.ErrVerificationTimedOut) {
-			httpError(w, http.StatusConflict, "the safety words went unconfirmed on the other "+
-				"side in time, so nothing was signed")
+			// **It was THIS machine's gate that went unanswered, not the other side's, and the
+			// sentence used to say the opposite (/pending 385).**
+			//
+			// `ErrVerificationTimedOut` has no wire code — `p2p/verify.go` says so where it is
+			// declared, and it appears in neither `refusalCode` nor `errorForCode` — so it can only
+			// ever be produced by the `Verifier` running in THIS process. Blaming "the other side"
+			// for a local timeout is not a wording nicety: it cost a tier-4d investigation its
+			// first hour, sending it to read the peer's code for a gate the peer never had.
+			//
+			// The peer's own failure to confirm arrives as a closed connection, deliberately — see
+			// `ErrVerificationDeclined`'s doc on why the two must stay indistinguishable on the
+			// wire — so there is no error here that could honestly name the far end.
+			httpError(w, http.StatusConflict, "nobody confirmed the safety words on THIS machine in "+
+				"time, so nothing was signed. The words were shown here and went unanswered; if you "+
+				"were not at the screen, that is why.")
 			return
 		}
 		// **A contribution refusal is not a connect failure either (P07.S03b).** The three
