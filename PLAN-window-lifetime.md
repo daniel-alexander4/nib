@@ -8,7 +8,13 @@ notice first when a ceremony is still running.
 proposed to Dan — a heartbeat was overturned during the grill and the reason is recorded in D1,
 because it is the kind of thing a later reader will otherwise "simplify" back.
 
-**Status: unbuilt.** Tracked as `/pending 375`.
+**Status: P01.S01 done (v1.125.5); S02 is the next slice and it is a MEASUREMENT gate.** Tracked
+as `/pending 375`.
+
+*(This line read "unbuilt" until 2026-09-07, three days after S01 shipped its stream and its
+window count. A plan header is the first thing a resuming session reads, and one that
+disagrees with its own slice markers sends that session to re-derive what is already built —
+which is what happened here.)*
 
 ---
 

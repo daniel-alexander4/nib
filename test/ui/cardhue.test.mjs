@@ -28,7 +28,10 @@ const pick = async (value) => {
 };
 
 test('choosing a hue repaints every card into one colour', async () => {
-  await h.mode('edit');   // the mode with the most cards, so a ladder is visible
+  // The mode with the most cards, so the whole six-step ladder is on screen at once. It was
+  // Document/`edit` until v1.128.25 moved Edit Page Text and Recognize Text to Mark Up, which
+  // left that mode with five — measured, as `only 5 cards are showing`. Settings has six.
+  await h.mode('settings');
   const rainbow = await cards();
   assert.ok(rainbow.length >= 6,
     `only ${rainbow.length} cards are showing — a ladder of six needs six to be observable`);
@@ -42,7 +45,7 @@ test('choosing a hue repaints every card into one colour', async () => {
     `every card in the default sidebar leans the same way (${rainbow.map((c) => dominant(c.bg)).join('')}), so this server is already on a single hue and "picking one changes the screen" cannot be observed from here`);
 
   await pick('blue');
-  await h.mode('edit');
+  await h.mode('settings');
   const single = await cards();
 
   // Every card is now the SAME hue at a different strength. Rendered colours are what is compared,

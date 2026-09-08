@@ -1,0 +1,12 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+index 810eec4..6e6ec4f 100644
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -438,6 +438,7 @@ func ReadStored(root, id string, now time.Time) Stored {
+ 	// every ceremony whose document has not arrived.
+ 	s.Verification = readVerification(dir)
+ 	s.Joined = readMe(dir) != ""
++	s.Me = readMe(dir)
+ 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
+ 	if err != nil {
+ 		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to

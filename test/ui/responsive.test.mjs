@@ -172,8 +172,10 @@ test('a folded group stays inside its own mode', async () => {
       const r = e.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     };
-    // Three Edit-only controls, each in a group that folds at 360.
-    return ['ocrBtn', 'splitBtn', 'cropBtn'].filter(shown);
+    // Three Edit-only controls, each in a group that folds at 360. OCR stood here until
+    // v1.128.25 and is a Mark Up command now — a control from another pane would test that
+    // pane's gating instead of this one's, and a leak here would read as a pass.
+    return ['extractBtn', 'splitBtn', 'cropBtn'].filter(shown);
   });
   assert.deepEqual(leaked, [],
     `these Edit controls are visible while File is the active mode: ${leaked.join(', ')}. A group folded OUT of its .tbtab loses the mode gating that only applies to its descendants`);

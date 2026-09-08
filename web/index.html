@@ -25,7 +25,7 @@
     <nav class="modetabs">
       <button class="modetab" data-tab="file">File</button>
       <button class="modetab" data-tab="markup">Mark Up</button>
-      <button class="modetab" data-tab="edit">Document</button>
+      <button class="modetab" data-tab="edit">Page Functions</button>
       <button class="modetab" data-tab="secure">Secure</button>
       <button class="modetab" data-tab="collaborate">Signing</button>
       <button class="modetab" data-tab="settings">Settings</button>
@@ -39,7 +39,7 @@
       <div class="dropdown">
         <button data-modejump="file">File</button>
         <button data-modejump="markup">Mark Up</button>
-        <button data-modejump="edit">Document</button>
+        <button data-modejump="edit">Page Functions</button>
         <button data-modejump="secure">Secure</button>
         <button data-modejump="collaborate">Signing</button>
         <button data-modejump="settings">Settings</button>
@@ -269,11 +269,7 @@
 <button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
       <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
             </div>
-    </div><div class="tbtab" data-tab="edit">
-      
-      
-      
-      <div class="tbgroup" data-label="Edit Page Text" data-fold="5">
+    <div class="tbgroup" data-label="Edit Page Text" data-fold="5">
 <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
       <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
             </div>
@@ -327,6 +323,10 @@
         <option value="300">Best — 300 DPI</option>
       </select>
             </div>
+    </div><div class="tbtab" data-tab="edit">
+      
+      
+      
       <div class="tbgroup" data-label="Split Pages" data-fold="2">
 <button id="splitBtn" title="Split an imposed page (2-up, 4-up…) into separate pages">Split page…</button>
       <button id="splitBoxBtn" title="Draw regions to split this page into (the page is replaced by the pieces you draw)">Split by box</button>
@@ -342,7 +342,7 @@
       <div class="tbgroup" data-label="Size &amp; Number Pages" data-fold="3">
 <button id="pageNumBtn" title="Stamp running page numbers (or Bates numbers) onto every page">Page numbers…</button>
       <button id="pageLabelsBtn" title="Set the logical page numbers a viewer shows (front matter i, ii, iii then body 1, 2, 3)">Page labels…</button>
-      <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">N-up…</button>
+      <button id="nupBtn" title="Combine several pages onto each sheet (2-up, 4-up…) for printing">Pages per sheet…</button>
       <button id="normalizeBtn" title="Resize every page to the document's most common size — make a mixed-size document uniform">Normalize sizes</button>
       <button id="cropBtn" title="Draw a box to crop every page (or just this one) down to that area">Crop…</button>
             </div>
@@ -1198,13 +1198,13 @@
     </div>
   </div>
 
-  <!-- N-up: combine several pages onto each sheet (printing / handouts) -->
+  <!-- Pages per sheet (the "N-up" imposition): several pages onto each sheet. -->
   <div id="nupModal" hidden>
     <div class="sigcard">
-      <h3>N-up — combine pages onto sheets</h3>
+      <h3>Pages per sheet</h3>
       <p class="libhint">Place several pages onto each sheet, for printing or handouts. Every page is re-arranged in place, in reading order; each sheet keeps the document's page size.</p>
       <div class="splitcontrols">
-        <label>Pages per sheet
+        <label>Pages on each sheet
           <select id="nupN">
             <option value="2" selected>2 (2-up)</option>
             <option value="4">4 (2×2)</option>

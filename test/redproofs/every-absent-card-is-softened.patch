@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index c02c9ca..34385f0 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -11238,7 +11238,7 @@ try {
+ // `=== true` rather than truthiness, because the field is `omitempty` — absent means the server
+ // could not say, which is not the same as a definite no, and only a definite yes may soften a
+ // warning.
+-const cerWaiting = (c) => c.state === 'absent' && c.joined === true;
++const cerWaiting = (c) => c.state === 'absent';
+ 
+ // CEREMONY_STATE_WORDS maps a load class to the sentence a person reads.
+ //

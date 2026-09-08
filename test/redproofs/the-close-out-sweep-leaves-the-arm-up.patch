@@ -1,0 +1,12 @@
+diff --git a/internal/server/closeout.go b/internal/server/closeout.go
+index 288ff87..f986259 100644
+--- a/internal/server/closeout.go
++++ b/internal/server/closeout.go
+@@ -190,7 +190,6 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
+ 		// ceremony this machine has decided is over must not go on holding an arm; the sweep
+ 		// closing it out is the same decision the user's leave is, reached by the deadline
+ 		// instead of by a button.
+-		s.stopListeningFor(st.ID)
+ 		if cerr := s.closeOutCeremony(v, st.ID, state, now); cerr != nil {
+ 			log.Printf("close-out %s: %v", st.ID, cerr)
+ 		}

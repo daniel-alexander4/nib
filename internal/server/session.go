@@ -651,6 +651,55 @@ func (se *session) disarmCeremony(cer *ceremonyID) {
 	se.disarmWhen(func(a *arm) bool { return cer != nil && a.cer == cer })
 }
 
+// stopListeningFor tears down every arm this machine holds for one ceremony, by ID.
+//
+// **The rule is "when this machine has decided a ceremony is over, it stops listening for it", and
+// this is its one door (ADR-009).** Before it, nothing anywhere released a standing arm on that
+// decision: `rearmCeremonies` SKIPS a ceremony it holds no invitation for — `continue`, not a
+// teardown — so pruning the invitation stops the arm coming BACK and leaves the live one holding
+// the single interactive slot until Nib quits. That is exactly the condition `/pending 378` was
+// filed about, and the "leave this ceremony" lever shipped for it did not relieve it. Named search
+// at the time: zero `disarm` calls on the leave path.
+//
+// **By ID and not by pointer, which is why `disarmCeremony` could not be reused.** That one keys on
+// `a.cer == cer` — identity, so a stale goroutine cannot disarm the session that replaced it — and
+// a route that has just read an id off a request holds no such pointer. This asks the question the
+// caller can actually ask.
+//
+// **Every arm for that ceremony, hop and delivery alike.** A user who has left, or a proceeding
+// that has ended, has no use for either, and leaving one behind would release the slot on paper
+// while the socket stayed open.
+//
+// **The DECLINE path is the declared exemption and does not call this.** `declineCeremony` runs on
+// the p2p goroutine inside `p2p.Receive`'s consent callback, with the session armed and the
+// exchange still in progress — disarming from inside the arm's own accept goroutine would tear down
+// the transfer that is reporting the decline. That path's teardown is `runSession`'s own defer.
+func (s *Server) stopListeningFor(id string) {
+	if id == "" {
+		return
+	}
+	// **Logged when something actually goes, and the count comes from the teardown itself.**
+	// Zero is the ordinary case — most close-outs reach a ceremony this machine was never armed
+	// for — so a line per call would be the noise that gets a log ignored; that is the convention
+	// `dropPunchBudgets` already follows one file over.
+	//
+	// **Counted by `disarmWhen` rather than by a pre-check under the lock, and the difference is
+	// not cosmetic.** A count taken first and acted on second is two acquisitions with a window
+	// between them, so an arm raised in that window would be logged as absent and left standing.
+	// The teardown already walks the slots under the one lock it holds; asking it what it did is
+	// the same walk with no second truth.
+	//
+	// **It earned its keep immediately.** A tier-4d red was pinned on this function on the
+	// strength of it being the most invasive change in a sweep — and one run with this line
+	// showed it firing ZERO times across a four-party ceremony that closed out nine ceremonies,
+	// which refuted the mechanism in one run instead of a bisect.
+	if n := s.sess.disarmWhen(func(a *arm) bool {
+		return a.cer != nil && strings.EqualFold(a.cer.inv.ID, id)
+	}); n > 0 {
+		log.Printf("ceremony %s: stopped listening (%d arm(s) torn down)", id, n)
+	}
+}
+
 // disarmWhen is the shared teardown: it captures and clears the armed state under the lock only if
 // the guard holds, then closes the listener and ceremony and releases any parked gate outside it.
 //
@@ -665,7 +714,9 @@ func (se *session) disarmCeremony(cer *ceremonyID) {
 // server, the shared UDP socket, the port-mapping lease whose refresh goroutine only `close()`
 // stops. That is the same harm `TestASecondArmCannotOrphanALiveCeremony` exists for, reintroduced
 // through the teardown instead of the door. Found by this slice's own review.
-func (se *session) disarmWhen(ok func(*arm) bool) {
+// It returns how many arms it tore down, so a caller that needs to say whether anything
+// happened does not have to ask a second time under a second acquisition of this lock.
+func (se *session) disarmWhen(ok func(*arm) bool) int {
 	se.mu.Lock()
 	var hits []*arm
 	for k, a := range se.arms {
@@ -676,7 +727,7 @@ func (se *session) disarmWhen(ok func(*arm) bool) {
 	}
 	if len(hits) == 0 {
 		se.mu.Unlock()
-		return // a later session is armed; this one is already over
+		return 0 // a later session is armed; this one is already over
 	}
 	// **The two gates are machine-wide, so they are released only when NOTHING is left armed.**
 	// One user, one screen, one gate — but a parked gate belongs to whichever arm put it there,
@@ -723,6 +774,7 @@ func (se *session) disarmWhen(ok func(*arm) bool) {
 		default:
 		}
 	}
+	return len(hits)
 }
 
 // A consentAnchor names the armed operation a consent request belongs to, so setPending can

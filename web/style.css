@@ -1302,7 +1302,12 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* A degraded ceremony is marked and NOT dimmed. It is the entry a user most needs to read — it is
    the one they have to act on — and dimming the thing that needs attention is the readability
    trade this repo has already refused once. */
-.cercard[data-state]:not([data-state="ok"]) { border-color: var(--peach); }
+/* `:not([data-waiting])` rather than a later rule that paints it back (/pending 377). A
+   waiting card is not a degraded one, and the obvious fix — a second rule overriding this
+   border — LOSES the cascade: this selector is one class and two attributes (`:not()` carries
+   its argument's specificity) against the two of `.cercard[data-waiting]`. Excluding here is
+   one edit, has no specificity contest to get wrong, and reads as the rule it is. */
+.cercard[data-state]:not([data-state="ok"]):not([data-waiting]) { border-color: var(--peach); }
 .cerhead { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .cerintent { font-weight: 600; color: var(--text); }
 .cerbadge {
@@ -1314,6 +1319,10 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 }
 .cerended { background: transparent; border: 1px solid var(--surface1); }
 .cerreason { color: var(--peach); font-size: 11px; margin: 4px 0 0; }
+/* A party who has accepted and is waiting for the baton is not a degraded ceremony
+   (/pending 377). The card keeps `.cercard`'s own border — the border rule above excludes
+   it rather than being overridden — and the sentence loses the peach that means "warning". */
+.cercard[data-waiting] .cerreason { color: var(--subtext1); }
 .cerdeadline { color: var(--subtext1); font-size: 11px; margin: 4px 0 0; }
 .cerroster { margin-top: 6px; }
 .cerparty { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0; }

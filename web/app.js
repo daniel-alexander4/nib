@@ -10709,10 +10709,10 @@ setSidebarCollapsed(sidebarNarrow.matches);
 // Exactly one is expanded, so the open one gets the column's remaining height and nothing
 // scrolls inside something else that scrolls.
 //
-// **Tabs were tried and cannot carry this.** Document mode has a command group called "Pages"
-// and the sidebar already has a "Pages" tab for thumbnails — two tabs, one word, two meanings.
-// Width finishes the argument: Document would need seven tabs across 200px, 28px each, against
-// a one-word label that needs about 40 at 12px.
+// **Tabs were tried and cannot carry this.** The `edit` mode (labelled Page Functions) has
+// command groups named for Pages and the sidebar already has a "Pages" tab for thumbnails —
+// two tabs, one word, two meanings. Width finishes the argument: that mode would need seven
+// tabs across 200px, 28px each, against a one-word label that needs about 40 at 12px.
 //
 // The existing `.tab` buttons BECOME the headers rather than being replaced, so their click
 // wiring, their roving-tabindex and `SIDEBAR_FOR` all keep working; they move next to the panel
@@ -11227,6 +11227,19 @@ try {
 // That is D24's resumption criterion: a screen that silently needed the DHT would be exactly the
 // failure it was written to catch.
 
+// cerWaiting is "this machine is a party and nothing has arrived for it yet" — the commonest
+// invitee state, and the one the panel used to draw as damage (/pending 377).
+//
+// **ONE definition, because three surfaces turn on it**: the badge word, the card's peach border,
+// and the colour of the reason. Deciding it three times is the shape ADR-009 refuses, and the way
+// it decays is one of the three being fixed.
+//
+// `joined` is the server's, from the `me` marker an accept writes; the client never re-derives it.
+// `=== true` rather than truthiness, because the field is `omitempty` — absent means the server
+// could not say, which is not the same as a definite no, and only a definite yes may soften a
+// warning.
+const cerWaiting = (c) => c.state === 'absent' && c.joined === true;
+
 // CEREMONY_STATE_WORDS maps a load class to the sentence a person reads.
 //
 // The server already sends a `reason` for every degraded class, written for a human, and this map
@@ -11353,6 +11366,11 @@ function ceremonyCard(c, mayAct) {
   card.className = 'cercard';
   card.dataset.ceremony = c.id;
   card.dataset.state = c.state || '';
+  // **A second attribute rather than a different `data-state`.** The state stays a faithful echo
+  // of the server's classification — tests and future readers key on it — and this carries the
+  // fact that softens its presentation. The peach border and the peach reason are both warnings,
+  // and there is nothing wrong here.
+  if (cerWaiting(c)) card.dataset.waiting = '1';
 
   const head = document.createElement('div');
   head.className = 'cerhead';
@@ -11365,7 +11383,11 @@ function ceremonyCard(c, mayAct) {
   if (c.state && c.state !== 'ok') {
     const badge = document.createElement('span');
     badge.className = 'cerbadge';
-    badge.textContent = CEREMONY_STATE_WORDS[c.state] || c.state;
+    // "Nothing on disk" is true of an accepted invitee's folder and is the wrong thing to say
+    // about it: nothing is missing, the document has not reached their hop yet.
+    badge.textContent = cerWaiting(c)
+      ? 'Waiting for your turn'
+      : (CEREMONY_STATE_WORDS[c.state] || c.state);
     head.appendChild(badge);
   }
   if (c.ended) {

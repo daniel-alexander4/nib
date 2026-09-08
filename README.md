@@ -192,7 +192,7 @@ flag it — the flag snaps to that line (or click anywhere to place one freehand
 Then click each flag to fill it and Nib **jumps to the next** one: a date flag
 stamps today's date; a sign/initial flag drops your signature or initials, picked
 from the Library once and reused; and a name/title/company flag fills from your
-**autofill profile** (add the value once under *Edit → Edit autofill profile* and
+**autofill profile** (add the value once under *Mark Up → Edit autofill profile* and
 every such flag reuses it). Each fill is sized to fit its flag. These place a
 *visible* signature for filling out the form; the cryptographic signature is still
 the separate **Finalize & sign** step.
@@ -243,7 +243,7 @@ it becomes a real clickable sticky-note annotation (an icon whose popup shows yo
 text) that any PDF viewer can read.
 
 ### Edit existing text
-**Edit → Edit text**, then drag a box over baked-in text. Nib covers it with a
+**Mark Up → Edit text**, then drag a box over baked-in text. Nib covers it with a
 fill sampled from the background and drops an editable box prefilled in the
 original's size, colour, and closest font (serif / sans / mono, bold, italic) —
 so a fix reads like an edit, not a patch. The page stays sharp and vector. The
@@ -252,7 +252,7 @@ originals**, which flattens just the edited pages so the old text is gone for
 good — or until you flatten / finalize the whole document.
 
 ### OCR — make a scan searchable
-Got a scanned PDF that's just images? **Edit → OCR** reads the text on every page
+Got a scanned PDF that's just images? **Mark Up → OCR** reads the text on every page
 and adds an **invisible text layer** underneath the scan, so the page still looks
 exactly the same but the text is now **selectable, copyable, and findable** (and
 shows up in *Find*). The OCR runs **entirely on your machine** — the recognition
@@ -687,7 +687,7 @@ browser's normal undo.
 
 Rotate, delete, **append**, and reorder pages — **drag a page's thumbnail** in the
 sidebar's **Arrange Pages** card to move it where you want. Rotate every page at
-once with **Rotate all ↺ / ↻** in **Rotate All Pages** on the **Document** tab, or
+once with **Rotate all ↺ / ↻** in **Rotate All Pages** on the **Page Functions** tab, or
 hover a thumbnail to rotate (either direction) or delete a single page.
 **Shift- or Ctrl/Cmd-click thumbnails** to select several at once, then
 rotate, delete, or **move the whole selection to the front or back** (⤒ / ⤓) from the
@@ -705,10 +705,10 @@ numbers — the ones a viewer shows in its page box and thumbnails, as distinct 
 ink stamped on the page — so front matter can read i, ii, iii while the body reads
 1, 2, 3. Add a range per section (from which page, what style — decimal, upper/lower
 Roman, upper/lower letters, or a prefix-only label — and where its count starts);
-pages before the first range carry no label. Going the other way, **N-up…** combines several pages onto
+pages before the first range carry no label. Going the other way, **Pages per sheet…** combines several pages onto
 each sheet (2-up, 4-up, up to 16) for printing or handouts, in reading order, with
 an optional border — each sheet keeps the document's page size. Got a document
-whose pages are all different sizes? **Normalize sizes** (Edit tab) resizes every
+whose pages are all different sizes? **Normalize sizes** (Page Functions tab) resizes every
 page to the document's most common size, scaling each page's content to fit and
 centring it — a one-click way to make a mixed-size scan or merge uniform. It keeps
 each page's orientation (a landscape page stays landscape) and the text stays live

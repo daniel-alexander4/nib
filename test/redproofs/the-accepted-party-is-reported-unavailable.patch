@@ -1,0 +1,14 @@
+diff --git a/internal/server/ceremonynext.go b/internal/server/ceremonynext.go
+index ee9b051..9fa2da8 100644
+--- a/internal/server/ceremonynext.go
++++ b/internal/server/ceremonynext.go
+@@ -122,9 +122,6 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
+ 		// guard caught.** `Me` is a position and must stay empty on every class that is not
+ 		// `LoadOK`; `Joined` is the marker's presence, which needs no roster to mean something.
+ 		state := "unavailable"
+-		if st.State == ceremony.LoadAbsent && st.Joined {
+-			state = "accepted"
+-		}
+ 		writeJSON(w, ceremonyNextResponse{Ceremony: id, State: state, Reason: st.Reason})
+ 		return
+ 	}
