@@ -1,20 +1,20 @@
 --- a/internal/server/delivery.go
 +++ b/internal/server/delivery.go
-@@ -886,6 +886,8 @@
+@@ -963,6 +963,8 @@
  		defer closeShared()
  	}
  
 +	_ = shared
 +
- 	attempt := 0
- 	out := make([]deliveryOutcome, 0, len(rec.Roster))
- 	for _, party := range rec.Roster {
-@@ -939,7 +941,7 @@
- 		// denominator it is not drawn from and show "4 of 2".
- 		attempt++
- 		endLeg := s.beginLeg(rec.ID, party.Fingerprint, party.Label, attempt, walked)
--		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, shared)
-+		derr := s.deliverToParty(ctx, v, inv, party.Fingerprint, addrs[strings.ToLower(party.Fingerprint)], cert, key, myFP, payload, nil)
+ 	// ── The walk is PLANNED serially and RUN concurrently (/pending 376) ────────────────
+ 	//
+ 	// The plan pass decides every skip, mints every per-party invitation and assigns every
+@@ -1048,7 +1050,7 @@
+ 		t := tasks[i]
+ 		endLeg := s.beginLeg(rec.ID, t.party.Fingerprint, t.party.Label, t.attempt, walked)
+ 		derr := s.deliverToParty(ctx, v, t.inv, t.party.Fingerprint,
+-			addrs[strings.ToLower(t.party.Fingerprint)], cert, key, myFP, payload, shared)
++			addrs[strings.ToLower(t.party.Fingerprint)], cert, key, myFP, payload, nil)
  		endLeg()
  		if derr != nil {
- 			res.Reason = derr.Error()
+ 			// One party's failure does not end the round; the re-run reaches them.
