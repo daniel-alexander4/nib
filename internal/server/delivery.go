@@ -884,6 +884,11 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	// otherwise left believing it is still travelling. Same walk, same per-party rendezvous, same
 	// acknowledgement markers — a second round would have duplicated all three.
 	payload := pdf
+	// **The end state is kept for the PULL half as well as the push** (/pending 380). A party who
+	// has accepted and not signed cannot be delivered to — their machine's single delivery slot may
+	// be armed for another ceremony entirely, which is what tier 4d measured — so whatever this
+	// round could not hand over is published for them to read instead. See publishEndStateFor.
+	var endState *ceremony.Termination
 	t, terr := ceremony.ReadTermination(defaultOutputDir(), rec)
 	switch {
 	case terr == nil && t.State == ceremony.StateDeclined:
@@ -892,8 +897,12 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			return nil, merr
 		}
 		payload = b
+		endState = &t
 	case terr == nil:
-		// A completed ceremony: the finished document is the payload, as it always was.
+		// A completed ceremony: the finished document is the payload, as it always was — and the
+		// attestation still goes to the rendezvous, because a pre-hop party is owed "it is over"
+		// whichever way it ended.
+		endState = &t
 	case errors.Is(terr, ceremony.ErrNoTermination):
 		// The ordinary case — the proceeding has not ended — and it must never read as damage.
 	default:
@@ -1066,7 +1075,74 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		}
 		out[t.slot].Delivered = true
 	})
+
+	// ── What the round could NOT hand over is PUBLISHED instead (/pending 380) ──────────
+	//
+	// **A fetch needs no arm at all, and that is the whole of why this is a pull.** A delivery
+	// rendezvous is keyed `(ceremony, hop)` and its listener pins one peer, so a machine holding a
+	// pre-hop arm for one ceremony cannot also hold a delivery arm for another — measured at tier
+	// 4d, where the recipient's single slot was armed for the wrong ceremony and refused the
+	// convener on its own identity. Widening that is the security question the ceremony plan
+	// reserves; `rendezvous.Fetch` is a DHT read and approaches none of it.
+	//
+	// **Only the legs that did not land**, not every party. A publish is off-link traffic under
+	// ADR-011 and a party that already has the document has nothing to read.
+	if endState != nil {
+		for _, t := range tasks {
+			if out[t.slot].Delivered {
+				continue
+			}
+			s.publishEndStateFor(ctx, t.inv, *endState, shared)
+		}
+	}
 	return out, nil
+}
+
+// publishEndStateFor seals this ceremony's end state and publishes it at ONE party's end-state
+// target, so a party the round could not reach can read it without holding an arm.
+//
+// # The target is per PARTY, and the derivation's own doc said otherwise
+//
+// `EndStateSalt`'s comment claimed the end state is "not hop-scoped … every party reads the same
+// one, and a per-party target would make the convener publish N copies of an object that is
+// identical for all of them". The first half is right and the second is false as built: every
+// end-state value derives through `Invitation.derive`, which is keyed on `i.Secret`, and
+// `convenerInvitationFor` takes that secret from `v.CeremonySecret(rec.ID, fp)` — **per party**.
+// So N copies is exactly what the plumbing produces, and the comment has been corrected rather
+// than the plumbing changed: per-party targets are the better property anyway. A shared target
+// would be a BEP-44 mutable key every party could write as well as read, since the private key
+// falls out of the same seed.
+//
+// **Best-effort and quiet.** The push already succeeded or failed on its own terms and its outcome
+// is what the convener reads; a rendezvous that will not take the record does not turn a delivered
+// round into a failed one. What is lost is a pre-hop party learning early, and their arm's own
+// fetch retries.
+func (s *Server) publishEndStateFor(ctx context.Context, inv ceremony.Invitation, t ceremony.Termination, shared *sharedRendezvous) {
+	if shared == nil || shared.rz == nil {
+		return // no round endpoint: nothing to publish through, and a leg's own is already closed
+	}
+	anchor, aerr := inv.Anchor()
+	if aerr != nil {
+		return
+	}
+	seed, serr := inv.EndStateSeed()
+	salt, lerr := inv.EndStateSalt()
+	key, kerr := inv.EndStateKey()
+	if serr != nil || lerr != nil || kerr != nil {
+		return
+	}
+	// `Seal` verifies against the anchor before it encrypts, so an end state this machine cannot
+	// stand behind is never published — the refusal is inside the one door rather than here.
+	sealed, err := t.Seal(key, salt, anchor)
+	if err != nil {
+		log.Printf("ceremony %s: end state not published (%v)", inv.ID, err)
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, rendezvousPublishBudget)
+	defer cancel()
+	if perr := shared.rz.Publish(pctx, seed, salt, sealed); perr != nil {
+		log.Printf("ceremony %s: end state not published (%v)", inv.ID, perr)
+	}
 }
 
 // walkLegs runs `n` tasks with at most `width` in flight, and returns when every one has finished.
@@ -1683,5 +1759,76 @@ func (s *Server) handleCeremonyDeliveryProgress(w http.ResponseWriter, r *http.R
 		Of:        l.Of,
 		ElapsedMs: int(time.Since(l.Started) / time.Millisecond),
 		CeilingMs: int(connectDeadline / time.Millisecond),
+	})
+}
+
+// fetchEndStateWhenSlow reads this ceremony's published end state on the arm a pre-hop party
+// already holds, and closes the arm out when one arrives (/pending 380).
+//
+// # Why the party PULLS
+//
+// `rearmDeliveries` admits only `LoadOK`, so a party who has accepted and not signed has no
+// delivery arm and the convener's round cannot reach them. Admitting `LoadAbsent` was tried at
+// P05.S03 and backed out: the pre-hop ceremony's arm holds the machine's single delivery slot and
+// the convener arrives with a DIFFERENT ceremony, so the arm refuses on its own identity. One
+// slot, many ceremonies.
+//
+// A fetch is a DHT read. It needs no arm, no slot and no pin, so the one-pinned-peer tripwire —
+// which `PLAN-ceremony-wizard.md` puts out of scope pending a security review — is never
+// approached. That is what makes this the direction that does not need the review.
+//
+// # It rides the LAN-FIRST HOLD, and that was the check this owed
+//
+// A fetch is off-link traffic and ADR-011 governs when anything leaves the link, so this waits on
+// `holdDHT` exactly as `publishWhenSlow` does rather than reading immediately. A pre-hop party on
+// an office LAN whose ceremony is still live must not start writing its curiosity to the public
+// DHT before the link has had its window.
+//
+// # What it does NOT do
+//
+// It never deletes, never signs and never decides the proceeding is over on its own: the only
+// thing that ends the arm is a sealed attestation that opens at this party's own target AND
+// verifies against the invitation anchor. `OpenEndState` refuses on either, so a planted record
+// cannot end anybody's ceremony — which is the trap `/pending 354` recorded, and the reason the
+// anchor is the invitation rather than a `record.json` sitting beside it.
+func (s *Server) fetchEndStateWhenSlow(ctx context.Context, cer *ceremonyID, hold time.Duration) {
+	defer safe.Recover("end state fetch")
+	if cer == nil || cer.rz == nil {
+		return
+	}
+	anchor, aerr := cer.inv.Anchor()
+	if aerr != nil {
+		return
+	}
+	seed, serr := cer.inv.EndStateSeed()
+	salt, lerr := cer.inv.EndStateSalt()
+	key, kerr := cer.inv.EndStateKey()
+	if serr != nil || lerr != nil || kerr != nil {
+		return
+	}
+	if !cer.holdDHT(ctx, hold) {
+		return
+	}
+	// The same period the republish uses, for the same reason: one door for "how often this
+	// ceremony touches the DHT", so the two cannot drift into different network manners.
+	publishLoop(ctx, 0, republishEvery(), func(ctx context.Context) {
+		fctx, cancel := context.WithTimeout(ctx, rendezvousPublishBudget)
+		defer cancel()
+		sealed, _, ferr := cer.rz.Fetch(fctx, seed, salt)
+		if ferr != nil || len(sealed) == 0 {
+			return // nothing published yet is the ORDINARY state of a live proceeding
+		}
+		t, oerr := ceremony.OpenEndState(key, salt, sealed, anchor)
+		if oerr != nil {
+			return // not ours, or does not verify: never a reason to end an arm
+		}
+		if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
+			return // retried on the next tick; the arm stands until it is recorded
+		}
+		s.tellEndState(cer, t)
+		// **Stop listening for a proceeding that is over.** Through the one door /pending 378
+		// built, keyed by ceremony id, so this releases the interactive slot the same way leaving
+		// does rather than by a second teardown path.
+		s.stopListeningFor(cer.inv.ID)
 	})
 }

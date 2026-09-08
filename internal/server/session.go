@@ -2386,6 +2386,14 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	if armAnnouncer != nil {
 		defer armAnnouncer.Close()
 	}
+	// **The pull half of /pending 380, and only before this party has signed.** A party who has
+	// signed holds a record and is reachable by the convener's delivery round; one who has not is
+	// exactly the party the round cannot reach, and this is how they learn the proceeding ended.
+	// It rides `holdDHT` like every other DHT reach on this arm, so a LAN-local ceremony still
+	// emits nothing off-link inside its window (ADR-011).
+	if !cer.hasSigned() {
+		go s.fetchEndStateWhenSlow(ctx, cer, browseWindow)
+	}
 	// **No bootstrap here (S05d).** The QUIC arm used to warm the DHT before anyone knew whether
 	// the link would answer, which is off-link traffic on every hop of every ceremony carrying an
 	// invitation. connect's feed and publish now reach it through `cer.ensureBootstrapped` after

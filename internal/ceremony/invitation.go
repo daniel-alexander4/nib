@@ -562,9 +562,19 @@ func (i Invitation) RecordKey(hop int) ([]byte, error) {
 // hop could collide with, and `derive`'s own doc states the rule these follow: a value used for one
 // purpose can never be the value used for another.
 //
-// **Not hop-scoped, deliberately.** The end state is a fact about the PROCEEDING; every party reads
-// the same one, and a per-party target would make the convener publish N copies of an object that
-// is identical for all of them.
+// **Not hop-scoped, deliberately.** The end state is a fact about the PROCEEDING rather than about
+// one leg of it, so there is no hop in the derivation and none in the sealed record's AAD.
+//
+// **It IS per-party, though, and this comment used to say the opposite.** It read *"every party
+// reads the same one, and a per-party target would make the convener publish N copies of an object
+// that is identical for all of them"* — and N copies is exactly what the plumbing produces, because
+// every value below goes through `derive`, which is keyed on `i.Secret`, and the convener takes
+// that secret from `v.CeremonySecret(rec.ID, fp)`: one per party. The comment was corrected rather
+// than the plumbing, because per-party targets are the better property. A BEP-44 mutable key is
+// WRITABLE by whoever holds the seed, and the seed falls out of the same secret — so one shared
+// target would be a record every party could overwrite, not merely read. Publishing is also only
+// ever for the parties a round could not reach, so N is the count of the unreachable and not of
+// the roster.
 
 // EndStateSeed is the BEP-44 keypair seed for the end-state target.
 func (i Invitation) EndStateSeed() ([]byte, error) {
