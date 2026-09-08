@@ -2,12 +2,15 @@ package ceremony
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+
+	"golang.org/x/crypto/chacha20poly1305"
 
 	"nib/internal/sign"
 )
@@ -85,6 +88,16 @@ var (
 	// substituted file than a corrupted one. Conflating them would tell a user to suspect their
 	// hardware.
 	ErrBadTermination = errors.New("this ceremony's stored termination does not verify")
+
+	// ErrEndStateTooBig: a sealed end state exceeds what the rendezvous will carry.
+	//
+	// **A distinct sentinel because it is not a verification failure**, and reporting it as one
+	// sends the reader to the wrong place entirely — it says the object is untrustworthy when the
+	// object is fine and the TRANSPORT is the constraint. Caught by reading this test's own output
+	// while building it: `a sealed end state is 1223 bytes ...` arrived wearing
+	// `ErrBadTermination`'s "does not verify" prefix. `ErrCandidateTooBig` is the same distinction
+	// one file over.
+	ErrEndStateTooBig = errors.New("this end state is too large to publish")
 	// ErrTerminationConflict reports a second termination naming a different end state.
 	ErrTerminationConflict = errors.New("this ceremony is already recorded as ended in a different state")
 )
@@ -297,3 +310,104 @@ func DecodeTermination(b []byte) (Termination, error) {
 
 // Ended reports the state for a surface to render, or "" when there is none.
 func (t Termination) Ended() string { return t.State }
+
+// --- the published end state (/pending 380) -----------------------------------
+
+// endStateAADDomain separates the SEALED record's AAD from every other length-prefixed structure
+// this package builds — the same separation `candidateDomain` provides one file over.
+//
+// **Distinct from `terminationDomain`, which is the SIGNATURE preimage's tag, and the compiler
+// caught the collision.** They are different objects at different layers: one is what the convener
+// signs, the other is what binds a sealed copy to the target it was published at. Sharing a tag
+// would make a value used for one purpose usable for the other, which is the failure `derive`'s own
+// doc names.
+const endStateAADDomain = "nib-end-state-record-v1"
+
+// terminationAAD binds a sealed end state to the target it was published at.
+//
+// **No hop, unlike `candidateAAD`.** The end state is a fact about the proceeding rather than about
+// one leg of it, and `EndStateSalt` is not hop-scoped — adding a hop here would be a second, weaker
+// derivation of a thing that has none.
+func terminationAAD(salt []byte) []byte {
+	var p preimageBuilder
+	p.addString(endStateAADDomain)
+	p.add(salt)
+	return p.bytes()
+}
+
+// Seal encrypts this end state for publication at the end-state rendezvous.
+//
+// **It verifies BEFORE it seals, which is `CandidateRecord.Seal`'s discipline and is here for the
+// same reason**: an object that does not check out must never be handed to the network wearing this
+// package's seal. The anchor is the caller's — a convener passes its record's, so a termination
+// that does not bind to the ceremony it is being published for cannot leave the machine.
+//
+// **The size ceiling is checked HERE and not at the publisher, and that is the load-bearing part.**
+// `MaxSealedRecord`'s own doc says why: an over-size value is refused by our own store inside
+// `dht.Server.Put` before any datagram is sent, `getput.Put` logs a warning per node and returns
+// nil, and **the record simply never leaves the machine**. Measured while building this: a
+// termination carrying a PEM certificate bencodes to 827 bytes for the 8-character common name
+// production actually mints (`GenerateIdentity("Nib User")`), and to **1172 bytes — over the cap —**
+// for a 128-character one. The margin is real today and it is a function of a name; if that name
+// ever becomes user-supplied, this check is what turns a silent non-publish into a refusal a caller
+// can report. `TestASealedEndStateFitsTheRendezvous` is its guard.
+func (t Termination) Seal(key, salt []byte, anchor Anchor) ([]byte, error) {
+	if err := t.VerifyAgainst(anchor); err != nil {
+		return nil, fmt.Errorf("this end state does not verify, so it will not be published: %w", err)
+	}
+	plain, err := json.Marshal(t)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	out := aead.Seal(nonce, nonce, plain, terminationAAD(salt))
+	if len(out) > MaxSealedRecord {
+		return nil, fmt.Errorf("%w: %d bytes against a cap of %d — it would be dropped by this "+
+			"machine's own store before any datagram was sent, silently",
+			ErrEndStateTooBig, len(out), MaxSealedRecord)
+	}
+	return out, nil
+}
+
+// OpenEndState decrypts and VERIFIES an end state fetched from the rendezvous.
+//
+// **Verification is inside this door and not beside it.** `ReadTermination`'s doc already states
+// the rule this follows — *"`rec` must come from the document or the invitation, never from the
+// `record.json` sitting beside it"* — and here the anchor comes from the invitation, which is the
+// only thing a pre-hop party holds. A reader that could open without verifying is a reader that
+// will eventually be called by somebody who forgets, which is the ADR-009 shape a single door
+// exists to refuse.
+//
+// The bytes come off the public DHT and are written by whoever reached that target first, so every
+// failure below is the ordinary case rather than an anomaly: a wrong key, a truncated value, a
+// stranger's noise and a planted object all land here and all return an error.
+func OpenEndState(key, salt, sealed []byte, anchor Anchor) (Termination, error) {
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return Termination{}, err
+	}
+	if len(sealed) < chacha20poly1305.NonceSizeX {
+		return Termination{}, fmt.Errorf("%w: a sealed end state is %d bytes, shorter than its nonce",
+			ErrBadTermination, len(sealed))
+	}
+	nonce, ct := sealed[:chacha20poly1305.NonceSizeX], sealed[chacha20poly1305.NonceSizeX:]
+	plain, err := aead.Open(nil, nonce, ct, terminationAAD(salt))
+	if err != nil {
+		return Termination{}, fmt.Errorf("%w: this end state does not open at that target", ErrBadTermination)
+	}
+	var t Termination
+	if err := json.Unmarshal(plain, &t); err != nil {
+		return Termination{}, fmt.Errorf("%w: %v", ErrBadTermination, err)
+	}
+	if err := t.VerifyAgainst(anchor); err != nil {
+		return Termination{}, err
+	}
+	return t, nil
+}

@@ -544,6 +544,53 @@ func (i Invitation) RecordKey(hop int) ([]byte, error) {
 	return i.derive(fmt.Sprintf("nib-record-v1/hop-%d", hop), 32)
 }
 
+// --- the end-state rendezvous (/pending 380) ----------------------------------
+//
+// **A party who has accepted and not signed cannot be DELIVERED to, and this is why they are
+// PULLED to instead.** A delivery rendezvous is keyed `(ceremony, hop)` and its listener pins one
+// peer, so a machine holding a pre-hop arm for one ceremony cannot also hold a delivery arm for
+// another — measured at tier 4d, where the recipient's single slot was armed for the wrong
+// ceremony and refused the convener on its own identity. Widening that is a security question the
+// ceremony plan reserves.
+//
+// **A fetch needs no arm at all**, which is the observation the whole item turned on and nobody
+// had made: `rendezvous.Fetch` is a DHT read. So the convener PUBLISHES the end state and the
+// party READS it, and the one-pinned-peer rule is never approached.
+//
+// **Three derivations, not one, and they are domain-separated from the hop family above.** Reusing
+// `HopSeed`/`RecordSalt`/`RecordKey` with a sentinel hop would put the end state at a target a real
+// hop could collide with, and `derive`'s own doc states the rule these follow: a value used for one
+// purpose can never be the value used for another.
+//
+// **Not hop-scoped, deliberately.** The end state is a fact about the PROCEEDING; every party reads
+// the same one, and a per-party target would make the convener publish N copies of an object that
+// is identical for all of them.
+
+// EndStateSeed is the BEP-44 keypair seed for the end-state target.
+func (i Invitation) EndStateSeed() ([]byte, error) {
+	return i.derive("nib-bep44-seed-v1/end-state", 32)
+}
+
+// EndStateSalt is the end-state target's salt.
+//
+// Keyed, for `RecordSalt`'s stated reason: a salt travels in cleartext in every put and is held by
+// every storing node, so an unkeyed one would turn the public DHT into a searchable index of who is
+// ending ceremonies and when.
+func (i Invitation) EndStateSalt() ([]byte, error) {
+	return i.derive("nib-rendezvous-salt-v1/end-state", 32)
+}
+
+// EndStateKey is the AEAD key the published end state is sealed under.
+//
+// **Sealed rather than published in the clear, and that is not symmetry with the candidate path —
+// it is the same threat.** A `Termination` carries the convener's CERTIFICATE, which is an
+// identity; `RecordSalt`'s doc frets about exactly this, that a fingerprint is "the permanent,
+// never-rotated pin people hand out on a card or a QR code". Publishing one unsealed at a DHT key
+// hands every storing node a Nib identity and the fact that its ceremony died.
+func (i Invitation) EndStateKey() ([]byte, error) {
+	return i.derive("nib-record-v1/end-state", 32)
+}
+
 // RecordSalt is the BEP-44 salt separating the two parties publishing under one hop.
 //
 // A hop has two parties and both publish. Sharing one target would mean the higher-seq

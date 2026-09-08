@@ -1,0 +1,13 @@
+diff --git a/internal/ceremony/termination.go b/internal/ceremony/termination.go
+index f4e52b4..f4ea011 100644
+--- a/internal/ceremony/termination.go
++++ b/internal/ceremony/termination.go
+@@ -368,7 +368,7 @@ func (t Termination) Seal(key, salt []byte, anchor Anchor) ([]byte, error) {
+ 		return nil, err
+ 	}
+ 	out := aead.Seal(nonce, nonce, plain, terminationAAD(salt))
+-	if len(out) > MaxSealedRecord {
++	if false {
+ 		return nil, fmt.Errorf("%w: %d bytes against a cap of %d — it would be dropped by this "+
+ 			"machine's own store before any datagram was sent, silently",
+ 			ErrEndStateTooBig, len(out), MaxSealedRecord)

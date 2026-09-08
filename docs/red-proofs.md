@@ -4656,3 +4656,44 @@ edit, no cascade to get wrong — and the guard reads the SELECTOR, which is wha
 already does for its ladder and for the same stated reason.
 
 `recorded` 372 → 378.
+
+## The end state a pre-hop party can PULL (/pending 380, v1.128.27)
+
+A party who has accepted and not signed cannot be **delivered** to: a delivery rendezvous is keyed
+`(ceremony, hop)` and its listener pins one peer, so a machine holding a pre-hop arm for one
+ceremony cannot also hold a delivery arm for another. Tier 4d measured exactly that. The observation
+the item turned on, and which nobody had made, is that **a fetch needs no arm at all** —
+`rendezvous.Fetch` is a DHT read — so the convener publishes the end state and the party reads it,
+and the one-pinned-peer rule is never approached.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-end-state-door-does-not-verify` | `TestAPlantedEndStateIsRefused`, tier 1 | "for a DIFFERENT proceeding opened against this invitation" |
+| `the-end-state-size-ceiling-is-not-checked` | `TestAnOversizeEndStateIsRefusedAtTheSeal`, tier 1 | "far over the cap was accepted" |
+| `the-end-state-aad-drops-its-salt` | `TestAnEndStateDoesNotOpenAtAnotherTarget`, tier 1 | "opened at a target it was not published at" |
+| `the-end-state-shares-a-hop-domain` | `TestTheEndStateDerivationsAreSeparatedFromTheHopFamily`, tier 1 | "equals hop 0's seed" |
+
+**Three of the four rows record MUTATION SURVIVORS, and that is the entry worth reading.** The first
+four tests written for this object — a round-trip, a determinism check, a domain-separation check
+and a size check — caught **one** of four mutations. Removing the door's verification, removing the
+size ceiling, and dropping the salt from the AAD all left the set **green**. A happy-path test proves
+an object round-trips; it says nothing about what a door REFUSES, and refusing is the entire job of a
+reader whose bytes come off the public DHT. The three tests that close them drive a planted object,
+a wrong target, and an over-size seal.
+
+**The size row's number is a function of a NAME, and that is why it is a row rather than a
+constant.** A sealed end state is **875 bytes** against a 996 cap for the 8-character common name
+production actually mints — `GenerateIdentity("Nib User")`, and `finalize.go:153` is its only
+production caller — and **1219 bytes, over the cap,** for a 128-character one. The margin is real
+today and it is not structural. `MaxSealedRecord`'s own doc says what an over-size value does: our
+own store drops it inside `dht.Server.Put` before any datagram is sent and `getput.Put` returns nil,
+so the record never leaves the machine and nothing says so. The check at the seal is what turns that
+into a refusal a caller can report, and this row is what keeps the check.
+
+**A defect in this work's own error message was caught by reading its test output.** The size refusal
+arrived wearing `ErrBadTermination`'s prefix — *"this ceremony's stored termination does not
+verify"* — which is false and sends the reader to the wrong place: the object is fine and the
+transport is the constraint. `ErrEndStateTooBig` is the distinction, and `ErrCandidateTooBig` is the
+same one, one file over.
+
+`recorded` 378 → 382.
