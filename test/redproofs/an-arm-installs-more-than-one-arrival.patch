@@ -1,9 +1,9 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1285,7 +1285,8 @@
+@@ -1607,7 +1607,8 @@
+ 			continue // an unreadable role is a peer this build cannot serve; the arm is not spent
  		}
- 		timer.Stop()
- 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
+ 		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
 -		if final != nil && !opened {
 +		_ = opened
 +		if final != nil {

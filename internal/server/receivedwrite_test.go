@@ -250,6 +250,9 @@ func TestSendReportsNotStoredAsItsOwnOutcome(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// This test is the RESPONDER: it reads the role the server declared (ADR-018).
+		_, _ = p2p.ReadRole(conn.Channel)
+		_ = p2p.AcceptRole(conn.Channel)
 		_, e = p2p.ReceiveDocument(conn.Channel, notStoringAccepter{}, bFPBytes, okVerifier{})
 		recvErr <- e
 	}()

@@ -107,6 +107,14 @@ func (s *Server) deliverOneLeg(ch p2p.Channel, cer *ceremonyID, myFP []byte, pdf
 	if send {
 		// PeerGatesUnattended: the round armed the far side itself, so the sender's third
 		// deadline waits on no human. See p2p.DeliveryLegBudget.
+		// **What this dial is FOR, before either side picks a gate set** (/pending 385, ADR-018).
+		// Declared HERE and not inside `SendDocument`, because the far side's read is a server
+		// decision too — the delivery arm reads the role to choose between this exchange and a
+		// resumed hop. A write inside the exchange function and a read outside it is a frame
+		// nobody consumes on any direct pairing, which is what the first cut of this did.
+		if rerr := p2p.WriteRole(ch, p2p.RoleTransfer); rerr != nil {
+			return nil, rerr
+		}
 		return nil, p2p.SendDocument(ch, pdf, myFP, autoVerifier{}, p2p.PeerGatesUnattended)
 	}
 	var kept []byte
@@ -393,6 +401,22 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 	if err != nil || len(peerFP) != sha256.Size {
 		return errors.New("this ceremony's convener fingerprint is not a fingerprint")
 	}
+	// This machine's own fingerprint as bytes. `me` is the hex form the caller already holds, so
+	// this decodes rather than re-deriving from the cert — one value travelling, which is the same
+	// argument `sessionConfirmer.me` makes for taking it from serveOneSession's caller.
+	myFP, err := hex.DecodeString(me)
+	if err != nil || len(myFP) != sha256.Size {
+		return errors.New("this machine's fingerprint is not a fingerprint")
+	}
+	// The convener's label as the roster gives it, for the consent surface the co-sign branch
+	// below can raise. The panel's standing rule is that a person is named, never fingerprinted.
+	convenerLabel := "the convener"
+	for _, p := range inv.Roster {
+		if strings.EqualFold(p.Fingerprint, inv.ConvenerFingerprint) && strings.TrimSpace(p.Label) != "" {
+			convenerLabel = p.Label
+			break
+		}
+	}
 	cer, err := s.deliveryCeremony(inv, me, inv.ConvenerFingerprint, cert, key)
 	if err != nil {
 		return err
@@ -504,6 +528,58 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			conn, aerr := ln.Accept()
 			if aerr != nil {
 				return // net.ErrClosed: disarmed, or the arm's window elapsed
+			}
+			// ── This arm serves BOTH roles, and that is /pending 385's fix ──────────────
+			//
+			// A party that has committed its contribution has a record, so the hop sweep skips
+			// it (`ceremonyarm.go`: `if st.State == ceremony.LoadOK { continue }`) and this
+			// sweep arms it instead. Before ADR-018 that made the resumed hop unanswerable:
+			// this was the only arm the party had and `deliverOneLeg` cannot serve a stored
+			// contribution, because `ReceiveDocument` never reaches `coSignExchange`.
+			//
+			// **The party could not have chosen the other arm either**, which is why the fix is
+			// here and not in the sweep: nothing is written between `persistContribution` and
+			// the frame reaching the initiator, so a party that died in that window is
+			// byte-identical on disk to one whose hop landed. The dialer knows; the party does
+			// not. So the dialer says.
+			role, rerr := p2p.ReadRole(conn.Channel)
+			if rerr != nil {
+				conn.Close()
+				continue // unreadable role: a peer this build cannot serve, and the arm stands
+			}
+			// **The acknowledgement, and its absence was a real defect.** The co-sign branch
+			// gets one inside `serveOneSession`; the transfer branch had none, so the sending
+			// side's `WriteRole` waited out `RoleDeadline` on an ack nobody sent and the leg
+			// failed — measured as a party never receiving the document it signed. One door for
+			// both branches, above the split, for the reason the hop path's `exchange` closure
+			// states one file over: a rule written on one arm of a branch covers one arm.
+			if !armServesRole(sessionModeDelivery, role) {
+				_ = p2p.RefuseRole(conn.Channel)
+				conn.Close()
+				continue
+			}
+			if aerr := p2p.AcceptRole(conn.Channel); aerr != nil {
+				conn.Close()
+				continue
+			}
+			if role == p2p.RoleCoSign {
+				// **The REAL gates, never the unattended ones.** `deliverOneLeg`'s own header
+				// says the auto gates are sound on a delivery leg and only there — the two
+				// parties met at their hop and answered these words about this pin. A resumed
+				// HOP is that hop, being taken for the first time, so it owes the human spoken
+				// check and the human consent exactly as the interactive arm does.
+				// `TestTheUnattendedGatesHaveOneDoor` keeps that honest structurally: routing
+				// here goes through `serveOneSession`, which is `p2p.Receive`'s one call site
+				// and constructs the real Confirmer and Verifier.
+				_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
+					cer, conn, cert, key, convenerLabel, sessionModeDelivery, myFP, role, true)
+				if final != nil {
+					s.openArrival(convenerLabel, cer, final)
+				}
+				if xerr == nil {
+					return // the hop completed here; this arm is spent
+				}
+				continue // a failed hop does not spend the arm, as a failed leg does not
 			}
 			_, derr := s.deliverOneLeg(conn.Channel, cer, nil, nil, false)
 			conn.Close()

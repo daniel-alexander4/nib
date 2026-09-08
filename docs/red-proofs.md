@@ -4771,3 +4771,38 @@ so tier 4 was configured past the disagreement it existed to find. A test handed
 nothing about a dialer that has to choose.
 
 `recorded` 385 → 389.
+
+## ADR-028 — a dial declares its role (`/pending 385`, v1.128.36)
+
+The role frame was added to `Initiate` and `SendDocument`'s call sites, on the reasoning that those
+are the two dialing verbs. **There is a third.** `Carry` is the non-signing convener's baton hop and
+it initiates the verification exactly as the other two do, so its first frame — a 32-byte
+commitment — arrived where the far side expected a one-byte role. The arm refused it, re-raced, and
+the hop failed as `rendezvous-unreachable`: a wire desync reported to the user as a dead network.
+
+**Two-party tier 4 passed throughout**, both transports, because the relay is the only shape that
+uses `Carry`. It took a four-party run and a log line printing the frame width (`declared frame too
+large: 32 bytes (max 1)`) to name it. The enumeration was *"the functions I knew"* rather than
+*"everything with the property"* — and the property is one grep: `runVerification(ch, true`.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-baton-hop-dials-undeclared` | `TestEveryDialDeclaresItsRole`, tier 1 | "are reached BEFORE their function declares a role" |
+| `the-role-frame-reaches-a-pre-role-peer` | `TestAPeerThatDidNotNegotiateTheRoleFrameExchangesNothing`, tier 1 | "panic: test timed out" |
+
+**The second row's token is a TIMEOUT, and that is deliberate rather than lazy.** A role frame is a
+frame in both directions, unlike a named refusal that an older peer can simply never be sent —
+writing one to a peer that will not read it leaves a byte in front of the verification exchange.
+The test drives it over an unbuffered `net.Pipe`, so a stray write blocks forever instead of
+passing: the assertion is that nothing is written, and a hang is what "something was written" looks
+like. A row whose proof is a deadlock is the honest shape for a property about silence.
+
+**Two guards, split across the two packages on purpose.** `p2p` knows which verbs initiate; only
+`internal/server` knows where they are called. Either alone is satisfiable while the defect stands
+— p2p's list can be complete beside a call site that declares nothing, and the server's can be
+clean while a fourth verb nobody listed is dialling. The server half is also POSITIONAL, because
+the function-scoped version passed against the exact code that shipped: the write sat in the
+`Initiate` arm and `Carry` returned above it, so a role written on one arm of a branch covered one
+arm.
+
+`recorded` 389 → 391.

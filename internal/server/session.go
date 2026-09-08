@@ -1598,7 +1598,15 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			continue
 		}
 		timer.Stop()
-		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
+		// The dial says what it is for before either side picks a gate set (ADR-018). A peer that
+		// predates the role frame declared none and reads as RoleCoSign, which is what every
+		// pre-role dial to an interactive arm meant.
+		role, rerr := p2p.ReadRole(conn.Channel)
+		if rerr != nil {
+			conn.Close()
+			continue // an unreadable role is a peer this build cannot serve; the arm is not spent
+		}
+		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
 		if final != nil && !opened {
 			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
@@ -1690,7 +1698,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 // `consentAnchor.current` PREFERS `cer` when it is non-nil, so that path's stale-goroutine test
 // would silently switch from listener-identity to ceremony-identity — a change to what
 // `stale-consent-on-new-session` guards, smuggled in under another slice's name.
-func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte) (served bool, coSigned []byte, err error) {
+func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte, role p2p.Role, roleAcknowledged bool) (served bool, coSigned []byte, err error) {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -1725,7 +1733,30 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// is loosened, which is the whole of what this slice needs.
 	var saw reached
 	ch := conn.Channel
-	if mode == sessionModeReceive {
+	// ── The arm's POLICY, checked against the dial's declared role (/pending 385, ADR-018) ──
+	//
+	// `mode` is what this arm was opened to do and `role` is what the dialer is asking for. They
+	// are not the same fact and the wire does not get to override the arm: a listener the user
+	// armed for a one-way transfer must never co-sign because a peer asked it to, which is the
+	// whole reason this is a check rather than an assignment of `mode = role`.
+	//
+	// Refused by NAME, not by hanging up. A responder that closed here would reach the initiator
+	// as a bare EOF — the `/pending 315` class found at four sentinels — and a peer dialling the
+	// wrong arm would be told its network failed.
+	if !armServesRole(mode, role) {
+		return saw.v.Load(), nil, p2p.RefuseRole(ch)
+	}
+	// **Acknowledged by whoever READ the role, and exactly once.** The delivery arm reads and
+	// acknowledges before it dispatches here — it has to, because it chooses between two gate
+	// sets — so a second ack from this function would put a stray byte in front of the
+	// verification exchange. `roleAcknowledged` says which caller already did it; a bool rather
+	// than a re-read, because the frame is gone by then.
+	if !roleAcknowledged {
+		if err := p2p.AcceptRole(ch); err != nil {
+			return saw.v.Load(), nil, err
+		}
+	}
+	if role == p2p.RoleTransfer {
 		// **The save is NOT here any more (P08.S05a), and the returned bytes are therefore
 		// discarded.** It ran here, after `ReceiveDocument` had already written `ackOK`, so the
 		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
@@ -1947,6 +1978,37 @@ func checkSessionMode(mode string) error {
 }
 
 var errUnknownSessionMode = errors.New("unknown session mode")
+
+// armServesRole is the one door for "may this arm serve that dial" (/pending 385, ADR-018).
+//
+// **One function rather than a comparison at each site**, because there are three sites now — the
+// manual listener, the ceremony hop arm and the delivery arm — and ADR-009's own words are that
+// eight copies checked for agreement say nothing about a ninth added without one. The delivery
+// arm is the reason the answer is not simply `mode == role`: it serves BOTH, which is the whole
+// of what /pending 385 needed.
+//
+// The empty mode is co-sign, kept for `checkSessionMode`'s stated reason — it is what older
+// clients send and the route has always treated it that way, an accepted spelling rather than a
+// silent fallback.
+func armServesRole(mode string, role p2p.Role) bool {
+	switch mode {
+	case sessionModeReceive:
+		return role == p2p.RoleTransfer
+	case sessionModeCoSign, "":
+		return role == p2p.RoleCoSign
+	case sessionModeDelivery:
+		// The arm a party holds after it has committed its contribution. It answers a delivery
+		// leg AND the resumed hop that its own record made unreachable — see armForDelivery.
+		return role == p2p.RoleTransfer || role == p2p.RoleCoSign
+	}
+	return false
+}
+
+// sessionModeDelivery is the delivery arm's policy: it is the one arm that serves both roles.
+//
+// It is not a value any client may send — `checkSessionMode` does not accept it — because it is
+// this machine's own answer to "I have signed and am waiting", never a request from a user.
+const sessionModeDelivery = "delivery"
 
 // sessionModeReceive arms the listener to accept a one-way document transfer (save to
 // ~/nib); any other mode value co-signs.
@@ -2407,7 +2469,12 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 				return // the baton never arrived, or the ceremony deadline passed
 			}
 		}
-		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP)
+		role, rerr := p2p.ReadRole(conn.Channel)
+		if rerr != nil {
+			conn.Close()
+			continue // see runSession: an unreadable role does not spend the arm
+		}
+		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
 		if final != nil && !opened {
 			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
@@ -2760,6 +2827,16 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// One exchange verb, chosen once, so the two dial paths below cannot drift into disagreeing
 	// about which one this hop is.
 	exchange := func(ch p2p.Channel) ([]byte, error) {
+		// **The role is declared ABOVE the branch, and putting it inside one arm was a real
+		// defect** (ADR-028). `Carry` is the non-signing convener's baton hop and it initiates
+		// the verification exactly as `Initiate` does, so a role written on only one arm leaves
+		// the other's commitment arriving where a role byte is expected — measured as a
+		// deterministic tier-4d failure on the 4-party relay, `rendezvous-unreachable` after the
+		// arm read a 32-byte frame as a role. This closure's own comment warned of exactly that:
+		// one verb chosen once, so the two dial paths cannot drift.
+		if rerr := p2p.WriteRole(ch, p2p.RoleCoSign); rerr != nil {
+			return nil, rerr
+		}
 		if carrying {
 			return p2p.Carry(ch, signed, myFP, sessionVerifier{s: s, cer: cer}, cer.l3Roster())
 		}
@@ -3060,6 +3137,13 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	// The role, before the exchange (ADR-018). A refusal here is the far side saying it is not
+	// listening for a transfer — an answer, not a network failure, so it gets the same 502-with-a
+	// -sentence treatment as any other refusal rather than a bare connect error.
+	if rerr := p2p.WriteRole(conn.Channel, p2p.RoleTransfer); rerr != nil {
+		httpError(w, http.StatusBadGateway, connectFailure(rerr))
+		return
+	}
 	if err := p2p.SendDocument(conn.Channel, pdfBytes, myFP, sessionVerifier{s: s}, p2p.PeerGatesHuman); err != nil {
 		if errors.Is(err, p2p.ErrDeclined) {
 			writeJSON(w, sendResult{Sent: false, Declined: true})

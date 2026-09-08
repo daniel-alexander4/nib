@@ -41,9 +41,23 @@ const alpn = "nib/1"
 // "old peer", not "error".
 const alpn2 = "nib/2"
 
+// alpn3 is the session protocol version that declares its ROLE before the exchange (/pending 385,
+// ADR-018).
+//
+// **A negotiated version rather than an unconditional frame, for `alpn2`'s reason exactly.** A
+// build that predates this one, handed a one-byte role frame where it expects the verification
+// exchange, does not fail cleanly — it reads the byte as the start of something else and produces
+// a verdict about its counterparty from a version skew, which is what D32 forbids and what `alpn2`
+// was minted to avoid. So the frame is sent only to a peer that has said it can read one.
+//
+// Offering three versions costs nothing: quic-go requires a non-empty NextProtos and the list is
+// most-preferred-first, so a peer that knows only `nib/2` agrees on `nib/2` and gets this build's
+// pre-role behaviour, which is exactly what it expects.
+const alpn3 = "nib/3"
+
 // sessionALPN is the offer list, most preferred first. One list, set at every config site, so the
 // two transports cannot drift into offering different things (ADR-009).
-var sessionALPN = []string{alpn2, alpn}
+var sessionALPN = []string{alpn3, alpn2, alpn}
 
 // ProtocolSkewError is D32's sentence for the one version skew the ALPN cannot negotiate away
 // (P07.S09c).

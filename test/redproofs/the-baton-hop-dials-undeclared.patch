@@ -1,0 +1,18 @@
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -2834,12 +2834,12 @@
+ 		// deterministic tier-4d failure on the 4-party relay, `rendezvous-unreachable` after the
+ 		// arm read a 32-byte frame as a role. This closure's own comment warned of exactly that:
+ 		// one verb chosen once, so the two dial paths cannot drift.
+-		if rerr := p2p.WriteRole(ch, p2p.RoleCoSign); rerr != nil {
+-			return nil, rerr
+-		}
+ 		if carrying {
+ 			return p2p.Carry(ch, signed, myFP, sessionVerifier{s: s, cer: cer}, cer.l3Roster())
+ 		}
++		if rerr := p2p.WriteRole(ch, p2p.RoleCoSign); rerr != nil {
++			return nil, rerr
++		}
+ 		return p2p.Initiate(ch, signed, myFP, sessionVerifier{s: s, cer: cer}, cer.l3Roster())
+ 	}
+ 	// ── The dialing side ANNOUNCES before it browses (P07.S05c, T01) ────────────────────────

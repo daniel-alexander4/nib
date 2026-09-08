@@ -208,3 +208,29 @@ const (
 	TransportTCP  = "tcp"
 	TransportQUIC = "quic"
 )
+
+// SpeaksRoleFrame reports whether the peer negotiated a session protocol that declares its role
+// before the exchange (/pending 385, ADR-018).
+//
+// **A FLOOR looked up in the same list, exactly as SpeaksNamedRefusals is, and for the reason
+// that one records rather than for symmetry.** That predicate was written as `c.Proto == alpn2`
+// and it was a latent defect: a third version negotiates fine and then reports FALSE, denying the
+// capability to the NEWEST peers in the one direction nothing checks. `alpn3` IS that third
+// version, so the defect its floor was written against is no longer hypothetical — this is the
+// bump that would have fired it.
+//
+// It fails CLOSED on an unknown protocol, and on `alpn3` ever leaving the offer list. The role
+// frame is a wire frame in BOTH directions here, not merely an addition like a named refusal:
+// sending one to a peer that will not read it desynchronises the exchange rather than being
+// ignored. So an unrankable peer must read as "does not speak it", never as "might".
+func (c Channel) SpeaksRoleFrame() bool {
+	floor := protoRank(alpn3)
+	if floor == 0 {
+		return false // this build no longer offers it: nobody speaks it
+	}
+	r := protoRank(c.Proto)
+	if r == 0 {
+		return false // not one of ours: an older peer, or a future one this build cannot rank
+	}
+	return r >= floor
+}

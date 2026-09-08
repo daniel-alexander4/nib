@@ -200,8 +200,12 @@ func SessionBudget() time.Duration {
 // `2*exchangeDeadline + postConsentDeadline` = 14m rather than 24m. An ordinary transfer is
 // unchanged at 24m, which is why this function takes the gates rather than assuming them: a
 // budget that assumed "unattended" would under-reserve every interactive send.
+// **The role exchange is a FOURTH term (ADR-018).** It is one machine-to-machine round trip with
+// no human in it, and the temptation is to call that negligible against fourteen minutes. This
+// repo punishes exactly that reasoning — the budget's own doc records `S05d owes both edits or
+// neither` — so the term is here because the code arms it, not because it is large.
 func DeliveryLegBudget(g PeerGates) time.Duration {
-	return 2*exchangeDeadline + remoteDecisionFor(g)
+	return RoleDeadline + 2*exchangeDeadline + remoteDecisionFor(g)
 }
 
 // Confirmer is the receiving side's consent gate. Shown the connected peer's
@@ -525,6 +529,12 @@ const (
 	// the wire exactly on the attacker's path and nowhere else, and a codeless refusal there is a
 	// bare EOF rendered as a 502 with a D19 NETWORK cause, inviting the retry a refusal must not.
 	refuseDocumentSubstituted = 15
+
+	// 16 is a dial whose declared role this arm does not serve (/pending 385). A named refusal
+	// rather than a close, because a responder that simply hung up would reach the initiator as a
+	// bare EOF — the class this repo has now found at four sentinels — and a version skew would
+	// then read as a dropped network rather than as "not that kind of connection".
+	refuseWrongRole = 16
 )
 
 // ErrCeremonyEnded reports that the proceeding this document belongs to is over — its deadline has
@@ -675,6 +685,8 @@ func refusalCode(err error) byte {
 		return refuseRosterMismatch
 	case errors.Is(err, ErrDocumentSubstituted):
 		return refuseDocumentSubstituted
+	case errors.Is(err, ErrRoleRefused):
+		return refuseWrongRole
 	}
 	return 0
 }
@@ -712,6 +724,8 @@ func errorForCode(code byte) error {
 		return ErrRosterMismatch
 	case refuseDocumentSubstituted:
 		return ErrDocumentSubstituted
+	case refuseWrongRole:
+		return ErrRoleRefused
 	}
 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
 }
