@@ -168,6 +168,9 @@ type Server struct {
 
 	// windows counts the windows currently holding a stream open; see window.go.
 	windows liveWindows
+	// idleExit is D2's answer for THIS process: did it launch a browser, and is it therefore
+	// waiting for a window at all. Set once at startup through `ArmIdleExit`; read by P01.S04.
+	idleExit atomic.Bool
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it

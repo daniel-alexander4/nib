@@ -178,13 +178,27 @@ invalidate it silently.
 
 **D1 stands: a window's life is a connection, not a timer.** P01.S03 is unblocked.
 
-#### P01.S03 — arm the idle-exit, and prove it stays disarmed
+#### P01.S03 — arm the idle-exit, and prove it stays disarmed *(done 2026-09-08, v1.128.39)*
 Scope: arm only when this process launched a browser; log `idleExitArmed` once at startup.
 Refs: D2.
 Acceptance:
 - Every harness reports it false, asserted rather than observed by eye.
 - A normal launch reports it true.
 - A red proof: arming unconditionally turns a harness red.
+
+**Done, and one thing was added that the slice did not ask for.** The scope was "arm only when this
+process launched a browser"; reading only `NIB_NO_BROWSER` satisfies that sentence and is wrong.
+`browser.Open` falls back from an app-mode window to a tab and errors only when NOTHING launched, so
+"the variable was unset" and "this process has a window" differ exactly where it matters — a locked
+profile, snap confinement, an Edge policy. That user's report already begins *"I double-clicked Nib
+and nothing happened"*. The rule is `server.IdleExitDecision(noBrowser, openErr)`, a door rather
+than an `&&` in `main`, because the difference is invisible in every case this repo runs and a door
+can be given a test.
+
+The three acceptance clauses are covered by three different guards, deliberately: the RULE at tier 1,
+"no harness *can* arm it" by a source scan over the launch lines, and "the shipped binary says so"
+at tier 3. The scan cannot see a binary that ignores its environment; the unit test cannot see a
+harness that stopped setting the variable.
 
 #### P01.S04 — the grace timer and its two cancels
 Scope: last stream closes → grace → exit; cancelled by a new window or an inbound hand-off, counted

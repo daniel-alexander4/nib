@@ -181,11 +181,21 @@ func run() int {
 
 	// NIB_NO_BROWSER lets the app run headless (tests, remote boxes); the URL
 	// above is logged so it can still be opened by hand.
-	if os.Getenv("NIB_NO_BROWSER") == "" {
-		if _, err := browser.Open(uiURL); err != nil {
-			log.Printf("could not open a browser window: %v", err)
+	//
+	// **Whether a window was actually launched is captured, not re-derived** (D2, P01.S03).
+	// `browser.Open` falls back from an app-mode window to a browser tab and errors only when
+	// NOTHING could launch, so "the environment variable was unset" and "this process has a
+	// window" are different facts on a real machine — a locked profile or a confined snap makes
+	// them differ. The idle-exit arms on the second, because a process with no window must never
+	// be one that exits for want of one.
+	noBrowser := os.Getenv("NIB_NO_BROWSER") != ""
+	var openErr error
+	if !noBrowser {
+		if _, openErr = browser.Open(uiURL); openErr != nil {
+			log.Printf("could not open a browser window: %v", openErr)
 		}
 	}
+	s.ArmIdleExit(server.IdleExitDecision(noBrowser, openErr))
 
 	// Run until interrupted, then shut down cleanly.
 	//

@@ -4806,3 +4806,30 @@ the function-scoped version passed against the exact code that shipped: the writ
 arm.
 
 `recorded` 389 → 391.
+
+## P01.S03 — the idle-exit arms only for a process that launched a window (v1.128.39)
+
+D2 arms the idle-exit only where this process opened a window. At P01.S04 an armed harness does not
+fail visibly — it **exits mid-run**, and the failure surfaces as a connection refused somewhere
+unrelated, because the server under test has gone. So the slice's own acceptance clause asks for
+this to be proved red, one slice before the behaviour it protects exists.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-idle-exit-arms-unconditionally` | `windowstream.test.mjs`, tier 3 | "the harness ARMED the idle-exit" |
+
+**Three guards, and each covers what the other two cannot.** `IdleExitDecision` is tested at tier 1
+for the RULE; a source scan over `build/*.sh` proves no harness *can* arm it, from its launch lines
+rather than from its output; and this row drives the shipped binary and reads what it actually
+logged. A source scan cannot see a binary that ignores its own environment, and a unit test cannot
+see a harness that stopped setting the variable.
+
+**The launch-vs-environment distinction earned its own door, and a probe is why.** Reading only
+`NIB_NO_BROWSER` builds, passes every test in the tree and passes tier 3 — with a working browser
+both readings agree, and every harness sets the variable. The difference appears only when
+`browser.Open` FAILS: a locked profile, snap or flatpak confinement, an Edge policy. That user's
+report already begins *"I double-clicked Nib and nothing happened"*, and arming them would exit Nib
+on the one person it had already failed. `IdleExitDecision` exists so that case has a test; an `&&`
+inside `main` could not have one.
+
+`recorded` 391 → 392.

@@ -52,7 +52,62 @@ func (w *liveWindows) Live() int { return int(w.n.Load()) }
 const (
 	windowConnectedMsg = "window connected"
 	windowGoneMsg      = "window gone"
+	// idleExitArmedMsg is P01.S03's observable, in the same shape and for the same
+	// reason: a harness cannot call a Go accessor, and this is the line that says
+	// whether THIS process is one that would ever exit on an empty window count.
+	//
+	// **A prefix rather than a whole sentence**, because the value is what a test
+	// greps and the two must not be assembled independently at each end.
+	idleExitArmedMsg = "idle-exit armed="
 )
+
+// IdleExitDecision is D2's rule as a value, so it can be probed (P01.S03).
+//
+// **Two facts, not one, and reading only the first is a real defect rather than a simplification.**
+// `noBrowserRequested` is the environment saying "do not open a window"; `openErr` is whether one
+// actually opened. They differ on a real machine: `browser.Open` falls back from an app-mode window
+// to a browser tab and errors only when NOTHING could launch — a locked profile, snap or flatpak
+// confinement, an Edge policy. A process whose browser failed to start has no window, and arming it
+// means exiting on a user whose report already begins "I double-clicked Nib and nothing happened".
+//
+// It is a function rather than an expression at the call site because the difference is invisible
+// in the common case: with a working browser both readings agree, and every harness sets the
+// variable, so nothing this repo runs would notice the wrong one. A door can be given a test; an
+// `&&` inside `main` cannot.
+func IdleExitDecision(noBrowserRequested bool, openErr error) bool {
+	return !noBrowserRequested && openErr == nil
+}
+
+// ArmIdleExit records whether this process is one that waits for a window (D2, P01.S03).
+//
+// # The rule is exact and needs no allow-list
+//
+// **Armed only if THIS process launched a browser.** A process that never opened a window is never
+// waiting for one, so a headless run — every harness, and the `NIB_ADDR` SSH-tunnel mode — is never
+// a candidate for idle-exit. D2 settled this against a heuristic precisely so the set cannot drift:
+// there is no list of "test-like" conditions to keep current, only the fact of having launched.
+//
+// **"Launched" means `browser.Open` returned no error, not that `NIB_NO_BROWSER` was unset.** Those
+// differ on a real machine: `Open` falls back from an app-mode window to a browser tab and returns
+// an error only when NOTHING could launch — a locked profile, snap confinement, an Edge policy. A
+// process whose browser failed to start has no window and must not arm, and reading only the
+// environment variable would arm it. The user's report in that case is "I double-clicked Nib and
+// nothing happened"; exiting on them would be the second half of that sentence.
+//
+// # Nothing exits yet
+//
+// This slice arms a FLAG and logs it. The grace timer, its two cancels and the exit itself are
+// P01.S04, which reads this and the count above. Kept separate on purpose: a slice that armed the
+// exit before the cancels existed would exit Nib on a reload.
+func (s *Server) ArmIdleExit(launchedBrowser bool) {
+	s.idleExit.Store(launchedBrowser)
+	log.Printf("%s%v", idleExitArmedMsg, launchedBrowser)
+}
+
+// IdleExitArmed reports whether this process would consider exiting when its last window closes.
+// P01.S04 is its first behavioural reader; today it exists so the flag has one door rather than a
+// bool passed down two call paths.
+func (s *Server) IdleExitArmed() bool { return s.idleExit.Load() }
 
 // handleWindow holds a stream open for the life of one window and counts it.
 //

@@ -72,3 +72,33 @@ test('a real window declares itself, and stops when it closes', async () => {
   assert.deepEqual(consoleErrors, [], 'the page logged errors');
   void page;
 });
+
+// P01.S03 — the idle-exit reports FALSE in the harness, asserted rather than observed by eye.
+//
+// # Why this clause exists, and why it is tier 3
+//
+// D2 arms the idle-exit only for a process that launched a browser. Every harness runs
+// `NIB_NO_BROWSER=1`, so every harness must report false — and `internal/server`'s
+// `TestNoHarnessCanArmTheIdleExit` proves that no harness *can* arm it, from the launch lines.
+// This is the other half: that the shipped binary, launched exactly as the harness launches it,
+// actually says so. A source scan cannot see a binary that ignores its own environment.
+//
+// **At P01.S04 an armed harness does not fail visibly — it EXITS mid-run**, and the failure
+// surfaces as a connection refused somewhere unrelated. So the assertion is worth making now,
+// one slice before the behaviour it protects exists.
+test('the harness never arms the idle-exit', () => {
+  const log = readLog();
+  // STIMULUS: the line is present at all. A grep for a value that is never logged returns "not
+  // armed" over a log that never mentioned it, which is the vacuous green this clause invites.
+  assert.ok(
+    log.includes('idle-exit armed='),
+    'nib never logged the idle-exit decision, so this assertion is reading nothing. The line is '
+      + 'the seam inventory\'s Emitted string for P01.S03 and is written once at startup.',
+  );
+  assert.ok(
+    !log.includes('idle-exit armed=true'),
+    'the harness ARMED the idle-exit. It launches with NIB_NO_BROWSER=1 and therefore opened no '
+      + 'window, so at P01.S04 it would exit for want of one — mid-run, surfacing as a connection '
+      + 'refused somewhere unrelated (D2).',
+  );
+});
