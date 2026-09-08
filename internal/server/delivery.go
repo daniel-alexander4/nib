@@ -1019,7 +1019,7 @@ func (s *Server) deliverToParty(ctx context.Context, v *vault.Vault, inv ceremon
 		// non-nil even if a concurrent vault import nils `s.vault` mid-request". `runDeliveryRound`
 		// already holds and nil-checks that one; reaching for `s.unlockedVault()` here would be a
 		// second door onto the same fact, with a nil branch the first door has already excluded.
-		if found, ferr := findPeerOnLAN(v, peerFP); ferr == nil {
+		if found, ferr := findPeerOnLAN(v, peerFP, hopOf(cer)); ferr == nil {
 			cands = found
 		}
 	}

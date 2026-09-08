@@ -64,7 +64,7 @@ func TestAPinnedPeerResolvesAndAnUnpinnedOneDoesNot(t *testing.T) {
 	pins := []vault.PinnedPeer{{Fingerprint: pinned, Label: "Bea"}}
 
 	// The pinned peer.
-	got, ok := resolve(pins, announcementFrom(t, pinned, 8443, "192.168.1.9"))
+	got, ok := resolve(pins, announcementFrom(t, pinned, 8443, "192.168.1.9"), discovery.HopNone)
 	if !ok {
 		t.Fatal("a pinned peer's announcement did not resolve; nothing below is meaningful")
 	}
@@ -81,7 +81,7 @@ func TestAPinnedPeerResolvesAndAnUnpinnedOneDoesNot(t *testing.T) {
 	}
 
 	// The stranger. Same shape of announcement, same everything, different identity.
-	if c, ok := resolve(pins, announcementFrom(t, stranger, 8443, "192.168.1.9")); ok {
+	if c, ok := resolve(pins, announcementFrom(t, stranger, 8443, "192.168.1.9"), discovery.HopNone); ok {
 		t.Errorf("an UNPINNED peer resolved to %+v — discovery would be introducing a peer, "+
 			"which L1 forbids and which the invitation path exists to do instead", c)
 	}
@@ -99,7 +99,7 @@ func TestTheResolvedFingerprintIsThePinnedOneNotTheAnnouncedName(t *testing.T) {
 	pins := []vault.PinnedPeer{{Fingerprint: pinned, Label: "Bea"}}
 	seen := announcementFrom(t, pinned, 9000, "10.0.0.5")
 
-	got, ok := resolve(pins, seen)
+	got, ok := resolve(pins, seen, discovery.HopNone)
 	if !ok {
 		t.Fatal("setup: the announcement did not resolve")
 	}
@@ -122,19 +122,19 @@ func TestAnAnnouncementWithoutAPortOrSourceResolvesToNothing(t *testing.T) {
 	pins := []vault.PinnedPeer{{Fingerprint: fp, Label: "Bea"}}
 
 	full := announcementFrom(t, fp, 8443, "10.0.0.5")
-	if _, ok := resolve(pins, full); !ok {
+	if _, ok := resolve(pins, full, discovery.HopNone); !ok {
 		t.Fatal("setup: a complete announcement does not resolve")
 	}
 
 	noSource := full
 	noSource.From = nil
-	if c, ok := resolve(pins, noSource); ok {
+	if c, ok := resolve(pins, noSource, discovery.HopNone); ok {
 		t.Errorf("an announcement with no source resolved to %+v — the address half of the "+
 			"candidate comes from the source, so this one cannot be dialled", c)
 	}
 	noPort := full
 	noPort.Port = 0
-	if c, ok := resolve(pins, noPort); ok {
+	if c, ok := resolve(pins, noPort, discovery.HopNone); ok {
 		t.Errorf("an announcement with no port resolved to %+v", c)
 	}
 }
@@ -185,7 +185,7 @@ func TestBrowseCollectsEachPeerOnceAndSurvivesNoise(t *testing.T) {
 		{seen: announcementFrom(t, b, 9443, "10.0.0.2")},
 	}}
 
-	got := browsePeers(fb, pins, 500*time.Millisecond)
+	got := browsePeers(fb, pins, 500*time.Millisecond, discovery.HopNone)
 
 	// Stimulus: the whole script was consumed, so the loop did not stop at the first
 	// error — which is what a browse over a shared link would do to itself.
@@ -222,7 +222,7 @@ func TestTheBrowseWindowBoundsTheWait(t *testing.T) {
 	fb := &fakeBrowser{}
 
 	start := time.Now()
-	got := browsePeers(fb, pins, 300*time.Millisecond)
+	got := browsePeers(fb, pins, 300*time.Millisecond, discovery.HopNone)
 	elapsed := time.Since(start)
 
 	if len(got) != 0 {
@@ -305,7 +305,7 @@ func TestTwoHostsClaimingOneNameBothBecomeCandidates(t *testing.T) {
 		{seen: announcementFrom(t, fp, 8443, "10.0.0.99")}, // repeats are still deduped
 	}}
 
-	got := browsePeers(fb, pins, 400*time.Millisecond)
+	got := browsePeers(fb, pins, 400*time.Millisecond, discovery.HopNone)
 
 	// Stimulus: the script really was consumed, so "two candidates" is not one arrival
 	// counted twice.
@@ -414,7 +414,7 @@ func TestARealAnnouncementResolvesToACandidate(t *testing.T) {
 	// Pinned: the browser holds this fingerprint already. That is the only way a name
 	// on the wire can ever become an identity.
 	pins := []vault.PinnedPeer{{Fingerprint: peerFP, Label: "Bea"}}
-	got := browsePeers(browser, pins, 3*time.Second)
+	got := browsePeers(browser, pins, 3*time.Second, discovery.HopNone)
 
 	// One candidate PER ADDRESS, not per peer — a host with three interfaces and two
 	// families legitimately announces from several addresses, and all of them are worth
@@ -464,7 +464,7 @@ func TestARealAnnouncementResolvesToACandidate(t *testing.T) {
 	// NOTHING pinned resolves to nothing. Without this the test above is satisfied by
 	// a resolver that returns every announcement it hears.
 	none := browsePeers(browser, []vault.PinnedPeer{{Fingerprint: fpOf(99), Label: "Nobody"}},
-		1*time.Second)
+		1*time.Second, discovery.HopNone)
 	if len(none) != 0 {
 		t.Errorf("an unpinned peer resolved to %+v on a real link", none)
 	}
@@ -493,7 +493,7 @@ func TestALinkLocalCandidateCarriesItsZone(t *testing.T) {
 		t.Fatal("the fixture is not a link-local address")
 	}
 
-	got, ok := resolve(pins, seen)
+	got, ok := resolve(pins, seen, discovery.HopNone)
 	if !ok {
 		t.Fatal("a link-local announcement did not resolve at all")
 	}
@@ -514,7 +514,7 @@ func TestALinkLocalCandidateCarriesItsZone(t *testing.T) {
 	// An ordinary address must NOT grow a zone suffix — the other half, without which
 	// this passes for a hostOf that appends "%" unconditionally.
 	plain := announcementFrom(t, fp, 8443, "192.168.1.9")
-	got2, ok := resolve(pins, plain)
+	got2, ok := resolve(pins, plain, discovery.HopNone)
 	if !ok {
 		t.Fatal("an ordinary announcement did not resolve")
 	}
@@ -550,7 +550,7 @@ func TestOneHostCannotFloodTheCandidateList(t *testing.T) {
 		}{seen: announcementFrom(t, fp, uint16(20000+i), "10.0.0.9")})
 	}
 	fb := &fakeBrowser{script: script}
-	got := browsePeers(fb, pins, 2*time.Second)
+	got := browsePeers(fb, pins, 2*time.Second, discovery.HopNone)
 
 	// STIMULUS: the flood must actually have produced candidates, or the cap below is
 	// being credited for a resolve that rejected everything.

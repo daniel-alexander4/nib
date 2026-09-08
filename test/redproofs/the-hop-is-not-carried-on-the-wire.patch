@@ -1,0 +1,13 @@
+diff --git a/internal/discovery/announce.go b/internal/discovery/announce.go
+index 21130d6..3024829 100644
+--- a/internal/discovery/announce.go
++++ b/internal/discovery/announce.go
+@@ -262,7 +262,7 @@ func (a Announcement) Encode() ([]byte, error) {
+ 	out = append(out, version)
+ 	out = append(out, byte(a.Transport))
+ 	out = binary.BigEndian.AppendUint16(out, a.Port)
+-	out = binary.BigEndian.AppendUint16(out, hopWire(a.Hop))
++	out = binary.BigEndian.AppendUint16(out, hopNoneWire)
+ 	out = append(out, a.Nonce[:]...)
+ 	out = append(out, byte(len(a.Name)))
+ 	out = append(out, a.Name...)

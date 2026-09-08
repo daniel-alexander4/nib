@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"nib/internal/ceremony"
+	"nib/internal/discovery"
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
 	"nib/internal/safe"
@@ -2216,7 +2217,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		var armCands []candidate
 		if req.Address != "" {
 			var ok2 bool
-			armCands, ok2 = s.peerAddresses(w, v, req.Address, req.Transport, peerFP)
+			armCands, ok2 = s.peerAddresses(w, v, req.Address, req.Transport, peerFP, hopOf(cer))
 			if !ok2 {
 				return // peerAddresses wrote the error
 			}
@@ -2799,11 +2800,11 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 		// Never fatal, exactly as on the arm side: a host with no usable interface, or a loopback
 		// bind, still races the DHT and its own accept. `startAnnouncing` refuses a loopback bind
 		// BY NAME, which is why this is silent on the tier-4 harness and live in the namespace.
-		if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, hopAnnounceWindow); aerr == nil {
+		if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, hopAnnounceWindow, hopOf(cer)); aerr == nil {
 			defer ann.Close()
 		}
 	}
-	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
+	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP, hopOf(cer))
 	if !ok {
 		return
 	}
@@ -3045,7 +3046,7 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not load identity")
 		return
 	}
-	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP)
+	cands, ok := s.peerAddresses(w, v, address, r.FormValue("transport"), peerFP, discovery.HopNone)
 	if !ok {
 		return
 	}

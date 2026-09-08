@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -64,7 +65,10 @@ type candidate struct {
 	// whole race. A stray candidate from another hop would fail the PIN, but it would still
 	// be DIALLED, which is precisely what the criterion forbids.
 	//
-	// Zero for the LAN and typed sources, which belong to no hop — see hopScoped.
+	// **Carried by LAN candidates since announcement v3**, which added the hop to the wire so a
+	// dialer can tell a hop arm from a delivery arm on one machine. It is `discovery.HopNone` for
+	// a typed address and for any arm with no ceremony. `hopScoped` still only consults it for
+	// the DHT source, so this is information rather than routing.
 	Hop int
 }
 
@@ -164,8 +168,27 @@ type browser interface {
 // a table keyed on exact bytes would quietly miss a peer whose name arrived
 // differently cased. The cost is one Name() per pin per announcement, over a handful
 // of pins.
-func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
+// **`want` is the hop the caller is looking for, and a sighting for another arm is refused here
+// rather than raced.** A machine can hold a hop arm and a delivery arm at once, pinned to the same
+// peer, and before the hop travelled in the announcement the two were indistinguishable on the
+// link — so the dialer raced them and took whichever answered first. That is ADR-010's defect one
+// level up: a port without its arm is not an address.
+//
+// `discovery.HopNone` as `want` means "any", which is what the manual and LAN receive paths ask
+// for — they have no ceremony, so they have no hop to match and every pinned peer is a candidate.
+func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bool) {
 	if s.From == nil || s.Port == 0 {
+		return candidate{}, false
+	}
+	// Refused BEFORE the pin scan, deliberately: this is cheaper than `pairing.Matches` per pin,
+	// and it keeps the reason for the refusal about the arm rather than about identity.
+	if want != discovery.HopNone && s.Hop != want {
+		// **Logged, because a refusal that drops a legitimate arm is invisible otherwise.** This
+		// is a discovery filter: when it is right it removes a candidate nobody should dial, and
+		// when it is wrong it removes the only one that would have worked — and both look
+		// identical from outside (a peer that was simply never found). Tier 4d found the second
+		// case within one run of this filter existing.
+		log.Printf("link: ignoring %s at hop %d — this dial wants hop %d", s.Name, s.Hop, want)
 		return candidate{}, false
 	}
 	for _, p := range pins {
@@ -201,6 +224,13 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen) (candidate, bool) {
 			// announcer sends us at a socket that does not answer as the pinned
 			// peer, which is what the handshake is for.
 			Transport: transportOf(s.Transport),
+			// **The ANNOUNCED hop, since v3 carries one.** The field's own doc said "zero for the
+			// LAN and typed sources, which belong to no hop" — true when a LAN sighting could not
+			// say, and false now that it can. `hopScoped` exempts non-DHT sources
+			// (`ceremonynet.go:420`), so this changes no routing; what it changes is that the
+			// struct stops asserting hop 0 about an arm that told us otherwise, which is the same
+			// meaningful-zero trap this field's neighbour `Source` was burned by.
+			Hop: s.Hop,
 		}, true
 	}
 	return candidate{}, false
@@ -277,7 +307,9 @@ const maxLANCandidates = 8
 // spends up to `lanDialTimeout` on the impostor first.
 const browseQuiet = announceEvery + 250*time.Millisecond
 
-func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []candidate {
+// browsePeers listens for the window and returns the pinned peers it found. `want` is the hop the
+// caller is dialling for; `discovery.HopNone` means any. See resolve.
+func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration, want int) []candidate {
 	deadline := time.Now().Add(window)
 	seen := map[string]candidate{}
 	var order []string
@@ -307,7 +339,7 @@ func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration) []can
 			}
 			continue
 		}
-		c, ok := resolve(pins, s)
+		c, ok := resolve(pins, s, want)
 		if !ok {
 			continue
 		}
@@ -410,7 +442,7 @@ func (s *Server) handleLANHeard(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sock.Close()
 	out := lanHeardResponse{Heard: []lanHeard{}, WindowMs: int(browseWindow / time.Millisecond)}
-	for _, c := range browsePeers(sock, pins, browseWindow) {
+	for _, c := range browsePeers(sock, pins, browseWindow, discovery.HopNone) {
 		out.Heard = append(out.Heard, lanHeard{
 			Fingerprint: hex.EncodeToString(c.Fingerprint),
 			Label:       c.Label,
@@ -511,7 +543,8 @@ func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "could not derive a test name")
 		return
 	}
-	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce}
+	// HopNone: the network test announces a machine, not an arm — it has no ceremony at all.
+	ann := discovery.Announcement{Name: name, Port: 8443, Nonce: nonce, Hop: discovery.HopNone}
 
 	deadline := time.Now().Add(networkTestWindow)
 	stop := make(chan struct{})

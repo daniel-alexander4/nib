@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http/httptest"
+	"nib/internal/discovery"
 	"testing"
 )
 
@@ -41,7 +42,7 @@ func TestATypedPrivateAddressReachesTheDialer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			cands, ok := srv.peerAddresses(w, nil, tc.addr, "tcp", nil)
+			cands, ok := srv.peerAddresses(w, nil, tc.addr, "tcp", nil, discovery.HopNone)
 			if !ok {
 				t.Fatalf("a typed %s address was refused with %d — %s. The README recommends this path and the refusal would make that advice false",
 					tc.name, w.Code, tc.why)
@@ -63,7 +64,7 @@ func TestATypedPrivateAddressReachesTheDialer(t *testing.T) {
 func TestATypedAddressStillHasItsTransportChecked(t *testing.T) {
 	srv := New(nil, nil, t.TempDir(), "test")
 	w := httptest.NewRecorder()
-	if _, ok := srv.peerAddresses(w, nil, "100.64.0.1:9", "carrier-pigeon", nil); ok {
+	if _, ok := srv.peerAddresses(w, nil, "100.64.0.1:9", "carrier-pigeon", nil, discovery.HopNone); ok {
 		t.Fatal("a typed address with an unknown transport was accepted — the scope check is absent by design here, so the transport check is the only thing left refusing a typo")
 	}
 	if w.Code != 400 {

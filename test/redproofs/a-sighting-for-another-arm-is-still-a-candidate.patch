@@ -1,0 +1,20 @@
+diff --git a/internal/server/discover.go b/internal/server/discover.go
+index 3602c5e..6b66653 100644
+--- a/internal/server/discover.go
++++ b/internal/server/discover.go
+@@ -182,15 +182,6 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
+ 	}
+ 	// Refused BEFORE the pin scan, deliberately: this is cheaper than `pairing.Matches` per pin,
+ 	// and it keeps the reason for the refusal about the arm rather than about identity.
+-	if want != discovery.HopNone && s.Hop != want {
+-		// **Logged, because a refusal that drops a legitimate arm is invisible otherwise.** This
+-		// is a discovery filter: when it is right it removes a candidate nobody should dial, and
+-		// when it is wrong it removes the only one that would have worked — and both look
+-		// identical from outside (a peer that was simply never found). Tier 4d found the second
+-		// case within one run of this filter existing.
+-		log.Printf("link: ignoring %s at hop %d — this dial wants hop %d", s.Name, s.Hop, want)
+-		return candidate{}, false
+-	}
+ 	for _, p := range pins {
+ 		if !pairing.Matches(p.Fingerprint, s.Name) {
+ 			continue

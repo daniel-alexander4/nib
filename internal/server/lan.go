@@ -108,7 +108,13 @@ var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it
 // The rule lives HERE rather than at the call site because this is the door (ADR-009).
 // A guard on `runSession` would say nothing about the second caller, and the ladder's
 // later tiers are exactly where a second caller comes from.
-func startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration) (*lanAnnouncer, error) {
+// **`hop` is required and there is no default, because the zero value is a REAL hop.**
+// `discovery.HopNone` is the value for an arm with no ceremony; passing 0 by omission would
+// announce the convener's own index and send a dialer to the wrong arm. This repo has paid for a
+// meaningful zero once already — `candidate.Source` accounted every unset producer to the typed
+// tier — and the fix there was a guard that every producer names it. Same here:
+// `TestEveryAnnouncerNamesItsHop`.
+func startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration, hop int) (*lanAnnouncer, error) {
 	name, err := ownName(myCertPEM)
 	if err != nil {
 		return nil, err
@@ -144,6 +150,7 @@ func startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration) (*
 		Name:      name,
 		Port:      uint16(port),
 		Transport: announcedTransport(ln.Transport()),
+		Hop:       hop,
 		Nonce:     nonce,
 	}
 
@@ -247,7 +254,10 @@ var errNoPeerOnTheLink = errors.New("that peer is not announcing on this network
 // fingerprint that will be pinned at the handshake is the one from the vault. An
 // announcer who lies reaches a TLS handshake that rejects it, which is L1's promise
 // spent exactly where it was meant to be.
-func findPeerOnLAN(v *vault.Vault, peerFP []byte) ([]candidate, error) {
+// findPeerOnLAN browses the link for one pinned peer. `want` is the hop being dialled for;
+// `discovery.HopNone` means any arm of that peer will do, which is the manual and LAN receive
+// paths. A ceremony dial names its hop, or it races a delivery arm that cannot serve it.
+func findPeerOnLAN(v *vault.Vault, peerFP []byte, want int) ([]candidate, error) {
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
@@ -279,7 +289,7 @@ func findPeerOnLAN(v *vault.Vault, peerFP []byte) ([]candidate, error) {
 	// The CANDIDATES, not their address strings. Flattening to []string here threw
 	// away the announced transport, so the dialer fell back to whatever the caller's
 	// own request said and a QUIC-armed peer was dialled over TCP (ADR-010).
-	found := browsePeers(sock, pins, browseWindow)
+	found := browsePeers(sock, pins, browseWindow, want)
 	if len(found) == 0 {
 		return nil, fmt.Errorf("%w (listened for %s on %v)", errNoPeerOnTheLink, browseWindow, sock.Interfaces())
 	}
@@ -308,7 +318,10 @@ func portOf(ln interface{ Addr() net.Addr }) int {
 // tell me where they are and they are not on this network" is a different message from
 // "I could not reach the address you gave me", and a user can act on each differently —
 // the first says try the manual path, the second says check the address.
-func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, transport string, peerFP []byte) ([]candidate, bool) {
+// peerAddresses resolves where to dial a peer. `want` is the hop this dial is for;
+// `discovery.HopNone` for the manual and LAN receive paths, which have no ceremony and will take
+// any arm of that peer.
+func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, transport string, peerFP []byte, want int) ([]candidate, bool) {
 	if address != "" {
 		// A typed address carries no announcement, so the REQUEST names the
 		// transport — the only case where it still does. It is validated here rather
@@ -320,7 +333,7 @@ func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, t
 		}
 		return []candidate{{Addr: address, Transport: transport, Source: sourceTyped}}, true
 	}
-	found, err := findPeerOnLAN(v, peerFP)
+	found, err := findPeerOnLAN(v, peerFP, want)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, err.Error())
 		return nil, false
@@ -670,7 +683,7 @@ func raceKey(c candidate) string {
 // `wanted` reports whether this arm still wants to be found. Once the hop has signed, a peer that
 // reaches us can only be re-delivering and already holds the address, so answering would put a
 // stale candidate on the link for the next ceremony's browse to pick up (/pending 300).
-func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte, wanted func() bool, sighted, watching func(time.Time)) {
+func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announceable, peerFP []byte, hop int, wanted func() bool, sighted, watching func(time.Time)) {
 	v := s.unlockedVault()
 	if v == nil {
 		return
@@ -724,8 +737,8 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 			answering = nil
 		}
 	}
-	answerLoop(ctx, sock, pins, time.Now, wanted, stop, sighted, func(candidate) bool {
-		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow)
+	answerLoop(ctx, sock, pins, hop, time.Now, wanted, stop, sighted, func(candidate) bool {
+		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow, hop)
 		if aerr != nil {
 			return false // loopback bind or no interface — never fatal to the arm
 		}
@@ -768,7 +781,7 @@ func (s *Server) watchLink(ctx context.Context, cer *ceremonyID, ln announceable
 	wanted func() bool) *lanAnnouncer {
 
 	var ann *lanAnnouncer
-	if a, err := startAnnouncing(cert, ln, lanAnnounceWindow); err == nil {
+	if a, err := startAnnouncing(cert, ln, lanAnnounceWindow, hopOf(cer)); err == nil {
 		ann = a
 	}
 	if cer == nil || len(peerFP) == 0 {
@@ -776,7 +789,7 @@ func (s *Server) watchLink(ctx context.Context, cer *ceremonyID, ln announceable
 	}
 	go func() {
 		defer safe.Recover("hop seeker answers")
-		s.answerHopSeekers(ctx, cert, ln, peerFP, wanted, cer.noteLinkSighting, cer.watchingLink)
+		s.answerHopSeekers(ctx, cert, ln, peerFP, hopOf(cer), wanted, cer.noteLinkSighting, cer.watchingLink)
 	}()
 	return ann
 }
@@ -810,7 +823,7 @@ func (s *Server) watchLink(ctx context.Context, cer *ceremonyID, ln announceable
 // announcing when that goes false. Both are checked once per iteration rather than per sighting,
 // because the state this is about — the hop has signed — is exactly the state in which nothing is
 // announcing to us any more.
-func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now func() time.Time, wanted func() bool, stop func(), sighted func(time.Time), answer func(candidate) bool) {
+func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, want int, now func() time.Time, wanted func() bool, stop func(), sighted func(time.Time), answer func(candidate) bool) {
 	var lastAnswer time.Time
 	for {
 		if ctx.Err() != nil {
@@ -837,7 +850,7 @@ func answerLoop(ctx context.Context, b browser, pins []vault.PinnedPeer, now fun
 		if idle {
 			continue // signed: a reconnect needs the listener, not another advertisement
 		}
-		c, ok := resolve(pins, seen)
+		c, ok := resolve(pins, seen, want)
 		if !ok {
 			continue // not the peer this arm is for — see the amplification note above
 		}
@@ -898,4 +911,17 @@ func allQUICCandidates(cands []candidate) bool {
 		}
 	}
 	return true
+}
+
+// hopOf is the one place a ceremony becomes an announced hop (ADR-009).
+//
+// Nil means an arm with no ceremony — the manual and LAN receive paths — and that is
+// `discovery.HopNone`, never 0. Written as a function rather than inlined at each announce site
+// because the sentinel is exactly the kind of thing that gets spelled `0` by a later caller who
+// did not read this comment.
+func hopOf(cer *ceremonyID) int {
+	if cer == nil {
+		return discovery.HopNone
+	}
+	return cer.hop
 }

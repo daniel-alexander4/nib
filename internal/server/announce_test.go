@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"net"
+	"nib/internal/discovery"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func TestALoopbackBindIsNotAnnouncedOnTheLink(t *testing.T) {
 					ln.Addr(), ip.IsLoopback())
 			}
 
-			ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, lanAnnounceWindow)
+			ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, lanAnnounceWindow, discovery.HopNone)
 			if ann != nil {
 				ann.Close()
 			}
@@ -176,7 +177,7 @@ func TestTheAnnouncerStopsAtItsWindow(t *testing.T) {
 	defer ln.Close()
 
 	const window = 700 * time.Millisecond // several announceEvery ticks, then the cap fires
-	ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, window)
+	ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, window, discovery.HopNone)
 	if err != nil {
 		t.Skipf("announcer did not start (multicast unavailable here): %v", err)
 	}

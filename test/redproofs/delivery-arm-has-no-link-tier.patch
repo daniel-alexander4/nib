@@ -1,12 +1,14 @@
+diff --git a/internal/server/lan.go b/internal/server/lan.go
+index 7bcaf73..10f6a3f 100644
 --- a/internal/server/lan.go
 +++ b/internal/server/lan.go
-@@ -774,10 +774,7 @@
+@@ -786,10 +786,7 @@ func (s *Server) watchLink(ctx context.Context, cer *ceremonyID, ln announceable
  	if cer == nil || len(peerFP) == 0 {
  		return ann
  	}
 -	go func() {
 -		defer safe.Recover("hop seeker answers")
--		s.answerHopSeekers(ctx, cert, ln, peerFP, wanted, cer.noteLinkSighting, cer.watchingLink)
+-		s.answerHopSeekers(ctx, cert, ln, peerFP, hopOf(cer), wanted, cer.noteLinkSighting, cer.watchingLink)
 -	}()
 +	_ = wanted
  	return ann
