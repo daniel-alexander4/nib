@@ -1,0 +1,12 @@
+--- a/cmd/nib/main.go
++++ b/cmd/nib/main.go
+@@ -195,7 +195,8 @@
+ 			log.Printf("could not open a browser window: %v", openErr)
+ 		}
+ 	}
+-	s.ArmIdleExit(server.IdleExitDecision(noBrowser, openErr))
++	s.ArmIdleExit(true)
++	_, _ = noBrowser, openErr
+ 
+ 	// Run until interrupted, then shut down cleanly.
+ 	//
