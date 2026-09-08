@@ -390,10 +390,10 @@ els.keyChoice.addEventListener('change', syncKeyMode);
 // The first-run intro popup explains the SSH key before the wizard; it stays up
 // until the user clicks the backdrop (off the card).
 
-// applyStatus drives the UI from /api/status.
 // Guards the locked screen's ceremony load against re-entry — see the call site below.
 let lockedPanelInFlight = false;
 
+// applyStatus drives the UI from /api/status.
 function applyStatus(st) {
   authState = st.state;
   gsAvailable = !!st.ghostscript;
@@ -1168,6 +1168,8 @@ function reflectArmed(on) {
   if (els.armedPill) els.armedPill.hidden = !on;
 }
 
+let noticeShownAt = '';
+
 // reflectNotice is the READER for sessionStatus.notice — the sticky failure surface P08.S08
 // built and nothing consumed.
 //
@@ -1182,7 +1184,6 @@ function reflectArmed(on) {
 // Rendered, not toasted, for the reason `noticeView`'s own doc gives: the disarm IS the symptom,
 // so a message that goes away with the session is a message nobody reads. It persists until the
 // user dismisses it or a later session replaces it.
-let noticeShownAt = '';
 function reflectNotice(n) {
   if (!els.sessionNotice) return;
   if (!n || !n.summary) return; // never CLEAR on absence — see below
@@ -1206,31 +1207,8 @@ function reflectNotice(n) {
   els.sessionNotice.hidden = false;
 }
 
-// reflectDiagnosis is the READER for sessionStatus.diagnosis — D19's live "why has nobody
-// connected yet", computed since P05.S11 and consumed by nothing until /pending 349.
-//
-// **The field states its own purpose and the gap was exactly that sentence**: "so the polling UI
-// shows why nothing has connected yet, RATHER THAN A BLANK WAIT". A named search found `diagnosis`
-// in this file once, inside a comment. So the user watching an arm got the blank wait for the whole
-// life of the feature — `reflectNotice`'s shape (published at P08.S08, read thirteen versions
-// later), one layer over.
-//
-// # It CLEARS on absence, where reflectNotice deliberately does not
-//
-// A notice is a STICKY record of something that already failed; clearing it on a poll that happens
-// not to carry one would erase a failure the user has not read. A diagnosis is LIVE STATE — the
-// answer to "why is nothing happening *now*" — so when the server stops sending one, the reason has
-// stopped applying and leaving the old sentence on screen would be a stale explanation of a
-// condition that has passed. Opposite fields, opposite rules; the difference is why this is not
-// folded into reflectNotice.
-//
-// # `cause` selects the TONE, and that is what it is for
-//
-// It is the machine key, and printing it would put `peer-not-started` in front of somebody. What it
-// decides is whether this reads as a PROBLEM: "the other side hasn't started" is the ordinary state
-// of a ceremony arm whose counterparty is still reading their email, and dressing it as a fault
-// teaches the user to ignore the line that will one day say the rendezvous is unreachable.
 let diagnosisShownFor = '';
+
 // runNetworkTest asks this machine whether local discovery works at all, and says so in a sentence
 // (/pending 23).
 //
@@ -1286,6 +1264,30 @@ async function runNetworkTest() {
   }
 }
 
+// reflectDiagnosis is the READER for sessionStatus.diagnosis — D19's live "why has nobody
+// connected yet", computed since P05.S11 and consumed by nothing until /pending 349.
+//
+// **The field states its own purpose and the gap was exactly that sentence**: "so the polling UI
+// shows why nothing has connected yet, RATHER THAN A BLANK WAIT". A named search found `diagnosis`
+// in this file once, inside a comment. So the user watching an arm got the blank wait for the whole
+// life of the feature — `reflectNotice`'s shape (published at P08.S08, read thirteen versions
+// later), one layer over.
+//
+// # It CLEARS on absence, where reflectNotice deliberately does not
+//
+// A notice is a STICKY record of something that already failed; clearing it on a poll that happens
+// not to carry one would erase a failure the user has not read. A diagnosis is LIVE STATE — the
+// answer to "why is nothing happening *now*" — so when the server stops sending one, the reason has
+// stopped applying and leaving the old sentence on screen would be a stale explanation of a
+// condition that has passed. Opposite fields, opposite rules; the difference is why this is not
+// folded into reflectNotice.
+//
+// # `cause` selects the TONE, and that is what it is for
+//
+// It is the machine key, and printing it would put `peer-not-started` in front of somebody. What it
+// decides is whether this reads as a PROBLEM: "the other side hasn't started" is the ordinary state
+// of a ceremony arm whose counterparty is still reading their email, and dressing it as a fault
+// teaches the user to ignore the line that will one day say the rendezvous is unreachable.
 function reflectDiagnosis(d) {
   if (!els.srvWaitWhy) return;
   if (!d || !d.summary) {
@@ -1594,9 +1596,6 @@ function renderConsentSigners(signers) {
   }
 }
 
-// loadPendingPreview renders the received document in its own pdf.js instance,
-// entirely apart from the main viewer, so reviewing (and declining) a peer's
-// document never disturbs the open document or its unsaved edits.
 // markBlock draws the outline of this party's own attestation block over a rendered page.
 //
 // **The rect is in PDF points with the origin at the BOTTOM left, and a canvas measures from the
@@ -1622,6 +1621,9 @@ function markBlock(wrap, vp, rect, scale) {
   wrap.appendChild(box);
 }
 
+// loadPendingPreview renders the received document in its own pdf.js instance,
+// entirely apart from the main viewer, so reviewing (and declining) a peer's
+// document never disturbs the open document or its unsaved edits.
 async function loadPendingPreview(token, block) {
   els.srvPreview.innerHTML = '';
   const loading = emptyNote(els.srvPreview, 'Loading the document…');
@@ -2705,10 +2707,6 @@ function markStale(target, why) {
   paintStale();
 }
 
-// paintStale renders the ACTIVE view's staleness. Shared chrome, so it reads `view` and
-// never its caller's target: a background load that failed must not put its banner over
-// the document the user is reading. Called from repaintForActiveView too, so switching
-// tabs shows each document's own answer.
 // DISK_CHANGED is the whole message, and every clause of it is chosen for being true in
 // every case it can fire (/pending 333):
 //
@@ -2723,6 +2721,10 @@ function markStale(target, why) {
 //     a cache or an in-memory copy to understand her own document.
 const DISK_CHANGED = 'This file has changed on disk since Nib opened it. You are still looking at the copy Nib opened, and saving would replace the changed file with it.';
 
+// paintStale renders the ACTIVE view's staleness. Shared chrome, so it reads `view` and
+// never its caller's target: a background load that failed must not put its banner over
+// the document the user is reading. Called from repaintForActiveView too, so switching
+// tabs shows each document's own answer.
 function paintStale() {
   // A render failure OUTRANKS a disk change: a document that cannot be displayed at all
   // is the more urgent fact, and it is also the one the retry button belongs to.
@@ -3531,9 +3533,6 @@ els.combineGo.onclick = async () => {
 //   Side-by-side — render the same page of both documents next to each other.
 //   Differences  — pixel-diff the rendered pages with pixelmatch (where it
 //                  changed); works on scans too, since it compares pixels.
-// documentText is the shared content-stream-order dump also used by "Export
-// text" — deliberately NOT geometry-sorted (re-sorting scrambles columns),
-// which keeps the diff reliable for two versions from the same producer.
 // pageTexts returns each page's text in content-stream order (image-only pages →
 // ""). It is the single extraction pass behind both documentText (joined) and the
 // per-page fingerprints used for auto page-matching.
@@ -3550,6 +3549,9 @@ async function pageTexts(doc) {
   return out;
 }
 
+// documentText is the shared content-stream-order dump also used by "Export
+// text" — deliberately NOT geometry-sorted (re-sorting scrambles columns),
+// which keeps the diff reliable for two versions from the same producer.
 async function documentText(doc) {
   return (await pageTexts(doc)).join('\n') + '\n';
 }
@@ -6072,6 +6074,8 @@ const LIST_REASON = {
   unreadable: 'That folder can’t be read.',
 };
 
+const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList });
+
 // browseDir drives the folder browser behind every dialog that picks a folder:
 // Save-as, the two splits, and Open. t names the four elements it writes (dir
 // input, here label, up button, list ul). onFile, when given, additionally
@@ -6082,7 +6086,6 @@ const LIST_REASON = {
 // which is the only side that knows the separator. This used to be four dialogs
 // over two near-identical browsers, both joining with "/" — which is why a
 // Windows path displayed and behaved inconsistently.
-const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.saveAsUp, list: els.saveAsList });
 async function browseDir(path, t = saveAsDirEls(), onFile = null) {
   const res = await apiFetch('/api/listdir' + (path ? '?path=' + encodeURIComponent(path) : ''));
   if (!res.ok) return toast('could not list folder');
@@ -6763,16 +6766,17 @@ els.exportTextBtn.onclick = async () => {
   openSaveAs(new Blob([out], { type: 'text/plain' }), exportName + '.txt', 'Export text (.txt)');
 };
 
-// extractTable clusters a page's pdf.js text items into a row/column grid — the
-// canonical position-based table extraction (works on ruled and unruled grid
-// tables, since it reads text alignment, not drawn rules). It is best-effort:
-// merged cells, multi-line cells, and irregular layouts mis-extract, so the export
-// UI tells the user to review the result. Returns rows of cell strings.
 function median(xs) {
   if (!xs.length) return 0;
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)];
 }
+
+// extractTable clusters a page's pdf.js text items into a row/column grid — the
+// canonical position-based table extraction (works on ruled and unruled grid
+// tables, since it reads text alignment, not drawn rules). It is best-effort:
+// merged cells, multi-line cells, and irregular layouts mis-extract, so the export
+// UI tells the user to review the result. Returns rows of cell strings.
 async function extractTable(page) {
   const tc = await page.getTextContent();
   const items = tc.items
@@ -11541,17 +11545,6 @@ function watchDeliveryRound(id, line) {
   return () => { stopped = true; if (timer) clearTimeout(timer); };
 }
 
-// ceremonyDeliver is the convener's "send everyone their copy" control and its result.
-//
-// **The round can take minutes and the button says so before it is pressed, not after.** A leg to
-// a party that is not listening burns `connectDeadline` — measured at tier 4 as 300 s — and the
-// round walks one leg per party that has not already acknowledged. That is the case the outcome
-// list exists for, so it is the ordinary case here rather than the exception, and a control that
-// looked instant would read as hung.
-//
-// **There is no client-side timeout, deliberately.** `apiFetch` sets none, and adding one here
-// would abandon a round the server keeps running — the user would be told it failed while parties
-// were still being reached, which is the exact wrong answer this item was filed about.
 // ceremonyLeave is the "stop taking part" control (P05.S01, D17).
 //
 // **It is deliberately not next to anything that signs, and it confirms.** Leaving and declining
@@ -11613,6 +11606,17 @@ function ceremonyLeave(c) {
   return wrap;
 }
 
+// ceremonyDeliver is the convener's "send everyone their copy" control and its result.
+//
+// **The round can take minutes and the button says so before it is pressed, not after.** A leg to
+// a party that is not listening burns `connectDeadline` — measured at tier 4 as 300 s — and the
+// round walks one leg per party that has not already acknowledged. That is the case the outcome
+// list exists for, so it is the ordinary case here rather than the exception, and a control that
+// looked instant would read as hung.
+//
+// **There is no client-side timeout, deliberately.** `apiFetch` sets none, and adding one here
+// would abandon a round the server keeps running — the user would be told it failed while parties
+// were still being reached, which is the exact wrong answer this item was filed about.
 function ceremonyDeliver(c) {
   const wrap = document.createElement('div');
   wrap.className = 'cerdeliver';
@@ -11903,10 +11907,6 @@ function cerEls() {
   };
 }
 
-// showCeremonyForm reveals one of the two forms and hides the other.
-//
-// Exclusive because they are two answers to one question — "am I starting this or joining it" —
-// and a screen showing both invites a user to fill in the wrong one.
 // showCeremonySheet puts the setup sheet in front of the document, or takes it away (P03.S01, D3).
 //
 // **The viewer is HIDDEN and not destroyed**, which is ADR-002's rule for the same reason one layer
@@ -12019,6 +12019,10 @@ async function restoreCeremonyDraft() {
 
 document.getElementById('ceremonyConveneForm')?.addEventListener('change', () => { saveCeremonyDraft(); });
 
+// showCeremonyForm reveals one of the two forms and hides the other.
+//
+// Exclusive because they are two answers to one question — "am I starting this or joining it" —
+// and a screen showing both invites a user to fill in the wrong one.
 function showCeremonyForm(which) {
   const e = cerEls();
   if (!e.convene || !e.accept) return;
@@ -12295,21 +12299,6 @@ document.getElementById('ceremonyAcceptForm')?.addEventListener('submit', (ev) =
   acceptFromPanel();
 });
 
-// reflectArmProgress is the READER for sessionStatus.progress (P06.S05, D16 amendment).
-//
-// **It is not the diagnosis and it renders above one.** `reflectDiagnosis` answers *why nothing has
-// connected*; this answers *what is happening*. They are published under different conditions on
-// purpose: the diagnosis waits for `bootstrapDone` so a cause cannot accuse a tier that has not had
-// its chance, and under ADR-011 the bootstrap itself waits for the local link — on a LAN, for
-// `lanFirstBudget`, thirty seconds. **That wait is exactly the window D16 says must never be a
-// blank spinner**, and it is the window the diagnosis structurally cannot speak in.
-//
-// # Every line is plain language and none of them is a countdown
-//
-// D16's amendment says only the ceremony deadline appears in human units; neither the connect
-// deadline nor the exchange deadline appears as a countdown. So the tiers report STATE, never
-// remaining time. A countdown here would also invite a user to watch it, and what they can act on
-// is the router line.
 const TIER_WORDS = {
   'link:watching': 'Listening for the other party on your local network.',
   // **Deliberately not the word 'heard'**, for the second time in this phase.
@@ -12331,6 +12320,22 @@ const TIER_WORDS = {
     + 'or WireGuard is the way through.',
 };
 let tiersShownFor = '';
+
+// reflectArmProgress is the READER for sessionStatus.progress (P06.S05, D16 amendment).
+//
+// **It is not the diagnosis and it renders above one.** `reflectDiagnosis` answers *why nothing has
+// connected*; this answers *what is happening*. They are published under different conditions on
+// purpose: the diagnosis waits for `bootstrapDone` so a cause cannot accuse a tier that has not had
+// its chance, and under ADR-011 the bootstrap itself waits for the local link — on a LAN, for
+// `lanFirstBudget`, thirty seconds. **That wait is exactly the window D16 says must never be a
+// blank spinner**, and it is the window the diagnosis structurally cannot speak in.
+//
+// # Every line is plain language and none of them is a countdown
+//
+// D16's amendment says only the ceremony deadline appears in human units; neither the connect
+// deadline nor the exchange deadline appears as a countdown. So the tiers report STATE, never
+// remaining time. A countdown here would also invite a user to watch it, and what they can act on
+// is the router line.
 function reflectArmProgress(p) {
   const host = els.srvWaitTiers;
   if (!host) return;
