@@ -26,7 +26,8 @@ const doc = h.document;
 // way doccontrols reads DOC_REQUIRED and modes reads SIDEBAR_FOR.
 const APP_SRC = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
-// The fold ranks app.js declares. 0 means "never folds"; the rest are the ladder.
+// The fold ranks app.js declares. **Rank 0 means "never folds" ONLY in the fixed bar** — see the
+// exemption below, which used to state it unconditionally and was wrong for 25 of the 28 groups.
 const RANKS = ['0', '1', '2', '3', '4', '5', '6', '7'];
 
 const panes = () => [...doc.querySelectorAll('.tbtab')];
@@ -66,17 +67,68 @@ test('every group declares a label and a fold rank', () => {
 });
 
 test('a foldable group is never left empty, and never holds a dropdown', () => {
+  // ── The rank-0 exemption is a FIXED-BAR exemption (/pending 384) ────────────
+  //
+  // This used to skip every `data-fold="0"` group on the stated grounds that a rank-0 group
+  // never folds. That is `applyFold`'s rule and `applyFold` governs the fixed bar alone
+  // (`app.js`: `all('#toolbar .tbfixed')`). `foldAll` — the sidebar-closed path — puts EVERY
+  // registered group into its pane's ⋯ More "ignoring the width ladder", rank 0 included, and
+  // its own comment says a rank-0 group left unregistered "would have no home to return to".
+  //
+  // So a rank-0 `.tbtab` group holding a dropdown WOULD nest a menu inside ⋯ More whenever the
+  // sidebar is shut, and the guard was written not to look at exactly those four groups
+  // (Detect & Fill Fields, Annotate & Draw, Redact Content, Sign & Timestamp). No such group
+  // exists today; an unsound exemption is how a guard decays into one, which is why this is a
+  // fix rather than a note.
+  const exemptCount = [];
   for (const g of doc.querySelectorAll('.tbgroup[data-fold]')) {
-    if (g.dataset.fold === '0') continue;
+    if (g.dataset.fold === '0' && g.closest('.tbfixed')) { exemptCount.push(g.dataset.label); continue; }
     const controls = g.querySelectorAll('button, select, input');
     assert.ok(controls.length > 0,
       `foldable group "${g.dataset.label}" holds no controls — it would put an empty heading in the ⋯ More menu`);
     // A .menu inside ⋯ More would be a menu within a menu, and the bar tracks one open menu
-    // at a time (app.js's openMenu). Recent / Save as / Export are pinned to the bar for
-    // exactly this reason, and their groups carry fold rank 0.
+    // at a time (app.js's openMenu).
     assert.equal(g.querySelector('.menu'), null,
-      `foldable group "${g.dataset.label}" contains a dropdown. Folding it would nest a menu inside the ⋯ More menu, and only one menu can be open at a time — give the group fold rank 0`);
+      `foldable group "${g.dataset.label}" contains a dropdown. Folding it would nest a menu inside the ⋯ More menu, and only one menu can be open at a time — move the dropdown out, or pin the group to the fixed bar at rank 0`);
   }
+  // The exemption is still real and still small. An exemption that stops matching reads exactly
+  // like a clean run — the lesson `docattach_test.go` states for its own exempt map. Measured
+  // 2026-09-08: Reload and Save. The guard's own prose used to cite "Recent / Save as / Export",
+  // which have not been the bar's rank-0 groups for some time.
+  assert.deepEqual(exemptCount.sort(), ['Reload', 'Save'],
+    `the fixed bar's rank-0 groups are now ${JSON.stringify(exemptCount)} — the exemption skips the dropdown check for these, so a change to the set is a change to what this guard does not look at`);
+});
+
+// ── The fold RANK's value is a fixed-bar concern, and 25 of 28 groups carry an inert one ──
+//
+// /pending 384. `data-fold` does two jobs and only one of them is per-group:
+//
+//   - Its PRESENCE registers a group as foldable. `buildOverflowMenus` and `foldAll` both select
+//     `.tbgroup[data-fold]`, so a group without the attribute gets no `_home`, no menu caption,
+//     and never folds — it would sit in the bar when the sidebar is shut. That is load-bearing
+//     for all 28.
+//   - Its VALUE is a threshold index into `foldThresholds`, read at exactly ONE place, inside
+//     `applyFold`, which iterates `#toolbar .tbfixed` and nothing else. So it decides something
+//     for the three groups in the bar and nothing at all for the 25 in the panes.
+//
+// The 25 inert values are deliberately left as they are, and this test is why. Deleting the
+// attribute breaks folding; rewriting them all to 0 would assert "never folds", which is true in
+// the bar and false in every pane. The honest move was to make the claim checkable instead — so
+// if a second reader of `foldThresholds` ever appears, the ladder is live for the panes again and
+// 25 numbers that mean nothing today suddenly mean something, in an order nobody chose.
+test('the fold ladder has exactly one reader, and it reads the fixed bar', () => {
+  const reads = [...APP_SRC.matchAll(/foldThresholds\s*\[/g)];
+  assert.equal(reads.length, 1,
+    `foldThresholds is looked up ${reads.length} times; it was 1 when /pending 384 measured the 25 inert ranks. A second reader means the width ladder now governs something beyond the fixed bar — every .tbtab group's data-fold value becomes live, and those 25 values were never chosen for an order`);
+
+  // The one reader's enclosing sweep. Asserted as the query rather than as a line number,
+  // because the claim is "the ladder only ever sees the fixed bar" and that is what the query says.
+  const applyFold = APP_SRC.slice(APP_SRC.indexOf('function applyFold()'));
+  const body = applyFold.slice(0, applyFold.indexOf('\n}\n') + 3);
+  assert.ok(body.length > 200 && body.includes('foldThresholds['),
+    `applyFold's body did not parse out of the source (${body.length} chars) — this assertion is reading nothing`);
+  assert.ok(body.includes("all('#toolbar .tbfixed')"),
+    "applyFold no longer sweeps `#toolbar .tbfixed`. The width ladder's scope is what makes 25 groups' data-fold values inert; if it has widened, style.css's `data-fold=\"0\" means never folds` and this file's rank-0 exemption both need re-deriving");
 });
 
 test('the ⋯ More menu is built inside its own pane, not beside it', () => {

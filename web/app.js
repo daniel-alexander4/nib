@@ -10633,6 +10633,15 @@ setMode('file');
 //
 // The order is fixed at every width on purpose: a command that changed places depending
 // on how wide the window happened to be could never be learned.
+//
+// **There is no rung 0, and that is what `data-fold="0"` means**: the lookup below misses, so
+// `w <= undefined` is false and the group never folds by width. It still folds when the sidebar
+// shuts, because `foldAll` ignores this table entirely — which is why 25 of the 28 groups carry
+// a rank that decides nothing (/pending 384). Their values are left as they are deliberately:
+// deleting the attribute would unregister them from folding altogether, and rewriting them to 0
+// would assert "never folds", which is true in the bar and false in every pane.
+// `toolbargroups.test.mjs` asserts this table has exactly one reader, so the claim goes red
+// instead of stale.
 const foldThresholds = { 1: 949, 2: 899, 3: 849, 4: 749, 5: 699, 6: 649, 7: 599 };
 
 function buildOverflowMenus() {
