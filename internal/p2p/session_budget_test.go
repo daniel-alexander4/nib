@@ -150,20 +150,27 @@ func TestDeliveryLegBudgetCountsEveryDeadlineSendDocumentArms(t *testing.T) {
 // that ignored its argument would satisfy either arm alone.
 func TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend(t *testing.T) {
 	// ── The interactive arm is unchanged, and that is half the property ──────────────────────
-	if got, want := DeliveryLegBudget(PeerGatesHuman), 2*exchangeDeadline+remoteDecisionDeadline; got != want {
-		t.Errorf("DeliveryLegBudget(PeerGatesHuman) = %s, want %s (the three arms SendDocument "+
-			"takes when a person is on the far side)", got, want)
+	if got, want := DeliveryLegBudget(PeerGatesHuman), RoleDeadline+2*exchangeDeadline+remoteDecisionDeadline; got != want {
+		t.Errorf("DeliveryLegBudget(PeerGatesHuman) = %s, want %s (the FOUR arms a leg takes when "+
+			"a person is on the far side: the role round trip, then SendDocument's three)", got, want)
 	}
-	if got, want := DeliveryLegBudget(PeerGatesHuman), 24*time.Minute; got != want {
+	// **24m -> 24m30s, changed deliberately for ADR-018.** The role frame is a machine round trip
+	// with no human in it, and the temptation was to call 30s negligible against 24 minutes. This
+	// guard's own doc records what that reasoning cost last time — a budget short by 22 minutes a
+	// leg — so the term is reserved because the code arms it, not because it is large.
+	if got, want := DeliveryLegBudget(PeerGatesHuman), 24*time.Minute+30*time.Second; got != want {
 		t.Errorf("DeliveryLegBudget(PeerGatesHuman) = %s, want %s. Change this literal "+
 			"deliberately, not as a consequence of moving a constant.", got, want)
 	}
 
 	// ── The unattended arm, which is what the round reserves ─────────────────────────────────
-	if got, want := DeliveryLegBudget(PeerGatesUnattended), 2*exchangeDeadline+postConsentDeadline; got != want {
+	if got, want := DeliveryLegBudget(PeerGatesUnattended), RoleDeadline+2*exchangeDeadline+postConsentDeadline; got != want {
 		t.Errorf("DeliveryLegBudget(PeerGatesUnattended) = %s, want %s", got, want)
 	}
-	if got, want := DeliveryLegBudget(PeerGatesUnattended), 14*time.Minute; got != want {
+	// 14m -> 14m30s, same deliberate edit. At MaxRoster 32 this adds ~16 minutes to a ceremony's
+	// reserved DeliveryBudget, which is the honest price of the frame and is recorded here rather
+	// than discovered by a convener.
+	if got, want := DeliveryLegBudget(PeerGatesUnattended), 14*time.Minute+30*time.Second; got != want {
 		t.Errorf("DeliveryLegBudget(PeerGatesUnattended) = %s, want %s. Change this literal "+
 			"deliberately, with the reservation it feeds — internal/server's "+
 			"ceremonyDeliveryLegBudget and Convene's DeliveryBudget.", got, want)

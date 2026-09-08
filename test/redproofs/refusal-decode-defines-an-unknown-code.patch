@@ -1,11 +1,11 @@
 --- a/internal/p2p/session.go
 +++ b/internal/p2p/session.go
-@@ -701,6 +701,8 @@
+@@ -724,6 +724,8 @@
  		return ErrRosterMismatch
  	case refuseDocumentSubstituted:
  		return ErrDocumentSubstituted
 +	case 42:
 +		return ErrReadmeOverflow
+ 	case refuseWrongRole:
+ 		return ErrRoleRefused
  	}
- 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
- }

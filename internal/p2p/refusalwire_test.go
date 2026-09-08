@@ -328,12 +328,26 @@ func TestEveryALPNConfigSiteOffersTheSameList(t *testing.T) {
 		t.Fatalf("found %d NextProtos assignments across the three transport files, want at "+
 			"least 3 — the scan is not reading what it thinks it is", sites)
 	}
-	// And the list itself: v2 first, v1 still offered. Dropping v1 would make this a hard
-	// handshake failure against every older peer rather than a graceful fallback.
-	if len(sessionALPN) != 2 || sessionALPN[0] != alpn2 || sessionALPN[1] != alpn {
-		t.Errorf("sessionALPN is %v, want [%q %q] — most preferred first, and the older protocol "+
+	// And the list itself: newest first, every older protocol still offered. Dropping one would
+	// make this a hard handshake failure against that peer rather than a graceful fallback.
+	//
+	// **This pin is a TRIPWIRE and it fired for ADR-018, which is what it is for.** It read
+	// `len(sessionALPN) != 2` until `alpn3` was minted; `SpeaksNamedRefusals`' own doc cites this
+	// hard pin as the reason a capability predicate could rot in place beside a list that cannot
+	// change without a deliberate edit. This is that edit.
+	want := []string{alpn3, alpn2, alpn}
+	if len(sessionALPN) != len(want) {
+		t.Errorf("sessionALPN is %v, want %v — most preferred first, and every older protocol "+
 			"still offered so an older peer negotiates rather than failing the handshake",
-			sessionALPN, alpn2, alpn)
+			sessionALPN, want)
+	} else {
+		for i := range want {
+			if sessionALPN[i] != want[i] {
+				t.Errorf("sessionALPN[%d] is %q, want %q (the list is newest first: protoRank "+
+					"reads position as recency, so an APPENDED version is denied the capability "+
+					"it introduced)", i, sessionALPN[i], want[i])
+			}
+		}
 	}
 }
 

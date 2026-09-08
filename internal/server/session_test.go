@@ -116,6 +116,8 @@ func TestSessionArmReceiveSign(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier, p2p.Roster{})
 		if e != nil {
 			errc <- e
@@ -339,6 +341,8 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		if _, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{}); e == nil {
 			errc <- nil // a declined round-trip must surface an error to the initiator
 			return
@@ -472,6 +476,8 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		_, _ = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{}) // declined below; an error is expected
 		errc <- nil
 	}()
@@ -572,6 +578,8 @@ func TestSessionReceiveTransfer(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleTransfer)
 		errc <- p2p.SendDocument(conn.Channel, flagged, aFPBytes, okVerifier{}, p2p.PeerGatesHuman)
 	}()
 
@@ -646,6 +654,8 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleTransfer)
 		errc <- p2p.SendDocument(conn.Channel, base, aFPBytes, okVerifier{}, p2p.PeerGatesHuman)
 	}()
 
@@ -720,6 +730,9 @@ func TestSessionSend(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// This test is the RESPONDER: it reads the role the server declared (ADR-018).
+		_, _ = p2p.ReadRole(conn.Channel)
+		_ = p2p.AcceptRole(conn.Channel)
 		doc, e := p2p.ReceiveDocument(conn.Channel, autoAccept{}, bFPBytes, okVerifier{})
 		if e != nil {
 			errc <- e
@@ -879,6 +892,9 @@ func TestSessionInitiate(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// This test is the RESPONDER: it reads the role the server declared (ADR-018).
+		_, _ = p2p.ReadRole(conn.Channel)
+		_ = p2p.AcceptRole(conn.Channel)
 		_, e = p2p.Receive(conn.Channel, bCert, bKey, "Alice", autoConfirm{intent: "I accept"}, okVerifier{}, nil, p2p.Roster{})
 		recvErr <- e
 	}()
@@ -1582,6 +1598,8 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 			errc <- e
 			return
 		}
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, initiatorVerifier, p2p.Roster{})
 		if e != nil {
 			errc <- e
@@ -1763,6 +1781,8 @@ func redeliveryAfterReconnect(t *testing.T, transport string) {
 				return nil, e
 			}
 			defer conn.Close()
+			// The dial declares its role, as every production dial site does (ADR-018).
+			_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 			return p2p.Initiate(conn.Channel, aSigned, aFPBytes, &recordingVerifier{}, p2p.Roster{})
 		}
 		aEnd, e := p2p.NewSharedEndpoint("127.0.0.1:0")
@@ -1779,6 +1799,8 @@ func redeliveryAfterReconnect(t *testing.T, transport string) {
 			return nil, e
 		}
 		defer conn.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		return p2p.Initiate(conn.Channel, aSigned, aFPBytes, &recordingVerifier{}, p2p.Roster{})
 	}
 
@@ -1945,6 +1967,8 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 			return
 		}
 		defer conn2.Close()
+		// The dial declares its role, as every production dial site does (ADR-018).
+		_ = p2p.WriteRole(conn2.Channel, p2p.RoleCoSign)
 		f, err := p2p.Initiate(conn2.Channel, aSigned, aFPBytes, &recordingVerifier{}, p2p.Roster{})
 		if err != nil {
 			e2 <- err

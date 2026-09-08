@@ -222,3 +222,15 @@ home today.
   not a wizard: nothing is enforced, but the order contains two one-way doors and says so. Cost: a
   TDZ trap (the boot call sat above the `const` it reads and took the rest of app.js with it) and
   a caption written as `.menucap`, which is display:none inside #commands
+- [ADR-028: A dial declares its role before either side picks a gate set](028-a-dial-declares-its-role.md)
+  — a session connection carries a one-byte ROLE, written by the dialer and acknowledged, before
+  either side picks a gate set. ALPN `nib/2` → `nib/3`; the frame goes only to a peer that
+  negotiated it, and `SpeaksRoleFrame` is a floor that fails closed. ADR-010's argument one layer
+  in: a connection that cannot say what it is for is not an address. It exists because a party
+  that has committed HAS a record, so the hop sweep skips it and the delivery sweep arms it —
+  and that arm cannot serve a resumed hop (`ReceiveDocument` never reaches `coSignExchange`),
+  which was a one-in-three tier-4d failure. The party could not have chosen the other arm either:
+  nothing distinguishes "died before the frame landed" from "hop delivered" on its own disk. So
+  the dialer says. The arm's `mode` stays POLICY and the wire never overrides it; a co-sign
+  reaching the delivery arm gets the REAL human gates, never the unattended ones. Cost, reserved
+  rather than discovered: `DeliveryLegBudget` 14m → 14m30s, ~16 min per 32-party ceremony

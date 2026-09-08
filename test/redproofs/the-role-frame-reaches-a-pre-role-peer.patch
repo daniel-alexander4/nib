@@ -1,0 +1,12 @@
+--- a/internal/p2p/role.go
++++ b/internal/p2p/role.go
+@@ -108,9 +108,6 @@
+ // Silent on a peer that did not negotiate the role frame, so an older build is not broken by a
+ // frame it would read as a document.
+ func WriteRole(ch Channel, r Role) error {
+-	if !ch.SpeaksRoleFrame() {
+-		return nil
+-	}
+ 	if !r.valid() {
+ 		return fmt.Errorf("%w: %s", ErrRoleUnreadable, r)
+ 	}

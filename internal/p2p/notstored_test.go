@@ -18,7 +18,10 @@ import (
 // The stimulus is the prepend itself: against the old equality this test fails on the very
 // assertion it exists for, because "nib/3" is not alpn2.
 func TestSpeaksNamedRefusalsIsAFloorNotAnEquality(t *testing.T) {
-	const future = "nib/3"
+	// **Was "nib/3" until ADR-018 minted it for real.** A fake future version that becomes a real
+	// one stops being a test of the floor and starts being a test of the list — and it would have
+	// passed for the wrong reason had the setup guard below not refused it first.
+	const future = "nib/99"
 
 	// SETUP: the future version must genuinely be unknown right now, or "it speaks after the
 	// prepend" is true for the wrong reason.

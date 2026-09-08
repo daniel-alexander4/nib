@@ -67,6 +67,7 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		"refuseCeremonyEnded":       refuseCeremonyEnded,
 		"refuseRosterMismatch":      refuseRosterMismatch,
 		"refuseDocumentSubstituted": refuseDocumentSubstituted,
+		"refuseWrongRole":           refuseWrongRole,
 	}
 	// And the values they are pinned TO, written out separately from the identifiers above. The
 	// two halves are compared below: the map above proves the names still exist, this one proves
@@ -86,6 +87,12 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		// wire only on that path, and a codeless one there is the bare EOF 13 and 14 were minted
 		// to close, on the newest instance of the same defect.
 		"refuseDocumentSubstituted": 15,
+		// Frozen 2026-09-08 (/pending 385, ADR-018). A dial whose declared role this arm does not
+		// serve. Minted with the role frame for the reason 13, 14 and 15 were: the refusal crosses
+		// the wire exactly where a version or an arm mismatch would otherwise close the connection,
+		// and a codeless refusal there is the bare EOF that reads as a dead network and invites the
+		// retry a decision must not.
+		"refuseWrongRole": 16,
 	}
 
 	fset := token.NewFileSet()
