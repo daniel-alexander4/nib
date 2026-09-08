@@ -548,6 +548,50 @@ re-fires this trigger rather than inheriting this paragraph.
 **Exit criteria.** Setup survives closing and reopening Nib; the draft is consumed exactly once at
 `convene`; block placement leaves the sheet for the page and returns.
 
+**Slices firmed 2026-09-07 at phase-open**, against the code as it now stands.
+
+**Two facts established before cutting, both by reading:** the convene form is `#ceremonyConveneForm`
+and it lives **inside `<aside id="sidebar">`** — which is the 200px surface D3 says it does not fit.
+And a named search for a persisted setup draft (`grep -rniE draft web/app.js internal/server/*.go`)
+returns only prose about first drafts of code: **nothing persists one today**, so S02 builds an
+artifact rather than moving one.
+
+**`/plan-review` trigger: did NOT fire.** This phase is not security-, migration- or egress-heavy:
+the draft is local, unsigned, carries no key material and crosses no boundary. What it *does* is
+persist a roster and a recital, which fires the **privacy/data-protection seat** at S02's own grill —
+`CLAUDE.md` puts that seat on any change that *"persists, publishes or transports anything"*, and
+its question is always residue. Recorded rather than skipped silently.
+
+#### P03.S01 — the setup sheet has room
+Scope: the convene form leaves the sidebar for a full-width sheet owned by the Ceremony mode,
+dismissible and re-enterable. Refs: D3.
+Acceptance: the roster picker, recital and deadline are usable at 1024×768 without the chrome
+breaching `responsive.test.mjs`'s ≤33% ceiling; the sheet is dismissible and re-enterable within a
+session without losing what was typed; the sidebar keeps the running rail.
+
+#### P03.S02 — the draft survives closing Nib
+Scope: the roster, recital and deadline persist locally before `convene` writes anything signed.
+Refs: D4.
+Acceptance: closing and reopening Nib restores all three; the draft is unsigned and per-machine;
+nothing about it reaches the network.
+
+**Deepdive due before this slice** — the plan's own standing caveat: *"the setup draft is a new
+persisted artifact this plan did not author. Where it lives, whether it needs the vault, and how it
+interacts with the mirror `convene` later writes should be dived before P03 rather than decided
+inside it."* The candidates are `localStorage`, a file under `~/nib/`, and the vault, and they differ
+on exactly the question D29 answers for key material.
+
+#### P03.S03 — the draft is consumed exactly once
+Scope: a successful `convene` clears the draft and a failed one does not. Refs: D4.
+Acceptance: convening clears it; a refused convene leaves it intact and re-enterable; a second
+convene cannot reuse a consumed draft.
+
+#### P03.S04 — placing blocks leaves the sheet and returns
+Scope: signature-block placement leaves the sheet for the page and comes back with what was typed.
+Refs: D3.
+Acceptance: leaving for the page and returning preserves the roster, recital and deadline; the sheet
+is re-entered rather than rebuilt.
+
 ### P04 — Scale and repair
 **Goal.** The rail at a full roster, and the operational steps the design has never had.
 
@@ -605,6 +649,25 @@ in `/pending 380`, and a guard fails if the admission reappears without `-n 4` b
 
 **So the receiving half is built and the arriving half is not**, and this marker says so rather than
 claiming a slice that is two thirds of itself.
+
+**(deepdive, 2026-09-07 — `deepdives/2026-09-07-p05s03-the-slot-contention.md`. The arriving half is
+OUT OF THIS PLAN'S SCOPE, and that is the plan's own words rather than a convenience.)** The
+instrumentation built at `/pending 381` produced the mechanism on its first run: the recipient's
+single delivery slot was armed for a **different ceremony** than the convener arrived with. A
+delivery rendezvous is keyed `(ceremony, hop)` and its listener pins ONE peer, so two ceremonies are
+two peers and two rendezvous — **no single arm can serve both**, and no ordering or yielding rule
+changes that.
+
+The obvious answer, a ceremony-keyed slot map, was **already refused** by `armKind`'s own doc — and
+its premise is narrower than its conclusion: *"a machine needs at most one of each"* is true per
+CEREMONY and false per MACHINE, because two conveners running two rounds coordinate with each other
+not at all. Re-opening it is a decision, not a correction.
+
+And widening it is what *Out of scope* names: *"the serial hub and its one-pinned-peer tripwire …
+widening either needs a fresh security review."* N concurrent armed listeners **is** that widening.
+
+**So this slice closes at its scope boundary rather than at its acceptance clause**, and P05's first
+exit criterion goes to Dan as a parked amendment rather than being re-worded to fit what shipped.
 Scope: the receiving half — a pre-hop party is reachable by the round that already walks them, and
 acts on what it verifies. Refs: D16.
 Acceptance: a declined ceremony delivered to a party holding no record closes their arm; a planted
