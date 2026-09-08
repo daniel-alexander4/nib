@@ -151,12 +151,20 @@ func TestTheEndStateIsStillRefusedOnItsOwnTerms(t *testing.T) {
 	})
 }
 
-// TestTheDeliverySweepArmsForAPartyWhoHasNotSigned is the sweep half: being able to CHECK the
-// object is worth nothing if nothing is listening for it.
+// TestTheDeliverySweepStillAdmitsOnlySignedCeremonies records a BACKED-OUT change, and it is a
+// test rather than a comment because a comment cannot notice the change coming back.
 //
-// A source scan, because arming drives a real socket and a rendezvous — tier 4's job — while what
-// this owns is the class test that kept pre-hop parties out of the sweep entirely.
-func TestTheDeliverySweepArmsForAPartyWhoHasNotSigned(t *testing.T) {
+// P05.S03 widened `rearmDeliveries` to admit `LoadAbsent` — a party who has accepted and not
+// signed — so the convener's end-state round could reach them. **It caused a deterministic tier-4d
+// failure at four parties** (*"a party is not reported delivered after the recovery run"*, twice,
+// passing with the admission reverted) and three hypotheses failed to explain it. The measured
+// evidence and the dead ends are in `/pending 380`.
+//
+// **This guard is not an argument that the admission is wrong** — it is almost certainly right, and
+// the receiving half it exists for already shipped. It is here so the next attempt is a deliberate
+// one that re-runs `pairrepro.sh -n 4`, rather than a re-introduction by somebody who reads
+// `checkDeliveredPayload`'s pre-hop branch and reasonably concludes the sweep must already feed it.
+func TestTheDeliverySweepStillAdmitsOnlySignedCeremonies(t *testing.T) {
 	src, err := os.ReadFile("delivery.go")
 	if err != nil {
 		t.Fatal(err)
@@ -166,14 +174,10 @@ func TestTheDeliverySweepArmsForAPartyWhoHasNotSigned(t *testing.T) {
 	if body == "" {
 		t.Fatal("cannot find rearmDeliveries — this guard is reading the wrong thing")
 	}
-	// **The CLASS TEST, not the token — a probe showed the difference.** Scanning for
-	// `ceremony.LoadAbsent` anywhere in the body passed against a mutation that removed it from the
-	// guard clause, because the body still binds `preHop := st.State == ceremony.LoadAbsent` a few
-	// lines down. A scan that matches a name rather than the decision is satisfied by any mention
-	// of it.
-	if !strings.Contains(body, "st.State != ceremony.LoadOK && st.State != ceremony.LoadAbsent") {
-		t.Error("rearmDeliveries no longer admits a ceremony with no record. That is the state of " +
-			"every party who has accepted and not signed, so on this build the convener's end " +
-			"state has nothing to arrive at — and the gate that would have checked it never runs")
+	if strings.Contains(body, "ceremony.LoadAbsent") {
+		t.Error("rearmDeliveries admits the pre-hop class again. That is the change /pending 380 " +
+			"records as backed out after a deterministic tier-4d failure — re-run " +
+			"`./build/pairrepro.sh -n 4` and, if it is green, delete this guard with the evidence " +
+			"rather than editing around it")
 	}
 }
