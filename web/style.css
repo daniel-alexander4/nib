@@ -1755,3 +1755,25 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* What this machine observed about the spoken check (P02.S04). A statement of fact on the card,
    not a warning: it reads the same whether the answer is reassuring or not. */
 .cerverify { margin-top: 4px; font-size: 12px; color: var(--subtext1); }
+
+/* The convener's setup sheet (P03.S01, D3) — a third child of #main, in place of the viewer.
+   `flex: 1` so it takes exactly the space the document had; the sidebar is untouched beside it. */
+/* **`[hidden]` must win, and a class selector beats the user agent's `[hidden] { display: none }`
+   on specificity.** Without the second rule the sheet is never actually hidden: it keeps its
+   `display: flex` and squashes the document column at every width. Measured — tier 3 went from
+   93/93 to four failures, two of them in unrelated stamp and checklist tests, because the viewer
+   they measure had been quietly halved. */
+.sheet { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; background: var(--base); }
+.sheet[hidden] { display: none; }
+.sheethead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-bottom: 1px solid var(--surface1);
+}
+.sheethead h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.sheetclose {
+  background: none; border: 1px solid var(--surface1); color: var(--subtext1);
+  border-radius: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.sheetclose:hover { border-color: var(--blue); color: var(--blue); }
+/* The form itself gets room rather than a 200px column — the whole point of the sheet. */
+.sheetbody { padding: 16px; max-width: 720px; }

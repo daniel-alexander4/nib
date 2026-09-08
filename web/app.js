@@ -85,6 +85,7 @@ const els = {
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), closeAllBtn: $('closeAllBtn'),
+  ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
   outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
@@ -10553,6 +10554,10 @@ function collapseGroupCards() {
 
 function syncSidebarForMode(tab) {
   const panels = SIDEBAR_FOR[tab] || [];
+  // **Leaving the Ceremony mode puts the sheet away** (P03.S01). It stands in place of the
+  // document, so a sheet that survived a mode change would leave the user in Edit or Mark Up
+  // looking at a convene form with no way back to the page except the mode they just left.
+  if (tab !== 'collaborate') showCeremonySheet(false);
   // Loaded when the panel becomes reachable rather than on a timer or at boot. It reads the local
   // mirror, so it is cheap and needs no network — but it is also not free (the server opens each
   // record), and a user who never goes near Collaborate should not pay for it.
@@ -11880,11 +11885,40 @@ function cerEls() {
 //
 // Exclusive because they are two answers to one question — "am I starting this or joining it" —
 // and a screen showing both invites a user to fill in the wrong one.
+// showCeremonySheet puts the setup sheet in front of the document, or takes it away (P03.S01, D3).
+//
+// **The viewer is HIDDEN and not destroyed**, which is ADR-002's rule for the same reason one layer
+// up: the value lives in the DOM.
+//
+// # It restores no scroll position, and that is MEASURED rather than assumed
+//
+// `#viewerWrap` had never been hidden by anything before this slice, and `/pending 372` maps that
+// territory: *"nothing survives pdf.js re-laying the document out"*. So this function first saved
+// `currentPageNumber` on the way out and put it back on the way in.
+//
+// **The probe showed the restore was dead code.** Removing it entirely leaves the tier-3 clause
+// green — the reader comes back to the same scroll offset either way. A `hidden` toggle is not a
+// reload: pdf.js re-lays out on `setDocument`, and nothing here calls it. 372's defect needed an
+// actual re-layout, which this round trip does not perform.
+//
+// The tier-3 clause stays. It is cheap, it is the only thing that would notice if the round trip
+// ever DID start re-laying out, and it reads the viewer's own scroll rather than the `.pageNum`
+// input — which is written on open and close and reported the right answer whatever the viewer did.
+function showCeremonySheet(open) {
+  if (!els.ceremonySheet || !els.viewerWrap) return;
+  els.ceremonySheet.hidden = !open;
+  els.viewerWrap.hidden = !!open;
+}
+
 function showCeremonyForm(which) {
   const e = cerEls();
   if (!e.convene || !e.accept) return;
   e.convene.hidden = which !== 'convene';
   e.accept.hidden = which !== 'accept';
+  // **The SHEET follows the convene form and nothing else.** Accepting an invitation is a paste and
+  // a button — it fits the sidebar and always did — so putting it behind a full-width surface would
+  // spend the document's space on a one-field form.
+  showCeremonySheet(which === 'convene');
   // **Cleared when a form OPENS, never when one closes**, and the difference is a defect a test
   // caught. Both submit paths render their result and then call this with `null` to put the form
   // away — so clearing on close wiped the invitations in the same tick they were drawn, and the
@@ -12127,6 +12161,9 @@ function renderAccepted(d) {
     e.result.appendChild(p);
   }
 }
+
+// The sheet's own Close, which is the same act as the form's Cancel and routes through one door.
+document.getElementById('cerSheetClose')?.addEventListener('click', () => { showCeremonyForm(null); });
 
 document.getElementById('ceremonyConveneBtn')?.addEventListener('click', () => {
   showCeremonyForm('convene');

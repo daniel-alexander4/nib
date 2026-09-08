@@ -562,12 +562,46 @@ persist a roster and a recital, which fires the **privacy/data-protection seat**
 `CLAUDE.md` puts that seat on any change that *"persists, publishes or transports anything"*, and
 its question is always residue. Recorded rather than skipped silently.
 
-#### P03.S01 — the setup sheet has room
+#### P03.S01 — the setup sheet has room *(done 2026-09-07, v1.128.23)*
 Scope: the convene form leaves the sidebar for a full-width sheet owned by the Ceremony mode,
 dismissible and re-enterable. Refs: D3.
-Acceptance: the roster picker, recital and deadline are usable at 1024×768 without the chrome
-breaching `responsive.test.mjs`'s ≤33% ceiling; the sheet is dismissible and re-enterable within a
-session without losing what was typed; the sidebar keeps the running rail.
+Acceptance: the roster picker, recital and deadline are usable at 1024×768 ~~without the chrome
+breaching `responsive.test.mjs`'s ≤33% ceiling~~ **with the sidebar still rendering the rail**; the
+sheet is dismissible and re-enterable within a session without losing what was typed; the sidebar
+keeps the running rail; **and the reader's page survives the round trip.**
+
+**(deepdive, 2026-09-07 — `deepdives/2026-09-07-p03s01-the-setup-sheet.md`.)**
+
+**(pin — D3's cited evidence for refusing a second rail is wrong, and its conclusion is right
+anyway.)** D3 says a second rail *"breaches `responsive.test.mjs`'s ≤33% ceiling"*. That test sums
+`menubar.height + toolbar.height` against viewport **height** (`responsive.test.mjs:55`), so a
+second *vertical* rail cannot enter it however wide it gets. The conclusion survives on arithmetic
+the decision did not cite: `#sidebar { width: 200px }` and two of those at a 360px viewport leaves
+nothing for the document. **The acceptance clause is corrected with it** — leaning on an instrument
+that cannot see this slice's subject would have produced a criterion that can only report pass.
+
+**(pin — this sheet is the first of its kind, so there is no structure to copy.)** ADR-025, accepted
+the same day, made Settings the sixth mode with its items as **sidebar cards**. `#main` is
+`display: flex` over `#sidebar` and **`#viewerCol`**, and the column holds the tab strip and the
+viewer — so the sheet is a **sibling of `#viewerWrap` inside `#viewerCol`**, shown in its place, and
+not an overlay, which D7 reserves for the two synchronised moments. *(The deepdive first recorded
+`#main` as the parent and the test caught it; landing in the column is the better placement anyway,
+because the sheet takes the document's space and leaves the strip and the sidebar alone.)*
+
+**(pin — a fourth acceptance clause, added because the grill found a live hazard.)** `#viewerWrap`
+is **never hidden today**; it is only class-toggled. Hiding and re-showing it is new ground, and
+`/pending 372` is exactly the defect that lives there: *"nothing survives pdf.js re-laying the
+document out"* — `currentPageNumber` → `resetCurrentPageView` → `scrollIntoView` scrolls willingly.
+A save/restore pattern already exists for view switching (`app.js:2525`, `:2567`). **So the round
+trip is an acceptance clause rather than a hope**, and it is asserted at tier 3, because only a real
+browser lays a document out.
+
+Tasks:
+- T01 — `#ceremonySheet` as a third child of `#main`; the convene form moves into it, markup only.
+- T02 — show and dismiss wired to the Ceremony mode, with the reader's page surviving the trip.
+- T03 — leaving the Ceremony mode dismisses the sheet; the sidebar keeps the rail.
+- T04 — tests: tier 2 for the structure and for typed values surviving a dismiss; tier 3 for the
+  reader's page and for 1024×768.
 
 #### P03.S02 — the draft survives closing Nib
 Scope: the roster, recital and deadline persist locally before `convene` writes anything signed.

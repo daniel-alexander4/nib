@@ -500,30 +500,6 @@
           <button id="ceremonyAcceptBtn" type="button">Accept an invitation…</button>
         </div>
 
-        <!-- Convene (P06.S04). The roster is PICKED from the peers this machine has already
-             pinned, never typed: the phase's criterion is that the primary flow contains no hex
-             fingerprint, and a fingerprint is hex. A party who is not pinned yet is pinned first,
-             through Identity & peers, which is where D21's read-it-aloud comparison already
-             happens and where the Copy buttons already are. -->
-        <form id="ceremonyConveneForm" class="cerform" hidden>
-          <label for="cerIntent">What is being agreed</label>
-          <input id="cerIntent" type="text" maxlength="200"
-                 placeholder="We agree to the lease of 14 Elm Row" />
-          <label for="cerExpires">Open until</label>
-          <input id="cerExpires" type="datetime-local" />
-          <label class="cercheck"><input id="cerISign" type="checkbox" checked /> I sign this too</label>
-          <p class="libhint">Who is signing — choose from the people you have already paired with.</p>
-          <div id="cerPeerPick" class="cerpeerpick"></div>
-          <p class="libhint cerhexnote">
-            Someone missing? Pair with them first under <b>Identity &amp; peers</b>, where you
-            compare fingerprints once, out loud, before anybody signs.
-          </p>
-          <div class="cerformbtns">
-            <button id="cerConveneGo" type="submit">Convene</button>
-            <button id="cerConveneCancel" type="button">Cancel</button>
-          </div>
-          <p id="cerConveneError" class="cererror" hidden></p>
-        </form>
 
         <!-- Accept (P06.S04), the invitee's half. -->
         <form id="ceremonyAcceptForm" class="cerform" hidden>
@@ -555,6 +531,50 @@
            two. Buttons are built by syncTabs() in app.js from the `views` array —
            the server holds the documents, the strip is client state. -->
       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
+      <!-- The convener's setup SHEET (P03.S01, D3). Setup is form work — a roster picker and two
+           fields — and does not fit a 200px sidebar; `#sidebar { width: 200px }` and two rails at a
+           360px viewport leaves nothing for the document.
+
+           **A third child of #main, shown in place of #viewerWrap, and not an overlay.** D7 reserves
+           overlay for the two synchronised moments and setup is neither. It is also why D3's last
+           clause is structural rather than incidental: "placing signature blocks leaves the sheet
+           for the page" is what a sheet standing in front of the page already implies.
+
+           **The first surface of its kind in this app.** ADR-025 made Settings the sixth mode with
+           its items as sidebar CARDS, so there is no structure to copy — Settings is a list of small
+           controls and this is a roster picker. -->
+      <div id="ceremonySheet" class="sheet" hidden>
+        <div class="sheethead">
+          <h2>Convene a ceremony</h2>
+          <button id="cerSheetClose" type="button" class="sheetclose">Close</button>
+        </div>
+        <div class="sheetbody">
+          <!-- Convene (P06.S04). The roster is PICKED from the peers this machine has already
+               pinned, never typed: the phase's criterion is that the primary flow contains no hex
+               fingerprint, and a fingerprint is hex. A party who is not pinned yet is pinned first,
+               through Identity & peers, which is where D21's read-it-aloud comparison already
+               happens and where the Copy buttons already are. -->
+          <form id="ceremonyConveneForm" class="cerform" hidden>
+            <label for="cerIntent">What is being agreed</label>
+            <input id="cerIntent" type="text" maxlength="200"
+                   placeholder="We agree to the lease of 14 Elm Row" />
+            <label for="cerExpires">Open until</label>
+            <input id="cerExpires" type="datetime-local" />
+            <label class="cercheck"><input id="cerISign" type="checkbox" checked /> I sign this too</label>
+            <p class="libhint">Who is signing — choose from the people you have already paired with.</p>
+            <div id="cerPeerPick" class="cerpeerpick"></div>
+            <p class="libhint cerhexnote">
+              Someone missing? Pair with them first under <b>Identity &amp; peers</b>, where you
+              compare fingerprints once, out loud, before anybody signs.
+            </p>
+            <div class="cerformbtns">
+              <button id="cerConveneGo" type="submit">Convene</button>
+              <button id="cerConveneCancel" type="button">Cancel</button>
+            </div>
+            <p id="cerConveneError" class="cererror" hidden></p>
+          </form>
+        </div>
+      </div>
       <div id="viewerWrap">
       <!-- "What you are looking at is not what the server holds." Raised when a render
            fails after the document's metadata has already been replaced — see markStale.
