@@ -89,6 +89,14 @@ when curl or python3 are absent. **It exists because the previous version of it 
 P07.S02a live-verified the convene route with a script in a session scratchpad, the scratchpad was
 wiped, and the product's only ceremony-creating surface was then exercised by nothing committed.
 
+And `node build/windowfreeze.mjs` answers one question that no tier can: does a window FROZEN or
+backgrounded by the browser keep the `/api/window` stream open? `PLAN-window-lifetime.md`'s D1 rests
+on it — a closed page drops its connection and a minimised one does not — and it is measured with
+Chrome DevTools' own `Page.setWebLifecycleState`, plus a hidden tab held past the five-minute
+threshold, ending with the control that matters: closing the page must report zero. It is out of the
+routine loop for the same reason `dhtlive.sh` is — it spends seven minutes waiting out a browser's
+timer — and it needs `NIB_UI_BROWSER` set and the repo root as its working directory.
+
 There is also `./build/winrepro.sh`, which runs the Windows binary under wine to
 check the places `path/filepath` answers differently, and to run a **second
 launch** against a live first one — the single-instance hand-off, on the platform

@@ -8,8 +8,8 @@ notice first when a ceremony is still running.
 proposed to Dan — a heartbeat was overturned during the grill and the reason is recorded in D1,
 because it is the kind of thing a later reader will otherwise "simplify" back.
 
-**Status: P01.S01 done (v1.125.5); S02 is the next slice and it is a MEASUREMENT gate.** Tracked
-as `/pending 375`.
+**Status: P01.S01 done (v1.125.5); P01.S02 done (measured 2026-09-07 — D1 HOLDS). S03 is next.**
+Tracked as `/pending 375`.
 
 *(This line read "unbuilt" until 2026-09-07, three days after S01 shipped its stream and its
 window count. A plan header is the first thing a resuming session reads, and one that
@@ -140,13 +140,43 @@ T01–T06 changed, both because an existing guard correctly refused the slice:
 - `build/uirepro.sh` — the tier-3 file-count floor moved 22 → 23. Its own comment records this guard
   going stale for eight versions once before, so moving it is part of adding a file, not a chore.
 
-#### P01.S02 — measure the assumption before building on it
+#### P01.S02 — measure the assumption before building on it *(done 2026-09-07, MEASURED — D1 HOLDS)*
 Scope: **a measurement, not code.** Does an app-mode window minimised past the browser's freeze
 threshold keep its stream open? Refs: D1.
 Acceptance:
 - A recorded observation spanning the 5-minute threshold, not a reasoned one.
 - **If the socket does not survive, D1 is superseded in place and the rest of P01 is re-planned** —
   this slice is a gate, and it is second on purpose.
+
+**The measurement, 2026-09-07, against the real binary in Chromium via playwright-core.**
+
+| Observation | Result |
+|---|---|
+| window opened | server reports `1 open` |
+| `Page.setWebLifecycleState: frozen`, +20 s | **1 open** |
+| same freeze, +90 s | **1 open** |
+| thawed back to `active` | 1 open |
+| hidden behind a second tab, +60 / +180 / +300 / +360 / +420 s | **1 open at every reading** |
+| **control:** page closed | **0 open** — the instrument can see a drop |
+
+**The explicit freeze is the decisive half, and it is deliberately the one that carries the
+verdict.** `Page.setWebLifecycleState: frozen` puts the page in the state Chromium's own background
+heuristic drives it to — the most aggressive state short of discarding it — applied
+deterministically rather than waited for. A socket that survives that survives a minimise.
+
+**The control is what makes the rest mean anything.** *"Still 1 open"* is also what a broken counter
+says, so the run ends by closing the page and requiring `0 open`. The first attempt of this probe
+crashed before reaching the control and its numbers were discarded rather than recorded, which is
+the only honest thing to do with a measurement whose instrument was never checked.
+
+**What this measurement does NOT establish, stated because the slice's own caveat asks for it.**
+It ran headless, and headless Chromium may not apply the automatic backgrounding heuristic on the
+same timer as a real window — so the hidden-tab observations corroborate and do not prove. The
+explicit freeze does not have that weakness: it is the state itself, not a wait for the state. And
+per the plan's standing caveat, nothing guards this afterwards — a future browser change can
+invalidate it silently.
+
+**D1 stands: a window's life is a connection, not a timer.** P01.S03 is unblocked.
 
 #### P01.S03 — arm the idle-exit, and prove it stays disarmed
 Scope: arm only when this process launched a browser; log `idleExitArmed` once at startup.
@@ -195,7 +225,8 @@ Acceptance:
   than a verification step at the end.
 - **S02's answer has no standing guard afterwards.** No tier can hold a window minimised for five
   minutes, so this is measured once and recorded, and a future browser change could invalidate it
-  silently.
+  silently. **The probe is committed as `build/windowfreeze.mjs`** — out of the routine loop, on
+  `dhtlive.sh`'s footing — so "measured once" does not also mean "unrepeatable".
 
 ## Seam inventory
 
