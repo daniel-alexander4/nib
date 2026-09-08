@@ -222,6 +222,13 @@ type Server struct {
 	live     context.Context
 	stopLive context.CancelFunc
 	inFlight sync.WaitGroup
+	// admit makes `enter`'s refusal atomic with `Close`'s transition (/pending 387). Its own
+	// doc claimed refusal "is the only shape that terminates", and the refusal was a
+	// check-then-act: `live.Err()` and `inFlight.Add(1)` were two statements, with `Close`'s
+	// `stopLive(); inFlight.Wait()` free to land between them. It is a separate mutex from `mu`
+	// below because it guards a different rule — admission, not the seed list — and one lock over
+	// two rules is how the next reader learns the wrong invariant.
+	admit sync.Mutex
 
 	loaded        int
 	cacheRejected bool
@@ -721,7 +728,14 @@ func (s *Server) Close() error {
 		// the wait finite: an in-flight traversal watches this context, so without the
 		// cancel `Close` would block for the caller's full remaining budget — up to 45
 		// seconds per call — on a path a user reaches by quitting the app.
+		// Under `admit`, so no `enter` can observe a live server and then register behind this
+		// wait. Released before the wait rather than held across it: an in-flight operation's
+		// `leave` does not take `admit`, so holding it would not deadlock — but a `Close` that
+		// blocks every would-be caller for the length of a traversal is a worse shape than one
+		// that refuses them immediately, which is what cancellation already does.
+		s.admit.Lock()
 		s.stopLive()
+		s.admit.Unlock()
 		s.inFlight.Wait()
 		err = s.saveNodes()
 		s.dht.Close()
@@ -734,11 +748,28 @@ func (s *Server) Close() error {
 // It refuses to start after Close rather than queueing behind the wait, which is the only
 // shape that terminates: work admitted after the WaitGroup has been waited on would either
 // be abandoned or deadlock the Close it was admitted behind.
+//
+// # The check and the registration are ONE step, and they were two (/pending 387)
+//
+// `live.Err()` and `inFlight.Add(1)` were separate statements with nothing between them but
+// the scheduler, and `Close` does `stopLive()` then `inFlight.Wait()`. A caller that read a
+// live server and was descheduled could register **after** the wait had started, which is
+// either work running against a torn-down DHT or `sync.WaitGroup` misuse — `Add` with a
+// positive delta while `Wait` is blocked on a zero counter, which panics the process on a
+// goroutine nobody can recover.
+//
+// It survived `-race` because both halves are individually race-free: `live` is a context and
+// `inFlight` a WaitGroup, so there is no unsynchronised memory for the detector to see. The
+// defect is in the ordering, not in the access, and only a test that drives the two paths
+// against each other can find it.
 func (s *Server) enter(ctx context.Context) (context.Context, func(), error) {
+	s.admit.Lock()
 	if err := s.live.Err(); err != nil {
+		s.admit.Unlock()
 		return nil, nil, fmt.Errorf("rendezvous: the server is closed")
 	}
 	s.inFlight.Add(1)
+	s.admit.Unlock()
 	// Derived from BOTH: the caller's cancellation and the server's shutdown must each be
 	// able to end this operation, and neither is a superset of the other.
 	merged, cancel := context.WithCancel(ctx)
