@@ -400,6 +400,23 @@ type Stored struct {
 	// reader wants to ask about — gating this on `LoadOK` would hide it for every hop that has not
 	// completed, which is most of the ones anybody is asking about.
 	Verification *Verification `json:"verification,omitempty"`
+	// Joined is whether this machine has recorded itself as taking part — the `me` marker's
+	// PRESENCE, as distinct from `Me`, which is the position it names (/pending 377).
+	//
+	// **Two facts and not one, and conflating them is a rule violation rather than a shortcut.**
+	// `Me` answers *which party are you*, which is a pointer into a roster and means nothing
+	// beside a record that did not verify — `TestNoDegradedClassReportsAPosition` holds it empty
+	// on every degraded class for that reason. This answers *are you taking part at all*, which
+	// needs no roster: a successful accept writes the marker and nothing else, so before the
+	// document reaches this machine's hop the marker is the only fact its directory holds.
+	//
+	// **Populated regardless of `LoadState`, on `Verification`'s footing and by its argument.**
+	// The population this exists for is the one with no record, so gating it on `LoadOK` would
+	// hide it for exactly the readers who need it.
+	//
+	// **False means "no marker", never "not a party."** A ceremony mirrored before the marker
+	// shipped has none and its user is still a party — the same limit `Me` states for itself.
+	Joined bool `json:"joined,omitempty"`
 	// The rest are populated only for LoadOK.
 	Intent  string    `json:"intent,omitempty"`
 	Expires time.Time `json:"expires,omitempty"`
@@ -420,6 +437,7 @@ func ReadStored(root, id string, now time.Time) Stored {
 	// the branches that returns early. Placing it after them would have made it invisible for
 	// every ceremony whose document has not arrived.
 	s.Verification = readVerification(dir)
+	s.Joined = readMe(dir) != ""
 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
 	if err != nil {
 		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to
@@ -429,6 +447,33 @@ func ReadStored(root, id string, now time.Time) Stored {
 		// that reads as reassuring.
 		if os.IsNotExist(err) {
 			s.State = LoadAbsent
+			// **The `me` marker separates the commonest invitee state from a folder somebody
+			// deleted, and it is readable with the vault locked (/pending 377).** A successful
+			// accept ends at `WriteMe`: the directory and the marker exist and `record.json` does
+			// not, because an invitee holds no record until the document reaches their hop. Until
+			// this, that state — accepted, waiting for the baton — was reported with the sentence
+			// written for a directory the user had removed, which sends them looking for something
+			// that was never there.
+			//
+			// **`Joined`, not `Me`, and the first cut of this got that wrong.** `Me` is a
+			// POSITION — a pointer into the roster — and `TestNoDegradedClassReportsAPosition`
+			// requires it empty on every class that is not `LoadOK`, because a position read
+			// beside a record this machine has refused to trust is a claim about a roster nothing
+			// established. Setting it here broke that guard, which is how the distinction was
+			// found. `Joined` is a different fact — *is this machine taking part at all* — it
+			// needs no roster to mean something, and it is read on `Verification`'s footing.
+			//
+			// **It says "a party", not "you accepted", because this branch cannot tell which.** A
+			// convener reaches `LoadAbsent` too if their `record.json` is deleted by hand —
+			// `WriteMirror` runs before `WriteMe` at convene, so it is not an ordinary state — and
+			// the marker alone cannot distinguish the two. The invitation could, and `ReadStored`
+			// is deliberately vault-free (`handleCeremonyNext` answers with the vault locked), so
+			// that discriminator is not available here.
+			if s.Joined {
+				s.Reason = "this machine is a party to this ceremony and nothing has arrived for " +
+					"it yet — the document reaches you when it is your turn"
+				return s
+			}
 			s.Reason = "this ceremony has no record on this machine — its folder may have been " +
 				"removed, or it was interrupted before anything was written"
 			return s

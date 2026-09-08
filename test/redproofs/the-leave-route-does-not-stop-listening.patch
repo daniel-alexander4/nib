@@ -1,13 +1,12 @@
 diff --git a/internal/server/leave.go b/internal/server/leave.go
-index 544145c..fa8dba8 100644
+index 544145c..816e89a 100644
 --- a/internal/server/leave.go
 +++ b/internal/server/leave.go
-@@ -129,7 +129,7 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
+@@ -128,7 +128,6 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
+ 	// would mean the one path that answers "Nib could not finish leaving" is also the one that
  	// leaves the socket open. Disarming an unarmed ceremony is a no-op, so the order costs nothing
  	// on the ordinary path.
- 	s.stopListeningFor(id)
--	if err := s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now()); err != nil {
-+	if err := error(nil); err != nil {
+-	s.stopListeningFor(id)
+ 	if err := s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now()); err != nil {
  		httpError(w, http.StatusInternalServerError,
  			"this machine could not finish leaving that ceremony, so it may still hold its pins "+
- 				"or its secret: "+err.Error())

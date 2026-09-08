@@ -1,9 +1,11 @@
+diff --git a/internal/server/leave.go b/internal/server/leave.go
+index 544145c..b263e09 100644
 --- a/internal/server/leave.go
 +++ b/internal/server/leave.go
-@@ -110,7 +110,7 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
- 		return
- 	}
- 
+@@ -129,7 +129,7 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
+ 	// leaves the socket open. Disarming an unarmed ceremony is a no-op, so the order costs nothing
+ 	// on the ordinary path.
+ 	s.stopListeningFor(id)
 -	if err := s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now()); err != nil {
 +	if err := s.closeOutCeremony(v, id, ceremony.StateDeclined, time.Now()); err != nil {
  		httpError(w, http.StatusInternalServerError,

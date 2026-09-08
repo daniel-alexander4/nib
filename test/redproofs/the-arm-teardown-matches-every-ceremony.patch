@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 050c258..0765679 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -694,7 +694,7 @@ func (s *Server) stopListeningFor(id string) {
+ 	// showed it firing ZERO times across a four-party ceremony that closed out nine ceremonies,
+ 	// which refuted the mechanism in one run instead of a bisect.
+ 	if n := s.sess.disarmWhen(func(a *arm) bool {
+-		return a.cer != nil && strings.EqualFold(a.cer.inv.ID, id)
++		return a.cer != nil
+ 	}); n > 0 {
+ 		log.Printf("ceremony %s: stopped listening (%d arm(s) torn down)", id, n)
+ 	}

@@ -4548,3 +4548,111 @@ machine holds two live ceremonies; that is `/pending 378`'s residual doubt, not 
 settle, and a row asserting otherwise would be asserting a race.
 
 `recorded` 362 → 367.
+
+## The pre-hop party's own state (/pending 377, v1.128.25)
+
+`handleCeremonyNext` answered `unavailable` for every class that is not `LoadOK`, and a party who
+has just accepted is `LoadAbsent` — the directory and the `me` marker exist, `record.json` does not,
+because an invitee holds no record until the document reaches their hop. So the single commonest
+invitee state was reported with the sentence written for a folder the user had DELETED, and with a
+state whose own field doc means *"Nib could not read enough to say"*. Nib had read everything there
+is.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-accepted-party-is-reported-unavailable` | `TestAPartyWhoJustAcceptedIsNotToldTheirFolderMayBeGone`, tier 1 | `want "accepted"` |
+| `the-joined-marker-is-written-and-never-read` | `TestThePreHopPartyStillClassifiesAsAbsent`, tier 1 | "does not read as joined" |
+| `every-absent-ceremony-folder-reads-as-accepted` | `TestAGenuinelyEmptyCeremonyFolderStillSaysSo`, tier 1 | `want "unavailable"` |
+| `the-marker-is-read-as-a-position` | `TestNoDegradedClassReportsAPosition`, tier 1 | "reported a position" |
+| `the-pre-hop-delivery-arm-drops-to-the-floor` | `TestThePreHopPartyStillClassifiesAsAbsent`, tier 1 | "delivery arm gets" |
+
+**The state and the sentence are two rows because they are two defects.** The first mutation goes
+red on the state alone and the second on the sentence alone — they live in different packages, and a
+fix to either would have left the other shipping.
+
+**`the-marker-is-read-as-a-position` records a shape that was BUILT and then refused, which is the
+useful half.** The item offered two designs — a fifth `LoadState`, or a state on the response — and
+the discriminator was first cut as `Stored.Me`, the position field. `TestNoDegradedClassReportsAPosition`
+went red on three of its four classes, which is a guard that already existed doing exactly its job:
+`Me` is a pointer INTO the roster and means nothing beside a record this machine has refused to
+trust. `Joined` — the marker's PRESENCE — needs no roster and is read on `Verification`'s footing,
+which had already made this argument for this same population in its own doc.
+
+**And the fifth `LoadState` is refused by the code, which is what the last row measures.**
+`deliveryWindowFor` and `checkDeliveredPayload` both test `st.State == ceremony.LoadAbsent` to mean
+*exactly* this party. Carving a new state out of `LoadAbsent` would have made both stop matching in
+the one case each was written for, and **neither would have failed loudly**: the delivery arm silently
+drops from the hop window to a five-minute floor (measured by that row as `5m0s` against `720h0m0s`)
+and the end-state check falls through to *"cannot check against its own record"*. Nothing in the tree
+drove `deliveryWindowFor`'s absent arm before this row.
+
+**Two rows were re-recorded rather than added**: `the-spoken-check-note-is-never-read` and
+`the-spoken-check-note-is-read-too-late` both patch the line above `s.Verification =
+readVerification(dir)`, and `s.Joined` landing beside it staled both. `TestEveryRedProofStillApplies`
+caught it in the same run — 0.24 s against the full replay — which is the cheap half working as
+CONTRIBUTING.md says it does.
+
+`recorded` 367 → 372.
+
+## Leaving a ceremony did not stop this machine listening for it (/pending 378, v1.128.25)
+
+D14 made accepting an invitation ARM, renewed at every unlock, so a party who changed their mind had
+no lever short of quitting Nib. `POST /api/ceremony/leave` shipped at v1.128.10 as that lever, and
+its own doc said the prune *"stops the arm on the next sweep and it never comes back."* Only the
+second half was true: `rearmCeremonies` **skips** a ceremony it holds no invitation for — `continue`,
+not a teardown — so the standing arm went on holding the single interactive slot and its QUIC
+endpoint until the process exited. Named search over the leave path returned **zero** occurrences of
+`disarm`.
+
+**The acceptance test written alongside that lever could not see it, and its own shape is the tell.**
+`TestLeavingStopsTheArmAndKeepsItStopped` **disarms the session by hand as setup**, then asserts that
+the next sweep does not re-arm. That second half is real and is still asserted. The first half — does
+leaving release the arm that is up? — was asserted nowhere, because the test hands the slot back
+before it looks.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-leave-route-does-not-stop-listening` | `TestLeavingACeremonyReleasesTheArmItHeld`, tier 1 | "still armed for a ceremony the user has just left" |
+| `the-arm-teardown-matches-every-ceremony` | `TestLeavingOneCeremonyLeavesAnotherAlone`, tier 1 | "tore down the arm this machine holds for a DIFFERENT one" |
+| `the-close-out-sweep-leaves-the-arm-up` | `TestTheCloseOutSweepReleasesTheArmToo`, tier 1 | "left this machine listening for it" |
+| `the-panel-draws-a-waiting-party-as-damage` | `test/jsdom/prehopcard.test.mjs`, tier 2 | `badged "Nothing on disk"` |
+| `every-absent-card-is-softened` | `test/jsdom/prehopcard.test.mjs`, tier 2 | "is marked as waiting" |
+| `the-waiting-card-loses-the-cascade` | `test/jsdom/prehopcard.test.mjs`, tier 2 | "must exclude a waiting card" |
+
+**`the-close-out-sweep-leaves-the-arm-up` records a MUTATION SURVIVOR, and that is why it exists.**
+The rule has two doors — the user's leave, and the sweep closing a ceremony out by its deadline —
+and every test written alongside the fix drove the first. Deleting the second site left all of them
+green. That is ADR-009's shape exactly, found the only way it can be: a mutation on the site nobody
+drove.
+
+**The slot's release is asserted as the SLOT and not as a flag.** `armed:false` is what a fix that
+cleared a boolean produces, so the test takes the thing the user is owed: a second ceremony's arm,
+refused `409 a session is already armed` a moment earlier, must now succeed. The first cut re-armed
+the ceremony just LEFT and failed with *"that peer isn't pinned"* — leaving revokes that convener's
+ceremony pin, correctly, and a refusal for that reason is indistinguishable here from a slot still
+held. Measured on the first run, and the fixture takes a second ceremony because of it.
+
+**Two client rows, because the panel had the same defect as the route and `/pending 377` only fixed
+the route's half.** An accepted invitee is `absent` on the listing, and the panel dressed that as a
+fault three ways from one decision — a badge reading "Nothing on disk", a peach card border, and a
+peach sentence. `cerWaiting` is the one door for all three, which is what the second row protects:
+softening the whole `absent` class would satisfy the first row completely and hide the case the badge
+was written for.
+
+**Two rows were re-recorded rather than added**: `leaving-a-ceremony-prunes-nothing` and
+`leaving-is-recorded-as-a-decline` both patch the `closeOutCeremony` call in `handleCeremonyLeave`,
+and `s.stopListeningFor(id)` landing above it staled both. Caught by
+`TestEveryRedProofStillApplies` in the same run — the second time in this one commit.
+
+**The third client row is a near-miss caught in self-review, and it is the one worth reading.** The
+card's warning border was first softened by adding `.cercard[data-waiting] { border-color: … }`
+after the existing rule — and that override LOSES:
+`.cercard[data-state]:not([data-state="ok"])` is one class and **two** attributes, because `:not()`
+carries its argument's specificity, against the override's two. The badge would have read "Waiting
+for your turn" over a peach card. **Nothing below tier 3 could have seen it**: `boot.mjs` loads no
+stylesheet, so `getComputedStyle` answers about nothing here, and every other assertion in that
+file passed against the broken version. The rule now `:not([data-waiting])`s the case out — one
+edit, no cascade to get wrong — and the guard reads the SELECTOR, which is what `cardhue.test.mjs`
+already does for its ladder and for the same stated reason.
+
+`recorded` 372 → 378.

@@ -291,7 +291,10 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE } 
     // still hold a typed value, but would not be the flow a user takes.
     async placeEditField() {
       await this.topOfDocument();
-      await this.mode('edit');
+      // Edit text is a Mark Up command since v1.128.25, and it is not that mode's first card —
+      // so the card has to be opened rather than relying on the mode landing on it.
+      await this.mode('markup');
+      await this.card('Edit Page Text');
       await page.click('#editTextBtn');
       const box = await page.locator('.viewerContainer:not([hidden]) .page').first().boundingBox();
       await page.mouse.move(box.x + box.width * 0.10, box.y + box.height * 0.08);

@@ -1,0 +1,14 @@
+diff --git a/web/style.css b/web/style.css
+index 142dd48..ac395e7 100644
+--- a/web/style.css
++++ b/web/style.css
+@@ -1307,7 +1307,8 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
+    border — LOSES the cascade: this selector is one class and two attributes (`:not()` carries
+    its argument's specificity) against the two of `.cercard[data-waiting]`. Excluding here is
+    one edit, has no specificity contest to get wrong, and reads as the rule it is. */
+-.cercard[data-state]:not([data-state="ok"]):not([data-waiting]) { border-color: var(--peach); }
++.cercard[data-state]:not([data-state="ok"]) { border-color: var(--peach); }
++.cercard[data-waiting] { border-color: var(--surface1); }
+ .cerhead { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+ .cerintent { font-weight: 600; color: var(--text); }
+ .cerbadge {

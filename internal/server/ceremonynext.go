@@ -40,11 +40,15 @@ type ceremonyNextResponse struct {
 	// wrong card.
 	Ceremony string `json:"ceremony"`
 	// State is what L3 concluded: "waiting" (somebody's turn), "complete" (every signing party has
-	// signed), or "unavailable" (the document or record could not be read well enough to say).
+	// signed), "ended" (a party declined, or the deadline passed), "accepted" (this machine is a
+	// party and nothing has arrived for it yet), or "unavailable" (the document or record could not
+	// be read well enough to say).
 	//
-	// **Three states and not two.** A route that answered "waiting for X" or nothing would make
-	// "the ceremony is finished" and "Nib cannot tell" the same screen, and those want opposite
-	// actions from the user — one is done, the other needs somebody to look at a file.
+	// **More than two, and each addition is a screen the others got wrong.** A route that answered
+	// "waiting for X" or nothing would make "the ceremony is finished" and "Nib cannot tell" the
+	// same screen, and those want opposite actions from the user — one is done, the other needs
+	// somebody to look at a file. `ended` and `accepted` were each carved out of a state that was
+	// answering for them wrongly, not added for symmetry.
 	State string `json:"state"`
 	// Label, Capacity and Position describe the party whose turn it is, empty unless State is
 	// "waiting". Position is 1-based within the SIGNING order, which is what a person counts.
@@ -100,7 +104,28 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 	// machine has refused to trust — the same rule `Stored.Me` follows one field over.
 	st := ceremony.ReadStored(root, id, now)
 	if st.State != ceremony.LoadOK {
-		writeJSON(w, ceremonyNextResponse{Ceremony: id, State: "unavailable", Reason: st.Reason})
+		// **`accepted` is a definite answer and `unavailable` is the absence of one, so the
+		// commonest invitee state may not be reported as the second (/pending 377).** A party who
+		// has accepted holds a directory with a `me` marker and no `record.json` until the document
+		// reaches their hop. Nib has read everything there is to read about that ceremony and the
+		// answer is *nothing has arrived yet* — which is not "Nib could not read enough to say",
+		// the meaning `unavailable` carries in this route's own field doc.
+		//
+		// **A fifth `LoadState` was the other shape and the code refuses it.** `deliveryWindowFor`
+		// (`session.go`) and `checkDeliveredPayload` (`delivery.go`) both test
+		// `st.State == ceremony.LoadAbsent` to mean *exactly* this party, and each would silently
+		// stop matching in the one case it was written for — the delivery arm's window and the
+		// invitation-anchored end-state check. So the discriminator is a FIELD on `Stored` —
+		// `Joined` — which is the argument `Stored.Ended`'s own doc already makes.
+		//
+		// **And it is `Joined` rather than `Me`, which the first cut got wrong and an existing
+		// guard caught.** `Me` is a position and must stay empty on every class that is not
+		// `LoadOK`; `Joined` is the marker's presence, which needs no roster to mean something.
+		state := "unavailable"
+		if st.State == ceremony.LoadAbsent && st.Joined {
+			state = "accepted"
+		}
+		writeJSON(w, ceremonyNextResponse{Ceremony: id, State: state, Reason: st.Reason})
 		return
 	}
 

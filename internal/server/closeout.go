@@ -186,6 +186,11 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
 		if !ok {
 			continue
 		}
+		// **The same rule as the leave route's, through the same door (/pending 378).** A
+		// ceremony this machine has decided is over must not go on holding an arm; the sweep
+		// closing it out is the same decision the user's leave is, reached by the deadline
+		// instead of by a button.
+		s.stopListeningFor(st.ID)
 		if cerr := s.closeOutCeremony(v, st.ID, state, now); cerr != nil {
 			log.Printf("close-out %s: %v", st.ID, cerr)
 		}

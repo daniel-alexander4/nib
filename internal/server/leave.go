@@ -24,8 +24,13 @@ import (
 // # Why it is a prune and not a message
 //
 // `rearmCeremonies` keys on the stored invitation: a ceremony this machine holds none for is
-// skipped, so removing it stops the arm on the next sweep and it never comes back. Nothing has to
-// be told and nothing has to be signed, which is exactly what makes leaving local.
+// skipped, so removing it stops the arm ever coming back. Nothing has to be told and nothing has to
+// be signed, which is exactly what makes leaving local.
+//
+// **The prune alone does not release the arm that is already up, and this comment claimed it did**
+// (*"stops the arm on the next sweep"*, until /pending 378 read the sweep). A skip is not a
+// teardown, so the standing arm held the single interactive slot until Nib quit. The route calls
+// `stopListeningFor` for that; the prune is what stops it returning.
 //
 // # Why it is NOT a decline, stated at the door because the two are one keystroke apart
 //
@@ -110,6 +115,20 @@ func (s *Server) handleCeremonyLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **The live arm goes HERE, before the close-out, and the route's own doc above was wrong
+	// about this (/pending 378).** It said pruning the invitation *"stops the arm on the next sweep
+	// and it never comes back"* — the second half is true and the first is not:
+	// `rearmCeremonies` **skips** a ceremony it holds no invitation for rather than tearing one
+	// down, so nothing released the arm this user has just said they want no part of. It held the
+	// single interactive slot until Nib was quit, which is the exact condition the lever exists to
+	// relieve.
+	//
+	// **Before the close-out rather than after, so a failing vault teardown cannot leave the user
+	// still listening.** `closeOutCeremony` reports its failure and returns 500; disarming after it
+	// would mean the one path that answers "Nib could not finish leaving" is also the one that
+	// leaves the socket open. Disarming an unarmed ceremony is a no-op, so the order costs nothing
+	// on the ordinary path.
+	s.stopListeningFor(id)
 	if err := s.closeOutCeremony(v, id, ceremony.StateLeft, time.Now()); err != nil {
 		httpError(w, http.StatusInternalServerError,
 			"this machine could not finish leaving that ceremony, so it may still hold its pins "+

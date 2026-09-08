@@ -1,0 +1,13 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
+index 1d70f32..081b609 100644
+--- a/internal/server/session.go
++++ b/internal/server/session.go
+@@ -459,7 +459,7 @@ func deliveryWindowFor(cer *ceremonyID) time.Duration {
+ 	if cer == nil {
+ 		return sessionAcceptTimeout
+ 	}
+-	if st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now()); st.State == ceremony.LoadAbsent {
++	if st := ceremony.ReadStored(defaultOutputDir(), cer.inv.ID, time.Now()); st.State == ceremony.LoadUnparseable {
+ 		return hopWindowFor(cer)
+ 	}
+ 	rec, _, err := ceremony.ReadMirror(defaultOutputDir(), cer.inv.ID, time.Now())
