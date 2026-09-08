@@ -99,6 +99,9 @@ const PUBLISHED = [
   // signature lands before the signer decides (P02.S03). Both fields are read by
   // `loadPendingPreview`/`markBlock`.
   { type: 'pendingBlock', readers: ['web/app.js'] },
+  // The convener's setup draft, an opaque blob the server neither parses nor validates
+  // (P03.S02, D4). `restoreCeremonyDraft` reads it; `saveCeremonyDraft` writes it.
+  { type: 'draftResponse', readers: ['web/app.js'] },
   // Who has already signed the arriving document (P07.S07c, D27 item 3). Rendered by
   // `renderConsentSigners`, which draws a row per signer and marks an invalid one rather than
   // dropping it — so all three fields have a reader on the consent screen.
@@ -199,6 +202,7 @@ const EXCLUDED = {
   // P07.S02b's accept route (v1.117.157).
   acceptRequest: 'request body, read by its handler',
   leaveRequest: 'request body, read by its handler',
+  draftRequest: 'request body, read by its handler',
   listDirRequest: 'request body, read by its handler',
   ocrRequest: 'request body, read by its handler',
   tableRequest: 'request body, read by its handler',

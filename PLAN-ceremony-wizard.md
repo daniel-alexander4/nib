@@ -603,17 +603,43 @@ Tasks:
 - T04 — tests: tier 2 for the structure and for typed values surviving a dismiss; tier 3 for the
   reader's page and for 1024×768.
 
-#### P03.S02 — the draft survives closing Nib
+#### P03.S02 — the draft survives closing Nib *(done 2026-09-07, v1.128.24)*
 Scope: the roster, recital and deadline persist locally before `convene` writes anything signed.
 Refs: D4.
 Acceptance: closing and reopening Nib restores all three; the draft is unsigned and per-machine;
 nothing about it reaches the network.
 
-**Deepdive due before this slice** — the plan's own standing caveat: *"the setup draft is a new
-persisted artifact this plan did not author. Where it lives, whether it needs the vault, and how it
-interacts with the mirror `convene` later writes should be dived before P03 rather than decided
-inside it."* The candidates are `localStorage`, a file under `~/nib/`, and the vault, and they differ
-on exactly the question D29 answers for key material.
+**(deepdive, 2026-09-07 — `deepdives/2026-09-07-p03s02-where-the-draft-lives.md`. It answers the
+plan's standing caveat, and one candidate is eliminated outright rather than on preference.)**
+
+**`localStorage` cannot meet the exit criterion at all.** It is keyed by ORIGIN, and
+`cmd/nib/main.go:94` binds `127.0.0.1:0` — *"a random port by design"*. A new port is a new origin is
+an empty store, so a draft kept there is gone on the restart the clause is about. A slice built on it
+would have passed every test that did not restart the process. (`grep -c localStorage web/app.js` →
+**0**: it would be a new mechanism as well as an unworkable one.)
+
+**The vault is where this app already keeps per-machine state** — `handleSettings` persists
+appearance, card hue, the update preference and recent highlight colours there. D29 says key material
+must be *in* the vault, not that nothing else may be.
+
+**And the privacy seat's own question settles the remaining choice.** Its question is always residue,
+and an abandoned draft leaves *who the user was about to transact with and what they were about to
+agree*. Under `~/nib/` that is plaintext beside the documents; in the vault it is encrypted at rest.
+
+**A dedicated store, not a `Settings` field**: `Settings` is read back through `/api/status`, which
+the client polls, so a form's contents there would ship on every poll. The vault already holds
+ceremony data in dedicated stores with their own doors, and a draft follows that shape with one
+difference — **a single slot, because it has no ceremony id yet**, which is also what gives S03 one
+door to clear.
+
+**It does not interact with the mirror**, which the caveat also asked: `convene` writes the record
+and the mirror at the moment the draft is consumed, and a draft has no id to collide on.
+
+Tasks:
+- T01 — a single-slot ceremony-draft store in the vault, with its own read, write and clear doors.
+- T02 — routes to save and load it, and the client saving on change and restoring on open.
+- T03 — tests, each probed red: a draft survives a restart; an empty draft is not stored; the
+  roster, recital and deadline all round-trip.
 
 #### P03.S03 — the draft is consumed exactly once
 Scope: a successful `convene` clears the draft and a failed one does not. Refs: D4.

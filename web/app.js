@@ -11910,6 +11910,93 @@ function showCeremonySheet(open) {
   els.viewerWrap.hidden = !!open;
 }
 
+// ── The convener's setup DRAFT (P03.S02, D4) ─────────────────────────────────────────────────
+//
+// **Read and written as one blob**, because the server neither parses nor validates it — what is in
+// a half-finished form is this file's business, and `convene` is the door that decides whether the
+// finished thing is a ceremony.
+//
+// **Saved on `change`, not on every keystroke.** A vault write is an encrypt-and-fsync of the whole
+// file; per-character it would be a write amplification the user pays for while typing a sentence.
+// `change` fires on blur and on a picker choice, which is exactly "the user finished with this
+// control" — and the abandonment case D4 is about is closing Nib, not crashing mid-word.
+function ceremonyDraftValues() {
+  // **`dataset.fingerprint` and not `value`** — the picker's own comment says *"the fingerprint
+  // travels here and is never rendered as text"*, so it is on the dataset. Reading `.value` finds
+  // the empty string on every row, which selects nobody and restores nobody, and does it silently:
+  // the recital and the deadline come back and the roster is quietly empty, which looks like it
+  // worked.
+  //
+  // **The CAPACITY comes with it.** Each row carries a `.cerpeercap` text input, and a roster
+  // restored without capacities is a roster that lost what each party is signing AS — which D20's
+  // capacity amendment makes part of the agreement rather than a label.
+  const roster = Array.from(document.querySelectorAll('#cerPeerPick .cerpeerrow'))
+    .map((row) => ({
+      fingerprint: row.querySelector('.cerpeerbox')?.dataset.fingerprint || '',
+      capacity: row.querySelector('.cerpeercap')?.value || '',
+      picked: !!row.querySelector('.cerpeerbox')?.checked,
+    }))
+    .filter((r) => r.fingerprint && (r.picked || r.capacity));
+  return {
+    intent: document.getElementById('cerIntent')?.value || '',
+    expires: document.getElementById('cerExpires')?.value || '',
+    iSign: !!document.getElementById('cerISign')?.checked,
+    roster,
+  };
+}
+
+// saveCeremonyDraft persists what is typed so far. Failures are SILENT here and that is deliberate:
+// the user is mid-form and has asked for nothing, so a toast about a bookkeeping row would interrupt
+// the thing it is trying to protect. The failure that matters — the draft not being there on the way
+// back in — is visible where it happens, because the form comes up empty.
+async function saveCeremonyDraft() {
+  try {
+    await apiFetch('/api/ceremony/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft: JSON.stringify(ceremonyDraftValues()) }),
+      unpinned: true,
+    });
+  } catch { /* see above */ }
+}
+
+// restoreCeremonyDraft puts a saved draft back into the form.
+//
+// **The roster is restored AFTER the picker is built**, or there are no checkboxes to tick — the
+// picker is filled from `/api/peers` and a restore that ran first would silently drop every party.
+async function restoreCeremonyDraft() {
+  let d = null;
+  try {
+    const res = await apiFetch('/api/ceremony/draft', { unpinned: true });
+    if (!res.ok) return;
+    const body = await res.json();
+    if (!body || !body.draft) return;
+    d = JSON.parse(body.draft);
+  } catch { return; }
+  if (!d) return;
+  const intent = document.getElementById('cerIntent');
+  const expires = document.getElementById('cerExpires');
+  const iSign = document.getElementById('cerISign');
+  if (intent && typeof d.intent === 'string') intent.value = d.intent;
+  if (expires && typeof d.expires === 'string') expires.value = d.expires;
+  if (iSign && typeof d.iSign === 'boolean') iSign.checked = d.iSign;
+  for (const entry of (Array.isArray(d.roster) ? d.roster : [])) {
+    if (!entry || !entry.fingerprint) continue;
+    // Matched on the dataset, which is where the picker puts it. A party who has since been
+    // unpinned has no row and is skipped — the draft is a convenience and must not resurrect a
+    // peer this machine no longer trusts.
+    const row = Array.from(document.querySelectorAll('#cerPeerPick .cerpeerrow'))
+      .find((r) => r.querySelector('.cerpeerbox')?.dataset.fingerprint === entry.fingerprint);
+    if (!row) continue;
+    const box = row.querySelector('.cerpeerbox');
+    const cap = row.querySelector('.cerpeercap');
+    if (box) box.checked = !!entry.picked;
+    if (cap && typeof entry.capacity === 'string') cap.value = entry.capacity;
+  }
+}
+
+document.getElementById('ceremonyConveneForm')?.addEventListener('change', () => { saveCeremonyDraft(); });
+
 function showCeremonyForm(which) {
   const e = cerEls();
   if (!e.convene || !e.accept) return;
@@ -12165,9 +12252,14 @@ function renderAccepted(d) {
 // The sheet's own Close, which is the same act as the form's Cancel and routes through one door.
 document.getElementById('cerSheetClose')?.addEventListener('click', () => { showCeremonyForm(null); });
 
-document.getElementById('ceremonyConveneBtn')?.addEventListener('click', () => {
+document.getElementById('ceremonyConveneBtn')?.addEventListener('click', async () => {
   showCeremonyForm('convene');
-  loadPeerPicker();
+  // **Awaited, and the restore runs after it.** `loadPeerPicker` fills `#cerPeerPick` from
+  // `/api/peers`; a restore that ran first would find no checkboxes and drop every party from the
+  // roster silently, leaving the recital and the deadline looking restored and the roster empty —
+  // which is the worst of the three outcomes, because it looks like it worked.
+  await loadPeerPicker();
+  await restoreCeremonyDraft();
 });
 document.getElementById('ceremonyAcceptBtn')?.addEventListener('click', () => showCeremonyForm('accept'));
 document.getElementById('cerConveneCancel')?.addEventListener('click', () => showCeremonyForm(null));
