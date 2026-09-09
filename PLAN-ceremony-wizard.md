@@ -682,11 +682,110 @@ though restored because `restoreCeremonyDraft` finds nothing and returns early. 
 clause — *"a second convene cannot reuse a consumed draft"* — is false with the server half working
 perfectly.
 
-#### P03.S04 — placing blocks leaves the sheet and returns
-Scope: signature-block placement leaves the sheet for the page and comes back with what was typed.
-Refs: D3.
+#### P03.S04 — leaving the sheet for the document, and coming back *(done 2026-09-08, v1.128.45)*
+Scope: ~~signature-block placement leaves the sheet for the page and comes back with what was
+typed.~~ **the setup sheet can be stepped out of to the document and re-entered without being
+rebuilt.** Refs: D3.
 Acceptance: leaving for the page and returning preserves the roster, recital and deadline; the sheet
 is re-entered rather than rebuilt.
+
+**(deepdive, 2026-09-08 — `deepdives/2026-09-08-p03s04-leaving-the-sheet-for-the-page.md`.)**
+
+**(reality-drift pin — D3's last clause names an act that does not exist in a ceremony, and the
+acceptance clauses survive the correction untouched.)** D3 says *"Placing signature blocks leaves the
+sheet for the page, where that panel already lives"*, and the scope sentence above was written from
+it. **In a ceremony nobody places a signature block.** `PlacementFor` is the one door onto "where
+does this party's block go" (`internal/p2p/cosign.go:107-119`) and inside a ceremony it is
+`ceremonyPlacement`, which puts each party's block *"on the signature page their ROSTER POSITION
+allocates, at that page's own index"* (`cosign.go:121-146`) — on pages `PrepareCeremonyDocument`
+appends for exactly that purpose (`internal/p2p/sigpages.go:199-224`). Three named searches confirm
+nothing else feeds it, and each is stated as it actually ran, because the search is the evidence:
+`conveneRequest` carries roster, intent, expires and `convenerSigns` and no placement
+(`internal/server/convene.go:40-52`); `grep -rniE 'flag|marker|widget' internal/ceremony/*.go`
+returns **28 hits, 18 of them outside tests**, and every one is the roster's `Signs` flag, the `me`
+file marker inside a ceremony directory, or the *signature* widget annot — never a signing flag; and
+`grep -rniE 'signingflag|signflag|/api/flags|collectFlags|overlayField' internal/ceremony/*.go
+internal/p2p/*.go` returns **zero**, which is the panel's own objects looked for by name. On the
+client `embedFlags` has three callers, all on save-and-flatten paths, and none is the convene path.
+
+*(The first version of this paragraph said that first search "returns only the signature widget annot
+and a `me` file". It returns 28 things. The conclusion held; the claim about the search did not, and
+a search quoted wrongly is not evidence.)*
+
+**What the panel D3 points at actually is.** `#flags` opens with its own sentence — *"Get a Sign /
+Date / Initial flag onto every blank the other person must fill, then email them the file"*
+(`web/index.html:163`). It is the prepare-and-email product. A convener sent there during setup would
+place flags **no ceremony party is ever asked to fill**, and would then receive auto-generated
+signature pages she did not ask for. So the excursion is built, and its destination is not that
+panel.
+
+**The conclusion D3 was reaching for survives, and it is what the acceptance clauses already say.**
+Neither clause mentions a flag or a block: they say *leaving for the page and returning* preserves
+what was typed, and that the sheet is re-entered rather than rebuilt. The sheet stands in place of
+the document (`showCeremonySheet`, `web/app.js`), so **any** setup work that needs the
+document needs this trip — reading the lease to write the recital, checking the file is the right
+one, and finishing markup **before** convening, which `internal/ceremony/convene.go:296-303` makes
+irreversible: *"Nothing may append after this line: page count and page content are both inside
+ContentDigest."* A pin rather than a strike-and-supersede, because the decision's conclusion and both
+acceptance clauses stand; it is the cited act that was wrong, which is the same shape as S01's pin.
+
+**(pin — the way back cannot live in the sidebar, and that was measured rather than preferred.)**
+`#sidebar.collapsed { display: none }` (`web/style.css:356`) and a crossing listener collapses it
+automatically below 899px (`sidebarNarrow`, `web/app.js`). So a return control in the Flags or Ceremony panel
+disappears when the user narrows the window mid-excursion, leaving a half-filled ceremony in memory
+with nothing on screen saying so. It goes **inside `#viewerWrap`** instead — the one surface that is
+present by definition while parked, since parked *is* `#viewerWrap` showing.
+
+**(pin — three things the grill proposed and the code refused.)** An auto-park on arming a marker
+fires on the **toggle-off** click too (the `.markers button` handler passes `null` when the lit button is
+clicked again), so a user putting a tool away would be ejected from the form. A `view.pdfDocument`
+guard on the step-out would be a **fourth** implementation of "may flags be placed now" beside the `.markers button`
+handler's `view.pdfDocument` toast, `reflectSignControls`'s disabled sweep and `flagsEditable()` — ADR-009's named failure — and with no flags button
+there is nothing to guard: stepping out with no document shows `#empty`'s *"Open a PDF to begin"*,
+which outlasts a 2.5-second toast. And `resumeCeremonySheet` does **not** write the sheet itself:
+`showCeremonyForm` is today the only writer of the sheet↔form pair, and a
+second one desynchronises them — reachable in six clicks, ending with a visible sheet whose only
+child is a hidden form.
+
+Tasks: *(written at slice-grill time, 2026-09-08, after the deepdive and two attack passes)*
+1. T01 — `ceremonySetupParked` plus `parkCeremonySheet` / `resumeCeremonySheet`, the resume routed
+   through the existing `showCeremonyForm('convene')` so no second writer of the sheet↔form pair
+   exists. `showCeremonyForm` clears the park and reflects it in the same breath, so the flag and
+   the control it drives cannot disagree.
+2. T02 — the two controls: `#cerSeeDoc` in the sheet HEAD beside Close (outside `<form>`, so a
+   defaulted `type="submit"` that would convene the ceremony is structurally impossible), and
+   `#cerSetupBar` inside `#viewerWrap` carrying the sentence and `#cerBackToSetup`.
+3. T03 — `#ceremonyConveneBtn` resumes instead of rebuilding while parked, so the two ways back are
+   one door; focus moves after the visibility flips, not before, and each leg is announced through
+   the existing `role="status"` toast.
+4. T04 — tests, each probed red. Tier 2 asserts the round trip makes **no** `/api/peers` and **no**
+   `/api/ceremony/draft` request, which is what "re-entered rather than rebuilt" means as a
+   behaviour rather than as a description; tier 3 drives it in a browser and collapses the sidebar
+   mid-excursion.
+5. T05 — seam inventory rows for the trip.
+
+**Divergence from the task list, recorded rather than absorbed (2026-09-08).** Two additions, both
+from review, both outside T01–T05.
+
+**The convene POST is now PINNED to the document the sheet was opened on, and this slice is what
+made that necessary.** `/api/ceremony/convene` has been in `pinning.test.mjs`'s MUTATING inventory
+since P07.S02a, with a comment naming this exact defect — *"an unpinned convene would commit a
+ceremony record into whichever tab the user switched to while it ran"* — and it was unpinned anyway,
+because `scanUnpinned` finds mutating calls *"preceded by an `await` in its own function"* and in
+`conveneFromPanel` the convene POST **is** the first await. The pause that lets the document change
+is not an await: it is the user filling in a form. `#tabstrip` is a sibling of the sheet and
+`showCeremonySheet` never touches it, so the switcher was always live behind the sheet — but before
+this slice the only ways out read as abandonment, and `parkCeremonySheet` now invites the user onto
+the page with the strip right there. ADR-001 in its own words: *no operation acts on a document it
+did not capture at its start.* Driven at tier 3 by closing the document mid-excursion, where a
+pinned convene is refused **409** and an unpinned one answers **404** — ADR-004's two statuses doing
+the discriminating.
+
+**The parked-setup bar outranks the page overlays (`z-index: 11`, not `#signBanner`'s 6).**
+`.viewerContainer` is positioned with `z-index: auto` and creates no stacking context, so `.ovl` (8),
+its variants (9) and `.shapemark` (10) paint in `#viewerWrap`'s context and are pointer-interactive.
+A stamp near the bottom-left covered "Back to setup" and took the click. `#signBanner` can afford 6
+because its button is a convenience; this bar carries the only route back.
 
 ### P04 — Scale and repair
 **Goal.** The rail at a full roster, and the operational steps the design has never had.

@@ -1,0 +1,24 @@
+--- a/web/index.html
++++ b/web/index.html
+@@ -496,6 +496,10 @@
+            P06.S03's, computed by the one function the server's L3 check uses, so building a second
+            rule here would be a duplicate with a one-slice lifetime. -->
+       <div id="ceremony" class="panel">
++        <div id="cerSetupBar" role="status" aria-live="polite" hidden>
++        <span>Ceremony setup is open — nothing has been convened yet.</span>
++        <button id="cerBackToSetup" type="button">Back to setup</button>
++      </div>
+         <div class="ceractions">
+           <button id="ceremonyConveneBtn" type="button">Convene a ceremony…</button>
+           <button id="ceremonyAcceptBtn" type="button">Accept an invitation…</button>
+@@ -629,10 +633,6 @@
+            role="status" because it appears without a user action on the far side of a transition
+            the user did ask for — the same reasoning as #staleBanner, and polite for the same reason:
+            assertive is spent on "you are about to lose a signature". -->
+-      <div id="cerSetupBar" role="status" aria-live="polite" hidden>
+-        <span>Ceremony setup is open — nothing has been convened yet.</span>
+-        <button id="cerBackToSetup" type="button">Back to setup</button>
+-      </div>
+       <div id="signBanner" hidden>
+         <span id="signMsg"></span>
+         <button id="signDone" hidden>Finish &amp; sign</button>

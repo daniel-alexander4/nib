@@ -1789,10 +1789,55 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   padding: 10px 16px; border-bottom: 1px solid var(--surface1);
 }
 .sheethead h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.sheetheadbtns { display: flex; gap: 6px; }
 .sheetclose {
   background: none; border: 1px solid var(--surface1); color: var(--subtext1);
   border-radius: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer;
 }
 .sheetclose:hover { border-color: var(--blue); color: var(--blue); }
+/* Focus moves on its own across this slice's two transitions — out to #cerBackToSetup, back to
+   #cerIntent — so the ring is the only evidence the user has that anything happened. The UA default
+   still applies (nothing here suppresses it), so this is an ENHANCEMENT rather than the thing
+   standing between a keyboard user and a lost focus: the same --blue the tab strip's ring uses, at
+   a wider offset because these two sit against a filled surface rather than a bar edge. */
+.sheetclose:focus-visible, #cerBackToSetup:focus-visible {
+  outline: 2px solid var(--blue); outline-offset: 2px;
+}
+
+/* The parked-setup bar (P03.S04). Bottom-LEFT, which needs no NEW collision rule: the two banners
+   share the top anchor with a single `.stacked` offset between them and no third value, and the
+   signing-locked badge takes the top right — so a third top banner would have turned a one-boolean
+   stacking rule into a three-way one, in shared code this slice has no business in.
+
+   **It does overlap #toast, and the first version of this comment said it did not.** #toast is
+   `position: fixed` at bottom-CENTRE of the VIEWPORT while this is bottom-left of the VIEWER with
+   `max-width: 70%`, and measured in Chromium at 1280, 1024 and 900 the two rects intersect every
+   time — the toast winning at `z-index: 300`. The answer is not to move the bar: parkCeremonySheet
+   no longer fires a toast, so the only remaining collision is with an unrelated toast the user
+   raised herself, transiently, which is what every other surface in this app already lives with. */
+#cerSetupBar {
+  /* z-index 11, ABOVE the page overlays, and that is a deliberate departure from #signBanner's 6.
+     `.viewerContainer` is positioned with `z-index: auto` and so creates no stacking context, which
+     puts every overlay in #viewerWrap's context: `.ovl` 8, the stamp/box/shape/note/dropdown
+     variants 9, `.shapemark` 10. At 6 a stamp or a note near the bottom-left of the visible page
+     covers "Back to setup" AND takes the click, because those overlays are pointer-interactive.
+     #signBanner can afford 6 — its button is a convenience. This bar carries the ONLY route back to
+     a half-filled ceremony, so it outranks them: an occluded overlay is recovered by scrolling, an
+     unreachable way back is not. Still below the modals (110), the auth overlay (100) and the
+     toast (300), which are all things that should cover it. */
+  position: absolute; bottom: 14px; left: 14px; z-index: 11;
+  display: flex; align-items: center; gap: 12px;
+  padding: 7px 10px 7px 14px; border-radius: 8px;
+  background: var(--surface0); color: var(--text); font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--surface1); border-left: 3px solid var(--mauve);
+  max-width: 70%;
+}
+#cerSetupBar #cerBackToSetup {
+  padding: 5px 14px; font-weight: 600; border-radius: 4px; cursor: pointer;
+  background: var(--surface1); color: var(--text); border: 1px solid var(--surface2);
+  white-space: nowrap;
+}
+#cerSetupBar #cerBackToSetup:hover { background: var(--surface2); }
 /* The form itself gets room rather than a 200px column — the whole point of the sheet. */
 .sheetbody { padding: 16px; max-width: 720px; }

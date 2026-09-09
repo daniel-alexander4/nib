@@ -547,7 +547,26 @@
       <div id="ceremonySheet" class="sheet" hidden>
         <div class="sheethead">
           <h2>Convene a ceremony</h2>
-          <button id="cerSheetClose" type="button" class="sheetclose">Close</button>
+          <!-- The two ways out of the sheet, together, because they are the same kind of act
+               (P03.S04, D3). "See the document" PARKS setup — the sheet goes away, the page comes
+               back, and nothing typed is cleared or re-fetched; Close ABANDONS it, and the next
+               entry rebuilds from the saved draft.
+
+               **In the head and NOT inside <form id="ceremonyConveneForm">.** A <button> in a form
+               defaults to type="submit", and this form's submit handler convenes the ceremony —
+               posts the roster, renders invitations and consumes the draft, irreversibly. Both
+               buttons here carry type="button" as well, but being outside the form is what makes
+               the mistake unrepresentable rather than one attribute away.
+
+               **Why the sheet needs this at all**: it stands IN PLACE of the document, so reading
+               the lease to write the recital, checking the file is the right one, and finishing any
+               markup all need the page. The markup especially — convening appends the ceremony and
+               signature pages and takes the hash after them, and internal/ceremony/convene.go says
+               "Nothing may append after this line". -->
+          <div class="sheetheadbtns">
+            <button id="cerSeeDoc" type="button" class="sheetclose">See the document</button>
+            <button id="cerSheetClose" type="button" class="sheetclose">Close</button>
+          </div>
         </div>
         <div class="sheetbody">
           <!-- Convene (P06.S04). The roster is PICKED from the peers this machine has already
@@ -591,6 +610,28 @@
         <span id="staleMsg"></span>
         <button id="staleRetry" class="primary">Try again</button>
         <button id="staleReload" class="primary" hidden>Reload from disk</button>
+      </div>
+      <!-- The parked-setup bar (P03.S04, D3). It says a ceremony setup is open and offers the way
+           back into it.
+
+           **Inside #viewerWrap and not in the sidebar, and that is measured rather than preferred.**
+           `#sidebar.collapsed { display: none }` (style.css) and a crossing listener collapses the
+           sidebar automatically below 899px (app.js) — so a return control in the Flags or Ceremony
+           panel vanishes when the user narrows the window mid-excursion, leaving a half-filled
+           ceremony in memory with nothing on screen saying so. #viewerWrap is the one surface
+           present by definition while parked, because parked IS #viewerWrap showing.
+
+           **Bottom-LEFT, which collides with nothing.** The two existing banners share `top: 10px`
+           with a single `.stacked` offset between them and no third value; the signing-locked badge
+           takes the top right; #toast is bottom-CENTRE. A third top banner would have made a
+           one-boolean stacking rule a three-way one, in shared code this slice has no business in.
+
+           role="status" because it appears without a user action on the far side of a transition
+           the user did ask for — the same reasoning as #staleBanner, and polite for the same reason:
+           assertive is spent on "you are about to lose a signature". -->
+      <div id="cerSetupBar" role="status" aria-live="polite" hidden>
+        <span>Ceremony setup is open — nothing has been convened yet.</span>
+        <button id="cerBackToSetup" type="button">Back to setup</button>
       </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
