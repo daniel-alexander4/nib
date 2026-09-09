@@ -87,6 +87,10 @@ const PUBLISHED = [
   { type: 'imageMeta', readers: ['web/app.js'] },
   { type: 'recentEntry', readers: ['web/app.js'] },
   { type: 'sessionStatus', readers: ['web/app.js'] },
+  // The window stream's one message (P01.S05/S06). Read by app.js's `armed` listener, which is
+  // what feeds the close prompt and Quit's wording — a field nobody read here would mean a user
+  // told nothing about a ceremony their close would end.
+  { type: 'armedEvent', readers: ['web/app.js'] },
   { type: 'receivedInfo', readers: ['web/app.js'] },
   // The sticky session-failure surface (P08.S08, C03). It sat in NEITHER table from v1.117.243
   // until v1.117.262 — so tier 2 was red for five commits and this scan was the thing saying so.

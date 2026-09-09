@@ -83,6 +83,7 @@ const els = {
   findToggle: $('findToggle'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
+  quitBtn: $('quitBtn'),
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), closeAllBtn: $('closeAllBtn'),
   ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
@@ -11208,6 +11209,11 @@ refreshStatus();
 // one round trip at launch.
 let ceremonyArmed = false;
 
+// ceremonyArmedWhat is what the armed ceremony is FOR, in the convener's own words — its intent.
+// Empty for a manual co-signing arm, which has no ceremony to name; Quit says so in its own words
+// rather than printing an empty string (P01.S06).
+let ceremonyArmedWhat = '';
+
 // closeWouldLose is the ONE door the close prompt turns on (P01.S05, D5/D8).
 //
 // **One door and not one test per condition**, which is the slice's own third acceptance clause.
@@ -11232,6 +11238,36 @@ window.addEventListener('beforeunload', (e) => {
   e.preventDefault();
   e.returnValue = ''; // required by older browsers to trigger the prompt at all
 });
+
+// quitNib ends the process, and its modal is where D5's real wording finally lives.
+//
+// **The browser would not show these words on a close, which is the whole reason Quit exists.**
+// `beforeunload` can require confirmation and cannot say why; this can, so it names what it is
+// about to end — the ceremony by what it is FOR and each unsaved document by its file name, never
+// "you have unsaved work". A user cannot decide about a generality.
+//
+// **No confirmation when there is nothing to lose**, on the same argument as the close prompt: a
+// dialog on every quit trains the user to dismiss it, and then it is worth nothing on the quit that
+// mattered.
+//
+// The route only signals; the teardown is `run()`'s, unchanged, which is D6. And the window is left
+// to the browser: a process that has gone takes its own window with it.
+async function quitNib() {
+  const lose = [];
+  if (ceremonyArmed) {
+    lose.push(ceremonyArmedWhat
+      ? `the ceremony “${ceremonyArmedWhat}” is still running`
+      : 'a co-signing session is still armed');
+  }
+  for (const v of editedViews()) {
+    lose.push(`“${v.originalName || 'an untitled document'}” has unsaved changes`);
+  }
+  if (lose.length && !confirm(`Quit Nib? ${lose.join(', and ')}. Quitting ends ${lose.length > 1 ? 'them' : 'it'}.`)) {
+    return;
+  }
+  try { await fetch('/api/quit', { method: 'POST' }); } catch { /* the process is going; a dropped response is the expected shape */ }
+}
+els.quitBtn.onclick = () => quitNib();
 
 // One connection, opened at launch and never closed by us. Nib counts the windows
 // holding it; P01.S04 will read that count to decide the process has no reason to
@@ -11258,7 +11294,16 @@ window.addEventListener('beforeunload', (e) => {
 try {
   const windowStream = new EventSource('/api/window');
   // The server pushes this on connect and on every change — never on a clock. See the route.
-  windowStream.addEventListener('armed', (e) => { ceremonyArmed = e.data === 'true'; });
+  windowStream.addEventListener('armed', (e) => {
+    try {
+      const v = JSON.parse(e.data);
+      ceremonyArmed = !!v.armed;
+      ceremonyArmedWhat = v.what || '';
+    } catch {
+      // A frame this build cannot parse must not be read as "nothing is armed": that is the
+      // direction that loses work silently. Leave the last known state alone.
+    }
+  });
 } catch (e) {
   // A window that cannot declare itself still works; it only fails to keep nib
   // alive, which is the safe direction to fail in.

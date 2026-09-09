@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -144,6 +145,17 @@ const (
 	idleExitCauseHandoff = "a hand-off"
 )
 
+// armedEvent is what the window stream pushes: whether this machine is armed, and what for.
+//
+// **A JSON object rather than the bare bool P01.S05 shipped**, because S06's acceptance clause is
+// that the modal names the ceremony specifically. `What` is empty for a manual co-signing arm,
+// which has no ceremony to name, and the client says so in its own words rather than printing an
+// empty string.
+type armedEvent struct {
+	Armed bool   `json:"armed"`
+	What  string `json:"what,omitempty"`
+}
+
 // idleExitTimer is the grace and the two counters D4 asks to be kept apart.
 //
 // **Two counters, not one**, in D4's own words: "they are counted separately because they fail
@@ -156,6 +168,7 @@ type idleExitTimer struct {
 	timer     *time.Timer
 	armedAt   time.Time
 	fired     chan struct{}
+	exited    bool // RequestExit is idempotent: two causes can race, and close() twice panics
 	byWindow  atomic.Uint64
 	byHandoff atomic.Uint64
 }
@@ -167,6 +180,40 @@ type idleExitTimer struct {
 // defers `stop()` and `instance.Remove(cfgDir)` — which is why `main()` is `os.Exit(run())` at all.
 // A third *cause* that called teardown itself would be a third teardown, and the failure that
 // prevents is the stale instance record returning by a new door (ADR-009).
+// Exit causes, for the log line that says WHY this process is going.
+const (
+	exitCauseLastWindow = "the last window closed"
+	exitCauseQuit       = "you chose Quit"
+)
+
+// RequestExit is the ONE door onto "this process should exit" (P01.S06, D6).
+//
+// **A second closer of this channel would be a second exit path in everything but name.** D6's
+// rule is that every exit path runs the same teardown in the same order, and the way that is kept
+// true is that nothing tears down for itself: causes signal here, `run()` selects, and the teardown
+// below it is the only one there has ever been. The grace (P01.S04) was closing the channel
+// directly until Quit needed to as well — which is exactly when a rule like this earns its keep.
+//
+// Idempotent, because two causes can genuinely race: a user pressing Quit as the grace elapses is
+// ordinary, not pathological, and `close` on a closed channel panics.
+func (s *Server) RequestExit(cause string) {
+	s.idle.mu.Lock()
+	defer s.idle.mu.Unlock()
+	if s.idle.exited {
+		return
+	}
+	s.idle.exited = true
+	if s.idle.fired == nil {
+		s.idle.fired = make(chan struct{})
+	}
+	log.Printf("%s%s", exitingMsg, cause)
+	close(s.idle.fired)
+}
+
+// exitingMsg is the observable for WHY the process is exiting — the seam a user's log carries when
+// Nib went away and they want to know what decided that.
+const exitingMsg = "exiting: "
+
 func (s *Server) IdleExit() <-chan struct{} {
 	s.idle.mu.Lock()
 	defer s.idle.mu.Unlock()
@@ -205,7 +252,6 @@ func (s *Server) armIdleExitGrace() {
 		s.idle.fired = make(chan struct{})
 	}
 	s.idle.armedAt = time.Now()
-	ch := s.idle.fired
 	log.Printf("%s %s", idleExitGraceMsg, idleExitGrace)
 	s.idle.timer = time.AfterFunc(idleExitGrace, func() {
 		defer safe.Recover("idle exit")
@@ -221,7 +267,7 @@ func (s *Server) armIdleExitGrace() {
 		s.idle.timer = nil
 		s.idle.mu.Unlock()
 		log.Printf("%s", idleExitFiringMsg)
-		close(ch)
+		s.RequestExit(exitCauseLastWindow)
 	})
 }
 
@@ -348,7 +394,16 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// no timeouts (cmd/nib/main.go).
 	ctx := r.Context()
 	for {
-		if _, err := w.Write([]byte("event: armed\ndata: " + strconv.FormatBool(s.sess.Armed()) + "\n\n")); err != nil {
+		// **What is armed, not merely whether.** "Names a live ceremony specifically, not
+		// generically" (P01.S06) cannot be met from a bool, and the name is the ceremony's own
+		// INTENT — the convener's words for what this proceeding is — never a fingerprint, which
+		// is the panel's standing rule about naming people.
+		armed, what := s.sess.ArmedWhat()
+		payload, merr := json.Marshal(armedEvent{Armed: armed, What: what})
+		if merr != nil {
+			return
+		}
+		if _, err := w.Write(append(append([]byte("event: armed\ndata: "), payload...), '\n', '\n')); err != nil {
 			return
 		}
 		flusher.Flush()
@@ -358,4 +413,21 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		case <-s.sess.armedChanges():
 		}
 	}
+}
+
+// handleQuit is the explicit Quit action (P01.S06, D5/D6).
+//
+// **Guarded by `requirePublicLoopback` and NOT `requireUnlocked`**, which is D3's argument reaching
+// one route further: a window sitting on the unlock screen is a real window, and a locked Nib is
+// still a Nib its user wants to quit. There is no CSRF token before the vault unlocks, so a
+// loopback Origin is the only write guard this route can apply — the same one `/api/handoff` and
+// the window stream itself rely on.
+//
+// **It decides nothing about what would be lost.** The confirmation is the client's, because the
+// client is where the user is and where the wording lives (D5); this end is the mechanism. A
+// server that second-guessed the answer would be a second place deciding, which is the shape the
+// close prompt's one door exists to refuse.
+func (s *Server) handleQuit(w http.ResponseWriter, r *http.Request) {
+	s.RequestExit(exitCauseQuit)
+	w.WriteHeader(http.StatusNoContent)
 }

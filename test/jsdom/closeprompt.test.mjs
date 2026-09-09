@@ -42,7 +42,7 @@ test('a ceremony armed DOES arm the prompt', () => {
   // **The other half, and it was untestable at this tier until boot stubbed EventSource.** jsdom
   // has none, so app.js's constructor threw, its own try/catch swallowed it, and `ceremonyArmed`
   // could never leave its initial false — a green test that had never met the case.
-  const delivered = h.pushWindowEvent('armed', 'true');
+  const delivered = h.pushWindowEvent('armed', JSON.stringify({ armed: true }));
   assert.ok(
     delivered,
     'no window stream was listening, so this pushed nothing and the assertion below would pass '
@@ -58,7 +58,7 @@ test('a ceremony armed DOES arm the prompt', () => {
   );
 
   // And it comes back down, or the prompt sticks on for the life of the window after one ceremony.
-  h.pushWindowEvent('armed', 'false');
+  h.pushWindowEvent('armed', JSON.stringify({ armed: false }));
   const after = new h.window.Event('beforeunload', { cancelable: true });
   h.window.dispatchEvent(after);
   assert.equal(
@@ -120,4 +120,50 @@ test('the armed state comes from the window stream, not from a poll', () => {
     'the armed state is polled on a timer. It rides the socket every window already holds, on '
       + 'change and never on a clock — a new timer is the cost D1 refused for the window signal.',
   );
+});
+
+// P01.S06 — Quit's modal names what it will end, specifically.
+//
+// D5's shape is that `beforeunload` can require confirmation and cannot say why, so the real
+// wording lives here. The clause is "names a live ceremony and an unsaved document SPECIFICALLY,
+// not generically" — a user cannot decide about "you have unsaved work".
+test('Quit names the ceremony and the document, and does not prompt for nothing', async () => {
+  const src = APP_SRC.slice(APP_SRC.indexOf('async function quitNib()'));
+  const body = src.slice(0, src.indexOf('\n}\n'));
+  assert.ok(body.length > 100, 'quitNib did not parse out of app.js');
+
+  // Named by the ceremony's own words, and by each document's own name.
+  // **Interpolated into the MESSAGE, not merely mentioned.** The first version of this asserted
+  // `body.includes('ceremonyArmedWhat')` and stayed green against a mutation that removed the name
+  // from the sentence while leaving the variable in the ternary that chooses it — a test that
+  // checked the word was in the file rather than in the text the user reads.
+  assert.ok(
+    /\$\{ceremonyArmedWhat\}/.test(body),
+    'Quit mentions ceremonyArmedWhat but does not put it in the sentence. "A ceremony is running" '
+      + 'is a generality, and the clause asks for the specific one — its intent, in the '
+      + 'convener\'s words.',
+  );
+  assert.ok(
+    /originalName/.test(body),
+    'Quit does not name the unsaved documents. "You have unsaved work" is the generality the '
+      + 'clause refuses.',
+  );
+  // Every view, not the active one — same reason as the close prompt.
+  assert.ok(
+    body.includes('editedViews()'),
+    'Quit asks about the active view only, so the other documents\' unsaved work goes unnamed and '
+      + 'unmentioned — the defect app.js:3128 records for Close-All.',
+  );
+
+  // **Nothing to lose does not prompt**, on D5's own argument: a dialog on every quit trains the
+  // user to dismiss it, and then it is worth nothing on the quit that mattered.
+  const h2 = await boot({});
+  let confirmed = 0;
+  h2.window.confirm = () => { confirmed += 1; return false; };
+  // Nothing armed, nothing edited: the route is called with no dialog.
+  assert.ok(
+    /if \(lose\.length && !confirm/.test(body),
+    'Quit confirms unconditionally. A dialog on every quit trains the user to dismiss it (D5).',
+  );
+  assert.equal(confirmed, 0, 'sanity: the stub was not called during boot');
 });
