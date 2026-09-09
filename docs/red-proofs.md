@@ -5017,3 +5017,34 @@ description's; and the size clamp, invisible because every fixture used a size t
 all three branches unchanged.
 
 `recorded` 399 → 401.
+
+## P01.S02 — two more, and both record an outcome the plan NAMED as the fix
+
+`a-wrapped-edit-grows-out-of-its-box` and `an-edit-that-does-not-fit-cannot-be-saved`.
+
+The slice implements the overflow ladder P01.S01 made measurable. The plan named three
+outcomes — shrink, wrap, refuse — and **all three were wrong as written**, which is worth
+recording because two of them read as obviously correct.
+
+**Wrap.** *"Wrap within the box"* is unavailable in the common case, measured: two lines of
+12pt Helvetica are 27.74pt against the 18pt a 20pt-tall box leaves, and `position:bl` grows
+the block upward over the previous line of text. Wrapping a one-line box trades a horizontal
+overrun for a vertical one, and the vertical one collides with content rather than margin.
+
+**Refuse.** Implemented as an HTTP refusal this is a data-loss-shaped bug. `/api/bake` is what
+every save, print, flatten, export and both signature paths run through — **24 call sites** —
+and the client aborts the whole operation on a bake that is not OK — so refusing one over-long edit makes the
+document unsaveable. The outcome became *stamp and report*, on a response header, because the
+body of that route is the PDF and 24 call sites read it as bytes.
+
+**Shrink** was the third, and its floor did not exist: `stampStyle` turned 5, 4 and 1 into 8,
+so a loop walking down from 7 got a LARGER size back and never converged. That one is guarded
+by `TestShrinkStopsAtTheFloorAndNeverJumpsUp` rather than by a row here, because it is an
+internal discontinuity rather than a behaviour a user meets.
+
+A fourth mutation is recorded in the slice's inventory section instead of here: the boundary
+comparisons were exact, and a box built as `y0 + inset + h` measures back as
+41.619999999999997 for an h of 41.62 — so text occupying exactly its box reported as
+overrunning, and which way it fell depended on how the caller reached the number.
+
+`recorded` 401 → 403.

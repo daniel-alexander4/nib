@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01.S01 done; P01.S02 next. `/createcode` drives it from P01.
+**Status: building.** P01.S01-S02 done; P01.S03 next. `/createcode` drives it from P01.
 
 ---
 
@@ -223,12 +223,56 @@ Acceptance:
 - A red proof: removing the measurement turns the overflow assertion red.
 - No second width implementation is introduced — the guard greps for one.
 
-#### P01.S02 — decide and implement the overflow behaviour
+#### P01.S02 — decide and implement the overflow behaviour *(done 2026-09-09, v1.128.65)*
 Scope: shrink-to-fit down to the existing 6pt floor, then wrap within the box, then refuse with a
 sentence naming what happened. Refs: D1, law 3.
+
+**Pinned 2026-09-09 by the slice's grill — the slice's purpose holds and ALL THREE of its named
+outcomes were wrong.** Two of the three read as obviously correct, which is why they are recorded
+rather than quietly changed:
+
+- **"Wrap within the box" is unavailable in the common case.** Measured: two lines of 12pt
+  Helvetica occupy 27.74pt against the 18pt a 20pt-tall box leaves after the anchor inset, and
+  pdfcpu's `position:bl` anchors the block at the BOTTOM, so extra lines grow **upward** over
+  whatever is above — on a text document, the previous line. A box drawn around one line of text
+  has room for one line. Wrap is now **gated on measured vertical room**, and is the fallback for
+  what shrinking cannot reach rather than the second rung for everything.
+- **"The existing 6pt floor" did not exist.** `stampStyle` turned 5, 4 and 1 into **8**, so a
+  shrink loop stepping down from 7 got a LARGER size back and never converged. It is a
+  degenerate-input guard, not a legibility floor. `stampFloorPt` is now the floor and the clamp is
+  written against it.
+- **"Refuse" cannot mean refusing the request.** `/api/bake` is what every save, print, flatten,
+  export, PDF/A conversion and both signature paths run through — **24 call sites** in
+  `web/app.js` — and the client's own rule there is that a bake which is not OK **aborts the whole
+  operation**. A 409 would make a document carrying one over-long edit impossible to save, print or
+  sign at all. The outcome is **stamp and report**, on an `X-Nib-Fit` response header, because that
+  route's body is the PDF.
+- **The comparisons needed a tolerance.** A box built as `y0 + inset + h` measures back as
+  41.619999999999997 for an h of 41.62, so text occupying exactly its box reported as overrunning
+  and which way it fell depended on how the caller reached the number. `fitTolerancePt` is 0.01pt —
+  1/7000 inch, below anything visible and above double-precision noise.
+
+Tasks:
+- T01 — `stampFloorPt`; `stampStyle`'s clamp written against it so a shrink can land on the floor.
+- T02 — `mdpdf.CoreLineHeight`, guarding pdfcpu's **opposite** failure: `font.LineHeight` returns a
+  silent **0** on an unlisted font where `font.CharWidth` panics. A zero is law 2's exact defect —
+  `N * 0 <= height` is true for every N, so any number of lines reports as fitting.
+- T03 — `mdpdf.WrapCore`: the ONE line-breaking door, adapting a plain string into the existing
+  `wrapWords` engine rather than growing a second greedy wrapper (law 4, ADR-009).
+- T04 — `FitOutcome` (as-drawn / shrunk / wrapped / overran), `resolveFit`'s ladder, `Fit.Outcome`
+  and `Fit.StampedPt`.
+- T05 — `X-Nib-Fit` on the bake response; `Fit`'s JSON tags arrive WITH their marshaller.
+- T06 — the assertions, 9 mutations, 2 red proofs, `recorded` 401 → 403.
+
 Acceptance:
-- Each of the three outcomes is reachable and asserted with a fixture that produces it.
-- The refusal names the cause; it does not toast a generic failure.
+- Each of the four outcomes is reachable and asserted with a fixture that produces it **and cannot
+  produce the others**.
+- Wrap fires only where the wrapped lines fit the box's measured height, driven from both sides of
+  the boundary with the same text.
+- Shrink stops at the floor and never jumps up, probed at every size from 1 to 20.
+- A bake whose text cannot be made to fit still returns **200 with a whole PDF**, and names the
+  cause per field.
+- The cause is per-field and per-reason, never a lumped count.
 
 #### P01.S03 — the client agrees with the server
 Scope: the on-screen overlay reflects the same fit decision, so the preview stops disagreeing with

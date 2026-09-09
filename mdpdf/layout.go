@@ -62,6 +62,69 @@ func CoreWidth(text, fontName string, size int) float64 {
 	return font.TextWidth(encodedWidth(text), fontName, size)
 }
 
+// CoreLineHeight is the baseline-to-baseline distance for text set in a Base-14
+// CORE font at size pt — the height one stamped line occupies.
+//
+// **It exists beside CoreWidth for the same reason, and guards the OPPOSITE
+// failure.** pdfcpu's two metric APIs fail in different directions on a font it
+// does not carry: `font.CharWidth` PANICS, and `font.LineHeight` returns a silent
+// **0**. Measured 2026-09-09 — `font.LineHeight("Arial", 12)` is `0` with no
+// recover triggered.
+//
+// A zero here is worse than a panic, and it is exactly what this project's law 2
+// forbids: a caller asking "do N lines fit this box" computes `N * 0 <= height`,
+// which is true for every N, so an unbounded number of lines reports as fitting.
+// The panic is loud; this is silent and wrong.
+//
+// Core fonts only, and callers reach it with an allowlisted name — the same
+// contract CoreWidth states. Nothing here can make an unlisted name safe, so the
+// coercion belongs at the caller's door, not behind a zero-check here that would
+// only convert one wrong answer into another.
+func CoreLineHeight(fontName string, size int) float64 {
+	return font.LineHeight(fontName, size)
+}
+
+// WrapCore breaks text into lines no wider than maxW points when set in a Base-14
+// core font at size pt, and is the ONE line-breaking door for callers outside this
+// package.
+//
+// It exists so that `internal/pdfops`, which must fit a stamped field to the box a
+// user drew, does not grow a second greedy wrapper beside this one. That is the
+// ADR-009 defect this repo has already paid for twice, and `PLAN-text-reflow.md`'s
+// law 4 names it: a rule holding at more than one call site is written once and
+// every site calls it. The engine is `wrapWords`/`splitWord` below, unchanged —
+// this only adapts a plain single-styled string into and out of the fragment model
+// that engine speaks.
+//
+// Semantics come from that engine and are worth stating because a caller sees only
+// strings: breaks happen between words; a single word wider than maxW is hard-split
+// rather than allowed to overrun; existing newlines in text are honoured as forced
+// breaks and each segment is wrapped independently.
+func WrapCore(text, fontName string, size int, maxW float64) []string {
+	sty := style{font: fontName, size: size}
+	var out []string
+	for _, seg := range strings.Split(text, "\n") {
+		var words []word
+		for _, f := range strings.Fields(seg) {
+			words = append(words, word{frags: []frag{{text: f, sty: sty}}})
+		}
+		if len(words) == 0 {
+			out = append(out, "")
+			continue
+		}
+		for _, ln := range wrapWords(words, maxW) {
+			var parts []string
+			for _, w := range ln {
+				for _, f := range w.frags {
+					parts = append(parts, f.text)
+				}
+			}
+			out = append(out, strings.Join(parts, " "))
+		}
+	}
+	return out
+}
+
 // leading is the baseline-to-baseline distance for lines set in this style.
 func (s style) leading() float64 { return float64(s.size) * 1.35 }
 
