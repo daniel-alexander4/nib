@@ -7736,7 +7736,7 @@ async function addEdit(hit, frac) {
   const bx0 = frac[0] * pageW, bx1 = frac[2] * pageW;
   const byTop = (1 - frac[1]) * pageH, byBot = (1 - frac[3]) * pageH; // byBot < byTop
 
-  let text = '', size = (byTop - byBot) * 0.8, font = 'Helvetica';
+  let text = '', size = (byTop - byBot) * 0.8, font = 'Helvetica', baseFont = '';
   try {
     const tc = await page.getTextContent();
     const picked = [];
@@ -7753,8 +7753,21 @@ async function addEdit(hit, frac) {
       text = picked.map((p) => p.str).join('').replace(/\s+/g, ' ').trim();
       const dom = picked.slice().sort((a, b) => b.str.length - a.str.length)[0]; // the dominant run sets the style
       size = dom.size || size;
+      // **`commonObjs` carries the document's own BaseFont, and `styles` does not.**
+      // `tc.styles[...].fontFamily` is a CSS GENERIC — measured: "monospace" for a
+      // Courier document and "sans-serif" for a Helvetica-Bold one — so on its own it
+      // can only ever produce a family guess. `commonObjs.get(fontName).name` is the
+      // real thing ("Courier", "Helvetica-Bold"); it lives on the FontFaceObject's
+      // prototype, and it is populated by RENDERING, not by getTextContent. That is
+      // fine here and worth stating: a user drags an edit box over a page they are
+      // looking at, so the page has been painted by the time this runs.
       let name = tc.styles?.[dom.fontName]?.fontFamily || '';
       try { if (page.commonObjs.has(dom.fontName)) name += ' ' + (page.commonObjs.get(dom.fontName)?.name || ''); } catch { /* font not resolved */ }
+      // Kept, where it used to be discarded the moment classifyFont had read it. The
+      // core-font guess is still what gets STAMPED — pdfcpu can set nothing else — but
+      // the real name is what says whether that substitution makes the width
+      // measurement exact, near enough, or a guess (D9, /pending 459's neighbour G4).
+      baseFont = name.trim();
       font = classifyFont(name);
     }
   } catch { /* image-only page: no text layer */ }
@@ -7763,7 +7776,7 @@ async function addEdit(hit, frac) {
   // Widen the cover a touch so ascenders/descenders of the original are hidden.
   const my = 0.15 * (frac[3] - frac[1]), mx = 0.01 * (frac[2] - frac[0]);
   const coverFrac = [Math.max(0, frac[0] - mx), Math.max(0, frac[1] - my), Math.min(1, frac[2] + mx), Math.min(1, frac[3] + my)];
-  const f = makeEditField(frac, { page: n, pageW, pageH, text, size, color, bg, font, coverFrac }, pv, owner);
+  const f = makeEditField(frac, { page: n, pageW, pageH, text, size, color, bg, font, baseFont, coverFrac }, pv, owner);
   f.el.focus();
   f.el.select();
 }
@@ -7771,7 +7784,7 @@ async function addEdit(hit, frac) {
 function makeEditField(frac, opts, pv, owner = view) {
   const f = {
     page: opts.page, frac, pageW: opts.pageW, pageH: opts.pageH, kind: 'edit',
-    font: opts.font, size: opts.size, color: opts.color, bg: opts.bg, coverFrac: opts.coverFrac,
+    font: opts.font, baseFont: opts.baseFont || '', size: opts.size, color: opts.color, bg: opts.bg, coverFrac: opts.coverFrac,
   };
   const el = document.createElement('input');
   el.type = 'text';
@@ -9922,7 +9935,7 @@ function collectFieldsWithSources(owner = view) {
     } else if (f.kind === 'edit' && f.el.value.trim() !== '') {
       // Cover-and-replace: carry the recognized font/size/colour so the bake
       // matches the original run. (An emptied edit is an erase — cover only.)
-      fields.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value, font: f.font, size: f.size, color: f.color });
+      fields.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value, font: f.font, baseFont: f.baseFont || '', size: f.size, color: f.color });
       sources.push(f);
     }
   }
@@ -9937,6 +9950,11 @@ const FIT_WORDS = {
   wrapped: 'wrapped onto more than one line',
   overran: 'too long for the box',
 };
+// Nib will not shrink text below three quarters of the size it was typed at — past
+// that the replacement stops reading as the line it replaced, and silently resizing
+// an executed document is worse than an overrun the user can see. So a very long
+// replacement is reported rather than shrunk, and this is the sentence that says so.
+const FIT_OVERRAN_ADVICE = 'shorten it or redraw the box';
 
 // applyFitReport makes the on-screen overlay agree with what was actually baked.
 //
@@ -9973,6 +9991,13 @@ function applyFitReport(owner, sources, header) {
       f.size = fit.stampedPt;
       layoutFieldNow(owner, f);
     }
+    // **Two markers, because the outcomes say opposite things about the page.**
+    // `shrunk` and `wrapped` mean Nib CHANGED what gets baked to make it fit, so the
+    // document no longer matches what was typed — that is the one a user must be able
+    // to spot without having caught the toast. `overran` means Nib changed nothing and
+    // baked exactly what was typed; it simply does not fit. One class for both would
+    // collapse "we altered your text" into "your text is too long".
+    f.el.classList.toggle('ovl-refit', fit.outcome === 'shrunk' || fit.outcome === 'wrapped');
     f.el.classList.toggle('ovl-misfit', fit.outcome === 'overran');
     applied.push(fit);
   }
@@ -9993,9 +10018,16 @@ function tellFitReport(applied) {
     // guessing whether to cut a word or a sentence; the measured overrun is the number
     // that tells them, and it is the reason the server publishes it rather than just a
     // verdict. Widest overrun of the group, so one number describes the worst case.
+    // A verdict measured on a font Nib had to substitute is an ESTIMATE, and saying
+    // so is the difference between "your text is 119pt too long" and "your text is
+    // about 119pt too long, measured in a stand-in face". Only for the outcomes that
+    // rest on the measurement being right.
+    if (applied.some((f) => f.outcome === cause && f.fidelity === 'guess')) {
+      part += ' (measured in a substitute font, so this is an estimate)';
+    }
     if (cause === 'overran') {
       const worst = Math.max(...applied.filter((f) => f.outcome === cause).map((f) => f.overrunPt || 0));
-      if (worst > 0) part += ` by ${Math.round(worst)}pt`;
+      if (worst > 0) part += ` by ${Math.round(worst)}pt — ${FIT_OVERRAN_ADVICE}`;
     }
     parts.push(part);
   }

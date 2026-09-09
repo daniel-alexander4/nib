@@ -598,14 +598,58 @@ func TestShrinkStopsAtTheFloorAndNeverJumpsUp(t *testing.T) {
 			t.Errorf("size %d became %d, below the %dpt floor", size, pts, stampFloorPt)
 		}
 	}
-	// And the ladder itself lands ON the floor rather than skipping past it: text
-	// that fits only at 6pt must come back at 6pt, not be reported as overrunning.
-	w6 := stampWidth("Plain ASCII", "Helvetica", stampFloorPt)
-	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w6, 420}, Text: "Plain ASCII", Font: "Helvetica", Size: 12}
+	// The ladder lands ON its floor rather than skipping past it — and which floor
+	// binds depends on the size asked for, so both arms are driven.
+	for _, tc := range []struct{ asked, want int }{
+		{12, 9}, // ratio binds: 0.75 x 12
+		{8, 6},  // absolute binds: 0.75 x 8 = 6, and 6 is the floor
+		{6, 6},  // already at the floor: nothing below it
+	} {
+		if got := shrinkFloorFor(tc.asked); got != tc.want {
+			t.Errorf("shrinkFloorFor(%d) = %d, want %d", tc.asked, got, tc.want)
+		}
+	}
+	// From 12pt, text that fits only at its ratio floor comes back SHRUNK at that size.
+	w9 := stampWidth("Plain ASCII", "Helvetica", shrinkFloorFor(12))
+	atFloor := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w9, 420}, Text: "Plain ASCII", Font: "Helvetica", Size: 12}
+	if got, outcome, _, _ := resolveFit(atFloor); outcome != FitShrunk || int(got.Size) != shrinkFloorFor(12) {
+		t.Errorf("text that fits exactly at the ratio floor came back %q at %.0fpt, want %q at %d",
+			outcome, got.Size, FitShrunk, shrinkFloorFor(12))
+	}
+}
+
+// The ratio bound is what stops a shrink silently rewriting the page.
+//
+// Text that would need HALF its asked-for size is not shrunk to fit; it is stamped as
+// typed and reported. The bound is the whole reason: a 12pt edit set at 6pt no longer
+// reads as the line it replaced, and on an executed document a silent resize is worse
+// than a visible overrun, because the overrun is something the user can see and fix.
+func TestShrinkRefusesToRewriteThePageAndReportsInstead(t *testing.T) {
+	const line = "Plain ASCII"
+	// A box that only 6pt would fit — below 12pt's ratio floor of 9pt.
+	w6 := stampWidth(line, "Helvetica", stampFloorPt)
+	if w6 >= stampWidth(line, "Helvetica", shrinkFloorFor(12)) {
+		t.Fatalf("fixture is inert: %.2fpt at the absolute floor is not narrower than the "+
+			"ratio floor's width, so no box can sit between them", w6)
+	}
+	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w6, 420}, Text: line, Font: "Helvetica", Size: 12}
+
 	got, outcome, _, _ := resolveFit(f)
-	if outcome != FitShrunk || int(got.Size) != stampFloorPt {
-		t.Errorf("text that fits exactly at the %dpt floor came back %q at %.0fpt, want %q at %d",
-			stampFloorPt, outcome, got.Size, FitShrunk, stampFloorPt)
+	if outcome != FitOverran {
+		t.Errorf("outcome %q at %.0fpt: text needing %dpt from an asked-for 12pt must be "+
+			"REPORTED, not shrunk past the ratio bound — a silent halving rewrites the page",
+			outcome, got.Size, stampFloorPt)
+	}
+	if int(got.Size) != 12 {
+		t.Errorf("the reported field was stamped at %.0fpt, want the 12pt that was typed — "+
+			"an overran outcome must bake what the user asked for", got.Size)
+	}
+	// The control: raise the box to the ratio floor's width and it DOES shrink, so the
+	// refusal above is the bound firing rather than shrink being broken.
+	w9 := stampWidth(line, "Helvetica", shrinkFloorFor(12))
+	ok := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w9, 420}, Text: line, Font: "Helvetica", Size: 12}
+	if _, oc, _, _ := resolveFit(ok); oc != FitShrunk {
+		t.Fatalf("the control did not shrink (%q) — the refusal above proves nothing", oc)
 	}
 }
 
@@ -666,5 +710,97 @@ func TestShrinkIsWhatTheTfReports(t *testing.T) {
 	resolved, _, _, _ := resolveFit(f)
 	if got := emittedTfSize(t, pdf, resolved); math.Abs(got-float64(fits[0].StampedPt)) > 0.01 {
 		t.Errorf("StampedPt says %d, pdfcpu emitted %.2fpt", fits[0].StampedPt, got)
+	}
+}
+
+// S04 — the fit verdict says whether the width it rests on is the document's own.
+//
+// `classifyFont` cannot fail, only be wrong: it is a substring search defaulting to
+// Helvetica, so a document set in a display face is measured with Helvetica's widths
+// and reports its verdict with exactly the confidence of one measured exactly. This
+// is the signal that separates them, and the cases are the ones pdf.js really hands
+// over — measured in a real browser 2026-09-09: "Courier" for a Courier document,
+// "Helvetica-Bold" for a Helvetica-Bold one, each prefixed by a CSS generic.
+func TestFontFidelitySeparatesAnExactWidthFromAGuess(t *testing.T) {
+	cases := []struct {
+		name, baseFont, stamped string
+		want                    FontFidelity
+	}{
+		{"the document's own face", "Courier", "Courier", FontExact},
+		{"as pdf.js hands it over", "monospace Courier", "Courier", FontExact},
+		{"bold, exactly", "sans-serif Helvetica-Bold", "Helvetica-Bold", FontExact},
+		{"metric-compatible alias", "sans-serif ArialMT", "Helvetica", FontAlias},
+		{"alias with punctuation", "Arial-BoldMT", "Helvetica-Bold", FontAlias},
+		{"Courier New", "monospace CourierNewPSMT", "Courier", FontAlias},
+		{"a subset of something else", "ABCDEF+MinionPro-Regular", "Helvetica", FontGuess},
+		// **The case that proves the prefix is stripped at all.** A subset of a font
+		// whose widths ARE the stamped face's must read as an alias — and without the
+		// strip it reads as a guess, because "ABCDEF+Arial" matches no alias key. The
+		// MinionPro case above cannot show this: it is a guess either way.
+		{"a subset of a metric-compatible face", "ABCDEF+ArialMT", "Helvetica", FontAlias},
+		{"a subset of the stamped face itself", "ABCDEF+Courier", "Courier", FontExact},
+		{"a display face", "sans-serif Impact", "Helvetica", FontGuess},
+		{"nothing was sent", "", "Helvetica", FontUnknown},
+		{"whitespace is nothing", "   ", "Helvetica", FontUnknown},
+		// The one that matters most: an alias name that does NOT match the face being
+		// stamped is a guess, not an alias. Arial's widths are Helvetica's, not Courier's.
+		{"alias of a different face", "ArialMT", "Courier", FontGuess},
+	}
+	seen := map[FontFidelity]bool{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fontFidelityFor(tc.baseFont, tc.stamped); got != tc.want {
+				t.Errorf("fontFidelityFor(%q, %q) = %q, want %q", tc.baseFont, tc.stamped, got, tc.want)
+			}
+			seen[fontFidelityFor(tc.baseFont, tc.stamped)] = true
+		})
+	}
+	for _, f := range []FontFidelity{FontExact, FontAlias, FontGuess, FontUnknown} {
+		if !seen[f] {
+			t.Errorf("no case reached %q — that arm is asserted by nothing", f)
+		}
+	}
+}
+
+// The fidelity reaches the fit report, and a document that sends nothing still works.
+//
+// The second half is the compatibility clause: every pre-S04 client, the CLI, and
+// every Go test constructs a Field with no BaseFont, and all of them must keep
+// stamping exactly as before.
+func TestFitCarriesFidelityAndWorksWithoutABaseFont(t *testing.T) {
+	pdf, err := testpdf.Text("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roomy := [4]float64{50, 400, 400, 420}
+	for _, tc := range []struct {
+		name, baseFont string
+		want           FontFidelity
+	}{
+		{"told, and exact", "Helvetica", FontExact},
+		{"told, and a guess", "ABCDEF+MinionPro-Regular", FontGuess},
+		{"not told", "", FontUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := Field{Page: 1, Rect: roomy, Text: "Plain ASCII", Font: "Helvetica", BaseFont: tc.baseFont, Size: 12}
+			out, fits, err := StampFields(pdf, []Field{f})
+			if err != nil {
+				t.Fatalf("StampFields: %v", err)
+			}
+			if len(fits) != 1 {
+				t.Fatalf("got %d fits, want 1", len(fits))
+			}
+			if fits[0].Fidelity != tc.want {
+				t.Errorf("Fidelity = %q, want %q", fits[0].Fidelity, tc.want)
+			}
+			// Whatever it was told, the STAMP is unchanged — BaseFont is advisory.
+			if got := emittedBBoxWidth(t, pdf, f); math.Abs(got-fits[0].WidthPt) > 0.01 {
+				t.Errorf("BaseFont %q changed what was emitted: %.2f vs reported %.2f",
+					tc.baseFont, got, fits[0].WidthPt)
+			}
+			if !bytes.HasPrefix(out, []byte("%PDF")) {
+				t.Error("no PDF came back")
+			}
+		})
 	}
 }

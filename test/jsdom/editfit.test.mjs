@@ -109,6 +109,24 @@ test('each cause is named separately, with its own count', () => {
 // Law 4 / ADR-009: which overlays bake is ONE rule. The fit report names fields by
 // their index in the posted array, so a second walk that filtered differently would
 // map a report onto the wrong overlay.
+// S04: the document's own font name is POSTED, not just computed and dropped.
+//
+// `addEdit` has always derived it — `commonObjs.get(fontName).name`, measured in a
+// real browser as "Courier" / "Helvetica-Bold" — and then discarded it the moment
+// classifyFont had collapsed it to one of twelve. Without it the server cannot tell
+// an exact width measurement from Helvetica standing in for a display face.
+test('the edit carries the document\'s own font name to the server', () => {
+  const walk = fnBody('collectFieldsWithSources', 'function collectFieldsWithSources(owner = view)');
+  assert.match(walk, /baseFont: f\.baseFont \|\| ''/,
+    'the posted field drops baseFont, so every fit verdict reaches the server as though it '
+      + 'were measured in the document\'s own face when it may be a stand-in');
+  const add = fnBody('addEdit', 'async function addEdit(hit, frac)');
+  assert.match(add, /baseFont = name\.trim\(\)/,
+    'addEdit computes the real font name and throws it away again');
+  assert.match(CODE, /baseFont: opts\.baseFont \|\| ''/,
+    'makeEditField does not keep baseFont on the field, so collectFields has nothing to send');
+});
+
 test('there is one field-collection walk, not two', () => {
   assert.match(CODE, /function collectFields\(owner = view\) \{ return collectFieldsWithSources\(owner\)\.fields; \}/,
     'collectFields no longer delegates — a second copy of the filter decides which overlays '
@@ -118,11 +136,37 @@ test('there is one field-collection walk, not two', () => {
     `${walks.length} walks decide which overlay fields bake; there must be exactly one`);
 });
 
-test('an overrun is marked on the element, and the marker has a rule', () => {
+// Two markers, and the split is the point: `shrunk`/`wrapped` mean Nib ALTERED what
+// gets baked, `overran` means it baked exactly what was typed. Collapsing them loses
+// the distinction between "we changed your text" and "your text is too long", and the
+// first is the one a user must be able to spot without having caught the toast.
+test('every outcome that CHANGES the bake is marked, distinctly from one that does not', () => {
   const fn = fnBody('applyFitReport', 'function applyFitReport(owner, sources, header)');
+  assert.match(fn, /classList\.toggle\('ovl-refit', fit\.outcome === 'shrunk' \|\| fit\.outcome === 'wrapped'\)/,
+    'a shrunk or wrapped edit carries no marker. Those are the outcomes that REWRITE what '
+      + 'is baked, so their only signal would be a toast the user can miss — and the document '
+      + 'then no longer says what the preview said.');
   assert.match(fn, /classList\.toggle\('ovl-misfit', fit\.outcome === 'overran'\)/,
-    'an overrunning edit carries no marker, so the only signal is a toast the user can miss');
+    'an overrunning edit carries no marker');
   const css = readFileSync(join(REPO, 'web', 'style.css'), 'utf8');
-  assert.match(css, /input\.ovl-edit\.ovl-misfit/,
-    'ovl-misfit is set by app.js and styled by nothing — the class is applied and invisible');
+  for (const cls of ['ovl-misfit', 'ovl-refit']) {
+    assert.match(css, new RegExp(`input\\.ovl-edit\\.${cls}`),
+      `${cls} is set by app.js and styled by nothing — the class is applied and invisible`);
+  }
+  // And they must not be the same rule, or the two facts render identically.
+  const misfit = css.slice(css.indexOf('input.ovl-edit.ovl-misfit'));
+  assert.ok(!/ovl-misfit[^{]*\{[^}]*\}\s*input\.ovl-edit\.ovl-refit\s*\{\s*\}/.test(misfit),
+    'ovl-refit has an empty rule, so an altered edit looks like an unaltered one');
+});
+
+// The overrun sentence must tell the user what to DO. The ratio bound means Nib
+// deliberately refuses to shrink very long text, so "too long by 119pt" without a
+// next step reads as a failure rather than a decision.
+test('the overrun message says what to do about it', () => {
+  const tell = fnBody('tellFitReport', 'function tellFitReport(applied)');
+  assert.match(tell, /FIT_OVERRAN_ADVICE/,
+    'an overrun reports a measurement and no remedy; the user is told their edit does not '
+      + 'fit and not that shortening it or redrawing the box is the fix');
+  assert.match(CODE, /const FIT_OVERRAN_ADVICE = 'shorten it or redraw the box'/,
+    'the advice string is gone or reworded past recognition');
 });
