@@ -2888,6 +2888,32 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// accidentally sign and a signer cannot accidentally skip their turn — both unrepresentable
 	// rather than checked. `buildCoSigned` is SKIPPED on the carry path, which is the whole
 	// point: it is the door that applies the local signature.
+	// **One dial, shared by both doors that start a hop (ADR-009, P01.S02b).**
+	//
+	// Everything below this line was the tail of `handleSessionInitiate` and moved WHOLE, with no
+	// change to its logic — the glare arm, the announcement, the candidate ladder, the race, the
+	// error mapping, the install and the mirror write. It moved because `POST /api/ceremony/hop`
+	// needs exactly this and nothing else: a second copy would be two implementations of the one
+	// sequence in which a signature becomes irreversible, and the two would drift on the first
+	// timeout anybody tuned.
+	//
+	// **What DIFFERS between the two doors is only how the four inputs are obtained**, which is why
+	// they are parameters here rather than re-read from the request. `/api/session/initiate` takes
+	// them from a multipart form — the document, the peer's fingerprint, the rendered appearance and
+	// a pasted invitation. `/api/ceremony/hop` takes a ceremony id, resolves the turn from the open
+	// document, and mints the invitation itself. The dial cannot tell them apart and must not.
+	s.runHopDial(w, r, v, cer, cert, key, myFP, peerFP, pdfBytes, appearance, att, address, peerLabel)
+}
+
+// runHopDial is the second half of a hop: sign if this party contributes, then reach the far end
+// and run the exchange. See the call site above for why it is its own function.
+func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vault,
+	cer *ceremonyID, cert, key, myFP, peerFP, pdfBytes, appearance []byte,
+	att p2p.Attestation, address, peerLabel string) {
+	// `err` and `final` are the race's accumulators: both branches below assign into them across
+	// iterations, so they are declared once here rather than inside either arm.
+	var err error
+
 	// **C17 on the DIAL side, and it had exactly one caller before this (P07.S07b).**
 	//
 	// `checkArrival` reconciles the document against the invitation this ceremony identity was
@@ -2911,17 +2937,26 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	// refuses with "document carries no ceremony record", which is every ordinary two-party
 	// co-sign. `TestSessionInitiate` went red on exactly that. The receiving side has always had
 	// this guard (`if sc.cer != nil`); this door needed the same one.
+	// **Moved here from `handleSessionInitiate` with the dial it guards (P01.S02b).** It is the
+	// same check in the same position relative to `buildCoSigned`; what changed is that both
+	// doors onto a hop now reach it, rather than only the one that takes a pasted invitation.
 	if cer != nil {
 		if err := cer.checkArrival(pdfBytes, time.Now()); err != nil {
 			httpError(w, http.StatusConflict, err.Error())
 			return
 		}
 	}
+
 	// **Refused rather than defaulted, because neither default is safe.** `carries` walks the
 	// document to answer whether this party has already signed it, and that walk can fail. False
 	// would contribute a second signature; true would skip a hop that was owed one. 409 for the
 	// same reason `checkArrival` uses one: this is the STATE of a proceeding, not a malformed
 	// request.
+	//
+	// **It lives HERE and not at either caller**, so the decision and the signature it gates stay
+	// in one function: `buildCoSigned` is three lines below, and an ordering guard can only see a
+	// sequence it can read in one body. Both doors that start a hop get the same answer from the
+	// same walk.
 	carrying, cerr := cer.carries(hex.EncodeToString(myFP), pdfBytes)
 	if cerr != nil {
 		httpError(w, http.StatusConflict, "this ceremony's document could not be read well enough "+
@@ -2930,6 +2965,24 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 	}
 	signed := pdfBytes
 	if !carrying {
+		// **Required exactly when this party CONTRIBUTES, and that is a change (P01.S02b).**
+		// `/api/session/initiate` used to demand the `appearance` part unconditionally, so even a
+		// carry hop — which never reaches `buildCoSigned` — had to upload a PNG it would not use.
+		// The requirement belongs to the signature, not to the request, and putting it here is
+		// what lets the hop route send nothing on the carry path.
+		//
+		// **Refused rather than defaulted, because the default is silent.** `p2p.Contribute`
+		// treats an empty appearance as "the signature is invisible but still carries the
+		// machine-readable attestation in its signed /Reason" — legitimate for a caller that meant
+		// it, and a silent downgrade for a client whose render failed. A signature cannot be taken
+		// back off a document, so this is the last moment the distinction can be made.
+		if len(appearance) == 0 {
+			httpError(w, http.StatusBadRequest,
+				"this hop needs your signature block and none was sent, so Nib will not sign: an "+
+					"empty block would put an invisible signature on the document and there is no "+
+					"way to take one back off")
+			return
+		}
 		var ok bool
 		signed, ok = s.buildCoSigned(w, pdfBytes, cert, key, att, appearance, cer.l3Roster())
 		if !ok {

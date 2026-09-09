@@ -4925,3 +4925,29 @@ refusals are `ErrNotYourTurn`, so the clause was green for its own reason while 
 for the defect.
 
 `recorded` 396 → 397.
+
+## P01.S02b — the convener's own door onto a hop *(v1.128.59)*
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `a-hop-mints-without-checking-who-is-asking` — the mint gate dropped from the hop route | `TestTheHopRouteRefusesBeforeItDials`, tier 1 | "a party who did not convene answered 200, want 403" |
+
+**Four gates were probed and only one is registered**, because a row is for a defect that can come
+back and the other three are caught by their own case the moment anyone runs the file. All four were
+driven: dropping the document/ceremony match lets a hop run over another ceremony's document (200
+instead of 409); dropping the is-this-a-ceremony check reports the wrong gate's sentence; dropping
+the entitlement gate is the row above; and dropping the self-dial refusal falls through to a **410**
+about a missing secret, which is a sentence about storage where the truth is that there is nobody to
+call.
+
+**Two of the four probes were void the first time and one test was inert, and both are worth
+recording.** The first mutations did not COMPILE — `inDoc` went unused — so `go test` reported a
+build error, no `--- FAIL` line was counted, and three gates read as unprobed when they had never
+been probed at all. That is the same shape as the 427 probe whose replacement never applied: *a
+probe that did not run is not a mutation that survived*, and the only way to tell them apart is to
+check the build. Then, with a compiling mutation, the document-match case went **green** — it pinned
+to `"nib-doc-that-is-not-open"` and asserted a 409 that arrived from `resolveDoc`'s *"that document
+is no longer open"*, a completely different gate. It now convenes a SECOND real ceremony and pins to
+that document, and asserts the sentence rather than the status code.
+
+`recorded` 397 → 398.

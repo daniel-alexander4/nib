@@ -24,10 +24,13 @@ func TestInitiateLiftsTheMITMSignalBeforeTheNetworkDiagnosis(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(src)
-	const marker = "func (s *Server) handleSessionInitiate("
+	// **`runHopDial`, not `handleSessionInitiate` (P01.S02b).** The dial — and with it every
+	// error-mapping arm this guard reads — was extracted so `/api/ceremony/hop` runs the same
+	// sequence rather than a second copy. The ordering asserted below is unchanged; only its home is.
+	const marker = "func (s *Server) runHopDial("
 	start := strings.Index(s, marker)
 	if start < 0 {
-		t.Fatalf("handleSessionInitiate not found in session.go — this guard has gone blind")
+		t.Fatalf("runHopDial not found in session.go — this guard has gone blind")
 	}
 	// Bound the search to this function: up to the next top-level func.
 	rest := s[start+len(marker):]

@@ -1,9 +1,9 @@
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -2922,7 +2922,8 @@
- 	// would contribute a second signature; true would skip a hop that was owed one. 409 for the
- 	// same reason `checkArrival` uses one: this is the STATE of a proceeding, not a malformed
- 	// request.
+@@ -2957,7 +2957,8 @@
+ 	// in one function: `buildCoSigned` is three lines below, and an ordering guard can only see a
+ 	// sequence it can read in one body. Both doors that start a hop get the same answer from the
+ 	// same walk.
 -	carrying, cerr := cer.carries(hex.EncodeToString(myFP), pdfBytes)
 +	carrying, cerr := false, error(nil)
 +	_ = cer.carries

@@ -109,8 +109,14 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// the one the client fires WITHOUT the user asking, on return-to-foreground, so
 	// docFor's fallback to the active document would reload the file underneath whichever
 	// tab the user happened to switch to.
-	if resolveSites != 24 {
-		t.Errorf("expected 24 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 25, not 24: `hopTarget`, the resolver both `/api/ceremony/hop` routes share (P01.S02b).
+	// It is the one that most needed to resolve rather than fall back. The route picks WHICH PARTY
+	// to dial from the document's signatures, so reading whichever tab happened to be active would
+	// let the user's tab switch decide who gets called and whose invitation gets minted — and the
+	// deepdive that opened the slice is why it reads the open document at all rather than the
+	// ceremony mirror, whose bytes carry no per-hop guarantee (`/pending 437-440`).
+	if resolveSites != 25 {
+		t.Errorf("expected 25 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

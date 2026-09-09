@@ -11631,7 +11631,7 @@ function ceremonyCard(c, mayAct) {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       next.textContent = '';
-      next.appendChild(await ceremonyNextLine(c.id));
+      next.appendChild(await ceremonyNextLine(c, mayAct));
       // **A worklist REPLACES the roster above it** (P04.S02, and the phase close is where it was
       // actually made to). Without this the card went from 32 rows to 59 — measured — which is the
       // opposite of what the threshold is for: the rendering that appears when the roster stops
@@ -12185,7 +12185,11 @@ async function loadCeremonyPanel(host, canAct) {
 // things from the user: `waiting` is somebody's turn, `complete` is finished, and `unavailable`
 // means Nib could not read enough to say — and folding the last two together would tell a user
 // whose ceremony finished that their document is damaged.
-async function ceremonyNextLine(id) {
+// **`c` is the ceremony row, not just its id, since P01.S02b.** The action this renders is gated on
+// who convened — `convenedHere(c)` — and on `mayAct`, and neither is derivable from an id. Passing
+// the row rather than adding a second fetch keeps the rail's one-request-per-open shape.
+async function ceremonyNextLine(c, mayAct) {
+  const id = c.id;
   const p = document.createElement('p');
   p.className = 'cernextline';
   let d;
@@ -12226,6 +12230,17 @@ async function ceremonyNextLine(id) {
     p.classList.add('certurn');
   } else {
     p.textContent = `Waiting for ${who}${cap}${where}.`;
+    // **The action binds HERE, on the ELSE branch, and binding it to `isMe` would have been the
+    // defect (P01.S02b).** The slice's scope reads "the rail's 'It is your turn' sentence becomes
+    // that button" — but that sentence is the branch above, where the LOCAL user is the signer. The
+    // convener calling party 3 is this branch: `Waiting for …`. Putting a "call them" control on
+    // the `isMe` sentence would offer a self-dial to the one person who cannot be dialled.
+    //
+    // Gated on `convenedHere`, because under D22 only the convener dials — every other party waits
+    // and D14's accept arms them. The server refuses a non-convener 403 regardless; this is so the
+    // control is not offered where it is known to be refused, which is the rule
+    // `ceremonyLeave` already follows one screen up.
+    if (mayAct && convenedHere(c)) p.appendChild(ceremonyCallNext(c, who));
   }
   // **Above the sitting ceiling the same answer renders as a WORKLIST** (P04.S02, D6). Below it,
   // one sentence is right and stays; above it a coordinator working through a full roster needs to
@@ -12235,6 +12250,116 @@ async function ceremonyNextLine(id) {
     return ceremonyWorklist(p, d.parties);
   }
   return p;
+}
+
+// ceremonyCallNext is the convener's one action, and the action the wizard was missing.
+//
+// **The whole of `/pending 436`.** A ceremony convened through the product could not be advanced
+// through it: the only dial took its ceremony from a pasted `invitation` field no client has ever
+// sent, so a convened document answered *"this document is part of a signing ceremony … Use the
+// ceremony to sign it"* — advice naming a door that did not exist. Under D22's hub the convener is
+// at one end of every hop and every other party waits, so this button is the only user action that
+// moves a proceeding forward at all.
+//
+// **The client never decides whose turn it is.** It asks, renders what it is told, and posts back a
+// ceremony id. The server resolves the turn twice — once for the quote and again for the dial — and
+// refuses if it moved in between. That is D1's rule ("the wizard's enabled action is a rendering of
+// that answer") made structural rather than promised: there is no turn for a client-side guess to
+// diverge from, because the client sends no party.
+//
+// **It is a CALL, not a Sign button, and the label says so.** The exchange runs the spoken check on
+// both machines: safety words appear here and at the other end and two people read them to each
+// other. So the honest label names the human act — ring them — and the confirmation below says what
+// is about to happen before anything dials.
+function ceremonyCallNext(c, who) {
+  const btn = document.createElement('button');
+  btn.className = 'cercall';
+  btn.type = 'button';
+  btn.textContent = `Call ${who} to sign`;
+  const say = document.createElement('span');
+  say.className = 'cercallstate';
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    say.textContent = 'Working out whose turn it is…';
+    try {
+      // 1. The quote. The server names the party and, when THIS machine signs at this hop, the
+      //    lines of the block to draw.
+      const q = await (await apiFetch(
+        `/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { unpinned: false })).json();
+      if (q.error) { say.textContent = q.error; btn.disabled = false; return; }
+      if (q.mine) {
+        // The convener's own turn: nobody to call. Said rather than dialled — a signing convener is
+        // FIRST in the signing order, so this is the ordinary state of a ceremony just convened.
+        say.textContent = 'It is your own turn to sign — there is nobody to call yet.';
+        return;
+      }
+      // 2. The block, rasterised HERE because nothing in the server can draw one: `renderAttestation`
+      //    is the only producer in the tree. Skipped entirely on the carry path, where this machine
+      //    contributes nothing — which is why the server makes the appearance required exactly when
+      //    it signs rather than on every request.
+      let appearance = '';
+      if (q.contributes) {
+        // **`renderAttestation` returns a BLOB, not a data URL**, and the first cut of this line
+        // assumed otherwise — `png.split(',')` on a Blob throws. Every other caller appends it to a
+        // FormData, where a Blob is exactly right; this route takes JSON, so it is base64'd here.
+        // Read rather than assumed, which is the only way to find it: the failure is at runtime, in
+        // a flow that needs a server at the other end.
+        //
+        // **`blobToBase64` already existed** (one screen up, added for the vault import) and a
+        // second copy of it here was written and then deleted — the duplicate is exactly what
+        // ADR-009 refuses, and `node --check` caught it as a redeclaration before anything shipped.
+        appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
+      }
+      // 3. The dial. The spoken check appears mid-request on both machines, so the verify poller
+      //    runs BESIDE the call — the server is blocked waiting for an answer and cannot deliver
+      //    the words in the response it has not sent.
+      say.textContent = `Calling ${q.party} — read the safety words to them when they appear.`;
+      const stopVerify = startVerifyPoll();
+      const stopWatch = watchHop(c.id, say, q.party);
+      try {
+        const res = await apiFetch('/api/ceremony/hop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
+        });
+        const body = await res.json();
+        if (!res.ok) { say.textContent = body.error || `The call failed (${res.status}).`; btn.disabled = false; return; }
+        say.textContent = `${q.party} has signed. Open the panel again to see whose turn it is now.`;
+      } finally {
+        stopVerify();
+        stopWatch();
+      }
+    } catch (e) {
+      say.textContent = 'Nib could not reach that party. Nothing was signed.';
+      btn.disabled = false;
+    }
+  });
+  const wrap = document.createDocumentFragment();
+  wrap.appendChild(btn);
+  wrap.appendChild(say);
+  return wrap;
+}
+
+// watchHop shows how long the call has been running against the ceiling it will give up at.
+//
+// **A "running" flag would be coarser than the judgment it serves.** Within one stalled hop nothing
+// moves — no index, no party, no step — so elapsed against a stated ceiling is the only number that
+// ticks, which is exactly the argument `runDeliveryRound` records for its own watcher
+// (`delivery.go`: "within one stalled leg the index does not move"). Shipping the call without this
+// would reintroduce the defect `/pending 370` closed: minutes of a disabled control and a static
+// string while somebody waits on the phone.
+//
+// **The ceiling is the SERVER's, not a number typed here.** `connectDeadline` is 300s and the
+// exchange budget is longer; the client states what it knows — how long it has been — and does not
+// invent a limit it would have to keep in step.
+function watchHop(id, say, party) {
+  const t0 = Date.now();
+  const base = `Calling ${party}`;
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    say.textContent = `${base} — ${s}s so far. Read the safety words to them when they appear.`;
+  }, 1000);
+  return () => clearInterval(tick);
 }
 
 // ceremonyWorklist renders the parties who still have to act, under a one-line summary.

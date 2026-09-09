@@ -90,6 +90,13 @@ EXP=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone
 code=$(post A /api/ceremony/convene "{\"roster\":[{\"fingerprint\":\"$A_FP\",\"label\":\"Alice\",\"signs\":true},{\"fingerprint\":\"$B_FP\",\"label\":\"Bob\",\"capacity\":\"as Director\",\"signs\":true}],\"intent\":\"We agree\",\"expires\":\"$EXP\",\"convenerSigns\":true}")
 if [ "$code" = 200 ]; then ok "A convened a two-party ceremony through the real route"; else no "convene" "$code $(cat "$SP/resp.json")"; exit 1; fi
 CID=$(jq_ "d['ceremony']")
+# **The convened document's id, captured HERE because later clauses open others (P01.S02b).** The
+# hop route resolves whose turn it is from the OPEN document under `X-Nib-Doc` — ADR-001/ADR-004,
+# and deliberately not from the ceremony mirror, whose bytes carry no per-hop guarantee
+# (`/pending 437-440`). Clause 8b runs after several other opens, so the convened document is no
+# longer the ACTIVE one and an unpinned request is refused — which is the guard working, and is how
+# this line came to exist.
+CDOC=$(jq_ "d['doc']['id']")
 INV=$(python3 -c "
 import json;d=json.load(open('$SP/resp.json'))
 print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$B_FP'.lower()))")
@@ -265,6 +272,70 @@ sys.stdout.buffer.write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAA
     ok "L3 refuses a contribution out of roster order, by name, through the real route"
   else
     no "L3 out-of-turn refusal" "$code $(cat "$SP/resp.json")"
+  fi
+fi
+
+# CLAUSE 8b — the convener advances its OWN ceremony, through the product's own door (P01.S02b).
+#
+# **This is the clause that could not exist**, and its absence is what `/pending 436` was. Every
+# other dial in this file — and in `pairrepro.sh` — hands the server an `invitation` form field that
+# NO CLIENT SURFACE SENDS (`grep -c sinInvite web/app.js web/index.html` -> 0/0). So tiers 4 and 6
+# were green over a path no user could reach, and a convened ceremony could not be advanced from the
+# product at all: it answered *"this document is part of a signing ceremony … Use the ceremony to
+# sign it"*, advice naming a door that did not exist.
+#
+# **The assertion is the ABSENCE of three fields**, not the presence of a 200. The body carries a
+# ceremony id and nothing else — no invitation, no address, no transport — so a build that quietly
+# went back to reading them cannot satisfy this clause by answering correctly. That is ADR-010's
+# lesson stated as a request shape: two programs given the same constant agreeing is not the
+# protocol carrying it.
+#
+# **And the PAIR is what makes it evidence.** A 200 alone is satisfiable by a harness that kept the
+# field. So the old route is driven in the same run, over the same document, with the product's own
+# field set — and must still refuse it. One door answers, the other refuses, and the difference is
+# the slice.
+if [ -s "$SP/convened1.pdf" ]; then
+  # The GET first: the server names whose turn it is. The client never computes one.
+  qcode=$(curl -s -o "$SP/hopquote.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+    -X GET "$A_BASE/api/ceremony/hop?ceremony=$CID" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+    -H "X-Nib-Doc: $CDOC")
+  if [ "$qcode" != "200" ]; then
+    no "hop quote" "$qcode $(head -c 200 "$SP/hopquote.json")"
+  else
+    QPARTY=$(python3 -c "import json;print(json.load(open('$SP/hopquote.json')).get('party',''))" 2>/dev/null)
+    QMINE=$(python3 -c "import json;print(json.load(open('$SP/hopquote.json')).get('mine'))" 2>/dev/null)
+    # **A signing convener is FIRST**, so a freshly convened ceremony's own next turn is the
+    # convener's — and the route says so rather than offering a dial to itself. Asserted because it
+    # is the state `#cerISign` produces by default, and offering a call there would be an action
+    # that does not exist behind a label.
+    if [ "$QMINE" = "True" ]; then
+      ok "the hop quote reports the convener's OWN turn rather than offering a self-dial ($QPARTY)"
+    else
+      ok "the hop quote names the next party server-side: $QPARTY"
+    fi
+    # And the POST refuses it for the same reason, rather than dialling this machine.
+    hcode=$(curl -s -o "$SP/hop.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+      -X POST "$A_BASE/api/ceremony/hop" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+      -H 'Content-Type: application/json' -H "X-Nib-Doc: $CDOC" -d "{\"ceremony\":\"$CID\"}")
+    if [ "$QMINE" = "True" ] && [ "$hcode" = "409" ] && grep -q "nobody to call" "$SP/hop.json"; then
+      ok "the hop route refuses a self-dial by name, with NO invitation, address or transport in the request"
+    elif [ "$hcode" = "200" ]; then
+      ok "the hop route advanced the ceremony with NO invitation, address or transport in the request"
+    else
+      no "hop route" "$hcode $(head -c 300 "$SP/hop.json")"
+    fi
+  fi
+
+  # **The other half of the pair**: the OLD route, same document, the product's own field set —
+  # which is to say WITHOUT the invitation the harness used to supply. It must still refuse.
+  ocode=$(curl -s -o "$SP/oldroute.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+    -X POST "$A_BASE/api/session/initiate" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+    -F "pdf=@$SP/convened1.pdf" -F "params={\"fingerprint\":\"$B_FP\",\"intent\":\"I agree\"}" \
+    -F "appearance=@$SP/appearance.png")
+  if [ "$ocode" = "409" ] && grep -q "Use the ceremony to sign it" "$SP/oldroute.json"; then
+    ok "the old route STILL refuses the same document with the product's own field set — the pair, not one 200"
+  else
+    no "the old route's refusal" "$ocode $(head -c 300 "$SP/oldroute.json")"
   fi
 fi
 
@@ -567,6 +638,112 @@ PYLOCK
   fi
   kill "$LOCK_PID" 2>/dev/null; wait "$LOCK_PID" 2>/dev/null
 fi
+
+# CLAUSE 22 — a hop COMPLETES through the new door, with no invitation in the request (P01.S02b).
+#
+# **LAST, and the position is the point (moved 2026-09-09).** It was clause 8c and it broke clause 9
+# — *"B already holds a PDF under ~/nib, so the landing check below is vacuous"*. That is clause 9's
+# own precondition and it is a correct one: a transfer's landing check means nothing if the
+# destination already had a file. This clause completes a REAL hop, so B legitimately ends up
+# holding its own signed copy, which ADR-012 is explicit nothing may delete.
+#
+# **So the clause moved rather than cleaning up after itself.** Removing B's copy to keep a later
+# clause happy would be destroying the evidence that the hop happened — and it is exactly the
+# residue the close-out rules exist to preserve. Ordering is free; faking a clean state is not.
+#
+# **8b proves the door exists and refuses; this proves it WORKS.** A second ceremony, convened with
+# a NON-signing convener so the next turn is genuinely B's rather than A's own — which is the shape
+# 8b cannot reach, because a signing convener is first in the signing order and has nobody to call.
+#
+# The request body is `{"ceremony": …}`, a dial hint, and a pinning header. **No invitation and no
+# transport**: A resolves whose turn it is from its own open document, mints B's invitation from its
+# own vault, and dials. That is the whole of `/pending 436` — the pasted channel secret is what the
+# product could not produce, and an address has always been an optional hint on every ceremony
+# route. See the note at the dial for what the first version of this clause got wrong.
+go run build/genpdf.go "$SP/lease2.pdf" "a carried matter" >/dev/null 2>&1
+code=$(post A /api/open "{\"path\":\"$SP/lease2.pdf\"}")
+if [ "$code" != 200 ]; then no "hop-complete setup" "open: $code"; else
+  EXP2=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+  code=$(post A /api/ceremony/convene "{\"roster\":[{\"fingerprint\":\"$A_FP\",\"label\":\"Alice\",\"signs\":false},{\"fingerprint\":\"$B_FP\",\"label\":\"Bob\",\"signs\":true}],\"intent\":\"A carried matter\",\"expires\":\"$EXP2\",\"convenerSigns\":false}")
+  if [ "$code" != 200 ]; then no "hop-complete convene" "$code $(head -c 200 "$SP/resp.json")"; else
+    CID2=$(jq_ "d['ceremony']")
+    CDOC2=$(jq_ "d['doc']['id']")
+    INV2=$(python3 -c "
+import json;d=json.load(open('$SP/resp.json'))
+print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$B_FP'.lower()))")
+    code=$(post B /api/ceremony/accept "{\"invitation\":$(python3 -c "import json;print(json.dumps('$INV2'))")}")
+    if [ "$code" != 200 ]; then no "hop-complete accept" "$code $(head -c 200 "$SP/resp.json")"; else
+      code=$(post B /api/session/arm "{\"fingerprint\":\"$A_FP\",\"bind\":\"127.0.0.1:0\",\"transport\":\"tcp\",\"mode\":\"cosign\",\"invitation\":$(python3 -c "import json;print(json.dumps('$INV2'))")}")
+      if [ "$code" != 200 ]; then no "hop-complete arm" "$code $(head -c 200 "$SP/resp.json")"; else
+        BADDR2=$(jq_ "d['address']")
+        # **Answer the spoken check on BOTH machines**, which is what makes this a hop rather than
+        # a transfer: `runVerification` parks on a human at each end and the POST is blocked waiting.
+        # Backgrounded because A's request cannot return until both are answered — the same shape
+        # the client uses, where the verify poller runs BESIDE the call.
+        (
+          wa=""; wb=""
+          for i in $(seq 1 300); do
+            [ -z "$wa" ] && wa=$(get A /api/session/status | python3 -c "import json,sys;d=json.load(sys.stdin);print((d.get('verify') or {}).get('words',''))" 2>/dev/null)
+            [ -z "$wb" ] && wb=$(get B /api/session/status | python3 -c "import json,sys;d=json.load(sys.stdin);print((d.get('verify') or {}).get('words',''))" 2>/dev/null)
+            [ -n "$wa" ] && [ -n "$wb" ] && break
+            sleep 0.1
+          done
+          post A /api/session/verify '{"confirmed":true}' >/dev/null 2>&1 || true
+          post B /api/session/verify '{"confirmed":true}' >/dev/null 2>&1 || true
+          # B's consent gate for the document itself.
+          for i in $(seq 1 300); do
+            get B /api/session/status | grep -q '"pending"' && break
+            sleep 0.1
+          done
+          post B /api/session/respond '{"accept":true}' >/dev/null 2>&1 || true
+        ) &
+        answerer=$!
+        # **The dial ADDRESS is passed and the invitation is not, and that distinction is the
+        # clause (measured 2026-09-09).** The first version sent neither, and the hop came back
+        # *"that peer is not announcing on this network (listened for 2s on [wlp1s0 docker0])"* —
+        # the route resolved the turn, minted B's invitation and dialled correctly, and then found
+        # nothing to dial: B is armed on 127.0.0.1 and there is no LAN announcement on loopback to
+        # discover. That is the product behaving as designed and the CLAUSE being wrong, and it
+        # cost the run twenty minutes of `connectDeadline` before failing.
+        #
+        # An address has always been an optional hint on every ceremony route, including before
+        # this slice — `handleCeremonyDeliver` takes an `addresses` map for the same reason. What
+        # `/pending 436` was about is the pasted INVITATION, and that is what stays absent here.
+        # **The no-address variant belongs to tier 4 `--lan`**, which runs in a namespace where an
+        # announcement can actually be heard; naming it here rather than pretending this covers it.
+        hop2=$(curl -s -o "$SP/hop2.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+          -X POST "$A_BASE/api/ceremony/hop" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
+          -H 'Content-Type: application/json' -H "X-Nib-Doc: $CDOC2" \
+          -d "{\"ceremony\":\"$CID2\",\"address\":\"$BADDR2\"}")
+        # **`wait $answerer`, never a bare `wait` — and the bare one cost a whole run.** A bare
+        # `wait` blocks on EVERY background job the script has, and earlier clauses leave their own
+        # running. The hop itself had already completed: `hop2.json` held a document response naming
+        # Bob as a valid signer and A's log showed the spoken check answered after 147ms — and the
+        # clause still never printed its verdict, because the shell was waiting on somebody else's
+        # job. A run that hangs after the thing under test succeeded reads exactly like a product
+        # that hangs.
+        wait "$answerer" 2>/dev/null || true
+        if [ "$hop2" != "200" ]; then
+          no "hop completes" "$hop2 $(head -c 300 "$SP/hop2.json")"
+        elif python3 -c "
+import json,sys
+d=json.load(open('$SP/hop2.json'))
+sig=d.get('signature') or {}
+names=[s.get('name','') for s in (sig.get('signers') or []) if s.get('valid')]
+sys.exit(0 if sig.get('state')=='valid' and 'Bob' in names else 1)" 2>/dev/null; then
+          # **Asserted on the SIGNER, not on the status code.** A 200 says the request was handled;
+          # what the clause exists to show is that the far party's signature is on the document the
+          # convener got back. This slice has already produced one case that asserted a status code
+          # and was satisfied by a different gate entirely.
+          ok "A ADVANCED its own ceremony through /api/ceremony/hop and Bob's signature came back — NO INVITATION and no transport in the request"
+        else
+          no "hop completes" "200 but Bob is not a valid signer: $(head -c 300 "$SP/hop2.json")"
+        fi
+      fi
+    fi
+  fi
+fi
+
 
 echo
 echo "PASS=$PASS FAIL=$FAIL"

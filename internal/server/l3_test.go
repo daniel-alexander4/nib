@@ -165,20 +165,11 @@ func TestARefusalIsNotReportedAsAConnectFailure(t *testing.T) {
 
 	// **The routing** — the handler lifts refusals BEFORE writeConnectDiagnosis. Asserting the
 	// predicate alone says nothing about whether anything calls it.
-	src, err := os.ReadFile("session.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := stripLineComments(string(src))
-	i := strings.Index(code, "func (s *Server) handleSessionInitiate(")
-	if i < 0 {
-		t.Fatal("cannot find handleSessionInitiate")
-	}
-	body := funcBodyFrom(code, i)
+	body := dialBodySource(t)
 	lift := strings.Index(body, "IsContributionRefusal(")
 	diag := strings.Index(body, "writeConnectDiagnosis(")
 	if lift < 0 {
-		t.Fatal("handleSessionInitiate does not lift contribution refusals at all")
+		t.Fatal("runHopDial does not lift contribution refusals at all")
 	}
 	if diag < 0 {
 		t.Fatal("cannot find writeConnectDiagnosis in handleSessionInitiate")
@@ -306,12 +297,7 @@ func TestWhetherYouSignIsReadOffTheRoster(t *testing.T) {
 	// **And the ROUTING**, because the predicate alone says nothing about whether the handler
 	// asks it. Asserted with `//` stripped, and on the ORDER: `buildCoSigned` applies the local
 	// signature, so a carry decided after it has already signed.
-	src, err := os.ReadFile("session.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := stripLineComments(string(src))
-	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	body := dialBodySource(t)
 	if body == "" {
 		t.Fatal("cannot find handleSessionInitiate")
 	}
@@ -434,12 +420,7 @@ func TestTheRelayDoorHonoursTheByteCap(t *testing.T) {
 // by mutation: swapping the call back to `addDoc` left every behavioural test above green, because
 // they drive the door directly and nothing drives the route's installation.
 func TestTheInitiateRouteInstallsThroughTheRelayDoor(t *testing.T) {
-	src, err := os.ReadFile("session.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := stripLineComments(string(src))
-	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	body := dialBodySource(t)
 	if body == "" {
 		t.Fatal("cannot find handleSessionInitiate")
 	}
@@ -535,7 +516,7 @@ func TestBothSidesOfAHopMirrorIt(t *testing.T) {
 	}
 	code := stripLineComments(string(src))
 	// **The INITIATING side, which has a response to return and therefore an order to keep.**
-	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	body := dialBodySource(t)
 	if body == "" {
 		t.Fatal("cannot find handleSessionInitiate")
 	}
@@ -608,12 +589,7 @@ func TestBothSidesOfAHopMirrorIt(t *testing.T) {
 // network work; every other ceremony test is in-process with a hand-built channel; and the
 // two-party tier-4 runs carry no invitation, so `cer` is nil and they take the else branch.
 func TestACeremonyHopIsNotForcedOntoQUIC(t *testing.T) {
-	src, err := os.ReadFile("session.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := stripLineComments(string(src))
-	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) handleSessionInitiate("))
+	body := dialBodySource(t)
 	if body == "" {
 		t.Fatal("cannot find handleSessionInitiate")
 	}
@@ -790,4 +766,88 @@ func TestASigningConvenerCarriesOnceTheyHaveSigned(t *testing.T) {
 			"question (%v) instead of refusing it — so a walk that cannot say what is on the "+
 			"document silently picks one of the two unsafe answers", got)
 	}
+}
+
+// TestTheInvitationMintHasOneDoorAndItCarriesTheRules — ADR-009 over the mint, P01.S02b.
+//
+// **The rule is asserted on the ROUTING, never on the sentences.** ADR-009's own words: "The guard
+// asserts routing through the door, not the text each site prints — eight copies checked for
+// agreement say nothing about a ninth site added without one." So this walks the source for callers
+// of `convenerInvitationFor` and requires every one to be either the door itself or a site that
+// names its exemption.
+//
+// **Why the mint needed a door at all.** `convenerInvitationFor` checks nothing about who is
+// asking: it resolves the convener from the record, re-hashes the roster and returns an
+// `Invitation` carrying the per-party channel secret — the value that keys that leg's rendezvous,
+// its record encryption and its published end state. Every gate lived at `handleCeremonyInvites`;
+// `runDeliveryRound` had the convener check and no deadline check at all. That is ADR-005's "1 of 6"
+// shape at 1 of 2, and a third caller was about to make it 1 of 3.
+func TestTheInvitationMintHasOneDoorAndItCarriesTheRules(t *testing.T) {
+	for _, f := range []string{"delivery.go", "convene.go", "session.go", "ceremonyid.go"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripLineComments(string(src))
+		for _, line := range strings.Split(code, "\n") {
+			if !strings.Contains(line, "convenerInvitationFor(") {
+				continue
+			}
+			// The declaration and the door's own call are the two legitimate mentions.
+			if strings.Contains(line, "func convenerInvitationFor(") ||
+				strings.Contains(line, "return convenerInvitationFor(v, rec, party)") {
+				continue
+			}
+			// The round is the one named exemption, and it is named in the SOURCE rather than
+			// here — this test only requires that the exemption exists as a comment at the site.
+			if f == "delivery.go" && strings.Contains(string(src), "The one NAMED exemption from `mintInvitationFor`") {
+				continue
+			}
+			t.Errorf("%s mints an invitation directly:\n  %s\nEvery mint goes through "+
+				"mintInvitationFor, which carries the entitlement and deadline rules. A site that "+
+				"needs an exemption names it at the site (ADR-009).", f, strings.TrimSpace(line))
+		}
+	}
+
+	// **And the door's rules are asserted to BE there**, because routing to a door that checks
+	// nothing is the same defect one level in. Probed by deleting each check separately.
+	src, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func checkMintAllowed("))
+	if body == "" {
+		t.Fatal("cannot find checkMintAllowed — the mint's rules have no door")
+	}
+	for _, want := range []string{"convenedByMe(", "errNotTheConvener", "recordOutlivesBudget("} {
+		if !strings.Contains(body, want) {
+			t.Errorf("checkMintAllowed does not use %s — the door exists and the rule it was "+
+				"written to carry is not in it, so every caller routes through a check that "+
+				"passes everything", want)
+		}
+	}
+}
+
+// dialBodySource returns the body of `runHopDial` — the shared second half of a hop.
+//
+// **One accessor for every guard that walks the dial, so a future move costs one edit.** These
+// checks used to scan `handleSessionInitiate`; P01.S02b extracted the dial so that
+// `/api/ceremony/hop` could run the same sequence instead of a second copy of it, and seven guards
+// went red at once. That is the guards working — the routing they assert is real and they noticed it
+// moved — but seven copies of `strings.Index(code, "func (s *Server) handleSessionInitiate(")` is
+// the drift ADR-009 is about, so they share this instead.
+func dialBodySource(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) runHopDial("))
+	if body == "" {
+		t.Fatal("cannot find runHopDial — the shared dial is gone, and every guard below is " +
+			"asserting an ordering in a function that no longer exists")
+	}
+	return body
 }
