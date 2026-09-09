@@ -246,12 +246,16 @@ var published = map[string][]string{
 	"pdfops.OutlineItem":       {"internal/cli/commands.go", "web/app.js"},
 	"pdfops.ScanReport":        {"internal/server/scan.go", "web/app.js"},
 	"pdfops.SplitPart":         {"internal/server/export.go", "internal/cli/commands.go"},
-	"vault.KeyInfo":            {"internal/server/keys.go", "web/app.js"},
-	"vault.PinnedPeer":         {"internal/server/peers.go", "internal/vault/vault.go"},
-	"vault.Settings":           {"internal/server/settings.go", "internal/vault/vault.go"},
-	"vault.Image":              {"internal/server/images.go", "internal/vault/vault.go"},
-	"vault.ExternalSigner":     {"internal/server/keys.go", "internal/vault/vault.go"},
-	"vault.Slot":               {"internal/vault/vault.go", "internal/server/keys.go"},
+	// `pdfops.Fit`'s destination is handleBake, which discards it with `_` today. Naming the
+	// file is the shape's honest far end; the five FIELDS are parked in `unreadKnown` below,
+	// which is where the truth that nobody reads them is recorded. P01.S02 is the consumer.
+	"pdfops.Fit":           {"internal/server/overlay.go"},
+	"vault.KeyInfo":        {"internal/server/keys.go", "web/app.js"},
+	"vault.PinnedPeer":     {"internal/server/peers.go", "internal/vault/vault.go"},
+	"vault.Settings":       {"internal/server/settings.go", "internal/vault/vault.go"},
+	"vault.Image":          {"internal/server/images.go", "internal/vault/vault.go"},
+	"vault.ExternalSigner": {"internal/server/keys.go", "internal/vault/vault.go"},
+	"vault.Slot":           {"internal/vault/vault.go", "internal/server/keys.go"},
 }
 
 // excluded shapes, each with its reason. An UNEXPLAINED entry here is how a genuinely
@@ -386,6 +390,27 @@ var unreadKnown = map[string]string{
 	// was not.
 	"ceremony.Party.Capacity": "published and committed at P07.S02; the block renderer that " +
 		"displays it is P07.S07 (C19). Delete this line then.",
+
+	// **`pdfops.Fit`, P01.S01 of PLAN-text-reflow.md, entered the day it is written.**
+	//
+	// StampFields now MEASURES every field it stamps against the box it was drawn into —
+	// today's shipped defect is that nothing did, and a replacement four times its box's
+	// width is emitted with no error and no clip path. `handleBake` discards the fits with
+	// `_`, so the honest state is: measured, correct, and read by nobody.
+	//
+	// It is parked rather than given a reader because DECIDING what an overrun should do —
+	// shrink, wrap, or refuse with a sentence — is P01.S02, the very next slice, and
+	// smearing that policy across two slices is how the ledger stops describing the build.
+	// This is the same shape as `ceremony.Termination.*` above: the object is right, its
+	// consumer is one slice away, and claiming the tier-1 assertions as its reader would be
+	// the laundering this map exists to catch — tests do not count, by this file's own rule.
+	//
+	// Delete these five when P01.S02 acts on an overrun and P01.S03 shows it in the client.
+	"pdfops.Fit.Field":     "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
+	"pdfops.Fit.Page":      "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
+	"pdfops.Fit.WidthPt":   "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
+	"pdfops.Fit.BoxPt":     "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
+	"pdfops.Fit.OverrunPt": "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
 }
 
 func TestEveryPublishedObservableHasANamedReader(t *testing.T) {

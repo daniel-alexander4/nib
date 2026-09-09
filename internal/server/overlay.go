@@ -69,7 +69,7 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := pdfops.StampFields(pdfBytes, fields)
+	out, _, err := pdfops.StampFields(pdfBytes, fields)
 	if wroteStampTextError(w, err) {
 		return
 	}

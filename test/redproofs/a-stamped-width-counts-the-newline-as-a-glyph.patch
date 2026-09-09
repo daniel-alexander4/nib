@@ -1,0 +1,17 @@
+--- a/internal/pdfops/pdfops.go
++++ b/internal/pdfops/pdfops.go
+@@ -1044,13 +1044,7 @@
+ //     value that already decides which face is stamped, so the measurement and
+ //     the emission cannot describe different fonts.
+ func stampWidth(text, fontName string, pts int) float64 {
+-	widest := 0.0
+-	for _, line := range strings.Split(text, "\n") {
+-		if w := mdpdf.CoreWidth(line, fontName, pts); w > widest {
+-			widest = w
+-		}
+-	}
+-	return widest
++	return mdpdf.CoreWidth(text, fontName, pts)
+ }
+ 
+ // Fit is the measured relationship between one stamped field's text and the
