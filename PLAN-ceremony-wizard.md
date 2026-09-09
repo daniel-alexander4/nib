@@ -928,7 +928,7 @@ its second staleness when the second fixture doubled the readings.
 **No deepdive: this slice adds an instrument and changes no production code.** Recorded rather than
 skipped silently.
 
-#### P04.S02 — the worklist above the threshold
+#### P04.S02 — the worklist above the threshold *(done 2026-09-09, v1.128.51)*
 Scope: the rail shows a single action below the threshold and a worklist above it — **and the
 per-party progress the worklist needs does not exist yet, so this slice adds it at the server.**
 Refs: D6, D1, D22.
@@ -977,6 +977,99 @@ and the surface moved.** Recorded rather than quietly re-labelled.
 
 **And the slice gate moves with it**: S02 touches `internal/server`'s ceremony path, so tiers 4 and 6
 fire at its close.
+
+**(deepdive, 2026-09-09 — `deepdives/2026-09-09-p04s02-per-party-progress.md`. Four findings, three
+of them constraints the slice would otherwise have hit mid-build.)**
+
+1. **Progress cannot be a field on `Party`, and a guard says so by name.**
+   `TestEveryPartyFieldIsInTheCommitment` varies **every** field of `Party` alone and requires
+   `RosterHash` to move; its `excluded` map is deliberately empty, with a comment saying EMPTY is the
+   correct state. So a new field goes **red on its own name in the commit that adds it**, and both
+   ways out are wrong here: into `rosterPreimage` with `FormatVersion` 4→5, invalidating every record
+   in flight, or an exemption from a **cryptographic commitment** for a display field. **Progress
+   goes on `Stored` — the mirror's view — and never on the record's roster.**
+2. **Nothing on disk records it.** Every file a live ceremony directory holds was enumerated with its
+   writer, and not one carries per-party signing progress — `delivered/` is a *post-signing*
+   distribution fact written only in the convener's delivery round; `me` is one party;
+   `verification.json` is one machine's own hop. **No hop counter exists**: `grep -rn 'json:"hop'
+   --include=*.go internal/` returns **zero**, and the hop number is derived from a pair of parties
+   rather than counted. So the only authoritative source is the document's own signatures.
+3. **"Has party k signed" already exists THREE times, and two use different rules.**
+   `NextContributor` is a **positional prefix** (signature *i* must equal `signing[i]`, and a
+   mismatch refuses the whole answer); `Completeness` is **set membership**; and
+   `internal/cli/verifyceremony.go` is a third, inline copy of the set loop that already renders
+   exactly the ✓ / · table this slice wants. They agree only while the prefix holds. **A fourth
+   derivation is ADR-009's named failure**, so S02 exposes what `NextContributor` already computes —
+   the done-count and the signing order — and every party's state is a pure function of its index.
+4. **LIVE DEFECT, and it changes this slice's arithmetic.** `handleCeremonies`' own header reads
+   *"Why it does not open a single document"*. It calls `closeOutEnded` three lines later, which
+   loops `ceremony.ReadMirror` over **every** stored ceremony — no filter, no cap, no pagination —
+   and **discards the bytes**. That has been true since P08.S06 and is `/pending 360`. So the
+   marginal cost of progress is **not** a document read per ceremony, which is already paid; it is
+   `NextContributor`'s two further `sign.Verify` passes, or one if the slice threads the
+   `sign.Status` down — the pattern `handleAttestations` already uses. **With the vault LOCKED the
+   listing opens no document at all**, so a progress field would newly add that cost there.
+
+**(pin — the numbering hazard is CONFIRMED and reachable from the shipped UI.)** Unticking "I sign
+this too" sends `convenerSigns:false`, and `Convene` **prepends** the convener at roster position 0.
+So `next` answers `Position:1` for the first signer while `roster[position-1]` is the convener — a
+party who never signs, marked *current*. **The offset is one in every ceremony the shipped UI can
+produce.** The `next` route is safe today only because the client renders a string and never indexes
+the roster; S02 is the first surface that would. And **no tier can currently drive it**:
+`railscale.test.mjs` builds every entry `signs: true`.
+
+**(pin — the slice MEASURES before it designs, because the number it rests on has never been run.)**
+The repo has **zero benchmarks** (`grep -rn "func Benchmark" --include=*_test.go .`), and the
+10 / 69 / 195 ms figure quoted in three files is P08.S01's, on text-only fixtures, for a different
+function — `/pending 360` says so itself. What decides the slice is the split between `sign.Verify`
+and `ContentDigest` inside it: if `sign.Verify` dominates, `NextContributor`'s two extra passes
+roughly triple the per-ceremony cost; if `ContentDigest` dominates they are near-free past hop 1,
+where `DocumentHash` is skipped. **If the measurement shows a material per-request cost, the
+decision is Dan's under the hot-path rule and is parked rather than shipped.**
+
+**MEASURED 2026-09-09 by `internal/p2p/railcost_test.go`, and it moved the design.** Medians of five,
+with spreads, on this machine:
+
+| pages | bytes | `sign.Verify` unsigned | `sign.Verify` signed | `NextContributor` |
+|---|---|---|---|---|
+| 1 | 2.3 KB | 51 µs | 0.6 ms ±9.9 | 1.1 ms ±0.5 |
+| 50 | 12 KB | 122 µs | 3.8 ms ±1.5 | 6.5 ms ±2.3 |
+| 200 | 43 KB | 103 µs | 12.0 ms ±2.2 | 26.6 ms ±6.2 |
+
+**Two facts the quoted figure did not contain.** `sign.Verify` on an **unsigned** document is
+essentially free — 50 to 220 µs, because there is nothing to check — so the expensive verify is the
+one that only exists *after* the first signature, which is every ceremony the rail has anything to
+say about. And `NextContributor` costs **2 to 4×** a single verify, consistent with its two passes
+plus the attestation walk.
+
+**So progress on the LISTING is tens of milliseconds per ceremony per request**, on a route that
+already pays one `ReadMirror` each and already has `/pending 360` open against it. At fifty stored
+ceremonies that is seconds. `CLAUDE.md`'s hot-path rule makes that Dan's call — and the measurement
+means the slice does not have to ask, because there is a shape that costs nothing.
+
+**(pin — progress goes on `/api/ceremony/next`, NOT on the listing, and the measurement is why.)**
+`next` is already per-ceremony, already on demand behind *"What happens next?"*, and already opens
+and verifies the document — so per-party states are computed where `NextContributor` runs anyway and
+the marginal cost is the attestation walk it already does. **Nothing is added to `/api/ceremonies`,
+so the locked screen and the listing are untouched.** D6 is satisfied by RENDERING rather than by
+fetching: below `SittingCeiling` the card's action stays the single sentence it is today, and above
+it the same affordance opens a worklist. That also keeps D2's *"fetched on open and on hop
+completion, never on a timer"*.
+
+**And it fixes the numbering hazard at the source.** The server sends each party's state, so the
+client never joins `Position` against a roster indexed differently — the join that would have marked
+a non-signing convener as *current* in every ceremony the shipped UI can produce.
+
+Tasks: *(written at slice-grill time, 2026-09-09, after the deepdive and the measurement)*
+1. T01 — measure it. `ReadMirror`, `sign.Verify`, `ContentDigest` and `NextContributor` on real
+   ceremony documents at several page counts, recorded the way S01's geometry is.
+2. T02 — correct `handleCeremonies`' header, which asserts the opposite of what the code does.
+3. T03 — per-party states on `ceremonyNextResponse`, derived from `NextContributor`'s done-count
+   and signing order through one door. No new predicate, nothing on `Party`, nothing on the listing.
+4. T04 — the rail's worklist above `SittingCeiling`: the same affordance, rendering a summary plus
+   the parties who still have to act, with the full roster collapsed.
+5. T05 — tests, each probed red, including the `Signs:false` fixture that exists at no tier today.
+6. T06 — seam inventory rows.
 
 **The deepdive's named question, which decides the slice's cost.** Per-party progress has to come
 from somewhere, and the obvious home — a field on the listing — may pay exactly the price the listing

@@ -11990,8 +11990,70 @@ async function ceremonyNextLine(id) {
   } else {
     p.textContent = `Waiting for ${who}${cap}${where}.`;
   }
+  // **Above the sitting ceiling the same answer renders as a WORKLIST** (P04.S02, D6). Below it,
+  // one sentence is right and stays; above it a coordinator working through a full roster needs to
+  // see who remains, and `d.worklist` is the server's answer to which of the two this is — the
+  // threshold is `ceremony.SittingCeiling` and lives there, not here.
+  if (d.worklist && Array.isArray(d.parties) && d.parties.length) {
+    return ceremonyWorklist(p, d.parties);
+  }
   return p;
 }
+
+// ceremonyWorklist renders the parties who still have to act, under a one-line summary.
+//
+// **It shows LESS per party than the rail already does, not more**, and that is the whole reason it
+// exists. The rail's own roster renders every party at every size; a worklist that added a state
+// token to each of those rows would be TALLER than the rendering that just failed to fit, which
+// points the remedy in the opposite direction from the problem. So the parties who are done
+// collapse into a count, and only those still to act are named.
+//
+// **Every state word comes from the server.** "Has party k signed" is already implemented three
+// times in this tree and two of them use different rules, so a JS predicate over the roster would
+// be the fourth — ADR-009's named failure, and the reason the panel's own comment forbids exactly
+// that shortcut one screen up.
+function ceremonyWorklist(head, parties) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cerworklist';
+  const signing = parties.filter((x) => x.state !== 'watching');
+  const done = signing.filter((x) => x.state === 'signed').length;
+  // The summary replaces the roster, so it carries the count the roster used to show by being
+  // there. `watching` is named separately: a party who never signs is not one who is late, and
+  // folding them into "remaining" is the misreading the fourth state word exists to prevent.
+  const watching = parties.length - signing.length;
+  const sum = document.createElement('p');
+  sum.className = 'cerworksum';
+  sum.textContent = `${done} of ${signing.length} signed`
+    + (watching ? `, ${watching} not signing` : '') + '.';
+  wrap.appendChild(head);
+  wrap.appendChild(sum);
+  for (const party of parties) {
+    if (party.state === 'signed') continue; // collapsed into the count above
+    const row = document.createElement('div');
+    row.className = 'cerworkrow';
+    if (party.state === 'signing') row.classList.add('cerworknow');
+    if (party.isMe) row.classList.add('cerme');
+    const who = document.createElement('span');
+    who.className = 'cerwho';
+    who.textContent = party.label || 'a party';
+    row.appendChild(who);
+    const what = document.createElement('span');
+    what.className = 'cerworkstate';
+    what.textContent = WORKLIST_WORDS[party.state] || party.state;
+    row.appendChild(what);
+    if (party.capacity) {
+      const cap = document.createElement('span');
+      cap.className = 'cerrole';
+      cap.textContent = party.capacity;
+      row.appendChild(cap);
+    }
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+// The words, in one place, so a state the server adds shows as itself rather than as nothing.
+const WORKLIST_WORDS = { signing: 'their turn now', waiting: 'not yet reached', watching: 'does not sign' };
 
 // --- Convene and accept (P06.S04) -------------------------------------------
 //

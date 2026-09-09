@@ -503,12 +503,25 @@ type ceremoniesResponse struct {
 
 // handleCeremonies lists the ceremonies stored on this machine (P08.S03, C12).
 //
-// # Why it does not open a single document
+// # Why THIS FUNCTION opens no document, and why the route nonetheless does
 //
-// `ReadMirror` runs `sign.Verify` and, on an unsigned document, a full `ContentDigest`. Measured at
-// the P08.S01 deepdive: 10 ms at 100 pages, 69 ms at 500, 195 ms at 1000 — superlinear, on text-only
-// fixtures, and these are contracts with images. Fifty stored ceremonies would be seconds on a
-// request path. `ceremony.ListStored` reads `record.json` and nothing else.
+// **The heading here read "Why it does not open a single document" until P04.S02, and it had been
+// false since P08.S06.** `ceremony.ListStored` genuinely reads `record.json` and nothing else — that
+// half is intact and is the reason the listing carries no signature count and no "next action". But
+// `closeOutEnded`, three lines below, loops `ceremony.ReadMirror` over EVERY stored ceremony with no
+// `LoadOK` filter, no cap and no pagination, and discards the bytes it read. So the route pays a
+// full document read per ceremony and this comment said the opposite of the code beneath it. That
+// is `/pending 360`, still open; what is fixed here is the sentence, not the cost.
+//
+// The cost, MEASURED at P04.S02 (`internal/p2p/railcost_test.go`) rather than quoted — the
+// 10/69/195 ms figure this comment used to cite is P08.S01's, on text-only fixtures, for a
+// different function, and `/pending 360` says so itself:
+//
+//	sign.Verify, unsigned document:   51 µs (1 page) … 103 µs (200 pages)
+//	sign.Verify, signed document:    0.6 ms (1 page) … 12.0 ms (200 pages)
+//
+// The unsigned case is nearly free because there is nothing to check; the expensive verify exists
+// only after the first signature. `ReadMirror` also runs a full `ContentDigest` while unsigned.
 //
 // The cost of that is stated rather than hidden: this answer carries no signature count and no next
 // action, because both live in the document. The panel opens ONE ceremony to say "2 of 4 signed".

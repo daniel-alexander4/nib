@@ -178,6 +178,14 @@ var published = map[string][]string{
 	// `NextContributor` returns a `RosterEntry`. So its `Commitment` field is covered by nothing
 	// here. Named rather than left as a silent hole in a scan that reads as exhaustive.
 	"p2p.RosterEntry": {"internal/p2p/l3.go", "internal/server/ceremonyid.go"},
+	// **`p2p.Progress` is the L3 gate's ONE walk, made readable by more than one caller (P04.S02).**
+	// It existed before as three locals inside `NextContributor`, which is now a thin reading of it;
+	// the second reading is `partyStates`, which turns the signing order and the done-count into one
+	// row per roster member for the rail's worklist. Both fields plus `Complete` are read at both
+	// sites — `Order[Done]` is whose turn it is, and the index of a party against `Done` is its
+	// state — which is the point: "has party k signed" is already implemented three times in this
+	// tree with two different rules, so this type exists so that a fourth is never written.
+	"p2p.Progress":    {"internal/p2p/l3.go", "internal/server/ceremonynext.go"},
 	"ceremony.Record": {"internal/ceremony/record.go", "internal/server/ceremonynet.go"},
 	// **Parked as "no reader yet" mid-slice, and the parking was STALE IN ITS OWN COMMIT.**
 	// The convene route landed in the same slice and reads every field of both shapes, so the
