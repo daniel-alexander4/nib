@@ -1,13 +1,13 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -10413,9 +10413,7 @@
-   //   - `me` and `convener` both KNOWN and equal. Both are unknown-when-empty by their own
-   //     doctrine, so an absent marker must not read as a match — which `''  === ''` would.
-   if (mayAct && c.state === 'ok' && c.ended
--      && typeof c.me === 'string' && c.me !== ''
--      && typeof c.convener === 'string' && c.convener !== ''
--      && c.me.toLowerCase() === c.convener.toLowerCase()) {
-+      && (c.me || '').toLowerCase() === (c.convener || '').toLowerCase()) {
-     card.appendChild(ceremonyDeliver(c));
-   }
-   if (c.state === 'ok') {
+@@ -11726,9 +11726,7 @@
+ // rather than a comparison: `'' === ''` would read two absent markers as a match and offer the
+ // convener's controls to a party who simply has not recorded their position yet.
+ function convenedHere(c) {
+-  return typeof c.me === 'string' && c.me !== ''
+-    && typeof c.convener === 'string' && c.convener !== ''
+-    && c.me.toLowerCase() === c.convener.toLowerCase();
++  return (c.me || '').toLowerCase() === (c.convener || '').toLowerCase();
+ }
+ 
+ // ceremonyReissue is the convener's "send someone their invitation again" control (P04.S03, D11).

@@ -1,11 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -10412,7 +10412,7 @@
-   //     test and never `!== 'running'`.
-   //   - `me` and `convener` both KNOWN and equal. Both are unknown-when-empty by their own
-   //     doctrine, so an absent marker must not read as a match — which `''  === ''` would.
--  if (mayAct && c.state === 'ok' && c.ended
-+  if (c.state === 'ok' && c.ended
-       && typeof c.me === 'string' && c.me !== ''
-       && typeof c.convener === 'string' && c.convener !== ''
-       && c.me.toLowerCase() === c.convener.toLowerCase()) {
+@@ -11561,7 +11561,7 @@
+   //   - `convenedHere(c)` — `me` and `convener` both KNOWN and equal. Extracted at P04.S03, when a
+   //     second control needed the same test: a rule holding at more than one call site is written
+   //     once and every site calls it (ADR-009).
+-  if (mayAct && c.state === 'ok' && c.ended && convenedHere(c)) {
++  if (c.state === 'ok' && c.ended && convenedHere(c)) {
+     card.appendChild(ceremonyDeliver(c));
+   }
+   // **Re-issuing (D11), which is the delivery button's population with the LIFECYCLE inverted.**

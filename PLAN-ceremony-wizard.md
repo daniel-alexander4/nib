@@ -1079,7 +1079,7 @@ needs the DOCUMENT, and `ListStored` never opens one — measured at 10 / 69 / 1
 listing, which is what `/pending 360` is already about."* So: where does "done" come from, what does
 it cost per ceremony, and is there an answer that does not open the document?
 
-#### P04.S03 — invitations can be reissued from the rail
+#### P04.S03 — invitations can be reissued from the rail *(done 2026-09-09, v1.128.52)*
 Scope: the convener can re-issue every party's invitation from the rail. The route exists and is
 unreached; this is its client surface. Refs: D11, D21.
 Acceptance: a convener reissues **one named party's** invitation from the rail, with all-parties as a

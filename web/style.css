@@ -1358,6 +1358,24 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    that never co-occur on a row unless it is both, which is exactly when it should stand out most. */
 .cerworkrow.cerworknow .cerwho { font-weight: 600; color: var(--green); }
 .cerworkrow.cerworknow .cerworkstate { color: var(--green); }
+
+/* Re-issuing an invitation (P04.S03, D11). It renders inside the card rather than in
+   #ceremonyResult, because a dismissal that has to ERASE cannot live in a container another
+   surface owns and clears on its own schedule. */
+.cerreissue { margin-top: 6px; }
+.cerreissuebtn { width: 100%; }
+.cerreissuebody { margin-top: 6px; }
+.cerreissuerow { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 1px 0; }
+.cerreissueall { display: block; width: 100%; margin-top: 6px; }
+.cerreissueout { margin-top: 6px; }
+.cerdismiss { display: block; width: 100%; margin-top: 4px; }
+/* The terminal refusal reads differently from an ordinary one: --peach is this file's warning
+   accent, and the message carries itself in --text as .stampwarn and #staleBanner both do, because
+   light --peach is 2.45:1 on --surface0 and colour is decoration. */
+.cergone {
+  color: var(--text); font-size: 11px; margin: 4px 0 0;
+  border-left: 2px solid var(--peach); padding-left: 6px;
+}
 .cerendedhead { margin-top: 12px; }
 .cerended-row {
   display: flex;

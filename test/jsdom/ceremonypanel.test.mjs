@@ -28,7 +28,11 @@ const listing = {
       state: 'ok',
       intent: 'We agree to the lease of 14 Elm Row',
       expires: '2026-10-01T12:00:00Z',
+      // `me` AND `convener`, both marked, because P04.S03's control asks whether this machine
+      // convened it. The delivery control is not affected: it also needs `ended`, and this
+      // ceremony is running — which is the population the re-issue is FOR.
       me: ME,
+      convener: ME,
       roster: [
         { fingerprint: THEM, label: 'Bob Landlord', signs: true },
         { fingerprint: ME, label: 'Alice Tenant', capacity: 'as attorney-in-fact', signs: true },
@@ -52,10 +56,23 @@ const defaultNext = {
 };
 let nextAnswer = defaultNext;
 
+// The re-issue route, stubbed per test (P04.S03). `invitesPosted` is what the client SENT, which is
+// where the per-party clause is actually observable — the response cannot show whether one party
+// was asked for or all of them.
+let invitesPosted = null;
+let invitesAnswer = () => ({
+  ceremony: '1'.repeat(32),
+  invites: [{ fingerprint: THEM, label: 'Bob Landlord', signs: true, invitation: 'nib-invite-v3.aaaa.bbbb' }],
+});
+
 const { document: doc, settle } = await boot({
   routes: {
     '/api/ceremonies': () => listing,
     '/api/ceremony/next': () => nextAnswer,
+    '/api/ceremony/invites': (opts) => {
+      invitesPosted = JSON.parse((opts && opts.body) || '{}');
+      return invitesAnswer();
+    },
     '/api/peers': () => peers,
     '/api/ceremony/convene': (opts) => { convenePosted = JSON.parse((opts && opts.body) || '{}'); return convened; },
     '/api/ceremony/accept': () => ({
@@ -406,4 +423,137 @@ test('below the sitting ceiling nothing changes — one sentence, no worklist', 
     + 'make the threshold do nothing');
   assert.match(host.querySelector('.cernextline').textContent, /Waiting for Bob Landlord/,
     'the single sentence is gone, so the small case was changed by a slice that is about the large one');
+});
+
+// ── P04.S03: re-issuing an invitation from the rail ─────────────────────────────────────────
+//
+// The route has existed since P07.S02b and the client called it from nowhere, so D11's "the rail
+// offers reissue" was a sentence in a plan. What makes this slice more than wiring is the shape:
+// per party rather than all at once, a sentence saying the invitation is the SAME one, a 410 that
+// reads differently from an ordinary failure, and a dismissal that erases rather than hides.
+
+async function openReissue() {
+  const host = await showPanel();
+  const btn = host.querySelector('.cerreissuebtn');
+  assert.ok(btn, 'the convener is offered no way to re-issue an invitation on a running ceremony');
+  btn.click();
+  await settle();
+  return host;
+}
+
+test('the re-issue control is the convener\'s, and only while the ceremony is still running', async () => {
+  const host = await showPanel();
+  const cards = [...host.querySelectorAll('.cercard')];
+  const live = cards[0];
+  assert.ok(live.querySelector('.cerreissuebtn'),
+    'the convener of a running ceremony is offered no re-issue. D11: "because the API already '
+    + 'supports regenerating them, the rail offers reissue — a settlement agent re-sends constantly"');
+  // The damaged card is not the convener's and is not `ok`; neither should offer it.
+  assert.equal(cards[1].querySelector('.cerreissuebtn'), null,
+    'a degraded ceremony offers a re-issue. The route reads the mirror, which is strictly stronger '
+    + 'than the listing, so the control would be offering something the server is known to refuse');
+});
+
+test('a re-issue asks for ONE named party, and says the invitation is the same one', async () => {
+  const host = await openReissue();
+  const hint = host.querySelector('.cerreissuebody .libhint');
+  assert.match(hint.textContent, /same invitation again/i,
+    `the re-issue box says ${JSON.stringify(hint.textContent)}. A re-issue reads the stored secret `
+    + 'back and hands over the same bytes — no rand, no vault write — so a convener pressing this '
+    + 'because they think the first one leaked gets no security benefit at all, and a control that '
+    + 'does not say so reads as a revocation');
+  assert.match(hint.textContent, /does not replace/i, 'the box does not say what a re-issue is NOT');
+
+  const rows = [...host.querySelectorAll('.cerreissuerow')];
+  assert.equal(rows.length, 1,
+    `${rows.length} parties are offered. The roster holds two and one of them is this machine, `
+    + 'which holds every invitation and receives none — offering it would be offering something '
+    + 'the server skips');
+
+  invitesPosted = null;
+  rows[0].querySelector('button').click();
+  await settle();
+  assert.ok(invitesPosted, 'pressing Send again posted nothing');
+  assert.equal(invitesPosted.fingerprint, THEM,
+    `the request named ${JSON.stringify(invitesPosted.fingerprint)}. An empty fingerprint means `
+    + 'EVERY party, so one press would put every party\'s channel secret on screen — the '
+    + 'maximal-exposure shape D21\'s own pin argues against');
+});
+
+test('the all-parties form is a separate, explicit act', async () => {
+  const host = await openReissue();
+  const all = host.querySelector('.cerreissueall');
+  assert.ok(all, 'there is no way to re-issue to everybody, which the route supports and a convener may want');
+  invitesPosted = null;
+  all.click();
+  await settle();
+  assert.equal(invitesPosted.fingerprint, undefined,
+    'the all-parties control named a party, so it is not the all-parties control');
+});
+
+// **The plan's acceptance clause was wrong TWICE, and this test's own floor found both.**
+//
+// It read *"no element in the document contains the string `nib-invite-v`"*.
+//
+// 1. `textContent` does not reach a `<textarea>`'s value — that is a PROPERTY, absent from
+//    `textContent` and from `innerHTML` alike, and the invitation is rendered into exactly one. So
+//    the clause as worded is satisfied by every build, including one that dismisses nothing.
+// 2. Scoped to the whole DOCUMENT it is not this slice's clause at all. `#ceremonyResult` — the
+//    CONVENE surface — holds every party's invitation from the moment a ceremony is convened until
+//    a form is next opened, surviving every way out of the sheet, a mode change, and the vault
+//    re-locking behind its overlay. That is `/pending 431`, and it is a real leak; it is not
+//    something a re-issue's dismiss button can be asked to fix.
+//
+// So the predicate reads values as well as text, and is scoped to the box this slice owns.
+const secretIn = (root) => (root.textContent || '').includes('nib-invite-v')
+  || [...root.querySelectorAll('input, textarea')].some((el) => String(el.value || '').includes('nib-invite-v'));
+
+test('the rendered invitation can be dismissed, and dismissing ERASES it', async () => {
+  const host = await openReissue();
+  host.querySelector('.cerreissuerow button').click();
+  // Longer than the default drain: the send awaits the fetch AND `res.json()`, so the DOM this
+  // asserts on lands two microtask hops after the request the test above asserts on.
+  await settle(40);
+  const box = host.querySelector('.cerreissue');
+  assert.ok(secretIn(box),
+    'setup: no invitation was rendered into the re-issue box, so "it can be dismissed" is about nothing');
+
+  const done = host.querySelector('.cerdismiss');
+  assert.ok(done, 'a rendered channel secret has no dismissal at all');
+  done.click();
+  await settle();
+  assert.equal(secretIn(box), false,
+    'the invitation is still in the document after being dismissed. Both of this app\'s existing '
+    + 'dismiss affordances only set hidden=true, which leaves the bytes reachable from the console '
+    + 'and in the page\'s memory — right for a pill, wrong for a channel secret');
+});
+
+test('a 410 reads differently from an ordinary failure', async () => {
+  const host = await openReissue();
+  const body = { error: 'Nib no longer holds the invitation secret for aabbccddeeff.' };
+  const answerWith = async (status) => {
+    invitesAnswer = () => new (doc.defaultView.Response || Response)(JSON.stringify(body),
+      { status, headers: { 'Content-Type': 'application/json' } });
+    host.querySelector('.cerreissuerow button').click();
+    await settle();
+  };
+  try {
+    await answerWith(410);
+    const gone = host.querySelector('.cergone');
+    assert.ok(gone, 'a 410 rendered as an ordinary failure. It means the secrets are gone, which is '
+      + 'terminal for this ceremony — every other refusal here is something the convener can act on');
+    assert.match(gone.textContent, /new ceremony/i, 'the terminal refusal names no next step');
+
+    await answerWith(500);
+    assert.equal(host.querySelector('.cergone'), null,
+      'a 500 carrying the SAME body rendered as the terminal refusal. The branch is on the status '
+      + 'code; asserting on the words would pass for a build that branches on neither, because '
+      + 'errText already puts the server\'s own sentence on screen');
+    assert.ok(host.querySelector('.cerreissueout .cererror'), 'a 500 rendered nothing at all');
+  } finally {
+    invitesAnswer = () => ({
+      ceremony: '1'.repeat(32),
+      invites: [{ fingerprint: THEM, label: 'Bob Landlord', signs: true, invitation: 'nib-invite-v3.aaaa.bbbb' }],
+    });
+  }
 });
