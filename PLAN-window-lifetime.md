@@ -100,7 +100,36 @@ orphan silently preserved unsaved work; exiting cleanly must not silently discar
 
 ## Build order
 
-### P01 — Closing the window ends the process
+### P01 — Closing the window ends the process *(done 2026-09-08, v1.128.43)*
+
+**Acceptance ledger — every clause, split on `and`.**
+
+| # | Clause | Verdict |
+|---|---|---|
+| C1a | No `nib` process survives a closed window | **verified live** — the real binary in a throwaway `HOME`: `no window came back; exiting` → `exiting: the last window closed`, and the relaunch bound the same port, which it could not have if the old process still held it |
+| C1b | …and no `instance.json` survives | **verified live** — present while serving, gone after the exit |
+| C1c | …a later launch starts fresh | **verified live** — clean boot on the same port, `/api/status` 200 |
+| C2 | A window minimised past the browser's freeze threshold does **not** exit Nib | **met by composition, not end-to-end** — see below |
+| C3a | All three harnesses complete unchanged | **verified** — tier 3 98/98, tier 4 both transports, tier 4d four parties, tier 6 PASS=19 FAIL=0 |
+| C3b | …with `idleExitArmed` observably false in each | **verified** — tier 3 greps the line off the real binary, and `TestNoHarnessCanArmTheIdleExit` proves no harness *can* arm it, from the launch lines rather than from output |
+
+**C2 is the one clause not driven end to end, and the reason is a guard working.** Showing it
+directly needs a process with the idle-exit ARMED and a frozen window. Every harness — including
+`build/windowfreeze.mjs` — runs `NIB_NO_BROWSER=1`, so none can arm it; that is P01.S03's own
+guard, and the alternative is a switch whose purpose is to make the program exitable in a test,
+which is the loaded-gun shape this repo already refuses once (`redproof.sh`'s own doc). So the
+clause rests on two measured halves: **S02 measured that a frozen window does not drop its stream**
+(+20 s and +90 s frozen, past the threshold hidden behind a tab, with the close-control reporting
+`0`), and **tier 1 asserts a grace is armed only on a 1→0 transition and never while a window is
+open**. A window that never disconnects never reaches the transition. That is an argument over two
+measurements rather than one observation, and it is recorded as such.
+
+**Required-run gates, enumerated separately from the criteria** (`CLAUDE.md`'s slice gate, which
+fires because P01 touched `internal/server/session.go`): tier 4 **PASS** both transports, tier 4d
+**PASS** four parties, tier 6 **PASS=19 FAIL=0** — all at v1.128.43. Tier 6 failed once in a
+back-to-back run with a harness-setup error (`no csrf` from the locked instance during startup, not
+an assertion) and passed on a dedicated re-run; recorded rather than smoothed over.
+
 **Goal.** Nib exits when its last window goes away, never while one still exists, and never during a
 headless run — with a notice first when a ceremony or unsaved work would be lost.
 
