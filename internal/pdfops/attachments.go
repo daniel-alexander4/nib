@@ -422,15 +422,70 @@ func hashUint(h hash.Hash, v uint64) {
 // them in Go's randomised iteration order — nondeterminism reaching a digest (C11), which is
 // the one defect no single-process test can see.
 //
-// Indirect references are followed, bounded by depth and by an on-path object set. Object
-// NUMBERS are never hashed: they change on every pdfcpu rewrite, which is the whole reason
-// this function exists instead of a byte hash.
+// Indirect references are followed, bounded by depth AND by a first-visit set scoped to this
+// top-level call. Object NUMBERS are never hashed: they change on every pdfcpu rewrite, which is
+// the whole reason this function exists instead of a byte hash.
+//
+// # The set was claimed here and did not exist (/pending 454)
+//
+// This comment read *"bounded by depth and by an on-path object set"* from the commit that
+// introduced the function (`67015a7`, v1.117.0) — it described the fix rather than the code, and
+// there was no set of any kind. A shared object graph was therefore re-walked once per PATH.
+//
+// **It is not a corner case; two shipped features compose into it.** A `/Link` annotation's
+// `/Dest`, and equally a widget annot's `/P`, dereferences to a PAGE dict, whose `/Parent` is a
+// Pages node whose `/Kids` is every page in the document — so from one page's `/Annots` the walk
+// reaches every other page, their annots, and back again. Measured on documents built entirely
+// through Nib's own doors (`testpdf.Text(N)` + `AddNotes`, one sticky note per page):
+//
+//	2 pages     6 ms        8 pages    1.44 s
+//	4 pages    83 ms       10 pages    3.61 s
+//	6 pages   385 ms       12 pages   42.58 s
+//
+// That is ~N⁴. A twenty-page contract with a note on each page takes about a minute; `convene` has
+// no page cap and `cmd/nib` sets no `ReadTimeout` or `WriteTimeout`, and `ContentDigest` takes no
+// context, so nothing can cancel it. On one real 172-page statute PDF it did not finish in 29m50s
+// for a SINGLE page. It is reachable on three production doors — convene, `ReadMirror` and
+// `checkArrival` — and 19 of 320 ordinary user documents on this machine are in the same class.
+//
+// # Why a first-visit INDEX and not the object number
+//
+// A repeat emits `#again` plus the position at which that object was first met in THIS walk. The
+// object number cannot be hashed — see the rule above, it changes on every rewrite — but the
+// first-visit position is stable, because the walk order is deterministic: dict keys are sorted and
+// arrays are in order, so the Nth distinct object reached is the same object whatever pdfcpu
+// numbered it.
+//
+// # Why the scope is one top-level call, and why there is no version bump
+//
+// Per-DOCUMENT scope is 8× faster again and it is WRONG: it changes the digest of ordinary
+// documents, measured on two controls immediately. Per-call preserves it — on all 197 live
+// ceremonies in `~/nib/ceremonies/` the stored `DocHash` still reproduces, 197 of 197.
+//
+// A `ContentDigestVersion` bump would be the *unsafe* option here, which is the opposite of how it
+// looks: `ReadMirror` compares a stored digest through `Record.Verify`, and `Verify` never reads
+// `DigestVersion` at all — so a bumped build reading an in-flight ceremony reports "the copy on this
+// machine is damaged or incomplete", which is the false accusation that constant exists to prevent.
 func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int) {
+	hashObjectSeen(xt, o, h, depth, map[int]int{})
+}
+
+func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int, seen map[int]int) {
 	if depth > 16 {
 		hashChunk(h, []byte("#depth"))
 		return
 	}
 	if ir, ok := o.(types.IndirectRef); ok {
+		num := ir.ObjectNumber.Value()
+		if idx, met := seen[num]; met {
+			// Met already in this walk: record THAT it recurred and where it first appeared, so
+			// "the same object again" stays distinguishable from "a different object here" without
+			// re-expanding it. Recorded before dereferencing, so a cycle terminates here too.
+			hashChunk(h, []byte("#again"))
+			hashUint(h, uint64(idx))
+			return
+		}
+		seen[num] = len(seen)
 		d, err := xt.Dereference(ir)
 		if err != nil {
 			hashChunk(h, []byte("#unresolved"))
@@ -451,17 +506,17 @@ func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int) {
 		hashUint(h, uint64(len(keys)))
 		for _, k := range keys {
 			hashChunk(h, []byte(k))
-			hashObject(xt, v[k], h, depth+1)
+			hashObjectSeen(xt, v[k], h, depth+1, seen)
 		}
 	case types.StreamDict:
 		hashChunk(h, []byte("#stream"))
-		hashObject(xt, v.Dict, h, depth+1)
+		hashObjectSeen(xt, v.Dict, h, depth+1, seen)
 		hashStreamBody(&v, h)
 	case types.Array:
 		hashChunk(h, []byte("#array"))
 		hashUint(h, uint64(len(v)))
 		for _, e := range v {
-			hashObject(xt, e, h, depth+1)
+			hashObjectSeen(xt, e, h, depth+1, seen)
 		}
 	default:
 		// Names, strings, numbers, booleans. PDFString is canonical for these — the

@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
@@ -908,5 +909,88 @@ func TestTheCeremonyRecordIsNotInItsOwnDigest(t *testing.T) {
 		t.Errorf("attaching %s moved the digest (%s -> %s) — the record contains this digest, so "+
 			"a digest that covers the record is a fixed point and no party could ever recompute it",
 			CeremonyRecordName, before[:16], after[:16])
+	}
+}
+
+// TestTheContentDigestDoesNotBlowUpOnAnnotatedPages — /pending 454, and the case no tier could see.
+//
+// **Two shipped features compose into a hang.** A sticky note is a `/Text` annotation and
+// `api.AddAnnotationsMap` writes `/P` on every annot — a back-reference to the page dict, whose
+// `/Parent` is a Pages node whose `/Kids` is every page. So from one page's `/Annots` the walk
+// reaches every other page, their annotations, and back. `hashObject`'s only bound was `depth > 16`,
+// so a shared graph was re-walked once per PATH rather than once.
+//
+// Measured against HEAD before the fix, on documents built entirely through Nib's own doors:
+//
+//	2 pages     6 ms        8 pages    1.44 s
+//	4 pages    83 ms       10 pages    3.61 s
+//	6 pages   385 ms       12 pages   42.58 s
+//
+// ~N⁴. A twenty-page contract with a note on each page is about a minute, `convene` has no page cap,
+// `cmd/nib` sets no `ReadTimeout`/`WriteTimeout` and `ContentDigest` takes no context — nothing can
+// cancel it.
+//
+// **Nothing in the suite could fail on this**, which is why it went unseen: every digest fixture in
+// the tree is 1–5 pages and at N≤5 an N⁴ law is invisible. The ceiling is deliberately loose —
+// three orders of magnitude above the fixed cost — so this asserts the growth law and not the speed
+// of the machine it runs on.
+func TestTheContentDigestDoesNotBlowUpOnAnnotatedPages(t *testing.T) {
+	const pages = 10
+	texts := make([]string, pages)
+	for i := range texts {
+		texts[i] = fmt.Sprintf("page %d of the agreement", i+1)
+	}
+	base, err := testpdf.Text(texts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := make([]Note, pages)
+	for i := range notes {
+		notes[i] = Note{Page: i + 1, X: 100, Y: 700, Text: "please check this clause"}
+	}
+	annotated, err := AddNotes(base, notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// **The stimulus floor, and the first version of it was wrong.** It looked for the literal bytes
+	// `/Annots`, which pdfcpu compresses into an object stream — so it fired against a fixture that
+	// was perfectly well annotated. What actually has to be true is that the annotations reach the
+	// WALK, and the digest itself is the witness: if adding them does not move it, the graph under
+	// test was never traversed and the timing below is a measurement of nothing.
+	plain, perr := ContentDigest(base)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+
+	start := time.Now()
+	digest, derr := ContentDigest(annotated)
+	elapsed := time.Since(start)
+	if derr != nil {
+		t.Fatalf("ContentDigest failed: %v", derr)
+	}
+	if digest == plain {
+		t.Fatal("setup: annotating the document did not move its content digest, so the annotation " +
+			"graph under test is not being walked and the timing below measures nothing")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("ContentDigest took %v on %d annotated pages. Before the first-visit set this was "+
+			"3.61s at this size and 42.58s at twelve — ~N⁴ — and it is reachable at convene, at "+
+			"ReadMirror and at checkArrival, none of which can be cancelled", elapsed, pages)
+	}
+
+	// **A repeat must still be VISIBLE.** The set makes a re-reached subtree cheap; it must not make
+	// a CHANGE to that subtree invisible, which would be a far worse defect than the one being
+	// fixed — the digest exists to notice exactly that.
+	edited, eerr := AddNotes(base, append(notes, Note{Page: 1, X: 300, Y: 400, Text: "and this one"}))
+	if eerr != nil {
+		t.Fatal(eerr)
+	}
+	other, oerr := ContentDigest(edited)
+	if oerr != nil {
+		t.Fatal(oerr)
+	}
+	if other == digest {
+		t.Error("adding an annotation did not move the content digest — the first-visit set is " +
+			"eliding a difference rather than eliding a repeat")
 	}
 }
