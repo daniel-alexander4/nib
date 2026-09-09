@@ -282,11 +282,15 @@ slice would either invent a surface those phases own or ship a button that does 
 **Re-sequenced, not re-scoped:** it moves to after P03, where the surfaces it renders actions onto
 exist. Sequencing is the arc's to settle; the exit criterion below is not.
 
-**PARKED — a P01 exit criterion cannot be met and its amendment is Dan's.** The criterion reads
-*"The rail's enabled action equals `/api/ceremony/next`'s answer, and no step state exists in the
-client."* The second clause holds today and the first cannot, because no enabled action exists to
-compare. Amending a criterion is strike-and-supersede and therefore decision-level, so the text is
-left standing and the phase does not close over it. Carried in the closing batch.
+**~~PARKED — a P01 exit criterion cannot be met and its amendment is Dan's.~~ ANSWERED 2026-09-07
+on Dan's instruction (`/discuss`): the criterion was struck and superseded, and P01 closed at
+v1.128.15.** The superseding clause keeps the rendering half and moves the enabling half to
+whichever phase ships an action — which is what leaves this slice re-sequenced rather than blocked.
+
+*(Pin corrected 2026-09-08 at resume. The paragraph above still read as an open park a day after it
+was answered, and the phase heading twelve lines up already said `done`. A parked question that
+stays written as parked after it is settled sends the next session to re-derive it — which is the
+same cost as the park itself, paid again.)*
 
 Scope: the per-card sentence becomes the rail's enabled action, labelled from `next`. Refs: D1, D6, D15.
 Acceptance:
@@ -641,10 +645,42 @@ Tasks:
 - T03 — tests, each probed red: a draft survives a restart; an empty draft is not stored; the
   roster, recital and deadline all round-trip.
 
-#### P03.S03 — the draft is consumed exactly once
+#### P03.S03 — the draft is consumed exactly once *(done 2026-09-08, v1.128.44)*
 Scope: a successful `convene` clears the draft and a failed one does not. Refs: D4.
 Acceptance: convening clears it; a refused convene leaves it intact and re-enterable; a second
 convene cannot reuse a consumed draft.
+Tasks: *(written at slice-grill time, 2026-09-08, after tracing both halves of the draft's life)*
+1. T01 — `handleCeremonyConvene` calls `clearCeremonyDraft` after its LAST failure path
+   (`pinCeremonyRoster`), so a refused convene leaves the draft intact by construction rather than
+   by ordering luck. Best-effort with a log, exactly as `WriteMe` two lines above it is: the
+   ceremony IS convened by then, and failing the request over a draft that would not clear would
+   report a failure for something that succeeded.
+2. T02 — **the client resets the form too, and the scope sentence does not say so.** After a
+   successful convene the client calls `showCeremonyForm(null)`, which HIDES the sheet without
+   clearing it — so the consumed draft's values stay in the fields, `#ceremonyConveneForm`'s
+   `change` listener re-saves them on any keystroke (resurrecting a consumed draft), and reopening
+   shows stale values because `restoreCeremonyDraft` finds nothing and returns early. The third
+   acceptance clause is false without this half.
+3. T03 — tests, each probed red: a successful convene leaves the store empty; a REFUSED convene
+   leaves it byte-identical; the form is empty after a successful convene, so a stray change event
+   cannot re-persist what was consumed.
+4. T04 — seam inventory rows for the consume and its failure.
+
+**Divergence from the task list, recorded rather than absorbed (2026-09-08).** One test outside
+T01–T04: `TestTheDraftIsConsumedAfterTheLastRefusal`, a source-level ordering guard. It exists
+because a probe showed the **behavioural** test could not see the property it was written for —
+"a refused convene leaves the draft intact" is an ordering claim, and the refusal that test drives
+(an empty intent) is rejected EARLY, so moving the consume into the middle of the handler left it
+green. A late refusal is not reachable from a test: `pinCeremonyRoster` fails only on a vault error.
+
+**And the scope sentence was satisfiable and incomplete, which is the slice's real finding.**
+*"A successful `convene` clears the draft and a failed one does not"* reads as server-only. After a
+successful convene the client calls `showCeremonyForm(null)`, which HIDES the sheet without clearing
+it — so the consumed draft's values stay in the fields, `#ceremonyConveneForm`'s change listener
+re-saves them on the next keystroke (resurrecting a consumed draft), and reopening shows them as
+though restored because `restoreCeremonyDraft` finds nothing and returns early. The third acceptance
+clause — *"a second convene cannot reuse a consumed draft"* — is false with the server half working
+perfectly.
 
 #### P03.S04 — placing blocks leaves the sheet and returns
 Scope: signature-block placement leaves the sheet for the page and comes back with what was typed.

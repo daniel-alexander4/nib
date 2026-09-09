@@ -213,6 +213,19 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 			"the ceremony's parties could not be pinned, so nothing was convened: "+perr.Error())
 		return
 	}
+	// **The draft is consumed here, after the LAST failure path** (P03.S03, D4). Every way this
+	// request can still refuse is above — `pinCeremonyRoster` is the last of them — so "a refused
+	// convene leaves the draft intact" holds by construction rather than by ordering luck.
+	//
+	// Best-effort with a log, exactly as `WriteMe` above it is, and for the same reason: the
+	// ceremony IS convened by the time this runs. Failing the request because a draft would not
+	// clear would report a failure for something that succeeded, and the cost of the miss is that
+	// the user's next setup sheet opens pre-filled with a proceeding they already convened —
+	// annoying, and strictly better than being told their ceremony failed.
+	if derr := clearCeremonyDraft(v); derr != nil {
+		log.Printf("convened ceremony %s: could not clear the saved setup draft: %v — the ceremony "+
+			"is convened, but the next setup sheet will open pre-filled with it", out.Record.ID, derr)
+	}
 	// **commitBarrier, not commitMutation — undo must not be able to un-convene.**
 	//
 	// Convene creates state OUTSIDE the document: N-1 secrets in the vault and a directory
