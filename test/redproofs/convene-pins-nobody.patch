@@ -1,6 +1,6 @@
 --- a/internal/server/convene.go
 +++ b/internal/server/convene.go
-@@ -208,11 +208,7 @@
+@@ -208,11 +208,8 @@
  		log.Printf("convened ceremony %s: could not record which party this machine is: %v — the "+
  			"ceremony works, but the panel cannot show your position in it", out.Record.ID, merr)
  	}
@@ -10,6 +10,7 @@
 -		return
 -	}
 +	_ = convener
- 	// **The draft is consumed here, after the LAST failure path** (P03.S03, D4). Every way this
- 	// request can still refuse is above — `pinCeremonyRoster` is the last of them — so "a refused
- 	// convene leaves the draft intact" holds by construction rather than by ordering luck.
++
+ 	// **commitBarrier, not commitMutation — undo must not be able to un-convene.**
+ 	//
+ 	// Convene creates state OUTSIDE the document: N-1 secrets in the vault and a directory

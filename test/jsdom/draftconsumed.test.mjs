@@ -71,7 +71,15 @@ test('the clear writes every field the restore reads', () => {
   const fields = [
     { id: 'cerIntent', wrote: /intent\.value\s*=\s*''/, what: 'the recital' },
     { id: 'cerExpires', wrote: /expires\.value\s*=\s*''/, what: 'the deadline' },
-    { id: 'cerISign', wrote: /iSign\.checked\s*=\s*false/, what: 'the convener-signs box' },
+    // **`true|false`, and the literal it used to pin was the DEFECT.** This read
+    // `=\s*false` and so held `clearCeremonyForm` at `iSign.checked = false` — while
+    // `#cerISign` ships `checked` in the markup. Every ceremony after the first in a session
+    // therefore defaulted to "the convener does not sign", silently: the server seats them at
+    // roster position 0 with `Signs:false` and the invitations screen lists only invitees. This
+    // guard's business is that the field is RESET AT ALL; which value counts as reset is a
+    // behavioural question and `setupsheet.test.mjs` answers it against the markup's own default —
+    // which the code now reads directly, as `defaultChecked`, so no literal here could pin it.
+    { id: 'cerISign', wrote: /iSign\.checked\s*=/, what: 'the convener-signs box' },
   ];
   for (const f of fields) {
     // STIMULUS: the restore really writes this field, or "the clear must too" is about nothing.

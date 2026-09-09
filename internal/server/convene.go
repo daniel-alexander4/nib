@@ -213,19 +213,6 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 			"the ceremony's parties could not be pinned, so nothing was convened: "+perr.Error())
 		return
 	}
-	// **The draft is consumed here, after the LAST failure path** (P03.S03, D4). Every way this
-	// request can still refuse is above — `pinCeremonyRoster` is the last of them — so "a refused
-	// convene leaves the draft intact" holds by construction rather than by ordering luck.
-	//
-	// Best-effort with a log, exactly as `WriteMe` above it is, and for the same reason: the
-	// ceremony IS convened by the time this runs. Failing the request because a draft would not
-	// clear would report a failure for something that succeeded, and the cost of the miss is that
-	// the user's next setup sheet opens pre-filled with a proceeding they already convened —
-	// annoying, and strictly better than being told their ceremony failed.
-	if derr := clearCeremonyDraft(v); derr != nil {
-		log.Printf("convened ceremony %s: could not clear the saved setup draft: %v — the ceremony "+
-			"is convened, but the next setup sheet will open pre-filled with it", out.Record.ID, derr)
-	}
 	// **commitBarrier, not commitMutation — undo must not be able to un-convene.**
 	//
 	// Convene creates state OUTSIDE the document: N-1 secrets in the vault and a directory
@@ -250,6 +237,33 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
+
+	// **The draft is consumed here, and "here" is BELOW the commit — corrected at P03's phase
+	// close, having shipped one slice earlier claiming the opposite.**
+	//
+	// It sat above `commitBarrier` under a comment reading *"Every way this request can still
+	// refuse is above — `pinCeremonyRoster` is the last of them"*. That was false at the line:
+	// `commitBarrier` refuses three ways (the ceremony freeze, a document closed under the
+	// request, ADR-008's byte cap — which this handler's own header names as reachable by convene,
+	// since it appends a readme, N signature pages and an attachment), and on any of them the
+	// deferred `unconvene` rolls the whole ceremony back. So a convener could close the document
+	// mid-convene and be left with **no ceremony and no draft**: the setup erased from the vault
+	// for a proceeding that does not exist, and the next sheet opening blank as though nothing
+	// had happened.
+	//
+	// `committed = true` is the honest marker for "past the last refusal", because it is the
+	// sentinel the rollback itself keys on: below this line the deferred `unconvene` does nothing,
+	// which is the same fact as "nothing can refuse from here".
+	//
+	// Best-effort with a log, exactly as `WriteMe` above it is, and for the same reason: the
+	// ceremony IS convened by the time this runs. Failing the request because a draft would not
+	// clear would report a failure for something that succeeded, and the cost of the miss is that
+	// the user's next setup sheet opens pre-filled with a proceeding they already convened —
+	// annoying, and strictly better than being told their ceremony failed.
+	if derr := clearCeremonyDraft(v); derr != nil {
+		log.Printf("convened ceremony %s: could not clear the saved setup draft: %v — the ceremony "+
+			"is convened, but the next setup sheet will open pre-filled with it", out.Record.ID, derr)
+	}
 
 	// **No `Seeds` on a FIRST-issued invitation either, and the silence is what produced
 	// `/pending 357` (recorded 2026-09-03).** The re-issue door below states the absence for its

@@ -16,6 +16,11 @@ import { boot } from './boot.mjs';
 
 // Two peers, because P03.S04's clause is about the ROSTER surviving a round trip and an empty
 // picker has no roster to lose. The three tests that predate it assert nothing about the picker.
+// The stored draft is a MUTABLE fixture, empty for every test but the last one. A route that
+// returned a draft to all of them would repopulate the form on each fresh entry and quietly become
+// the starting state of every later assertion in the file.
+let storedDraft = '';
+
 const { document: doc, settle, calls } = await boot({
   routes: {
     '/api/peers': () => ({
@@ -25,6 +30,10 @@ const { document: doc, settle, calls } = await boot({
         { fingerprint: 'b'.repeat(64), label: 'quiet heron ribbon plum copper lane' },
       ],
     }),
+    '/api/ceremony/draft': (opts) => (opts.method === 'POST' ? { draft: '' } : { draft: storedDraft }),
+    // A convene that succeeds, so the CONSUME path can be driven end to end rather than read.
+    '/api/ceremony/convene': () => ({ ceremony: 'c'.repeat(64), invitations: [] }),
+    '/api/ceremonies': () => ({ ceremonies: [] }),
   },
 });
 
@@ -330,4 +339,118 @@ test('parking is impossible when there is no setup to park', async () => {
     'the bar came up with no setup open. `parked` is supposed to MEAN "the setup sheet is waiting", '
     + 'and a bar offering to return to a sheet nobody opened would raise an empty full-width surface');
   assert.equal(doc.getElementById('viewerWrap').hidden, false, 'the document was taken away by a park that should not have happened');
+});
+
+// ── P03's first exit criterion, driven at last: "setup survives closing and reopening Nib" ────
+//
+// **Found MISSING by the phase-close acceptance ledger, not by a slice.** P03.S02 built the draft
+// and proved the BLOB survives a process restart — `TestTheDraftSurvivesTheProcess` stands up a
+// second `Server` over the same HOME and asserts byte-identity. Nothing anywhere asserted the other
+// half: that a stored draft is put back into the FORM. `restoreCeremonyDraft` appeared in this
+// tier only inside source scans and inside P03.S04's "no rebuild happened" assertions — which
+// observe it NOT running. A criterion whose two halves are each owned by a different tier is
+// exactly the shape a per-slice ledger reads as covered.
+//
+// Reopening Nib is a fresh page against a server that still holds the draft, and this tier is the
+// one that can express that: the process restart is tier 1's, already proved, and what remains is
+// the client's read of it.
+test("a stored draft is put back into the form — P03's first exit criterion, client half", async () => {
+  // Nothing has restored anything so far in this file, so this is also the floor for the
+  // assertions below: they cannot be satisfied by values a previous test left in the fields.
+  doc.getElementById('cerSheetClose').click();
+  await settle();
+  doc.getElementById('cerIntent').value = '';
+  doc.getElementById('cerExpires').value = '';
+  for (const r of doc.querySelectorAll('#cerPeerPick .cerpeerrow')) {
+    r.querySelector('.cerpeerbox').checked = false;
+    r.querySelector('.cerpeercap').value = '';
+  }
+
+  storedDraft = JSON.stringify({
+    intent: 'We agree to the lease of 14 Elm Row',
+    expires: '2026-10-01T12:00',
+    iSign: false,
+    roster: [{ fingerprint: 'b'.repeat(64), capacity: 'as landlord', picked: true }],
+  });
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  storedDraft = '';
+
+  assert.equal(doc.getElementById('cerIntent').value, 'We agree to the lease of 14 Elm Row',
+    'the recital did not come back, so a convener who closed Nib mid-setup starts again from blank '
+    + '— which is the abandonment case D4 exists to end');
+  assert.equal(doc.getElementById('cerExpires').value, '2026-10-01T12:00', 'the deadline did not come back');
+  assert.equal(doc.getElementById('cerISign').checked, false,
+    '"I sign this too" did not come back. It defaults CHECKED in the markup, so a restore that '
+    + 'skipped booleans would silently add the convener to the roster of a ceremony they had '
+    + 'decided not to sign');
+
+  // The roster is the half that fails silently: the picker is rebuilt from /api/peers first, and a
+  // restore matching on the wrong attribute finds no row and drops every party while the recital
+  // and the deadline come back looking correct.
+  const rows = [...doc.querySelectorAll('#cerPeerPick .cerpeerrow')];
+  const picked = rows.filter((r) => r.querySelector('.cerpeerbox').checked);
+  assert.equal(picked.length, 1,
+    `${picked.length} parties came back picked, not 1. The picker is rebuilt from /api/peers before `
+    + 'the restore runs, so a restore that matched on the wrong attribute would find no row and '
+    + 'drop the whole roster — leaving the recital and the deadline looking restored');
+  assert.equal(picked[0].querySelector('.cerpeerbox').dataset.fingerprint, 'b'.repeat(64),
+    'the wrong party came back picked');
+  assert.equal(picked[0].querySelector('.cerpeercap').value, 'as landlord',
+    'the capacity did not come back. D20 makes capacity part of the agreement rather than a label, '
+    + 'so a roster restored without it has lost what each party is signing AS');
+});
+
+// ── Two defects the phase-close review found in code four slices had already reviewed ─────────
+
+test('emptying the form returns it to how it OPENS, not to all-false', async () => {
+  await openSheet();
+  const iSign = doc.getElementById('cerISign');
+  // **`defaultChecked`, not `checked`** — it reflects the HTML attribute whatever the live state
+  // is, so this floor is order-independent. Written as `checked` first and it failed here, because
+  // the test above had left the box unchecked from a restored draft: a floor that reads live state
+  // measures the test that ran before it.
+  assert.equal(iSign.defaultChecked, true,
+    'setup: #cerISign does not ship checked, so "returns to the markup default" is about nothing '
+    + 'and the assertion below would pass for the wrong reason');
+
+  doc.getElementById('cerIntent').value = 'We agree to the lease of 14 Elm Row';
+  doc.getElementById('cerExpires').value = '2027-10-01T12:00';
+  doc.querySelector('#cerPeerPick .cerpeerbox').checked = true;
+  doc.getElementById('ceremonyConveneForm').dispatchEvent(new doc.defaultView.Event('submit', { bubbles: true, cancelable: true }));
+  await settle();
+
+  assert.equal(doc.getElementById('cerIntent').value, '', 'the recital survived a successful convene');
+  assert.equal(iSign.checked, iSign.defaultChecked,
+    'after convening, "I sign this too" is UNCHECKED — so the next ceremony in this session '
+    + 'defaults to the convener not signing. The server seats them at roster position 0 with '
+    + 'Signs:false and the invitations screen lists only invitees, so nothing on screen tells them '
+    + 'they left themselves out. Emptying a form means returning it to how it opens, which for a '
+    + 'checkbox is not the same as clearing it');
+});
+
+test('leaving the Ceremony mode PARKS the setup rather than dropping the thread', async () => {
+  await openSheet();
+  doc.getElementById('cerIntent').value = 'We agree to the lease of 14 Elm Row';
+  doc.querySelector('#cerPeerPick .cerpeercap').value = 'as tenant';
+  await settle();
+
+  doc.querySelector('.modetab[data-tab="markup"]').click();
+  await settle();
+  assert.equal(sheet().hidden, true, 'setup: the sheet survived the mode change, so this tests nothing');
+  assert.equal(bar().hidden, false,
+    'leaving the mode dropped the thread back to a half-filled ceremony. This is the path the '
+    + 'excursion exists for — finishing markup before convening — and a user who reaches Mark Up '
+    + 'by the mode tab rather than by "See the document" got no way back but the rebuild');
+
+  const peersBefore = countCalls('/api/peers');
+  doc.getElementById('cerBackToSetup').click();
+  await settle();
+  assert.equal(sheet().hidden, false, 'the way back did not bring the sheet back');
+  assert.equal(doc.body.dataset.tab, 'collaborate', 'the sheet came back over another mode\'s sidebar');
+  assert.equal(countCalls('/api/peers'), peersBefore,
+    'coming back from a mode change rebuilt the picker, so the mode exit and the button exit are '
+    + 'still two different mechanisms');
+  assert.equal(doc.querySelector('#cerPeerPick .cerpeercap').value, 'as tenant',
+    'the uncommitted capacity was lost across the mode round trip');
 });
