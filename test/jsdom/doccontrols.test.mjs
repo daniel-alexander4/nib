@@ -89,6 +89,10 @@ const EXEMPT = new Set([
   // (`prevBtn`/`nextBtn` were here until v1.125.0 and are gone from the product — a name in an
   // exemption list that matches nothing is a claim about a control that does not exist.)
   'zoomOutBtn', 'fitBtn', 'zoomInBtn',
+  // Quit acts on the PROCESS, not on a document (P01.S06). Requiring a document would make it
+  // unreachable from the one state a user most wants it in — a Nib with nothing open that they
+  // want to stop — and its own modal already names whatever would be lost, document or ceremony.
+  'quitBtn',
   // The Settings pane (v1.126.0). None of it acts on the open document — they are the machine's
   // identity, its vault, its update preference and its About box — so requiring a document would
   // make Settings unreachable on a fresh install, which is exactly when it is needed.

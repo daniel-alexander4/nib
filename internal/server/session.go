@@ -321,6 +321,29 @@ func (se *session) Armed() bool {
 	return se.armedLocked()
 }
 
+// ArmedWhat reports whether anything is armed and, when it is a ceremony, what the ceremony is FOR
+// — its intent, in the convener's own words (P01.S06).
+//
+// **The intent and never a fingerprint**, which is the panel's standing rule about naming people
+// applied to naming proceedings: the user is being asked whether to end something, and "a ceremony
+// with a4f9c2…" is not a thing anyone can decide about.
+//
+// Empty `what` on a manual co-signing arm is correct rather than missing: that arm has no ceremony
+// and no intent, so there is nothing to name, and the client says so in its own words.
+func (se *session) ArmedWhat() (bool, string) {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if !se.armedLocked() {
+		return false, ""
+	}
+	for _, a := range se.arms {
+		if a != nil && a.cer != nil {
+			return true, a.cer.inv.Intent
+		}
+	}
+	return true, ""
+}
+
 // slotTaken is `collidesLocked` for a caller that does not hold the lock — so a door can ask before
 // it opens a socket rather than after (`/pending 381`).
 //

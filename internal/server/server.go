@@ -308,6 +308,7 @@ func (s *Server) Handler() http.Handler {
 	// a window on the unlock screen is a real window.
 	mux.HandleFunc("GET /api/window", requirePublicLoopback(s.handleWindow))
 	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
+	mux.HandleFunc("POST /api/quit", requirePublicLoopback(s.handleQuit))
 	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
 	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))

@@ -316,11 +316,49 @@ throw, and `ceremonyArmed` could never leave its initial `false` — so "a cerem
 prompt fires" would have been a green test that had never met its case. `h.pushWindowEvent` returns
 whether a stream was there to push to, so a silent no-op cannot make the assertion vacuous.
 
-#### P01.S06 — Quit Nib
+#### P01.S06 — Quit Nib *(done 2026-09-08, v1.128.42)*
 Scope: an explicit quit action whose modal names what it will end, in Nib's words. Refs: D5, D6.
 Acceptance:
 - The modal names a live ceremony and an unsaved document specifically, not generically.
 - Quit exits through the same teardown as every other cause.
+Tasks: *(written at slice-grill time, 2026-09-08)*
+1. T01 — **`RequestExit` is the one door onto "this process should exit"**, and S04's grace becomes
+   its first caller rather than closing the channel itself. D6 says every exit path runs the same
+   teardown in the same order; a second closer of that channel is a second exit path in everything
+   but name.
+2. T02 — `POST /api/quit` under `requirePublicLoopback`, the guard `/api/window` and `/api/handoff`
+   already use. **Not `requireUnlocked`**: a locked Nib is still a Nib the user wants to quit, and
+   D3 already settled that a window on the unlock screen is a real window.
+3. T03 — the pushed armed state carries WHAT is armed, not just whether. S05 pushes a bool, and
+   "names a live ceremony specifically, not generically" cannot be met from one. The name is the
+   ceremony's `Intent` — the convener's own words — never a fingerprint, which is the panel's
+   standing rule.
+4. T04 — the Quit command and its confirm. `confirm()` and not a bespoke modal: it is what
+   `requestClose` already uses, and D5's distinction is that `beforeunload` CANNOT carry text while
+   this can. The text names the ceremony by its intent and each unsaved document by its file name.
+5. T05 — Quit with nothing to lose does not confirm at all, on D5's own argument: a prompt on every
+   quit trains the user to dismiss it.
+6. T06 — tier-1 for the door and the route; tier-2 for the wording naming both specifically; seam
+   inventory rows.
+
+**Divergence from the task list, recorded rather than absorbed (2026-09-08).** Three changes outside
+T01–T06, all forced by existing guards and none discretionary: `quitBtn` in the markup and the `els`
+handle table (a command needs a home); the doc-controls EXEMPT set and the apiFetch-bypass allowlist,
+each with its own reason at the site — Quit acts on the PROCESS, so requiring a document would make
+it unreachable from the one state a user most wants it in, and it cannot be CSRF'd because there is
+no token before the vault unlocks; and `published.test.mjs`, whose shape scan requires every wire
+object to name a reader.
+
+**And S05's own tier-1 test had to change, which is worth recording.** T03 turns the pushed bool
+into an object so the modal can name the ceremony, and that test read `== "true"`. It **failed**
+rather than going quietly false — the shape that gets noticed — and it now decodes the event
+instead of comparing a string.
+
+**One clause is met structurally rather than by observation, and the inventory says so.** "Quit
+exits through the same teardown as every other cause" is shown by one door, one `select` arm and
+zero new teardown lines; nothing observes the process actually dying after the signal, because
+`run()`'s teardown is `cmd/nib`'s and no test drives it end to end. Driving it needs a real process
+to die, which is `winrepro`-shaped and does not exist for this platform's exit path.
 
 ---
 

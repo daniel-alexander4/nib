@@ -187,6 +187,12 @@ test('nothing bypasses apiFetch to reach a document route', () => {
     // CSRF token can ride on it. Structural, like the pdf.js pair above, rather than an
     // omission.
     '/api/window',
+    // Quit (P01.S06). Not a document route — it ends the PROCESS, which is true of no document —
+    // and it deliberately cannot be pinned or CSRF'd: it is `requirePublicLoopback` for D3's
+    // reason reaching one route further, that a locked Nib is still a Nib its user wants to quit,
+    // and there IS no CSRF token before the vault unlocks. Structural, like the window stream
+    // above, rather than an omission.
+    '/api/quit',
   ]);
 
   // The stimulus: an empty result would read as "no bypasses" forever, including
