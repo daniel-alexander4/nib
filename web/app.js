@@ -9902,18 +9902,104 @@ function rectPoints(f, frac) {
   return [fx0 * f.pageW, (1 - fy1) * f.pageH, fx1 * f.pageW, (1 - fy0) * f.pageH];
 }
 
-function collectFields(owner = view) {
-  const out = [];
+function collectFields(owner = view) { return collectFieldsWithSources(owner).fields; }
+
+// collectFieldsWithSources is collectFields plus the overlay objects each posted
+// field came from, at the SAME index.
+//
+// The pairing exists because the server's fit report (X-Nib-Fit) names fields by
+// their index in this array, and applying it means finding the overlay that index
+// belongs to. Rebuilding the list with a second copy of the filter would be two
+// implementations of "which overlays bake", and they would disagree the first time
+// either changed — the ADR-009 defect this repo has already paid for. One walk,
+// two outputs.
+function collectFieldsWithSources(owner = view) {
+  const fields = [], sources = [];
   for (const f of owner.overlayFields) {
     if (f.kind === 'text' && f.el.value.trim() !== '') {
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value });
+      fields.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value });
+      sources.push(f);
     } else if (f.kind === 'edit' && f.el.value.trim() !== '') {
       // Cover-and-replace: carry the recognized font/size/colour so the bake
       // matches the original run. (An emptied edit is an erase — cover only.)
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value, font: f.font, size: f.size, color: f.color });
+      fields.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value, font: f.font, size: f.size, color: f.color });
+      sources.push(f);
     }
   }
-  return out;
+  return { fields, sources };
+}
+
+// FIT_WORDS says what happened to a field that did not fit its box, in the words a
+// user can act on. Law 3: a fallback that does not name its cause is how somebody
+// comes to believe text was placed as they typed it when it was not.
+const FIT_WORDS = {
+  shrunk: 'made smaller to fit the box',
+  wrapped: 'wrapped onto more than one line',
+  overran: 'too long for the box',
+};
+
+// applyFitReport makes the on-screen overlay agree with what was actually baked.
+//
+// The server decides the fit, because the measurement lives in one place: pdfcpu's
+// core-font metrics, reached through mdpdf.CoreWidth. The browser cannot reproduce
+// that decision without a second implementation of it (its own font metrics are not
+// the AFM tables), so the client does not guess — it reads the answer back.
+//
+// **The rule is about text stamped AS TEXT, and `ctx.measureText` elsewhere in this
+// file does not break it.** `stampURL` and `textStampURL` measure a string to size a
+// canvas they are about to rasterise; those bake through StampImages as pixels, so
+// the image is by construction the size it was measured at and there is no fit
+// question to get wrong. The case that matters is the one where pdfcpu lays out
+// glyphs from AFM widths and the browser would have to predict where they land.
+//
+// **Pinned like every other post-await write.** `sources` was captured before the
+// round trip; in between, the user may have deleted an overlay, switched documents,
+// or drawn new ones. Each source is checked to be STILL in this owner's field list
+// before anything is written to it (ADR-001), so a stale index cannot resize a field
+// that happens to sit at the same position now.
+function applyFitReport(owner, sources, header) {
+  if (!header) return [];
+  let fits;
+  try { fits = JSON.parse(header); } catch { return []; }
+  if (!Array.isArray(fits)) return [];
+  const applied = [];
+  for (const fit of fits) {
+    const f = sources[fit.field];
+    if (!f || !owner.overlayFields.includes(f)) continue;
+    if (fit.outcome === 'shrunk' && fit.stampedPt > 0 && f.kind === 'edit') {
+      // The size the page carries, which is not the size that was asked for. Without
+      // this the overlay keeps showing the original and the preview lies about the
+      // document the user just produced.
+      f.size = fit.stampedPt;
+      layoutFieldNow(owner, f);
+    }
+    f.el.classList.toggle('ovl-misfit', fit.outcome === 'overran');
+    applied.push(fit);
+  }
+  return applied;
+}
+
+// tellFitReport names each cause once, with a count — never a lumped "some fields
+// did not fit", because the three causes have three different things a user can do
+// about them.
+function tellFitReport(applied) {
+  if (!applied.length) return;
+  const byCause = new Map();
+  for (const fit of applied) byCause.set(fit.outcome, (byCause.get(fit.outcome) || 0) + 1);
+  const parts = [];
+  for (const [cause, n] of byCause) {
+    let part = `${n} ${n === 1 ? 'edit was' : 'edits were'} ${FIT_WORDS[cause] || cause}`;
+    // **How far past, not just that it is past.** "too long for the box" leaves the user
+    // guessing whether to cut a word or a sentence; the measured overrun is the number
+    // that tells them, and it is the reason the server publishes it rather than just a
+    // verdict. Widest overrun of the group, so one number describes the worst case.
+    if (cause === 'overran') {
+      const worst = Math.max(...applied.filter((f) => f.outcome === cause).map((f) => f.overrunPt || 0));
+      if (worst > 0) part += ` by ${Math.round(worst)}pt`;
+    }
+    parts.push(part);
+  }
+  toast(parts.join('; '));
 }
 
 // collectAuthorFields gathers detected/placed fields as interactive AcroForm
@@ -10003,7 +10089,7 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view)
   // the first caller to use it would have baked one document's pages with another
   // document's fields, stamps, covers and notes. No caller passed it, so nothing
   // exposed that.
-  const fields = collectFields(owner);
+  const { fields, sources: fieldSources } = collectFieldsWithSources(owner);
   const stamps = collectStamps(owner);
   const covers = collectCovers(owner);
   const notes = collectNotes(owner);
@@ -10020,6 +10106,9 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view)
     // here would let save/print/flatten/sign proceed with a document silently
     // missing the user's covers, fields, stamps, and notes.
     if (!res.ok) throw new Error(await errText(res, 'could not apply edits'));
+    // The fit report rides on a header because the body is the PDF. An ABSENT
+    // header is the common case and means every field fitted as drawn.
+    tellFitReport(applyFitReport(owner, fieldSources, res.headers.get('X-Nib-Fit')));
     out = new Uint8Array(await res.arrayBuffer());
   }
   // A document opened with embedded signing flags carries the NibFlags property,
