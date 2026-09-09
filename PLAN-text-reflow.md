@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: unbuilt.** No slice has started. `/createcode` drives it from P01.
+**Status: building.** P01.S01 done; P01.S02 next. `/createcode` drives it from P01.
 
 ---
 
@@ -178,11 +178,48 @@ users already believe it does.
 - A replacement narrower than the original no longer leaves an unexplained band of cover-colour.
 - The overflow measurement is asserted at tier 1 and visible at tier 3.
 
-#### P01.S01 — wire the metrics to the bake path
+#### P01.S01 — wire the metrics to the bake path *(done 2026-09-09, v1.128.64)*
 Scope: `StampFields` measures each field's text before emitting, through `mdpdf.CoreWidth` (D3).
 Refs: D1, D3, law 4.
+
+**Pinned 2026-09-09 by the slice's grill — the scope holds and the prescription does not.**
+Measured against pdfcpu's own emitted form-XObject `BBox`, which is what actually decides where
+the glyphs land:
+
+- **`mdpdf.CoreWidth` alone is the wrong measurement**, 2 of 5 trap strings. It counts `\n` as a
+  character, so `"one\ntwo"` measures 50.69pt against an emitted 20.02pt. The rule is **split on
+  newline, widest line wins** — and this is not a future concern, because S02's *wrap* outcome
+  works by inserting newlines.
+- **Measure the RAW text, never `stampText`'s output.** `stampText` doubles `%` for pdfcpu's
+  format string and pdfcpu undoubles it; measuring the escaped form reads `"50% of the time"` as
+  94.04pt against an emitted 83.38pt.
+- **`mdpdf.CoreWidth` PANICS on a non-core font name** (`pdfcpu: user font not loaded: Arial`), so
+  the prescription as written puts a panic on `/api/bake`. The fix is structural, not defensive:
+  measure `coreFont(f.Font)` — the value that already decides what is stamped — so the allowlist
+  bounds the measurement and emission and measurement cannot diverge.
+- **The `+2` anchor inset is worth 2pt of silent error** in every verdict and becomes a named
+  constant read by both sites.
+- **Four sites bake text; only this one is the "must fit a drawn box" rule.** Page numbers anchor
+  to a page corner, the watermark is centred and relatively scaled, the OCR layer is invisible and
+  sized from OCR's own boxes. Established by a grep over `TextWatermark` call sites, not assumed.
+
+Tasks:
+- T01 — `stampStyle(Field) (font string, pts int)`: one door for what is actually emitted,
+  extracting the font coercion and size clamp already inline in `StampFields`.
+- T02 — `stampInsetPt`: the `+2` anchor inset as a named constant, read by the stamp description
+  and by the fit.
+- T03 — `stampWidth(text, font string, pts int)`: one door for the emitted width — newline-split,
+  widest line, `mdpdf.CoreWidth` per line, allowlisted font by contract.
+- T04 — `Fit{Field, Page, WidthPt, BoxPt, OverrunPt}`; `StampFields` returns `([]byte, []Fit, error)`;
+  `internal/server/overlay.go` updated.
+- T05 — the assertions, the red proof, and the `recorded` count bump.
+
 Acceptance:
-- The measured width of a known string in a known core font matches the AFM value.
+- The measured width equals the `BBox` width pdfcpu actually emits, across the trap corpus
+  (ε ≤ 0.01pt) — the oracle is pdfcpu's own layout, not a hand-copied AFM figure.
+- A field carrying a non-core font name neither panics nor measures the wrong face.
+- The overrun is computed against the same inset the stamp uses, proven by a fixture where a 2pt
+  error flips the verdict.
 - A red proof: removing the measurement turns the overflow assertion red.
 - No second width implementation is introduced — the guard greps for one.
 

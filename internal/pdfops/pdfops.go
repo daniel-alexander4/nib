@@ -19,6 +19,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"nib/mdpdf"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
@@ -983,59 +985,146 @@ func coreFont(name string) string {
 	return "Helvetica"
 }
 
+// stampInsetPt is how far inside its rectangle's bottom-left corner a stamped
+// field's text is anchored, in points.
+//
+// It is a named constant because TWO sites must agree on it: the watermark
+// description that positions the glyphs, and the fit measurement that decides
+// whether they overrun. A literal in one and not the other is 2pt of silent
+// error in every verdict — small enough to survive review and large enough to
+// call a fit an overrun on a short field.
+const stampInsetPt = 2.0
+
+// stampStyle is the font and point size StampFields will ACTUALLY emit for a
+// field — not the ones the caller asked for.
+//
+// The distinction is the whole point. `Field.Font` is an arbitrary string from
+// the client (pdf.js hands over whatever the document's BaseFont said), and
+// `Field.Size` is a float the client derived from a text run; what reaches the
+// page is the allowlist-coerced name and a clamped integer size. Anything that
+// wants to predict the emitted result — the width measurement, above all — must
+// ask this, because measuring the requested font when a different one is stamped
+// is measuring the wrong thing, and passing an unlisted name to a metrics table
+// is a panic (see stampWidth).
+func stampStyle(f Field) (string, int) {
+	// An explicit Size (cover-and-replace edit) is honoured up to 144pt; with
+	// none, size is derived from the rect height as detected fields always have,
+	// capped at 48 so a tall detected box doesn't balloon the text.
+	pts, ceiling := int(f.Size), 144
+	if pts <= 0 {
+		pts, ceiling = int((f.Rect[3]-f.Rect[1])*0.72), 48
+	}
+	if pts < 6 {
+		pts = 8
+	}
+	if pts > ceiling {
+		pts = ceiling
+	}
+	return coreFont(f.Font), pts
+}
+
+// stampWidth is the width in points of text as StampFields will actually draw
+// it: the widest of its lines, measured through mdpdf.CoreWidth.
+//
+// Three things it does that a direct CoreWidth call does not, each measured
+// against the form-XObject BBox pdfcpu emits — which is the number that decides
+// where the glyphs land, and so the only oracle worth holding this to:
+//
+//   - **It splits on newline.** CoreWidth counts "\n" as an ordinary character,
+//     so "one\ntwo" measures 50.69pt against an emitted 20.02pt. pdfcpu sets
+//     each line separately and the form is as wide as the widest one.
+//   - **It takes the RAW text**, never stampText's output. stampText doubles "%"
+//     for pdfcpu's format string and pdfcpu undoubles it, so measuring the
+//     escaped form reads "50% of the time" as 94.04pt against an emitted 83.38pt.
+//   - **fontName must be allowlisted**, which is why every caller reaches this
+//     through stampStyle. pdfcpu's metrics table PANICS on a name it does not
+//     carry ("pdfcpu: user font not loaded: Arial"), and Field.Font is arbitrary
+//     client input, so passing it through unconverted would put a panic on
+//     /api/bake. Coercing first is not a guard bolted on top: it is the same
+//     value that already decides which face is stamped, so the measurement and
+//     the emission cannot describe different fonts.
+func stampWidth(text, fontName string, pts int) float64 {
+	widest := 0.0
+	for _, line := range strings.Split(text, "\n") {
+		if w := mdpdf.CoreWidth(line, fontName, pts); w > widest {
+			widest = w
+		}
+	}
+	return widest
+}
+
+// Fit is the measured relationship between one stamped field's text and the
+// rectangle it was drawn into. StampFields returns one per field it stamped.
+//
+// Nothing acts on it yet — deciding what to do about an overrun is P01.S02.
+// What it ends is the state where nothing MEASURES: today a replacement four
+// times its box's width is emitted with no error and no clip path.
+type Fit struct {
+	Field     int // index into the fields slice StampFields was given
+	Page      int
+	WidthPt   float64 // the text as emitted: widest line, stamped face and size
+	BoxPt     float64 // usable width — the rectangle less the anchor inset
+	OverrunPt float64 // WidthPt - BoxPt; NEGATIVE is the ordinary case
+}
+
+// fitFor measures one field against its box. Both halves come from stampStyle,
+// so the width is measured in the face and size that will actually be drawn.
+func fitFor(i int, f Field, page int) Fit {
+	fontName, pts := stampStyle(f)
+	w := stampWidth(f.Text, fontName, pts)
+	box := f.Rect[2] - (f.Rect[0] + stampInsetPt)
+	return Fit{Field: i, Page: page, WidthPt: w, BoxPt: box, OverrunPt: w - box}
+}
+
 // StampFields bakes the given overlay-field values onto the PDF as text, sized to
 // each field's rectangle. All fields are applied in a single pass.
-func StampFields(pdf []byte, fields []Field) ([]byte, error) {
+//
+// It also returns one Fit per stamped field — how wide the text came out against
+// the box it was drawn into. Nothing acts on that yet (P01.S02 decides what an
+// overrun should DO); what it ends is the state where nothing measures at all.
+// Fields skipped as empty produce no Fit, so callers key on Fit.Field rather than
+// on position.
+func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 	wms := map[int][]*model.Watermark{}
-	for _, f := range fields {
+	var fits []Fit
+	for i, f := range fields {
 		if strings.TrimSpace(f.Text) == "" {
 			continue
 		}
-		// An explicit Size (cover-and-replace edit) is honoured up to 144pt; with
-		// none, size is derived from the rect height as detected fields always have,
-		// capped at 48 so a tall detected box doesn't balloon the text.
-		pts, max := int(f.Size), 144
-		if pts <= 0 {
-			pts, max = int((f.Rect[3]-f.Rect[1])*0.72), 48
-		}
-		if pts < 6 {
-			pts = 8
-		}
-		if pts > max {
-			pts = max
-		}
+		fontName, pts := stampStyle(f)
 		color := "#000000"
 		if hexColor.MatchString(f.Color) {
 			color = f.Color
 		}
 		// Anchor the text near the field's bottom-left (small inset), in points.
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.1f %.1f, fillcolor:%s, rotation:0",
-			coreFont(f.Font), pts, f.Rect[0]+2, f.Rect[1]+2, color)
+			fontName, pts, f.Rect[0]+stampInsetPt, f.Rect[1]+stampInsetPt, color)
 		ftext, err := stampText(f.Text)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if ftext == "" {
 			continue
 		}
 		wm, err := api.TextWatermark(ftext, desc, true, false, types.POINTS)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		page := f.Page
 		if page < 1 {
 			page = 1
 		}
 		wms[page] = append(wms[page], wm)
+		fits = append(fits, fitFor(i, f, page))
 	}
 	if len(wms) == 0 {
-		return pdf, nil
+		return pdf, fits, nil
 	}
 	var out bytes.Buffer
 	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out.Bytes(), nil
+	return out.Bytes(), fits, nil
 }
 
 // Stamp is an image to bake onto the page at a given rectangle (PDF points,

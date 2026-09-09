@@ -406,7 +406,7 @@ func TestStampFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := StampFields(pdf, []Field{
+	out, _, err := StampFields(pdf, []Field{
 		{Page: 1, Rect: [4]float64{72, 700, 300, 716}, Text: "Jane Doe"},
 		{Page: 1, Rect: [4]float64{72, 650, 86, 664}, Text: "X"},
 	})
@@ -420,7 +420,7 @@ func TestStampFields(t *testing.T) {
 		t.Error("stamped PDF is not larger than the original (nothing added?)")
 	}
 	// Empty fields are skipped, returning the input unchanged.
-	same, err := StampFields(pdf, []Field{{Page: 1, Text: "   "}})
+	same, _, err := StampFields(pdf, []Field{{Page: 1, Text: "   "}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestStampFieldsStyle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := StampFields(pdf, []Field{
+	out, _, err := StampFields(pdf, []Field{
 		{Page: 1, Rect: [4]float64{72, 700, 300, 716}, Text: "Replacement", Font: "Times-BoldItalic", Size: 13, Color: "#cc0000"},
 	})
 	if err != nil {

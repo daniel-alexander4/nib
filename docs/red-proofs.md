@@ -4982,3 +4982,38 @@ originally proposed — goes red by name.
 it patches gained a `stopped` arm. Re-applied and re-run: still red for its own token.
 
 `recorded` 398 → 399.
+
+## P01.S01 of `PLAN-text-reflow.md` — two rows, and both record a defect the PLAN prescribed
+
+`a-stamped-width-counts-the-newline-as-a-glyph` and `a-measured-field-trusts-the-fonts-name`.
+
+The slice's job was to measure a stamped field's text against the box it was drawn into, because
+nothing did: 74 characters of Helvetica 12 into a 100pt box emits a **398.16pt** form, a 4× overrun,
+with no error and no clip path. The plan said to do it "through `mdpdf.CoreWidth`", and taken
+literally that ships two defects, both of which these rows pin.
+
+**The newline row.** `CoreWidth` measures a string; pdfcpu sets one line per `\n` and the form it
+emits is as wide as the WIDEST line. Measuring the whole string sums the lines end to end —
+`"one\ntwo"` reads 50.69pt against an emitted 20.02pt. This is not latent: P01.S02's wrap outcome
+works BY inserting newlines, so the naive door is wrong at the moment the next slice starts using it.
+
+**The font row.** `Field.Font` is arbitrary client input and pdfcpu's metrics table PANICS on a name
+it does not carry — `pdfcpu: user font not loaded: Arial`. `StampFields` is called from `handleBake`,
+so measuring the REQUESTED font rather than the coerced one puts a panic on `/api/bake` for most real
+documents. The fix routes the measurement through the same `coreFont` call that already decides which
+face is stamped, which makes "measured the wrong font" and "panicked on an unlisted font" both
+unrepresentable rather than merely guarded against.
+
+**Why the oracle is pdfcpu's emitted BBox and not the AFM table.** The plan's own acceptance clause
+was *"the measured width of a known string in a known core font matches the AFM value"* — and that
+clause is **green against both wrong implementations**, because neither trap string is a plain ASCII
+word. Reading the form XObject pdfcpu actually wrote escapes the circularity `internal/p2p`'s column
+guard declares about itself, and goes red if pdfcpu ever changes how it measures.
+
+Three further mutations were green when first run and are recorded in the slice's inventory section
+rather than here, because each was a defect in the TESTS: the trap corpus driven through the door
+instead of through `StampFields`; the anchor inset asserted on the fit's side but not on the stamp
+description's; and the size clamp, invisible because every fixture used a size that passes through
+all three branches unchanged.
+
+`recorded` 399 → 401.

@@ -1,0 +1,11 @@
+--- a/internal/pdfops/pdfops.go
++++ b/internal/pdfops/pdfops.go
+@@ -1020,7 +1020,7 @@
+ 	if pts > max {
+ 		pts = max
+ 	}
+-	return coreFont(f.Font), pts
++	return f.Font, pts
+ }
+ 
+ // stampWidth is the width in points of text as StampFields will actually draw
