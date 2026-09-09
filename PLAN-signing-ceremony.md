@@ -1405,6 +1405,34 @@ delivered over whatever channel the parties already use.
   at the handshake, because the pin is the fingerprint and the holder has no private key. P06
   says this on screen rather than leaving the user to reason about it.
 
+**(pin, 2026-09-09 — `/pending 427`. "The rendezvous, and nothing beyond it" is FALSE, and P06 put it
+on screen.)** This decision's own summary of what an intercepted invitation buys — *"the rendezvous,
+and nothing beyond it"* — was rendered verbatim to users for three weeks, because P06's criterion
+asked for the screen to say it *in D21's terms* and D21's terms were wrong. Read at the line, a
+holder needs no key to get three things:
+
+- **The roster and the recital, in plain text.** `Invitation.Encode` is `json.Marshal` then
+  base64url with a paste checksum (`internal/ceremony/invitation.go:376-382`); nothing signs it and
+  nothing encrypts it, which this decision's own Stage 6 pin already says. So `base64 -d` yields
+  every party's **label** (the human name the convener typed), **capacity** ("as Director of Acme
+  Ltd"), full 32-byte fingerprint and `signs` flag, plus `Intent` — the sentence being agreed. Who
+  is involved, in what role, and what the matter is.
+- **What is published on that party's leg.** The secret keys `HopSeed`, `RecordKey`, `RecordSalt` and
+  the end-state trio, so a holder fetches and decrypts the candidate records — that leg's public
+  addresses, ports and transports — and the published end state, which carries the convener's
+  certificate. `candidate.go:23-27` states it as the design's own boundary: *"The CONFIDENTIALITY
+  boundary is the ceremony. Everyone holding the invitation can read every candidate record."*
+- **Denial of that leg.** `candidate.go:60-68` records it as an accepted residual: a holder publishes
+  at `seq = MaxInt64` and takes the key, and the honest party's own error says *"somebody who holds
+  this ceremony's invitation has taken the key"* (`publish.go:167-169`).
+
+**The scope is ONE LEG and not the ceremony**, because secrets are per party — this decision's own
+`:302-303`: *"A forwarded or intercepted invitation exposes one hop rather than the ceremony."* The
+bullet above stays because its three claims are all true; what is struck is the *"and nothing beyond
+it"* gloss, which was never true and which nothing guarded. It is guarded now, clause by clause, at
+`test/jsdom/ceremonypanel.test.mjs`, with `an-invitation-gets-its-holder-nothing-more` recorded
+against the negative.
+
 *Why an object at all, when the plan's premise was one spoken name:* **a roster of four cannot
 be spoken.** Multi-party needs a distributable invitation whether or not it carries a secret, so
 the secret is free — and it is the thing that removes the human step rather than merely

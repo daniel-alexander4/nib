@@ -274,6 +274,35 @@ test('the invitations screen says what an invitation is, in D21\'s terms', async
     'and the criterion asks for those terms');
   assert.match(out.textContent, /not a signing credential/,
     'the screen does not say what an invitation is NOT, which is the half a user who forwards one needs');
+  // **The three capabilities, asserted SEPARATELY (`/pending 427`).** The sentence this replaced
+  // said an invitation lets its holder "find this ceremony and nothing more", which is false: the
+  // payload is plaintext JSON (`Invitation.Encode` is marshal + base64url, no signature, no
+  // encryption), so a holder reads the roster's labels, capacities and fingerprints and the
+  // recital; the per-party secret opens that leg's published candidate records and end state; and
+  // `candidate.go:60-68` records that a holder can take the leg's BEP-44 key to the sequence
+  // ceiling.
+  //
+  // Asserted one clause at a time and never as one regex, because an assertion probed only as a
+  // whole hides a dead conjunct: a future edit that deletes the disruption clause while keeping the
+  // other two would leave a combined match green. Each of these was probed by deleting its own
+  // clause from `app.js` and requiring THIS line red.
+  assert.match(out.textContent, /who the parties are/,
+    'the screen does not say a holder can read who the parties are. The invitation is plaintext '
+    + 'JSON carrying every roster label, capacity and full fingerprint');
+  assert.match(out.textContent, /agreeing to/,
+    'the screen does not say a holder can read the recital. `Intent` is a required invitation '
+    + 'field and it is the sentence every signature carries verbatim');
+  assert.match(out.textContent, /get in the way of/,
+    'the screen does not say a holder can disrupt the connection. candidate.go records the '
+    + 'sequence-ceiling denial as an accepted residual, and the honest publisher\'s own error '
+    + 'names it');
+  // **The negative, and it is the actual ask.** Any restoration of "and nothing more" or a synonym
+  // is the defect coming back. Kept beside the positives rather than instead of them: on its own
+  // this is a spelling check that a silent deletion of all three clauses would pass.
+  assert.doesNotMatch(out.textContent, /nothing more|nothing else|nothing beyond|and no more/,
+    'the screen claims an invitation gets its holder nothing beyond the rendezvous. That is D21\'s '
+    + 'own wording and it is false at the line — see renderInvitations\' doc comment for what a '
+    + 'holder actually gets (`/pending 427`)');
   // **Read from the field, not from the container's text.** The invitation lives in a read-only
   // `<textarea>` so it can be selected and copied, and a textarea's `value` is not part of its
   // parent's `textContent` — asserting on the container would fail against a screen that is
