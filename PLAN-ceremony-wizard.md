@@ -270,7 +270,34 @@ per-card answer also checks the echoed ceremony id before rendering, so a slow a
 cannot appear under another. **D2's hot-path rule is therefore a rule the code already keeps** —
 recorded so a later slice does not "add" a fetch-on-open and think it is implementing this plan.
 
-#### P01.S02 — the next answer becomes an action *(deferred out of P01 2026-09-07 — see the pin)*
+#### P01.S02 — the next answer becomes an action *(**BLOCKED** 2026-09-09 — the action it labels does not exist; `/pending 436`)*
+
+**(reality-drift pin, 2026-09-09, at the deepdive that opened this slice as the plan's last — and
+the scope was fiction in the one way the earlier pin did not anticipate.)**
+
+The 2026-09-07 pin below re-sequenced this slice to *"after P03, where the surfaces it renders
+actions onto exist"*. **P02, P03, P04 and P05 have all closed and no such surface was built** — and
+the deepdive found why, then it was **verified live**: posting the four form fields `web/app.js`'s
+`sessionInit` posts, on the server's own convened bytes, answers
+
+> `409 … this document is part of a signing ceremony, so it cannot be co-signed outside it … Use
+> the ceremony to sign it.`
+
+**The client's dial sends no invitation** (`grep -c sinInvite web/app.js web/index.html` → 0/0), and
+`handleSessionInitiate` takes its ceremony from exactly that field. So `cer` is nil, the roster is
+empty, and `buildCoSigned` reaches its convened-document gate. **Tiers 4 and 6 are green over this
+because `ceremonyrepro.sh` posts `-F "invitation=$INV"` by hand.**
+
+**And the topology makes it the whole flow.** Every hop has the convener at one end and *"the
+convener dials; it does not wait to be dialled"*; a signer waits, because D14's accept arms them
+automatically and the sweep re-arms on unlock. So the convener's dial is the only user action that
+moves a ceremony forward, and this slice cannot label an action that has no door.
+
+**This is a BLOCK and not a deferral.** The fix is a new ceremony-aware dial — the server already
+mints per-party invitations through one door, so the client need not paste anything — but *which*
+party, at what moment, and whether the rail offers it or the document does, is a product decision
+with a security dimension. **That is Dan's, and it is `/pending 436`.** The arc does not clear a
+block it did not set.
 
 **(reality-drift pin, 2026-09-07 — deepdive before the grill.) There is no action to enable yet.**
 The card's only gated action is delivery (`web/app.js:11370`, convener of an ended ceremony);
