@@ -171,6 +171,8 @@ type Server struct {
 	// idleExit is D2's answer for THIS process: did it launch a browser, and is it therefore
 	// waiting for a window at all. Set once at startup through `ArmIdleExit`; read by P01.S04.
 	idleExit atomic.Bool
+	// idle is P01.S04's grace and its two cancel counters (D4).
+	idle idleExitTimer
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it

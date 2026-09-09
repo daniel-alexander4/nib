@@ -3,7 +3,12 @@ package server
 import (
 	"log"
 	"net/http"
+	"strconv"
+	"sync"
 	"sync/atomic"
+	"time"
+
+	"nib/internal/safe"
 )
 
 // A window's life is a CONNECTION, not a timer (PLAN-window-lifetime.md, D1).
@@ -105,9 +110,166 @@ func (s *Server) ArmIdleExit(launchedBrowser bool) {
 }
 
 // IdleExitArmed reports whether this process would consider exiting when its last window closes.
-// P01.S04 is its first behavioural reader; today it exists so the flag has one door rather than a
-// bool passed down two call paths.
 func (s *Server) IdleExitArmed() bool { return s.idleExit.Load() }
+
+// ── The grace, and its two cancels (P01.S04, D4) ────────────────────────────────
+
+// idleExitGrace is how long the last window has to come back before the process gives up on it.
+//
+// **It is measured against a reconnect Nib CHOOSES, not one the browser picks** (T05). A bare
+// `EventSource` reconnects on the browser's own default — 3 s in Chromium, unstated elsewhere and
+// free to change — so a grace picked against it would be a guess against somebody else's constant.
+// The stream sends an explicit `retry:` instead, so both numbers are ours and the margin is a
+// stated ratio rather than a hope. `sseRetry` is that number; this is ten times it.
+//
+// **Ten times and not twice**, because the reconnect is the *floor* of the gap and not the gap: a
+// reload re-parses the document, and a machine under load can spend the difference. The cost of
+// being generous is that a closed window's process lingers for a few seconds with no window, which
+// nobody can see; the cost of being tight is exiting under a user who reloaded.
+const (
+	idleExitGrace = 10 * time.Second
+	sseRetry      = 1 * time.Second
+)
+
+// These are the strings a tier-3 test greps, on `windowConnectedMsg`'s footing.
+//
+// The cancel line carries the ELAPSED time (T06) because the first acceptance clause asks for the
+// reconnect to be *measured* against the grace rather than asserted to be under it. A line saying
+// only "cancelled" would pass whether the reconnect took 200 ms or 9.9 s.
+const (
+	idleExitGraceMsg     = "no windows left; exiting in"
+	idleExitCancelMsg    = "idle-exit cancelled by"
+	idleExitFiringMsg    = "no window came back; exiting"
+	idleExitCauseWindow  = "a window"
+	idleExitCauseHandoff = "a hand-off"
+)
+
+// idleExitTimer is the grace and the two counters D4 asks to be kept apart.
+//
+// **Two counters, not one**, in D4's own words: "they are counted separately because they fail
+// differently." A window cancelling is the ordinary case — a reload, a second window. A hand-off
+// cancelling is the race the grill surfaced and neither party had named: close, relaunch
+// immediately, and the file is handed to a process that is already on its way out. Folding them
+// would make the rare one invisible inside the common one.
+type idleExitTimer struct {
+	mu        sync.Mutex
+	timer     *time.Timer
+	armedAt   time.Time
+	fired     chan struct{}
+	byWindow  atomic.Uint64
+	byHandoff atomic.Uint64
+}
+
+// IdleExit is the channel `run()` selects on as its THIRD exit cause.
+//
+// **A channel and not a teardown call, and that is D6.** `run()`'s teardown is four steps and only
+// two of them are visible there — `DisarmSession()` and `srv.Close()` run inline, then the LIFO
+// defers `stop()` and `instance.Remove(cfgDir)` — which is why `main()` is `os.Exit(run())` at all.
+// A third *cause* that called teardown itself would be a third teardown, and the failure that
+// prevents is the stale instance record returning by a new door (ADR-009).
+func (s *Server) IdleExit() <-chan struct{} {
+	s.idle.mu.Lock()
+	defer s.idle.mu.Unlock()
+	if s.idle.fired == nil {
+		s.idle.fired = make(chan struct{})
+	}
+	return s.idle.fired
+}
+
+// armIdleExitGrace starts the grace. Called ONLY on the 1→0 window transition.
+//
+// **The transition and not the count, and the difference is a boot that exits.** At startup the
+// count is zero before the first window connects, so a rule reading "the count is zero" would fire
+// during boot, before the browser this process just launched had finished loading. `handleWindow`'s
+// `left := Add(-1)` is the transition itself, and it makes the initial zero unreachable rather than
+// merely unlikely.
+func (s *Server) armIdleExitGrace() {
+	if !s.IdleExitArmed() {
+		return
+	}
+	s.idle.mu.Lock()
+	defer s.idle.mu.Unlock()
+	if s.idle.timer != nil {
+		return // already counting down; a second 1->0 cannot happen, but nothing relies on that
+	}
+	// **Re-checked here, and this closes a real interleaving.** The arming caller has already
+	// decremented, but a NEW window can connect between that decrement and this lock — cancelling
+	// a grace that does not exist yet and then being counted. Arming on the caller's stale view
+	// would leave a grace running with a window open, and the process would exit under it a grace
+	// later. The count is the authority at the moment the timer is set, not at the moment the
+	// decision to set it was taken.
+	if s.windows.Live() != 0 {
+		return
+	}
+	if s.idle.fired == nil {
+		s.idle.fired = make(chan struct{})
+	}
+	s.idle.armedAt = time.Now()
+	ch := s.idle.fired
+	log.Printf("%s %s", idleExitGraceMsg, idleExitGrace)
+	s.idle.timer = time.AfterFunc(idleExitGrace, func() {
+		defer safe.Recover("idle exit")
+		s.idle.mu.Lock()
+		// Re-checked under the lock: `AfterFunc` can already be running when `cancelIdleExit`
+		// takes the lock, and `Stop` returning false is exactly that case. Clearing the field is
+		// what the cancel observes, so a fire that finds it nil has been cancelled and must not
+		// close the channel.
+		if s.idle.timer == nil {
+			s.idle.mu.Unlock()
+			return
+		}
+		s.idle.timer = nil
+		s.idle.mu.Unlock()
+		log.Printf("%s", idleExitFiringMsg)
+		close(ch)
+	})
+}
+
+// cancelIdleExit stops a running grace and counts WHY. Returns whether there was one to stop, so an
+// ordinary window connect does not count a cancel that did not happen.
+func (s *Server) cancelIdleExit(cause string) bool {
+	// **The stop and its count happen under ONE lock hold, and they did not at first.** Clearing
+	// the timer and then counting leaves a window in which the grace is cancelled and the counter
+	// has not moved — so an observer that checks "is it cancelled" and then reads the cause sees a
+	// cancel attributed to nobody. A test caught it; the counters are a diagnostic, so nothing
+	// would have failed in production, and that is exactly the kind of gap that survives.
+	s.idle.mu.Lock()
+	t, at := s.idle.timer, s.idle.armedAt
+	s.idle.timer = nil
+	if t != nil {
+		switch cause {
+		case idleExitCauseHandoff:
+			s.idle.byHandoff.Add(1)
+		default:
+			s.idle.byWindow.Add(1)
+		}
+	}
+	s.idle.mu.Unlock()
+	if t == nil {
+		return false
+	}
+	t.Stop()
+	log.Printf("%s %s after %s (grace %s)", idleExitCancelMsg, cause, time.Since(at).Round(time.Millisecond), idleExitGrace)
+	return true
+}
+
+// idleGraceRunning reports whether a grace is counting down, under the lock that owns the timer.
+//
+// **It exists because the race detector caught its absence.** The tests read `s.idle.timer`
+// directly while the stream handler wrote it from another goroutine — a real data race, in the
+// tests rather than the product, and exactly what `-race` is for. A field guarded by a mutex has
+// one reader shape and this is it; reaching past the lock because "it's only a test" is how the
+// guarded field stops being guarded.
+func (s *Server) idleGraceRunning() bool {
+	s.idle.mu.Lock()
+	defer s.idle.mu.Unlock()
+	return s.idle.timer != nil
+}
+
+// IdleExitCancels reports the two counters, kept apart per D4.
+func (s *Server) IdleExitCancels() (byWindow, byHandoff uint64) {
+	return s.idle.byWindow.Load(), s.idle.byHandoff.Load()
+}
 
 // handleWindow holds a stream open for the life of one window and counts it.
 //
@@ -143,11 +305,26 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// by however long the write took.
 	flusher.Flush()
 
+	// **The reconnect gap is Nib's number** (T05). Without this the browser picks it — 3 s in
+	// Chromium, unstated elsewhere — and `idleExitGrace` would be a margin against somebody else's
+	// constant. Written before the count moves, so a client that reads it and immediately drops
+	// still has it.
+	_, _ = w.Write([]byte("retry: " + strconv.Itoa(int(sseRetry/time.Millisecond)) + "\n\n"))
+	flusher.Flush()
+	// **The cancel happens BEFORE the count moves, and the order is an observable property.**
+	// Incrementing first leaves a window in which the count says a window is here and the grace is
+	// still running — so anything that reads the count and then the grace sees a state the server
+	// is never actually in. A test caught it at one run in three, and a reader in the field would
+	// have seen it far more rarely and had nothing to go on.
+	s.cancelIdleExit(idleExitCauseWindow)
 	n := s.windows.n.Add(1)
 	log.Printf("%s (%d open)", windowConnectedMsg, n)
 	defer func() {
 		left := s.windows.n.Add(-1)
 		log.Printf("%s (%d open)", windowGoneMsg, left)
+		if left == 0 {
+			s.armIdleExitGrace()
+		}
 	}()
 
 	// The whole handler. net/http cancels the request context when the peer

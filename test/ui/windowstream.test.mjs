@@ -18,7 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { launch, WORK } from './harness.mjs';
+import { launch, WORK, BASE } from './harness.mjs';
 
 const LOG = join(WORK, 'nib.log');
 const readLog = () => readFileSync(LOG, 'utf8');
@@ -101,4 +101,50 @@ test('the harness never arms the idle-exit', () => {
       + 'window, so at P01.S04 it would exit for want of one — mid-run, surfacing as a connection '
       + 'refused somewhere unrelated (D2).',
   );
+});
+
+// P01.S04 — a real reload really does reconnect the stream.
+//
+// # What this can see, and what it deliberately cannot
+//
+// The grace absorbs a reload's 1 -> 0 -> 1. Half of that claim is the server's arithmetic and is
+// driven through the real route at tier 1 (`TestTheGraceIsArmedAndCancelledThroughTheRealRoute`);
+// the other half is that a browser reload actually drops and re-opens the stream, which only a
+// browser can show.
+//
+// **This harness structurally CANNOT exercise the grace, and saying so is the point.** It runs
+// `NIB_NO_BROWSER=1`, so `IdleExitArmed()` is false and no grace is ever armed here — which is not
+// an oversight but S03's guard working: an armed harness would exit mid-run. A test that asserted
+// "the grace was cancelled" would therefore be asserting a line this tier can never produce, and a
+// test that asserted "nib survived the reload" would pass on a build with no grace at all, because
+// nothing here would have started one. So this asserts the ONE thing a browser adds — the
+// reconnect — and the ledger records the composition rather than claiming an end-to-end this tier
+// cannot run.
+test('a real reload drops the window stream and opens a new one', async () => {
+  const goneBefore = countOf(readLog(), 'window gone');
+  const connectedBefore = countOf(readLog(), 'window connected');
+
+  const { browser, page, consoleErrors } = await launch();
+  await waitForLog('window connected', connectedBefore + 1);
+
+  // STIMULUS: the reload has not happened yet, so the gone-count below is about the reload and
+  // not about some earlier window in this shared log.
+  assert.equal(
+    countOf(readLog(), 'window gone'), goneBefore,
+    'a window that is still open must not have been reported gone',
+  );
+
+  await page.reload();
+
+  // The drop, then the reconnect — the 1 -> 0 -> 1 the grace exists to absorb.
+  await waitForLog('window gone', goneBefore + 1);
+  await waitForLog('window connected', connectedBefore + 2);
+
+  // And nib is still serving. In THIS tier that is true because nothing armed a grace; the tier-1
+  // test is what shows it would still be true if one had been.
+  const res = await page.request.get(`${BASE}/api/status`);
+  assert.equal(res.status(), 200, 'nib stopped serving across a reload');
+
+  await browser.close();
+  assert.deepEqual(consoleErrors, [], 'the page logged errors');
 });

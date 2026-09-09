@@ -59,6 +59,16 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusForbidden, "not this instance")
 		return
 	}
+	// **D4's second cancel, and it is the race the grill surfaced.** Close the last window and
+	// relaunch immediately, and the file is handed to a process already counting down to exit —
+	// which would open the document, tear the server down a moment later, and leave the user
+	// looking at a dead tab having double-clicked a PDF.
+	//
+	// **After the token check and not before**, or an unauthenticated caller could keep any Nib
+	// alive indefinitely by poking this route. Counted apart from the window cause because D4 says
+	// so and because the two fail differently: a window cancel is the ordinary reload, this one is
+	// a launch that would otherwise be lost.
+	s.cancelIdleExit(idleExitCauseHandoff)
 
 	var req handoffRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil || req.Path == "" {
