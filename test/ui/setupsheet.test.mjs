@@ -323,6 +323,81 @@ test('the convene is bound to the document the setup was started on', async () =
   await h.openDocument(DOC, 6);
 });
 
+// **The no-capture case, which the first version of the pin left open.** A convener can reach the
+// setup sheet with nothing loaded — Nib launched empty, Collaborate, "Convene a ceremony…" — and a
+// null pin is NOT a refusal: `docFor` answers an absent `X-Nib-Doc` with `activeDoc()`, so the
+// ceremony would land on whatever the excursion happened to open, unpinned, which is the channel
+// ADR-001 exists to close. `bindCeremonySetupDoc` fills an empty binding on the way back and can
+// never re-point a full one.
+//
+// Driven the same way as the test above, and for the same reason: 409 ("that document is no longer
+// open") is reachable only by a request that NAMED a document, and 404 ("no document open") is what
+// the unbound build gets.
+test('a setup opened with no document binds to the one the excursion opens', async () => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+    await h.closeDocument();
+  }
+  assert.equal(await page.$eval('#viewerWrap', (el) => el.className), '',
+    'setup: a document is still open, so the sheet would capture it and the binding below is not the '
+    + 'no-capture case this test is about');
+
+  await page.click('.modetab[data-tab="collaborate"]');
+  await h.panel('ceremony');
+  await page.click('#ceremonyConveneBtn');
+  await page.waitForSelector('#ceremonySheet:not([hidden])');
+  await page.waitForSelector('#cerPeerPick .cerpeerrow');
+  await page.fill('#cerIntent', 'We agree to the lease of 14 Elm Row');
+  await page.fill('#cerExpires', '2027-10-01T12:00');
+  await page.check('#cerPeerPick .cerpeerbox');
+
+  // Out to the page with nothing on it, open the lease there, and come back — the supported path,
+  // and the one that used to leave the setup bound to nothing.
+  await page.click('#cerSeeDoc');
+  await page.waitForSelector('#viewerWrap:not([hidden])');
+  await h.openDocument(DOC, 6);
+  await page.click('.modetab[data-tab="collaborate"]');
+  await h.panel('ceremony');
+  await page.click('#cerBackToSetup');
+  await page.waitForSelector('#ceremonySheet:not([hidden])');
+  assert.equal(await page.$eval('#cerIntent', (el) => el.value), 'We agree to the lease of 14 Elm Row',
+    'the recital was lost on the way back, so the trip went through the rebuild and the binding '
+    + 'below would be measuring a different setup');
+
+  const statuses = [];
+  const onResponse = (r) => { if (r.url().includes('/api/ceremony/convene')) statuses.push(r.status()); };
+  page.on('response', onResponse);
+
+  // Now take that document away. A BOUND setup names it and is refused 409; an unbound one asks
+  // after whatever is current and gets 404.
+  await page.click('#cerSeeDoc');
+  await page.waitForSelector('#viewerWrap:not([hidden])');
+  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+    await h.closeDocument();
+  }
+  await page.click('.modetab[data-tab="collaborate"]');
+  await h.panel('ceremony');
+  await page.click('#cerBackToSetup');
+  await page.waitForSelector('#ceremonySheet:not([hidden])');
+  await page.click('#cerConveneGo');
+  await page.waitForFunction(() => {
+    const e = document.getElementById('cerConveneError');
+    return e && !e.hidden && e.textContent.length > 0;
+  });
+  page.off('response', onResponse);
+
+  assert.equal(statuses.length, 1,
+    `the convene was posted ${statuses.length} time(s); the client refused before reaching the server`);
+  assert.equal(statuses[0], 409,
+    `the convene answered ${statuses[0]}, not 409 — so the setup never bound to the document the `
+    + 'excursion opened. A null binding is not a refusal: the server answers an absent X-Nib-Doc '
+    + 'with whatever document is active, so this ceremony would have landed on a file the setup was '
+    + 'never started on');
+
+  await page.click('#cerSheetClose');
+  await h.openDocument(DOC, 6);
+});
+
 // **This file leaves the shared server as it found it**, which is this tier's own convention and
 // not optional: the files share one server, so a document left open is counted by the next file as
 // its own. Measured when this file first shipped without it — `stamplace.test.mjs` timed out at 30s

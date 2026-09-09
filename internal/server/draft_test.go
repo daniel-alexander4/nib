@@ -262,23 +262,68 @@ func TestTheDraftIsConsumedAfterTheLastRefusal(t *testing.T) {
 	}
 
 	consume := strings.Index(body, "clearCeremonyDraft(")
-	lastRefusal := strings.LastIndex(body, "httpError(")
 
-	// STIMULUS, both halves: a handler with no consume, or none that can refuse, would satisfy the
-	// comparison below by having nothing to compare.
+	// **Every spelling a refusal uses in this handler, not just `httpError(` — and the second
+	// spelling is why this guard was green over the defect it exists to catch.**
+	//
+	// It matched `httpError(` alone and passed while the consume sat ABOVE `commitBarrier`, whose
+	// refusal is spelled `wroteCommitFailure(w, err)` — a helper that exists precisely so
+	// ADR-004's 409-never-404 rule lives in one function instead of at each call site. So the
+	// handler grew a refusal in the one spelling this scan could not see, which is `CLAUDE.md`'s
+	// own lesson in miniature: a guard that asserts the TEXT a site prints says nothing about a
+	// site that prints it differently.
+	refusals := []string{"httpError(", "wroteCommitFailure("}
+	lastRefusal, lastSpelling := -1, ""
+	for _, r := range refusals {
+		if at := strings.LastIndex(body, r); at > lastRefusal {
+			lastRefusal, lastSpelling = at, r
+		}
+	}
+
+	// STIMULUS, three halves now: no consume, no refusal at all, or a refusal list that has gone
+	// stale against the handler — each would satisfy the comparison below by having nothing to
+	// compare.
 	if consume < 0 {
 		t.Fatal("handleCeremonyConvene never consumes the draft, so a convened ceremony leaves its " +
 			"setup on disk (P03.S03)")
 	}
 	if lastRefusal < 0 {
-		t.Fatal("handleCeremonyConvene contains no httpError at all — the scan is not reading the " +
-			"handler it thinks it is, and the ordering below is vacuous")
+		t.Fatalf("handleCeremonyConvene contains none of %v — the scan is not reading the handler "+
+			"it thinks it is, and the ordering below is vacuous", refusals)
+	}
+	for _, r := range refusals {
+		if !strings.Contains(body, r) {
+			t.Errorf("the refusal spelling %q no longer appears in handleCeremonyConvene. Either it "+
+				"was renamed — in which case this list is stale and the guard is weaker than it "+
+				"reads — or the refusal is gone and the entry should go with it.", r)
+		}
+	}
+
+	// And it must be past the COMMIT, which is the marker for "nothing can refuse from here": below
+	// `committed = true` the deferred unconvene does nothing, and that is the same fact.
+	// **The ASSIGNMENT, not the phrase** — matched with its own line so a comment that merely
+	// mentions `committed = true` cannot stand in for it. The comment beside the consume says
+	// exactly that phrase, in prose, to explain why the consume sits where it does; a bare
+	// `strings.Index` found the prose first when the two moved relative to each other, and the
+	// probe written to prove this guard red was itself fooled by it before the guard was. Assert
+	// the effect, never the mention.
+	commit := strings.Index(body, "\n\tcommitted = true\n")
+	if commit < 0 {
+		t.Fatal("handleCeremonyConvene has no `committed = true` assignment on a line of its own — " +
+			"the rollback sentinel this guard reads as the point past the last refusal has moved, " +
+			"so the check below is vacuous")
+	}
+	if consume < commit {
+		t.Errorf("the draft is consumed at offset %d, BEFORE the commit at %d. Everything above the "+
+			"commit can still be rolled back by the deferred unconvene, so a convene that refuses "+
+			"there leaves the user with NO ceremony and NO setup — the sheet opens blank as though "+
+			"nothing had happened.", consume, commit)
 	}
 
 	if consume < lastRefusal {
-		t.Errorf("the draft is consumed at offset %d, BEFORE the handler's last refusal at %d. A "+
-			"convene that refuses after that point would take the user's setup with it — and the "+
+		t.Errorf("the draft is consumed at offset %d, BEFORE the handler's last refusal (%s) at %d. "+
+			"A convene that refuses after that point would take the user's setup with it — and the "+
 			"setup is exactly what they still need after a refusal, which is the defect P03.S02 "+
-			"was built against.", consume, lastRefusal)
+			"was built against.", consume, lastSpelling, lastRefusal)
 	}
 }

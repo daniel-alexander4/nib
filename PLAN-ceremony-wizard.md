@@ -546,11 +546,15 @@ existing arm is opened, not what it accepts — the listener still takes one pin
 session, which is the tripwire D22 protects. A slice that turns out to touch either property
 re-fires this trigger rather than inheriting this paragraph.
 
-### P03 — The convener's setup sheet
+### P03 — The convener's setup sheet *(**done** 2026-09-08, v1.128.46 — four slices. **Acceptance ledger: 3 criteria, 7 clauses, 6 met and ONE refused** — `ledgers/2026-09-08-p03-acceptance.md`. The refusal is C03, *"block placement leaves the sheet for the page"*: in a ceremony nobody places a signature block, and the clause is **refuted rather than unbuilt** — parked for Dan rather than re-worded to fit what shipped. C03b, what it was reaching for, is built and driven at two tiers. **C01b was met by NOTHING when this phase's last slice closed**: S02 proved the draft's blob survives a process restart and nothing anywhere asserted it is read back into the FORM — found by splitting the criterion on its own `and`, built here, 4 mutations red, one of them the exact `.value`-vs-`dataset` defect S02's review had caught by eye. **The full-repo review found four defects across four slices that no slice review could see**, three of them created by the joins between slices: the draft consumed ABOVE a refusal that can still roll the ceremony back (so a convener could be left with no ceremony AND no setup); `clearCeremonyForm` resetting `#cerISign` to false against a markup that ships it checked, so every ceremony after the first defaulted to *"the convener does not sign"*; leaving the Collaborate mode hiding the sheet without parking it, so the path the excursion exists for was the one with no thread back; and a null document binding that is not a refusal. **The ordering guard that should have caught the first was green over it** — it matched `httpError(` and the refusal is spelled `wroteCommitFailure(`, which is `CLAUDE.md`'s own lesson about a guard asserting the text a site prints. **Required-run gates, enumerated because a ledger over criteria cannot see them**: tier 0 ✓, tier 1 ✓, `go vet` ✓, `gofmt` ✓, tier 2 ✓ (246), tier 3 ✓ (101), **tier 6 ✓ 19/19 and tier 4 ✓ both transports — and they FIRED**, against a first reading that said they did not: P03.S03 touched `internal/server/convene.go`, a ceremony path, and its commit records no gate line in either direction (`/pending 426`). **Graduation pass: 22 rows, 3 actionable, 0 hot-path, nothing deleted or gated**; all 31 readers resolve. **Closure sweep: the `Phase` section is EMPTY**, so this close falsified nothing — recorded because a sweep that closes nothing must say so.)*
 **Goal.** Roster, recital and deadline in a surface with room for them, resumable before commit.
 
 **Exit criteria.** Setup survives closing and reopening Nib; the draft is consumed exactly once at
-`convene`; block placement leaves the sheet for the page and returns.
+`convene`; ~~block placement leaves the sheet for the page and returns~~ **→ the third criterion is
+REFUTED, not unmet, and is parked for Dan rather than re-worded** (P03.S04's pin: in a ceremony
+nobody places a signature block, `ceremonyPlacement` derives it from the roster position). What it
+was reaching for — leaving the sheet for the document and returning without a rebuild — is built and
+driven.
 
 **Slices firmed 2026-09-07 at phase-open**, against the code as it now stands.
 
