@@ -225,7 +225,7 @@ that do not bend for a local action.
 
 ## Build order
 
-### P01 — The rail *(done 2026-09-07, v1.128.15)*
+### P01 — The rail *(done 2026-09-07, v1.128.15; **RE-CLOSED 2026-09-09, v1.128.60** — see the re-close note below)*
 **Goal.** A convener or signer opens a ceremony and is told, correctly and without asking anyone,
 what happens next — including when the answer is "nothing, and here is why".
 
@@ -236,6 +236,36 @@ what happens next — including when the answer is "nothing, and here is why".
   it has no sentence of its own for; no step state exists in the client.**
 - `next` is fetched on open and on hop completion only, proved by a fetch count over a minute of idling.
 - A declined or expired ceremony names its state and offers no action.
+
+**(RE-CLOSE, 2026-09-09, v1.128.60 — this phase closed and then grew three slices, and saying so
+is the point of the note.)** P01 closed on 2026-09-07 with S02 marked **BLOCKED**: the action it was
+written to label did not exist, and clearing that block was Dan's. He cleared it at `/discuss` on
+2026-09-09, and S02 then shipped as three slices — **S02a** (`v1.128.58`, the carry decision follows
+progress), **S02b** (`v1.128.59`, `GET`/`POST /api/ceremony/hop`) and **S02c** (`v1.128.60`, the
+convener's stop). So the phase marker above predated half its own slices for two days, which is
+exactly the stale-marker shape `/createcode`'s resume step exists to catch, and it is recorded here
+rather than fixed by quietly moving a date.
+
+**The struck clause's ENABLING half has come home, and that changes what this phase is credited
+with.** The 2026-09-07 supersession kept *"the rail RENDERS `next`'s answer"* and moved the enabling
+half to *"whichever phase ships an action"* — on the reasoning that no action existed to gate. The
+action now exists, and it is in P01: `ceremonyCallNext` renders on the rail's `Waiting for …`
+sentence, gated on `convenedHere`, and it names no party — the client sends a ceremony id and the
+server resolves the turn twice, so **a client-side guess cannot diverge in effect rather than merely
+being discouraged from doing so.** That is the original clause's intent, met structurally. It is
+recorded as met HERE rather than re-instated as a criterion, because a criterion struck by Dan's
+instruction is his to un-strike.
+
+**What re-opened it, and it was not a change of mind.** The grill on `/pending 436` found a defect
+*underneath* the missing route: `carries()` read the roster alone, so a SIGNING convener — the setup
+sheet's default — was refused `ErrNotYourTurn` at hop 2 by their own machine, and at three parties or
+more the default ceremony could not advance past its first hop by any route. `build/pairrepro.sh`
+asserted that refusal as **designed**, in prose describing a different scenario from the curl beneath
+it. So the phase's own exit criterion had been unmeetable for a reason no criterion named.
+
+**Gates for the three slices**: tiers 0-3 green throughout (261 jsdom, 107 browser), tier 4 `-n 3`
+and `-n 4` both PASS *with a signing convener* — a configuration no run in this repo had ever driven
+— and tier 6 at 27/27, including a completing hop through the new door and four stop clauses.
 
 **Why the first clause was struck.** It required an *enabled action* gated on `next`, and P01.S02's
 reality-drift pin established there is no such action to gate: the card's only actions belong to
