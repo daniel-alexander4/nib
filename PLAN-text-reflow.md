@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01.S01-S02 done; P01.S03 next. `/createcode` drives it from P01.
+**Status: building.** P01.S01-S03 done; P01.S04 next. `/createcode` drives it from P01.
 
 ---
 
@@ -274,10 +274,35 @@ Acceptance:
   cause per field.
 - The cause is per-field and per-reason, never a lumped count.
 
-#### P01.S03 — the client agrees with the server
+#### P01.S03 — the client agrees with the server *(done 2026-09-09, v1.128.66)*
 Scope: the on-screen overlay reflects the same fit decision, so the preview stops disagreeing with
 the bake. Refs: D1.
-Acceptance: a string that shrinks server-side shrinks in the overlay; asserted at tier 2.
+
+**Pinned 2026-09-09 — the client READS the decision rather than reaching it.**
+A live, per-keystroke fit would need width measurement in the browser, and that is a second
+implementation of the rule law 4 says exists once. It would also be a *different* one: the browser's
+font metrics are not pdfcpu's AFM tables, so the two would disagree in exactly the cases that
+matter. The server decides; the client consumes `X-Nib-Fit`. What "agrees" means is therefore the
+same **decision** — the same point size, the same verdict — not pixel-identical rasterisation, which
+cover-and-replace can never have.
+
+Tasks:
+- T01 — `collectFieldsWithSources`: one walk yielding the posted array AND the overlay objects at
+  matching indices, because the report addresses fields by index and a second filter would map a
+  report onto the wrong overlay (ADR-009).
+- T02 — `applyFitReport`: shrunk fields take `stampedPt` and re-lay out; overruns get `ovl-misfit`.
+  Pinned per ADR-001 — a field deleted mid-bake must not be written to by its stale index.
+- T03 — `tellFitReport`: one count per cause, never lumped, with the measured overrun in the
+  sentence.
+- T04 — the `ovl-misfit` rule; dashed, not filled, so the text underneath stays readable.
+- T05 — tier-2 assertions, 12 mutations, and the `unreadKnown` park retired.
+
+Acceptance:
+- A field the server shrank shows the size the PAGE carries, not the size the client asked for.
+- A stale index cannot write to a field that is no longer open.
+- An absent or malformed header changes nothing and does not fail the save.
+- Each cause is named separately with its own count, and an overrun says by how much.
+- Exactly one walk decides which overlay fields bake.
 
 #### P01.S04 — carry font identity across the wire
 Scope: BaseFont and the font-resource reference travel with the edit; `classifyFont` becomes the

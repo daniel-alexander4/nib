@@ -246,10 +246,12 @@ var published = map[string][]string{
 	"pdfops.OutlineItem":       {"internal/cli/commands.go", "web/app.js"},
 	"pdfops.ScanReport":        {"internal/server/scan.go", "web/app.js"},
 	"pdfops.SplitPart":         {"internal/server/export.go", "internal/cli/commands.go"},
-	// `pdfops.Fit`'s destination is handleBake, which discards it with `_` today. Naming the
-	// file is the shape's honest far end; the five FIELDS are parked in `unreadKnown` below,
-	// which is where the truth that nobody reads them is recorded. P01.S02 is the consumer.
-	"pdfops.Fit":           {"internal/server/overlay.go"},
+	// `pdfops.Fit` was parked field-by-field in `unreadKnown` for two slices while it had no
+	// consumer — measured at P01.S01, put on the wire at P01.S02, and read here at P01.S03.
+	// **The park is deleted rather than kept as a comment**, because its own stated deletion
+	// condition is met: `applyFitReport` in web/app.js consumes the report, and the JS arm of
+	// this scan matches a reader on the bare JSON tag.
+	"pdfops.Fit":           {"internal/server/overlay.go", "web/app.js"},
 	"vault.KeyInfo":        {"internal/server/keys.go", "web/app.js"},
 	"vault.PinnedPeer":     {"internal/server/peers.go", "internal/vault/vault.go"},
 	"vault.Settings":       {"internal/server/settings.go", "internal/vault/vault.go"},
@@ -391,31 +393,23 @@ var unreadKnown = map[string]string{
 	"ceremony.Party.Capacity": "published and committed at P07.S02; the block renderer that " +
 		"displays it is P07.S07 (C19). Delete this line then.",
 
-	// **`pdfops.Fit`, P01.S01 of PLAN-text-reflow.md, entered the day it is written.**
+	// **`pdfops.Fit`'s two INPUT measurements, parked where its verdict is not.**
 	//
-	// StampFields now MEASURES every field it stamps against the box it was drawn into —
-	// today's shipped defect is that nothing did, and a replacement four times its box's
-	// width is emitted with no error and no clip path. `handleBake` discards the fits with
-	// `_`, so the honest state is: measured, correct, and read by nobody.
+	// `OverrunPt` is read — `tellFitReport` puts it in the sentence the user sees, because
+	// "too long by 119pt" is actionable where "too long" is not. `WidthPt` and `BoxPt` are the
+	// two numbers it is derived from, and nothing renders either: a surface that showed them
+	// would be telling the user "your text is 197pt and your box is 78pt", which is the same
+	// fact twice in units they did not choose and cannot check.
 	//
-	// It is parked rather than given a reader because DECIDING what an overrun should do —
-	// shrink, wrap, or refuse with a sentence — is P01.S02, the very next slice, and
-	// smearing that policy across two slices is how the ledger stops describing the build.
-	// This is the same shape as `ceremony.Termination.*` above: the object is right, its
-	// consumer is one slice away, and claiming the tier-1 assertions as its reader would be
-	// the laundering this map exists to catch — tests do not count, by this file's own rule.
+	// They stay on the struct because they are the ORACLE the width guard needs — `WidthPt` is
+	// what TestStampWidthMatchesEmittedBBox compares against the form XObject pdfcpu emits.
+	// That is a test reader, and tests do not count by this file's own rule, which is why they
+	// are parked here rather than claimed. Same shape as `pdfops.SignatureWidget.*` above.
 	//
-	// Delete these five when P01.S02 acts on an overrun and P01.S03 shows it in the client.
-	"pdfops.Fit.Field":     "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
-	"pdfops.Fit.Page":      "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
-	"pdfops.Fit.WidthPt":   "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
-	"pdfops.Fit.BoxPt":     "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
-	"pdfops.Fit.OverrunPt": "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
-	// `StampedPt` is the one field a client cannot derive for itself: once shrink-to-fit
-	// exists, the size on the page is NOT the size the client asked for, and nothing else
-	// on the wire says what it became. It is on the wire and read by nobody until the
-	// overlay matches the bake, which is P01.S03's whole subject.
-	"pdfops.Fit.StampedPt": "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
+	// Delete these two if a surface ever reports the box's own size — the "your box is too
+	// small" half of the diagnosis, which today Nib does not offer.
+	"pdfops.Fit.WidthPt": "the oracle TestStampWidthMatchesEmittedBBox holds pdfcpu to; no product surface renders it",
+	"pdfops.Fit.BoxPt":   "the box half of that comparison; nothing reports a box's own size to a user",
 }
 
 func TestEveryPublishedObservableHasANamedReader(t *testing.T) {

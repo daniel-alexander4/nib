@@ -904,6 +904,15 @@ input.ovl-edit {
   outline: 1px dashed var(--blue); outline-offset: 0;
 }
 input.ovl-edit:focus { outline-style: solid; }
+/* An edit whose text runs past the box it was drawn in. Nib stamps what was typed —
+   refusing would make the document unsaveable, since every save, print and signature
+   goes through the same bake — so the overlay says so instead. Dashed rather than a
+   fill: the text underneath must stay readable, because reading it is how the user
+   decides what to shorten. */
+input.ovl-edit.ovl-misfit {
+  outline: 2px dashed var(--peach);
+  outline-offset: 1px;
+}
 /* editmark: the box being dragged over text to select it for editing. */
 .editmark {
   position: absolute;
