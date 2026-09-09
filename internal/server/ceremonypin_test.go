@@ -87,16 +87,10 @@ func TestDecliningACeremonyRevokesItsPins(t *testing.T) {
 // signed into something this build has just refused, and a signature cannot be taken back off a
 // document. That is the deadline check's own stated reasoning one line above it.
 func TestTheDialSideAlsoRoutesThroughTheArrivalCheck(t *testing.T) {
-	src, err := os.ReadFile("session.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := stripLineComments(string(src))
-	i := strings.Index(code, "func (s *Server) handleSessionInitiate(")
-	if i < 0 {
-		t.Fatal("cannot find handleSessionInitiate — this guard is reading the wrong thing")
-	}
-	body := funcBodyFrom(code, i)
+	// **`runHopDial` since P01.S02b.** `checkArrival` moved into the shared dial with the
+	// `buildCoSigned` call it is ordered against, so both doors onto a hop reach it rather than
+	// only the one that takes a pasted invitation. The ordering this guard asserts is unchanged.
+	body := dialBodySource(t)
 	if body == "" {
 		t.Fatal("could not brace-match handleSessionInitiate's body")
 	}

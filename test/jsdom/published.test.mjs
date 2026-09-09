@@ -69,6 +69,17 @@ const PUBLISHED = [
   // beside `isMe` because a machine that does not know its position must not be told it is
   // somebody else's turn.
   { type: 'ceremonyNextResponse', readers: ['web/app.js'] },
+  // The convener's own door onto a hop (P01.S02b, `/pending 436`). Two shapes, one route pair:
+  // the GET answers whose turn it is plus the block to draw for it, the POST carries the ceremony
+  // id and — only when this machine signs at this hop — the block the client rasterised from it.
+  //
+  // **`contributes` is the field that earns the pair.** Nothing in the server can draw a signature
+  // block; `renderAttestation` in `web/app.js` is the only producer in the tree, so the client has
+  // to be told the lines before it can post a PNG back. `contributes` is how it learns whether it
+  // needs to draw one at all — false on the carry path, where the convener moves the baton and
+  // signs nothing.
+  { type: 'ceremonyHopQuote', readers: ['web/app.js'] },
+  { type: 'ceremonyHopRequest', readers: ['web/app.js'] },
   // One roster member's standing in the proceeding (P04.S02, D6). Rendered by `ceremonyWorklist`
   // above `ceremony.SittingCeiling`: `label` names the party, `state` is the word beside them,
   // `capacity` the role they sign in, and `isMe` marks the user's own row. It rides on

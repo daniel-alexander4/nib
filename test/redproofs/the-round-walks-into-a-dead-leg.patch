@@ -1,6 +1,6 @@
 --- a/internal/server/delivery.go
 +++ b/internal/server/delivery.go
-@@ -799,12 +799,6 @@
+@@ -1021,12 +1021,6 @@
  		// remaining party, and there is nothing to learn from a leg whose result nobody will read.
  		// Recorded rather than dropped, so the outcome list stays one row per party for a caller
  		// that IS still there, which is every other way this context ends.
@@ -10,6 +10,6 @@
 -			out = append(out, res)
 -			continue
 -		}
- 		inv, ierr := convenerInvitationFor(v, rec, party)
- 		if ierr != nil {
- 			res.Reason = ierr.Error()
+ 		// **The one NAMED exemption from `mintInvitationFor` (ADR-009, P01.S02b).**
+ 		//
+ 		// The round is the only mint site where the deadline rule must NOT apply, and it must not

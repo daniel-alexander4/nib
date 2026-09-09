@@ -206,6 +206,12 @@ type Server struct {
 	// would otherwise have to assert.
 	legMu sync.Mutex
 	legs  map[legKey]deliveryLeg
+	// hops is the convener's in-flight dial per (ceremony, party), guarded by legMu above
+	// (P01.S02b). It is a LOCK and `legs` is a REPORT, which is why they are different maps
+	// sharing one mutex rather than one map doing both jobs: a reporting entry is written for a
+	// leg that has already started and read by a watcher, where this one has to be taken and
+	// refused atomically before anything starts.
+	hops map[legKey]bool
 
 	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by
 	// **`(ceremony id, hop)`** (P07.S09b; re-keyed P08.S05h). Held here because a "side" is this
@@ -359,6 +365,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ceremony/leave", s.requireUnlocked(s.handleCeremonyLeave))
 	mux.HandleFunc("GET /api/ceremony/draft", s.requireUnlocked(s.handleCeremonyDraft))
 	mux.HandleFunc("POST /api/ceremony/draft", s.requireUnlocked(s.handleCeremonyDraft))
+	// **The convener's own door onto a hop (P01.S02b, `/pending 436`).** Both are
+	// `requireUnlocked`: the POST signs and dials, and the GET answers whose turn it is from a
+	// document only an unlocked vault can resolve. See `ceremonyhop.go` for why there are two.
+	mux.HandleFunc("GET /api/ceremony/hop", s.requireUnlocked(s.handleCeremonyHopQuote))
+	mux.HandleFunc("POST /api/ceremony/hop", s.requireUnlocked(s.handleCeremonyHop))
 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
 	// The round's in-flight leg, polled while one runs (/pending 370). A GET and read-only, but
 	// `requireUnlocked` like its round: it names which party this machine is reaching.

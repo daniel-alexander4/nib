@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nib/internal/ceremony"
+	"nib/internal/p2p"
 	"nib/internal/sign"
 	"nib/internal/vault"
 )
@@ -460,36 +461,27 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 	// that refuses everyone satisfies every negative test there is; only a test that drives the
 	// legitimate case can see it, and `TestAnInvitationReIssuedMidCeremonyLeavesEveryoneElseUntouched`
 	// is that test.
-	mine, ierr := convenedByMe(v, rec)
-	if ierr != nil {
-		httpError(w, http.StatusInternalServerError,
-			"Nib could not read this machine's own identity, so it cannot tell whether it convened "+
-				"this ceremony")
-		return
-	}
-	if !mine {
-		httpError(w, http.StatusForbidden,
-			"only the convener can re-issue invitations: this machine is a party to this ceremony, "+
-				"not the one that convened it")
-		return
-	}
-	// **A ceremony whose deadline has passed has nobody left to invite** (P04's phase close).
-	//
-	// The client gates the control on `!c.ended`, and `Stored.Ended`'s own doc forbids reading that
-	// as liveness in as many words: *"Empty means UNKNOWN, never live … no surface may render
-	// absence as 'still running'."* Expiry is never written there — it is DERIVED, by `endedReason`
-	// — so a ceremony a month past its deadline carries no termination, offers the control, and
-	// minted a working invitation. Measured at the phase close: the same card said *"this ceremony's
-	// deadline has passed"* on one line and offered a re-issue on the next.
-	//
-	// Refused here rather than only in the client, because that is where the rule already lives and
-	// because a second client-side derivation of "expired" is the shape ADR-009 refuses. **409 and
-	// not 410**: the secrets are still on this machine, so "gone" would be false — what has ended is
-	// the proceeding, which is a state conflict.
-	if !rec.Expires.IsZero() && time.Now().After(rec.Expires) {
-		httpError(w, http.StatusConflict,
-			"this ceremony's deadline has passed, so there is nobody left to invite: to bring "+
-				"somebody in now, run the document as a new ceremony")
+	// **Through the one door (ADR-009, P01.S02b).** The entitlement and deadline rules live in
+	// `checkMintAllowed`; this route maps them to its own sentences and its own status codes. The
+	// budget is ZERO because a re-issue is fine right up to the deadline — the party may accept now
+	// and sign later — where a hop needs a whole exchange to fit. See `mintInvitationFor`.
+	if merr := checkMintAllowed(v, rec, time.Now(), 0); merr != nil {
+		switch {
+		case errors.Is(merr, errNotTheConvener):
+			httpError(w, http.StatusForbidden,
+				"only the convener can re-issue invitations: this machine is a party to this "+
+					"ceremony, not the one that convened it")
+		case errors.Is(merr, p2p.ErrCeremonyEnded):
+			// **409 and not 410**: the secrets are still on this machine, so "gone" would be
+			// false — what has ended is the proceeding, which is a state conflict.
+			httpError(w, http.StatusConflict,
+				"this ceremony's deadline has passed, so there is nobody left to invite: to bring "+
+					"somebody in now, run the document as a new ceremony")
+		default:
+			httpError(w, http.StatusInternalServerError,
+				"Nib could not read this machine's own identity, so it cannot tell whether it "+
+					"convened this ceremony")
+		}
 		return
 	}
 	// A named party who is not in the roster is a request about somebody else's ceremony, and
@@ -522,7 +514,7 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 		// `Seeds` is still absent and cannot be recovered — the record does not carry them — so a
 		// re-issued invitation has no DHT seed hints. Stated rather than papered over; every other
 		// field a recipient CHECKS is present.
-		inv, ierr := convenerInvitationFor(v, rec, p)
+		inv, ierr := mintInvitationFor(v, rec, p, time.Now(), 0)
 		if ierr != nil {
 			httpError(w, http.StatusGone, ierr.Error())
 			return

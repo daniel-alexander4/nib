@@ -1027,6 +1027,17 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 			out = append(out, res)
 			continue
 		}
+		// **The one NAMED exemption from `mintInvitationFor` (ADR-009, P01.S02b).**
+		//
+		// The round is the only mint site where the deadline rule must NOT apply, and it must not
+		// apply in the direction that would break it: D29 orders end state -> delivery round ->
+		// close-out, so the round runs AFTER the proceeding has ended, and `closeOutGrace` gives it
+		// three days past `Expires` to finish. A budget of zero — "not past the deadline", which is
+		// what the invites route wants — would refuse every round that has anything to deliver.
+		//
+		// The entitlement half is not skipped, it is established EARLIER and harder: this function
+		// refuses at its own entry unless this machine is the convener, before it reads a payload or
+		// walks a party. So what is exempted here is the deadline and only the deadline.
 		inv, ierr := convenerInvitationFor(v, rec, party)
 		if ierr != nil {
 			res.Reason = ierr.Error()
@@ -1328,6 +1339,70 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 	}{Ceremony: req.Ceremony, Parties: outcomes})
 }
 
+// The two sentinels the mint door refuses with, so a caller can map them to a status code without
+// re-deriving the rule or matching on a sentence.
+var (
+	// errNotTheConvener: this machine holds the ceremony but did not convene it.
+	//
+	// **Every party writes a mirror**, so holding a record proves nothing about entitlement —
+	// `handleCeremonyInvites`' own doc makes the point: without this check "a party who merely
+	// holds a mirror of the ceremony reaches the mint".
+	errNotTheConvener = errors.New("this machine is a party to this ceremony, not the one that convened it")
+	// errNoCeremonySecret: the per-party secret is gone, which is what a close-out does.
+	errNoCeremonySecret = errors.New("Nib no longer holds the invitation secret for")
+)
+
+// mintInvitationFor is the ONE door onto a party's invitation, and it carries the entitlement and
+// deadline rules that used to live at one of its callers (ADR-009).
+//
+// # Why the rules moved inside
+//
+// `convenerInvitationFor` below checks **nothing about who is asking**. It resolves the convener
+// from the record, re-hashes the roster, and hands back an `Invitation` carrying
+// `v.CeremonySecret(rec.ID, fp)` — the full-strength per-party channel secret that keys that leg's
+// rendezvous, its record encryption and its published end state. Every gate lived at
+// `handleCeremonyInvites`; the second caller, `runDeliveryRound`, had the convener check and **no
+// deadline check at all**. That is ADR-005's "1 of 6" shape at 1 of 2, and P01.S02b would have made
+// it 1 of 3 — so the rules come here instead, and the guard asserts routing through this door
+// rather than the sentences each site prints.
+//
+// # The budget is a PARAMETER, and that is not a loophole
+//
+// Re-issuing an invitation and starting a hop want different thresholds, and collapsing them would
+// be wrong in one direction or the other. A re-issue is fine right up to the deadline — the party
+// may accept and sign later — so its budget is zero, which `recordOutlivesBudget` reads as "not past
+// `Expires`". A hop must fit a WHOLE exchange before the deadline, because the alternative is asking
+// somebody to consent to a signature on a proceeding that has ended by the time it completes; that
+// is `ceremonyHopBudget()`, and `checkCeremonyDeadline` already states the measured failure — with
+// `Expires = now+7m` the weaker check passed and the far party's consent landed thirteen minutes
+// after the ceremony was over. So the caller names its own budget and the door enforces it.
+func mintInvitationFor(v *vault.Vault, rec ceremony.Record, party ceremony.Party, now time.Time,
+	budget time.Duration) (ceremony.Invitation, error) {
+	if err := checkMintAllowed(v, rec, now, budget); err != nil {
+		return ceremony.Invitation{}, err
+	}
+	return convenerInvitationFor(v, rec, party)
+}
+
+// checkMintAllowed is the rule itself, split out so a route can fail FAST without naming a party.
+//
+// **It exists for an ordering reason, not a tidiness one.** `handleCeremonyInvites` answers 403 for
+// a non-convener and 404 for a party its roster does not name, and it does so in that order — a
+// stranger asking about somebody else's ceremony must not learn which fingerprints are on its roster
+// by the shape of the refusal. Minting per party inside the loop would invert that, so the route
+// asks here first and `mintInvitationFor` asks again per party. Two calls, ONE implementation, and
+// the mint still cannot be reached without it.
+func checkMintAllowed(v *vault.Vault, rec ceremony.Record, now time.Time, budget time.Duration) error {
+	mine, err := convenedByMe(v, rec)
+	if err != nil {
+		return err
+	}
+	if !mine {
+		return errNotTheConvener
+	}
+	return recordOutlivesBudget(rec, now, budget)
+}
+
 // convenerInvitationFor re-mints one party's invitation from the record and the convener's own
 // stored secret — the ONE door for that (ADR-009).
 //
@@ -1356,8 +1431,8 @@ func convenerInvitationFor(v *vault.Vault, rec ceremony.Record, party ceremony.P
 	}
 	secret, ok := v.CeremonySecret(rec.ID, fp)
 	if !ok {
-		return ceremony.Invitation{}, errors.New("Nib no longer holds the invitation secret for " +
-			party.Fingerprint[:12] + ", so it cannot reach them. A ceremony's secrets are removed when it ends.")
+		return ceremony.Invitation{}, fmt.Errorf("%w: %s, so it cannot reach them. A ceremony's "+
+			"secrets are removed when it ends.", errNoCeremonySecret, party.Fingerprint[:12])
 	}
 	return ceremony.Invitation{
 		Version:             ceremony.InvitationVersion,

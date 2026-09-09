@@ -374,7 +374,7 @@ caller, on the initiating side only, so preparation runs at hop 1 for a signing 
 at all for a non-signing one. That breaks the byte-prefix assertion at exactly one hop, legitimately;
 the clause skips it there and says why.
 
-#### P01.S02b — the ceremony-aware dial *(pending)*
+#### P01.S02b — the ceremony-aware dial *(done 2026-09-09, v1.128.59)*
 
 Scope: `GET`/`POST /api/ceremony/hop`. The turn is resolved server-side, the invitation is minted
 server-side through one door carrying `convenedByMe` and `recordOutlivesBudget` INSIDE it, and the
@@ -390,6 +390,38 @@ Acceptance:
   that ceremony is already in flight, and when the resolved turn is this machine's own.
 - The dialling side shows the wait-tier diagnosis and an elapsed-against-ceiling figure; today
   `startVerifyPoll` reads only `st.verify`, so the convener is the one user who never sees D19's.
+
+**(build pin, 2026-09-09 — the dial was EXTRACTED, and seven guards went red at once.)** The route
+could not have a second copy of the dial: that sequence is where a signature becomes irreversible,
+and two implementations would drift on the first timeout anybody tuned. So `handleSessionInitiate`'s
+tail moved whole into `runHopDial` with no logic change, and `checkArrival` and the carry decision
+moved with it so both doors reach them. Seven source-scan guards asserted orderings inside the body
+that no longer held them — which is the guards working, not breaking — and they now share one
+accessor, `dialBodySource`, so the next move costs one edit rather than seven. Each was re-probed
+red afterwards; three red proofs staled and were re-recorded and re-run for their own token.
+
+**(build pin — `document.ceremony` is NOT set at convene, and the first cut used it.)** That field
+is written in exactly one place, `installCeremonyResult`, which runs when a hop's RESULT arrives. The
+convene route commits the record into the open document and never sets it, so on the convener's
+machine — the only machine this route runs on — it is empty for the whole of hop 1. The control case
+failed with *"the open document is not the one this ceremony is running over"* against exactly the
+right document. The check reads `ceremony.Extract(doc.data)` instead: the document's own record,
+which cannot be stale in that way.
+
+**(build pin — two probes were VOID and one test was inert, found by probing rather than by
+reading.)** The first mutations did not compile, so `go test` reported a build error, no `--- FAIL`
+line was counted, and three gates read as unprobed when they had never been probed. Then, with a
+compiling mutation, the document-match case went green: it pinned to a document id that was not open
+at all and asserted a 409 that arrived from `resolveDoc`'s *"that document is no longer open"* — a
+different gate entirely. It now convenes a SECOND real ceremony and asserts the sentence rather than
+the status code. **A case that asserts a status code without asserting which check produced it is
+satisfied by any refusal.**
+
+**(scope pin — the budget refusal cannot be built through the front door.)** `Convene` itself
+refuses a deadline that does not leave room for every hop and every delivery leg, so no ceremony can
+exist whose deadline was too short when it was created; the case arises only from the passage of
+time. The rule is therefore driven at `recordOutlivesBudget`, where it can be reached, and the
+route-level case is named here as unreachable rather than left looking untested.
 
 #### P01.S03 — `next` learns the terminal states *(done 2026-09-07, v1.128.2)*
 Scope: `/api/ceremony/next` reports a ceremony that has been declined or has passed its deadline,
