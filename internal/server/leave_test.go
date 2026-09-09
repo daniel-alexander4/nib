@@ -203,3 +203,53 @@ func TestLeavingIsRefusedWhereItWouldOnlyCostTheUser(t *testing.T) {
 		}
 	})
 }
+
+// **A teardown answers a parked consent, and that answer must not read as a DECLINE** (P05's phase
+// close, measured).
+//
+// `handleCeremonyLeave` reaches `stopListeningFor` → `disarmWhen`, which answers any parked consent
+// so the peer's goroutine is not left on a channel nobody will write to. That release is necessary.
+// What it used to send was a bare `accept: false` — and `Confirm` reads that as a person refusing:
+// it prunes this party's ceremony pins and returns `(false, nil)`, which travels the wire as
+// `ackDeclined`, which the convener turns into `endCeremony(StateDeclined)` — a SIGNED termination
+// naming this party, plus an `ended-by` marker.
+//
+// That is precisely what `handleCeremonyLeave`'s own door says must not happen: *"Minting a
+// termination here would put a withdrawal on the record that the user did not choose."*
+// `TestLeavingWritesNoTermination` covers the quiet path; this is the path with somebody on the
+// line, and it is the one where leaving is a keystroke away from an attested refusal.
+func TestATeardownAnswersAConsentWithoutDecliningIt(t *testing.T) {
+	se := &session{}
+	cer := &ceremonyID{}
+	se.arms[armInteractive] = &arm{kind: armInteractive, cer: cer}
+	resp := make(chan sessionDecision, 1)
+	se.pending = &pendingReq{resp: resp}
+
+	// SETUP: there really is an arm to tear down and a consent parked on it, or the release below
+	// is a channel nobody was waiting on.
+	if se.arms[armInteractive] == nil || se.pending == nil {
+		t.Fatal("setup: nothing is armed or nothing is parked")
+	}
+
+	if n := se.disarmWhen(func(a *arm) bool { return a.cer == cer }); n != 1 {
+		t.Fatalf("the teardown released %d arm(s), want 1 — the answer below would then be nobody's", n)
+	}
+
+	select {
+	case d := <-resp:
+		if d.accept {
+			t.Fatal("a teardown answered the consent with ACCEPT, which would sign the document")
+		}
+		if !d.torn {
+			t.Error("a teardown answers a parked consent with a bare refusal. `Confirm` reads that " +
+				"as the user declining: it prunes this party's ceremony pins and puts `ackDeclined` " +
+				"on the wire, so the CONVENER mints a signed Termination naming a party who pressed " +
+				"Leave and refused nothing. The two outcomes are one keystroke apart and the wire " +
+				"already has a byte for each")
+		}
+	default:
+		t.Fatal("the teardown left the parked consent unanswered — the peer's goroutine then sits " +
+			"on a channel nobody will write to until the session deadline, which is the hazard the " +
+			"release exists for")
+	}
+}

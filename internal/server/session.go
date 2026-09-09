@@ -231,7 +231,24 @@ type receivedInfo struct {
 }
 
 type sessionDecision struct {
-	accept     bool
+	accept bool
+	// torn is set when this answer came from a TEARDOWN rather than from the user — a disarm, a
+	// leave, a quit. It exists because `accept: false` alone means two opposite things.
+	//
+	// **A teardown answered a parked consent as a refusal, and the convener minted a signed
+	// termination naming this party for it** (found at P05's phase close, measured). The release
+	// itself is necessary — without it the peer's goroutine sits on a channel nobody will write to
+	// until the session deadline — but `Confirm` read it as *"the user declined"*, called
+	// `declineCeremony`, and returned `(false, nil)`, which travels the wire as `ackDeclined` and
+	// makes the convener run `endCeremony(StateDeclined)`. `leave.go`'s own doc says what that
+	// costs in as many words: *"Minting a termination here would put a withdrawal on the record
+	// that the user did not choose."*
+	//
+	// The distinction already existed one branch down — a TIMEOUT returns `ErrConsentTimedOut`
+	// rather than `(false, nil)`, *"collapsing the two here means the peer is told a person
+	// declined when nobody was at the machine"* — and this is the same fact arriving through a
+	// different door.
+	torn       bool
 	intent     string
 	appearance []byte
 	// when is the time the responder's quote pinned, carried through to the signature.
@@ -831,7 +848,8 @@ func (se *session) disarmWhen(ok func(*arm) bool) int {
 	}
 	if p != nil {
 		select {
-		case p.resp <- sessionDecision{accept: false}:
+		// `torn`, not a bare refusal: this is the session being taken down, not a person refusing.
+		case p.resp <- sessionDecision{accept: false, torn: true}:
 		default:
 		}
 	}
@@ -1185,6 +1203,13 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	defer sc.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
+		// **A teardown is not a decline, and it leaves the same way a timeout does.** Returning
+		// `(false, nil)` here would prune this party's pins locally AND put `ackDeclined` on the
+		// wire, which the convener turns into a signed `Termination` naming them. Nothing was
+		// signed and nobody refused, which is what `ackTimedOut` already says.
+		if d.torn {
+			return false, "", nil, time.Time{}, p2p.ErrConsentTimedOut
+		}
 		if !d.accept {
 			// **A decline ends this party's part in the ceremony, so its pins go (D29, P07.S02b).**
 			//
