@@ -1,0 +1,15 @@
+--- a/internal/server/overlay.go
++++ b/internal/server/overlay.go
+@@ -74,6 +74,12 @@
+ 		return
+ 	}
+ 	writeFitReport(w, fits)
++	for _, ft := range fits {
++		if ft.Outcome == pdfops.FitOverran {
++			httpError(w, http.StatusConflict, "does not fit")
++			return
++		}
++	}
+ 	if err != nil {
+ 		httpError(w, http.StatusInternalServerError, "could not stamp fields: "+err.Error())
+ 		return

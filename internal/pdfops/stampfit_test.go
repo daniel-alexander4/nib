@@ -250,20 +250,31 @@ var anchorCmRE = regexp.MustCompile(`([0-9.]+) [0-9.]+ cm[^D]*/Fm[0-9]+ Do`)
 func TestFitAccountsForTheAnchorInset(t *testing.T) {
 	const text = "Plain ASCII"
 	w := stampWidth(text, "Helvetica", 12) // 61.36pt
-	// Box chosen so that: w <= rectWidth, and w > rectWidth - stampInsetPt.
+	// Box chosen so 2pt is the WHOLE verdict: the text fits the raw rectangle and
+	// does not fit it once the anchor inset is taken off. So a fit measured against
+	// the wrong one does not merely report a different number — it reaches a
+	// different OUTCOME, "as-drawn" instead of "shrunk", and stamps a different size.
 	rectW := w + stampInsetPt/2
 	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + rectW, 420}, Text: text, Font: "Helvetica", Size: 12}
-	fit := fitFor(0, f, 1)
 
-	if fit.BoxPt >= rectW {
-		t.Fatalf("BoxPt %.2f did not subtract the %.0fpt inset from a %.2fpt rectangle",
-			fit.BoxPt, stampInsetPt, rectW)
+	got, outcome, _, boxPt := resolveFit(f)
+	if boxPt >= rectW {
+		t.Fatalf("box %.2f did not subtract the %.0fpt inset from a %.2fpt rectangle",
+			boxPt, stampInsetPt, rectW)
 	}
-	if fit.OverrunPt <= 0 {
-		t.Errorf("overrun %.2fpt: text of %.2fpt in a %.2fpt rectangle anchored %.0fpt in "+
-			"DOES overrun; a fit measured against the raw rectangle would call this a fit",
-			fit.OverrunPt, w, rectW, stampInsetPt)
+	if w <= boxPt || w > rectW {
+		t.Fatalf("fixture is inert: %.2fpt text must fit the %.2fpt rectangle and not the "+
+			"%.2fpt box, or this proves nothing", w, rectW, boxPt)
 	}
+	if outcome != FitShrunk {
+		t.Errorf("outcome %q: text of %.2fpt in a %.2fpt rectangle anchored %.0fpt in must "+
+			"shrink; measured against the raw rectangle it would report %q",
+			outcome, w, rectW, stampInsetPt, FitAsDrawn)
+	}
+	if got.Size >= f.Size {
+		t.Errorf("shrunk to %.0fpt from %.0fpt — nothing was reduced", got.Size, f.Size)
+	}
+
 	// The two USES of stampInsetPt agree: the fit's box starts where the glyphs do.
 	pdf, err := testpdf.Text("hello")
 	if err != nil {
@@ -273,17 +284,19 @@ func TestFitAccountsForTheAnchorInset(t *testing.T) {
 	wantX := f.Rect[0] + stampInsetPt
 	if math.Abs(gotX-wantX) > 0.05 {
 		t.Errorf("glyphs anchored at x=%.2f but the fit measures its box from x=%.2f — "+
-			"the stamp description and fitFor disagree about the inset", gotX, wantX)
+			"the stamp description and resolveFit disagree about the inset", gotX, wantX)
 	}
-	if math.Abs((f.Rect[2]-gotX)-fit.BoxPt) > 0.05 {
+	if math.Abs((f.Rect[2]-gotX)-boxPt) > 0.05 {
 		t.Errorf("usable width from the emitted anchor is %.2fpt, fit reported %.2fpt",
-			f.Rect[2]-gotX, fit.BoxPt)
+			f.Rect[2]-gotX, boxPt)
 	}
 
 	// And the ordinary case stays negative and distinguishable from "not measured".
 	roomy := Field{Page: 1, Rect: [4]float64{50, 400, 50 + w + 40, 420}, Text: text, Font: "Helvetica", Size: 12}
-	if rf := fitFor(0, roomy, 1); rf.OverrunPt >= 0 {
-		t.Errorf("a comfortably-fitting field reported overrun %.2fpt, want negative", rf.OverrunPt)
+	ro, rw, rb := func() (FitOutcome, float64, float64) { _, o, w, b := resolveFit(roomy); return o, w, b }()
+	if rf := fitFor(0, roomy, 1, ro, rw, rb); rf.OverrunPt >= 0 || rf.Outcome != FitAsDrawn {
+		t.Errorf("a comfortably-fitting field reported overrun %.2fpt outcome %q, want negative and %q",
+			rf.OverrunPt, rf.Outcome, FitAsDrawn)
 	}
 }
 
@@ -424,7 +437,12 @@ func TestStampStyleSizeMatchesTheEmittedTf(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := Field{Page: 1, Rect: [4]float64{50, tc.y0, 300, tc.y1}, Text: "Plain ASCII", Font: "Helvetica", Size: tc.size}
+			// A WIDE box and a one-glyph string, deliberately: this test is about the
+			// size clamp, and once resolveFit's ladder exists an overrunning fixture
+			// would shrink and measure the shrink instead. Fit.StampedPt is what
+			// predicts the emitted size in general; stampStyle does so only here,
+			// where nothing overruns. TestShrinkIsWhatTheTfReports covers the other side.
+			f := Field{Page: 1, Rect: [4]float64{50, tc.y0, 560, tc.y1}, Text: "x", Font: "Helvetica", Size: tc.size}
 			_, pts := stampStyle(f)
 			if pts != tc.want {
 				t.Errorf("stampStyle size = %d, want %d", pts, tc.want)
@@ -471,3 +489,182 @@ func emittedTfSize(t *testing.T, pdf []byte, f Field) float64 {
 }
 
 var tfRE = regexp.MustCompile(`/F[0-9]+ ([0-9.]+) Tf`)
+
+// C1 — each outcome is reachable, and each fixture reaches ONLY its own.
+//
+// The last clause is the one that matters. A table where every row happens to be
+// satisfiable by the same branch proves the branch runs, not that the ladder
+// chooses; so each row asserts the outcome it wants AND that it is not one of the
+// others, and the table asserts all four values are covered.
+func TestEachFitOutcomeIsReachableAndDistinct(t *testing.T) {
+	const line = "Plain ASCII"
+	w12 := stampWidth(line, "Helvetica", 12) // 61.36pt
+
+	cases := []struct {
+		name string
+		f    Field
+		want FitOutcome
+		why  string
+	}{
+		{
+			"as-drawn", Field{Page: 1, Rect: [4]float64{50, 400, 50 + w12 + 40, 420}, Text: line, Font: "Helvetica", Size: 12},
+			FitAsDrawn, "40pt of slack: nothing to do",
+		},
+		{
+			// Needs ~11pt. Reachable well above the floor.
+			"shrunk", Field{Page: 1, Rect: [4]float64{50, 400, 50 + w12*0.95, 420}, Text: line, Font: "Helvetica", Size: 12},
+			FitShrunk, "5% over: one point down clears it",
+		},
+		{
+			// Far too wide to shrink into (would need ~2pt), but the box is TALL, so
+			// the wrapped lines have somewhere to go.
+			"wrapped", Field{Page: 1, Rect: [4]float64{50, 300, 130, 420}, Text: "alpha bravo charlie delta echo foxtrot", Font: "Helvetica", Size: 12},
+			FitWrapped, "120pt tall: room for the lines wrapping produces",
+		},
+		{
+			// The same text in a ONE-LINE box: shrinking cannot reach it and the box
+			// has no vertical room, so it is stamped and reported.
+			"overran", Field{Page: 1, Rect: [4]float64{50, 400, 130, 420}, Text: "alpha bravo charlie delta echo foxtrot", Font: "Helvetica", Size: 12},
+			FitOverran, "same text, 20pt tall: nowhere to wrap into",
+		},
+	}
+
+	seen := map[FitOutcome]bool{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got, _, _ := resolveFit(tc.f)
+			if got != tc.want {
+				t.Errorf("outcome %q, want %q (%s)", got, tc.want, tc.why)
+			}
+			seen[got] = true
+		})
+	}
+	for _, o := range []FitOutcome{FitAsDrawn, FitShrunk, FitWrapped, FitOverran} {
+		if !seen[o] {
+			t.Errorf("no fixture reached %q — that arm is asserted by nothing", o)
+		}
+	}
+}
+
+// C2 — wrap fires ONLY when the wrapped lines fit the box's height.
+//
+// Driven from both sides of the boundary with the SAME text, so the only thing that
+// changes is the height. Without this, "wrapped" and "overran" are distinguishable
+// only by text, and a wrap that ignored height entirely would pass the table above.
+func TestWrapIsGatedOnMeasuredVerticalRoom(t *testing.T) {
+	const text = "alpha bravo charlie delta echo foxtrot"
+	const pts = 12
+	boxW := 130.0 - (50 + stampInsetPt)
+	lines := mdpdf.WrapCore(text, "Helvetica", pts, boxW)
+	if len(lines) < 2 {
+		t.Fatalf("fixture is inert: the text wraps to %d line(s), so there is no height "+
+			"question to ask", len(lines))
+	}
+	need := float64(len(lines)) * mdpdf.CoreLineHeight("Helvetica", pts)
+
+	// Exactly enough room, and one point less.
+	for _, tc := range []struct {
+		name string
+		h    float64
+		want FitOutcome
+	}{
+		{"exactly enough", need, FitWrapped},
+		{"one point short", need - 1, FitOverran},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			y0 := 400.0
+			f := Field{Page: 1, Rect: [4]float64{50, y0, 130, y0 + stampInsetPt + tc.h}, Text: text, Font: "Helvetica", Size: pts}
+			if _, got, _, _ := resolveFit(f); got != tc.want {
+				t.Errorf("%d lines need %.2fpt and the box offers %.2fpt: outcome %q, want %q",
+					len(lines), need, tc.h, got, tc.want)
+			}
+		})
+	}
+}
+
+// C3 — shrink stops at the floor and never jumps up.
+//
+// Probed at every size, because the bug this replaces was a DISCONTINUITY, not an
+// off-by-one: stampStyle used to turn 5, 4 and 1 into 8, so a loop walking down
+// from 7 got a larger size back and never converged.
+func TestShrinkStopsAtTheFloorAndNeverJumpsUp(t *testing.T) {
+	for size := 1; size <= 20; size++ {
+		f := Field{Page: 1, Rect: [4]float64{50, 400, 150, 420}, Text: "x", Font: "Helvetica", Size: float64(size)}
+		_, pts := stampStyle(f)
+		if size >= stampFloorPt && pts != size {
+			t.Errorf("size %d became %d — at or above the floor nothing should move it", size, pts)
+		}
+		if pts < stampFloorPt {
+			t.Errorf("size %d became %d, below the %dpt floor", size, pts, stampFloorPt)
+		}
+	}
+	// And the ladder itself lands ON the floor rather than skipping past it: text
+	// that fits only at 6pt must come back at 6pt, not be reported as overrunning.
+	w6 := stampWidth("Plain ASCII", "Helvetica", stampFloorPt)
+	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w6, 420}, Text: "Plain ASCII", Font: "Helvetica", Size: 12}
+	got, outcome, _, _ := resolveFit(f)
+	if outcome != FitShrunk || int(got.Size) != stampFloorPt {
+		t.Errorf("text that fits exactly at the %dpt floor came back %q at %.0fpt, want %q at %d",
+			stampFloorPt, outcome, got.Size, FitShrunk, stampFloorPt)
+	}
+}
+
+// C4 — a field that cannot be made to fit is still STAMPED, and the document is whole.
+//
+// /api/bake is what every save, print, flatten, export and signature runs through,
+// and the client aborts the whole operation on a bake that is not OK. Refusing here
+// would make a document carrying one over-long edit impossible to save at all — so
+// the outcome is a report, and this is the assertion that keeps it one.
+func TestAnUnfittableFieldStillProducesAWholeDocument(t *testing.T) {
+	pdf, err := testpdf.Text("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := Field{Page: 1, Rect: [4]float64{50, 400, 130, 420},
+		Text: "alpha bravo charlie delta echo foxtrot", Font: "Helvetica", Size: 12}
+	out, fits, err := StampFields(pdf, []Field{f})
+	if err != nil {
+		t.Fatalf("an over-long field failed the bake: %v — every save runs through this", err)
+	}
+	if len(fits) != 1 || fits[0].Outcome != FitOverran {
+		t.Fatalf("got %d fit(s) outcome %v, want one %q", len(fits), fits, FitOverran)
+	}
+	if fits[0].OverrunPt <= 0 {
+		t.Errorf("outcome is %q but the overrun is %.2fpt — the report contradicts itself",
+			FitOverran, fits[0].OverrunPt)
+	}
+	// The document is readable and the text is really on the page.
+	if _, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration()); err != nil {
+		t.Fatalf("the returned PDF does not re-read: %v", err)
+	}
+	if len(out) <= len(pdf) {
+		t.Error("nothing was added to the document")
+	}
+}
+
+// StampedPt is what predicts the emitted size once shrink can fire — stampStyle
+// alone no longer does, and that narrowing is asserted rather than assumed.
+func TestShrinkIsWhatTheTfReports(t *testing.T) {
+	pdf, err := testpdf.Text("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const line = "Plain ASCII"
+	w12 := stampWidth(line, "Helvetica", 12)
+	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + w12*0.95, 420}, Text: line, Font: "Helvetica", Size: 12}
+
+	_, fits, err := StampFields(pdf, []Field{f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fits[0].Outcome != FitShrunk {
+		t.Fatalf("fixture did not shrink (outcome %q), so this asserts nothing", fits[0].Outcome)
+	}
+	if _, asked := stampStyle(f); fits[0].StampedPt >= asked {
+		t.Errorf("StampedPt %d is not below the %dpt asked for", fits[0].StampedPt, asked)
+	}
+	resolved, _, _, _ := resolveFit(f)
+	if got := emittedTfSize(t, pdf, resolved); math.Abs(got-float64(fits[0].StampedPt)) > 0.01 {
+		t.Errorf("StampedPt says %d, pdfcpu emitted %.2fpt", fits[0].StampedPt, got)
+	}
+}

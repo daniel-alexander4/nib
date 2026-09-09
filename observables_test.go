@@ -406,11 +406,16 @@ var unreadKnown = map[string]string{
 	// the laundering this map exists to catch — tests do not count, by this file's own rule.
 	//
 	// Delete these five when P01.S02 acts on an overrun and P01.S03 shows it in the client.
-	"pdfops.Fit.Field":     "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
-	"pdfops.Fit.Page":      "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
-	"pdfops.Fit.WidthPt":   "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
-	"pdfops.Fit.BoxPt":     "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
-	"pdfops.Fit.OverrunPt": "measured at P01.S01; handleBake discards it. P01.S02 is the consumer.",
+	"pdfops.Fit.Field":     "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
+	"pdfops.Fit.Page":      "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
+	"pdfops.Fit.WidthPt":   "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
+	"pdfops.Fit.BoxPt":     "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
+	"pdfops.Fit.OverrunPt": "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
+	// `StampedPt` is the one field a client cannot derive for itself: once shrink-to-fit
+	// exists, the size on the page is NOT the size the client asked for, and nothing else
+	// on the wire says what it became. It is on the wire and read by nobody until the
+	// overlay matches the bake, which is P01.S03's whole subject.
+	"pdfops.Fit.StampedPt": "published in the X-Nib-Fit header at P01.S02; the client reads it at P01.S03.",
 }
 
 func TestEveryPublishedObservableHasANamedReader(t *testing.T) {

@@ -69,10 +69,11 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, _, err := pdfops.StampFields(pdfBytes, fields)
+	out, fits, err := pdfops.StampFields(pdfBytes, fields)
 	if wroteStampTextError(w, err) {
 		return
 	}
+	writeFitReport(w, fits)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not stamp fields: "+err.Error())
 		return
@@ -187,4 +188,42 @@ func wroteStampTextError(w http.ResponseWriter, err error) bool {
 	}
 	httpError(w, http.StatusBadRequest, err.Error())
 	return true
+}
+
+// fitReportHeader carries StampFields' per-field fit verdicts back to the client.
+//
+// **A header, because the body of this route is the PDF and must stay the PDF.**
+// Twenty-four client call sites bake — save, print, flatten, export, PDF/A, both
+// signature paths — and every one of them reads the response as bytes. Putting the
+// report in the body would mean changing all of them to unwrap an envelope, for a
+// value most bakes do not carry.
+//
+// It is also why an over-long field is REPORTED rather than refused. The client's
+// own rule is that a bake which is not OK aborts the whole operation, so an HTTP
+// error here would make a document carrying one over-long edit impossible to save,
+// print or sign at all — a far worse failure than the overrun it was meant to
+// prevent.
+const fitReportHeader = "X-Nib-Fit"
+
+// writeFitReport publishes the fields that did not fit exactly as drawn.
+//
+// Fields that fitted are omitted: on an ordinary bake every field fits, and a
+// header listing them all would be the whole field set on every save. An ABSENT
+// header therefore means "nothing needed doing", which is the common case, and is
+// distinguishable from a present-but-empty one only in that we never write one.
+func writeFitReport(w http.ResponseWriter, fits []pdfops.Fit) {
+	report := make([]pdfops.Fit, 0, len(fits))
+	for _, f := range fits {
+		if f.Outcome != pdfops.FitAsDrawn {
+			report = append(report, f)
+		}
+	}
+	if len(report) == 0 {
+		return
+	}
+	b, err := json.Marshal(report)
+	if err != nil {
+		return // a report that cannot be encoded must not fail the bake
+	}
+	w.Header().Set(fitReportHeader, string(b))
 }

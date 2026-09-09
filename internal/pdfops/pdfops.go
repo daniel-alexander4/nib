@@ -1014,7 +1014,17 @@ func stampStyle(f Field) (string, int) {
 	if pts <= 0 {
 		pts, ceiling = int((f.Rect[3]-f.Rect[1])*0.72), 48
 	}
-	if pts < 6 {
+	// **A size BELOW the floor is a degenerate input, not a small font.** A rect a
+	// few points tall, or a client sending 0, derives 1-5pt — unreadable, and almost
+	// certainly a bad box rather than a deliberate choice. It becomes 8pt, which is
+	// what this has always done.
+	//
+	// It is written as "below the floor" rather than "< 6" because shrink-to-fit
+	// walks down to stampFloorPt and MUST be able to land on it. With the old
+	// spelling the two disagreed: 5 became 8, so a shrink loop stepping 7, 6, 5 got
+	// a LARGER size back at the bottom and never converged. Measured before this
+	// changed — 12->12, 8->8, 7->7, 6->6, 5->8, 4->8, 1->8.
+	if pts < stampFloorPt {
 		pts = 8
 	}
 	if pts > ceiling {
@@ -1056,24 +1066,118 @@ func stampWidth(text, fontName string, pts int) float64 {
 // Fit is the measured relationship between one stamped field's text and the
 // rectangle it was drawn into. StampFields returns one per field it stamped.
 //
-// Nothing acts on it yet — deciding what to do about an overrun is P01.S02.
-// What it ends is the state where nothing MEASURES: today a replacement four
-// times its box's width is emitted with no error and no clip path.
+// The tags are here because handleBake marshals this into the X-Nib-Fit response
+// header. They were deliberately absent at P01.S01, when nothing marshalled it: a
+// wire contract asserted before a marshaller exists is a guess at a shape, and this
+// repo's own observable scan is built to catch exactly that.
 type Fit struct {
-	Field     int // index into the fields slice StampFields was given
-	Page      int
-	WidthPt   float64 // the text as emitted: widest line, stamped face and size
-	BoxPt     float64 // usable width — the rectangle less the anchor inset
-	OverrunPt float64 // WidthPt - BoxPt; NEGATIVE is the ordinary case
+	Field     int     `json:"field"` // index into the fields slice StampFields was given
+	Page      int     `json:"page"`
+	WidthPt   float64 `json:"widthPt"`   // the text as emitted: widest line, stamped face and size
+	BoxPt     float64 `json:"boxPt"`     // usable width — the rectangle less the anchor inset
+	OverrunPt float64 `json:"overrunPt"` // WidthPt - BoxPt; NEGATIVE is the ordinary case
+	// Outcome is what was DONE about a field that did not fit, one value per cause.
+	Outcome FitOutcome `json:"outcome"`
+	// StampedPt is the size actually emitted — which is not Field.Size when the
+	// text was shrunk, and is what a client must use to match the bake on screen.
+	StampedPt int `json:"stampedPt"`
 }
 
-// fitFor measures one field against its box. Both halves come from stampStyle,
-// so the width is measured in the face and size that will actually be drawn.
-func fitFor(i int, f Field, page int) Fit {
+// stampFloorPt is the smallest point size shrink-to-fit will produce. Below this
+// the text is not small, it is unreadable, and shrinking further trades a visible
+// problem for an invisible one.
+const stampFloorPt = 6
+
+// fitTolerancePt is the slack the fit comparisons allow, in points.
+//
+// **It is here because the boundary was otherwise decided by float association
+// order, not because a hair of overrun is acceptable.** A box built as
+// `y0 + inset + h` and then measured as `rect[3] - (rect[1] + inset)` returns
+// 41.619999999999997 for an h of 41.62, so text occupying exactly its box reported
+// as overrunning — and which way it fell depended on how the caller had arrived at
+// the number.
+//
+// 0.01pt is about 1/7000 of an inch: far below anything a reader can see or a
+// renderer can place, and far above double-precision noise at page-coordinate
+// magnitudes. What it buys is that "exactly fits" is a decidable case with one
+// answer, rather than a coin flip.
+const fitTolerancePt = 0.01
+
+// FitOutcome names what StampFields did about a field whose text did not fit the
+// box it was drawn into. One value per cause, never a lumped "did not fit": the
+// three causes have three different fixes, and a user told only "it did not fit"
+// cannot act on any of them.
+type FitOutcome string
+
+const (
+	// FitAsDrawn — the text fitted at the size and face asked for. Nothing changed.
+	FitAsDrawn FitOutcome = "as-drawn"
+	// FitShrunk — the point size was reduced, down to at most stampFloorPt.
+	FitShrunk FitOutcome = "shrunk"
+	// FitWrapped — broken across lines, and the box was measured to have room for them.
+	FitWrapped FitOutcome = "wrapped"
+	// FitOverran — nothing would make it fit, so it was stamped as asked and it
+	// overruns. **This is a report, not a refusal.** /api/bake is what every save,
+	// print, flatten, export and signature runs through, and the client aborts the
+	// whole operation on a bake that is not OK — so refusing here would make a
+	// document with one over-long edit impossible to save at all. Nib stamps what
+	// the user typed and says it did not fit.
+	FitOverran FitOutcome = "overran"
+)
+
+// resolveFit decides what to stamp for one field, and reports which of the four
+// outcomes it reached. It returns the field as it should actually be emitted, so
+// the caller stamps exactly what was measured.
+//
+// The ladder is shrink, then wrap, then report, and the order is deliberate: a
+// replacement one point smaller still looks like the line it replaced, whereas one
+// broken across two lines does not. Wrap is the fallback for the case shrinking
+// cannot reach, not the first resort.
+func resolveFit(f Field) (Field, FitOutcome, float64, float64) {
 	fontName, pts := stampStyle(f)
-	w := stampWidth(f.Text, fontName, pts)
-	box := f.Rect[2] - (f.Rect[0] + stampInsetPt)
-	return Fit{Field: i, Page: page, WidthPt: w, BoxPt: box, OverrunPt: w - box}
+	boxW := f.Rect[2] - (f.Rect[0] + stampInsetPt)
+	boxH := f.Rect[3] - (f.Rect[1] + stampInsetPt)
+
+	if w := stampWidth(f.Text, fontName, pts); w <= boxW+fitTolerancePt {
+		return f, FitAsDrawn, w, boxW
+	}
+
+	// Shrink. Down to the floor inclusive — which stampStyle can now return.
+	for p := pts - 1; p >= stampFloorPt; p-- {
+		if w := stampWidth(f.Text, fontName, p); w <= boxW+fitTolerancePt {
+			out := f
+			out.Size = float64(p)
+			return out, FitShrunk, w, boxW
+		}
+	}
+
+	// Wrap, at the size asked for, and ONLY if the box has the height for it.
+	//
+	// **Measured, and it is why this is gated rather than attempted:** two lines of
+	// 12pt Helvetica occupy 27.74pt against the 18pt a 20pt-tall box leaves after the
+	// inset, and pdfcpu's position:bl anchors the block at the BOTTOM — so the extra
+	// lines grow upward, over whatever sits above the box. On a text document that is
+	// the previous line. A box drawn around one line of text has room for one line,
+	// so wrapping it would trade a horizontal overrun for a vertical one.
+	if lines := mdpdf.WrapCore(f.Text, fontName, pts, boxW); len(lines) > 1 {
+		if float64(len(lines))*mdpdf.CoreLineHeight(fontName, pts) <= boxH+fitTolerancePt {
+			out := f
+			out.Text = strings.Join(lines, "\n")
+			return out, FitWrapped, stampWidth(out.Text, fontName, pts), boxW
+		}
+	}
+
+	return f, FitOverran, stampWidth(f.Text, fontName, pts), boxW
+}
+
+// fitFor records one resolved field. Both halves of the measurement come from
+// stampStyle, so the width is measured in the face and size that will be drawn.
+func fitFor(i int, f Field, page int, outcome FitOutcome, w, boxW float64) Fit {
+	_, pts := stampStyle(f)
+	return Fit{
+		Field: i, Page: page, WidthPt: w, BoxPt: boxW, OverrunPt: w - boxW,
+		Outcome: outcome, StampedPt: pts,
+	}
 }
 
 // StampFields bakes the given overlay-field values onto the PDF as text, sized to
@@ -1091,6 +1195,12 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 		if strings.TrimSpace(f.Text) == "" {
 			continue
 		}
+		// Resolve BEFORE anything is derived from the field: resolveFit returns the
+		// field as it should actually be emitted (a smaller size, or text broken
+		// across lines), so everything below describes what is really stamped. The
+		// field is rebound deliberately — measuring one field and stamping another is
+		// the whole defect this pair of slices exists to end.
+		f, outcome, wPt, boxPt := resolveFit(f)
 		fontName, pts := stampStyle(f)
 		color := "#000000"
 		if hexColor.MatchString(f.Color) {
@@ -1115,7 +1225,7 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 			page = 1
 		}
 		wms[page] = append(wms[page], wm)
-		fits = append(fits, fitFor(i, f, page))
+		fits = append(fits, fitFor(i, f, page, outcome, wPt, boxPt))
 	}
 	if len(wms) == 0 {
 		return pdf, fits, nil
