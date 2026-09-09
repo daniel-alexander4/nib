@@ -1172,7 +1172,7 @@ upstream of both for both roles. What is **not** settled by reading is whether a
 has an irreversible moment distinct from `sessionInit()`, which decides whether one statement covers
 both roles or whether the convener needs their own. Settle that before choosing the surface.
 
-### P05 — The pre-hop party learns, and can leave
+### P05 — The pre-hop party learns, and can leave *(**done** 2026-09-09, v1.128.55 — three slices, **and ONE NAMED GAP**. Ledger `ledgers/2026-09-09-p05-acceptance.md`: 6 clauses, 4 met, **C01 not met AS A MECHANISM**, C03 falsified on a reachable path and fixed at this close. **The closure sweep re-credited C01 off a stale marker and the review's mutation battery refuted it two hours later** — S03's marker had read *"PARTLY done, the arm BACKED OUT"* for two days after `/pending 380` shipped the arriving half as a PULL, so the code was there and the criterion was not met: `fetchEndStateWhenSlow` and `publishEndStateFor` appear in ZERO test files and **7 of 7 mutations to them came back green**. What is covered is the crypto — the seal, the derivations and both refusals, with a replaying red proof — never the reaching. Tier 4 cannot be pointed at it as it stands: `decline_round` convenes exactly four parties and none is pre-hop. Filed `/pending 433` with the table. **C03 was falsified with teeth**: leaving while a consent request is parked sent a bare `accept: false`, which `Confirm` read as a person refusing — it pruned this party's pins and put `ackDeclined` on the wire, so the CONVENER minted a signed `Termination` naming a party who refused nothing, which is exactly what `leave.go`'s own door says must not happen. Fixed through the byte the wire already had for "nobody answered"; 2 mutations red, and the source guard that should have caught it was re-anchored after it broke on a correct change. **Two more measured and filed**: the pull learns the ceremony ended and nothing acts on it — no close-out, because `closeOutReason` requires `LoadOK` and a pre-hop party is `LoadAbsent`, so the panel still says *"Waiting for your turn"* beside a verified termination (`/pending 434`); and it tells that party *"your signature stands"* when they never signed (`/pending 435`). **Two inventory rows I wrote at this close named readers that do not read the mechanism** and are corrected in place — `/pending 1`'s shape, on rows an hour old. **Gates**: tiers 0–3 ✓ (261 jsdom, 107 browser), vet ✓, gofmt ✓, tier 6 ✓ 19/19, tier 4 ✓ both transports **and `-n 4` ✓** — the decline round, because this close changed the consent path.)*
 **Goal.** Close the two ends D14 left open: a party who has accepted and not yet signed can find
 out the proceeding ended, and can decide to stop taking part.
 
@@ -1206,7 +1206,23 @@ Refs: D16.
 Acceptance: a termination verifies against an invitation exactly where it verifies against the
 record, and is refused on a mismatched roster commitment or a non-convener signer.
 
-#### P05.S03 — the declined end state reaches a party who never signed *(PARTLY done 2026-09-07, v1.128.19; the arm BACKED OUT at v1.128.20 — `/pending 380`)*
+#### P05.S03 — the declined end state reaches a party who never signed *(**done** — receiving half 2026-09-07 v1.128.19; the arriving half **2026-09-08, v1.128.38**, by a different mechanism, `/pending 380`)*
+
+**(marker corrected at P05's close, 2026-09-09, and the correction is the closure sweep landing on
+its own phase.)** This read *"PARTLY done … the arm BACKED OUT"* for two days after the missing half
+shipped. Below, this slice declares the arriving half **out of this plan's scope** because a
+ceremony-keyed slot map was refused by `armKind`'s own doc and widening the one-pinned-peer tripwire
+needs a fresh security review. **All of that is still true, and it is why the half was built the
+other way round**: `/pending 380` closed it with a **pull** rather than an arm — a fetch needs no
+arm, so the tripwire is never approached. `fetchEndStateWhenSlow` is spawned on the arm
+(`internal/server/session.go:2464`) and reads the ceremony's published end state, refusing anything
+that does not open at this party's own target AND verify against the invitation anchor.
+
+**Nine tests cover it**, including *"a pre-hop party reads the end state it cannot be delivered
+to"*, *"a planted end state is refused"* and *"an end state does not open at another target"*. So
+P05's first exit criterion is **met**, and the amendment the slice parked for Dan — that the
+criterion be re-worded to fit what shipped — is **withdrawn rather than answered**: what shipped
+meets the criterion as written.
 
 **(reality-drift pin, 2026-09-07, and it corrects a marker I wrote.)** This slice was marked done at
 v1.128.19 having passed tiers 0–3 and 6. **Tier 4d had not been run, and it is a required-run gate**
@@ -1239,8 +1255,10 @@ not at all. Re-opening it is a decision, not a correction.
 And widening it is what *Out of scope* names: *"the serial hub and its one-pinned-peer tripwire …
 widening either needs a fresh security review."* N concurrent armed listeners **is** that widening.
 
-**So this slice closes at its scope boundary rather than at its acceptance clause**, and P05's first
-exit criterion goes to Dan as a parked amendment rather than being re-worded to fit what shipped.
+~~**So this slice closes at its scope boundary rather than at its acceptance clause**, and P05's first
+exit criterion goes to Dan as a parked amendment rather than being re-worded to fit what shipped.~~
+**Superseded 2026-09-08 by `/pending 380`**, which built the arriving half as a PULL — see the
+marker above. The park is withdrawn; nothing goes to Dan here.
 Scope: the receiving half — a pre-hop party is reachable by the round that already walks them, and
 acts on what it verifies. Refs: D16.
 Acceptance: a declined ceremony delivered to a party holding no record closes their arm; a planted

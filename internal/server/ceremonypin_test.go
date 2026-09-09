@@ -192,11 +192,35 @@ func TestTheConsentGateRoutesThroughTheArrivalCheck(t *testing.T) {
 		t.Error("Confirm does not revoke the ceremony's pins on a decline — D29's revocable " +
 			"pin then outlives the ceremony it was taken on for")
 	}
-	tail := body[at("ErrConsentTimedOut"):]
+	// **Anchored on the timeout BRANCH, not on the first mention of its error.** This read
+	// `body[at("ErrConsentTimedOut"):]` and broke the moment a second non-pruning early return was
+	// added above it — P05's phase close added one for a teardown, which returns the same error for
+	// the same reason — even though the property it guards was still true. A positional scan over a
+	// token that now appears twice is a guard that fails on a correct change.
+	tail := body[at("case <-time.After("):]
 	if strings.Contains(tail, "declineCeremony(") {
 		t.Error("the consent TIMEOUT path prunes the ceremony's pins. Nobody was at the " +
 			"machine and the user has decided nothing; unpinning on their behalf makes " +
 			"stepping away from the desk revoke a relationship.")
+	}
+	// **A TEARDOWN is not a decline either, and it is the one that had teeth.** A disarm, a leave
+	// or a quit answers a parked consent so the peer's goroutine is not left on a channel nobody
+	// will write to — and that answer used to be a bare `accept: false`, which `Confirm` read as a
+	// refusal: it pruned this party's pins AND put `ackDeclined` on the wire, so the convener minted
+	// a signed `Termination` naming them. `leave.go`'s own door says what that costs: *"Minting a
+	// termination here would put a withdrawal on the record that the user did not choose."*
+	if !strings.Contains(body, "d.torn") {
+		t.Error("Confirm does not distinguish a teardown from a decline. `accept: false` means " +
+			"both 'the user refused' and 'the session was taken down', and only one of those is " +
+			"an attested refusal the convener is entitled to act on.")
+	}
+	if torn, decline := at("d.torn"), at("declineCeremony("); torn > decline {
+		t.Error("the teardown check runs AFTER declineCeremony, so a leave still prunes this " +
+			"party's pins on its way out — and still tells the peer a person refused.")
+	}
+	if strings.Count(body, "declineCeremony(") != 1 {
+		t.Errorf("Confirm calls declineCeremony %d times; one branch is the decline and every "+
+			"other way out of this select must not be it", strings.Count(body, "declineCeremony("))
 	}
 	// The stimulus for the two absence checks above: the token really does appear somewhere in
 	// this file, so "not found in the tail" is a fact about position rather than about spelling.
