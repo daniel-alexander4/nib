@@ -460,24 +460,36 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 	// that refuses everyone satisfies every negative test there is; only a test that drives the
 	// legitimate case can see it, and `TestAnInvitationReIssuedMidCeremonyLeavesEveryoneElseUntouched`
 	// is that test.
-	cert, _, ierr := identity(v)
+	mine, ierr := convenedByMe(v, rec)
 	if ierr != nil {
 		httpError(w, http.StatusInternalServerError,
 			"Nib could not read this machine's own identity, so it cannot tell whether it convened "+
 				"this ceremony")
 		return
 	}
-	myFP, ferr := sign.Fingerprint(cert)
-	if ferr != nil {
-		httpError(w, http.StatusInternalServerError,
-			"Nib could not read this machine's own fingerprint, so it cannot tell whether it "+
-				"convened this ceremony")
-		return
-	}
-	if !strings.EqualFold(hex.EncodeToString(myFP), conv) {
+	if !mine {
 		httpError(w, http.StatusForbidden,
 			"only the convener can re-issue invitations: this machine is a party to this ceremony, "+
 				"not the one that convened it")
+		return
+	}
+	// **A ceremony whose deadline has passed has nobody left to invite** (P04's phase close).
+	//
+	// The client gates the control on `!c.ended`, and `Stored.Ended`'s own doc forbids reading that
+	// as liveness in as many words: *"Empty means UNKNOWN, never live … no surface may render
+	// absence as 'still running'."* Expiry is never written there — it is DERIVED, by `endedReason`
+	// — so a ceremony a month past its deadline carries no termination, offers the control, and
+	// minted a working invitation. Measured at the phase close: the same card said *"this ceremony's
+	// deadline has passed"* on one line and offered a re-issue on the next.
+	//
+	// Refused here rather than only in the client, because that is where the rule already lives and
+	// because a second client-side derivation of "expired" is the shape ADR-009 refuses. **409 and
+	// not 410**: the secrets are still on this machine, so "gone" would be false — what has ended is
+	// the proceeding, which is a state conflict.
+	if !rec.Expires.IsZero() && time.Now().After(rec.Expires) {
+		httpError(w, http.StatusConflict,
+			"this ceremony's deadline has passed, so there is nobody left to invite: to bring "+
+				"somebody in now, run the document as a new ceremony")
 		return
 	}
 	// A named party who is not in the roster is a request about somebody else's ceremony, and
@@ -654,4 +666,31 @@ func rosterHas(roster []ceremony.Party, fp string) bool {
 		}
 	}
 	return false
+}
+
+// convenedByMe is whether THIS machine convened the ceremony — the one door (ADR-009).
+//
+// **Written after the phase-close review counted four inline copies** of the same three steps
+// (`closeout.go`'s round check, `delivery.go`'s round guard and its end-state guard, and this
+// route). `convenerFingerprintOf` was only ever the second half; the half that got it wrong in
+// P04.S03 had no door at all — that cut read `identity(v)` as `(cert, fingerprint, err)` when it is
+// `(cert, KEY, err)`, compared a private key's bytes to a fingerprint, and refused every caller
+// including the convener. A composite spelled out at four sites is exactly the shape where one of
+// them is written differently and nothing notices.
+//
+// The three existing sites are deliberately NOT moved onto it here: they sit inside
+// `runDeliveryRound`, `endCeremony` and `roundIsFinished`, each of which already holds a `myFP` it
+// uses for other things, and rewriting three live delivery paths to prove a point about a fourth is
+// how a review fix becomes its own defect. This door exists, it is the one new callers take, and
+// the migration is `/pending 432`.
+func convenedByMe(v *vault.Vault, rec ceremony.Record) (bool, error) {
+	cert, _, err := identity(v)
+	if err != nil {
+		return false, err
+	}
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(hex.EncodeToString(myFP), convenerFingerprintOf(rec)), nil
 }

@@ -83,6 +83,21 @@ const h = await launch({
     '**/api/ceremonies': (route) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(listing()),
     }),
+    // The worklist's own answer (P04.S02), stubbed so the rendering the threshold TRIGGERS can be
+    // measured. Without it this file measured only the rendering the threshold replaces — which is
+    // the half S02 changed, and the instrument was not re-pointed until the phase close.
+    '**/api/ceremony/next*': (route) => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        ceremony: '1'.repeat(32), state: 'waiting', label: 'Signer 1', position: 1, of: size,
+        isMe: false, meKnown: true, worklist: true,
+        parties: roster(size).map((p, i) => ({
+          label: p.label, capacity: p.capacity,
+          state: i < Math.floor(size / 2) ? 'signed' : i === Math.floor(size / 2) ? 'signing' : 'waiting',
+          isMe: i === 1,
+        })),
+      }),
+    }),
   },
 });
 const { page } = h;
@@ -267,4 +282,40 @@ test('this file leaves the shared server as it found it', async () => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const open = await page.evaluate(() => document.querySelectorAll('.viewerContainer .page').length);
   assert.equal(open, 0, `${open} page divs are open — this file never opens a document, so they are not its own`);
+});
+
+// **The rendering the threshold TRIGGERS, measured — which nothing did until P04's phase close.**
+//
+// S01 measured the card at six roster sizes and the plan's bracket was read off it. S02 then changed
+// what the card renders above the threshold, and this file was not re-pointed: it never clicked
+// "What happens next?" and never stubbed `/api/ceremony/next`, so tier 3 — the only tier with
+// layout — measured only the rendering the threshold replaces.
+//
+// The property is the one the whole threshold exists for and it is a GEOMETRY property, so it can
+// only be asserted here: the card the worklist produces must be SHORTER than the roster it replaced.
+// At tier 2 the same claim is a row count with no heights behind it.
+test('above the threshold the worklist makes the card shorter, not taller', async () => {
+  size = 32;
+  await page.setViewportSize(REF);
+  await page.click('.modetab[data-tab="collaborate"]');
+  await h.panel('ceremony');
+  await page.waitForFunction((want) =>
+    document.querySelectorAll('#ceremonyList .cerparty').length === want, size, { timeout: 15000 });
+
+  const cardH = () => page.$eval('#ceremonyList .cercard', (el) => Math.round(el.getBoundingClientRect().height));
+  const before = await cardH();
+  assert.ok(before > 0, 'setup: the card has no height, so "shorter" is about nothing');
+
+  await page.click('#ceremonyList .cernextbtn');
+  await page.waitForSelector('#ceremonyList .cerworklist');
+  const after = await cardH();
+
+  console.log('# worklist at n=%d: card %dpx -> %dpx', size, before, after);
+  assert.ok(after < before,
+    `at ${size} parties the card is ${after}px with the worklist and was ${before}px without it. `
+    + 'The worklist appears when the roster stops fitting, so a worklist that makes the card TALLER '
+    + 'points the remedy in the opposite direction from the problem — which is what shipped: the '
+    + 'roster was left rendered above it and 32 rows became 59');
+  assert.equal(await page.$eval('#ceremonyList .cerroster', (el) => el.hidden), true,
+    'the roster is still rendered beside the worklist');
 });

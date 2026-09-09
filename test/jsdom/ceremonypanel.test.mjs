@@ -343,6 +343,15 @@ test('accepting an invitation shows the roster with you and the convener marked'
 // **What this tier can see and tier 3 cannot bother with:** which parties are named, which are
 // collapsed, and that every state word came from the server rather than from a predicate here.
 
+// **The card's roster and the worklist's parties are built from ONE list**, and a mismatch is what
+// hid the phase's worst defect: the fixture's ceremony carried 2 parties while `bigParties()`
+// supplied 13, so the card never rendered a big roster and "the worklist is shorter than what it
+// replaces" was asserted against a 2-row roster.
+const bigRoster = (n) => Array.from({ length: n }, (_, i) => ({
+  fingerprint: i === 0 ? ME : String(i).padStart(2, '0').repeat(32),
+  label: `Signer ${i}`, signs: true,
+}));
+
 const bigParties = (done, signing = 12, watching = 1) => {
   const out = [];
   for (let i = 0; i < watching; i++) out.push({ label: `Observer ${i + 1}`, state: 'watching' });
@@ -357,8 +366,10 @@ const bigParties = (done, signing = 12, watching = 1) => {
   return out;
 };
 
-async function worklist(answer) {
+async function worklist(answer, rosterSize) {
   nextAnswer = answer;
+  const saved = listing.ceremonies[0].roster;
+  if (rosterSize) listing.ceremonies[0].roster = bigRoster(rosterSize);
   try {
     const host = await showPanel();
     host.querySelector('.cernextbtn').click();
@@ -366,6 +377,7 @@ async function worklist(answer) {
     return host;
   } finally {
     nextAnswer = defaultNext;
+    listing.ceremonies[0].roster = saved;
   }
 }
 
@@ -393,6 +405,41 @@ test('above the sitting ceiling the parties who are DONE collapse into a count',
     'a party who has already signed is still named individually, so the worklist is TALLER per '
     + 'party than the roster it replaces — which points the remedy the opposite way from the '
     + 'problem it exists to fix');
+});
+
+test('the worklist REPLACES the roster — the card gets shorter, not longer', async () => {
+  const visible = (host, sel) => [...host.querySelectorAll(sel)].filter((e) => !e.closest('[hidden]')).length;
+  // 13 parties in the card AND in the answer, so the two renderings are of the same ceremony.
+  // **Not through `worklist()`, which clicks for you** — the first version of this test did, so it
+  // measured `before` AFTER the collapse and read zero. The point is the difference across the
+  // click, so the click has to be in the test.
+  nextAnswer = {
+    ceremony: '1'.repeat(32), state: 'waiting', label: 'Signer 6', position: 6, of: 12,
+    isMe: true, meKnown: true, worklist: true, parties: bigParties(5),
+  };
+  const saved = listing.ceremonies[0].roster;
+  listing.ceremonies[0].roster = bigRoster(13);
+  const host = await showPanel();
+  const before = visible(host, '.cerparty');
+  assert.ok(before >= 13,
+    `setup: the card rendered ${before} roster rows, so "the worklist is shorter than the roster it `
+    + 'replaces" would be a claim about a roster that already fits — which is the mismatch that hid '
+    + 'this defect through a whole slice');
+
+  host.querySelector('.cernextbtn').click();
+  await settle(40);
+
+  assert.equal(visible(host, '.cerparty'), 0,
+    'the roster is still rendered beside the worklist, so the card is now the roster PLUS a state '
+    + 'token per remaining party — measured at 32 parties, 32 rows became 59. That is the opposite '
+    + 'of what the threshold is for: the rendering that appears when the roster stops fitting was '
+    + 'TALLER than the roster');
+  const after = visible(host, '.cerparty, .cerworkrow');
+  assert.ok(after < before,
+    `the card shows ${after} rows after the worklist against ${before} before it. A worklist that `
+    + 'does not shorten the card cannot be the answer to a card that is too long');
+  nextAnswer = defaultNext;
+  listing.ceremonies[0].roster = saved;
 });
 
 test('the worklist marks whose turn it is, and says it in words rather than in colour alone', async () => {
@@ -452,6 +499,47 @@ test('the re-issue control is the convener\'s, and only while the ceremony is st
   assert.equal(cards[1].querySelector('.cerreissuebtn'), null,
     'a degraded ceremony offers a re-issue. The route reads the mirror, which is strictly stronger '
     + 'than the listing, so the control would be offering something the server is known to refuse');
+});
+
+// **Each population clause driven SEPARATELY, because none of them went red anywhere.** The phase
+// review probed it: dropping `mayAct`, `!c.ended` or `convenedHere` from the gate broke no test.
+// The delivery control — the twin of this one — has two committed red proofs; the control that
+// renders channel secrets had none. The lock-screen fixture cannot stand in for it either, because
+// `lockedpanel.test.mjs` sets `ended: 'completed'`, so `!c.ended` already excludes the control
+// regardless of the lock.
+test('each of the re-issue\'s three gates is load-bearing', async () => {
+  const c = listing.ceremonies[0];
+  const saved = { ended: c.ended, convener: c.convener, primary: listing.primary };
+  const offered = async () => {
+    const host = await showPanel();
+    return !!host.querySelector('.cerreissuebtn');
+  };
+  try {
+    assert.equal(await offered(), true,
+      'setup: the control is not offered in the baseline state, so removing a condition below '
+      + 'cannot show that the condition was what offered it');
+
+    c.ended = 'completed';
+    assert.equal(await offered(), false,
+      'an ENDED ceremony still offers a re-issue. There is nobody left to invite, and D29 orders the '
+      + 'lifecycle end state -> delivery -> close-out');
+    c.ended = saved.ended;
+
+    c.convener = 'ff'.repeat(32); // somebody else convened it
+    assert.equal(await offered(), false,
+      'a party who did not convene the ceremony is offered a control that mints every other party\'s '
+      + 'channel secret. The server refuses it 403 — this is the half that stops it being offered');
+    c.convener = saved.convener;
+
+    listing.primary = false;
+    assert.equal(await offered(), false,
+      'a NON-PRIMARY Nib offers the re-issue. `mayAct` folds that together with the lock screen, and '
+      + 'both are states where the user is looking rather than acting');
+  } finally {
+    c.ended = saved.ended;
+    c.convener = saved.convener;
+    listing.primary = saved.primary;
+  }
 });
 
 test('a re-issue asks for ONE named party, and says the invitation is the same one', async () => {

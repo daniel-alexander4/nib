@@ -1085,6 +1085,10 @@ async function openSessionInit() {
   els.sinPeer.hidden = none;
   els.sinProgress.hidden = true;
   els.sinGo.disabled = none;
+  // D12's statement, written each time the dialog opens because the ceremony half depends on the
+  // document that is open NOW. `view.inCeremony` is set from the document's own metadata, so this
+  // branches on a fact rather than on a mode.
+  setPermanence(document.getElementById('sinPermanence'), !!view.inCeremony);
   els.sessionInitModal.hidden = false;
 }
 
@@ -1334,6 +1338,10 @@ async function openSessionRecv(mode) {
   const receive = recvMode === 'receive';
   els.srvTitle.textContent = receive ? 'Receive a document' : 'Receive a live co-signature';
   els.srvIntentRow.hidden = receive; // a plain transfer needs no agreement statement
+  // ...and no permanence statement either: nothing is signed on this flow, so telling the user
+  // signing is permanent is a sentence about something they are not doing.
+  const perm = document.getElementById('srvPermanence');
+  if (perm) perm.hidden = receive;
   els.srvReasonCap.textContent = receive ? 'What they’re sending' : 'Their signed statement';
   els.srvAccept.textContent = receive ? 'Accept & save' : 'Accept & co-sign';
   els.srvArmHint.textContent = receive
@@ -1542,6 +1550,9 @@ function showConsent(pending) {
   // the consent request. Outside a ceremony there is no record and the field is absent, so the
   // original default stands — the branch is on the field's presence, never on a mode flag.
   if (pending.recital) els.srvIntent.value = pending.recital;
+  // D12's statement, with its ceremony half only when there is one — same discriminator as the
+  // recital two lines up, for the same reason.
+  setPermanence(document.getElementById('srvPermanence'), !!pending.recital);
   renderConsentSigners(pending.signers || []);
   showRecvView('srvConsent');
   loadPendingPreview(recvPoll, pending.block || null);
@@ -11566,8 +11577,16 @@ function ceremonyCard(c, mayAct) {
   }
   // **Re-issuing (D11), which is the delivery button's population with the LIFECYCLE inverted.**
   // Delivery needs `ended` because D29 orders end state → delivery round → close-out; a re-issue is
-  // for a proceeding that is still RUNNING and whose invitation somebody lost. Same convener test,
-  // through the same door, so the two cannot drift apart.
+  // for a proceeding whose invitation somebody lost. Same convener test, through the same door, so
+  // the two cannot drift apart.
+  //
+  // **`!c.ended` is "not KNOWN to have ended", never "still running"**, and the first version of
+  // this comment said the second. `Stored.Ended`'s own doc: *"Empty means UNKNOWN, never live …
+  // no surface may render absence as 'still running'."* Expiry in particular is derived and never
+  // written there, so a ceremony past its deadline reaches this test with an empty field. The
+  // server refuses that case with its own sentence (`handleCeremonyInvites`, 409) rather than this
+  // file deriving "expired" a second time — which is how the leave control already treats the
+  // convener case it cannot answer locally.
   if (mayAct && c.state === 'ok' && !c.ended && convenedHere(c)) {
     card.appendChild(ceremonyReissue(c));
   }
@@ -11613,6 +11632,13 @@ function ceremonyCard(c, mayAct) {
       btn.disabled = true;
       next.textContent = '';
       next.appendChild(await ceremonyNextLine(c.id));
+      // **A worklist REPLACES the roster above it** (P04.S02, and the phase close is where it was
+      // actually made to). Without this the card went from 32 rows to 59 — measured — which is the
+      // opposite of what the threshold is for: the rendering that appears when the roster stops
+      // fitting was taller than the roster. Hidden rather than removed, because the card is rebuilt
+      // on every panel load and the two renderings should differ only in height.
+      const roster = card.querySelector('.cerroster');
+      if (roster) roster.hidden = !!next.querySelector('.cerworklist');
     });
     next.appendChild(btn);
     card.appendChild(next);
@@ -11739,13 +11765,27 @@ function ceremonyLeave(c) {
 //
 // **One constant, two placements**, because it is one rule stated at two sites (ADR-009): a second
 // copy of a sentence about permanence is how one of them comes to say something else.
-const PERMANENCE = 'Signing is permanent. Nib cannot remove a signature or cancel a ceremony: '
-  + 'if this one is wrong, the document has to be run again as a new ceremony — and Nib does not '
-  + 'tell the other parties that the first one is finished.';
+// **Two halves, because the first cut said "a ceremony" on flows that have none.** Measured at the
+// phase close: `#srvPermanence` renders on the RECEIVE flow, where `#srvIntentRow` is already hidden
+// because "a plain transfer needs no agreement statement" — nothing is signed there at all — and
+// `#sinPermanence` sits in the generic "Co-sign live with a peer" dialog, which has no ceremony
+// awareness. So every plain two-party co-sign was told the document "has to be run again as a new
+// ceremony". S04's own acceptance clause is that the statement is TRUE of the shipped code, and on
+// those two paths it was not.
+const PERMANENCE_SIGNATURE = 'Signing is permanent. Nib cannot remove a signature once it is on the '
+  + 'document.';
+const PERMANENCE_CEREMONY = ' It cannot cancel a ceremony either: if this one is wrong, the document '
+  + 'has to be run again as a new ceremony — and Nib does not tell the other parties that the first '
+  + 'one is finished.';
 
-for (const id of ['sinPermanence', 'srvPermanence']) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = PERMANENCE;
+// setPermanence writes the statement, adding the ceremony half only where there IS a ceremony.
+//
+// **The branch is on a fact, never on a mode flag** — the same rule `showConsent` already follows
+// for the recital: `pending.recital` is present inside a ceremony and absent outside it, and
+// `view.inCeremony` is the initiating side's equivalent.
+function setPermanence(el, inCeremony) {
+  if (!el) return;
+  el.textContent = PERMANENCE_SIGNATURE + (inCeremony ? PERMANENCE_CEREMONY : '');
 }
 
 // convenedHere is whether THIS machine convened the ceremony — the one door (ADR-009), because two
@@ -12212,6 +12252,18 @@ async function ceremonyNextLine(id) {
 function ceremonyWorklist(head, parties) {
   const wrap = document.createElement('div');
   wrap.className = 'cerworklist';
+  // **It COLLAPSES the roster it replaces, and shipping without this was the phase's own defect.**
+  // `ceremonyRoster` is appended to the card unconditionally, and this renders into a separate
+  // `.cernext` below it — so a 32-party card went from 32 rows to **59**, measured. That is exactly
+  // what the plan's grill pin forbade: *"switching at N+1 to a rendering that is taller per party
+  // than the one that just failed to fit points the metric and the remedy in opposite directions."*
+  // The slice's own comments claimed the opposite ("the summary replaces the roster") and its test
+  // asserted only the worklist's own rows, never the card's total.
+  //
+  // **The collapse is performed by the CALLER**, and a first attempt here was silently useless:
+  // this function builds the worklist before it is attached, so `head.closest('.cercard')` returned
+  // null and hid nothing while the probe still read 59 rows. The one call site does it, right after
+  // it appends — see `ceremonyCard`'s "what happens next" handler.
   const signing = parties.filter((x) => x.state !== 'watching');
   const done = signing.filter((x) => x.state === 'signed').length;
   // The summary replaces the roster, so it carries the count the roster used to show by being
@@ -12230,14 +12282,31 @@ function ceremonyWorklist(head, parties) {
     row.className = 'cerworkrow';
     if (party.state === 'signing') row.classList.add('cerworknow');
     if (party.isMe) row.classList.add('cerme');
+    // **The "you" tag, in words.** `.cerme` alone was inert here: the only rule for it is
+    // `.cerparty.cerme .cerwho`, which a `.cerworkrow` does not match, so `ceremonyPartyState.IsMe`
+    // travelled the wire, was read, and produced nothing on screen. At a full roster a user could
+    // not find their own row unless it happened to be the current one — and that green comes from
+    // `.cerworknow`, not from this. The roster above already tags itself this way.
     const who = document.createElement('span');
     who.className = 'cerwho';
-    who.textContent = party.label || 'a party';
+    // **A distinguishing fallback, because the convener is ALWAYS unlabelled.** `canonicalRoster`
+    // prepends them as a bare fingerprint and `signs` flag, so at nine parties the row a
+    // coordinator is meant to act on read "a party" while the roster above it said "Party 1" and
+    // the sentence said "your turn". Three renderings of one party on one card, and the anonymous
+    // one was the actionable row. Both neighbours already fall back to something that
+    // distinguishes — `ceremonyRoster` to `Party ${i + 1}`, the CLI's table to a short fingerprint.
+    who.textContent = party.label || `Party ${parties.indexOf(party) + 1}`;
     row.appendChild(who);
     const what = document.createElement('span');
     what.className = 'cerworkstate';
     what.textContent = WORKLIST_WORDS[party.state] || party.state;
     row.appendChild(what);
+    if (party.isMe) {
+      const tag = document.createElement('span');
+      tag.className = 'certag';
+      tag.textContent = 'you';
+      row.appendChild(tag);
+    }
     if (party.capacity) {
       const cap = document.createElement('span');
       cap.className = 'cerrole';

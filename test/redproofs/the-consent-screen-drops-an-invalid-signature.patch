@@ -1,11 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -1537,7 +1537,7 @@ function showConsent(pending) {
-   // the consent request. Outside a ceremony there is no record and the field is absent, so the
-   // original default stands — the branch is on the field's presence, never on a mode flag.
-   if (pending.recital) els.srvIntent.value = pending.recital;
+@@ -1553,7 +1553,7 @@
+   // D12's statement, with its ceremony half only when there is one — same discriminator as the
+   // recital two lines up, for the same reason.
+   setPermanence(document.getElementById('srvPermanence'), !!pending.recital);
 -  renderConsentSigners(pending.signers || []);
 +  renderConsentSigners((pending.signers || []).filter((x) => x.valid));
    showRecvView('srvConsent');
-   loadPendingPreview(recvPoll);
+   loadPendingPreview(recvPoll, pending.block || null);
  }
