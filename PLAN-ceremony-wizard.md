@@ -835,20 +835,54 @@ machine.)
 #### P04.S01 — the rail at a full roster, measured
 Scope: an instrument that renders the rail at arbitrary roster sizes, and the measurement that
 chooses the threshold. No product behaviour changes. Refs: D6.
-Acceptance: the rail is rendered at several roster sizes up to `MaxRoster` and the geometry recorded
-at each; the worklist threshold is written into this plan as a number **with its measurement beside
-it**; and the harness that produced it is committed, so the number can be re-derived rather than
-believed.
+Acceptance: the rail is rendered at several roster sizes up to `MaxRoster` **at tier 3**, and at
+each size the card's `getBoundingClientRect()` and the panel's scroll extent are recorded; the
+worklist threshold is written into this plan as a number **with its measurement beside it**; and the
+harness that produced it is committed, so the number can be re-derived rather than believed.
+
+**Tier 3 and not tier 2, and the reason is the metric.** `CONTRIBUTING.md` states jsdom's ceiling in
+as many words — *"jsdom models the DOM, not an engine — no layout (every `clientWidth` is 0)"* — and
+every candidate metric for D6's threshold is geometry. **A threshold measured at tier 2 would be a
+number produced by a harness that cannot see the thing it measures.**
+
+**The stub is a faithful instrument for GEOMETRY and explicitly not for progress state**, and S02
+must not inherit the assumption. `Stored` carries the whole `Roster []Party` and the rail reads
+nothing else to draw a card, so a generated 32-entry roster is the same shape `ListStored` produces.
+It cannot produce a live per-party progress state, because **no such field exists** — see S02.
 
 **No deepdive: this slice adds an instrument and changes no production code.** Recorded rather than
 skipped silently.
 
 #### P04.S02 — the worklist above the threshold
-Scope: the rail shows a single action below the threshold and a worklist above it. Refs: D6, D1.
+Scope: the rail shows a single action below the threshold and a worklist above it — **and the
+per-party progress the worklist needs does not exist yet, so this slice adds it at the server.**
+Refs: D6, D1, D22.
 Acceptance: at a size below the threshold the rail is unchanged and shows exactly one enabled action
-per ceremony (P01.S02's clause, still true); at a size above it the coordinator can see who remains;
-both are asserted, and the assertion at the smaller size is what stops the worklist becoming the
-only shape.
+per ceremony (P01.S02's clause, still true); **at a size above it each party renders as done /
+current / not yet reached, and the count of those not yet reached is asserted against a fixture
+where that count differs from the roster length**; both are asserted, and the assertion at the
+smaller size is what stops the worklist becoming the only shape.
+
+**(pin at `/plan-review`, 2026-09-09 — the first wording of the above-threshold clause was
+satisfiable by code that already shipped.)** It read *"the coordinator can see who remains"*, and
+the rail **already renders the entire roster, at every size, for every party**: `ceremonyRoster` is
+an unguarded `forEach` and the card appends it unconditionally. A test asserting that clause at 32
+parties passes against HEAD **with zero production change** — the same satisfiable-and-wrong shape
+that P01.S03 and P03.S03 each shipped a slice on, both caught only by a probe. What D6 asks for is
+the DISCRIMINATOR — who still has to act, as distinct from who is done.
+
+**And that data exists on no surface.** `ceremony.Party` carries `Fingerprint`, `Label`, `Signs`,
+`Capacity` and nothing else; `/api/ceremony/next` answers with ONE contributor plus `Position`/`Of`.
+So a client slice's correct build is a server change, and finding that out mid-slice is what this
+pin prevents.
+
+**(pin — the obvious client-side join is WRONG on any ceremony with a non-signing party.)**
+`ceremonyNextResponse.Position` is *"1-based within the SIGNING order"*; `ceremonyRoster` numbers
+over the **full roster** (`Party ${i + 1}`, `You are party ${mine + 1} of ${roster.length}`). The
+two diverge the moment `Party.Signs` is false — D22's non-signing convener — and the panel already
+displays both numbering systems side by side, which makes the wrong join the natural one. The rail's
+own comment forbids the shortcut: *"A JS predicate over the roster would be a second derivation that
+agrees on the day it is written — the shape ADR-009 refuses."* Hence the fixture clause above.
 
 **No deepdive: the rail is this plan's own code** (P01.S02 authored the per-card action, P01.S03 its
 terminal states). Recorded rather than skipped silently.
@@ -856,9 +890,48 @@ terminal states). Recorded rather than skipped silently.
 #### P04.S03 — invitations can be reissued from the rail
 Scope: the convener can re-issue every party's invitation from the rail. The route exists and is
 unreached; this is its client surface. Refs: D11, D21.
-Acceptance: a convener reissues from the rail and gets every non-convener party's invitation, in the
-same words the first issue used; a party who is not the convener is not offered it; the 410 ("the
-secret is gone") is rendered as its own sentence rather than as a generic failure.
+Acceptance: a convener reissues **one named party's** invitation from the rail, with all-parties as a
+separate, explicit action; the surface says that a reissue **sends the same invitation again and
+does not replace a leaked one**; a party who is not the convener is not offered it, **and the server
+refuses them 403 before it mints anything**; the client **branches on `res.status === 410`** and
+renders a distinct recovery sentence, asserted by a test showing the 410 branch produces different
+DOM from a 500 carrying the same body; and the render can be **dismissed**, asserted as *no element
+in the document contains the string `nib-invite-v`*.
+
+**(pin at `/plan-review`, 2026-09-09 — four corrections, each read at the line.)**
+
+1. **Per-party, not all-or-nothing.** `ceremonyInvitesRequest` carries only `Ceremony`, so one press
+   renders **all N−1 channel secrets**. D21's own pin describes the opposite shape: *"What discharges
+   this specifically: re-issuing to ONE party mid-ceremony and completing, with the other parties'
+   state untouched."* The first wording of this clause built the maximal-exposure shape D21 did not
+   ask for.
+2. **A reissue REPRODUCES the secret; it never rotates it.** `convenerInvitationFor` reads
+   `v.CeremonySecret` and returns those exact bytes — no `rand.Read`, no write. So a convener who
+   reissues *because they believe the first one leaked* gets **no security benefit whatsoever**, and
+   a button that does not say so reads as a revocation control. (Rotation is not a small change
+   either: the roster hash is inside every existing signature's commitment.)
+3. **403 before the mint, so 410 means one thing.** `requireUnlocked` enforces vault + CSRF +
+   loopback origin and **nothing about the convener**; a non-convener reaches the mint and is
+   refused **410** on the first missing secret. That collapses three different facts into one code —
+   the ceremony ended and secrets were pruned, you are not the convener, and one party's secret is
+   missing. The codebase already records this ambiguity as a defect in `Stored.Convener`'s own doc:
+   *"true, useless to a non-convener, and indistinguishable from a ceremony whose secrets were
+   cleaned up."*
+4. **The 410 clause was itself satisfiable by the generic path.** `httpError` writes a full
+   person-facing sentence and `errText` returns `.error`, so wiring reissue with the ordinary
+   fallback already puts the 410's sentence on screen with no 410-specific code. The clause is about
+   the **branch** now, not the text.
+
+**(pin — the sentence this surface must NOT copy.)** `renderInvitations` ships D21's wording, *"lets
+its holder find this ceremony and nothing more"*. Measured against `HopSeed`'s own doc, that is
+inaccurate: seeded into `ed25519.NewKeyFromSeed` those 32 bytes *"ARE the BEP-44 private key for the
+hop, i.e. the write authority for both parties' records under it"*, and any roster member can derive
+any hop's record key from the same secret. S03 must state something true; **correcting the shipped
+first-issue copy is D21's and is parked**, not this slice's.
+
+Also in scope, cheaply: `handleCeremonyInvites` calls `ReadMirror`, which reads `document.pdf` in
+full and discards it. Today the route has no client caller; S03 makes it a button, against documents
+ADR-005 caps at 512 MiB. Debounce the control or note the `ReadStored`-shaped read it wants.
 
 **(deepdive REQUIRED before the grill.)** It modifies `renderInvitations`, which is P06.S04's and
 which this plan did not write, and it surfaces channel secrets. Two things to settle at the line:
@@ -870,9 +943,36 @@ wording.
 #### P04.S04 — the no-correction rule is stated before the first hop
 Scope: the surface says, before a signature becomes irreversible, that there is no correction path.
 Refs: D12.
-Acceptance: the statement is reachable on the path a party actually takes, in D12's own terms (a
-wrong signature cannot be undone; the remedy is to abandon and re-convene, losing every signature
-collected); it appears for **both** roles; and it is not a toast.
+Acceptance: the statement is reachable on the path a party actually takes; it is **true of the
+shipped code** (see the pin); it appears for **both** roles; and it is not a toast.
+
+**(pin at `/plan-review`, 2026-09-09 — D12's remedy names an action the product does not offer, and
+this was the first time that assumption was read against the code.)** D12 says the remedy is *"to
+abandon and re-convene, losing every signature collected"*. Traced:
+
+- **There is no abandon route.** The ceremony routes are convene, invites, ceremonies, next, accept,
+  leave, draft ×2, deliver, delivery. No cancel, no convener-side decline.
+- **`unconvene` is the rollback verb only**, with one caller inside the convene failure path
+  (ADR-012).
+- **A ceremony ends only when a counterparty refuses at a hop** — `endCeremony` has exactly one
+  caller, on `ErrCoSignDeclined` — and `SignTermination` refuses any end state but `declined` and
+  `completed`, by name.
+- **`StateAbandoned` is derived, local, and late**: `closeOutReason`'s `past` branch fires
+  `closeOutGrace` (3 days) after a deadline that may itself be 30 days out, and its own doc says it
+  means *"a proceeding that ended without reaching this machine at all"*. It reaches no other party.
+- **Leaving is local too** (D17): it prunes this machine's invitation and sends nothing.
+
+So the real cost for a convener watching a wrong signature land is: **no control; the ceremony stays
+live in the rail offering actions until its deadline; the other parties are never told; and this
+machine files it as "abandoned" up to 33 days later.** Stating D12 verbatim would name a user action
+that does not exist and imply the other parties learn of it — which is a false expectation on the
+one surface built to prevent one. **The honest sentence is what S04 ships; amending D12 itself is
+decision-level and is PARKED.**
+
+**The slice's named question is answered by reading, and the deepdive should confirm rather than
+re-derive it.** The convener signs at their own hop through the same initiating path that carries
+`endCeremony`, so `#sinGo` covers that role and `#srvAccept` the other: two doors, one statement
+each, which is what the scope already guesses.
 
 **(deepdive REQUIRED before the grill, and it has a named question.)** There are two doors — the
 initiating side's `#sinGo` and the receiving side's `#srvAccept` — and the spoken-check modal fires
