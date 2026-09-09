@@ -76,7 +76,7 @@ func (s *Server) handleCeremonyDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, draftResponse{Draft: req.Draft})
 }
 
-// clearCeremonyDraft is the consume door (P03.S03 will call it at convene).
+// clearCeremonyDraft is the consume door, called at a successful convene (P03.S03).
 //
 // Best-effort and logged by its caller: a ceremony that convened is convened whether or not the
 // draft that led to it was tidied away, and failing a convene over a bookkeeping row would trade the

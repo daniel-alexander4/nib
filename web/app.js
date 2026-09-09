@@ -12079,6 +12079,30 @@ async function saveCeremonyDraft() {
   } catch { /* see above */ }
 }
 
+// clearCeremonyForm empties the setup sheet after its draft has been consumed (P03.S03).
+//
+// **It writes the same fields `restoreCeremonyDraft` reads, and that pairing is the point.** A
+// clear that missed a field would leave exactly that field to be re-saved by the next change event
+// — a partial resurrection, which is harder to notice than a whole one because the sheet looks
+// blank. The two functions are read together for that reason.
+//
+// It does NOT save afterwards: the server has already cleared its copy, and posting an empty draft
+// would be a second writer of the same fact.
+function clearCeremonyForm() {
+  const intent = document.getElementById('cerIntent');
+  const expires = document.getElementById('cerExpires');
+  const iSign = document.getElementById('cerISign');
+  if (intent) intent.value = '';
+  if (expires) expires.value = '';
+  if (iSign) iSign.checked = false;
+  for (const row of document.querySelectorAll('#cerPeerPick .cerpeerrow')) {
+    const box = row.querySelector('.cerpeerbox');
+    const cap = row.querySelector('.cerpeercap');
+    if (box) box.checked = false;
+    if (cap) cap.value = '';
+  }
+}
+
 // restoreCeremonyDraft puts a saved draft back into the form.
 //
 // **The roster is restored AFTER the picker is built**, or there are no checkboxes to tick — the
@@ -12218,6 +12242,13 @@ async function conveneFromPanel() {
     });
     if (!res.ok) { say(await errText(res, 'this ceremony could not be convened')); return; }
     renderInvitations(await res.json());
+    // **The FORM is emptied too, and the server clearing its store is not enough** (P03.S03, D4).
+    // `showCeremonyForm(null)` hides the sheet without clearing it, so the consumed draft's values
+    // stay in the fields — where `#ceremonyConveneForm`'s change listener re-saves them on the next
+    // keystroke, resurrecting a draft that was consumed, and where reopening shows them as though
+    // restored because `restoreCeremonyDraft` finds nothing and returns early. "Consumed exactly
+    // once" is a claim about both halves.
+    clearCeremonyForm();
     showCeremonyForm(null);
     loadCeremonyPanel();
   } catch (e) {
