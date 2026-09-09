@@ -968,8 +968,23 @@ worklist is a **summary plus the parties who still have to act** — the full ro
 that is what "a worklist" means for the rest of this phase. Settled here, before the measurement, so
 S01 knows what it is measuring the threshold FOR.
 
-**No deepdive: the rail is this plan's own code** (P01.S02 authored the per-card action, P01.S03 its
-terminal states). Recorded rather than skipped silently.
+**(deepdive REQUIRED — and this line said the opposite until the plan review moved the slice.)** It
+read *"no deepdive: the rail is this plan's own code"*, which was true of S02 as firmed: a client
+slice over a panel P01 authored. The review established that the discriminator exists on no surface,
+so S02 is now a change to the **ceremony listing on the server** — `internal/ceremony`'s record and
+mirror, and `handleCeremonies` — none of which this plan wrote. **The trigger is the slice's SURFACE,
+and the surface moved.** Recorded rather than quietly re-labelled.
+
+**And the slice gate moves with it**: S02 touches `internal/server`'s ceremony path, so tiers 4 and 6
+fire at its close.
+
+**The deepdive's named question, which decides the slice's cost.** Per-party progress has to come
+from somewhere, and the obvious home — a field on the listing — may pay exactly the price the listing
+was designed around never paying. `ceremonynext.go` says so in its own words: *"`NextContributor`
+needs the DOCUMENT, and `ListStored` never opens one — measured at 10 / 69 / 195 ms for 100 / 500 /
+1000 pages, superlinear … A `next` field on `ceremoniesResponse` would pay that per ceremony per
+listing, which is what `/pending 360` is already about."* So: where does "done" come from, what does
+it cost per ceremony, and is there an answer that does not open the document?
 
 #### P04.S03 — invitations can be reissued from the rail
 Scope: the convener can re-issue every party's invitation from the rail. The route exists and is
