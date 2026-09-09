@@ -891,22 +891,87 @@ func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
 }
 
 // carries reports whether this machine moves the baton for this ceremony without contributing to
-// it — a roster member with `signs:false` (P07.S05, C07).
+// it — a roster member with `signs:false`, OR a signing party who has already signed this document
+// (P07.S05 C07; the second half added 2026-09-09, P01.S02a).
 //
 // **Whether you sign is a fact about the roster, not a choice**, which is why there is no separate
 // carry route and no flag on the request. `/api/session/initiate` asks this and takes the carry
 // path or the contribution path accordingly, so a non-signing convener cannot accidentally sign
 // and a signer cannot accidentally skip their turn — both are unrepresentable rather than checked.
-func (c *ceremonyID) carries(meFP string) bool {
+//
+// # Why the roster alone was not enough, and how the harness pinned it as correct
+//
+// **A signing convener could not get past hop 1, and that is the default ceremony.** This function
+// used to be `!p.Signs` and nothing else — a pure roster test, with no notion of how far the
+// document had got. Under D22's hub the convener is at one end of EVERY hop, so with
+// `convenerSigns` true they contributed at hop 1 and then re-entered `buildCoSigned` at hop 2,
+// where `p2p.AdmitContribution` refused them `ErrNotYourTurn` at their own machine before a packet
+// left. `web/index.html`'s `#cerISign` ships **checked**, so that is the ceremony the setup sheet
+// produces unless the convener unticks it.
+//
+// **It was never reachable from the product**, which is why three weeks of green tiers said
+// nothing: the client sends no invitation, so `cer` was nil and the route never got as far as
+// asking (`/pending 436`). The only caller that could reach it was the harness — and
+// `build/pairrepro.sh` asserted the hop-2 refusal as DESIGNED, in its own words, *"the carrier
+// signing a second time is refused at its own machine. So hop 2 needs no watchers…"*, which is why
+// its only multi-hop walk uses `"signs":false`. A harness configured past the defect it exists to
+// find is ADR-010's lesson, and this is its third recorded instance.
+//
+// # The turn rule keeps its ONE door, and this is deliberately not a second one
+//
+// Three outcomes are possible and this function answers only two of them. A signer whose turn it is
+// NOT and who has not signed yet still returns false — contribute — and is refused by
+// `AdmitContribution` with `ErrNotYourTurn`, exactly as before. Deciding that here would be a
+// second implementation of the turn rule, which is the ADR-009 shape, and `AdmitContribution`'s
+// refusal is already the better one: it names both parties. What this adds is strictly the case
+// that rule cannot express — *I already signed, so there is nothing for me to contribute* — because
+// "not your turn" is true both of a party who is early and of one who is done.
+//
+// # The error is a refusal, never a default
+//
+// `pdf` is the document about to be signed, and a walk over it can fail. **Neither default is
+// safe**: false contributes a second signature, true skips a hop that was owed one, and both are
+// silent. So the error is returned and the caller refuses the hop — `/api/session/initiate` answers
+// 409 with the walk's own sentence.
+//
+// **Which failures those actually are, stated because the obvious guess is wrong.**
+// `ContributionProgress` errors on a document whose signature is present-and-unparseable
+// (`sign.Invalid`) and on signatures that are not the roster's positional prefix. Bytes that are not
+// a PDF at all do **not** error: they read as `unsigned` with zero signers, which is a legitimate
+// state indistinguishable from an unsigned document, and that is the walk's own documented ceiling.
+// A first draft of this function's test asserted the opposite and was right to fail. In the route
+// those bytes cannot arrive regardless — `checkArrival` runs `ceremony.CheckDocument` above here.
+func (c *ceremonyID) carries(meFP string, pdf []byte) (bool, error) {
 	if c == nil {
-		return false
+		return false, nil
 	}
+	signs := false
+	member := false
 	for _, p := range c.inv.Roster {
 		if strings.EqualFold(p.Fingerprint, meFP) {
-			return !p.Signs
+			member, signs = true, p.Signs
+			break
 		}
 	}
-	return false
+	if !member {
+		return false, nil
+	}
+	if !signs {
+		return true, nil
+	}
+	// A signing party: carry only once this document already holds their signature.
+	pr, err := p2p.ContributionProgress(pdf, c.l3Roster())
+	if err != nil {
+		return false, err
+	}
+	for i, e := range pr.Order {
+		if strings.EqualFold(e.Fingerprint, meFP) {
+			return i < pr.Done, nil
+		}
+	}
+	// In the roster as a signer and absent from the signing order is not a state `Progress` can
+	// produce — `Order` IS the roster filtered on `Signs`. Contribute, and let the one door speak.
+	return false, nil
 }
 
 // ceremonyIDOf is the ceremony a session belongs to, or "" outside one.
