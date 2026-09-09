@@ -680,7 +680,25 @@ func ReadTermination(root string, rec Record) (Termination, error) {
 	if err != nil {
 		return Termination{}, err
 	}
+	// **It falls back to `ended/`, and without that the signed attestation is invisible exactly
+	// when somebody looks (P01.S02c, `/pending 428`).** ADR-012 renames a ceremony's folder into
+	// `~/nib/ended/<id>` rather than deleting it, precisely so the record survives — and this door
+	// only ever looked in `ceremonies/<id>`. So the moment the close-out sweep ran, the convener's
+	// signed end state stopped being readable, and `nib verify`'s `localEnd` fell through to the
+	// unattested receipt and reported the outcome as *"this machine's own note … not signed"*.
+	//
+	// That is the wrong answer in the one tool whose reader is *"often the person deciding whether
+	// to rely on the document"*. It matters most for a STOP: the whole value of attesting one is
+	// that a party can later show the convener ended it, and the folder they would show it from is
+	// the moved one. The bytes were always there; nothing read them.
 	t, err := readTerminationRaw(dir)
+	if errors.Is(err, ErrNoTermination) {
+		if ended, eerr := EndedDir(root, rec.ID); eerr == nil {
+			if moved, merr := readTerminationRaw(ended); merr == nil {
+				t, err = moved, nil
+			}
+		}
+	}
 	if err != nil {
 		return Termination{}, err
 	}

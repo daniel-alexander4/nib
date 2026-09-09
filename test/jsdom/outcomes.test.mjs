@@ -31,7 +31,13 @@ import { boot } from './boot.mjs';
 
 // D28's four, plus a state this build does not know — which had no case of its own until P06.S08
 // and rendered as `abandoned`'s sentence.
-const END_STATES = ['completed', 'declined', 'expired', 'abandoned', 'a-state-from-a-newer-nib'];
+// **`stopped` and `left` are here because a state missing from this list simply IS the unknown
+// case** (`/pending 428`). The uniqueness assertion below stays green whether or not the ladder has
+// an arm for a word — so an attested state left out of this list renders as "Ended in a way this
+// version does not recognise" for a state this version knows perfectly well, and nothing goes red.
+// The list is the stimulus, not a description.
+const END_STATES = ['completed', 'declined', 'expired', 'abandoned', 'stopped', 'left',
+  'a-state-from-a-newer-nib'];
 
 // D19's five machine tags, each with the summary the server sends for it. The summaries are the
 // server's own words; this file asserts the CLIENT renders what it is given and keeps them apart.

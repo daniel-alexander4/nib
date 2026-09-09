@@ -118,11 +118,42 @@ Nib does not deliver invitations; the convener hands them out over their own cha
 so. And because the API already supports regenerating them, the rail offers reissue — a settlement
 agent re-sends constantly, and presenting it as one-shot is a surface limitation, not a design one.
 
-### D12 — There is no correction path, and the wizard says so before the first hop *(settled 2026-09-07 via /grill — closing-agent seat)*
+### D12 — There is no correction path, and the wizard says so before the first hop *(settled 2026-09-07 via /grill — closing-agent seat; amended 2026-09-09, `/pending 428`)*
 A signature is an append; a wrong one cannot be undone, and the remedy is to abandon and re-convene,
 losing every signature collected. That is the most common bad day in this line of work and the
 design has no answer. Stating it up front is the honest surface; whether the answer should change is
 `/pending`, not this plan.
+
+**(amended 2026-09-09, P01.S02c — half of this is now false, and it is the half that named an action
+that did not exist.)** *"The remedy is to abandon and re-convene"* described no route: `unconvene` is
+the convene rollback with one caller inside the failure path, `endCeremony` fired only on a
+counterparty's decline, and `SignTermination` refused any state but `declined` and `completed` by
+name. So a convener who had just watched a wrong signature land had no control at all — the ceremony
+stayed live in the rail offering actions until its deadline, the other parties were never told, and
+re-convening left the first proceeding running alongside the second with every party still holding a
+valid invitation to it.
+
+**What changed:** `POST /api/ceremony/stop` attests `ceremony.StateStopped` and runs the delivery
+round **inline**, so the parties are told as part of the act rather than by a second button somebody
+has to find. `/pending 428` is closed.
+
+**What did NOT change, and this is the load-bearing half:** stopping is not correcting. A signature
+still cannot be removed, a wrong one still cannot be undone, and running the document again starts
+from the ORIGINAL file with none of the signatures collected. D12's finding stands; only its claim
+about the remedy's availability was wrong.
+
+**The word is `stopped`, not `abandoned`.** `abandoned` is already a DERIVED local state meaning *"a
+proceeding that ended without reaching this machine at all"* — the opposite of an announced stop —
+and the two vocabularies meet in `Receipt.State`, whose conflict rule compares strings, so sharing a
+word would merge them with no trace. `cancelled` was refused for a different reason: `web/index.html`
+carries 28 `>Cancel<` buttons, two of them on the ceremony panel itself, every one meaning *close this
+dialog and do nothing*. A tier-1 guard now asserts the attested and derived sets are disjoint, so the
+next state cannot re-open the collision.
+
+**The shipped statement moved with the decision, which is what the guard is for.** P04.S04's
+permanence sentence said Nib *cannot* cancel a ceremony and *does not* tell the other parties — true
+when written, false the moment this shipped — and `permanence.test.mjs` went red on exactly that.
+Both now say what stopping does and does not buy.
 
 ### D13 — The recital has one home *(settled 2026-09-07 via /grill — legal-documents seat)*
 Prefill the signer's statement from the record's recital. Today the signature carries a generic
@@ -373,6 +404,19 @@ hop carries one more. And the third revealed `/pending 450` — `PrepareDocument
 caller, on the initiating side only, so preparation runs at hop 1 for a signing convener and never
 at all for a non-signing one. That breaks the byte-prefix assertion at exactly one hop, legitimately;
 the clause skips it there and says why.
+
+#### P01.S02c — the convener can stop a ceremony *(done 2026-09-09, v1.128.60)*
+
+Scope: `POST /api/ceremony/stop` attests `StateStopped` and runs the delivery round inline; the four
+sites that read the end state as a binary get one predicate; D12 and its shipped statement move with
+it. Refs: D12, D28, D32, ADR-009, ADR-012.
+Acceptance:
+- A convener stops a live ceremony, every party is told in the same act, and the attestation is the
+  payload rather than the partially-signed document.
+- A party who did not convene it is refused, and so is a second stop.
+- The attested and derived vocabularies are disjoint, asserted at tier 1 rather than by inspection.
+- A version skew names its DIRECTION and never wears `ErrBadTermination`.
+- The convener's signed end state is still readable after the close-out has moved the folder.
 
 #### P01.S02b — the ceremony-aware dial *(done 2026-09-09, v1.128.59)*
 

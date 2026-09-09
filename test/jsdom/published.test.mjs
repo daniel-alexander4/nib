@@ -79,6 +79,14 @@ const PUBLISHED = [
   // needs to draw one at all — false on the carry path, where the convener moves the baton and
   // signs nothing.
   { type: 'ceremonyHopQuote', readers: ['web/app.js'] },
+  // The convener's stop (P01.S02c, `/pending 428`, D12). The request carries only the ceremony id —
+  // who may stop it, what is attested and who is told are all decided server-side. The response
+  // echoes `state` so the panel renders the SERVER's word rather than holding a second copy of the
+  // vocabulary (D1), and `parties` is `deliveryOutcome` because the stop runs the same delivery
+  // round a completed ceremony does; only the payload differs, and `DeliversDocument` decides that
+  // in one place.
+  { type: 'ceremonyStopRequest', readers: ['web/app.js'] },
+  { type: 'ceremonyStopResponse', readers: ['web/app.js'] },
   { type: 'ceremonyHopRequest', readers: ['web/app.js'] },
   // One roster member's standing in the proceeding (P04.S02, D6). Rendered by `ceremonyWorklist`
   // above `ceremony.SittingCeiling`: `label` names the party, `state` is the word beside them,

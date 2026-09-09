@@ -710,3 +710,45 @@ func TestANonPrimaryNibDoesNotCloseOut(t *testing.T) {
 			"proves nothing: it would pass against a sweep that closes nothing at all", serr)
 	}
 }
+
+// TestAStoppedCeremonyCarriesItsAttestationAndFinishesItsRound — the four binary sites, driven.
+//
+// **Three of the four produced a FALSE STATEMENT for a third state**, and each is asserted here on
+// the fact it decides rather than on the literal it used to compare against.
+func TestAStoppedCeremonyCarriesItsAttestationAndFinishesItsRound(t *testing.T) {
+	// **The payload.** `runDeliveryRound` chose with `t.State == StateDeclined` and an else that
+	// shipped the mirror document — so a stopped ceremony would have delivered the PARTIALLY-SIGNED
+	// file as the finished one. That is the failure that arm's own comment records having shipped.
+	if ceremony.DeliversDocument(ceremony.StateStopped) {
+		t.Error("a stopped ceremony is treated as having a finished document to deliver — it has " +
+			"none, and the round would ship the partially-signed mirror AS the finished file")
+	}
+	if ceremony.DeliversDocument(ceremony.StateDeclined) {
+		t.Error("a declined ceremony is treated as delivering a document")
+	}
+	// The control: the one state that DOES deliver still does. Without it this asserts a predicate
+	// that answers false to everything, which every case above would also satisfy.
+	if !ceremony.DeliversDocument(ceremony.StateCompleted) {
+		t.Fatal("a completed ceremony no longer delivers its document — the predicate refuses " +
+			"everything, so the assertions above prove nothing")
+	}
+
+	// **`roundIsFinished`.** A signer on a stopped ceremony must not be left waiting for a document
+	// that will never arrive. This function's own doc records that exact defect for `declined`: the
+	// stat is *"permanently false, so a signer who had been told the proceeding was over held the
+	// directory and its pins until the three-day grace expired"*.
+	rec := ceremony.Record{Roster: []ceremony.Party{
+		{Fingerprint: strings.Repeat("c0", 32), Signs: false},
+		{Fingerprint: strings.Repeat("a1", 32), Signs: true},
+	}}
+	signer := strings.Repeat("a1", 32)
+	if !roundIsFinished(rec, signer, ceremony.StateStopped) {
+		t.Error("a signer on a STOPPED ceremony is not finished, so it falls through to " +
+			"alreadyDelivered — a stat on a finished document that will never exist. The folder " +
+			"and its pins are held until the three-day grace, which is the defect this " +
+			"function's own comment records having already shipped once for declined")
+	}
+	if !roundIsFinished(rec, signer, ceremony.StateDeclined) {
+		t.Error("the declined case regressed")
+	}
+}

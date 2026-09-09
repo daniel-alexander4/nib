@@ -1369,6 +1369,13 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .cerreissueall { display: block; width: 100%; margin-top: 6px; }
 .cerreissueout { margin-top: 6px; }
 .cerdismiss { display: block; width: 100%; margin-top: 4px; }
+/* The convener stop (/pending 428). Same shape as .cerleave — they are counterparts and a user must
+   read them as the same KIND of control — but --peach on the label, because this one is attested and
+   reaches every other machine where leaving reaches none. Colour is decoration: the confirmation
+   dialog carries the distinction in words. */
+.cerstop { margin-top: 6px; }
+.cerstopbtn { width: 100%; color: var(--peach); }
+.cerstopout { margin-top: 4px; color: var(--subtext1); font-size: 11px; }
 /* The convener's call control (P01.S02b). It sits INSIDE the rail's "Waiting for …" sentence, so it
    is a block rather than inline: the sentence names the party and the button names the act, and a
    button wrapped mid-sentence at a narrow rail reads as part of the prose. `.cercallstate` carries

@@ -370,6 +370,10 @@ func (s *Server) Handler() http.Handler {
 	// document only an unlocked vault can resolve. See `ceremonyhop.go` for why there are two.
 	mux.HandleFunc("GET /api/ceremony/hop", s.requireUnlocked(s.handleCeremonyHopQuote))
 	mux.HandleFunc("POST /api/ceremony/hop", s.requireUnlocked(s.handleCeremonyHop))
+	// **The convener's stop (P01.S02c, `/pending 428`, D12).** It mints a signed end state and runs
+	// the delivery round inline, so a stop cannot leave the ceremony looking live on every other
+	// machine while the convener believes it is over.
+	mux.HandleFunc("POST /api/ceremony/stop", s.requireUnlocked(s.handleCeremonyStop))
 	mux.HandleFunc("POST /api/ceremony/deliver", s.requireUnlocked(s.handleCeremonyDeliver))
 	// The round's in-flight leg, polled while one runs (/pending 370). A GET and read-only, but
 	// `requireUnlocked` like its round: it names which party this machine is reaching.

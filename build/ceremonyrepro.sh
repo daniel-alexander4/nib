@@ -745,6 +745,80 @@ sys.exit(0 if sig.get('state')=='valid' and 'Bob' in names else 1)" 2>/dev/null;
 fi
 
 
+# CLAUSE 23 — the convener STOPS a ceremony, and the parties are told in the same act (/pending 428).
+#
+# **D12 said the remedy was to "abandon and re-convene" and there was no abandon.** No route;
+# `unconvene` is the convene rollback with one caller inside the failure path; `endCeremony` fired
+# only on a counterparty's decline. So a convener who had watched a wrong signature land had no
+# control, and the ceremony stayed live in every other party's rail until its deadline.
+#
+# **The round runs INLINE and that is the clause.** A two-step stop — attest here, then find and
+# press "Send everyone their copy" — would be left unpressed, and the proceeding would look live on
+# every other machine while the convener believed it was over. So this asserts the PARTY ROWS came
+# back, not merely that the route answered.
+#
+# Last, for clause 22's reason: a real stop writes a real end state, and later clauses assert on
+# clean state. Ordering is free.
+go run build/genpdf.go "$SP/lease3.pdf" "a stopped matter" >/dev/null 2>&1
+code=$(post A /api/open "{\"path\":\"$SP/lease3.pdf\"}")
+if [ "$code" != 200 ]; then no "stop setup" "open: $code"; else
+  EXP3=$(python3 -c "import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+  code=$(post A /api/ceremony/convene "{\"roster\":[{\"fingerprint\":\"$A_FP\",\"label\":\"Alice\",\"signs\":true},{\"fingerprint\":\"$B_FP\",\"label\":\"Bob\",\"signs\":true}],\"intent\":\"A matter to stop\",\"expires\":\"$EXP3\",\"convenerSigns\":true}")
+  if [ "$code" != 200 ]; then no "stop convene" "$code $(head -c 200 "$SP/resp.json")"; else
+    CID3=$(jq_ "d['ceremony']")
+
+    # **B is refused, and the clause is careful about WHICH refusal it is claiming.**
+    #
+    # The first version asserted 403 "only the convener" and failed with a 409 — correctly. B never
+    # accepted this ceremony, so B holds no mirror for it, and the route reads the record before it
+    # can ask who convened. A party with no record of a proceeding is not "not the convener": it is
+    # a machine that has never heard of it, and saying so is the honest refusal.
+    #
+    # **So the ENTITLEMENT case is a tier-1 one and is named here rather than faked.**
+    # `TestTheHopRouteRefusesBeforeItDials` stages a ceremony convened under a foreign identity
+    # into this machine's own mirror — which is exactly the position a party is in after accepting
+    # and signing — and gets the 403 by name. That state cannot be reached here without walking B
+    # through a hop, which this clause is not about. What tier 6 shows is that a machine which is
+    # not the convener cannot stop the ceremony THROUGH THE REAL ROUTE, whichever gate stops it.
+    bcode=$(post B /api/ceremony/stop "{\"ceremony\":\"$CID3\"}")
+    if [ "$bcode" = "409" ] || [ "$bcode" = "403" ]; then
+      ok "a machine that did not convene it cannot stop it ($bcode; the 403 entitlement arm is driven at tier 1, where a foreign mirror can be staged)"
+    else
+      no "stop entitlement" "$bcode $(head -c 200 "$SP/resp.json")"
+    fi
+
+    scode=$(post A /api/ceremony/stop "{\"ceremony\":\"$CID3\"}")
+    if [ "$scode" != 200 ]; then
+      no "stop" "$scode $(head -c 300 "$SP/resp.json")"
+    elif python3 -c "
+import json,sys
+d=json.load(open('$SP/resp.json'))
+# The SERVER's word, and party rows from the round that ran inside the same request.
+sys.exit(0 if d.get('state')=='stopped' and isinstance(d.get('parties'),list) and len(d['parties'])>=1 else 1)" 2>/dev/null; then
+      ok "the convener STOPPED a live ceremony and the delivery round ran in the same act (D12, /pending 428)"
+    else
+      no "stop shape" "$(head -c 300 "$SP/resp.json")"
+    fi
+
+    # A second stop is refused: the proceeding is already over, said in those terms rather than as
+    # a storage error from the write-once check underneath.
+    scode2=$(post A /api/ceremony/stop "{\"ceremony\":\"$CID3\"}")
+    if [ "$scode2" = "409" ] && grep -q "already ended" "$SP/resp.json"; then
+      ok "a second stop is refused because the proceeding has already ended"
+    else
+      no "second stop" "$scode2 $(head -c 200 "$SP/resp.json")"
+    fi
+
+    # And the rail says the right word rather than the raw enum.
+    ncode=$(get A "/api/ceremony/next?ceremony=$CID3" > "$SP/next3.json" 2>/dev/null; echo done)
+    if grep -q "the convener stopped this ceremony" "$SP/next3.json" 2>/dev/null; then
+      ok "the rail names the stop in a sentence rather than printing the raw end state"
+    else
+      no "stopped rail sentence" "$(head -c 200 "$SP/next3.json")"
+    fi
+  fi
+fi
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

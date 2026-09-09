@@ -159,8 +159,16 @@ func partyStates(roster []ceremony.Party, pr p2p.Progress, me string) []ceremony
 // and deliberately not in `Termination`'s set. Both end the proceeding; only one has an author.
 func endedReason(st ceremony.Stored, now time.Time) string {
 	if st.Ended != "" && st.Ended != ceremony.StateCompleted {
-		if st.Ended == ceremony.StateDeclined {
+		// **A switch, because the fallback printed the RAW ENUM at a user** (`/pending 428`). The
+		// old shape was one named arm and `"this ceremony has ended: " + st.Ended`, so the first
+		// state added after it would have shown somebody the word `stopped` with a colon in front
+		// of it. The fallback stays for a state this build genuinely does not know — where naming
+		// it is the honest limit rather than a guess — but a state we DO know gets a sentence.
+		switch st.Ended {
+		case ceremony.StateDeclined:
 			return "a party declined, so this ceremony has ended"
+		case ceremony.StateStopped:
+			return "the convener stopped this ceremony"
 		}
 		return "this ceremony has ended: " + st.Ended
 	}

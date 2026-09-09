@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,7 +176,12 @@ func TestTheTerminationPreimageHasNoMalleableAxis(t *testing.T) {
 		mut  func(*Termination)
 	}{
 		{"the state", func(x *Termination) { x.State = StateCompleted }},
-		{"the version", func(x *Termination) { x.Version = 2 }},
+		// **`terminationVersion + 1`, never a literal.** This was `x.Version = 2`, and the moment
+		// the constant was bumped to 2 the perturbation became a NO-OP: the preimage stayed
+		// byte-identical and this case failed reporting "that axis has a second encoding" — a false
+		// diagnosis about malleability, from a test that was otherwise correct. Predicted at the
+		// grill and then observed. Derived from the constant, the next bump cannot repeat it.
+		{"the version", func(x *Termination) { x.Version = terminationVersion + 1 }},
 		{"the roster hash's VALUE", func(x *Termination) {
 			b, _ := hex.DecodeString(x.RosterHash)
 			b[0] ^= 0xff
@@ -251,8 +257,15 @@ func TestTheTerminationDoorKeepsAbsenceApartFromDamage(t *testing.T) {
 	}
 
 	// PRESENT AND UNVERIFIABLE — its own state, never damage-of-the-mirror.
+	//
+	// **The fixture carries THIS build's version, and it used to carry 1.** That was fine while 1
+	// was current; after the bump a version-1 object is a legitimately OLDER one, and the door now
+	// says so by name — so the old fixture stopped being a stand-in for a planted file and started
+	// being a stand-in for an out-of-date peer. It is the current version with no signature now,
+	// which fails for a reason that genuinely is tampering.
 	dir, _ := MirrorDir(root, rec.ID)
-	if err := os.WriteFile(filepath.Join(dir, terminationFile), []byte(`{"version":1,"state":"declined"}`), 0o600); err != nil {
+	planted := fmt.Sprintf(`{"version":%d,"state":"declined"}`, terminationVersion)
+	if err := os.WriteFile(filepath.Join(dir, terminationFile), []byte(planted), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err = ReadTermination(root, rec)
@@ -318,4 +331,105 @@ func TestTheMirrorsOwnDoorsAreUnchangedByATermination(t *testing.T) {
 func cfpOf(t *testing.T, certPEM []byte) string {
 	t.Helper()
 	return convenerFingerprint(string(certPEM))
+}
+
+// TestAVersionSkewIsNotATamperingAccusation — D32, and the bug this package already shipped once.
+//
+// **The direction is the whole test.** `invitation.go` records the failure verbatim: a
+// direction-blind check told a user holding an ORDINARY older invitation that it *"was made by a
+// newer version of Nib"*, and its own comment names the version bump as the change that would reach
+// it. `terminationVersion` has just been bumped, so this is that moment.
+//
+// **And neither skew may wear `ErrBadTermination`**, whose doc calls an object failing it *"far more
+// likely a planted or substituted file than a corrupted one"*. Telling a user that an honest newer
+// Nib's attestation is a probable forgery is the accusation D32 forbids.
+func TestAVersionSkewIsNotATamperingAccusation(t *testing.T) {
+	rec, cert, key := terminationFixture(t)
+	term, err := SignTermination(rec, StateDeclined, cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor, err := rec.Anchor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The CONTROL first: the object as minted verifies. Without it every assertion below is
+	// satisfied by a door that refuses everything.
+	if verr := term.VerifyAgainst(anchor); verr != nil {
+		t.Fatalf("setup: a freshly minted termination does not verify (%v) — nothing below means "+
+			"anything", verr)
+	}
+
+	newer := term
+	newer.Version = terminationVersion + 1
+	err = newer.VerifyAgainst(anchor)
+	if !errors.Is(err, ErrTerminationVersion) {
+		t.Errorf("a NEWER end state reported %v, want ErrTerminationVersion", err)
+	}
+	if errors.Is(err, ErrBadTermination) {
+		t.Error("a newer Nib's honest end state is reported as one that DOES NOT VERIFY — that is " +
+			"a tampering accusation produced by an upgrade, which is what D32 forbids")
+	}
+
+	older := term
+	older.Version = terminationVersion - 1
+	err = older.VerifyAgainst(anchor)
+	if !errors.Is(err, ErrTerminationOldVersion) {
+		t.Errorf("an OLDER end state reported %v, want ErrTerminationOldVersion", err)
+	}
+	if errors.Is(err, ErrTerminationVersion) {
+		t.Error("an older end state is reported as NEWER — this is the exact defect invitation.go " +
+			"records having shipped, where a direction-blind check told a user their ordinary " +
+			"older object came from the future")
+	}
+}
+
+// TestTheVocabularyDoorIsReachedByBothCallers — ADR-009 over the closed set.
+//
+// **The rule had two implementations and one of them was tested nowhere.** Measured at this item's
+// grill: deleting `VerifyAgainst`'s state arm entirely left `./internal/ceremony`,
+// `./internal/server` and `./internal/cli` all green — the only state test drove
+// `SignTermination`'s separate copy, and the "flipped state" case flips between two KNOWN states,
+// which the signature catches. Adding a third value to two hand-written lists is the ADR-009 shape,
+// so both now ask `attestable` and this drives BOTH doors.
+func TestTheVocabularyDoorIsReachedByBothCallers(t *testing.T) {
+	rec, cert, key := terminationFixture(t)
+	anchor, err := rec.Anchor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The minting door. Expired and abandoned are derived and must stay unattestable: nobody can
+	// sign a clock, and the party who would attest "abandoned" is the one who stopped answering.
+	for _, bad := range []string{"expired", "abandoned", "left", "", "Stopped"} {
+		if _, serr := SignTermination(rec, bad, cert, key); serr == nil {
+			t.Errorf("%q was accepted as an attestable end state", bad)
+		}
+	}
+	// And every attestable one IS mintable — the half that stops the door refusing everything.
+	for _, good := range []string{StateDeclined, StateCompleted, StateStopped} {
+		if _, serr := SignTermination(rec, good, cert, key); serr != nil {
+			t.Errorf("%q is in the attested set and could not be minted: %v", good, serr)
+		}
+	}
+
+	// The VERIFYING door, which is the one nothing reached. Driven on a SIGNED object whose state
+	// is then replaced, so the refusal is the vocabulary's rather than the signature's — the
+	// distinction the old "flipped state" case could not make, because it flipped between two
+	// states this build knows.
+	term, err := SignTermination(rec, StateStopped, cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verr := term.VerifyAgainst(anchor); verr != nil {
+		t.Fatalf("setup: a stopped termination does not verify (%v)", verr)
+	}
+	unknown := term
+	unknown.State = "a-state-from-a-newer-nib"
+	verr := unknown.VerifyAgainst(anchor)
+	if !errors.Is(verr, ErrUnknownEndState) {
+		t.Errorf("an unknown end state reported %v, want ErrUnknownEndState — a reader that cannot "+
+			"tell 'I do not know this word' from 'this does not verify' sends the user to look at "+
+			"their disk for a build difference", verr)
+	}
 }

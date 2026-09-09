@@ -11459,6 +11459,11 @@ function renderEndedCeremonies(host, ended) {
       : r.state === 'completed' ? 'Completed'
       : r.state === 'expired' ? 'Ran out of time'
       : r.state === 'abandoned' ? 'No further word'
+      // **`stopped` is the convener's own act and reads as one** (`/pending 428`). It sits beside
+      // `abandoned` deliberately: that word means nobody ever said what happened, and this one
+      // means the convener said so. Sharing a word would have printed "No further word" for the
+      // one outcome that was announced — which is why the attested state is not called abandoned.
+      : r.state === 'stopped' ? 'Stopped by the convener'
       // **`left` is this machine's own action and reads as one** (D17). Without this line it fell
       // to the fallback below — "Ended in a way this version does not recognise" — which is a
       // sentence about a damaged file, shown to a user for the thing they did on purpose a moment
@@ -11516,7 +11521,13 @@ function ceremonyCard(c, mayAct) {
   if (c.ended) {
     const e = document.createElement('span');
     e.className = 'cerbadge cerended';
-    e.textContent = c.ended === 'declined' ? 'Declined' : 'Completed';
+    // **A three-way with a FALLBACK, and it was a binary fold (P01.S02c, `/pending 428`).** This
+    // read `c.ended === 'declined' ? 'Declined' : 'Completed'`, so every end state that was not
+    // declined rendered as **Completed** — which for a stopped ceremony is the product telling a
+    // user their proceeding finished when the convener ended it early. The ended-RECEIPT renderer
+    // one screen up already had its full ladder and its unknown arm; this one never did, and
+    // nothing tested it.
+    e.textContent = CEREMONY_ENDED_WORDS[c.ended] || 'Ended';
     head.appendChild(e);
   }
   card.appendChild(head);
@@ -11589,6 +11600,12 @@ function ceremonyCard(c, mayAct) {
   // convener case it cannot answer locally.
   if (mayAct && c.state === 'ok' && !c.ended && convenedHere(c)) {
     card.appendChild(ceremonyReissue(c));
+    // **The same population as re-issue, and for the same reason** (`/pending 428`): both are the
+    // convener's own controls on a proceeding that has not ended. `!c.ended` is "not KNOWN to have
+    // ended" rather than "still running" — see the re-issue comment above — and the server refuses
+    // a stop on an already-ended ceremony with its own sentence, so the client does not derive that
+    // a second time.
+    card.appendChild(ceremonyStop(c));
   }
   // **Leaving (D17), and its population is the exact complement of the delivery button's.**
   //
@@ -11684,6 +11701,59 @@ function watchDeliveryRound(id, line) {
   return () => { stopped = true; if (timer) clearTimeout(timer); };
 }
 
+// ceremonyStop is the convener's stop (D12, `/pending 428`).
+//
+// **The counterpart of `ceremonyLeave`, and the wording has to keep them apart.** Leaving is local
+// and tells nobody; stopping is attested and tells everybody. They sit on the same card for
+// different people — leave is offered to a party who holds no record, stop only to the convener —
+// and a user who confuses them either abandons a proceeding they meant to end, or ends one they
+// meant to walk away from.
+//
+// **The confirmation names what is LOST, not just what happens.** D12's whole point is that
+// stopping is not correcting: every signature collected so far goes, and the document has to be run
+// again from the original. A dialog that said only "this ends the ceremony" would let a convener
+// who has just watched a wrong signature land press it expecting a fix.
+function ceremonyStop(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cerstop';
+  const btn = document.createElement('button');
+  btn.className = 'cerstopbtn';
+  btn.type = 'button';
+  btn.textContent = 'Stop this ceremony';
+  const out = document.createElement('div');
+  out.className = 'cerstopout';
+  btn.addEventListener('click', async () => {
+    const ok = confirm(
+      'Stop this ceremony?\n\n'
+      + 'Every party is told it is over, and it cannot be restarted.\n\n'
+      + 'This does not undo anything: signatures already given stay on the copies people hold, '
+      + 'and running the document again starts from the ORIGINAL file with none of them.\n\n'
+      + 'This is not the same as one party declining, which is their decision rather than yours.');
+    if (!ok) return;
+    btn.disabled = true;
+    out.textContent = 'Stopping, and telling everyone…';
+    try {
+      const res = await apiFetch('/api/ceremony/stop', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony: c.id }), unpinned: true,
+      });
+      const body = await res.json();
+      if (!res.ok) { out.textContent = body.error || `Nib could not stop it (${res.status}).`; btn.disabled = false; return; }
+      // **The server's own word, never a client-side one** (D1). `state` is echoed precisely so
+      // this line does not hold a second copy of the vocabulary.
+      const reached = (body.parties || []).filter((p) => p.delivered).length;
+      out.textContent = `This ceremony is ${CEREMONY_ENDED_WORDS[body.state] ? CEREMONY_ENDED_WORDS[body.state].toLowerCase() : body.state}. `
+        + `${reached} of ${(body.parties || []).length} parties have been told.`;
+    } catch (e) {
+      out.textContent = 'Nib could not stop it. Nothing was attested.';
+      btn.disabled = false;
+    }
+  });
+  wrap.appendChild(btn);
+  wrap.appendChild(out);
+  return wrap;
+}
+
 // ceremonyLeave is the "stop taking part" control (P05.S01, D17).
 //
 // **It is deliberately not next to anything that signs, and it confirms.** Leaving and declining
@@ -11774,9 +11844,21 @@ function ceremonyLeave(c) {
 // those two paths it was not.
 const PERMANENCE_SIGNATURE = 'Signing is permanent. Nib cannot remove a signature once it is on the '
   + 'document.';
-const PERMANENCE_CEREMONY = ' It cannot cancel a ceremony either: if this one is wrong, the document '
-  + 'has to be run again as a new ceremony — and Nib does not tell the other parties that the first '
-  + 'one is finished.';
+// **Rewritten 2026-09-09 (`/pending 428`), because building the stop made both of its clauses
+// false.** It used to read *"It cannot cancel a ceremony either … and Nib does not tell the other
+// parties that the first one is finished"* — true of the code that shipped it, and untrue the moment
+// a convener could stop a proceeding and have every party told. `permanence.test.mjs` is where that
+// went red, which is the coupling working: the guard exists so this sentence follows the decision
+// instead of drifting from it.
+//
+// **What did NOT change is the half D12 is actually about.** Stopping is not correcting. A signature
+// still cannot be removed, a wrong one still cannot be undone, and the remedy is still to run the
+// document again from the ORIGINAL — losing every signature collected. The new sentence says the
+// thing that changed and keeps the thing that did not, because a user reading "a ceremony can be
+// stopped" must not hear "a mistake can be fixed".
+const PERMANENCE_CEREMONY = ' A ceremony can be stopped, but not corrected: if this one is wrong, '
+  + 'stopping it tells the other parties it is over, and the document then has to be run again from '
+  + 'the original file — every signature collected so far is lost.';
 
 // setPermanence writes the statement, adding the ceremony half only where there IS a ceremony.
 //
@@ -12445,6 +12527,15 @@ function ceremonyWorklist(head, parties) {
 
 // The words, in one place, so a state the server adds shows as itself rather than as nothing.
 const WORKLIST_WORDS = { signing: 'their turn now', waiting: 'not yet reached', watching: 'does not sign' };
+
+// The badge on a LIVE card for a ceremony that has ended (P01.S02c). `Stored.Ended` carries only
+// ATTESTED states — a derived one never reaches it — so this table is the attested set and nothing
+// else, which is why it is shorter than the receipt ladder in `renderEndedCeremonies`.
+//
+// **`Ended` is the fallback and it is deliberately vague.** A state this build does not know is a
+// state it cannot describe, and guessing is how the binary fold this replaced came to say
+// "Completed" about a proceeding the convener stopped.
+const CEREMONY_ENDED_WORDS = { declined: 'Declined', completed: 'Completed', stopped: 'Stopped' };
 
 // --- Convene and accept (P06.S04) -------------------------------------------
 //
