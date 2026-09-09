@@ -1132,7 +1132,7 @@ absent and cannot be recovered**, and states it rather than papering over it —
 first-issue and re-issue surfaces can share one renderer without either inheriting the other's
 wording.
 
-#### P04.S04 — the no-correction rule is stated before the first hop
+#### P04.S04 — the no-correction rule is stated before the first hop *(done 2026-09-09, v1.128.53)*
 Scope: the surface says, before a signature becomes irreversible, that there is no correction path.
 Refs: D12.
 Acceptance: the statement is reachable on the path a party actually takes; it is **true of the

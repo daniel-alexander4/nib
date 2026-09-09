@@ -1523,6 +1523,10 @@
       </details>
       <label>What you're agreeing to
         <textarea id="sinIntent" rows="2">I agree to sign this document.</textarea></label>
+      <!-- D12, stated before the first hop (P04.S04). The words live in ONE place in app.js and are
+           written into both doors at boot: this one and #srvPermanence on the consent screen. Two
+           copies of a sentence about permanence is how one of them comes to say something else. -->
+      <p id="sinPermanence" class="permanence"></p>
       <div id="sinProgress" class="libhint" hidden>Connecting and co-signing…</div>
       <div class="sigbtns">
         <button id="sinCancel">Cancel</button>
@@ -1674,6 +1678,8 @@
         <div id="srvPreview" class="docpreview"></div>
         <label id="srvIntentRow">What you're agreeing to
           <textarea id="srvIntent" rows="2">I agree to sign this document.</textarea></label>
+        <!-- The receiving half of D12's statement. Same words, same source — see #sinPermanence. -->
+        <p id="srvPermanence" class="permanence"></p>
         <div class="sigbtns">
           <button id="srvDecline">Decline</button>
           <span class="grow"></span>

@@ -1372,6 +1372,15 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* The terminal refusal reads differently from an ordinary one: --peach is this file's warning
    accent, and the message carries itself in --text as .stampwarn and #staleBanner both do, because
    light --peach is 2.45:1 on --surface0 and colour is decoration. */
+/* D12 stated at the two doors (P04.S04). --peach on the left edge and the words in --text, the
+   same colour-is-decoration rule #staleBanner and .stampwarn follow: light --peach is 2.45:1 on
+   --surface0, so the accent marks the paragraph and the text carries it. Not a toast, by
+   construction — it is in the card, above the button that commits. */
+.permanence {
+  color: var(--text); font-size: 11px; margin: 6px 0 0;
+  border-left: 2px solid var(--peach); padding-left: 6px;
+}
+
 .cergone {
   color: var(--text); font-size: 11px; margin: 4px 0 0;
   border-left: 2px solid var(--peach); padding-left: 6px;

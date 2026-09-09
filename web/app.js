@@ -11719,6 +11719,35 @@ function ceremonyLeave(c) {
   return wrap;
 }
 
+// PERMANENCE is D12's rule, in ONE place, written into both doors at boot (P04.S04).
+//
+// **It is not D12's own words, and the difference is the slice.** D12 says the remedy is *"to
+// abandon and re-convene, losing every signature collected"* — and there is no abandon. Traced at
+// the plan review: the ceremony routes are convene, invites, ceremonies, next, accept, leave, draft,
+// deliver and delivery; `unconvene` is the rollback verb with one caller inside the convene failure
+// path; `endCeremony` has exactly one caller and fires on a counterparty's decline; and
+// `SignTermination` refuses any end state but `declined` and `completed`, by name. `StateAbandoned`
+// is derived, local, and fires up to three days past a deadline that may itself be a month out —
+// its own doc says it means *"a proceeding that ended without reaching this machine at all"*.
+// Leaving is local too (D17) and sends nothing.
+//
+// So a convener watching a wrong signature land has no control, the ceremony stays live in every
+// other party's rail until its deadline, and nobody is told. **Stating D12 verbatim would name a
+// user action that does not exist and imply the other parties learn of it** — a false expectation
+// on the one surface built to prevent one. The sentence below is what is true of this code;
+// amending D12 itself is Dan's, and is `/pending 428`.
+//
+// **One constant, two placements**, because it is one rule stated at two sites (ADR-009): a second
+// copy of a sentence about permanence is how one of them comes to say something else.
+const PERMANENCE = 'Signing is permanent. Nib cannot remove a signature or cancel a ceremony: '
+  + 'if this one is wrong, the document has to be run again as a new ceremony — and Nib does not '
+  + 'tell the other parties that the first one is finished.';
+
+for (const id of ['sinPermanence', 'srvPermanence']) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = PERMANENCE;
+}
+
 // convenedHere is whether THIS machine convened the ceremony — the one door (ADR-009), because two
 // controls now ask it and a second copy would agree on the day it was written.
 //
