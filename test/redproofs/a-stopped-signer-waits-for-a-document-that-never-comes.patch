@@ -1,0 +1,11 @@
+--- a/internal/server/closeout.go
++++ b/internal/server/closeout.go
+@@ -283,7 +283,7 @@
+ 		// three-day grace expired"*. A stopped ceremony has no finished document either, so the
+ 		// literal would have reintroduced that defect for the new state with every test green —
+ 		// `closeout_test.go` covers exactly `declined` and `completed`.
+-		if !ceremony.DeliversDocument(ended) {
++		if ended == ceremony.StateDeclined {
+ 			return true
+ 		}
+ 		return alreadyDelivered(rec)

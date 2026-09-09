@@ -276,7 +276,14 @@ func closeOutReason(st ceremony.Stored, rec ceremony.Record, me string, now time
 // will never be written would hold every declined ceremony open until the grace ran out.
 func roundIsFinished(rec ceremony.Record, me, ended string) bool {
 	if !strings.EqualFold(me, convenerFingerprintOf(rec)) {
-		if ended == ceremony.StateDeclined {
+		// **`!DeliversDocument` and not `== StateDeclined` (P01.S02c, `/pending 428`).** This
+		// function's own doc, twenty lines up, records what the literal already cost once: asking
+		// `alreadyDelivered` for a state that ships no document is *"permanently false, so a signer
+		// who had been told the proceeding was over held the directory and its pins until the
+		// three-day grace expired"*. A stopped ceremony has no finished document either, so the
+		// literal would have reintroduced that defect for the new state with every test green —
+		// `closeout_test.go` covers exactly `declined` and `completed`.
+		if !ceremony.DeliversDocument(ended) {
 			return true
 		}
 		return alreadyDelivered(rec)

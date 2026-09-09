@@ -1,18 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -11317,14 +11317,7 @@
+@@ -11458,7 +11458,7 @@
      what.textContent = r.state === 'declined' ? 'Declined'
        : r.state === 'completed' ? 'Completed'
        : r.state === 'expired' ? 'Ran out of time'
 -      : r.state === 'abandoned' ? 'No further word'
-+      : 'No further word'
--      // **`left` is this machine's own action and reads as one** (D17). Without this line it fell
--      // to the fallback below — "Ended in a way this version does not recognise" — which is a
--      // sentence about a damaged file, shown to a user for the thing they did on purpose a moment
--      // earlier. It is phrased as the user's act rather than the ceremony's end, because it says
--      // nothing about whether the proceeding is still running for everybody else.
--      : r.state === 'left' ? 'You left'
--      : 'Ended in a way this version does not recognise';
-     row.appendChild(what);
-     const when = new Date(r.observed_at);
-     if (!Number.isNaN(when.getTime())) {
++
+       // **`stopped` is the convener's own act and reads as one** (`/pending 428`). It sits beside
+       // `abandoned` deliberately: that word means nobody ever said what happened, and this one
+       // means the convener said so. Sharing a word would have printed "No further word" for the

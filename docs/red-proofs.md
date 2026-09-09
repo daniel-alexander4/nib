@@ -4951,3 +4951,34 @@ is no longer open"*, a completely different gate. It now convenes a SECOND real 
 that document, and asserts the sentence rather than the status code.
 
 `recorded` 397 → 398.
+
+## P01.S02c — the convener can stop a ceremony *(/pending 428, v1.128.60)*
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `a-stopped-signer-waits-for-a-document-that-never-comes` — `roundIsFinished` back to the `declined` literal | `TestAStoppedCeremonyCarriesItsAttestationAndFinishesItsRound`, tier 1 | "a signer on a STOPPED ceremony is not finished" |
+
+**One row for four sites, and the choice is deliberate.** Adding a third attested end state meant
+four places stopped being correct at once, because each read the end state as a binary: the round's
+payload choice (`t.State == StateDeclined`, else ship the mirror document), `roundIsFinished`'s
+signer branch, `tellEndState`'s default, and the card badge's
+`c.ended === 'declined' ? 'Declined' : 'Completed'`. **Three of the four produce a FALSE STATEMENT
+for a third value** — a partially-signed file delivered as the finished one, *"One of the parties
+refused"* for an act that accused nobody, and a stopped ceremony rendered as **Completed**. All four
+now ask one predicate, `ceremony.DeliversDocument`, and the registered row is the site whose failure
+this repo has already paid for once: `roundIsFinished`'s own doc records the identical mistake for
+`declined`, *"found by trying to drive the clause at tier 4, not by reading this function."*
+
+**Also probed and not registered**, because each is caught by its own case the moment the file runs:
+the version check going direction-blind (which reproduces `invitation.go`'s recorded bug verbatim —
+*"an OLDER end state reported this end state was written by a newer version of Nib"*); a skew wearing
+`ErrBadTermination` again, which is D32's forbidden tampering accusation; the vocabulary door dropped
+from `VerifyAgainst`, **which the grill measured as reached by no test in the tree** — deleting it
+left `./internal/ceremony`, `./internal/server` and `./internal/cli` all green; and the attested and
+derived state sets sharing a word, where naming the new state `abandoned` — which is what this item
+originally proposed — goes red by name.
+
+**`abandoned-borrows-the-unknown-sentence` staled and was re-recorded**, because the receipt ladder
+it patches gained a `stopped` arm. Re-applied and re-run: still red for its own token.
+
+`recorded` 398 → 399.

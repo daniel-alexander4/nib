@@ -57,15 +57,102 @@ type Termination struct {
 	Sig string `json:"sig"`
 }
 
-// The two states, and the set is closed. A third would need a convener able to observe it, which
-// is the whole reason *expired* and *abandoned* are derived rather than attested.
+// The THREE states a convener can attest, and the set is still closed — it is closed at three now
+// rather than at two (P01.S02c, `/pending 428`).
+//
+// # Why the old argument admits this one rather than being overturned by it
+//
+// This block used to read *"the set is closed. A third would need a convener able to observe it,
+// which is the whole reason expired and abandoned are derived rather than attested."* That is a
+// CONDITIONAL and not a prohibition, and its test is *can the convener observe it*. A convener
+// stopping their own proceeding is the one fact in this system they observe with more authority
+// than anybody — so `StateStopped` passes the gate the old wording set rather than violating it.
+// Both derived states still fail it, for their own reasons and unchanged: nobody can attest a
+// clock, and *abandoned* means the convener never came back, so the party who would sign it is
+// precisely the one who stopped answering.
+//
+// # Why it is `stopped` and not `abandoned`, and not `cancelled`
+//
+// **`abandoned` is taken, and it means the OPPOSITE.** `closeout.go` defines it as *"a proceeding
+// that ended without reaching this machine at all — the deadline and the grace both passed and
+// nothing ever said what happened"*, and `renderEndedCeremonies` prints it as **"No further word"**.
+// Attesting under that word would put the product's considered phrase for silence in front of every
+// party for the one act the convener performed deliberately and told everybody about. Worse, the
+// two vocabularies meet in `Receipt.State`, whose conflict rule is `prev.State == r.State` — a
+// STRING comparison — so an attested and a derived *abandoned* would compare equal and merge with
+// no trace, defeating the guard whose own doc says it exists to stop *"destroying the better answer
+// with the worse one"*.
+//
+// **`cancelled` is worse, and the count is the argument.** `web/index.html` carries 28 `>Cancel<`
+// buttons and two of them are on the ceremony panel itself — `cerAcceptCancel` and
+// `cerConveneCancel`, inches from where this control renders — every one meaning *close this dialog
+// and do nothing*. A "Cancel ceremony" meaning *irrevocably end this for everyone* beside them is a
+// collision no wording fixes.
+//
+// `stopped` collides with nothing in the ceremony domain (searched: `grep -rn "'stopped'\|\"stopped\""`
+// over `internal/` and `web/` returns nothing), it names an ACT rather than a duration — which
+// matters, because this object carries no `When` and so cannot honestly assert a duration — and it
+// reads correctly unexplained in the two places the vocabulary surfaces: *"Stopped by the convener"*
+// in the ended list, and *"the convener stopped this proceeding"* in what a party is told.
 const (
 	StateDeclined  = "declined"
 	StateCompleted = "completed"
+	// StateStopped is the convener ending their own proceeding before it finished (D12).
+	StateStopped = "stopped"
 )
 
+// DeliversDocument reports whether a proceeding that ended in this state has a finished document
+// to hand out.
+//
+// **One predicate replacing a `== StateDeclined` literal at four sites, three of which produced a
+// FALSE STATEMENT for any third value.** `runDeliveryRound` chose its payload with
+// `case t.State == StateDeclined` and an `else` that shipped the mirror document — so a stopped
+// ceremony would have delivered the partially-signed file AS the finished one, which is precisely
+// the failure that arm's own comment records ("swallowing it here shipped the partially-signed
+// mirror document to every party instead of the attestation"). `roundIsFinished` fell through to
+// `alreadyDelivered`, a stat on a finished document that will never exist — its doc says that
+// mistake already held every declined ceremony open until the three-day grace. `tellEndState`
+// defaulted to *"One of the parties refused"*. And the card badge read
+// `c.ended === 'declined' ? 'Declined' : 'Completed'`, rendering a stopped ceremony as **Completed**.
+//
+// **Phrased as a question about the DOCUMENT rather than as a list of states**, because that is the
+// fact all four sites actually need: what the round carries, whether a signer should wait for a
+// file, what the user is told, and what the badge says are all downstream of "is there a finished
+// document at the end of this". A list would have to be edited again at the next state; this does
+// not.
+func DeliversDocument(state string) bool { return state == StateCompleted }
+
+// attestable reports whether a convener can sign this end state.
+//
+// **One door, because the rule had TWO implementations and neither was tested.** `SignTermination`
+// and `VerifyAgainst` each carried their own copy of the closed set, and a probe found the second
+// was reached by no test in the tree: deleting `VerifyAgainst`'s state arm entirely left
+// `./internal/ceremony`, `./internal/server` and `./internal/cli` all green. Adding a third value to
+// two hand-written lists is exactly the ADR-009 shape, so both now ask here.
+func attestable(state string) bool {
+	return state == StateDeclined || state == StateCompleted || state == StateStopped
+}
+
 // terminationVersion is this object's own format number.
-const terminationVersion = 1
+//
+// **Bumped 1 -> 2 on 2026-09-09 for `StateStopped` (`/pending 428`), and the reason is D32 rather
+// than tidiness.** The argument against bumping was that the state field is itself a version
+// signal — an unknown state can only have come from a newer build — so a sentinel added here could
+// carry the news without breaking version 1. That is wrong in the one direction that matters: the
+// RELEASED build's behaviour is already fixed, and the only field it inspects before the state is
+// this one (`VerifyAgainst` checks the version first, deliberately). So no sentinel added in a new
+// build can ever reach an old peer, and without a bump an upgrade makes an older Nib call an honest
+// termination a file that *"does not verify"* — `ErrBadTermination`, whose own doc calls such an
+// object *"far more likely a planted or substituted file than a corrupted one"*. That is the
+// tampering accusation D32 exists to forbid.
+//
+// **What the bump costs, measured rather than estimated:** exactly one test, whose mutation is the
+// hard-coded literal `x.Version = 2` in `TestTheTerminationPreimageHasNoMalleableAxis` — with the
+// constant at 2 that perturbation becomes a no-op and the test correctly reports the axis as having
+// a second encoding. It mutates to `terminationVersion + 1` now, so the next bump cannot repeat it.
+// Version 1 objects on disk are refused, which is the zero-users doctrine this repo has already
+// invoked three times for `FormatVersion` and once for `InvitationVersion`.
+const terminationVersion = 2
 
 // terminationDomain separates this preimage from every other signature in the product.
 //
@@ -88,6 +175,32 @@ var (
 	// substituted file than a corrupted one. Conflating them would tell a user to suspect their
 	// hardware.
 	ErrBadTermination = errors.New("this ceremony's stored termination does not verify")
+
+	// ErrTerminationVersion / ErrTerminationOldVersion: a version this build does not know, split
+	// by DIRECTION (P01.S02c, `/pending 428`).
+	//
+	// **Split because a direction-blind check can only ever say one of the two things, and this
+	// package has already shipped that bug once.** `invitation.go`'s own doc records it: the check
+	// read the version out of a prefix, so every mismatch produced *"made by a newer version of
+	// Nib"* — and *"the first time InvitationVersion is bumped, a NEW build handed an ORDINARY v1
+	// invitation would have told the user their invitation came from the future"*. That comment
+	// names the bump as the change that would reach the bug. `terminationVersion` has just been
+	// bumped, so this is that moment, and the split lands with it rather than after it.
+	//
+	// **Neither wears `ErrBadTermination`, and that is the whole point.** D32's rule is that a
+	// version mismatch produces a SENTENCE and never a tampering accusation, and
+	// `ErrBadTermination`'s own doc says an object failing it is *"far more likely a planted or
+	// substituted file than a corrupted one"*. Telling a user that an honest newer Nib's
+	// attestation is a probable forgery is the failure this repo already paid for once, where one
+	// signature from a newer build made a whole document report as not one proceeding.
+	ErrTerminationVersion    = errors.New("this end state was written by a newer version of Nib — update Nib to read it. It is not damaged")
+	ErrTerminationOldVersion = errors.New("this end state was written by an older version of Nib")
+	// ErrUnknownEndState: the object verifies and names a state this build does not know.
+	//
+	// **Reachable only on a version this build DOES know**, because the version is checked first —
+	// so it means a build that shares this format and not this vocabulary, which is a narrower and
+	// more useful thing to tell a reader than "does not verify".
+	ErrUnknownEndState = errors.New("this end state names an outcome this version of Nib does not know")
 
 	// ErrEndStateTooBig: a sealed end state exceeds what the rendezvous will carry.
 	//
@@ -139,10 +252,11 @@ func (t Termination) preimage() ([]byte, error) {
 
 // SignTermination mints the object for a ceremony that has ended.
 func SignTermination(rec Record, state string, certPEM, keyPEM []byte) (Termination, error) {
-	if state != StateDeclined && state != StateCompleted {
-		return Termination{}, fmt.Errorf("%q is not an end state a convener can attest — only %q "+
-			"and %q have a convener to sign them; expired and abandoned are derived locally",
-			state, StateDeclined, StateCompleted)
+	if !attestable(state) {
+		return Termination{}, fmt.Errorf("%q is not an end state a convener can attest — only %q, "+
+			"%q and %q have a convener to sign them; expired and abandoned are derived locally, "+
+			"because nobody can attest a clock and the party who would sign 'abandoned' is the one "+
+			"who stopped answering", state, StateDeclined, StateCompleted, StateStopped)
 	}
 	h, err := rec.RosterHash()
 	if err != nil {
@@ -258,12 +372,21 @@ func (t Termination) Verify(rec Record) error {
 // VerifyAgainst is the one door: every check, against values either a record or an invitation can
 // supply.
 func (t Termination) VerifyAgainst(anchor Anchor) error {
-	if t.Version != terminationVersion {
-		return fmt.Errorf("%w: it is version %d and this build writes %d", ErrBadTermination,
+	// **Version FIRST and direction-aware.** A version this build does not know means the preimage
+	// layout may differ, so every check below it — including the signature — would be asking the
+	// wrong question of the wrong bytes. `Record.Verify` orders itself the same way and `ReadStored`
+	// classifies skew before damage for the same reason: *"classifying in the other order would
+	// report a newer Nib's ceremony as forged."*
+	if t.Version > terminationVersion {
+		return fmt.Errorf("%w: it is version %d and this build reads %d", ErrTerminationVersion,
 			t.Version, terminationVersion)
 	}
-	if t.State != StateDeclined && t.State != StateCompleted {
-		return fmt.Errorf("%w: %q is not an end state this build knows", ErrBadTermination, t.State)
+	if t.Version < terminationVersion {
+		return fmt.Errorf("%w: it is version %d and this build reads %d", ErrTerminationOldVersion,
+			t.Version, terminationVersion)
+	}
+	if !attestable(t.State) {
+		return fmt.Errorf("%w: %q", ErrUnknownEndState, t.State)
 	}
 	want := anchor.RosterHash
 	got, err := hex.DecodeString(t.RosterHash)

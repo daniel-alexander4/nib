@@ -96,16 +96,28 @@ test('the consent screen states it, and inside a ceremony it names the ceremony'
   assert.equal(hidden, false, 'the statement is hidden on the flow that signs');
   assert.match(text, /cannot remove a signature/i,
     'the statement does not say a signature cannot be removed, which is D12\'s first half');
-  assert.match(text, /cancel a ceremony/i,
-    'inside a ceremony the statement does not say Nib cannot cancel one. That is the half D12 got '
-    + 'wrong — it names "abandon and re-convene" as the remedy, and there is no abandon route');
-  assert.match(text, /does not tell the other parties/i,
-    'the statement does not say the other parties are not told. Without it a convener reads "run it '
-    + 'again" as something the software communicates — the first ceremony stays live in every other '
-    + 'party\'s rail until its deadline');
+  // **Rewritten with the statement it guards (`/pending 428`), and the OLD assertions are worth
+  // recording because they were right when written.** They required the statement to say Nib
+  // *cannot* cancel a ceremony and *does not* tell the other parties — both true of the code that
+  // shipped them, and both false the moment `POST /api/ceremony/stop` existed and ran the delivery
+  // round inline. This test going red is the coupling doing its job: the surface follows the
+  // decision rather than drifting from it, and a later author cannot restore D12's wording without
+  // being stopped here.
+  assert.match(text, /stopped, but not corrected/i,
+    'inside a ceremony the statement does not draw the line between stopping and correcting. That '
+    + 'is now the whole of D12: a ceremony CAN be stopped, and stopping is not a way to fix a wrong '
+    + 'signature — the document still has to be run again from the original');
+  assert.match(text, /every signature collected so far is lost/i,
+    'the statement does not say what re-running costs. That half of D12 did not change when the '
+    + 'stop was built, and it is the half a convener most needs before they sign');
+  assert.match(text, /tells the other parties/i,
+    'the statement does not say stopping tells the other parties. It used to say the opposite — '
+    + 'correctly, because nothing told them — and a convener who still believes that will leave a '
+    + 'dead ceremony live in every other party\'s rail rather than stopping it');
   assert.doesNotMatch(text, /\babandon/i,
-    'the statement offers to "abandon" a ceremony. There is no abandon route, so naming it would be '
-    + 'a false expectation on the surface built to prevent one');
+    'the statement says "abandon". D12\'s word was abandon and the shipped state is `stopped`; '
+    + '`abandoned` is a DERIVED state meaning nobody ever said what happened, which is the opposite '
+    + 'of an announced stop, and the two must not share a word on screen either');
 });
 
 test('OUTSIDE a ceremony it does not claim there is one', async () => {
@@ -164,8 +176,14 @@ test('the initiating door states it too, and it is a paragraph in the card', asy
   assert.equal(sin().compareDocumentPosition(go) & 4, 4,
     'the statement comes AFTER the button that commits, so a user who has already pressed it is the '
     + 'first to read it');
-  assert.match(sin().textContent, /cancel a ceremony/i,
-    'the document is in a ceremony and the initiating door does not say Nib cannot cancel one');
+  // The SECOND door carries the same statement, so it moves with the first (`/pending 428`). It
+  // asserted `/cancel a ceremony/` — the wording that said Nib cannot — and both doors now say what
+  // stopping does and does not buy. Asserted on the distinction rather than on the whole sentence,
+  // so the two doors can differ in framing without this going red for a difference that is fine.
+  assert.match(sin().textContent, /stopped, but not corrected/i,
+    'the document is in a ceremony and the initiating door does not draw the line between stopping '
+    + 'it and correcting it — a user who reads "a ceremony can be stopped" and hears "a mistake can '
+    + 'be fixed" has been told the opposite of D12');
   doc.getElementById('sinCancel').click();
   await settle();
 });

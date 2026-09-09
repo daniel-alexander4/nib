@@ -891,7 +891,12 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	var endState *ceremony.Termination
 	t, terr := ceremony.ReadTermination(defaultOutputDir(), rec)
 	switch {
-	case terr == nil && t.State == ceremony.StateDeclined:
+	// **`!DeliversDocument` and not `== StateDeclined` (P01.S02c, `/pending 428`).** The question is
+	// whether there IS a finished document to hand out, and a stopped ceremony has one exactly as
+	// little as a declined one does. With the literal, a third state fell into the arm below and
+	// shipped the partially-signed mirror AS the finished document — which is the failure the
+	// `default` arm's own comment records having already shipped once.
+	case terr == nil && !ceremony.DeliversDocument(t.State):
 		b, merr := json.Marshal(t)
 		if merr != nil {
 			return nil, merr
@@ -899,9 +904,9 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		payload = b
 		endState = &t
 	case terr == nil:
-		// A completed ceremony: the finished document is the payload, as it always was — and the
-		// attestation still goes to the rendezvous, because a pre-hop party is owed "it is over"
-		// whichever way it ended.
+		// A COMPLETED ceremony — the only state that delivers a document — so the finished file is
+		// the payload, as it always was; and the attestation still goes to the rendezvous, because
+		// a pre-hop party is owed "it is over" whichever way it ended.
 		endState = &t
 	case errors.Is(terr, ceremony.ErrNoTermination):
 		// The ordinary case — the proceeding has not ended — and it must never read as damage.
@@ -1558,6 +1563,18 @@ func (s *Server) endCeremony(cer *ceremonyID, state string) {
 	// its own best-effort write: a log line goes to a stderr that a double-clicked launch sends
 	// nowhere, and this failure has a user-visible consequence — the round spends its connect
 	// deadline on a party it cannot reach, once per re-run, and says nothing about why.
+	// **Still `== StateDeclined`, and that is deliberate rather than an oversight (P01.S02c).**
+	// Every other `declined` literal in this package became `!DeliversDocument` for `/pending 428`;
+	// this one must not. `endedBy` records which party ENDED the proceeding so the delivery round
+	// can skip them — and the reason it can is specific to a decline: `declineCeremony` routes
+	// straight to `closeOutCeremony` on the refusing machine, moving its folder out of the live set,
+	// so that party has nothing to arm a rendezvous with and waiting for their marker would hold
+	// every declined ceremony open until the grace ran out.
+	//
+	// A convener STOPPING their own proceeding accuses nobody and closes out nobody else. The
+	// convener is already skipped by the round as `me`, and every other party is still reachable
+	// and still owed the news — so there is no ender to record and no marker to skip. Recording one
+	// would make the round skip a party who is waiting.
 	if state == ceremony.StateDeclined && cer.peer != "" {
 		if merr := markEndedBy(rec.ID, cer.peer); merr != nil {
 			s.sess.noteFailure(armInteractive, "ender-not-recorded",
@@ -1687,14 +1704,37 @@ func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination) {
 	// Neither sentence names the party who refused, and that is S04b's decision showing through
 	// rather than an omission: the termination binds the roster hash alone, deliberately, so the
 	// convener cannot prove who declined and an unprovable accusation would name an innocent.
-	what := "ceremony-declined"
-	summary := "The proceeding you signed has been declined, so it is over."
-	ended := "One of the parties refused, and the convener attested that the proceeding is over — " +
-		"they are the only party who can attest an end state. "
-	if t.State == ceremony.StateCompleted {
+	// **A switch over the closed set, and it was an `if` with a DEFAULT (P01.S02c, `/pending 428`).**
+	// The default was the declined text, so any state that was not `completed` told every signer
+	// *"One of the parties refused"* — a false statement about a person's decision, which is the
+	// collapse this package has refused three times already: `ackTimedOut` and `ackNotStored` each
+	// exist because reusing `ackDeclined` *"would be a false statement about a person"*, and D17
+	// keeps leaving apart from declining for the same reason. A convener stopping their own
+	// proceeding accuses nobody, and saying they were refused would invent a counterparty.
+	//
+	// The `default` arm is deliberately generic rather than a fourth guess: a state this build does
+	// not know must not be described, only reported. `VerifyAgainst` refuses unknown states before
+	// this is reached, so it is unreachable today and is here so that it stays honest if that ever
+	// changes.
+	var what, summary, ended string
+	switch t.State {
+	case ceremony.StateCompleted:
 		what, summary = "ceremony-completed", "The proceeding you signed has completed."
 		ended = "Every party has now signed, and the convener attested that the proceeding is " +
 			"complete — they are the only party who can attest an end state. "
+	case ceremony.StateStopped:
+		what, summary = "ceremony-stopped", "The convener has stopped the proceeding you signed."
+		ended = "The convener ended it before every party had signed, and attested that — they " +
+			"are the only party who can attest an end state. Nobody refused: this was the " +
+			"convener's own decision to stop. "
+	case ceremony.StateDeclined:
+		what, summary = "ceremony-declined", "The proceeding you signed has been declined, so it is over."
+		ended = "One of the parties refused, and the convener attested that the proceeding is " +
+			"over — they are the only party who can attest an end state. "
+	default:
+		what, summary = "ceremony-ended", "The proceeding you signed is over."
+		ended = "The convener attested that it has ended, in a way this version of Nib does not " +
+			"recognise — updating Nib may explain it. "
 	}
 	s.sess.noteFailure(armDelivery, what, summary,
 		ended+
