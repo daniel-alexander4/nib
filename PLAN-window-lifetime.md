@@ -258,12 +258,63 @@ earlier with **no inventory section at all**. It is the measurement slice and ha
 rows" and "no section" are different facts and only the second is invisible to a pass over rows.
 Written as a section with an explicit empty table.
 
-#### P01.S05 — the close prompt
+#### P01.S05 — the close prompt *(done 2026-09-08, v1.128.41)*
 Scope: `beforeunload` armed only for an armed/running ceremony or unsaved changes. Refs: D5, D8.
 Acceptance:
 - Closing with nothing to lose does not prompt.
 - Closing with a ceremony armed prompts, and confirming disarms through the existing path.
 - The armed/unarmed decision has one door, not one per condition.
+Tasks: *(written at slice-grill time, 2026-09-08, after a deepdive of the two predicates)*
+1. T01 — the ceremony half needs a signal that does not exist. `pollRecv` starts only when THIS
+   window arms, so a window that did not arm never learns the machine is armed — which is the
+   policy-armed ceremony D5 most cares about — and `/api/status` carries no armed flag and is not
+   polled continuously. `beforeunload` cannot fetch. So the server PUSHES the state on the window
+   stream every window already holds, and on which its own comment says "nothing is ever sent".
+   No new connection, no new timer, and no heartbeat (D1's objection is to a heartbeat as the
+   window SIGNAL; this is state on a socket already held for that signal).
+2. T02 — the client keeps the last pushed value in one module-level variable, written by one
+   reader, so `beforeunload` reads it synchronously.
+3. T03 — ONE door, `closeWouldLose()`, composing the ceremony state with `editedViews()` — not
+   `hasUnsavedWork()`, which is per-VIEW while closing the window ends every view. `editedViews`
+   exists because that exact defect shipped once for Close-All (`app.js:3128`).
+4. T04 — `beforeunload` armed from that door alone, and unarmed otherwise. D5: browsers ignore
+   custom text, so this can only REQUIRE CONFIRMATION; the wording is S06's Quit modal.
+5. T05 — tier-1 for the pushed field and its one reader; tier-2 for the door's composition and for
+   "nothing to lose does not arm the handler"; tier-3 for the real stream carrying it.
+6. T06 — seam inventory rows for the pushed state and the door.
+
+**Divergence from the task list, recorded rather than absorbed (2026-09-08).** The scope reads
+"`beforeunload` armed only for an armed/running ceremony or unsaved changes" as though both facts
+were already available to the client. **Neither was, in the form the clause needs**, and the
+deepdive found both before a line was written:
+
+- **`hasUnsavedWork()` is per-VIEW and closing the window ends every view.** `editedViews()` exists
+  because that exact defect shipped once already for Close-All — `app.js:3128` records it: *"the
+  other document's typed overlays, its overlay undo stack and its server history were discarded
+  with NO prompt at all."*
+- **The ceremony half had no client-side signal at all.** `pollRecv` starts only when THIS window
+  arms, so a window that never armed reported nothing-to-lose while a ceremony was running — the
+  policy-armed case D5 most cares about — and `/api/status` carries no such field and is not polled
+  continuously. `beforeunload` cannot fetch, so the value has to be sitting in the client already.
+
+**So the state rides the window stream, which every window already holds and on which its own
+comment said "nothing is ever sent".** No new connection, no new timer, no heartbeat: D1's
+objection is to a heartbeat as the window SIGNAL, and this is state pushed on a socket already held
+for that signal, on change and never on a clock. That comment is now corrected at the site.
+
+**Three defects in my own tests, each found by running rather than reading**, and the middle one is
+the one worth keeping: `readArmedEvent` first checked its deadline BETWEEN blocking reads, so a
+build that stopped pushing did not fail the test — it **hung** it, and the red arrived as `panic:
+test timed out` with no sentence; its second version started a reader goroutine per call, so two
+goroutines raced one stream and it failed against **correct** code, which is worse because it looks
+like the product; and a slice replacement silently deleted `TestEveryWriteToTheArmsTableAnnouncesIt`
+while rewriting the helper above it, caught by re-running rather than by review.
+
+**And `boot.mjs` gained an EventSource stub, without which this slice's main case was UNTESTABLE at
+tier 2 rather than merely untested.** jsdom has no EventSource, app.js's own try/catch swallowed the
+throw, and `ceremonyArmed` could never leave its initial `false` — so "a ceremony is armed, so the
+prompt fires" would have been a green test that had never met its case. `h.pushWindowEvent` returns
+whether a stream was there to push to, so a silent no-op cannot make the assertion vacuous.
 
 #### P01.S06 — Quit Nib
 Scope: an explicit quit action whose modal names what it will end, in Nib's words. Refs: D5, D6.
