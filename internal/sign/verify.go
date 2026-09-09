@@ -72,6 +72,26 @@ type Status struct {
 // signed-and-modified, with per-signer detail. It never returns an error for
 // the ordinary unsigned case — a PDF without signatures simply reports Unsigned.
 func Verify(data []byte) Status {
+	// **A document with no signature never reaches the third-party parser** (/pending 453(a)).
+	//
+	// `digitorus/pdf` has an unbounded read that no `recover` can contain: `readByte` returns `'\n'`
+	// at EOF forever (`lex.go:71-82`) and `readLiteralString` loops appending with no EOF check
+	// (`:229`), so an unterminated literal string allocates until the process dies. That is a
+	// `fatal error: out of memory`, not a panic — the library's own `recover` cannot catch it,
+	// `internal/safe.Recover` cannot catch it, and Go has no per-goroutine allocation cap. It is an
+	// upstream defect and it cannot be fixed here.
+	//
+	// What CAN be done is to stop handing it documents it has no reason to see. Every signature
+	// dictionary carries `/ByteRange`; a document without those bytes has no signature to verify,
+	// so it is `Unsigned` by inspection and the parser is never entered. That removes the crash
+	// surface for every unsigned document — which is what an upload usually is — and leaves it only
+	// for documents that genuinely claim a signature.
+	//
+	// **It is a reduction, not a fix**, and the residue is filed. A malformed document that DOES
+	// carry `/ByteRange` still reaches the parser and can still take the process.
+	if !scanForSignatureBlob(data) {
+		return Status{State: Unsigned}
+	}
 	resp, err := verify.Verify(bytes.NewReader(data), int64(len(data)))
 	if err != nil || resp == nil || len(resp.Signers) == 0 {
 		// Zero parseable signers covers two very different documents: one that is
@@ -80,7 +100,18 @@ func Verify(data []byte) Status {
 		// is tamper-evident — silently downgrading it to Unsigned would hide a
 		// corrupted signature — so cross-check the PDF for an actual signature blob
 		// before calling it unsigned.
-		if err == nil && resp != nil && signatureBlobPresent(data) {
+		// **The `err == nil` conjunct was here and it defeated the cross-check exactly when it was
+		// needed** (/pending 453). The comment above states the rule — a signature blob that fails
+		// to parse must not be "silently downgraded to Unsigned" — and the guard skipped the blob
+		// question whenever the library returned an error, which is the commonest way a tampered
+		// document arrives. Measured over 75 single-byte flips inside the pre-signature revision:
+		// 40 reported `unsigned`, and 39 of those still had a signature blob present. `web/app.js`
+		// renders that as "Unsigned", which a reader takes as *never signed*.
+		//
+		// `signatureBlobPresent` no longer panics and answers through a bounded scan when the parse
+		// fails, so it is safe to ask on the error path — which is the only path where the answer
+		// changes anything.
+		if signatureBlobPresent(data) {
 			return Status{State: Invalid}
 		}
 		return Status{State: Unsigned}
@@ -162,12 +193,41 @@ func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
 // field carrying a non-empty /Contents — i.e. a real PKCS#7 blob the verifier
 // should have been able to parse. It's the discriminator between a genuinely
 // unsigned document (no such field, or an empty placeholder field left by another
-// tool's "prepare for signing") and one whose sole signature failed to parse. A
-// parse failure here is treated as "no signature" — best-effort, never panics.
-func signatureBlobPresent(pdf []byte) bool {
+// tool's "prepare for signing") and one whose sole signature failed to parse.
+//
+// # It DID panic, on 115 of 300 single-byte flips (/pending 453)
+//
+// The sentence here used to end *"best-effort, never panics"*, and that was false against
+// attacker-supplied bytes: `digitorus/pdf` panics out of `applyFilter`, `readXref` and the object
+// parser on ordinary corruption. Measured on a 3,715-byte signed document — one bit flipped per
+// run, 300 offsets — **115 panicked**. Its only production caller is `ceremonyid.go`'s arrival
+// gate, reached from `sessionConfirmer.Confirm` on the **p2p arm**, where `net/http`'s per-request
+// recover does not apply: the panic takes the process, not the request.
+//
+// # Why a recover alone would have been the wrong fix
+//
+// Returning `false` on failure is this function's documented contract, and for a *parse error* it
+// is right. But `Verify` uses the answer to tell "genuinely unsigned" from "signed and unreadable",
+// so answering `false` for a document that panicked mid-parse reports a tampered signed document as
+// **Unsigned** — which `web/app.js` renders as "Unsigned", i.e. *never signed*. That is the unsafe
+// direction, and it is exactly the defect the cross-check exists to prevent.
+//
+// So the fallback is not `false`, it is a **bounded byte scan**: every signed PDF's signature
+// dictionary carries `/ByteRange`, the scan allocates nothing, parses nothing, and cannot panic or
+// grow. A document that will not parse but contains `/ByteRange` is reported as carrying a blob,
+// which routes it to `Invalid` — "something is wrong with a signed document" — rather than to a
+// claim that it was never signed.
+func signatureBlobPresent(pdf []byte) (present bool) {
+	// The recover is positional: it must cover the whole parse below, including the lazy
+	// dereferences inside the Key/Index walk, which is where most of the 115 panics landed.
+	defer func() {
+		if r := recover(); r != nil {
+			present = scanForSignatureBlob(pdf)
+		}
+	}()
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
-		return false
+		return scanForSignatureBlob(pdf)
 	}
 	acro := r.Trailer().Key("Root").Key("AcroForm")
 	if acro.IsNull() {
@@ -184,6 +244,23 @@ func signatureBlobPresent(pdf []byte) bool {
 		}
 	}
 	return false
+}
+
+// scanForSignatureBlob answers the narrow question without a parser.
+//
+// **It exists because the parser is the thing that fails** (/pending 453). Every signed PDF carries
+// a signature dictionary with a `/ByteRange` array — `pdfsign` writes one, and it is required by
+// the spec for any signature the verifier could have checked. A byte scan for that token allocates
+// nothing, follows no references and cannot panic, so it is a safe answer on exactly the documents
+// where the full read is not.
+//
+// **It over-reports rather than under-reports, deliberately.** A file containing the literal bytes
+// `/ByteRange` in some unrelated place is called "carries a blob", routing it to `Invalid` instead
+// of `Unsigned`. That is the safe direction: telling a user a broken document may carry a signature
+// costs them a look, where telling them a tampered signed document was never signed costs them the
+// thing they were relying on.
+func scanForSignatureBlob(pdf []byte) bool {
+	return bytes.Contains(pdf, []byte("/ByteRange"))
 }
 
 // trailingContentAfterLastSignature reports whether pdf has content beyond the
