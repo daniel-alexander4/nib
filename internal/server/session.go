@@ -2917,7 +2917,17 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	carrying := cer.carries(hex.EncodeToString(myFP))
+	// **Refused rather than defaulted, because neither default is safe.** `carries` walks the
+	// document to answer whether this party has already signed it, and that walk can fail. False
+	// would contribute a second signature; true would skip a hop that was owed one. 409 for the
+	// same reason `checkArrival` uses one: this is the STATE of a proceeding, not a malformed
+	// request.
+	carrying, cerr := cer.carries(hex.EncodeToString(myFP), pdfBytes)
+	if cerr != nil {
+		httpError(w, http.StatusConflict, "this ceremony's document could not be read well enough "+
+			"to tell whether you have already signed it, so Nib will not run the hop: "+cerr.Error())
+		return
+	}
 	signed := pdfBytes
 	if !carrying {
 		var ok bool

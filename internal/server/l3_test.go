@@ -275,19 +275,32 @@ func TestWhetherYouSignIsReadOffTheRoster(t *testing.T) {
 		{Fingerprint: signer, Signs: true},
 	}}
 	cer := &ceremonyID{inv: inv}
-	if !cer.carries(conv) {
+	// **`nil` for the document on these four, and that is not laziness.** None of them reaches the
+	// walk: a non-member and the manual path return before it, and a `signs:false` member is
+	// answered by the roster alone. Passing a document here would assert nothing extra and would
+	// hide which cases actually need one — the signing-party cases below, which pass real bytes.
+	carries := func(fp string, pdf []byte) bool {
+		t.Helper()
+		got, err := cer.carries(fp, pdf)
+		if err != nil {
+			t.Fatalf("carries(%s…): %v", fp[:8], err)
+		}
+		return got
+	}
+	if !carries(conv, nil) {
 		t.Error("a signs:false roster member does not carry — they would contribute a signature " +
 			"to a ceremony they were convened not to sign")
 	}
-	if cer.carries(signer) {
-		t.Error("a SIGNING party carries — they would skip their own turn, and the chain would " +
-			"never advance past them")
+	if carries(signer, nil) {
+		t.Error("a SIGNING party who has not signed carries — they would skip their own turn, " +
+			"and the chain would never advance past them")
 	}
-	if cer.carries(strings.Repeat("ff", 32)) {
+	if carries(strings.Repeat("ff", 32), nil) {
 		t.Error("a party outside the roster carries")
 	}
-	if (*ceremonyID)(nil).carries(conv) {
-		t.Error("the manual path carries — there is no roster there and nothing to carry for")
+	if got, err := (*ceremonyID)(nil).carries(conv, nil); got || err != nil {
+		t.Errorf("the manual path carries (%v, %v) — there is no roster there and nothing to "+
+			"carry for", got, err)
 	}
 
 	// **And the ROUTING**, because the predicate alone says nothing about whether the handler
@@ -629,5 +642,152 @@ func TestACeremonyHopIsNotForcedOntoQUIC(t *testing.T) {
 			"transport. That path races QUIC candidates only (filterQUIC), and dialerCeremony " +
 			"opens a QUIC endpoint for every ceremony — so a TCP ceremony hop races an empty " +
 			"candidate set and spins until connectDeadline with the receiver armed and idle.")
+	}
+}
+
+// TestASigningConvenerCarriesOnceTheyHaveSigned — P01.S02a, and the case that could not happen.
+//
+// **The defect this drives is the whole of `/pending 436`'s second half.** Under D22's hub the
+// convener is at one end of EVERY hop. `carries` used to be `!p.Signs` and nothing else, so a
+// convener with `convenerSigns` true contributed at hop 1 and then re-entered `buildCoSigned` at
+// hop 2, where `AdmitContribution` refused them `ErrNotYourTurn` at their own machine. `#cerISign`
+// ships CHECKED (`web/index.html`), so that is the ceremony the setup sheet produces by default —
+// and at three parties or more it could not advance past its first hop by any route.
+//
+// **It was invisible for three weeks in three different ways, and each is worth naming.** The
+// product could not reach it at all: the client sends no invitation, so `cer` was nil and the route
+// never asked. `build/pairrepro.sh:2473` asserts the hop-2 refusal as DESIGNED — *"the carrier
+// signing a second time is refused at its own machine"* — so tier 4 pinned the defect as correct.
+// And its only multi-hop walk uses `"signs":false`, so the configuration that breaks was never run.
+//
+// **Driven on a real convened document at every hop, never on a hand-built roster.** The stimulus
+// floor is the point: `Progress.Done` is a count of signatures that form a valid PREFIX of the
+// signing order, so a fixture whose "signature" does not verify yields Done=0 at every hop and the
+// hop-2 assertion would pass against code that never learned anything. Each step therefore asserts
+// the progress it created before asking what the party should do with it.
+func TestASigningConvenerCarriesOnceTheyHaveSigned(t *testing.T) {
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	convFP := hex.EncodeToString(fpb)
+	second := strings.Repeat("5e", 32)
+	third := strings.Repeat("7a", 32)
+
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// THREE parties, because hop 2 is where the defect lives and a two-party ceremony has only
+	// hop 1. The convener signs — the setup sheet's own default.
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: second, Label: "Bob", Signs: true},
+			{Fingerprint: third, Label: "Carla", Signs: true},
+		},
+		Intent:         "We agree to the terms",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cer := &ceremonyID{inv: ceremony.Invitation{
+		ID:                  out.Record.ID,
+		Roster:              out.Record.Roster,
+		Intent:              out.Record.Intent,
+		RosterHash:          rosterHashHex(out.Record),
+		ConvenerFingerprint: convFP,
+	}}
+	roster := cer.l3Roster()
+
+	// **Stimulus floor 1: the convener really is first in the signing order.** `Convene` prepends a
+	// signing convener at roster position 0, and if it ever stopped doing so this whole test would
+	// be about a different party and would still pass.
+	pr, err := p2p.ContributionProgress(out.Document, roster)
+	if err != nil {
+		t.Fatalf("setup: the convened document does not walk: %v", err)
+	}
+	if pr.Done != 0 || len(pr.Order) != 3 || !strings.EqualFold(pr.Order[0].Fingerprint, convFP) {
+		t.Fatalf("setup: want an unsigned 3-party order led by the convener, got Done=%d order=%d "+
+			"first=%s — a green result below would mean nothing", pr.Done, len(pr.Order),
+			pr.Order[0].Fingerprint[:8])
+	}
+
+	// Hop 1: the convener has not signed, so they CONTRIBUTE.
+	if got, cerr := cer.carries(convFP, out.Document); cerr != nil || got {
+		t.Fatalf("at hop 1 a signing convener carries (%v, %v) — they would skip their own "+
+			"signature and hand Bob a document the roster says the convener signed", got, cerr)
+	}
+
+	// Apply the convener's signature through the door the route uses, so the bytes under test are
+	// the bytes the product would produce.
+	rec := httptest.NewRecorder()
+	att := p2p.Attestation{Signer: "Nib User", When: time.Now()}
+	signed, ok := (&Server{epoch: "test-epoch"}).buildCoSigned(rec, out.Document, cert, key, att, nil, roster)
+	if !ok {
+		t.Fatalf("setup: the convener could not sign hop 1: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// **Stimulus floor 2: the signature landed AND it counts.** `Done` moving from 0 to 1 is what
+	// makes the next assertion about progress rather than about a roster flag — a signature that
+	// did not verify would leave Done at 0 and the hop-2 case would pass for the wrong reason.
+	pr2, err := p2p.ContributionProgress(signed, roster)
+	if err != nil {
+		t.Fatalf("the signed document does not walk: %v", err)
+	}
+	if pr2.Done != 1 {
+		t.Fatalf("setup: after the convener signed, Done=%d not 1 — the signature did not count, "+
+			"so nothing below is testing progress", pr2.Done)
+	}
+
+	// Hop 2: THE CASE. The convener has signed, so they CARRY.
+	if got, cerr := cer.carries(convFP, signed); cerr != nil || !got {
+		t.Errorf("at hop 2 a signing convener does not carry (%v, %v) — they re-enter "+
+			"buildCoSigned, AdmitContribution refuses them ErrNotYourTurn at their own machine, "+
+			"and a ceremony with a signing convener cannot advance past hop 1", got, cerr)
+	}
+
+	// And the party whose turn it now IS still contributes — the fix must not turn everyone into a
+	// carrier, which is the way an over-broad version of it would pass the assertion above.
+	if got, cerr := cer.carries(second, signed); cerr != nil || got {
+		t.Errorf("the party whose turn it is carries (%v, %v) — the chain would never advance", got, cerr)
+	}
+
+	// **The walk's failure is a REFUSAL, never a default.** Neither answer is safe when the walk
+	// cannot say what is on the document: false contributes a second signature, true skips a hop
+	// that was owed one, and both are silent.
+	//
+	// **Driven on a prefix mismatch and NOT on garbage bytes, because garbage is not an error
+	// here.** The first version of this assertion passed `[]byte("not a pdf")` and failed — a
+	// correct result that caught a wrong test. `ContributionProgress` errors only on a document
+	// whose signature is present-and-unparseable (`sign.Invalid`) or whose signatures are not the
+	// roster's prefix; bytes that are not a PDF at all read as `unsigned` with zero signers, which
+	// is a legitimate state and is exactly what an unsigned document looks like. That is the walk's
+	// documented behaviour, and in the route those bytes cannot arrive anyway — `checkArrival` runs
+	// `ceremony.CheckDocument` before this point. So the reachable failure is the prefix, and it is
+	// the one asserted.
+	other := &ceremonyID{inv: ceremony.Invitation{
+		ID: out.Record.ID, Intent: out.Record.Intent, RosterHash: rosterHashHex(out.Record),
+		ConvenerFingerprint: convFP,
+		// Same three parties, Bob first — so the convener's signature is signature 1 where the
+		// roster says Bob's should be. The convener is still a signing member, so the walk is
+		// reached rather than short-circuited by the roster test above.
+		Roster: []ceremony.Party{
+			{Fingerprint: second, Label: "Bob", Signs: true},
+			{Fingerprint: convFP, Label: "Alice", Signs: true},
+			{Fingerprint: third, Label: "Carla", Signs: true},
+		},
+	}}
+	if got, cerr := other.carries(convFP, signed); cerr == nil {
+		t.Errorf("a document whose signatures are not the roster's prefix answers the carry "+
+			"question (%v) instead of refusing it — so a walk that cannot say what is on the "+
+			"document silently picks one of the two unsafe answers", got)
 	}
 }

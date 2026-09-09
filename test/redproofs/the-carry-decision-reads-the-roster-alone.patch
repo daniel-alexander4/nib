@@ -1,0 +1,14 @@
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -956,9 +956,8 @@
+ 	if !member {
+ 		return false, nil
+ 	}
+-	if !signs {
+-		return true, nil
+-	}
++	// MUTATION: the old rule — the roster alone, with no notion of progress.
++	return !signs, nil
+ 	// A signing party: carry only once this document already holds their signature.
+ 	pr, err := p2p.ContributionProgress(pdf, c.l3Roster())
+ 	if err != nil {

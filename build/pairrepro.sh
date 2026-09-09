@@ -2471,9 +2471,21 @@ if [ "$N" != "2" ]; then
   # was needed.
   #
   # The refusal is now raised BEFORE any network work: `/api/session/initiate` applies the local
-  # signature in `buildCoSigned`, the L3 gate runs there, and the carrier signing a second time is
-  # refused at its own machine. So hop 2 needs no watchers, no arm on the far side, and no
-  # unreachable port — which is why all of that is gone.
+  # signature in `buildCoSigned`, the L3 gate runs there, and a party who is not next is refused at
+  # its own machine. So hop 2 needs no watchers, no arm on the far side, and no unreachable port —
+  # which is why all of that is gone.
+  #
+  # **This paragraph used to say "the carrier signing a second time is refused at its own machine",
+  # and that described a DIFFERENT scenario from the one the code below drives (corrected
+  # 2026-09-09, P01.S02a).** What is driven here is instance 3 — third in the signing order, over a
+  # document carrying no signature — so the party is EARLY, not repeating. Both refusals are
+  # `ErrNotYourTurn`, which is why the mismatch survived: the clause was green for its own reason
+  # while its prose described another.
+  #
+  # The cost of that was not cosmetic. The sentence read as a statement that a party at the near end
+  # of hop 2 is *designedly* refused, and a signing convener IS the party at the near end of every
+  # hop — so the shape that broke the default ceremony was written down here as correct behaviour,
+  # and the relay below was built with `signs:false` to avoid it. `relay … csigns` now drives it.
   echo "convening a real $N-party ceremony…"
   roster='{"fingerprint":"'"${FPS[0]}"'","label":"p1","signs":true}'
   for i in $(seq 2 "$N"); do
@@ -2569,9 +2581,13 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
   # Not "the model refuses hop 2" — it does not. Measured at P07.S03b:
   #
   #   hop 1  the convener contributes, party 2 co-signs: exactly the roster prefix
-  #   hop 2  /api/session/initiate applies the LOCAL signature first (buildCoSigned), so the
-  #          carrier signs AGAIN, and L3 refuses it BY NAME at the carrier's own machine
-  #   and    party 3, handed that document unchanged, IS admitted
+  #   hop 2  instance 3, third in the signing order, offers the convened document and L3 refuses
+  #          it BY NAME at instance 3's own machine — the party is EARLY
+  #   and    party 3, handed that document once it IS their turn, is admitted
+  #
+  # **The middle line used to say "the carrier signs AGAIN".** It did not: the curl below posts
+  # from instance 3, not from the carrier. See the correction above the convene — that wrong
+  # sentence is what made a signing convener's hop 2 look like designed behaviour.
   #
   # **The carry verb landed at P07.S05 and this probe is still right — for a narrower reason, and
   # the narrowing is recorded because the sentence here was stale once already.** `p2p.Carry`
@@ -2606,13 +2622,27 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
   # a flag here (`session.go:1408`), so this harness cannot accidentally drive the wrong verb.
   # With N parties on the roster the convener is one of them and N-1 sign, so there are N-1 hops
   # and the finished document carries N-1 signatures.
-  relay() { # transport [lan]
-    local transport="$1" mode="${2:-}"
+  relay() { # transport [lan|""] [csigns]
+    local transport="$1" mode="${2:-}" csigns="${3:-}"
     local n_hops=$(( N - 1 ))
-    echo "relay over $transport: convening $N parties, non-signing convener, $n_hops hops…"
+    # **`csigns` is the case that could not run until P01.S02a**, and it is the DEFAULT ceremony:
+    # `web/index.html`'s `#cerISign` ships checked, so a convener who touches nothing signs. Under
+    # D22's hub they are at one end of every hop, so they contribute at hop 1 and must CARRY at
+    # every hop after — and `carries()` read the roster alone, with no notion of progress, so hop 2
+    # re-entered `buildCoSigned` and L3 refused them `ErrNotYourTurn` at their own machine. At three
+    # parties or more the default ceremony could not advance past its first hop by any route.
+    #
+    # Hops are N-1 either way; what differs is the SIGNATURE COUNT — a signing convener adds their
+    # own, so the finished document carries N rather than N-1, and the identity check below is told
+    # which.
+    local p1signs=false conv=false who="non-signing convener" sig_offset=0
+    if [ "$csigns" = "csigns" ]; then
+      p1signs=true; conv=true; who="SIGNING convener (the setup sheet's default)"; sig_offset=1
+    fi
+    echo "relay over $transport: convening $N parties, $who, $n_hops hops…"
 
     # A ceremony of its own, so the run's two transports cannot share a document or a record.
-    local roster='{"fingerprint":"'"${FPS[0]}"'","label":"p1","signs":false}'
+    local roster='{"fingerprint":"'"${FPS[0]}"'","label":"p1","signs":'"$p1signs"'}'
     local i
     for i in $(seq 2 "$N"); do
       roster="$roster,"'{"fingerprint":"'"${FPS[$((i-1))]}"'","label":"p'"$i"'","signs":true}'
@@ -2625,7 +2655,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
     local code
     code="$(curl -sS -X POST "${URLS[0]}/api/ceremony/convene" -H 'Content-Type: application/json' \
       -H "X-CSRF-Token: ${CSRFS[0]}" \
-      -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":false}" \
+      -d "{\"roster\":[$roster],\"intent\":\"We agree\",\"expires\":\"$expires\",\"convenerSigns\":$conv}" \
       -o "$WORK/relay.convene.$transport.json" -w '%{http_code}')"
     [ "$code" = "200" ] \
       || fail "[$transport] convening $N parties failed (HTTP $code): $(head -c 300 "$WORK/relay.convene.$transport.json")"
@@ -2736,7 +2766,14 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
       # is what stops it being typed into the dial.
       local dialport=""
       [ "$mode" != "lan" ] || dialport="lan"
-      ceremony "$transport" "$dialport" "$out" 1 "$to" "$prev" "$k" 1 "${INVITES[$to]}" "${ARM_ADDR[$to]}"
+      # **`k + sig_offset`, and the offset is the signing convener's own signature.** With a
+      # non-signing convener hop k's output carries k signatures — one per party reached. When the
+      # convener signs they contribute at hop 1 as well, so every hop's document carries one more.
+      # Passing a flat `k` here is what the first run of the csigns relay did, and `ceremony()`
+      # refused it correctly: "carries 2 signature byte-ranges, want exactly 1". The count is the
+      # assertion that catches a party signing twice, so it is raised deliberately rather than
+      # relaxed to `>=`.
+      ceremony "$transport" "$dialport" "$out" 1 "$to" "$prev" "$(( k + sig_offset ))" 1 "${INVITES[$to]}" "${ARM_ADDR[$to]}"
       RELAY_WORDS+=( "$WORDS" )
 
       # **The byte prefix, which is what makes this a BATON rather than N ceremonies.** Asserting
@@ -2744,6 +2781,27 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
       # instance is fetched twice in one relay, so two hops' documents differ whatever happened.
       # A PDF is signed incrementally, so hop k's output must literally begin with hop k-1's
       # bytes — anything else means the party started from a document of their own.
+      # **The preparation hop legitimately BREAKS the prefix, and only a signing convener has
+      # one (measured 2026-09-09, P01.S02a).** `p2p.PrepareDocument` appends the trust-explainer
+      # page and has exactly ONE production caller — `buildCoSigned`, `internal/server/cosign.go:428`
+      # — which runs on the INITIATING side only. With a non-signing convener the near end never
+      # contributes, so preparation never runs at any hop and every hop is a pure incremental
+      # append; that is why this assertion has held unchanged for every relay in this file. With a
+      # signing convener the near end contributes at hop 1, preparation runs there, and the document
+      # is rewritten rather than appended — measured: hop 0 is 4479 bytes and hop 1 diverges from it
+      # at byte 31, with object 1's `/Names` going from an indirect reference to an inline dict.
+      #
+      # **That is not this slice's defect and it is not caused by it**: at hop 1 `carries` returns
+      # false both before and after P01.S02a, so the near end contributes identically either way.
+      # What the configuration reveals is that the readme is added on one door and one door only —
+      # filed, not fixed here.
+      if [ "$csigns" = "csigns" ] && [ "$k" = "1" ]; then
+        echo "[$transport] hop 1: prefix check SKIPPED — this is the preparation hop (the signing"
+        echo "      convener's own contribution appends the trust-explainer page and rewrites the"
+        echo "      file). Every LATER hop is still asserted, which is where the baton property lives."
+        prev="$out"
+        continue
+      fi
       python3 - "$prev" "$out" "$transport" "$k" <<'PYPFX' || exit 1
 import sys
 prev = open(sys.argv[1], "rb").read()
@@ -2789,11 +2847,14 @@ PYPFX
     #
     # Read from the LAST hop's attestations, which `ceremony()` already fetched from the receiving
     # instance by document id.
-    python3 - "$WORK/atts.$transport.json" "$transport" "${FPS[@]}" <<'PYSET' || exit 1
+    python3 - "$WORK/atts.$transport.json" "$transport" "$csigns" "${FPS[@]}" <<'PYSET' || exit 1
 import json, sys
-path, t = sys.argv[1], sys.argv[2]
-fps = [f.lower() for f in sys.argv[3:]]
-signing = fps[1:]  # party 1 is the non-signing convener
+path, t, csigns = sys.argv[1], sys.argv[2], sys.argv[3]
+fps = [f.lower() for f in sys.argv[4:]]
+# Party 1 is the convener. They are in the signing set only when the ceremony was convened with
+# `convenerSigns` — and when they are, they are FIRST, because `Convene` puts the convener at
+# roster position 0 and L3's rule is positional.
+signing = fps if csigns == "csigns" else fps[1:]
 ats = json.load(open(path)).get("attestations") or []
 got = [a.get("fingerprint", "").lower() for a in ats]
 if len(got) != len(signing):
@@ -3137,6 +3198,67 @@ PYONE
     WORDS_RELAY_QUIC=( "${RELAY_WORDS[@]}" ); FINAL_QUIC="$RELAY_FINAL"
     relay tcp
     WORDS_RELAY_TCP=( "${RELAY_WORDS[@]}" ); FINAL_TCP="$RELAY_FINAL"
+
+    # ── The SIGNING convener, which is the setup sheet's default and had never been run ────────
+    #
+    # **P01.S02a.** Every relay above convenes with `signs:false` for party 1, and that was not a
+    # simplification — it was avoidance. `#cerISign` ships CHECKED, so the ceremony a convener gets
+    # by touching nothing has them signing; under D22's hub they are at one end of every hop, so
+    # they contribute at hop 1 and must carry at every hop after. `carries()` read the roster alone,
+    # so hop 2 re-entered `buildCoSigned` and L3 refused them at their own machine — and at three
+    # parties or more the default ceremony could not advance past its first hop by any route.
+    #
+    # One transport is enough and TCP is the one chosen: the defect is in the near end's branch
+    # decision, decided before a packet leaves, so it is transport-independent by construction —
+    # and a second run would double the slowest clause in this file for no new information. Stated
+    # rather than left as an omission, because "we ran it on one transport" and "we only had one"
+    # look identical afterwards.
+    #
+    # **The convener's documents are closed FIRST, and the first run of this clause proved why.**
+    # Each relay leaves the convener holding documents, and a third run tips it past ADR-005's cap
+    # of 8 — measured, not predicted: the clause failed with
+    # `{"error":"too many documents open (limit 8) — close one first"}` and a 409 on initiate, which
+    # reads exactly like a ceremony refusal and is not one. The decline clause below already does
+    # this for the same reason; doing it here keeps the cap from being charged to whichever clause
+    # happens to run third.
+    python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE2' || exit 1
+import json, sys, urllib.request
+base, csrf = sys.argv[1], sys.argv[2]
+
+def docs():
+    return json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+
+open_docs = docs()
+if open_docs:
+    d = open_docs[0]
+    req = urllib.request.Request(base + "/api/close", method="POST",
+                                 data=json.dumps({"id": d["id"]}).encode(),
+                                 headers={"Content-Type": "application/json", "X-CSRF-Token": csrf,
+                                          "X-Nib-Doc": d["id"]})
+    try:
+        urllib.request.urlopen(req).read()
+    except Exception as e:
+        print("FAIL: csigns: /api/close was refused (%s), so the convener still holds documents "
+              "against ADR-005's cap and the convene below will 409 about something else" % e,
+              file=sys.stderr)
+        sys.exit(1)
+left = docs()
+if left:
+    print("FAIL: csigns: %d document(s) still open after a close that clears the whole registry"
+          % len(left), file=sys.stderr)
+    sys.exit(1)
+print("csigns: closed %d document(s) the earlier relays left open" % len(open_docs))
+PYCLOSE2
+    # **`""` for the mode, and the empty argument is load-bearing.** The first version of this call
+    # was `relay tcp csigns`, which put `csigns` in the MODE slot — so `csigns` was empty, the run
+    # convened a non-signing convener, and it was simply a third copy of the relay above. It failed
+    # on the document cap rather than on anything it was written to test, and it would have been
+    # credited as driving the signing convener if it had passed.
+    relay tcp "" csigns
+    echo "[tcp] SIGNING-CONVENER RELAY COMPLETED: $(( N - 1 )) hops, $N signatures — the convener"
+    echo "      contributed at hop 1 and CARRIED at every hop after. Before P01.S02a this run"
+    echo "      could not exist: carries() read the roster alone, so hop 2 re-entered buildCoSigned"
+    echo "      and L3 refused the convener at its own machine."
   fi
 
   # ── The word-strings: EQUAL within a hop, DISTINCT across hops ──────────────

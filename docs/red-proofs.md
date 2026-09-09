@@ -4900,3 +4900,28 @@ are per party — which is why the new sentence names the connection to one pers
 ceremony's rendezvous.
 
 `recorded` 395 → 396.
+
+## P01.S02a — the carry decision follows progress, not the roster *(v1.128.58)*
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `the-carry-decision-reads-the-roster-alone` — `carries()` back to `!p.Signs` | `TestASigningConvenerCarriesOnceTheyHaveSigned`, tier 1 | "at hop 2 a signing convener does not carry" |
+
+**The same mutation was driven at tier 4 and is recorded here rather than as a second row.** The new
+`relay tcp "" csigns` clause in `build/pairrepro.sh` was run against this exact revert and failed
+with `FAIL: [tcp] initiate returned HTTP 409 before any spoken check: {"error":"it is not this
+party's turn to sign: the document is waiting for 54e4… and this is afa3…"}` — the convener refused
+at their own machine at hop 2, end to end, over two real processes. Against the fixed code the same
+clause reports `3 distinct signers, in roster order, one signature each`. A tier-4 row costs twenty
+minutes to replay and this one costs a second, so the register holds the cheap proof and the
+expensive one is named in the slice.
+
+**What made the defect invisible for three weeks is worth recording beside it**, because it is a
+shape rather than an accident. It was unreachable from the product — the client sends no invitation,
+so `cer` was nil and the route never asked. The harness that *could* reach it asserted the refusal as
+**designed**, in its own prose. And that prose described a different scenario from the code beneath
+it: it said "the carrier signing a second time", while the curl posts from a party who is EARLY. Both
+refusals are `ErrNotYourTurn`, so the clause was green for its own reason while its comment argued
+for the defect.
+
+`recorded` 396 → 397.

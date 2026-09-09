@@ -1,14 +1,12 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index 1fd2157..54964bf 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -1602,7 +1602,8 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
- 			return
- 		}
- 	}
--	carrying := cer.carries(hex.EncodeToString(myFP))
-+	carrying := false
+@@ -2922,7 +2922,8 @@
+ 	// would contribute a second signature; true would skip a hop that was owed one. 409 for the
+ 	// same reason `checkArrival` uses one: this is the STATE of a proceeding, not a malformed
+ 	// request.
+-	carrying, cerr := cer.carries(hex.EncodeToString(myFP), pdfBytes)
++	carrying, cerr := false, error(nil)
 +	_ = cer.carries
- 	signed := pdfBytes
- 	if !carrying {
- 		var ok bool
+ 	if cerr != nil {
+ 		httpError(w, http.StatusConflict, "this ceremony's document could not be read well enough "+
+ 			"to tell whether you have already signed it, so Nib will not run the hop: "+cerr.Error())

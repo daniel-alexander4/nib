@@ -270,7 +270,20 @@ per-card answer also checks the echoed ceremony id before rendering, so a slow a
 cannot appear under another. **D2's hot-path rule is therefore a rule the code already keeps** —
 recorded so a later slice does not "add" a fetch-on-open and think it is implementing this plan.
 
-#### P01.S02 — the next answer becomes an action *(**BLOCKED** 2026-09-09 — the action it labels does not exist; `/pending 436`)*
+#### P01.S02 — the next answer becomes an action *(**SPLIT** 2026-09-09 into S02a and S02b; block cleared — see below)*
+
+**The block is cleared, and by the person whose gate it was.** It read *"which party, at what moment,
+and whether the rail offers it or the document does, is a product decision with a security
+dimension. That is Dan's, and it is `/pending 436`."* Dan answered it at `/discuss` on 2026-09-09 —
+build a ceremony-aware dial that resolves the turn server-side, mints the invitation itself, and
+turns the rail's sentence into the action; no invitation paste field — and approved the grilled plan
+on the same day. The arc did not clear its own block.
+
+**And the grill found that the action cannot be built first.** `carries()` was a pure roster test, so
+a SIGNING convener — `#cerISign` ships checked, so the default — contributed at hop 1 and was then
+refused `ErrNotYourTurn` by their own L3 gate at hop 2. At three parties or more the default ceremony
+could not advance past its first hop by any route, and `build/pairrepro.sh:2473` asserted that
+refusal as designed. So the slice splits: the carry decision first, the route on top of it.
 
 **(reality-drift pin, 2026-09-09, at the deepdive that opened this slice as the plan's last — and
 the scope was fiction in the one way the earlier pin did not anticipate.)**
@@ -324,6 +337,59 @@ Acceptance:
 - The enabled action equals `next`'s answer; a red proof shows a client-side guess diverging.
 - Machine steps render as state and are not clickable.
 - Below the worklist threshold there is exactly one enabled action per ceremony.
+
+**(pin, 2026-09-09 — the third clause counts ADVANCING actions, and it was written before a second
+control existed.)** A convener's live ceremony card already carries `ceremonyReissue` (D11,
+`!c.ended && convenedHere`), so adding the call action makes two enabled controls on one card. The
+clause is credited on advancing actions — nothing else may offer *sign* or *continue* — which is the
+same reading P01's own third exit criterion took when `/uiux`'s wider wording outran its intent.
+Re-issue is a repair, not an advance. The wider reading is named here so a later slice cannot use it
+to add a second way forward.
+
+#### P01.S02a — the carry decision follows progress, not the roster *(done 2026-09-09, v1.128.58)*
+
+Scope: `carries()` stops being `!p.Signs` and derives from `ContributionProgress` — already
+contributed or never signs → carry; my turn → contribute; anything else → refuse the hop rather than
+pick a branch. Refs: D22, ADR-009.
+Acceptance:
+- A signing convener carries at hop 2 and contributes at hop 1, driven on a real convened document.
+- The party whose turn it is still contributes — the fix does not turn everyone into a carrier.
+- A walk that cannot say what is on the document refuses the hop rather than defaulting.
+- Tier 4 completes a 3-party relay with a SIGNING convener, which no run in this repo had ever done.
+
+**(build pin — the harness asserted the defect as correct, and its prose described a different
+scenario from its code.)** `pairrepro.sh:2473` said *"the carrier signing a second time is refused at
+its own machine"*; the curl below it posts from instance 3, a party who is EARLY. Both refusals are
+`ErrNotYourTurn`, so the clause was green for its own reason while its prose described another — and
+that wrong sentence is what made a signing convener's hop 2 read as designed behaviour. Corrected in
+place rather than deleted, because the clause it guards is still true.
+
+**(build pin — three things the run found that reading did not.)** A first attempt called
+`relay tcp csigns`, putting `csigns` in the MODE slot: the run convened a *non-signing* convener,
+was simply a third copy of the relay above, and failed on ADR-005's open-document cap — a 409 that
+reads exactly like a ceremony refusal and is not one. A second attempt passed hop `k`'s signature
+count unchanged, and `ceremony()` correctly refused it: a signing convener adds their own, so every
+hop carries one more. And the third revealed `/pending 450` — `PrepareDocument` has one production
+caller, on the initiating side only, so preparation runs at hop 1 for a signing convener and never
+at all for a non-signing one. That breaks the byte-prefix assertion at exactly one hop, legitimately;
+the clause skips it there and says why.
+
+#### P01.S02b — the ceremony-aware dial *(pending)*
+
+Scope: `GET`/`POST /api/ceremony/hop`. The turn is resolved server-side, the invitation is minted
+server-side through one door carrying `convenedByMe` and `recordOutlivesBudget` INSIDE it, and the
+document comes from the open tab under `X-Nib-Doc` — never from the mirror (`/pending 438`). The
+co-sign verbs, never `deliverOneLeg`. Refs: D1, D15, D22, ADR-001, ADR-004, ADR-009.
+Acceptance:
+- A convener advances a convened ceremony from the product, with no invitation, address or transport
+  in the request — driven at tier 6 alongside the old route still answering 409 in the same run.
+- `/api/ceremony/next` advances its hop pointer after the call, which `/api/session/initiate` cannot
+  produce.
+- The route refuses when `X-Nib-Doc` names a document whose ceremony id does not match, when the
+  caller did not convene it, when the hop budget will not fit before the deadline, when a dial for
+  that ceremony is already in flight, and when the resolved turn is this machine's own.
+- The dialling side shows the wait-tier diagnosis and an elapsed-against-ceiling figure; today
+  `startVerifyPoll` reads only `st.verify`, so the convener is the one user who never sees D19's.
 
 #### P01.S03 — `next` learns the terminal states *(done 2026-09-07, v1.128.2)*
 Scope: `/api/ceremony/next` reports a ceremony that has been declined or has passed its deadline,
