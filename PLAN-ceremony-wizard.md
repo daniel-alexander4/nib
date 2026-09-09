@@ -832,23 +832,98 @@ what a 410 means are security questions, so the firmed phase goes to `/plan-revi
 grilled. (It is not migration- or egress-heavy: no format version moves and nothing new leaves the
 machine.)
 
-#### P04.S01 — the rail at a full roster, measured
-Scope: an instrument that renders the rail at arbitrary roster sizes, and the measurement that
-chooses the threshold. No product behaviour changes. Refs: D6.
-Acceptance: the rail is rendered at several roster sizes up to `MaxRoster` **at tier 3**, and at
-each size the card's `getBoundingClientRect()` and the panel's scroll extent are recorded; the
-worklist threshold is written into this plan as a number **with its measurement beside it**; and the
-harness that produced it is committed, so the number can be re-derived rather than believed.
+#### P04.S01 — the rail at a full roster, measured *(done 2026-09-09, v1.128.49)*
+Scope: measure the rail at roster sizes up to `MaxRoster` at a **declared reference window**, and
+settle whether `SittingCeiling` is D6's threshold. Refs: D6, D22.
+Acceptance:
+- **The reference window is declared in this plan**, because there is none today — no `@media
+  (max-height` rule anywhere, and `browser.Open` launches `--app` with no `--window-size`.
+- The rail is measured at several roster sizes at that window, over the **whole panel** — every live
+  ceremony, the `primary` note and the ended list — not one card.
+- The threshold is stated **with its conditions beside it** (window height, fixture, locale), and is
+  `SittingCeiling` unless the measurement refutes it; a refutation is recorded with the reason a
+  second number is justified against ADR-009.
+- The committed test asserts the **shape and the reachability, never the number**: the per-party
+  cost is bounded, every roster row is hit-testable at `MaxRoster` after scrolling, exactly one
+  element scrolls, and the rendered row count equals the roster length.
 
-**Tier 3 and not tier 2, and the reason is the metric.** `CONTRIBUTING.md` states jsdom's ceiling in
-as many words — *"jsdom models the DOM, not an engine — no layout (every `clientWidth` is 0)"* — and
-every candidate metric for D6's threshold is geometry. **A threshold measured at tier 2 would be a
-number produced by a harness that cannot see the thing it measures.**
+**(pin at the grill, 2026-09-09 — the number D6 owes ALREADY EXISTS, and the first cut of this slice
+was about to invent a second one.)** `SittingCeiling = 8` is D22's, and its own doc separates the two
+roles in as many words: 32 is *"what the code refuses past"* and ~8 is **"what the UI should be
+designed and copy-written for"** (`internal/ceremony/convene.go:115-126`). It already reaches the
+client — `WarnSittingCeiling` is bound to a control in `renderInvitations`. So a convener at nine
+parties is told this is more than one sitting, and a freshly-measured threshold in the high teens
+would have the rail keep presenting that same ceremony as one action: **two roster-size regimes, two
+derivations, disagreeing** — ADR-009's named failure. The slice's job is therefore to CHECK a number,
+not to search for one.
 
-**The stub is a faithful instrument for GEOMETRY and explicitly not for progress state**, and S02
-must not inherit the assumption. `Stored` carries the whole `Roster []Party` and the rail reads
-nothing else to draw a card, so a generated 32-entry roster is the same shape `ListStored` produces.
-It cannot produce a live per-party progress state, because **no such field exists** — see S02.
+**(pin — the viewport axis was wrong. Width is a constant; HEIGHT is the variable.)** `#sidebar` is a
+fixed `width: 200px` and `matchMedia('(max-width: 899px)')` collapses it to `display: none`, so at
+every width where the rail exists the card is the same width and therefore the same height:
+measuring at 900, 1280 and 1920 would produce three identical numbers and a phrase — *"the smallest
+viewport where the sidebar exists"* — that fixes nothing. The harness default is 900 tall and the
+repo's own responsive suite measures at **768**; a threshold taken at 900 is wrong on every 768-tall
+laptop.
+
+**(pin — both of the first cut's observables are ones this repo has already measured LYING.)**
+`responsive.test.mjs` records it after a reverted change: *"`scrollHeight` — with the old cap the
+body reported 223 = 223 while holding 505px of items, because a flex column with a capped height
+clips its children without establishing any scroll extent … Hit-testing is the one that accounts for
+the clip."* The same nesting is live here — the active panel is `flex: 1 1 auto; min-height: 0`
+inside `.sbpane`, which is the same again — so the fit predicate is a **hit test**, reusing that
+file's `lastItemReachable` shape, not a height.
+
+**(pin — the measurement is fixture-dependent in four places, one of them MACHINE-dependent.)**
+`font: 14px/1.4 system-ui` resolves per OS; the deadline line is `toLocaleDateString()` +
+`toLocaleTimeString()` and the harness pins **no locale and no timezone**; `.cerhead` is
+`flex-wrap: wrap`, so the recital's length sets the head's line count; and `.cerparty` is a flex row
+with **no** wrap, so a realistic capacity is clipped by `.sbpane { overflow-x: hidden }` — which
+means a fixture of short labels measures a row height real ceremonies never have, erring
+**optimistic**. So: pin `locale` and `timezoneId` at launch, and make the fixture's worst row
+explicit — longest label, a real capacity, and the `you` tag, which carries its own border.
+
+**MEASURED 2026-09-09 at 1280x768, `en-GB`/`UTC`, by `test/ui/railscale.test.mjs`.** The reference
+window is declared here because the app declares none: no `@media (max-height` rule exists and
+`browser.Open` launches `--app` with no `--window-size`. Width is not the axis — `#sidebar` is a
+fixed 200px that `display: none`s below 899, so every width where the rail exists renders an
+identical card; 768 is the height `responsive.test.mjs` already measures against, and a threshold
+taken at the harness's default 900 would be wrong on every 768-tall laptop.
+
+| roster | plain card | action above the fold | rich card | action above the fold |
+|---|---|---|---|---|
+| 2 | 167px | **yes** | 346px | **yes** |
+| 4 | 204px | **yes** | 504px | no |
+| 8 | 280px | **yes** | 820px | no |
+| 16 | 430px | **yes** | 1451px | no |
+| 24 | 580px | no | 2083px | no |
+| 32 | 731px | no | 2714px | no |
+
+*(pane 649px throughout. `plain` is a name and nothing else; `rich` adds the capacity D20's amendment
+makes part of the agreement rather than a label. Every row at every size is reachable by scrolling,
+on both fixtures — the rail scrolls correctly at a full roster and nothing is clipped.)*
+
+**The threshold is `SittingCeiling` — 8 — and this slice CHECKED it rather than choosing a second
+number.** The measured bracket is **4 to 16–24**: with capacities the one action leaves the fold at
+4, with bare names it survives to 16. Eight sits inside that bracket, it is already the number this
+codebase designates as *"what the UI should be designed and copy-written for"*
+(`internal/ceremony/convene.go:115-126`), and it already reaches the user through
+`WarnSittingCeiling`. **A freshly-minted second number would be two roster-size regimes disagreeing
+— ADR-009's named failure — for no gain the measurement can show.**
+
+**What the measurement says that the threshold does not.** D6's premise is *"one enabled action is
+right at three parties"*. At 1280x768 with real capacities the single action is already below the
+fold at **four**. So "one action" is right about the *rail's shape* and was never a claim that the
+action is on screen; what keeps it reachable is scrolling, at every size, which is measured above.
+That is worth knowing before S02 decides what a worklist replaces.
+
+**Two things the run corrected about its own instrument, recorded because a measurement is only as
+good as the probe.** The first cut scrolled `#sbFunctions`, copying `responsive.test.mjs`, and every
+reading past n=2 came back unreachable with the pane reporting a scroll extent of **zero** — which
+reads exactly like the clip that file documents. It is not: `.sbpane > .panel.active:not(#commands)`
+is `flex: 1 1 auto; min-height: 0` and `.panel` carries `overflow: auto`, so **the ceremony panel is
+its own scroller** and the accordion's cards and a content panel scroll in two different boxes. A
+probe that assumes one measures nothing about the other. And the sweep's own stimulus floor caught
+its second staleness when the second fixture doubled the readings.
 
 **No deepdive: this slice adds an instrument and changes no production code.** Recorded rather than
 skipped silently.
@@ -883,6 +958,15 @@ two diverge the moment `Party.Signs` is false — D22's non-signing convener —
 displays both numbering systems side by side, which makes the wrong join the natural one. The rail's
 own comment forbids the shortcut: *"A JS predicate over the roster would be a second derivation that
 agrees on the day it is written — the shape ADR-009 refuses."* Hence the fixture clause above.
+
+**(pin at the grill, 2026-09-09 — the worklist must show LESS per party, not more, or the remedy is
+taller than the problem it fixes.)** The clause above asks that above the threshold each party render
+as done / current / not yet reached — an extra state token on every row. If the threshold is "the
+roster stopped fitting", then switching at N+1 to a rendering that is **taller per party than the
+one that just failed to fit** points the metric and the remedy in opposite directions. So the
+worklist is a **summary plus the parties who still have to act** — the full roster collapses — and
+that is what "a worklist" means for the rest of this phase. Settled here, before the measurement, so
+S01 knows what it is measuring the threshold FOR.
 
 **No deepdive: the rail is this plan's own code** (P01.S02 authored the per-card action, P01.S03 its
 terminal states). Recorded rather than skipped silently.
@@ -1065,8 +1149,12 @@ or mismatched object does not.
 
 ## Standing caveats
 
-- **The worklist threshold does not exist yet** (D6), and until it does, any test of that behaviour
-  can only report pass. It is chosen from rendering at several roster sizes, not guessed.
+- ~~**The worklist threshold does not exist yet** (D6), and until it does, any test of that behaviour
+  can only report pass. It is chosen from rendering at several roster sizes, not guessed.~~
+  **DISCHARGED at P04.S01, 2026-09-09**: measured at six roster sizes on two fixtures at a declared
+  reference window, and the threshold is `SittingCeiling` (8) — checked, not chosen, because the
+  codebase already carries that number for exactly this job. The measurement and its bracket are in
+  S01.
 - **Whether a correction path is genuinely needed is unmeasured.** The inventory's row 19 is the
   only evidence that would settle it, and it has no reader today.
 - **P05.S03's reachability is the one thing in that phase not settled by reading.** The convener

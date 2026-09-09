@@ -43,12 +43,20 @@ if (!BASE || !EXECUTABLE) {
 // `base` names which nib to drive. It defaults to the shared unlocked one; the locked-view file
 // passes LOCKED_BASE. `waitFor` moves with it — a locked app never reaches `#empty`, because
 // applyStatus returns at the overlay.
-export async function launch({ routes = null, waitFor = '#empty', base = BASE } = {}) {
+// `locale` and `timezoneId` pin the two things a MEASUREMENT cannot leave to the machine. The
+// ceremony rail renders its deadline with `toLocaleDateString()` + `toLocaleTimeString()`, so the
+// string's length — and how many lines it wraps to in a 200px column — varies by host locale and
+// zone. Unset for every test that asserts behaviour; set by the one that measures geometry.
+export async function launch({ routes = null, waitFor = '#empty', base = BASE, locale = null, timezoneId = null } = {}) {
   const browser = await chromium.launch({
     executablePath: EXECUTABLE,
     headless: process.env.NIB_UI_HEADED !== '1',
   });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 900 },
+    ...(locale ? { locale } : {}),
+    ...(timezoneId ? { timezoneId } : {}),
+  });
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
