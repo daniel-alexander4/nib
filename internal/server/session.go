@@ -100,6 +100,10 @@ const (
 // state is guarded by mu; it is independent of the Server's document lock.
 type session struct {
 	mu sync.Mutex
+	// armedWatch is closed and replaced whenever the arms table changes, so a window stream can
+	// wait on "something changed" without polling (P01.S05). Nil until the first waiter, because
+	// most processes never have one.
+	armedWatch chan struct{}
 	// arms holds this machine's armed sessions, one slot per kind (P08.S05c). Everything that
 	// belongs to ONE arm and dies with it lives on the `arm` value; everything the machine has
 	// exactly one of — because there is one user looking at one screen — stays below.
@@ -280,6 +284,43 @@ func (se *session) armedLocked() bool {
 // one door, and the guard now requires all three sites rather than the two it could see.
 func (se *session) collidesLocked(kind armKind) bool { return se.arms[kind] != nil }
 
+// armedChangedLocked wakes every window stream waiting on the armed state (P01.S05, D5).
+//
+// **One door called from the three places that write `arms`, which is ADR-009's shape rather than
+// three copies of a notify.** Those three are `armIn`, `displacePolicyArm` and `disarmWhen`; every
+// other disarm routes through the last of them. A site added without this call is a window whose
+// close prompt is stale, which nothing else would notice — so the door is named at each of them.
+//
+// Called with the lock HELD, and the close-and-replace is the standard broadcast: every waiter is
+// holding the old channel and every one of them wakes.
+func (se *session) armedChangedLocked() {
+	if se.armedWatch != nil {
+		close(se.armedWatch)
+		se.armedWatch = nil
+	}
+}
+
+// armedChanges returns a channel closed on the next change to the armed state.
+func (se *session) armedChanges() <-chan struct{} {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if se.armedWatch == nil {
+		se.armedWatch = make(chan struct{})
+	}
+	return se.armedWatch
+}
+
+// Armed reports whether ANY slot is armed — the fact a close prompt turns on (D5).
+//
+// **Any slot and not the interactive one**, because D5's clause is "an armed or running ceremony"
+// and the delivery arm is a ceremony this machine is part of: closing the window ends the process
+// and the arm with it, whichever slot holds it.
+func (se *session) Armed() bool {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	return se.armedLocked()
+}
+
 // slotTaken is `collidesLocked` for a caller that does not hold the lock — so a door can ask before
 // it opens a socket rather than after (`/pending 381`).
 //
@@ -319,6 +360,7 @@ func (se *session) armIn(a *arm) bool {
 		return false
 	}
 	se.arms[a.kind] = a
+	se.armedChangedLocked() // P01.S05: a window's close prompt turns on this
 	if se.receivedBy == a.kind {
 		se.received = nil // a fresh session clears THIS slot's prior transfer result
 	}
@@ -527,6 +569,7 @@ func (se *session) displacePolicyArm() bool {
 	}
 	cancel, ln := a.cerCancel, a.ln
 	se.arms[armInteractive] = nil
+	se.armedChangedLocked() // P01.S05
 	se.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -725,6 +768,9 @@ func (se *session) disarmWhen(ok func(*arm) bool) int {
 			hits = append(hits, a)
 			se.arms[k] = nil
 		}
+	}
+	if len(hits) > 0 {
+		se.armedChangedLocked() // P01.S05
 	}
 	if len(hits) == 0 {
 		se.mu.Unlock()

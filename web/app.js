@@ -11195,6 +11195,44 @@ refreshStatus();
 
 // --- this window declares itself, and holds the declaration open ------------
 //
+// ceremonyArmed is the machine's armed state as the SERVER last pushed it, and it is the half of
+// the close prompt the client could not otherwise know (P01.S05, D5).
+//
+// **One variable, written by one reader.** `pollRecv` cannot supply it: that poller starts only
+// when THIS window arms, so a window that never armed would report `false` while a ceremony was
+// running — the policy-armed case D5 most cares about. `/api/status` carries no such field. And
+// `beforeunload` cannot fetch, so the value has to be sitting here before the user closes.
+//
+// It starts `false`, which is the safe direction: a window that has not yet heard from the server
+// does not prompt. The server pushes the current value the moment the stream opens, so the gap is
+// one round trip at launch.
+let ceremonyArmed = false;
+
+// closeWouldLose is the ONE door the close prompt turns on (P01.S05, D5/D8).
+//
+// **One door and not one test per condition**, which is the slice's own third acceptance clause.
+// Two conditions today and the prompt must fire on either; a `beforeunload` that grew a second
+// `if` per condition is how one of them silently stops being asked.
+//
+// **`editedViews()` and NOT `hasUnsavedWork()`.** The second is per-VIEW and closing the window
+// ends every view — the exact defect that shipped once already for Close-All, where "the other
+// document's typed overlays, its overlay undo stack and its server history were discarded with NO
+// prompt at all". `editedViews` exists because of that and is the honest question here too.
+function closeWouldLose() {
+  return ceremonyArmed || editedViews().length > 0;
+}
+
+// **The browser will not show our words, and that is D5's whole shape.** Chrome, Firefox and Safari
+// all ignore custom `beforeunload` text and show their own generic sentence, so this can REQUIRE
+// CONFIRMATION and cannot say why. It is therefore armed only when something would actually be
+// lost — a prompt on every close trains the user to dismiss it, and then it is worth nothing on the
+// close that mattered. The real wording lives in Quit Nib (P01.S06), where Nib owns the modal.
+window.addEventListener('beforeunload', (e) => {
+  if (!closeWouldLose()) return;
+  e.preventDefault();
+  e.returnValue = ''; // required by older browsers to trigger the prompt at all
+});
+
 // One connection, opened at launch and never closed by us. Nib counts the windows
 // holding it; P01.S04 will read that count to decide the process has no reason to
 // keep running. Closing this window drops the socket, which is the whole signal.
@@ -11209,13 +11247,18 @@ refreshStatus();
 // Opened here rather than after the vault unlocks: a window sitting on the unlock
 // screen is a real window, and the route is public-loopback (D3) so it answers one.
 //
-// EventSource for its reconnect, not for its messages — nothing is ever sent on this
-// stream. A transient drop reconnects on its own, which is what keeps a blip from
-// reading as a closed window once a grace period exists. It is deliberately never
-// closed and never assigned: nothing in the app may end it, because ending it means
-// telling nib this window is gone.
+// EventSource for its reconnect FIRST, and since P01.S05 for one message too. A transient
+// drop reconnects on its own, which is what keeps a blip from reading as a closed window
+// inside the grace (P01.S04). It is deliberately never closed: nothing in the app may end
+// it, because ending it means telling nib this window is gone.
+//
+// **The one message is the machine's armed state**, pushed on connect and on change, and the
+// close prompt above turns on it. This comment said "nothing is ever sent on this stream"
+// until that landed.
 try {
-  new EventSource('/api/window');
+  const windowStream = new EventSource('/api/window');
+  // The server pushes this on connect and on every change — never on a clock. See the route.
+  windowStream.addEventListener('armed', (e) => { ceremonyArmed = e.data === 'true'; });
 } catch (e) {
   // A window that cannot declare itself still works; it only fails to keep nib
   // alive, which is the safe direction to fail in.

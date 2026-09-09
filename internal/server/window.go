@@ -327,9 +327,35 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// The whole handler. net/http cancels the request context when the peer
-	// disconnects, so this returns the moment the window is gone — and not
-	// before, however long that is. There is no read deadline to survive: the
-	// server is constructed with no timeouts (cmd/nib/main.go).
-	<-r.Context().Done()
+	// ── The armed state rides this stream (P01.S05, D5) ────────────────────────────
+	//
+	// **Because `beforeunload` cannot go and ask.** The close prompt must be armed only when
+	// something would be lost, and one half of that is "a ceremony is armed or running" — a fact
+	// the client had no window-independent way to know: `pollRecv` starts only when THIS window
+	// arms, so a window that did not arm never learned the machine was armed, which is exactly the
+	// policy-armed ceremony D5 most cares about. `/api/status` carries no such field and is not
+	// polled continuously.
+	//
+	// **Sent here rather than on a new poll, and this is not the heartbeat D1 refused.** D1's
+	// objection is to a heartbeat as the WINDOW SIGNAL — a timer cannot tell a minimised window
+	// from a closed one. This is state pushed on a socket already held for that signal, on change
+	// and never on a clock, so it adds no timer and no connection. The stream's own comment said
+	// "nothing is ever sent on this stream"; this is the first thing worth sending.
+	//
+	// The loop is also the whole handler. net/http cancels the request context when the peer
+	// disconnects, so a blocked `select` returns the moment the window is gone — and not before,
+	// however long that is. There is no read deadline to survive: the server is constructed with
+	// no timeouts (cmd/nib/main.go).
+	ctx := r.Context()
+	for {
+		if _, err := w.Write([]byte("event: armed\ndata: " + strconv.FormatBool(s.sess.Armed()) + "\n\n")); err != nil {
+			return
+		}
+		flusher.Flush()
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.sess.armedChanges():
+		}
+	}
 }

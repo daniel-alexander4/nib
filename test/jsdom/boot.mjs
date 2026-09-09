@@ -102,6 +102,29 @@ export async function boot({ routes = {}, search = '' } = {}) {
     if (dom.window[k] !== undefined) globalThis[k] = dom.window[k];
   }
 
+  // jsdom implements no EventSource, and app.js opens one at boot for the window stream. Without
+  // this the constructor throws, app.js's own try/catch swallows it, and the ARMED state the close
+  // prompt turns on can never be set — so P01.S05's "a ceremony is armed, so the prompt fires"
+  // case would be untestable at this tier rather than merely untested.
+  //
+  // **A stub that records rather than a polyfill that pretends.** It opens nothing and delivers
+  // nothing on its own; a test pushes an event by hand through `h.pushWindowEvent`, which is the
+  // honest shape for a tier with no server on the other end. Modelled on `matchMedia` below, which
+  // makes the same argument for staying inert.
+  const windowStreams = [];
+  globalThis.EventSource = class {
+    constructor(url) {
+      this.url = url;
+      this.listeners = {};
+      windowStreams.push(this);
+    }
+
+    addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+
+    close() {}
+  };
+  dom.window.EventSource = globalThis.EventSource;
+
   // jsdom implements no media queries at all — see the ceiling above. Inert is
   // the honest shape: a polyfill that pretended to answer queries would let a
   // test assert a media-dependent behaviour this tier cannot actually observe.
@@ -175,6 +198,19 @@ export async function boot({ routes = {}, search = '' } = {}) {
   return {
     dom,
     window: dom.window,
+    // pushWindowEvent delivers one server-sent event on the window stream app.js opened at boot,
+    // so a test can drive state the server would push (P01.S05's armed flag). Returns whether a
+    // stream was there to push to, because a silent no-op would make every assertion vacuous.
+    pushWindowEvent(type, data) {
+      let delivered = false;
+      for (const es of windowStreams) {
+        for (const fn of es.listeners[type] || []) {
+          fn({ data });
+          delivered = true;
+        }
+      }
+      return delivered;
+    },
     document: dom.window.document,
     calls,
     rejections,
