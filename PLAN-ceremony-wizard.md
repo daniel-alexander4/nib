@@ -798,6 +798,88 @@ because its button is a convenience; this bar carries the only route back.
 either side of it; invitations can be reissued from the rail; the no-correction rule is stated
 before the first hop.
 
+**Slices firmed 2026-09-09 at phase-open**, against the code as it now stands.
+
+**Four facts established before cutting, all by reading, each of which moved a slice boundary:**
+
+1. **The rail has no size-dependent behaviour of any kind.** Named searches over the whole panel
+   region for `slice(`, `length >`, `length <`, `Math.min`, `Math.max`, `paginat`, `collapse`,
+   `summar`, `showMore` return **zero**. `ceremonyRoster` is an unguarded `forEach`, the panel an
+   unguarded `for…of`, `ListStored` caps nothing and `handleCeremonies` has no limit or cursor. So
+   the worklist is built rather than tuned.
+2. **`POST /api/ceremony/invites` already re-issues every party's invitation, and the client calls
+   it from NOWHERE.** `grep -rn "ceremony/invites"` returns six hits — the route, two Go tests, a
+   red-proof script, a doc comment and a plan line — and **zero** in `web/`. D11's *"the API already
+   supports regenerating them"* is exact. Reissue is therefore a client slice, not a protocol one.
+3. **Nothing anywhere states the no-correction rule.** Searched the rendered strings for
+   `cannot be undone`, `irreversib`, `permanent`, `re-convene`, `abandon`, `losing every signature`:
+   every hit is a code comment or a *different* irreversibility (the redaction bake, the text-edit
+   flatten, password loss). Not in the README or the ADRs either.
+4. **No tier renders the rail above four parties, and no browser tier above two.** The largest rail
+   fixture in the repo is `ceremonydeliver.test.mjs` at 4; tier 3 and tier 6 are both at 2. So the
+   phase's first criterion has no instrument at all today, which is why S01 exists before S02.
+
+**The threshold is MEASURED, not chosen.** The plan's own standing caveat says it *"is chosen from
+rendering at several roster sizes, not guessed"*, and `CLAUDE.md` says a claim about scale is settled
+by running it. `MaxRoster` is **32** (`internal/ceremony/invitation.go:41-50`, enforced at three
+doors), so that is the top of the measured range and the number will be stated with the measurement
+beside it.
+
+**`/plan-review` trigger: FIRES, on the security dimension.** S03 puts **channel secrets** on screen
+from a new client surface — D21's own words are *"The invitation is a channel secret, never a
+signing credential"* — and the route returns every party's. Who may press it, what it renders, and
+what a 410 means are security questions, so the firmed phase goes to `/plan-review` before S01 is
+grilled. (It is not migration- or egress-heavy: no format version moves and nothing new leaves the
+machine.)
+
+#### P04.S01 — the rail at a full roster, measured
+Scope: an instrument that renders the rail at arbitrary roster sizes, and the measurement that
+chooses the threshold. No product behaviour changes. Refs: D6.
+Acceptance: the rail is rendered at several roster sizes up to `MaxRoster` and the geometry recorded
+at each; the worklist threshold is written into this plan as a number **with its measurement beside
+it**; and the harness that produced it is committed, so the number can be re-derived rather than
+believed.
+
+**No deepdive: this slice adds an instrument and changes no production code.** Recorded rather than
+skipped silently.
+
+#### P04.S02 — the worklist above the threshold
+Scope: the rail shows a single action below the threshold and a worklist above it. Refs: D6, D1.
+Acceptance: at a size below the threshold the rail is unchanged and shows exactly one enabled action
+per ceremony (P01.S02's clause, still true); at a size above it the coordinator can see who remains;
+both are asserted, and the assertion at the smaller size is what stops the worklist becoming the
+only shape.
+
+**No deepdive: the rail is this plan's own code** (P01.S02 authored the per-card action, P01.S03 its
+terminal states). Recorded rather than skipped silently.
+
+#### P04.S03 — invitations can be reissued from the rail
+Scope: the convener can re-issue every party's invitation from the rail. The route exists and is
+unreached; this is its client surface. Refs: D11, D21.
+Acceptance: a convener reissues from the rail and gets every non-convener party's invitation, in the
+same words the first issue used; a party who is not the convener is not offered it; the 410 ("the
+secret is gone") is rendered as its own sentence rather than as a generic failure.
+
+**(deepdive REQUIRED before the grill.)** It modifies `renderInvitations`, which is P06.S04's and
+which this plan did not write, and it surfaces channel secrets. Two things to settle at the line:
+what `convenerInvitationFor` does and does not carry — the door's own comment says **`Seeds` is
+absent and cannot be recovered**, and states it rather than papering over it — and whether the
+first-issue and re-issue surfaces can share one renderer without either inheriting the other's
+wording.
+
+#### P04.S04 — the no-correction rule is stated before the first hop
+Scope: the surface says, before a signature becomes irreversible, that there is no correction path.
+Refs: D12.
+Acceptance: the statement is reachable on the path a party actually takes, in D12's own terms (a
+wrong signature cannot be undone; the remedy is to abandon and re-convene, losing every signature
+collected); it appears for **both** roles; and it is not a toast.
+
+**(deepdive REQUIRED before the grill, and it has a named question.)** There are two doors — the
+initiating side's `#sinGo` and the receiving side's `#srvAccept` — and the spoken-check modal fires
+upstream of both for both roles. What is **not** settled by reading is whether a convener who signs
+has an irreversible moment distinct from `sessionInit()`, which decides whether one statement covers
+both roles or whether the convener needs their own. Settle that before choosing the surface.
+
 ### P05 — The pre-hop party learns, and can leave
 **Goal.** Close the two ends D14 left open: a party who has accepted and not yet signed can find
 out the proceeding ended, and can decide to stop taking part.
