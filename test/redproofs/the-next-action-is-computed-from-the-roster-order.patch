@@ -1,16 +1,17 @@
 --- a/internal/server/ceremonynext.go
 +++ b/internal/server/ceremonynext.go
-@@ -106,7 +106,12 @@
- 		return
- 	}
+@@ -252,9 +252,11 @@
  	roster := l3RosterFrom(rec.Roster, hex.EncodeToString(rh), rec.Intent)
--	next, nerr := p2p.NextContributor(pdf, roster)
+ 	// **One walk, two readings** (ADR-009). `NextContributor` is itself a thin reading of this, so
+ 	// calling it here as well would verify the document a second time for an answer already held.
+-	pr, nerr := p2p.ContributionProgress(pdf, roster)
+-	if nerr == nil && pr.Complete {
+-		nerr = p2p.ErrCeremonyComplete
 +	_ = pdf
-+	var next p2p.RosterEntry
++	var pr p2p.Progress
 +	var nerr error
 +	if len(roster.Entries) > 0 {
-+		next = roster.Entries[0]
-+	}
++		pr = p2p.Progress{Order: roster.Entries, Done: 0}
+ 	}
  	if nerr != nil {
  		out := ceremonyNextResponse{Ceremony: id, State: "unavailable", Reason: nerr.Error()}
- 		if errors.Is(nerr, p2p.ErrCeremonyComplete) {

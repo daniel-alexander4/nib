@@ -216,9 +216,49 @@ var (
 // It returns the roster entry whose contribution the document is waiting for, having first
 // established that everything already on the document is the prefix before it.
 func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
+	pr, err := ContributionProgress(pdf, r)
+	if err != nil {
+		return RosterEntry{}, err
+	}
+	if pr.Complete {
+		return RosterEntry{}, ErrCeremonyComplete
+	}
+	return pr.Order[pr.Done], nil
+}
+
+// Progress is how far a ceremony's document has got, in the terms the gate already reasons in.
+//
+// **It carries no per-party rendering and no state words**: `Order` and `Done` are the two facts
+// the walk below produces, and everything a surface wants — done / current / not yet reached — is a
+// pure function of an index against them. That is the whole point (ADR-009). "Has party k signed"
+// is already implemented three times in this tree and two of them use DIFFERENT rules —
+// `Completeness` is set membership and this walk is a positional PREFIX, and they diverge the
+// moment signature 2 belongs to roster party 3. A fourth derivation is the shape ADR-009 refuses,
+// so a caller that wants per-party states derives them from these two fields and never re-walks.
+type Progress struct {
+	// Order is the signing order — `r.Entries` filtered on `Signs`, which is NOT the roster's own
+	// order or its indices. The two diverge in every ceremony with a non-signing party.
+	Order []RosterEntry
+	// Done is how many signatures form a valid prefix of Order. Order[Done] is whose turn it is.
+	Done int
+	// Complete is Done == len(Order). Kept as a field rather than left to the caller's arithmetic
+	// because `NextContributor`'s contract turns it into a named error, and two places computing
+	// "finished" from a count is how they come to disagree.
+	Complete bool
+}
+
+// ContributionProgress is the ONE walk (ADR-009). `NextContributor` is a thin reading of it, and
+// so is any per-party surface.
+//
+// **Extracted at P04.S02 without changing a line of the walk**, so the error taxonomy every caller
+// branches on — `ErrPrefixMismatch`, `ErrPrefixUnproven`, `ErrProceedingMismatch`,
+// `ErrCeremonyComplete` — is the same taxonomy, produced in the same order, by the same
+// comparisons. The alternative on offer was a second function that answers "has k signed" its own
+// way; this repo already has three of those.
+func ContributionProgress(pdf []byte, r Roster) (Progress, error) {
 	signing := SigningOrder(r)
 	if len(signing) == 0 {
-		return RosterEntry{}, fmt.Errorf("%w: this roster has no signing parties", ErrPrefixMismatch)
+		return Progress{}, fmt.Errorf("%w: this roster has no signing parties", ErrPrefixMismatch)
 	}
 	// **A destroyed signature does not report itself as invalid — it VANISHES, and that is
 	// measured.** Tampering with a signed document's body leaves `sign.Verify` reporting
@@ -237,13 +277,13 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
 	// check over the document's bytes, which `embed.go` records as unsolved and which S05 and
 	// S06 inherit. L3 is about ORDER, and it says so here rather than appearing to cover it.
 	if st := sign.Verify(pdf); st.State == sign.Invalid {
-		return RosterEntry{}, fmt.Errorf("%w: this document carries a signature that cannot be "+
+		return Progress{}, fmt.Errorf("%w: this document carries a signature that cannot be "+
 			"read, so what is already on it cannot be checked against the roster",
 			ErrPrefixUnproven)
 	}
 	ats := ReadAttestations(pdf)
 	if len(ats) > len(signing) {
-		return RosterEntry{}, fmt.Errorf("%w: the document carries %d signature(s) and the "+
+		return Progress{}, fmt.Errorf("%w: the document carries %d signature(s) and the "+
 			"ceremony has %d signing part(ies)", ErrPrefixMismatch, len(ats), len(signing))
 	}
 	for i, a := range ats {
@@ -253,11 +293,11 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
 		// `SignerAttestation.Valid` is part of the type's contract and a future library that
 		// honoured it would otherwise walk straight past here.
 		if !a.Valid {
-			return RosterEntry{}, fmt.Errorf("%w: signature %d (%s) does not verify",
+			return Progress{}, fmt.Errorf("%w: signature %d (%s) does not verify",
 				ErrPrefixUnproven, i+1, shortFP(a.Fingerprint))
 		}
 		if !strings.EqualFold(a.Fingerprint, signing[i].Fingerprint) {
-			return RosterEntry{}, fmt.Errorf("%w: signature %d is %s and the roster's %s signer "+
+			return Progress{}, fmt.Errorf("%w: signature %d is %s and the roster's %s signer "+
 				"is %s", ErrPrefixMismatch, i+1, shortFP(a.Fingerprint), ordinal(i+1),
 				shortFP(signing[i].Fingerprint))
 		}
@@ -278,21 +318,18 @@ func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
 		// at hop 2 with *"signature 1 attests to a peer who is not a valid signer of this
 		// document"* — the first signer, exempt under the new direction and not under the old.
 		if i > 0 && !a.Matched {
-			return RosterEntry{}, fmt.Errorf("%w: signature %d (%s) attests to a peer who is "+
+			return Progress{}, fmt.Errorf("%w: signature %d (%s) attests to a peer who is "+
 				"not a valid signer of this document", ErrPrefixUnproven, i+1,
 				shortFP(a.Fingerprint))
 		}
 		if r.Commitment != "" && a.RosterHash != "" &&
 			!strings.EqualFold(a.RosterHash, r.Commitment) {
-			return RosterEntry{}, fmt.Errorf("%w: signature %d commits to proceeding %s and this "+
+			return Progress{}, fmt.Errorf("%w: signature %d commits to proceeding %s and this "+
 				"one is %s", ErrProceedingMismatch, i+1, shortFP(a.RosterHash),
 				shortFP(r.Commitment))
 		}
 	}
-	if len(ats) == len(signing) {
-		return RosterEntry{}, ErrCeremonyComplete
-	}
-	return signing[len(ats)], nil
+	return Progress{Order: signing, Done: len(ats), Complete: len(ats) == len(signing)}, nil
 }
 
 // PredecessorOf names the signing party immediately BEFORE `me` in the roster, or "" when `me` is

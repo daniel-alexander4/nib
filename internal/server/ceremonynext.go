@@ -65,6 +65,88 @@ type ceremonyNextResponse struct {
 	MeKnown bool `json:"meKnown"`
 	// Reason is the sentence for a non-waiting state, already written for a person.
 	Reason string `json:"reason,omitempty"`
+	// Parties is every roster member with what the document says about them (P04.S02, D6). It is
+	// what the rail's worklist renders above `ceremony.SittingCeiling`.
+	//
+	// **On THIS route and not on the listing, and the measurement decided it.**
+	// `internal/p2p/railcost_test.go` measured `NextContributor` at 26.6 ms on a 200-page signed
+	// document — two to four times a single `sign.Verify` — so per-party progress on
+	// `/api/ceremonies` would be tens of milliseconds per ceremony per request, on a route that
+	// already pays a `ReadMirror` each (`/pending 360`). Here the document is already open and
+	// already walked, so this costs nothing that was not already spent.
+	//
+	// **In ROSTER order, so the client never joins an index.** `Position` above is 1-based within
+	// the SIGNING order and the panel numbers over the full roster; joining them would mark a
+	// non-signing convener as the current signer in every ceremony the convene form can produce,
+	// since `Convene` prepends the convener at position 0. Sending the states removes the join.
+	Parties []ceremonyPartyState `json:"parties,omitempty"`
+	// Worklist is whether this ceremony is past `ceremony.SittingCeiling` and should render as a
+	// worklist rather than as one sentence (D6).
+	//
+	// **The SERVER decides, and the client is told.** The threshold is `ceremony.SittingCeiling`,
+	// which already exists and already reaches the user through `WarnSittingCeiling` at convene —
+	// its own doc calls it "what the UI should be designed and copy-written for". A JS comparison
+	// against a literal 8 would be a second copy of that number, and two roster-size regimes that
+	// agree on the day they are written is ADR-009's named failure. It is also D1's rule: the rail
+	// renders `next`'s answer and the client holds no step of its own.
+	Worklist bool `json:"worklist,omitempty"`
+}
+
+// ceremonyPartyState is one roster member's standing in the proceeding.
+//
+// **Derived, never decided here.** Every field is a reading of `p2p.Progress`'s two facts — the
+// signing order and how many signatures form a valid prefix of it — which is the ONE walk
+// (`ContributionProgress`). "Has party k signed" already has three implementations in this tree and
+// two of them use different rules; a fourth would be ADR-009's named failure, so this type computes
+// nothing and only re-expresses what the gate concluded.
+type ceremonyPartyState struct {
+	// Label is what the convener called them. No fingerprint: the phase's criterion is that the
+	// primary flow contains no hex, and a fingerprint is hex.
+	Label string `json:"label,omitempty"`
+	// Capacity is the role they sign in, which D20 makes part of the agreement.
+	Capacity string `json:"capacity,omitempty"`
+	// State is one of: "signed", "signing" (their turn), "waiting" (not yet reached), or
+	// "watching" (a party who does not sign at all — D22's non-signing convener).
+	//
+	// **"watching" is a fourth word and not an omission.** A non-signing party rendered as
+	// "waiting" would tell a coordinator that somebody still owes a signature they will never
+	// give, which at a full roster is exactly the misreading the worklist exists to prevent.
+	State string `json:"state"`
+	// IsMe marks this machine's own row, from the same marker the panel already uses.
+	IsMe bool `json:"isMe"`
+}
+
+// partyStates re-expresses `p2p.Progress` as one row per ROSTER member, in roster order.
+//
+// It is the only place that maps the gate's conclusion onto words, and it decides nothing: a
+// party's index in the SIGNING order against `Done` is the whole rule, and a party absent from that
+// order does not sign.
+func partyStates(roster []ceremony.Party, pr p2p.Progress, me string) []ceremonyPartyState {
+	at := make(map[string]int, len(pr.Order))
+	for i, e := range pr.Order {
+		at[strings.ToLower(e.Fingerprint)] = i
+	}
+	out := make([]ceremonyPartyState, 0, len(roster))
+	for _, p := range roster {
+		row := ceremonyPartyState{
+			Label:    p.Label,
+			Capacity: p.Capacity,
+			IsMe:     me != "" && strings.EqualFold(me, p.Fingerprint),
+			State:    "watching",
+		}
+		if i, ok := at[strings.ToLower(p.Fingerprint)]; ok {
+			switch {
+			case i < pr.Done:
+				row.State = "signed"
+			case i == pr.Done:
+				row.State = "signing"
+			default:
+				row.State = "waiting"
+			}
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // endedReason returns the person-facing sentence for a ceremony that has ended, or "" when it has
@@ -178,7 +260,12 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roster := l3RosterFrom(rec.Roster, hex.EncodeToString(rh), rec.Intent)
-	next, nerr := p2p.NextContributor(pdf, roster)
+	// **One walk, two readings** (ADR-009). `NextContributor` is itself a thin reading of this, so
+	// calling it here as well would verify the document a second time for an answer already held.
+	pr, nerr := p2p.ContributionProgress(pdf, roster)
+	if nerr == nil && pr.Complete {
+		nerr = p2p.ErrCeremonyComplete
+	}
 	if nerr != nil {
 		out := ceremonyNextResponse{Ceremony: id, State: "unavailable", Reason: nerr.Error()}
 		if errors.Is(nerr, p2p.ErrCeremonyComplete) {
@@ -190,12 +277,17 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	next := pr.Order[pr.Done]
 	pos, of := signingPositionIn(roster, next.Fingerprint)
 	writeJSON(w, ceremonyNextResponse{
 		Ceremony: id, State: "waiting",
 		Label: next.Label, Capacity: next.Capacity, Position: pos, Of: of,
 		IsMe:    st.Me != "" && strings.EqualFold(st.Me, next.Fingerprint),
 		MeKnown: st.Me != "",
+		Parties: partyStates(rec.Roster, pr, st.Me),
+		// Measured at P04.S01: with real capacities the card's one action leaves the fold at four
+		// parties and with bare names it survives to sixteen, so eight sits inside the bracket.
+		Worklist: len(rec.Roster) > ceremony.SittingCeiling,
 	})
 }
 

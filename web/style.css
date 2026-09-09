@@ -1346,6 +1346,18 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .cerdeliverwhy { color: var(--subtext1); font-size: 11px; margin: 2px 0 6px 8px; }
 .cerfail { color: var(--peach); }
 .cerpos { color: var(--subtext1); font-size: 11px; margin: 6px 0 0; }
+
+/* The worklist (P04.S02, D6), shown above ceremony.SittingCeiling in place of one sentence. It is
+   deliberately LIGHTER per row than .cerparty: the parties who are done collapse into the summary,
+   so what is left is the shortlist a coordinator is actually working. */
+.cerworklist { margin-top: 4px; }
+.cerworksum { color: var(--subtext1); font-size: 11px; margin: 4px 0; }
+.cerworkrow { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0; }
+.cerworkrow .cerworkstate { color: var(--subtext0); font-size: 11px; }
+/* Whose turn it is, in the same green the rail already uses for "you" — one accent, two meanings
+   that never co-occur on a row unless it is both, which is exactly when it should stand out most. */
+.cerworkrow.cerworknow .cerwho { font-weight: 600; color: var(--green); }
+.cerworkrow.cerworknow .cerworkstate { color: var(--green); }
 .cerendedhead { margin-top: 12px; }
 .cerended-row {
   display: flex;

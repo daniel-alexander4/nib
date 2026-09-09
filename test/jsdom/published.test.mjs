@@ -69,6 +69,13 @@ const PUBLISHED = [
   // beside `isMe` because a machine that does not know its position must not be told it is
   // somebody else's turn.
   { type: 'ceremonyNextResponse', readers: ['web/app.js'] },
+  // One roster member's standing in the proceeding (P04.S02, D6). Rendered by `ceremonyWorklist`
+  // above `ceremony.SittingCeiling`: `label` names the party, `state` is the word beside them,
+  // `capacity` the role they sign in, and `isMe` marks the user's own row. It rides on
+  // `ceremonyNextResponse.parties` — the `next` route rather than the listing, because
+  // `internal/p2p/railcost_test.go` measured `NextContributor` at 26.6 ms on a 200-page signed
+  // document and the listing pays a `ReadMirror` per ceremony already.
+  { type: 'ceremonyPartyState', readers: ['web/app.js'] },
   // What each tier of the connection ladder is doing (P06.S05). Published while armed and NOT
   // behind the diagnosis's bootstrap gate, which is the gate that made this screen blank.
   { type: 'armProgress', readers: ['web/app.js'] },

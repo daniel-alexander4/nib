@@ -314,3 +314,96 @@ test('accepting an invitation shows the roster with you and the convener marked'
   assert.doesNotMatch(out.textContent, new RegExp(PEER_FP.slice(0, 16)),
     'the accepted roster renders a hex fingerprint');
 });
+
+// ── P04.S02: above the sitting ceiling the same answer renders as a worklist ─────────────────
+//
+// D6: one enabled action is right at three parties and wrong at thirty-two, "where a coordinator
+// working through six hours of hops needs to see who remains". The threshold is
+// `ceremony.SittingCeiling` and it lives on the SERVER — `d.worklist` is its answer — because a JS
+// comparison against a literal 8 would be a second copy of a number the codebase already has, and
+// which already reaches the user through `WarnSittingCeiling` at convene.
+//
+// **What this tier can see and tier 3 cannot bother with:** which parties are named, which are
+// collapsed, and that every state word came from the server rather than from a predicate here.
+
+const bigParties = (done, signing = 12, watching = 1) => {
+  const out = [];
+  for (let i = 0; i < watching; i++) out.push({ label: `Observer ${i + 1}`, state: 'watching' });
+  for (let i = 0; i < signing; i++) {
+    out.push({
+      label: `Signer ${i + 1}`,
+      capacity: i === 0 ? 'as director' : '',
+      state: i < done ? 'signed' : i === done ? 'signing' : 'waiting',
+      isMe: i === done,
+    });
+  }
+  return out;
+};
+
+async function worklist(answer) {
+  nextAnswer = answer;
+  try {
+    const host = await showPanel();
+    host.querySelector('.cernextbtn').click();
+    await settle();
+    return host;
+  } finally {
+    nextAnswer = defaultNext;
+  }
+}
+
+test('above the sitting ceiling the parties who are DONE collapse into a count', async () => {
+  const host = await worklist({
+    ceremony: '1'.repeat(32), state: 'waiting', label: 'Signer 6', position: 6, of: 12,
+    isMe: true, meKnown: true, worklist: true, parties: bigParties(5),
+  });
+  const list = host.querySelector('.cerworklist');
+  assert.ok(list, 'a ceremony past the sitting ceiling rendered one sentence and no worklist');
+
+  const sum = list.querySelector('.cerworksum');
+  assert.match(sum.textContent, /5 of 12 signed/,
+    `the summary reads ${JSON.stringify(sum.textContent)} — the count is what replaces the parties `
+    + 'who are done, so a worklist without it has hidden them rather than summarised them');
+  assert.match(sum.textContent, /1 not signing/,
+    'the summary does not separate the party who never signs. Folding them into the remainder tells '
+    + 'a coordinator somebody still owes a signature they will never give');
+
+  const rows = [...list.querySelectorAll('.cerworkrow')];
+  assert.equal(rows.length, 8,
+    `${rows.length} rows are named. Twelve signers with five done leaves seven, plus the one who `
+    + 'does not sign — and every row that IS named is one a coordinator still has to think about');
+  assert.equal(rows.filter((r) => /Signer [1-5]\b/.test(r.textContent)).length, 0,
+    'a party who has already signed is still named individually, so the worklist is TALLER per '
+    + 'party than the roster it replaces — which points the remedy the opposite way from the '
+    + 'problem it exists to fix');
+});
+
+test('the worklist marks whose turn it is, and says it in words rather than in colour alone', async () => {
+  const host = await worklist({
+    ceremony: '1'.repeat(32), state: 'waiting', label: 'Signer 6', position: 6, of: 12,
+    isMe: true, meKnown: true, worklist: true, parties: bigParties(5),
+  });
+  const now = host.querySelector('.cerworkrow.cerworknow');
+  assert.ok(now, 'no row is marked as the current signer');
+  assert.match(now.textContent, /Signer 6/, `the current row names ${JSON.stringify(now.textContent)}`);
+  assert.match(now.textContent, /their turn now/i,
+    'the current party is distinguished only by a class. A state carried by colour alone is not a '
+    + 'state a screen reader or a monochrome display conveys (WCAG 1.4.1)');
+  const watcher = [...host.querySelectorAll('.cerworkrow')].find((r) => /Observer/.test(r.textContent));
+  assert.match(watcher.textContent, /does not sign/i,
+    'the non-signing party is rendered with no word of its own, so it reads as one still to act');
+});
+
+test('below the sitting ceiling nothing changes — one sentence, no worklist', async () => {
+  const host = await worklist({
+    ceremony: '1'.repeat(32), state: 'waiting', label: 'Bob Landlord', position: 1, of: 2,
+    isMe: false, meKnown: true, parties: bigParties(0, 2, 0),
+  });
+  assert.equal(host.querySelector('.cerworklist'), null,
+    'a two-party ceremony rendered a worklist. The parties are sent on every answer because they '
+    + 'cost nothing to compute where the document is already open — `worklist` is the server\'s '
+    + 'decision about which rendering this is, and rendering one whenever parties arrive would '
+    + 'make the threshold do nothing');
+  assert.match(host.querySelector('.cernextline').textContent, /Waiting for Bob Landlord/,
+    'the single sentence is gone, so the small case was changed by a slice that is about the large one');
+});
