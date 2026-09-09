@@ -1326,7 +1326,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .cerdeadline { color: var(--subtext1); font-size: 11px; margin: 4px 0 0; }
 .cerroster { margin-top: 6px; }
 .cerparty { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0; }
-.cerparty.cerme .cerwho { font-weight: 600; color: var(--green); }
+.cerparty.cerme .cerwho, .cerworkrow.cerme .cerwho { font-weight: 600; color: var(--green); }
 .cerwho { color: var(--text); }
 .cerrole { color: var(--subtext1); font-size: 11px; }
 .certag {

@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -283,4 +286,163 @@ func foreignRecord(t *testing.T) ceremony.Record {
 		t.Fatal(err)
 	}
 	return rec
+}
+
+// **The THRESHOLD itself, driven either side — which nothing did until P04's phase close.**
+//
+// The rail's two renderings are driven at tier 2 with `worklist` stubbed true and false, so the
+// panel is asserted on both sides of the boundary. What that cannot see is the boundary: the server
+// decides it (`len(rec.Roster) > ceremony.SittingCeiling`), and a wrong comparison — `>=`, or a
+// different constant — renders perfectly on both sides of whatever number it happens to use.
+//
+// P04's first exit criterion is "the worklist threshold is a stated number AND the rail is asserted
+// at sizes either side of it". The number is stated; this is the half that makes it the number the
+// code uses.
+func TestTheWorklistThresholdIsSittingCeiling(t *testing.T) {
+	ts, pdfPath := startServer(t)
+	c, csrf := authedClient(t, ts)
+	me := ""
+
+	convene := func(parties int) string {
+		t.Helper()
+		if code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: pdfPath}); code != http.StatusOK {
+			t.Fatalf("open: %d %s", code, body)
+		}
+		if me == "" {
+			me = myFingerprint(t, c, ts.URL)
+		}
+		roster := []convenePartyRequest{{Fingerprint: me, Label: "Convener", Signs: true}}
+		for i := 1; i < parties; i++ {
+			roster = append(roster, convenePartyRequest{
+				// Distinct, valid hex, one per party.
+				Fingerprint: strings.Repeat(string("0123456789abcdef"[i%16]), 64),
+				Label:       "Party " + string(rune('A'+i)), Signs: true,
+			})
+		}
+		code, body := postForCode(t, c, csrf, ts.URL+"/api/ceremony/convene", conveneRequest{
+			Roster: roster, Intent: "co-sign the lease", ConvenerSigns: true,
+			Expires: time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+		})
+		if code != http.StatusOK {
+			t.Fatalf("convene %d parties: %d %s", parties, code, body)
+		}
+		var out conveneResponse
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Ceremony
+	}
+
+	worklistFor := func(id string) bool {
+		t.Helper()
+		res, err := c.Get(ts.URL + "/api/ceremony/next?ceremony=" + id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out ceremonyNextResponse
+		if derr := json.NewDecoder(res.Body).Decode(&out); derr != nil {
+			t.Fatal(derr)
+		}
+		// SETUP: the route really answered about this ceremony and really got as far as walking it.
+		if out.Ceremony != id {
+			t.Fatalf("the route answered about %s, asked about %s", out.Ceremony, id)
+		}
+		if out.State != "waiting" {
+			t.Fatalf("a freshly convened ceremony is %q (%s), not \"waiting\" — the worklist flag is "+
+				"only set on the waiting branch, so any other state makes this test vacuous",
+				out.State, out.Reason)
+		}
+		return out.Worklist
+	}
+
+	atCeiling := convene(ceremony.SittingCeiling)
+	overCeiling := convene(ceremony.SittingCeiling + 1)
+
+	if worklistFor(atCeiling) {
+		t.Errorf("a roster of exactly %d asks for a worklist. The ceiling is the largest roster the "+
+			"single action is right for — D22's own doc calls %d \"what the UI should be designed "+
+			"and copy-written for\" — so the switch is at ceiling+1, not at the ceiling",
+			ceremony.SittingCeiling, ceremony.SittingCeiling)
+	}
+	if !worklistFor(overCeiling) {
+		t.Errorf("a roster of %d does not ask for a worklist, so the rail keeps offering one action "+
+			"past the size D6 says it is wrong at — and the threshold is a number nothing reads",
+			ceremony.SittingCeiling+1)
+	}
+}
+
+// A ceremony past its deadline has nobody left to invite, and the client cannot know it.
+//
+// **`Stored.Ended` is the ATTESTED end state only.** Expiry is derived, never written there, so the
+// rail's `!c.ended` gate — which is "not known to have ended", not "still running" — lets the
+// control through. Measured at P04's phase close: the same card said "this ceremony's deadline has
+// passed" on one line and offered a re-issue on the next, and the mint worked.
+func TestAReIssueIsRefusedOnceTheDeadlineHasPassed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, v := unlockedServer(t)
+	cert, key, err := identity(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	myFP, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := sign.GenerateIdentity("the other party")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ofp, err := sign.Fingerprint(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := ceremony.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// **Planted rather than convened, and that is forced.** `Convene` refuses a deadline that does
+	// not leave time for every hop — measured: it wants ~49m for a single hop — so a ceremony that
+	// has ALREADY expired cannot be created through the door. The record is therefore built and
+	// signed with this machine's own identity, which is what makes the convener check pass and
+	// leaves the deadline as the only thing left to refuse.
+	rec := ceremony.Record{
+		ID: id, Intent: "co-sign the lease",
+		Expires: time.Now().Add(-24 * time.Hour),
+		Roster: []ceremony.Party{
+			{Fingerprint: hex.EncodeToString(myFP), Label: "Convener", Signs: true},
+			{Fingerprint: hex.EncodeToString(ofp), Label: "B", Signs: true},
+		},
+	}
+	if err := rec.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	root := defaultOutputDir()
+	if _, err := ceremony.WriteMirror(root, rec, nil); err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: the mirror reads back and the record still VERIFIES with a past deadline — otherwise
+	// the route answers 404 and this test is about an unreadable directory rather than an expiry.
+	if _, _, rerr := ceremony.ReadMirror(root, rec.ID, time.Now()); rerr != nil {
+		t.Fatalf("setup: the planted mirror does not read back: %v", rerr)
+	}
+
+	body, _ := json.Marshal(ceremonyInvitesRequest{Ceremony: rec.ID})
+	req := httptest.NewRequest(http.MethodPost, "/api/ceremony/invites", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	// The vault is attached the way `requireUnlocked` attaches it, so the handler is reached in the
+	// state the wrapper leaves it in rather than through a second door.
+	s.handleCeremonyInvites(w, req.WithContext(context.WithValue(req.Context(), vaultCtxKey{}, v)))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("re-issuing past the deadline answered %d %s, want 409. The client's gate is "+
+			"`!c.ended`, and Stored.Ended is the ATTESTED end state — expiry is derived and never "+
+			"written there — so the control is offered and this is the only thing that refuses it",
+			w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "deadline has passed") {
+		t.Errorf("the refusal reads %s — it has to say WHICH thing ended, because the convener's "+
+			"next step (run it again as a new ceremony) follows from that and not from a generic "+
+			"conflict", w.Body.String())
+	}
 }
