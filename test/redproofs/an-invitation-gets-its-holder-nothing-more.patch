@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -12851,7 +12851,7 @@
+     + 'a copy can read who the parties are, their roles, and the sentence you are all agreeing to, '
+     + 'and can find — and get in the way of — the connection between you and the person this one '
+     + 'was made for. They cannot sign and cannot read the document: that needs the private key of '
+-    + 'a party the roster names, so anyone else is refused at the handshake.';
++    + 'a party the roster names and nothing more, so anyone else is refused at the handshake.';
+   e.result.appendChild(warn);
+ 
+   for (const inv of (d.invites || [])) e.result.appendChild(invitationRow(inv));

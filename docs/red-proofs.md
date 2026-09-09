@@ -4871,3 +4871,32 @@ assertion behind it, which is exactly what `redproof.sh` refuses to accept as a 
 asks `elementFromPoint` directly, so the defect has a sentence.
 
 `recorded` 392 → 395.
+
+## `/pending 427` — the invitation warning says what a holder can actually do *(v1.128.57)*
+
+| Defect reintroduced | Check that fired | What it said |
+| --- | --- | --- |
+| `an-invitation-gets-its-holder-nothing-more` — "and nothing more" put back into the warning | `ceremonypanel.test.mjs`, tier 2 | "the screen claims an invitation gets its holder nothing beyond the rendezvous" |
+
+**Only the negative clause is registered, and the three positive ones are probed beside it rather
+than recorded.** The row above is the defect that actually shipped: D21's own words, *"the
+rendezvous, and nothing beyond it"*, rendered on screen for three weeks. But an assertion probed
+only as a whole hides a dead conjunct, so each of the three capability clauses — the parties, the
+recital, the disruption — was deleted **separately** from `app.js` and required red on its own line.
+All three were, and the results are in the slice's commit message rather than here, because a red
+proof is for a defect that can come back and a deleted clause is caught by the clause's own
+assertion the moment anyone runs the file.
+
+**What made the old sentence false is worth stating once, because the correction is not a matter of
+tone.** `Invitation.Encode` is `json.Marshal` then base64url with a paste checksum — nothing signs
+it and nothing encrypts it — so `base64 -d` yields every party's label, capacity and full
+fingerprint plus `Intent`, the sentence being agreed. The per-party secret derives that leg's
+`HopSeed`/`RecordKey`/`RecordSalt` and the end-state trio, so a holder can fetch and decrypt the
+candidate records and the published end state, which carries the convener's certificate;
+`candidate.go`'s own doc already said *"Everyone holding the invitation can read every candidate
+record."* And `candidate.go:60-68` records the sequence-ceiling denial as an accepted residual, with
+the honest publisher's error naming it. The scope is **one leg**, not the ceremony, because secrets
+are per party — which is why the new sentence names the connection to one person rather than the
+ceremony's rendezvous.
+
+`recorded` 395 → 396.

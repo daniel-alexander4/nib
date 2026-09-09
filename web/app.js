@@ -12804,12 +12804,38 @@ function invitationRow(inv) {
 
 // renderInvitations shows one invitation per party, with what an invitation IS.
 //
-// **D21's sentence, in D21's terms, and the criterion asks for those terms.** Its own words: *"What
-// an intercepted invitation gets its holder: the rendezvous, and nothing beyond it. The pin is the
-// fingerprint in the roster and they do not hold the private key, so they are refused at the
-// handshake. The invitation is a channel secret, never a signing credential."* A user who forwards
+// **D21's sentence, in D21's terms, and the criterion asks for those terms.** A user who forwards
 // one should know what they did and did not give away, so the screen says it beside the thing
 // itself rather than in help nobody opens.
+//
+// **"The rendezvous, and nothing beyond it" was FALSE and shipped for three weeks (corrected
+// 2026-09-09, `/pending 427`, pinned against D21).** D21's own words — which this comment used to
+// quote approvingly — are *"What an intercepted invitation gets its holder: the rendezvous, and
+// nothing beyond it."* Read at the line, a holder gets considerably more, and none of it needs a
+// key:
+//
+//   * **The roster and the recital, in plain text.** `Invitation.Encode` is `json.Marshal` then
+//     base64url with a checksum (`internal/ceremony/invitation.go:376-382`) — nothing signs or
+//     encrypts it, and the package doc says so. So `base64 -d` yields every party's LABEL (the
+//     human name the convener typed), CAPACITY ("as Director of Acme Ltd"), full 32-byte
+//     fingerprint and `signs` flag, plus `Intent` — the sentence being agreed. That is who is
+//     involved, in what role, and what the matter is.
+//   * **What is published on that party's leg.** The secret keys `HopSeed`/`RecordKey`/`RecordSalt`
+//     and the end-state trio, so a holder can fetch and decrypt the candidate records (that leg's
+//     public addresses and ports) and the published end state, which carries the convener's
+//     certificate. `candidate.go`'s own doc states the boundary: *"Everyone holding the invitation
+//     can read every candidate record."*
+//   * **Denial of that leg.** `candidate.go:60-68` records it as an accepted residual: a holder can
+//     publish at `seq = MaxInt64` and take the key, and the honest publisher's own error says
+//     *"somebody who holds this ceremony's invitation has taken the key"* (`publish.go:167-169`).
+//
+// **The three things the old sentence got right are kept verbatim**, because they are true at the
+// line: it is a channel secret, it is not a signing credential, and the refusal is literally in the
+// TLS handshake callback (`internal/p2p/transport.go:143-148`), not at an application layer above
+// it. **And the scope is ONE LEG, not the ceremony** — secrets are per party
+// (`invitation.go:302-303`: *"A forwarded or intercepted invitation exposes one hop rather than the
+// ceremony"*), which is why the text says "the connection between you and the person this one was
+// made for" rather than naming the ceremony's rendezvous as a whole.
 function renderInvitations(d) {
   const e = cerEls();
   if (!e.result) return;
@@ -12821,9 +12847,11 @@ function renderInvitations(d) {
 
   const warn = document.createElement('p');
   warn.className = 'libhint cersecret';
-  warn.textContent = 'An invitation is a channel secret, not a signing credential. It lets its '
-    + 'holder find this ceremony and nothing more: signing needs the private key of a party the '
-    + 'roster names, so anyone else is refused at the handshake.';
+  warn.textContent = 'An invitation is a channel secret, not a signing credential. Anyone who gets '
+    + 'a copy can read who the parties are, their roles, and the sentence you are all agreeing to, '
+    + 'and can find — and get in the way of — the connection between you and the person this one '
+    + 'was made for. They cannot sign and cannot read the document: that needs the private key of '
+    + 'a party the roster names, so anyone else is refused at the handshake.';
   e.result.appendChild(warn);
 
   for (const inv of (d.invites || [])) e.result.appendChild(invitationRow(inv));
