@@ -85,7 +85,14 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # 40 since P02.S01 (consentrecital.test.mjs): the signer's agreement statement defaults to the
 # ceremony's recital, and outside a ceremony to the original sentence — two cases, because a
 # change that read an absent field would leave the box empty.
-Nib_expect_files=45
+#
+# **FIFTH INSTANCE, found 2026-09-08 at P03.S04, and it had run for two slices.** 45 → 47:
+# closeprompt.test.mjs landed at P01.S05 (v1.128.41) and draftconsumed.test.mjs at P03.S03
+# (v1.128.44), neither bumping this literal — so tier 2 exited 1 across both, with all 236 tests
+# passing, and both slices reported it green. **P03.S04 adds no jsdom file at all**; this bump is
+# the earlier drift being repaired by the next slice that ran the harness and read its last line,
+# which is the fourth instance's shape again (a person needing the number, not a check).
+Nib_expect_files=47
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

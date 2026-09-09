@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -12131,6 +12131,7 @@
+   // undone by the switch, because `syncSidebarForMode` stands the sheet down only for a tab that is
+   // NOT collaborate, and collaborate is the tab being switched to.
+   showCeremonyForm('convene'); // clears the park, through the one door
++  loadPeerPicker().then(() => restoreCeremonyDraft());
+   if (document.body.dataset.tab !== 'collaborate') setMode('collaborate');
+   // AFTER the flips, for the reason `parkCeremonySheet` gives: at entry `#cerIntent` is inside both
+   // a hidden sheet and a hidden form, where `.focus()` is a silent no-op that drops focus to

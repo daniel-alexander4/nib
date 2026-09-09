@@ -4833,3 +4833,41 @@ on the one person it had already failed. `IdleExitDecision` exists so that case 
 inside `main` could not have one.
 
 `recorded` 391 → 392.
+
+## P03.S04 — leaving the sheet for the document, and coming back (v1.128.45)
+
+The slice's content is an **absence**: the return leg re-shows the sheet and rebuilds nothing. An
+absence is the hardest thing to keep, because every later author who looks at the return path sees a
+form being shown and no restore beside it, and the restore is the obvious thing to add.
+
+| Row | Reader | Token |
+|---|---|---|
+| `the-setup-sheet-is-rebuilt-on-return` | `setupsheet.test.mjs`, tier 2 | "the return leg re-fetched the peers" |
+| `the-way-back-lives-in-the-sidebar` | `setupsheet.test.mjs`, tier 2 | "the way back is not inside #viewerWrap" |
+| `the-way-back-is-painted-under-the-document` | `setupsheet.test.mjs`, tier 3 | "the way back is painted under the document" |
+
+**"Rebuilt" is a claim about REQUESTS.** A rebuild that happens to restore the same values is
+indistinguishable from a re-entry by reading the fields, so the first row counts GETs — and the
+GET/POST split is itself a correction tier 3 made rather than foresight. The first cut counted every
+request to either path and went red at two, both **POSTs**: the draft saving as `change` fired on
+blur, which is the draft working. jsdom never showed it, because setting `.value` from script fires
+no `change`, so the tier-2 form of the same assertion was green against a build that saves and one
+that does not.
+
+**Two rows for the way back, and the split was decided by running them, not by reasoning.** The
+second row was first written as a **tier 3** row on the argument that the defect needs computed
+style — *"jsdom reports `hidden === false` for an element inside a `display: none` ancestor"*. Run,
+that argument is wrong for this patch: moving the bar out of `#viewerWrap` is a **structural**
+change and `closest('#viewerWrap')` catches it at tier 2 in a second. Worse, the tier-3 test does go
+red for it, but on its **geometry** assertion several lines before the sidebar is ever collapsed —
+so the token the row declared never printed, and `redproof.sh` would have reported *"went red, but
+not for its own reason"*. The row is tier 2 now.
+
+**The third row is what the tier-3-only half actually looks like.** Losing the bar's `z-index`
+leaves `hidden`, `closest()` and the element's rect all unchanged — nothing structural moves — while
+the page's own overlays (`.ovl` 8, its variants 9, `.shapemark` 10) paint over it in `#viewerWrap`'s
+context and take the click. Measured first as a bare Playwright **click timeout**: a red with no
+assertion behind it, which is exactly what `redproof.sh` refuses to accept as a proof. The test now
+asks `elementFromPoint` directly, so the defect has a sentence.
+
+`recorded` 392 → 395.

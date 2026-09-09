@@ -1,0 +1,11 @@
+--- a/web/style.css
++++ b/web/style.css
+@@ -1825,7 +1825,7 @@
+      a half-filled ceremony, so it outranks them: an occluded overlay is recovered by scrolling, an
+      unreachable way back is not. Still below the modals (110), the auth overlay (100) and the
+      toast (300), which are all things that should cover it. */
+-  position: absolute; bottom: 14px; left: 14px; z-index: 11;
++  position: absolute; bottom: 14px; left: 14px;
+   display: flex; align-items: center; gap: 12px;
+   padding: 7px 10px 7px 14px; border-radius: 8px;
+   background: var(--surface0); color: var(--text); font-size: 13px;

@@ -87,6 +87,7 @@ const els = {
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), closeAllBtn: $('closeAllBtn'),
   ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
+  cerSetupBar: $('cerSetupBar'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
   outlineAddBtn: $('outlineAddBtn'), outlineCancel: $('outlineCancel'), outlineSave: $('outlineSave'),
@@ -12029,6 +12030,115 @@ function showCeremonySheet(open) {
   els.viewerWrap.hidden = !!open;
 }
 
+// ── Leaving the sheet for the document, and coming back (P03.S04, D3) ─────────────────────────
+//
+// **The slice's scope sentence said "signature-block placement" and that act does not exist.**
+// `PlacementFor` is the one door onto where a party's block goes (`internal/p2p/cosign.go`), and
+// inside a ceremony it is `ceremonyPlacement` — the signature page the party's ROSTER POSITION
+// allocates. Nothing in `internal/ceremony` reads a signing flag, `conveneRequest` carries no
+// placement, and `#flags` is the prepare-and-email product ("then email them the file"). A convener
+// sent there during setup would place flags no party is ever asked to fill.
+//
+// **What is real is the trip itself.** The sheet stands in place of the document, so reading the
+// lease to write the recital, checking the file, and finishing markup all need the page — the
+// markup especially, because convening appends pages and takes the hash after them.
+//
+// `ceremonySetupParked` is a module boolean, which is this file's idiom for session-scoped UI state
+// (`ceremonyArmed`, `ctrlHeld`, `profileFilled`, `restored`). It is deliberately NOT per-view: a
+// ceremony draft is not a fact about a document, which is why every route it touches is `unpinned`.
+let ceremonySetupParked = false;
+
+// setCeremonyPark is the ONE door onto the parked state (ADR-009): it writes the flag and the
+// control the flag drives, together, so no site can move one without the other. The first version
+// left the flag's two writers to call a separate `reflectCeremonyPark()` by convention, which is
+// the shape ADR-009 names — a rule holding at more than one call site, written more than once.
+function setCeremonyPark(on) {
+  ceremonySetupParked = on;
+  if (els.cerSetupBar) els.cerSetupBar.hidden = !on;
+}
+
+// ceremonySetupDoc is the document the open setup sheet is FOR, captured when the sheet is opened
+// fresh and never re-read afterwards — which is ADR-001 in the form this slice needs it (`no
+// operation acts on a document it did not capture at its start`).
+//
+// **The excursion is what makes this bite.** `#tabstrip` is a sibling of the sheet and
+// `showCeremonySheet` never touches it, so the document switcher has always been clickable behind
+// the sheet — but before this slice the only ways out read as abandonment. Now `parkCeremonySheet`
+// invites the user onto the page with the strip right there, and its own doc comment names
+// "checking the file is the right one" as a reason to go. Convening then posted with whatever
+// `X-Nib-Doc` was current, so a click on another tab silently moved the ceremony to that document:
+// the recital about the lease, attached to the file the user last looked at. The capture makes that
+// a 409 instead — the refusal `apiFetch`'s own pinning comment says a captured id earns.
+let ceremonySetupDoc = null;
+
+// parkCeremonySheet steps out of setup to the document, keeping everything typed.
+//
+// **It writes the HIDE direction only, and that state is already reachable today**: leaving the
+// Collaborate mode calls `showCeremonySheet(false)` without touching either form's `hidden`
+// (`syncSidebarForMode`), which is exactly "sheet away, convene form still the showing one". What
+// this adds is a way to enter it deliberately and a way back that does not rebuild.
+//
+// **It does not save.** The `change` listener has already persisted every committed field, and the
+// return leg re-reads nothing — the DOM is the source of truth across the trip. A save here would
+// be a vault write (encrypt-and-fsync of the whole file) bought for nothing, and an unawaited one
+// racing a read that never happens.
+function parkCeremonySheet() {
+  if (els.ceremonySheet && els.ceremonySheet.hidden) return; // not in setup; nothing to park
+  showCeremonySheet(false);
+  setCeremonyPark(true);
+  // AFTER the flips, never before: the button lives in #viewerWrap, which `showCeremonySheet(false)`
+  // has just un-hidden. Focusing an element inside a `display: none` subtree is a silent no-op and
+  // the browser drops focus to <body> — the same SC 2.4.3 harm the modal focus-restore observer
+  // documents in its own words (grep `focusTrail`). That comment also records that jsdom does NOT
+  // blur on hide, which is why the LANDING is asserted in a browser and only the attempt here.
+  document.getElementById('cerBackToSetup')?.focus();
+  // **No toast on this leg, and the reason is measured.** `#toast` is `position: fixed` at
+  // bottom-CENTRE of the viewport (style.css) while the bar is at the viewer's bottom-left with
+  // `max-width: 70%`, so at 1280, 1024 and 900 the two overlap — and the toast is `z-index: 300`
+  // against the bar's 6, so for 2.5 s it covers the right third of the bar including
+  // `#cerBackToSetup`, at exactly the moment the bar exists to be seen. It was also a second
+  // `role="status" aria-live="polite"` region firing in the same tick as the bar with near-identical
+  // words. The bar says everything the toast said and keeps saying it.
+}
+
+// resumeCeremonySheet comes back, and the thing it does NOT do is the slice.
+//
+// **Routed through `showCeremonyForm('convene')`, which is the one writer of the sheet↔form pair.**
+// Writing `showCeremonySheet(true)` here instead would be a second writer of a pairing that is only
+// correct in lockstep, and the pair desynchronises: park, then Accept an invitation, then Cancel,
+// and a resume would raise the sheet over a hidden convene form — a full-width empty surface.
+//
+// **No `loadPeerPicker` and no `restoreCeremonyDraft`.** That absence is the acceptance clause. The
+// rebuild empties `#cerPeerPick` before its fetch, which destroys every checkbox's state and every
+// capacity typed and not yet blurred; and where `/api/peers` answers nothing, the restore matches no
+// row and the next change event posts an empty roster over the saved one.
+function resumeCeremonySheet() {
+  // **Back to the mode that owns the sheet, and this was a defect found by putting the code in
+  // front of a reviewer who had not read its tests.** The park deliberately SURVIVES a mode change
+  // — stepping out to mark the document up means going to Mark Up, and a park that died there
+  // would send the user back through the rebuild, losing exactly the uncommitted values this slice
+  // exists to keep. But `showCeremonyForm('convene')` on its own would then raise a sheet D3 calls
+  // "owned by the Ceremony mode" while the sidebar is showing Mark Up's panels — and
+  // `syncSidebarForMode` puts the sheet away on leaving that mode, so the two would contradict
+  // each other. Guarded on `body.dataset.tab`, which `setMode` writes, because an unconditional
+  // call re-runs `syncSidebarForMode` on every resume: that reloads the rail and switches the
+  // sidebar to the mode's first panel, which is visible churn for a no-op.
+  // **The sheet first, the mode second, and the order is an error path rather than a preference.**
+  // `showCeremonyForm` is the only clearer of the park, and both ways back funnel through here — so
+  // if `setMode` threw with the mode switch first (`showPanel`'s handler dereferences
+  // `$(tab.dataset.panel)` with no null guard), the park would be unclearable for the rest of the
+  // session: bar stuck on, sheet never returning, Convene dead. Raising the sheet first cannot be
+  // undone by the switch, because `syncSidebarForMode` stands the sheet down only for a tab that is
+  // NOT collaborate, and collaborate is the tab being switched to.
+  showCeremonyForm('convene'); // clears the park, through the one door
+  if (document.body.dataset.tab !== 'collaborate') setMode('collaborate');
+  // AFTER the flips, for the reason `parkCeremonySheet` gives: at entry `#cerIntent` is inside both
+  // a hidden sheet and a hidden form, where `.focus()` is a silent no-op that drops focus to
+  // <body> — and jsdom cannot see that, so it is asserted in a browser.
+  document.getElementById('cerIntent')?.focus();
+  toast('Back to ceremony setup.');
+}
+
 // ── The convener's setup DRAFT (P03.S02, D4) ─────────────────────────────────────────────────
 //
 // **Read and written as one blob**, because the server neither parses nor validates it — what is in
@@ -12147,6 +12257,12 @@ document.getElementById('ceremonyConveneForm')?.addEventListener('change', () =>
 function showCeremonyForm(which) {
   const e = cerEls();
   if (!e.convene || !e.accept) return;
+  // **Every open and every dismissal clears the park, and reflects it in the same breath.** This is
+  // the door all EIGHT of them already route through (both submit paths, Close, Cancel x2, the two
+  // panel buttons, and `resumeCeremonySheet`), so there is no path that leaves the flag true while the sheet is not parked
+  // — and none that leaves the bar on screen after the user has chosen another surface. Clearing
+  // the boolean without the bar is what an attack pass reached in six clicks.
+  setCeremonyPark(false);
   e.convene.hidden = which !== 'convene';
   e.accept.hidden = which !== 'accept';
   // **The SHEET follows the convene form and nothing else.** Accepting an invitation is a paste and
@@ -12239,6 +12355,11 @@ async function conveneFromPanel() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      // Pinned to the document the sheet was opened on (ADR-001, ADR-004). `'docId' in opts` is
+      // what `apiFetch` tests, so passing an explicit null is not "fall back to current" — it is
+      // "send no pin", which is what a setup opened with no document open should do, and the
+      // server answers that with its own 404.
+      ...(ceremonySetupDoc === null ? {} : { docId: ceremonySetupDoc }),
     });
     if (!res.ok) { say(await errText(res, 'this ceremony could not be convened')); return; }
     renderInvitations(await res.json());
@@ -12406,7 +12527,18 @@ function renderAccepted(d) {
 // The sheet's own Close, which is the same act as the form's Cancel and routes through one door.
 document.getElementById('cerSheetClose')?.addEventListener('click', () => { showCeremonyForm(null); });
 
+// The step out and the two ways back, all three through one door each (P03.S04, ADR-009).
+document.getElementById('cerSeeDoc')?.addEventListener('click', () => { parkCeremonySheet(); });
+document.getElementById('cerBackToSetup')?.addEventListener('click', () => { resumeCeremonySheet(); });
+
 document.getElementById('ceremonyConveneBtn')?.addEventListener('click', async () => {
+  // **While parked this button RESUMES rather than rebuilds**, so the bar and this button are two
+  // call sites of one rule rather than two rules. Without it the user's obvious way back — the
+  // control labelled "Convene a ceremony…" — is the rebuild the slice exists to stop taking.
+  if (ceremonySetupParked) { resumeCeremonySheet(); return; }
+  // Captured HERE and not in `showCeremonyForm`, because that door is also the resume's — and a
+  // resume must keep the document the setup was started on, which is the whole point of the pin.
+  ceremonySetupDoc = (view.docMeta && view.docMeta.id) || null;
   showCeremonyForm('convene');
   // **Awaited, and the restore runs after it.** `loadPeerPicker` fills `#cerPeerPick` from
   // `/api/peers`; a restore that ran first would find no checkboxes and drop every party from the
