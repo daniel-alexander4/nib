@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nib/internal/ceremony"
+	"nib/internal/sign"
 	"nib/internal/vault"
 )
 
@@ -370,6 +371,15 @@ func conveneStatus(err error) int {
 
 type ceremonyInvitesRequest struct {
 	Ceremony string `json:"ceremony"`
+	// Fingerprint narrows the re-issue to ONE party. Empty means every party, which is what this
+	// route did before it had this field and what both of its existing tests drive.
+	//
+	// **Per-party is the DEFAULT the surface offers, and the reason is exposure.** Without it one
+	// press renders every party's channel secret at once, and D21's own pin describes the opposite
+	// shape: *"re-issuing to ONE party mid-ceremony and completing, with the other parties' state
+	// untouched."* Optional rather than required so the all-parties action stays available as a
+	// deliberate second act, and so the two tests that already cover this route keep covering it.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // handleCeremonyInvites re-issues the invitations for a ceremony this machine convened.
@@ -421,8 +431,67 @@ func (s *Server) handleCeremonyInvites(w http.ResponseWriter, r *http.Request) {
 			"that ceremony's record will not re-hash, so Nib cannot re-issue its invitations")
 		return
 	}
+	// **Only the convener re-issues, refused BEFORE anything is minted (P04.S03).**
+	//
+	// `requireUnlocked` enforces the vault, the CSRF token and a loopback origin — and nothing at
+	// all about who this machine is for this ceremony. Without this check a party who merely holds
+	// a mirror of the ceremony (every party writes one) reaches the mint and is refused **410** on
+	// the first party whose secret this machine does not hold. That collapses three different facts
+	// into one code: the ceremony ended and its secrets were pruned, you are not the convener, and
+	// one party's secret is missing. `Stored.Convener`'s own doc already records that ambiguity as
+	// a defect — *"true, useless to a non-convener, and indistinguishable from a ceremony whose
+	// secrets were cleaned up."*
+	//
+	// **403 and not 409**, which is what `handleCeremonyDeliver` answers for a similar sentence.
+	// That one is a route-wide catch-all over every `runDeliveryRound` error rather than a code
+	// chosen for this fact, and 403 is what THIS route's other two authorization refusals already
+	// are: `requireUnlocked` answers 403 for a bad CSRF token and for a non-loopback origin. A
+	// third authorization failure on the same route answering differently is the drift. The
+	// inconsistency with the delivery route is real and is filed rather than silently widened.
+	//
+	// Derived through the same door the three existing convener checks use — the vault's own
+	// identity against `convenerFingerprintOf` — so this is a fourth call site of one rule, never a
+	// second rule.
+	//
+	// **The three steps are `identity` → `sign.Fingerprint` → hex, and taking a shortcut here was
+	// caught by an existing test acting as the positive control.** The first cut read
+	// `_, myFP, _ := identity(v)` — but `identity` returns `(cert, KEY, err)`, so it compared the
+	// private key's bytes to a fingerprint and refused EVERY caller including the convener. A guard
+	// that refuses everyone satisfies every negative test there is; only a test that drives the
+	// legitimate case can see it, and `TestAnInvitationReIssuedMidCeremonyLeavesEveryoneElseUntouched`
+	// is that test.
+	cert, _, ierr := identity(v)
+	if ierr != nil {
+		httpError(w, http.StatusInternalServerError,
+			"Nib could not read this machine's own identity, so it cannot tell whether it convened "+
+				"this ceremony")
+		return
+	}
+	myFP, ferr := sign.Fingerprint(cert)
+	if ferr != nil {
+		httpError(w, http.StatusInternalServerError,
+			"Nib could not read this machine's own fingerprint, so it cannot tell whether it "+
+				"convened this ceremony")
+		return
+	}
+	if !strings.EqualFold(hex.EncodeToString(myFP), conv) {
+		httpError(w, http.StatusForbidden,
+			"only the convener can re-issue invitations: this machine is a party to this ceremony, "+
+				"not the one that convened it")
+		return
+	}
+	// A named party who is not in the roster is a request about somebody else's ceremony, and
+	// answering 200 with an empty list would read as "there is nothing to re-issue".
+	if req.Fingerprint != "" && !rosterHas(rec.Roster, req.Fingerprint) {
+		httpError(w, http.StatusNotFound,
+			"that ceremony's roster does not name the party you asked to re-issue for")
+		return
+	}
 	invites := make([]conveneInvite, 0, len(rec.Roster))
 	for _, p := range rec.Roster {
+		if req.Fingerprint != "" && !strings.EqualFold(p.Fingerprint, req.Fingerprint) {
+			continue // a per-party re-issue renders one secret, not N-1
+		}
 		if strings.EqualFold(p.Fingerprint, conv) {
 			continue // the convener holds every party's invitation and receives none
 		}
@@ -574,4 +643,15 @@ func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
 			"writing to the same folder."
 	}
 	writeJSON(w, out)
+}
+
+// rosterHas reports whether a roster names this fingerprint, case-insensitively — the comparison
+// every other roster lookup in this package uses.
+func rosterHas(roster []ceremony.Party, fp string) bool {
+	for _, p := range roster {
+		if strings.EqualFold(p.Fingerprint, fp) {
+			return true
+		}
+	}
+	return false
 }

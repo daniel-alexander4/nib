@@ -11558,13 +11558,18 @@ function ceremonyCard(c, mayAct) {
   //   - `ended` — D29 orders the lifecycle **end state → delivery round → close-out**, so a
   //     proceeding still running has nothing to deliver. Empty is UNKNOWN, so this is a positive
   //     test and never `!== 'running'`.
-  //   - `me` and `convener` both KNOWN and equal. Both are unknown-when-empty by their own
-  //     doctrine, so an absent marker must not read as a match — which `''  === ''` would.
-  if (mayAct && c.state === 'ok' && c.ended
-      && typeof c.me === 'string' && c.me !== ''
-      && typeof c.convener === 'string' && c.convener !== ''
-      && c.me.toLowerCase() === c.convener.toLowerCase()) {
+  //   - `convenedHere(c)` — `me` and `convener` both KNOWN and equal. Extracted at P04.S03, when a
+  //     second control needed the same test: a rule holding at more than one call site is written
+  //     once and every site calls it (ADR-009).
+  if (mayAct && c.state === 'ok' && c.ended && convenedHere(c)) {
     card.appendChild(ceremonyDeliver(c));
+  }
+  // **Re-issuing (D11), which is the delivery button's population with the LIFECYCLE inverted.**
+  // Delivery needs `ended` because D29 orders end state → delivery round → close-out; a re-issue is
+  // for a proceeding that is still RUNNING and whose invitation somebody lost. Same convener test,
+  // through the same door, so the two cannot drift apart.
+  if (mayAct && c.state === 'ok' && !c.ended && convenedHere(c)) {
+    card.appendChild(ceremonyReissue(c));
   }
   // **Leaving (D17), and its population is the exact complement of the delivery button's.**
   //
@@ -11712,6 +11717,169 @@ function ceremonyLeave(c) {
   });
   wrap.append(btn, out);
   return wrap;
+}
+
+// convenedHere is whether THIS machine convened the ceremony — the one door (ADR-009), because two
+// controls now ask it and a second copy would agree on the day it was written.
+//
+// **Both fields are unknown-when-empty by their own doctrine**, so this is a positive test on each
+// rather than a comparison: `'' === ''` would read two absent markers as a match and offer the
+// convener's controls to a party who simply has not recorded their position yet.
+function convenedHere(c) {
+  return typeof c.me === 'string' && c.me !== ''
+    && typeof c.convener === 'string' && c.convener !== ''
+    && c.me.toLowerCase() === c.convener.toLowerCase();
+}
+
+// ceremonyReissue is the convener's "send someone their invitation again" control (P04.S03, D11).
+//
+// **Per party by default, and that is an exposure decision rather than a convenience.** The route
+// accepts an empty fingerprint meaning every party, and one press would then put every party's
+// channel secret on screen at once. D21's own pin asks for the opposite — *"re-issuing to ONE party
+// mid-ceremony and completing, with the other parties' state untouched"* — so each party has their
+// own control and the all-parties form is a second, explicitly labelled act.
+//
+// **It renders into the CARD and not into `#ceremonyResult`.** That container belongs to the convene
+// and accept forms and is cleared only when one of them OPENS, so a secret rendered there survives
+// every way out of the sheet, a mode change, and the vault re-locking behind its overlay. A
+// dismissal that has to erase cannot live in a box somebody else owns.
+function ceremonyReissue(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cerreissue';
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'cerreissuebtn';
+  // "Send again", not "resend" or "regenerate": the second would promise a new invitation and the
+  // whole point of the sentence below is that there isn't one.
+  open.textContent = 'Send someone their invitation again…';
+  const body = document.createElement('div');
+  body.className = 'cerreissuebody';
+  body.hidden = true;
+  open.addEventListener('click', () => {
+    body.hidden = !body.hidden;
+    if (body.hidden) clearReissue(body); else fillReissue(body, c);
+  });
+  wrap.appendChild(open);
+  wrap.appendChild(body);
+  return wrap;
+}
+
+// clearReissue ERASES, and `hidden` would not do.
+//
+// The app's two existing dismiss affordances (`#updateDismiss`, `#sessionNoticeDismiss`) both set
+// `hidden = true`, which is right for a pill and wrong for a channel secret: the bytes stay in the
+// DOM, reachable from the console, in the page's memory, and in any accessibility tree that ignores
+// `hidden`. The precedent to follow is `els.authPw.value = ''` — the app already erases the one
+// other secret it renders.
+function clearReissue(body) { body.textContent = ''; }
+
+// fillReissue draws one control per party the convener can re-send to.
+function fillReissue(body, c) {
+  clearReissue(body);
+  const hint = document.createElement('p');
+  hint.className = 'libhint';
+  // **The sentence this control exists to carry.** `convenerInvitationFor` reads the stored secret
+  // back and returns those exact bytes — no `rand.Read`, no vault write — so a re-issue hands over
+  // the SAME invitation. A convener who presses this because they think the first one leaked gets
+  // no security benefit at all, and a button that does not say so reads as a revocation control.
+  hint.textContent = 'This sends the same invitation again — it does not replace one that has been '
+    + 'seen by someone else. There is no way to withdraw an invitation; a ceremony that has leaked '
+    + 'one has to be run again as a new proceeding.';
+  body.appendChild(hint);
+
+  const out = document.createElement('div');
+  out.className = 'cerreissueout';
+
+  const send = async (fingerprint, label) => {
+    out.textContent = '';
+    let res;
+    try {
+      res = await apiFetch('/api/ceremony/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony: c.id, ...(fingerprint ? { fingerprint } : {}) }),
+        unpinned: true,
+      });
+    } catch (err) {
+      out.appendChild(reissueNote('Nib could not re-issue that invitation.', 'cererror'));
+      return;
+    }
+    // **410 is branched on, not folded into the generic failure.** Every other refusal here is
+    // something the convener can act on by trying again or by asking somebody; 410 means the
+    // secrets are gone, which is terminal for this ceremony and needs a different next step. The
+    // generic path would have put the server's own sentence on screen and looked fine — which is
+    // exactly why the branch is asserted on the DOM rather than on the words.
+    if (res.status === 410) {
+      out.appendChild(reissueNote('Nib no longer holds this ceremony\u2019s invitation secrets, so it '
+        + 'cannot send them again. That happens once a ceremony has ended. To bring somebody in now, '
+        + 'run the document as a new ceremony.', 'cergone'));
+      return;
+    }
+    if (!res.ok) {
+      out.appendChild(reissueNote(await errText(res, 'that invitation could not be re-issued'), 'cererror'));
+      return;
+    }
+    let d;
+    try { d = await res.json(); } catch (err) { d = null; }
+    const invites = (d && d.invites) || [];
+    if (!invites.length) {
+      out.appendChild(reissueNote('Nib has no invitation to send for that party.', 'cererror'));
+      return;
+    }
+    for (const inv of invites) out.appendChild(invitationRow(inv));
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'cerdismiss';
+    done.textContent = 'Done — hide these';
+    done.addEventListener('click', () => { out.textContent = ''; });
+    out.appendChild(done);
+    if (label) toast(`Invitation ready for ${label}.`);
+  };
+
+  for (const p of (c.roster || [])) {
+    // **The convener holds every invitation and receives none**, so offering the control would be
+    // offering something the server is known to refuse — it skips the same entry, by fingerprint,
+    // for the same reason.
+    //
+    // **This IS a second site for that rule, and it is named rather than hidden.** It is not
+    // `convenedHere`: that asks whether THIS MACHINE convened the ceremony, and this asks whether
+    // THIS PARTY is the convener's entry — two questions over the same field. The server stays
+    // authoritative (a request for the convener's own invitation returns an empty list, which the
+    // send path renders as its own sentence), so the worst this client-side skip can do is decline
+    // to offer a control that would have done nothing. That is the same shape, and the same
+    // reasoning, as the leave control's population one screen up.
+    if (c.convener && p.fingerprint && p.fingerprint.toLowerCase() === String(c.convener).toLowerCase()) continue;
+    const row = document.createElement('div');
+    row.className = 'cerreissuerow';
+    const who = document.createElement('span');
+    who.className = 'cerwho';
+    who.textContent = p.label || p.name || 'a party';
+    row.appendChild(who);
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.textContent = 'Send again';
+    go.addEventListener('click', () => { go.disabled = true; send(p.fingerprint, who.textContent).finally(() => { go.disabled = false; }); });
+    row.appendChild(go);
+    body.appendChild(row);
+  }
+
+  // The all-parties form, deliberately separate and deliberately last.
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'cerreissueall';
+  all.textContent = 'Send every party their invitation again';
+  all.addEventListener('click', () => { all.disabled = true; send('', '').finally(() => { all.disabled = false; }); });
+  body.appendChild(all);
+  body.appendChild(out);
+}
+
+// reissueNote is one sentence in the re-issue box, classed so a test can tell the terminal refusal
+// from an ordinary one without reading the words.
+function reissueNote(text, cls) {
+  const p = document.createElement('p');
+  p.className = cls;
+  p.textContent = text;
+  return p;
 }
 
 // ceremonyDeliver is the convener's "send everyone their copy" control and its result.
@@ -12496,6 +12664,46 @@ async function conveneFromPanel() {
   }
 }
 
+// invitationRow is one party's invitation, and it is the ONE renderer both issue paths use
+// (P04.S03). Extracted verbatim from `renderInvitations`, which is why it reads only the four
+// `conveneInvite` fields the server populates identically on both paths — the first issue and the
+// re-issue hand back byte-identical invitations, which `rearm_test.go` asserts rather than assumes.
+//
+// **What deliberately did NOT come with it:** the head sentence and the channel-secret paragraph.
+// The head says "Convened.", which is false on a re-issue, and the paragraph is the one this slice
+// is pinned not to copy — see `ceremonyReissue`.
+function invitationRow(inv) {
+  const row = document.createElement('div');
+  row.className = 'cerinvite';
+  const who = document.createElement('span');
+  who.className = 'cerwho';
+  // The name, never the fingerprint — the payload carries both and only one belongs on screen.
+  who.textContent = inv.label || inv.name || 'a party';
+  row.appendChild(who);
+  const text = document.createElement('textarea');
+  text.className = 'cerinvitetext';
+  text.rows = 2;
+  text.readOnly = true;
+  text.value = inv.invitation || '';
+  row.appendChild(text);
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'cercopy';
+  copy.textContent = 'Copy';
+  copy.addEventListener('click', () => {
+    text.select();
+    try { document.execCommand('copy'); } catch (err) { /* selection is the fallback */ }
+  });
+  row.appendChild(copy);
+  if (inv.signs === false) {
+    const n = document.createElement('span');
+    n.className = 'cerrole';
+    n.textContent = 'does not sign';
+    row.appendChild(n);
+  }
+  return row;
+}
+
 // renderInvitations shows one invitation per party, with what an invitation IS.
 //
 // **D21's sentence, in D21's terms, and the criterion asks for those terms.** Its own words: *"What
@@ -12520,37 +12728,7 @@ function renderInvitations(d) {
     + 'roster names, so anyone else is refused at the handshake.';
   e.result.appendChild(warn);
 
-  for (const inv of (d.invites || [])) {
-    const row = document.createElement('div');
-    row.className = 'cerinvite';
-    const who = document.createElement('span');
-    who.className = 'cerwho';
-    // The name, never the fingerprint — the payload carries both and only one belongs on screen.
-    who.textContent = inv.label || inv.name || 'a party';
-    row.appendChild(who);
-    const text = document.createElement('textarea');
-    text.className = 'cerinvitetext';
-    text.rows = 2;
-    text.readOnly = true;
-    text.value = inv.invitation || '';
-    row.appendChild(text);
-    const copy = document.createElement('button');
-    copy.type = 'button';
-    copy.className = 'cercopy';
-    copy.textContent = 'Copy';
-    copy.addEventListener('click', () => {
-      text.select();
-      try { document.execCommand('copy'); } catch (err) { /* selection is the fallback */ }
-    });
-    row.appendChild(copy);
-    if (inv.signs === false) {
-      const n = document.createElement('span');
-      n.className = 'cerrole';
-      n.textContent = 'does not sign';
-      row.appendChild(n);
-    }
-    e.result.appendChild(row);
-  }
+  for (const inv of (d.invites || [])) e.result.appendChild(invitationRow(inv));
   // **A warning is BOUND to the control that caused it, which is what its `code` is for.**
   // `conveneResponse.Warnings`' own doc says they are *"machine-tagged so a panel can bind one to
   // the control that caused it rather than re-parsing English"* — so the code selects the control
