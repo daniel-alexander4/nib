@@ -2697,11 +2697,31 @@ function anyToolArmed() {
 function isSigned() {
   return !!(view.lastSig && view.lastSig.state && view.lastSig.state !== 'unsigned');
 }
+// **"Invalidate" was the wrong word, and the difference is what the document PROVES**
+// (/pending 455). Measured on a signed document carrying one invisible approval signature:
+//
+//   api.WriteContext (writeMutated)  -> state=invalid    signers=1   blob=true
+//   pdfops.Collect / api.MergeRaw    -> state=unsigned   signers=0   blob=false
+//
+// Redaction and remove-originals build their output with `Collect` + `MergeRaw`, which
+// CONSTRUCT a new document rather than re-serialising the old one — so the AcroForm
+// signature field goes with it and a receiving reviewer sees no evidence a signature ever
+// existed. "Invalidate" promises the opposite: a reader told a signature was invalidated
+// expects to find a broken one, and a broken signature is evidence. Erasure leaves none.
+//
+// Which of the two a route produces depends on the primitive it happens to use, and that is
+// not a decision anyone took. The deeper question — whether Nib wants an edited signed
+// document to read `invalid` or `unsigned` — is /pending 455 and is open. What is fixed
+// here is the sentence, which promised evidence the operation destroys.
 function signatureWarning() {
-  return isSigned() ? '\n\nThis will also invalidate the document’s existing signature.' : '';
+  return isSigned()
+    ? '\n\nThis will also destroy the document’s existing signature — and because these '
+      + 'pages are rebuilt, the result will not show that it was ever signed.'
+    : '';
 }
 function confirmSignatureLoss() {
-  return !isSigned() || confirm('This document is signed. Editing it will invalidate the existing signature. Continue?');
+  return !isSigned() || confirm('This document is signed. Editing it destroys the existing '
+    + 'signature, and it cannot be restored. Continue?');
 }
 
 // --- open / load -------------------------------------------------------------
