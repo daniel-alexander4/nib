@@ -214,9 +214,18 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 // identity**, answerable only before the first visible signature. `embed.go`'s own paragraph
 // above says so in those words; this function is that sentence made callable.
 //
-// `CheckDocument` keeps the hash comparison and keeps its callers — the convener checking their
-// own bytes, the arrival gate on a signature-free arrival (P08.S03, its first production caller
-// outside the convener), and the tests that measure the boundary.
+// `CheckDocument` keeps the hash comparison. **It has NO production callers, and this comment
+// claimed three** — the convener checking their own bytes, the arrival gate on a signature-free
+// arrival, and the tests. Whole-tree grep (`CheckDocument(` excluding `_test.go` and this
+// declaration): **zero**. The arrival gate calls `ceremony.DocumentHash`
+// (`internal/server/ceremonyid.go`) and says so at its own line; the only hits anywhere are tests
+// and comments.
+//
+// The function is kept rather than deleted because ADR-013's last bullet already states the
+// zero-caller fact correctly and treats the comparison as the shape a future caller wants. What
+// is corrected here is the description: a sentence naming callers that do not exist is how a
+// reader concludes a gate is enforced somewhere it is not (/pending 458, found by the 2026-09-09
+// deepdive; nothing in this tree can see a zero-caller export — /pending 445).
 func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 	r, err := Extract(pdf)
 	if err != nil {

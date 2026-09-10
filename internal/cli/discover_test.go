@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -253,4 +254,65 @@ func TestTheSummarySaysWhenOnlyONEFamilyJoined(t *testing.T) {
 			}
 		})
 	}
+}
+
+// /pending 452 — the socket-open failure and the zero-join failure need DIFFERENT advice,
+// and until v1.128.70 the one sentence in the tree was printed on the wrong one of them.
+//
+// # What this tier can see, and what it cannot
+//
+// Neither branch can be driven from a test: `discovery.Open` takes only a nonce and has no
+// injection seam, so forcing it to fail means a real machine with a broken multicast stack
+// (which is how this was found — the released Windows binary under wine, `wsaioctl: winapi
+// error #10045`). A zero-join needs a socket that opens and joins nothing. So the assertion
+// is over the SOURCE, and it is written to fail against the defect rather than to describe
+// the fix: it requires the interface-list advice to be absent from the open-failure branch
+// and present in the zero-join branch. Swapping them back turns it red.
+func TestTheTwoNothingWasJoinedFailuresGiveDifferentAdvice(t *testing.T) {
+	src, err := os.ReadFile("discover.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+
+	openFail := between(t, s, "sock, err := discovery.Open(nonce)", "defer sock.Close()")
+	zeroJoin := between(t, s, "joined := sock.Interfaces()", "// A name from random bytes")
+
+	// The defect: the open-failure path sending the reader to a list that carries no reasons,
+	// because no interface was ever attempted.
+	if strings.Contains(openFail, "the list above says which and why") {
+		t.Error("the socket-open failure still points at the interface list. On that path the " +
+			"socket never opened, so no interface was tried: every row above is printed as " +
+			"eligible and annotated with nothing, and the cause is the line immediately above.")
+	}
+	if !strings.Contains(openFail, "no interface was tried") {
+		t.Error("the socket-open failure does not say that no interface was tried, so a reader " +
+			"has no way to know the list above is not where the reason is")
+	}
+	// The other half: the advice that IS right for a zero-join had no home at all — that path
+	// printed `joined: []` bare.
+	if !strings.Contains(zeroJoin, "the list above says which and why") {
+		t.Error("a zero-join prints no advice. The socket opened and every interface was skipped, " +
+			"which is the one case where the interface list DOES carry the reasons — and saying " +
+			"so is what the misplaced sentence was for.")
+	}
+	if !strings.Contains(zeroJoin, "len(joined) == 0") {
+		t.Error("the zero-join advice is not guarded on an empty join list, so it prints on a " +
+			"healthy run too")
+	}
+}
+
+// between returns the source between two markers, failing loudly when either has moved —
+// a scan that silently matches nothing is a scan that reports a clean tree.
+func between(t *testing.T, s, from, to string) string {
+	t.Helper()
+	i := strings.Index(s, from)
+	if i < 0 {
+		t.Fatalf("marker %q is gone from discover.go — this scan would otherwise pass over nothing", from)
+	}
+	j := strings.Index(s[i:], to)
+	if j < 0 {
+		t.Fatalf("marker %q is gone from discover.go", to)
+	}
+	return s[i : i+j]
 }
