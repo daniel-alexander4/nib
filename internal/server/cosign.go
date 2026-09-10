@@ -424,9 +424,25 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
 	}
 	prepared := pdf
-	// The same rule as `mirror.go` and `ceremonyid.go`, spelled the way `ceremonyid.go` argues
-	// for — "is there a signature at all", not "is there a valid one" (`/pending 456`).
-	if !sign.HasSignatureBlob(pdf) {
+	// **Never inside a ceremony, because `Convene` has already done it** (/pending 450, and the
+	// finding is the mirror image of the one that was filed).
+	//
+	// `ceremony.Convene` calls `p2p.PrepareCeremonyDocument`, whose FIRST act is
+	// `PrepareDocument` — so every convened document leaves the convener's machine already
+	// carrying the trust-explainer page. It is also unsigned at that point, which is exactly what
+	// the `HasSignatureBlob` test below reads as "not prepared yet". So a SIGNING convener — the
+	// setup sheet's default, `#cerISign` ships checked — appended a second readme at hop 1.
+	//
+	// **And the duplicate is not cosmetic; it moves every signature block.** `ceremonyPlacement`
+	// finds the signature pages as the LAST `pages` of the document (`first := total - pages + 1`),
+	// so one extra trailing page shifts the target by one: measured on a 3-party relay, the
+	// document came out `[source][readme][ceremony][sig 1][readme]` and page 5 — the duplicate —
+	// is where the block would land, leaving the allocated signature page empty. That is precisely
+	// the overlap `ceremonyPlacement` was written to remove, reintroduced through the other door.
+	//
+	// **`len(roster.Entries) > 0` is the same predicate `PlacementFor` branches on**, which is the
+	// point: "inside a ceremony" has one spelling in this codebase and this is it.
+	if len(roster.Entries) == 0 && !sign.HasSignatureBlob(pdf) {
 		p, err := p2p.PrepareDocument(pdf)
 		if err != nil {
 			// 400 only for the one failure that IS the caller's document — an
