@@ -396,3 +396,83 @@ func TestASecondProceedingCannotOverwriteAStoredCeremony(t *testing.T) {
 			"sidecar was already unlinked", len(after), len(stored))
 	}
 }
+
+// TestARecordFiledUnderAnotherCeremonysIdIsRefused is /pending 439.
+//
+// A record is self-anchored — it verifies against its own contents — so a record for ceremony B
+// copied into ceremony A's folder verifies perfectly, and `ReadMirror` used the id it was given only
+// to build a path. The confused deputy that makes it matter is `convenerInvitationFor`, which keys
+// `v.CeremonySecret(rec.ID, fp)` on the RECORD's id while every gate on that route reads `rec` and
+// therefore passes.
+//
+// **Built by hand-copying a real second ceremony's record**, not by editing a field: an edited
+// record does not verify, so it would be refused a line earlier and this test would pass against a
+// build with no id check at all.
+func TestARecordFiledUnderAnotherCeremonysIdIsRefused(t *testing.T) {
+	root := t.TempDir()
+	recA, docA := convened(t)
+	if _, err := WriteMirror(root, recA, docA); err != nil {
+		t.Fatal(err)
+	}
+	recB, docB := convened(t)
+	if _, err := WriteMirror(root, recB, docB); err != nil {
+		t.Fatal(err)
+	}
+	// The stimulus floor, and it is the load-bearing half: two ceremonies convened in one test can
+	// come out with the same id if anything about Convene is deterministic, and this whole test
+	// would then be asserting that a record matches its own folder.
+	if recA.ID == recB.ID {
+		t.Fatalf("setup: both ceremonies got id %s, so nothing below distinguishes a misfiled "+
+			"record from a matching one", recA.ID)
+	}
+	// A reads back cleanly before anything is moved — or "refused" below cannot be told from a
+	// mirror that never worked.
+	if _, _, err := ReadMirror(root, recA.ID, mirrorNow); err != nil {
+		t.Fatalf("setup: ceremony A does not read back at all: %v", err)
+	}
+	dirA, err := MirrorDir(root, recA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirB, err := MirrorDir(root, recB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bB, err := os.ReadFile(filepath.Join(dirB, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirA, "record.json"), bB, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// It still VERIFIES — the point of the whole finding. Asserted, because if the copy had
+	// damaged it the refusal below would come from the wrong line.
+	stored, err := Decode(bB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verr := stored.Verify(mirrorNow); verr != nil {
+		t.Fatalf("setup: the copied record does not verify, so the refusal below is Verify's and "+
+			"not the id check's: %v", verr)
+	}
+	if _, _, err := ReadMirror(root, recA.ID, mirrorNow); err == nil {
+		t.Fatal("ReadMirror returned a record for a different proceeding than the folder it was " +
+			"asked for — convenerInvitationFor would then key CeremonySecret on that record's id " +
+			"and hand out another ceremony's channel secrets, with every gate on the route passing")
+	} else if !strings.Contains(err.Error(), "different proceeding") {
+		t.Fatalf("refused, but not as a misfiled record: %v", err)
+	} else if strings.Contains(err.Error(), recB.ID) {
+		t.Fatalf("the refusal names the other proceeding, which makes it a disclosure oracle for "+
+			"whoever provoked it: %v", err)
+	}
+	// The listing reader classifies rather than errors, and it must not report the misfiled record
+	// as an ordinary ceremony — it would render B's intent and roster under A's id.
+	st := ReadStored(root, recA.ID, mirrorNow)
+	if st.State == LoadOK {
+		t.Fatalf("ReadStored reported a misfiled record as ok, so the panel would render one "+
+			"ceremony's intent and roster under another's id: %+v", st)
+	}
+	if st.Intent != "" || len(st.Roster) != 0 {
+		t.Fatalf("ReadStored populated the record's own fields for a misfiled record: %+v", st)
+	}
+}
