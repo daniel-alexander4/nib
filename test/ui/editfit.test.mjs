@@ -104,6 +104,55 @@ test('an edit that fits its box is not marked', async () => {
       + 'the assertion above vacuous');
 });
 
+// **The primary path, and the one the marker cannot serve.**
+//
+// Save writes the file and then reloads the document from the server — correctly, since
+// the file now carries the baked edits — so `clearOverlays` destroys the marked field
+// (measured: `edits: 0` immediately after) and `toast()` has no queue, so "Saved"
+// replaces the fit sentence. Both signals are gone on the action a user takes most.
+//
+// After a save the subject is no longer an overlay; it is the FILE, which now contains
+// text running past its box. A marker cannot describe a file. A persistent notice can,
+// and that is what this asserts.
+test('after a real Save, the file that was written is reported on', async () => {
+  await h.closeDocument();
+  await h.openDocument(DOC, 1);
+  await h.placeEditField();
+  await page.waitForSelector(EDIT);
+
+  const LONG = 'this replacement is very considerably longer than the box it was drawn into and cannot be made to fit';
+  await page.fill(EDIT, LONG);
+  assert.equal(await page.inputValue(EDIT), LONG,
+    'setup: the replacement did not land in the overlay, so nothing below is about an edit');
+
+  await h.mode('file');
+  await page.click('#saveBtn');
+  await page.waitForFunction(() => document.getElementById('toast')?.textContent === 'Saved');
+
+  // The overlay really is gone — this is the premise, asserted rather than assumed, so
+  // that if Save ever stops reloading, this test says so instead of quietly passing for
+  // a different reason.
+  assert.equal(await page.locator('.ovl-edit').count(), 0,
+    'the overlay survived the save, so the notice this test asserts may not be what a user '
+      + 'would actually rely on — re-derive which signal carries this path');
+
+  const notice = page.locator('#fitNotice');
+  await notice.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  const seen = await page.evaluate(() => {
+    const el = document.getElementById('fitNotice');
+    if (!el) return { present: false };
+    const s = getComputedStyle(el);
+    return { present: true, hidden: el.hidden, display: s.display, text: el.textContent || '' };
+  });
+
+  assert.ok(seen.present && !seen.hidden && seen.display !== 'none',
+    `nothing persistent reports the fit after a Save (${JSON.stringify(seen)}). The overlay is `
+      + 'destroyed by the reload and the "Saved" toast overwrites the fit sentence, so a user '
+      + 'who saved an over-long edit is told nothing at all about the file they just wrote.');
+  assert.match(seen.text, /too long for the box/,
+    `the notice is up but does not name the cause: ${JSON.stringify(seen.text)}`);
+});
+
 test('this file leaves the shared server as it found it', async () => {
   // Tier 3 runs every file against ONE nib process; a document left open here is a
   // document the next file counts. Observe, clean up, THEN assert — an `after` hook

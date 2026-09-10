@@ -199,6 +199,7 @@ const els = {
   fzPreviewMark: $('fzPreviewMark'),
   pnStamped: $('pnStamped'), fzStamped: $('fzStamped'),
   staleBanner: $('staleBanner'), staleMsg: $('staleMsg'), staleRetry: $('staleRetry'),
+  fitNotice: $('fitNotice'), fitNoticeText: $('fitNoticeText'), fitNoticeDismiss: $('fitNoticeDismiss'),
   staleReload: $('staleReload'),
   profileModal: $('profileModal'), profileText: $('profileText'),
   profileCancel: $('profileCancel'), profileSave: $('profileSave'),
@@ -7839,6 +7840,8 @@ const TEXT_MARKER_KEYS = {
 document.querySelectorAll('.markers button').forEach((b) => {
   b.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); setMarkerMode(view.markerMode === b.dataset.marker ? null : b.dataset.marker); };
 });
+if (els.fitNoticeDismiss) els.fitNoticeDismiss.onclick = () => clearFitNotice();
+
 els.saveForSigningBtn.onclick = () => { if (!view.pdfDocument) return toast('Open a PDF first'); saveForSigning(); };
 
 // "Signing marks completed" locks the document into signing-only mode: flag
@@ -10008,7 +10011,10 @@ function applyFitReport(owner, sources, header) {
 // did not fit", because the three causes have three different things a user can do
 // about them.
 function tellFitReport(applied) {
-  if (!applied.length) return;
+  // A bake where everything fitted must take down a notice from an earlier one, or the
+  // banner outlives the problem it describes and the user is told about a document they
+  // have already fixed. This is why the early return clears rather than just returning.
+  if (!applied.length) { clearFitNotice(); return; }
   const byCause = new Map();
   for (const fit of applied) byCause.set(fit.outcome, (byCause.get(fit.outcome) || 0) + 1);
   const parts = [];
@@ -10031,7 +10037,36 @@ function tellFitReport(applied) {
     }
     parts.push(part);
   }
-  toast(parts.join('; '));
+  const sentence = parts.join('; ');
+  toast(sentence);
+  // **And say it somewhere that survives the operation that produced it.**
+  //
+  // The toast alone is not delivery. Five of the app's twenty-three bake call sites
+  // replace the document server-side and then reload it — Save among them, which is the
+  // action a user takes most — so `clearOverlays` destroys the marked overlay and the
+  // operation's own "Saved" overwrites this sentence 2.5 seconds later at the outside.
+  // Measured live: `edits: 0`, `toast: "Saved"`. After a save the subject is not an
+  // overlay any more; it is the FILE, which now carries text the user did not see
+  // adjusted. A marker cannot describe a file (/pending 460).
+  showFitNotice(sentence);
+}
+
+// showFitNotice raises the persistent report and returns whether it was raised, so a
+// caller that thinks it reported something can tell when it did not.
+function showFitNotice(sentence) {
+  if (!els.fitNotice || !els.fitNoticeText) return false;
+  els.fitNoticeText.textContent = sentence;
+  els.fitNotice.hidden = false;
+  return true;
+}
+
+// clearFitNotice takes it down. Called when the report no longer describes anything on
+// screen: a new document, or the user dismissing it. NOT on the next bake — a second
+// bake with everything fitting must clear it, and that is tellFitReport's job below.
+function clearFitNotice() {
+  if (!els.fitNotice) return;
+  els.fitNotice.hidden = true;
+  if (els.fitNoticeText) els.fitNoticeText.textContent = '';
 }
 
 // collectAuthorFields gathers detected/placed fields as interactive AcroForm

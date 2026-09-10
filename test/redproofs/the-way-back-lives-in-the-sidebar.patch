@@ -19,6 +19,6 @@
 -        <span>Ceremony setup is open — nothing has been convened yet.</span>
 -        <button id="cerBackToSetup" type="button">Back to setup</button>
 -      </div>
-       <div id="signBanner" hidden>
-         <span id="signMsg"></span>
-         <button id="signDone" hidden>Finish &amp; sign</button>
+       <!-- The fit notice (P01.S03, /pending 460). It says what a bake did to edits that did
+            not fit their boxes, and it persists, because a toast cannot serve the path that
+            matters most: Save reloads the document after writing, `clearOverlays` destroys the

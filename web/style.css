@@ -1912,3 +1912,26 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 #cerSetupBar #cerBackToSetup:hover { background: var(--surface2); }
 /* The form itself gets room rather than a 200px column — the whole point of the sheet. */
 .sheetbody { padding: 16px; max-width: 720px; }
+
+/* The fit notice — see index.html for why it is bottom-right and why it is polite.
+   z-index 11 matches #cerSetupBar: page overlays reach 10 and are pointer-interactive, so
+   at a lower value a stamp near the bottom-right would cover the notice AND take the click.
+   Below the modals, the auth overlay and the toast, all of which should cover it. */
+#fitNotice {
+  position: absolute; bottom: 14px; right: 14px; z-index: 11;
+  display: flex; align-items: center; gap: 12px;
+  max-width: 42ch;
+  padding: 7px 10px 7px 14px; border-radius: 8px;
+  background: var(--surface0); color: var(--text);
+  border: 1px solid var(--peach);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 25%);
+  font-size: 13px;
+}
+#fitNotice[hidden] { display: none; }
+#fitNotice::before { content: "⚠ "; }
+#fitNotice #fitNoticeDismiss {
+  background: var(--surface1); color: var(--text);
+  border: 1px solid var(--surface2); border-radius: 6px;
+  padding: 3px 9px; cursor: pointer; white-space: nowrap;
+}
+#fitNotice #fitNoticeDismiss:hover { background: var(--surface2); }
