@@ -132,7 +132,11 @@ type Invitation struct {
 	// Roster carries FULL fingerprints — this is what makes the invited path a 256-bit
 	// pin rather than the six-word name's 66 bits.
 	Roster []Party `json:"roster"`
-	// Secret keys the rendezvous, the record encryption and the channel binding. It is
+	// Secret keys the rendezvous and the record encryption. **It would key a channel binding
+	// too, and nothing calls that** — `BindingMAC`/`CheckBindingMAC` below have had zero
+	// production callers since v1.109.47 (`/pending 441`, `442`). What actually anchors a
+	// channel is the four spoken words, which D21's own corrected block says are "the only one
+	// anchored outside the channel under attack". It is
 	// never written to the ceremony mirror (D29) — that directory is ordinary files under
 	// the user's home, and this belongs in the vault.
 	Secret []byte `json:"secret"`
@@ -634,6 +638,14 @@ func (i Invitation) RecordSalt(hop int, fingerprint string) ([]byte, error) {
 
 // --- caveat 11: the channel binding -------------------------------------------
 
+// **BindingMAC has NO production caller and has had none since v1.109.47** (`/pending 441`,
+// found by the 2026-09-09 deepdive). Three shipped comments said the channel binding was live;
+// they are corrected. It is kept rather than deleted because the wire-or-delete verdict is
+// `/pending 442` and that is Dan's — see the deepdive for why it could never have worked as D21
+// describes: the pin, the vault pin, the candidate AEAD and this MAC are all keyed on the SAME
+// pasted invitation, and D21's own CORRECTED block says the four spoken words are "the only one
+// anchored outside the channel under attack".
+//
 // BindingMAC is the confirmation that used to be spoken (D21), computed by the machines.
 //
 // **The mechanism, and why it is not a PAKE.** A PAKE bounds an attacker to one online

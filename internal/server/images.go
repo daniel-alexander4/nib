@@ -1,11 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"time"
 
 	"nib/internal/vault"
 )
@@ -68,19 +66,21 @@ func (s *Server) handleImageAdd(w http.ResponseWriter, r *http.Request) {
 		name string
 		data []byte
 	)
-	if r.Header.Get("Content-Type") == "application/json" {
-		var req struct{ URL, Name string }
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
-			httpError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-		b, err := safeFetch(req.URL, maxImageBytes, 15*time.Second)
-		if err != nil {
-			httpError(w, http.StatusBadGateway, "could not fetch image")
-			return
-		}
-		name, data = req.Name, b
-	} else {
+	// **The remote-image-by-URL branch was deleted here** (`/pending 449`). It branched on
+	// `Content-Type: application/json` into `safeFetch`, and nothing in the tree posted JSON to
+	// this route: both client sites post multipart `{file, name}`, and `build/`, `test/` and
+	// `internal/cli/` have no sender either.
+	//
+	// **It was not a hole and it is not deleted as one.** `safeFetch` is the same primitive
+	// `handleOpenURL` exposes and the client DOES reach, and this route sits behind
+	// `requireUnlocked`, CSRF and loopback. What it was is an unreachable fetch of an arbitrary
+	// URL on a request path — exercised by no test, considered by no reviewer, and one JSON
+	// client away from going live without either.
+	//
+	// "Add an image from a URL" may well be worth building. An implementation with no surface
+	// is not that feature; it is a claim the feature exists. If it is wanted it needs a control,
+	// a decision and a test, and none of those is made cheaper by this branch having survived.
+	{
 		cleanup, pok := parseMultipart(w, r, maxImageBytes)
 		if !pok {
 			return
