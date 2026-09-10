@@ -5048,3 +5048,25 @@ comparisons were exact, and a box built as `y0 + inset + h` measures back as
 overrunning, and which way it fell depended on how the caller reached the number.
 
 `recorded` 401 → 403.
+
+## /pending 447 — every request field a handler reads is one some client sends (v1.128.96)
+
+The finding was a FALSE CLAIM rather than a missing test. `internal/server/cosign.go` said, of
+adding an `invitation` parameter, that it "would be a field no client fills, **which is the shape
+this repo's reader scans exist to refuse**" — and no scan refused it. `observables_test.go` cannot
+see a multipart form field at all (there is no Go struct to discover), and for the JSON request
+shapes its matcher passed on coincidental name collisions: `armRequest.Transport` on
+`ceremony.TransportQUIC`, and `armRequest.Address` on `st.address` in `web/app.js`, which is the arm
+RESPONSE's address, on the same route, travelling the other way.
+
+| proof | check | expects |
+|---|---|---|
+| `a-handler-grows-a-field-no-client-fills` — the founding defect, verbatim: `handleCoSign` takes its roster from `r.FormValue("invitation")` | `TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends`, tier 1 | "read by a handler and sent by no client" |
+| `the-client-stops-sending-a-field-it-owes` — `form.append('address', address)` deleted from the initiate path | the same check, tier 1 | "/api/session/initiate address" |
+
+**The second row exists because the guard has two sides and only one of them fails loudly.** A
+server scan that came back empty reports zero members, which is byte-identical to a clean run; a
+client scan that came back empty reports every field as unsent, which nobody could miss. So the
+client half gets a proof of its own, and it patches `web/app.js` rather than any Go file.
+
+`recorded` 403 → 405.

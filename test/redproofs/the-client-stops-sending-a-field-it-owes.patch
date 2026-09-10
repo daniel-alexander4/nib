@@ -1,0 +1,22 @@
+diff --git a/web/app.js b/web/app.js
+index b1c0ca2..f45ef74 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -1127,7 +1127,7 @@ async function sessionInit() {
+     const form = await bakedForm(owner);
+     form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
+     form.append('appearance', png, 'attestation.png');
+-    form.append('address', address);
++    /* address removed by the red proof */
+     // The spoken check happens while this request is in flight — the server is blocked
+     // waiting for it — so the poller runs beside the call, not before or after it.
+     const stopVerify = startVerifyPoll();
+@@ -1940,7 +1940,7 @@ async function sendToPeer() {
+   try {
+     const form = await sendableForm();
+     form.append('fingerprint', opt.value);
+-    form.append('address', address);
++    /* address removed by the red proof */
+     const stopVerify = startVerifyPoll();
+     let res;
+     try {
