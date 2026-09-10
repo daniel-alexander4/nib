@@ -33,7 +33,7 @@ const (
 
 // DefaultExplorers are the public Esplora-API block sources used to look up an
 // attested block's header. They are run by independent operators; all are queried
-// and at least two must agree on the block (see defaultMinAgree), so a single
+// and at least two must agree on the block (see DefaultMinAgree), so a single
 // lying or compromised explorer can't spoof a verification while one being down
 // doesn't break it. Verification sends only a public block height to these —
 // never the document or its hash. A user pointing Nib at their own Esplora
@@ -44,10 +44,15 @@ var DefaultExplorers = []string{
 	"https://mempool.emzy.de/api",
 }
 
-// defaultMinAgree is how many of the DefaultExplorers must return the same block
+// DefaultMinAgree is how many of the DefaultExplorers must return the same block
 // header before a result is trusted. Two keeps the "no single explorer can spoof"
 // guarantee while tolerating one of the three being unreachable.
-const defaultMinAgree = 2
+// **Exported at /pending 425, because the rule had two implementations and the named one
+// was unreachable.** `internal/server/timestamp.go` applied the same policy as a bare `2`
+// with its own comment, so this constant was referenced only by the two comments above it
+// and changing it changed nothing. Exporting it and calling it from there is the ADR-009
+// shape: one rule, one door, every site calling it.
+const DefaultMinAgree = 2
 
 // bitcoinMagic tags a Bitcoin block-header attestation in the .ots format.
 var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}

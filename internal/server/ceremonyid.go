@@ -611,7 +611,16 @@ func (c *ceremonyID) close() {
 	// `~/nib/ceremonies/<id>/document.pdf` on both sides of every hop, so signed bytes are already
 	// at rest and have been since P07.S02a. What this line actually does is drop the IN-MEMORY
 	// copy, which is worth doing on its own terms. Their retention is the close-out prune's
-	// question, and that prune has no caller yet (see `ceremony.RemoveMirror`).
+	// question, and there is no such prune: ADR-012 made the close-out a MOVE into
+	// `~/nib/ended/` precisely so nothing deletes the only copy of a party's own signature,
+	// and it records that removing what was moved is `/pending 361` rather than an oversight.
+	//
+	// **`/pending 425` claimed this line was stale and said the prune "has three production
+	// callers via closeOutCeremony". It does not.** The parenthetical here used to point at
+	// `ceremony.RemoveMirror`, which has exactly ONE caller — `unconvene` (`convene.go`) —
+	// because ADR-012 keeps it as the ROLLBACK's verb and not the close-out's. So the entry's
+	// correction was itself wrong, and what was actually imprecise was "no caller YET", which
+	// implies a prune exists and is unwired. Nothing of the sort exists.
 	c.reDelivery = nil
 	c.mu.Unlock()
 	// The mapping is released before the sockets close. Its delete opens its OWN socket to the

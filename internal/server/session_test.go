@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1169,16 +1168,6 @@ type okVerifier struct{}
 
 func (okVerifier) ConfirmVerification(string) (bool, error) { return true, nil }
 
-// peerFPForTest is the SPKI fingerprint of a test identity's cert.
-func peerFPForTest(t *testing.T, certPEM []byte) []byte {
-	t.Helper()
-	fp, err := sign.Fingerprint(certPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return fp
-}
-
 // csrfFor reads the CSRF token off /api/status, so a helper that needs to POST does not
 // have to be handed one through every call site it already has.
 func csrfFor(t *testing.T, c *http.Client, baseURL string) string {
@@ -1191,22 +1180,6 @@ func csrfFor(t *testing.T, c *http.Client, baseURL string) string {
 		t.Fatal("no CSRF token on /api/status")
 	}
 	return st.CSRF
-}
-
-// peerChannel establishes a p2p.Channel over a completed mTLS connection, exactly as the
-// server's own call sites do. Built through p2p.TLSChannel rather than assembled here so
-// a test cannot keep passing while the constructor stops reading the peer's fingerprint
-// off the verified chain.
-func peerChannel(t *testing.T, conn *tls.Conn) p2p.Channel {
-	t.Helper()
-	ch, err := p2p.TLSChannel(conn)
-	if err != nil {
-		// Errorf, not Fatalf: several call sites are inside accept goroutines, where
-		// FailNow is not legal. The zero Channel then fails p2p's own check.
-		t.Errorf("establish channel: %v", err)
-		return p2p.Channel{}
-	}
-	return ch
 }
 
 // stubListener is two distinct p2p.Listener values and nothing else. The test it serves

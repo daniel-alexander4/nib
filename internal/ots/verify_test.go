@@ -9,6 +9,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -436,4 +439,45 @@ func TestAProofCannotDriveAnUnboundedNumberOfLookups(t *testing.T) {
 				"two GETs apiece, from the user's IP", n)
 		}
 	})
+}
+
+// /pending 425 — the agreement threshold has ONE home, and it is this one.
+//
+// `DefaultMinAgree` was unexported and referenced only by the two comments above its own
+// declaration, because the single place the policy is actually applied — the timestamp
+// handler in `internal/server` — carried a bare `2` with a comment of its own. One rule,
+// two implementations, and the named one was reachable from nothing: changing it changed
+// nothing at all. That is the ADR-009 shape, and it is why the constant was exported and
+// wired rather than deleted as dead.
+//
+// **What this guard does NOT do, said plainly.** It does not test the policy. Nothing does:
+// with the constant set to 3 instead of 2, every package still passes, so the value is
+// untested end to end and only its SINGLE SOURCE is pinned here. A behavioural test needs
+// explorer doubles and is a larger job than this item; the gap is recorded rather than
+// implied.
+func TestTheAgreementThresholdIsNotDuplicatedInTheHandler(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "server", "timestamp.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "minAgree") {
+		t.Fatal("timestamp.go no longer mentions minAgree — this guard would pass over a file " +
+			"that has nothing to do with the policy it claims to pin")
+	}
+	if !strings.Contains(src, "ots.DefaultMinAgree") {
+		t.Error("timestamp.go sets the agreement threshold without calling ots.DefaultMinAgree. " +
+			"A literal here makes the exported constant unreachable from the only place the " +
+			"policy is applied, which is the state /pending 425 corrected: the named rule was " +
+			"referenced by comments alone and changing it changed nothing.")
+	}
+	// The INITIALISER only. `minAgree = 1` further down is a deliberate override — a user's
+	// own explorer node is trusted on its own — and policing every assignment would forbid it.
+	// The first cut of this check did exactly that and reported the override as the
+	// duplication returning, which is a guard failing on the behaviour it was written to
+	// protect.
+	if regexp.MustCompile(`minAgree\s*:=\s*\d`).MatchString(src) {
+		t.Error("timestamp.go initialises minAgree from a bare integer — the duplication is back, " +
+			"and the exported constant is once again reachable from nothing")
+	}
 }

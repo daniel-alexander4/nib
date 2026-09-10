@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -17,24 +16,6 @@ import (
 
 	"nib/internal/testpdf"
 )
-
-// channelOf establishes a Channel over a completed mTLS connection, failing the test if
-// the peer's identity or the exporter is not available. It is TLSChannel and not a
-// hand-built Channel on purpose: a test that assembled the struct itself could keep
-// passing while TLSChannel stopped reading the fingerprint off the verified chain.
-// It reports with Errorf and returns the zero Channel rather than calling Fatalf,
-// because several call sites are inside accept goroutines and FailNow is only legal on
-// the goroutine running the test. A zero Channel then fails Channel.check at the entry
-// point — a clean named error rather than a nil dereference.
-func channelOf(t *testing.T, conn *tls.Conn) Channel {
-	t.Helper()
-	ch, err := TLSChannel(conn)
-	if err != nil {
-		t.Errorf("establish channel: %v", err)
-		return Channel{}
-	}
-	return ch
-}
 
 // livePair brings up a real mTLS session between two pinned identities and hands each
 // side to its half of the exchange. Real TLS rather than a pipe, because the string binds

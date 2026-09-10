@@ -613,8 +613,6 @@ type pathRefusal struct {
 	msg    string
 }
 
-func (r *pathRefusal) Error() string { return r.msg }
-
 // readInstallablePDF is THE door onto "this file may become a document" (ADR-009).
 //
 // Three sites need this sequence — handleOpen, openHandedOff and handleReload — and it

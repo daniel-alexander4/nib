@@ -57,7 +57,10 @@ func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	explorers := ots.DefaultExplorers
-	minAgree := 2 // default public set: at least two independent explorers must agree
+	// The policy lives in `ots`, beside the explorer set it is about — this was a bare `2`
+	// here, so the named constant there was reachable from nothing and changing it changed
+	// nothing (/pending 425).
+	minAgree := ots.DefaultMinAgree
 	if custom := strings.TrimSpace(r.FormValue("explorer")); custom != "" {
 		if u, err := url.Parse(custom); err != nil || requireHTTPScheme(u) != nil {
 			httpError(w, http.StatusBadRequest, "block explorer must be an http(s) URL")
