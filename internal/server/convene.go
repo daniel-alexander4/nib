@@ -684,5 +684,28 @@ func convenedByMe(v *vault.Vault, rec ceremony.Record) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return strings.EqualFold(hex.EncodeToString(myFP), convenerFingerprintOf(rec)), nil
+	return isConvener(hex.EncodeToString(myFP), rec), nil
+}
+
+// isConvener reports whether a fingerprint already in hand is this record's convener.
+//
+// **The comparison half of the rule, split from the derivation half deliberately**
+// (`/pending 432`). `convenedByMe` above derives an identity from the vault and then asks
+// this; four other sites already hold their own `myFP` — `runDeliveryRound` twice,
+// `endCeremony` and `roundIsFinished` — because they need the cert or the key for the work
+// they are about to do. Routing those through `convenedByMe` would make each of them derive
+// the identity a SECOND time to answer a question they already have the input for, which is
+// how a review fix becomes its own defect.
+//
+// So the door takes what the caller has. The derivation is guarded by having one caller of
+// `identity`+`Fingerprint` for this purpose; the comparison is guarded by being the only
+// place `convenerFingerprintOf` is compared to anything
+// (`TestOnlyOneSiteAsksWhetherThisMachineConvened`).
+//
+// **The half that got written wrong was the derivation, not this.** P04.S03's first cut read
+// `identity(v)` as `(cert, fingerprint, err)` when it is `(cert, KEY, err)`, compared a
+// private key's bytes to a fingerprint, and refused every caller including the convener — and
+// a guard that refuses everyone passes every negative test there is.
+func isConvener(meHex string, rec ceremony.Record) bool {
+	return strings.EqualFold(meHex, convenerFingerprintOf(rec))
 }

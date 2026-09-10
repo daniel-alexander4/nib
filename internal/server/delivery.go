@@ -873,8 +873,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		return nil, err
 	}
 	me := hex.EncodeToString(myFP)
-	conv := convenerFingerprintOf(rec)
-	if !strings.EqualFold(me, conv) {
+	if !isConvener(me, rec) {
 		return nil, errors.New("only the convener delivers a finished document: this machine is " +
 			"a party to this ceremony, not the one that convened it")
 	}
@@ -1482,7 +1481,7 @@ func (s *Server) armDeliveryAfterHop(final []byte) {
 		return
 	}
 	me := hex.EncodeToString(myFP)
-	if strings.EqualFold(me, convenerFingerprintOf(rec)) {
+	if isConvener(me, rec) {
 		return
 	}
 	if alreadyDelivered(rec) {
@@ -1539,7 +1538,7 @@ func (s *Server) endCeremony(cer *ceremonyID, state string) {
 		return
 	}
 	myFP, err := sign.Fingerprint(cert)
-	if err != nil || !strings.EqualFold(hex.EncodeToString(myFP), convenerFingerprintOf(rec)) {
+	if err != nil || !isConvener(hex.EncodeToString(myFP), rec) {
 		return // only the convener attests an end state
 	}
 	t, terr := ceremony.SignTermination(rec, state, cert, key)
