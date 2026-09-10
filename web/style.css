@@ -449,6 +449,12 @@ input[type="search"] { width: 100%; }
 .quickstamps button, .markers button { padding: 4px 8px; font-size: 13px; }
 .markers button.active { background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 .libhint { color: var(--subtext0); font-size: 11px; margin: 4px 0 8px; }
+/* The setup sheet's "which document" line (/pending 413). Larger than .libhint because it is the
+   sheet's subject rather than a note about a field, and it carries the one sentence saying that
+   convening fixes the document. `.cerdocnone` is the state where nothing is bound yet: coloured as
+   a warning, since the convener is otherwise filling in a form for a file that is not there. */
+.cerdocline { color: var(--subtext1); font-size: 12px; margin: 0 0 12px; line-height: 1.5; }
+.cerdocline.cerdocnone { color: var(--yellow); }
 .libnote { color: var(--text); font-size: 12px; background: var(--surface0); border-left: 2px solid var(--blue); border-radius: 4px; padding: 8px; }
 #imageGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .libimg {

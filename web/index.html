@@ -574,6 +574,19 @@
           </div>
         </div>
         <div class="sheetbody">
+          <!-- WHICH document (/pending 413). The sheet stands IN PLACE of the page, so without
+               this line the convener decides the recital, the deadline and the roster with the
+               file they are deciding about off screen entirely — and, where nothing was open when
+               they pressed Convene, learns so at SUBMIT, from a 404 about a document.
+
+               It is not solved by adding the button to DOC_REQUIRED: `bindCeremonySetupDoc`
+               deliberately supports "I opened the sheet, then went and opened the lease", binding
+               on the way back. So the sheet SAYS what it is bound to, including when that is
+               nothing, and the empty case names the way out rather than refusing the way in.
+
+               Written by `renderCeremonySetupDoc`, whose one caller is `bindCeremonySetupDoc` —
+               the binding and the statement of it are the same act. -->
+          <p id="cerSheetDoc" class="cerdocline"></p>
           <!-- Convene (P06.S04). The roster is PICKED from the peers this machine has already
                pinned, never typed: the phase's criterion is that the primary flow contains no hex
                fingerprint, and a fingerprint is hex. A party who is not pinned yet is pinned first,
