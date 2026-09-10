@@ -82,7 +82,7 @@ func TestAConvenedDocumentRefusesMutation(t *testing.T) {
 	if aerr != nil {
 		t.Fatal(aerr)
 	}
-	err = s.commitMutation(d, doc, edited)
+	err = s.commitMutation(d, doc, edited, false)
 	if !errors.Is(err, ErrCeremonyFrozen) {
 		t.Fatalf("a mutation on a convened document reported %v, want ErrCeremonyFrozen — "+
 			"every other party was invited to sign these exact bytes", err)
@@ -93,7 +93,7 @@ func TestAConvenedDocumentRefusesMutation(t *testing.T) {
 
 	// The DESTRUCTIVE door too, and it matters more there: redaction on a convened document
 	// would leave every other party's copy hashing to bytes that no longer exist.
-	if err := s.commitBarrier(d, edited); !errors.Is(err, ErrCeremonyFrozen) {
+	if err := s.commitBarrier(d, edited, false); !errors.Is(err, ErrCeremonyFrozen) {
 		t.Errorf("a barrier operation on a convened document reported %v, want ErrCeremonyFrozen", err)
 	}
 
@@ -106,7 +106,7 @@ func TestAConvenedDocumentRefusesMutation(t *testing.T) {
 	if gerr != nil {
 		t.Fatal(gerr)
 	}
-	if err := s.commitMutation(p, plain, grown); err != nil {
+	if err := s.commitMutation(p, plain, grown, false); err != nil {
 		t.Errorf("an ordinary document was refused (%v) — the freeze is refusing everything, "+
 			"which would break every edit in the product", err)
 	}
@@ -129,7 +129,7 @@ func TestConveneItselfIsNotFrozenOut(t *testing.T) {
 	s.registerLocked(d)
 	s.mu.Unlock()
 	// The shape convene performs: an input with no record, a result with one.
-	if err := s.commitBarrier(d, conv); err != nil {
+	if err := s.commitBarrier(d, conv, false); err != nil {
 		t.Fatalf("convene's own commit was refused (%v) — a freeze on the RESULT rather than "+
 			"the input makes creating a ceremony impossible", err)
 	}

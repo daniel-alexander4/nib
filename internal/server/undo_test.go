@@ -140,7 +140,7 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 	// altered ordinary trimming.
 	doc := s.activeDoc()
 	for i := 0; i < maxUndoDepth+5; i++ {
-		s.commitMutation(doc, pdf, pdf)
+		s.commitMutation(doc, pdf, pdf, false)
 	}
 	if len(doc.undo) != maxUndoDepth {
 		t.Errorf("undo depth = %d, want %d (oldest evicted)", len(doc.undo), maxUndoDepth)
@@ -149,7 +149,7 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 		t.Errorf("commitMutation must clear redo, got %d", len(doc.redo))
 	}
 
-	s.commitBarrier(doc, pdf)
+	s.commitBarrier(doc, pdf, false)
 	if len(doc.undo) != 0 || len(doc.redo) != 0 {
 		t.Errorf("barrier must clear history, got undo=%d redo=%d", len(doc.undo), len(doc.redo))
 	}

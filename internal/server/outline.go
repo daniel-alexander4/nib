@@ -69,7 +69,7 @@ func (s *Server) handleOutlineSet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.commitMutation(doc, pdfBytes, result); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, pdfBytes, result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

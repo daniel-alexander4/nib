@@ -235,7 +235,7 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 	//
 	// The result goes STRAIGHT to wroteCommitFailure — ADR-004's 409-never-404 rule lives in
 	// that one function, and a call site that maps the error itself is a second copy of it.
-	if err := s.commitBarrier(doc, out.Document); wroteCommitFailure(w, err) {
+	if err := s.commitBarrier(doc, out.Document, false); wroteCommitFailure(w, err) {
 		return
 	}
 	committed = true

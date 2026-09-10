@@ -61,8 +61,11 @@ const (
 // belongs here and not in the caller because only this function holds the lock
 // across the test and the write; a caller that tested the document first would leave a
 // window for a close to land in between, which is the very defect.
-func (s *Server) commitMutation(doc *document, input, result []byte) error {
+func (s *Server) commitMutation(doc *document, input, result []byte, acceptSignatureLoss bool) error {
 	sig := sign.Verify(result)
+	if err := s.refuseSignatureErasure(doc, result, acceptSignatureLoss); err != nil {
+		return err
+	}
 	// **D29's freeze, on the SERVER's bytes and BEFORE the lock — both halves were wrong in
 	// the first draft and the slice's own diff review found each.**
 	//
@@ -121,6 +124,56 @@ func (s *Server) commitMutation(doc *document, input, result []byte) error {
 // which happened.
 var errDocClosed = errors.New("that document is no longer open")
 
+// errSignatureWouldBeErased is the refusal a commit gets when it would leave no trace of a
+// signature the document had.
+var errSignatureWouldBeErased = errors.New(
+	"this document carries a signature, and this operation would rebuild it in a way that leaves " +
+		"no record it was ever signed — not a broken signature a reader can point at, but nothing " +
+		"at all. Confirm that you want that, and Nib will do it")
+
+// refuseSignatureErasure is the one door for /pending 455, and it OBSERVES rather than predicts.
+//
+// # Why it compares bytes instead of consulting a list of operations
+//
+// The obvious shape — a table of which routes or which pdfcpu primitives erase a signature — was
+// built and thrown away, because measuring it falsified the taxonomy it would have been built on.
+// `internal/pdfops`' own `TestWhatEachDocumentPrimitiveDoesToASignature` records the numbers:
+// `api.MergeRaw` PRESERVES the blob while `Collect` erases it, and `api.RemovePages` erases without
+// being a rebuild path — so neither "which primitive family" nor "which route" separates the cases.
+// Worse, every row is pdfcpu's behaviour rather than Nib's, so a dependency upgrade can move one
+// silently and a predicted set would then be confidently wrong.
+//
+// Comparing the document the server holds against the result it was handed cannot go stale. It also
+// covers routes nobody enumerated, including any added later.
+//
+// # Why the flag is a parameter and not a field this function reads
+//
+// It has no request, and giving it one would put a `acceptSignatureLoss` read on all ten committing
+// call sites — which /pending 447's guard would then require every one of those routes' clients to
+// send. Seven of them cannot erase anything and would need exemption rows, and that guard's
+// `product-gap` category is capped at two precisely to stop a table growing that way. So the flag
+// is a parameter: the three handlers that can actually trip this read the field, and the rest pass
+// a literal `false`.
+//
+// **A handler that passes `false` and then erases something is refused with no way through, and
+// that is the safe direction.** It is loud and it is a bug report, where the alternative — a route
+// nobody thought about erasing a signature silently — is the defect this exists to end.
+func (s *Server) refuseSignatureErasure(doc *document, result []byte, accepted bool) error {
+	if doc == nil || accepted {
+		return nil
+	}
+	// `docBytes` and not the caller's `input`: two of the six mutation call sites pass the
+	// CLIENT's posted bytes, and `commitMutation`'s own comment records what that cost D29's
+	// freeze. The document the rule is about is the one the server holds.
+	if !sign.HasSignatureBlob(s.docBytes(doc)) {
+		return nil
+	}
+	if sign.HasSignatureBlob(result) {
+		return nil // it survives as evidence, broken or not — that is the loud outcome, and allowed
+	}
+	return errSignatureWouldBeErased
+}
+
 // byteCapLocked refuses a commit that would push the open documents past ADR-005's aggregate
 // ceiling. Caller holds s.mu.
 //
@@ -155,8 +208,11 @@ func (s *Server) byteCapLocked(doc *document, result []byte) error {
 // and it matters more here, because the operations that come through this door
 // are the irreversible ones. Telling a user their redaction succeeded when it
 // was discarded is the worst reply this server can give.
-func (s *Server) commitBarrier(doc *document, result []byte) error {
+func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss bool) error {
 	sig := sign.Verify(result)
+	if err := s.refuseSignatureErasure(doc, result, acceptSignatureLoss); err != nil {
+		return err
+	}
 	// D29's freeze, on the server's bytes and before the lock — see commitMutation. It
 	// matters more at this door: a barrier operation is destructive, so redaction on a
 	// convened document would leave every other party's copy hashing to bytes that no longer

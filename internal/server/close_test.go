@@ -82,8 +82,8 @@ func TestCloseClearsBothRings(t *testing.T) {
 	doc := s.activeDoc()
 
 	// Populate BOTH rings: two commits fill undo, one undo moves a state across.
-	s.commitMutation(doc, pdf, pdf)
-	s.commitMutation(doc, pdf, pdf)
+	s.commitMutation(doc, pdf, pdf, false)
+	s.commitMutation(doc, pdf, pdf, false)
 	s.handleUndo(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/undo", nil))
 	if len(doc.undo) == 0 || len(doc.redo) == 0 {
 		t.Fatalf("setup: want both rings non-empty, got undo=%d redo=%d", len(doc.undo), len(doc.redo))
@@ -159,8 +159,8 @@ func TestCommitAfterCloseIsRefused(t *testing.T) {
 		name   string
 		commit func(*Server) error
 	}{
-		{"commitMutation", func(s *Server) error { return s.commitMutation(s.activeDoc(), pdf, pdf) }},
-		{"commitBarrier", func(s *Server) error { return s.commitBarrier(s.activeDoc(), pdf) }},
+		{"commitMutation", func(s *Server) error { return s.commitMutation(s.activeDoc(), pdf, pdf, false) }},
+		{"commitBarrier", func(s *Server) error { return s.commitBarrier(s.activeDoc(), pdf, false) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := openTestServer(t, pdf)

@@ -1945,6 +1945,32 @@ gets a defined behaviour and its own message.
   the parties who signed keep their partial document and convene a new ceremony. Recorded because a
   limit nobody wrote down is discovered by the person it happens to, at the worst moment.
 
+  **(AMENDED 2026-09-10, `/pending 421`: EXPIRED IS A LIVE CONDITION, NOT A CLOSE-OUT STATE — three
+  states can be produced, not four.)** *Expired* above reads as a fourth thing the close-out can
+  conclude, and the code cannot produce it. `closeOutReason` waits for `Expires` **plus**
+  `closeOutGrace`, which is word for word *abandoned*'s own definition — the deadline and the grace
+  both passed and nothing ever said what happened — so at the only moment a close-out runs, both
+  are true and *abandoned* is the more specific claim. There is no window in which only expiry
+  holds.
+
+  **And the grace is why that must not be "fixed" by closing out earlier.** `closeOutGrace`'s own
+  doc says what it covers: *"the delivery round starting AFTER the deadline — the convener's own arm
+  runs to `MaxCeremonyLife` and a round that begins at the last moment still has to walk N parties
+  at `connectDeadline` each — plus the machine being off"*. Firing a close-out at the deadline to
+  mint *expired* would archive proceedings that are still legitimately completing, which is the one
+  thing the grace exists to prevent.
+
+  **The condition is not unimplemented; it is reported as prose.** `endedReason` tests the deadline
+  with no grace and returns *"this ceremony's deadline has passed"*, and `ceremonynext.go` states
+  outright that the two predicates are different questions — *"`closeOutReason` … decides whether to
+  ARCHIVE a directory, and a late round must be allowed to finish first. This decides what to tell a
+  person to do now."* — and refuses to unify them by name.
+
+  So `ceremony.StateExpired` KEEPS its constant and its place in the derived-state block, and the
+  client keeps its `expired` arm as forward compatibility; what changes is this decision's claim
+  that four end states are producible. Nothing signs *expired* either, and D28's own text below says
+  why: nobody can attest *"the deadline passed"*.
+
 Two adjacent states also get defined behaviour, because both are new with D24:
 
 - **A party holding an intermediate document** between their own hop and the delivery round holds
@@ -4412,7 +4438,7 @@ Exit criteria:
 - **A corrupt or unreadable ceremony record degrades that ceremony's panel entry and leaves every other ceremony and open document working — driven with a truncated record. (added 2026-08-18, D34, STANDARDS §9 self-healing.)**
 - **The consent screen shows every party who has already signed, not one. (added 2026-08-18, D27.)** Driven with a three-signature document, because a two-party fixture cannot tell a roster from a single peer.
 - **The panel renders roster, position and next action with the vault locked, and asks for the password at the moment of signing rather than at the moment of looking. (added 2026-08-18, D29.)**
-- **Each of D28's four end states — completed, declined, expired, abandoned — produces its own message, distinct from each other and from D19's four network causes. (added 2026-08-18, D28.)** Eight distinct outcomes, driven separately; a screen that folds "they declined" into "couldn't establish a connection" fails this.
+- **Each of D28's end states — completed, declined, abandoned, and the two D24 added — produces its own message, distinct from each other and from D19's four network causes. (added 2026-08-18, D28; amended 2026-09-10, `/pending 421`.)** A screen that folds "they declined" into "couldn't establish a connection" fails this. **`expired` is not among the states this clause ranges over, and that is the amendment**: no close-out can produce it, because `closeOutReason`'s window is the deadline PLUS the grace, which is *abandoned*'s definition. Expiry is reported live by `endedReason` as prose. The client's `expired` arm stays as forward compatibility and is asserted as such, not as an outcome anything can put on the wire.
 - **A document under a live ceremony refuses mutating operations and names the ceremony; the refusal is driven through a real edit, not asserted on a flag. (added 2026-08-18, D29.)**
 - **The ceremony record is labelled in the attachments panel for what it is, and cannot be removed while the ceremony is live. (added 2026-08-18, D29.)**
 - **A party's in-progress copy is labelled as in-progress and never as the finished document. (added 2026-08-18, D28.)**

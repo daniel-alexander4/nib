@@ -2650,7 +2650,7 @@ function repaintForActiveView() {
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + (open ? view.pdfDocument.numPages : 0); });
   all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
   reflectDocTitle();
-  updateBadge(view.lastSig, view.inCeremony); // idempotent re-assignment; NEVER updateBadge(null) here
+  updateBadge(view.lastSig, view.inCeremony, view.lastUnverified); // idempotent re-assignment; NEVER updateBadge(null) here
 
   // The sidebars are NOT rebuilt. P05.S05 gave each view its own grid and outline list, so
   // activation SHOWS them — which is the phase-open decision, taken because
@@ -2722,6 +2722,38 @@ function signatureWarning() {
 function confirmSignatureLoss() {
   return !isSigned() || confirm('This document is signed. Editing it destroys the existing '
     + 'signature, and it cannot be restored. Continue?');
+}
+
+// SIGNATURE_ERASURE_TOKEN is the phrase the server's refusal carries, and the two copies are held
+// together by a tier-1 test rather than by care (/pending 455).
+//
+// Matching on prose is normally the wrong shape, and it is chosen here over a second status code
+// because 409 already means several things on these routes and a new code would have to be
+// explained to every existing 409 handler. The exposure — the server rewording and the client
+// silently never offering the retry again — is closed by
+// `TestTheSignatureErasureRefusalSaysWhatTheClientListensFor`.
+const SIGNATURE_ERASURE_TOKEN = 'no record it was ever signed';
+
+// acceptedSignatureLoss asks the user whether to go ahead with an operation the server refused
+// because it would leave no trace of a signature the document carries.
+//
+// **The confirm happens AFTER the refusal, not before, and that ordering is the point.** The client
+// cannot know in advance whether an operation erases: measured, `api.MergeRaw` preserves the
+// signature while `Collect` erases it, and `api.RemovePages` erases while its sibling page
+// operations do not — so a pre-flight warning would either cry wolf on rotate or stay silent on
+// delete. The server compares the bytes it holds against the bytes it produced, which cannot be
+// wrong, and asks only when the answer is yes. `/api/write`'s 412-then-overwrite is the same shape
+// and the precedent for it.
+//
+// Returns false for every other refusal, so an ordinary 409 still reaches its own handler.
+async function acceptedSignatureLoss(res) {
+  if (!res || res.status !== 409) return false;
+  let body = '';
+  try { body = await res.clone().text(); } catch { return false; }
+  if (!body.includes(SIGNATURE_ERASURE_TOKEN)) return false;
+  return confirm('This document is signed, and this change rebuilds it in a way that leaves no '
+    + 'record it was ever signed — not a broken signature someone can point at, but nothing at '
+    + 'all. Continue?');
 }
 
 // --- open / load -------------------------------------------------------------
@@ -3022,10 +3054,16 @@ async function setDocumentFromServer(meta, target = view) {
   // call it — that would overwrite the ACTIVE view's signature result, which is the trust
   // decision the details modal shows. The target's own value is recorded directly instead.
   if (target === view) {
-    updateBadge(meta.signature, meta.inCeremony);
+    updateBadge(meta.signature, meta.inCeremony, meta.unverifiedSigners);
   } else {
     target.lastSig = meta.signature;
     target.inCeremony = !!meta.inCeremony;
+    // **`lastUnverified` travels with `lastSig`, and leaving it behind was a live defect** found
+    // by the tier-2 badge test on its second open. These three are what the badge is rebuilt from
+    // when the user switches to this tab; recording two of them means the switch renders this
+    // document's signature with the PREVIOUS document's trust count — or with none at all, which
+    // reads as "unlock to check who signed" on a document whose signers are all known.
+    target.lastUnverified = meta.unverifiedSigners;
   }
   // Rebuild any embedded signing flags as markers and offer the signing flow.
   target.docHadFlags = Array.isArray(meta.flags) && meta.flags.length > 0;
@@ -4311,7 +4349,7 @@ async function save() {
     // document is open, and that is what the id answers.
     if (!view.docMeta || view.docMeta.id !== doc.id) { toast('Saved'); return; }
 
-    updateBadge(meta.signature, meta.inCeremony);
+    updateBadge(meta.signature, meta.inCeremony, meta.unverifiedSigners);
     toast('Saved');
     // If detected fields were baked in, reload so the page shows the stamped
     // text and the transient input widgets are cleared. view.overlayFields is read only
@@ -4329,9 +4367,14 @@ async function save() {
 }
 
 // --- signature badge ---------------------------------------------------------
-function updateBadge(sig, inCeremony) {
+// `unverified` is docResponse's `unverifiedSigners`, and it arrives as a THIRD argument rather than
+// on `sig` because `sign.Status` is `internal/sign`'s shape and that package has no vault: it cannot
+// know whether a fingerprint is one this user has pinned. The count is computed where the vault is,
+// beside the signature rather than inside it, and threaded here.
+function updateBadge(sig, inCeremony, unverified) {
   view.lastSig = sig;
   view.inCeremony = !!inCeremony;
+  view.lastUnverified = unverified;
   const b = els.sigBadge;
   const signers = sig?.signers || [];
   const map = {
@@ -4340,13 +4383,38 @@ function updateBadge(sig, inCeremony) {
     unsigned: ['badge-unsigned', 'Unsigned'],
   };
   let [cls, label] = map[sig?.state] || ['badge-none', 'no document'];
+  // **`Untampered` is reserved for the case it is true of (/pending 390).**
+  //
+  // The defect, reproduced: a stranger appends changed content plus their OWN self-signed
+  // signature covering to EOF. Every signature is valid over its own byte range and `addedAfter`
+  // is false — content added BETWEEN signatures is expected in multi-party signing — so this badge
+  // said `✓ Untampered · 2 signers` about a document that had been altered after its owner signed
+  // it. The attacker needed no key of the owner's.
+  //
+  // `addedAfter`'s premise is true on a ROSTER and false in a dispute, and the solo path has no
+  // roster. What it does have is whether the viewer already knows each signer, which the server
+  // now answers as `unverifiedSigners`. That count is the only thing standing between the reader
+  // and a green tick, so the word is withheld unless it is zero.
+  //
+  // **`undefined` is not zero**, and treating it as such is the whole failure this replaces. The
+  // field is absent when the vault is LOCKED and the pinned set cannot be read — the machine has
+  // verified nothing, which is exactly when it must not claim to have.
+  const vouched = unverified === 0;
+  if (sig?.state === 'valid' && !vouched) {
+    cls = 'badge-warn';
+    label = signers.length === 1 ? '⚠ 1 signature' : '⚠ ' + signers.length + ' signatures';
+    label += unverified === undefined
+      ? ' · unlock to check who signed'
+      : ' · ' + unverified + ' from someone you have not verified';
+  }
   // Deliberately no inline signing time: it may be self-asserted, and the
   // badge can't qualify it. Time + its trust level live in the details modal.
-  if (sig?.state === 'valid' && signers.length > 1) label += ' · ' + signers.length + ' signers';
+  if (sig?.state === 'valid' && vouched && signers.length > 1) label += ' · ' + signers.length + ' signers';
   // Valid signatures, but content rides after the last one, uncovered: the bare
   // "Untampered" overstates it, so tone the badge to caution. (Invalid already
   // dominates; the full explanation is in the details modal.)
   if (sig?.state === 'valid' && sig?.addedAfter) { cls = 'badge-warn'; label += ' · content added after signing'; }
+
   b.className = 'badge ' + cls;
   b.textContent = label;
   b.title = label;
@@ -4381,7 +4449,13 @@ async function openSigDetails() {
 
     const status = document.createElement('div');
     status.className = s.valid ? 'sigrow-ok' : 'sigrow-bad';
-    status.textContent = s.valid ? '✓ Untampered' : '⚠ Modified since signing';
+    // **Not the badge's word, and the difference is the point (/pending 390).** This row is about
+    // ONE signature — `SignerInfo.Valid` is "this signer's byte-range hash checks out" — and the
+    // badge's `Untampered` is a claim about the DOCUMENT. They were the same string, so a reader
+    // looking at a document the badge now warns about would find a column of green ticks each
+    // saying the word the badge had just withheld. Every one of them would be true, which is what
+    // makes it the wrong word here: an attacker's own self-signed signature checks out perfectly.
+    status.textContent = s.valid ? '✓ Signature checks out' : '⚠ Modified since signing';
     row.appendChild(status);
 
     const time = document.createElement('div');
@@ -4862,7 +4936,11 @@ els.scanFlattenBtn.onclick = async () => {
   });
   form.append('format', 'pdf');
   form.append('reload', '1');
-  const res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+  let res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+  if (await acceptedSignatureLoss(res)) {
+    form.append('acceptSignatureLoss', '1');
+    res = await apiFetch('/api/assemble', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+  }
   if (!res.ok) return toast('flatten failed');
   await setDocumentFromServer(await res.json(), owner);
   renderScanReport({ findings: [] });
@@ -5258,7 +5336,11 @@ async function pageOp(op, extra = {}) {
   // `pageNumGo`'s object literal, which is one function short of the wire.
   if (extra.size != null) form.append('size', String(extra.size));
   if (extra.color) form.append('color', extra.color);
-  const res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+  let res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+  if (await acceptedSignatureLoss(res)) {
+    form.append('acceptSignatureLoss', '1');
+    res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
+  }
   // The server's sentence — see the attachment-add door for why (P06.S09).
   if (!res.ok) { toast(await errText(res, 'page operation failed')); return false; }
   await setDocumentFromServer(await res.json(), owner);
@@ -6509,7 +6591,12 @@ async function flattenPages(pages, paint, docId = view.docMeta && view.docMeta.i
     form.append('pageW', String(w));
     form.append('pageH', String(h));
   }
-  return apiFetch('/api/redact', { method: 'POST', body: form, docId });
+  let res = await apiFetch('/api/redact', { method: 'POST', body: form, docId });
+  if (await acceptedSignatureLoss(res)) {
+    form.append('acceptSignatureLoss', '1');
+    res = await apiFetch('/api/redact', { method: 'POST', body: form, docId });
+  }
+  return res;
 }
 
 // assembleBlob rasterises every (filled, stamped) page and packages it server-

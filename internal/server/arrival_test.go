@@ -27,7 +27,7 @@ func TestArrivalAddsRatherThanReplacing(t *testing.T) {
 	// Give the open document a history, so "it survived" is a claim with something
 	// behind it. A document with no history survives an arrival that wiped every
 	// history, and the assertion would not know the difference.
-	s.commitMutation(existing, pdf, pdf)
+	s.commitMutation(existing, pdf, pdf, false)
 	if len(existing.undo) == 0 {
 		t.Fatal("setup: the open document has no history, so its survival would prove nothing")
 	}
@@ -82,7 +82,7 @@ func TestSetDocStillReplaces(t *testing.T) {
 	}
 	s := openTestServer(t, pdf)
 	first := s.activeDoc()
-	s.commitMutation(first, pdf, pdf)
+	s.commitMutation(first, pdf, pdf, false)
 
 	second := s.setDoc(&document{data: []byte("replacement")})
 

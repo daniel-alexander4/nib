@@ -5,6 +5,21 @@
 // distinct outcomes, driven separately; a screen that folds 'they declined' into 'couldn't
 // establish a connection' fails this."**
 //
+// # `expired` is in this list as FORWARD COMPATIBILITY, not as an outcome (/pending 421)
+//
+// The criterion says four end states and the close-out can produce three. `closeOutReason` waits
+// for `Expires` **plus** `closeOutGrace`, which is word for word `abandoned`'s definition — the
+// deadline and the grace both passed and nothing said what happened — so at the only moment a
+// close-out runs both are true and `abandoned` is the more specific claim. There is no window in
+// which only expiry holds, and firing the close-out earlier to make one would archive proceedings
+// the grace exists to let finish.
+//
+// So the `expired` row below drives a client branch that **nothing can currently put on the wire**.
+// It is kept rather than deleted, because the branch is real and the alternative — deleting it and
+// having a future producer render the raw enum at somebody — is the defect `/pending 428` already
+// paid for once. What changed is this comment: the row is no longer evidence that the product can
+// reach that state, and D28 is amended to say so.
+//
 // # Nine, not eight, and the plan carries the pin
 //
 // D19 has FIVE causes, not four — the plan review of 2026-08-18 corrected D19 itself and this
@@ -38,6 +53,24 @@ import { boot } from './boot.mjs';
 // The list is the stimulus, not a description.
 const END_STATES = ['completed', 'declined', 'expired', 'abandoned', 'stopped', 'left',
   'a-state-from-a-newer-nib'];
+
+// The producible subset — every state above except the two that nothing puts on the wire:
+// `expired` (see the header) and the deliberately-unknown sentinel. Producibility itself is a
+// SERVER fact and is asserted there, by `TestNoCloseOutPathProducesTheExpiredState`; what this
+// list does here is keep the two halves from drifting apart silently.
+const PRODUCIBLE = ['completed', 'declined', 'abandoned', 'stopped', 'left'];
+
+test('every producible end state is one this file drives', () => {
+  for (const st of PRODUCIBLE) {
+    assert.ok(END_STATES.includes(st),
+      `${st} can be put on the wire and this file does not drive it, so nothing checks that it `
+      + 'says its own thing — which is the whole criterion');
+  }
+  assert.equal(PRODUCIBLE.includes('expired'), false,
+    'expired is listed as producible here while the header, D28 and internal/server all say no '
+    + 'close-out can reach it. If that changed, this is the wrong file to record it in — amend '
+    + 'D28 and TestNoCloseOutPathProducesTheExpiredState first');
+});
 
 // D19's five machine tags, each with the summary the server sends for it. The summaries are the
 // server's own words; this file asserts the CLIENT renders what it is given and keeps them apart.
