@@ -189,7 +189,13 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.commitMutation(doc, pdfBytes, result); wroteCommitFailure(w, err) {
+	// **The field is spelled out here rather than behind a helper or a constant, and that is
+	// deliberate.** /pending 447's guard reads `r.FormValue("…")` as an `*ast.BasicLit` and
+	// follows only helpers whose names match its prefix list — so a shared `acceptsSignatureLoss(r)`
+	// or a named constant would make this field invisible to the one check that verifies a client
+	// still sends it. Three routes can erase a signature; each states so in its own words.
+	acceptLoss := r.FormValue("acceptSignatureLoss") == "1"
+	if err := s.commitMutation(doc, pdfBytes, result, acceptLoss); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

@@ -214,7 +214,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// so there is no second read that could disagree with it and record an undo target the
 	// document never held.
 	before := s.docBytes(doc)
-	if err := s.commitMutation(doc, before, data); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, before, data, false); wroteCommitFailure(w, err) {
 		return
 	}
 	s.mu.Lock()

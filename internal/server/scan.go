@@ -75,7 +75,7 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	residual, _ := pdfops.Scan(result)
-	if err := s.commitMutation(doc, before, result); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, sanitizeResponse{docResponse: s.docResponse(doc), Ok: true, Residual: residual})
@@ -158,7 +158,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := s.commitMutation(doc, before, result); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, decryptResponse{docResponse: s.docResponse(doc)})

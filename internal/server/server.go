@@ -10,6 +10,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -530,14 +531,22 @@ type docResponse struct {
 	// every request silently takes docFor's compatibility default, which is the
 	// unpinned path D7 exists to prevent. Omitted when nothing is open, so the
 	// empty docResponse stays byte-identical to what it was before.
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name"`
-	Path      string          `json:"path"`            // empty => upload origin, no in-place save
-	CanSave   bool            `json:"canSave"`         // true when a save would overwrite Path
-	Signature sign.Status     `json:"signature"`       // untampered / modified / unsigned
-	Flags     json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
-	CanUndo   bool            `json:"canUndo"`         // an undoable operation is on the stack
-	CanRedo   bool            `json:"canRedo"`         // an undone operation can be re-applied
+	ID        string      `json:"id,omitempty"`
+	Name      string      `json:"name"`
+	Path      string      `json:"path"`      // empty => upload origin, no in-place save
+	CanSave   bool        `json:"canSave"`   // true when a save would overwrite Path
+	Signature sign.Status `json:"signature"` // untampered / modified / unsigned
+	// UnverifiedSigners is how many of this document's signatures are by an identity this
+	// machine cannot vouch for — neither its own nor a peer the user has pinned (/pending 390).
+	//
+	// **Three states, and the null is the load-bearing one.** Absent means "not asked": there are
+	// no signers, or the vault is locked so the pinned set cannot be read. Zero means every
+	// signature is by a known identity. The badge may only say *Untampered* on zero, and must not
+	// say it on absent — a locked vault has not verified anything.
+	UnverifiedSigners *int            `json:"unverifiedSigners,omitempty"`
+	Flags             json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
+	CanUndo           bool            `json:"canUndo"`         // an undoable operation is on the stack
+	CanRedo           bool            `json:"canRedo"`         // an undone operation can be re-applied
 
 	// HistoryEvicted distinguishes "your edit history was dropped to free memory"
 	// from "you have not edited this document" — states that canUndo:false reports
@@ -1512,9 +1521,11 @@ func (s *Server) docResponse(doc *document) docResponse {
 	// may read it, and a syscall under the server mutex serializes every route behind
 	// it — which on a network mount is a hung request becoming a hung process.
 	path, recorded := doc.path, doc.disk
+	vlt := s.vault
 	s.mu.Unlock()
 
 	resp.DiskChanged = diskChanged(path, recorded)
+	resp.UnverifiedSigners = unverifiedSigners(vlt, resp.Signature)
 
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is
@@ -1535,6 +1546,58 @@ func (s *Server) docResponse(doc *document) docResponse {
 	}
 	s.mu.Unlock()
 	return resp
+}
+
+// unverifiedSigners counts the signatures this machine cannot vouch for — /pending 390.
+//
+// # The defect
+//
+// Dan signs. Mallory appends changed content plus her own self-signed signature covering to EOF.
+// Every signature is valid over its own byte range, `AddedAfter` is false because content added
+// BETWEEN signatures is expected in multi-party signing, and the badge rendered
+// `✓ Untampered · 2 signers`. Mallory needed no key of Dan's — `GenerateIdentity` plus
+// `SignApproval` is the whole attack. `AddedAfter`'s premise is true on a roster and false in a
+// dispute, and the solo path has no roster.
+//
+// # Why a count and not a roster
+//
+// The ceremony path already models this with `unrostered` and `Pinned`, and porting that would
+// mean deciding what a roster IS outside a ceremony. It is not needed: the question the badge asks
+// is only *may this say Untampered*, and "is every signer someone this user already knows" answers
+// it. `attestationView.Pinned` on the verify path is the same fact per signer, and the details
+// modal is where per-signer trust already lives.
+//
+// # Cost, on a path that answers every document mutation
+//
+// One `PinnedPeers()` copy and one `Identity()` read, and BOTH are skipped when the document has
+// no signers — which is the ordinary document. On a document that does have them, this response
+// has already run `sign.Verify`, a full PDF parse, so the work here is strictly smaller than what
+// the same call has already paid for.
+//
+// **`v.Identity()` and never `identity(v)`**: the latter GENERATES an identity when none exists,
+// which is a write, and this is a read path that answers /api/doc.
+func unverifiedSigners(v *vault.Vault, st sign.Status) *int {
+	if len(st.Signers) == 0 || v == nil {
+		return nil // not asked: nothing signed it, or the vault is locked and cannot say
+	}
+	known := map[string]bool{}
+	for _, p := range v.PinnedPeers() {
+		known[strings.ToLower(hex.EncodeToString(p.Fingerprint))] = true
+	}
+	if cert, _, ok := v.Identity(); ok {
+		if fp, err := sign.Fingerprint(cert); err == nil {
+			known[strings.ToLower(hex.EncodeToString(fp))] = true // this machine's own signature
+		}
+	}
+	n := 0
+	for _, sg := range st.Signers {
+		// A signer with no fingerprint at all cannot be recognised, and counting it as known
+		// would make an unparseable identity the quiet way past this.
+		if !known[strings.ToLower(sg.Fingerprint)] {
+			n++
+		}
+	}
+	return &n
 }
 
 // docName is the document's display name, and it is EMPTY for a path-less document

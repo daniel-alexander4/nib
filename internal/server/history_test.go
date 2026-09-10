@@ -70,7 +70,7 @@ func TestBudgetEvictsInactiveDocumentWhole(t *testing.T) {
 	}
 
 	// Now grow the ACTIVE document, which is what runs the budget.
-	s.commitMutation(active, []byte("x"), []byte("y"))
+	s.commitMutation(active, []byte("x"), []byte("y"), false)
 
 	s.mu.Lock()
 	after := s.historyBytesLocked()
@@ -137,7 +137,7 @@ func TestEvictionSparesTheActiveDocumentWhenAnInactiveOneGrows(t *testing.T) {
 	if grown == active {
 		t.Fatal("setup: the grown document is the active one — the case under test is the other one")
 	}
-	s.commitMutation(grown, []byte("x"), []byte("y"))
+	s.commitMutation(grown, []byte("x"), []byte("y"), false)
 
 	if len(active.undo) == 0 || active.historyEvicted {
 		t.Error("the ACTIVE document's history was evicted while an inactive document grew — the user loses the history of the tab they are looking at, to make room for one they are not")
@@ -164,7 +164,7 @@ func TestEvictionIsDistinguishableFromNeverHavingHadHistory(t *testing.T) {
 	evicted := documentByID(s, evictedID)
 	pushHistory(evicted, 4, budget/2)
 
-	s.commitMutation(active, []byte("x"), []byte("y"))
+	s.commitMutation(active, []byte("x"), []byte("y"), false)
 
 	// The stimulus: the eviction must actually have happened, or "the two documents
 	// report differently" is being asked of two documents in the same state.
@@ -211,7 +211,7 @@ func TestBudgetCountsRedoBytesToo(t *testing.T) {
 		t.Fatalf("setup: %d bytes of redo did not exceed the %d budget", before, budget)
 	}
 
-	s.commitMutation(active, []byte("x"), []byte("y"))
+	s.commitMutation(active, []byte("x"), []byte("y"), false)
 
 	if len(other.redo) != 0 {
 		t.Errorf("redo bytes were not counted toward the budget: %d entries survived — this is the 2N× ceiling the pin closes", len(other.redo))
@@ -228,7 +228,7 @@ func TestActiveDocumentKeepsItsLastUndoEntry(t *testing.T) {
 	active := s.activeDoc()
 
 	big := make([]byte, budget*4)
-	s.commitMutation(active, big, []byte("result"))
+	s.commitMutation(active, big, []byte("result"), false)
 
 	if len(active.undo) != 1 {
 		t.Fatalf("undo depth = %d, want 1 (the entry is larger than the budget and must survive)", len(active.undo))
@@ -257,7 +257,7 @@ func TestSingleDocumentTrimmingIsUnchangedAtTheRealBudget(t *testing.T) {
 	doc := s.activeDoc()
 
 	for i := 0; i < maxUndoDepth+5; i++ {
-		s.commitMutation(doc, pdf, pdf)
+		s.commitMutation(doc, pdf, pdf, false)
 	}
 
 	if len(doc.undo) != maxUndoDepth {
