@@ -1,0 +1,13 @@
+diff --git a/internal/server/cosign.go b/internal/server/cosign.go
+index 449daed..446fc48 100644
+--- a/internal/server/cosign.go
++++ b/internal/server/cosign.go
+@@ -277,7 +277,7 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
+ 	// matched `st.address` in web/app.js, which is the arm RESPONSE's address, on the same route,
+ 	// travelling the other way. The author knew the rule, cited the enforcement, and the
+ 	// enforcement was absent — which is the shape worth remembering, not the field.
+-	att, ok := s.cosignAttestation(w, v, p, p2p.Roster{})
++	att, ok := s.cosignAttestation(w, v, p, invitationRoster(r.FormValue("invitation")))
+ 	if !ok {
+ 		return
+ 	}
