@@ -157,7 +157,12 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
 		}
 		names = append(names, p.Name+".pdf")
 	}
-	writeJSON(w, map[string]any{"dir": dir, "count": len(names), "names": names})
+	// **`names` was published and read by nobody** (/pending 419). The client reads `count`
+	// and `dir`; the full list was the one field nothing wanted, and it is the one that grows
+	// with the document — a 500-page split shipped 500 filenames for a caller that renders
+	// "500 files in ~/nib". Dropped rather than parked: nothing anywhere reads it, and the
+	// filenames are on disk in `dir` for anyone who does.
+	writeJSON(w, map[string]any{"dir": dir, "count": len(names)})
 }
 
 // handleAssemble turns client-rendered page images into a download: a flattened
