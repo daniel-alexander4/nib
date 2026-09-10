@@ -389,10 +389,15 @@
      renderSignSteps(); the markup is empty because every row's STATE is computed, and a row
      hard-coded here would be a claim about progress that nothing checks.
 
-     A step is ticked only where Nib can actually observe it. The rest show "—" and say so on
-     hover: Nib cannot know whether you ran a hidden-content scan, or where you saved an .ots.
-     A tick that is not backed by a signal is worse than no tick, because the whole point of the
-     list is to answer "what is left". -->
+     A step is ticked by a PROBE or by the USER, and the row says which (ADR-029, superseding
+     ADR-027's "only where Nib can observe it"). `data-by` is `nib` for an observation and `hand`
+     for a claim, and a manual tick never overwrites a probe's answer. A step with neither shows
+     "—" and says on hover that Nib cannot tell — it cannot know whether you ran a hidden-content
+     scan, or where you saved an .ots.
+
+     The old rule protected against an UNATTRIBUTED tick and was too strong: eight steps have no
+     probe and never will, so under it the list could not record what is LEFT for exactly the
+     steps that needed it. Provenance keeps the guarantee that scarcity was standing in for. -->
 <div id="signSteps" class="signsteps"></div>
             </div>
       <!-- Nib's own peer transport, in its own card. It left Simple Sign at v1.127.1: those are
