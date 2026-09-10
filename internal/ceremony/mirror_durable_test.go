@@ -476,3 +476,105 @@ func TestARecordFiledUnderAnotherCeremonysIdIsRefused(t *testing.T) {
 		t.Fatalf("ReadStored populated the record's own fields for a misfiled record: %+v", st)
 	}
 }
+
+// TestATruncatedMirrorWithNoSidecarReadsCleanAndThatIsTheSTATEDBoundary — /pending 437.
+//
+// # The combination nothing exercised
+//
+// `TestASignedMirrorTruncatedAtAPriorRevisionIsCaught` above truncates with the sidecar PRESENT,
+// then restores the FULL document before removing the sidecar. So it drives "truncated, sidecar
+// present" (caught) and "whole, no sidecar" (tolerated) — and never the pair. Measured: a signed
+// mirror truncated at a prior `%%EOF` **with the sidecar deleted** reads back clean, `err == nil`,
+// truncated bytes returned.
+//
+// # Why this asserts the tolerance rather than a refusal
+//
+// **It is not a report that the threat model is wrong.** The sidecar's own comment says it "is a
+// damage detector and NOT an access control", and ADR-013 calls the missing content anchor "a
+// decided limitation, not an open question": a local writer is inside the model for `record.json`
+// and explicitly outside the guarantee for `document.pdf`.
+//
+// What was wrong is that the boundary was INVISIBLE — no test named it, so nobody reading the suite
+// could tell a decided limitation from an oversight. This is the honest park: it pins what happens
+// today and goes red the day somebody closes it, which is when /pending 437's remedy and the two
+// comments in mirror.go need re-reading rather than quietly disagreeing with the code.
+//
+// # The honest half that IS live, and is not this test's
+//
+// `WriteMirror` unlinks the sidecar before writing the document, so a crash inside that window
+// leaves a mirror with no byte check for the rest of its life — and nothing distinguishes that from
+// a pre-sidecar mirror or a deleted file. That is the case the remedy is for.
+func TestATruncatedMirrorWithNoSidecarReadsCleanAndThatIsTheSTATEDBoundary(t *testing.T) {
+	// **A REAL `Convene`, not `draft` — and the first cut of this test used `draft` and measured
+	// the wrong arm.** `draft`'s `DocHash` is a placeholder, so the `DocHash` comparison refuses
+	// the mirror before the sidecar is ever consulted, and that refusal reads exactly like the one
+	// this test is about. The deepdive this item came from records making the same mistake and
+	// correcting itself.
+	r, base := convened(t)
+	cert, key, _ := identity(t, "Signer")
+	// SIGNED, for the fixture reason the test above states: signing switches the `DocHash`
+	// comparison off, which is the state every mirror is in from hop 2 onward. Asserted, because
+	// if it were still live it would catch the truncation and report a coverage the sidecar has not
+	// got.
+	doc, err := sign.SignApproval(base, cert, key, sign.Options{Name: "Signer", Reason: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sign.Verify(doc).State == sign.Unsigned {
+		t.Fatal("setup: the fixture is unsigned, so the DocHash comparison is still live and this " +
+			"test would be measuring that instead of the sidecar's absence")
+	}
+	root := t.TempDir()
+	dir, err := WriteMirror(root, r, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The control: it reads clean before anything is damaged. Without it, "reads clean" below is
+	// indistinguishable from a mirror that never worked.
+	if _, got, rerr := ReadMirror(root, r.ID, mirrorNow); rerr != nil || len(got) != len(doc) {
+		t.Fatalf("setup: the intact mirror does not read back (%v, %d of %d bytes)",
+			rerr, len(got), len(doc))
+	}
+
+	// **At a prior `%%EOF`, not at an arbitrary byte, and the difference is the whole finding.**
+	// A cut at `len/2` leaves a torn file that fails to PARSE, and `ReadMirror` refuses that on a
+	// different arm entirely — measured while writing this: "its document will not parse:
+	// dereferenceObject: problem dereferencing stream 31: EOF". A cut at a revision boundary leaves
+	// a WELL-FORMED earlier revision, which is the rewind, and which nothing on this path refuses.
+	ends := []int{}
+	for i := 0; i+5 <= len(doc); i++ {
+		if string(doc[i:i+5]) == "%%EOF" {
+			ends = append(ends, i+5)
+		}
+	}
+	if len(ends) < 2 {
+		t.Fatalf("the fixture has %d %%%%EOF markers and a rewind needs at least two revisions — "+
+			"signing did not append one, so there is nothing to rewind TO", len(ends))
+	}
+	cut := ends[len(ends)-2]
+	// The floor this test was missing on its first cut: a "truncation" that removes nothing leaves
+	// every assertion below satisfied by an intact file.
+	if cut >= len(doc) {
+		t.Fatalf("the cut at %d removes nothing from a %d-byte document, so this test is reading "+
+			"an intact mirror and calling it truncated", cut, len(doc))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "document.pdf"), doc[:cut], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "document.sha256")); err != nil {
+		t.Fatal(err)
+	}
+	_, got, rerr := ReadMirror(root, r.ID, mirrorNow)
+	if rerr != nil {
+		t.Fatalf("a truncated mirror with no sidecar is now REFUSED (%v).\n"+
+			"    That is very likely an improvement — but three things were written on the "+
+			"assumption that it is tolerated and are stale the moment it is not: this test, the "+
+			"two comments in mirror.go that /pending 437 corrected, and 437's own remedy. Read "+
+			"them, then delete this test rather than loosening it.", rerr)
+	}
+	if len(got) != cut {
+		t.Errorf("the read returned %d bytes for a mirror truncated to %d — it is neither "+
+			"refusing nor returning what is on disk, which is a third behaviour nothing describes",
+			len(got), cut)
+	}
+}
