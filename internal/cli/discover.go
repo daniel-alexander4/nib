@@ -101,13 +101,32 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 	}
 	sock, err := discovery.Open(nonce)
 	if err != nil {
+		// **The advice here used to send the reader to the interface list, and on THIS
+		// path that list cannot help** (/pending 452, found by running the released
+		// Windows binary under wine). The socket never opened, so no interface was ever
+		// attempted: every row above is printed as eligible and annotated with nothing,
+		// and the actual cause is the line immediately above this one. Telling somebody
+		// to look for a per-interface reason that does not exist costs them the search
+		// before they re-read the error they already had.
+		//
+		// Observed on v1.128.1: `wsaioctl: winapi error #10045` — the operation is not
+		// supported on this socket — with three interfaces listed clean above it.
 		fmt.Fprintf(errw, "could not open the discovery socket: %v\n", err)
-		fmt.Fprintln(errw, "\nNothing was joined. On a machine with a working network this usually means\n"+
-			"every interface was skipped — the list above says which and why.")
+		fmt.Fprintln(errw, "\nNothing was joined, and no interface was tried: the socket above never opened,\n"+
+			"so the interface list is not where the reason is. The error on the line above it is.")
 		return 1
 	}
 	defer sock.Close()
-	fmt.Fprintf(out, "joined: %v\n", sock.Interfaces())
+	joined := sock.Interfaces()
+	fmt.Fprintf(out, "joined: %v\n", joined)
+	// **And the advice that WAS right for a zero-join had no home.** The sentence above
+	// described this case — the socket opens and every per-interface join fails, where
+	// the list really does carry the reasons — and it was printed on the one path where
+	// it is false while this path printed `joined: []` bare. Same item, other half.
+	if len(joined) == 0 {
+		fmt.Fprintln(errw, "\nNothing was joined. The socket opened, so every interface was tried and every\n"+
+			"one was skipped — the list above says which and why.")
+	}
 
 	// The Windows divergence, surfaced rather than assumed. Nothing in Nib filters on
 	// the arrival interface, precisely because this can be false with no error.

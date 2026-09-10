@@ -261,9 +261,17 @@ func ContributionProgress(pdf []byte, r Roster) (Progress, error) {
 		return Progress{}, fmt.Errorf("%w: this roster has no signing parties", ErrPrefixMismatch)
 	}
 	// **A destroyed signature does not report itself as invalid — it VANISHES, and that is
-	// measured.** Tampering with a signed document's body leaves `sign.Verify` reporting
+	// measured.** Tampering with a signed document's body OFTEN leaves `sign.Verify` reporting
 	// `unsigned` with zero signers; corrupting the `/Contents` blob leaves it `invalid`, also
-	// with zero signers. `ReadAttestations` iterates `st.Signers`, so in both cases it returns
+	// with zero signers.
+	//
+	// **"Often", not "always", and the number is why.** This sentence read as a universal until
+	// a 2026-09-09 deepdive sampled it: **35 `invalid` to 40 `unsigned` over 75 single-byte
+	// flips** in a signed document's body. Which one you get is offset-dependent, so a body
+	// tamper reaching `invalid` is ordinary rather than exceptional. Nothing below changes —
+	// the `Invalid` refusal fires first and covers that half — but a reader taking the
+	// universal at face value would conclude the refusal is unreachable from a body tamper,
+	// and it is reachable roughly half the time (/pending 458). `ReadAttestations` iterates `st.Signers`, so in both cases it returns
 	// an EMPTY slice and the per-attestation `Valid` check below cannot fire.
 	//
 	// So the reachable defence is the document's own state, asked here: `invalid` means a
