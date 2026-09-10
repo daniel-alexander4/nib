@@ -9578,8 +9578,6 @@ function reflectUndoControls(enabled) {
   const m = view.docMeta || {};
   // `clientHistory` rather than `overlayHistory`: it counts BOTH client stacks, and the editor
   // one was invisible here — two drawings on screen and the Undo button read as disabled.
-  if (els.undoBtn) els.undoBtn.disabled = !(enabled && (m.canUndo || view.clientHistory.undo.length));
-  if (els.redoBtn) els.redoBtn.disabled = !(enabled && (m.canRedo || view.clientHistory.redo.length));
   reflectDocTitle();
 
   // Eviction is observable or it is not eviction (ADR-003). The server has always
@@ -9590,16 +9588,21 @@ function reflectUndoControls(enabled) {
   // ambiguity the ADR says whole-history eviction exists to resolve, left
   // unresolved because the last step was missing.
   //
-  // Told once per eviction, on the control itself rather than as a toast: a toast
-  // for something that happened while the user was working on another document is
-  // gone before they look, and this is a standing fact about the button, not an
-  // event.
-  if (els.undoBtn) {
-    els.undoBtn.title = m.historyEvicted
-      ? 'Undo — earlier history for this document was released to stay within the memory budget'
-      : 'Undo';
-    els.undoBtn.classList.toggle('evicted', !!m.historyEvicted);
-  }
+  // **This used to be told on the control, and there is no control any more.** The
+  // ↶/↷ buttons went at v1.125.0; `undoAny` is now reached only by Ctrl+Z
+  // (`app.js`'s key handler), and the branch that set the button's title and its
+  // `.evicted` outline sat behind `if (els.undoBtn)` — permanently false — for every
+  // release since (/pending 423).
+  //
+  // The argument that branch carried is still right and is now unmet: a toast for
+  // something that happened while the user was working on ANOTHER document is gone
+  // before they look, and an eviction is a standing fact rather than an event. What
+  // is left is the toast, which is the delivery that reasoning rejected. It is kept
+  // because it is better than silence, not because it is sufficient — a user who
+  // presses Ctrl+Z and gets nothing still has no standing way to learn why. That gap
+  // is /pending 462, filed rather than fixed here: this item is residue removal, and
+  // choosing where a persistent eviction notice lives is a product decision of its
+  // own (the one free corner was taken by #fitNotice at v1.128.68).
   if (m.historyEvicted && view.lastEvictionSeen !== view.docMeta.id) {
     view.lastEvictionSeen = view.docMeta.id;
     toast('Earlier undo history for this document was released to stay within the memory budget');
@@ -9766,8 +9769,6 @@ async function doRedo() {
   if (!res.ok) { toast(await errText(res, 'redo failed')); return; }
   await setDocumentFromServer(await res.json(), owner);
 }
-if (els.undoBtn) els.undoBtn.onclick = undoAny;
-if (els.redoBtn) els.redoBtn.onclick = redoAny;
 
 // Drag-and-drop a PDF onto the window to open it (upload origin -> Save As).
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));

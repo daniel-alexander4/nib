@@ -65,14 +65,14 @@ function toolbarButtons() {
   return out;
 }
 
-// Undo/Redo are gated by reflectUndoControls off canUndo/canRedo, not by the open/closed
-// state — enabling them for an open document with no history would be wrong. Edit profile
-// is a preferences control and acts on no document. Both are exemptions NAMED at the
-// site, which is what ADR-009 asks for in place of a silent omission.
+// Edit profile is a preferences control and acts on no document. It is an exemption NAMED
+// at the site, which is what ADR-009 asks for in place of a silent omission.
+//
+// (Undo/Redo were exempted here until v1.128.72 and the controls had been gone since
+// v1.125.0 — six releases of an exemption naming nothing, which is the defect the note
+// below already stated about `prevBtn`/`nextBtn`. `TestEveryExemptionNamesAControlThatExists`
+// is what now stops a third instance; /pending 423.)
 const EXEMPT = new Set([
-  // Gated by canUndo/canRedo, not by open/closed — enabling them for an open document with
-  // no history would be wrong. They are global controls since v1.120.0.
-  'undoBtn', 'redoBtn',
   // A preferences control; acts on no document.
   'editProfileBtn',
   // ── The rest became visible when this scan widened from the Edit pane to every pane.
@@ -128,4 +128,26 @@ test('EDITING_TOOLS stays a strict subset of DOC_REQUIRED', () => {
   const stray = listNamed('EDITING_TOOLS').filter((id) => !required.has(id));
   assert.deepEqual(stray, [],
     `${stray.join(', ')} are in EDITING_TOOLS but not DOC_REQUIRED — app.js's ordering comment says the first is a strict subset of the second, and setEditingEnabled would re-enable them with nothing open`);
+});
+
+// **The other direction, and it is the one that was missing.** The scan above asks whether
+// every toolbar button is required-or-exempt; nothing asked whether every EXEMPTION names a
+// button that exists. So a control could be deleted from the product and its exemption stay
+// behind, claiming a considered decision about something that is not there.
+//
+// Twice now. `prevBtn`/`nextBtn` went at v1.125.0 and the note above records it; `undoBtn`
+// and `redoBtn` went in the same release and were still exempted six releases later, along
+// with six dead `if (els.undoBtn)` branches and a CSS rule matching nothing (/pending 423).
+// Both were found by a person reading, which is what this replaces.
+test('every exemption names a control that exists', () => {
+  const buttons = new Set(toolbarButtons());
+  assert.ok(buttons.size > 20,
+    `only ${buttons.size} toolbar buttons were parsed; this markup has many more. The scan is `
+      + 'broken, so every name below would report as missing and the failure would be the scan.');
+  const ghosts = [...EXEMPT].filter((id) => !buttons.has(id));
+  assert.deepEqual(ghosts, [],
+    `${ghosts.join(', ')} sit in EXEMPT and match no button in the markup. An exemption for a `
+      + 'control that does not exist is a claim about a considered decision that nobody can '
+      + 'check — and it outlives the control, so the next reader believes the gate was thought '
+      + 'about. Delete the name, or restore the control.');
 });
