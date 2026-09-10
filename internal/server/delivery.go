@@ -108,7 +108,7 @@ func (s *Server) deliverOneLeg(ch p2p.Channel, cer *ceremonyID, myFP []byte, pdf
 	if send {
 		// PeerGatesUnattended: the round armed the far side itself, so the sender's third
 		// deadline waits on no human. See p2p.DeliveryLegBudget.
-		// **What this dial is FOR, before either side picks a gate set** (/pending 385, ADR-018).
+		// **What this dial is FOR, before either side picks a gate set** (/pending 385, ADR-028).
 		// Declared HERE and not inside `SendDocument`, because the far side's read is a server
 		// decision too — the delivery arm reads the role to choose between this exchange and a
 		// resumed hop. A write inside the exchange function and a read outside it is a frame
@@ -534,7 +534,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			//
 			// A party that has committed its contribution has a record, so the hop sweep skips
 			// it (`ceremonyarm.go`: `if st.State == ceremony.LoadOK { continue }`) and this
-			// sweep arms it instead. Before ADR-018 that made the resumed hop unanswerable:
+			// sweep arms it instead. Before ADR-028 that made the resumed hop unanswerable:
 			// this was the only arm the party had and `deliverOneLeg` cannot serve a stored
 			// contribution, because `ReceiveDocument` never reaches `coSignExchange`.
 			//

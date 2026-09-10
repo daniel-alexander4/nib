@@ -578,6 +578,26 @@ func (r Record) Convener() (Party, bool) {
 	return Party{}, false
 }
 
+// Hops is how many hops this ceremony has: one fewer than its roster.
+//
+// **Kept at /pending 443 where `Invitation.Hops()` was deleted, and the difference is
+// what reads it.** That one's only use was a test asserting the two agreed — two methods
+// nothing called, checked against each other. This one is a STIMULUS FLOOR:
+// `record_test.go` requires a three-party roster to report 2 hops before any assertion
+// about the hop MAPPING runs, because those assertions are meaningless if the count is
+// wrong. `convene.go`'s ErrDuplicateParty reasoning also turns on it — a duplicate
+// collapses two parties into one invitation "while Hops() still counts both".
+//
+// It has no production caller and that is recorded rather than hidden: nothing in this
+// tree can see a zero-caller export (/pending 445), so this note is the only thing that
+// would tell the next reader.
+func (r Record) Hops() int {
+	if len(r.Roster) < 2 {
+		return 0
+	}
+	return len(r.Roster) - 1
+}
+
 // Hop returns the hop index joining two parties, and it is the ONLY definition of a hop
 // number in this project.
 //
@@ -643,14 +663,6 @@ func hopBetween(roster []Party, convener, a, b string) (int, error) {
 		n++
 	}
 	return 0, fmt.Errorf("%w: %s is not in this ceremony's roster", ErrNotAHop, short(other))
-}
-
-// Hops is how many hops this ceremony has: one fewer than its roster.
-func (r Record) Hops() int {
-	if len(r.Roster) < 2 {
-		return 0
-	}
-	return len(r.Roster) - 1
 }
 
 func (r Record) Encode() ([]byte, error) { return json.Marshal(r) }

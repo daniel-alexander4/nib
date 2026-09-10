@@ -154,7 +154,7 @@ func TestDeliveryLegBudgetIsNotSmallerThanTheLegCanSpend(t *testing.T) {
 		t.Errorf("DeliveryLegBudget(PeerGatesHuman) = %s, want %s (the FOUR arms a leg takes when "+
 			"a person is on the far side: the role round trip, then SendDocument's three)", got, want)
 	}
-	// **24m -> 24m30s, changed deliberately for ADR-018.** The role frame is a machine round trip
+	// **24m -> 24m30s, changed deliberately for ADR-028.** The role frame is a machine round trip
 	// with no human in it, and the temptation was to call 30s negligible against 24 minutes. This
 	// guard's own doc records what that reasoning cost last time — a budget short by 22 minutes a
 	// leg — so the term is reserved because the code arms it, not because it is large.

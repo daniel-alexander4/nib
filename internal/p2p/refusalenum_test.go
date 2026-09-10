@@ -87,7 +87,7 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		// wire only on that path, and a codeless one there is the bare EOF 13 and 14 were minted
 		// to close, on the newest instance of the same defect.
 		"refuseDocumentSubstituted": 15,
-		// Frozen 2026-09-08 (/pending 385, ADR-018). A dial whose declared role this arm does not
+		// Frozen 2026-09-08 (/pending 385, ADR-028). A dial whose declared role this arm does not
 		// serve. Minted with the role frame for the reason 13, 14 and 15 were: the refusal crosses
 		// the wire exactly where a version or an arm mismatch would otherwise close the connection,
 		// and a codeless refusal there is the bare EOF that reads as a dead network and invites the

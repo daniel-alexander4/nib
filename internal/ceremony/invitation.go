@@ -703,14 +703,6 @@ func (i Invitation) Hop(a, b string) (int, error) {
 	return hopBetween(i.Roster, i.ConvenerFingerprint, a, b)
 }
 
-// Hops is how many hops this ceremony has: one fewer than its roster.
-func (i Invitation) Hops() int {
-	if len(i.Roster) < 2 {
-		return 0
-	}
-	return len(i.Roster) - 1
-}
-
 // MatchesRecord checks the invitation's roster against the record's.
 //
 // This is the only check that can catch a tampered invitation, and it can only happen once

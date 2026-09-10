@@ -321,7 +321,7 @@ func TestADeclinedSpokenCheckSpendsTheArm(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		// The dial declares its role, as every production dial site does (ADR-018).
+		// The dial declares its role, as every production dial site does (ADR-028).
 		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		_, e = p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{})
 		errc <- e // an error is expected: this side is declined
@@ -480,7 +480,7 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 			return
 		}
 		defer conn.Close()
-		// The dial declares its role, as every production dial site does (ADR-018).
+		// The dial declares its role, as every production dial site does (ADR-028).
 		_ = p2p.WriteRole(conn.Channel, p2p.RoleCoSign)
 		final, e := p2p.Initiate(conn.Channel, aSigned, aFPBytes, okVerifier{}, p2p.Roster{})
 		if e != nil {

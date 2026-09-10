@@ -200,7 +200,7 @@ func SessionBudget() time.Duration {
 // `2*exchangeDeadline + postConsentDeadline` = 14m rather than 24m. An ordinary transfer is
 // unchanged at 24m, which is why this function takes the gates rather than assuming them: a
 // budget that assumed "unattended" would under-reserve every interactive send.
-// **The role exchange is a FOURTH term (ADR-018).** It is one machine-to-machine round trip with
+// **The role exchange is a FOURTH term (ADR-028).** It is one machine-to-machine round trip with
 // no human in it, and the temptation is to call that negligible against fourteen minutes. This
 // repo punishes exactly that reasoning — the budget's own doc records `S05d owes both edits or
 // neither` — so the term is here because the code arms it, not because it is large.

@@ -42,7 +42,7 @@ const alpn = "nib/1"
 const alpn2 = "nib/2"
 
 // alpn3 is the session protocol version that declares its ROLE before the exchange (/pending 385,
-// ADR-018).
+// ADR-028).
 //
 // **A negotiated version rather than an unconditional frame, for `alpn2`'s reason exactly.** A
 // build that predates this one, handed a one-byte role frame where it expects the verification
