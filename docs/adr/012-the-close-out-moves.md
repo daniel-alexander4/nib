@@ -58,6 +58,15 @@ end state. Without the rule, a re-sweep replaces *"they declined on the 2nd"* wi
 
 - **No code may delete a ceremony directory except `unconvene`.** A new destructive site
   is a new decision and supersedes this ADR rather than joining it.
+- **Clarified 2026-09-09 (`/pending 420`), because the code reads differently from this
+  bullet and the code is right.** Three of the four go through `closeOutStores`, and they
+  are the three that PERSIST — secrets, invitations, peers. The fourth, `punchBudgets`, is
+  in memory, and it is dropped by the caller immediately BEFORE that call and after the
+  receipt is written: it has to happen on every path that reaches "this machine considers
+  the ceremony over", and a failing vault teardown must not leave the counters behind when
+  the pins they belonged to are already gone. The rule below is unchanged for a store that
+  persists; an in-memory one has an ordering constraint a shared door cannot express.
+
 - **Every store that holds ceremony-scoped material goes through `closeOutStores`.** It is
   four today. A fifth store added anywhere is added there, not at a call site — the count
   was three in the plan and four in the code, and building to the plan would have left the

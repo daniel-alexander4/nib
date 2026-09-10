@@ -249,9 +249,15 @@ func ceremonyHopBudget() time.Duration {
 //
 //	bootstrapBudget                              20s   the DHT table is warm before anybody dials
 //	connectDeadline                             300s   the race to reach the party
-//	p2p.DeliveryLegBudget(PeerGatesUnattended)   14m   what SendDocument arms on this leg
+//	p2p.DeliveryLegBudget(PeerGatesUnattended) 14m30s   what SendDocument arms on this leg
 //	                                          -------
-//	                                           19m20s
+//	                                           19m50s
+//
+// **The leg was 14m and is 14m30s since ADR-028** (`RoleDeadline` 30s + 2 x `exchangeDeadline`
+// 6m + `remoteDecisionFor` 2m), so this total moved 19m20s -> 19m50s. It said 14m/19m20s for
+// four commits after the role frame landed (/pending 420). A table copied by hand from figures
+// that are computed elsewhere drifts the moment one of them moves, and nothing here notices —
+// the numbers below are re-derived by running `DeliveryLegBudget`, not read off this comment.
 //
 // **It was equal to `ceremonyHopBudget()` and is no longer, which is why it was kept separate.**
 // The two matched only because the transfer path and the co-sign path armed the same three

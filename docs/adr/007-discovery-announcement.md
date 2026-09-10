@@ -4,8 +4,12 @@
 **Date:** 2026-08-19
 **Context:** `PLAN-signing-ceremony.md` P03.S01; law L1; D3; caveat 3.
 **Extended by:** [ADR-010](010-announcement-carries-the-transport.md) — the announcement
-also carries the **transport** its port belongs to, and the format version is **2**. The
-identity reasoning below is unchanged; only the "exactly three things" enumeration is.
+also carries the **transport** its port belongs to — and then by
+[ADR-030](030-an-announcement-carries-its-arm.md), which adds the **hop** and takes the
+format version to **3**. The identity reasoning below is unchanged; only the "exactly
+three things" enumeration is, and it is six fields now. **This line said "the format
+version is 2" while the code said 3** (`/pending 420`), which is why ADR-030 exists: ADR-010
+is the decision that established a bump is ADR-worthy.
 
 ## Decision
 
