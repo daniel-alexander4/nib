@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -153,5 +154,119 @@ func TestTheEndStateTargetIsPerParty(t *testing.T) {
 	if err == nil && string(hop) == string(as) {
 		t.Error("the end-state seed equals a hop seed, so a hop's target and the end state's are " +
 			"the same key: a value used for one purpose being the value used for another")
+	}
+}
+
+// TestThePreHopEndStateMechanismIsStillWired — /pending 433, and it is a SCAN by necessity.
+//
+// # What was measured, and why nothing was red
+//
+// P05's phase close ran a seven-mutation battery over the pre-hop end-state PULL and **every one
+// came back green**: the pull never spawned, the pull running after this party has signed, the pull
+// skipping the LAN window, not stopping listening, not recording the end state, the round
+// publishing to every party rather than the undelivered ones, and the round never publishing at
+// all. `fetchEndStateWhenSlow` and `publishEndStateFor` appear in zero test files.
+//
+// # Why this is a scan and not a behavioural test, established rather than assumed
+//
+// The entry said the instrument wanted "a fifth party who accepts and never signs" at tier 4. That
+// is not what is missing. **`build/pairrepro.sh` says in its own words: "These instances have no
+// DHT and no multicast — every hop above is driven by a typed `address=` — so nothing here can
+// resolve a rendezvous."** The pull is a `rendezvous.Fetch`, a DHT read with no typed-address
+// escape, and the publish is a DHT write; a fifth party in that harness would still have nothing
+// for the two halves to meet on.
+//
+// Tier 1 cannot reach it either: `cer.rz` is a concrete `*rendezvous.Server` and
+// `publishEndStateFor` takes a concrete `*sharedRendezvous`, so there is no seam to substitute.
+//
+// **So the behavioural half is `build/dhtlive.sh`'s, and that is `/pending 2`** — the Instrument
+// Missing section's own member, which is exactly "a live-DHT run cannot be had until dhtlive.sh is
+// extended with an armed-ceremony case". 433 is deferred onto it.
+//
+// # What a scan DOES buy here
+//
+// Five of the seven mutations are DELETIONS — of the spawn, of the window hold, of the record, of
+// the teardown, of the publish — and a scan sees a deletion. It cannot see the mechanism working;
+// it can see that the mechanism is still there, which is five more than zero. Each clause below
+// carries its own stimulus floor, because a scan that cannot find its function reports clean.
+func TestThePreHopEndStateMechanismIsStillWired(t *testing.T) {
+	session, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ── The SPAWN, and its guard ─────────────────────────────────────────────
+	//
+	// The pull belongs to a party who has NOT signed: one who has holds a record and is reachable
+	// by the convener's delivery round. Spawning it unconditionally is mutation 2, and it would
+	// have every party in a ceremony reading the DHT for an end state the round is about to hand
+	// them.
+	// `runCeremonyReceive`, not `armCeremonyHop` — the arm's LISTENING half, which is where the
+	// pull is spawned and where `cer` is in hand. Named by reading `go s.fetchEndStateWhenSlow(`'s
+	// enclosing function rather than by remembering it.
+	arm := funcBodyFrom(string(session), strings.Index(string(session), "func (s *Server) runCeremonyReceive("))
+	if !strings.Contains(arm, "armAnnouncer") {
+		t.Fatal("runCeremonyReceive's body could not be read — an empty body contains none of the " +
+			"strings below either, so every clause in this test would pass over nothing")
+	}
+	if !strings.Contains(arm, "go s.fetchEndStateWhenSlow(") {
+		t.Error("the ceremony arm no longer spawns fetchEndStateWhenSlow. A party whose proceeding " +
+			"ends before the baton reaches them then holds the interactive slot until the process " +
+			"exits, and nothing local ever tells them otherwise")
+	}
+	if !strings.Contains(arm, "if !cer.hasSigned() {") {
+		t.Error("the pull is no longer guarded on this party not having signed. A party who HAS " +
+			"signed holds a record and is reached by the delivery round; spawning it for them is " +
+			"every party in the ceremony reading the DHT for something they are about to be handed")
+	}
+
+	// ── The PULL's own body: the window, the record, the teardown ────────────
+	pull := funcBodyFrom(string(delivery), strings.Index(string(delivery), "func (s *Server) fetchEndStateWhenSlow("))
+	if !strings.Contains(pull, "cer.rz.Fetch(") {
+		t.Fatal("fetchEndStateWhenSlow's body could not be read, or it no longer fetches at all — " +
+			"the clauses below would pass over nothing")
+	}
+	for _, c := range []struct{ needle, why string }{
+		{"cer.holdDHT(ctx, hold)",
+			"the pull no longer holds the LAN window before reaching the DHT (ADR-011). A " +
+				"same-room ceremony would put its first packet on the public network"},
+		{"ceremony.WriteTermination(",
+			"the pull no longer records the end state it read, so the answer is held in memory " +
+				"and the next launch asks again — and /pending 434's ended-check, which reads that " +
+				"file, would never see one"},
+		{"s.stopListeningFor(",
+			"the pull no longer stops listening for a proceeding it has just learned is over, so " +
+				"the interactive slot stays taken for a ceremony that has ended"},
+		{"ceremony.OpenEndState(",
+			"the pull no longer opens the sealed end state against its anchor, which is the only " +
+				"thing standing between it and a published object somebody else wrote"},
+	} {
+		if !strings.Contains(pull, c.needle) {
+			t.Errorf("%s (looked for %q in fetchEndStateWhenSlow)", c.why, c.needle)
+		}
+	}
+
+	// ── The PUBLISH, and that it is only for the legs that did not land ──────
+	//
+	// Publishing to every party is mutation 6. A publish is off-link traffic under ADR-011, and a
+	// party that already holds the document has nothing to read — so the round's own budget clause
+	// in pairrepro.sh is measuring a number this would inflate.
+	round := funcBodyFrom(string(delivery), strings.Index(string(delivery), "func (s *Server) runDeliveryRound("))
+	if !strings.Contains(round, "publishEndStateFor(") {
+		t.Fatal("runDeliveryRound's body could not be read, or it no longer publishes the end " +
+			"state at all — mutation 7 of /pending 433's battery, and the clause below would " +
+			"pass over nothing")
+	}
+	at := strings.Index(round, "s.publishEndStateFor(")
+	before := round[:at]
+	if !strings.Contains(before[strings.LastIndex(before, "for _, t := range tasks"):], "Delivered {") {
+		t.Error("the end-state publish is no longer inside the not-delivered branch, so the round " +
+			"publishes for every party including the ones it just handed the document to. That is " +
+			"off-link traffic under ADR-011 for parties with nothing to read, and it inflates the " +
+			"packet budget pairrepro.sh grades")
 	}
 }
