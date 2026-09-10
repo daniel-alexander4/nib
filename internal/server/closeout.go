@@ -275,7 +275,7 @@ func closeOutReason(st ceremony.Stored, rec ceremony.Record, me string, now time
 // round that skipped them is finished, not incomplete — waiting for a marker that by construction
 // will never be written would hold every declined ceremony open until the grace ran out.
 func roundIsFinished(rec ceremony.Record, me, ended string) bool {
-	if !strings.EqualFold(me, convenerFingerprintOf(rec)) {
+	if !isConvener(me, rec) {
 		// **`!DeliversDocument` and not `== StateDeclined` (P01.S02c, `/pending 428`).** This
 		// function's own doc, twenty lines up, records what the literal already cost once: asking
 		// `alreadyDelivered` for a state that ships no document is *"permanently false, so a signer

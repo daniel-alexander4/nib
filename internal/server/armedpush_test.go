@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"net/http"
 	"strings"
 	"testing"
@@ -296,5 +297,158 @@ func TestTheArmedPushNamesTheCeremony(t *testing.T) {
 	if !armed || what != "" {
 		t.Errorf("a manual co-signing arm reports armed=%v what=%q, want true and empty — it has "+
 			"no ceremony and no intent, so there is nothing to name", armed, what)
+	}
+}
+
+// /pending 422 — RequestExit's doc calls it "the ONE door onto 'this process should exit'",
+// and until v1.128.80 nothing checked that.
+//
+// `TestExitHasOneDoorAndIsIdempotent` asserts a fresh server is not exiting, that one call
+// signals, and that repeats do not panic. All true, and none of it is the door claim: it
+// contains no source scan, so a second `close(s.idle.fired)` added anywhere in this package
+// would leave it green. ADR-009's own words are that the guard asserts ROUTING through the
+// door, not the behaviour each site happens to have.
+//
+// Modelled on `TestTheDHTBootstrapHasExactlyOneDoor` (lazybootstrap_test.go), which is the
+// shape this repo already uses for exactly this rule, down to the stimulus floor.
+//
+// **Why the channel and not the function.** The rule D6 protects is that every exit path runs
+// the same teardown in the same order, and what makes that true is that nothing tears down for
+// itself — causes signal, `run()` selects. So the thing that must have one writer is the
+// SIGNAL. A guard counting callers of RequestExit would pass a build where the grace closed
+// the channel directly, which is the state that existed before Quit needed it too.
+func TestOnlyRequestExitClosesTheExitSignal(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var closers []string
+	var sawRequestExit bool
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				fn, ok := n.(*ast.FuncDecl)
+				if !ok {
+					return true
+				}
+				if fn.Name.Name == "RequestExit" {
+					sawRequestExit = true
+				}
+				ast.Inspect(fn, func(m ast.Node) bool {
+					call, ok := m.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					id, ok := call.Fun.(*ast.Ident)
+					if !ok || id.Name != "close" || len(call.Args) != 1 {
+						return true
+					}
+					// close(s.idle.fired) — the exit signal, however the receiver is spelled.
+					sel, ok := call.Args[0].(*ast.SelectorExpr)
+					if !ok || sel.Sel.Name != "fired" {
+						return true
+					}
+					inner, ok := sel.X.(*ast.SelectorExpr)
+					if !ok || inner.Sel.Name != "idle" {
+						return true
+					}
+					closers = append(closers, fn.Name.Name+" ("+path+")")
+					return true
+				})
+				return true
+			})
+		}
+	}
+	// SETUP: the scan can see this package at all. Without it the assertion below is satisfied
+	// by a parse that found nothing — the vacuous green this repo keeps finding in its own guards.
+	if !sawRequestExit {
+		t.Fatal("setup: the scan did not find RequestExit, so it is not reading this package " +
+			"and an empty closer list proves nothing")
+	}
+	if len(closers) != 1 || !strings.HasPrefix(closers[0], "RequestExit ") {
+		t.Fatalf("the exit signal must be closed by RequestExit and nowhere else — a second "+
+			"closer is a second exit path in everything but name, and D6's rule is that every "+
+			"exit path runs the same teardown in the same order (ADR-009: a rule gets one door, "+
+			"and its guard checks the door). Closers: %v", closers)
+	}
+}
+
+// /pending 432 — "am I the convener" is one rule, and only one site may perform the comparison.
+//
+// The composite is `identity(v)` → `sign.Fingerprint(cert)` → hex → compare against
+// `convenerFingerprintOf(rec)`, and P04.S03 built `convenedByMe` for the whole of it while
+// four sites that predate it kept their own copies. **The half that got written wrong was the
+// derivation**: the first cut read `identity(v)` as `(cert, fingerprint, err)` when it is
+// `(cert, KEY, err)`, compared a private key's bytes to a fingerprint, and refused every
+// caller including the convener — and a guard that refuses everyone passes every negative test
+// there is.
+//
+// The four are NOT migrated onto `convenedByMe`, and that is deliberate: each already holds
+// its own `myFP` because it needs the cert or the key for the work it is about to do, so
+// routing them through a door that re-derives would make them derive twice to answer a
+// question they already have the input for. `isConvener` takes the fingerprint instead, so the
+// comparison has one home and nobody derives anything a second time.
+//
+// This asserts the comparison half. `convenerFingerprintOf` may still be READ elsewhere — two
+// sites check it for emptiness, which is a different question — so what is pinned is that it is
+// compared to a fingerprint in exactly one function.
+func TestOnlyOneSiteAsksWhetherThisMachineConvened(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var comparers []string
+	var sawDoor bool
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				fn, ok := n.(*ast.FuncDecl)
+				if !ok {
+					return true
+				}
+				if fn.Name.Name == "isConvener" {
+					sawDoor = true
+				}
+				ast.Inspect(fn, func(m ast.Node) bool {
+					call, ok := m.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					sel, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok || sel.Sel.Name != "EqualFold" {
+						return true
+					}
+					// An EqualFold whose operands include convenerFingerprintOf(...) is the
+					// composite; an emptiness check on the same helper is not.
+					for _, a := range call.Args {
+						inner, ok := a.(*ast.CallExpr)
+						if !ok {
+							continue
+						}
+						if id, ok := inner.Fun.(*ast.Ident); ok && id.Name == "convenerFingerprintOf" {
+							comparers = append(comparers, fn.Name.Name+" ("+path+")")
+						}
+					}
+					return true
+				})
+				return true
+			})
+		}
+	}
+	if !sawDoor {
+		t.Fatal("setup: the scan did not find isConvener, so it is not reading this package and " +
+			"an empty comparer list proves nothing")
+	}
+	if len(comparers) != 1 || !strings.HasPrefix(comparers[0], "isConvener ") {
+		t.Fatalf("\"am I the convener\" must be asked through isConvener and nowhere else "+
+			"(ADR-009: a rule gets one door, and its guard checks the door). Its derivation half "+
+			"was written wrong once and refused every caller including the convener, which every "+
+			"negative test passed. Comparers: %v", comparers)
 	}
 }
