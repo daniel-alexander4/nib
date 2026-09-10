@@ -913,6 +913,14 @@ input.ovl-edit.ovl-misfit {
   outline: 2px dashed var(--peach);
   outline-offset: 1px;
 }
+/* An edit Nib ALTERED to make it fit — shrunk, or wrapped. Distinct from ovl-misfit
+   above and the more important of the two: an overrun is baked exactly as typed and
+   is visible on the page, whereas a refit means the document no longer says what the
+   preview said, which is the case a user needs to be able to spot after the fact. */
+input.ovl-edit.ovl-refit {
+  outline: 2px dotted var(--blue);
+  outline-offset: 1px;
+}
 /* editmark: the box being dragged over text to select it for editing. */
 .editmark {
   position: absolute;

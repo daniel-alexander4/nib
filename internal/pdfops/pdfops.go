@@ -13,6 +13,7 @@ import (
 	_ "image/jpeg" // register decoders for image.DecodeConfig
 	_ "image/png"
 	"io"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -961,12 +962,18 @@ func scaleTiles(tiles []byte, s float64) ([]byte, error) {
 // the historical auto-detected-field behaviour (Helvetica, size from the rect
 // height, black), so detected form fields are unaffected.
 type Field struct {
-	Page  int        `json:"page"`
-	Rect  [4]float64 `json:"rect"` // x0, y0, x1, y1
-	Text  string     `json:"text"`
-	Font  string     `json:"font,omitempty"`  // a Base-14 core font name; defaults to Helvetica
-	Size  float64    `json:"size,omitempty"`  // explicit point size; 0 = derive from rect height
-	Color string     `json:"color,omitempty"` // #RRGGBB; "" = black
+	Page int        `json:"page"`
+	Rect [4]float64 `json:"rect"` // x0, y0, x1, y1
+	Text string     `json:"text"`
+	Font string     `json:"font,omitempty"` // a Base-14 core font name; defaults to Helvetica
+	// BaseFont is the document's OWN font name for the run this edit replaces, as
+	// pdf.js reports it ("Courier", "Helvetica-Bold", "ABCDEF+MinionPro-Regular").
+	// Optional and advisory: pdfcpu can stamp only the Base-14 faces, so Font is
+	// still what gets drawn. What this decides is whether that substitution makes
+	// the WIDTH MEASUREMENT exact, near enough, or a guess — see FontFidelity.
+	BaseFont string  `json:"baseFont,omitempty"`
+	Size     float64 `json:"size,omitempty"`  // explicit point size; 0 = derive from rect height
+	Color    string  `json:"color,omitempty"` // #RRGGBB; "" = black
 }
 
 // coreFonts is the Base-14 text-font allowlist StampFields will honour. The name
@@ -1081,12 +1088,46 @@ type Fit struct {
 	// StampedPt is the size actually emitted — which is not Field.Size when the
 	// text was shrunk, and is what a client must use to match the bake on screen.
 	StampedPt int `json:"stampedPt"`
+	// Fidelity says whether the width this verdict rests on is the document's own,
+	// metrically identical to it, or a stand-in. A fit measured on a guess is still
+	// worth reporting; reporting it as though it were exact is not.
+	Fidelity FontFidelity `json:"fidelity,omitempty"`
 }
 
 // stampFloorPt is the smallest point size shrink-to-fit will produce. Below this
 // the text is not small, it is unreadable, and shrinking further trades a visible
 // problem for an invisible one.
 const stampFloorPt = 6
+
+// stampShrinkFloorRatio is how far below the size a caller ASKED for shrink-to-fit
+// may go, as a fraction of it.
+//
+// **The absolute floor is not enough, and the reason is what a shrink IS.** Shrinking
+// rewrites the user's document: they typed text at the size of the line they were
+// replacing, and a fit that silently sets it 50% smaller has produced a page that
+// does not say what the preview said. On an executed document that is the worst of
+// the outcomes available here, and it was reachable — a 12pt edit could be stamped at
+// 6pt with nothing but a toast to say so.
+//
+// So the ladder stops shrinking while the result still reads as the same line. Past
+// that, the honest outcome is FitOverran: Nib stamps exactly what was typed and
+// reports that it does not fit, which leaves the decision — shorten it, or redraw the
+// box — with the person who knows what the document has to say.
+//
+// **0.75 is a judgment and is recorded as one.** 12pt to 9pt reads as the same line;
+// 12pt to 6pt does not. Nobody has measured where that stops, and if the number is
+// wrong it is wrong in the safe direction: a tighter bound produces more honest
+// overrun reports and never more silent resizing.
+const stampShrinkFloorRatio = 0.75
+
+// shrinkFloorFor is the smallest size resolveFit may shrink a field to: the absolute
+// floor, or the ratio bound, whichever binds first.
+func shrinkFloorFor(asked int) int {
+	if r := int(math.Ceil(float64(asked) * stampShrinkFloorRatio)); r > stampFloorPt {
+		return r
+	}
+	return stampFloorPt
+}
 
 // fitTolerancePt is the slack the fit comparisons allow, in points.
 //
@@ -1125,6 +1166,72 @@ const (
 	FitOverran FitOutcome = "overran"
 )
 
+// FontFidelity says how much the fit measurement can be trusted, given that the
+// document's own face is not necessarily one pdfcpu can set.
+//
+// **`classifyFont` cannot fail, only be wrong.** It is a substring search that
+// defaults to Helvetica, so a document set in a condensed or display face is
+// measured with Helvetica's widths and the fit verdict is produced with the same
+// confidence as one measured exactly. Nothing said which had happened. This is that
+// signal, and it is per-cause because the causes differ in kind rather than degree.
+type FontFidelity string
+
+const (
+	// FontExact — the document's own face IS the one being stamped, so the widths
+	// are the document's widths and the verdict is as good as the arithmetic.
+	FontExact FontFidelity = "exact"
+	// FontAlias — a different name for metrically identical widths. Arial and
+	// Helvetica share advance widths by design, as do Courier New and Courier; the
+	// measurement is exact even though the name is not.
+	FontAlias FontFidelity = "alias"
+	// FontGuess — the document's face is neither, so Helvetica's widths stand in for
+	// something they do not describe. The fit verdict is an estimate and says so.
+	FontGuess FontFidelity = "guess"
+	// FontUnknown — no BaseFont reached the server, which is every pre-P01.S04
+	// client and every non-web caller. Distinct from FontGuess: this is "not told",
+	// not "told, and it does not match".
+	FontUnknown FontFidelity = ""
+)
+
+// metricAliases map a document font name to the core font whose widths it shares.
+// **Metric compatibility, not visual similarity** — these pairs are defined to have
+// identical advance widths, which is the only property the fit measurement uses.
+var metricAliases = map[string]string{
+	"arial": "Helvetica", "arialmt": "Helvetica",
+	"arialbold": "Helvetica-Bold", "arial-boldmt": "Helvetica-Bold",
+	"couriernew": "Courier", "couriernewpsmt": "Courier",
+	"timesnewroman": "Times-Roman", "timesnewromanpsmt": "Times-Roman",
+	"helvetica": "Helvetica", "courier": "Courier", "times": "Times-Roman",
+}
+
+// fontFidelityFor judges the substitution actually being made.
+func fontFidelityFor(baseFont, stamped string) FontFidelity {
+	if strings.TrimSpace(baseFont) == "" {
+		return FontUnknown
+	}
+	// A subset prefix ("ABCDEF+") names the subsetting, not the face.
+	name := baseFont
+	if i := strings.IndexByte(name, '+'); i == 6 {
+		name = name[i+1:]
+	}
+	// pdf.js hands over the CSS generic AND the real name, space-joined; the real
+	// name is what matters and it is the last token.
+	if fs := strings.Fields(name); len(fs) > 0 {
+		name = fs[len(fs)-1]
+	}
+	if strings.EqualFold(name, stamped) {
+		return FontExact
+	}
+	key := strings.ToLower(strings.NewReplacer(" ", "", ",", "", "-", "").Replace(name))
+	if a, ok := metricAliases[key]; ok && a == stamped {
+		return FontAlias
+	}
+	if a, ok := metricAliases[strings.ToLower(name)]; ok && a == stamped {
+		return FontAlias
+	}
+	return FontGuess
+}
+
 // resolveFit decides what to stamp for one field, and reports which of the four
 // outcomes it reached. It returns the field as it should actually be emitted, so
 // the caller stamps exactly what was measured.
@@ -1142,8 +1249,10 @@ func resolveFit(f Field) (Field, FitOutcome, float64, float64) {
 		return f, FitAsDrawn, w, boxW
 	}
 
-	// Shrink. Down to the floor inclusive — which stampStyle can now return.
-	for p := pts - 1; p >= stampFloorPt; p-- {
+	// Shrink. Down to the floor inclusive — which stampStyle can now return — and no
+	// further than the ratio bound, because past that a shrink stops looking like the
+	// line it replaced and starts silently rewriting the page.
+	for p := pts - 1; p >= shrinkFloorFor(pts); p-- {
 		if w := stampWidth(f.Text, fontName, p); w <= boxW+fitTolerancePt {
 			out := f
 			out.Size = float64(p)
@@ -1173,10 +1282,11 @@ func resolveFit(f Field) (Field, FitOutcome, float64, float64) {
 // fitFor records one resolved field. Both halves of the measurement come from
 // stampStyle, so the width is measured in the face and size that will be drawn.
 func fitFor(i int, f Field, page int, outcome FitOutcome, w, boxW float64) Fit {
-	_, pts := stampStyle(f)
+	fontName, pts := stampStyle(f)
 	return Fit{
 		Field: i, Page: page, WidthPt: w, BoxPt: boxW, OverrunPt: w - boxW,
 		Outcome: outcome, StampedPt: pts,
+		Fidelity: fontFidelityFor(f.BaseFont, fontName),
 	}
 }
 

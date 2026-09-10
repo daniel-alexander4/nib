@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01.S01-S03 done; P01.S04 next. `/createcode` drives it from P01.
+**Status: building.** P01 slices all done; the phase close is next. `/createcode` drives it from P01.
 
 ---
 
@@ -170,13 +170,33 @@ none is a prototype for the next.
 
 ### P01 — Measure the edit *(the shipped defect)*
 **Goal.** An edit that does not fit its box is detected and handled, using metrics already in the
-process. No content stream is parsed and no reflow happens; this is the released feature working as
-users already believe it does.
+process. No content stream is parsed and no reflow happens; this is the released feature's **fit**
+behaviour working as users already believe it does.
 
 **Exit criteria.**
-- A replacement wider than its box is shrunk to fit, wrapped, or refused — never silently overrun.
-- A replacement narrower than the original no longer leaves an unexplained band of cover-colour.
+- A replacement wider than its box is shrunk to fit, wrapped, or reported — never silently overrun.
+- Every outcome that CHANGES what is baked is visible on the field, not only in a message that can
+  be missed; and a shrink stops while the result still reads as the line it replaced.
 - The overflow measurement is asserted at tier 1 and visible at tier 3.
+
+**Amended 2026-09-09 — one criterion left this phase, and one word of another changed.**
+
+- **The cover-fidelity criterion is now `/pending 459`.** It read *"a replacement narrower than the
+  original no longer leaves an unexplained band of cover-colour"*, and it is out of this phase
+  because **D13's one direction does not pass through it**: cover-and-replace is kept permanently by
+  this plan's own Out of scope (D8), as the fallback for `missing-glyph`, `no-widths`,
+  `unsupported-encoding`, `signed`, tables, columns and scanned text — so no phase here will ever
+  satisfy it, and P06 does not dissolve it. Measured while re-filing: over a ruled line the flat
+  fill is `rgb[255 255 255]` and the rule is **erased** rather than banded, on same-length edits as
+  much as short ones, so the criterion was also narrower than its own defect. **The first proposal
+  was to strike it as dissolved by P06; that was refuted at the line by its own grill.**
+- **"refused" became "reported"** in the first criterion, per P01.S02's pin: `/api/bake` is what
+  every save, print, flatten, export and both signature paths run through — 24 call sites — so an
+  HTTP refusal makes an over-long edit impossible to save at all.
+- **The second criterion is new, and it is the one the S02 grill earned.** A shrink rewrites the
+  user's page, and it shipped with the weakest signal of the three outcomes: a toast, no marker, and
+  no bound below the 6pt floor, so 12pt→6pt was reachable silently. It is now bounded at three
+  quarters of the asked-for size and marked on the element.
 
 #### P01.S01 — wire the metrics to the bake path *(done 2026-09-09, v1.128.64)*
 Scope: `StampFields` measures each field's text before emitting, through `mdpdf.CoreWidth` (D3).
@@ -304,12 +324,40 @@ Acceptance:
 - Each cause is named separately with its own count, and an overrun says by how much.
 - Exactly one walk decides which overlay fields bake.
 
-#### P01.S04 — carry font identity across the wire
+#### P01.S04 — carry font identity across the wire *(done 2026-09-09, v1.128.67)*
 Scope: BaseFont and the font-resource reference travel with the edit; `classifyFont` becomes the
 fallback rather than the only path. Refs: D9.
+
+**Pinned 2026-09-09 — D9's mechanism was measured in a real browser, and half of it does not exist.**
+
+- **`tc.styles[fontName].fontFamily` is a CSS GENERIC, not a font name** — measured `"monospace"`
+  for a Courier document and `"sans-serif"` for a Helvetica-Bold one. On its own it can only ever
+  produce a family guess, which is what `classifyFont` already does.
+- **`commonObjs.get(fontName).name` IS the document's BaseFont** — `"Courier"`, `"Helvetica-Bold"` —
+  and `addEdit` has been computing it all along, then discarding it once `classifyFont` had read it.
+  It lives on the `FontFaceObject` **prototype**, so `Object.keys` does not show it; and it is
+  populated by **rendering**, not by `getTextContent`, which is fine because a user drags an edit
+  box over a page they are looking at. **A first probe that skipped the render reported it absent
+  and I briefly concluded the slice could not be built; that was wrong and is recorded here because
+  the pre-render reading is the one a future reader will reproduce.**
+- **The font-RESOURCE reference does not reach the client at all**, and is not carried. Nothing in
+  P01 could consume it: pdfcpu stamps Base-14 faces only. When the server needs the real font dict
+  it will read it from the document it already holds, which is P02/P03's work — so the wire never
+  needs to carry it, and D9's second half is answered by not needing it.
+
+**What P01 can actually consume, which is what this slice builds.** `classifyFont` cannot fail, only
+be wrong — a document set in a display face is measured with Helvetica's widths and reports its
+verdict with the same confidence as one measured exactly. `Fit.Fidelity` separates them: `exact`
+(the document's own face is the one stamped), `alias` (metrically identical by design — Arial and
+Helvetica share advance widths), `guess` (a stand-in), `unknown` (nothing was sent). A fit measured
+on a guess now says so, in the sentence the user reads.
+
 Acceptance:
 - The server receives a real font identity for a document that has one.
 - A document with nothing better still works through the old guess, asserted.
+- Every fidelity arm is reachable, and a subset prefix of a metric-compatible face reads as `alias`
+  rather than `guess` — the case that proves the prefix is stripped at all.
+- `BaseFont` is advisory: what is stamped is unchanged by it, asserted against the emitted BBox.
 
 ### P02 — The width reader
 **Goal.** Given a page and a font, return the advance for any code, from the document's own
