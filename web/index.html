@@ -1220,6 +1220,14 @@
         <label>Zero-pad width <input id="pnPad" type="number" min="0" max="12" value="0" /></label>
       </div>
       <label>Prefix <input id="pnPrefix" type="text" placeholder="optional — e.g. “Page ” or a Bates prefix" /></label>
+      <!-- Size and colour were READ by the server and set by nothing: `handlePages`' pagenum case
+           has taken both since it shipped, `pageNumGo` appended neither, and no control offered
+           them — so every stamp the product produced was 11pt black, because StampPageNumbers
+           clamps a size below 6 to 11 and a non-hex colour to #000000 (/pending 448). Wired
+           rather than deleted: a Bates stamp is a stated use of this dialog (the prefix
+           placeholder says so), and size and colour are exactly what a Bates run specifies. -->
+      <label>Size <input id="pnSize" type="number" min="6" max="72" value="11" /> pt</label>
+      <label>Colour <input id="pnColor" type="color" value="#000000" /></label>
       <label class="check"><input id="pnTotal" type="checkbox" /> Append “ of N” (total)</label>
       <p id="pnPreview" class="libhint"></p>
       <div class="sigbtns">

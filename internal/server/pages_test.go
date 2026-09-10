@@ -9,6 +9,10 @@ import (
 	"math"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"nib/internal/pdfops"
@@ -313,6 +317,71 @@ func TestPageReorderUpdatesDocument(t *testing.T) {
 	for i, w := range want {
 		if math.Round(dims[i].Width) != w {
 			t.Errorf("page %d width = %.1f pt, want %.0f (reorder 3,1,2 not applied)", i+1, dims[i].Width, w)
+		}
+	}
+}
+
+// /pending 448 — every field the pagenum case READS must be one `pageNumGo` SENDS.
+//
+// The defect this pins: `handlePages` has read `size` and `color` since it shipped,
+// `pageNumGo` appended neither, and no control offered them — so every page-number stamp
+// the product produced was 11pt black, silently, because StampPageNumbers clamps a size
+// below 6 to 11 and a non-hex colour to #000000. Nothing was wrong with the output, which
+// is why it survived: it is a shipped knob with no handle, and only a comparison of the
+// two sides can see it.
+//
+// **This is the narrow instance of `/pending 447`'s general scan** — "nothing compares what
+// a handler READS to what the client SENDS". That one is still open and would subsume this;
+// until it exists, the route that actually lost two knobs gets its own.
+//
+// Scoped to the pagenum case deliberately: the other cases in this switch are reached by
+// callers this test does not read, and a whole-file scan would report them as unsent.
+func TestEveryPageNumberFieldTheServerReadsIsOneTheClientSends(t *testing.T) {
+	srv, err := os.ReadFile("pages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(srv)
+	from := strings.Index(s, `case "pagenum":`)
+	if from < 0 {
+		t.Fatal(`the "pagenum" case is gone from pages.go — this scan would pass over nothing`)
+	}
+	to := strings.Index(s[from:], `case "pagelabels":`)
+	if to < 0 {
+		t.Fatal("the case after pagenum is gone — the scan has no end and would read the whole switch")
+	}
+	reads := map[string]bool{}
+	for _, m := range regexp.MustCompile(`FormValue\("([a-zA-Z]+)"\)`).FindAllStringSubmatch(s[from:from+to], -1) {
+		reads[m[1]] = true
+	}
+	if len(reads) < 4 {
+		t.Fatalf("found %d FormValue reads in the pagenum case; it takes at least four. The scan "+
+			"is broken, so a clean result means nothing.", len(reads))
+	}
+
+	cli, err := os.ReadFile(filepath.Join("..", "..", "web", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(cli)
+	gi := strings.Index(js, "async function pageNumGo()")
+	if gi < 0 {
+		t.Fatal("pageNumGo is gone or renamed — the client half of this comparison has no source")
+	}
+	body := js[gi : gi+strings.Index(js[gi:], "\n}")]
+	sends := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*([a-zA-Z]+):`).FindAllStringSubmatch(body, -1) {
+		sends[m[1]] = true
+	}
+	if len(sends) < 4 {
+		t.Fatalf("parsed %d keys out of pageNumGo; it sends at least four", len(sends))
+	}
+
+	for name := range reads {
+		if !sends[name] {
+			t.Errorf("handlePages reads %q from the pagenum request and pageNumGo never sends it. "+
+				"The server then applies its default and the user gets a value no control offered "+
+				"— which is how every page-number stamp came out 11pt black.", name)
 		}
 	}
 }

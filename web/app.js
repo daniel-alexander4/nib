@@ -224,6 +224,7 @@ const els = {
   pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
   pnPosition: $('pnPosition'), pnStart: $('pnStart'), pnPad: $('pnPad'),
   pnPrefix: $('pnPrefix'), pnTotal: $('pnTotal'), pnPreview: $('pnPreview'),
+  pnSize: $('pnSize'), pnColor: $('pnColor'),
   pnCancel: $('pnCancel'), pnGo: $('pnGo'),
   pageLabelsBtn: $('pageLabelsBtn'), pageLabelsModal: $('pageLabelsModal'),
   plList: $('plList'), plAdd: $('plAdd'), plPreview: $('plPreview'),
@@ -5458,13 +5459,18 @@ async function pageNumGo() {
     start: Math.max(1, parseInt(els.pnStart.value, 10) || 1),
     pad: Math.min(12, Math.max(0, parseInt(els.pnPad.value, 10) || 0)),
     total: els.pnTotal.checked,
+    // Clamped here to the same bounds the server enforces, so the dialog cannot ask for
+    // something it will silently not get: StampPageNumbers turns a size below 6 into 11
+    // and a non-hex colour into #000000.
+    size: Math.min(72, Math.max(6, parseInt(els.pnSize.value, 10) || 11)),
+    color: /^#[0-9a-fA-F]{6}$/.test(els.pnColor.value) ? els.pnColor.value : '#000000',
   });
   if (ok) { els.pageNumModal.hidden = true; toast('Page numbers added'); }
 }
 els.pageNumBtn.onclick = openPageNum;
 els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
 els.pnGo.onclick = pageNumGo;
-['pnPosition', 'pnStart', 'pnPad', 'pnPrefix', 'pnTotal'].forEach((id) => els[id].addEventListener('input', pnPreview));
+['pnPosition', 'pnStart', 'pnPad', 'pnPrefix', 'pnTotal', 'pnSize', 'pnColor'].forEach((id) => els[id].addEventListener('input', pnPreview));
 
 // --- page labels -------------------------------------------------------------
 // Author the /PageLabels number tree as a flat, page-ordered list of ranges
