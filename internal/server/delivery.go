@@ -744,6 +744,26 @@ func markDelivered(id, partyFP string) error {
 	return atomicfile.WriteDurable(path, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 }
 
+// wasDelivered reports whether this party has already acknowledged its copy.
+//
+// **This and `endedBy` are the only two mirror reads in this package with NO anchor outside the
+// mirror, and that is deliberate rather than an oversight (/pending 440, declined).** Every
+// neighbour carries one — the vault identity in `convenedByMe`, the vault invitation in the
+// delivery gates — because those reads let something HAPPEN. These two only stop something
+// happening: a planted marker makes a round skip a leg, and it can neither forge a delivery on the
+// wire nor mint an end state anybody else will accept. A writer able to plant one can delete the
+// ceremony folder outright, which suppresses the round more completely and is defended nowhere.
+//
+// **The non-adversarial half was checked and does not exist.** Both markers go through
+// `atomicfile.WriteDurable`, so an interrupted write cannot leave a zero-byte file that reads as
+// "delivered" — the shape that would have made this a bug rather than a boundary.
+//
+// **Presence and not content, and that is the honest reading.** `markDelivered` writes a timestamp,
+// but nothing needs it: the question is "has this party acknowledged", and parsing the value would
+// refuse a marker with a trailing byte while refusing nothing a planter would write. Any route that
+// wants to reuse these markers for a decision that AUTHORISES rather than suppresses — the hop
+// route in /pending 438 is the live candidate — needs an anchor first, and does not inherit one
+// from here.
 func wasDelivered(id, partyFP string) bool {
 	path, err := deliveredMarkerPath(id, partyFP)
 	if err != nil {
@@ -807,6 +827,10 @@ func markEndedBy(id, partyFP string) error {
 // that refuses the id. Both fail in the safe direction — the round walks the party as it did
 // before this rule existed — but the two are not the same fact, and a caller that needs to tell
 // them apart must not read this function's answer as the first one.
+//
+// **It says nothing about a PLANTED value either, and `wasDelivered`'s comment is where that
+// boundary is written down** (/pending 440). Short version: this marker suppresses a leg, it never
+// authorises one, and a writer who can plant it can delete the folder.
 func endedBy(id string) string {
 	path, err := endedByPath(id)
 	if err != nil {

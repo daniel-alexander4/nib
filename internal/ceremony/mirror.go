@@ -196,6 +196,38 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
 	return dir, nil
 }
 
+// recordNamesItsDirectory refuses a stored record whose ceremony id is not the folder it came out
+// of (/pending 439).
+//
+// **`Verify` cannot catch this, and that is why it needs its own line.** A record is self-anchored:
+// it verifies against its own contents, so a record for ceremony B copied into ceremony A's folder
+// verifies perfectly. `id` and `r.ID` are two identities in one read with nothing tying them —
+// `Stored` carries the same pair, taking `ID` from the directory name and `Intent`, `Expires` and
+// `Roster` from the record.
+//
+// **Two places the difference is load-bearing.** `convenerInvitationFor` keys
+// `v.CeremonySecret(rec.ID, fp)` on the RECORD's id, so a record for B in directory A yields B's
+// live channel secrets to a convener who asked about A — and every gate on that route
+// (`convenedByMe`, the deadline, roster membership) passes, because they all read `rec`. And
+// `closeOutEnded` moves `st.ID`, the directory name, while `roundIsFinished` reads `endedBy(rec.ID)`
+// and `wasDelivered(rec.ID, …)` — so "is the round finished" would be decided from markers in a
+// different folder from the one being moved.
+//
+// **No legitimate flow produces a difference, and that is a search rather than a look.**
+// `record.json` has exactly one writer in the tree — `WriteMirror`, into `MirrorDir(root, r.ID)`
+// (grep `"record.json"` under internal/, three readers and that one writer) — and the only rename
+// is `MoveEnded`, `~/nib/ceremonies/<id>` → `~/nib/ended/<id>`, which preserves the name.
+//
+// **It says nothing about the record it found**, for `refuseDifferentProceeding`'s stated reason:
+// naming the other proceeding would turn a refusal into a disclosure oracle for whoever provoked it.
+func recordNamesItsDirectory(id string, r Record) error {
+	if r.ID == id {
+		return nil
+	}
+	return errors.New("this ceremony's stored record belongs to a different proceeding than the " +
+		"folder it is in")
+}
+
 // ReadMirror loads a ceremony back off disk.
 func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	dir, err := MirrorDir(root, id)
@@ -225,6 +257,9 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	// nondeterminism reaching a decision.
 	if err := r.Verify(now); err != nil {
 		return Record{}, nil, fmt.Errorf("this ceremony's stored record does not verify: %w", err)
+	}
+	if err := recordNamesItsDirectory(id, r); err != nil {
+		return Record{}, nil, err
 	}
 	pdf, err := os.ReadFile(filepath.Join(dir, "document.pdf"))
 	if err != nil && !os.IsNotExist(err) {
@@ -513,6 +548,16 @@ func ReadStored(root, id string, now time.Time) Stored {
 		}
 		s.State = LoadUnverifiable
 		s.Reason = "this ceremony's record does not verify: " + verr.Error()
+		return s
+	}
+	// **Classified as `LoadUnverifiable` rather than given a class of its own**, and the reason is
+	// that a class is a wire value: `CEREMONY_STATE_WORDS` in web/app.js maps every one to a
+	// heading, and a sixth would render with no heading above its sentence on every Nib that has
+	// not been updated. The sentence below is the specific one, and this reader authorises nothing
+	// — it is a listing. The route that AUTHORISES is `ReadMirror`, which refuses outright.
+	if ierr := recordNamesItsDirectory(id, r); ierr != nil {
+		s.State = LoadUnverifiable
+		s.Reason = ierr.Error()
 		return s
 	}
 	s.Intent, s.Expires, s.Roster = r.Intent, r.Expires, r.Roster
