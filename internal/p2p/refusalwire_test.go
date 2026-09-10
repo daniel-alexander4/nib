@@ -331,7 +331,7 @@ func TestEveryALPNConfigSiteOffersTheSameList(t *testing.T) {
 	// And the list itself: newest first, every older protocol still offered. Dropping one would
 	// make this a hard handshake failure against that peer rather than a graceful fallback.
 	//
-	// **This pin is a TRIPWIRE and it fired for ADR-018, which is what it is for.** It read
+	// **This pin is a TRIPWIRE and it fired for ADR-028, which is what it is for.** It read
 	// `len(sessionALPN) != 2` until `alpn3` was minted; `SpeaksNamedRefusals`' own doc cites this
 	// hard pin as the reason a capability predicate could rot in place beside a list that cannot
 	// change without a deliberate edit. This is that edit.

@@ -1692,7 +1692,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			continue
 		}
 		timer.Stop()
-		// The dial says what it is for before either side picks a gate set (ADR-018). A peer that
+		// The dial says what it is for before either side picks a gate set (ADR-028). A peer that
 		// predates the role frame declared none and reads as RoleCoSign, which is what every
 		// pre-role dial to an interactive arm meant.
 		role, rerr := p2p.ReadRole(conn.Channel)
@@ -1827,7 +1827,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// is loosened, which is the whole of what this slice needs.
 	var saw reached
 	ch := conn.Channel
-	// ── The arm's POLICY, checked against the dial's declared role (/pending 385, ADR-018) ──
+	// ── The arm's POLICY, checked against the dial's declared role (/pending 385, ADR-028) ──
 	//
 	// `mode` is what this arm was opened to do and `role` is what the dialer is asking for. They
 	// are not the same fact and the wire does not get to override the arm: a listener the user
@@ -2073,7 +2073,7 @@ func checkSessionMode(mode string) error {
 
 var errUnknownSessionMode = errors.New("unknown session mode")
 
-// armServesRole is the one door for "may this arm serve that dial" (/pending 385, ADR-018).
+// armServesRole is the one door for "may this arm serve that dial" (/pending 385, ADR-028).
 //
 // **One function rather than a comparison at each site**, because there are three sites now — the
 // manual listener, the ceremony hop arm and the delivery arm — and ADR-009's own words are that
@@ -3302,7 +3302,7 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	// The role, before the exchange (ADR-018). A refusal here is the far side saying it is not
+	// The role, before the exchange (ADR-028). A refusal here is the far side saying it is not
 	// listening for a transfer — an answer, not a network failure, so it gets the same 502-with-a
 	// -sentence treatment as any other refusal rather than a bare connect error.
 	if rerr := p2p.WriteRole(conn.Channel, p2p.RoleTransfer); rerr != nil {

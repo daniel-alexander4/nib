@@ -210,7 +210,7 @@ const (
 )
 
 // SpeaksRoleFrame reports whether the peer negotiated a session protocol that declares its role
-// before the exchange (/pending 385, ADR-018).
+// before the exchange (/pending 385, ADR-028).
 //
 // **A FLOOR looked up in the same list, exactly as SpeaksNamedRefusals is, and for the reason
 // that one records rather than for symmetry.** That predicate was written as `c.Proto == alpn2`

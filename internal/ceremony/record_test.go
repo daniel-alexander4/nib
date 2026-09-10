@@ -1457,9 +1457,11 @@ func TestBothRostersUseOneHopRule(t *testing.T) {
 		t.Fatalf("setup: the invitation's roster has %d parties and the record's %d",
 			len(inv.Roster), len(r.Roster))
 	}
-	if inv.Hops() != r.Hops() {
-		t.Errorf("hop counts differ: invitation %d, record %d", inv.Hops(), r.Hops())
-	}
+	// **The hop COUNT cross-check went with `Hops()` itself** (/pending 443). Both methods
+	// had zero production callers and this was their only use — a test asserting that two
+	// functions nothing calls agree with each other, which proves nothing about the product.
+	// The invariant that matters is the one below: the two objects resolve the same PAIRS to
+	// the same hop, and that is checked against `Hop()`, which is live at two call sites.
 
 	for _, pair := range [][2]string{{c, a}, {a, b}, {b, a}, {c, b}, {a, a}} {
 		rh, rerr := r.Hop(pair[0], pair[1])
