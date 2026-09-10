@@ -9791,13 +9791,37 @@ function redoAny() {
 // doUndo/doRedo revert or re-apply the last server-side document operation (page
 // ops, outline, sanitize, attachments). The server returns fresh doc metadata and
 // the view reloads through the universal setDocumentFromServer path.
+// tellEvictedHistory answers the press that found nothing, when the reason is an eviction
+// (/pending 462).
+//
+// **The press, and not the moment of eviction, and that is the whole placement decision.** ADR-003
+// says eviction is observable or it is not eviction, and `reflectUndoControls` already toasts when
+// the server reports one — but that toast fires while the user is working on ANOTHER document (that
+// is what makes the budget global), so it is gone before the document it is about is even on
+// screen. Its own site says as much: an eviction is a standing fact rather than an event, and a
+// toast is the delivery that reasoning rejected. **What was missing is a standing ANSWER, not a
+// louder announcement** — and since v1.125.0 removed the ↶/↷ buttons there is no control left to
+// hang one on, with every banner corner spoken for. So it is said where the user is already looking
+// at the moment they ask the question: on the Ctrl+Z that does nothing.
+//
+// **Silent when nothing was ever evicted**, which is the precision the ADR asks for. The ambiguity
+// it names is that `canUndo: false` reads identically for "you have made no edits" and "your edits
+// are no longer undoable"; speaking in both cases would replace it with a toast on every fruitless
+// keypress and resolve nothing.
+function tellEvictedHistory(doc) {
+  if (!doc || !doc.historyEvicted) return;
+  toast('There is nothing left to undo here — this document\u2019s earlier history was released '
+    + 'to stay within the memory budget while you were working elsewhere.');
+}
+
 async function doUndo() {
   // Pinned and owned: the id names the document whose history is being walked, and
   // the reload lands on the view that asked. Unpinned, an undo issued on A and
   // answered after a switch reverted B a step and installed the result over A.
   const owner = view;
   const doc = owner.docMeta;
-  if (!owner.pdfDocument || !(doc && doc.canUndo)) return;
+  if (!owner.pdfDocument) return;
+  if (!(doc && doc.canUndo)) { tellEvictedHistory(doc); return; }
   const res = await apiFetch('/api/undo', { method: 'POST', docId: doc && doc.id });
   if (!res.ok) { toast(await errText(res, 'undo failed')); return; }
   await setDocumentFromServer(await res.json(), owner);
@@ -9805,7 +9829,10 @@ async function doUndo() {
 async function doRedo() {
   const owner = view;
   const doc = owner.docMeta;
-  if (!owner.pdfDocument || !(doc && doc.canRedo)) return;
+  // Redo too, through the same door: ADR-003's budget bounds the undo+redo PAIR and drops a
+  // history WHOLE, so an eviction takes both stacks and a fruitless Ctrl+Y is the same question.
+  if (!owner.pdfDocument) return;
+  if (!(doc && doc.canRedo)) { tellEvictedHistory(doc); return; }
   const res = await apiFetch('/api/redo', { method: 'POST', docId: doc && doc.id });
   if (!res.ok) { toast(await errText(res, 'redo failed')); return; }
   await setDocumentFromServer(await res.json(), owner);
