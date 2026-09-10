@@ -364,6 +364,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.handleCeremonyNext))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/leave", s.requireUnlocked(s.handleCeremonyLeave))
+	mux.HandleFunc("POST /api/ceremony/name", s.requireUnlocked(s.handleCeremonyName))
 	mux.HandleFunc("GET /api/ceremony/draft", s.requireUnlocked(s.handleCeremonyDraft))
 	mux.HandleFunc("POST /api/ceremony/draft", s.requireUnlocked(s.handleCeremonyDraft))
 	// **The convener's own door onto a hop (P01.S02b, `/pending 436`).** Both are

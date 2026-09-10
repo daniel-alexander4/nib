@@ -1,0 +1,14 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -11901,10 +11901,4 @@
+ 
+   // The recital, on its own line, and ONLY when the heading is a name — otherwise the heading IS
+   // the recital and this would print it twice.
+-  if (c.name && c.intent) {
+-    const recital = document.createElement('p');
+-    recital.className = 'cerrecital';
+-    recital.textContent = c.intent;
+-    card.appendChild(recital);
+-  }
+ 

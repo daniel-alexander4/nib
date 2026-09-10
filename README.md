@@ -509,6 +509,15 @@ its roster, your position in it, and a *"what happens next"* control that asks N
 — the same question the software itself refuses out-of-order contributions with, rather than a
 second answer computed for the screen.
 
+**You can give a ceremony a name.** The recital — *"We agree to the lease of 14 Elm Row, Edinburgh,
+for a term of five years"* — is the sentence every party signs, and it is the wrong thing to scan a
+list of proceedings by. A name is the handle: it heads the card, the recital stays underneath it,
+and it is **stored on your machine only**. Nobody else sees it, it is not part of what anyone signs,
+and two parties are free to call one ceremony different things. Clearing the name puts the
+agreement back at the top of the card, and a name given while a ceremony was running stays on it in
+the finished list afterwards — where it is the only line a person recognises, since a closed-out row
+otherwise carries an outcome and a date and nothing else.
+
 **It renders with the vault locked**, deliberately: you can open Nib, see that a proceeding exists
 and where it has got to, and be asked for your password at the moment you sign rather than at the
 moment you look. Finished ceremonies stay listed, because a close-out **moves** a ceremony's folder

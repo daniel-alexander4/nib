@@ -11824,6 +11824,15 @@ function renderEndedCeremonies(host, ended) {
       : r.state === 'left' ? 'You left'
       : 'Ended in a way this version does not recognise';
     row.appendChild(what);
+    // **The name, where it is the ONLY thing a person would recognise.** A finished row carries a
+    // state and a date; five completed proceedings read as five identical lines. The name travels
+    // with the folder ADR-012 moves, so a ceremony named while it ran is still findable after.
+    if (r.name) {
+      const n = document.createElement('span');
+      n.className = 'cerendedname';
+      n.textContent = r.name;
+      row.appendChild(n);
+    }
     const when = new Date(r.observed_at);
     if (!Number.isNaN(when.getTime())) {
       const w = document.createElement('span');
@@ -11858,7 +11867,13 @@ function ceremonyCard(c, mayAct) {
   title.className = 'cerintent';
   // The recital is what the parties agreed to, and it is the only thing here worth reading first.
   // A degraded ceremony has none, so it is named by what it is instead — never by its hex id.
-  title.textContent = c.intent || 'A ceremony on this machine';
+  //
+  // **A name this machine gave it comes FIRST, and it never replaces the recital.** The Intent is
+  // a clause to be signed — *"We agree to the lease of 14 Elm Row, Edinburgh, for a term of five
+  // years"* — and D20 makes it the recital's only home, so a name that hid it would put the panel
+  // in the business of paraphrasing what the parties agreed. The name is the handle in the list;
+  // the recital moves one line down (`.cerrecital`) and stays on the card.
+  title.textContent = c.name || c.intent || 'A ceremony on this machine';
   head.appendChild(title);
   if (c.state && c.state !== 'ok') {
     const badge = document.createElement('span');
@@ -11883,6 +11898,15 @@ function ceremonyCard(c, mayAct) {
     head.appendChild(e);
   }
   card.appendChild(head);
+
+  // The recital, on its own line, and ONLY when the heading is a name — otherwise the heading IS
+  // the recital and this would print it twice.
+  if (c.name && c.intent) {
+    const recital = document.createElement('p');
+    recital.className = 'cerrecital';
+    recital.textContent = c.intent;
+    card.appendChild(recital);
+  }
 
   if (c.reason) {
     const r = document.createElement('p');
@@ -12012,7 +12036,93 @@ function ceremonyCard(c, mayAct) {
     next.appendChild(btn);
     card.appendChild(next);
   }
+  // **Naming comes last on the card and is offered on every state, degraded included.** A user
+  // with three proceedings and no documents yet is exactly who needs a handle, and that party's
+  // card is the one with the least on it.
+  if (mayAct) card.appendChild(ceremonyName(c));
   return card;
+}
+
+// ceremonyName builds the control that gives a proceeding a name on THIS machine.
+//
+// **The name is local, unsigned, and never on the wire** — the reasoning is at `WriteName` and at
+// `handleCeremonyName`, and the short version is that a shared name is either a claim nothing
+// anchors or a signature-format flag day. So the sentence under the field says so plainly: a user
+// who believes their label is what the other parties see would write a different label.
+//
+// **It does not replace the recital and cannot.** D20 makes the Intent the recital's only home;
+// the name is a handle for a list, which is a different job, and `ceremonyCard` keeps both.
+function ceremonyName(c) {
+  const wrap = document.createElement('div');
+  wrap.className = 'cername';
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'cernamebtn';
+  // The two labels are different acts: one gives a proceeding a handle it has never had, the
+  // other edits one. A single "Name…" on a named ceremony reads as though the name were gone.
+  open.textContent = c.name ? 'Rename this ceremony…' : 'Name this ceremony…';
+  const body = document.createElement('div');
+  body.className = 'cernamebody';
+  body.hidden = true;
+  const field = document.createElement('input');
+  field.type = 'text';
+  field.className = 'cernameinput';
+  // 120 is `ceremony.MaxCeremonyNameLen`, and the server trims to it whatever arrives — this
+  // stops a user typing 400 characters and being handed back 120 with no explanation. A tier-1
+  // guard holds the two numbers together.
+  field.maxLength = 120;
+  field.placeholder = 'The Elm Row lease';
+  field.setAttribute('aria-label', 'A name for this ceremony, on this machine');
+  const note = document.createElement('p');
+  note.className = 'cernamenote';
+  note.textContent = 'This name is stored on this machine only. Nobody else sees it, and it is '
+    + 'not part of what anyone signs. Clear it to go back to the agreement.';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'cernamesave';
+  save.textContent = 'Save';
+  const out = document.createElement('div');
+  out.className = 'cernameout';
+  open.addEventListener('click', () => {
+    body.hidden = !body.hidden;
+    // Refilled on every open from the card's own data, so an abandoned edit does not come back
+    // as though it had been saved — the same rule D4 settles for the setup sheet's draft.
+    if (!body.hidden) {
+      field.value = c.name || '';
+      out.textContent = '';
+      field.focus();
+    }
+  });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    out.textContent = '';
+    try {
+      const res = await apiFetch('/api/ceremony/name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony: c.id, name: field.value }),
+        unpinned: true,
+      });
+      if (!res.ok) {
+        const e = document.createElement('p');
+        e.className = 'cererror';
+        e.textContent = await errText(res, 'Nib could not save that name.');
+        out.appendChild(e);
+        save.disabled = false;
+        return;
+      }
+      loadCeremonyPanel();
+    } catch (err) {
+      const e = document.createElement('p');
+      e.className = 'cererror';
+      e.textContent = 'Nib could not save that name.';
+      out.appendChild(e);
+      save.disabled = false;
+    }
+  });
+  body.append(field, save, note, out);
+  wrap.append(open, body);
+  return wrap;
 }
 
 // watchDeliveryRound polls the round's current leg and writes it into `line` (/pending 370).

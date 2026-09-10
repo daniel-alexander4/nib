@@ -512,6 +512,10 @@ type Stored struct {
 	// fingerprint, and because an index is a second derivation that goes wrong the moment a roster
 	// is read in a different order.
 	Me string `json:"me,omitempty"`
+	// Name is THIS machine's label for the proceeding, and it is local: unsigned, never on the
+	// wire, and not a fact about the agreement — see `nameFile`. Empty means unnamed, and the
+	// panel falls back to the Intent, which is the recital and is signed.
+	Name string `json:"name,omitempty"`
 	// Convener is the fingerprint of the party that signed this record — the one fact a panel
 	// needs to know whether THIS machine may act on the ceremony as its convener (/pending 353).
 	//
@@ -576,6 +580,12 @@ func ReadStored(root, id string, now time.Time) Stored {
 	// every ceremony whose document has not arrived.
 	s.Verification = readVerification(dir)
 	s.Joined = readMe(dir) != ""
+	// **Read here with the other markers, BEFORE any `LoadState` branch can return.** A pre-hop
+	// party has no `record.json` and returns at `LoadAbsent` below — and that party is exactly the
+	// one with several proceedings and nothing to tell them apart, so a name read after the
+	// branches would be invisible to the reader who needs it most. Same argument `Verification`
+	// makes for itself two lines up.
+	s.Name = readName(dir)
 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
 	if err != nil {
 		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to

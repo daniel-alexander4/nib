@@ -232,6 +232,7 @@ const EXCLUDED = {
   // P07.S02b's accept route (v1.117.157).
   acceptRequest: 'request body, read by its handler',
   leaveRequest: 'request body, read by its handler',
+  ceremonyNameRequest: 'request body, read by its handler',
   draftRequest: 'request body, read by its handler',
   listDirRequest: 'request body, read by its handler',
   ocrRequest: 'request body, read by its handler',
