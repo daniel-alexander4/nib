@@ -15,7 +15,11 @@
 // response, and the count is asserted as well as the contents.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './boot.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { boot, REPO } from './boot.mjs';
+
+const APP = readFileSync(join(REPO, 'web', 'app.js'), 'utf8');
 
 const ME = 'aa'.repeat(32);
 const THEM = 'bb'.repeat(32);
@@ -673,4 +677,42 @@ test('a 410 reads differently from an ordinary failure', async () => {
       invites: [{ fingerprint: THEM, label: 'Bob Landlord', signs: true, invitation: 'nib-invite-v3.aaaa.bbbb' }],
     });
   }
+});
+
+// /pending 431 — a convene leaves every party's channel secret in the DOM, and a Done
+// control that ERASES is what takes it out.
+//
+// `HopSeed`'s own doc: those 32 bytes ARE the BEP-44 private key for the hop, "the write
+// authority for both parties' records under it"; `RecordKey`'s adds that any roster member
+// can derive ANY hop's key from the secret. `#ceremonyResult` had three writers and all three
+// cleared it only on the way IN, so after a convene the secrets stayed for the life of the
+// page — reachable from the console, in the page's memory, and in any accessibility tree that
+// ignores `hidden`.
+//
+// **`hidden` would not do**, which is the distinction this pins. The app's two existing dismiss
+// affordances set `hidden = true`; that is right for a pill and wrong for a secret, and
+// `clearReissue` already records the reasoning one surface over. The precedent the app follows
+// for its one other rendered secret is `els.authPw.value = ''`.
+//
+// Asserted over the source, because rendering the panel needs a convene response and the
+// erasure is a property of the HANDLER, not of a rendered tree.
+test('the convene result is erased by a Done control, not hidden', () => {
+  const fn = APP.slice(APP.indexOf('function renderInvitations(d)'), APP.indexOf('\n}', APP.indexOf('function renderInvitations(d)')));
+  assert.ok(fn.length > 200, 'renderInvitations is gone or renamed — this pins nothing');
+
+  assert.match(fn, /id = 'cerInvitesDone'/,
+    'the convened invitations have no Done control, so every party\'s channel secret stays in the '
+      + 'DOM for the life of the page (/pending 431)');
+  // **Scoped to the Done HANDLER.** renderInvitations clears the container on the way IN as
+  // well, so a whole-function match is satisfied by that line and stays green against a Done
+  // control that erases nothing — which is what the first cut of this did.
+  const done = fn.slice(fn.indexOf("id = 'cerInvitesDone'"));
+  assert.match(done, /e\.result\.textContent = ''/,
+    'the Done control does not ERASE the container. Those bytes are BEP-44 write authority for '
+      + 'both parties\' records, and leaving them anywhere reachable is the defect.');
+  assert.doesNotMatch(done, /hidden = true/,
+    'the Done control hides rather than erases. `hidden` is what the app\'s two dismiss '
+      + 'affordances do and it is wrong for a secret: the bytes stay in the DOM, in memory, and '
+      + 'in any accessibility tree that ignores it — which is what clearReissue records one '
+      + 'surface over.');
 });

@@ -13264,6 +13264,33 @@ function renderInvitations(d) {
   e.result.appendChild(warn);
 
   for (const inv of (d.invites || [])) e.result.appendChild(invitationRow(inv));
+
+  // **A Done control that ERASES, because these bytes are write authority** (/pending 431).
+  //
+  // Each row holds a party's invitation, and `HopSeed`'s own doc says those 32 bytes ARE the
+  // BEP-44 private key for the hop — "the write authority for both parties' records under it" —
+  // while `RecordKey`'s adds that any roster member can derive ANY hop's key from the secret.
+  // `#ceremonyResult` had three writers and all three cleared it only on the way IN, so after a
+  // convene every party's secret stayed in the DOM for the life of the page: reachable from the
+  // console, in the page's memory, and in any accessibility tree that ignores `hidden`.
+  //
+  // `hidden = true` is what the app's two existing dismiss affordances do and it is wrong here
+  // for exactly the reason `clearReissue` records. This is that shape: erase, into a container
+  // this function owns.
+  //
+  // **Clearing on CLOSE was tried and reverted** — `showCeremonyForm`'s comment records that it
+  // wiped the invitations in the same tick they were drawn and the screen went blank on success.
+  // So the trigger is the user saying they are done, never the form's lifecycle: the two are
+  // different events and only one of them means "I have sent these".
+  const done = document.createElement('button');
+  done.type = 'button';
+  done.id = 'cerInvitesDone';
+  done.textContent = 'I have sent these — clear them';
+  done.onclick = () => {
+    e.result.textContent = '';
+    toast('Invitations cleared from this screen. They are not stored anywhere else — if you need one again, re-issue it.');
+  };
+  e.result.appendChild(done);
   // **A warning is BOUND to the control that caused it, which is what its `code` is for.**
   // `conveneResponse.Warnings`' own doc says they are *"machine-tagged so a panel can bind one to
   // the control that caused it rather than re-parsing English"* — so the code selects the control
