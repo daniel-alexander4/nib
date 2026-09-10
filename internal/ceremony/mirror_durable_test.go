@@ -578,3 +578,69 @@ func TestATruncatedMirrorWithNoSidecarReadsCleanAndThatIsTheSTATEDBoundary(t *te
 			len(got), cut)
 	}
 }
+
+// TestAMirrorWriteMustExtendTheDocumentAlreadyStored — /pending 437's remedy.
+//
+// The READ side tolerates a rewind by decision (ADR-013, and the test above pins it). What was never
+// decided is that a rewind may be made CANONICAL: `WriteMirror` refused nothing about descent, so a
+// one-off rewind became the stored document with a freshly written sidecar and every later hop
+// proceeded from it. That is the difference between a limitation and a durable rollback, and it is
+// what /pending 438 named as the consequence of authorising from the mirror.
+//
+// **The allowed cases are asserted first and they are the load-bearing half.** A refusal that also
+// refuses hop 1, or an identical rewrite, or an ordinary hop, is not a guard — it is an outage. Each
+// of the three is a real flow: `convene.go` writes the first document, and both `ceremonyid.go`
+// sites write a hop's `final`.
+func TestAMirrorWriteMustExtendTheDocumentAlreadyStored(t *testing.T) {
+	rec, doc := convened(t)
+	root := t.TempDir()
+
+	// ALLOWED: the first write. Nothing is stored, so there is nothing to descend from.
+	if _, err := WriteMirror(root, rec, doc); err != nil {
+		t.Fatalf("the first write was refused: %v — hop 1 has no stored document and must not be", err)
+	}
+	// ALLOWED: the identical document again. A re-write of the same bytes extends trivially, and
+	// refusing it would break every retry.
+	if _, err := WriteMirror(root, rec, doc); err != nil {
+		t.Fatalf("re-writing the identical document was refused: %v", err)
+	}
+	// ALLOWED: a genuine extension, which is what every hop produces — the repo models a
+	// co-signature as a byte append.
+	longer := append(append([]byte{}, doc...), []byte("\n% a later hop's bytes\n")...)
+	if _, err := WriteMirror(root, rec, longer); err != nil {
+		t.Fatalf("an extension was refused: %v — this is what every hop writes", err)
+	}
+	// The stimulus floor: the extension really landed, so the refusals below are descending from
+	// the longer document rather than from the original.
+	if _, got, rerr := ReadMirror(root, rec.ID, mirrorNow); rerr != nil || len(got) != len(longer) {
+		t.Fatalf("setup: the extension did not become the stored document (%v, %d of %d bytes)",
+			rerr, len(got), len(longer))
+	}
+
+	// REFUSED: the rewind. Shorter, and a prefix of what is stored — which is exactly what a
+	// truncation at a prior `%%EOF` produces, and exactly what the read side lets through.
+	if _, err := WriteMirror(root, rec, doc); err == nil {
+		t.Error("a SHORTER document replaced the stored one. A rewind then becomes canonical: the " +
+			"sidecar is rewritten over it, every later hop proceeds from it, and the one-off " +
+			"limitation ADR-013 accepted has turned into a durable rollback")
+	} else if !errors.Is(err, ErrMirrorRewind) {
+		t.Errorf("refused, but not as a rewind: %v", err)
+	}
+
+	// REFUSED: same length, different bytes. Length alone is not descent — a check that compared
+	// only sizes would pass this, and it is a substitution rather than a rollback.
+	swapped := append([]byte{}, longer...)
+	swapped[len(swapped)/2] ^= 0xff
+	if _, err := WriteMirror(root, rec, swapped); err == nil {
+		t.Error("a document of the SAME LENGTH with different bytes replaced the stored one — the " +
+			"check is comparing sizes rather than descent")
+	} else if !errors.Is(err, ErrMirrorRewind) {
+		t.Errorf("refused, but not as a rewind: %v", err)
+	}
+
+	// And the stored document is untouched by either refusal, which is what makes them refusals.
+	if _, got, rerr := ReadMirror(root, rec.ID, mirrorNow); rerr != nil || len(got) != len(longer) {
+		t.Errorf("after two refusals the stored document is %d bytes (want %d), err %v — it "+
+			"refused after writing, which is no refusal at all", len(got), len(longer), rerr)
+	}
+}

@@ -154,6 +154,11 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
 		//
 		// Best-effort: a sidecar that is already absent is the ordinary case at hop 1, and a remove
 		// that fails leaves the old behaviour rather than blocking the write.
+		// **The descent check, and it runs BEFORE the unlink because the old document is what it
+		// reads** (/pending 437).
+		if err := refuseRewind(dir, pdf); err != nil {
+			return "", err
+		}
 		_ = os.Remove(filepath.Join(dir, "document.sha256"))
 		if err := atomicfile.WriteDurable(filepath.Join(dir, "document.pdf"), pdf, 0o600); err != nil {
 			return "", err
@@ -194,6 +199,75 @@ func WriteMirror(root string, r Record, pdf []byte) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// ErrMirrorRewind is the refusal for a document that would replace the stored one with something
+// it is not an extension of.
+var ErrMirrorRewind = errors.New("this ceremony's document would go backwards")
+
+// refuseRewind refuses a write that does not EXTEND the document already in this mirror
+// (/pending 437).
+//
+// # What it closes
+//
+// `ReadMirror`'s `DocHash` comparison runs only while the document is UNSIGNED — from the first
+// signature the document legitimately stops hashing to a convene-time identity — and the
+// `document.sha256` sidecar is a damage detector that anyone able to truncate the document can also
+// delete. Measured: a signed mirror truncated at a prior `%%EOF` with the sidecar removed reads back
+// clean, and so does a rewind all the way to the convened bytes. That is a decided limitation about
+// a mirror nothing authorised from (ADR-013), and it is tolerated on the READ side deliberately —
+// `TestATruncatedMirrorWithNoSidecarReadsCleanAndThatIsTheSTATEDBoundary` pins it.
+//
+// What was never decided is that a rewind may be made CANONICAL. `WriteMirror` refused nothing
+// about length or descent, so a one-off rewind became the stored document with a freshly written
+// sidecar, and every later hop proceeded from it. This is that door.
+//
+// # Why it compares the stored DOCUMENT and not a widened sidecar
+//
+// The item proposed widening `document.sha256` to `<hex-sha256> <decimal-len>` and checking
+// `sha256(new[:oldLen]) == oldHash`. That works and it carries a mixed-version hazard the item
+// names: `ReadMirror` compares the sidecar's WHOLE contents against the hex digest, so a
+// new-format sidecar read by a downgraded binary reports `ErrMirrorDamaged` on a mirror that is
+// perfectly good — a false accusation about the user's own disk, with no repair path.
+//
+// None of that is needed, because **the old document is still on disk at this point**: the unlink
+// above removes the sidecar, and `atomicfile.WriteDurable` has not yet replaced `document.pdf`. So
+// the check reads the bytes it is descending from directly, and there is no format to change and
+// nothing for an older binary to misread.
+//
+// **Streamed, in 64 KiB, so it never holds the old document.** ADR-005 caps a document at 512 MiB
+// and reading one whole would double this call's peak for no reason. What it costs is one
+// sequential read of a file the same call is about to replace with a durable write of the same
+// magnitude.
+//
+// # Local damage must NOT refuse, which is `refuseDifferentProceeding`'s rule one door over
+//
+// An absent or unreadable stored document allows the write. Refusing would brick the ceremony with
+// no repair path, and an attacker who can make the old document unreadable can equally delete it —
+// the same reasoning that file already applies to a corrupt `record.json`. Hop 1 and a
+// document-less mirror both arrive here with nothing stored, and both are ordinary.
+func refuseRewind(dir string, pdf []byte) error {
+	f, err := os.Open(filepath.Join(dir, "document.pdf"))
+	if err != nil {
+		return nil // nothing stored yet: hop 1, or a mirror written without a document
+	}
+	defer f.Close()
+	buf := make([]byte, 64<<10)
+	off := 0
+	for {
+		n, rerr := f.Read(buf)
+		if n > 0 {
+			if off+n > len(pdf) || !bytes.Equal(buf[:n], pdf[off:off+n]) {
+				return fmt.Errorf("%w: the copy being written is not an extension of the one this "+
+					"machine already holds, so a later hop would proceed from a document earlier "+
+					"than the one it already has", ErrMirrorRewind)
+			}
+			off += n
+		}
+		if rerr != nil {
+			return nil // EOF, or a read fault: local damage does not refuse — see above
+		}
+	}
 }
 
 // recordNamesItsDirectory refuses a stored record whose ceremony id is not the folder it came out
