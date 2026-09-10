@@ -146,3 +146,69 @@ func TestEveryMapOrAnonymousResponseBodyHasAReader(t *testing.T) {
 // unreadJSONKeys are keys published in a map or anonymous body that the client does not read,
 // each with the reason it stays. An UNEXPLAINED entry is the failure this guard exists for.
 var unreadJSONKeys = map[string]string{}
+
+// /pending 456 — ADR-013's three digest gates ask ONE question, in one spelling.
+//
+// They were spelled two ways: `!sign.HasSignatureBlob(pdf)` at `ceremonyid.go`, and
+// `sign.Verify(pdf).State == sign.Unsigned` at `mirror.go` and `cosign.go`. `ceremonyid.go`
+// argues the right one at its own line — `Verify` answers "is there a VALID signature", and what
+// a digest gate needs is "is there a signature at all", because treating a signed document as
+// unsigned there produces a tampering accusation for a library divergence.
+//
+// **They are NOT equivalent, and I checked the wrong way round first.** `/pending 453` put a blob
+// check on `Verify`'s error path, which made the two agree on every unsigned document and on 43
+// single-byte flips of a signed one — so a first probe reported zero disagreements and I nearly
+// recorded the divergence as closed. It is not: a flip that leaves the library able to see a
+// malformed SIGNER while the structural check finds no blob gives `Verify=invalid` with
+// `HasSignatureBlob=false`, and the two gates then differ on whether to compare the digest at
+// all. Rare, offset-dependent, and exactly the shape ADR-009 exists for.
+//
+// So the assertion is the ONE DOOR, not the equivalence — which is what ADR-009 asks for anyway:
+// the guard checks routing, not that two implementations happen to agree today.
+func TestTheDigestGatesAskTheSameQuestionOneWay(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loose []string
+	scanned := 0
+	err = filepath.Walk(root, func(path string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if info.IsDir() {
+			switch info.Name() {
+			case ".git", "node_modules", "dist", "vendor", "web":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		scanned++
+		// The looser spelling, wherever it is used as a signedness GATE.
+		if strings.Contains(string(b), "State == sign.Unsigned") {
+			rel, _ := filepath.Rel(root, path)
+			loose = append(loose, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned < 50 {
+		t.Fatalf("scanned only %d production Go files; the tree has many more. A clean result "+
+			"would mean nothing.", scanned)
+	}
+	if len(loose) > 0 {
+		t.Errorf("%v ask signedness as `Verify(...).State == sign.Unsigned`. ADR-013's three "+
+			"digest gates are one rule reaching three callers, and the rule is "+
+			"`sign.HasSignatureBlob` — `Verify` answers a different question, and a signed "+
+			"document it cannot fully parse is not an unsigned one (/pending 456).", loose)
+	}
+}

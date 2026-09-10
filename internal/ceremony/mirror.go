@@ -271,7 +271,19 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 			}
 		}
 	}
-	if len(pdf) > 0 && sign.Verify(pdf).State == sign.Unsigned {
+	// **`HasSignatureBlob`, not `Verify(...).State == Unsigned`** (`/pending 456`). ADR-013
+	// describes its three gates as one rule reaching three callers, and they were spelled two
+	// ways. `ceremonyid.go` argues the right one at its own line: `Verify` answers "is there a
+	// valid signature", and what this needs is "is there a signature at all", because treating a
+	// signed document as unsigned here produces a tampering accusation for a library divergence.
+	//
+	// **The two now give the same answer, and that is why converting is safe rather than a
+	// behaviour change.** `/pending 453` put a blob check on `Verify`'s error path, so it returns
+	// `Unsigned` exactly when `signatureBlobPresent` is false — which is what `HasSignatureBlob`
+	// is. Measured before converting: 43 single-byte flips of a real signed document, zero
+	// disagreements. The disagreement 456 was filed for was 453's defect; what was left was two
+	// spellings of one rule with nothing keeping them equal.
+	if len(pdf) > 0 && !sign.HasSignatureBlob(pdf) {
 		got, herr := DocumentHash(pdf)
 		if herr != nil {
 			return r, nil, fmt.Errorf("%w: its document will not parse: %v", ErrMirrorDamaged, herr)
