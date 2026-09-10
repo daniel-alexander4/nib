@@ -364,24 +364,57 @@ func TestEveryPageNumberFieldTheServerReadsIsOneTheClientSends(t *testing.T) {
 		t.Fatal(err)
 	}
 	js := string(cli)
+	// **`pageOp`, and NOT `pageNumGo` — this test was satisfied one function short of the wire.**
+	//
+	// The first cut read `pageNumGo`'s options object, and that object is not the request: it is
+	// handed to `pageOp`, which builds the FormData by appending a NAMED LIST of keys and silently
+	// drops anything not on it. So when /pending 448 added `size` and `color` to the object and to
+	// the dialog, this test went green and **the two knobs still did nothing** — the request
+	// carried neither, the server applied its defaults, and every stamp stayed 11pt black exactly
+	// as before the fix. The mutation recorded with it ("client stops sending both knobs") removed
+	// them from the object, which this test could see, and never touched the form.
+	//
+	// Reading the appends is what makes the assertion about the REQUEST. `pageNumGo` is still
+	// checked, below, because a key that never reaches `pageOp` cannot be appended either — but it
+	// is the weaker half and it is no longer the only one.
+	oi := strings.Index(js, "async function pageOp(")
+	if oi < 0 {
+		t.Fatal("pageOp is gone or renamed — the function that actually builds the /api/pages " +
+			"request has no source, so nothing below is about what the server receives")
+	}
+	opBody := js[oi : oi+strings.Index(js[oi:], "\n}")]
+	sends := map[string]bool{}
+	for _, m := range regexp.MustCompile(`form\.append\('([a-zA-Z]+)'`).FindAllStringSubmatch(opBody, -1) {
+		sends[m[1]] = true
+	}
+	if len(sends) < 10 {
+		t.Fatalf("parsed %d form.append names out of pageOp; it appends well over ten. The client "+
+			"half of this comparison is broken, so a clean result means nothing.", len(sends))
+	}
+
 	gi := strings.Index(js, "async function pageNumGo()")
 	if gi < 0 {
 		t.Fatal("pageNumGo is gone or renamed — the client half of this comparison has no source")
 	}
 	body := js[gi : gi+strings.Index(js[gi:], "\n}")]
-	sends := map[string]bool{}
+	passes := map[string]bool{}
 	for _, m := range regexp.MustCompile(`(?m)^\s*([a-zA-Z]+):`).FindAllStringSubmatch(body, -1) {
-		sends[m[1]] = true
+		passes[m[1]] = true
 	}
-	if len(sends) < 4 {
-		t.Fatalf("parsed %d keys out of pageNumGo; it sends at least four", len(sends))
+	if len(passes) < 4 {
+		t.Fatalf("parsed %d keys out of pageNumGo; it passes at least four", len(passes))
 	}
 
 	for name := range reads {
 		if !sends[name] {
-			t.Errorf("handlePages reads %q from the pagenum request and pageNumGo never sends it. "+
-				"The server then applies its default and the user gets a value no control offered "+
-				"— which is how every page-number stamp came out 11pt black.", name)
+			t.Errorf("handlePages reads %q from the pagenum request and pageOp never appends it, "+
+				"so the request does not carry it. The server then applies its default and the "+
+				"user gets a value no control offered — which is how every page-number stamp came "+
+				"out 11pt black, both before /pending 448 and after it.", name)
+		}
+		if !passes[name] {
+			t.Errorf("pageNumGo never passes %q to pageOp, so however pageOp is written the value "+
+				"cannot reach the request", name)
 		}
 	}
 }

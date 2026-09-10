@@ -5250,6 +5250,14 @@ async function pageOp(op, extra = {}) {
   if (extra.ranges) form.append('ranges', extra.ranges);
   if (extra.n != null) form.append('n', String(extra.n));
   if (extra.border != null) form.append('border', extra.border ? '1' : '0');
+  // **size and colour, and their absence here is /pending 448 shipping half-done.** That item
+  // added both to `pageNumGo`'s options object and to the dialog, and stopped there — so the keys
+  // reached this function and it dropped them, because it appends a named list rather than
+  // forwarding what it is handed. Every page-number stamp stayed 11pt black, exactly as before the
+  // fix, and the guard written alongside it could not tell: it compared the server's reads against
+  // `pageNumGo`'s object literal, which is one function short of the wire.
+  if (extra.size != null) form.append('size', String(extra.size));
+  if (extra.color) form.append('color', extra.color);
   const res = await apiFetch('/api/pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   // The server's sentence — see the attachment-add door for why (P06.S09).
   if (!res.ok) { toast(await errText(res, 'page operation failed')); return false; }
