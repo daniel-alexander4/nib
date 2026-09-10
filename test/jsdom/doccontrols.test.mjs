@@ -151,3 +151,31 @@ test('every exemption names a control that exists', () => {
       + 'check — and it outlives the control, so the next reader believes the gate was thought '
       + 'about. Delete the name, or restore the control.');
 });
+
+// /pending 455 — the signature warning must not promise evidence the operation destroys.
+//
+// Measured on a signed document with one invisible approval signature: `writeMutated`
+// (api.WriteContext) leaves `invalid` with the blob present and one signer, while
+// `pdfops.Collect`/`api.MergeRaw` leave `unsigned` with no blob and no signers. Redaction
+// and remove-originals use the second pair, so they ERASE rather than invalidate — and a
+// user told their signature would be "invalidated" expects to find a broken signature,
+// which is evidence a reader can act on. Erasure leaves none.
+//
+// The deeper question — whether Nib wants an edited signed document to read `invalid` or
+// `unsigned`, rather than having it depend on which primitive a route happens to use — is
+// still open on that item. This pins only the sentence.
+test('the signature warning does not promise an invalidation it does not perform', () => {
+  const warn = APP.slice(APP.indexOf('function signatureWarning()'), APP.indexOf('function confirmSignatureLoss()'));
+  assert.ok(warn.length > 40, 'signatureWarning is gone or renamed — this pins nothing');
+
+  assert.doesNotMatch(warn, /invalidate/,
+    'the redaction/flatten warning still says the signature will be "invalidated". Those routes '
+      + 'rebuild the document through Collect/MergeRaw and leave it reading UNSIGNED with no blob '
+      + 'and no signers — so the reader is promised evidence that the operation removes.');
+  assert.match(warn, /destroy/,
+    'the warning no longer says the signature is destroyed, which is the fact the user is '
+      + 'deciding on');
+  assert.match(warn, /not show that it was ever signed/,
+    'the warning does not say the result carries no trace of the signature. "Destroyed" alone '
+      + 'still lets a reader assume a broken signature will remain to point at.');
+});
