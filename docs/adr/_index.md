@@ -242,3 +242,11 @@ home today.
   scarcity: `row.dataset.by` is `nib` or `hand`, a manual tick never overwrites a probe, and the
   hover text distinguishes them. **Written after the behaviour shipped, which is the second defect
   it closes** (`/pending 417`): a new architectural decision gets an ADR in the same change.
+
+- [ADR-030: An announcement carries which ARM its port belongs to](030-an-announcement-carries-its-arm.md)
+  — the format is version **3** and carries a `hop`. ADR-010's argument one level in: a version-2
+  announcement's port could be either a hop arm or a delivery arm, on one machine, pinned to the same
+  peer, and guessing between them is the defect the version field exists to remove. A version-2
+  speaker is refused, not best-guessed. **Written because the code had been at 3 while ADR-007 and
+  this index both said 2** (`/pending 420`) — and ADR-010 is the decision that established a bump is
+  ADR-worthy, so its own successor going unrecorded is the defect.
