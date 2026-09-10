@@ -306,8 +306,21 @@ func routableSelf() (netip.Addr, bool) {
 // its own secret, so party-to-party is unreachable by construction and convener-to-party is
 // the hop this path actually serves.
 func liveCeremony(t *testing.T) (inv ceremony.Invitation, certPEM, keyPEM []byte, meFP, peerFP string) {
+	i, _, _, _, c, k, me, peer := liveCeremonyFull(t)
+	return i, c, k, me, peer
+}
+
+// liveCeremonyFull is liveCeremony plus the RECORD and the convener's key, which an end-state
+// test needs and a candidate test does not: a `Termination` is signed by the convener over the
+// record, and only the record carries the roster hash its anchor is checked against.
+//
+// One fixture rather than two, because both tests need the same thing — a real signed record and
+// the invitation `NewInvitations` derives from it — and a second copy would be two ceremonies
+// that agree by transcription.
+func liveCeremonyFull(t *testing.T) (inv ceremony.Invitation, rec ceremony.Record, convCert, convKey, certPEM, keyPEM []byte, meFP, peerFP string) {
 	t.Helper()
-	convCert, convKey, err := sign.GenerateIdentity("live convener")
+	var err error
+	convCert, convKey, err = sign.GenerateIdentity("live convener")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +344,7 @@ func liveCeremony(t *testing.T) (inv ceremony.Invitation, certPEM, keyPEM []byte
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := ceremony.Record{
+	rec = ceremony.Record{
 		ID:      id,
 		DocHash: strings.Repeat("ab", 32),
 		Intent:  "We agree to co-sign the lease",
@@ -348,11 +361,12 @@ func liveCeremony(t *testing.T) (inv ceremony.Invitation, certPEM, keyPEM []byte
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, ok := all[meFP]
+	var ok bool
+	inv, ok = all[meFP]
 	if !ok {
 		t.Fatalf("no invitation for the invited party %s (the map holds %d)", meFP, len(all))
 	}
-	return inv, certPEM, keyPEM, meFP, peerFP
+	return inv, rec, convCert, convKey, certPEM, keyPEM, meFP, peerFP
 }
 
 // liveServer opens a rendezvous Server on its own socket and cache directory.
@@ -415,4 +429,128 @@ func warmFrom(t *testing.T, from, to string) {
 	}
 	t.Logf("WARMED the fetcher from %d file(s) of the publisher's saved node cache "+
 		"(addresses only; the record's whereabouts are not among them)", copied)
+}
+
+// TestLiveAPreHopPartyReadsTheEndStateOverTheRealDHT — /pending 433's behavioural half.
+//
+// # What it covers that no scan can
+//
+// P05's phase close ran a seven-mutation battery over the pre-hop end-state PULL and every one
+// came back green. `TestThePreHopEndStateMechanismIsStillWired` closes five of them by scanning
+// for the WIRING — the spawn, its `!cer.hasSigned()` guard, the LAN-window hold, the record, the
+// teardown. A scan sees a deletion; it cannot see whether the two halves ever MEET. This is that:
+// the convener's real `publishEndStateFor` writing to the public DHT, and a second machine on its
+// own socket and cache reading it back and opening it against the invitation's anchor.
+//
+// # Why here and not at tier 4
+//
+// The entry asked for "a fifth party who accepts and never signs" in `build/pairrepro.sh`. That is
+// not what was missing: pairrepro says in its own words that "these instances have no DHT and no
+// multicast — every hop above is driven by a typed `address=` — so nothing here can resolve a
+// rendezvous". A fifth party there would still have nothing for publish and fetch to meet on. The
+// pull is a `rendezvous.Fetch`; the only harness that reaches a real one is this one.
+//
+// **This item was DEFERRED onto /pending 2 earlier the same day and that gate was already
+// discharged** — 2 closed on 2026-09-04 by building the very file this test is in. Naming a gate
+// is not the same as checking it is still shut.
+//
+// # Skips, not failures
+//
+// The DHT is a third party. Every "nothing came back" branch below is a SKIP for the reason this
+// file's other live test states: a public DHT can decline an honest publish, and a red there would
+// be the network's rather than this code's. What is NOT a skip is a record that comes back and
+// fails to open — that is ours.
+func TestLiveAPreHopPartyReadsTheEndStateOverTheRealDHT(t *testing.T) {
+	if os.Getenv("NIB_LIVE_DHT") == "" {
+		t.Skip("set NIB_LIVE_DHT=1 (or run ./build/dhtlive.sh) — this test uses the public network")
+	}
+	inv, rec, convCert, convKey, _, _, _, _ := liveCeremonyFull(t)
+
+	// The convener's own signed end state. A real `SignTermination`, because every check the
+	// fetch side performs is a signature or a commitment and a hand-built object exercises none
+	// of them.
+	term, err := ceremony.SignTermination(rec, ceremony.StateDeclined, convCert, convKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stimulus floor: it verifies against the INVITATION's anchor before the DHT is involved.
+	// Without this, a fetch that came back and failed to open would be indistinguishable from a
+	// termination that never could have opened, and the skip/fail split below would be wrong.
+	anchor, aerr := inv.Anchor()
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if verr := term.VerifyAgainst(anchor); verr != nil {
+		t.Fatalf("setup: the end state does not verify against the invitation's anchor (%v), so "+
+			"nothing below is about the DHT", verr)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pubDir := t.TempDir()
+	pub, pubClose := liveServer(t, pubDir)
+	if err := pub.Bootstrap(ctx); err != nil {
+		pubClose()
+		t.Skipf("the publisher could not bootstrap: %v", err)
+	}
+	// **The production door, not a hand-rolled publish.** `publishEndStateFor` is what the
+	// delivery round calls for every leg it could not hand over, and it seals with the same
+	// derivations the pull reads with — so a change to either side that broke the pairing would
+	// surface here rather than in a test that re-derived both.
+	srv := &Server{}
+	srv.publishEndStateFor(ctx, inv, term, &sharedRendezvous{rz: pub})
+	if n := pub.Stats().PublishNodes; n == 0 {
+		pubClose()
+		t.Skip("no node answered the token traversal, so there was nowhere to write")
+	} else {
+		t.Logf("published the sealed end state to %d node(s)", n)
+	}
+	// Closed BEFORE the fetch, for the reason the candidate test gives: the cache holds node
+	// ADDRESSES and not the record's whereabouts, so nothing the publisher held can answer — what
+	// it avoids is a second cold bootstrap, which is also what a real second Nib has.
+	pubClose()
+
+	subDir := t.TempDir()
+	warmFrom(t, pubDir, subDir)
+	sub, subClose := liveServer(t, subDir)
+	defer subClose()
+	if err := sub.Bootstrap(ctx); err != nil {
+		t.Skipf("the fetcher could not bootstrap: %v", err)
+	}
+
+	// The pull's own three derivations, from the invitation alone — which is the whole point of
+	// /pending 380's design: a party who has not signed holds no record, and everything needed to
+	// read the end state comes off the invitation they already have.
+	seed, serr := inv.EndStateSeed()
+	salt, lerr := inv.EndStateSalt()
+	key, kerr := inv.EndStateKey()
+	if serr != nil || lerr != nil || kerr != nil {
+		t.Fatalf("the end-state derivations failed off a good invitation: %v / %v / %v", serr, lerr, kerr)
+	}
+	sealed, seq, ferr := sub.Fetch(ctx, seed, salt)
+	if ferr != nil || len(sealed) == 0 {
+		t.Skipf("fetch found nothing (%v) after %d node(s) answered — on a public DHT that can "+
+			"happen to an honest publish, so it is a skip and not a failure",
+			ferr, sub.Stats().FetchNodes)
+	}
+
+	// From here it is OURS. The bytes came back from strangers; if they do not open, the pairing
+	// between the publish derivations and the read derivations is broken, and that is a defect
+	// rather than a network condition.
+	got, oerr := ceremony.OpenEndState(key, salt, sealed, anchor)
+	if oerr != nil {
+		t.Fatalf("the sealed end state came back from the DHT at seq %d and did NOT open against "+
+			"the invitation's anchor: %v. Publish and fetch derive their target and their key from "+
+			"the same invitation, so this is the two sides disagreeing — a pre-hop party would "+
+			"hold its arm for a proceeding that has ended and never learn otherwise", seq, oerr)
+	}
+	if got.State != ceremony.StateDeclined {
+		t.Errorf("the end state opened as %q, want %q — the round published one thing and the "+
+			"waiting party reads another", got.State, ceremony.StateDeclined)
+	}
+	if !strings.EqualFold(got.Ceremony, rec.ID) {
+		t.Errorf("the end state names ceremony %s, want %s", got.Ceremony, rec.ID)
+	}
+	t.Logf("a pre-hop party read the convener's %q end state off the public DHT at seq %d", got.State, seq)
 }

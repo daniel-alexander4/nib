@@ -137,6 +137,19 @@ else
   cat "$OUT"; fail "TestLiveACandidateFetchedFromTheDHTIsDialled neither passed nor skipped — it failed"
 fi
 
+# The pre-hop end-state PULL, reported separately for the same reason each of the others is:
+# a live test the harness does not NAME is one whose skip is silent, and a skip here means the
+# DHT declined rather than that the mechanism works. `/pending 433`'s battery found seven
+# mutations green over this path, and five of them are closed by a source scan at tier 1 — what
+# only this run can see is whether the convener's publish and a waiting party's fetch ever MEET.
+if grep -q -- "--- PASS: TestLiveAPreHopPartyReadsTheEndStateOverTheRealDHT" "$OUT"; then
+  ENDSTATE="verified — a party holding only an invitation read the convener's signed end state off the public DHT"
+elif grep -q -- "--- SKIP: TestLiveAPreHopPartyReadsTheEndStateOverTheRealDHT" "$OUT"; then
+  ENDSTATE="SKIPPED — the DHT did not answer the publish or the fetch; UNVERIFIED by this run"
+else
+  cat "$OUT"; fail "TestLiveAPreHopPartyReadsTheEndStateOverTheRealDHT neither passed nor skipped — it failed"
+fi
+
 # The invitation-seed rescue, reported separately for the same reason publish/fetch is —
 # with a THIRD outcome of its own, because this one has two ways of not running. Absent
 # NIB_LIVE_SEEDS the mechanism was never offered any seeds; present but with a working
@@ -166,4 +179,5 @@ echo "PASS: a real DHT node reported this host's public endpoint, port included,
 echo "      mapping classified — from a cold start with no cached nodes"
 echo "      publish/fetch round trip: $PUBFETCH"
 echo "      candidate fetched→dialled: $CANDDIAL"
+echo "      pre-hop end-state pull:    $ENDSTATE"
 echo "      invitation-seed rescue:   $SEEDRESCUE"
