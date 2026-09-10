@@ -83,6 +83,19 @@
 * { box-sizing: border-box; }
 
 /* The hidden attribute must win over id-based display rules on modals/overlays. */
+/* **`!important`, and it is why a per-class `[hidden]` rule is never needed** (/pending 415).
+   Cascade origin beats specificity, so this wins over any `.thing { display: flex }` however
+   specific — a `.thing[hidden] { display: none }` beside it is redundant, always.
+
+   Three had accumulated: `.sheet[hidden]`, `.thumbselbar[hidden]` and `#tabstrip[hidden]`, each
+   justified by a comment saying a class selector would otherwise beat the user agent's rule.
+   That is true of the USER AGENT's `[hidden]` and irrelevant here, because this file has carried
+   its own since fe078dc — before all three were written. One of them cited a tier-3 measurement
+   (93/93 -> four failures) as proof it was necessary; this rule already existed at that commit,
+   which also added a new tier-3 test file and changed uirepro.sh. Removing all three leaves
+   tier 3 at 111/111, so whatever produced those failures, it was not the missing rule.
+
+   If an element must be `display: none` when hidden, it already is. */
 [hidden] { display: none !important; }
 
 html, body {
@@ -375,7 +388,6 @@ input[type="search"] { width: 100%; }
   margin-bottom: 8px; padding: 6px; border-radius: 6px;
   background: var(--surface0);
 }
-.thumbselbar[hidden] { display: none; } /* set display:flex would otherwise override the hidden attr */
 .thumbselcount { color: var(--subtext0); font-size: 12px; margin-right: auto; }
 .thumbselbar button { padding: 3px 8px; font-size: 13px; }
 .thumbwrap { position: relative; margin-bottom: 10px; text-align: center; cursor: grab; }
@@ -747,7 +759,6 @@ body > div[id$="Modal"] {
   background: var(--crust);
   border-bottom: 1px solid var(--surface0);
 }
-#tabstrip[hidden] { display: none; }
 #tabstrip .tab {
   display: flex;
   align-items: center;
@@ -1851,7 +1862,6 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    93/93 to four failures, two of them in unrelated stamp and checklist tests, because the viewer
    they measure had been quietly halved. */
 .sheet { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; background: var(--base); }
-.sheet[hidden] { display: none; }
 .sheethead {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 16px; border-bottom: 1px solid var(--surface1);
@@ -1924,7 +1934,6 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   box-shadow: 0 2px 10px rgb(0 0 0 / 25%);
   font-size: 13px;
 }
-#fitNotice[hidden] { display: none; }
 #fitNotice::before { content: "⚠ "; }
 #fitNotice #fitNoticeDismiss {
   background: var(--surface1); color: var(--text);

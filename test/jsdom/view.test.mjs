@@ -601,3 +601,63 @@ test('views is mutated in exactly three places, and each re-renders the strip', 
       `${fn} mutates views without re-rendering the strip — the strip and the app disagree from that call on`);
   }
 });
+
+// /pending 411 — a zero measurement is not a layout, and writing it destroys one.
+//
+// `layoutField` read `pv.div.clientWidth/clientHeight` with no guard. Under a `display: none`
+// ancestor both are 0, so every line after wrote `0px` — every overlay on the page collapsed,
+// and permanently, because it self-heals only on the next `pagerendered`/`scalechanging` and
+// neither fires for a page already rendered and still in pdf.js's buffer.
+//
+// Reachable: `#tabstrip` is a sibling of `#ceremonySheet` inside `#viewerCol` and
+// `showCeremonySheet` never touches it, so with two documents open the switcher is clickable
+// while the sheet covers the viewer, and `activateView` calls `relayoutOverlays(v)`
+// unconditionally.
+//
+// The sibling `fitWidestWidth` guards the same hazard (`avail > 0`) and says so in as many
+// words. This pins that the WRITER has it too.
+//
+// **On the cost, since this is a hot path**: the guard is two comparisons in front of four DOM
+// style writes, so when it does not fire it is unmeasurable and when it does it saves the
+// writes. The risk worth naming is the other one — skipping a legitimate zero — and leaving an
+// overlay at its last good geometry is strictly better than writing 0px, because the next real
+// layout corrects the first and nothing corrects the second.
+test('layoutField refuses to lay out against a zero-sized page', () => {
+  const fn = CODE.slice(CODE.indexOf('function layoutField(f, pv)'), CODE.indexOf('\n}', CODE.indexOf('function layoutField(f, pv)')));
+  assert.ok(fn.length > 100, 'layoutField is gone or renamed — this pins nothing');
+  assert.match(fn, /if \(!\(W > 0 && H > 0\)\) return;/,
+    'layoutField writes geometry without checking it measured anything. Under a display:none '
+      + 'ancestor clientWidth/clientHeight are 0 and every overlay on the page is written to '
+      + '0px — permanently, because nothing re-fires for a page already in pdf.js\'s buffer '
+      + '(/pending 411).');
+  // The guard must come BEFORE the writes, or it guards nothing.
+  const guardAt = fn.indexOf('if (!(W > 0 && H > 0)) return;');
+  const firstWrite = fn.indexOf('f.el.style.left');
+  assert.ok(guardAt > 0 && guardAt < firstWrite,
+    'the zero guard is after the first style write, so the collapse it prevents has already '
+      + 'happened by the time it runs');
+});
+
+// /pending 415 — a per-class `[hidden]` rule is redundant, and three had accumulated.
+//
+// `[hidden] { display: none !important; }` has been in this stylesheet since fe078dc. Cascade
+// origin beats specificity, so it wins over any `.thing { display: flex }` however specific —
+// which makes `.thing[hidden] { display: none }` beside it dead, always. Three were written
+// anyway, each justified by a comment about the USER AGENT's `[hidden]` rule, which is true and
+// irrelevant once the sheet carries its own.
+//
+// One cited a tier-3 measurement as proof it was necessary. The global rule already existed at
+// that commit, which also added a tier-3 test file and changed the harness; removing all three
+// leaves tier 3 at 111/111. Whatever produced those failures, it was not the missing rule.
+test('no per-class [hidden] rule is added back', () => {
+  const css = fs.readFileSync(path.join(REPO, 'web', 'style.css'), 'utf8');
+  assert.match(css, /\[hidden\] \{ display: none !important; \}/,
+    'the global [hidden] rule is gone — every per-class one below would then be load-bearing, '
+      + 'and this check would be asserting the opposite of what it should');
+  const perClass = [...css.matchAll(/^([.#][\w-]+)\[hidden\]\s*\{[^}]*display:\s*none/gm)].map((m) => m[1]);
+  assert.deepEqual(perClass, [],
+    `${perClass.join(', ')} carry their own [hidden] display rule. The stylesheet's own `
+      + '[hidden] { display: none !important } already beats any class rule on cascade origin, '
+      + 'so these are dead — and each of the three that existed came with a comment explaining a '
+      + 'mechanism that was not the mechanism (/pending 415).');
+});
