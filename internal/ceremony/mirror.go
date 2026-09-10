@@ -247,8 +247,17 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	// record, and a record can arrive from another party"; the same is true of the record
 	// itself once anything can write here — a co-tenant, a synced home, malware, and from
 	// P07.S05 a record that arrived over the wire. The convene route re-mints invitations
-	// from this record's roster and commitment, so an unverified one lets someone else choose
-	// what the convener hands out.
+	// from this record's roster and commitment, so an unverified one is a record nobody checked.
+	//
+	// **What this verification is, stated exactly, because this comment overstated it
+	// (/pending 437).** It used to say an unverified record "lets someone else choose what the
+	// convener hands out", which reads as though `Verify` refuses an attacker's record. It does
+	// not: `Record.Verify` checks the signature with `r.ConvenerCert`, carried in the same file,
+	// and asks only that the signer be on the roster that same file supplies. It is an
+	// INTERNAL-CONSISTENCY check — a record minted whole by somebody else verifies perfectly. The
+	// gate that actually refuses one on the re-issue route is `convenedByMe`
+	// (`internal/server/convene.go`, P04.S03). This check is still worth having, for what it does
+	// catch: a record that has been TAMPERED with rather than replaced.
 	//
 	// Every other production reader of a Record verifies before acting on it
 	// (checkCeremonyDeadline, CheckDocument). This was the site where that rule was not
@@ -285,8 +294,16 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	//
 	// So this catches the case it can: a convened document that was torn or truncated on the
 	// way to disk, before anybody signed. Past that point the mirror is stored without a
-	// self-check, and saying so is better than implying a coverage it has not got — the
-	// per-hop continuity that would replace it is S05's carry route.
+	// self-check, and saying so is better than implying a coverage it has not got.
+	//
+	// **The per-hop continuity that would replace it DOES NOT EXIST, and this comment used to say
+	// it was "S05's carry route" (/pending 437).** `p2p.Carry` is a routing verb: its
+	// `bytes.HasPrefix(final, pdf)` compares against bytes the carrier is holding in memory for
+	// that one hop, so it survives no process boundary and reads nothing from disk. A named search
+	// for anything that would chain hops across restarts — `PrevHash`, `PriorHash`, `ParentHash`,
+	// `prevHop`, `hopHash`, `lineage` — returns **zero** hits in internal/ and cmd/. The two
+	// neighbouring comments have it right: `p2p/l3.go` calls it unsolved and `ceremony/embed.go`
+	// calls it "NOT this slice's". This one was the odd one out.
 	// **The sidecar check runs UNCONDITIONALLY, signed or not (P08.S02, C02).** It is the half the
 	// `DocHash` comparison below cannot cover, and it covers the case that matters: a mirror
 	// written at hop 2 or later, which is every mirror a resumption actually reads.
