@@ -13,6 +13,7 @@ import (
 
 	"nib/internal/ceremony"
 	"nib/internal/p2p"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
 )
@@ -33,7 +34,17 @@ func TestTheInitiatingSideIsGatedToo(t *testing.T) {
 	aFP := hex.EncodeToString(aFPb)
 	bFP := strings.Repeat("bb", 32)
 
-	doc, err := testpdf.Form()
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// **A CONVENED document, not a bare one, and the difference is /pending 450.** Every document
+	// that reaches this door inside a ceremony has been through `PrepareCeremonyDocument` at
+	// convene — readme, ceremony page, and the signature pages D25 allocates — so a bare fixture
+	// exercises a shape production cannot produce. It passed only because `buildCoSigned` used to
+	// append the readme itself whenever the document carried no signature yet, which is the
+	// duplicate-preparation defect this fixture was quietly standing on.
+	doc, err := p2p.PrepareCeremonyDocument(base, p2p.CeremonyID{4}, []byte("convener"), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +70,33 @@ func TestTheInitiatingSideIsGatedToo(t *testing.T) {
 	}
 	if st := sign.Verify(signed); st.State != sign.Valid {
 		t.Fatalf("setup: the control did not produce a valid signature (%s)", st.State)
+	}
+	// **/pending 450 — a convened document is prepared ONCE, and the count is the whole assertion.**
+	//
+	// `ceremony.Convene` runs `PrepareCeremonyDocument`, whose first act is `PrepareDocument`, so
+	// the document arrives here already carrying its trust-explainer page — and unsigned, which is
+	// exactly what `buildCoSigned`'s `HasSignatureBlob` test read as "not prepared yet". So a
+	// SIGNING convener, the setup sheet's default, appended a second one at hop 1.
+	//
+	// **Asserted on the page COUNT and not on the readme's absence, because the harm is
+	// geometric.** `ceremonyPlacement` locates the signature pages as the last `pages` of the
+	// document, so one extra trailing page shifts every block by one page: measured on a 3-party
+	// relay before the fix, the finished document was `[source][readme][ceremony][sig 1][readme]`
+	// and the allocated signature page was the one left empty. That is the overlap
+	// `ceremonyPlacement` exists to remove, arriving through the other door.
+	before, err := pdfops.PageCount(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := pdfops.PageCount(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("contributing inside a ceremony changed the page count from %d to %d — a "+
+			"convened document is already prepared, and an extra trailing page moves every "+
+			"later signature block onto it and leaves the allocated signature page empty",
+			before, after)
 	}
 
 	// And the refusal.
@@ -104,8 +142,51 @@ func TestTheManualCoSignPathIsNotGated(t *testing.T) {
 	s := &Server{epoch: "test-epoch"}
 	att := p2p.Attestation{Signer: "A", AcceptedPeer: strings.Repeat("bb", 32), Intent: "ok", When: time.Now()}
 	w := httptest.NewRecorder()
-	if _, ok := s.buildCoSigned(w, doc, aCert, aKey, att, nil, p2p.Roster{}); !ok {
+	signed, ok := s.buildCoSigned(w, doc, aCert, aKey, att, nil, p2p.Roster{})
+	if !ok {
 		t.Fatalf("a manual co-sign with no ceremony was refused: %d %s", w.Code, w.Body.String())
+	}
+	// **The manual path still PREPARES, and nothing anywhere in the tree asserted that.**
+	// Found by probing /pending 450's fix: with the preparation branch mutated to `if false`, the
+	// whole repository stayed green — so the trust-explainer page, which exists precisely so a
+	// stranger receiving a Nib-signed PDF can read what the signatures mean, was policed by no
+	// test at all on the path that is the ordinary two-party co-sign.
+	//
+	// The count is the assertion for the same reason it is one page over, and the page's own text
+	// is checked too — a mutation that appended any page would satisfy a count alone.
+	before, err := pdfops.PageCount(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := pdfops.PageCount(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before+1 {
+		t.Errorf("a manual co-sign went from %d page(s) to %d — the first signer appends the "+
+			"trust-explainer page before signing, and it is what a receiving stranger reads to "+
+			"learn what these signatures do and do not prove", before, after)
+	}
+	// A SECOND manual co-sign of the now-signed document must not append another: preparation is
+	// a full rewrite and would break the signature already on it, which is why `PrepareDocument`
+	// refuses a signed document by name.
+	bCert, bKey, err := sign.GenerateIdentity("B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w2 := httptest.NewRecorder()
+	twice, ok2 := s.buildCoSigned(w2, signed, bCert, bKey, att, nil, p2p.Roster{})
+	if !ok2 {
+		t.Fatalf("a second manual co-sign was refused: %d %s", w2.Code, w2.Body.String())
+	}
+	again, err := pdfops.PageCount(twice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != after {
+		t.Errorf("a second manual co-sign changed the page count from %d to %d — a later signer's "+
+			"document is already prepared, and preparing again is a full rewrite that breaks the "+
+			"signature already on it", after, again)
 	}
 }
 

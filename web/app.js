@@ -9788,9 +9788,6 @@ function redoAny() {
   return redoOverlayEdit();
 }
 
-// doUndo/doRedo revert or re-apply the last server-side document operation (page
-// ops, outline, sanitize, attachments). The server returns fresh doc metadata and
-// the view reloads through the universal setDocumentFromServer path.
 // tellEvictedHistory answers the press that found nothing, when the reason is an eviction
 // (/pending 462).
 //
@@ -9814,6 +9811,9 @@ function tellEvictedHistory(doc) {
     + 'to stay within the memory budget while you were working elsewhere.');
 }
 
+// doUndo/doRedo revert or re-apply the last server-side document operation (page
+// ops, outline, sanitize, attachments). The server returns fresh doc metadata and
+// the view reloads through the universal setDocumentFromServer path.
 async function doUndo() {
   // Pinned and owned: the id names the document whose history is being walked, and
   // the reload lands on the view that asked. Unpinned, an undo issued on A and
