@@ -165,3 +165,42 @@ func TestTheInvitationAnchorRefusesWhatTheRecordAnchorWould(t *testing.T) {
 		}
 	})
 }
+
+// TestTheInvitationReaderFindsAMovedCeremonyToo — /pending 434, and it is a ROUTING assertion.
+//
+// `ReadTerminationFor` and `ReadTermination` share `readTerminationAt`, which is what makes the
+// `ended/` fallback one rule rather than two (ADR-009). That fallback is not a convenience:
+// ADR-012 renames a finished ceremony's folder into `~/nib/ended/<id>`, so after a close-out the
+// moved folder holds the ONLY copy of the convener's signed attestation — and a party who is being
+// asked "should I still be listening for this?" is exactly the reader who asks after it has ended.
+//
+// Asserted through the new door specifically, because the existing close-out test drives the
+// record-anchored one: a second implementation added here later would pass that test and fail this.
+func TestTheInvitationReaderFindsAMovedCeremonyToo(t *testing.T) {
+	inv, rec, term := endedFixture(t)
+	root := t.TempDir()
+	if _, err := WriteMirror(root, rec, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteTermination(root, term); err != nil {
+		t.Fatal(err)
+	}
+	// The control: it reads from the LIVE folder first, or "found after the move" is satisfied by a
+	// reader that never worked.
+	if got, err := ReadTerminationFor(root, inv); err != nil || got.State != StateDeclined {
+		t.Fatalf("setup: the invitation reader does not find a live ceremony's end state (%v, %q)",
+			err, got.State)
+	}
+	if err := CloseOutMirror(root, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadTerminationFor(root, inv)
+	if err != nil {
+		t.Fatalf("after the close-out the invitation reader cannot find the convener's signed end "+
+			"state (%v) — so a pre-hop party goes on holding the interactive slot for a proceeding "+
+			"that is over, which is the whole of /pending 434", err)
+	}
+	if got.State != StateDeclined {
+		t.Errorf("the recovered end state is %q, want %q", got.State, StateDeclined)
+	}
+}

@@ -119,31 +119,25 @@ func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key,
 // The convener, because the convener dials and does not wait to be dialled. And a ceremony whose
 // invitation this machine no longer holds, which is what the D29 prune leaves behind.
 //
-// **There is no ended-check here, and its absence is a limitation rather than an omission**
-// (`/pending 378`). `rearmDeliveries` has one, anchored on the invitation because a planted
-// (record, termination) pair verifies against itself (`/pending 354`) — and every anchor it uses
-// needs a record. This sweep's ceremonies are exactly the ones with no record: `ReadStored` returns
-// at `LoadAbsent` before it ever sets `Ended`, `ReadTermination` takes a `Record`, and the
-// invitation carries no deadline (`/pending 247`). `closeOutReason` cannot help either — it opens
-// with `st.State != ceremony.LoadOK { return "", false }`, so a record-less directory is never
-// closed out.
+// **The ended-check IS here now, and it is anchored on the invitation** (`/pending 434`, closed).
 //
-// So a party whose proceeding was declined or abandoned *before the baton reached them* holds this
-// arm for the life of the Nib process, and nothing local can tell them otherwise. That is the same
-// gap as D14's bound, seen from the other side.
+// It was missing for four years' worth of reasoning that turned out to be false. The paragraph that
+// stood here said *"everything that would say the proceeding ended lives in the record this party
+// does not have"* — untrue since S02+S03: `Invitation.Anchor()` and `Termination.VerifyAgainst`
+// need no record, and the pre-hop end-state PULL already holds exactly that object, verified, at
+// the moment it could act on it. What was genuinely missing was one read path, and
+// `ceremony.ReadTerminationFor` is it.
 //
-// **This paragraph used to end "everything that would say the proceeding ended lives in the
-// record this party does not have", and that has been FALSE since S02+S03** (`/pending 434`).
-// `Invitation.Anchor()` and `Termination.VerifyAgainst(anchor)` need no record — the invitation
-// this party already holds is enough to verify a convener-signed termination — and the pre-hop
-// PULL holds exactly that object, verified, at the moment it could act on it.
+// **Anchored on the invitation and NOT on `Stored.Ended`, and that difference is the whole rule.**
+// Deciding not to arm is an authorisation, so it must rest on a verified convener signature.
+// `Stored.Ended` is the exact anchor `/pending 354` proved forgeable, and a planted
+// (record, termination) pair verifies perfectly against itself — only the invitation, which came
+// out of the vault, is an anchor a local writer cannot choose. This is the same anchoring
+// `rearmDeliveries` uses, now reachable from the sweep whose ceremonies have no record at all.
 //
-// The rest of the reasoning stands and is the reason a fix is not a one-liner: a check against
-// `Stored.Ended` would be worse than the gap, because that is the exact anchor `/pending 354`
-// proved forgeable, and the decision NOT to arm is an authorisation. What is wanted is an
-// ended-check keyed on a **verified** termination rather than on a field, and the missing piece
-// is a read path taking an INVITATION where `ReadTermination` takes a `Record`. That is
-// `/pending 434`, re-scoped there now that its stated blocker is known to be false.
+// **A missing or unverifiable termination arms as before**, which is the safe direction: the
+// ordinary case is that no proceeding has ended, and refusing to arm on a file that will not verify
+// would let anyone who can drop a byte into `~/nib/ceremonies/<id>/` silence a party's hop.
 //
 // Best-effort per ceremony, and it never fails the accept that triggered it: the interactive slot
 // is shared with the user's own manual receive arm, so "a session is already armed" is an ordinary
@@ -216,6 +210,17 @@ func (s *Server) rearmCeremoniesPreferring(v *vault.Vault, prefer string) {
 		}
 		inv, ierr := ceremony.ParseInvitation(text)
 		if ierr != nil {
+			continue
+		}
+		// **Ended? Then there is nothing to wait for** (`/pending 434`). Read before the convener
+		// skip and before `ceremonyFor`, because it is the strongest reason not to arm and it
+		// costs one file read; and anchored on `inv`, per this function's header — the decision
+		// not to arm is an authorisation and rests on a convener signature, never on a field.
+		//
+		// Errors fall through to the arm deliberately. `ErrNoTermination` is the ordinary case,
+		// and a file that does not verify must NOT stop a party listening: that would hand anyone
+		// who can write into `~/nib/ceremonies/<id>/` a way to silence a hop.
+		if _, terr := ceremony.ReadTerminationFor(defaultOutputDir(), inv); terr == nil {
 			continue
 		}
 		// **The convener dials; it does not wait to be dialled.** Kept as DEFENCE IN DEPTH and

@@ -721,19 +721,45 @@ func readTerminationRaw(dir string) (Termination, error) {
 	return DecodeTermination(b)
 }
 
-// ReadTermination loads and VERIFIES the stored end state against a record.
+// ReadTerminationFor loads and VERIFIES the stored end state for a party who holds no RECORD
+// (/pending 434).
 //
-// **`rec` must come from the document or the invitation, never from the `record.json` beside it.**
-// A planted pair — a matching record and termination for another proceeding, dropped into this
-// directory — verifies perfectly against itself. Only an anchor the attacker does not control
-// refuses it, and this function cannot tell where its argument came from, so the rule lives at
-// every call site and is driven by its own red proof.
+// **This is the read path a pre-hop party never had.** `ReadTermination` takes a `Record`, and an
+// invitee holds none until the document reaches their hop — so the termination the end-state PULL
+// writes could not be read back by the machine that wrote it. `ceremonyarm.go` justified having no
+// ended-check with *"everything that would say the proceeding ended lives in the record this party
+// does not have"*, which has been false since S02+S03: `Invitation.Anchor` derives the same
+// checking values, and does the roster-membership check on the convener that makes them
+// trustworthy.
 //
-// Three outcomes, and keeping them apart is the point: `ErrNoTermination` (the ordinary case, and
-// it must never read as damage), `ErrBadTermination` (present and does not verify — a planted file
-// far more likely than a corrupted one), or the object.
-func ReadTermination(root string, rec Record) (Termination, error) {
-	dir, err := MirrorDir(root, rec.ID)
+// **The invitation is a legitimate anchor and `record.json` is not**, which is the whole point of
+// the split. A planted record-and-termination pair verifies perfectly against itself; the
+// invitation came out of the vault, so an attacker who can write `~/nib/ceremonies/<id>/` cannot
+// choose it.
+//
+// **It shares `ReadTermination`'s body through `readTerminationAt` rather than repeating it**
+// (ADR-009): the `ended/` fallback is not an incidental convenience — after a close-out the moved
+// folder is the only one holding the signed attestation — and two copies of a fallback is how one
+// of them stops falling back.
+func ReadTerminationFor(root string, inv Invitation) (Termination, error) {
+	anchor, err := inv.Anchor()
+	if err != nil {
+		return Termination{}, err
+	}
+	t, err := readTerminationAt(root, inv.ID)
+	if err != nil {
+		return Termination{}, err
+	}
+	if err := t.VerifyAgainst(anchor); err != nil {
+		return Termination{}, err
+	}
+	return t, nil
+}
+
+// readTerminationAt reads the stored end state for one ceremony id, live folder or ended folder,
+// WITHOUT verifying it. The two public readers differ only in the anchor they check it against.
+func readTerminationAt(root, id string) (Termination, error) {
+	dir, err := MirrorDir(root, id)
 	if err != nil {
 		return Termination{}, err
 	}
@@ -750,12 +776,28 @@ func ReadTermination(root string, rec Record) (Termination, error) {
 	// the moved one. The bytes were always there; nothing read them.
 	t, err := readTerminationRaw(dir)
 	if errors.Is(err, ErrNoTermination) {
-		if ended, eerr := EndedDir(root, rec.ID); eerr == nil {
+		if ended, eerr := EndedDir(root, id); eerr == nil {
 			if moved, merr := readTerminationRaw(ended); merr == nil {
-				t, err = moved, nil
+				return moved, nil
 			}
 		}
 	}
+	return t, err
+}
+
+// ReadTermination loads and VERIFIES the stored end state against a record.
+//
+// **`rec` must come from the document or the invitation, never from the `record.json` beside it.**
+// A planted pair — a matching record and termination for another proceeding, dropped into this
+// directory — verifies perfectly against itself. Only an anchor the attacker does not control
+// refuses it, and this function cannot tell where its argument came from, so the rule lives at
+// every call site and is driven by its own red proof.
+//
+// Three outcomes, and keeping them apart is the point: `ErrNoTermination` (the ordinary case, and
+// it must never read as damage), `ErrBadTermination` (present and does not verify — a planted file
+// far more likely than a corrupted one), or the object.
+func ReadTermination(root string, rec Record) (Termination, error) {
+	t, err := readTerminationAt(root, rec.ID)
 	if err != nil {
 		return Termination{}, err
 	}

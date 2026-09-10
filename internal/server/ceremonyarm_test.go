@@ -561,3 +561,164 @@ func TestTheAcceptTriggerNamesWhatItAccepted(t *testing.T) {
 			"could not arm before hop 1`")
 	}
 }
+
+// conveneRealCeremonyFor builds a ceremony convened by SOMEBODY ELSE with `me` on the roster, and
+// hands back everything a test needs to mint a convener-signed end state for it — which
+// `inviteFor` deliberately does not, because it returns only the two strings its own callers need.
+func conveneRealCeremonyFor(t *testing.T, me string) (invitation string, rec ceremony.Record, cert, key []byte, convenerFP string) {
+	t.Helper()
+	cert, key, err := sign.GenerateIdentity("Convener")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fpb, err := sign.Fingerprint(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	convenerFP = hex.EncodeToString(fpb)
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := ceremony.Convene(base, ceremony.ConveneRequest{
+		Roster: []ceremony.Party{
+			{Fingerprint: convenerFP, Label: "Convener", Signs: true},
+			{Fingerprint: me, Label: "The other party", Signs: true},
+		},
+		Intent:         "We agree to co-sign the lease",
+		Expires:        time.Now().Add(48 * time.Hour),
+		HopBudget:      ceremonyHopBudget(),
+		DeliveryBudget: ceremonyDeliveryLegBudget(),
+		ConvenerSigns:  true,
+	}, cert, key, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inv := range out.Invites {
+		if strings.EqualFold(inv.Party.Fingerprint, me) {
+			invitation = inv.Text
+		}
+	}
+	if invitation == "" {
+		t.Fatal("setup: convene issued no invitation for the counterparty")
+	}
+	return invitation, out.Record, cert, key, convenerFP
+}
+
+// TestTheHopSweepStopsArmingForAProceedingThatHasVerifiablyEnded — /pending 434.
+//
+// A party whose proceeding was declined or abandoned BEFORE the baton reached them held this arm
+// for the life of the process, and nothing local could tell them otherwise: `ReadStored` returns at
+// `LoadAbsent` before it ever sets `Ended`, `closeOutReason` opens by refusing anything that is not
+// `LoadOK`, and `ReadTermination` took a `Record` this party does not have. So the end-state PULL
+// could WRITE a verified termination that the machine that wrote it could not read back, the panel
+// went on saying "Waiting for your turn", and the single interactive slot stayed taken.
+//
+// **Three assertions, and the control is the load-bearing one.** Without proving the sweep arms for
+// this exact ceremony when no end state is stored, "it did not arm" is what a sweep that found
+// nothing looks like — and this sweep has six earlier `continue`s that would produce it.
+func TestTheHopSweepStopsArmingForAProceedingThatHasVerifiablyEnded(t *testing.T) {
+	ts, srv := startServerWith(t)
+	srv.EnableDeliveryRearm()
+	c, csrf := authedClient(t, ts)
+	me := myFingerprint(t, c, ts.URL)
+
+	invitation, rec, cert, key, convenerFP := conveneRealCeremonyFor(t, me)
+	inv, err := ceremony.ParseInvitation(invitation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	v := srv.vault
+	srv.mu.Unlock()
+	if v == nil {
+		t.Fatal("setup: the vault is not open, so the sweep would return before reaching any rule")
+	}
+	if err := v.AddCeremonyInvitation(inv.ID, invitation); err != nil {
+		t.Fatal(err)
+	}
+	if err := ceremony.WriteMe(defaultOutputDir(), inv.ID, me); err != nil {
+		t.Fatal(err)
+	}
+	convFPb, derr := hex.DecodeString(convenerFP)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	if err := v.AddCeremonyPeer(convFPb, "Convener", inv.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL — the sweep really does arm for this ceremony as things stand. Six `continue`s sit
+	// above the new check, and every one of them produces exactly the "did not arm" this test
+	// would otherwise be reading as a pass.
+	srv.rearmCeremonies(v)
+	if !srv.sess.status().Armed {
+		t.Fatal("control: the sweep did not arm for a live ceremony this machine accepted, so " +
+			"the assertions below cannot tell the ended-check from any other refusal in the sweep")
+	}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != 200 {
+		t.Fatalf("setup: could not disarm between the control and the test: %d %s", code, body)
+	}
+
+	// A termination for a DIFFERENT proceeding — present, signed, and not this ceremony's. It must
+	// NOT stop the arm: refusing on a file that will not verify hands anyone who can write into
+	// `~/nib/ceremonies/<id>/` a way to silence a party's hop.
+	otherInvitation, otherRec, otherCert, otherKey, _ := conveneRealCeremonyFor(t, me)
+	_ = otherInvitation
+	foreign, err := ceremony.SignTermination(otherRec, ceremony.StateDeclined, otherCert, otherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign.Ceremony = inv.ID // filed under THIS ceremony, signed for another
+	if err := ceremony.WriteTermination(defaultOutputDir(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	if _, verr := ceremony.ReadTerminationFor(defaultOutputDir(), inv); verr == nil {
+		t.Fatal("setup: a termination signed for another proceeding verified against this " +
+			"invitation, so the assertion below is not about an unverifiable file at all")
+	}
+	srv.rearmCeremonies(v)
+	if !srv.sess.status().Armed {
+		t.Error("a termination that does NOT verify stopped this party listening — anyone able " +
+			"to drop a file into ~/nib/ceremonies/<id>/ could then silence a hop, which is worse " +
+			"than the gap this check closes")
+	}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != 200 {
+		t.Fatalf("setup: could not disarm before the real end state: %d %s", code, body)
+	}
+
+	// And the real thing: the convener's own signed decline, for THIS proceeding.
+	term, err := ceremony.SignTermination(rec, ceremony.StateDeclined, cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(terminationPathForTest(t, inv.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ceremony.WriteTermination(defaultOutputDir(), term); err != nil {
+		t.Fatal(err)
+	}
+	if _, verr := ceremony.ReadTerminationFor(defaultOutputDir(), inv); verr != nil {
+		t.Fatalf("setup: the convener's own signed decline does not verify against the "+
+			"invitation, so this test would pass for the wrong reason: %v", verr)
+	}
+	srv.rearmCeremonies(v)
+	if srv.sess.status().Armed {
+		defer postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{})
+		t.Error("the sweep armed for a proceeding the convener has verifiably ended — this party " +
+			"holds the single interactive slot waiting for a baton that is never coming, and " +
+			"after a restart nothing on the machine tells them otherwise")
+	}
+}
+
+// terminationPathForTest names the stored end-state file, so a test can replace one. It is spelled
+// out here rather than exported from `internal/ceremony`: `WriteTermination` is deliberately
+// write-once and refuses a second state, which is the rule under test one file over.
+func terminationPathForTest(t *testing.T, id string) string {
+	t.Helper()
+	dir, err := ceremony.MirrorDir(defaultOutputDir(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir + "/termination.json"
+}
