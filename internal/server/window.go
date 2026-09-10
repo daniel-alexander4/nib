@@ -394,6 +394,26 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// no timeouts (cmd/nib/main.go).
 	ctx := r.Context()
 	for {
+		// **SUBSCRIBE BEFORE READING, and the other order was a lost wakeup (/pending 464).**
+		//
+		// `armedChangedLocked` broadcasts by CLOSING this channel and setting it to nil, and
+		// `armedChanges` lazily makes a fresh one. So obtaining it after the read meant: read the
+		// state, marshal, write to the socket, flush — and if the arm landed anywhere in that
+		// window, the close-and-nil happened while this loop held no channel at all, and the
+		// `armedChanges()` below then handed back a NEW channel that only fires on the NEXT
+		// change. The stream parked forever on a change that had already happened.
+		//
+		// **It is a production defect and not a test flake**, which is how it was found: a window
+		// open when a ceremony arms never learns the machine is armed, so `beforeunload` reports
+		// nothing-to-lose while a ceremony is running — exactly the policy-armed case D5 exists
+		// for, and exactly what this stream was added to carry. It surfaced as
+		// `TestTheWindowStreamCarriesTheArmedState` failing under `go test ./...` and passing
+		// alone in 0.089s, because the window between the read and the subscribe is a network
+		// write and widens under load.
+		//
+		// Holding the channel first closes it: a change after this line closes a channel this
+		// loop already has, and the select returns at once.
+		changed := s.sess.armedChanges()
 		// **What is armed, not merely whether.** "Names a live ceremony specifically, not
 		// generically" (P01.S06) cannot be met from a bool, and the name is the ceremony's own
 		// INTENT — the convener's words for what this proceeding is — never a fingerprint, which
@@ -410,7 +430,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.sess.armedChanges():
+		case <-changed:
 		}
 	}
 }
