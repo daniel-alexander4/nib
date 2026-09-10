@@ -36,7 +36,18 @@
 # The blind spots at N, stated rather than left to be discovered. **Two of the three
 # that stood here until 2026-08-25 are gone, and the third was wrong about its own
 # subject:**
-#   * **The relay stops at hop 2, and NOT for the reason this file used to give.** It
+#   * **The relay no longer stops at hop 2 — S05 landed and this bullet did not.** It read
+#     as a live ceiling until 2026-09-09 and ended *"the probe asserts that refusal by name
+#     and goes red the day S05 lands"*. S05 shipped `p2p.Carry` (`internal/p2p/session.go`),
+#     the probe was updated with it, and the prediction therefore never fired: the relay is
+#     a full N−1 baton loop and `relay tcp "" csigns` completes a three-party ceremony over
+#     both transports. **A comment that names the day it should have gone red, and does not,
+#     is worse than one that is merely old** — it reads as a still-standing limit backed by a
+#     test. Kept below as history because the diagnosis in it was right and hard-won
+#     (/pending 424).
+#
+#     The original text: **The relay stops at hop 2, and NOT for the reason this file used
+#     to give.** It
 #     said `coSignExchange` takes one prior signer only, "until P07.S03 removes it".
 #     S03 conditioned that rule and the relay still stops — measured: hop 1 leaves
 #     exactly the roster prefix, `/api/session/initiate` then applies the LOCAL
@@ -54,8 +65,13 @@
 #     the run asserts the accept established exactly one pin. Hop 1 still hand-pins and
 #     is the remaining half.
 #
-# **`--lan` and `--v6` are N=2-only, and the refusal is enforced above rather than
-# documented here alone.** `--lan`'s zero-egress assertion holds only while arms
+# **`--v6` is N=2-only, and the refusal is enforced above rather than documented here
+# alone. `--lan` accepts any N since P07.S05c** — this line said BOTH were N=2-only until
+# 2026-09-09, contradicting its own file ninety-five lines later (`--lan accepts any N
+# since P07.S05c`), the gate below (which refuses `--v6` alone), `CONTRIBUTING.md`'s row 4b
+# (which advertises `--lan -n 4` and `-n 9`) and ADR-011 (which records `--lan -n 9` green).
+# A harness whose stated ceiling is wrong is the one thing CONTRIBUTING.md sends readers to
+# this file for (/pending 424). `--lan`'s zero-egress assertion holds only while arms
 # carry no invitation — from P07.S02b every arm is a ceremony arm that publishes to
 # the DHT after its browse window, and N−1 of them would. `--v6` generalises
 # mechanically but has nothing N-shaped to observe until a hop exists.
@@ -188,9 +204,11 @@ fi
 # the variable was created for, one flag later — which is what a list that has to be maintained by
 # hand looks like when a new member arrives.
 #
-# It was the THIRD of three barriers between the LAN clause and its only driver. The other two: an
-# explicit `--lan` is N=2-only refusal, and the `N != 2` block exiting three lines before the LAN
-# block. Any one alone made `--lan -n 9` impossible, which is why nobody had ever run it.
+# It was the THIRD of three barriers between the LAN clause and its only driver. The other two, both
+# since removed: an explicit `--lan` was refused for N != 2, and the `N != 2` block exited three
+# lines before the LAN block. Any one alone made `--lan -n 9` impossible, which is why nobody had
+# ever run it. (Past tense as of 2026-09-09 — the sentence read as present and was the third place
+# in this file claiming a ceiling that no longer exists; /pending 424.)
 FLAGS=""
 [ "$LAN" = "1" ] && FLAGS="$FLAGS --lan"
 [ "$KEEP" = "1" ] && FLAGS="$FLAGS --keep"

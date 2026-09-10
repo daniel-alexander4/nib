@@ -744,3 +744,43 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 		}
 	}
 }
+
+// /pending 424 — `pairrepro.sh` stated a ceiling it contradicted ninety-five lines later.
+//
+// The guard above pins that each harness CARRIES its ceiling section. Nothing checked that
+// the ceiling it states agrees with the gate it enforces — so `--lan` was documented as
+// N=2-only at the top of the file, accepted at any N ninety-five lines down, advertised as
+// `--lan -n 4` / `-n 9` by CONTRIBUTING.md row 4b, and recorded green at nine parties by
+// ADR-011. Four places, one of them wrong, and the wrong one is the first a reader meets.
+//
+// **This is the failure mode CONTRIBUTING.md's own row 4b already records about itself** —
+// it claimed "currently RED against shipped code" for four phases after that was fixed, and
+// a real red then went unnoticed for four commits because readers had been told to expect
+// one. A harness whose contract misstates it is a harness whose output nobody reads.
+//
+// Narrow by construction: it asserts only that the file does not call `--lan` N=2-only while
+// refusing `--v6` alone. It cannot see a ceiling that is wrong in some other way, and there
+// is no general check for that.
+func TestPairreproDoesNotStateACeilingItDoesNotEnforce(t *testing.T) {
+	b, err := os.ReadFile("build/pairrepro.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+
+	// The stimulus: the gate this is checked against must still be there.
+	if !strings.Contains(src, "--v6 is N=2-only") {
+		t.Fatal("the --v6 refusal is gone from pairrepro.sh — this test would otherwise pass " +
+			"over a file with no gate to disagree with")
+	}
+	if !strings.Contains(src, "--lan` accepts any N") {
+		t.Fatal("pairrepro.sh no longer records that --lan accepts any N; if that changed, this " +
+			"guard is asserting the wrong direction and must be re-derived rather than deleted")
+	}
+	if strings.Contains(src, "`--lan` and `--v6` are N=2-only") {
+		t.Error("pairrepro.sh says `--lan` and `--v6` are N=2-only. Its own gate refuses --v6 " +
+			"alone, CONTRIBUTING.md row 4b advertises `--lan -n 4` and `-n 9`, and ADR-011 " +
+			"records `--lan -n 9` green — so the first ceiling a reader meets is the one that " +
+			"is wrong, and it is the reason they were sent to this file (/pending 424).")
+	}
+}
