@@ -212,7 +212,7 @@ even if they filled a flag from the Library or left one blank. Send the file
 as-is: printing it or re-exporting it through another app strips the flags.
 
 **Skip email entirely — send it Nib-to-Nib.** Instead of mailing the file,
-**Collaborate → Originate → Send a document to a peer…** hands it straight to a pinned peer over
+**Signing → Simple Sign → Send a document to a peer…** hands it straight to a pinned peer over
 the same encrypted, no-cloud channel co-signing uses (both of you online; they
 pick **Receive a document…** first). Received files save into `~/nib` — a flagged
 document waiting for you under `to-sign/`, a finished signature under `signed/` —
@@ -380,7 +380,7 @@ optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signatur
 
 **Sign with your own certificate.** By default Finalize uses Nib's self-signed
 identity (integrity, not third-party trust). If you have a CA-issued credential,
-import it under **⚙ → Identity & peers → Signing certificate** (a PKCS#12
+import it under **Settings → Identity & peers → Signing certificate** (a PKCS#12
 `.p12`/`.pfx` file + its passphrase); then Finalize offers a **Sign as** choice
 and signs with that certificate and its chain, so a verifier who trusts the
 issuing CA sees a trusted signature. The certificate is used only for solo
@@ -402,8 +402,8 @@ document, newest first, whether it was a drawing, a stamp, a note, or a page ope
 Drawing some lines and then some shapes leaves one history, not two. There is no Undo
 button: the keyboard is the whole interface for it.
 
-**Start over** — the **↻ reload** button beside Undo/Redo throws away everything you
-have done since opening and re-reads the file from disk. It asks first when there is
+**Start over** — the **↻ reload** button throws away everything you have done since
+opening and re-reads the file from disk. It asks first when there is
 unsaved work. Undo steps back one operation at a time; this abandons all of them.
 
 **The sidebar has two tabs** — **Pages** is the thumbnail grid (drag to reorder, and the
@@ -473,8 +473,8 @@ There are two ways to exchange the document:
   Signal); they co-sign and send it back. Nothing but the file moves, and the result
   verifies on its own, with no server in between.
 - **Live, over an encrypted channel** — co-sign in real time without passing a file.
-  One person **arms to receive** (Collaborate → Receive → *Receive a live co-signature…*), the other
-  **dials in** (Collaborate → Originate → *Co-sign live with a peer…*). The connection is mutually
+  One person **arms to receive** (Signing → Simple Sign → *Receive a live co-signature…*), the other
+  **dials in** (Signing → Simple Sign → *Co-sign live with a peer…*). The connection is mutually
   authenticated TLS, pinned to each other's identity key: an unpinned peer is dropped
   at the handshake, before any document bytes are exchanged. The receiver reviews the
   exact document and accepts or declines — nothing is signed without that consent —
@@ -656,10 +656,8 @@ saving deliberately leaves the undo history intact, so a save does not silence t
 question. Closing the last document returns the viewer to "Open a PDF to begin."
 with Nib still running, ready for the next file.
 
-One caveat, until single-instance handling lands: opening a PDF from your file
-manager doesn't reach the Nib you already have running — it starts a *second* Nib,
-with its own set of documents. Use **Open…** from inside the app to add a document
-to the session you are already in.
+Opening a PDF from your file manager reaches the Nib you already have running and
+adds it to that session, rather than starting a second one.
 
 The same folder browser backs every destination picker (Save As, and both
 splits). On Windows it lists your **drives** once you reach the top of one:
@@ -791,10 +789,11 @@ readout next to the box shows which match you're on out of the total (`3/12`).
 Navigation keys stand down while you're typing in a field or a dialog is open, so
 they never get in the way of editing.
 
-### Choose your layout
-Pick how the commands are presented from **⚙ Settings → Layout**: the classic
-**Menus** (File / Edit / View), a compact **Toolbar** of dropdowns and icons, or
-**Both**. The choice is saved in your vault. (Defaults to Menus.)
+### How the commands are arranged
+The commands live on six tabs across the top — **File**, **Mark Up**, **Page
+Functions**, **Secure**, **Signing** and **Settings** — with a sidebar carrying the
+panels for the tab you are on. There is no layout choice: an earlier build offered
+Menus / Toolbar / Both, and the picker was never implemented on the client side.
 
 ### Dark or light
 Tap the **sun/moon** button in the top-right to switch between the dark
@@ -923,7 +922,7 @@ one-time setup where you either **use an SSH key you already have** or have Nib
 **create one for you** (at a path you can change — works the same on Linux,
 macOS, and Windows, no key needed up front). That key is what unlocks your
 vault, so keep it safe and back it up. You can authorize or create more keys
-later from the **⚙ menu → Manage authorized keys…**.
+later from **Settings → Manage authorized keys…**.
 
 ### Install on Debian / Ubuntu
 ```sh
@@ -996,7 +995,7 @@ documents never leave your computer. It is not the only call Nib can make —
 timestamping, opening by URL and co-signing all use the network when you ask
 them to — and every one of them is listed under
 [What leaves your computer](#what-leaves-your-computer). Turn the
-startup check off from **⚙ Settings → Check for updates on startup** (saved in
+startup check off from **Settings → Check for updates on startup** (saved in
 your vault), or set `NIB_NO_UPDATE_CHECK=1` to force it off regardless (clicking
 the version pill still checks either way). Nib only notifies and downloads — it never installs or replaces
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
@@ -1155,6 +1154,6 @@ Their required copyright and license notices are collected in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), regenerated with
 `build/gen-notices.sh`.
 
-**⚙ Settings & Help → About Nib…** shows these in-app — a plain-English account of what a Nib
+**Settings → About Nib…** shows these in-app — a plain-English account of what a Nib
 signature does and doesn't prove, plus the licence and third-party notices read
 straight from the shipped files.

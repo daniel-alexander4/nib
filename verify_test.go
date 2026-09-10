@@ -784,3 +784,73 @@ func TestPairreproDoesNotStateACeilingItDoesNotEnforce(t *testing.T) {
 			"is wrong, and it is the reason they were sent to this file (/pending 424).")
 	}
 }
+
+// /pending 416 — every navigation path the README gives must start at a tab that exists.
+//
+// The README is the file a new user reads, and six of its clusters described a UI that had
+// been replaced: a ⚙ gear menu (gone at ADR-025, surviving in the markup only in two
+// comments saying so), a Collaborate → Originate/Receive toggle (gone at v1.126.1), a
+// Settings → Layout picker `vault.go` says in as many words "was never built in the
+// client", Undo/Redo buttons, an Edit tab, and a single-instance caveat the same file
+// contradicts three hundred lines later.
+//
+// **Self-maintaining by construction, which is why it is this and not a denylist of removed
+// names.** It reads the tab labels out of the markup and requires every `**X → ` path in the
+// README to start at one of them. Rename a tab and it fires; document a menu that no longer
+// exists and it fires. A list of forbidden words would have caught the gear menu and nothing
+// after it.
+//
+// It found one the manual pass missed, before it was even committed: `(Collaborate → Receive
+// → …)` inside parentheses, which is why the pattern takes that form too.
+//
+// What it cannot see: a path whose FIRST hop is right and whose later hops are not
+// (`**File → a menu that went away…**`). That needs the panel contents, a wider scan than
+// this one, and it is not written.
+func TestREADMENavigationPathsStartAtRealTabs(t *testing.T) {
+	markup, err := os.ReadFile(filepath.Join("web", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabs := map[string]bool{}
+	for _, m := range regexp.MustCompile(`<button class="modetab" data-tab="[a-z]+">([^<]+)</button>`).
+		FindAllStringSubmatch(string(markup), -1) {
+		tabs[m[1]] = true
+	}
+	if len(tabs) < 4 {
+		t.Fatalf("found %d mode tabs in the markup; this app has six. The scan is broken, so every "+
+			"README path below would report as unreachable and the failure would be the scan.", len(tabs))
+	}
+
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := regexp.MustCompile(`(?:\*\*|\()([A-Z][^*→()]{1,23}) → `).FindAllStringSubmatch(string(readme), -1)
+	if len(paths) < 5 {
+		t.Fatalf("parsed %d navigation paths out of the README; it carries many more. The scan is broken.", len(paths))
+	}
+
+	names := make([]string, 0, len(tabs))
+	for k := range tabs {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	seen := map[string]bool{}
+	for _, m := range paths {
+		start := strings.TrimSpace(strings.TrimPrefix(m[1], "("))
+		if tabs[start] || seen[start] {
+			continue
+		}
+		// Prose, not navigation: "This page's table → spreadsheet". A tab label is one or two
+		// capitalised words, so anything whose second word is lowercase is a sentence fragment.
+		// Deliberately loose in that direction — a false positive is a guard nobody trusts.
+		if w := strings.Fields(start); len(w) > 1 && strings.ToLower(w[1]) == w[1] {
+			continue
+		}
+		seen[start] = true
+		t.Errorf("the README sends the reader to %q, and no tab is called that. The tabs are %v. "+
+			"This is the file a new user reads, so a path into a menu that was replaced costs them "+
+			"the search before they conclude the feature is gone (/pending 416).", start, names)
+	}
+}
