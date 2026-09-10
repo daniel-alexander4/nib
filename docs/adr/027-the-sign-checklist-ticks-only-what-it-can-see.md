@@ -18,6 +18,12 @@ tracked**.
 is advice — but it is advice containing two one-way doors, applying a redaction and signing, and
 saying so out loud is the reason the surface earns its place.
 
+**Superseded in part by [ADR-029](029-a-tick-is-a-probe-or-a-claim-and-says-which.md)
+(2026-09-09):** the rule immediately below is no longer the rule. A step may be ticked by
+hand, and the row records whether the tick is Nib's observation or the user's claim. The
+reasoning here is not withdrawn — it is right about an UNATTRIBUTED tick — and everything
+else in this ADR stands. Decision content is immutable; this is a pointer, not an edit.
+
 **A step is ticked only where Nib can observe it.** `done` is a probe or it is `null`. Null renders
 as "—" and says on hover that Nib cannot tell. Nib genuinely cannot know whether you ran a
 hidden-content scan, or emailed the file, or where you put an `.ots` — and a tick not backed by a

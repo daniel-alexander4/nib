@@ -854,3 +854,60 @@ func TestREADMENavigationPathsStartAtRealTabs(t *testing.T) {
 			"the search before they conclude the feature is gone (/pending 416).", start, names)
 	}
 }
+
+// /pending 417 — an ADR whose rule the code reversed must say so, and every ADR must be indexed.
+//
+// ADR-027 said *"a step is ticked only where Nib can observe it"*. `web/app.js` ticks by hand
+// (`manualSteps`), argues the change well in its own heading, and shipped — with no superseding
+// ADR, against this repo's own law that a new architectural decision gets one in the same
+// change. `web/index.html` still carried the old rule as user-facing copy. Two files stating a
+// rule the third had abandoned, and nothing could tell.
+//
+// **The general check is not written and would be hard**: nothing can compare an ADR's prose to
+// behaviour. What IS checkable is the coupling that actually broke — the code that reverses a
+// rule and the ADR that states it — plus the index, which is how a superseded ADR gets found at
+// all. Both are cheap and both were absent.
+
+func TestSupersededADRsSaySoAndEveryADRIsIndexed(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("docs", "adr", "0*.md"))
+	if err != nil || len(files) < 10 {
+		t.Fatalf("globbed %d ADRs; this repo has more than ten. The scan is broken, so a clean "+
+			"result would mean nothing.", len(files))
+	}
+	idx, err := os.ReadFile(filepath.Join("docs", "adr", "_index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		name := filepath.Base(f)
+		if !strings.Contains(string(idx), name) {
+			t.Errorf("%s is not linked from docs/adr/_index.md. That index is how a reader finds a "+
+				"decision, and a superseding ADR nobody can find leaves the superseded one reading "+
+				"as current.", name)
+		}
+	}
+
+	// The coupling that broke: the checklist ticks by hand, so the ADR that forbade it must
+	// carry a superseded-by pointer.
+	app, err := os.ReadFile(filepath.Join("web", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticksByHand := strings.Contains(string(app), "const manualSteps = new Set();")
+	adr, err := os.ReadFile(filepath.Join("docs", "adr", "027-the-sign-checklist-ticks-only-what-it-can-see.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saysSuperseded := strings.Contains(string(adr), "Superseded in part by")
+	if ticksByHand && !saysSuperseded {
+		t.Error("web/app.js ticks checklist steps by hand and ADR-027 still states, unqualified, " +
+			"that a step is ticked only where Nib can observe it. The code reversed the rule and " +
+			"the decision record did not move — which this repo's own law forbids: a new " +
+			"architectural decision gets an ADR in the same change (/pending 417).")
+	}
+	if !ticksByHand && saysSuperseded {
+		t.Error("ADR-027 is marked superseded in part but web/app.js no longer ticks by hand — " +
+			"the pointer now describes a behaviour that is gone, which is the same defect in the " +
+			"other direction")
+	}
+}

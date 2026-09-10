@@ -234,3 +234,11 @@ home today.
   the dialer says. The arm's `mode` stays POLICY and the wire never overrides it; a co-sign
   reaching the delivery arm gets the REAL human gates, never the unattended ones. Cost, reserved
   rather than discovered: `DeliveryLegBudget` 14m → 14m30s, ~16 min per 32-party ceremony
+- [ADR-029: A tick is a probe or a claim, and the row says which](029-a-tick-is-a-probe-or-a-claim-and-says-which.md)
+  — supersedes ADR-027's *"a step is ticked only where Nib can observe it"*. That rule protected
+  against an UNATTRIBUTED tick and was too strong: eight of the checklist's steps have no probe and
+  never will, so under it the list could not record the one thing it exists to answer — what is
+  left — for exactly the steps that needed it. The guarantee is kept by PROVENANCE rather than
+  scarcity: `row.dataset.by` is `nib` or `hand`, a manual tick never overwrites a probe, and the
+  hover text distinguishes them. **Written after the behaviour shipped, which is the second defect
+  it closes** (`/pending 417`): a new architectural decision gets an ADR in the same change.
