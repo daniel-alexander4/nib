@@ -7946,6 +7946,27 @@ function reflectSignControls() {
 function setMarkerMode(m) {
   view.markerMode = m;
   if (m) { // one placement tool at a time
+    // **Arming a placement tool is a request for the PAGE, so it steps out of the setup sheet.**
+    // `SIDEBAR_FOR.collaborate` is `['flags', 'commands', 'ceremony']`, so the Flags panel and the
+    // Ceremony panel are two panels of one mode and the tab that switches between them touches the
+    // sheet not at all. Without this, Sign lights up and `#viewerWrap` takes a crosshair cursor
+    // while the sheet has it under `display: none` — a tool armed with no reachable surface and no
+    // feedback, which reads to the user as the button not working.
+    //
+    // **The park and not a refusal, and not a disarm on the way in.** The user asked to draw on the
+    // document, which is exactly what "See the document" is for, and the park keeps the setup
+    // intact for the return leg. Refusing would leave the same press doing nothing; disarming when
+    // the sheet RISES would not reach this case at all, which is arming after it is already up.
+    //
+    // **`moveFocus` is false for the reason the mode-change caller passes false**: the user has
+    // just pressed a tool button, and pulling focus to `#cerBackToSetup` takes it off the control
+    // they pressed. The sheet's own door hides the control focus is on, so there it must move.
+    //
+    // **This function is the whole surface, not one site of ten.** The other nine arm functions are
+    // Mark Up's, and `syncSidebarForMode` stands the sheet down on leaving Collaborate — so the
+    // markers are the only tools a raised sheet can be looking at. Checked rather than assumed:
+    // `SIDEBAR_FOR.collaborate` names `flags`, and no other mode's panel list does.
+    parkCeremonySheet(false);
     if (view.redactMode) { view.redactMode = false; reflectRedact(); }
     if (view.editMode) { view.editMode = false; reflectEdit(); }
     exitSplitBox();
@@ -12834,6 +12855,28 @@ function setCeremonyPark(on) {
 // a 409 instead — the refusal `apiFetch`'s own pinning comment says a captured id earns.
 let ceremonySetupDoc = null;
 
+// ceremonySetupGen numbers the sheet's opens, so a slow one cannot write to a sheet it no longer
+// owns.
+//
+// Opening the setup is two GETs deep — `/api/peers` then `/api/ceremony/draft` — and the sheet is
+// live throughout: the user can step out to the document, come back, and start typing while both
+// are still in flight. The restore then lands on top of what they typed and puts the saved draft
+// back over it, which reads as the form spontaneously reverting.
+//
+// **A generation and not an `AbortController`**, because the thing to cancel is not the request but
+// the WRITE: `restoreCeremonyDraft` is a fetch followed by a dozen assignments, and an abort that
+// lands between them leaves half a form. Bumping the number invalidates every write the old open
+// still owes, wherever it had got to.
+//
+// **A NEWER OPEN is the only thing that invalidates one, and that is the whole rule.** The park and
+// the form switch bumped it too at first, and a `ceremonySetupReady` flag then had the return leg
+// re-finish what the park had abandoned — three writers of one number, a fourth piece of state, and
+// a probe found that none of them could go red. The park does not need to cancel an open: an open
+// that simply COMPLETES across the excursion leaves the picker filled, which is what the user wants
+// anyway, and the one thing it must not do — write the saved draft over what they have since typed
+// — is refused by the restore's own pristine test rather than by a race flag.
+let ceremonySetupGen = 0;
+
 // parkCeremonySheet steps out of setup to the document, keeping everything typed.
 //
 // **It writes the HIDE direction only, and that state is already reachable today**: leaving the
@@ -12878,8 +12921,53 @@ function parkCeremonySheet(moveFocus = true) {
 // to open. Binding on the way back makes "I opened the sheet, then went and opened the lease" a
 // supported path instead of a silent one, and re-pointing an EXISTING binding stays impossible.
 function bindCeremonySetupDoc() {
-  if (ceremonySetupDoc !== null) return;
-  ceremonySetupDoc = (view.docMeta && view.docMeta.id) || null;
+  if (ceremonySetupDoc === null) {
+    ceremonySetupDoc = (view.docMeta && view.docMeta.id) || null;
+  }
+  // **Outside the early return, deliberately.** The binding is monotone and happens once; the
+  // STATEMENT of it has to be rewritten on every entry, including the resume's, or a sheet that
+  // was bound on a previous open comes back saying nothing.
+  renderCeremonySetupDoc();
+}
+
+// renderCeremonySetupDoc writes the one line that says which document this ceremony will be built
+// from — and, when nothing is bound yet, that nothing is (/pending 413).
+//
+// **Read from `views`, not from `view`.** The pin survives the user switching tabs, so the active
+// document and the bound one are routinely different — and reading the active one would put a
+// confident filename on the sheet that is not the file the ceremony will use, which is worse than
+// the silence this replaces.
+//
+// **It says what convening DOES, not only which file.** `PrepareCeremonyDocument` appends the
+// ceremony page and a signature page per party, and `internal/ceremony/convene.go` takes the hash
+// after them under "Nothing may append after this line" — so finishing any markup is a
+// PRECONDITION of pressing Convene, and nothing on this surface said so.
+function renderCeremonySetupDoc() {
+  const el = document.getElementById('cerSheetDoc');
+  if (!el) return;
+  const bound = ceremonySetupDoc
+    ? views.find((v) => v.docMeta && v.docMeta.id === ceremonySetupDoc)
+    : null;
+  if (!bound) {
+    el.textContent = 'No document is open yet. Choose "See the document" and open the one this '
+      + 'ceremony is for — it is bound as soon as you come back, and cannot be changed after that.';
+    el.classList.add('cerdocnone');
+    return;
+  }
+  el.classList.remove('cerdocnone');
+  const pages = bound.pdfDocument ? bound.pdfDocument.numPages : 0;
+  // Built as nodes rather than as an HTML string: the filename is untrusted text from disk, and
+  // this file has a standing rule against interpolating one into markup.
+  el.textContent = '';
+  el.appendChild(document.createTextNode('This ceremony will be built from '));
+  const name = document.createElement('b');
+  name.textContent = bound.docMeta.name || bound.docMeta.path || 'the open document';
+  el.appendChild(name);
+  el.appendChild(document.createTextNode(
+    pages ? ` (${pages} page${pages === 1 ? '' : 's'}).` : '.'));
+  el.appendChild(document.createTextNode(
+    ' Convening adds the ceremony page and a signature page for each party, and fixes the document'
+    + ' at that point — so finish any markup before you convene.'));
 }
 
 // resumeCeremonySheet comes back, and the thing it does NOT do is the slice.
@@ -13008,7 +13096,7 @@ function clearCeremonyForm() {
 //
 // **The roster is restored AFTER the picker is built**, or there are no checkboxes to tick — the
 // picker is filled from `/api/peers` and a restore that ran first would silently drop every party.
-async function restoreCeremonyDraft() {
+async function restoreCeremonyDraft(gen) {
   let d = null;
   try {
     const res = await apiFetch('/api/ceremony/draft', { unpinned: true });
@@ -13018,9 +13106,25 @@ async function restoreCeremonyDraft() {
     d = JSON.parse(body.draft);
   } catch { return; }
   if (!d) return;
+  // Checked HERE, between the fetch and the first assignment, and not by the caller after the
+  // await: the writes below are a dozen statements with no suspension point between them, so a
+  // caller checking afterwards checks a form the draft has already overwritten.
+  if (gen !== undefined && gen !== ceremonySetupGen) return;
   const intent = document.getElementById('cerIntent');
   const expires = document.getElementById('cerExpires');
   const iSign = document.getElementById('cerISign');
+  // **A draft never overwrites live input, and this is the half the generation cannot cover.** The
+  // generation says whether the sheet is still this open's; it cannot say whether the user has
+  // started typing into it, and both fetches here are long enough on a real machine for them to
+  // have. D4 makes this draft a recovery from closing Nib mid-form — so against a form somebody is
+  // filling in right now, the saved copy is the stale one, and putting it back reads as the form
+  // spontaneously reverting.
+  //
+  // **All or nothing, on the two text fields.** Restoring the roster while leaving the recital
+  // alone is the partial restore this file keeps refusing: it comes back looking complete and is
+  // not. `#cerISign` is not part of the test because it ships CHECKED, so a checkbox cannot
+  // distinguish "the user cleared it" from its own default.
+  if ((intent && intent.value !== '') || (expires && expires.value !== '')) return;
   if (intent && typeof d.intent === 'string') intent.value = d.intent;
   if (expires && typeof d.expires === 'string') expires.value = d.expires;
   if (iSign && typeof d.iSign === 'boolean') iSign.checked = d.iSign;
@@ -13082,19 +13186,26 @@ function showCeremonyForm(which) {
 // **The six-word name is the label and the hex is the value**, carried in a data attribute the user
 // never sees. That is the whole no-hex criterion in one line: the fingerprint has to reach the
 // server, and it does not have to reach the screen.
-async function loadPeerPicker() {
+async function loadPeerPicker(gen) {
   const e = cerEls();
   if (!e.pick) return;
-  e.pick.textContent = '';
   let peers = [];
   try {
     const res = await apiFetch('/api/peers', { unpinned: true });
     if (res.ok) peers = (await res.json()).peers || [];
   } catch (err) { /* rendered as the empty case below */ }
+  // **Nothing above this line touched the DOM, and the clear is below it.** It used to be the first
+  // statement, so a load that was slow, that failed, or that belonged to an open the user had
+  // already left emptied the picker anyway — destroying every checkbox and every capacity typed
+  // and not yet blurred, for a fetch whose answer never arrived. The function now either replaces
+  // the picker's contents or leaves them exactly as it found them.
+  if (gen !== undefined && gen !== ceremonySetupGen) return;
+  const rows = document.createDocumentFragment();
   if (!peers.length) {
     const p = document.createElement('p');
     p.className = 'libhint';
     p.textContent = 'You have not paired with anyone yet.';
+    e.pick.textContent = '';
     e.pick.appendChild(p);
     return;
   }
@@ -13117,8 +13228,10 @@ async function loadPeerPicker() {
     cap.placeholder = 'capacity (optional)';
     cap.maxLength = 120;
     row.appendChild(cap);
-    e.pick.appendChild(row);
+    rows.appendChild(row);
   }
+  e.pick.textContent = '';
+  e.pick.appendChild(rows);
 }
 
 // conveneFromPanel posts the roster the user picked.
@@ -13399,6 +13512,22 @@ function renderAccepted(d) {
   }
 }
 
+// openCeremonySetup fills a freshly opened sheet: the peer picker first, then the saved draft.
+//
+// **One door, because the two GETs are one act and their ORDER is a rule.** `loadPeerPicker` builds
+// the checkboxes the restore matches on, so a restore that ran first would match no row and drop
+// every party from the roster silently — the recital and the deadline back, the roster empty, which
+// is the worst of the three outcomes because it looks like it worked.
+//
+// **The generation is taken once, here, and handed to both.** Each helper checks it after its own
+// fetch and before its own first write, so an open the user has walked away from writes nothing at
+// all rather than writing whichever half had not started yet.
+async function openCeremonySetup() {
+  const gen = (ceremonySetupGen += 1);
+  await loadPeerPicker(gen);
+  await restoreCeremonyDraft(gen);
+}
+
 // The sheet's own Close, which is the same act as the form's Cancel and routes through one door.
 document.getElementById('cerSheetClose')?.addEventListener('click', () => { showCeremonyForm(null); });
 
@@ -13421,12 +13550,7 @@ document.getElementById('ceremonyConveneBtn')?.addEventListener('click', async (
   ceremonySetupDoc = null;
   bindCeremonySetupDoc();
   showCeremonyForm('convene');
-  // **Awaited, and the restore runs after it.** `loadPeerPicker` fills `#cerPeerPick` from
-  // `/api/peers`; a restore that ran first would find no checkboxes and drop every party from the
-  // roster silently, leaving the recital and the deadline looking restored and the roster empty —
-  // which is the worst of the three outcomes, because it looks like it worked.
-  await loadPeerPicker();
-  await restoreCeremonyDraft();
+  await openCeremonySetup();
 });
 document.getElementById('ceremonyAcceptBtn')?.addEventListener('click', () => showCeremonyForm('accept'));
 document.getElementById('cerConveneCancel')?.addEventListener('click', () => showCeremonyForm(null));
