@@ -424,7 +424,9 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 		p2p.StampCommitment(&att, roster, hex.EncodeToString(myFP))
 	}
 	prepared := pdf
-	if sign.Verify(pdf).State == sign.Unsigned {
+	// The same rule as `mirror.go` and `ceremonyid.go`, spelled the way `ceremonyid.go` argues
+	// for — "is there a signature at all", not "is there a valid one" (`/pending 456`).
+	if !sign.HasSignatureBlob(pdf) {
 		p, err := p2p.PrepareDocument(pdf)
 		if err != nil {
 			// 400 only for the one failure that IS the caller's document — an

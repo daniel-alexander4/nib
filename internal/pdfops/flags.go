@@ -6,6 +6,30 @@ package pdfops
 // PDF (no sidecar to lose in the mail) and survives a later watermark bake, so it
 // must be stripped explicitly once the recipient has filled the flags. base64
 // keeps the value pure ASCII, sidestepping PDF string-literal escaping.
+//
+// # A flag is a PAGE COORDINATE and is not anchored to content (/pending 457)
+//
+// `frac` is a fraction of the page, so a flag says WHERE on the page, never WHAT it was placed
+// beside. Nothing in this tree cross-checks one against page content: the named grep
+// `NibFlags|FlagsJSON|flagsKey` over `internal/` non-test returns this file and a slice-identity
+// cache in `internal/server/server.go`, and `reconstructFlags` in the client clamps to `[0,1]`
+// and to the page count and validates nothing else.
+//
+// **Measured**: after a rewrite that changed a page's text — `ContentDigest` moved —
+// `FlagsJSON` returned a byte-identical flag set. It survives because `writeMutated` and
+// `api.WriteContext` carry `ctx.Info` through unchanged. So a flag placed on "sign here" points
+// at whatever now occupies that fraction of the page.
+//
+// **Live today at small scale**, on any `writeMutated` route reached with a flagged document
+// open — `/api/ocr`, `/api/sanitize`, `/api/attachments/add`. Those rewrites move text by a
+// little or not at all, so the flag usually still lands somewhere defensible, which is why this
+// has not been seen.
+//
+// **It becomes load-bearing for `PLAN-text-reflow.md`'s P05**, whose whole job is to move the
+// text a flag was placed beside. Making it DETECTABLE means carrying a content anchor beside the
+// coordinate, and that is a change to a persisted, document-travelling format rather than a
+// local fix — so it belongs with the phase that needs it, grilled there, not bolted on here.
+// Recorded at the line meanwhile, because the hazard is invisible from the struct.
 
 import (
 	"bytes"
