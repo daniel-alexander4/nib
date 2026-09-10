@@ -177,18 +177,18 @@ body { display: flex; flex-direction: column; }
 .tbtab.active { display: flex; }
 /* Flat toolbar controls (direct children of a tab or a role group). The >
    combinator keeps dropdown items out, so they keep their .dropdown styling. */
-.tbtab > button, .tbtab > .tbgroup > button, #toolbar .tbfixed > .tbgroup > button, #toolbar .tbglobal > button {
+.tbtab > button, .tbtab > .tbgroup > button, #toolbar .tbfixed > .tbgroup > button {
   background: transparent; border: 1px solid transparent; border-radius: 6px;
   padding: 5px 9px; color: var(--subtext0); font: inherit; cursor: pointer;
 }
-.tbtab > button:hover, .tbtab > .tbgroup > button:hover, #toolbar .tbfixed > .tbgroup > button:hover, #toolbar .tbglobal > button:hover { background: var(--surface0); color: var(--text); }
-.tbtab > button:disabled, .tbtab > .tbgroup > button:disabled, #toolbar .tbfixed > .tbgroup > button:disabled, #toolbar .tbglobal > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
+.tbtab > button:hover, .tbtab > .tbgroup > button:hover, #toolbar .tbfixed > .tbgroup > button:hover { background: var(--surface0); color: var(--text); }
+.tbtab > button:disabled, .tbtab > .tbgroup > button:disabled, #toolbar .tbfixed > .tbgroup > button:disabled { opacity: 0.5; cursor: not-allowed; background: transparent; }
 /* The active tab's label is --text, not --blue. --blue on --surface1 is 4.33:1 in the dark
    theme and 2.79:1 in the light one — under AA in BOTH, and this is a label people read,
    not an accent. The blue stays as the underline, which is what actually signals "active"
    and does so without asking anyone to distinguish two greys-on-blue. Colour as the
    indicator, text as the message — the same rule .stampwarn and #staleBanner follow. */
-.tbtab > button.active, .tbtab > .tbgroup > button.active, #toolbar .tbfixed > .tbgroup > button.active, #toolbar .tbglobal > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
+.tbtab > button.active, .tbtab > .tbgroup > button.active, #toolbar .tbfixed > .tbgroup > button.active { color: var(--text); background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 #toolbar #saveBtn { color: var(--blue); font-weight: 600; }
 /* Dropdown triggers in the toolbar (Recent / Save as / Export under View). */
 #toolbar .menutop {
@@ -1228,7 +1228,6 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 /* An undo button whose earlier history was released to stay within the global
  * budget (ADR-003). Marked rather than disabled — undo still reaches the entries
  * that remain, and the tooltip says what happened. */
-#undoBtn.evicted { border-color: var(--yellow); }
 
 /* ── pdf.js image assets Nib supplies itself ─────────────────────────────────
    The vendored pdf.js references 32 images and ships ONE (annotation-note.svg,
@@ -1537,7 +1536,6 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 .modemenu { display: none; }
 
 /* Undo/Redo, outside the panes because they are global. */
-.tbglobal { display: flex; align-items: center; gap: 4px; }
 
 /* ── The fixed bar, and the commands panel ────────────────────────────────────
    The toolbar stopped being contextual in v1.121.0: it holds only what is true in
