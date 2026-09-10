@@ -951,6 +951,17 @@ func TestACachedContributionSurvivesARestart(t *testing.T) {
 // as `(record, 0 bytes, nil)`, which is true of `document.pdf` and false of `record.json`. Two
 // ceremony tests went red. The absent case below is that regression, pinned.
 func TestAnUnreadableStoredContributionIsUnknownAndNotAMiss(t *testing.T) {
+	// **HOME first, and its absence wrote 532 ceremonies into the developer's own `~/nib`.**
+	//
+	// `ceremonyOnDisk` ends in `ceremony.WriteMirror(defaultOutputDir(), …)`, and
+	// `defaultOutputDir()` reads `$HOME` at call time. Sixteen of this fixture's seventeen callers
+	// set HOME first; this one called it on its first line. One ceremony per run, every run, for
+	// days — and the product then LISTED them, so the Signing Ceremonies panel filled with
+	// identical "We agree" cards for proceedings nobody convened.
+	//
+	// It is a `t.Setenv`, which `testing` unsets again at the end of the test, so it cannot leak
+	// into a sibling either.
+	t.Setenv("HOME", t.TempDir())
 	rec, inbound, stored := ceremonyOnDisk(t)
 	c := &ceremonyID{inv: ceremony.Invitation{ID: rec.ID}}
 
