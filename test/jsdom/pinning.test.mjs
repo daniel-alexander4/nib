@@ -93,9 +93,28 @@ test('every route in the MUTATING inventory is a real POST route on the server',
   }
 });
 
-// scanUnpinned finds every apiFetch on a mutating route that is preceded by an `await`
-// in its own function and does not pass an explicit `docId`. That is the corruption
-// channel, defined mechanically rather than by inspection.
+// scanUnpinned finds every apiFetch that MUTATES a document without naming which one.
+//
+// **The `await` condition is gone, and removing it is /pending 410.** The scan used to require an
+// await that completes before the call is built — "capture, then await, then post" — and that is
+// one corruption channel of two. The other is a HUMAN: the user opens a form, fills it in for
+// minutes, and clicks Submit, with `#tabstrip` live the whole time. No scanner shaped around
+// control flow can represent that window, and `/api/ceremony/convene` proved it — the route sat in
+// the inventory below since P07.S02a with a comment naming this exact defect, and was unpinned
+// anyway until P03.S04, because in `conveneFromPanel` the convene POST IS the first await.
+//
+// **So the rule is now unconditional: a mutating POST names its document.** That is strictly
+// stronger, and it was affordable — measured against HEAD before it was written, the whole file
+// holds 15 apiFetch calls on mutating routes, 14 POSTs and one GET, and every one of the 14 already
+// passes `docId`. A rule with no exemptions needs no argument about which windows are wide enough.
+//
+// **Two scanner defects had to go with it, and both were masked by the await condition.**
+// The `docId` test read a fixed 400-character tail, which `conveneFromPanel`'s own pin sits past —
+// so relaxing the condition alone would have reported a pinned site. And a mutating ROUTE is not a
+// mutating CALL: `openOutlineEditor` GETs `/api/outline`. The options object is now brace-matched
+// to its close, and a call is mutating when it carries a `method:` that is not literally `'GET'` —
+// no `method:` at all is `apiFetch`'s GET default, and a method the scan cannot read is treated as
+// mutating rather than waved through.
 function scanUnpinned(src) {
   const funcs = [];
   const header = /^(?:async function (\w+)|const (\w+) = async|\s*async (\w+)\()/gm;
@@ -135,23 +154,34 @@ function scanUnpinned(src) {
     const call = /apiFetch\(\s*'([^']+)'/g;
     let c;
     while ((c = call.exec(body)) !== null) {
-      // Is there an await that COMPLETES before this call is built? The naive test —
-      // "does the word `await` appear earlier in the function" — is wrong and was
-      // wrong here: in `const res = await apiFetch(...)` the word `await` sits before
-      // `apiFetch`, so the call's OWN await counted as a preceding one and eight
-      // functions were reported as corrupting that structurally cannot be. Strip the
-      // introducer that belongs to this very call, then look.
-      const pre = body.slice(0, c.index)
-        .replace(/(?:(?:const|let|var)\s+\w+\s*=\s*|return\s+)?await\s+$/, '');
-      if (!pre.includes('await')) continue;
       const route = c[1].split('?')[0];
       if (!MUTATING.some((r) => route.startsWith(r))) continue;
-      // Read the call's own argument object — from the call to the matching close —
-      // and look for an explicit docId.
+      // The call's OWN arguments, paren-matched from `apiFetch(` to its close. The
+      // predecessor read a fixed 400-character tail, which runs off the end of a call
+      // whose options carry a comment — `conveneFromPanel`'s pin sits at character 700
+      // of its own call — and runs INTO the next call on a short one.
+      let pd = 0, args = '';
+      for (let j = c.index; j < body.length; j++) {
+        if (body[j] === '(') pd++;
+        else if (body[j] === ')') { pd--; if (pd === 0) { args = body.slice(c.index, j + 1); break; } }
+      }
+      if (!args) args = body.slice(c.index);
+      // **Comments stripped, and this was found by a mutation probe going green.** Replacing the
+      // pin with `// docId removed` left the site reading as pinned, because the shorthand test is
+      // a word match and the word was in a comment. Every options object in this file carries
+      // comments, so it is not a contrived shape — and a scan that a comment can satisfy is one a
+      // future author disables by explaining what they took out.
+      args = args.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+      // A mutating ROUTE reached by a GET is not a mutating CALL — `openOutlineEditor`
+      // reads `/api/outline`. `apiFetch` defaults to GET, so no `method:` key is a read;
+      // anything else, INCLUDING a method this scan cannot resolve to a literal, is
+      // treated as a write, because "I could not tell" must not read as "it is safe".
+      const method = /method:\s*'([A-Z]+)'/.exec(args);
+      if (!/method\s*:/.test(args)) continue;
+      if (method && method[1] === 'GET') continue;
       // Both forms count: `docId: expr` and the ES6 shorthand `docId`. Missing the
       // shorthand made three pinned helpers read as unpinned.
-      const tail = body.slice(c.index, c.index + 400);
-      if (/\bdocId\s*[,:}\s]/.test(tail)) continue;
+      if (/\bdocId\s*[,:}\s]/.test(args)) continue;
       out.push({ name, route });
     }
   }
@@ -188,14 +218,55 @@ async function withDefault(op, extra = {}) {
   assert.deepEqual(scanUnpinned(defaulted).map((f) => f.name), ['withDefault'],
     'a function with an object default parameter is invisible to the scanner — its body was never read');
 
-  // And it must NOT flag the shape that is safe, or it would be unusable and the
-  // frozen list would fill with functions that are fine.
-  const good = `
-async function safe() {
-  const res = await apiFetch('/api/save', { method: 'POST' });
+  // **/pending 410's own shape, and the one the scan was blind to.** No await completes before
+  // this call — the window is a HUMAN holding a form open — and that is exactly how
+  // `/api/ceremony/convene` stayed unpinned for two phases while sitting in the inventory with a
+  // comment naming the defect. Under the old `await`-preceded condition this fixture read as safe.
+  const userPause = `
+async function submitHandler() {
+  const res = await apiFetch('/api/ceremony/convene', { method: 'POST', body: form });
 }`;
-  assert.deepEqual(scanUnpinned(good), [],
-    'the scanner flags a call that IS its own first await — the false positive that put eight safe functions on the frozen list');
+  assert.deepEqual(scanUnpinned(userPause).map((f) => f.name), ['submitHandler'],
+    'a mutating POST whose only window is the user filling in a form reads as safe — which is how '
+    + 'the convene route sat in this inventory, with a comment naming this exact defect, and was '
+    + 'unpinned anyway until P03.S04');
+
+  // And it must NOT flag what is actually safe, or it would be unusable and the frozen list would
+  // fill with functions that are fine. Two shapes, because the rule now has two ways to be met.
+  const pinned = `
+async function safe() {
+  const res = await apiFetch('/api/save', { method: 'POST', docId: captured });
+}`;
+  assert.deepEqual(scanUnpinned(pinned), [],
+    'a call that names its document is being reported, so the rule cannot be satisfied at all');
+
+  const read = `
+async function reader() {
+  const res = await apiFetch('/api/outline');
+}`;
+  assert.deepEqual(scanUnpinned(read), [],
+    'a GET on a mutating route is being reported as an unpinned write — openOutlineEditor reads '
+    + '/api/outline, and a mutating ROUTE is not a mutating CALL');
+
+  // A method the scan cannot resolve to a literal is treated as a WRITE. "I could not tell" must
+  // not read as "it is safe" — that is how a scan reports clean over a site it never understood.
+  const opaque = `
+async function opaque() {
+  const res = await apiFetch('/api/save', { method: verb, body: bytes });
+}`;
+  assert.deepEqual(scanUnpinned(opaque).map((f) => f.name), ['opaque'],
+    'a call whose method the scan cannot read is being waved through, so any future site can '
+    + 'become invisible by building its options a little differently');
+
+  // A COMMENT must not satisfy the pin. Found the way these things are found: a mutation probe
+  // that removed the real pin and wrote `// docId removed` in its place went green.
+  const commented = `
+async function commented() {
+  const res = await apiFetch('/api/save', { method: 'POST', /* docId dropped on purpose */ body: b });
+}`;
+  assert.deepEqual(scanUnpinned(commented).map((f) => f.name), ['commented'],
+    'a comment mentioning docId satisfies the pin test, so a site is exempted by explaining '
+    + 'itself — and every options object in this file carries comments');
 });
 
 test('no mutating call is unpinned', () => {
