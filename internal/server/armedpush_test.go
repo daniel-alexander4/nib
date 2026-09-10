@@ -100,13 +100,35 @@ type lineOrErr struct {
 // hang is a test whose red nobody reads.
 func readArmedEvent(t *testing.T, lines <-chan lineOrErr) armedEvent {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	// **Derived from the test binary's own deadline, not a 5-second stopwatch** (`/pending 430`).
+	//
+	// A fixed 5s measured the SCHEDULER, not the stream. Under `go test ./...` — packages in
+	// parallel, this one standing up real servers — the event arrives late and the test failed;
+	// run alone it passed in 0.10s, three times out of three. A guard that fails on a busy
+	// machine and passes on an idle one is one people learn to re-run rather than read, and this
+	// repo has already paid for that with a real red that went unnoticed for four commits
+	// because a contract said to expect one.
+	//
+	// The question this deadline exists to answer is "is the stream pushing at all", never "how
+	// fast". So it is generous and it scales: a quarter of whatever time the run has left, capped
+	// so a hung stream still fails inside a normal `-timeout`, floored so a nearly-expired run
+	// does not report a stream defect it never waited for.
+	wait := 30 * time.Second
+	if d, ok := t.Deadline(); ok {
+		if q := time.Until(d) / 4; q < wait {
+			wait = q
+		}
+	}
+	if wait < 5*time.Second {
+		wait = 5 * time.Second
+	}
+	deadline := time.After(wait)
 	seenEvent := false
 	for {
 		select {
 		case <-deadline:
-			t.Fatal("no armed event arrived within the deadline — the stream is not pushing the " +
-				"armed state, so a window's close prompt never learns a ceremony is running (D5)")
+			t.Fatalf("no armed event arrived within %s — the stream is not pushing the "+
+				"armed state, so a window's close prompt never learns a ceremony is running (D5)", wait)
 			return armedEvent{}
 		case l := <-lines:
 			if l.err != nil {

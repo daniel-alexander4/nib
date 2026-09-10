@@ -332,7 +332,7 @@ func TestATerminationIsToldNotSaved(t *testing.T) {
 // know what it is now worth.
 func TestTheEndStateTellingSaysAllFourThings(t *testing.T) {
 	srv := &Server{}
-	srv.tellEndState(&ceremonyID{}, ceremony.Termination{State: ceremony.StateDeclined})
+	srv.tellEndState(&ceremonyID{}, ceremony.Termination{State: ceremony.StateDeclined}, true)
 
 	st := srv.sess.status()
 	if st.Notice == nil {
@@ -1300,5 +1300,41 @@ func TestARoundStopsWhenTheRequestThatStartedItGoesAway(t *testing.T) {
 		t.Errorf("on an already-cancelled context the round reported %q. It walked into the leg "+
 			"anyway — minting an invitation and entering a race whose result nobody will read — "+
 			"instead of naming the one thing that actually stopped it.", out2[0].Reason)
+	}
+}
+
+// /pending 435 — the pre-hop pull's audience has NOT signed, and must not be told otherwise.
+//
+// `tellEndState` is documented as "what a party who already signed is owed" and every sentence
+// in it read "the proceeding you signed" and "Your signature stands". The pull calls it behind
+// `if !cer.hasSigned()`: its whole audience is a party with no signature on this ceremony and
+// no copy on disk. Telling them their signature stands is a false statement about what they
+// did — the same collapse this package refuses three times over for `ackDeclined`, where
+// `ackTimedOut` and `ackNotStored` each exist because reusing it "would be a false statement
+// about a person".
+//
+// The sibling above pins the signer wording. This pins that the two are DIFFERENT, which is the
+// half a shared function loses.
+func TestTheEndStateTellingDoesNotInventASignature(t *testing.T) {
+	srv := &Server{}
+	srv.tellEndState(&ceremonyID{}, ceremony.Termination{State: ceremony.StateDeclined}, false)
+
+	st := srv.sess.status()
+	if st.Notice == nil {
+		t.Fatal("a non-signer was told nothing at all")
+	}
+	body := st.Notice.Summary + " " + st.Notice.Detail
+	for _, forbidden := range []string{"you signed", "Your signature stands", "what you signed"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("a party who never signed was told %q. They have no signature on this "+
+				"ceremony and no copy on disk; saying otherwise invents both (/pending 435).\n%s",
+				forbidden, body)
+		}
+	}
+	// And it still tells them the things the sibling requires — the wording changed, not the duty.
+	for _, want := range []string{"over", "convener", "party to"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the non-signer telling does not say %q: %s", want, body)
+		}
 	}
 }

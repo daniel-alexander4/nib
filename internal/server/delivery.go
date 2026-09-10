@@ -160,7 +160,7 @@ func (s *Server) deliverOneLeg(ch p2p.Channel, cer *ceremonyID, myFP []byte, pdf
 				if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
 					return fmt.Errorf("%w: %v", p2p.ErrNotStored, werr)
 				}
-				s.tellEndState(cer, t)
+				s.tellEndState(cer, t, true) // the delivery round reaches a party who signed
 				kept = d
 				return nil
 			}
@@ -1682,6 +1682,16 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 // tellEndState is C06's telling half: what a party who already signed is owed when the proceeding
 // they signed into has ended.
 //
+// **The audience is not always a signer, and until v1.128.84 this said it was**
+// (`/pending 435`). The pre-hop PULL calls this behind `if !cer.hasSigned()` — its whole
+// audience is a party who has NOT signed and holds no copy on disk — and every sentence here
+// read "the proceeding you signed" and "Your signature stands". Telling somebody their
+// signature stands when they never gave one is a false statement about what they did, which is
+// the collapse the paragraph below already refuses three times over for `ackDeclined`.
+//
+// So `signed` is a parameter rather than an assumption, and the two callers differ: the
+// delivery round reaches a party who signed, the pull reaches one who did not.
+//
 // **Four things, and the criterion names all four** — so they are written as four sentences rather
 // than one summary, because a party reading this has a signed document on their disk and needs to
 // know what it is now worth:
@@ -1695,7 +1705,7 @@ func (s *Server) checkDeliveredPayload(cer *ceremonyID, d []byte) error {
 // of its own (/pending 353) — `noticeView`'s own doc makes that argument, and this is the case it
 // most obviously covers: the disarm IS the symptom, and a message that vanished with it would be
 // one nobody reads.
-func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination) {
+func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination, signed bool) {
 	// **Item 2 is per-state, and one shared sentence got it wrong.** The first cut said *"The
 	// convener ended this proceeding"* for both states — but in the only state reachable today
 	// the convener did NOT end it, a party refused, and telling a signer the wrong party ended
@@ -1717,32 +1727,45 @@ func (s *Server) tellEndState(cer *ceremonyID, t ceremony.Termination) {
 	// not know must not be described, only reported. `VerifyAgainst` refuses unknown states before
 	// this is reached, so it is unreachable today and is here so that it stays honest if that ever
 	// changes.
+	// "the proceeding you signed" for a signer; "a proceeding you were a party to" for one who
+	// never signed — the pull's whole audience.
+	yours := "you signed"
+	if !signed {
+		yours = "you were a party to"
+	}
 	var what, summary, ended string
 	switch t.State {
 	case ceremony.StateCompleted:
-		what, summary = "ceremony-completed", "The proceeding you signed has completed."
+		what, summary = "ceremony-completed", "The proceeding "+yours+" has completed."
 		ended = "Every party has now signed, and the convener attested that the proceeding is " +
 			"complete — they are the only party who can attest an end state. "
 	case ceremony.StateStopped:
-		what, summary = "ceremony-stopped", "The convener has stopped the proceeding you signed."
+		what, summary = "ceremony-stopped", "The convener has stopped the proceeding "+yours+"."
 		ended = "The convener ended it before every party had signed, and attested that — they " +
 			"are the only party who can attest an end state. Nobody refused: this was the " +
 			"convener's own decision to stop. "
 	case ceremony.StateDeclined:
-		what, summary = "ceremony-declined", "The proceeding you signed has been declined, so it is over."
+		what, summary = "ceremony-declined", "The proceeding "+yours+" has been declined, so it is over."
 		ended = "One of the parties refused, and the convener attested that the proceeding is " +
 			"over — they are the only party who can attest an end state. "
 	default:
-		what, summary = "ceremony-ended", "The proceeding you signed is over."
+		what, summary = "ceremony-ended", "The proceeding "+yours+" is over."
 		ended = "The convener attested that it has ended, in a way this version of Nib does not " +
 			"recognise — updating Nib may explain it. "
 	}
+	// The reassurance is only true for somebody who signed. A non-signer has no signature to
+	// stand and no copy to be a record of anything — saying otherwise invents both.
+	stands := "Your signature stands: nothing about this unmakes a signature you have already " +
+		"given, and the copy on your disk is still a valid record of what you signed. "
+	if !signed {
+		stands = "You had not signed this one, so there is nothing of yours on it and nothing " +
+			"to undo. "
+	}
 	s.sess.noteFailure(armDelivery, what, summary,
-		ended+
-			"Your signature stands: nothing about this unmakes a signature you have already given, "+
-			"and the copy on your disk is still a valid record of what you signed. If these parties "+
-			"want to try again it starts from the ORIGINAL unsigned file, not from anything you "+
-			"hold now — a new proceeding, with a new record and a new set of signatures.")
+		ended+stands+
+			"If these parties want to try again it starts from the ORIGINAL unsigned file, not "+
+			"from anything you hold now — a new proceeding, with a new record and a new set of "+
+			"signatures.")
 }
 
 // deliveryLeg is the round's current leg, for a watcher (/pending 370).
@@ -1941,7 +1964,7 @@ func (s *Server) fetchEndStateWhenSlow(ctx context.Context, cer *ceremonyID, hol
 		if werr := ceremony.WriteTermination(defaultOutputDir(), t); werr != nil {
 			return // retried on the next tick; the arm stands until it is recorded
 		}
-		s.tellEndState(cer, t)
+		s.tellEndState(cer, t, false) // the pull is guarded to a party who has NOT signed
 		// **Stop listening for a proceeding that is over.** Through the one door /pending 378
 		// built, keyed by ceremony id, so this releases the interactive slot the same way leaving
 		// does rather than by a second teardown path.

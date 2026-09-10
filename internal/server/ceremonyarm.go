@@ -130,10 +130,20 @@ func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key,
 //
 // So a party whose proceeding was declined or abandoned *before the baton reached them* holds this
 // arm for the life of the Nib process, and nothing local can tell them otherwise. That is the same
-// gap as D14's bound, seen from the other side: everything that would say the proceeding ended
-// lives in the record this party does not have. Writing a check against `Stored.Ended` anyway
-// would be worse than the gap — it is the exact anchor `/pending 354` proved forgeable, and the
-// decision NOT to arm is an authorisation.
+// gap as D14's bound, seen from the other side.
+//
+// **This paragraph used to end "everything that would say the proceeding ended lives in the
+// record this party does not have", and that has been FALSE since S02+S03** (`/pending 434`).
+// `Invitation.Anchor()` and `Termination.VerifyAgainst(anchor)` need no record — the invitation
+// this party already holds is enough to verify a convener-signed termination — and the pre-hop
+// PULL holds exactly that object, verified, at the moment it could act on it.
+//
+// The rest of the reasoning stands and is the reason a fix is not a one-liner: a check against
+// `Stored.Ended` would be worse than the gap, because that is the exact anchor `/pending 354`
+// proved forgeable, and the decision NOT to arm is an authorisation. What is wanted is an
+// ended-check keyed on a **verified** termination rather than on a field, and the missing piece
+// is a read path taking an INVITATION where `ReadTermination` takes a `Record`. That is
+// `/pending 434`, re-scoped there now that its stated blocker is known to be false.
 //
 // Best-effort per ceremony, and it never fails the accept that triggered it: the interactive slot
 // is shared with the user's own manual receive arm, so "a session is already armed" is an ordinary
