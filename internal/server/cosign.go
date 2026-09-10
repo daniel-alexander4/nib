@@ -266,8 +266,17 @@ func (s *Server) handleCosignQuote(w http.ResponseWriter, r *http.Request) {
 	//
 	// **The day the client sends an invitation on this path, this line must send it too.** The
 	// door is `invitationRoster`, already used by `handleSessionInitiate` for the CLI and harness
-	// callers that do send one. Adding the parameter here now would be a field no client fills,
-	// which is the shape this repo's reader scans exist to refuse.
+	// callers that do send one. Adding the parameter here now would be a field no client fills.
+	//
+	// **This used to say that shape is "what this repo's reader scans exist to refuse", and NO
+	// SCAN REFUSED IT** (/pending 447, corrected 2026-09-09 and again on 2026-09-10 after the
+	// first correction was lost to a concurrent session). `observables_test.go` cannot see a
+	// multipart form field at all — there is no Go struct for it to discover — and for the JSON
+	// request shapes its matcher passed on coincidental name collisions: `armRequest.Transport`
+	// matched `ceremony.TransportQUIC` in internal/cli/rendezvous.go, and `armRequest.Address`
+	// matched `st.address` in web/app.js, which is the arm RESPONSE's address, on the same route,
+	// travelling the other way. The author knew the rule, cited the enforcement, and the
+	// enforcement was absent — which is the shape worth remembering, not the field.
 	att, ok := s.cosignAttestation(w, v, p, p2p.Roster{})
 	if !ok {
 		return

@@ -102,6 +102,16 @@ var jsonPublishedPackages = map[string]bool{"internal/server": true}
 // client WRITES the field rather than reading it, and the check — does the reader source mention
 // `.field` or `.jsonTag` — answers both directions. A request field nothing sets is as much a
 // field nobody was ever told about as a response field nothing reads.
+//
+// **Two limits on that, both measured, and neither is admitted by this file's own "what this scan
+// cannot prove" section** (/pending 447). First, `discoverObservables` collects only
+// `*ast.TypeSpec`, so an ANONYMOUS request struct is outside the population entirely — there are
+// nine of them in internal/server and one carries a field no client sends. Second, the
+// coincidental-match limit bites HARDER in the write direction: a response field needs a reader to
+// have been written on purpose, while a request field is satisfied by any mention of its name
+// anywhere in the reader sources, including the same route's RESPONSE. Both were found by the
+// request-field deepdive; the guard that closes them is
+// `requestfields_test.go` in package nib, which correlates route with field.
 var jsonShapeReaders = []string{
 	"web/app.js",
 	"internal/cli/commands.go",
