@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01 slices all done; the phase close is next. `/createcode` drives it from P01.
+**Status: building.** P01 CLOSED (v1.128.69); P02 — the width reader — is next. `/createcode` drives it from P01.
 
 ---
 
@@ -168,7 +168,7 @@ none is a prototype for the next.
 
 ## Build order
 
-### P01 — Measure the edit *(the shipped defect)*
+### P01 — Measure the edit *(done 2026-09-09, v1.128.69)*
 **Goal.** An edit that does not fit its box is detected and handled, using metrics already in the
 process. No content stream is parsed and no reflow happens; this is the released feature's **fit**
 behaviour working as users already believe it does.
@@ -178,6 +178,26 @@ behaviour working as users already believe it does.
 - Every outcome that CHANGES what is baked is visible on the field, not only in a message that can
   be missed; and a shrink stops while the result still reads as the line it replaced.
 - The overflow measurement is asserted at tier 1 and visible at tier 3.
+
+**Closed 2026-09-09 at v1.128.69 — 6 clauses, all met, none credited to a path chosen because it
+worked.** C1a–d (shrunk / wrapped / reported / never silently overrun) by four outcomes each with a
+fixture that cannot reach the others. C2a by two distinct markers — `ovl-refit` where Nib ALTERED
+what is baked, `ovl-misfit` where it did not — with the computed outline asserted non-zero at tier 3.
+**C2b and C3b were partial at the first reconciliation and are now met**: tier 3 driving a real Save
+found that `clearOverlays` destroys the marked overlay and `"Saved"` overwrites the fit sentence, so
+on the commonest path the user was told nothing; `#fitNotice` fixed it, and the guard that proves it
+was written before the fix and was red against that build (`/pending 460`). C2c by the ratio bound.
+C3a by 7 trap strings held to pdfcpu's own emitted BBox rather than to a hand-copied AFM figure.
+
+**Gates at the close:** tier 0 build, tier 1 `go test ./...` serially, tier 2 **272/272**, tier 3
+**111/111**, red proofs **403**. **Tiers 4 and 6 did NOT fire** — P01 touched `internal/pdfops`,
+`mdpdf`, `internal/server/overlay.go` and `web/*`, none of the session/ceremony/delivery/discovery
+paths and nothing crossing two processes.
+
+**What the close-out review found that four slice reviews could not:** two doc comments that were
+correct when written and were falsified by a LATER slice — `stampFloorPt`'s *"the smallest point
+size shrink-to-fit will produce"* and `FitShrunk`'s *"down to at most stampFloorPt"*, both untrue
+once the ratio bound landed. Corrected, along with this plan's own S02 pin.
 
 **Amended 2026-09-09 — one criterion left this phase, and one word of another changed.**
 
@@ -259,8 +279,11 @@ rather than quietly changed:
   what shrinking cannot reach rather than the second rung for everything.
 - **"The existing 6pt floor" did not exist.** `stampStyle` turned 5, 4 and 1 into **8**, so a
   shrink loop stepping down from 7 got a LARGER size back and never converged. It is a
-  degenerate-input guard, not a legibility floor. `stampFloorPt` is now the floor and the clamp is
-  written against it.
+  degenerate-input guard, not a legibility floor. `stampFloorPt` is now the ABSOLUTE floor and the
+  clamp is written against it. **Superseded in part at the phase close:** the ratio bound added
+  after this slice is what actually stops a shrink above 8pt, so `stampFloorPt` binds only under it
+  — see `shrinkFloorFor`. This sentence read "`stampFloorPt` is now the floor" until P01's close-out
+  review caught that a later slice had falsified it.
 - **"Refuse" cannot mean refusing the request.** `/api/bake` is what every save, print, flatten,
   export, PDF/A conversion and both signature paths run through — **24 call sites** in
   `web/app.js` — and the client's own rule there is that a bake which is not OK **aborts the whole

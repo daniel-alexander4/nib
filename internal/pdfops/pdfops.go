@@ -1094,9 +1094,19 @@ type Fit struct {
 	Fidelity FontFidelity `json:"fidelity,omitempty"`
 }
 
-// stampFloorPt is the smallest point size shrink-to-fit will produce. Below this
-// the text is not small, it is unreadable, and shrinking further trades a visible
-// problem for an invisible one.
+// stampFloorPt is the ABSOLUTE floor on a stamped size: below this the text is not
+// small, it is unreadable, and shrinking further trades a visible problem for an
+// invisible one.
+//
+// **It is not, on its own, where shrink-to-fit stops.** `shrinkFloorFor` takes the
+// higher of this and the ratio bound, so for anything asked for above 8pt the RATIO is
+// what binds — a 12pt field stops at 9pt and never reaches 6. This constant is the
+// floor under that: it is what stops an already-small field being shrunk into
+// illegibility, and what `stampStyle`'s degenerate-size clamp is written against.
+//
+// The doc comment said "the smallest point size shrink-to-fit will produce" until the
+// ratio bound landed a slice later and made that false. Recorded because the P01 close
+// is what caught it, not either slice's own review.
 const stampFloorPt = 6
 
 // stampShrinkFloorRatio is how far below the size a caller ASKED for shrink-to-fit
@@ -1153,7 +1163,8 @@ type FitOutcome string
 const (
 	// FitAsDrawn — the text fitted at the size and face asked for. Nothing changed.
 	FitAsDrawn FitOutcome = "as-drawn"
-	// FitShrunk — the point size was reduced, down to at most stampFloorPt.
+	// FitShrunk — the point size was reduced, no further than shrinkFloorFor allows
+	// (the ratio bound, or the absolute floor where that is lower).
 	FitShrunk FitOutcome = "shrunk"
 	// FitWrapped — broken across lines, and the box was measured to have room for them.
 	FitWrapped FitOutcome = "wrapped"
