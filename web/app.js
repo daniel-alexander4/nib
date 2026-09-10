@@ -10308,12 +10308,22 @@ els.detectBtn.onclick = async () => {
   // 3. "Circle one" choices (incl. Y/N) become a circle-my-answer widget: a
   //    radio set of choices, each circled (pill around a word) when picked.
   const choiceGroups = dedupeGroups([...ynItems, ...findCircleOne(textItems), ...findSlashTemplates(textItems), ...findPipeChoices(textItems), ...findRunChoices(textItems, cells)]);
-  // The canvas is read ONCE for the whole loop. snapChoices used to read it per group —
-  // a full getImageData over a page-sized canvas, ~13 MB each, for a picture that does
-  // not change between groups. Skipped entirely when there are no groups.
+  // The canvas is read ONCE for the whole loop and the read is PASSED IN. snapChoices
+  // falls back to reading it itself, so a caller that computes this and does not hand it
+  // over gets the per-group read anyway plus one wasted whole-canvas read — N+1 where the
+  // design intended 1. That is what this line did until v1.128.77 (/pending 418).
+  //
+  // Measured in Chrome 2026-09-09, not estimated: one whole-canvas getImageData is
+  // **4.32 ms at A4 @2x** (1224x1584, 7.76 MB) and **8.95 ms at Letter @2x** (1700x2200,
+  // 14.96 MB). The comment here said "~13 MB each" and that figure was never measured; it
+  // is in the right range for Letter. The saving is N reads per page, N being the number
+  // of choice groups. Skipped entirely when there are none.
+  //
+  // Safe to hoist because nothing in the loop draws on the canvas — snapChoices reads, and
+  // makeField appends overlay elements to the page div.
   const groupPixels = choiceGroups.length ? pixelsOf(canvas) : null;
   for (const grp of choiceGroups) {
-    const choices = snapChoices(canvas, grp.choices, grp.marker);
+    const choices = snapChoices(canvas, grp.choices, grp.marker, groupPixels);
     const cf = choices.map((c) => ({ rect: [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], word: !!c.word }));
     const x0 = Math.min(...cf.map((c) => c.rect[0])), y0 = Math.min(...cf.map((c) => c.rect[1]));
     const x1 = Math.max(...cf.map((c) => c.rect[2])), y1 = Math.max(...cf.map((c) => c.rect[3]));
