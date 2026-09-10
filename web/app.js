@@ -9903,6 +9903,22 @@ function clearDetected() {
 
 function layoutField(f, pv) {
   const W = pv.div.clientWidth, H = pv.div.clientHeight;
+  // **A zero measurement is not a layout, and writing it destroys one** (/pending 411).
+  //
+  // Under a `display: none` ancestor both reads are 0, and every line below then writes
+  // `left/top/width/height: 0px` — every overlay on the page collapsed, permanently, because
+  // this self-heals only on the next `pagerendered`/`scalechanging` and neither fires for a page
+  // already rendered and still in pdf.js's buffer.
+  //
+  // Reachable today: `#tabstrip` is a sibling of `#ceremonySheet` inside `#viewerCol` and
+  // `showCeremonySheet` never touches it, so with two documents open the switcher is clickable
+  // while the sheet covers the viewer — and `activateView` calls `relayoutOverlays(v)`
+  // unconditionally.
+  //
+  // `fitWidestWidth` guards the same hazard (`avail > 0`) and documents it in as many words; this
+  // is that guard, at the site that writes rather than the one that reads. Returning leaves the
+  // overlay at its last good geometry, which is what the next real layout will correct.
+  if (!(W > 0 && H > 0)) return;
   const h = (f.frac[3] - f.frac[1]) * H;
   f.el.style.left = (f.frac[0] * W) + 'px';
   f.el.style.top = (f.frac[1] * H) + 'px';

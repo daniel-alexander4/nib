@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -909,5 +910,63 @@ func TestSupersededADRsSaySoAndEveryADRIsIndexed(t *testing.T) {
 		t.Error("ADR-027 is marked superseded in part but web/app.js no longer ticks by hand — " +
 			"the pointer now describes a behaviour that is gone, which is the same defect in the " +
 			"other direction")
+	}
+}
+
+// TestTheHarnessPopulationCountsMatchTheFilesOnDisk compares the test-file count each
+// front-end harness declares against the files actually on disk.
+//
+// Both harnesses already check this themselves and refuse, so this looks redundant, and it
+// is not: they check it AFTER printing their totals. A run read as `./build/jsdomtest.sh |
+// tail` shows `# fail 0` with the refusal scrolled past the window, and `$?` belongs to
+// `tail` rather than to the harness — so the refusal is invisible in exactly the way a
+// person actually reads these. Both counts went stale that way and stayed stale for twenty
+// versions: tier 2's from v1.128.66 (editfit.test.mjs) and tier 3's from v1.128.67
+// (test/ui/editfit.test.mjs), with a third file, snapchoices.test.mjs, added past an
+// already-red guard at v1.128.77. Tier 1 is the tier nothing pipes and the tier that runs
+// where 2 and 3 skip, which is the whole reason the count is also asserted here.
+func TestTheHarnessPopulationCountsMatchTheFilesOnDisk(t *testing.T) {
+	for _, h := range []struct{ script, decl, dir string }{
+		{"build/jsdomtest.sh", "Nib_expect_files", "test/jsdom"},
+		{"build/uirepro.sh", "expect_files", "test/ui"},
+	} {
+		body, err := os.ReadFile(h.script)
+		if err != nil {
+			t.Fatalf("%s: %v", h.script, err)
+		}
+		m := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(h.decl) + `=(\d+)$`).FindSubmatch(body)
+		if m == nil {
+			t.Errorf("%s declares no %s= line, so nothing pins how many test files it expects to run",
+				h.script, h.decl)
+			continue
+		}
+		declared, err := strconv.Atoi(string(m[1]))
+		if err != nil {
+			t.Fatalf("%s: %s=%q: %v", h.script, h.decl, m[1], err)
+		}
+		ents, err := os.ReadDir(h.dir)
+		if err != nil {
+			t.Fatalf("%s: %v", h.dir, err)
+		}
+		found := 0
+		for _, e := range ents {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".test.mjs") {
+				found++
+			}
+		}
+		// The stimulus floor. A directory that reads as empty — renamed, moved, or a
+		// suffix convention that changed — would otherwise make this guard agree with a
+		// harness declaring zero, which is the shape it exists to refuse.
+		if found == 0 {
+			t.Errorf("%s holds no *.test.mjs files at all, so %s cannot be checked against anything",
+				h.dir, h.decl)
+			continue
+		}
+		if declared != found {
+			t.Errorf("%s declares %s=%d but %s holds %d *.test.mjs files — the harness will refuse, "+
+				"and it refuses AFTER printing its totals, so a piped run reads as green. Update the "+
+				"declaration in the same commit that adds or drops the file",
+				h.script, h.decl, declared, h.dir, found)
+		}
 	}
 }
