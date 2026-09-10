@@ -1636,9 +1636,31 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    commands container held `flex: 1` and pushed the content-panel headers to the bottom of
    the column with a dead gap above them. */
 .sbpane > .panel, #commands { flex: 0 0 auto; }
-/* #commands is a pass-through — its CARDS are the items, so it sizes to content and
-   only a real content panel claims the leftover height. */
-.sbpane > .panel.active:not(#commands) { flex: 1 1 auto; min-height: 0; }
+/* #commands is a pass-through — its CARDS are the items, so it sizes to content.
+   **NOTHING claims the leftover height any more (/pending 463).** The active content panel used to
+   — `.sbpane > .panel.active:not(#commands) { flex: 1 1 auto }` — which is the SAME defect the
+   comment above records fixing one selector over, arriving from the other side: in Collaborate mode
+   the Place Signing Flags panel ate the column and pushed Simple Sign, Send & Receive and Signing
+   Ceremonies to the bottom edge. Measured at 1280x900: a **203px** gap below `Save for signing…`,
+   where consecutive cards in that column sit **32px** apart. Dan sent a screenshot of it.
+
+   Sizing every panel to content is the accordion's own documented model — see the block below:
+   "the body is as tall as its items and the PANE is the one thing that scrolls" — and `.sbpane`
+   already carries `overflow-y: auto`, so a long outline or library scrolls the column rather than
+   becoming an island inside it. Leftover space now falls at the BOTTOM of the pane, below
+   everything, which is where empty space belongs.
+
+   `#thumbs` keeps its own `flex: 1 1 auto` at `#sbPages > #thumbs.panel`: the Pages pane holds one
+   panel and nothing follows it, so there is no card for it to push anywhere.
+
+   **It is `0 1 auto` and not `0 0 auto`, and a test is what drew that line.** Removing the rule
+   outright broke `railscale.test.mjs`'s "the panel is the only scroller, at every size": at 16
+   parties the ceremony roster started scrolling `#sbFunctions` instead of the ceremony panel, and
+   that file asserts the panel is the scroller BY DESIGN. The defect was only ever GROW — a short
+   panel expanding to fill a column it does not need. SHRINK is what makes a tall panel scroll
+   inside itself when the column is full, and `min-height: 0` is what lets it. So: never grow,
+   always able to shrink. */
+.sbpane > .panel.active:not(#commands) { flex: 0 1 auto; min-height: 0; }
 /* ── An open card's content flows under its own header ───────────────────────
    No cap and no scroller of its own: the body is as tall as its items and the PANE
    is the one thing that scrolls. That is the ordinary accordion, and it is what
