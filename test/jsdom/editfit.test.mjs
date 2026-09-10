@@ -170,3 +170,36 @@ test('the overrun message says what to do about it', () => {
   assert.match(CODE, /const FIT_OVERRAN_ADVICE = 'shorten it or redraw the box'/,
     'the advice string is gone or reworded past recognition');
 });
+
+// /pending 460: the report must survive the operation that produced it.
+//
+// Five of the app's bake call sites replace the document and reload it, so the marked
+// overlay is destroyed and the operation's own toast overwrites the fit sentence. A
+// toast alone is therefore not delivery on the path a user takes most.
+test('the fit report is also said somewhere persistent', () => {
+  const tell = fnBody('tellFitReport', 'function tellFitReport(applied)');
+  assert.match(tell, /showFitNotice\(sentence\)/,
+    'the fit report is announced only by toast(). toast() sets textContent with no queue and '
+      + 'clears after 2.5s, and Save\'s own "Saved" replaces it — so on the primary path the '
+      + 'user is told nothing (/pending 460).');
+  assert.match(tell, /if \(!applied\.length\) \{ clearFitNotice\(\); return; \}/,
+    'a bake where everything fitted returns without taking down an earlier notice, so the '
+      + 'banner outlives the problem it describes and reports a document already fixed');
+
+  const show = fnBody('showFitNotice', 'function showFitNotice(sentence)');
+  assert.match(show, /els\.fitNotice\.hidden = false/, 'showFitNotice does not reveal the notice');
+  assert.match(show, /els\.fitNoticeText\.textContent = sentence/, 'the notice is shown without its text');
+});
+
+// It is polite and dismissible, and it is not the alert element.
+test('the notice does not spend the one assertive announcement', () => {
+  const html = readFileSync(join(REPO, 'web', 'index.html'), 'utf8');
+  const el = html.slice(html.indexOf('<div id="fitNotice"'), html.indexOf('</div>', html.indexOf('<div id="fitNotice"')));
+  assert.match(el, /role="status"/,
+    'the fit notice claims role="alert" — assertive is reserved for #sessionNotice\'s "you are '
+      + 'about to lose a signature", and spending it on a recoverable fit report devalues it');
+  assert.match(el, /aria-live="polite"/, 'the notice appears without a user action and announces nothing');
+  assert.match(el, /id="fitNoticeDismiss"/, 'a persistent notice with no way to dismiss it is a permanent one');
+  const css = readFileSync(join(REPO, 'web', 'style.css'), 'utf8');
+  assert.match(css, /#fitNotice \{/, 'the notice is shown by app.js and styled by nothing');
+});

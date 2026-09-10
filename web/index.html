@@ -633,6 +633,26 @@
         <span>Ceremony setup is open — nothing has been convened yet.</span>
         <button id="cerBackToSetup" type="button">Back to setup</button>
       </div>
+      <!-- The fit notice (P01.S03, /pending 460). It says what a bake did to edits that did
+           not fit their boxes, and it persists, because a toast cannot serve the path that
+           matters most: Save reloads the document after writing, `clearOverlays` destroys the
+           marked overlay, and `toast()` has no queue so "Saved" overwrites the fit sentence.
+           Both signals are gone on the action a user takes most.
+
+           **BOTTOM-RIGHT, and every other corner is taken.** #staleBanner and #signBanner share
+           top-centre under a one-boolean `.stacked` rule that #cerSetupBar's own comment says
+           not to make three-way; #cerSetupBar is bottom-left; #toast is bottom-centre; the
+           signing-locked badge is top-right. This is the corner left, and it collides with
+           nothing.
+
+           role="status" + aria-live="polite", not alert: the report describes a file the user
+           already has and can reopen, so it does not warrant interrupting them. Assertive stays
+           spent on #sessionNotice's "you are about to lose a signature" — the same reasoning
+           #staleBanner and #cerSetupBar both record. -->
+      <div id="fitNotice" role="status" aria-live="polite" hidden>
+        <span id="fitNoticeText"></span>
+        <button id="fitNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
         <button id="signDone" hidden>Finish &amp; sign</button>
