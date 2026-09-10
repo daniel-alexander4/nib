@@ -138,7 +138,7 @@ const els = {
   srvTitle: $('srvTitle'), srvArmHint: $('srvArmHint'), srvConsentHint: $('srvConsentHint'),
   srvArm: $('srvArm'), srvWait: $('srvWait'), srvConsent: $('srvConsent'),
   srvPeer: $('srvPeer'), srvNoPeers: $('srvNoPeers'), srvBind: $('srvBind'),
-  srvInvite: $('srvInvite'), srvInviteNote: $('srvInviteNote'),
+  srvInvite: $('srvInvite'),
   srvSelfFp: $('srvSelfFp'), srvSelfName: $('srvSelfName'), srvSelfCopy: $('srvSelfCopy'),
   srvCancel: $('srvCancel'), srvArmGo: $('srvArmGo'),
   srvWaitAddr: $('srvWaitAddr'), srvWaitPeer: $('srvWaitPeer'), srvDisarm: $('srvDisarm'),

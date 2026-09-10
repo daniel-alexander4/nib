@@ -30,12 +30,6 @@ func parseAuthorizedKeys(raw string) []string {
 	return out
 }
 
-// BuiltinKeys returns the authorized public keys this build was compiled with
-// (empty by default). Every new or migrated vault is additionally sealed to
-// each, so it unlocks on any machine holding one of their private halves with
-// no per-machine enrollment.
-func BuiltinKeys() []string { return append([]string(nil), builtinKeys...) }
-
 // sealBuiltins appends a slot for every built-in key not already present in
 // slots, sealing key to it. Such slots record no private-key path — OpenSSH
 // locates the private half among the local ~/.ssh keys at unlock time. A

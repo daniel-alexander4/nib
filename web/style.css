@@ -237,7 +237,6 @@ body { display: flex; flex-direction: column; }
 .menu.settings .menutop { font-size: 16px; }
 /* Open right-aligned (.dropdown sets left:0 later in source, so match its
    specificity to win the left/right tug-of-war). */
-.dropdown.dropdown-right { left: auto; right: 0; }
 
 button {
   background: var(--surface0);
