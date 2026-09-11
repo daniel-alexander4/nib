@@ -323,10 +323,20 @@ Acceptance:
   the enumeration** rather than an operation that is exempt. Its verdict is a decision (it destroys
   page content by design), and the enumeration needs widening to reach it either way.
 
-#### P01.S05 — the ADR and the corpus
+#### P01.S05 — the ADR and the corpus *(done 2026-09-11, v1.129.12)*
 Scope: ADR for laws 1 and 2; the golden corpus per D12 with its expected verdicts. Refs: D12.
 Acceptance: the ADR names the operations, the corpus is loaded by S03's guard, and the ADR is cited
 from the tag-fate table.
+- ✅ **ADR-031** names all eight operations the guard caught, carries the measurement rather than
+  the argument, and records why the check is a post-condition that expires on its own.
+- ✅ The corpus is `internal/pdfops/corpus_test.go` and is loaded by S03's guard, S01's guards and
+  S04's merge test — one definition of "tagged", shared, rather than each guard inventing its own.
+- ✅ Cited from the tag-fate door (`internal/pdfops/tagfate.go`) and indexed in `docs/adr/_index.md`,
+  which `TestSupersededADRsSaySoAndEveryADRIsIndexed` enforces.
+- **The ADR records two things the plan did not ask for, because both are the instructive part**:
+  that the enumeration's first filter was itself a hole (it matched on a parameter NAME), and that
+  veraPDF's conformance score cannot express law 1 — dropping a claim *adds* UA-1 failures, so a
+  failure count scores honesty as a regression.
 
 ### P02 — The application's own WCAG 2.1 AA
 **Goal.** Make nib operable without a pointer and legible to a screen reader. This is a live

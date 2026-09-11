@@ -61,6 +61,9 @@ import (
 // Every operation that voids structure calls this, rather than each deleting three keys correctly.
 // That is ADR-009's shape and law 2's: the guard checks the door, not the sites that happen to be
 // right today.
+//
+// **The law itself is ADR-031**, which carries the measurement, the eight operations the guard
+// found, and the argument for the check being a post-condition rather than an unconditional strip.
 
 // dropTaggingClaim removes every assertion that a document is tagged, and returns pdf unchanged
 // when there was no claim to remove.
