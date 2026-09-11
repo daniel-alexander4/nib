@@ -77,9 +77,10 @@ func taggedFixture() []byte {
 // claims counts the assertions a document makes about being tagged, **in the raw bytes**.
 //
 // **`/StructElem` here is nearly always 0 and that is not a finding** — pdfcpu writes the tree into
-// a compressed object stream, so the literal never appears in the output. Kept for diagnostics and
-// for the catalog-level keys, which ARE written uncompressed; anything asking about the structure
-// itself must use `StructureElements`. This distinction is what `lies` got wrong.
+// a compressed object stream, so the literal never appears in the output. It is kept for DIAGNOSTIC
+// output only: when a guard below fails, the raw keys are what a reader wants to see beside the
+// parsed verdict. Nothing decides anything on this function's result, and
+// `TestTheOracleParsesRatherThanCountingBytes` is what keeps that true.
 func claims(pdf []byte) map[string]int {
 	out := map[string]int{}
 	for _, k := range []string{"/StructTreeRoot", "/MarkInfo", "/Marked", "/StructParents", "/StructElem"} {
@@ -88,19 +89,36 @@ func claims(pdf []byte) map[string]int {
 	return out
 }
 
-// lies reports law 1's violation: a document that SAYS it is tagged while carrying no structure.
+// fate classifies a document against law 1 and law 2's vocabulary, by parsing.
 //
-// **It PARSES, and the first version did not — which is the most expensive error in this plan's
-// history.** It byte-counted `/StructElem`, and pdfcpu writes the structure tree into a compressed
-// object stream, so that count is **0 for every pdfcpu output**. The predicate therefore reported
-// every tagged document as lying, the enforcement built on it stripped tag trees that had survived
-// intact, and four slices, an ADR and a pending item were written on the strength of it.
+// The four values are the verdicts the tag-fate table declares, and this is what turns that table
+// from a list of assertions into a list of CHECKED assertions:
 //
-// Measured with the parse: a no-op write keeps all 14 elements, `Rotate` keeps 14, `Optimize` keeps
-// 14, and `NUp`/`Collect` drop the root and the elements together. **No operation lies.** The guard
-// is kept because it would catch one that started to; the enforcement is gone because there was
-// nothing to enforce and it was destroying data.
-func lies(pdf []byte) bool {
-	claimed := ClaimsTagging(pdf)
-	return claimed && structureElements(pdf) == 0
+//   - `dropped`  — no claim at all. Honest: a visible loss.
+//   - `carried`  — a claim, a live tree, and every page with content described by it.
+//   - `partial`  — a claim and a live tree that does not reach every page with content.
+//   - `orphaned` — a claim over a tree that describes nothing in the document. **Law 1's violation.**
+//
+// **`orphaned` exists because the first version of this file had no word for it.** Its predicate was
+// "claims tagging and has zero struct elements", which is the weakest possible reading of law 1 and
+// cannot see the case that actually ships: `NUp` emits 45 elements, all of them pointing at pages
+// that are no longer in the document. A census whose vocabulary cannot express the defect reports
+// every operation as compliant.
+func fate(pdf []byte) string {
+	s := inspectTags(pdf)
+	switch {
+	case !s.readable:
+		return "unreadable"
+	case !s.claims():
+		return "dropped"
+	case s.orphaned():
+		return "orphaned"
+	case s.partial():
+		return "partial"
+	default:
+		return "carried"
+	}
 }
+
+// lies reports law 1's violation.
+func lies(pdf []byte) bool { return inspectTags(pdf).orphaned() }

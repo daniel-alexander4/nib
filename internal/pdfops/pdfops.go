@@ -321,9 +321,13 @@ func Append(pdf, other []byte) ([]byte, error) {
 		return nil, err
 	}
 	// **`MergeRaw` takes the FIRST document's catalog whole**, so merging a tagged document with an
-	// untagged one carries that catalog's `/StructTreeRoot` onto the result. Whether that is a LIE
-	// depends on whether the elements come with it, and the answer is measured rather than assumed:
-	// see `structureCount` and the tag-fate table's merge row.
+	// untagged one carries that catalog's `/StructTreeRoot` onto the result — and the argument order
+	// decides it: tagged-first keeps the claim, tagged-second drops it. Measured, the result is
+	// `partial`, not orphaned: all 45 elements stay anchored to live pages and the appended page is
+	// the only undescribed one. It is NOT routed through `honest`, and that is a recorded decision
+	// rather than an oversight — stripping would destroy a whole live tree to fix one page, and this
+	// is the path `p2p/readme.go` and `p2p/sigpages.go` take for every ceremony document. See the
+	// tag-fate table's `partial` verdict and `PLAN-accessibility.md` D9.
 	return out.Bytes(), nil
 }
 
@@ -558,14 +562,18 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
 		return nil, err
 	}
-	// **No claim-stripping here, and the reason is the most expensive lesson in this plan.** An
-	// earlier version dropped the tagging claim after an n-up on the strength of
-	// `bytes.Count(pdf, "/StructElem")` reporting 0. pdfcpu writes the structure tree into a
-	// COMPRESSED OBJECT STREAM, so that count is 0 for every pdfcpu output whatever it contains.
-	// Parsed instead, the n-up output still carries its struct elements — on the minimal fixture and
-	// on a real LibreOffice document alike. There was never a false claim to strip, and the "fix"
-	// was destroying trees that had survived. See `structureCount`.
-	return out.Bytes(), nil
+	// **The one operation measured to violate law 1, so the one that routes through `honest`.**
+	// `api.NUp` composes its sheets as NEW page objects and carries the source catalog — and with it
+	// `/StructTreeRoot` and `/MarkInfo /Marked true` — onto them. Parsed: every struct element still
+	// points at a page that is no longer in the page tree, no composed sheet carries
+	// `/StructParents`, and veraPDF ua1 adds 7.1 t3 (*"Content shall be marked as Artifact or tagged
+	// as real content"*, 24 failed checks) over an input that passes it. The tree describes nothing
+	// that is in the document.
+	//
+	// `honest` is a POST-CONDITION, not a strip: it parses the result and acts only if it is
+	// orphaned. An earlier version stripped unconditionally on a byte count that could not see a
+	// compressed object stream, and destroyed trees that had survived — see `tagfate.go`.
+	return honest(out.Bytes())
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in

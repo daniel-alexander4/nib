@@ -1,9 +1,12 @@
 package pdfops
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"image"
+	"image/png"
 	"os"
 	"sort"
 	"strings"
@@ -17,36 +20,41 @@ import (
 // # The law
 //
 // **Every operation declares its tag fate.** One verdict per operation, in one table, and the guard
-// asserts that every operation *has* one. This is ADR-009's shape: the guard checks the door, not
-// the eight sites that happen to be right.
+// asserts both that every operation *has* one and that the one it has is **true**.
 //
-// # Two assertions, and they are different claims
+// # Three assertions, and they are different claims
 //
 //  1. **Completeness.** Every document-touching operation in this package appears in the table.
 //     Enumerated from the CODE with go/ast — not from a hand-written list, which is the acceptance
-//     criterion and also the only version that can catch an operation added tomorrow. P01.S02 is why
-//     it matters: that measurement found `Rotate` lying, and `Rotate` was on nobody's list.
-//  2. **Law 1 in force.** For every operation this guard can actually drive, the output does not
-//     claim tagging it has not got. That is `lies()` and it is deliberately not "the tree survived":
-//     an operation that drops everything passes, one that carries everything passes, and only the
-//     middle — a claim over no content — fails.
+//     criterion and also the only version that can catch an operation added tomorrow.
+//  2. **Correctness — and this half did not exist until 2026-09-11.** For every operation the guard
+//     can drive, the MEASURED fate must equal the declared one. Without it the table was a list of
+//     assertions nothing checked, and **19 of its 33 rows were wrong**: every one said `dropped`
+//     while the operation carried the tree intact. A census that cannot be wrong is not a census.
+//  3. **Law 1 in force.** No driven operation may emit an `orphaned` output — a tagging claim over
+//     a tree that describes nothing in the document. This is asserted over the whole population
+//     rather than at the one door that fixes it, so an operation that starts lying goes red whether
+//     or not anybody remembered to route it through `honest`.
 //
 // # What it cannot do, said rather than implied
 //
 // Not every operation can be driven from a table: some need a password, an attachment name, a font,
-// a second document. Those declare a verdict and a **reason they are not driven**, which the guard
+// a raster map. Those declare a verdict and a **reason they are not driven**, which the guard
 // requires to be non-empty — so an undriven operation is a recorded gap rather than a silent one.
 // The completeness half covers all of them regardless, and that is the half law 2 is about.
 
 // tagFate is one operation's declared verdict.
 type tagFate struct {
-	// verdict is `dropped` (the claim is removed with the content — law 1 satisfied honestly),
-	// `carried` (claim and structure both survive) or `untouched` (the operation cannot affect the
-	// claim, e.g. it reads and returns a report rather than a document).
+	// verdict is one of:
 	//
-	// **There is deliberately no verdict for "keeps the claim without the content".** Law 1 forbids
-	// that state, so it is not a fate an operation may declare — it is a failure, and `lies()` is
-	// what fails it.
+	//   - `carried`   — the claim and a live tree both survive, reaching every page with content.
+	//   - `dropped`   — the claim goes with the content it described. Honest: a visible loss.
+	//   - `partial`   — the claim and a live tree survive, but do not reach every page with content.
+	//   - `untouched` — the operation cannot affect the claim (it returns a report, not a document).
+	//
+	// **`orphaned` is not a fate an operation may declare.** It is law 1's violation — a claim over
+	// a tree that describes nothing in the document — and the guard fails it rather than recording
+	// it. `NUp` produced exactly that state and now routes through `honest`.
 	verdict string
 	// why is required when the operation is not driven below: an undriven operation is a declared
 	// gap, never a silent one.
@@ -56,72 +64,116 @@ type tagFate struct {
 }
 
 // tagFates is the table. Every document-touching operation in this package must appear.
+//
+// **Every driven verdict below was MEASURED, not reasoned.** The same measurement was taken twice —
+// against the hand-built fixture this file drives, and against a 4-page LibreOffice-produced
+// document with 45 struct elements — and the two agree operation for operation. The LibreOffice
+// figures are recorded at `PLAN-accessibility.md` D9.
 var tagFates = map[string]tagFate{
-	// ── Driven: these take a document and simple arguments, so the verdict is CHECKED, not declared.
-	"NUp":                 {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return NUp(b, 2, false) }},
-	"Booklet":             {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},
-	"Collect":             {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Collect(b, []string{"1"}) }},
-	"RemovePages":         {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
-	"Rotate":              {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Rotate(b, nil, 90) }},
-	"Crop":                {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Crop(b, [4]float64{0.05, 0.05, 0.05, 0.05}, nil) }},
-	"NormalizePageSizes":  {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return NormalizePageSizes(b) }},
-	"Optimize":            {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Optimize(b) }},
-	"InsertBlank":         {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertBlank(b, 1) }},
-	"DuplicatePage":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
-	"SetLang":             {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SetLang(b, "en-GB") }},
-	"StripMetadata":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
-	"StripActive":         {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
-	"RemoveFilesAndMedia": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},
-	"ClearFlags":          {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return ClearFlags(b) }},
-	"SplitPage":           {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
+	// ── CARRIED. The tree survives intact. Every one of these was declared `dropped` until the
+	// census was measured rather than asserted; the byte count that produced that declaration could
+	// not see a compressed object stream, so it reported a carried tree as an empty one.
+	"Rotate":              {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Rotate(b, nil, 90) }},
+	"Optimize":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Optimize(b) }},
+	"NormalizePageSizes":  {verdict: "carried", drive: func(b []byte) ([]byte, error) { return NormalizePageSizes(b) }},
+	"SetLang":             {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetLang(b, "en-GB") }},
+	"StripMetadata":       {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
+	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
+	"RemoveFilesAndMedia": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},
+	"ClearFlags":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return ClearFlags(b) }},
+	"SetOutline":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetOutline(b, []OutlineItem{{Title: "x", Page: 1}}) }},
+	"SetPageLabels": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return SetPageLabels(b, []PageLabelRange{{Start: 1, Style: "decimal"}})
+	}},
+	"StampPageNumbers": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampPageNumbers(b, PageNumberStyle{}) }},
+	"StampWatermark":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampWatermark(b, "DRAFT", WatermarkStyle{}) }},
+	"AddNotes":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddNotes(b, []Note{{Page: 1, X: 10, Y: 10, Text: "n"}}) }},
+	"AddAttachment":    {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddAttachment(b, "a.txt", []byte("hi")) }},
+	"StampImages": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return StampImages(b, []Stamp{{Page: 1, Rect: [4]float64{10, 10, 60, 60}, PNG: onePixelPNG()}})
+	}},
+	"SetFlags": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetFlags(b, []byte(`{"a":1}`)) }},
+	"AuthorForm": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return AuthorForm(b, []FormField{{Page: 1, Rect: [4]float64{10, 10, 200, 40}, Kind: "text", Name: "f1"}})
+	}},
+	"StampFields": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		o, _, e := StampFields(b, []Field{{Page: 1, Rect: [4]float64{10, 10, 200, 30}, Text: "t"}})
+		return o, e
+	}},
+	"RemoveAttachment": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		x, e := AddAttachment(b, "a.txt", []byte("hi"))
+		if e != nil {
+			return nil, e
+		}
+		return RemoveAttachment(x, "a.txt")
+	}},
+	// **`InsertBlank` is `carried`, and the reason is a rule about what counts as undescribed.** It
+	// adds a page with no content stream at all, and a page with nothing on it has nothing to tag —
+	// counting it as undescribed would make adding an empty page a law-1 violation. See
+	// `tagState.undescribed`.
+	"InsertBlank": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return InsertBlank(b, 1) }},
 
-	// ── Not driven, each with the reason. The completeness half still covers them.
-	"Encrypt":                {verdict: "dropped", why: "needs a password, and the encrypted output cannot be scanned for claim keys — the keys are inside the encrypted stream"},
-	"RemovePassword":         {verdict: "dropped", why: "needs an already-encrypted input, which the corpus does not carry"},
-	"AddAttachment":          {verdict: "dropped", why: "needs a file to attach"},
-	"RemoveAttachment":       {verdict: "dropped", why: "needs an input that already has an attachment"},
-	"ExtractAttachment":      {verdict: "untouched", why: "returns the attachment's bytes, not a document"},
-	"ExportFormJSON":         {verdict: "untouched", why: "returns a report, not a document"},
-	"ExportFormCSV":          {verdict: "untouched", why: "returns a report, not a document"},
-	"ExportFormXFDF":         {verdict: "untouched", why: "returns a report, not a document"},
-	"FlagsJSON":              {verdict: "untouched", why: "returns a report, not a document"},
-	"AuthorForm":             {verdict: "dropped", why: "needs a field spec"},
-	"AddNotes":               {verdict: "dropped", why: "needs note geometry"},
-	"SetOutline":             {verdict: "dropped", why: "needs an outline spec"},
-	"SetPageLabels":          {verdict: "dropped", why: "needs a label spec"},
-	"StampPageNumbers":       {verdict: "dropped", why: "needs a stamp spec"},
-	"StampImages":            {verdict: "dropped", why: "needs an image"},
-	"StampTextLayer":         {verdict: "dropped", why: "needs an OCR text layer"},
-	"StampWatermark":         {verdict: "dropped", why: "needs watermark text and options"},
-	"SplitRegions":           {verdict: "dropped", why: "needs region geometry"},
-	"ConvertPDFAGhostscript": {verdict: "dropped", why: "shells out to Ghostscript, which is optional and absent on most machines"},
+	// ── DROPPED. The claim goes with the content it described, which is law 1 satisfied honestly.
+	// These are the page-set and page-composition operations: the tree cannot survive a subset it no
+	// longer describes, and pdfcpu drops root and elements together rather than keeping a dangling
+	// claim. That is D9's question answered — for a KEPT subset the remap is still open.
+	"Collect":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Collect(b, []string{"1"}) }},
+	"RemovePages":   {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
+	"Crop":          {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Crop(b, [4]float64{0.05, 0.05, 0.05, 0.05}, nil) }},
+	"DuplicatePage": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
+	"SplitPage":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
+	"SplitRegions":  {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
+	"Booklet":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},
+	"InsertPDF":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1) }},
+	"CarryAttachments": {verdict: "dropped", drive: func(b []byte) ([]byte, error) {
+		o, _, e := CarryAttachments(b, untaggedFixture())
+		return o, e
+	}},
+	// **`NUp` is `dropped` because `honest` makes it so, and it is the reason `honest` exists.**
+	// `api.NUp` composes new page objects and carries the source catalog onto them, so the raw
+	// output claims tagging over a tree whose every element points at a page that is gone — the one
+	// measured `orphaned` output in this package. `TestNUpDoesNotClaimTaggingItHasNot` is the
+	// dedicated guard; this row keeps it in the census.
+	"NUp": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return NUp(b, 2, false) }},
 
-	// ── Found by the ENUMERATION, not by anyone's list — which is the acceptance criterion working.
-	// Each takes a second document, a data payload or returns more than bytes, so none is drivable
-	// from a one-argument table; every one still owes a verdict, and that is law 2's whole point.
-	"Append":           {verdict: "dropped", why: "needs a second document to append"},
-	"InsertPDF":        {verdict: "dropped", why: "needs a second document to insert"},
-	"FillFormJSON":     {verdict: "dropped", why: "needs a JSON field record"},
-	"FillFormXFDF":     {verdict: "dropped", why: "needs an XFDF field record"},
-	"SetFlags":         {verdict: "dropped", why: "needs a flags record"},
-	"StampFields":      {verdict: "dropped", why: "needs field geometry, and returns fit results beside the document"},
-	"ExtractImagesZip": {verdict: "untouched", why: "returns a ZIP of images, not a document"},
-	"PreparePDFA":      {verdict: "dropped", why: "returns blockers beside the document, so it does not fit the one-result driver"},
+	// ── PARTIAL. A live tree that does not reach every page with content.
+	//
+	// **`Append` is the whole `partial` category, and it is a DECISION that it is not enforced.**
+	// `api.MergeRaw` takes the first document's catalog whole, so appending an untagged document to
+	// a tagged one keeps the claim over a page nothing describes — while every original element
+	// stays anchored to a live page. Stripping would destroy a whole live tree to fix one page, and
+	// `p2p/readme.go` and `p2p/sigpages.go` take this path for every ceremony document, so the cure
+	// is worse than the disease at the only scale that matters. Recorded here, parked for Dan, and
+	// the argument-order half is asserted separately below.
+	"Append": {verdict: "partial", drive: func(b []byte) ([]byte, error) { return Append(b, untaggedFixture()) }},
 
-	// ── Found when the enumeration stopped requiring the first parameter to be NAMED `pdf`. Every
-	// one of these was hiding behind a different parameter name, and `RedactPages` is the one
-	// P01.S04 names explicitly — an operation escaping a law-2 census by what it calls its argument
-	// is the census failing, not the operation qualifying.
-	"RedactPages": {
-		verdict: "dropped",
-		why: "destroys page content by design — it replaces pages with rasters, so no structure it " +
-			"described can still be true. Dispositioned as a DECISION per P01.S04, not an oversight: " +
-			"a redaction that kept a tag tree would let a reader recover the shape of what was removed",
-	},
-	"CarryAttachments":   {verdict: "dropped", why: "takes two documents and moves attachments between them"},
+	// ── UNTOUCHED. These return a report, an archive or an attachment — not a document — so there is
+	// no output that could carry a claim.
+	"ExtractAttachment":  {verdict: "untouched", why: "returns the attachment's bytes, not a document"},
+	"ExportFormJSON":     {verdict: "untouched", why: "returns a report, not a document"},
+	"ExportFormCSV":      {verdict: "untouched", why: "returns a report, not a document"},
+	"ExportFormXFDF":     {verdict: "untouched", why: "returns a report, not a document"},
+	"FlagsJSON":          {verdict: "untouched", why: "returns a report, not a document"},
+	"ExtractImagesZip":   {verdict: "untouched", why: "returns a ZIP of images, not a document"},
 	"ConvertDocToPDF":    {verdict: "untouched", why: "its input is not a PDF — it produces one from an office document"},
 	"ConvertOfficeToPDF": {verdict: "untouched", why: "as ConvertDocToPDF"},
 	"CreateFromJSON":     {verdict: "untouched", why: "authors a document from a JSON spec; there is no input tagging to lose"},
+
+	// ── Declared but not driven, each with the reason. The completeness half still covers them.
+	"Encrypt":                {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},
+	"RemovePassword":         {verdict: "carried", why: "needs an already-encrypted input, which the corpus does not carry"},
+	"FillFormJSON":           {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the sibling `AuthorForm` drives the same write path and is measured"},
+	"FillFormXFDF":           {verdict: "carried", why: "as FillFormJSON"},
+	"StampTextLayer":         {verdict: "carried", why: "needs an OCR text layer and its fonts installed"},
+	"ConvertPDFAGhostscript": {verdict: "dropped", why: "shells out to Ghostscript, which is optional and absent on most machines"},
+	"PreparePDFA":            {verdict: "carried", why: "its output is unreadable to the oracle on the minimal fixture; measured `carried` on the LibreOffice document (D9)"},
+	"RedactPages": {
+		verdict: "dropped",
+		why: "needs a raster map. Dispositioned as a DECISION per P01.S04, not an oversight: it " +
+			"destroys page content by design — it replaces pages with rasters, so no structure it " +
+			"described can still be true, and a redaction that kept a tag tree would let a reader " +
+			"recover the shape of what was removed",
+	},
 }
 
 // TestEveryOperationDeclaresItsTagFate — law 2's completeness half, enumerated from the code.
@@ -140,10 +192,9 @@ func TestEveryOperationDeclaresItsTagFate(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Errorf("these operations take a document and return one, and declare no tag fate: %s.\n"+
-			"Law 2: every operation declares `dropped` / `carried` / `untouched`, in one table, and "+
-			"this guard asserts each one HAS a verdict. An operation with none is one nobody has "+
-			"asked what it does to a tagged document — which is how `Rotate` was found lying at "+
-			"P01.S02, on nobody's list.", strings.Join(missing, ", "))
+			"Law 2: every operation declares `carried` / `dropped` / `partial` / `untouched`, in one "+
+			"table, and this guard asserts each one HAS a verdict. An operation with none is one "+
+			"nobody has asked what it does to a tagged document.", strings.Join(missing, ", "))
 	}
 	// The other direction: a table row for an operation that no longer exists is a claim about
 	// code that is not there — the shape `/pending 423` closed on for exemption lists.
@@ -168,15 +219,24 @@ func TestEveryOperationDeclaresItsTagFate(t *testing.T) {
 			t.Errorf("%s is not driven by this guard and gives no reason — an undriven operation "+
 				"has to be a recorded gap, not an omission", name)
 		}
+		if f.verdict == "orphaned" {
+			t.Errorf("%s declares `orphaned`, which is not a fate an operation may have — it is "+
+				"law 1's violation, and the guard fails it rather than recording it", name)
+		}
 	}
 }
 
-// TestNoOperationClaimsTaggingItHasNot — law 1, in force, over every operation that can be driven.
-func TestNoOperationClaimsTaggingItHasNot(t *testing.T) {
+// TestEveryDeclaredFateIsTheMEASUREDFate — law 2's correctness half.
+//
+// **This is the assertion whose absence let 19 wrong verdicts sit in the table.** The declarations
+// were derived from a byte count that could not see a compressed object stream, every one of them
+// said `dropped`, and nothing ever compared a declaration to the document the operation produced.
+func TestEveryDeclaredFateIsTheMEASUREDFate(t *testing.T) {
 	src := taggedFixture()
-	if !claimsTagged(src) {
-		t.Fatal("setup: the corpus fixture is not tagged, so every assertion below would pass on a " +
-			"build that does nothing at all")
+	s := inspectTags(src)
+	if !s.claims() || s.anchored < 1 {
+		t.Fatal("setup: the corpus fixture is not a tagged document, so every assertion below would " +
+			"pass on a build that does nothing at all")
 	}
 	driven := 0
 	for name, f := range tagFates {
@@ -191,59 +251,84 @@ func TestNoOperationClaimsTaggingItHasNot(t *testing.T) {
 			continue
 		}
 		driven++
-		if lies(out) {
-			t.Errorf("%s emits a tagging claim over content nothing describes: %v.\n"+
-				"Law 1: no output may carry `/MarkInfo /Marked true` or a `/StructTreeRoot` over "+
-				"content that is neither tagged nor marked as an artifact. A visible loss is honest; "+
-				"a false claim is worse than no tagging, because a screen reader told a document is "+
-				"tagged stops reaching for the fallbacks it would otherwise use.", name, claims(out))
+		got := fate(out)
+		if got == "orphaned" {
+			t.Errorf("%s emits a tagging claim over a tree that describes nothing in the document: "+
+				"%v.\nLaw 1: no output may carry `/MarkInfo /Marked true` or a `/StructTreeRoot` "+
+				"over content that is neither tagged nor marked as an artifact. A visible loss is "+
+				"honest; a false claim is worse than no tagging, because a screen reader told a "+
+				"document is tagged stops reaching for the fallbacks it would otherwise use.",
+				name, claims(out))
+			continue
+		}
+		if got != f.verdict {
+			t.Errorf("%s declares %q and measures %q (%v).\nLaw 2 is not satisfied by a table of "+
+				"assertions — the declaration has to be TRUE. 19 rows here said `dropped` about "+
+				"operations that carry the tree intact, and nothing compared them to a document.",
+				name, f.verdict, got, claims(out))
 		}
 	}
-	if driven < 10 {
+	if driven < 20 {
 		t.Errorf("only %d operation(s) were actually driven; the rest errored out on the fixture, so "+
-			"this guard is reporting a law as upheld that it barely tested", driven)
+			"this guard is reporting a census as checked that it barely tested", driven)
 	}
 }
 
-// TestMergeDoesNotLieInEitherArgumentOrder — P01.S04's first clause, in the form D9 left it.
+// TestMergeDoesNotOrphanInEitherArgumentOrder — P01.S04's first clause, in the form the measurement
+// leaves it.
 //
-// The clause was written as *"`merge` preserves tagging in both argument orders"*, against a known
-// defect where tagging survived only when the tagged file came first. D9 overtook it: nothing
-// preserves tagging in any order. What survives is the honesty question, and the ORDER still matters
-// for it — a merge that dropped the claim only when the tagged document was first would leave the
-// other order lying, and one argument order is exactly how this was missed before.
-func TestMergeDoesNotLieInEitherArgumentOrder(t *testing.T) {
+// The clause was written as *"`merge` preserves tagging in both argument orders"*, against a defect
+// where tagging survived only when the tagged file came first. **That defect is real**: `MergeRaw`
+// takes the first document's catalog whole, so tagged-first keeps the claim and tagged-second drops
+// it. It was struck in error on 2026-09-11 when a byte count reported both orders as dropping.
+//
+// What the order must not do is ORPHAN. One argument order is exactly how this was missed before.
+func TestMergeDoesNotOrphanInEitherArgumentOrder(t *testing.T) {
 	tagged := taggedFixture()
 	plain, err := testpdf.Text("an untagged second document")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !claimsTagged(tagged) {
+	if s := inspectTags(tagged); !s.claims() || s.anchored < 1 {
 		t.Fatal("setup: the tagged fixture is not tagged, so neither order below tests anything")
 	}
 	for _, tc := range []struct {
 		name string
 		a, b []byte
+		want string
 	}{
-		{"tagged first", tagged, plain},
-		{"tagged second", plain, tagged},
+		{"tagged first", tagged, plain, "partial"},
+		{"tagged second", plain, tagged, "dropped"},
 	} {
 		out, aerr := Append(tc.a, tc.b)
 		if aerr != nil {
 			t.Errorf("%s: %v", tc.name, aerr)
 			continue
 		}
-		if lies(out) {
-			t.Errorf("merge with the %s emits a tagging claim over content nothing describes: %v. "+
-				"One argument order is how this was missed the first time", tc.name, claims(out))
+		if got := fate(out); got != tc.want {
+			t.Errorf("merge with the %s measures %q, want %q (%v). The argument order decides which "+
+				"catalog survives, and one order is how this was missed the first time",
+				tc.name, got, tc.want, claims(out))
 		}
 	}
 }
 
-// claimsTagged is the fixture's own precondition.
-func claimsTagged(pdf []byte) bool {
-	c := claims(pdf)
-	return c["/StructTreeRoot"] > 0 && c["/Marked"] > 0 && c["/StructElem"] > 0
+// onePixelPNG is the smallest image the stamp row can be driven with.
+func onePixelPNG() []byte {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		panic(err) // a fixture this package cannot build is a broken build, not a test failure
+	}
+	return buf.Bytes()
+}
+
+// untaggedFixture is the second document the merge and insert rows need.
+func untaggedFixture() []byte {
+	b, err := testpdf.Text("an untagged second document")
+	if err != nil {
+		panic(err) // a fixture this package cannot build is a broken build, not a test failure
+	}
+	return b
 }
 
 // documentTouchingOps enumerates, from the source, every exported function in this package whose

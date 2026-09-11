@@ -494,11 +494,12 @@ A PDF can carry **tags**: a structure a screen reader uses to read it in the rig
 heading from a paragraph, and navigate. Nib does not yet author them — that is real work in progress
 — and this section is about the half that is already true.
 
-**Nib will not claim tagging it has not got.** Most editing operations destroy a document's tag
-structure as a side effect of rewriting it, and the temptation is to leave the *claim* in place so
-the file still looks accessible. Nib removes the claim with the content, because a screen reader
-told a document is tagged stops reaching for the fallbacks it would otherwise use — a false claim is
-worse than a visible loss.
+**Nib will not claim tagging it has not got.** Most editing operations keep a document's tag
+structure — rotate, optimise, set the language, add a note or an attachment, stamp a watermark or
+page numbers, and the tags come through intact. The ones that rebuild the page set — extract pages,
+delete pages, crop, split, booklet — destroy the structure, and they remove the *claim* along with
+it rather than leaving the file looking accessible. A screen reader told a document is tagged stops
+reaching for the fallbacks it would otherwise use, so a false claim is worse than a visible loss.
 
 **And it tells you when it happens.** If you open a document that arrived with accessibility
 structure and an edit removes it, a notice stays on screen — not a message that flashes past — until
