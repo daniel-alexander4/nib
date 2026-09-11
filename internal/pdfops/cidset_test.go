@@ -147,3 +147,34 @@ func mdpdfRaw(t *testing.T) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// TestTheCIDSetTailIsSkippedForACoreFontSpec — the cost half of P04's phase close.
+//
+// `CreateFromJSON` is called once per signature page, and the tail is a parse-and-rewrite that more
+// than doubles it (3.8 ms → 8.7 ms, measured). A spec naming only Base-14 faces cannot produce a
+// `/CIDSet`, so the tail is asked of the spec rather than run unconditionally.
+//
+// **The assertion is over-inclusiveness, which is the direction that is safe.** A spec that merely
+// MENTIONS a user font anywhere must take the tail even if no page draws with it; the reverse — a
+// spec that draws with one and is skipped — is the failure that ships the clause violation.
+func TestTheCIDSetTailIsSkippedForACoreFontSpec(t *testing.T) {
+	body, _, embedded := AuthoredTextFaces()
+	if !embedded {
+		t.Skip("SKIP (not a pass): no embedded face is installed here, so a spec cannot name one")
+	}
+	for _, c := range []struct {
+		name string
+		spec string
+		want bool
+	}{
+		{"only Base-14 faces", `{"fonts":{"b":{"name":"Helvetica","size":11}},"pages":{}}`, false},
+		{"a user font under fonts", `{"fonts":{"b":{"name":"` + body + `","size":11}},"pages":{}}`, true},
+		{"a user font named anywhere at all", `{"pages":{"1":{"content":{"text":[` +
+			`{"value":"` + body + `","font":{"name":"Helvetica"}}]}}}}`, true},
+		{"unparseable", `{not json`, true},
+	} {
+		if got := specNamesAUserFont([]byte(c.spec)); got != c.want {
+			t.Errorf("%s: specNamesAUserFont = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

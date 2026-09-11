@@ -60,13 +60,18 @@ var authoringFontFiles = map[string]string{
 	"LiberationMono": "fonts/LiberationMono-Regular.ttf",
 }
 
-// authoringFaces is the base face set handed to `mdpdf`, or nil when any face is unreadable.
+// authoringFaces is the base face set handed to `mdpdf`.
 //
-// **Nil is a degrade, not an error, and `mdpdf` treats it as one**: a document set in core
-// fonts fails one PDF/UA rule, while refusing to convert fails the thing the user asked for.
-// The bytes are embedded in the binary, so in a built nib this cannot fail — the nil path
-// exists for the case that can, which is P04.S03's: an install into an unwritable font
-// directory, handled inside `mdpdf`.
+// **It always returns a set, never nil**, and an unreadable face arrives as a zero `mdpdf.Font`
+// inside it — which `Faces.valid()` reports as incomplete and `ConvertWithFaces` degrades on. The
+// degrade is all-or-nothing by design: a document half in Roboto and half in Helvetica still fails
+// PDF/UA 7.21.4.1 and is harder to reason about than either.
+//
+// The bytes are embedded in the binary, so an unreadable face means the `//go:embed` list and
+// `authoringFontFiles` have diverged — which `TestEveryVendoredAuthoringFontIsEmbeddedInTheBinary`
+// catches at tier 1. The failure this function's degrade actually exists for is the one that can
+// happen on a user's machine: an install into an unwritable font directory (P04.S03), which is
+// detected in `mdpdf` and announced by the callers.
 func authoringFaces() *mdpdf.Faces {
 	read := func(name string) mdpdf.Font {
 		bb, err := ocrFontFS.ReadFile(authoringFontFiles[name])

@@ -1,6 +1,9 @@
 package pdfops
 
 import (
+	"encoding/json"
+
+	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -38,6 +41,49 @@ import (
 // layer. It is deliberately not applied to documents nib merely rewrites — a `/CIDSet` in a user's
 // own document is their file's business, and an office conversion's fonts come from LibreOffice,
 // which does not produce this defect (measured: a converted document fails neither font clause).
+// specNamesAUserFont reports whether a pdfcpu "create" spec mentions any font pdfcpu has registered
+// as a user font — which is the only way its output can contain an embedded CID font, and therefore
+// the only way it can contain a `/CIDSet`.
+//
+// **It is deliberately over-inclusive.** Every string value anywhere in the spec is offered to
+// `font.IsUserFont`, rather than only the ones under a `fonts` key: a false positive costs one
+// parse-and-rewrite, while a false negative ships the clause violation this door exists to remove.
+// The asymmetry decides the shape.
+//
+// It exists because the tail is otherwise paid by every caller: measured, `CreateFromJSON` goes
+// from **3.8 ms to 8.7 ms** with it, and the overwhelming majority of specs name only Base-14 core
+// faces and have no `/CIDSet` to remove. A failure to parse answers **true** — if the spec cannot be
+// read here, pdfcpu's own reading of it is the authority and the safe answer is to check the output.
+func specNamesAUserFont(spec []byte) bool {
+	var v any
+	if err := json.Unmarshal(spec, &v); err != nil {
+		return true
+	}
+	found := false
+	var walk func(any)
+	walk = func(n any) {
+		if found {
+			return
+		}
+		switch x := n.(type) {
+		case string:
+			if font.IsUserFont(x) {
+				found = true
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	return found
+}
+
 func dropCIDSets(pdf []byte) ([]byte, error) {
 	return writeMutated(pdf, func(ctx *model.Context) error {
 		for _, e := range ctx.XRefTable.Table {
