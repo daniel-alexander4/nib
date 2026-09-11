@@ -250,3 +250,12 @@ home today.
   speaker is refused, not best-guessed. **Written because the code had been at 3 while ADR-007 and
   this index both said 2** (`/pending 420`) — and ADR-010 is the decision that established a bump is
   ADR-worthy, so its own successor going unrecorded is the defect.
+
+- **[ADR-031 — Nothing claims tagging it has not, and every operation declares its tag fate](031-nothing-claims-tagging-it-has-not.md)**
+  — a false tagging claim is worse than a visible loss, because a screen reader told a document is
+  tagged stops reaching for the fallbacks it would otherwise use. **Eight shipped operations were
+  emitting that lie** and none was on a list; law 2's guard found them on its first run by
+  enumerating the population from the code. The check is a POST-CONDITION at two write doors, so it
+  expires on its own the day the write path carries a tree (`/pending 467`) rather than needing
+  anyone to remember to delete it. Measured, not argued: a **no-op** pdfcpu write loses 14 struct
+  elements from a LibreOffice-tagged PDF while keeping the claim.
