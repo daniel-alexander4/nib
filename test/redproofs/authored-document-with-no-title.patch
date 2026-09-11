@@ -1,0 +1,15 @@
+diff --git a/internal/server/office.go b/internal/server/office.go
+index 740aefb..e661963 100644
+--- a/internal/server/office.go
++++ b/internal/server/office.go
+@@ -46,9 +46,7 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
+ 		// The converted document's title is the source document's name — the one thing here that
+ 		// identifies it, and what the user already calls it. A name that derives to nothing gets
+ 		// no title rather than a made-up one; see pdfops.TitleFromFilename.
+-		if t := pdfops.TitleFromFilename(header.Filename); t != "" {
+-			pdf, err = pdfops.SetTitle(pdf, t)
+-		}
++		_ = pdfops.TitleFromFilename(header.Filename)
+ 	}
+ 	if err != nil {
+ 		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {

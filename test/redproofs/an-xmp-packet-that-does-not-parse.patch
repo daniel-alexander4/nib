@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/title.go b/internal/pdfops/title.go
+index 0566ec6..0e170dd 100644
+--- a/internal/pdfops/title.go
++++ b/internal/pdfops/title.go
+@@ -78,7 +78,7 @@ type xmpAltSeq struct {
+ 
+ type xmpAltLi struct {
+ 	Lang  string `xml:"xml:lang,attr"`
+-	Value string `xml:",chardata"`
++	Value string `xml:",innerxml"`
+ }
+ 
+ // buildXMP renders the packet for one title.
