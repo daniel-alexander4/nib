@@ -87,6 +87,17 @@ type announceable interface {
 // nothing truthful to announce about it.
 var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it is not announced")
 
+// errDiscoveryOff is the refusal when the user has switched local-network discovery off. A distinct
+// error rather than `errLoopbackBind`'s: one is a fact about the socket and the other is a fact about
+// what this machine has been told to do, and a diagnostic that conflates them sends the reader to
+// the network stack for a settings answer.
+var errDiscoveryOff = errors.New("local network discovery is switched off on this machine")
+
+// errRendezvousOff is the DHT's counterpart. Separate from errDiscoveryOff because the two are
+// separate switches: a user may keep local-network signing and refuse the public DHT, which is the
+// configuration the pair exists to make possible.
+var errRendezvousOff = errors.New("remote peer rendezvous is switched off on this machine")
+
 // startAnnouncing begins announcing this user's name and the port ln is bound to.
 //
 // **It never fails the session.** A host with no usable interface, or a firewall that
@@ -114,7 +125,19 @@ var errLoopbackBind = errors.New("the armed listener is bound to loopback, so it
 // meaningful zero once already — `candidate.Source` accounted every unset producer to the typed
 // tier — and the fix there was a guard that every producer names it. Same here:
 // `TestEveryAnnouncerNamesItsHop`.
-func startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration, hop int) (*lanAnnouncer, error) {
+// **A METHOD since v1.129.5, so the advanced-features switch can be ASKED here rather than told at
+// three call sites** (`/pending 451`). The rule this function's own comment already states — *"the
+// rule lives HERE rather than at the call site because this is the door (ADR-009)"* — is what makes
+// this the right place for it: a guard at `watchLink` would say nothing about `answerHopSeekers` or
+// `runHopDial`, and those are exactly where a fourth caller comes from.
+//
+// Refusing here means the socket is never opened and the ticker never starts, which is what "off"
+// has to mean: `/pending 3` is open precisely because discovery announces a stable identifier every
+// 500 ms whether or not anyone is looking at the panel.
+func (s *Server) startAnnouncing(myCertPEM []byte, ln announceable, window time.Duration, hop int) (*lanAnnouncer, error) {
+	if !advancedOn(s.unlockedVault(), featDiscovery) {
+		return nil, errDiscoveryOff
+	}
 	name, err := ownName(myCertPEM)
 	if err != nil {
 		return nil, err
@@ -738,7 +761,7 @@ func (s *Server) answerHopSeekers(ctx context.Context, cert []byte, ln announcea
 		}
 	}
 	answerLoop(ctx, sock, pins, hop, time.Now, wanted, stop, sighted, func(candidate) bool {
-		ann, aerr := startAnnouncing(cert, ln, hopAnnounceWindow, hop)
+		ann, aerr := s.startAnnouncing(cert, ln, hopAnnounceWindow, hop)
 		if aerr != nil {
 			return false // loopback bind or no interface — never fatal to the arm
 		}
@@ -781,7 +804,7 @@ func (s *Server) watchLink(ctx context.Context, cer *ceremonyID, ln announceable
 	wanted func() bool) *lanAnnouncer {
 
 	var ann *lanAnnouncer
-	if a, err := startAnnouncing(cert, ln, lanAnnounceWindow, hopOf(cer)); err == nil {
+	if a, err := s.startAnnouncing(cert, ln, lanAnnounceWindow, hopOf(cer)); err == nil {
 		ann = a
 	}
 	if cer == nil || len(peerFP) == 0 {

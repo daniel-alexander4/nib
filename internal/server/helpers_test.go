@@ -123,6 +123,22 @@ func newClient(t *testing.T) *http.Client {
 
 // authedClient enrolls a freshly generated SSH key (first run), which unlocks the
 // vault, and returns a client plus the CSRF token to send on writes.
+//
+// # It also switches the advanced features ON, and that is a deliberate divergence
+//
+// Production does not: `/pending 451` made them **default off** (Dan, 2026-09-10), and a fresh
+// enrol leaves `Settings.Advanced` nil, which `advancedOn` reads as all-off. Thirty-eight tests in
+// this package are about convening, accepting, arming, leaving and delivering — none of them is
+// about the switch — and without this every one of them would be asserting the 403 the switch
+// returns while reporting it as a fact about ceremonies.
+//
+// **The default is not thereby untested.** `advanced_test.go` puts the setting back to nil with
+// `setAdvancedNil` and drives the refusals explicitly, which is the right home for the claim: a
+// helper that quietly reached the default would leave no single place where "off is the default"
+// is written down and checked.
+//
+// Timestamping is included for the same reason — `timestamp_test.go` and the doc-route tests
+// exercise the stamping path, not the switch.
 func authedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	t.Helper()
 	c := newClient(t)
@@ -140,6 +156,22 @@ func authedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	json.NewDecoder(resp.Body).Decode(&st)
 	if st.State != "ready" || st.CSRF == "" {
 		t.Fatalf("enroll state = %q csrf=%q, want ready with csrf", st.State, st.CSRF)
+	}
+	// Switched on through the REAL route rather than by writing the vault directly: the helper
+	// then stands for a user who went to Settings and ticked the boxes, which is the state these
+	// tests mean by "a machine set up for ceremonies".
+	on := advancedRequest{Ceremony: true, Discovery: true, Rendezvous: true, Timestamp: true}
+	body2, _ := json.Marshal(settingsRequest{Advanced: &on})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/settings", bytes.NewReader(body2))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", st.CSRF)
+	req.Header.Set("Origin", ts.URL)
+	if r2, err2 := c.Do(req); err2 == nil {
+		r2.Body.Close()
+		if r2.StatusCode != http.StatusOK {
+			t.Fatalf("enabling the advanced features returned %d — every ceremony test in this "+
+				"package would then be asserting the switch's 403", r2.StatusCode)
+		}
 	}
 	return c, st.CSRF
 }

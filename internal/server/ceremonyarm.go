@@ -161,6 +161,13 @@ func (s *Server) rearmCeremoniesPreferring(v *vault.Vault, prefer string) {
 	if v == nil {
 		return
 	}
+	// **The ceremony switch reaches the SWEEP, not only the routes** (`/pending 451`). D14 made
+	// accepting an invitation arm, and this renews that arm at every unlock — so a switch that
+	// only refused convene and accept would leave a machine listening for hops on a feature its
+	// user has turned off, which is the hidden-button-only shape the switch exists to refuse.
+	if !advancedOn(v, featCeremony) {
+		return
+	}
 	stored, err := ceremony.ListStored(defaultOutputDir(), time.Now())
 	if err != nil {
 		return
@@ -248,6 +255,7 @@ func (s *Server) rearmCeremoniesPreferring(v *vault.Vault, prefer string) {
 			continue
 		}
 		cer, cerr := ceremonyFor(text, cert, key, peerFP)
+		cer = s.gateRendezvous(cer)
 		if cerr != nil || cer == nil {
 			continue
 		}

@@ -641,6 +641,7 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 // scope already says "caveat 7 decides where the request is sent FROM".
 func (s *Server) dialerCeremony(text string, cert, key, peerFP []byte) (*ceremonyID, error) {
 	cer, err := ceremonyFor(text, cert, key, peerFP)
+	cer = s.gateRendezvous(cer)
 	if err != nil {
 		return nil, err
 	}

@@ -67,6 +67,14 @@ start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   local csrf; csrf=$(python3 -c "import json;print(json.load(open('$SP/$n.enroll.json')).get('csrf',''))")
   [ -n "$csrf" ] || { echo "$n: no csrf: $(cat "$SP/$n.enroll.json")"; exit 1; }
   eval "${n}_BASE='$base'; ${n}_CSRF='$csrf'; ${n}_HOME='$h'"
+  # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and a ceremony is
+  # one of them. A fresh instance therefore refuses convene and accept with 403 until its user
+  # turns them on — which is exactly what this does, standing for a user who went to
+  # Settings → Advanced features. Without it every scenario below fails on the switch and reports
+  # it as a ceremony defect.
+  curl -s -o /dev/null -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/settings" \
+    -H 'content-type: application/json' -H "X-CSRF-Token: $csrf" -H "Origin: $base" \
+    -d '{"advanced":{"ceremony":true,"discovery":true,"rendezvous":true,"timestamp":true}}'
 }
 post(){ # $1=name $2=path $3=json -> body in $SP/resp.json, prints status
   local n=$1 b c; eval "b=\$${n}_BASE; c=\$${n}_CSRF"

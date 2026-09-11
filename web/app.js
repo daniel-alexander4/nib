@@ -84,6 +84,9 @@ const els = {
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   fitPageBtn: $('fitPageBtn'), actualSizeBtn: $('actualSizeBtn'),
   viewStandardBtn: $('viewStandardBtn'), viewContinuousBtn: $('viewContinuousBtn'),
+  advCeremonyChk: $('advCeremonyChk'), advDiscoveryChk: $('advDiscoveryChk'),
+  advRendezvousChk: $('advRendezvousChk'), advTimestampChk: $('advTimestampChk'),
+  advError: $('advError'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   quitBtn: $('quitBtn'),
   themeToggle: $('themeToggle'),
@@ -421,6 +424,9 @@ function applyStatus(st) {
     // per document — and `|| 'pages'` is the same absent-means-default rule the server
     // stores by, kept in one shape on both sides.
     applyViewLayout(st.viewLayout || 'pages', false);
+    // Nil is what a vault answers before the seed has run, and it means all-off — the same
+    // reading `advancedOn` gives it on the server, kept identical on both sides.
+    applyAdvanced(st.advanced || {});
     // Saved highlight palette (most-recently-used colors); fall back to defaults.
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
@@ -8887,6 +8893,94 @@ async function saveSettings(body) {
   } catch { toast('Could not save settings'); }
 }
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
+
+// ── Advanced features (`/pending 451`) ───────────────────────────────────────
+//
+// Dan, 2026-09-10: *"default off. menus hidden."* Both halves, and the order between them matters:
+// **the server is what stops the function**, and this file only stops offering it. A surface hidden
+// while its subsystem still ran would be the exact shape `/pending 378` and `/pending 3` are about —
+// a control removed and a machine still announcing.
+//
+// So nothing here is a security boundary. It is the product telling the truth about what it is
+// currently willing to do.
+
+// advanced is what the server last said. All-off until `/api/status` answers, which matches the
+// server's own reading of a vault that has never been asked.
+let advanced = { ceremony: false, discovery: false, rendezvous: false, timestamp: false };
+
+// ADVANCED_SURFACES maps each feature to the things that disappear with it.
+//
+// **Cut at PANEL and COMMAND granularity, never at the MODE.** The ceremony lives inside the
+// `collaborate` mode, and that mode also carries co-signing and Simple Sign — neither of which is a
+// ceremony. Hiding the mode tab would take ordinary two-party signing away with it, which is the
+// collision the design round could not see until the two decisions were laid side by side.
+const ADVANCED_SURFACES = {
+  ceremony: ['#ceremony', '.tab[data-panel="ceremony"]', '.sbhead[data-panel="ceremony"]'],
+  // Discovery and rendezvous have no surface of their own: they are how the ceremony reaches a
+  // peer, and the ceremony's own panel is where a user meets them. Listed explicitly as empty so
+  // the map stays a complete statement about all four rather than a partial one.
+  discovery: [],
+  rendezvous: [],
+  timestamp: ['#timestampBtn', '#timestampVerifyBtn', '[data-forward="timestampVerifyBtn"]'],
+};
+
+// applyAdvanced writes the server's answer onto the checkboxes and the surfaces.
+function applyAdvanced(state, fromServer = true) {
+  advanced = {
+    ceremony: !!state.ceremony, discovery: !!state.discovery,
+    rendezvous: !!state.rendezvous, timestamp: !!state.timestamp,
+  };
+  const box = { ceremony: els.advCeremonyChk, discovery: els.advDiscoveryChk, rendezvous: els.advRendezvousChk, timestamp: els.advTimestampChk };
+  for (const [feat, el] of Object.entries(box)) if (el) el.checked = advanced[feat];
+  for (const [feat, sels] of Object.entries(ADVANCED_SURFACES)) {
+    for (const sel of sels) {
+      for (const el of all(sel)) {
+        // `hidden`, not a class: `[hidden] { display: none !important }` is this stylesheet's own
+        // rule and beats any class on cascade origin — the fact `/pending 415` turned on.
+        el.hidden = !advanced[feat];
+      }
+    }
+  }
+  // A panel that just disappeared cannot stay the selected one, or the mode shows an empty column.
+  if (typeof syncSidebarForMode === 'function') syncSidebarForMode();
+  if (fromServer && els.advError) els.advError.hidden = true;
+}
+
+// saveAdvanced sends all four together — see `advancedRequest` for why it is one object.
+//
+// **The server's answer is applied, not the request**, because the server can REFUSE: switching
+// ceremonies off while a proceeding is live is a 409, and the sentence it returns names what is
+// running. Echoing the request would leave a checkbox saying off while the feature is on.
+async function saveAdvanced() {
+  const want = {
+    ceremony: !!(els.advCeremonyChk && els.advCeremonyChk.checked),
+    discovery: !!(els.advDiscoveryChk && els.advDiscoveryChk.checked),
+    rendezvous: !!(els.advRendezvousChk && els.advRendezvousChk.checked),
+    timestamp: !!(els.advTimestampChk && els.advTimestampChk.checked),
+  };
+  try {
+    const res = await apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ advanced: want }),
+    });
+    if (!res.ok) {
+      if (els.advError) {
+        els.advError.textContent = await errText(res, 'Could not change that setting.');
+        els.advError.hidden = false;
+      }
+      applyAdvanced(advanced, false); // put the boxes back to what the machine actually holds
+      return;
+    }
+    applyAdvanced(want);
+  } catch {
+    if (els.advError) { els.advError.textContent = 'Could not change that setting.'; els.advError.hidden = false; }
+    applyAdvanced(advanced, false);
+  }
+}
+
+for (const el of [els.advCeremonyChk, els.advDiscoveryChk, els.advRendezvousChk, els.advTimestampChk]) {
+  if (el) el.onchange = saveAdvanced;
+}
 
 // Appearance: dark (Mocha, default) or light (Latte). Drives a data attribute on <html> (not
 // body, where the layout attr lives) so the palette override reaches html's own background; the

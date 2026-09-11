@@ -2331,6 +2331,7 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cer, cerr := ceremonyFor(invText, cert, key, peerFP)
+	cer = s.gateRendezvous(cer)
 	if cerr != nil && !errors.Is(cerr, errNoCeremony) {
 		httpError(w, http.StatusBadRequest, cerr.Error())
 		return
@@ -3042,7 +3043,7 @@ func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vau
 		// Never fatal, exactly as on the arm side: a host with no usable interface, or a loopback
 		// bind, still races the DHT and its own accept. `startAnnouncing` refuses a loopback bind
 		// BY NAME, which is why this is silent on the tier-4 harness and live in the namespace.
-		if ann, aerr := startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, hopAnnounceWindow, hopOf(cer)); aerr == nil {
+		if ann, aerr := s.startAnnouncing(cert, quicEndpointAnnounce{hl.Addr()}, hopAnnounceWindow, hopOf(cer)); aerr == nil {
 			defer ann.Close()
 		}
 	}

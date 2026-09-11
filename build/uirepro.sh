@@ -145,6 +145,18 @@ curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
   echo "FAIL: could not enroll a key" >&2; exit 1
 }
 
+# **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and the ceremony
+# panel is hidden while its feature is. Several files here drive that panel, so the harness sets the
+# machine up the way a user who wanted it would — through the real route, with the CSRF token the
+# enrol just issued.
+UI_CSRF="$(curl -fsS "$BASE/api/status" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p')"
+[ -n "$UI_CSRF" ] || { echo "FAIL: no CSRF token after enrolling" >&2; exit 1; }
+curl -fsS -o /dev/null -X POST "$BASE/api/settings" -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $UI_CSRF" -H "Origin: $BASE" \
+  -d '{"advanced":{"ceremony":true,"discovery":true,"rendezvous":true,"timestamp":true}}' || {
+  echo "FAIL: could not switch the advanced features on" >&2; exit 1
+}
+
 # The locked server, started AFTER the enrol above so its own data dir is untouched by it.
 # Its ~/nib points at the unlocked server's, so a later locked test CAN read a ceremony the other
 # process wrote. `lockedpanel.test.mjs` does not use it — it routes the list — because what tier 3

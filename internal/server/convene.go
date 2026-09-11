@@ -82,6 +82,12 @@ type conveneResponse struct {
 }
 
 func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
+	// **The ceremony switch, at the door that CREATES a proceeding** (`/pending 451`). Convening
+	// and accepting are the two ways this machine becomes party to one; the sweep that keeps a
+	// proceeding live is gated in `rearmCeremonies`, and between them there is no way in.
+	if refuseIfOff(w, s.unlockedVault(), featCeremony) {
+		return
+	}
 	v := vaultFrom(r)
 	doc, ok := s.resolveDoc(w, r)
 	if !ok {

@@ -144,10 +144,24 @@ func (s *Server) adoptVault(v *vault.Vault) {
 				// belongs to the delivery sweep, one without belongs to this — so the order
 				// between them is not load-bearing, and it is stated so the next reader does
 				// not have to work that out.
+				// **The seed runs BEFORE the sweep, and the order is the point** (`/pending 451`).
+				// `rearmCeremonies` refuses when the ceremony feature is off, and on the first
+				// unlock after upgrading the answer is whatever `SeedAdvanced` is about to write —
+				// so sweeping first would refuse every ceremony on the one run where the seed
+				// exists to keep a live one alive.
+				s.SeedAdvanced(v)
 				s.rearmCeremonies(v)
 			}()
 		}
 	}
+}
+
+// advancedStatus is the four switches as the client reads them.
+type advancedStatus struct {
+	Ceremony   bool `json:"ceremony"`
+	Discovery  bool `json:"discovery"`
+	Rendezvous bool `json:"rendezvous"`
+	Timestamp  bool `json:"timestamp"`
 }
 
 // requireUnlocked guards protected routes: the vault must be open, and writes
@@ -226,20 +240,25 @@ func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
 // --- status ------------------------------------------------------------------
 
 type statusResponse struct {
-	State                 string   `json:"state"` // ready | setup | migrate | key-missing
-	CSRF                  string   `json:"csrf,omitempty"`
-	Candidates            []string `json:"candidates,omitempty"`            // detected ~/.ssh keys
-	DefaultKeyPath        string   `json:"defaultKeyPath,omitempty"`        // where a new key would be created
-	KeyPath               string   `json:"keyPath,omitempty"`               // enrolled key path (key-missing)
-	AutoUpdate            bool     `json:"autoUpdate"`                      // run the startup update check (effective: env AND user preference)
-	UpdateCheckLocked     bool     `json:"updateCheckLocked"`               // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
-	Appearance            string   `json:"appearance,omitempty"`            // dark | light (saved theme preference)
-	CardHue               string   `json:"cardHue,omitempty"`               // all | blue|mauve|green|peach|red|yellow (sidebar card colours)
-	ViewLayout            string   `json:"viewLayout,omitempty"`            // pages (default, sent as empty) | continuous
-	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
-	Version               string   `json:"version"`                         // running build, shown in the About dialog
-	Ghostscript           bool     `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
-	LibreOffice           bool     `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
+	State             string   `json:"state"` // ready | setup | migrate | key-missing
+	CSRF              string   `json:"csrf,omitempty"`
+	Candidates        []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
+	DefaultKeyPath    string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
+	KeyPath           string   `json:"keyPath,omitempty"`        // enrolled key path (key-missing)
+	AutoUpdate        bool     `json:"autoUpdate"`               // run the startup update check (effective: env AND user preference)
+	UpdateCheckLocked bool     `json:"updateCheckLocked"`        // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
+	Appearance        string   `json:"appearance,omitempty"`     // dark | light (saved theme preference)
+	CardHue           string   `json:"cardHue,omitempty"`        // all | blue|mauve|green|peach|red|yellow (sidebar card colours)
+	ViewLayout        string   `json:"viewLayout,omitempty"`     // pages (default, sent as empty) | continuous
+	// Advanced is which exotic subsystems are switched on. **Always sent, never omitted** — the
+	// client hides a surface when a feature is off, and an absent object would be read as "the
+	// server did not say", which is a third state nothing implements. Nil before the seed runs,
+	// which the client treats as all-off, matching `advancedOn`.
+	Advanced              *advancedStatus `json:"advanced"`
+	RecentHighlightColors []string        `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
+	Version               string          `json:"version"`                         // running build, shown in the About dialog
+	Ghostscript           bool            `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
+	LibreOffice           bool            `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -258,6 +277,14 @@ func (s *Server) currentStatus() statusResponse {
 		st.Appearance = set.Appearance
 		st.CardHue = set.CardHue
 		st.ViewLayout = set.ViewLayout
+		if set.Advanced != nil {
+			st.Advanced = &advancedStatus{
+				Ceremony:   set.Advanced.Ceremony,
+				Discovery:  set.Advanced.Discovery,
+				Rendezvous: set.Advanced.Rendezvous,
+				Timestamp:  set.Advanced.Timestamp,
+			}
+		}
 		st.RecentHighlightColors = set.RecentHighlightColors
 		if set.DisableAutoUpdate {
 			st.AutoUpdate = false

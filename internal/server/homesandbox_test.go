@@ -59,7 +59,15 @@ func TestNoTestWritesIntoTheDevelopersRealHome(t *testing.T) {
 	// writes a test whose only route to the home is the fixture — which is the shape that cost
 	// 532 ceremonies.
 	reaches := map[string]bool{"defaultOutputDir": true, "ceremonyOnDisk": true}
-	sandbox := map[string]bool{"startServerWith": true, "openTestServer": true, "startServer": true}
+	// **The list is of helpers that sandbox HOME, and a helper that calls one of them counts.**
+	// `seedableVault` (advanced_test.go) is `startServerWith` + `authedClient`, so a test that opens
+	// with it is sandboxed — but the scan is one level and would otherwise report it. Named here
+	// rather than taught to follow calls, because one level is what makes this guard cheap and a
+	// call graph is what makes a guard stop being read.
+	sandbox := map[string]bool{
+		"startServerWith": true, "openTestServer": true, "startServer": true,
+		"seedableVault": true,
+	}
 
 	fset := token.NewFileSet()
 	var offenders []string

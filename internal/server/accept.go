@@ -77,6 +77,10 @@ type acceptResponse struct {
 }
 
 func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
+	// The ceremony switch's other creating door — see handleCeremonyConvene.
+	if refuseIfOff(w, s.unlockedVault(), featCeremony) {
+		return
+	}
 	v := vaultFrom(r)
 	var req acceptRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {

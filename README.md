@@ -430,6 +430,27 @@ become that colour in six steps.
 until a check runs, green when you are on the latest release, and red when a newer one
 exists — hover it to see which, and click to download.
 
+### Advanced features — off until you ask
+Nib is a PDF editor first. Four of its features reach the network or the local link — **signing
+ceremonies**, **finding peers on this network**, **reaching peers over the internet**, and
+**timestamping** — and every one of them is **off on a new installation**. Turn on what you want
+under *Settings → Advanced features*.
+
+**Off means the function stops, not that its button is hidden.** Switching discovery off closes the
+announcing socket; switching the rendezvous off means nothing contacts the DHT; switching ceremonies
+off stops the sweep that listens for your turn, not just the panel that shows it. The panels and
+buttons go too, so the app does not offer you a flow it will refuse.
+
+Two things worth knowing. **A ceremony already under way keeps working** — an installation that
+upgrades with a live proceeding on it comes up with the three features that proceeding needs already
+on, because stopping it silently and hiding the panel that would explain why is not a thing this
+program will do to you. And **you cannot switch ceremonies off while one is still running**: Nib
+refuses and tells you what is going on, because there is no way to record "ended because the user
+turned the feature off" that would be honest to the other parties.
+
+The `nib timestamp` and `nib watch` subcommands are not affected — they run without your vault, so
+there is no setting for them to read, and typing a command is already an explicit act.
+
 **How the pages are laid out — the View controls**, at the right edge of the toolbar. Two
 layouts: **Pages**, the default, which draws each page separately with a break between them, and
 **Continuous**, which joins them into one strip so the document scrolls as a single piece. The
@@ -855,12 +876,12 @@ background, and Nib has no telemetry, analytics or crash reporting of any kind.
 |---|---|---|
 | At startup, unless turned off | A version query | GitHub |
 | You click the version pill to update | The download of the new build | GitHub |
-| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
-| **You verify a timestamp** | The transaction/block lookup for the proof | up to three public block explorers |
+| **You timestamp a document** (`nib timestamp`, or Finalize with timestamping) — in the app, unless turned off | A **SHA-256 of the document** — never the document | four public OpenTimestamps calendar servers |
+| **You verify a timestamp** — in the app, unless turned off | The transaction/block lookup for the proof | up to three public block explorers |
 | **You Finalize with an RFC-3161 timestamp authority** | A **digest of the signature** | the TSA URL *you* typed |
 | **You open a document by URL** | The request for that document | the host you named |
 | **You run a co-signing session** | The document itself, to your counterpart, over a channel pinned to their key | the peer you pinned — and anyone who scans the port can see it is open |
-| **You arm a ceremony with an invitation** | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
+| **You arm a ceremony with an invitation**, unless turned off | Queries that reveal this machine's public IP, and — **only if the local network does not answer first** — one small encrypted record naming the address you can be reached at | strangers on the BitTorrent DHT |
 | **You run `nib rendezvous`** | Queries that reveal this machine's public IP — and with `--self-test`, one small encrypted record too | strangers on the BitTorrent DHT |
 | Never, under any circumstances | Telemetry, analytics, crash reports, usage data, your document contents to *us* | — |
 

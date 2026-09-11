@@ -446,6 +446,24 @@
       <div class="tbgroup" data-label="Updates" data-fold="3">
 <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
             </div>
+      <!-- Advanced features (`/pending 451`). Dan, 2026-09-10: "default off. menus hidden."
+
+           **Off means the function STOPS, not that its button is hidden.** Each of these is checked
+           at the door that does the thing — the announcer's constructor, the DHT bootstrap, the arm
+           sweep, the two timestamp routes — and the hiding below is the second half, never the whole
+           of it. This repo has shipped the hidden-button-only shape twice (`/pending 378`, `3`).
+
+           Checkboxes rather than the Colours radio list, because these are four independent
+           switches and not one choice of seven — the distinction ADR-021 drew. -->
+      <div class="tbgroup" data-label="Advanced features" data-fold="7">
+<p class="libhint">Nib is a PDF editor first. These four reach the network or the local link, and
+  each is off until you ask for it. Switching one off stops it — it is not just hidden.</p>
+<label class="menuitem"><input id="advCeremonyChk" type="checkbox" /> Signing ceremonies</label>
+      <label class="menuitem"><input id="advDiscoveryChk" type="checkbox" /> Find peers on this network</label>
+      <label class="menuitem"><input id="advRendezvousChk" type="checkbox" /> Reach peers over the internet</label>
+      <label class="menuitem"><input id="advTimestampChk" type="checkbox" /> Timestamping (OpenTimestamps)</label>
+      <p id="advError" class="cererror" hidden></p>
+            </div>
       <div class="tbgroup" data-label="Appearance" data-fold="4">
 <!-- The same sun/moon toggle that lives in the status cluster (ADR-021), forwarded. In the
      dropdown this was `.foldedonly` — shown only where the cluster had folded away — and here it
