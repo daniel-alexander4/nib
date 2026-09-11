@@ -3,6 +3,7 @@ package pdfops
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,7 +102,17 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 		// import it, and a package that reached in here would drag Nib's OCR machinery
 		// along with it. Nib is the caller that already has the fonts, so Nib supplies
 		// them.
-		out, err := mdpdf.ConvertWithFaces(data, authoringFaces(), markdownFallbackFonts())
+		faces := authoringFaces()
+		// **A degrade must not be silent.** mdpdf falls back to the Base-14 core fonts when the
+		// faces cannot be installed — a read-only or full user-font directory — and a document in
+		// core fonts looks entirely correct while failing PDF/UA 7.21.4.1. mdpdf has no logger by
+		// design, so the notice is raised here, where there is one. Asking twice costs a map
+		// lookup per face: installing an already-installed face short-circuits.
+		if ferr := mdpdf.InstallFaces(faces); ferr != nil {
+			log.Printf("markdown: the authoring faces could not be installed, so this document is "+
+				"set in Base-14 core fonts and will not embed them: %v", ferr)
+		}
+		out, err := mdpdf.ConvertWithFaces(data, faces, markdownFallbackFonts())
 		if err != nil {
 			return nil, err
 		}

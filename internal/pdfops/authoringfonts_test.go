@@ -2,12 +2,15 @@ package pdfops
 
 import (
 	"bytes"
+	"log"
+	"os"
 	"strings"
 	"testing"
 
 	"nib/mdpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -114,5 +117,49 @@ func TestEveryVendoredAuthoringFontIsEmbeddedInTheBinary(t *testing.T) {
 		if len(bb) < 10000 {
 			t.Errorf("%s is only %d bytes — that is not a TTF", name, len(bb))
 		}
+	}
+}
+
+// TestADegradedConversionSaysSo — `PLAN-accessibility.md` P04.S03's "and saying so".
+//
+// A document set in core fonts looks entirely correct and fails PDF/UA 7.21.4.1. If the degrade is
+// silent, the only way anyone learns of it is by validating a document — which is the situation the
+// whole phase exists to end.
+func TestADegradedConversionSaysSo(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("SKIP (not a pass): running as root ignores the directory mode this depends on")
+	}
+	model.NewDefaultConfiguration()
+	orig := font.UserFontDir
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { font.UserFontDir = orig; os.Chmod(dir, 0o700) })
+	font.UserFontDir = dir
+
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	out, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	if err != nil {
+		t.Fatalf("the conversion failed instead of degrading: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("the degrade produced nothing")
+	}
+	if !strings.Contains(buf.String(), "Base-14 core fonts") {
+		t.Errorf("the degrade was silent. Logged:\n%s", buf.String())
+	}
+	// And the degrade is real, not just announced: the document must actually name core fonts.
+	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	if rerr != nil {
+		t.Fatalf("re-read: %v", rerr)
+	}
+	if missing := nonEmbeddedFonts(ctx.XRefTable); len(missing) == 0 {
+		t.Error("the log says the document degraded and its fonts are all embedded — one of the " +
+			"two is lying, and a message nobody can check is worse than none")
 	}
 }

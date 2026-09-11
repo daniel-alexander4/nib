@@ -1284,17 +1284,41 @@ Acceptance:
   `TestPdfcpuStillWritesTheCIDSetTheDoorRemoves` goes red-as-a-skip when a later pdfcpu stops
   writing the stream, so the door gets retired rather than carried forever.
 
-#### P04.S03 — the font install becomes load-bearing, and an unwritable `$HOME` must still work
+#### P04.S03 — the font install becomes load-bearing, and an unwritable `$HOME` must still work *(done 2026-09-11, v1.129.42)*
 Scope: today a failed font install costs **non-Latin OCR only**, and `InstallOCRFonts` degrades
 rather than blocking startup (the `fault.Catch` block at `ocrfonts.go:160-171`, written after a
-read-only `$HOME` crashed nib at startup). After S01 it costs **every authored document's text**,
-and `CreateFromJSON` *errors* on an unknown font rather than substituting — so the readme and the
-signature pages would fail to render at all. Refs D7.
+read-only `$HOME` crashed nib at startup). After S01 it costs **every authored document's text**.
+Refs D7.
+
+**(grill, 2026-09-11 — confirmed, and the defect is OLDER than the slice that exposed it.)**
+Measured with the pdfcpu user-font directory at mode 0500: every Markdown conversion returned
+`install fallback font Roboto-Regular: permission denied` and produced nothing. **That was already
+true of the fallback pool before the base faces existed** — `markdownFallbackFonts()` supplies
+thirteen faces on every conversion, and `installFallbacks` returned the first failure — so P04 did
+not introduce this. P04 is what made it visible.
+
+**The fix turns on one distinction: whose fault is it.** An unwritable font directory is a
+condition on the user's machine and must cost them a prettier document, never the document. A face
+declared with the wrong name is a bug in nib that must not be papered over into silently-worse
+output on every machine. `ErrFaceMisdeclared` is a sentinel rather than a message so the two can be
+told apart — and it is the same error that already caught `LiberationMono-Regular` in S01.
+
+**A silent degrade is indistinguishable from working**, so the notice is raised in `pdfops`, where
+there is a logger. `mdpdf` deliberately has none: it lives at the repo root so other projects can
+import it, and a logging dependency would travel with it. `mdpdf.InstallFaces` exists for exactly
+this — installing an already-installed face is a map lookup, so asking twice costs nothing.
+
 Acceptance:
-- With the user font dir unwritable, authored output still renders — degraded to core fonts and
-  **saying so**, never failing.
-- The degrade is exercised, not reasoned: the test makes the directory unwritable.
-- A document that degraded is not claimed to embed its fonts (ADR-031 law 1's shape).
+- ✅ With the user font dir unwritable, authored output still renders — degraded to core fonts and
+  saying so, never failing.
+- ✅ The degrade is exercised, not reasoned: the test `chmod`s the directory to 0500, and **asserts
+  an install into it actually fails before grading anything** — otherwise the whole test passes for
+  the wrong reason. It skips loudly under `root`, which ignores the mode.
+- ✅ A document that degraded is not claimed to embed its fonts. The message and the document are
+  cross-checked against each other in one test: the log must say it degraded **and**
+  `nonEmbeddedFonts` must agree, because a message nobody can check is worse than none. *(That
+  cross-check arm is not independently probed: the state "the notice fired and the fonts embedded
+  anyway" is unreachable — using a face whose install failed panics inside pdfcpu.)*
 
 #### P04.S04 — a document nib did not author is refused for UA export, with the reason named
 Scope: `nonEmbeddedFonts()` already exists and `pdfaBlockers` already refuses-rather-than-mislabels;
