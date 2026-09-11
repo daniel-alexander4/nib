@@ -15,6 +15,9 @@ type settingsRequest struct {
 	CardHue               *string   `json:"cardHue"`
 	CheckUpdatesOnStartup *bool     `json:"checkUpdatesOnStartup"`
 	RecentHighlightColors *[]string `json:"recentHighlightColors"` // whole-list replace, newest first
+	// ViewLayout is "pages" or "continuous"; anything else is refused rather than stored, so a
+	// future build cannot be handed a layout name this one invented.
+	ViewLayout *string `json:"viewLayout"`
 }
 
 // maxRecentHighlightColors caps the stored most-recently-used highlight palette.
@@ -84,6 +87,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RecentHighlightColors != nil {
 		cur.RecentHighlightColors = sanitizeHighlightColors(*req.RecentHighlightColors)
+	}
+	if req.ViewLayout != nil {
+		// **"pages" is stored as EMPTY, which is the whole reason this is a switch and not an
+		// assignment.** The default and the absence have to be one state on disk: every field
+		// here is `omitempty`, so a build that does not know `viewLayout` drops it on re-save,
+		// and a user whose stored value was the literal "pages" would come back on a layout they
+		// never chose rather than on the default. Refused rather than coerced for anything else,
+		// so this build cannot be handed a layout name it does not implement.
+		switch *req.ViewLayout {
+		case "continuous":
+			cur.ViewLayout = "continuous"
+		case "pages", "":
+			cur.ViewLayout = ""
+		default:
+			httpError(w, http.StatusBadRequest, "invalid viewLayout")
+			return
+		}
 	}
 	if err := v.SetSettings(cur); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not save settings")

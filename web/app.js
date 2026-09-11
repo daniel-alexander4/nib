@@ -82,6 +82,8 @@ const els = {
   findPrevBtn: $('findPrevBtn'), findNextBtn: $('findNextBtn'), findCount: $('findCount'),
   findToggle: $('findToggle'),
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
+  fitPageBtn: $('fitPageBtn'), actualSizeBtn: $('actualSizeBtn'),
+  viewStandardBtn: $('viewStandardBtn'), viewContinuousBtn: $('viewContinuousBtn'),
   sigBadge: $('sigBadge'), saveBtn: $('saveBtn'), statusCluster: $('statusCluster'),
   quitBtn: $('quitBtn'),
   themeToggle: $('themeToggle'),
@@ -415,6 +417,10 @@ function applyStatus(st) {
     // Apply saved preferences: theme and the auto-update toggle.
     applyAppearance(st.appearance || 'dark');
     applyCardHue(st.cardHue || 'all');
+    // The layout is global and applies to every open view, so it is set here rather than
+    // per document — and `|| 'pages'` is the same absent-means-default rule the server
+    // stores by, kept in one shape on both sides.
+    applyViewLayout(st.viewLayout || 'pages', false);
     // Saved highlight palette (most-recently-used colors); fall back to defaults.
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
@@ -2036,6 +2042,30 @@ els.keyCreateBtn.onclick = () => addKey({ mode: 'create', keyPath: els.keyAddPat
 // aria-controls or querySelector resolve to the wrong view while still resolving.
 let viewSeq = 0;
 
+// viewLayout is 'pages' (discrete pages, the default) or 'continuous' (joined into one strip).
+let viewLayout = 'pages';
+
+// CONTINUOUS_CLASS rides pdf.js's own `.removePageBorders` and goes one step further.
+//
+// The separation between pages is not a margin: `--page-border` is `9px solid transparent` with
+// `background-clip: content-box`, plus `--page-margin: 1px auto -8px` — about 11px net. pdf.js's
+// class zeroes the border and leaves `margin: 0 auto 10px`; the extra rule in style.css takes that
+// last 10px so the pages actually touch.
+//
+// **What this does NOT remove is the white.** Each page's own top and bottom margins are baked into
+// the PDF and on A4 are larger than the 11px being taken away, so a joined document still shows a
+// pale band where one page's footer meets the next page's header. That is the document, not the
+// viewer, and no view mode can close it.
+const CONTINUOUS_CLASS = 'removePageBorders';
+
+// **Declared HERE, above `newView`, and that placement is load-bearing.** `const views = [view]`
+// runs `newView()` during module evaluation, and `newView` reads `viewLayout` to give a fresh page
+// stack the current layout. Declared further down — where the rest of the View group lives — both
+// of these sit in their temporal dead zone at that moment and the read throws, taking every later
+// line of app.js with it. Caught by tier 2 on the first run; it is the same trap
+// `renderSignSteps()` carries its own note about.
+
+
 function newView() {
   const v = {
     // SAFETY — marks drawn on this document, baked by /api/redact through
@@ -2230,6 +2260,12 @@ function newView() {
   v.container.setAttribute('role', 'tabpanel');
   const pagesEl = document.createElement('div');
   pagesEl.className = 'pdfViewer viewerPages';
+  // **The layout is applied at CONSTRUCTION as well as in applyViewLayout, and both are needed.**
+  // `applyViewLayout` walks `views`, which is the population that exists when the user switches;
+  // a document opened AFTER that would arrive on the default and the setting would look like it
+  // had come undone on the second file. `viewLayout` is module state, so this is the same source
+  // of truth rather than a second one.
+  if (viewLayout === 'continuous') pagesEl.classList.add(CONTINUOUS_CLASS, 'nibJoined');
   v.container.appendChild(pagesEl);
   const isFirstView = els.viewerWrap.querySelector('.viewerContainer') === null;
   els.viewerWrap.insertBefore(v.container, els.empty);
@@ -2335,7 +2371,7 @@ function newView() {
   // view is populated" is late: on a long document a zoom made while it was still
   // loading was overwritten the instant it finished. The same silent loss of the user's
   // zoom that P06's exit criterion names at the switch, through the load door instead.
-  v.eventBus.on('pagesloaded', () => { if (!v.userScale) fitWidestWidth(v, 'pagesloaded'); });
+  v.eventBus.on('pagesloaded', () => { if (!v.userScale) applyFit(v, 'pagesloaded'); });
   v.eventBus.on('pagechanging', (e) => {
     // The thumbnail highlight CHANGED CATEGORY in P05.S05. With a shared grid it was
     // shared chrome and belonged behind the gate; with a per-view grid it is this view's
@@ -2568,7 +2604,7 @@ function activateView(v) {
   // (activated before any page view was populated, so `maxW` was 0) still reads
   // hasScale false, and re-fitting it on the NEXT activation would discard a zoom the
   // user has set in the meantime.
-  if (!v.hasScale && !v.userScale) fitWidestWidth(v, 'activateView');
+  if (!v.hasScale && !v.userScale) applyFit(v, 'activateView');
   // Explicitly, not via the bus: a re-fit that computes the SAME scale fires no
   // `scalechanging`, so the self-serving path cannot be relied on to have run.
   relayoutOverlays(v);
@@ -10670,7 +10706,24 @@ function setUserScale(owner, value, why) {
 
 function zoomIn() { setUserScale(view, true, 'zoomIn'); scaleFrom(view, 'zoomIn'); view.viewer.currentScale = view.viewer.currentScale * 1.15; }
 function zoomOut() { setUserScale(view, true, 'zoomOut'); scaleFrom(view, 'zoomOut'); view.viewer.currentScale = view.viewer.currentScale / 1.15; }
-function fitWidth() { setUserScale(view, false, 'fitWidthButton'); fitWidestWidth(view, 'fitWidthButton'); }
+function fitWidth() { setUserScale(view, false, 'fitWidthButton'); view.fitMode = 'width'; fitWidestWidth(view, 'fitWidthButton'); }
+
+// applyFit is the ONE door the automatic re-fits go through, and it exists because there is now
+// more than one fit (ADR-009: a rule holding at more than one call site is written once).
+//
+// **`userScale === false` used to mean "re-fit to WIDTH", and that is what broke Fit page.** The
+// flag says only whether the user picked a number; the two automatic sites — `pagesloaded` and
+// `activateView` — then called `fitWidestWidth` by name. So pressing Fit page set a height-based
+// scale and the very next `pagesloaded` (which a scale change itself provokes) overwrote it with
+// the width fit. Measured at tier 3 before this: the tallest page rendered 1345px in a 782px
+// window, i.e. exactly the fit-width scale, on the press whose whole promise is that a page fits.
+//
+// So the view remembers WHICH fit is in force. 'width' is the default because it is what every
+// document has always opened on.
+function applyFit(owner, why) {
+  if (owner.fitMode === 'page') fitTallestHeight(owner, why);
+  else fitWidestWidth(owner, why);
+}
 // fitWidestWidth fits the WIDEST page in the document to the container width and
 // locks it as a NUMERIC scale, so a mixed-size document scrolls smoothly. A named
 // 'page-width' re-fits to whichever page scrolls into view (pdf.js recomputes it
@@ -10719,6 +10772,98 @@ all('.pageNum').forEach((input) => input.addEventListener('change', () => {
 els.zoomInBtn.onclick = zoomIn;
 els.zoomOutBtn.onclick = zoomOut;
 els.fitBtn.onclick = fitWidth;
+
+// ── The View group: two layout modes and three zoom modes ────────────────────
+//
+// **Why these live in the toolbar and not in a View menu.** Dan asked for a View menu; Nib has no
+// menu bar to put one in. `index.html`'s header says so — "the settings gear is the only chrome
+// dropdown left" — and that gear went when Settings became a mode (v1.126.0, ADR-025), leaving
+// `.modemenu` as the sole `.menu` and that is a width-swap of the mode tabs. Re-introducing one is
+// what the Settings tab's own comment calls "two routes to one surface … the drift ADR-009 exists
+// to stop", so the controls join the group that already held Fit width.
+//
+// **Layout is a radio and Full Screen is not.** Exactly one of pages/continuous is true; a window
+// state is orthogonal to both, which is why it will be a separate toggle rather than a third
+// layout. pdf.js conflates them — its presentation mode IS the Fullscreen API — and that is why
+// Escape is unpredictable in most viewers.
+
+// applyViewLayout sets the layout on EVERY open view, not just the active one.
+//
+// The mode is a global preference (see `vault.Settings.ViewLayout`), and ADR-002 keeps one
+// `PDFViewer` per document hidden rather than destroyed — so a view that is off screen when the
+// mode changes would otherwise come back on the old layout, which reads as the setting not having
+// stuck. `views` is the population; `view` alone is the bug.
+function applyViewLayout(mode, persist = true) {
+  viewLayout = mode === 'continuous' ? 'continuous' : 'pages';
+  for (const v of views) {
+    const pages = v.container && v.container.querySelector('.pdfViewer');
+    if (pages) {
+      pages.classList.toggle(CONTINUOUS_CLASS, viewLayout === 'continuous');
+      pages.classList.toggle('nibJoined', viewLayout === 'continuous');
+    }
+  }
+  reflectViewLayout();
+  if (persist) saveSettings({ viewLayout });
+}
+
+// reflectViewLayout writes the state onto the two buttons. `aria-pressed` rather than a class alone,
+// because these are a radio pair and a screen reader has to be able to say which one is on.
+function reflectViewLayout() {
+  if (els.viewStandardBtn) {
+    els.viewStandardBtn.setAttribute('aria-pressed', String(viewLayout === 'pages'));
+    els.viewStandardBtn.classList.toggle('active', viewLayout === 'pages');
+  }
+  if (els.viewContinuousBtn) {
+    els.viewContinuousBtn.setAttribute('aria-pressed', String(viewLayout === 'continuous'));
+    els.viewContinuousBtn.classList.toggle('active', viewLayout === 'continuous');
+  }
+}
+
+// fitTallestHeight is Fit width's mirror, and it is deliberately NOT pdf.js's `'page-fit'`.
+//
+// `fitWidestWidth`'s own doc gives the reason and it applies unchanged on this axis: a named value
+// re-fits to whichever page scrolls into view, which on a mixed-size document fights the scroll
+// position and traps you at the size boundary. So this locks a NUMERIC scale computed against the
+// TALLEST page, and every page is then guaranteed to fit the window's height.
+//
+// The height budget subtracts the same 40px pdf.js reserves for a scrollbar on the other axis: in
+// continuous layout the pages touch, so a fit computed to the exact pixel puts the next page's
+// first row on screen and the mode reads as broken.
+function fitTallestHeight(owner, fitReason = 'fitPage') {
+  if (!owner.pdfDocument) return;
+  let maxH = 0;
+  for (let i = 0; i < owner.pdfDocument.numPages; i++) {
+    const vp = owner.viewer.getPageView(i)?.viewport;
+    if (vp) {
+      const h = vp.height / vp.scale; // rendered display height in points (rotation applied)
+      if (h > maxH) maxH = h;
+    }
+  }
+  // The owning view's container, exactly as fitWidestWidth does: a hidden container reports 0 and
+  // the guard below makes this a silent no-op rather than a negative scale (ADR-002's consequence).
+  const avail = owner.container.clientHeight - 40;
+  if (maxH > 0 && avail > 0) {
+    owner.viewer.currentScale = avail / maxH / pdfjsLib.PixelsPerInch.PDF_TO_CSS_UNITS;
+    scaleFrom(owner, fitReason);
+    owner.hasScale = true;
+  }
+}
+
+function fitPage() { setUserScale(view, false, 'fitPageButton'); view.fitMode = 'page'; fitTallestHeight(view, 'fitPageButton'); }
+
+// actualSize is 100% — one PDF point rendered at pdf.js's 72pt->96px conversion, which is what every
+// other viewer means by the words. A USER scale, unlike the two fits: it is a number the user asked
+// for and must not be recomputed when the window resizes.
+function actualSize() {
+  setUserScale(view, true, 'actualSize');
+  scaleFrom(view, 'actualSize');
+  view.viewer.currentScale = 1;
+}
+
+els.fitPageBtn.onclick = fitPage;
+els.actualSizeBtn.onclick = actualSize;
+els.viewStandardBtn.onclick = () => applyViewLayout('pages');
+els.viewContinuousBtn.onclick = () => applyViewLayout('continuous');
 
 // Ctrl+scroll (and trackpad pinch, which Chromium/Firefox deliver as a ctrlKey
 // wheel) zooms the DOCUMENT, not the browser. Left to the browser, ctrl+wheel

@@ -89,6 +89,14 @@ const EXEMPT = new Set([
   // (`prevBtn`/`nextBtn` were here until v1.125.0 and are gone from the product — a name in an
   // exemption list that matches nothing is a claim about a control that does not exist.)
   'zoomOutBtn', 'fitBtn', 'zoomInBtn',
+  // The two zoom modes added with the View group (v1.129.4) are the same class as `fitBtn`
+  // beside them: they set the viewer's scale, and with nothing open there is no scale to set.
+  'fitPageBtn', 'actualSizeBtn',
+  // The two LAYOUT buttons are a step further out — they are a preference, persisted to the
+  // vault and applied to every view including ones not created yet, so they are meaningful with
+  // nothing open at all. Requiring a document would mean a user cannot choose how documents look
+  // until after one is already looking wrong.
+  'viewStandardBtn', 'viewContinuousBtn',
   // Quit acts on the PROCESS, not on a document (P01.S06). Requiring a document would make it
   // unreachable from the one state a user most wants it in — a Nib with nothing open that they
   // want to stop — and its own modal already names whatever would be lost, document or ceremony.

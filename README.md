@@ -430,9 +430,21 @@ become that colour in six steps.
 until a check runs, green when you are on the latest release, and red when a newer one
 exists — hover it to see which, and click to download.
 
+**How the pages are laid out — the View controls**, at the right edge of the toolbar. Two
+layouts: **Pages**, the default, which draws each page separately with a break between them, and
+**Continuous**, which joins them into one strip so the document scrolls as a single piece. The
+choice is remembered and applies to every document you have open, including ones you open later.
+One thing worth knowing before you switch: joining the pages removes the break Nib draws, not the
+margins the document itself has, so a page's own white footer and the next page's white header
+still meet in the middle.
+
+Beside them are the zoom controls — in, out, **Fit width**, **Fit page** and **Actual size**. Fit
+width and Fit page both measure the *whole* document and lock a single scale, so a file whose pages
+are not all the same size does not resize under you as you scroll past the boundary.
+
 **Where the file commands live** — the toolbar keeps what you reach for while reading:
 the document's name with a dot showing whether it needs saving, find, and — at the right
-edge — zoom, reload and Save. Opening, saving a copy, exporting, printing and
+edge — the View controls, reload and Save. Opening, saving a copy, exporting, printing and
 closing are once-per-document acts, so they are cards in the **File** tab's sidebar —
 *Open a Document*, *Save a Copy*, *Export & Print*, *Close Document*. **Ctrl+O** opens,
 **Ctrl+S** saves and **Ctrl+F** opens find without going near either.
