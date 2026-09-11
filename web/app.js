@@ -11383,6 +11383,23 @@ renderSignSteps();
 // it did before v1.121.0, folding by width into its own ⋯ More. That is what keeps every
 // command reachable below 900px, where the sidebar auto-collapses and the panel with it.
 //
+// **The CONTENT panels are deliberately not rescued, and the reason is `#toggleSidebarBtn`**
+// (`/pending 429`). `#ceremony`, `#flags`, `#library` and `#outline` are `.panel`s, not
+// `.tbtab`s, so none of them moves here — and the item that filed that concluded a signing
+// ceremony was therefore *unreachable* below 900px. Measured in a real browser at 375px and it
+// is not: the collapse is a DEFAULT, not a lock. The toggle sits outside the `.tbtab` groups
+// (index.html:96) so it never swaps out with the mode, no `@media` rule touches `#sidebar`, and
+// one press brings the whole accordion back with the document keeping 46.7% of the window.
+//
+// **Which makes that button load-bearing for four panels, and nothing said so.** Hiding it at
+// narrow widths — one plausible line in a responsive pass — would strand the ceremony rail, the
+// signing flags, the library and the outline with no home at all. `test/ui/narrowpanels.test.mjs`
+// is the guard, and that exact mutation is what it was probed red against.
+//
+// A vertical column of roster rows and hint paragraphs does not become a horizontal toolbar pane,
+// which is why folding them in here was refused rather than scheduled: it would be a SECOND home
+// for surfaces that already have one.
+//
 // The SAME nodes move. Mode gating follows them because `.tbtab.active` is unrooted, cached
 // `els` references survive reparenting, and nothing is duplicated — so no id is ever ambiguous
 // and no second list can drift.
