@@ -39,9 +39,10 @@ import (
 //	**These same two identities already completed a spoken check on this pin.** D22 makes the
 //	convener a hub, so every delivery leg is convener↔party, and every party ran `runVerification`
 //	against the convener at its own hop before it signed. The words are derived from both identity
-//	fingerprints and the TLS exporter's channel binding — that one is live, and is not
-//	`Invitation.BindingMAC`, which has no production caller (`/pending 441`); re-deriving them on
-//	a second channel between the same
+//	fingerprints and the TLS exporter's channel binding — that one is live, and is the only one:
+//	`Invitation.BindingMAC` was DELETED at v1.129.3 as refused rather than deferred
+//	(`/pending 442`; see the caveat-11 block in `internal/ceremony/invitation.go`). Re-deriving
+//	them on a second channel between the same
 //	two keys re-asks a question that was answered, by the same people, about the same pin.
 //
 // That argument does NOT extend to a leg between two parties who never met, and the distinction

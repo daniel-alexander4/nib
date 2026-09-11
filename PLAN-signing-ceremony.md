@@ -1396,9 +1396,12 @@ fingerprints**, and a **32-byte secret**. It is an object — copyable string, Q
 delivered over whatever channel the parties already use.
 
 - **The pin is full strength.** The roster carries whole fingerprints, not 66 bits of them, so
-  the invited path is a 256-bit pin and D4's spoken check stops being load-bearing there.
-- **The secret binds the channel**, so the confirmation that used to be spoken is computed by the
-  two machines. **Nothing is exchanged once connected** — Dan's requirement, met literally.
+  the invited path is a 256-bit pin ~~and D4's spoken check stops being load-bearing there~~
+  **(struck 2026-09-10 — see the pin below; this decision's own CORRECTED block already said the
+  opposite forty-five lines down)**.
+- ~~**The secret binds the channel**, so the confirmation that used to be spoken is computed by the
+  two machines.~~ **Nothing is exchanged once connected** — Dan's requirement, met literally.
+  **(first clause struck 2026-09-10 — see the pin below.)**
 - **It keys the rendezvous** (D6 amendment): both the DHT key and the record encryption derive
   from it rather than from names that are public by design.
 - **It is not a signing credential.** An intercepted invitation reaches the rendezvous and stops
@@ -1437,6 +1440,48 @@ against the negative.
 be spoken.** Multi-party needs a distributable invitation whether or not it carries a secret, so
 the secret is free — and it is the thing that removes the human step rather than merely
 tolerating it. The six-word name (D3) is untouched and stays the human identity.
+
+**(pin, 2026-09-10 — `/pending 441` + `442`. The channel binding is REFUSED, and two clauses above
+are struck rather than amended.)** This decision said the secret binds the channel and that D4's
+spoken check therefore stops being load-bearing on the invited path. **Its own CORRECTED 2026-08-18
+block, forty-five lines below, says the opposite** — that the four spoken words are *"the only one in
+this design anchored outside the channel under attack"* — and the bullets were never struck. They are
+now. The correction is the correct half, and this pin only finishes it.
+
+**The mechanism is gone, not pending.** `Invitation.BindingMAC` / `CheckBindingMAC` were P01.S07's
+**T03**, a task **no acceptance clause covers** (this plan's own `:2614-2621` list six clauses and
+none is about the binding). They shipped, acquired no production caller, kept none from v1.109.47 to
+v1.129.3, and took a crypto fix in v1.116.6 that reached code nothing called. Deleted at v1.129.3.
+
+**Three reasons, and the first is the one that decides it.**
+
+1. **The MAC could never have done this job.** The pin (`internal/server/accept.go:156`), the
+   delivery arm's pinned peer (`internal/server/delivery.go:401`), the candidate AEAD
+   (`internal/ceremony/gate.go`, `OpenCandidate`) and the MAC were all keyed on the SAME pasted
+   invitation. An attacker who *replaces* the invitation — the attacker the CORRECTED block says is
+   the one who matters — passes every one of them, both halves of every comparison being theirs.
+2. **The property is already a precondition of finding the peer.** Every candidate record is opened
+   under `RecordKey`, an AEAD over the secret; a party without the invitation cannot derive `HopSeed`
+   and never reaches a channel to bind. The MAC would have re-proved, after connecting, what
+   connecting already required.
+3. **Wiring it was blocked twice over, and one of those blocks has since moved.** `internal/p2p`
+   cannot import `internal/ceremony` — the edge runs the other way, confirmed by
+   `go list -deps ./internal/ceremony | grep -c nib/internal/p2p` → 1 and the reverse → 0 — so the
+   call would have to come from `internal/server` passing primitives down. The second block was that
+   *the dialling side holds no invitation*, and that is **no longer true**: P01.S02b's convener hop
+   route re-mints one per party through `convenerInvitationFor`
+   (`internal/server/delivery.go:1449`). Recorded because a stale blocker is how an item gets
+   re-opened for the wrong reason — it is reason 1 that refuses this, not the plumbing.
+
+**Caveat 11 is not reopened, and its scope is corrected.** The derivation decision — HKDF over the
+secret, not a PAKE, because 32 uniform bytes have no dictionary to attack — stands exactly as written
+at `:2596-2598`, and that passage is now the only home of the reasoning. What was over-claimed is the
+*discharge*: **discharged in the derivation, refused in the session-authentication half.** The phase
+close's bare "Caveat 11 discharged" (`:2436`) discharged the choice of primitive, not the mechanism
+the choice produced.
+
+**What holds this.** `zerocaller_test.go` carried an exemption row for the pair and no longer does, so
+re-adding an exported binding helper with no caller goes red at tier 1.
 
 **(pin: a lost invitation is re-issued, not re-convened — 2026-08-18, gap #24.)** D28 says re-running
 a ceremony is "a new record, with a new id and new invitations", which is right for a ceremony whose
@@ -2593,6 +2638,11 @@ Tasks: *(written at slice-grill time)*
 
 **(slice-grill notes, 2026-08-19 — including caveat 11, which this slice was assigned.)**
 
+**(scope corrected 2026-09-10, `/pending 442` — the choice below stands; the mechanism it produced was
+deleted at v1.129.3 as refused rather than deferred. Discharged in the DERIVATION, refused in the
+session-authentication half. See D21's 2026-09-10 pin. This paragraph is now the only home of the
+PAKE-vs-HKDF reasoning, the code that carried it having gone.)**
+
 **Caveat 11 is settled: HKDF over `secret ‖ exporter`, confirmed with a MAC. Not a PAKE.** The plan left the mechanism open between "a PAKE over the secret" and "an HKDF over secret ‖ transcript", and the choice is not close once the secret's entropy is stated. **A PAKE exists to make a LOW-entropy secret safe against offline dictionary attack** — it bounds an attacker to one guess per live interaction because the alternative is a wordlist. D21's secret is **32 bytes of uniform randomness**: there is no dictionary, and an offline attacker faces 2²⁵⁶ whatever the protocol. A PAKE would buy a property the secret already has, and charge a new dependency, a new licence to clear, and extra round trips for it.
 *What HKDF gives, and it is what D21 asks for:* the binding key is a function of the secret **and** of this channel's `ExportKeyingMaterial` — the same exporter P01.S04's verification string already uses — so a holder of the invitation proves possession on **this** connection and a recording of one connection is useless on another. Each side sends a MAC over its role; a peer without the secret cannot produce one, and a peer on a different channel produces the wrong one.
 *Recorded as a slice-grill decision rather than referred:* the best-and-most-correct test answers it — fewer moving parts, no new dependency, and the alternative solves a problem this design does not have. Caveat 11 is discharged, not deferred.
@@ -2604,7 +2654,7 @@ Tasks: *(written at slice-grill time)*
 Tasks:
 - **T01 — the invitation type, its text form and its version**: prefix, base64url payload, checksum; a corrupted one refused with a distinct error rather than a partial pairing.
 - **T02 — key derivation from the secret**: rendezvous key (per hop, D30), record key, and the channel-binding key — all HKDF, all domain-separated by info string.
-- **T03 — the channel binding**: MAC over the role, keyed on `HKDF(secret, exporter)`; caveat 11's mechanism.
+- ~~**T03 — the channel binding**: MAC over the role, keyed on `HKDF(secret, exporter)`; caveat 11's mechanism.~~ **(struck 2026-09-10, `/pending 442`. Built, never called, deleted at v1.129.3. No acceptance clause below covers it, which is how it shipped with nothing driving it.)**
 - **T04 — consume**: pin every roster fingerprint at FULL length, and a guard that no path decodes a name into a pin.
 - **T05 — the roster comparison** against the record when the document arrives.
 - **T06 — seam inventory rows.**

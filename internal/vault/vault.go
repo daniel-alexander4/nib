@@ -192,11 +192,11 @@ type CeremonySecret struct {
 	Fingerprint []byte `json:"fingerprint"`
 	// Secret is the 32 bytes the rendezvous and the record encryption are derived from.
 	//
-	// **A channel binding would be derived from it too and is not**: `Invitation.BindingMAC`
-	// has no production caller (`/pending 441`). Listing it here read as though the binding
-	// were live, and it never has been — everything keyed on this secret is keyed on the SAME
-	// pasted invitation, which is why the spoken check is what anchors the channel and not
-	// this (`/pending 442` carries the wire-or-delete verdict).
+	// **A channel binding would be derived from it too and is not**: the mechanism was built,
+	// never called, and DELETED at v1.129.3 (`/pending 442`). Listing it here read as though the
+	// binding were live, and it never has been — everything keyed on this secret is keyed on the
+	// SAME pasted invitation, which is why the spoken check is what anchors the channel and not
+	// this.
 	Secret []byte `json:"secret"`
 }
 
