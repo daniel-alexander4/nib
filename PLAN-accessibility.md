@@ -132,12 +132,46 @@ mutates it, and writes it back, with `/ParentTree`, `/StructParents` and MCIDs m
 invariants of the model rather than by each caller. Every operation in law 2 that reports `carried`
 routes through this one model.
 
-### D9 — The page-subset remap is a measured prerequisite, not an assumption *(open — first task of P01)*
-`Collect`, `RemovePages` and `SplitBySpans` drop the tree today. Carrying it means remapping
+### D9 — The page-subset remap is a measured prerequisite, not an assumption ~~*(open — first task of P01)*~~ *(SUPERSEDED IN PLACE 2026-09-11 by P01.S02's measurement — the question does not arise)*
+~~`Collect`, `RemovePages` and `SplitBySpans` drop the tree today. Carrying it means remapping
 `/ParentTree` and `/StructParents` for a kept subset and pruning orphaned elements. The grill
 measured **preservation in place** and explicitly did **not** measure a remap. P01.S02 measures it
 before anything is planned on top of it; if it proves impractical against pdfcpu v0.13.0, those
-operations fall back to `dropped-with-notice` under law 2 and this decision is superseded in place.
+operations fall back to `dropped-with-notice` under law 2 and this decision is superseded in place.~~
+
+**The answer, and it is one level below the question D9 asks.** There is no subset to remap, because
+**the write path carries no struct element at all.** Measured 2026-09-11 on a real LibreOffice-
+produced tagged PDF (five headings/paragraphs/list items, **14 `/StructElem`**), against pdfcpu
+v0.13.0:
+
+| operation | `/StructTreeRoot` | `/Marked` | `/StructElem` | `/StructParents` |
+|---|---|---|---|---|
+| **source** | 2 | 1 | **14** | 1 |
+| **no-op `writeMutated`** (read → validate → optimize → write, changing nothing) | 1 | 1 | **0** | 0 |
+| `Collect(1)` — i.e. `nib pages` | 0 | 0 | 0 | 0 |
+| `Rotate(90)` | 1 | 1 | **0** | 0 |
+| `NUp(2)` after P01.S01 | 0 | 0 | 0 | 0 |
+
+**The no-op row is the finding.** Remapping `/ParentTree` for a kept subset presupposes that the
+elements survive the write; they do not survive it even when nothing is asked of them. The read half
+is sound — `api.Validate` reports the fixture clean and the catalog still holds `/K` and a
+`/ParentTree` after `ReadValidateAndOptimize` — so this is `WriteContext` not serialising the objects
+the tree points at.
+
+**Two consequences that re-scope this phase.**
+
+1. **`Collect`, `RemovePages` and `SplitBySpans` fall back to `dropped-with-notice` under law 2**,
+   which is the outcome this decision named for the impractical case — but for a stronger reason than
+   it anticipated. `Collect` already drops the claim honestly today (row 3 above), so it is already
+   compliant with law 1 and needs only its verdict recorded.
+2. **`Rotate` is a live law-1 violation and was not on any slice's list.** Row 4: it keeps
+   `/MarkInfo /Marked true` and a `/StructTreeRoot` over **zero** struct elements — the same lie
+   P01.S01 fixed in `nup`, still shipping. Found by this measurement, not by the plan. It is P01.S03's
+   guard that must enumerate it rather than a one-off patch, because the same probe implies every
+   `writeMutated` caller is a candidate and a hand-written list would miss the next one.
+
+**And the prerequisite this plan does not have a slice for:** P05's tag-tree core cannot be built
+until the write path carries a tree. See `/pending 467`.
 
 ### D10 — The editing surface lives in the Document tab *(settled 2026-09-06 via /grill)*
 Per ADR-016, a mode is a kind of thing you do to the document. A tag tree changes the document
@@ -203,12 +237,20 @@ P01.S03/S04's scope is much wider than "the operations S02 found practical". And
 core cannot be built until the write path carries a tree**, which is a prerequisite this plan does
 not currently have a slice for. Filed as `/pending 467` with the measurement.
 
-#### P01.S02 — measure the page-subset remap
+#### P01.S02 — measure the page-subset remap *(done 2026-09-11, v1.129.10 — no code; the measurement IS the deliverable)*
 Scope: probe whether `/ParentTree` + `/StructParents` can be correctly remapped for a kept page
 subset against pdfcpu v0.13.0. Outcome, not code, is the deliverable; it settles D9. Refs: D9.
 Acceptance:
-- A recorded measurement, not an argument, for `Collect`, `RemovePages` and `SplitBySpans`.
-- D9 is superseded in place with the answer, and P01.S04's scope is set by it.
+- ✅ A recorded measurement, not an argument, for `Collect`, `RemovePages` and `SplitBySpans`.
+  **Widened**: the table under D9 covers `Collect`, `Rotate`, `NUp` and — the row that decides it —
+  a **no-op** `writeMutated`. `RemovePages` and `SplitBySpans` are `writeMutated`/`api` callers on the
+  same write path and are covered by that row; measuring each separately would have re-measured the
+  same write, which is the trap D9's own "preservation in place, not a remap" warning describes.
+- ✅ D9 is superseded in place with the answer, and P01.S04's scope is set by it: the three
+  operations become `dropped-with-notice`, and the guard must ENUMERATE rather than list.
+- **The fixture is a real LibreOffice-produced tagged PDF, not a hand-built one**, and that was the
+  point of running it: the hand-built fixture used at P01.S01 could not distinguish "pdfcpu drops
+  trees" from "my fixture is malformed". 14 struct elements from a producer settles it.
 
 #### P01.S03 — the tag-fate table and its guard
 Scope: every document-touching operation declares `carried` / `refused` / `dropped-with-notice` in
