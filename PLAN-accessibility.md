@@ -1051,15 +1051,57 @@ Acceptance *(rewritten at the grill, 2026-09-11)*:
   markdown or raster output and this slice says why rather than claiming it: no door can determine
   a language it was never given. It never fires on raster output at all.
 
-#### P03.S03 — the ua1 oracle becomes a standing reader
+#### P03.S03 — the ua1 oracle becomes a standing reader *(done 2026-09-11, v1.129.35)*
 Scope: the veraPDF ua1 differential runs in tier 1, `t.Skip`-guarded, and its skip is **reported**
 rather than passing silently. Closes `/pending 469`. Refs: exit criterion 3.
+
+**(grill, 2026-09-11 — confirmed, with one amendment the slice could not have known before it ran,
+and two findings.)**
+
+**Why it was never wired, and why it now costs 2 seconds.** veraPDF is a JVM: ~1.5 s per
+invocation, which over a 49-operation census is three minutes. It takes **many files in one
+invocation** — measured, 12 files in 2.6 s against 1.5 s for one, roughly 90 ms per extra file once
+the JVM is up. The whole census is one batch, and the test runs in **2.2 s**.
+
+**The population is the census.** It drives `tagFates`, which ADR-031 law 2 already enumerates from
+the code with its own stale-row check and floor. A hand-kept list here would be a second population
+that drifts from the first.
+
+**AMENDED: the assertion is a table of deltas, not "adds nothing".** P01 struck that acceptance for
+itself and wrote down why — *dropping is what law 1 demands and necessarily ADDS failures, since
+PDF/UA requires a tree, so a ua1 failure count scores honesty as a regression.* An operation
+declared `dropped` gives up the tree on purpose and `6.2 t1` / `7.1 t11` / `7.1 t3` are what a
+missing tree looks like to a clause counter; a guard failing on those would be demanding the
+dishonest option. So the rule is **"adds nothing that is not written down"**, checked both ways:
+a clause that appears is a regression, and a clause that stops appearing means something was fixed
+and the row is a claim about code that no longer exists.
+
+**Eighteen deltas were recorded on the first run, and two of them are defects.** Filed rather than
+folded into this diff, so the table is the record that the instrument found them:
+
+- **`/pending 472`** — `CarryAttachments`, `Crop`, `InsertPDF`, `SplitPage` and `SplitRegions` drop
+  the catalog **`/Lang`** as well as the tree. `carryLang` sits at `pdfops.go:193` with **two**
+  callers. Losing the tree is declared; losing the language is a second loss nobody declared, and
+  the census covers the tree and has nothing to say about `/Lang`.
+- **`/pending 473`** — all four stamping operations emit an optional-content configuration
+  dictionary with `/AS` present and `/Name` missing, which ua1 7.10 t2 and 7.10 t1 forbid by name.
+  Two catalog keys, in every stamped document nib produces.
+
+The rest are structural and named: merges bring untagged pages (`7.1 t3`), form fields and
+annotations arrive without `/TU` or `/Contents` (**P06's stated goal, now measured**), and
+`SetTitle` makes `5 t1` *applicable* by supplying the stream it inspects — refused until P05, when
+asserting it would be true.
+
 Acceptance:
-- A tier-1 test asserts an operation's output fails no ua1 clause its input did not.
-- With veraPDF absent it SKIPS and says so; the skip is visible in the run, never credited as a
+- ✅ A tier-1 test asserts an operation's output fails no ua1 clause its input did not — **amended
+  above** to "none that is not recorded with a reason", which is the only form that does not score
+  honesty as a regression.
+- ✅ With veraPDF absent it SKIPS and says so; the skip is visible in the run, never credited as a
   pass — the failure mode `/pending 411` records, where three seed tests reported SKIP on a
-  silently-always-true condition.
-- A red proof: an operation that adds a clause turns it red.
+  silently-always-true condition. Probed by making `verapdfPath()` return `""`.
+- ✅ A red proof: an operation that adds a clause turns it red. Five arms probed — a new clause with
+  no row, a recorded delta that shrinks, a stale row, an `unvalidatable` row whose output
+  validates, and the skip.
 
 ### P04 — Embedded fonts for authored text
 **Goal.** Clear rule 7.21.4.1 for everything nib writes, and refuse honestly for everything it does
