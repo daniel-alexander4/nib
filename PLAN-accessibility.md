@@ -292,7 +292,7 @@ the other four as direct `api.*` callers, which is how the second door was found
 Because it is a post-condition, it becomes a no-op by itself the day the write path carries a tree
 (P05's prerequisite, `/pending 467`) — there is no line to remember to delete.
 
-#### P01.S04 — carry the tree where it can be carried *(in progress — its CARRYING half is absorbed into S03 and answered by D9; two clauses below are NOT discharged)*
+#### P01.S04 — carry the tree where it can be carried *(blocked — the `dropped-with-notice` sentence is a product decision; its carrying half is absorbed into S03 and answered by D9)*
 
 **(pin, 2026-09-11 — marked `done` for twenty minutes and taken back, which is recorded rather than
 tidied away.)** S03's fix covers this slice's *carrying* half completely: D9 measured that nothing
@@ -348,10 +348,60 @@ conformance failure in shipped code (D11), and it is independent of every PDF co
 - A keyboard-only pass over the primary flows — open, mark up, save — completes with no trap and no
   stranded focus.
 
-Sketched slices: keyboard creation and arrow-nudge for every tool · `aria-pressed` across the
+~~Sketched slices: keyboard creation and arrow-nudge for every tool · `aria-pressed` across the
 armed-tool set and `aria-expanded` on panel accordion cards · the toast live region announcing its
 first message · accessible names for the 21 icon-only buttons currently named by `title` alone ·
-`prefers-reduced-motion` and a non-text contrast guard (SC 1.4.11) · a 200%-zoom reflow assertion.
+`prefers-reduced-motion` and a non-text contrast guard (SC 1.4.11) · a 200%-zoom reflow assertion.~~
+
+**(phase-open, 2026-09-11 — the sketch's baselines are re-measured against the tree as it now is,
+and three of the six have moved. One of them this session falsified itself.)**
+
+| sketched | measured 2026-09-11 | verdict |
+|---|---|---|
+| *"`grep ArrowUp web/app.js` → 0"* | **0** | **holds** — no keyboard creation or nudge exists |
+| *"`aria-pressed` appears nowhere in first-party code"* | **10 occurrences** (5 `index.html`, 5 `app.js`) | **false, and falsified by this session**: the View group added at v1.129.4–.6 uses it. What survives is the ratio — **27 `classList.toggle('active')` against 4 `setAttribute('aria-pressed')`** — so the defect is real and the sentence naming it is not |
+| *"accessible names for the 21 icon-only buttons named by `title` alone"* | **4** buttons have no visible text and no `aria-label` (`themeToggle`, `updateGet`, `sessionNoticeAction`, `signAction`); 3 already have one | **badly stale** — the count is off by a factor of five, and a slice scoped to 21 would have spent most of its effort discovering there was nothing to do |
+| *"the toast live region announcing its first message"* | the toast **already carries `role="status"` + `aria-live="polite"`**, set at creation, since `/pending 328` | **built** — what may survive is the first-message nuance (a live region created in the same tick as its first message is not announced), which is a different and much smaller slice |
+| `prefers-reduced-motion` / SC 1.4.11 | not measured here | unchanged |
+| 200%-zoom reflow | not measured here | unchanged |
+
+**Firmed slices:**
+
+#### P02.S01 — keyboard creation and arrow-nudge for every annotation tool
+Scope: every annotation can be created, moved and resized without a pointer. `ArrowUp` returns 0
+across `web/app.js`, so this is the phase's live SC 2.1.1 failure and nothing about it has moved.
+Refs: D11, exit criterion 1.
+Acceptance:
+- Each tool creates a mark from the keyboard alone, asserted at tier 3.
+- Arrow keys nudge and Shift+arrow resizes the selected mark, asserted at tier 3.
+- A red proof: removing the key handler turns the assertion red.
+
+#### P02.S02 — armed state is programmatic, not colour alone
+Scope: the 27 `classList.toggle('active')` sites that signal an armed tool gain `aria-pressed`, and
+the panel accordion cards gain `aria-expanded`. A guard asserts the ratio cannot regress — the
+measurement above is why it is a ratio and not a list. Refs: D11, exit criterion 2.
+Acceptance:
+- Every armed-tool toggle sets `aria-pressed` alongside its class, enumerated from the code.
+- Adding a toggle without one turns the guard red, proved by adding one.
+
+#### P02.S03 — the four buttons with no accessible name
+Scope: `themeToggle`, `updateGet`, `sessionNoticeAction`, `signAction`. **Four, not 21** — and a
+guard that enumerates rather than lists, so the number never needs re-measuring again. Refs: exit
+criterion 3.
+Acceptance:
+- Every button with no visible text has an `aria-label`, enumerated from `index.html`.
+- Adding one without turns the guard red.
+
+#### P02.S04 — the keyboard-only pass, and what it finds
+Scope: a tier-3 keyboard-only traversal of open → mark up → save, asserting no trap and no stranded
+focus. It is last because S01–S03 are what make it passable. Refs: exit criterion 3.
+Acceptance:
+- Tab order reaches every interactive control and returns; no element traps focus.
+- Focus is never left on a removed node after a modal closes.
+
+**Dropped from the sketch**: the toast live region (built, `/pending 328`). `prefers-reduced-motion`,
+SC 1.4.11 and the 200%-zoom reflow assertion are **not** dropped — they are unmeasured here and stay
+sketched rather than being firmed on numbers nobody has taken.
 
 ### P03 — The catalog floor
 **Goal.** Clear the seven PDF/UA rules that need no structure at all, and fix the `/Lang` one-door
