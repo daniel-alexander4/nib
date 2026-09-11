@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -144,6 +145,12 @@ type Receipt struct {
 	// ObservedAt is this machine's clock at the moment it decided the proceeding had ended. It
 	// is the retention clock's zero, and it is local by design: see the type's doc.
 	ObservedAt time.Time `json:"observed_at"`
+	// Name is this machine's label for the proceeding, filled in by `ReadReceipt` and **never
+	// written into `receipt.json`**. The name is editable and the receipt is write-once, so a copy
+	// stored here would be a snapshot that disagrees with the `name` file the moment either
+	// changes — and the receipt is the artifact whose whole value is that it does not change.
+	// `WriteReceipt`'s one caller builds its own literal, so nothing sets this on a write path.
+	Name string `json:"name,omitempty"`
 }
 
 // receiptFile is the receipt's name inside the closed-out directory.
@@ -326,6 +333,11 @@ func ReadReceipt(root, id string) (Receipt, error) {
 	if uerr := json.Unmarshal(b, &r); uerr != nil {
 		return Receipt{}, fmt.Errorf("this ceremony's local receipt could not be read: %w", uerr)
 	}
+	// **Read from the folder, never from the file — see `Receipt.Name`.** ADR-012 MOVES a ceremony's
+	// directory, so a name given while the proceeding was running travels with it and is the only
+	// identifying text a finished row can carry: the receipt holds a state and a date and nothing
+	// a person would recognise.
+	r.Name = readName(dir)
 	return r, nil
 }
 
@@ -388,6 +400,25 @@ func ListEnded(root string) ([]Receipt, error) {
 // meFile names the marker inside a ceremony directory.
 const meFile = "me"
 
+// nameFile is this machine's own LABEL for a proceeding.
+//
+// **Local, unsigned, and never on the wire — and that is the decision, not a shortcut.** The
+// obvious alternative is a name the convener chooses and every party sees, and it is refused for
+// two reasons that pull the same way. A shared name carried in the record but OUTSIDE
+// `rosterPreimage` would be a claim on the wire that nothing anchors — the shape /pending 390, 437
+// and 440 each found and this repo keeps refusing. Inside the preimage it commits, which makes a
+// convenience label a signature-format flag day: `Record.Verify` refuses a newer `Version`, so
+// every ceremony in flight the day it shipped would stop verifying.
+//
+// A name is how THIS person finds a proceeding in a list. It is not a fact about the agreement —
+// that is the Intent, and D20 makes the Intent the recital's only home. Two parties naming the
+// same ceremony differently is honest rather than a defect, and it is what a local label already
+// means everywhere else it appears.
+//
+// Beside the mirror like `me` and `ended-by`, so it is readable with the vault locked and survives
+// the close-out's move.
+const nameFile = "name"
+
 // WriteMe records which roster entry this machine is, for a reader that has no vault.
 //
 // Best-effort at its call sites and deliberately so: a ceremony whose `me` failed to write is
@@ -419,4 +450,47 @@ func readMe(dir string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(string(b)))
+}
+
+// MaxCeremonyNameLen bounds a label. It is a handle in a list, not a second recital — the Intent is
+// that — and the file is line-based, so a name is one line.
+const MaxCeremonyNameLen = 120
+
+// WriteName records this machine's label for a ceremony, or REMOVES it when name is empty.
+//
+// Empty deletes rather than storing a blank, so "clear the name" and "never named" are the same
+// state on disk and the panel has one thing to render rather than two.
+func WriteName(root, id, name string) error {
+	dir, err := MirrorDir(root, id)
+	if err != nil {
+		return err
+	}
+	name = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return ' ' // one line, because readName reads one
+		}
+		return r
+	}, name))
+	if len([]rune(name)) > MaxCeremonyNameLen {
+		name = string([]rune(name)[:MaxCeremonyNameLen])
+	}
+	if name == "" {
+		if rerr := os.Remove(filepath.Join(dir, nameFile)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return rerr
+		}
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return atomicfile.WriteDurable(filepath.Join(dir, nameFile), []byte(name+"\n"), 0o600)
+}
+
+// readName reports this machine's label for a proceeding, or "" when it has none.
+func readName(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, nameFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }

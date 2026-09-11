@@ -1,13 +1,12 @@
 diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
-index 810eec4..923752d 100644
 --- a/internal/ceremony/mirror.go
 +++ b/internal/ceremony/mirror.go
-@@ -437,7 +437,7 @@ func ReadStored(root, id string, now time.Time) Stored {
+@@ -579,7 +579,7 @@ func ReadStored(root, id string, now time.Time) Stored {
  	// the branches that returns early. Placing it after them would have made it invisible for
  	// every ceremony whose document has not arrived.
  	s.Verification = readVerification(dir)
 -	s.Joined = readMe(dir) != ""
 +	s.Joined = false
- 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
- 	if err != nil {
- 		// **An unreadable record is NOT an absent one (/pending 320).** Every read error used to
+ 	// **Read here with the other markers, BEFORE any `LoadState` branch can return.** A pre-hop
+ 	// party has no `record.json` and returns at `LoadAbsent` below — and that party is exactly the
+ 	// one with several proceedings and nothing to tell them apart, so a name read after the

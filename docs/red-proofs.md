@@ -5070,3 +5070,24 @@ client scan that came back empty reports every field as unsent, which nobody cou
 client half gets a proof of its own, and it patches `web/app.js` rather than any Go file.
 
 `recorded` 403 → 405.
+
+## Naming a ceremony — and the recital it must not replace (v1.128.107)
+
+Every card in the Signing Ceremonies panel was headed by its Intent, which is the recital: the
+sentence every party signs, often a whole clause. It is the right thing to sign and the wrong thing
+to scan a list by, and a party before their hop has no record at all — so their card fell to *"A
+ceremony on this machine"*, which is what every one of them says. The fix gives each machine its own
+local, unsigned name for a proceeding.
+
+**The risk the fix creates is the one recorded here.** D20 makes the Intent the recital's only home,
+so a name that takes the heading must not take the recital with it.
+
+| proof | check | expects |
+|---|---|---|
+| `a-name-replaces-the-recital` — the `.cerrecital` line deleted, leaving a card headed by a locally-typed label with the agreement nowhere on it | `node --test test/jsdom/ceremonyname.test.mjs`, tier 2 | "HID the recital" |
+
+**It fails in the invisible direction.** A card headed by a good name looks entirely correct —
+nothing is missing that a reader would notice, and the machine holding the name is the machine whose
+user wrote it. Only asserting both strings on one card can see it.
+
+`recorded` 405 → 406.

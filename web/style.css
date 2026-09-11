@@ -1356,6 +1356,10 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    it rather than being overridden — and the sentence loses the peach that means "warning". */
 .cercard[data-waiting] .cerreason { color: var(--subtext1); }
 .cerdeadline { color: var(--subtext1); font-size: 11px; margin: 4px 0 0; }
+/* The recital, once a name has taken the heading. It is what the parties agreed and it stays on
+   the card (D20), so it is ordinary body text rather than a caption — a name is a handle, and
+   shrinking the agreement to make room for the handle gets the two the wrong way round. */
+.cerrecital { color: var(--text); font-size: 12px; margin: 3px 0 0; }
 .cerroster { margin-top: 6px; }
 .cerparty { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0; }
 .cerparty.cerme .cerwho, .cerworkrow.cerme .cerwho { font-weight: 600; color: var(--green); }
@@ -1439,6 +1443,19 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   font-size: 11px;
   color: var(--subtext1);
   padding: 1px 0;
+}
+/* The name on a finished row sits between the outcome and the date and takes whatever is left.
+   The outcome and the date are short facts the user scans down a column; a long label must push
+   neither of them out of line, so it ellipsises rather than wrapping. --text rather than the row's
+   --subtext1 because on that row it is the only thing a person recognises. */
+.cerendedname {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cernext { margin-top: 8px; }
 .cernextbtn {
@@ -1862,6 +1879,17 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   color: var(--base);
   background: var(--blue);
 }
+
+/* Naming a proceeding on THIS machine. Same disclosure shape as .cerreissue — a button that
+   opens a body — because it is the same kind of act: something you do occasionally, on one card,
+   that should not take up room on every card in the list. The note is --subtext1 and not a
+   warning colour: "nobody else sees this" is a fact about where the name lives, not a caution. */
+.cername { margin-top: 6px; }
+.cernamebtn { width: 100%; }
+.cernamebody { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.cernameinput { flex: 1 1 120px; min-width: 0; }
+.cernamenote { flex: 1 1 100%; color: var(--subtext1); font-size: 11px; margin: 0; }
+.cernameout { flex: 1 1 100%; }
 
 /* The "leave this ceremony" control (P05.S01). Quiet by default — it is a way out, not an action
    the card is inviting — and it takes `--red` only on hover, where the user is already committing. */
