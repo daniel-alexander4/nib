@@ -364,6 +364,33 @@ in the `golang.org/x`/pdfcpu sections above and at
 
 ---
 
+## Roboto (Bold, Italic, Bold Italic)
+
+Vendored under `internal/pdfops/fonts/` (`Roboto-Bold.ttf`, `Roboto-Italic.ttf`,
+`Roboto-BoldItalic.ttf`) and installed into pdfcpu's font registry so the text Nib
+AUTHORS — Markdown conversion, the co-signing readme and the signature pages — is
+drawn in fonts that are embedded in the output. PDF/UA rule 7.21.4.1 requires every
+font used for rendering to be embedded, and the Base-14 core fonts are by definition
+not; pdfcpu bundles only `Roboto-Regular`, so the other three weights are vendored
+here. Copyright 2015 Google Inc., licensed under the Apache License, Version 2.0;
+the full license text is reproduced in the `golang.org/x`/pdfcpu sections above and
+at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
+<https://github.com/google/roboto>.
+
+---
+
+## Liberation Mono
+
+Vendored under `internal/pdfops/fonts/` (`LiberationMono-Regular.ttf`) and installed
+into pdfcpu's font registry as the monospace face for authored code blocks, for the
+same reason as the Roboto weights above: `Courier` is a Base-14 core font and cannot
+be embedded. Copyright (c) Red Hat, Inc., with Reserved Font Name "Liberation",
+licensed under the SIL Open Font License, Version 1.1 (the full license text is
+reproduced in the Noto Sans section above). Upstream:
+<https://github.com/liberationfonts/liberation-fonts>.
+
+---
+
 ## NanumGothic
 
 Vendored under `internal/pdfops/fonts/` (`NanumGothic-Regular.ttf`) and installed

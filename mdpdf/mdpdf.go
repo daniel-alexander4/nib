@@ -32,7 +32,12 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// Typography: Base-14 core fonts only, so nothing needs embedding.
+// Typography: the Base-14 core faces, which need no embedding and CANNOT be embedded.
+//
+// They are the default and the fallback, not the only option — see `Faces` and
+// `ConvertWithFaces`. PDF/UA rule 7.21.4.1 requires every font used for rendering to be
+// embedded in the file, which a core font by definition is not, so a document set in these
+// fails that rule no matter what else is done to it.
 const (
 	fontBody       = "Helvetica"
 	fontBold       = "Helvetica-Bold"
@@ -58,6 +63,65 @@ const (
 // headingSizes maps heading level 1-6 to point size (always bold).
 var headingSizes = [6]int{20, 16, 13, 12, 11, 11}
 
+// faceSet is the five base faces a document is set in, plus whether they are embedded.
+//
+// **`embedded` is not decoration: it decides how text is MEASURED.** pdfcpu measures a core
+// font BYTE by byte and a user font by RUNE, and `style.width` picks between them — so a set
+// of embedded faces carrying `embedded: false` lays every multi-byte word out at twice its
+// width. The flag travels with the names for that reason, rather than being derived at each
+// call site.
+type faceSet struct {
+	body, bold, italic, boldItalic, code string
+	embedded                             bool
+}
+
+// coreFaces is the Base-14 set: what `Convert` uses, and what a caller falls back to when the
+// embedded faces could not be installed.
+var coreFaces = faceSet{fontBody, fontBold, fontItalic, fontBoldItalic, fontCode, false}
+
+// sty is a style in one of this set's faces, carrying the measurement rule with it.
+func (f faceSet) sty(name string, size int) style {
+	return style{font: name, size: size, embedded: f.embedded}
+}
+
+// Faces supplies the five base faces a document is set in, so authored output can be drawn in
+// fonts that are EMBEDDED in the result.
+//
+// It exists for PDF/UA rule 7.21.4.1 — *the font programs for all fonts used for rendering
+// shall be embedded* — which the Base-14 core fonts cannot satisfy by construction. Each field
+// carries the face's PostScript name and its TTF, and the bytes are installed the same way the
+// fallback pool's are, so a caller supplies them and nothing is read from disk.
+//
+// All five are required. A partially-supplied set would mix embedded and core faces in one
+// document, which still fails the rule and is harder to reason about than either.
+type Faces struct {
+	Body, Bold, Italic, BoldItalic, Code Font
+}
+
+// valid reports whether every face is present with a name and bytes.
+func (f *Faces) valid() bool {
+	if f == nil {
+		return false
+	}
+	for _, x := range f.all() {
+		if x.Name == "" || len(x.Data) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *Faces) all() []Font {
+	if f == nil {
+		return nil
+	}
+	return []Font{f.Body, f.Bold, f.Italic, f.BoldItalic, f.Code}
+}
+
+func (f *Faces) set() faceSet {
+	return faceSet{f.Body.Name, f.Bold.Name, f.Italic.Name, f.BoldItalic.Name, f.Code.Name, true}
+}
+
 // Convert renders CommonMark Markdown to a paginated US Letter PDF using the Base-14
 // core fonts only — nothing is embedded, and coverage is WinAnsi (Latin) as a result.
 // Text outside that repertoire renders as spaces; see Unsupported, and ConvertWithFonts
@@ -74,6 +138,24 @@ func Convert(md []byte) ([]byte, error) { return ConvertWithFonts(md, nil) }
 // face that cannot print it either would only move the blanks, and Unsupported still
 // reports it either way.
 func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
+	return ConvertWithFaces(md, nil, fallbacks)
+}
+
+// ConvertWithFaces is ConvertWithFonts with the BASE faces supplied too, so the whole document
+// — not only the words the core fonts cannot print — is set in fonts embedded in the result.
+//
+// `base` nil, or any face in it missing its name or bytes, means the Base-14 core set: the
+// behaviour `Convert` has always had. That is a deliberate degrade rather than an error,
+// because the caller's faces come from an install that can fail (an unwritable font directory)
+// and a document set in core fonts is a worse PDF, not a broken one.
+func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) {
+	faces := coreFaces
+	if base.valid() {
+		if err := installFallbacks(base.all()); err != nil {
+			return nil, err
+		}
+		faces = base.set()
+	}
 	if err := installFallbacks(fallbacks); err != nil {
 		return nil, err
 	}
@@ -81,7 +163,7 @@ func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
 		return nil, err
 	}
 	doc := goldmark.New().Parser().Parse(text.NewReader(md))
-	r := &renderer{src: md, l: newLayout(), fonts: fallbacks}
+	r := &renderer{src: md, l: newLayout(faces), fonts: fallbacks, f: faces}
 	r.blocks(doc, 0, nil)
 	spec, err := r.l.spec()
 	if err != nil {
@@ -99,6 +181,7 @@ type renderer struct {
 	src   []byte
 	l     *layout
 	fonts []Font
+	f     faceSet
 }
 
 // blocks lays out the children of n. A non-nil marker (list bullet/number)
@@ -170,25 +253,25 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 	switch t := n.(type) {
 	case *ast.Heading:
 		lvl := min(t.Level, 6)
-		sty := style{font: fontBold, size: headingSizes[lvl-1]}
+		sty := r.f.sty(r.f.bold, headingSizes[lvl-1])
 		// Keep the heading with at least two body lines; break early otherwise.
-		bodyLead := style{font: fontBody, size: sizeBody}.leading()
+		bodyLead := r.f.sty(r.f.body, sizeBody).leading()
 		r.l.need(0.8*float64(sty.size) + sty.leading() + 2*bodyLead + paraGap)
 		r.l.gap(0.8 * float64(sty.size))
 		r.l.para(r.inline(n, sty.size), indent, marker, sty.leading())
 		r.l.gap(4)
 	case *ast.Paragraph:
-		r.l.para(r.inline(n, 0), indent, marker, style{font: fontBody, size: sizeBody}.leading())
+		r.l.para(r.inline(n, 0), indent, marker, r.f.sty(r.f.body, sizeBody).leading())
 		r.l.gap(paraGap)
 	case *ast.TextBlock: // paragraph inside a tight list item
-		r.l.para(r.inline(n, 0), indent, marker, style{font: fontBody, size: sizeBody}.leading())
+		r.l.para(r.inline(n, 0), indent, marker, r.f.sty(r.f.body, sizeBody).leading())
 		r.l.gap(tightGap)
 	case *ast.List:
 		num := t.Start
 		for li := t.FirstChild(); li != nil; li = li.NextSibling() {
-			m := word{[]frag{{"•", style{font: fontBody, size: sizeBody}}}}
+			m := word{[]frag{{"•", r.f.sty(r.f.body, sizeBody)}}}
 			if t.IsOrdered() {
-				m = word{[]frag{{strconv.Itoa(num) + ".", style{font: fontBody, size: sizeBody}}}}
+				m = word{[]frag{{strconv.Itoa(num) + ".", r.f.sty(r.f.body, sizeBody)}}}
 				num++
 			}
 			// Clamped, exactly as *ast.Blockquote below is and for the same measured
@@ -235,7 +318,7 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 // inline collects the inline content of a block into styled words.
 // headSize > 0 sets the heading base size (headings render bold).
 func (r *renderer) inline(n ast.Node, headSize int) []word {
-	in := &inliner{src: r.src, headSize: headSize, fonts: r.fonts}
+	in := &inliner{src: r.src, headSize: headSize, fonts: r.fonts, f: r.f}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		in.node(c)
 	}
@@ -258,7 +341,8 @@ func (r *renderer) codeLines(n ast.Node) []string {
 // whitespace between them in the source (so `**bold**.` wraps as one word).
 type inliner struct {
 	src      []byte
-	fonts    []Font // fallback faces for words the core fonts cannot print
+	fonts    []Font  // fallback faces for words the base faces cannot print
+	f        faceSet // the base faces this document is set in
 	headSize int
 	bold     int
 	italic   int
@@ -374,18 +458,18 @@ func (in *inliner) style() style {
 		size = in.headSize
 	}
 	if in.code > 0 {
-		return style{font: fontCode, size: max(size-1, 4)}
+		return in.f.sty(in.f.code, max(size-1, 4))
 	}
 	b := in.bold > 0 || in.headSize > 0
 	switch {
 	case b && in.italic > 0:
-		return style{font: fontBoldItalic, size: size}
+		return in.f.sty(in.f.boldItalic, size)
 	case b:
-		return style{font: fontBold, size: size}
+		return in.f.sty(in.f.bold, size)
 	case in.italic > 0:
-		return style{font: fontItalic, size: size}
+		return in.f.sty(in.f.italic, size)
 	}
-	return style{font: fontBody, size: size}
+	return in.f.sty(in.f.body, size)
 }
 
 // spec serializes the laid-out pages as a pdfcpu "create" JSON document.

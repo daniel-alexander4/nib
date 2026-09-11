@@ -19,8 +19,70 @@ import (
 // need their own embedded font, installed into pdfcpu's user-font dir. (This is
 // the only font Nib vendors itself; Roboto comes from inside pdfcpu.)
 
-//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/NotoSansBengali-Regular.ttf fonts/NotoSansTamil-Regular.ttf fonts/NotoSansTelugu-Regular.ttf fonts/NotoSansKannada-Regular.ttf fonts/NotoSansMalayalam-Regular.ttf fonts/NotoSansGujarati-Regular.ttf fonts/NotoSansGurmukhi-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf
+//go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/NotoSansBengali-Regular.ttf fonts/NotoSansTamil-Regular.ttf fonts/NotoSansTelugu-Regular.ttf fonts/NotoSansKannada-Regular.ttf fonts/NotoSansMalayalam-Regular.ttf fonts/NotoSansGujarati-Regular.ttf fonts/NotoSansGurmukhi-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf fonts/Roboto-Regular.ttf fonts/Roboto-Bold.ttf fonts/Roboto-Italic.ttf fonts/Roboto-BoldItalic.ttf fonts/LiberationMono-Regular.ttf
 var ocrFontFS embed.FS
+
+// The faces nib AUTHORS text in — `PLAN-accessibility.md` P04.S01.
+//
+// # Why these are vendored when a Base-14 face costs nothing
+//
+// PDF/UA rule 7.21.4.1 requires the font program of every font used for rendering to be
+// embedded in the file. A Base-14 core font cannot be: it is a name the reader supplies. So
+// `mdpdf`'s five core faces are exactly why nib's own Markdown output fails that rule, and the
+// only way past it is to draw in faces whose bytes ship with the document.
+//
+// # Why four are vendored and not one
+//
+// **pdfcpu bundles exactly one Latin face**, `Roboto-Regular` — measured: `font.IsUserFont` is
+// false for `Roboto-Bold`, `Roboto-Italic`, `Roboto-BoldItalic` and any mono face. A document
+// that embeds its body face and draws headings in core Helvetica-Bold still fails the rule, so
+// the set is all-or-nothing.
+//
+// `Roboto-Regular` is vendored too, even though pdfcpu installs its own copy, so that all five
+// faces come from ONE place and succeed or fail together. Without that, an install failure
+// leaves a document set in a vendored bold and pdfcpu's regular, or the reverse.
+//
+// # Why the monospace face is not a Roboto
+//
+// `RobotoMono` is not bundled and Google's Roboto repository does not carry it; Liberation Mono
+// is OFL, already a licence class this repo ships, and metrically a Courier New substitute —
+// which matters not at all for layout, because `mdpdf` measures an embedded face by RUNE
+// (`style.width`), but does mean code blocks look like what they replaced.
+var authoringFontFiles = map[string]string{
+	"Roboto-Regular":    "fonts/Roboto-Regular.ttf",
+	"Roboto-Bold":       "fonts/Roboto-Bold.ttf",
+	"Roboto-Italic":     "fonts/Roboto-Italic.ttf",
+	"Roboto-BoldItalic": "fonts/Roboto-BoldItalic.ttf",
+	// PostScript name "LiberationMono"; the FILE is *-Regular.ttf. Same split as
+	// DroidSansFallback above, and mdpdf refuses a mismatch rather than installing under a
+	// name nothing can reference — which is how this was found.
+	"LiberationMono": "fonts/LiberationMono-Regular.ttf",
+}
+
+// authoringFaces is the base face set handed to `mdpdf`, or nil when any face is unreadable.
+//
+// **Nil is a degrade, not an error, and `mdpdf` treats it as one**: a document set in core
+// fonts fails one PDF/UA rule, while refusing to convert fails the thing the user asked for.
+// The bytes are embedded in the binary, so in a built nib this cannot fail — the nil path
+// exists for the case that can, which is P04.S03's: an install into an unwritable font
+// directory, handled inside `mdpdf`.
+func authoringFaces() *mdpdf.Faces {
+	read := func(name string) mdpdf.Font {
+		bb, err := ocrFontFS.ReadFile(authoringFontFiles[name])
+		if err != nil {
+			return mdpdf.Font{}
+		}
+		return mdpdf.Font{Name: name, Data: bb}
+	}
+	f := &mdpdf.Faces{
+		Body:       read("Roboto-Regular"),
+		Bold:       read("Roboto-Bold"),
+		Italic:     read("Roboto-Italic"),
+		BoldItalic: read("Roboto-BoldItalic"),
+		Code:       read("LiberationMono"),
+	}
+	return f
+}
 
 // ocrFontFiles maps each font's PostScript name (the name pdfcpu registers it
 // under, and the name a watermark references) to its embedded TTF.
