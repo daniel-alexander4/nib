@@ -196,3 +196,73 @@ func TestNibDoesNotReplaceAConvertersLanguage(t *testing.T) {
 			"substituting its own guess for a value it did not determine", before, after)
 	}
 }
+
+// TestACropKeepsTheDocumentsLanguage — /pending 472, and specifically the branch the census could
+// not reach.
+//
+// `Crop` has two exits: a one-page document returns the single rebuilt segment, and a multi-page one
+// goes through `MergeRaw`. The ua1 differential that found this defect drives a ONE-PAGE fixture, so
+// it measured the first exit and only argued about the second. Three pages drives both.
+func TestACropKeepsTheDocumentsLanguage(t *testing.T) {
+	for _, n := range []int{1, 3} {
+		src, err := SetLang(pagesPDF(t, n), "en-GB")
+		if err != nil {
+			t.Fatalf("SetLang: %v", err)
+		}
+		if got := catalogLang(t, src); got != "en-GB" {
+			t.Fatalf("setup: the %d-page fixture does not carry the language being tested for "+
+				"(got %q), so the assertion below would pass on a build that drops it", n, got)
+		}
+		out, err := Crop(src, [4]float64{0.05, 0.05, 0.05, 0.05}, nil)
+		if err != nil {
+			t.Fatalf("Crop(%d pages): %v", n, err)
+		}
+		if got := catalogLang(t, out); got != "en-GB" {
+			t.Errorf("Crop on %d page(s) returned /Lang %q, want \"en-GB\" — cropping does not "+
+				"change what language a document is written in", n, got)
+		}
+	}
+}
+
+// TestInsertingADocumentKeepsTHISDocumentsLanguage — /pending 472, the `splice` half.
+//
+// Inserting at page 1 is the case that matters: `splice` builds the result by appending, `Append`
+// is `MergeRaw`, and `MergeRaw` takes the FIRST document's catalog whole — so at page 1 the
+// INSERTED document's catalog becomes the result's and the original's language is gone. Both
+// positions are driven, because a fix that only handles the tail leaves the defect where it was.
+func TestInsertingADocumentKeepsTHISDocumentsLanguage(t *testing.T) {
+	src, err := SetLang(pagesPDF(t, 3), "en-GB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := pagesPDF(t, 1)
+	if got := catalogLang(t, other); got != "" {
+		t.Fatalf("setup: the inserted document already carries /Lang %q, so this cannot tell a "+
+			"carried language from an inherited one", got)
+	}
+	for _, at := range []int{1, 2, 3} {
+		out, err := InsertPDF(src, other, at)
+		if err != nil {
+			t.Fatalf("InsertPDF at %d: %v", at, err)
+		}
+		if got := catalogLang(t, out); got != "en-GB" {
+			t.Errorf("InsertPDF at page %d returned /Lang %q, want \"en-GB\" — the inserted "+
+				"document's catalog has replaced this document's", at, got)
+		}
+	}
+}
+
+// pagesPDF is an n-page raster document. `threePagePDF` exists for the fixed case; the language
+// tests need both a one-page and a multi-page document to drive `Crop`'s two exits.
+func pagesPDF(t *testing.T, n int) []byte {
+	t.Helper()
+	pages := make([]RasterPage, n)
+	for i := range pages {
+		pages[i] = rasterPage(t, 80, 110)
+	}
+	pdf, err := ImagesToPDF(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pdf
+}

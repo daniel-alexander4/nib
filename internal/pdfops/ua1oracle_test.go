@@ -111,15 +111,21 @@ var knownUA1Deltas = map[string]struct {
 	"Collect":       {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
 	"DuplicatePage": {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
 
-	// ── The same, PLUS 7.2 t34 — and that extra clause is a SECOND loss nobody declared.
-	// `/pending 472`: these five drop the catalog `/Lang` as well as the tree, while `carryLang`
-	// sits two functions away with exactly two callers. Recorded here rather than fixed inside the
-	// slice that found it, so the fix arrives as its own change and this table shrinks to prove it.
-	"CarryAttachments": {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "tree loss + the /Lang drop of /pending 472"},
-	"Crop":             {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "the same"},
-	"InsertPDF":        {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "the same"},
-	"SplitPage":        {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "the same"},
-	"SplitRegions":     {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "the same"},
+	// ── These four also added 7.2 t34 when this table was first written, because they dropped the
+	// catalog `/Lang` as well as the tree. **That was `/pending 472`, and it is fixed** at v1.129.36
+	// — `splice` and both of `Crop`'s exits now route through `carryLang`. The rows shrank as part
+	// of the fix, which is what the both-ways check is FOR: a delta table that only fails on added
+	// clauses becomes a list of permanent excuses.
+	"Crop":         {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "tree loss only, since /pending 472"},
+	"InsertPDF":    {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
+	"SplitPage":    {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
+	"SplitRegions": {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
+
+	// `CarryAttachments` kept its 7.2 t34 and is NOT part of 472: the census drives it as
+	// `CarryAttachments(fixture, untaggedFixture())`, so the destination is a genuinely different
+	// document and having no `/Lang` of the source's is correct. It was in the filed item until the
+	// drive call was read. A differential reports what it measured, not what it measured it on.
+	"CarryAttachments": {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "the destination is a DIFFERENT document — a property of the drive call, not a defect"},
 
 	// ── Untagged content arrives from somewhere else. Both merge a second document in, and the
 	// pages that come with it are neither tagged nor marked as artifact — true of the second

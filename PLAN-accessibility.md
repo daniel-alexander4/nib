@@ -1079,10 +1079,14 @@ and the row is a claim about code that no longer exists.
 **Eighteen deltas were recorded on the first run, and two of them are defects.** Filed rather than
 folded into this diff, so the table is the record that the instrument found them:
 
-- **`/pending 472`** — `CarryAttachments`, `Crop`, `InsertPDF`, `SplitPage` and `SplitRegions` drop
-  the catalog **`/Lang`** as well as the tree. `carryLang` sits at `pdfops.go:193` with **two**
-  callers. Losing the tree is declared; losing the language is a second loss nobody declared, and
-  the census covers the tree and has nothing to say about `/Lang`.
+- **`/pending 472`** — ~~five~~ **four** page operations drop the catalog **`/Lang`** as well as the
+  tree. **CLOSED the same day, v1.129.36**: `splice` (`InsertPDF`, and `SplitPage`/`SplitRegions`
+  through `replacePage`) and both of `Crop`'s exits now route through `carryLang`, which sat at
+  `pdfops.go:193` with **two** callers — ADR-009's shape exactly. `CarryAttachments` was in the
+  filed item until its drive call was read: the census hands it a genuinely different destination
+  document, so having none of the source's `/Lang` is correct. **A differential reports what it
+  measured, not what it measured it on.** The fix proved itself — `knownUA1Deltas` is checked both
+  ways, so the four rows had to SHRINK before the suite went green.
 - **`/pending 473`** — all four stamping operations emit an optional-content configuration
   dictionary with `/AS` present and `/Name` missing, which ua1 7.10 t2 and 7.10 t1 forbid by name.
   Two catalog keys, in every stamped document nib produces.

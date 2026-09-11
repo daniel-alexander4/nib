@@ -694,7 +694,13 @@ func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) 
 			return nil, err
 		}
 	}
-	return result, nil
+	// **The catalog the result inherits belongs to whichever segment came FIRST.** `Append` is
+	// `MergeRaw`, which takes the first document's catalog whole — so splicing at page 1 makes the
+	// INSERTED document's catalog the result's, and the original's `/Lang` is gone. /pending 472,
+	// found by P03.S03's ua1 differential: `InsertPDF`, `SplitPage` and `SplitRegions` each added
+	// 7.2 t34 to a document that passed it. Cropping a page or inserting one does not change what
+	// language the document is written in.
+	return carryLang(pdf, result)
 }
 
 // replacePage returns pdf with page p (1-based, of n total) replaced in place by
@@ -840,7 +846,7 @@ func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
 		segs = append(segs, page)
 	}
 	if len(segs) == 1 {
-		return segs[0], nil // MergeRaw needs ≥2 inputs; a one-page doc is already done
+		return carryLang(pdf, segs[0]) // MergeRaw needs ≥2 inputs; a one-page doc is already done
 	}
 	readers := make([]io.ReadSeeker, len(segs))
 	for i, b := range segs {
@@ -850,7 +856,13 @@ func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
 	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	// The cropped pages are rebuilt from scratch, so the result's catalog is the first SEGMENT's
+	// and the document's own `/Lang` never reaches it. /pending 472 — cropping does not change what
+	// language a document is written in. The one-page early return above needs it for the same
+	// reason, and the census fixture is ONE page, so only that path was measured: this branch is
+	// fixed on the argument, not on a reading, and `TestACropKeepsTheDocumentsLanguage` drives it
+	// on three pages so it is measured too.
+	return carryLang(pdf, out.Bytes())
 }
 
 // normalizePage flattens a single-page PDF's /Rotate into its content and
