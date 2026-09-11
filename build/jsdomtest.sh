@@ -92,7 +92,7 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # passing, and both slices reported it green. **P03.S04 adds no jsdom file at all**; this bump is
 # the earlier drift being repaired by the next slice that ran the harness and read its last line,
 # which is the fourth instance's shape again (a person needing the number, not a check).
-Nib_expect_files=56
+Nib_expect_files=57
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

@@ -68,7 +68,12 @@ export const Util = {
 // render the document" — so with the default stub, geometry appended before the await is wiped
 // before a test can read it, and the flip between PDF points (origin bottom-left) and CSS pixels
 // (origin top-left) would have no reader below tier 3.
-function makePage(n, renders) {
+// `text` gives the page a text LAYER, and the empty default is the honest one: most callers here
+// are about geometry or lifecycle, and a page with no text is also a real page — a scan. Added for
+// read-aloud (`/pending 408`), whose most important case is exactly the empty one, where the app
+// must name OCR rather than fall silent. Shaped like pdf.js's own answer (`items` of `{str, hasEOL}`)
+// so a test asserting on what was READ is asserting on the same structure production parses.
+function makePage(n, renders, text = '') {
   return {
     pageNumber: n,
     getViewport({ scale = 1 } = {}) {
@@ -79,7 +84,7 @@ function makePage(n, renders) {
         ? { promise: Promise.resolve() }
         : { promise: Promise.reject(new Error('jsdom has no canvas — rendering is tier 3')) };
     },
-    getTextContent: async () => ({ items: [] }),
+    getTextContent: async () => ({ items: text ? [{ str: text, hasEOL: true }] : [] }),
     getAnnotations: async () => [],
   };
 }
@@ -134,7 +139,12 @@ export function getDocument() {
       }
       resetModified() { this.#modified = false; }
     })(),
-    getPage: async (n) => makePage(n, cfg.renders === true),
+    // `text` may be one string for every page, or an ARRAY of per-page strings. The array form
+    // exists because "it read only THIS page" cannot be asserted against a document whose pages all
+    // say the same thing — a whole-document read and a single-page read produce identical output,
+    // and the mutation that swapped one for the other stayed green until the pages differed.
+    getPage: async (n) => makePage(n, cfg.renders === true,
+      Array.isArray(cfg.text) ? (cfg.text[n - 1] || '') : (cfg.text || '')),
     getOutline: async () => cfg.outline,
     getData: async () => new Uint8Array(),
     saveDocument: async () => new Uint8Array(),
