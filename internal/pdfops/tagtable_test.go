@@ -77,6 +77,7 @@ var tagFates = map[string]tagFate{
 	"Optimize":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Optimize(b) }},
 	"NormalizePageSizes":  {verdict: "carried", drive: func(b []byte) ([]byte, error) { return NormalizePageSizes(b) }},
 	"SetLang":             {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetLang(b, "en-GB") }},
+	"SetTitle":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetTitle(b, "A title") }},
 	"StripMetadata":       {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
 	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
 	"RemoveFilesAndMedia": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},

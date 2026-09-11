@@ -42,6 +42,14 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
+	if err == nil {
+		// The converted document's title is the source document's name — the one thing here that
+		// identifies it, and what the user already calls it. A name that derives to nothing gets
+		// no title rather than a made-up one; see pdfops.TitleFromFilename.
+		if t := pdfops.TitleFromFilename(header.Filename); t != "" {
+			pdf, err = pdfops.SetTitle(pdf, t)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
 			httpError(w, http.StatusBadRequest, "LibreOffice is not installed")

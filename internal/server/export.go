@@ -177,9 +177,16 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	// It is ADVISORY and the resolve at the commit stays authoritative: the document can be
 	// closed while the body is being read, so this one cannot be trusted to still hold by the
 	// time there is something to install. Do not "optimise" by reusing the document it resolves.
-	if _, ok := s.resolveDoc(w, r); !ok {
+	src, ok := s.resolveDoc(w, r)
+	if !ok {
 		return
 	}
+	// The flattened result's title is the source document's name. Only the NAME is taken, as a
+	// string, and the document itself is not held: the warning above stands whole — what may not be
+	// reused is the resolved document as a commit target, because it can be closed while the body
+	// is read. A title is a label on bytes this handler is building and nothing downstream depends
+	// on its freshness.
+	srcTitle := pdfops.TitleFromFilename(src.displayName())
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -238,6 +245,9 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pdf, err := pdfops.ImagesToPDF(pages)
+	if err == nil && srcTitle != "" {
+		pdf, err = pdfops.SetTitle(pdf, srcTitle)
+	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not assemble PDF")
 		return

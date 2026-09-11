@@ -171,7 +171,11 @@ func renderPage(text []any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pdfops.CreateFromJSON(b)
+	pdf, err := pdfops.CreateFromJSON(b)
+	if err != nil {
+		return nil, err
+	}
+	return pdfops.SetTitle(pdf, "Signature page")
 }
 
 // PrepareCeremonyDocument readies pdf for a ceremony of `signers` signing parties: the

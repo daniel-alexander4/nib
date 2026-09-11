@@ -884,16 +884,82 @@ state P01 exists to stop, and would be caught by P01's own guard. `/MarkInfo` th
 
 **Firmed slices:**
 
-#### P03.S01 — the catalog floor that does not lie
+#### P03.S01 — the catalog floor that does not lie *(done 2026-09-11, v1.129.30)*
+
+**(grill, 2026-09-11 — confirmed, and the population is five call sites, not "authored output".)**
+pdfcpu **reads** XMP and has no writer (`model/metadata.go` unmarshals only), so the packet is
+hand-built. `ViewerPreferences` is a model struct with `DisplayDocTitle *bool` and
+`BindViewerPreferences()`, so that half is supported.
+
+**`dc:title` is the whole design question, and it decides the shape.** PDF/UA 7.1 t9 wants a title
+that *clearly identifies the document*; a generic one baked into the primitives — "Document" — is
+the failure wearing a pass, and the primitives do not know what they are making. **Each caller
+does.** So the door takes a title and the callers supply theirs, rather than the primitive
+inventing one.
+
+**Six call sites author a document; five of them produce one somebody receives.**
+`internal/pdfops/pdfops.go:374` calls `ImagesToPDF` to build a one-page raster **fragment** inside
+`RedactPages` — not a document, and it must not get a title. That is the exemption the guard needs,
+and it is the kind of site a population defined as "every call of an authoring primitive" would have
+swept in.
+
+Tasks:
+- T01 — `SetTitle(pdf, title)`: one door writing an XMP `/Metadata` packet with `dc:title`, the
+  Info dict's `/Title` to match, and `ViewerPreferences /DisplayDocTitle true`.
+- T02 — the five receiving call sites pass their own title.
+- T03 — the guard: enumerate authoring call sites from the code; each routes through the door or is
+  named, with a reason, as a fragment.
 Scope: authored output carries an XMP `/Metadata` stream with `dc:title` and
 `ViewerPreferences /DisplayDocTitle true`. **Not `/MarkInfo`** — see the phase pin. Refs: exit
 criterion 1, ADR-031 law 1.
-Acceptance:
-- A nib-authored document no longer fails ua1 7.1 t8 or 7.1 t10, measured before and after on the
-  same bytes.
-- It gains no clause it did not already fail — the same differential shape P01.S06 uses.
-- `inspectTags` still reports it un-orphaned: the floor must not make it claim tagging.
+Acceptance *(amended mid-slice on measurement, 2026-09-11)*:
+- A nib-authored document no longer fails ua1 **7.1 t8** or **7.1 t10**, measured before and after
+  on the same bytes.
+- ~~It gains no clause it did not already fail — the same differential shape P01.S06 uses.~~
+  **(STRUCK — the shape is wrong here, and measuring it is what showed why.)** Supplying a metadata
+  stream **creates the object that other clauses inspect**: with no `/Metadata` at all, ua1 5 t1
+  ("the stream shall carry the PDF/UA Identification schema") and 7.2 t33 ("natural language for
+  document metadata shall be determined") have **no subject and are not evaluated**. Adding an
+  honest one makes both applicable. A differential that counts clauses therefore penalises
+  supplying an artefact that was missing, which is the opposite of what it is for. **Replaced
+  with the two dispositions below**, which name every clause the change makes applicable.
+- ✅ **7.2 t33 is cleared by P03.S02's `/Lang`, not here** — measured: title alone leaves it
+  failing, title + `/Lang` clears it **and** 7.2 t34 together. The two slices are coupled and the
+  phase's benefit lands at S02; S01 alone is a net zero by clause count, and saying so is the
+  honest read.
+- ✅ **5 t1 is REFUSED, not deferred.** Clearing it means writing `pdfuaid:part` into the packet —
+  a **conformance assertion**, which is the third thing ADR-031's law 1 forbids by name over
+  content that is neither tagged nor marked as an artifact. The document still fails 7.1 t3 and
+  7.1 t11; asserting PDF/UA over it would be the same lie `/MarkInfo` would have been at
+  phase-open, in a different field. It arrives in P05 when it is true.
+- `inspectTags` still reports the document un-orphaned: the floor must not make it claim tagging.
 - A red proof: removing either key turns its clause red again.
+
+**Measured on the shipped code, same bytes through veraPDF ua1** (`CreateFromJSON` output):
+
+| | failing clauses |
+|---|---|
+| before | `6.2 t1` `7.1 t3` **`7.1 t8`** `7.1 t11` **`7.1 t10`** `7.21.4.1 t1` `7.2 t34` |
+| after `SetTitle` | `5 t1` `6.2 t1` `7.1 t3` `7.1 t11` `7.21.4.1 t1` `7.2 t33` `7.2 t34` |
+| after `+ /Lang` *(S02's, shown for the coupling)* | `5 t1` `6.2 t1` `7.1 t3` `7.1 t11` `7.21.4.1 t1` |
+
+**7.1 t8 and 7.1 t10 are cleared, and 7.1 t9 never appears in either column** — with no `/Metadata`
+there is no stream for it to inspect, so it is the third clause the change makes applicable and
+passes in the same step.
+
+**The population came out at six sites, not five, and the sixth is a caller the slice did not
+plan for.** `handleAssemble` takes its title from the OPEN document rather than from a file name —
+it builds from posted raster images and has no filename of its own. The name is read off the
+advisory resolve at the top of the handler, as a string and not a held document, so the warning
+there about not reusing the resolved document as a commit target stands whole.
+
+**`TitleFromFilename` returns `""` rather than a fallback, and the callers guard on it.** A
+document whose name derives to nothing gets no title: `"Document"` is precisely the generic label
+7.1 t9 exists to refuse, so failing the clause truthfully beats passing it falsely.
+
+**Measured, the whole arc of this phase on one authored document:** 7 failing clauses → 5 after
+S01+S02. The five left are P04's (7.21.4.1 t1, fonts), P05's (6.2 t1, 7.1 t3, 7.1 t11) and the
+one nib refuses (5 t1).
 
 #### P03.S02 — `/Lang` from every door that authors a document
 Scope: every authoring operation sets `/Lang`. Measured: `SetLang` has **exactly one caller**
