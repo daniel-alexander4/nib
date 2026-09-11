@@ -923,10 +923,15 @@ Acceptance *(amended mid-slice on measurement, 2026-09-11)*:
   honest one makes both applicable. A differential that counts clauses therefore penalises
   supplying an artefact that was missing, which is the opposite of what it is for. **Replaced
   with the two dispositions below**, which name every clause the change makes applicable.
-- ✅ **7.2 t33 is cleared by P03.S02's `/Lang`, not here** — measured: title alone leaves it
-  failing, title + `/Lang` clears it **and** 7.2 t34 together. The two slices are coupled and the
-  phase's benefit lands at S02; S01 alone is a net zero by clause count, and saying so is the
-  honest read.
+- ✅ **7.2 t33 is cleared by a `/Lang`, and this slice does not write one** — measured: title
+  alone leaves it failing, title + `/Lang` clears it **and** 7.2 t34 together. ~~The two slices are
+  coupled and the phase's benefit lands at S02.~~ **(AMENDED at S02's grill, 2026-09-11.)** S02
+  turned out to write no `/Lang` at all, because no authoring door can determine one. So t33 is
+  cleared only where a `/Lang` is **already present** — the office conversion path, where
+  LibreOffice supplies it — and that document, titled, fails exactly **one** ua1 clause: `5 t1`,
+  the one nib refuses. For `CreateFromJSON`, markdown and raster output, t33 stays failing and the
+  phase does not claim otherwise. S01 alone is a net zero by clause count on those, and saying so
+  is the honest read.
 - ✅ **5 t1 is REFUSED, not deferred.** Clearing it means writing `pdfuaid:part` into the packet —
   a **conformance assertion**, which is the third thing ADR-031's law 1 forbids by name over
   content that is neither tagged nor marked as an artifact. The document still fails 7.1 t3 and
@@ -979,14 +984,72 @@ own, which nib does not invent — S01's authoring-only rule, reaching further t
 S01+S02. The five left are P04's (7.21.4.1 t1, fonts), P05's (6.2 t1, 7.1 t3, 7.1 t11) and the
 one nib refuses (5 t1).
 
-#### P03.S02 — `/Lang` from every door that authors a document
-Scope: every authoring operation sets `/Lang`. Measured: `SetLang` has **exactly one caller**
-(`internal/server/ocr.go:86`), so the `/Lang` that shipped at v1.78.0 reaches OCR output and
-nothing else. Refs: exit criterion 2, `/pending 29` reason 2.
-Acceptance:
-- Every operation that authors a document sets `/Lang`, **enumerated from the code** with a floor.
-- Adding an authoring operation without one turns the guard red, proved by adding one.
-- A nib-authored document no longer fails ua1 7.2 t34.
+#### P03.S02 — where `/Lang` can honestly come from, and where it cannot *(done 2026-09-11, v1.129.33)*
+
+**(grill, 2026-09-11 — OVERTURNED on its own premise, and the scope is now the enumeration rather
+than the write.)** The slice was written as *"every authoring operation sets `/Lang`"*. Four
+measurements refute it, and each one removes a door from the population:
+
+| door | `/Lang` today | who determines the language |
+|---|---|---|
+| `office.go` · `commands.go` → `ConvertDocToPDF` (office) | **`en-US`, from LibreOffice** | **the converting machine, not the document** — see below |
+| the same doors → `ConvertDocToPDF` (`.md`, pure Go) | none | the user. nib has no basis |
+| `export.go` → `ImagesToPDF` | none | nobody: raster pages, **no text in page content at all**, so 7.2 t34 never fires on this output |
+| `readme.go` · `sigpages.go` → `CreateFromJSON` | none | nib knows exactly — its own English prose — and it is **inert**, because `Append` discards a fragment's catalog (the v1.129.32 correction) |
+| `RedactPages` → `ImagesToPDF` | n/a | a fragment |
+
+**The office door's `/Lang` is the CONVERTING MACHINE's locale, and finding that out took four
+measurements past the obvious one.** The first answer was *"LibreOffice derives it from the source
+document"*, which is what a single reading of `en-US` on an English document supports. Then: three
+DOCX files declaring `w:lang` `de-DE`, `th-TH` and `fr-FR` → **all `en-US`**; an ODT declaring
+`fo:language="de"`, in LibreOffice's own native format, so a parse failure cannot be the
+explanation → **`en-US`**; and the same ODT re-converted under `LANG=de_DE.UTF-8` → **`de-DE`**.
+The value tracks the machine, not the file.
+
+**nib passes it through rather than stripping it, and that is a decision.** Stripping would take a
+correct declaration off every document whose author and machine share a language — the common case
+— to avoid a wrong one where they do not, and would move the office path from **one** failing ua1
+clause to three. Correcting it needs someone who actually knows, which is the user; that is the
+`/pending` item this slice files rather than a default this slice invents.
+
+**So `SetLang`'s single caller is not a one-door defect; it is the one place nib knows the answer.**
+`/pending 29` reason 2 reads the count as an oversight. Measured, the OCR path is the only site
+where a language has been *determined* — by the user, choosing what to recognise — and every other
+door either already carries a better determination or has none available to it.
+
+**Why the gap is left open rather than filled with a default.** Writing `"en"` on a document nib
+did not write the text of is a false statement about that document, which is ADR-031 law 1's
+principle in a different field; an absent `/Lang` is silence. (Secondary, and NOT measured here:
+assistive technology with no `/Lang` falls back to the reading user's own setting, so silence is
+also the better outcome — stated as reasoning about AT behaviour, not as a result.)
+
+**The one real language defect nib creates is not a catalog key.** `AppendReadme` staples nib's
+English prose into a document whose `/Lang` may say `de`, and from that moment nib's own text is
+declared German. The catalog cannot fix it — the fix is a language on the *content*, and P05 must
+wrap that exact text in structure elements anyway. Filed there rather than done twice.
+
+Refs: exit criterion 2, `/pending 29` reason 2.
+
+Tasks:
+- T01 — the guard: enumerate authoring doors from the code and classify each `declares` /
+  `carries one already` / `no determination exists`, every row with its reason. A new door with no
+  classification turns it red.
+- T02 — the behavioural half the source scan cannot see, two standing readers, skip-guarded on
+  LibreOffice and **reporting** the skip: the converter's `/Lang` does not come from the document
+  (asserted as an equality between two sources declaring different languages, so it needs no
+  particular locale installed), and nib's pipeline does not replace it.
+- T03 — the two gaps recorded where they can be acted on: the appended-prose language into P05,
+  and a user-declared language for markdown and raster output as a `/pending` item gated on P05.
+
+Acceptance *(rewritten at the grill, 2026-09-11)*:
+- The authoring doors are enumerated **from the code** with a floor, and every one carries a
+  classification with a reason.
+- A new authoring door with none turns the guard red, proved by adding one.
+- An office conversion's `/Lang` survives nib's path unchanged — measured, not asserted.
+- The claim that value is *not* the document's own language is a standing reader, not a note.
+- ~~A nib-authored document no longer fails ua1 7.2 t34.~~ **(STRUCK.)** It is not cleared for
+  markdown or raster output and this slice says why rather than claiming it: no door can determine
+  a language it was never given. It never fires on raster output at all.
 
 #### P03.S03 — the ua1 oracle becomes a standing reader
 Scope: the veraPDF ua1 differential runs in tier 1, `t.Skip`-guarded, and its skip is **reported**
@@ -1024,6 +1087,16 @@ names and `/Tabs`, then OCR from tesseract's block/paragraph/line refs recovered
 
 **Exit criteria.** A markdown document, an authored form, and an OCR'd scan each pass veraPDF `ua1`;
 each tree records which of D4's three sources produced it.
+
+**Carried in from P03.S02 — the one real language defect nib creates, and no catalog key can fix
+it.** `AppendReadme` staples nib's own English prose into the user's document, and `pdfops.Append`
+keeps the FIRST document's catalog: from that moment nib's English text is declared to be in
+whatever language the user's document says, which for a German contract is German. The readme and
+the signature pages are `CreateFromJSON` output rather than `mdpdf`'s, so they are a fourth source
+alongside D4's three — small, entirely nib's own words, and the only one where the language is
+known with certainty. The fix is a language on the CONTENT (a `/Span` carrying `/Lang`, or the
+structure element's own `/Lang` attribute), which is P05's wrapping emitter applied here. P03.S02
+deliberately did not do it twice.
 
 ### P07 — The pure-Go conformance checker
 **Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and
