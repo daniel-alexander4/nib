@@ -2160,6 +2160,10 @@ function newView() {
     // Enumerated here because the phase's own binding count never was: it counted
     // bindings with many references, and the question activation asks is which bindings
     // must SWAP. Those are different sets, and this is the difference.
+    // focusNextOverlay is a one-shot request from keyboard placement, consumed by `layoutField`
+    // (P02.S01). Per-view for the ordinary reason: placement is async, and a request armed on one
+    // document must not steal focus onto a mark laid out in another.
+    focusNextOverlay: false,
     redactMode: false,
     editMode: false,
     markerMode: null,   // 'sign' | 'date' | 'initial' while armed to place
@@ -7402,6 +7406,137 @@ function pageAt(x, y) {
   }
   return null;
 }
+// ── Keyboard placement and nudge — `PLAN-accessibility.md` P02.S01, WCAG SC 2.1.1 ──────────
+//
+// **Eleven placement tools, all of them pointer-only until now.** Each is an
+// `els.viewerWrap` `pointerdown` handler gated on its own `view.*Mode` flag, and
+// `grep ArrowUp web/app.js` returned 0. That is a live Level A conformance failure in
+// shipped code (D11), not a nicety.
+//
+// # Why this SYNTHESISES a pointer sequence instead of calling the constructors
+//
+// The obvious shape is a table mapping each armed tool to its constructor. It was refused
+// after reading the handlers: eight of the eleven are drag-to-draw, building their mark on
+// `pointerup` from geometry they derive there — an async page fetch, a viewport at scale 1,
+// a clamp against the page the drag started on. A keyboard path calling the constructors
+// directly would reimplement all of that eleven times and then drift from it.
+//
+// Dispatching a real `pointerdown`/`pointerup` pair runs **the same handlers the mouse runs**,
+// so the keyboard mark and the mouse mark are identical by construction rather than by a test
+// that checks they still match. Verified against the code: no handler requires an intervening
+// `pointermove` — each `pointerup` reads its own coordinates against the point stored on
+// `pointerdown`.
+//
+// # Two details that decide whether it works at all
+//
+// **The event must originate on the page div, not on `viewerWrap`.** `startedInActiveView`
+// walks UP from `e.target` looking for `.viewerContainer`, and `viewerWrap` is the container's
+// ancestor — an event dispatched there fails the gate every handler opens with. Dispatching on
+// `pv.div` passes it and still bubbles to the listeners.
+//
+// **`e.target` is the page div, so `closest('.ovl')` is null**, which is exactly right: keyboard
+// placement means placing on empty page, never onto whatever overlay happens to be under a
+// cursor that does not exist.
+
+// PLACEMENT_TOOLS is the population this door serves. `keyboardplacement.test.mjs` asserts it
+// against the `view.*Mode` flags found in this file — a twelfth tool added without a name here
+// turns that guard red.
+//
+// **These are TOOL names, and the `Mode` suffix is appended in one place below.** Spelling them
+// as binding names (`'redactMode'`) put a bare `redactMode` token in the file, and
+// `view.test.mjs`'s per-view-binding scan is name-shaped and does not know about string
+// literals — it read the array element as a module-level read of a per-view flag and went red,
+// correctly by its own lights. Defeating that scan by splicing the string would be worse than
+// the problem; this says what the array actually holds instead.
+const PLACEMENT_TOOLS = [
+  'redact', 'splitBox', 'crop', 'edit', 'marker',
+  'border', 'dropdown', 'radio', 'shape', 'note', 'checkbox',
+];
+
+// modeFlag is the one place the `<tool>Mode` naming convention is written down.
+const modeFlag = (tool) => `${tool}Mode`;
+
+// KEY_PLACE_FRAC is the default mark size for a keyboard placement, as a fraction of the page.
+// A drag gives the user a size; a keypress has to pick one.
+const KEY_PLACE_FRAC = [0.25, 0.08];
+
+// KEY_NUDGE_FRAC is one arrow press, as a fraction of the page. Shift multiplies it.
+const KEY_NUDGE_FRAC = 0.01;
+const KEY_NUDGE_COARSE = 10;
+
+// armedTool reports which placement tool is armed, or null.
+//
+// **Nothing knew this before.** Mutual exclusion between the tools is implemented as eight
+// separate copies of `if (view.redactMode) { view.redactMode = false; reflectRedact(); }` at the
+// arming sites, so "what is armed" had no single answer to ask for.
+function armedTool() {
+  for (const t of PLACEMENT_TOOLS) if (view[modeFlag(t)]) return t;
+  return null;
+}
+
+// placeFromKeyboard creates a mark with the armed tool, centred on the current page.
+// Returns false when nothing is armed or no page is on screen, so the caller can let the key
+// through to whatever else wants it.
+function placeFromKeyboard() {
+  if (!armedTool()) return false;
+  const n = view.viewer?.currentPageNumber || 1;
+  const pv = view.viewer?.getPageView(n - 1);
+  if (!pv?.div) return false;
+  const r = pageContentRect(pv.div);
+  if (!(r.width > 0 && r.height > 0)) return false; // see layoutField: a zero measurement is not a layout
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const [fw, fh] = KEY_PLACE_FRAC;
+  const ev = (type, x, y) => new PointerEvent(type, {
+    bubbles: true, cancelable: true, composed: true,
+    clientX: x, clientY: y, pointerId: 1, isPrimary: true, button: 0, buttons: 1,
+  });
+  // **The new mark takes focus, or "keyboard alone" means "keyboard and then hunt for it with
+  // Tab".** Placement is async for several tools (a page fetch, a viewport), so the mark does not
+  // exist when `dispatchEvent` returns — this is a one-shot request that `layoutField` consumes
+  // when the mark is laid out, which is the same single door that makes overlays focusable.
+  view.focusNextOverlay = true;
+  pv.div.dispatchEvent(ev('pointerdown', cx, cy));
+  pv.div.dispatchEvent(ev('pointerup', cx + r.width * fw, cy + r.height * fh));
+  // Cleared on a turn of the loop so a tool that placed nothing does not leave the request armed
+  // to steal focus from whatever is laid out next.
+  setTimeout(() => { view.focusNextOverlay = false; }, 0);
+  return true;
+}
+
+// nudgeFocusedOverlay moves or resizes the focused mark by one arrow press.
+//
+// **Delegated, and keyed on focus rather than on a selection model this app does not have.**
+// Every overlay is focusable because `layoutField` gives it `tabIndex = 0` — one door, rather
+// than eleven constructors each remembering to.
+function nudgeFocusedOverlay(e) {
+  const el = document.activeElement?.closest?.('.ovl');
+  if (!el) return false;
+  const f = view.overlayFields.find((x) => x.el === el);
+  if (!f || !Array.isArray(f.frac)) return false;
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!d) return false;
+  const pv = view.viewer?.getPageView(f.page - 1);
+  if (!pv?.div) return false;
+  const step = KEY_NUDGE_FRAC * (e.ctrlKey || e.metaKey ? KEY_NUDGE_COARSE : 1);
+  const before = f.frac.slice();
+  let [x0, y0, x1, y1] = before;
+  if (e.shiftKey) {
+    // Resize: the far edge moves, the origin stays. A mark cannot be resized to nothing.
+    const min = 0.01;
+    x1 = Math.min(Math.max(x1 + d[0] * step, x0 + min), 1);
+    y1 = Math.min(Math.max(y1 + d[1] * step, y0 + min), 1);
+  } else {
+    const w = x1 - x0, h = y1 - y0;
+    x0 = Math.min(Math.max(x0 + d[0] * step, 0), 1 - w);
+    y0 = Math.min(Math.max(y0 + d[1] * step, 0), 1 - h);
+    x1 = x0 + w; y1 = y0 + h;
+  }
+  f.frac = [x0, y0, x1, y1];
+  layoutField(f, pv);
+  if (f.frac.join() !== before.join()) recordMove(f, before, f.frac.slice());
+  return true;
+}
+
 // clampToRect pins a pointer position inside a page's content rect.
 //
 // **Every box tool measures against the page the drag STARTED on**, and nothing bounded the
@@ -10247,6 +10382,12 @@ function clearDetected() {
 }
 
 function layoutField(f, pv) {
+  // **Every overlay is focusable, and this is the one door that makes it so** (P02.S01).
+  // Arrow-nudge keys on `document.activeElement`, so a mark that cannot take focus cannot be
+  // moved without a pointer. Only stamps and markers set `tabIndex` at construction; asking the
+  // other nine constructors to remember would be ADR-009's rule inverted.
+  if (f.el && f.el.tabIndex !== 0) f.el.tabIndex = 0;
+  if (f.el && view.focusNextOverlay) { view.focusNextOverlay = false; f.el.focus(); }
   const W = pv.div.clientWidth, H = pv.div.clientHeight;
   // **A zero measurement is not a layout, and writing it destroys one** (/pending 411).
   //
@@ -11234,6 +11375,29 @@ els.viewerWrap.addEventListener('click', (e) => {
   if (e.target.closest('.presentbar')) return;
   nextPage();
 });
+// ── P02.S01: the keyboard half of every placement tool ─────────────────────────────────────
+//
+// **Ordered before the presentation-mode handler on purpose.** That one claims ArrowLeft/Right
+// and Space whenever presentation mode is on; this one only acts when a placement tool is armed
+// or a mark has focus, which cannot both be true of the same keystroke — a tool is armed from a
+// toolbar that presentation mode hides. Registering first means a nudge is never eaten by a page
+// turn on the way past.
+window.addEventListener('keydown', (e) => {
+  if (isTypingTarget(e.target)) return;
+  if (e.altKey) return; // Alt+Arrow is the browser's history navigation
+  if (nudgeFocusedOverlay(e)) { e.preventDefault(); return; }
+  // **Enter belongs to whatever has focus, and only falls through to placement when nothing
+  // does.** Found at tier 3, which is the only tier that has focus at all: with a tool armed and
+  // focus on a toolbar button, this handler would place a mark AND `preventDefault()` the
+  // button's own activation — so arming the Note tool would break every button a user could
+  // reach with Tab. `isTypingTarget` does not cover this; it is about text entry, and a button
+  // is not a text field.
+  if (e.target?.closest?.('button, a[href], select, [role="button"], [role="tab"], summary')) return;
+  if ((e.key === 'Enter' || e.key === ' ') && armedTool() && placeFromKeyboard()) {
+    e.preventDefault();
+  }
+});
+
 window.addEventListener('keydown', (e) => {
   if (viewLayout !== 'presentation') return;
   if (isTypingTarget(e.target)) return;
