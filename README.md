@@ -459,6 +459,18 @@ One thing worth knowing before you switch: joining the pages removes the break N
 margins the document itself has, so a page's own white footer and the next page's white header
 still meet in the middle.
 
+**Present** is the third layout: one page at a time, full screen, with the menubar, toolbar and
+sidebar gone. Click or press → to advance, ← to go back, **P** for a pointer that follows your
+cursor, and **Esc** to leave. A small clock in the corner counts up from the moment you started —
+elapsed rather than a countdown, because the number a presenter wants is how long they have been
+talking. Presentation is deliberately **not remembered**: it is something you are doing now, not how
+you like to read, so Nib never reopens full screen because of a meeting last week.
+
+**Full screen** is a separate control, and that is on purpose. Presenting puts you full screen;
+being full screen does not put you in a presentation, so you can read an ordinary document with the
+window filling the display and everything still where it was. Most PDF viewers make these one thing,
+which is why Escape is unpredictable in them.
+
 Beside them are the zoom controls — in, out, **Fit width**, **Fit page** and **Actual size**. Fit
 width and Fit page both measure the *whole* document and lock a single scale, so a file whose pages
 are not all the same size does not resize under you as you scroll past the boundary.

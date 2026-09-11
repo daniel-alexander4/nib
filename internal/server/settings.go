@@ -118,6 +118,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			cur.ViewLayout = "continuous"
 		case "pages", "":
 			cur.ViewLayout = ""
+		// **"presentation" is refused rather than stored.** It is something you are doing for the
+		// next ten minutes, not how you like to read, and an app that reopened full screen because
+		// of a meeting last Tuesday would be wrong in a way the user cannot diagnose. The client
+		// does not send it; this is what makes that a property of the product rather than a habit.
 		default:
 			httpError(w, http.StatusBadRequest, "invalid viewLayout")
 			return

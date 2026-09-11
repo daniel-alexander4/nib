@@ -97,6 +97,11 @@ const EXEMPT = new Set([
   // nothing open at all. Requiring a document would mean a user cannot choose how documents look
   // until after one is already looking wrong.
   'viewStandardBtn', 'viewContinuousBtn',
+  // Present and Full screen join them (v1.129.6). Presenting with nothing open is an empty black
+  // screen rather than an error, and Full screen is a WINDOW state that has nothing to do with a
+  // document at all — requiring one would mean you cannot fill the display until you have opened
+  // something, which is backwards for the control that makes room to open things in.
+  'viewPresentBtn', 'fullScreenBtn',
   // Quit acts on the PROCESS, not on a document (P01.S06). Requiring a document would make it
   // unreachable from the one state a user most wants it in — a Nib with nothing open that they
   // want to stop — and its own modal already names whatever would be lost, document or ceremony.

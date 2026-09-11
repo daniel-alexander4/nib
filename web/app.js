@@ -7,6 +7,7 @@
 import * as pdfjsLib from './vendor/pdfjs/pdf.min.mjs';
 import {
   PDFViewer,
+  ScrollMode,
   EventBus,
   PDFLinkService,
   PDFFindController,
@@ -84,6 +85,7 @@ const els = {
   zoomInBtn: $('zoomInBtn'), zoomOutBtn: $('zoomOutBtn'), fitBtn: $('fitBtn'),
   fitPageBtn: $('fitPageBtn'), actualSizeBtn: $('actualSizeBtn'),
   viewStandardBtn: $('viewStandardBtn'), viewContinuousBtn: $('viewContinuousBtn'),
+  viewPresentBtn: $('viewPresentBtn'), fullScreenBtn: $('fullScreenBtn'),
   advCeremonyChk: $('advCeremonyChk'), advDiscoveryChk: $('advDiscoveryChk'),
   advRendezvousChk: $('advRendezvousChk'), advTimestampChk: $('advTimestampChk'),
   advError: $('advError'),
@@ -10888,28 +10890,65 @@ els.fitBtn.onclick = fitWidth;
 // mode changes would otherwise come back on the old layout, which reads as the setting not having
 // stuck. `views` is the population; `view` alone is the bug.
 function applyViewLayout(mode, persist = true) {
-  viewLayout = mode === 'continuous' ? 'continuous' : 'pages';
+  viewLayout = mode === 'continuous' || mode === 'presentation' ? mode : 'pages';
+  const presenting = viewLayout === 'presentation';
   for (const v of views) {
     const pages = v.container && v.container.querySelector('.pdfViewer');
     if (pages) {
       pages.classList.toggle(CONTINUOUS_CLASS, viewLayout === 'continuous');
       pages.classList.toggle('nibJoined', viewLayout === 'continuous');
     }
+    // **`ScrollMode` is the exported API and it is the whole of the slide behaviour.** pdf.js's own
+    // presentation mode is driven by `presentationModeState`, whose enum this build does not export
+    // (`grep "export {" pdf_viewer.mjs` lists `ScrollMode` and `SpreadMode` and not
+    // `PresentationModeState`) — so reaching for it would mean writing a magic integer against an
+    // unexported constant. PAGE scrolling gives one page at a time from the API that IS exported,
+    // and everything else a presentation needs — fullscreen, advancing, hiding the chrome — is
+    // Nib's own and would have been either way.
+    //
+    // It also means `isInPresentationMode` stays false, so pdf.js never creates `.dummyPage` and
+    // the shared `--viewer-container-height` global that `app.js:2289` warns about never goes live.
+    // That warning stands for whoever builds SPREAD mode; this slice does not trip it.
+    if (v.viewer) v.viewer.scrollMode = presenting ? ScrollMode.PAGE : ScrollMode.VERTICAL;
+  }
+  document.body.classList.toggle('presenting', presenting);
+  if (presenting) {
+    enterFullScreen();
+    presentStarted = Date.now();
+    tickPresentClock();
+    if (view.pdfDocument) fitPage();
+  } else if (presentStarted) {
+    presentStarted = 0;
+    if (document.fullscreenElement) exitFullScreen();
   }
   reflectViewLayout();
-  if (persist) saveSettings({ viewLayout });
+  // **Presentation is NOT persisted**, and that is the one asymmetry in this function. Pages and
+  // continuous are how you like to read; presentation is something you are doing for the next ten
+  // minutes, and an app that reopened full screen because of a meeting last Tuesday would be wrong
+  // in a way the user cannot diagnose. The server refuses the value too, so the two agree.
+  if (persist && !presenting) saveSettings({ viewLayout });
 }
 
 // reflectViewLayout writes the state onto the two buttons. `aria-pressed` rather than a class alone,
 // because these are a radio pair and a screen reader has to be able to say which one is on.
 function reflectViewLayout() {
-  if (els.viewStandardBtn) {
-    els.viewStandardBtn.setAttribute('aria-pressed', String(viewLayout === 'pages'));
-    els.viewStandardBtn.classList.toggle('active', viewLayout === 'pages');
+  const pairs = [
+    [els.viewStandardBtn, viewLayout === 'pages'],
+    [els.viewContinuousBtn, viewLayout === 'continuous'],
+    [els.viewPresentBtn, viewLayout === 'presentation'],
+  ];
+  for (const [el, on] of pairs) {
+    if (!el) continue;
+    el.setAttribute('aria-pressed', String(on));
+    el.classList.toggle('active', on);
   }
-  if (els.viewContinuousBtn) {
-    els.viewContinuousBtn.setAttribute('aria-pressed', String(viewLayout === 'continuous'));
-    els.viewContinuousBtn.classList.toggle('active', viewLayout === 'continuous');
+  if (els.fullScreenBtn) {
+    // **Full screen is a WINDOW STATE and reads from the browser, not from a flag of ours.** The
+    // user can leave it with Escape or F11 without touching this button, so a remembered boolean
+    // would drift; `document.fullscreenElement` is the only thing that knows.
+    const fs = !!document.fullscreenElement;
+    els.fullScreenBtn.setAttribute('aria-pressed', String(fs));
+    els.fullScreenBtn.classList.toggle('active', fs);
   }
 }
 
@@ -10958,6 +10997,109 @@ els.fitPageBtn.onclick = fitPage;
 els.actualSizeBtn.onclick = actualSize;
 els.viewStandardBtn.onclick = () => applyViewLayout('pages');
 els.viewContinuousBtn.onclick = () => applyViewLayout('continuous');
+els.viewPresentBtn.onclick = () => applyViewLayout('presentation');
+els.fullScreenBtn.onclick = () => (document.fullscreenElement ? exitFullScreen() : enterFullScreen());
+
+// ── Full screen, and why it is separate from Presentation ────────────────────
+//
+// pdf.js conflates them — its presentation mode IS the Fullscreen API — and that is why Escape
+// behaves unpredictably in most PDF viewers: leaving full screen and leaving slides are one act
+// with two meanings. Here they are orthogonal. Presentation IMPLIES full screen (it asks for it on
+// the way in); full screen does not imply presentation, so you can read an ordinary document with
+// the chrome still there and the window filling the display.
+//
+// The requests are wrapped because the Fullscreen API rejects outside a user gesture and in a
+// sandboxed frame, and neither is worth a thrown error reaching the console on a viewing feature.
+function enterFullScreen() {
+  const el = document.documentElement;
+  if (document.fullscreenElement || !el.requestFullscreen) return;
+  const p = el.requestFullscreen();
+  if (p && p.catch) p.catch(() => {});
+}
+function exitFullScreen() {
+  if (!document.fullscreenElement || !document.exitFullscreen) return;
+  const p = document.exitFullscreen();
+  if (p && p.catch) p.catch(() => {});
+}
+
+// **Leaving full screen leaves PRESENTATION**, because there is no such thing as presenting in a
+// window: the chrome is hidden and the pages are locked to one at a time, and a user who pressed
+// Escape expecting to get out would be left in a mode with no visible way back. The converse does
+// not hold — leaving presentation does not force the window out of full screen unless presentation
+// was what put it there, which `applyViewLayout` handles on its own.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && viewLayout === 'presentation') applyViewLayout('pages');
+  reflectViewLayout();
+});
+
+// ── The presenter's two small tools: a clock and a pointer ───────────────────
+
+let presentStarted = 0;
+let presentTimer = null;
+
+// tickPresentClock writes elapsed time into the on-screen readout once a second.
+//
+// **Elapsed, never a countdown.** A countdown needs a length nobody has given, and the number a
+// presenter actually wants is how long they have been talking. It is also why this starts at the
+// moment the mode is entered rather than at the first page turn: the clock is about the session.
+function tickPresentClock() {
+  const el = document.getElementById('presentClock');
+  if (!el) return;
+  if (presentTimer) clearInterval(presentTimer);
+  const paint = () => {
+    if (!presentStarted) { el.textContent = ''; return; }
+    const secs = Math.floor((Date.now() - presentStarted) / 1000);
+    const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+    const ss = String(secs % 60).padStart(2, '0');
+    el.textContent = `${mm}:${ss}`;
+  };
+  paint();
+  presentTimer = setInterval(() => {
+    // Stopped from inside rather than by every exit path: `applyViewLayout` has four ways out and
+    // an interval left running is the one that survives them all.
+    if (viewLayout !== 'presentation') { clearInterval(presentTimer); presentTimer = null; el.textContent = ''; return; }
+    paint();
+  }, 1000);
+}
+
+// The pointer is a dot that follows the cursor, armed with P and only while presenting.
+//
+// `pointer-events: none` on the dot, because it sits over the page and a pointer that swallowed
+// clicks would break the click-to-advance below — the two tools would fight and the more obvious
+// one would appear broken.
+let pointerOn = false;
+function reflectPointer() {
+  const dot = document.getElementById('presentDot');
+  if (dot) dot.hidden = !(pointerOn && viewLayout === 'presentation');
+}
+document.addEventListener('pointermove', (e) => {
+  if (!pointerOn || viewLayout !== 'presentation') return;
+  const dot = document.getElementById('presentDot');
+  if (dot) { dot.style.left = `${e.clientX}px`; dot.style.top = `${e.clientY}px`; }
+});
+
+// Advancing: click, and the keys every presenter's remote sends.
+//
+// **Bound on the viewer rather than the document**, so a click on the chrome that presentation
+// leaves visible — the clock, the Escape hint — does not turn a page.
+els.viewerWrap.addEventListener('click', (e) => {
+  if (viewLayout !== 'presentation') return;
+  if (e.target.closest('.presentbar')) return;
+  nextPage();
+});
+window.addEventListener('keydown', (e) => {
+  if (viewLayout !== 'presentation') return;
+  if (isTypingTarget(e.target)) return;
+  switch (e.key) {
+    case 'ArrowRight': case 'PageDown': case ' ': nextPage(); e.preventDefault(); break;
+    case 'ArrowLeft': case 'PageUp': prevPage(); e.preventDefault(); break;
+    case 'p': case 'P': pointerOn = !pointerOn; reflectPointer(); e.preventDefault(); break;
+    // Escape leaves full screen on its own and `fullscreenchange` takes it from there; this is for
+    // the case where the request was refused and there is no full screen to leave.
+    case 'Escape': applyViewLayout('pages'); break;
+    default: break;
+  }
+});
 
 // Ctrl+scroll (and trackpad pinch, which Chromium/Firefox deliver as a ctrlKey
 // wheel) zooms the DOCUMENT, not the browser. Left to the browser, ctrl+wheel
