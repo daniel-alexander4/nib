@@ -187,11 +187,33 @@ content stream and no `/StructParents`:
    `/StructParents` *could* be remapped to carry a kept subset is still unmeasured and still worth
    measuring — it is now an improvement rather than a prerequisite, and it is P03's.
 
-**Why `partial` is recorded and not enforced.** `Append` keeps a live 45-element tree and leaves one
-appended page undescribed. Stripping the claim would destroy the whole tree to fix one page, and
-`p2p/readme.go` and `p2p/sigpages.go` take this path for **every ceremony document** — so the cure is
-worse than the disease at the only scale that matters. It is a declared verdict in the tag-fate
-table, and whether law 1 should be superseded to permit it is parked for Dan.
+**Why `partial` is recorded and not enforced — settled 2026-09-11 by `/pending 468`.** `Append`
+keeps a live 45-element tree and leaves one appended page undescribed. Stripping the claim would
+destroy the whole tree to fix one page, and `p2p/readme.go` and `p2p/sigpages.go` take this path for
+**every ceremony document** — so the cure is worse than the disease at the only scale that matters.
+
+**The middle way was proposed and is REFUTED by measurement.** The proposal was to drop only
+`/MarkInfo /Marked true` and keep the tree, on a reading that `/StructTreeRoot` alone asserts nothing.
+Measured with veraPDF ua1 on the same partial document: the edit **keeps** 7.1 t3 and 7.21.4.1 t1 and
+**adds** 6.2 t1. It cannot work and the reason is structural — **7.1 t3 is about the content stream,
+not the catalog**, so no catalog edit can satisfy it. The same fact was already in hand from
+P01.S01's measurement, where stripping *both* keys from the n-up output left 7.1 t3 in place.
+
+**And the same probe found the state nothing could see.** `api.MergeRaw` merges two TAGGED documents
+by keeping the first document's `/StructTreeRoot` and `/ParentTree` whole while every page of the
+second keeps its own `/StructParents` — measured: an 8-page merge carries a **4-entry** `/ParentTree`
+and eight pages indexing keys 0–3. The second document's pages therefore have a `/StructParents` that
+resolves to structure describing different content, no element points at them, and a reader walking
+the tree from the root never reaches them. **The census rated that `carried`**, its best verdict,
+because `undescribed` asked whether a page HAS a `/StructParents` rather than whether anything points
+AT it. The predicate is now reachability, which catches both shapes with one question, and
+`Combine` — the package's other `MergeRaw` caller, invisible to the enumeration until it stopped
+requiring a `[]byte` first parameter — carries a verdict for the first time.
+
+**So the disposition is: record, do not enforce, and make the recording true.** The honest fix is to
+mark the appended pages' content as artifacts or merge the two `/ParentTree`s, both of which are
+authoring and P05's. `Append(tagged, tagged)` is the one case where the data to do it exists — the
+second tree is built and then discarded.
 
 **Measured, because a remedy is a claim too:** stripping the n-up output's claim does **not** remove
 7.1 t3 (the content is untagged either way) and adds 6.2 t1 and 7.1 t11, since PDF/UA requires a

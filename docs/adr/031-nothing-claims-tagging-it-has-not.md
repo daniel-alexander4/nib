@@ -136,9 +136,24 @@ operation, and that is the whole of the claim.
 `Append` with the tagged document first keeps a live 45-element tree and leaves the appended
 page undescribed. Dropping the claim there would destroy the whole tree to fix one page, and
 `p2p/readme.go` and `p2p/sigpages.go` take that path for **every ceremony document** — so the
-strict reading of law 1 costs more accessibility than it buys. Whether law 1 should be
-superseded to permit a structure tree over a partially-described document is open and is
-recorded at `PLAN-accessibility.md` D9.
+strict reading of law 1 costs more accessibility than it buys.
+
+**The obvious middle way does not exist, and it was refuted by running it** (`/pending 468`,
+v1.129.18). The proposal was to keep the tree and drop only `/MarkInfo /Marked true`, on the
+reading that a `/StructTreeRoot` alone asserts nothing. veraPDF ua1 on the edited document
+**keeps** 7.1 t3 and 7.21.4.1 t1 and **adds** 6.2 t1. The reason is structural and settles the
+question for any variant of it: **7.1 t3 is about the content stream, not the catalog.** An
+undescribed page cannot be made honest by editing the catalog, only by tagging its content or
+by dropping what describes the rest — which is why the two live options are `record` and
+`P05 authors it`, with nothing in between.
+
+**`partial` is measured by REACHABILITY, and asking the easier question hid the worse state.**
+A page is described when some struct element points at it — not when it carries a
+`/StructParents`. `api.MergeRaw` merging two tagged documents keeps the first `/ParentTree`
+whole while the second document's pages keep their own keys, so an 8-page merge has a 4-entry
+`/ParentTree` and eight pages indexing 0–3: those pages have a key, it resolves to structure
+about different content, and nothing in the tree reaches them. Under the old predicate that
+scored as `carried`.
 
 ## Alternatives considered
 
