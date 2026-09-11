@@ -573,10 +573,16 @@ this phase: a row can be live, its reader real, and the claim still false.
 `PLAN-signing-ceremony.md`'s and predate this plan — a coordinate collision, not relevance.
 `/pending 470` is this phase's own filing and stays open.
 
-**Residual doubt, recorded rather than resolved:** with a document open the tab order visits 1344
-stops in 1500 presses and **never wraps**, so the toolbar is not forwards-reachable from the
-document. Not a trap — `Shift+Tab` works and SC 2.1.2 holds — but a real burden no instrument here
-measures. `/pending 470`.
+~~**Residual doubt:** with a document open the tab order visits 1344 stops in 1500 presses and
+never wraps, so the toolbar is not forwards-reachable from the document.~~ **(STRUCK 2026-09-11 at
+v1.129.29 — measured, and false in every part.** The tab order is **32 elements** and cycles
+perfectly: 200 presses give 32 distinct stops, the first recurs at index 32, 6.3 laps. The toolbar
+is at most 32 presses away. The "1344" was a **consecutive-distinct counter recording ~47 laps of a
+32-element cycle**, and the "never wraps" was a search for a mode tab that roving tabindex
+deliberately keeps untabbable. `/pending 470` is overturned and closed with no fix.**)**
+
+**So P02 closes with no residual doubt** — the one it recorded was a measurement artefact of its
+own making.
 
 **Goal.** Make nib operable without a pointer and legible to a screen reader. This is a live
 conformance failure in shipped code (D11), and it is independent of every PDF concern below.
@@ -824,10 +830,12 @@ what the app does. The failure read as *"the app's primary navigation is keyboar
 the Level A defect this phase exists to find — and took two runs to tell apart, only because the
 failure message lists the stops focus actually visited.
 
-**Measured and filed rather than fixed here:** with a document open, 1500 forward `Tab` presses
-visit **1344 distinct stops and never wrap** back to the menubar. Not a trap — `Shift+Tab` works
-— but the toolbar is not forwards-reachable from the document in practice. `/pending 470`, with
-the text layer named as the suspect and the one measurement that would settle it.
+~~**Measured and filed rather than fixed here:** 1500 forward `Tab` presses visit 1344 distinct
+stops and never wrap.~~ **(STRUCK 2026-09-11 — the follow-up measurement refuted it.** The tab
+order is **32 elements** and cycles at index 32; the text layer holds **zero** focusable elements
+at 1, 2 or 6 pages and the count does not scale with page count. The figure came from a counter
+that recorded a stop whenever it differed from the previous one, which over ~47 laps of a small
+cycle reads as 1344 different places. `/pending 470` closed, overturned.**)**
 
 **Dropped from the sketch**: the toast live region (built, `/pending 328`). `prefers-reduced-motion`,
 SC 1.4.11 and the 200%-zoom reflow assertion are **not** dropped — they are unmeasured here and stay
