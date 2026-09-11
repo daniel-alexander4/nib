@@ -90,5 +90,8 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	// The text layer is drawn in a font nib supplied and pdfcpu embedded, so the same rule applies
+	// here as to authored Markdown: see dropCIDSets. The scan itself is the user's document and
+	// nothing else about it is touched.
+	return embeddedFontsAreHonest(out.Bytes()), nil
 }

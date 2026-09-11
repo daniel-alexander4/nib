@@ -1247,15 +1247,42 @@ Acceptance:
   refusal exercised in both directions.
 - `Append`ing them into a user document does not change that document's own fonts.
 
-#### P04.S02 — the `/CIDSet` that claims more than the font program has
+#### P04.S02 — the `/CIDSet` that claims more than the font program has *(done 2026-09-11, v1.129.41)*
 Scope: ua1 7.21.4.2 t2 on every embedded subset pdfcpu writes. The clause is conditional on the
 stream's presence, and PDF/UA does not require one — so the honest answer is very likely to remove
 it rather than to compute a correct one. **PDF/A-1 does require it**, so the boundary between the UA
 path and `pdfa.go`/`pdfa_gs.go` is the whole of the care here. Refs exit criterion 3.
+
+**pdfcpu's own comment is the diagnosis.** `font/fontDict.go:252` — *"CIDSet computes a CIDSet for
+used glyphs"* — written unconditionally at `:357`, with no configuration to turn it off. The clause
+wants every CID in the font PROGRAM. Measured on a one-line authored page: 162 bytes, **16 bits
+set**.
+
+**The population is TWO doors, not one.** The Markdown conversion and the OCR text layer are where
+nib embeds a face of its own, and both failed the clause. An office conversion does not — its fonts
+come from LibreOffice, which produces neither font-rule failure — and a `/CIDSet` in a document nib
+merely rewrites is that file's business.
+
+**PDF/A is measured, not argued.** `/CIDSet` is required for subset fonts by **PDF/A-1 only** and
+PDF/A-2 dropped it; nib targets **2b** (`pdfa.go:49` writes `<pdfaid:part>2</pdfaid:part>`). A
+de-CIDSet authored document goes through `PreparePDFA` and veraPDF calls it 2b-conformant.
+
+**Cost, measured:** 22.4 ms → 23.9 ms for a Markdown conversion — 1.5 ms on a step that was already
+22 ms.
+
 Acceptance:
-- An embedded-font document nib authors fails neither 7.21.4.1 t1 nor 7.21.4.2 t2.
-- The PDF/A path is measured to still carry whatever it requires — not argued.
-- The ua1 oracle's `knownUA1Deltas` shrinks rather than gaining a row.
+- ✅ An embedded-font document nib authors fails neither 7.21.4.1 t1 nor 7.21.4.2 t2. Measured: nib's
+  Markdown output now fails **`5 t1`** (refused by decision), **`6.2 t1` · `7.1 t3` · `7.1 t11`**
+  (P05's tree) and **`7.2 t33` · `7.2 t34`** (the language nib cannot determine, `/pending 471`) —
+  and no font clause at all.
+- ✅ The PDF/A path is measured to still carry whatever it requires.
+  `TestDroppingCIDSetsKeepsPDFAConformance` runs the reference validator at `2b`.
+- ➖ **`knownUA1Deltas` does not change**, and that is correct rather than a miss: the census drives
+  `tagFates`, and `StampTextLayer` has no drive function there (it needs an OCR layer and its fonts)
+  while `ConvertDocToPDF` is not an operation over a PDF at all. The oracle's population and this
+  slice's do not overlap. **Covered instead by a stimulus floor that rots on purpose**:
+  `TestPdfcpuStillWritesTheCIDSetTheDoorRemoves` goes red-as-a-skip when a later pdfcpu stops
+  writing the stream, so the door gets retired rather than carried forever.
 
 #### P04.S03 — the font install becomes load-bearing, and an unwritable `$HOME` must still work
 Scope: today a failed font install costs **non-Latin OCR only**, and `InstallOCRFonts` degrades
