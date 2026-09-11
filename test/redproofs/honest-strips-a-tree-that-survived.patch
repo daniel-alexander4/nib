@@ -1,0 +1,14 @@
+diff --git a/internal/pdfops/tagfate.go b/internal/pdfops/tagfate.go
+index 5c65048..313bfb0 100644
+--- a/internal/pdfops/tagfate.go
++++ b/internal/pdfops/tagfate.go
+@@ -220,9 +220,6 @@ func ClaimsTagging(pdf []byte) bool { return inspectTags(pdf).claims() }
+ // trace, and that is the exact failure this file exists because of. 123 ms is cheaper than finding
+ // out.
+ func honest(pdf []byte) ([]byte, error) {
+-	if !inspectTags(pdf).orphaned() {
+-		return pdf, nil
+-	}
+ 	return dropTaggingClaim(pdf)
+ }
+ 

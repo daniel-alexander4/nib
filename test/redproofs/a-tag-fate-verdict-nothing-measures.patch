@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/tagtable_test.go b/internal/pdfops/tagtable_test.go
+index d51aa9d..0b44fcc 100644
+--- a/internal/pdfops/tagtable_test.go
++++ b/internal/pdfops/tagtable_test.go
+@@ -73,7 +73,7 @@ var tagFates = map[string]tagFate{
+ 	// ── CARRIED. The tree survives intact. Every one of these was declared `dropped` until the
+ 	// census was measured rather than asserted; the byte count that produced that declaration could
+ 	// not see a compressed object stream, so it reported a carried tree as an empty one.
+-	"Rotate":              {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Rotate(b, nil, 90) }},
++	"Rotate":              {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Rotate(b, nil, 90) }},
+ 	"Optimize":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Optimize(b) }},
+ 	"NormalizePageSizes":  {verdict: "carried", drive: func(b []byte) ([]byte, error) { return NormalizePageSizes(b) }},
+ 	"SetLang":             {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetLang(b, "en-GB") }},
