@@ -152,7 +152,8 @@ var knownUA1Deltas = map[string]struct {
 	// at all, 5 t1 has no subject and is not evaluated; an honest one makes it applicable. Clearing
 	// it means writing `pdfuaid:part`, a conformance assertion over untagged content, which is the
 	// third thing ADR-031 law 1 forbids by name. Refused until P05, when it is true.
-	"SetTitle": {[]string{"5 t1"}, "the XMP packet makes the PDF/UA-identification clause applicable; asserting it would be the lie ADR-031 forbids"},
+	"SetTitle":      {[]string{"5 t1"}, "the XMP packet makes the PDF/UA-identification clause applicable; asserting it would be the lie ADR-031 forbids"},
+	"TitleFromName": {[]string{"5 t1"}, "the same door, reached the ordinary way — it is SetTitle with a file name and a best-effort contract"},
 }
 
 // knownUnvalidatable records operations whose output on THIS fixture veraPDF cannot validate at

@@ -142,9 +142,11 @@ func cmdOffice(args []string) int {
 	}
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err == nil {
-		// The source file's name is the title; a name that derives to nothing gets none.
-		if t := pdfops.TitleFromFilename(in); t != "" {
-			pdf, err = pdfops.SetTitle(pdf, t)
+		// The source file's name is the title. Best-effort and warned about, never fatal: the
+		// conversion the user asked for has already succeeded by this point.
+		var terr error
+		if pdf, terr = pdfops.TitleFromName(pdf, in); terr != nil {
+			errf("warning: %v", terr)
 		}
 	}
 	if err != nil {
