@@ -154,6 +154,19 @@ type Settings struct {
 	CardHue               string   `json:"cardHue,omitempty"`               // "" / "all" (the six-accent rotation) | one of blue|mauve|green|peach|red|yellow, that hue at stepped tints
 	DisableAutoUpdate     bool     `json:"disableAutoUpdate,omitempty"`     // skip the startup update check
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first (#rrggbb)
+	// ViewLayout is how pages are laid out: "" / "pages" (discrete pages, the default) |
+	// "continuous" (pages joined into one strip).
+	//
+	// **A preference about how you read, so it is global here rather than per document** — the
+	// same class as Appearance. Scale and scroll position stay per view (ADR-002), because those
+	// are facts about one document; "do I want page breaks drawn" is not.
+	//
+	// **Empty means the default and the default is `pages`**, which is why nothing writes
+	// "pages" — an absent key and a standard layout are one state, so a build that does not know
+	// this field drops it on re-save and the user lands back on the default rather than on a
+	// layout they never chose. Every field in this struct is `omitempty` and `Contents.Version`
+	// records why that matters.
+	ViewLayout string `json:"viewLayout,omitempty"`
 }
 
 // ExternalSigner is an imported PKCS#12 signing identity (the user's own /

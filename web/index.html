@@ -118,10 +118,25 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       </button>
       <span class="tbfind" hidden><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
-          </div><div class="tbgroup tbright" data-label="Zoom" data-fold="2">
+          </div><div class="tbgroup tbright" data-label="View" data-fold="2">
 
-<button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
+<!-- The group was labelled "Zoom" until v1.129.4. It holds the layout modes now as well, and
+     they belong beside the zoom modes rather than in a menu: **Nib has no menu bar.** The gear
+     that was the last chrome dropdown went when Settings became a mode (v1.126.0, ADR-025), and
+     `.modemenu` below is a width-swap of the mode tabs rather than a menu. Adding one back is
+     what the Settings tab's own comment calls "two routes to one surface … the drift ADR-009
+     exists to stop".
+
+     Layout is a RADIO — exactly one of standard/continuous is true — and Full Screen is a
+     window state that is orthogonal to it, which is why it is a separate toggle rather than a
+     third layout. pdf.js conflates the two (its presentation mode IS the Fullscreen API) and
+     that is why Escape behaves unpredictably in most viewers. -->
+<button id="viewStandardBtn" title="Standard page view — pages shown separately" aria-pressed="true">Pages</button>
+      <button id="viewContinuousBtn" title="Continuous view — pages joined into one strip" aria-pressed="false">Continuous</button>
+      <button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
       <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
+      <button id="fitPageBtn" title="Fit page — the tallest page fits the window">Fit page</button>
+      <button id="actualSizeBtn" title="Actual size (100%)">Actual size</button>
       <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
             </div><div class="tbgroup" data-label="Reload" data-fold="0">
       <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>

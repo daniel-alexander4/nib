@@ -1268,6 +1268,16 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    The set is guarded by test/jsdom/pdfjsassets.test.mjs, which is the half that
    matters: this drifted because nothing checked it, and the next pdf.js bump can
    add a reference exactly as quietly. */
+/* Continuous layout (v1.129.4). pdf.js's own `.removePageBorders` zeroes the 9px transparent
+   border each page carries — the thing that actually draws the gap, since `background-clip:
+   content-box` leaves it showing the viewer's ground — but it re-adds `margin: 0 auto 10px`.
+   This takes that last 10px so the pages genuinely touch.
+
+   `.nibJoined` rather than overriding `.removePageBorders` itself: the pdf.js class has a meaning
+   of its own and a future slice (spreads, presentation) may want borders gone WITHOUT joining. Two
+   classes, two facts. */
+.pdfViewer.nibJoined .page { margin: 0 auto; }
+
 .pdfViewer,
 .textLayer {
   --editorFreeText-editing-cursor: url(img/pdfjs/cursor-editorFreeText.svg) 0 16, text;

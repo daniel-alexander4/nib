@@ -235,6 +235,7 @@ type statusResponse struct {
 	UpdateCheckLocked     bool     `json:"updateCheckLocked"`               // NIB_NO_UPDATE_CHECK forces the check off; the UI toggle can't override it
 	Appearance            string   `json:"appearance,omitempty"`            // dark | light (saved theme preference)
 	CardHue               string   `json:"cardHue,omitempty"`               // all | blue|mauve|green|peach|red|yellow (sidebar card colours)
+	ViewLayout            string   `json:"viewLayout,omitempty"`            // pages (default, sent as empty) | continuous
 	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
 	Version               string   `json:"version"`                         // running build, shown in the About dialog
 	Ghostscript           bool     `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
@@ -256,6 +257,7 @@ func (s *Server) currentStatus() statusResponse {
 		set := v.Settings()
 		st.Appearance = set.Appearance
 		st.CardHue = set.CardHue
+		st.ViewLayout = set.ViewLayout
 		st.RecentHighlightColors = set.RecentHighlightColors
 		if set.DisableAutoUpdate {
 			st.AutoUpdate = false
