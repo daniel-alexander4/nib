@@ -1058,7 +1058,16 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 
 Commands that produce a PDF write it to `-o`/`--out`; `timestamp` writes a
 sidecar `.ots` beside each input and `verify` prints a report. Flags may go
-before or after the file arguments. The exit status is non-zero on failure —
+before or after the file arguments.
+
+**`timestamp` is the one command here that is not about PDFs.** It hashes the file you give
+it — any file: a spreadsheet, a photograph, a zip, a source tarball — and anchors that hash, so
+`nib timestamp notes.txt` is as valid as `nib timestamp contract.pdf`. Nothing is read as a
+document and nothing is modified: the proof is a separate `.ots` beside the input, and
+`--verify` reports on the bytes rather than on the format. (`nib watch DIR --do timestamp` is
+the exception and is deliberately `.pdf`-only — it is a watch folder for documents.)
+
+The exit status is non-zero on failure —
 `verify` returns `2` when a signature is invalid, absent, **valid over only
 part of the document**, or **valid over only part of the roster** — the third being a
 counterparty who returned your signed contract with pages appended, and the fourth a

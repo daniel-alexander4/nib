@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"errors"
 	"image"
 	"image/png"
@@ -1091,6 +1092,103 @@ func TestTimestampDoesNotClobberAnExistingProof(t *testing.T) {
 		// it must proceed to the read and fail on the missing input.
 		if code := timestampCreate([]string{filepath.Join(dir, "absent.pdf")}, true); code == 0 {
 			t.Error("--force still skipped a file that already had a proof")
+		}
+	})
+}
+
+// TestTimestampIsNotAPDFCommand — `/pending 404`, and the item's own named check.
+//
+// # What was wrong
+//
+// `nib timestamp` anchors a SHA-256 of the FILE. Neither path parses its input — both are
+// `os.ReadFile` -> `sha256.Sum256` -> `ots`, and `grep -rn "pdf" internal/ots/*.go` returns
+// nothing — so Nib has always been a general-purpose local notarisation tool wearing a PDF
+// label. The label was one string: the arity error said *"timestamp needs at least one PDF"*.
+//
+// # Why these three arms, and what they cannot see
+//
+// Stamping submits to four public calendar servers, so the confirming arm cannot live in a
+// test. All three below are offline **by construction**, and the third is the strong one:
+// `ots.VerifyProof` compares the document digest and returns `StateMismatch` before it opens a
+// socket (`internal/ots/verify.go:125`), so a non-PDF is carried through `timestampVerify`'s
+// whole read-and-hash path to a verdict about its CONTENT — which is exactly what a format
+// refusal inserted anywhere on that path would replace.
+//
+// **Declared blind spot**: on the CREATE path a format check placed AFTER `os.ReadFile` is not
+// caught here, because the second arm returns at the skip before the read and the only signal
+// past it is the network. A check placed anywhere earlier — beside the arity test, or at the
+// top of the loop, which is where one would naturally go — fails arms one and two.
+func TestTimestampIsNotAPDFCommand(t *testing.T) {
+	// A REAL proof, produced by `nib timestamp` on 2026-09-10 over exactly `stampedBytes`
+	// below, and carried inline rather than as a testdata blob so its provenance travels with
+	// it. Base64 because it is binary; 419 bytes.
+	const proofB64 = "" +
+		"AE9wZW5UaW1lc3RhbXBzAABQcm9vZgC/ieLohOiSlAEI077aVpVRJ0gs/KX9xK0iEJ/M42YDMbNW" +
+		"jom+sKKxe8X/8AhD4nsUXr2rvAjwEFgX9wMPMbS2VE7WvDprcHYI8SAXtdCp/CTl5hY7/+Yfxrnj" +
+		"Nu+PJ5UDK+bEJL/TfZgETgjxBGqjZarwCDImnE1CpiKAAIPf4w0u+QyOLi1odHRwczovL2FsaWNl" +
+		"LmJ0Yy5jYWxlbmRhci5vcGVudGltZXN0YW1wcy5vcmf/8AjErjDnsSPFVQjwECtvzVQ8ZsQVBjte" +
+		"WbV6J+EI8SBtsJYVq4A0gp4GTltmx9Uwp8/weszR3uhK+3ZQmhowVgjxBGqjZarwCDjWYuTTDRhc" +
+		"AIPf4w0u+QyOLCtodHRwczovL2JvYi5idGMuY2FsZW5kYXIub3BlbnRpbWVzdGFtcHMub3Jn8BD6" +
+		"TUEMLXJjmegwOyLWgXVsCPEEaqNlqvAISJN2nhgwPNEAg9/jDS75DI4jImh0dHBzOi8vYnRjLmNh" +
+		"bGVuZGFyLmNhdGFsbGF4eS5jb20="
+
+	t.Run("the arity error names a file, not a PDF", func(t *testing.T) {
+		out := captureStderr(t, func() { cmdTimestamp(nil) })
+		if strings.Contains(out, "PDF") {
+			t.Errorf("running `nib timestamp` with no arguments says %q. It anchors a hash of "+
+				"any file and always has; this string was the only thing in the product "+
+				"claiming the command is PDF-only", strings.TrimSpace(out))
+		}
+		if !strings.Contains(out, "file") {
+			t.Errorf("the arity error says %q and names no noun a user can act on",
+				strings.TrimSpace(out))
+		}
+	})
+
+	t.Run("a non-PDF with a proof beside it is skipped, not refused", func(t *testing.T) {
+		dir := t.TempDir()
+		txt := filepath.Join(dir, "minutes.txt")
+		if err := os.WriteFile(txt, []byte("not a PDF, and never was\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(txt+".ots", []byte("an existing proof"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Exit 0 and no network: the skip is reached, which means nothing ahead of it looked
+		// at the bytes or the extension. The PDF twin of this arm is
+		// TestTimestampDoesNotClobberAnExistingProof, so the contrast is the assertion.
+		if code := timestampCreate([]string{txt}, false); code != 0 {
+			t.Errorf("stamping a .txt that already has a proof exited %d, want 0 — a file "+
+				"Nib will not timestamp is one the command refuses for its NAME, and the "+
+				"path never reads the bytes at all", code)
+		}
+	})
+
+	t.Run("--verify carries a non-PDF all the way to a verdict about its content", func(t *testing.T) {
+		proof, err := base64.StdEncoding.DecodeString(proofB64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		txt := filepath.Join(dir, "minutes.txt")
+		// Deliberately NOT the bytes the proof was made over, so VerifyProof answers from the
+		// digest comparison at verify.go:125 and returns before any calendar or explorer is
+		// contacted. That is what makes this arm offline AND makes it a content verdict.
+		if err := os.WriteFile(txt, []byte("different bytes entirely\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(txt+".ots", proof, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := captureStderr(t, func() {
+			if code := timestampVerify([]string{txt}); code != 2 {
+				t.Errorf("verifying a .txt against a proof for other bytes exited %d, want 2 "+
+					"(the mismatch code)", code)
+			}
+		})
+		if strings.Contains(out, "PDF") {
+			t.Errorf("--verify on a .txt wrote %q to stderr — it refused the file for what it "+
+				"is instead of reporting what the proof says about it", strings.TrimSpace(out))
 		}
 	})
 }

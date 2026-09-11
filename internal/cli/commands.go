@@ -1051,7 +1051,14 @@ func cmdTimestamp(args []string) int {
 		return code
 	}
 	if fs.NArg() == 0 {
-		errf("timestamp needs at least one PDF")
+		// **"file", not "PDF", and that is a correction rather than a wording preference**
+		// (`/pending 404`). Nothing on either timestamp path parses its input: both
+		// `timestampCreate` and `timestampVerify` are `os.ReadFile` -> `sha256.Sum256` ->
+		// `ots`, and `grep -rn "pdf" internal/ots/*.go` returns nothing. So this command
+		// anchors ANY file, and this line was the only place in the product that said
+		// otherwise — measured end to end on a 39-byte `.txt`: stamped, verified back as
+		// pending, re-stamp skipped, and MISMATCH after one appended line.
+		errf("timestamp needs at least one file")
 		return 1
 	}
 	if doVerify {
