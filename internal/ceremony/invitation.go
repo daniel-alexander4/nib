@@ -1,7 +1,6 @@
 package ceremony
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -132,11 +131,11 @@ type Invitation struct {
 	// Roster carries FULL fingerprints — this is what makes the invited path a 256-bit
 	// pin rather than the six-word name's 66 bits.
 	Roster []Party `json:"roster"`
-	// Secret keys the rendezvous and the record encryption. **It would key a channel binding
-	// too, and nothing calls that** — `BindingMAC`/`CheckBindingMAC` below have had zero
-	// production callers since v1.109.47 (`/pending 441`, `442`). What actually anchors a
-	// channel is the four spoken words, which D21's own corrected block says are "the only one
-	// anchored outside the channel under attack". It is
+	// Secret keys the rendezvous and the record encryption, and **nothing else** — D21's second
+	// bullet said it binds the channel too, and that is refused rather than pending: see the
+	// caveat-11 block below (`/pending 442`, v1.129.3). What anchors a channel is the four spoken
+	// words, which D21's own corrected block calls "the only one anchored outside the channel
+	// under attack". It is
 	// never written to the ceremony mirror (D29) — that directory is ordinary files under
 	// the user's home, and this belongs in the vault.
 	Secret []byte `json:"secret"`
@@ -636,73 +635,38 @@ func (i Invitation) RecordSalt(hop int, fingerprint string) ([]byte, error) {
 	return i.derive(fmt.Sprintf("nib-rendezvous-salt-v1/hop-%d/party-%x", hop, raw), 32)
 }
 
-// --- caveat 11: the channel binding -------------------------------------------
+// --- caveat 11: the channel binding, REFUSED ----------------------------------
 
-// **BindingMAC has NO production caller and has had none since v1.109.47** (`/pending 441`,
-// found by the 2026-09-09 deepdive). Three shipped comments said the channel binding was live;
-// they are corrected. It is kept rather than deleted because the wire-or-delete verdict is
-// `/pending 442` and that is Dan's — see the deepdive for why it could never have worked as D21
-// describes: the pin, the vault pin, the candidate AEAD and this MAC are all keyed on the SAME
-// pasted invitation, and D21's own CORRECTED block says the four spoken words are "the only one
-// anchored outside the channel under attack".
+// **There is no channel binding, and its absence is a decision rather than a gap
+// (`/pending 441` + `442`, v1.129.3).** D21's second bullet said *"the secret binds the
+// channel, so the confirmation that used to be spoken is computed by the two machines"*, and
+// `BindingMAC`/`CheckBindingMAC` were built for it at P01.S07 T03 — a task with **no
+// acceptance clause covering it** (`PLAN-signing-ceremony.md:2614-2621`). They acquired no
+// production caller, kept none for twenty-odd minor versions, and took a crypto fix in
+// v1.116.6 that reached nothing. Both are deleted here.
 //
-// BindingMAC is the confirmation that used to be spoken (D21), computed by the machines.
+// **Deleted rather than wired, because the MAC could not have done the job D21 gave it.** The
+// pin (`internal/server/accept.go:156`), the delivery arm's pinned peer
+// (`internal/server/delivery.go:401`), the candidate AEAD (`gate.go`'s `OpenCandidate`) and
+// this MAC were all keyed on the SAME pasted invitation — so an attacker who replaces the
+// invitation wholesale passes every one of them, both halves of every comparison being theirs.
+// D21's own **CORRECTED 2026-08-18** block says exactly that, and names the four-word spoken
+// string as *"the only one in this design anchored outside the channel under attack"*. The
+// bullet the block refutes was never struck; it is struck now, at D21.
 //
-// **The mechanism, and why it is not a PAKE.** A PAKE bounds an attacker to one online
-// guess against a secret small enough to enumerate. This secret is 32 uniform bytes; there
-// is nothing to enumerate, and a PAKE would charge a dependency and round trips for a
-// property the secret already has. So: HKDF over the secret keyed to THIS channel's
-// exporter, and each side proves possession with a MAC over its role.
+// **And the property it would have proved is already a precondition of finding the peer at
+// all**: `CandidateGate.Accept` opens every candidate record under `RecordKey` (`gate.go`,
+// `OpenCandidate`), which is an AEAD keyed on the secret. A party without the invitation
+// cannot derive `HopSeed`, so it never reaches a channel to bind.
 //
-// exporter is RFC 5705 keying material from the live TLS connection — the same value the
-// spoken verification string binds to (P01.S04). That is what makes a recording of one
-// connection useless on another: the binding key changes with the channel, so a MAC
-// captured from one session verifies on no other.
+// **Caveat 11 is not reopened.** Its decision — HKDF over the secret rather than a PAKE, for a
+// 32-byte uniform secret with no dictionary to attack — stands and is recorded in full at
+// `PLAN-signing-ceremony.md:2596-2598`, which is where the reasoning lives now that no code
+// carries it. What is corrected is the *scope* of the discharge: discharged in the derivation,
+// refused in the session-authentication half.
 //
-// role distinguishes the two directions so the initiator's MAC cannot be replayed back as
-// the responder's — a reflection that would otherwise let an attacker who can echo bytes
-// look like a peer holding the secret.
-// bindingDomain separates the MAC preimage from every other length-prefixed structure this
-// package builds. The MAC input had no tag at all.
-const bindingDomain = "nib-invitation-binding-preimage-v1"
-
-func (i Invitation) BindingMAC(exporter []byte, role string) ([]byte, error) {
-	if len(exporter) == 0 {
-		return nil, errors.New("no channel binding material")
-	}
-	k, err := i.derive("nib-invitation-binding-v1", 32)
-	if err != nil {
-		return nil, err
-	}
-	// Through preimageBuilder, like every other signed input in this package — its own
-	// doc calls itself "the one length-prefix encoder every signed preimage in this
-	// package uses", and this was the exception that made the sentence false.
-	//
-	// Bare concatenation is ambiguous: ("a","bc") and ("ab","c") write identical bytes and
-	// produce one MAC. Two mitigations existed and neither was written down or asserted —
-	// the key is purpose-derived, so confusion needs the same key, and the only roles ever
-	// passed happen to be the same length. `role` is a free string parameter on an exported
-	// method, so neither is a property of the code.
-	var pb preimageBuilder
-	pb.addString(bindingDomain)
-	pb.addString(role)
-	pb.add(exporter)
-	m := hmac.New(sha256.New, k)
-	m.Write(pb.bytes())
-	return m.Sum(nil), nil
-}
-
-// CheckBindingMAC verifies a peer's MAC in constant time.
-func (i Invitation) CheckBindingMAC(exporter []byte, role string, got []byte) error {
-	want, err := i.BindingMAC(exporter, role)
-	if err != nil {
-		return err
-	}
-	if subtle.ConstantTimeCompare(want, got) != 1 {
-		return errors.New("the peer does not hold this ceremony's invitation secret, or is on a different channel")
-	}
-	return nil
-}
+// Nothing may re-add an exported binding helper without a caller: `zerocaller_test.go` carried
+// an exemption row for this pair and no longer does, so a stub would go red at tier 1.
 
 // --- the record comparison ----------------------------------------------------
 

@@ -44,9 +44,16 @@ import (
 // (`/pending 386`'s "hypothesis printed as a finding", and the ADR-010 harness configured past its
 // own disagreement).
 //
-// **Declared blind spot: transitive death.** `BindingMAC` is called only by `CheckBindingMAC`,
-// which nothing calls, so a one-level scan reports one of the pair and not the other. Whoever
-// resolves a row here should look one level down.
+// **Declared blind spot: transitive death.** A function called only by a dead one is not reported:
+// the scan is one level. `BindingMAC`/`CheckBindingMAC` were the worked example — the first was
+// called only by the second, so the pair reported as one row — and they are gone, deleted at
+// v1.129.3 when `/pending 442` disposed of them. The blind spot is not; whoever resolves a row
+// here should look one level down.
+//
+// **And this guard is now what holds that disposition.** The exemption row for the pair was
+// removed with the code, so re-adding an exported binding helper with no caller goes red here —
+// which is the only standing check that the refusal at `internal/ceremony/invitation.go`'s
+// caveat-11 block stays a refusal.
 func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 	// The exemption map, and every row carries the reason it is not a defect. The four prefixes are
 	// different claims, not a style: `interface` means the call site cannot exist textually,
@@ -54,10 +61,6 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 	// does not call it and that is a judgement someone made, and `finding` means it IS the defect,
 	// recorded under a pending item rather than fixed here.
 	declared := map[string]string{
-		"(Invitation).CheckBindingMAC": "finding — /pending 441/442. D21's channel binding is built, " +
-			"crypto-fixed once, and wired to nothing since v1.109.47. Refused rather than deleted: " +
-			"the deepdive found the MAC could never have worked (pin, vault pin, AEAD and MAC are " +
-			"all keyed on the same pasted invitation), and the disposition is blocked behind 436.",
 		"CheckDocument": "finding — /pending 458.",
 		"(Record).Hops": "finding — /pending 443. Deleted once as dead and restored: its only use " +
 			"is a stimulus floor in record_test.go requiring a 3-party roster to report 2 hops " +

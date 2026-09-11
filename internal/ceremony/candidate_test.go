@@ -556,7 +556,10 @@ func TestEveryDerivationTakesTheSecret(t *testing.T) {
 		{"HopSeed", func(i Invitation) ([]byte, error) { return i.HopSeed(0) }},
 		{"RecordKey", func(i Invitation) ([]byte, error) { return i.RecordKey(0) }},
 		{"RecordSalt", func(i Invitation) ([]byte, error) { return i.RecordSalt(0, fp) }},
-		{"BindingMAC", func(i Invitation) ([]byte, error) { return i.BindingMAC([]byte("x"), "initiator") }},
+		// `BindingMAC` was a fourth row until v1.129.3, when the channel binding was deleted as
+		// refused rather than deferred (`/pending 442`). Its removal is why the list is three:
+		// this is a table over the derivations that EXIST, and a row for one that does not is
+		// how a table stops describing the code it enumerates.
 	} {
 		x, err := d.fn(inv)
 		if err != nil {

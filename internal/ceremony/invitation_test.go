@@ -168,14 +168,6 @@ func TestTheSecretKeysEverythingAndKeysThemDifferently(t *testing.T) {
 			"find the record could decrypt it")
 	}
 
-	bind1, err := one.BindingMAC([]byte("exporter"), "initiator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(bind1, rec1) || bytes.Equal(bind1, rk1) {
-		t.Error("the channel binding shares a key with another purpose")
-	}
-
 	// Per hop (D30): two hops of one ceremony must not publish under the same key.
 	hop1, err := one.HopSeed(1)
 	if err != nil {
@@ -248,59 +240,6 @@ func mustHex(t *testing.T, s string) []byte {
 
 // --- caveat 11: the channel binding -------------------------------------------
 
-// TestTheBindingProvesTheSecretOnThisChannel is caveat 11's mechanism, driven.
-//
-// Three properties, and each is a separate way the binding could be useless:
-// a peer without the secret cannot produce the MAC; a MAC from one channel does not verify
-// on another; and the two directions are distinct, so the initiator's MAC cannot be
-// reflected back as the responder's.
-func TestTheBindingProvesTheSecretOnThisChannel(t *testing.T) {
-	_, inv := invited(t)
-	_, other := invited(t)
-	exporter := bytes.Repeat([]byte{7}, 32)
-
-	mine, err := inv.BindingMAC(exporter, "initiator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The stimulus: the honest case verifies, so every refusal below is about the attack.
-	if err := inv.CheckBindingMAC(exporter, "initiator", mine); err != nil {
-		t.Fatalf("setup: an honest MAC does not verify: %v", err)
-	}
-
-	theirs, err := other.BindingMAC(exporter, "initiator")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := inv.CheckBindingMAC(exporter, "initiator", theirs); err == nil {
-		t.Error("a MAC computed with a DIFFERENT invitation's secret verified — the binding " +
-			"proves nothing about holding this ceremony's secret")
-	}
-
-	otherChannel := bytes.Repeat([]byte{9}, 32)
-	if err := inv.CheckBindingMAC(otherChannel, "initiator", mine); err == nil {
-		t.Error("a MAC captured on one channel verified on another — a recording of one " +
-			"session would be replayable into the next")
-	}
-
-	if err := inv.CheckBindingMAC(exporter, "responder", mine); err == nil {
-		t.Error("the initiator's MAC verified as the responder's — an attacker who can echo " +
-			"bytes would look like a peer holding the secret")
-	}
-
-	if _, err := inv.BindingMAC(nil, "initiator"); err == nil {
-		t.Error("a MAC was produced with no channel binding material, so it binds no channel")
-	}
-}
-
-// --- the record comparison ----------------------------------------------------
-
-// TestAOneByteAlteredInvitationIsRefusedByName is the plan-review pin on D21.
-//
-// Nothing signs the invitation, so tampering cannot be caught when it is read. It is caught
-// at the first moment there is an independently-signed copy of the roster to compare
-// against — the record inside the document. The full-fingerprint clause cannot see this: a
-// tampered invitation satisfies it perfectly by pinning the WRONG key at full length.
 func TestAOneByteAlteredInvitationIsRefusedByName(t *testing.T) {
 	rec, inv := invited(t)
 
@@ -447,51 +386,6 @@ func TestAnInvitationCatchesARecordConvenedBySomeoneElse(t *testing.T) {
 		t.Errorf("MatchesRecord accepted a record convened by a different roster member: "+
 			"%v. A verifier reading the finished document cannot tell which of them "+
 			"convened, and the invitation is the only independent statement of it", err)
-	}
-}
-
-// TestTheBindingMACCannotBeSlidAcrossItsFieldBoundary.
-//
-// `BindingMAC` concatenated `role` and `exporter` with no length prefixes and no domain
-// tag, bypassing `preimageBuilder` — whose own doc calls itself "the one length-prefix
-// encoder every signed preimage in this package uses", which this made false.
-//
-// Bare concatenation is ambiguous: ("a","bc") and ("ab","c") write identical bytes. Two
-// mitigations existed and neither was written down or asserted — the key is purpose-derived
-// so confusion needs the same key, and the only roles anyone passes happen to be the same
-// length. `role` is a free string parameter on an exported method, so neither is a property
-// of the code.
-func TestTheBindingMACCannotBeSlidAcrossItsFieldBoundary(t *testing.T) {
-	_, inv := invited(t)
-
-	a, err := inv.BindingMAC([]byte("bc"), "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := inv.BindingMAC([]byte("c"), "ab")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(a, b) {
-		t.Error(`BindingMAC("bc","a") == BindingMAC("c","ab") — the boundary between the ` +
-			"role and the channel binding can be slid, so one MAC attests to two different " +
-			"(role, exporter) pairs")
-	}
-
-	// The control: the same inputs must still agree with themselves, or the fix is just noise.
-	again, err := inv.BindingMAC([]byte("bc"), "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(a, again) {
-		t.Fatal("BindingMAC is not deterministic")
-	}
-	// And the property the MAC exists for: the two roles must differ, so a reflection of
-	// the initiator's MAC cannot pass as the responder's.
-	init, _ := inv.BindingMAC([]byte("x"), "initiator")
-	resp, _ := inv.BindingMAC([]byte("x"), "responder")
-	if bytes.Equal(init, resp) {
-		t.Error("the two roles produce one MAC — a reflection passes as a peer holding the secret")
 	}
 }
 

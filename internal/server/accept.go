@@ -33,8 +33,8 @@ import (
 // span quitting Nib, and a party who has accepted an invitation and then restarts has a pin, an
 // identity, and no way to be a party to the ceremony again — `ceremonyFor` starts at
 // `ParseInvitation(text)`, and the rendezvous key and both salts are all HKDF over the secret
-// inside that text. (A channel binding would be too; `BindingMAC` has no production caller —
-// `/pending 441`.) They are
+// inside that text. (A channel binding would have been too; it was refused and deleted at
+// v1.129.3 — `/pending 442`.) They are
 // over the secret inside that text. The manual step D21 removed came back one process boundary out.
 //
 // **The vault, never `~/nib/ceremonies/`.** The text contains the secret, and D29 puts key material
