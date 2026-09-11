@@ -1,6 +1,6 @@
 // Tier-2 stub for the vendored pdf.js viewer (`web/vendor/pdfjs/pdf_viewer.mjs`).
 //
-// Five classes, which is exactly what `web/app.js` imports from it. The viewer is
+// Five classes and one enum, which is exactly what `web/app.js` imports from it. The viewer is
 // the rendering engine, and rendering is precisely where this tier stops — so
 // stubbing it is not a shortcut, it IS the tier boundary (see boot.mjs).
 //
@@ -70,3 +70,9 @@ export class GenericL10n {
   constructor() {}
   async get(_key, _args, fallback) { return fallback; }
 }
+
+// ScrollMode mirrors the vendored enum's values, which `app.js` sets on the viewer to drive the
+// layout modes (v1.129.6). The numbers are pdf.js's own and are checked against the real file by
+// `TestTheScrollModeStubMatchesTheVendoredEnum` at tier 1 — a stub whose constants drift from the
+// thing it stands for is a harness that agrees with itself and with nothing else.
+export const ScrollMode = { UNKNOWN: -1, VERTICAL: 0, HORIZONTAL: 1, WRAPPED: 2, PAGE: 3 };

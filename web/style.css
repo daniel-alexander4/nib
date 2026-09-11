@@ -1278,6 +1278,40 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
    classes, two facts. */
 .pdfViewer.nibJoined .page { margin: 0 auto; }
 
+/* ── Presentation (v1.129.6) ──────────────────────────────────────────────────
+   `body.presenting` is the one switch. Everything that is not the document goes: the menubar, the
+   toolbar and the sidebar. They are hidden with a class rather than `[hidden]` because they are
+   also hidden for other reasons elsewhere and two writers of one attribute is how a surface gets
+   stuck off — the class composes, the attribute does not. */
+body.presenting #menubar,
+body.presenting #toolbar,
+body.presenting #sidebar { display: none; }
+body.presenting #main { background: #000; }
+body.presenting .presentbar { display: flex; }
+
+/* The bar sits over the document, bottom-left, and is deliberately dim: a presenter needs to be
+   able to find the clock, and an audience should not be reading it. */
+.presentbar {
+  display: none;
+  position: absolute; left: 12px; bottom: 12px; z-index: 8;
+  align-items: center; gap: 10px;
+  padding: 5px 10px; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55); color: var(--subtext1);
+  font-size: 12px; pointer-events: auto;
+}
+.presentclock { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+.presenthint { opacity: 0.8; }
+
+/* The pointer. `pointer-events: none` is load-bearing: it sits over the page, and a dot that
+   swallowed clicks would break click-to-advance — the two tools would fight and the more obvious
+   one would look broken. */
+.presentdot {
+  position: fixed; z-index: 9; width: 14px; height: 14px;
+  margin: -7px 0 0 -7px; border-radius: 50%;
+  background: var(--red); box-shadow: 0 0 12px 4px rgba(243, 139, 168, 0.5);
+  pointer-events: none;
+}
+
 .pdfViewer,
 .textLayer {
   --editorFreeText-editing-cursor: url(img/pdfjs/cursor-editorFreeText.svg) 0 16, text;
