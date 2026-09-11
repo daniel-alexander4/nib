@@ -241,7 +241,52 @@ oracle — is the reason this is a decision and not a test-plan footnote.
 
 ## Build order
 
-### P01 — Preservation and honesty
+### P01 — Preservation and honesty *(done 2026-09-11, v1.129.21)*
+
+**Acceptance ledger**, every clause split on `and`, measured at v1.129.20:
+
+| # | clause | verdict | evidence |
+|---|---|---|---|
+| 1 | No operation emits a tagging claim over unmarked content | ✅ | `TestEveryDeclaredFateIsTheMEASUREDFate` fails any driven operation measuring `orphaned` — **32 driven, zero skips**. Probed red by restoring `NUp`'s v1.129.4 return. |
+| 2 | `nup`'s output no longer regresses veraPDF clause 7.1 t3 against a tagged input | ✅ | The fixture n-up fails **exactly** its input's three clauses; `boi.pdf` exactly; `adgm_va.pdf` a strict **subset** of its source's ten. Two are real producer documents. |
+| 3 | Every operation that touches a document has a declared tag verdict | ✅ | `TestEveryOperationDeclaresItsTagFate` — **49 operations enumerated from the code** by `go/ast`, 49 rows, checked both directions. |
+| 4 | …and a guard fails when a new one has none | ✅ | Probed by omission: `StampImages` was genuinely missed in the S03 rewrite and the guard caught it first. |
+| 5 | The tag-fate table and its law ship as an ADR | ✅ | ADR-031, indexed, held by `TestSupersededADRsSaySoAndEveryADRIsIndexed`. |
+
+**Required-run gates, discharged at the close and named explicitly** — they are a separate list from
+the exit criteria and nothing else walks them. Tier 0 build ✅ · tier 1 `go test ./...` ✅ · tier 2
+`jsdomtest.sh` **327/327** ✅ · tier 3 `uirepro.sh` **119/119, 0 skipped** ✅ · tier 4 `pairrepro.sh`
+**PASS both transports** ✅ · tier 6 `ceremonyrepro.sh` **27/0** ✅. Tiers 4 and 6 are run because the
+phase widened `ClaimsTagging`, which `convene.go:244` reaches through `commitBarrier`.
+
+**(pin — criterion 2 was UNMET when this close began, and the phase gained a sixth slice rather than
+a struck clause.)** `nup` still regressed 7.1 t3 at v1.129.18. The close only got past it by asking
+*what* fails that clause instead of accepting that it did: veraPDF's failing contexts read
+`xObject[0]/contentStream[0]/content[2]{mcid:0}` — the original marked content, intact, inside a Form
+XObject. `api.NUp` had destroyed nothing; it had only failed to re-link. P01.S06 re-anchors it, and
+P01.S01's struck acceptance clause is un-struck as a consequence.
+
+**What the phase review found, all three of the same shape as the defect the phase is built on — a
+claim nothing checked.** A doc comment asserting `dropTaggingClaim` had one caller when it had two;
+cost figures describing a call pattern that had stopped existing one commit earlier; and
+`orphaned()` scoring a document with `/Marked true` and **no structure tree at all** as `carried`,
+the census's best verdict. All fixed at v1.129.20, each probed red.
+
+**And a count that was never true.** The census population was reported as *"28 → 33 operations"* and
+*"19 of 33 rows were wrong"* across the plan, the ADR, the seam inventory and a commit message.
+Counted at the close: the table held **48 rows** (39 `dropped`, 9 `untouched`), **27** of those
+verdicts were false, and the enumeration finds **49** operations today.
+
+**Seam inventory: graduated, after repair.** 22 rows — 21 `keep-live`, 1 flagged (S06d), 2 deleted
+with the reverted `writeMutated` door. The repair came first: **four of section S01's five declared
+readers had been deleted and the rows still named them**, because the slice-close re-check had not
+run since the byte-count correction rewrote the file underneath it. `inventorycheck` passes with 23
+readers resolving and six retired instruments declared.
+
+**Residual doubt, recorded rather than resolved:** P01's strongest criterion — the veraPDF
+differential — has **no standing reader**. Every run of it was by hand, and it is the only oracle in
+this phase outside this repo. `/pending 469`.
+
 **Goal.** Stop nib degrading documents that arrive tagged, and stop it claiming tagging it does not
 have. Nothing in this phase authors any structure; it is the floor D2 requires, and it is
 independently worth shipping even if the plan went no further.
