@@ -471,6 +471,13 @@ being full screen does not put you in a presentation, so you can read an ordinar
 window filling the display and everything still where it was. Most PDF viewers make these one thing,
 which is why Escape is unpredictable in them.
 
+**Read aloud** speaks the page you are looking at, using the voice your browser already has. It
+stops when you turn the page, switch document, or press it again. **It is not a screen reader and
+does not claim to be** — a screen reader needs a tag tree, which Nib does not yet write (that is a
+known gap). This is a different thing, useful for proof-reading or for taking a document in by ear.
+On a scanned page there is no text to read and Nib says so, pointing you at OCR rather than falling
+silent.
+
 Beside them are the zoom controls — in, out, **Fit width**, **Fit page** and **Actual size**. Fit
 width and Fit page both measure the *whole* document and lock a single scale, so a file whose pages
 are not all the same size does not resize under you as you scroll past the boundary.

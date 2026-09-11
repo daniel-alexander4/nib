@@ -39,10 +39,24 @@ export class PDFViewer {
   constructor(opts = {}) {
     Object.assign(this, opts);
     this.pdfDocument = null;
-    this.currentPageNumber = 1;
+    this._pageNumber = 1;
     this.currentScaleValue = null;
     this.setDocumentCalls = [];
     this._editorMode = { mode: 0 };
+  }
+  // **`currentPageNumber` dispatches `pagechanging`, because the real PDFViewer does.**
+  // It was a plain property until v1.129.7, so setting it here fired nothing — which made every
+  // app behaviour hung off a page change invisible at this tier, including the one that stops
+  // read-aloud at the page boundary (`/pending 408`). A stub that silently drops an event the real
+  // component emits does not merely under-test: it reports the app as inert.
+  //
+  // Guarded on an actual change and on the bus existing, so it matches the real one's behaviour
+  // rather than shouting on every assignment during construction.
+  get currentPageNumber() { return this._pageNumber; }
+  set currentPageNumber(n) {
+    const changed = n !== this._pageNumber;
+    this._pageNumber = n;
+    if (changed && this.eventBus) this.eventBus.dispatch('pagechanging', { pageNumber: n });
   }
   setDocument(doc) {
     this.pdfDocument = doc;

@@ -102,6 +102,10 @@ const EXEMPT = new Set([
   // document at all — requiring one would mean you cannot fill the display until you have opened
   // something, which is backwards for the control that makes room to open things in.
   'viewPresentBtn', 'fullScreenBtn',
+  // Read aloud checks for a document itself and says "Open a PDF first" — it is in the View group
+  // with the other viewer controls, and disabling it would make the button that explains what it
+  // needs unavailable at the moment somebody is wondering what it does (`/pending 408`).
+  'readAloudBtn',
   // Quit acts on the PROCESS, not on a document (P01.S06). Requiring a document would make it
   // unreachable from the one state a user most wants it in — a Nib with nothing open that they
   // want to stop — and its own modal already names whatever would be lost, document or ceremony.

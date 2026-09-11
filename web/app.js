@@ -86,6 +86,7 @@ const els = {
   fitPageBtn: $('fitPageBtn'), actualSizeBtn: $('actualSizeBtn'),
   viewStandardBtn: $('viewStandardBtn'), viewContinuousBtn: $('viewContinuousBtn'),
   viewPresentBtn: $('viewPresentBtn'), fullScreenBtn: $('fullScreenBtn'),
+  readAloudBtn: $('readAloudBtn'),
   advCeremonyChk: $('advCeremonyChk'), advDiscoveryChk: $('advDiscoveryChk'),
   advRendezvousChk: $('advRendezvousChk'), advTimestampChk: $('advTimestampChk'),
   advError: $('advError'),
@@ -2388,6 +2389,11 @@ function newView() {
     markCurrentThumb(v, e.pageNumber);
     if (v !== view) return;
     all('.pageNum').forEach((i) => { i.value = e.pageNumber; }); // shared chrome, still gated
+    // **Reading aloud stops at the page boundary** (`/pending 408`). The unit is the page you are
+    // looking at, so a voice that carried on reading the previous one while a new one is on screen
+    // would be describing something the user can no longer see. Gated on `v === view` above: a
+    // background document turning its own page must not silence the one being read.
+    if (readingAloud) stopReadAloud();
   });
   // The editor UI manager is created with the first editor layer, not with the viewer, so the
   // history hook is armed from here. Idempotent — this fires per page — and it must be per
@@ -2574,6 +2580,9 @@ function activateView(v) {
   // divs, and a pointerup arriving after the swap would write the drag into whichever
   // document is active by then.
   abortDrags();
+  // Reading aloud belongs to the document on screen, and this is the moment that stops being this
+  // one. Same door as every other exit — see stopReadAloud (`/pending 408`).
+  if (readingAloud) stopReadAloud();
   // An armed fill target is transient the same way a half-drawn box is: `fillMarker`
   // parks a flag awaiting the NEXT Library click, and that click now belongs to another
   // document. Disarmed rather than threaded — the user has not chosen an image yet, so
@@ -10999,6 +11008,83 @@ els.viewStandardBtn.onclick = () => applyViewLayout('pages');
 els.viewContinuousBtn.onclick = () => applyViewLayout('continuous');
 els.viewPresentBtn.onclick = () => applyViewLayout('presentation');
 els.fullScreenBtn.onclick = () => (document.fullscreenElement ? exitFullScreen() : enterFullScreen());
+
+// ── Read aloud (`/pending 408`) ──────────────────────────────────────────────
+//
+// **What this is NOT, said first because the entry warns that this feature invites the claim.**
+// It is not tagged-PDF accessibility. A screen reader needs a tag tree, this builds none, and
+// `/pending 29` is still open. Read-aloud is a *different* path — useful to someone proof-reading,
+// to someone whose eyes are tired, to someone who takes documents in better by ear — and describing
+// it as answering the tagging row would be the exact over-claim ADR-013's language rule exists to
+// prevent.
+//
+// **Per PAGE, not per document.** A whole file read start to finish cannot be followed, cannot be
+// resumed, and has no relationship to what is on screen. The page you are looking at is the unit
+// that has one, which is also what makes "it stopped when I turned the page" the right behaviour
+// rather than a bug.
+//
+// **`speechSynthesis` is read at call time, never captured.** It is a browser global Nib has never
+// touched before (a named search over `web/` for `speechSynthesis` returned 0 before this), so it
+// is absent in jsdom and can be absent in an embedded view; reading it late means a harness can
+// provide one and a browser without it gets the honest sentence below rather than a thrown error.
+function speech() {
+  return (typeof window !== 'undefined' && window.speechSynthesis) || globalThis.speechSynthesis || null;
+}
+
+let readingAloud = false;
+
+function reflectReadAloud() {
+  if (!els.readAloudBtn) return;
+  els.readAloudBtn.setAttribute('aria-pressed', String(readingAloud));
+  els.readAloudBtn.classList.toggle('active', readingAloud);
+  els.readAloudBtn.textContent = readingAloud ? 'Stop reading' : 'Read aloud';
+}
+
+// stopReadAloud is the ONE way reading ends, and every route out calls it (ADR-009's shape).
+//
+// There are five: pressing the button again, turning the page, switching document, closing the
+// document, and the utterance finishing. Without one door the flag and the speech queue drift
+// apart, and the symptom is a button that says "Stop reading" over silence.
+function stopReadAloud() {
+  const sp = speech();
+  if (sp && sp.cancel) sp.cancel();
+  readingAloud = false;
+  reflectReadAloud();
+}
+
+async function startReadAloud() {
+  const sp = speech();
+  if (!sp || typeof sp.speak !== 'function') {
+    toast('This browser cannot read aloud');
+    return;
+  }
+  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  const n = view.viewer ? view.viewer.currentPageNumber : 1;
+  let text = '';
+  try {
+    const tc = await (await view.pdfDocument.getPage(n)).getTextContent();
+    for (const it of tc.items) { text += it.str; if (it.hasEOL) text += ' '; }
+  } catch { /* image-only page: no text layer, handled below */ }
+  text = text.replace(/\s+/g, ' ').trim();
+  if (!text) {
+    // **The honest sentence, and it names the remedy.** A scanned page has no text layer, so there
+    // is nothing to read — and silence would be indistinguishable from a broken feature. `/pending
+    // 408` is explicit that this must not be dressed up as accessibility it does not deliver.
+    toast('This page has no text to read — it looks like a scan. Run OCR on it first.');
+    return;
+  }
+  readingAloud = true;
+  reflectReadAloud();
+  const u = new (window.SpeechSynthesisUtterance || globalThis.SpeechSynthesisUtterance)(text);
+  // Ending through the same door as every other exit, so the button cannot be left saying "Stop
+  // reading" over a queue that has already drained.
+  u.onend = () => { readingAloud = false; reflectReadAloud(); };
+  u.onerror = () => { readingAloud = false; reflectReadAloud(); };
+  sp.cancel(); // whatever a previous page left queued; speak() appends rather than replacing
+  sp.speak(u);
+}
+
+els.readAloudBtn.onclick = () => (readingAloud ? stopReadAloud() : startReadAloud());
 
 // ── Full screen, and why it is separate from Presentation ────────────────────
 //
