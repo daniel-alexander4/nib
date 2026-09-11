@@ -74,8 +74,12 @@ func taggedFixture() []byte {
 	return b.Bytes()
 }
 
-// claims counts the assertions a document makes about being tagged, and the structure that would
-// have to be there for those assertions to be true.
+// claims counts the assertions a document makes about being tagged, **in the raw bytes**.
+//
+// **`/StructElem` here is nearly always 0 and that is not a finding** — pdfcpu writes the tree into
+// a compressed object stream, so the literal never appears in the output. Kept for diagnostics and
+// for the catalog-level keys, which ARE written uncompressed; anything asking about the structure
+// itself must use `StructureElements`. This distinction is what `lies` got wrong.
 func claims(pdf []byte) map[string]int {
 	out := map[string]int{}
 	for _, k := range []string{"/StructTreeRoot", "/MarkInfo", "/Marked", "/StructParents", "/StructElem"} {
@@ -86,12 +90,17 @@ func claims(pdf []byte) map[string]int {
 
 // lies reports law 1's violation: a document that SAYS it is tagged while carrying no structure.
 //
-// **This is the whole predicate, and it is deliberately not "did the tree survive".** A visible loss
-// is honest; a false claim is not, and it is worse than no tagging at all because it defeats the
-// reader's own check. An operation that drops everything passes; an operation that carries
-// everything passes; only the middle — claim without content — fails.
+// **It PARSES, and the first version did not — which is the most expensive error in this plan's
+// history.** It byte-counted `/StructElem`, and pdfcpu writes the structure tree into a compressed
+// object stream, so that count is **0 for every pdfcpu output**. The predicate therefore reported
+// every tagged document as lying, the enforcement built on it stripped tag trees that had survived
+// intact, and four slices, an ADR and a pending item were written on the strength of it.
+//
+// Measured with the parse: a no-op write keeps all 14 elements, `Rotate` keeps 14, `Optimize` keeps
+// 14, and `NUp`/`Collect` drop the root and the elements together. **No operation lies.** The guard
+// is kept because it would catch one that started to; the enforcement is gone because there was
+// nothing to enforce and it was destroying data.
 func lies(pdf []byte) bool {
-	c := claims(pdf)
-	claimed := c["/StructTreeRoot"] > 0 || c["/Marked"] > 0
-	return claimed && c["/StructElem"] == 0
+	claimed := ClaimsTagging(pdf)
+	return claimed && structureElements(pdf) == 0
 }

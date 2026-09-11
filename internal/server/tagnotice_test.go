@@ -81,13 +81,18 @@ func TestDroppingATaggingClaimIsRecordedOnTheDocument(t *testing.T) {
 	srv.registerLocked(doc)
 	srv.mu.Unlock()
 
-	out, err := pdfops.Rotate(src, nil, 90)
+	// **`Collect`, not `Rotate`, and the difference is the correction this file carries.** Measured
+	// by PARSING (a byte count cannot see a compressed object stream): `Rotate` and `Optimize` carry
+	// the structure tree through intact, while `Collect` and `NUp` drop the claim and the content
+	// together. An earlier version of this test used `Rotate` on the belief that every operation
+	// destroyed tagging, which was an artefact of the byte count and not true of any real document.
+	out, err := pdfops.Collect(src, []string{"1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pdfops.ClaimsTagging(out) {
-		t.Fatal("setup: rotate still claims tagging, so law 1 has regressed and this test is about " +
-			"the wrong thing")
+		t.Fatal("setup: Collect still claims tagging, so there is no loss for the notice to record " +
+			"and this test is about the wrong thing")
 	}
 	if err := srv.commitMutation(doc, src, out, false); err != nil {
 		t.Fatal(err)
@@ -141,7 +146,7 @@ func TestTheNoticeIsStickyAcrossLaterEdits(t *testing.T) {
 	srv.registerLocked(doc)
 	srv.mu.Unlock()
 
-	dropped, err := pdfops.Rotate(src, nil, 90)
+	dropped, err := pdfops.Collect(src, []string{"1"})
 	if err != nil {
 		t.Fatal(err)
 	}

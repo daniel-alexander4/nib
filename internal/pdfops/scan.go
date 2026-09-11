@@ -475,27 +475,7 @@ func writeMutated(pdf []byte, fn func(*model.Context) error) ([]byte, error) {
 	if err := api.WriteContext(ctx, &out); err != nil {
 		return nil, err
 	}
-	// **Law 1, enforced at the write door** (`PLAN-accessibility.md` P01.S03, `/pending 29`).
-	//
-	// Measured at P01.S02 on a real LibreOffice-produced tagged PDF with 14 `/StructElem`: this
-	// function, called with a function that does NOTHING, returns a document with zero of them while
-	// `/StructTreeRoot` and `/MarkInfo /Marked true` survive. `WriteContext` does not serialise the
-	// objects the tree points at. So every caller of this helper — eight of them, found by
-	// `TestNoOperationClaimsTaggingItHasNot` rather than by a list — emitted a document that said it
-	// was tagged over content nothing describes.
-	//
-	// **Here rather than at eight call sites**, which is ADR-009's rule and law 2's: a rule holding
-	// at more than one site is written once and every site calls it.
-	//
-	// **And it is a LAW, not a workaround, which is why it is a post-condition rather than an
-	// unconditional strip.** It fires only when the write has actually destroyed the structure. The
-	// day pdfcpu carries a tree through — or nib carries one around the write, which is P05's
-	// prerequisite — this becomes a no-op on its own, with no line to remember to delete.
-	b := out.Bytes()
-	if claimsTaggingItHasNot(b) {
-		return dropTaggingClaim(b)
-	}
-	return b, nil
+	return out.Bytes(), nil
 }
 
 // removeAllAttachments deletes every embedded file, treating "no attachments" as
