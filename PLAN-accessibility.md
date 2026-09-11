@@ -527,7 +527,57 @@ stored layout, no interface with several implementors. **Slice gate does not fir
 `internal/server`'s session/ceremony/delivery/discovery, `internal/p2p` or `internal/rendezvous` is
 touched.
 
-### P02 — The application's own WCAG 2.1 AA
+### P02 — The application's own WCAG 2.1 AA *(done 2026-09-11, v1.129.27)*
+
+**Acceptance ledger**, every clause split on `and`, measured at v1.129.26:
+
+| # | clause | verdict | evidence |
+|---|---|---|---|
+| 1a | Every annotation tool can **create** a mark by keyboard alone | ✅ | `keyboardplacement.test.mjs` enumerates all 11 `view.*Mode` from the code; `keyboardplace.test.mjs` drives **both** code paths — click-to-place and drag-to-draw, which are different halves. |
+| 1b | …**move** | ✅ | Arrow nudge, tier 3, asserted on laid-out geometry. |
+| 1c | …**resize** | ✅ | Shift+arrow, asserted separately from move so neither masks the other. |
+| 1d | …asserted at tier 3 | ✅ | 142/142, 0 skipped. |
+| 2a | Toggle state exposed **programmatically** | ✅ | Three doors by ARIA vocabulary — `setArmed` / `setSelected` / `setExpanded`. |
+| 2b | …**across every armed tool** | ✅ | Enumerated from source across **all three spellings** of the class change; 29 sites routed, 7 containers exempted by name with reasons. |
+| 3a | A keyboard-only pass over **open, mark up, save** | ✅ | P02.S05 drives the whole flow with no pointer, asserted over its own source. **This clause is why the phase gained a fifth slice.** |
+| 3b | …no trap | ✅ | Stall detector **with its own capability test**, because the obvious probe was inert under Nib's CSP. |
+| 3c | …no stranded focus | ✅ | Asserted in the traversal, plus `dialogfocus.test.mjs` for the modal-close case. |
+
+**Required-run gates, discharged and enumerated** — a separate list from the criteria, which nothing
+else walks. Tier 0 build ✅ · tier 1 `go test ./...` ✅ · tier 2 **343/343** ✅ · tier 3 **142/142,
+0 skipped** ✅. **The slice gate does NOT fire**, and that is recorded rather than skipped silently:
+P02's entire diff is `web/app.js`, `test/`, `build/` and this plan — nothing in `internal/server`'s
+session/ceremony/delivery/discovery, `internal/p2p` or `internal/rendezvous`.
+
+**(pin — the phase shipped a defect and then found it, three slices later, at its own close.)**
+P02.S02 gave `.modetab` `aria-pressed` after checking `index.html` for `role="tab"` and finding
+none. `wireTablist` (`app.js:9008`) adds the role **at runtime**, so v1.129.23 shipped
+`aria-pressed` on `role="tab"` — the invalid pairing the three doors exist to prevent. **A markup
+scan cannot see a runtime decision made ten lines away in the same file.** Found by P02.S05 driving
+the flow rather than reading it; fixed at v1.129.26, guard rewritten to ask the tablist-building
+code, probed red. A second collision from the same blind spot put `aria-expanded` on the document
+strip's tabs.
+
+**Every slice's plan text was wrong about its own population, and each was corrected by measuring
+before building:** "every annotation tool" was 11 placement tools of which 8 are drag-to-draw; "the
+27 toggle sites" missed **nine more in a spelling the census did not know**; "four buttons with no
+accessible name" was **two**, and two of the four would have been made worse by an `aria-label`
+overriding their real text.
+
+**Graduation pass**: 31 rows, **30 `keep-live` mechanically**, one needing judgment — S04c, whose
+metric must be NON-zero because a zero there means the trap detector is dead. No rot; all seven
+declared reader files resolved against the tree. **What the pass cannot see** has an instance in
+this phase: a row can be live, its reader real, and the claim still false.
+
+**Pending sweep against the closure: nothing falsified.** The two items naming "P02" are
+`PLAN-signing-ceremony.md`'s and predate this plan — a coordinate collision, not relevance.
+`/pending 470` is this phase's own filing and stays open.
+
+**Residual doubt, recorded rather than resolved:** with a document open the tab order visits 1344
+stops in 1500 presses and **never wraps**, so the toolbar is not forwards-reachable from the
+document. Not a trap — `Shift+Tab` works and SC 2.1.2 holds — but a real burden no instrument here
+measures. `/pending 470`.
+
 **Goal.** Make nib operable without a pointer and legible to a screen reader. This is a live
 conformance failure in shipped code (D11), and it is independent of every PDF concern below.
 
