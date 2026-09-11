@@ -724,6 +724,61 @@ on `id || className`, and every accordion header is `class="sbhead groupcard"` w
 three *different* buttons in a row read as one element. An identity function that cannot tell two
 elements apart turns "focus moved" into "focus is stuck". Re-keyed on a DOM path.
 
+#### P02.S05 — the flow itself, by keyboard alone *(done 2026-09-11, v1.129.26)*
+
+**(added 2026-09-11 at the phase close, because the acceptance ledger stopped on exit criterion 3
+and the phase would otherwise have closed on a narrowed version of its own words.)** The criterion
+says *"a keyboard-only pass over the primary flows — **open, mark up, save**"*. S04 traverses the
+app with a document **already open** and asserts no trap and no stranded focus; it never drives the
+flow. Those are different claims, and only the weaker one was tested.
+
+**It is achievable, which is why this is a slice and not a struck clause.** Checked before scoping
+it: `#pathInput` takes a path and `Enter` calls `openTyped` → `openSmart` (`app.js:8837`), so Open
+has a real keyboard route that does not go through the browser's native file picker. `#saveBtn` is
+an ordinary button. Mark-up by keyboard is P02.S01's, already shipped.
+
+Scope: one tier-3 test that opens a document, places and moves a mark, and saves — **using only
+keys**, never `page.click` or a harness helper that reaches past the UI. Refs: D11, exit criterion 3.
+
+Tasks:
+- T01 — open by keyboard: reach the Open dialog, type the path, `Enter`.
+- T02 — mark up by keyboard: arm a tool with `Enter`, place with `Enter`, nudge with an arrow.
+- T03 — save by keyboard: reach `#saveBtn` and `Enter`; assert the document reports saved.
+- T04 — the stimulus check: the test must fail if any step silently used a pointer.
+
+Acceptance:
+- The whole flow completes with **zero `page.click` and zero `page.mouse` calls** in the test,
+  asserted over the test's own source so the claim cannot rot into a mouse-driven test that says
+  it is keyboard-only.
+- Each step's effect is observed, not assumed: a document is open, a mark exists and has moved,
+  and the save is reported.
+- ✅ A red proof: disabling the keyboard route for any one step turns it red — and four of the
+  five runs it took to get here were exactly that, unplanned.
+
+**(pin — this slice found a defect P02.S02 SHIPPED, and the guard that should have caught it was
+asking the wrong artefact.)** `wireTablist` (`app.js:9008`) gives `.modetabs` `role="tablist"`,
+each tab `role="tab"`, `aria-selected` and a roving tabindex — **at runtime**. S02 checked
+`index.html`, found the mode tabs are plain `<button>`, and routed them through `setArmed`. So
+v1.129.23 put **`aria-pressed` on elements carrying `role="tab"`**: the invalid pairing the three
+doors exist to prevent. A markup scan cannot see a runtime decision made ten lines away in the
+same file, and the guard is now asked of the tablist-building code instead.
+
+**A second collision from the same blind spot**: `.tab` matches both the sidebar's panel headers
+and the document strip's tabs (`app.js:2509`), which `wireTablist` also runs as a tablist — so
+`setExpanded` was setting `aria-expanded` on a real tablist. Scoped to `.tab[data-panel]`. Each
+door now clears the other two's attribute, so a mis-routed element cannot keep a stale vocabulary.
+
+**And the test's own assumption was wrong in the instructive direction.** It expected Tab to reach
+each mode tab; a tablist is **one** Tab stop with arrows moving inside it, which is correct ARIA and
+what the app does. The failure read as *"the app's primary navigation is keyboard-unreachable"* —
+the Level A defect this phase exists to find — and took two runs to tell apart, only because the
+failure message lists the stops focus actually visited.
+
+**Measured and filed rather than fixed here:** with a document open, 1500 forward `Tab` presses
+visit **1344 distinct stops and never wrap** back to the menubar. Not a trap — `Shift+Tab` works
+— but the toolbar is not forwards-reachable from the document in practice. `/pending 470`, with
+the text layer named as the suspect and the one measurement that would settle it.
+
 **Dropped from the sketch**: the toast live region (built, `/pending 328`). `prefers-reduced-motion`,
 SC 1.4.11 and the 200%-zoom reflow assertion are **not** dropped — they are unmeasured here and stay
 sketched rather than being firmed on numbers nobody has taken.

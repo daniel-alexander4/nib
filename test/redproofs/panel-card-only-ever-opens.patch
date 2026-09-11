@@ -1,6 +1,6 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -11607,11 +11607,6 @@
+@@ -11646,11 +11646,6 @@
      // Form data and Multiple documents toggled on a second click, Pages and Outline re-opened
      // and could not be put away, so half the sidebar's pills answered a second click by doing
      // nothing. Code that wants a panel SHOWN rather than toggled goes through showPanel().
@@ -9,6 +9,6 @@
 -      $(tab.dataset.panel)?.classList.remove('active');
 -      return;
 -    }
-     document.querySelectorAll('.tab').forEach((t) => setExpanded(t, false));
-     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
-     setExpanded(tab, true);
+     // **`[data-panel]` scopes this to the sidebar's panel headers.** A bare `.tab` also matches
+     // the document strip's tabs (`app.js:2509`), which `wireTablist` runs as a real tablist — so
+     // this was setting `aria-expanded` on elements whose vocabulary is `aria-selected`.

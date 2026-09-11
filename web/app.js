@@ -7459,10 +7459,18 @@ function describeButton(el, text) {
 // — as something that is not a control. A twenty-eighth site added without one goes red.
 
 // setArmed reflects an on/off control state in the class AND in `aria-pressed`.
+//
+// **Each door clears the other two's attribute**, and that is not tidiness. An element routed
+// through the wrong door keeps the old attribute for ever otherwise, and `aria-pressed` beside
+// `role="tab"` + `aria-selected` is exactly the invalid pairing these three doors exist to
+// prevent — which is what happened to `.modetab` at v1.129.23 and shipped, because the guard
+// checked the MARKUP for `role="tab"` while `wireTablist` adds it at runtime (`app.js:9008`).
 function setArmed(el, on) {
   if (!el) return;
   el.classList.toggle('active', !!on);
   el.setAttribute('aria-pressed', String(!!on));
+  el.removeAttribute('aria-selected');
+  el.removeAttribute('aria-expanded');
 }
 
 // setExpanded is the disclosure vocabulary: `aria-expanded`, for a control that shows or hides a
@@ -7476,6 +7484,7 @@ function setExpanded(el, on) {
   if (!el) return;
   el.classList.toggle('active', !!on);
   el.setAttribute('aria-expanded', String(!!on));
+  el.removeAttribute('aria-pressed');
 }
 
 // setSelected is the tablist vocabulary: `aria-selected`, for elements that carry a `tab` role.
@@ -7487,6 +7496,7 @@ function setSelected(el, on) {
   if (!el) return;
   el.classList.toggle('active', !!on);
   el.setAttribute('aria-selected', String(!!on));
+  el.removeAttribute('aria-pressed');
 }
 
 // ── Keyboard placement and nudge — `PLAN-accessibility.md` P02.S01, WCAG SC 2.1.1 ──────────
@@ -11641,7 +11651,10 @@ document.querySelectorAll('.tab').forEach((tab) => {
       $(tab.dataset.panel)?.classList.remove('active');
       return;
     }
-    document.querySelectorAll('.tab').forEach((t) => setExpanded(t, false));
+    // **`[data-panel]` scopes this to the sidebar's panel headers.** A bare `.tab` also matches
+    // the document strip's tabs (`app.js:2509`), which `wireTablist` runs as a real tablist — so
+    // this was setting `aria-expanded` on elements whose vocabulary is `aria-selected`.
+    document.querySelectorAll('.tab[data-panel]').forEach((t) => setExpanded(t, false));
     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
     setExpanded(tab, true);
     $(tab.dataset.panel).classList.add('active');
@@ -11747,7 +11760,10 @@ function syncModeMenu(tab) {
 function setMode(tab) {
   document.body.dataset.tab = tab;
   syncModeMenu(tab);
-  all('.modetab').forEach((b) => setArmed(b, b.dataset.tab === tab));
+  // **`aria-selected`, because `wireTablist` makes these a real tablist at runtime**
+  // (`app.js:9008` — `role="tablist"`, `role="tab"`, roving tabindex). They are plain `<button>`
+  // in the markup, which is what P02.S02 checked and why it wrongly gave them `aria-pressed`.
+  all('.modetab').forEach((b) => setSelected(b, b.dataset.tab === tab));
   all('.tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
   syncSidebarForMode(tab);
 }
