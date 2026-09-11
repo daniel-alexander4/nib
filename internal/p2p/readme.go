@@ -219,9 +219,15 @@ func RenderReadme() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The catalog floor (P03.S01). The title is what this page IS — a reader announcing
-	// "readme.pdf" tells someone nothing about a document they are being asked to sign beside.
-	return pdfops.SetTitle(pdf, readmeTitle)
+	// **No title, and that is measured rather than assumed.** This page is a FRAGMENT: its only
+	// production caller is AppendReadme, which hands it to `pdfops.Append` as the second argument,
+	// and Append takes the FIRST document's catalog wholesale — title, /Metadata, DisplayDocTitle
+	// and /Lang. Measured 2026-09-11: a titled fragment appended to a titled document leaves the
+	// document's own title in place, and appended to an UNTITLED one leaves it untitled. So a title
+	// here is discarded on every path that exists, and `readmeTitle` stays what it has always been
+	// — the heading drawn on the page. The co-signed document's title is the user's document's,
+	// which nib does not invent (P03.S01: authoring-only).
+	return pdf, nil
 }
 
 // wrapText greedily wraps s into lines no wider than maxW points at the given
