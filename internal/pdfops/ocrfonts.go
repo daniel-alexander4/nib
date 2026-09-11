@@ -3,6 +3,7 @@ package pdfops
 import (
 	"embed"
 	"fmt"
+	"log"
 	"nib/mdpdf"
 	"os"
 	"path/filepath"
@@ -302,4 +303,27 @@ func markdownFallbackFonts() []mdpdf.Font {
 		out = append(out, mdpdf.Font{Name: sp.name, Data: bb, Covers: sp.ranges})
 	}
 	return out
+}
+
+// AuthoredTextFaces names the faces nib draws its OWN prose in — the co-signing readme and the
+// signature pages — and says whether they are embedded, so the caller measures with the matching
+// rule (`mdpdf.Width`).
+//
+// **It installs on the way past and degrades**, which is the whole reason it is a function and not
+// a pair of constants. The faces come from an install that can fail on the user's machine (P04.S03),
+// and a readme set in Helvetica is a worse PDF than one set in Roboto, while a readme that fails to
+// render stops a co-signing ceremony. The Base-14 names are the fallback and they always work.
+//
+// Callers must use the returned `embedded` for BOTH drawing and measuring. The readme's own comment
+// records why: the font it is rendered in and the font its wrap is computed against were once two
+// independent literals, which is a wrap for one font and a page drawn in another the moment either
+// moves.
+func AuthoredTextFaces() (body, bold string, embedded bool) {
+	faces := authoringFaces()
+	if err := mdpdf.InstallFaces(faces); err != nil {
+		log.Printf("authored text: the embedded faces are unavailable, so nib's own pages are set "+
+			"in Base-14 core fonts and will not embed them: %v", err)
+		return "Helvetica", "Helvetica-Bold", false
+	}
+	return faces.Body.Name, faces.Bold.Name, true
 }

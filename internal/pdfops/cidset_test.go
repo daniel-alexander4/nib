@@ -56,6 +56,15 @@ func TestNothingNibEmbedsAFontIntoCarriesACIDSet(t *testing.T) {
 		{"authored Markdown", func() ([]byte, error) {
 			return ConvertDocToPDF([]byte(p4Markdown), ".md")
 		}},
+		{"a CreateFromJSON spec naming an embedded face", func() ([]byte, error) {
+			body, _, embedded := AuthoredTextFaces()
+			if !embedded {
+				t.Skip("SKIP (not a pass): the embedded faces are unavailable here, so this door " +
+					"is drawing in core fonts and has no CIDSet to carry")
+			}
+			return CreateFromJSON([]byte(`{"pages":{"1":{"content":{"text":[{"value":"a page",` +
+				`"anchor":"TopLeft","position":[72,720],"font":{"name":"` + body + `","size":12}}]}}}}`))
+		}},
 		{"OCR text layer", func() ([]byte, error) {
 			return StampTextLayer(threePagePDF(t),
 				[]Word{{Page: 1, Rect: [4]float64{20, 40, 70, 50}, Text: "hello world"}}, "eng")

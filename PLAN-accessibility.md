@@ -1232,7 +1232,7 @@ Acceptance:
   version of the test did not show, and mutation found: `faceSet.sty` returning `embedded: false`
   left it green, because the test constructed its styles by hand.
 
-#### P04.S05 — the co-signing pages are authored output too
+#### P04.S05 — the co-signing pages are authored output too *(done 2026-09-11, v1.129.43)*
 Scope: `internal/p2p`'s readme and signature pages name `Helvetica` and `Helvetica-Bold` in their
 `CreateFromJSON` specs (`readme.go:106-107`, and `$body` in both files), so every co-signed document
 carries non-embedded fonts on the pages **nib itself wrote**. Refs exit criterion 1.
@@ -1241,11 +1241,40 @@ carries non-embedded fonts on the pages **nib itself wrote**. Refs exit criterio
 *"Core fonts only … a caller with a fallback face wants that path, not this one"* — and
 `ErrReadmeOverflow` refuses a body that runs past the page. Changing the face changes every width,
 so the readme can start overflowing where it did not.
+**Three things this slice found that the firming did not predict.**
+
+1. **`readmeFont` was serving two different purposes.** `attestation.go` measured the *acceptance
+   block's* text against it — and that block is **rasterised by the browser** onto a canvas at
+   `px sans-serif` (`web/app.js`, `renderAttestation`) and stretched in as an IMAGE. Nothing about
+   it is a PDF text run. Following the readme's face there would have re-measured a browser canvas
+   against a font the browser is not using, silently changing which acceptance lines get truncated
+   in a document people sign. It is now `blockProxyFont`, with the reason at the constant.
+2. **`CreateFromJSON` is a THIRD door P04.S02's rule had to reach.** The readme came out failing
+   7.21.4.2 t2 the moment it embedded a face. nib enters pdfcpu three different ways — mdpdf's own
+   `api.Create`, the OCR watermark path, and `CreateFromJSON` — so there are three tails, all
+   routing through one door. Found by measuring the page, not by reading the call graph.
+3. **Four tests' extraction broke, and that is the most useful finding.** `internal/p2p` and
+   `internal/ceremony` both decoded the raw content stream as single-byte WinAnsi, which was correct
+   for core fonts and returns `\x007\x00M\x00K…` for an embedded Type0/CID face. **The document is
+   fine** — `pdftotext` reads the rendered readme in full — so the defect was in the instrument.
+   Every assertion built on that text is a substring check and the load-bearing ones are NEGATIVE
+   (*"the page no longer says two people"*), so a garbled extraction fails the positive ones loudly
+   and **passes the negative ones silently**. The setup guard those helpers already carried is the
+   only reason this surfaced as a failure rather than as four tests quietly asserting nothing. Both
+   now use `pdftotext`, the oracle this repo already uses for embedded-font extraction
+   (`internal/pdfops/ocr_test.go`), skipping loudly when it is absent.
+
+**The readme fits: 31 lines either way, 95 pt of slack.** Roboto and Helvetica happen to wrap this
+prose to the same line count, which is luck rather than design — the slack is under seven lines and
+`ErrReadmeOverflow` is what stands between a prose edit and an illegible page.
+
 Acceptance:
-- A rendered readme and a rendered signature page report no non-embedded fonts.
-- The readme still fits, measured against the real prose rather than a sample, with the overflow
-  refusal exercised in both directions.
-- `Append`ing them into a user document does not change that document's own fonts.
+- ✅ A rendered readme and a rendered signature page report no non-embedded fonts, read out of the
+  produced document. They carry no `/CIDSet` either.
+- ✅ The readme still fits, measured against the real prose. *(The overflow refusal is exercised in
+  both directions by `TestRenderReadmeRefusesAnOverflowingBody`, which predates this slice.)*
+- ✅ `Append`ing them into a user document does not change that document's own fonts — asserted
+  **both ways**: no font of the user's disappears, and none of nib's non-embedded fonts arrives.
 
 #### P04.S02 — the `/CIDSet` that claims more than the font program has *(done 2026-09-11, v1.129.41)*
 Scope: ua1 7.21.4.2 t2 on every embedded subset pdfcpu writes. The clause is conditional on the

@@ -310,7 +310,12 @@ func CreateFromJSON(spec []byte) ([]byte, error) {
 	if err := api.Create(nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	// A spec may name an embedded face — `internal/p2p`'s readme and signature pages do, since
+	// P04.S05 — and pdfcpu then writes a `/CIDSet` over the USED glyphs, which PDF/UA 7.21.4.2
+	// forbids. THIRD of the three places nib embeds a font: mdpdf's own `api.Create`, the OCR
+	// watermark path, and here. They are three because pdfcpu is entered three different ways, and
+	// they all route through one door (ADR-009). See dropCIDSets.
+	return embeddedFontsAreHonest(out.Bytes()), nil
 }
 
 // Append concatenates other after pdf (merge).

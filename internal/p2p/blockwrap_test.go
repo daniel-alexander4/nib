@@ -29,7 +29,7 @@ func TestABlockLineWraps(t *testing.T) {
 	}
 	// EVERY line must fit, which is the property that makes wrapping a fix rather than a rename.
 	for i, ln := range lines {
-		if mdpdf.CoreWidth(ln, readmeFont, blockTextPt) > blockTextWidth() {
+		if mdpdf.CoreWidth(ln, blockProxyFont, blockTextPt) > blockTextWidth() {
 			t.Errorf("wrapped line %d is wider than the block: %q", i, ln)
 		}
 	}
@@ -61,7 +61,7 @@ func TestAnUnbreakableTokenIsHardBroken(t *testing.T) {
 			"or the canvas clips it exactly as it did before wrapping existed", len(lines))
 	}
 	for i, ln := range lines {
-		if mdpdf.CoreWidth(ln, readmeFont, blockTextPt) > blockTextWidth() {
+		if mdpdf.CoreWidth(ln, blockProxyFont, blockTextPt) > blockTextWidth() {
 			t.Errorf("hard-broken line %d still overflows the block: %d runes", i, len([]rune(ln)))
 		}
 	}
@@ -93,7 +93,7 @@ func TestTheFixedBlockLinesFit(t *testing.T) {
 		"Party 99 of 99",
 		"Time: 2026-09-01 12:00 MST",
 	} {
-		if mdpdf.CoreWidth(s, readmeFont, blockTextPt) > blockTextWidth() {
+		if mdpdf.CoreWidth(s, blockProxyFont, blockTextPt) > blockTextWidth() {
 			t.Errorf("the fixed block line %q does not fit; nothing wraps it, so it would be "+
 				"clipped at the canvas edge", s)
 		}

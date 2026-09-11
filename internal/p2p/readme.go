@@ -98,28 +98,39 @@ const (
 	readmeBodyTop = 735.0 // baseline of the first body line
 	readmeLeading = 14.0
 	readmeFontPt  = 11
-	// readmeFont/readmeFontPt are BOTH the font the page is rendered in and the
-	// font wrapText measures against. They were two independent literals — the
-	// constants here and "Helvetica"/11 written again into the JSON spec — which is
-	// a wrap computed for one font and a page drawn in another the moment either
-	// moves.
-	readmeFont      = "Helvetica"
-	readmeTitleFont = "Helvetica-Bold"
-	readmeTitlePt   = 16
+	readmeTitlePt = 16
 )
+
+// readmeFaces is the pair of faces this page is BOTH rendered in and measured against, resolved
+// once per render — P04.S05.
+//
+// **It used to be two constants, and before that two independent literals.** The comment they
+// carried is still the rule: *"a wrap computed for one font and a page drawn in another the moment
+// either moves"*. The faces are now embedded ones that can fail to install, so they are resolved
+// rather than declared — and `embedded` travels with them because it decides HOW text is measured,
+// not merely which name is drawn (`mdpdf.Width`).
+type readmeFaces struct {
+	body, title string
+	embedded    bool
+}
+
+func currentReadmeFaces() readmeFaces {
+	body, bold, emb := pdfops.AuthoredTextFaces()
+	return readmeFaces{body: body, title: bold, embedded: emb}
+}
 
 // readmeLines word-wraps the body into individual rendered lines, with one blank
 // line between paragraphs. Each line is drawn as its own positioned text run
 // rather than relying on pdfcpu's multi-line text box, whose wrapping proved
 // unreliable; per-line placement renders correctly across viewers.
-func readmeLines() []string {
+func readmeLines(f readmeFaces) []string {
 	maxW := readmePageW - readmeLeft - readmeRight
 	var out []string
 	for i, para := range readmeParagraphs {
 		if i > 0 {
 			out = append(out, "") // blank line between paragraphs
 		}
-		out = append(out, wrapText(para, maxW, readmeFontPt)...)
+		out = append(out, wrapText(para, maxW, readmeFontPt, f)...)
 	}
 	return out
 }
@@ -170,7 +181,8 @@ func readmeLastBaseline(lines []string) float64 {
 // a bold title as a page header, then the body as one positioned text run per
 // wrapped line.
 func RenderReadme() ([]byte, error) {
-	lines := readmeLines()
+	f := currentReadmeFaces()
+	lines := readmeLines(f)
 	// Refuse here rather than letting a later assertion notice: this is the one
 	// door that produces the page, so a caller cannot ship an unreadable one.
 	if last := readmeLastBaseline(lines); last <= readmeFloor() {
@@ -194,8 +206,8 @@ func RenderReadme() ([]byte, error) {
 		"paper":  "A4P",
 		"origin": "LowerLeft",
 		"fonts": map[string]any{
-			"title": map[string]any{"name": readmeTitleFont, "size": readmeTitlePt},
-			"body":  map[string]any{"name": readmeFont, "size": readmeFontPt},
+			"title": map[string]any{"name": f.title, "size": readmeTitlePt},
+			"body":  map[string]any{"name": f.body, "size": readmeFontPt},
 		},
 		"header": map[string]any{
 			"font":   map[string]any{"name": "$title"},
@@ -252,7 +264,7 @@ func RenderReadme() ([]byte, error) {
 // is a deliberate limit, and readmeOverflow does not catch it because it is a
 // horizontal defect. ErrReadmeOverflow is vertical only; the column is guarded by
 // TestEveryReadmeLineFitsTheColumn.
-func wrapText(s string, maxW float64, fontPt int) []string {
+func wrapText(s string, maxW float64, fontPt int, f readmeFaces) []string {
 	var lines []string
 	var cur string
 	for _, word := range strings.Fields(s) {
@@ -260,7 +272,7 @@ func wrapText(s string, maxW float64, fontPt int) []string {
 		if cur != "" {
 			try = cur + " " + word
 		}
-		if mdpdf.CoreWidth(try, readmeFont, fontPt) > maxW && cur != "" {
+		if mdpdf.Width(try, f.body, fontPt, f.embedded) > maxW && cur != "" {
 			lines = append(lines, cur)
 			cur = word
 		} else {
