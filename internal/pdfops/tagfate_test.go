@@ -2,7 +2,6 @@ package pdfops
 
 import (
 	"bytes"
-	"fmt"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -32,62 +31,6 @@ import (
 // is amended in place with this measurement.
 //
 // The fixture is built inline for this slice only; P01.S03's acceptance moves it to D12's corpus.
-
-// taggedFixture is a minimal but genuinely tagged PDF: `/MarkInfo /Marked true`, a `/StructTreeRoot`
-// with one `/StructElem`, one `/P <</MCID 0>> BDC … EMC` run, `/StructParents` on the page, and a
-// `/ParentTree` linking them. Hand-built rather than generated, because `internal/testpdf` writes
-// untagged documents and a fixture that is not actually tagged would make every assertion below
-// pass for the wrong reason.
-func taggedFixture() []byte {
-	content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (Tagged heading) Tj ET\nEMC\n"
-	objs := map[int]string{
-		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
-		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
-		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
-		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 >>",
-		8: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] >>",
-		9: "<< /Nums [0 [8 0 R]] >>",
-	}
-	var b bytes.Buffer
-	b.WriteString("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
-	offs := map[int]int{}
-	maxN := 0
-	for n := range objs {
-		if n > maxN {
-			maxN = n
-		}
-	}
-	for n := 1; n <= maxN; n++ {
-		body, ok := objs[n]
-		if !ok {
-			continue
-		}
-		offs[n] = b.Len()
-		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", n, body)
-	}
-	xref := b.Len()
-	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", maxN+1)
-	for n := 1; n <= maxN; n++ {
-		if off, ok := offs[n]; ok {
-			fmt.Fprintf(&b, "%010d 00000 n \n", off)
-		} else {
-			b.WriteString("0000000000 65535 f \n")
-		}
-	}
-	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", maxN+1, xref)
-	return b.Bytes()
-}
-
-// claims counts the assertions a document makes about being tagged.
-func claims(pdf []byte) map[string]int {
-	out := map[string]int{}
-	for _, k := range []string{"/StructTreeRoot", "/MarkInfo", "/Marked", "/StructParents", "/StructElem"} {
-		out[k] = bytes.Count(pdf, []byte(k))
-	}
-	return out
-}
 
 // TestNUpDoesNotClaimTaggingItVoided — P01.S01's whole point.
 //
