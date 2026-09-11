@@ -2731,8 +2731,8 @@ function repaintForActiveView() {
 
   reflectRedact(); reflectEdit(); reflectSplitBox(); reflectCrop();
   reflectBorder(); reflectDropdown(); reflectRadio(); reflectShape(); reflectNote();
-  all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === view.markerMode));
-  all('[data-mode]:not(.cmmode)').forEach((t) => t.classList.toggle('active', t.dataset.mode === view.activeTool));
+  all('.markers button').forEach((b) => setArmed(b, b.dataset.marker === view.markerMode));
+  all('[data-mode]:not(.cmmode)').forEach((t) => setArmed(t, t.dataset.mode === view.activeTool));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = anyToolArmed() ? 'crosshair' : '';
 }
@@ -4028,7 +4028,7 @@ function stepManual(da, db) {
 function setCompareMode(mode) {
   cmpMode = mode;
   for (const btn of document.querySelectorAll('.cmmode')) {
-    btn.classList.toggle('active', btn.dataset.mode === mode);
+    setArmed(btn, btn.dataset.mode === mode);
   }
   els.comparePager.hidden = (mode === 'text');
   if (mode === 'text') renderCompareText();
@@ -7138,7 +7138,7 @@ function drawPreview() {
   m.style.fontSize = 8 + (els.fzSize.value / 100) * 32 + 'px';
   m.style.transform = `translate(-50%, -50%) rotate(${-els.fzAngle.value}deg)`;
 }
-const syncWmPresets = () => all('.wmpreset').forEach((b) => b.classList.toggle('active', b.dataset.wm === els.fzText.value));
+const syncWmPresets = () => all('.wmpreset').forEach((b) => setArmed(b, b.dataset.wm === els.fzText.value));
 all('.wmpreset').forEach((b) => {
   b.onclick = () => {
     els.fzText.value = b.dataset.wm;
@@ -7332,7 +7332,7 @@ els.redactBtn.onclick = () => {
 };
 // Keep both the Edit-menu and toolbar redact buttons lit while redact mode is on.
 function reflectRedact() {
-  all('#redactBtn, [data-forward="redactBtn"]').forEach((b) => b.classList.toggle('active', view.redactMode));
+  all('#redactBtn, [data-forward="redactBtn"]').forEach((b) => setArmed(b, view.redactMode));
 }
 
 // The pdf.js .page has a transparent border (9px), so its border-box rect is
@@ -7406,6 +7406,60 @@ function pageAt(x, y) {
   }
   return null;
 }
+// ── Armed state is programmatic, not colour alone — P02.S01's sibling, P02.S02 ─────────────
+//
+// **WCAG SC 1.4.1: colour is not the only means of conveying information, and SC 4.1.2 wants a
+// control's state exposed programmatically.** Measured before this slice: 27 sites call
+// `classList.toggle('active', …)` and **22 of them set no ARIA state at all** — so every armed
+// tool, every selected preset and every mode tab announced itself to a screen reader as an
+// ordinary button while the sighted user saw a highlight.
+//
+// # Two doors, because there are two vocabularies and mixing them is invalid ARIA
+//
+// `aria-pressed` belongs to a toggle button; `aria-selected` belongs to something with a
+// `tab`/`option`/`row` role. Putting `aria-selected` on a plain `<button>` is not a weaker
+// statement, it is an invalid one — so the sidebar's real tablist (`role="tablist"` +
+// `role="tab"` + `aria-controls`, `index.html:168`) gets `setSelected`, and everything else gets
+// `setArmed`.
+//
+// # Why doors rather than 22 `setAttribute` calls
+//
+// ADR-009: a rule holding at more than one call site is written once and every site calls it, and
+// the guard checks the door. `armedstate.test.mjs` enumerates every `classList.toggle('active')`
+// in this file and requires each to route through one of these two or to be named — with a reason
+// — as something that is not a control. A twenty-eighth site added without one goes red.
+
+// setArmed reflects an on/off control state in the class AND in `aria-pressed`.
+function setArmed(el, on) {
+  if (!el) return;
+  el.classList.toggle('active', !!on);
+  el.setAttribute('aria-pressed', String(!!on));
+}
+
+// setExpanded is the disclosure vocabulary: `aria-expanded`, for a control that shows or hides a
+// region — the sidebar's panel headers.
+//
+// **Found by the census missing it.** The scan was written against `classList.toggle('active', …)`
+// and the panel headers use `classList.add('active')` / `.remove('active')` — the same state
+// change written differently, and invisible to a scan that only knows one spelling. The scan now
+// reads all three.
+function setExpanded(el, on) {
+  if (!el) return;
+  el.classList.toggle('active', !!on);
+  el.setAttribute('aria-expanded', String(!!on));
+}
+
+// setSelected is the tablist vocabulary: `aria-selected`, for elements that carry a `tab` role.
+//
+// **Not interchangeable with `setArmed`.** `aria-selected` on an element with no matching role is
+// ignored by some readers and misreported by others, which is worse than the silence this slice
+// exists to fix.
+function setSelected(el, on) {
+  if (!el) return;
+  el.classList.toggle('active', !!on);
+  el.setAttribute('aria-selected', String(!!on));
+}
+
 // ── Keyboard placement and nudge — `PLAN-accessibility.md` P02.S01, WCAG SC 2.1.1 ──────────
 //
 // **Eleven placement tools, all of them pointer-only until now.** Each is an
@@ -7802,7 +7856,7 @@ els.rtFind.onclick = async () => {
 let sbStart = null, sbDiv = null, sbHit = null; // transient: aborted on switch, never restored
 
 function reflectSplitBox() {
-  all('#splitBoxBtn, [data-forward="splitBoxBtn"]').forEach((b) => b.classList.toggle('active', view.splitBoxMode));
+  all('#splitBoxBtn, [data-forward="splitBoxBtn"]').forEach((b) => setArmed(b, view.splitBoxMode));
 }
 // View-scoped, not document-scoped. `all()` is document.querySelectorAll, and a
 // .splitmark only ever lives inside a page div — so under ADR-002 the document-wide
@@ -7900,7 +7954,7 @@ els.applyBoxSplitBtn.onclick = async () => {
 let cropStart = null, cropDiv = null, cropHit = null; // transient: aborted on switch
 
 function reflectCrop() {
-  all('#cropBtn, [data-forward="cropBtn"]').forEach((b) => b.classList.toggle('active', view.cropMode));
+  all('#cropBtn, [data-forward="cropBtn"]').forEach((b) => setArmed(b, view.cropMode));
 }
 // View-scoped for the same reason as clearSplitRects above.
 function clearCropRect() {
@@ -8000,7 +8054,7 @@ els.editTextBtn.onclick = () => {
   els.viewerWrap.style.cursor = view.editMode ? 'crosshair' : '';
 };
 function reflectEdit() {
-  all('#editTextBtn, [data-forward="editTextBtn"]').forEach((b) => b.classList.toggle('active', view.editMode));
+  all('#editTextBtn, [data-forward="editTextBtn"]').forEach((b) => setArmed(b, view.editMode));
 }
 
 els.viewerWrap.addEventListener('pointerdown', (e) => {
@@ -8223,7 +8277,7 @@ function reflectSignControls() {
   els.signCompleteBtn.hidden = !open || recipient;
   els.signCompleteBtn.disabled = !view.signLocked && n === 0;
   els.signCompleteBtn.textContent = view.signLocked ? 'Edit marks again' : 'Signing marks completed';
-  els.signCompleteBtn.classList.toggle('active', view.signLocked);
+  setArmed(els.signCompleteBtn, view.signLocked);
 }
 
 function setMarkerMode(m) {
@@ -8258,7 +8312,7 @@ function setMarkerMode(m) {
     exitCrop();
     exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   }
-  all('.markers button').forEach((b) => b.classList.toggle('active', b.dataset.marker === m));
+  all('.markers button').forEach((b) => setArmed(b, b.dataset.marker === m));
   els.viewerWrap.style.cursor = m ? 'crosshair' : '';
 }
 
@@ -9205,7 +9259,7 @@ function setTool(mode) {
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   // Scope out the compare tabs: they share the data-mode attribute (text/side/diff)
   // but are wired to setCompareMode, not the annotation tools.
-  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.toggle('active', b.dataset.mode === view.activeTool));
+  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => setArmed(b, b.dataset.mode === view.activeTool));
   // The highlight color row is contextual — show it only while highlighting (or
   // drawing a border), and re-assert the selected color so the next highlight
   // uses it (not pdf.js yellow).
@@ -9252,7 +9306,7 @@ function renderHlSwatches() {
     b.className = 'hlswatch';
     b.style.background = c;
     b.title = c === '#000000' ? 'Black' : c === '#ffffff' ? 'White' : c;
-    b.classList.toggle('active', c === selectedHlColor);
+    setArmed(b, c === selectedHlColor);
     b.onclick = () => setHighlightColor(c);
     els.hlSwatches.appendChild(b);
   }
@@ -9291,7 +9345,7 @@ function reflectAnnoControls() {
   els.shapeOpts.hidden = !view.shapeMode;
 }
 function reflectBorder() {
-  els.borderBtn.classList.toggle('active', view.borderMode);
+  setArmed(els.borderBtn, view.borderMode);
   reflectAnnoControls();
 }
 function exitBorder() {
@@ -9386,7 +9440,7 @@ function makeBox(frac, opts, owner = view) {
 // as fillable form…" it authors a real AcroForm combobox (see collectAuthorFields
 // → /api/form/author → pdfops.AuthorForm). Options are typed inline on the field.
 let ddStart = null, ddDiv = null, ddHit = null;
-function reflectDropdown() { els.dropdownBtn.classList.toggle('active', view.dropdownMode); }
+function reflectDropdown() { setArmed(els.dropdownBtn, view.dropdownMode); }
 function exitDropdown() {
   if (!view.dropdownMode) return;
   view.dropdownMode = false;
@@ -9484,7 +9538,7 @@ function makeDropdown(frac, opts, owner = view) {
 // AcroForm radiobuttongroup whose buttons march to the right of the anchor, each
 // labelled with its value. (Horizontal only for now.)
 let rdStart = null, rdDiv = null, rdHit = null;
-function reflectRadio() { els.radioBtn.classList.toggle('active', view.radioMode); }
+function reflectRadio() { setArmed(els.radioBtn, view.radioMode); }
 function exitRadio() {
   if (!view.radioMode) return;
   view.radioMode = false;
@@ -9602,7 +9656,7 @@ let shapeType = 'line';
 let shStart = null, shCanvas = null, shHit = null;
 
 function reflectShape() {
-  els.shapeBtn.classList.toggle('active', view.shapeMode);
+  setArmed(els.shapeBtn, view.shapeMode);
   reflectAnnoControls();
 }
 function exitShape() {
@@ -9627,7 +9681,7 @@ els.shapeBtn.onclick = () => {
   els.viewerWrap.style.cursor = 'crosshair';
 };
 all('.shapetype').forEach((b) => {
-  b.onclick = () => { shapeType = b.dataset.shape; all('.shapetype').forEach((x) => x.classList.toggle('active', x === b)); };
+  b.onclick = () => { shapeType = b.dataset.shape; all('.shapetype').forEach((x) => setArmed(x, x === b)); };
 });
 
 // shapePad: the margin a line/arrow's holding box needs beyond the segment so the
@@ -9777,7 +9831,7 @@ function makeShape(frac, opts, owner = view) {
 // A note is a Nib overlay (a small text card) you place, drag, and edit; at save
 // it bakes into a native /Text sticky-note annotation (a clickable icon whose
 // popup shows the comment) via pdfops.AddNotes.
-function reflectNote() { els.noteBtn.classList.toggle('active', view.noteMode); }
+function reflectNote() { setArmed(els.noteBtn, view.noteMode); }
 function exitNote() {
   if (!view.noteMode) return;
   view.noteMode = false;
@@ -9824,7 +9878,7 @@ els.viewerWrap.addEventListener('pointerdown', async (e) => {
 //
 // One click places one and the tool disarms, which is the Note tool's rule; ticking the box you
 // just placed is then an ordinary click on it rather than a second placement.
-function reflectCheckbox() { els.checkboxBtn.classList.toggle('active', view.checkboxMode); }
+function reflectCheckbox() { setArmed(els.checkboxBtn, view.checkboxMode); }
 function exitCheckbox() {
   if (!view.checkboxMode) return;
   view.checkboxMode = false;
@@ -10340,7 +10394,7 @@ function resetSharedDocState(owner = view) {
   if (view.redactMode) { view.redactMode = false; reflectRedact(); }
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   view.activeTool = null;
-  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => setArmed(b, false));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = '';
   // Compare goes with the document it was computed against (D11).
@@ -11150,16 +11204,14 @@ function reflectViewLayout() {
   ];
   for (const [el, on] of pairs) {
     if (!el) continue;
-    el.setAttribute('aria-pressed', String(on));
-    el.classList.toggle('active', on);
+    setArmed(el, on);
   }
   if (els.fullScreenBtn) {
     // **Full screen is a WINDOW STATE and reads from the browser, not from a flag of ours.** The
     // user can leave it with Escape or F11 without touching this button, so a remembered boolean
     // would drift; `document.fullscreenElement` is the only thing that knows.
     const fs = !!document.fullscreenElement;
-    els.fullScreenBtn.setAttribute('aria-pressed', String(fs));
-    els.fullScreenBtn.classList.toggle('active', fs);
+    setArmed(els.fullScreenBtn, fs);
   }
 }
 
@@ -11238,7 +11290,7 @@ let readingAloud = false;
 function reflectReadAloud() {
   if (!els.readAloudBtn) return;
   els.readAloudBtn.setAttribute('aria-pressed', String(readingAloud));
-  els.readAloudBtn.classList.toggle('active', readingAloud);
+  setArmed(els.readAloudBtn, readingAloud);
   els.readAloudBtn.textContent = readingAloud ? 'Stop reading' : 'Read aloud';
 }
 
@@ -11556,13 +11608,13 @@ document.querySelectorAll('.tab').forEach((tab) => {
     // and could not be put away, so half the sidebar's pills answered a second click by doing
     // nothing. Code that wants a panel SHOWN rather than toggled goes through showPanel().
     if (tab.classList.contains('active')) {
-      tab.classList.remove('active');
+      setExpanded(tab, false);
       $(tab.dataset.panel)?.classList.remove('active');
       return;
     }
-    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach((t) => setExpanded(t, false));
     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
-    tab.classList.add('active');
+    setExpanded(tab, true);
     $(tab.dataset.panel).classList.add('active');
     collapseGroupCards(); // one card open at a time, of either kind
     if (tab.dataset.panel === 'library') loadImages();
@@ -11666,7 +11718,7 @@ function syncModeMenu(tab) {
 function setMode(tab) {
   document.body.dataset.tab = tab;
   syncModeMenu(tab);
-  all('.modetab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  all('.modetab').forEach((b) => setArmed(b, b.dataset.tab === tab));
   all('.tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
   syncSidebarForMode(tab);
 }
@@ -11885,8 +11937,7 @@ function buildSidebarTabs() {
 function selectSidebarTab(name) {
   for (const t of all('.sbtab')) {
     const on = t.dataset.sbtab === name;
-    t.classList.toggle('active', on);
-    t.setAttribute('aria-selected', String(on));
+    setSelected(t, on);
   }
   const pages = $('sbPages'); const functions = $('sbFunctions');
   if (pages) pages.classList.toggle('active', name === 'pages');
@@ -11908,7 +11959,7 @@ function openCard(target, head) {
     g.classList.toggle('open', on);
     if (g._head) g._head.setAttribute('aria-expanded', String(on));
   }
-  if (head) all('.sbhead[data-panel]').forEach((t) => t.classList.remove('active'));
+  if (head) all('.sbhead[data-panel]').forEach((t) => setExpanded(t, false));
   if (target && target.classList.contains('panel')) return; // the tab wiring handles panels
   all('.panel').forEach((p) => { if (p.id !== 'commands') p.classList.remove('active'); });
 }

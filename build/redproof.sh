@@ -88,6 +88,14 @@ spec="$DIR/$name.sh"
 # defect itself lives beside it as <name>.patch, GENERATED with `git diff` rather than typed.
 # A hand-written diff gets its line numbers wrong and then fails as "stale" for a reason that
 # has nothing to do with the code — which is the one failure mode this script must not invent.
+#
+# **`git diff` with uncommitted work in the tree captures ALL of it, and the row then re-proves
+# for the wrong reason.** Re-recording a stale row mid-slice on 2026-09-11 produced a 26-hunk
+# patch — one hunk of defect and twenty-five of the slice that had staled it — and the replay
+# went green, because applying a whole feature plus a deletion to HEAD does make the check fail.
+# A patch that carries the fix it is supposed to be recorded against is not a red proof, it is a
+# green one wearing the name. Re-record against a CLEAN tree, or diff two copies of the single
+# file and check the hunk count is what you expect.
 PROVE=""; TIER=""
 # shellcheck disable=SC1090
 . "$spec"
