@@ -554,7 +554,14 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	// **The composed page is not the tagged one, so the claim goes with the content**
+	// (`PLAN-accessibility.md` P01.S01, law 1). Measured on pdfcpu v0.13.0: a tagged input comes out
+	// of `api.NUp` still carrying `/MarkInfo /Marked true` and a `/StructTreeRoot`, while the tree
+	// has lost every `/StructElem` and no page carries `/StructParents` — a document that says it is
+	// tagged over content nothing describes. veraPDF scores it a new ua1 7.1 t3 failure the input
+	// did not have. Dropping is honest; tagging an n-up sheet means authoring structure for a page
+	// that did not exist a moment ago, which D2 puts four phases later.
+	return dropTaggingClaim(out.Bytes())
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
