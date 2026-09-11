@@ -171,13 +171,37 @@ independently worth shipping even if the plan went no further.
   one has none.
 - The tag-fate table and its law ship as an ADR.
 
-#### P01.S01 — `nup` stops lying
+#### P01.S01 — `nup` stops lying *(done 2026-09-11, v1.129.9)*
 Scope: `nup` either drops `/StructTreeRoot` and `/MarkInfo` with the content it voids, or tags its
 composed page; it may not keep the claim. Refs: law 1, D2.
 Acceptance:
-- A tagged input through `nup` produces no veraPDF failure the input did not already have.
+- ~~A tagged input through `nup` produces no veraPDF failure the input did not already have.~~
+  **(struck 2026-09-11 — REFUTED BY MEASUREMENT, and only the option this slice defers could have
+  met it.)** Dropping the claim is what law 1 demands and it necessarily ADDS ua1 failures, because
+  PDF/UA requires a structure tree: an untagged file fails 6.2 t1 and 7.1 t11 by construction.
+  Measured on the slice's fixture — input fails {7.1 t8, 7.1 t10, 7.21.4.1 t1}; n-upped before the
+  fix fails those **plus 7.1 t3**; n-upped after the fix fails those plus 7.1 t3, 6.2 t1 and
+  7.1 t11. A ua1 failure COUNT scores honesty as a regression, so it cannot express law 1.
+- **Replacing it:** the output carries no `/MarkInfo /Marked true`, no `/StructTreeRoot` and no
+  `/StructParents` — law 1 as a structural property of the output, which is what it actually says.
 - The output carries no struct element whose `/Pg` points at a page that is not in the document.
 - A red proof: reinstating the claim without the content turns the guard red.
+
+**(pin, 2026-09-11 — the slice shipped and its FOUNDING PREMISE did not survive contact.)**
+`/pending 29`'s reason 1 says pdfcpu *"round-trips a hand-built `/StructTreeRoot`+`/MarkInfo`+
+`/ParentTree` and BDC/EMC marked content **intact** through `ReadValidateAndOptimize→WriteContext`"*,
+measured 2026-06-23, and the entry itself asks for it to be re-confirmed before anything is built on
+it. **It does not hold on pdfcpu v0.13.0 today.** A NO-OP `writeMutated` — read, validate, optimize,
+write, changing nothing — loses every `/StructElem` and every `/StructParents` while keeping
+`/StructTreeRoot` and `/MarkInfo`. The read half is fine: `api.Validate` reports the fixture clean
+and the catalog still holds `/K [8 0 R]` and a `/ParentTree` after the read. It is `WriteContext`
+that does not serialise the objects the tree points at.
+
+**Two consequences, and neither is this slice's to fix.** `nup` was never the destroyer — on this
+evidence *every* operation routed through `writeMutated` voids structure while keeping the claim, so
+P01.S03/S04's scope is much wider than "the operations S02 found practical". And **P05's tag-tree
+core cannot be built until the write path carries a tree**, which is a prerequisite this plan does
+not currently have a slice for. Filed as `/pending 467` with the measurement.
 
 #### P01.S02 — measure the page-subset remap
 Scope: probe whether `/ParentTree` + `/StructParents` can be correctly remapped for a kept page
