@@ -562,18 +562,39 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
 		return nil, err
 	}
-	// **The one operation measured to violate law 1, so the one that routes through `honest`.**
-	// `api.NUp` composes its sheets as NEW page objects and carries the source catalog — and with it
-	// `/StructTreeRoot` and `/MarkInfo /Marked true` — onto them. Parsed: every struct element still
-	// points at a page that is no longer in the page tree, no composed sheet carries
-	// `/StructParents`, and veraPDF ua1 adds 7.1 t3 (*"Content shall be marked as Artifact or tagged
-	// as real content"*, 24 failed checks) over an input that passes it. The tree describes nothing
-	// that is in the document.
+	// **Carry the tag tree if it can be carried; be honest if it cannot.**
 	//
-	// `honest` is a POST-CONDITION, not a strip: it parses the result and acts only if it is
-	// orphaned. An earlier version stripped unconditionally on a byte count that could not see a
-	// compressed object stream, and destroyed trees that had survived — see `tagfate.go`.
-	return honest(out.Bytes())
+	// `api.NUp` composes its sheets as NEW page objects and carries the source catalog — and with it
+	// `/StructTreeRoot` and `/MarkInfo /Marked true` — onto them, while leaving every element's
+	// `/Pg` pointing at a page it removed. That is the one measured `orphaned` output in this
+	// package: veraPDF ua1 scores it 7.1 t3 (*"Content shall be marked as Artifact or tagged as real
+	// content"*) over an input that passes that clause.
+	//
+	// The content itself survives intact inside Form XObjects, MCIDs and all, so the tree is
+	// **re-anchored** rather than dropped — `carryTagsThroughNUp`, P01.S06. After it, the composed
+	// document fails exactly what its input fails and nothing more. Dropping the claim could never
+	// have reached that: 7.1 t3 is about the content, which stays untagged either way, and dropping
+	// adds 6.2 t1 and 7.1 t11 on top.
+	//
+	// **The order of these checks is a cost decision, measured.** Asking the OUTPUT first means a
+	// document with nothing to carry pays one parse and stops, exactly as it did before the carry
+	// existed; only a document that would otherwise ship an orphaned tree pays for the remap.
+	//
+	// On a 1.4 MB, 22-page tagged document with **3800 struct elements**: `api.NUp` alone 147 ms,
+	// the orphan check 88 ms, the whole shipped path 559 ms — so the carry costs ~324 ms and buys
+	// 3800 elements that were previously dropped. Four of the six real-world PDFs to hand are tagged
+	// (3800, 2247, 1157 and 128 elements) and the carry preserves every element of all four.
+	raw := out.Bytes()
+	if !inspectTags(raw).orphaned() {
+		return raw, nil
+	}
+	// **The carry is verified, not believed.** `honest` re-measures the remapped document and drops
+	// the claim if it is still orphaned, so a bug in the remap degrades to the previous behaviour
+	// rather than shipping a false claim.
+	if carried, ok := carryTagsThroughNUp(pdf, raw); ok {
+		return honest(carried)
+	}
+	return dropTaggingClaim(raw)
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in

@@ -21,7 +21,7 @@ made in place rather than superseded.)** Two things were missing. `partial` — 
 that does not reach every page with content — is a state the original three words could not
 express, so the operation that produces it (`Append`, with the tagged document first) had to
 be declared as something it is not. And the guard asserted only that a verdict *existed*: it
-never compared a declaration to a document, so **19 of the 33 rows were false** — every one
+never compared a declaration to a document, so **27 of the 48 rows were false** — every one
 declaring `dropped` about an operation that carries the tree intact — and nothing was red.
 A census that cannot be wrong is not a census.
 
@@ -118,7 +118,7 @@ part.** It required the first parameter to be *named* `pdf`; five operations wer
 behind a different name, including `RedactPages` — the very operation the plan singles out
 as needing an explicit verdict. An operation escaping a census by what it calls its
 argument is the census failing, not the operation qualifying. The filter is now the shape,
-and the population went 28 → 33.
+and the population is **49** today. **The figure "33" stood here and in three other documents and was never true of any table this repo shipped** — the census held 48 rows when that sentence was written. A count nobody re-derives is a claim like any other, and this one propagated into a plan, an ADR, an inventory and a commit message before anybody counted.
 
 ## What this ADR does NOT say
 
@@ -128,9 +128,10 @@ carrying a tree at all. **Read-aloud (`/pending 408`, v1.129.7) is not this eith
 screen reader needs a tag tree and read-aloud builds none.
 
 It also does not say that nib's operations *preserve* tagging as a rule — though far more of
-them do than this ADR first claimed. **Measured: 19 carry the tree, 10 drop claim and content
-together, 1 is `partial`, and 1 (`NUp`) had to be fixed.** The census records which, per
-operation, and that is the whole of the claim.
+them do than this ADR first claimed, and the number moved twice. **Measured over the census's
+49 rows: 27 `carried`, 11 `dropped`, 2 `partial`, 9 `untouched`**; of the 32 the guard can
+drive, 21 carry, 9 drop and 2 are partial. The census records which, per operation, and that is
+the whole of the claim.
 
 **`partial` is recorded and not enforced, and that is a decision with a named cost.**
 `Append` with the tagged document first keeps a live 45-element tree and leaves the appended
@@ -162,6 +163,19 @@ structure for a page that did not exist a moment ago. That is P05's machinery, f
 later, and D2 is explicit that preservation precedes authoring: *"tagging authored on top
 of a pipeline that eats tagging produces documents that are accessible until the user
 rotates a page."*
+
+**(AMENDED 2026-09-11, v1.129.19 — this alternative was a false dichotomy and `nup` now
+carries its tree.)** Drop-or-author was not the choice. `api.NUp` leaves the source's content
+intact inside Form XObjects, MCIDs and marked-content sequences and all, and copies the whole
+structure tree onto the composed document — what it omits is the *linkage*: no XObject carries
+`/StructParents` and every element's `/Pg` names a removed page. **Re-anchoring that is neither
+dropping nor authoring**; it writes three keys (`/StructParents`, `/Pg`, `/Stm`) and creates no
+structure, so it sits squarely on D2's preservation side. Measured after it: the composed
+document fails exactly the veraPDF ua1 clauses its input fails — on the fixture, and on two real
+producer PDFs — and four real tagged documents keep all of 3800, 2247, 1157 and 128 elements.
+
+The reasoning above stands for the case it actually describes: *authoring* structure for
+composed content is still P05's, and nothing here does it.
 
 **Score the output with veraPDF instead of asserting structurally** — refuted by
 measurement. Dropping a claim *adds* PDF/UA failures, because UA-1 requires a structure

@@ -169,7 +169,7 @@ content stream and no `/StructParents`:
 
 **Three findings, in order of how much they cost.**
 
-1. **19 of the 33 operations carry the tree**, and every one of them was declared `dropped`. The
+1. **26 of the 48 operations carry the tree**, and every one of them was declared `dropped`. The
    write path is sound; `/pending 29`'s reason 1 stands as originally measured on 2026-06-23.
 
 2. **`NUp` is a genuine, shipped law-1 violation and it was invisible to the corrected oracle too.**
@@ -257,12 +257,15 @@ independently worth shipping even if the plan went no further.
 Scope: `nup` either drops `/StructTreeRoot` and `/MarkInfo` with the content it voids, or tags its
 composed page; it may not keep the claim. Refs: law 1, D2.
 Acceptance:
-- ~~A tagged input through `nup` produces no veraPDF failure the input did not already have.~~
-  **(struck 2026-09-11 — only the option this slice defers could have met it, and the strike stands
-  after the re-measurement.)** Dropping the claim is what law 1 demands and it necessarily ADDS ua1
-  failures, because PDF/UA requires a structure tree. Re-measured on the LibreOffice document:
-  stripping the n-up output's claim does not remove 7.1 t3 and adds 6.2 t1 and 7.1 t11. A ua1
-  failure COUNT scores honesty as a regression, so it cannot express law 1.
+- ✅ A tagged input through `nup` produces no veraPDF failure the input did not already have.
+  ~~**(struck 2026-09-11 — only the option this slice defers could have met it.)**~~
+  **(UN-STRUCK 2026-09-11 at the phase close, and this is the more interesting correction of the
+  two.)** The strike was right about *dropping*: stripping the claim cannot remove 7.1 t3, because
+  t3 is about the content, and it adds 6.2 t1 and 7.1 t11 on top. It was wrong that dropping was
+  the only option — the content survives the composition intact inside Form XObjects, so the tree
+  can be re-anchored. **P01.S06 does that and the clause is met as originally written.** The
+  clause was struck because the remedy in hand could not reach it; the remedy was the limit, not
+  the clause.
 - ✅ **Replacing it:** the output carries no `/MarkInfo /Marked true` and no `/StructTreeRoot` —
   law 1 as a structural property of the output, which is what it actually says.
 - ✅ The output carries no struct element whose `/Pg` points at a page that is not in the document.
@@ -315,14 +318,14 @@ confirmed the error.** A discriminator is only as good as the instrument reading
 parses, and is corroborated by veraPDF, which is outside this repo entirely.
 
 
-#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.16 — the CENSUS stood throughout; its 33 VERDICTS were wrong and are now measured)*
+#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.16 — the CENSUS stood throughout; 27 of its 48 VERDICTS were wrong and are now measured)*
 Scope: every document-touching operation declares `carried` / `refused` / `dropped-with-notice` in
 one table; a table-driven tier-1 guard over a tagged fixture asserts each verdict and fails when an
 operation has no entry. Refs: law 2, D12.
 Acceptance:
 - ✅ The guard enumerates operations from the code, not from a hand-written list. `go/ast` over
   every exported function in `internal/pdfops` whose first parameter is a `[]byte` and whose first
-  result is `[]byte` — **34 operations**, with a floor so an enumeration that stopped matching fails
+  result is a document — **49 operations**, with a floor so an enumeration that stopped matching fails
   loudly instead of passing empty. Matching on the SHAPE rather than the parameter NAME is what
   found `RedactPages` and four others.
 - ✅ Adding an operation with no verdict turns it red, **proved by adding one** (`StampImages`,
@@ -345,8 +348,9 @@ operation refuses a tagged input.
 guard fails it rather than recording it. That much of the original reasoning was right.
 
 **(pin, 2026-09-11 — the census was sound and every verdict in it was false, which is a failure mode
-worth naming.)** The table shipped as 33 rows of `dropped`, derived from a byte count that cannot see
-a compressed object stream. **19 of them carry the tree intact.** Nothing caught it because the guard
+worth naming.)** The table shipped as 39 rows of `dropped` and 9 of `untouched`, the first
+derived from a byte count that cannot see a compressed object stream. **26 of them carry the tree
+intact and one is `partial`.** Nothing caught it because the guard
 only ever asked *"does this output lie?"* under the weakest available definition of lying — it never
 compared a DECLARATION to a document. A census that cannot be wrong is not a census, and the
 correctness half (`TestEveryDeclaredFateIsTheMEASUREDFate`) is the missing assertion.
@@ -389,7 +393,7 @@ Acceptance:
   *"`toast` cannot carry them: it clears itself after 2500 ms"*). A user who lost their document's
   accessibility structure has to still be able to see it **at the moment they save**.
 
-  **Asserted at the COMMIT door, not at 33 operations.** `noteTaggingFate` runs from
+  **Asserted at the COMMIT door, not at 48 operations.** `noteTaggingFate` runs from
   `commitMutation` and `commitBarrier` — the only two places a mutation's result becomes the
   document, and the only two that hold both the before and the after. Asking each operation to
   report its own fate would be ADR-009's rule inverted: 33 sites that have to remember, against two
@@ -402,7 +406,7 @@ Acceptance:
   (`internal/pdfops/pdfops.go:354`) does not match S03's enumeration shape — its first parameter is
   `original`, not `pdf`, and it takes a raster map — so the guard never saw it, which was a **hole in
   the enumeration** rather than an operation that is exempt. The enumeration now matches on the
-  SHAPE (28 → 33 operations), and `RedactPages` carries an explicit verdict with its reasoning: a
+  SHAPE, and `RedactPages` carries an explicit verdict with its reasoning: a
   redaction that kept a tag tree would let a reader recover the shape of what was removed.
 
 #### P01.S05 — the ADR and the corpus *(done 2026-09-11, v1.129.12)*
@@ -419,6 +423,64 @@ from the tag-fate table.
   that the enumeration's first filter was itself a hole (it matched on a parameter NAME), and that
   veraPDF's conformance score cannot express law 1 — dropping a claim *adds* UA-1 failures, so a
   failure count scores honesty as a regression.
+
+#### P01.S06 — carry the tag tree through `nup` *(done 2026-09-11, v1.129.19)*
+
+**(added 2026-09-11 at the phase close, because the phase's own exit criterion was unmet and the
+reason it was unmet was not the reason anyone assumed.)** P01.S01 made `nup` honest by dropping the
+claim, and the phase's exit criterion asks for something stronger: *"`nup`'s output no longer
+regresses veraPDF clause 7.1 t3 against a tagged input."* Measured on the shipped v1.129.18 output —
+it still does, along with 6.2 t1 and 7.1 t11 that dropping the claim itself introduces.
+
+**The content was never destroyed.** veraPDF's failing contexts read
+`xObject[0]/contentStream[0]/content[2]{mcid:0}` — the original page content, still inside its
+`BDC …EMC` marked-content sequences with its MCIDs intact, now living in a Form XObject. Measured on
+the raw `api.NUp` output of a 4-page tagged document: 2 sheets, 4 Form XObjects whose decoded content
+is **byte-identical** to the four original pages, 45 struct elements still pointing at the four
+original page objects, and a `/ParentTree` that still holds all four entries keyed 0–3. What is
+missing is anchoring, and only anchoring: no XObject carries `/StructParents`, and every element's
+`/Pg` names a page that is no longer in the page tree.
+
+Scope: remap the surviving tree onto the composed sheets — give each Form XObject the
+`/StructParents` its source page had, and repoint each element's `/Pg` at the sheet it now appears
+on with `/Stm` naming the XObject (PDF 32000-1 §14.7.4.4). **Nothing is authored**, which is what
+keeps this inside P01's goal and on D2's side of the preservation/authoring line. Refs: law 1, D2,
+D9, P01 exit criterion 2.
+
+Acceptance:
+- ✅ A tagged input through `nup` adds **no veraPDF ua1 clause the input did not already fail** —
+  7.1 t3 in particular. Measured three ways: the 4-page LibreOffice fixture now fails exactly its
+  input's three clauses (5 t1, 7.1 t9, 7.1 t10) where before the carry it added 7.1 t3, 6.2 t1 and
+  7.1 t11; **`boi.pdf` fails exactly what its source fails**; and **`adgm_va.pdf` fails a strict
+  SUBSET** of its source's ten clauses. The last two are real producer documents, not fixtures.
+- ✅ Every struct element's `/Pg` is a page in the document, and no page with content is
+  unreachable from the tree. Enforced in the carry itself — an element whose `/Pg` names a page it
+  cannot place is `stranded` and abandons the whole remap — and asserted as `undescribed == 0`.
+  **Measured on four real tagged PDFs: 3800, 2247, 1157 and 128 elements, every one preserved**,
+  `undescribed` 0 in all four. (`anchored` runs 3 to 15 short of `elements` on each, which is
+  correct: a `/Document` or `/Sect` container carries no `/Pg` of its own.)
+- ✅ **A remap that cannot anchor everything drops the claim instead of shipping a partial one.**
+  Probed red: removing both all-or-nothing guards makes `TestTheCarryIsABANDONEDRatherThanShipped``HalfDone` report success over a document containing none of the XObjects it re-anchors.
+- ✅ An untagged input is returned by the new path **unmodified** — `inspectTags(raw).orphaned()`
+  is false and `raw` is returned as-is, so it costs one parse and no rewrite.
+  ~~byte-identical~~ **(clause reworded 2026-09-11 — byte identity was asserted across two separate
+  compositions and that cannot hold: pdfcpu writes a fresh `/ID` and `/ModDate` per run, so two
+  n-ups of one input differ by construction. Measured: same length, different bytes.)** The
+  verifiable claim is that the carry DECLINES, which is asserted directly.
+- ✅ `Booklet` is unaffected and stays `dropped`: it composes `InsertBlank` → `Collect` → `NUp`, and
+  `Collect` has already dropped the tree before `NUp` sees it. Held by the census, which measures
+  every declared verdict.
+
+**Cost, measured rather than reasoned.** On a 1.4 MB 22-page document with 3800 elements:
+`api.NUp` alone 147 ms, the orphan check 88 ms, the whole shipped path 559 ms — the carry costs
+~324 ms and buys 3800 preserved elements. **The check order is what keeps that off the common
+case**: asking the OUTPUT whether it is orphaned comes first, so a document with nothing to carry
+pays one parse and stops.
+
+**Not dived**: the slice touches `internal/pdfops` only and authors no seam — no wire format, no
+stored layout, no interface with several implementors. **Slice gate does not fire**: nothing in
+`internal/server`'s session/ceremony/delivery/discovery, `internal/p2p` or `internal/rendezvous` is
+touched.
 
 ### P02 — The application's own WCAG 2.1 AA
 **Goal.** Make nib operable without a pointer and legible to a screen reader. This is a live
