@@ -17,6 +17,11 @@ import (
 // never the document. The returned .ots is a sidecar the user keeps alongside the
 // PDF; it does not touch the PDF, so it cannot disturb an existing signature.
 func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
+	// **Refused BEFORE the body is read**, so a switched-off feature costs no upload: the refusal
+	// is about this machine's settings and nothing in the request can change it.
+	if refuseIfOff(w, s.unlockedVault(), featTimestamp) {
+		return
+	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -43,6 +48,11 @@ func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
 // form value overrides the default explorers with a single user-supplied
 // Esplora-API endpoint, which is then trusted on its own.
 func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
+	// Verifying reaches the public block explorers, so it is the same feature and the same door —
+	// gating only the stamping half would leave the switch half-true.
+	if refuseIfOff(w, s.unlockedVault(), featTimestamp) {
+		return
+	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return

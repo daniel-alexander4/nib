@@ -167,6 +167,41 @@ type Settings struct {
 	// layout they never chose. Every field in this struct is `omitempty` and `Contents.Version`
 	// records why that matters.
 	ViewLayout string `json:"viewLayout,omitempty"`
+	// Advanced is which of the exotic subsystems are switched ON.
+	//
+	// **A POINTER, and that is the whole design.** Dan's rule is *default off*, so the four bools
+	// below are all false by default and all `omitempty` — meaning "everything off" and "never
+	// configured" would be byte-identical inside the struct, and the one-time seeding at `SeedAdvanced`
+	// could not tell a user who switched everything off from a vault that has never been asked.
+	// A nil pointer is "never asked"; a non-nil one — even `{}` — is a set of choices somebody made.
+	//
+	// **It stores ENABLED, never DISABLED, which is the opposite polarity to `DisableAutoUpdate`
+	// above and for the same reason.** `Contents.Version` records that an older build drops keys it
+	// does not know when it re-saves. A dropped `advanced` therefore degrades to nil, which the seed
+	// then resolves to the DEFAULT — off, plus whatever is live. Store "disabled" instead and the
+	// same dropped key silently turns four network-touching features ON.
+	Advanced *Advanced `json:"advanced,omitempty"`
+}
+
+// Advanced names the four subsystems the advanced-features switch governs.
+//
+// They are the surface that makes Nib more than a PDF editor, and each one is a thing that reaches
+// the network or the local link. **Off has to mean the function stops, not that its button is
+// hidden** — the panel-hiding is the second half and never the whole of it.
+type Advanced struct {
+	// Ceremony gates convening, accepting, and the arm sweep that keeps a proceeding live.
+	Ceremony bool `json:"ceremony,omitempty"`
+	// Discovery gates the link-local announcer — the socket, not the panel.
+	Discovery bool `json:"discovery,omitempty"`
+	// Rendezvous gates the public DHT: the lazy bootstrap ADR-011 made the single door.
+	Rendezvous bool `json:"rendezvous,omitempty"`
+	// Timestamp gates OpenTimestamps **in the app**.
+	//
+	// It cannot gate `nib timestamp` or `nib watch`: those run headless with no vault to read the
+	// setting from, and a subcommand somebody typed is already an explicit act rather than
+	// something the product does on their behalf. Stated rather than fixed, because a switch whose
+	// scope is unwritten reads as broken the first time someone tests it from a shell.
+	Timestamp bool `json:"timestamp,omitempty"`
 }
 
 // ExternalSigner is an imported PKCS#12 signing identity (the user's own /

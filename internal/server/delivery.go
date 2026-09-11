@@ -347,7 +347,7 @@ func (s *Server) deliveryCeremony(inv ceremony.Invitation, me, peer string, cert
 	if err != nil {
 		return nil, err
 	}
-	return &ceremonyID{inv: inv, hop: hop, gate: gate, me: me, peer: peer, certPEM: certPEM, keyPEM: keyPEM}, nil
+	return s.gateRendezvous(&ceremonyID{inv: inv, hop: hop, gate: gate, me: me, peer: peer, certPEM: certPEM, keyPEM: keyPEM}), nil
 }
 
 // deliveryParty is whichever end of this leg is NOT the convener — the party the leg is about, and

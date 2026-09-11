@@ -747,6 +747,15 @@ for i in $(seq 1 "$N"); do
   tok="$(csrf "$url")"
   [ -n "$tok" ] || fail "instance $i ($url) returned no CSRF token"
   CSRFS+=( "$tok" )
+  # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and ceremonies,
+  # link-local discovery and the rendezvous are three of the four. A fresh instance refuses them
+  # 403 until its user asks, so every instance here is set up the way a user would set it up —
+  # through the real route. Without this the whole ladder fails on the switch and blames the
+  # ceremony.
+  curl -fsS -o /dev/null -X POST "$url/api/settings" -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: $tok" -H "Origin: $url" \
+    -d '{"advanced":{"ceremony":true,"discovery":true,"rendezvous":true,"timestamp":true}}' \
+    || fail "could not switch the advanced features on for instance $i ($url)"
   fp="$(curl -fsS "$url/api/peers" | jget fingerprint)"
   [ "${#fp}" = 64 ] || fail "instance $i ($url) has no identity fingerprint (got '${fp}')"
   FPS+=( "$fp" )

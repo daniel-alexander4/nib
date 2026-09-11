@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"net"
 	"nib/internal/discovery"
+	"nib/internal/vault"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +79,7 @@ func TestALoopbackBindIsNotAnnouncedOnTheLink(t *testing.T) {
 					ln.Addr(), ip.IsLoopback())
 			}
 
-			ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, lanAnnounceWindow, discovery.HopNone)
+			ann, err := announcingServer(t).startAnnouncing(cert, boundOn{ln, "tcp"}, lanAnnounceWindow, discovery.HopNone)
 			if ann != nil {
 				ann.Close()
 			}
@@ -177,7 +178,7 @@ func TestTheAnnouncerStopsAtItsWindow(t *testing.T) {
 	defer ln.Close()
 
 	const window = 700 * time.Millisecond // several announceEvery ticks, then the cap fires
-	ann, err := startAnnouncing(cert, boundOn{ln, "tcp"}, window, discovery.HopNone)
+	ann, err := announcingServer(t).startAnnouncing(cert, boundOn{ln, "tcp"}, window, discovery.HopNone)
 	if err != nil {
 		t.Skipf("announcer did not start (multicast unavailable here): %v", err)
 	}
@@ -204,4 +205,21 @@ func TestTheAnnouncerStopsAtItsWindow(t *testing.T) {
 		t.Errorf("emitted %d datagrams in a %s window (announceEvery=%s) — more than the cap should allow",
 			s1, window, announceEvery)
 	}
+}
+
+// announcingServer is a server whose user has switched local-network discovery ON.
+//
+// **Every test in this file is about the ANNOUNCER, and none is about the switch.** Since v1.129.5
+// `startAnnouncing` refuses when discovery is off (`/pending 451`), and off is the default — so
+// without this every case here would be testing the refusal and reporting it as a fact about
+// binding, hops or windows. The switch itself is driven in `advanced_test.go`.
+func announcingServer(t *testing.T) *Server {
+	t.Helper()
+	srv, v := unlockedServer(t)
+	cur := v.Settings()
+	cur.Advanced = &vault.Advanced{Discovery: true}
+	if err := v.SetSettings(cur); err != nil {
+		t.Fatal(err)
+	}
+	return srv
 }

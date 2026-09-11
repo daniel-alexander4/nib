@@ -55,7 +55,13 @@ export const REPO = path.resolve(HERE, '..', '..');
 // so a new endpoint on the boot path shows up as a loud failure instead of a
 // silent `{}` that the app mis-parses later.
 const BOOT_ROUTES = {
-  '/api/status': { state: 'ready', csrf: 'test-csrf', version: 'test', autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false },
+  // `advanced` is all ON here and OFF in production, and that is deliberate — the same divergence
+  // `authedClient` carries on the Go side, for the same reason. `/pending 451` made the exotic
+  // features default off; this harness's files are about the ceremony panel, the re-issue box and
+  // the worklist, none of which is about the switch, and without this every one of them would be
+  // asserting a hidden panel. `advanced.test.mjs` passes its own status with the features OFF,
+  // which keeps the default written down in exactly one place.
+  '/api/status': { state: 'ready', csrf: 'test-csrf', version: 'test', autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false, advanced: { ceremony: true, discovery: true, rendezvous: true, timestamp: true } },
   '/api/images': [],
   '/api/recent': [],
   '/api/doc': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },

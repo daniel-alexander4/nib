@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"nib/internal/vault"
 )
 
 // settingsRequest is a partial update — only the non-nil fields are applied, so
@@ -18,6 +20,22 @@ type settingsRequest struct {
 	// ViewLayout is "pages" or "continuous"; anything else is refused rather than stored, so a
 	// future build cannot be handed a layout name this one invented.
 	ViewLayout *string `json:"viewLayout"`
+	// Advanced is the four subsystem switches, sent whole.
+	//
+	// **A nested object rather than four top-level pointers**, because the partial-update shape
+	// this struct uses everywhere else cannot express "configured, and all four off": four absent
+	// pointers is what a client sends when it is changing something else entirely. One object
+	// arriving means the user was on the Advanced card, and every field in it is their answer.
+	Advanced *advancedRequest `json:"advanced"`
+}
+
+// advancedRequest mirrors vault.Advanced. Separate from it so the wire shape and the stored shape
+// can move independently — the same reason every other request struct here is its own type.
+type advancedRequest struct {
+	Ceremony   bool `json:"ceremony"`
+	Discovery  bool `json:"discovery"`
+	Rendezvous bool `json:"rendezvous"`
+	Timestamp  bool `json:"timestamp"`
 }
 
 // maxRecentHighlightColors caps the stored most-recently-used highlight palette.
@@ -103,6 +121,27 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		default:
 			httpError(w, http.StatusBadRequest, "invalid viewLayout")
 			return
+		}
+	}
+	if req.Advanced != nil {
+		// **Refused while a proceeding is live**, and this is the whole of what `/pending 451`
+		// called its hardest question. `Termination` carries two attested end states and `Receipt`
+		// two derived ones; *"the user switched the feature off"* is none of them, so ending a
+		// running ceremony this way would have to be recorded as `abandoned` or `stopped` — both
+		// false statements to every other party, which is the class `/pending 428` closed on. The
+		// only outcome the record can express is to refuse the change and say what is running.
+		if cur.Advanced != nil && cur.Advanced.Ceremony && !req.Advanced.Ceremony && hasLiveCeremony() {
+			httpError(w, http.StatusConflict,
+				"a signing ceremony on this machine has not finished, so switching ceremonies off "+
+					"now would leave it unreachable with no way to say what happened. End or leave "+
+					"it first, then switch this off")
+			return
+		}
+		cur.Advanced = &vault.Advanced{
+			Ceremony:   req.Advanced.Ceremony,
+			Discovery:  req.Advanced.Discovery,
+			Rendezvous: req.Advanced.Rendezvous,
+			Timestamp:  req.Advanced.Timestamp,
 		}
 	}
 	if err := v.SetSettings(cur); err != nil {

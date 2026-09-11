@@ -56,6 +56,10 @@ const PUBLISHED = [
   { type: 'docResponse', readers: ['web/app.js'] },
   { type: 'docsResponse', readers: ['web/app.js'] },
   { type: 'statusResponse', readers: ['web/app.js'] },
+  // The advanced-features switch (`/pending 451`). Nested inside statusResponse and read by
+  // `applyAdvanced`, which both ticks the boxes and hides the surfaces — so every field here
+  // has a reader that does something, not merely one that mentions it.
+  { type: 'advancedStatus', readers: ['web/app.js'] },
   { type: 'outlineResponse', readers: ['web/app.js'] },
   { type: 'attachmentsResponse', readers: ['web/app.js'] },
   { type: 'attestationsResponse', readers: ['web/app.js'] },
@@ -233,6 +237,7 @@ const EXCLUDED = {
   acceptRequest: 'request body, read by its handler',
   leaveRequest: 'request body, read by its handler',
   ceremonyNameRequest: 'request body, read by its handler',
+  advancedRequest: 'request body, read by its handler',
   draftRequest: 'request body, read by its handler',
   listDirRequest: 'request body, read by its handler',
   ocrRequest: 'request body, read by its handler',

@@ -41,6 +41,9 @@ type ceremonyID struct {
 	// certPEM/keyPEM sign this party's candidate records. Held here because a record is
 	// signed by the identity, not by the ceremony, and the publish path needs both.
 	certPEM, keyPEM []byte
+	// rzOn asks whether this machine may use the public DHT at all — the advanced-features switch,
+	// read live. See ensureBootstrapped for why it is a function and why nil means allowed.
+	rzOn func() bool
 
 	// reServed records that this hop answered a re-delivery from its STORED contribution
 	// (/pending 334). It is NOT `hasSigned` and must not be folded into it: `hasSigned` means
@@ -293,6 +296,19 @@ func waitCtx(ctx context.Context, d time.Duration) bool {
 func (c *ceremonyID) ensureBootstrapped(ctx context.Context) error {
 	if c == nil || c.rz == nil {
 		return errNoCeremony
+	}
+	// **The rendezvous switch, at ADR-011's one door** (`/pending 451`). That ADR already made this
+	// function the single lazy entrance to the public DHT — *"nothing reaches the public DHT until
+	// `browseWindow` has elapsed: the bootstrap is lazy behind ONE door"* — so a user who has
+	// switched the DHT off is refused here and nowhere else, and the refusal is the socket not
+	// being opened rather than a panel not being drawn.
+	//
+	// **A predicate rather than a bool, because the answer can change while a ceremony is open.**
+	// It is nil on the paths that have no server behind them (the CLI, and tests that build a
+	// ceremony directly), and nil means allowed — a hole that `TestEveryCeremonyThisServerUsesIsGated`
+	// closes by asserting every production construction is stamped.
+	if c.rzOn != nil && !c.rzOn() {
+		return errRendezvousOff
 	}
 	c.bootstrapOnce.Do(func() {
 		bctx, cancel := context.WithTimeout(ctx, bootstrapBudget)
