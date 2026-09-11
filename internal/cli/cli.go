@@ -110,6 +110,7 @@ var commands = map[string]func([]string) int{
 	"encrypt":     cmdEncrypt,
 	"decrypt":     cmdDecrypt,
 	"nup":         cmdNup,
+	"booklet":     cmdBooklet,
 	"normalize":   cmdNormalize,
 	"pagenum":     cmdPagenum,
 	"pagelabels":  cmdPagelabels,

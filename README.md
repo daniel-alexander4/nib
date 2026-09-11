@@ -1093,6 +1093,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib split IN --out-dir DIR …` | Burst into one file per chunk (`--every N`), range (`--ranges 1-3,4-8`), or `--bookmarks`. |
 | `nib encrypt IN -o OUT` | Add AES-256 password protection (`--password-file FILE` or `$NIB_PDF_PASSWORD`, required; an already-encrypted PDF is reported, not re-encrypted). |
 | `nib decrypt IN -o OUT` | Remove password protection / owner restrictions (`--password-file FILE` or `$NIB_PDF_PASSWORD`; already-plain PDFs pass through). |
+| `nib booklet IN -o OUT` | Impose for **saddle-stitch** printing: pad to a whole sheet of four, reorder into sheet order, two pages a side. Print double-sided **flipping on the short edge**, then fold and staple through the fold (`--border` for outlines). |
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
 | `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
@@ -1159,8 +1160,8 @@ and `export-xfdf`, a filename of `-` reads a PDF from stdin, and `-o -` writes
 the result to stdout (refused when stdout is a terminal), so the commands chain
 together.
 
-`decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`, `pagenum`,
-`pages`, `rotate`, and `sanitize` take `-w`/`--in-place` to rewrite each file
+`booklet`, `decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`,
+`pagenum`, `pages`, `rotate`, and `sanitize` take `-w`/`--in-place` to rewrite each file
 given instead of writing a single `-o` output — the batch form for a folder.
 Each rewrite is atomic (written through a temp file and renamed over the
 original, so a failure never corrupts it) and preserves the file's permissions.

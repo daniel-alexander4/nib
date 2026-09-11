@@ -1903,3 +1903,82 @@ func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
 	mb := attrs.MediaBox
 	return mb.LL.X, mb.LL.Y, mb.UR.X, mb.UR.Y, nil
 }
+
+// bookletOrder returns the page sequence a saddle-stitched booklet is printed in.
+//
+// # The arithmetic, because it is the whole feature
+//
+// A saddle-stitch booklet is folded down the middle and stapled through the fold, so one SHEET
+// carries four pages: two on the front and two on the back, and the pairs are the outermost
+// remaining pages and then inward. For n pages the sequence is
+//
+//	n, 1, 2, n-1, n-2, 3, 4, n-3, …
+//
+// which is *not* an obvious permutation and is the reason people open a several-hundred-euro tool
+// once a year to get it. Fold the printed stack in half and the pages read 1, 2, 3, … in order.
+//
+// # Why n must be a multiple of four, and why blanks go at the END
+//
+// Every sheet is four pages, so a document that is not a multiple of four leaves a partial sheet.
+// The blanks are appended rather than inserted anywhere clever: a reader expects a booklet to end
+// with blank leaves, and putting them at the front would shift every page number the document
+// itself prints.
+func bookletOrder(n int) []string {
+	out := make([]string, 0, n)
+	lo, hi := 1, n
+	for lo < hi {
+		// Front of the sheet: the last page beside the first.
+		out = append(out, strconv.Itoa(hi), strconv.Itoa(lo))
+		lo++
+		hi--
+		if lo >= hi {
+			break
+		}
+		// Back of the same sheet, and the pairing reverses — this is the half that is easy to get
+		// wrong, and the symptom is a booklet whose every other spread is upside-down in sequence.
+		out = append(out, strconv.Itoa(lo), strconv.Itoa(hi))
+		lo++
+		hi--
+	}
+	if lo == hi {
+		out = append(out, strconv.Itoa(lo))
+	}
+	return out
+}
+
+// Booklet imposes a document for saddle-stitch printing: pad to a multiple of four, reorder into
+// sheet order, and place two pages per sheet side by side.
+//
+// **A pure composition of what already ships** — `InsertBlank`, `Collect` and `NUp` — which is why
+// this is a small function rather than a new subsystem. `/pending 398` filed it as "the cheapest
+// item in this group … closest to a pure composition of existing commands", and building it any
+// other way would have been inventing a second page-placement engine beside pdfcpu's.
+//
+// **Print it double-sided, flipping on the SHORT edge**, and fold. That instruction is not
+// decoration: flipping on the long edge inverts every back face, and nothing in the file can say
+// which the printer will do. The CLI prints it; the app says it beside the button.
+func Booklet(pdf []byte, border bool) ([]byte, error) {
+	n, err := PageCount(pdf)
+	if err != nil {
+		return nil, err
+	}
+	if n < 1 {
+		return nil, fmt.Errorf("a booklet needs at least one page")
+	}
+	// Padded FIRST, so `bookletOrder` is computed over the sheet count that will actually print.
+	// Computing the order on the unpadded count and padding afterwards puts the blanks in the
+	// middle of a sheet, which is the one arrangement that cannot be folded into a booklet.
+	padded := pdf
+	for pad := (4 - n%4) % 4; pad > 0; pad-- {
+		padded, err = InsertBlank(padded, n)
+		if err != nil {
+			return nil, fmt.Errorf("could not pad to a whole sheet: %w", err)
+		}
+		n++
+	}
+	ordered, err := Collect(padded, bookletOrder(n))
+	if err != nil {
+		return nil, fmt.Errorf("could not put the pages in booklet order: %w", err)
+	}
+	return NUp(ordered, 2, border)
+}
