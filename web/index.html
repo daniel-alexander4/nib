@@ -716,6 +716,17 @@
         <span id="fitNoticeText"></span>
         <button id="fitNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
       </div>
+
+      <!-- Accessibility structure lost (ADR-031, law 2's `dropped-with-notice`). Same shape as
+           #fitNotice above and for the same reason: this is a report about what an operation did to
+           the document, it must survive longer than a 2.5-second toast, and it has to still be on
+           screen at the moment the user saves. `role="status"` / polite, because it is not an
+           interruption — assertive stays spent on #sessionNotice's "you are about to lose a
+           signature", which is the one thing in this app that earns it. -->
+      <div id="tagNotice" role="status" aria-live="polite" hidden>
+        <span id="tagNoticeText"></span>
+        <button id="tagNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
         <button id="signDone" hidden>Finish &amp; sign</button>

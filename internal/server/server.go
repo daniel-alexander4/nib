@@ -146,6 +146,10 @@ type document struct {
 	// that happened to the document, and it is cleared only by a barrier or a
 	// fresh history.
 	historyEvicted bool
+	// taggingDropped records that some operation on this document removed a tagging claim it
+	// arrived with — law 2's `dropped-with-notice`, ADR-031. Sticky for the document's life; see
+	// noteTaggingFate for why it is not per-operation.
+	taggingDropped bool
 
 	// disk is what the file at `path` looked like when this document last agreed with
 	// it — nil for a path-less document, which has no file to disagree with. Written
@@ -556,6 +560,21 @@ type docResponse struct {
 	// find an empty undo stack and no account of where it went. Omitted while false,
 	// so a document that has never been evicted serializes exactly as before.
 	HistoryEvicted bool `json:"historyEvicted,omitempty"`
+
+	// TaggingDropped says an operation on this document removed the accessibility structure it
+	// arrived with — law 2's `dropped-with-notice` (ADR-031).
+	//
+	// **The notice is the point, and the reason it is a persistent field rather than a one-off
+	// event.** A user who brought in a tagged document from LibreOffice or Word and ran `rotate`
+	// has lost its accessibility metadata; the file is honest about it (it no longer claims to be
+	// tagged) and the PERSON is told nothing. Sticky for the document's life, like HistoryEvicted
+	// above and for the same reason: it describes something that happened to the document, not
+	// something that happened in the last request, and it must still be on screen at the moment
+	// they save.
+	//
+	// Omitted while false, so a document that never carried tagging — which is nearly all of them —
+	// serializes exactly as it did before.
+	TaggingDropped bool `json:"taggingDropped,omitempty"`
 
 	// DiskChanged says the file this document was opened from now holds something else,
 	// so what the user is looking at is no longer what is on disk (/pending 333).
@@ -1506,6 +1525,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 		CanUndo:        len(doc.undo) > 0,
 		CanRedo:        len(doc.redo) > 0,
 		HistoryEvicted: doc.historyEvicted,
+		TaggingDropped: doc.taggingDropped,
 		InCeremony:     doc.ceremony != "",
 	}
 	// The bytes are read AFTER the lock is released, deliberately: FlagsJSON parses

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"nib/internal/ceremony"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -115,6 +116,7 @@ func (s *Server) commitMutation(doc *document, input, result []byte, acceptSigna
 	s.trimHistoryLocked(doc)
 	doc.data = result
 	doc.sig = sig
+	noteTaggingFate(doc, input, result)
 	return nil
 }
 
@@ -242,8 +244,14 @@ func (s *Server) commitBarrier(doc *document, result []byte, acceptSignatureLoss
 	// content to be destroyed, not because memory ran short. Reporting it as an
 	// eviction would tell them their redaction cost them their undo stack.
 	doc.historyEvicted = false
+	// **The barrier's "before" is the document's OWN bytes, not a caller's input.** It takes only a
+	// result — a barrier destroys content rather than transforming an argument — so the document as
+	// it stands is what the claim is compared against. Captured before the assignment below, which
+	// is the line that makes it unavailable.
+	before := doc.data
 	doc.data = result
 	doc.sig = sig
+	noteTaggingFate(doc, before, result)
 	return nil
 }
 
@@ -589,4 +597,34 @@ func ceremonyFreeze(docBytes []byte) error {
 	return fmt.Errorf("%w: it belongs to ceremony %s, and the other parties were invited to "+
 		"sign this exact document — so Nib will not write different bytes over it. The "+
 		"ceremony's own copy is at ~/nib/ceremonies/%s/document.pdf", ErrCeremonyFrozen, rec.ID, rec.ID)
+}
+
+// noteTaggingFate records that an operation removed this document's tagging claim — the NOTICE half
+// of law 2's `dropped-with-notice` (ADR-031, `PLAN-accessibility.md` P01.S04).
+//
+// # Why here, at the commit doors
+//
+// The 33 operations drop the claim honestly and none of them reports it. Without this nobody is
+// told, and a user who brought in a tagged document from LibreOffice or Word ships it stripped of
+// its accessibility metadata having been given no sign — which is the "claims accessible, is not"
+// family one step removed: the FILE no longer lies, and the person who could have fixed it is still
+// in the dark.
+//
+// **Both commit doors call it and neither can forget**, because they are the only two places a
+// mutation's result becomes the document. Asking each operation to report its own fate would be
+// ADR-009's rule inverted: 33 sites that have to remember, against two that cannot.
+//
+// # Sticky for the document, not for the operation
+//
+// A user who rotates a page and then makes six more edits has still lost the tagging, and a flag
+// that cleared on the next commit would be gone before they saved. It is set once and stays; a
+// fresh document is a fresh `document` value, so opening one clears it by construction rather than
+// by anyone remembering to.
+func noteTaggingFate(doc *document, input, result []byte) {
+	if doc == nil || doc.taggingDropped {
+		return
+	}
+	if pdfops.ClaimsTagging(input) && !pdfops.ClaimsTagging(result) {
+		doc.taggingDropped = true
+	}
 }

@@ -9884,6 +9884,67 @@ function reflectUndoControls(enabled) {
     view.lastEvictionSeen = view.docMeta.id;
     toast('Earlier undo history for this document was released to stay within the memory budget');
   }
+  reflectTagNotice(m);
+}
+
+// ── The accessibility-structure notice (ADR-031, law 2's `dropped-with-notice`) ──
+//
+// **A persistent banner and deliberately not a toast.** `index.html`'s own note about the other
+// persistent notice says why: *"`toast` cannot carry them: it clears itself after 2500 ms."* A user
+// who brought in a tagged document from LibreOffice or Word and rotated a page has lost its
+// accessibility metadata — the file is honest about it, and 2.5 seconds is not long enough for the
+// person who could re-make it to find out. It has to still be on screen when they save.
+//
+// **Driven from the server's sticky flag, never from the last operation.** Six edits after the one
+// that dropped the tagging, the tagging is still gone; a notice that cleared on the next commit
+// would be gone before it mattered. `taggingDropped` is per-DOCUMENT on the server for that reason,
+// and this function only renders it.
+//
+// Dismissable, because a user who has read it and decided they do not care should not be nagged for
+// the rest of the session — and per view, because two open documents have their own answers.
+// tagNoticeKey identifies the document a dismissal belongs to.
+//
+// A document with no id yet still has to be dismissable, so the sentinel stands in for one — and it
+// is a value no real id can take, so an unset `tagNoticeDismissed` (undefined) never matches it.
+function tagNoticeKey() {
+  return (view.docMeta && view.docMeta.id) || '\u0000no-id';
+}
+
+function reflectTagNotice(m) {
+  const box = document.getElementById('tagNotice');
+  if (!box) return;
+  const dropped = !!(m && m.taggingDropped);
+  // **The document's key is normalised ONCE, and both sides of the comparison use it.**
+  //
+  // Two defects came out of getting this wrong, both caught by `tagnotice.test.mjs` on its first two
+  // runs. Comparing `view.tagNoticeDismissed === view.docMeta.id` raw makes a document with no id
+  // yet compare `undefined === undefined` — **already dismissed**, so the banner never appeared at
+  // all. Substituting a sentinel on the WRITE side only then made a dismissal store something the
+  // read side could never match, so dismissing did nothing. One expression, used twice, has neither
+  // failure mode.
+  const alreadyDismissed = view.tagNoticeDismissed === tagNoticeKey();
+  if (!dropped || alreadyDismissed) {
+    box.hidden = true;
+    return;
+  }
+  const text = document.getElementById('tagNoticeText');
+  if (text) {
+    // Names what was lost, what it was for, and the one thing the user can do about it. "Tagging"
+    // alone would mean nothing to the small-practice user this product is for.
+    text.textContent = 'This document arrived with accessibility structure — the tags a screen '
+      + 'reader uses to read it in order — and an edit removed it. Nib cannot put it back. If that '
+      + 'matters, re-make this document from its source rather than saving this copy over it.';
+  }
+  box.hidden = false;
+}
+
+els.tagNoticeDismiss = $('tagNoticeDismiss');
+if (els.tagNoticeDismiss) {
+  els.tagNoticeDismiss.onclick = () => {
+    view.tagNoticeDismissed = tagNoticeKey();
+    const box = document.getElementById('tagNotice');
+    if (box) box.hidden = true;
+  };
 }
 
 // --- client overlay-edit undo (P2) ------------------------------------------

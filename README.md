@@ -489,6 +489,22 @@ closing are once-per-document acts, so they are cards in the **File** tab's side
 *Open a Document*, *Save a Copy*, *Export & Print*, *Close Document*. **Ctrl+O** opens,
 **Ctrl+S** saves and **Ctrl+F** opens find without going near either.
 
+### Accessibility structure — what Nib does and does not claim
+A PDF can carry **tags**: a structure a screen reader uses to read it in the right order, tell a
+heading from a paragraph, and navigate. Nib does not yet author them — that is real work in progress
+— and this section is about the half that is already true.
+
+**Nib will not claim tagging it has not got.** Most editing operations destroy a document's tag
+structure as a side effect of rewriting it, and the temptation is to leave the *claim* in place so
+the file still looks accessible. Nib removes the claim with the content, because a screen reader
+told a document is tagged stops reaching for the fallbacks it would otherwise use — a false claim is
+worse than a visible loss.
+
+**And it tells you when it happens.** If you open a document that arrived with accessibility
+structure and an edit removes it, a notice stays on screen — not a message that flashes past — until
+you dismiss it, so you find out while you can still do something about it. Nib cannot put the
+structure back; what it can do is not let you ship the loss unknowingly.
+
 ### Timestamp with OpenTimestamps — prove *when*
 **Timestamp (OpenTimestamps)** creates a small `.ots` proof that anchors your
 document's hash to the Bitcoin blockchain, so anyone can later confirm the exact
