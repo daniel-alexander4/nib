@@ -114,8 +114,22 @@ func (s tagState) claims() bool { return s.marked || s.tree }
 // pointing at a live page, and a page's `/StructParents` indexing into `/ParentTree` — and this
 // refuses to strip while either survives. That conservatism is deliberate and is the direct lesson
 // of the reverted version, which stripped on a predicate that could not see the tree at all.
+//
+// **Except when there is no tree, which the conservatism must not extend to.** `/MarkInfo /Marked
+// true` with no `/StructTreeRoot` is a conformance assertion over nothing at all, and a page's
+// `/StructParents` then indexes a `/ParentTree` that does not exist — so the second linkage is not
+// a surviving anchor, it is a dangling number. Without this clause such a document scored
+// `carried`, the census's BEST verdict, for having no structure whatsoever. Found by the P01 phase
+// review; not reachable through any operation measured today, because pdfcpu drops `/MarkInfo` and
+// the tree together, which is exactly why nothing had caught it.
 func (s tagState) orphaned() bool {
-	return s.readable && s.claims() && s.anchored == 0 && s.pagesSP == 0
+	if !s.readable || !s.claims() {
+		return false
+	}
+	if !s.tree {
+		return true
+	}
+	return s.anchored == 0 && s.pagesSP == 0
 }
 
 // partial is a claim over a document where the tree is live but does not reach every page that has
@@ -232,10 +246,10 @@ func ClaimsTagging(pdf []byte) bool { return inspectTags(pdf).claims() }
 // **The unchanged path costs a parse and never a rewrite**, which matters for more than speed: a
 // rewrite re-encodes, which moves bytes and invalidates any signature over them.
 //
-// **Measured on its one caller, `NUp`** (3 runs each, wall time): 232 KB / 8pp — `api.NUp` 17 ms,
-// `honest` 9 ms (+56%); 667 KB / 172pp — 124 ms and 14 ms (+12%); 1.4 MB / 22pp — 156 ms and 123 ms
-// (+79%). Worst case a user-initiated n-up goes from 156 ms to 279 ms, which is the price of a
-// post-condition and is paid on a path nothing holds a lock over.
+// **Measured at 88 ms on a 1.4 MB, 22-page document** — the parse, against `api.NUp`'s own 147 ms
+// for the composition. Its caller asks `inspectTags(...).orphaned()` directly before attempting a
+// carry, so since v1.129.19 `honest` is reached only by a document whose tree was re-anchored, and
+// what it costs there is the verification of that remap rather than a toll on every n-up.
 //
 // **There is a cheap pre-filter available and it is deliberately NOT taken.** The catalog-level keys
 // do survive uncompressed, so a byte scan for `/StructTreeRoot` would skip the parse for the
@@ -255,6 +269,13 @@ func honest(pdf []byte) ([]byte, error) {
 // **Unexported and called only through `honest`**, so the decision to strip is taken in exactly one
 // place against exactly one predicate. The reverted version had the strip reachable on its own, and
 // that is how it came to run over documents whose trees were intact.
+//
+// **That sentence was false for one commit** (v1.129.19): `NUp` called this directly, having already
+// established `orphaned`, to save a re-parse. The saving was real and the precedent was not worth
+// it — a second caller is how the predicate and the strip drift apart, and this comment asserting
+// otherwise is the shape of defect this repo keeps paying for. Restored to one caller at the P01
+// phase review; `zerocaller_test.go` cannot police this, because the function is unexported and has
+// a caller either way.
 func dropTaggingClaim(pdf []byte) ([]byte, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {

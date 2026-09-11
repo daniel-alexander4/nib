@@ -594,7 +594,11 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if carried, ok := carryTagsThroughNUp(pdf, raw); ok {
 		return honest(carried)
 	}
-	return dropTaggingClaim(raw)
+	// **Through `honest`, not straight to the strip**, even though `orphaned` is already known true
+	// here and this pays for a second parse. `dropTaggingClaim` having exactly one caller is what
+	// keeps the predicate and the strip from drifting apart, and it is what its own doc comment
+	// claims — a shortcut that falsifies a comment is not a saving.
+	return honest(raw)
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
