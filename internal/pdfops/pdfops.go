@@ -114,7 +114,7 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 	if err := api.Rotate(bytes.NewReader(pdf), &out, deg, pages, nil); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
 }
 
 // RemovePages drops the given pages from the PDF.
@@ -267,7 +267,7 @@ func InsertBlank(pdf []byte, afterPage int) ([]byte, error) {
 	if err := api.InsertPages(bytes.NewReader(pdf), &out, sel, false, nil, nil); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
 }
 
 // InsertPDF inserts the pages of other immediately BEFORE page (1-based) of pdf.
@@ -320,7 +320,12 @@ func Append(pdf, other []byte) ([]byte, error) {
 	if err := api.MergeRaw(rs, &out, false, nil); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	// **`MergeRaw` takes the FIRST document's catalog whole**, so merging a tagged document with an
+	// untagged one carries that catalog's `/StructTreeRoot` and `/MarkInfo` onto a result whose
+	// pages are half somebody else's and whose struct elements are gone. Measured at P01.S04: the
+	// "tagged first" order lied and the "tagged second" order did not — which is the argument-order
+	// asymmetry this slice was written about, surviving D9 in a different form.
+	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
 }
 
 // Combine merges the given PDFs into one, in the order given — each source keeps
@@ -1879,7 +1884,7 @@ func Optimize(pdf []byte) ([]byte, error) {
 	if err := api.Optimize(bytes.NewReader(pdf), &out, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
 }
 
 // PageBox returns a page's MediaBox as llx, lly, urx, ury in PDF points.

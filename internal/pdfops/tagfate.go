@@ -132,3 +132,46 @@ func hasTaggingClaim(ctx *model.Context) bool {
 	}
 	return false
 }
+
+// claimKeys counts the assertions a document makes about being tagged, and the structure that would
+// have to be present for those assertions to be true. Byte-counted rather than parsed: the question
+// is what the FILE says, and a parse that silently repaired a dangling tree would answer a
+// different one.
+func claimKeys(pdf []byte) (claimed bool, elements int) {
+	claimed = bytes.Contains(pdf, []byte("/StructTreeRoot")) || bytes.Contains(pdf, []byte("/Marked"))
+	elements = bytes.Count(pdf, []byte("/StructElem"))
+	return claimed, elements
+}
+
+// claimsTaggingItHasNot is law 1's violation, as a predicate.
+//
+// **Deliberately not "the tree was lost".** A visible loss is honest and an intact tree is better;
+// only the middle — a document that SAYS it is tagged while carrying no structure — is the state
+// law 1 forbids, because it defeats the reader's own check.
+func claimsTaggingItHasNot(pdf []byte) bool {
+	claimed, elements := claimKeys(pdf)
+	return claimed && elements == 0
+}
+
+// honest is the door every operation that returns a document passes its bytes through.
+//
+// **It exists because `writeMutated` is not the only write path.** Four operations —
+// `InsertBlank`, `NormalizePageSizes`, `Optimize` and `Rotate` — call `api.*` directly and return
+// the buffer, so the post-condition inside `writeMutated` never saw them. Measured, not assumed:
+// with the write-door check in place, `TestNoOperationClaimsTaggingItHasNot` still named exactly
+// those four.
+//
+// ADR-009's rule is that a rule holding at more than one call site is written ONCE and every site
+// calls it. This is that one place; the sites call it instead of each remembering to.
+//
+// It passes an error straight through, so a caller can write `return honest(out.Bytes(), nil)` in
+// place of `return out.Bytes(), nil` without restructuring its error handling.
+func honest(pdf []byte, err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	if claimsTaggingItHasNot(pdf) {
+		return dropTaggingClaim(pdf)
+	}
+	return pdf, nil
+}

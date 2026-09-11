@@ -252,24 +252,76 @@ Acceptance:
   point of running it: the hand-built fixture used at P01.S01 could not distinguish "pdfcpu drops
   trees" from "my fixture is malformed". 14 struct elements from a producer settles it.
 
-#### P01.S03 — the tag-fate table and its guard
+#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.11 — absorbs P01.S04, see below)*
 Scope: every document-touching operation declares `carried` / `refused` / `dropped-with-notice` in
 one table; a table-driven tier-1 guard over a tagged fixture asserts each verdict and fails when an
 operation has no entry. Refs: law 2, D12.
 Acceptance:
-- The guard enumerates operations from the code, not from a hand-written list.
-- Adding an operation with no verdict turns it red (proved by adding one).
-- The fixture corpus lands under D12's corpus, not as an inline literal.
+- ✅ The guard enumerates operations from the code, not from a hand-written list. `go/ast` over
+  every exported function in `internal/pdfops` whose first parameter is `pdf []byte` and whose first
+  result is `[]byte` — **33 operations**, with a floor so an enumeration that stopped matching fails
+  loudly instead of passing empty.
+- ✅ Adding an operation with no verdict turns it red, **proved by adding one** (a `Flatten` stub;
+  red, then removed). Three more mutations red: the write door and `honest()` each ceasing to
+  enforce law 1, and a table row for an operation that does not exist.
+- ✅ The fixture corpus lands under D12's corpus — `internal/pdfops/corpus_test.go`, shared by every
+  tag guard, rather than inline in one test. **Generated rather than committed**, for the reason
+  this package's own fixture file already gives: *"a checked-in binary fixture is opaque in review"*.
+  The producer-made LibreOffice document that P01.S02 needed is a recipe at D9, deliberately not a
+  28 KB blob.
 
-#### P01.S04 — carry the tree where it can be carried
+**The verdict vocabulary is one word different from the scope line, and the difference is measured.**
+`carried` / `refused` / `dropped-with-notice` became **`dropped` / `carried` / `untouched`**: nothing
+can be `carried` today (D9), no operation `refuses` a tagged input, and `untouched` is the honest
+verdict for the five operations that return a report or a ZIP rather than a document — a distinction
+the original three words could not make. **There is deliberately no verdict for "keeps the claim
+without the content"**: law 1 forbids that state, so it is not a fate an operation may declare, it is
+a failure.
+
+**(pin, 2026-09-11 — this slice absorbed P01.S04, because the guard could not ship red.)**
+The guard found **eight operations lying** on its first run — `Rotate`, `Optimize`, `SetLang`,
+`StripMetadata`, `StripActive`, `RemoveFilesAndMedia`, `InsertBlank`, `NormalizePageSizes` — and
+eight more with no verdict at all: `Append`, `InsertPDF`, `FillFormJSON`, `FillFormXFDF`, `SetFlags`,
+`StampFields`, `ExtractImagesZip`, `PreparePDFA`. Shipping a red guard is not shipping a guard, and
+the fix was S04's. Merging them is a granularity call, which `~/.claude/ASK.md` settles at rung 1.
+
+**The fix is a LAW at two doors, not eight patches.** `writeMutated` and `honest()` each check law 1
+as a **post-condition** — *did this write destroy the structure while leaving the claim* — and drop
+the claim when it did. Four of the eight were fixed by the write door alone; measurement then named
+the other four as direct `api.*` callers, which is how the second door was found rather than guessed.
+Because it is a post-condition, it becomes a no-op by itself the day the write path carries a tree
+(P05's prerequisite, `/pending 467`) — there is no line to remember to delete.
+
+#### P01.S04 — carry the tree where it can be carried *(in progress — its CARRYING half is absorbed into S03 and answered by D9; two clauses below are NOT discharged)*
+
+**(pin, 2026-09-11 — marked `done` for twenty minutes and taken back, which is recorded rather than
+tidied away.)** S03's fix covers this slice's *carrying* half completely: D9 measured that nothing
+can be carried, so every operation is `dropped` and S03's guard asserts it over all 33. The marker
+went on for that reason and was **wrong**, because this slice's acceptance has three clauses and only
+one of them is about carrying. Caught by walking the acceptance ledger clause by clause instead of
+crediting the slice against its scope line — which is exactly the failure the ledger rule exists to
+prevent. What remains is below.
+
 Scope: implement carrying for the operations S02 found practical; the rest become
 `dropped-with-notice` with a user-visible sentence. Includes `merge`'s argument-order defect —
 tagging survives only when the tagged file is first. Refs: D8, D9, law 2.
 Acceptance:
-- `merge` preserves tagging in both argument orders, asserted per order.
-- Every `dropped-with-notice` operation actually emits its notice, asserted at the door.
-- `redact` is explicitly dispositioned — it destroys page content by design, so its verdict is a
-  decision, not an oversight.
+- ~~`merge` preserves tagging in both argument orders, asserted per order.~~ **Overtaken by D9 and
+  replaced**: nothing preserves tagging in any order, so the defect this names — *"tagging survives
+  only when the tagged file is first"* — cannot exist. What survives of the clause is the honesty
+  question, and it is still owed: **`Append` is driven in BOTH argument orders and neither lies**.
+  ⭕ not discharged.
+- ⭕ **Every `dropped-with-notice` operation actually emits its notice, asserted at the door.** NOT
+  discharged, and it is the clause that holds this slice open. S03 shipped `dropped`, silently:
+  there is no notice mechanism anywhere in the tree (named search: `dropped-with-notice|tagNotice|
+  taggingLost` over `internal/` → 0). Telling a user their document's tagging was lost is a
+  user-visible surface spanning server and client, and *what it says and where it appears* is a
+  product decision rather than a correctness one. **Parked** — see the closing batch.
+- ⭕ **`redact` is explicitly dispositioned.** NOT discharged. `RedactPages`
+  (`internal/pdfops/pdfops.go:354`) does not match S03's enumeration shape — its first parameter is
+  `original`, not `pdf`, and it takes a raster map — so the guard never saw it, which is a **hole in
+  the enumeration** rather than an operation that is exempt. Its verdict is a decision (it destroys
+  page content by design), and the enumeration needs widening to reach it either way.
 
 #### P01.S05 — the ADR and the corpus
 Scope: ADR for laws 1 and 2; the golden corpus per D12 with its expected verdicts. Refs: D12.
