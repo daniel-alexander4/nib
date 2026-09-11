@@ -392,6 +392,32 @@ func cmdDecrypt(args []string) int {
 	})
 }
 
+// cmdBooklet imposes a document for saddle-stitch printing (`/pending 398`).
+//
+// **It prints the folding instruction, and that is not decoration.** The one way to get a booklet
+// wrong after the file is right is to print double-sided flipping on the LONG edge, which inverts
+// every back face — and nothing in the PDF can say which way a given printer will flip. The
+// sentence is the only place that can.
+func cmdBooklet(args []string) int {
+	fs := flag.NewFlagSet("nib booklet", flag.ContinueOnError)
+	var out string
+	var inPlace, border bool
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	fs.BoolVar(&border, "border", false, "draw a thin border around each placed page")
+	fs.Usage = usageFunc(fs, "nib booklet IN -o OUT [--border]  |  nib booklet -w FILE...",
+		"Impose a document for saddle-stitch printing: pad to a whole sheet, reorder, two pages\n"+
+			"per side. Print double-sided FLIPPING ON THE SHORT EDGE, then fold and staple.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	code := runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) { return pdfops.Booklet(b, border) })
+	if code == 0 {
+		fmt.Println("Print double-sided, flipping on the SHORT edge, then fold and staple through the fold.")
+	}
+	return code
+}
+
 func cmdNup(args []string) int {
 	fs := flag.NewFlagSet("nib nup", flag.ContinueOnError)
 	var out string
