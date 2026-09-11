@@ -41,6 +41,27 @@ import (
 // layer. It is deliberately not applied to documents nib merely rewrites — a `/CIDSet` in a user's
 // own document is their file's business, and an office conversion's fonts come from LibreOffice,
 // which does not produce this defect (measured: a converted document fails neither font clause).
+func dropCIDSets(pdf []byte) ([]byte, error) {
+	return writeMutated(pdf, func(ctx *model.Context) error {
+		for _, e := range ctx.XRefTable.Table {
+			if e == nil || e.Object == nil {
+				continue
+			}
+			d, ok := e.Object.(types.Dict)
+			if !ok {
+				continue
+			}
+			// FontDescriptor is the only dictionary that carries the key, and checking /Type
+			// rather than the key's presence means a stray "CIDSet" elsewhere is left alone.
+			if ty, _ := d["Type"].(types.Name); ty != "FontDescriptor" {
+				continue
+			}
+			delete(d, "CIDSet")
+		}
+		return nil
+	})
+}
+
 // specNamesAUserFont reports whether a pdfcpu "create" spec mentions any font pdfcpu has registered
 // as a user font — which is the only way its output can contain an embedded CID font, and therefore
 // the only way it can contain a `/CIDSet`.
@@ -82,27 +103,6 @@ func specNamesAUserFont(spec []byte) bool {
 	}
 	walk(v)
 	return found
-}
-
-func dropCIDSets(pdf []byte) ([]byte, error) {
-	return writeMutated(pdf, func(ctx *model.Context) error {
-		for _, e := range ctx.XRefTable.Table {
-			if e == nil || e.Object == nil {
-				continue
-			}
-			d, ok := e.Object.(types.Dict)
-			if !ok {
-				continue
-			}
-			// FontDescriptor is the only dictionary that carries the key, and checking /Type
-			// rather than the key's presence means a stray "CIDSet" elsewhere is left alone.
-			if ty, _ := d["Type"].(types.Name); ty != "FontDescriptor" {
-				continue
-			}
-			delete(d, "CIDSet")
-		}
-		return nil
-	})
 }
 
 // embeddedFontsAreHonest is the tail every door that embeds a nib-supplied face runs.

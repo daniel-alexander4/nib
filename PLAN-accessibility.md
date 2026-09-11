@@ -1430,6 +1430,83 @@ validates under veraPDF `ua1`; wrapping is proved not to disturb the wrapped con
 job (rewriting operators rather than bracketing them). Whichever plan reaches it first builds it and
 the other extends it; built twice, the two will disagree about the same bytes.
 
+**(phase-open, 2026-09-11 at v1.129.44 — four facts, and the first settles the shared surface.)**
+
+- **This plan reaches the walker first, and the condition is checked rather than assumed.**
+  `PLAN-text-reflow.md`'s P01 is done (v1.128.69) and its **P02–P05 are unstarted**, so nothing is
+  waiting on a walker that exists. This phase builds it; text-reflow's P05 extends it.
+- **Nothing in the tree parses a content stream, and neither does pdfcpu.** Named search across
+  `internal/` for a walker, a tokenizer or an operator type: **zero**. In pdfcpu v0.13.0 there is no
+  content-stream tokenizer and no text extraction at all — `ExtractContent` hands over decoded
+  bytes and stops. The capability is genuinely new, which is what the phase goal says.
+- **The read/write path is already proven in this repo.** `wrapPageToBox`
+  (`pdfops.go:969-997`) does the whole round trip: `ctx.PageContent(d, pageNr)` for the decoded
+  bytes, then `NewStreamDictForBuf` → `sd.Encode()` → `IndRefForNewObject` → `d["Contents"]`. The
+  walker needs no new pdfcpu surface, only a parser between those two halves.
+- **`/MarkInfo` is owed here by name.** P03 struck it from its own floor because setting
+  `/Marked true` with no `/StructTreeRoot` is exactly `tagState.orphaned()` — what ADR-031 law 1
+  forbids and P01.S06 built a door to prevent. It arrives with the tree.
+
+**One question is deliberately NOT firmed into a slice: where `5 t1` belongs.** P03.S01 refused to
+write `pdfuaid:part` because it was a conformance assertion over untagged content. A tagged document
+makes it *possible* to be true — but not automatically true, since the document must actually
+conform for the assertion to be honest, and the thing that can say so is **P07's checker**. Firming
+a P05 slice for it would be deciding that question by scheduling. Recorded here; taken when P07's
+exit criteria are firmed, or earlier if the tree turns out to carry the whole answer.
+
+**Firmed slices:**
+
+#### P05.S01 — the content-stream walker
+Scope: tokenize a decoded content stream into operand/operator steps and write it back. The surface
+`PLAN-text-reflow.md`'s P05 extends. Refs D3, and that plan's P05 note.
+Acceptance:
+- **Law 1: an unedited page round-trips BYTE-IDENTICALLY** across the corpus — not
+  semantically-equivalently. A walker that re-emits `1.0` as `1` has already lost the argument for
+  every later slice, because nothing downstream can then tell its own change from the walker's.
+- Inline images (`BI … ID <binary> EI`), string and hex literals containing operator-looking bytes,
+  dictionaries, and nested marked content all survive. Each is a fixture, not a claim.
+- The cost of a walk is **measured on a real page**, not estimated.
+
+#### P05.S02 — the structure tree as a typed model, read
+Scope: parse an existing `/StructTreeRoot` into Go — elements, `/K` children, `/S`, `/Pg`,
+`/ParentTree` — with the LibreOffice corpus fixture (45 elements, 4 pages) as the reference. Refs D8.
+Acceptance:
+- Parsing and re-serialising an untouched tree produces a document `inspectTags` reports identically
+  — same element count, same anchored count, same `undescribed`.
+- A tree nib cannot represent is **refused rather than partially parsed**: a model that silently
+  drops what it did not understand is how a lossless round-trip becomes a lossy one.
+- The corpus is driven, not one fixture.
+
+#### P05.S03 — `/ParentTree`, `/StructParents` and MCIDs as model invariants
+Scope: the write half, with the three things every caller currently has to remember maintained by
+the model instead. Refs D8, D9.
+Acceptance:
+- Adding, removing and re-parenting an element leaves `/ParentTree` and every page's
+  `/StructParents` consistent, checked by reading them back rather than by construction.
+- The page-subset remap D9 left unmeasured is either built here or **named as still unmeasured** —
+  it is the one thing in this phase the plan has never run.
+- `TestEveryDeclaredFateIsTheMEASUREDFate` is re-run: an operation whose verdict this makes
+  achievable is re-declared, or stays `dropped` with the reason.
+
+#### P05.S04 — the wrapping emitter
+Scope: bracket page content in `BDC`/`EMC` with MCIDs the model knows about. The first place nib
+emits content-stream operators of its own. Refs D3.
+Acceptance:
+- **Wrapping does not disturb the wrapped content's bytes** — asserted as a byte comparison of the
+  span between the inserted operators, which is the phase's own exit criterion.
+- The MCIDs the emitter writes are the ones the model's `/ParentTree` points at, read back.
+- A page that is already marked content is not double-wrapped.
+
+#### P05.S05 — `/MarkInfo`, and a document that is honestly tagged
+Scope: the clause P03 deferred here by name, plus the end-to-end proof. Refs exit criterion 2,
+ADR-031 law 1.
+Acceptance:
+- A nib-authored document gains `/MarkInfo /Marked true` **and** a `/StructTreeRoot` the emitter
+  populated, in one operation — never the first without the second.
+- `inspectTags` reports it un-orphaned, and `tagState.orphaned()` goes red if the two are split.
+- Measured on the ua1 oracle: **6.2 t1, 7.1 t3 and 7.1 t11 clear together**, and the delta table
+  shrinks rather than gaining a row.
+
 ### P06 — Tagging what nib authors
 **Goal.** Exact structure first (D4): `mdpdf` from its AST, then authored form fields with `/TU`
 names and `/Tabs`, then OCR from tesseract's block/paragraph/line refs recovered across the wire.
