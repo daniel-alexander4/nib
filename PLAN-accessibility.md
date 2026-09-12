@@ -841,7 +841,7 @@ cycle reads as 1344 different places. `/pending 470` closed, overturned.**)**
 SC 1.4.11 and the 200%-zoom reflow assertion are **not** dropped — they are unmeasured here and stay
 sketched rather than being firmed on numbers nobody has taken.
 
-### P03 — The catalog floor
+### P03 — The catalog floor *(done 2026-09-11, v1.129.37)*
 **Goal.** Clear the PDF/UA rules that need no structure at all, and fix the `/Lang` one-door
 defect.
 
@@ -881,6 +881,43 @@ state P01 exists to stop, and would be caught by P01's own guard. `/MarkInfo` th
   without it. Clears 7.2 t34.
 - The `ua1` oracle runs in tier 1 and its skip is recorded, never credited. **This criterion is
   `/pending 469`**, filed at P01's close before anyone noticed the plan already schedules it here.
+
+**Acceptance ledger — phase close, 2026-09-11 at v1.129.37.** Every clause split on `and`, asked
+separately.
+
+| # | clause | verdict |
+|---|---|---|
+| 1a | an XMP `/Metadata` stream | ✅ `TestSetTitleWritesTheWholeCatalogFloor`, read back through a validating re-read |
+| 1b | carrying `dc:title` | ✅ same, plus `TestSetTitleEscapesAHostileTitle` — the packet must PARSE, not merely contain a string |
+| 1c | `ViewerPreferences /DisplayDocTitle` | ✅ same; recorded as a red proof, because a title nothing displays passes every presence check |
+| 1d | **on authored output** | ✅ three receiving sites route through the door; three fragments named with measured reasons (`titledoor_test.go`) |
+| 1e | clearing ua1 7.1 t8 and 7.1 t10 | ✅ measured before/after on the same bytes. **7.1 t9 passes in the same step** — with no `/Metadata` there was no stream for it to inspect |
+| 1f | measured rather than asserted | ✅ the table in S01, and now `TestNoOperationAddsAUA1ClauseItsInputDidNotFail` re-measures it every run |
+| 2a | `/Lang` present from every authoring door | ❌ **NOT MET, and refuted as a goal.** Three of six doors have no language anyone determined, and inventing one is a false statement about the document. S02 carries the measurements |
+| 2b | enumerated from the code, not a hand-maintained list | ✅ `authoringscan_test.go`, shared with 1d's guard so the two cannot drift |
+| 2c | a guard that fails when a new door ships without it | ✅ **amended**: it demands a recorded ANSWER (`declares` / `carries` / `none` / `fragment`) rather than a write, and cross-checks the `declares` claim against the code. Proved by adding a door |
+| 2d | clears ua1 7.2 t34 | ❌ for markdown; **never fires** on raster output (no text in page content); cleared on the office path by a `/Lang` that was already there |
+| 3a | the ua1 oracle runs in tier 1 | ✅ 2.2 s for the whole census, one veraPDF invocation |
+| 3b | its skip is recorded, never credited | ✅ the skip names the criterion it leaves unchecked; probed by making `verapdfPath()` return `""` |
+
+**Criterion 2 was written on a premise measurement refuted, and the phase says so rather than
+scoring itself green.** *"`/Lang` present from every authoring door"* assumes a language is
+available to each door. It is not: the office path carries the **converting machine's locale**, the
+markdown path renders text nib was never told the language of, and raster output has no text at all.
+What the phase delivered instead is the enumeration and the recorded answer — which is what makes
+the gap actionable (`/pending 471`) rather than invisible.
+
+**Three defects were found and fixed that were on no slice's list**, each by a different mechanism:
+two of S01's titles were written onto fragments whose catalogs `Append` discards (found by S02's
+step zero); four page operations dropped the catalog `/Lang` while `carryLang` sat two functions
+away with two callers (found by S03's oracle on its first run, `/pending 472`); and all three
+receiving sites let a failed metadata write fail the whole operation, one of them as a **400**
+(found by this phase-close review, reading the diff).
+
+**Two gaps are filed where they can be acted on**: `/pending 471` (nobody tells nib what language a
+document is in) and `/pending 473` (every stamping operation emits an optional-content dictionary
+ua1 7.10 forbids by name). One is carried into P06: nib's English prose stapled into a document
+whose `/Lang` says otherwise, which no catalog key can fix.
 
 **Firmed slices:**
 
