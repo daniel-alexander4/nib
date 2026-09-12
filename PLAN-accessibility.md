@@ -619,13 +619,42 @@ placed note focuses its own `textarea`, where the arrow keys belong to the caret
 border box, which carries no text field, and the note's behaviour is pinned as its own rule so the
 reasoning cannot go stale in silence.
 
-#### P02.S02 — armed state is programmatic, not colour alone
-Scope: the 27 `classList.toggle('active')` sites that signal an armed tool gain `aria-pressed`, and
-the panel accordion cards gain `aria-expanded`. A guard asserts the ratio cannot regress — the
-measurement above is why it is a ratio and not a list. Refs: D11, exit criterion 2.
+#### P02.S02 — armed state is programmatic, not colour alone *(done 2026-09-11, v1.129.23)*
+Scope: every site that signals an armed or selected control exposes that state programmatically, not
+by colour alone. Refs: D11, exit criterion 2, WCAG SC 1.4.1 and SC 4.1.2.
+
+**(grill, 2026-09-11 — confirmed, and the scope line was wrong in two directions.)**
+
+**"gain `aria-pressed`" is wrong for part of the population.** The 27 sites are not one kind of
+thing. `aria-pressed` belongs to a toggle button and `aria-selected` to something carrying a
+`tab`/`option`/`row` role — and `aria-selected` on a plain `<button>` is not a weaker statement but
+an **invalid** one, ignored by some readers and misreported by others. Measured: `.modetab` are
+plain `<button>` with no `role="tab"`, `.tbtab` is a container `<div>`, and the sidebar's `.sbtab`
+is a real tablist (`index.html:168`) already doing it correctly. So there are **three doors**, by
+vocabulary, not one.
+
+**"the panel accordion cards gain `aria-expanded`" is already shipped.** `openCard` sets it at
+`app.js:11941` and `:11947`, and the headers are created with it at `:11882`. What was missing is
+the `.sbhead[data-panel]` *panel* headers, which are a different path.
+
+**And the measurement under-counted, because it knew one spelling.** 27 sites use
+`classList.toggle('active', …)`; **nine more** use `classList.add('active')` / `.remove('active')`
+— the same state change written differently — and that is where the panel headers live. A census
+that reads one spelling has a hole the width of the others.
+
+Tasks:
+- T01 — three doors: `setArmed` (aria-pressed), `setSelected` (aria-selected), `setExpanded`
+  (aria-expanded).
+- T02 — route every control site through the door its vocabulary calls for.
+- T03 — the guard: enumerate all three spellings from the source; every site routes through a door
+  or is named, with a reason, as something that is not a control.
+
 Acceptance:
-- Every armed-tool toggle sets `aria-pressed` alongside its class, enumerated from the code.
+- Every armed-tool toggle exposes its state alongside its class, **enumerated from the code across
+  all three spellings**.
 - Adding a toggle without one turns the guard red, proved by adding one.
+- **`aria-selected` is used only where a tab role backs it**, asserted rather than assumed.
+- The exemption list names only sites that still exist.
 
 #### P02.S03 — the four buttons with no accessible name
 Scope: `themeToggle`, `updateGet`, `sessionNoticeAction`, `signAction`. **Four, not 21** — and a
