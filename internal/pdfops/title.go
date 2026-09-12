@@ -203,3 +203,33 @@ func TitleFromFilename(name string) string {
 	name = strings.TrimSuffix(name, filepath.Ext(name))
 	return strings.TrimSpace(name)
 }
+
+// TitleFromName is the door the receiving call sites use: it derives a title from a file name and
+// applies it, and **it never costs the caller the document**.
+//
+// The returned bytes are always usable — the titled document on success, the original on any
+// failure — so a caller writes `pdf, err = TitleFromName(pdf, name)` and uses `pdf` either way. The
+// error is there to be LOGGED, not to be returned to a user.
+//
+// **This exists because the first version let a metadata write fail the whole operation, at all
+// three sites.** `handleOffice` converted a Word document, titled it, and on a title failure
+// answered **400 with the error text** — a server-side metadata write reported as the client's bad
+// request, discarding a conversion that had succeeded. `handleAssemble` turned it into a 500 and
+// `cmdOffice` into a non-zero exit. The repo already had the rule and it was written eight lines
+// from a working example: `internal/server/ocr.go`'s `SetLang` call says *"Best-effort: a failure
+// here must not fail the OCR itself."*
+//
+// One door rather than three copies of that judgment (ADR-009) — and the routing guard in
+// `titledoor_test.go` accepts either this or `SetTitle`, because a site that calls `SetTitle`
+// directly has made the same decision explicitly.
+func TitleFromName(pdf []byte, name string) ([]byte, error) {
+	title := TitleFromFilename(name)
+	if title == "" {
+		return pdf, nil
+	}
+	out, err := SetTitle(pdf, title)
+	if err != nil {
+		return pdf, fmt.Errorf("pdfops: could not title %q: %w", title, err)
+	}
+	return out, nil
+}

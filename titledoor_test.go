@@ -59,18 +59,21 @@ func TestEveryAuthoredDocumentGetsATitle(t *testing.T) {
 	hit := map[string]bool{}
 	var bad []string
 	for _, s := range sites {
-		if s.calls["SetTitle"] {
+		// Either door counts. `TitleFromName` is the ordinary one — it derives the title from a
+		// file name and guarantees a failed metadata write never costs the caller the document —
+		// and `SetTitle` is the site that already knows its title and has made that call itself.
+		if s.calls["TitleFromName"] || s.calls["SetTitle"] {
 			continue
 		}
 		if _, ok := exempt[s.key]; ok {
 			hit[s.key] = true
 			continue
 		}
-		bad = append(bad, fmt.Sprintf("%s calls %s and never reaches pdfops.SetTitle", s.pos, s.ctor))
+		bad = append(bad, fmt.Sprintf("%s calls %s and never reaches pdfops.TitleFromName or pdfops.SetTitle", s.pos, s.ctor))
 	}
 	sort.Strings(bad)
 	for _, b := range bad {
-		t.Errorf("authored document with no title: %s\n\tEither route it through pdfops.SetTitle "+
+		t.Errorf("authored document with no title: %s\n\tEither route it through pdfops.TitleFromName (never costs the caller the document) or pdfops.SetTitle "+
 			"with a title the caller knows, or add a row to `exempt` in this file naming the "+
 			"reason it is a fragment rather than a document.", b)
 	}

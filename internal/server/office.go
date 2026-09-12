@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -44,10 +45,11 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err == nil {
 		// The converted document's title is the source document's name — the one thing here that
-		// identifies it, and what the user already calls it. A name that derives to nothing gets
-		// no title rather than a made-up one; see pdfops.TitleFromFilename.
-		if t := pdfops.TitleFromFilename(header.Filename); t != "" {
-			pdf, err = pdfops.SetTitle(pdf, t)
+		// identifies it, and what the user already calls it. Best-effort, and the door guarantees
+		// it: a failed metadata write must not turn a conversion that succeeded into a 400.
+		var terr error
+		if pdf, terr = pdfops.TitleFromName(pdf, header.Filename); terr != nil {
+			log.Printf("office: %v", terr)
 		}
 	}
 	if err != nil {

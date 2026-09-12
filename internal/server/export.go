@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"log"
 	"net/http"
 	"nib/internal/atomicfile"
 	"os"
@@ -186,7 +187,7 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	// reused is the resolved document as a commit target, because it can be closed while the body
 	// is read. A title is a label on bytes this handler is building and nothing downstream depends
 	// on its freshness.
-	srcTitle := pdfops.TitleFromFilename(src.displayName())
+	srcName := src.displayName()
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -245,8 +246,12 @@ func (s *Server) handleAssemble(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pdf, err := pdfops.ImagesToPDF(pages)
-	if err == nil && srcTitle != "" {
-		pdf, err = pdfops.SetTitle(pdf, srcTitle)
+	if err == nil {
+		// Best-effort: the pages assembled, and a metadata write must not throw that away.
+		var terr error
+		if pdf, terr = pdfops.TitleFromName(pdf, srcName); terr != nil {
+			log.Printf("assemble: %v", terr)
+		}
 	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not assemble PDF")
