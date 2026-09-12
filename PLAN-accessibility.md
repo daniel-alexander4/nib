@@ -132,55 +132,72 @@ mutates it, and writes it back, with `/ParentTree`, `/StructParents` and MCIDs m
 invariants of the model rather than by each caller. Every operation in law 2 that reports `carried`
 routes through this one model.
 
-### D9 — The page-subset remap is a measured prerequisite, not an assumption ~~*(open — first task of P01)*~~ *(SUPERSEDED IN PLACE 2026-09-11 by P01.S02's measurement — the question does not arise)*
+### D9 — The page-subset remap is a measured prerequisite, not an assumption *(settled 2026-09-11 by P01.S02's SECOND measurement; the first is struck below and kept)*
+
+**Read the correction before the decision.** This section has been wrong twice and both are recorded,
+because the second error was made *while correcting the first* and that is the more useful lesson.
+
 ~~`Collect`, `RemovePages` and `SplitBySpans` drop the tree today. Carrying it means remapping
 `/ParentTree` and `/StructParents` for a kept subset and pruning orphaned elements. The grill
 measured **preservation in place** and explicitly did **not** measure a remap. P01.S02 measures it
-before anything is planned on top of it; if it proves impractical against pdfcpu v0.13.0, those
-operations fall back to `dropped-with-notice` under law 2 and this decision is superseded in place.~~
-
-**(CORRECTED 2026-09-11, hours after it was written. The supersession below was WRONG and is struck;
-D9 is REOPENED.)** The measurement it rests on used `bytes.Count(pdf, []byte("/StructElem"))`, and
-pdfcpu writes the structure tree into a **compressed object stream** — so that count is `0` for every
-pdfcpu output whatever it contains. Parsed instead, on the same LibreOffice document: a no-op write
-keeps all **14** elements, `Rotate` keeps 14, `Optimize` keeps 14, and `NUp`/`Collect` drop the claim
-and the content together. **The write path carries a tree.** `/pending 29`'s reason 1 stands as
-originally measured in 2026-06-23, and **D9's question — can `/ParentTree` be remapped for a kept
-page subset — is open again and unanswered.** P01.S02 must be re-run with a parsing oracle.
+before anything is planned on top of it.~~
 
 ~~**The answer, and it is one level below the question D9 asks.** There is no subset to remap, because
-**the write path carries no struct element at all.**~~ Measured 2026-09-11 on a real LibreOffice-
-produced tagged PDF (five headings/paragraphs/list items, **14 `/StructElem`**), against pdfcpu
-v0.13.0:
+**the write path carries no struct element at all.** A no-op `writeMutated` loses every
+`/StructElem`; `Rotate` keeps the claim over zero elements and is a live law-1 violation; every
+`writeMutated` caller is a candidate. P05's tag-tree core cannot be built until the write path
+carries a tree.~~
 
-| operation | `/StructTreeRoot` | `/Marked` | `/StructElem` | `/StructParents` |
-|---|---|---|---|---|
-| **source** | 2 | 1 | **14** | 1 |
-| **no-op `writeMutated`** (read → validate → optimize → write, changing nothing) | 1 | 1 | **0** | 0 |
-| `Collect(1)` — i.e. `nib pages` | 0 | 0 | 0 | 0 |
-| `Rotate(90)` | 1 | 1 | **0** | 0 |
-| `NUp(2)` after P01.S01 | 0 | 0 | 0 | 0 |
+**(STRUCK 2026-09-11. Every figure above came from `bytes.Count(pdf, []byte("/StructElem"))`, and
+pdfcpu writes the structure tree into a compressed object stream — so that count is `0` for every
+pdfcpu output whatever it contains. The write path carries trees perfectly well. The enforcement
+built on this reading stripped trees that had survived; see ADR-031.)**
 
-**The no-op row is the finding.** Remapping `/ParentTree` for a kept subset presupposes that the
-elements survive the write; they do not survive it even when nothing is asked of them. The read half
-is sound — `api.Validate` reports the fixture clean and the catalog still holds `/K` and a
-`/ParentTree` after `ReadValidateAndOptimize` — so this is `WriteContext` not serialising the objects
-the tree points at.
+**The measurement, parsed.** A LibreOffice-produced tagged PDF — 4 pages, `/MarkInfo /Marked true`,
+**45 `/StructElem`**, every page carrying `/StructParents` — through pdfcpu v0.13.0. *Anchored*
+counts elements whose `/Pg` is a page still in the page tree; *undescribed* counts pages that have a
+content stream and no `/StructParents`:
 
-**Two consequences that re-scope this phase.**
+| operation | claim | elements | anchored | undescribed | fate |
+|---|---|---|---|---|---|
+| **source** | yes | 45 | 45 | 0 | — |
+| no-op `writeMutated` | yes | 45 | 45 | 0 | **carried** |
+| `Rotate`, `Optimize`, `SetLang`, every stamp and strip (19 in all) | yes | 45 | 45 | 0 | **carried** |
+| `Collect`, `RemovePages`, `Crop`, `SplitPage`, `DuplicatePage`, `InsertPDF`, `Booklet` | no | 0 | — | — | **dropped**, honestly |
+| `Append(tagged, untagged)` | yes | 45 | 45 | **1** | **partial** |
+| `NUp(2)` | yes | 45 | **0** | 2 | **ORPHANED — law 1's violation** |
 
-1. **`Collect`, `RemovePages` and `SplitBySpans` fall back to `dropped-with-notice` under law 2**,
-   which is the outcome this decision named for the impractical case — but for a stronger reason than
-   it anticipated. `Collect` already drops the claim honestly today (row 3 above), so it is already
-   compliant with law 1 and needs only its verdict recorded.
-2. **`Rotate` is a live law-1 violation and was not on any slice's list.** Row 4: it keeps
-   `/MarkInfo /Marked true` and a `/StructTreeRoot` over **zero** struct elements — the same lie
-   P01.S01 fixed in `nup`, still shipping. Found by this measurement, not by the plan. It is P01.S03's
-   guard that must enumerate it rather than a one-off patch, because the same probe implies every
-   `writeMutated` caller is a candidate and a hand-written list would miss the next one.
+**Three findings, in order of how much they cost.**
 
-**And the prerequisite this plan does not have a slice for:** P05's tag-tree core cannot be built
-until the write path carries a tree. See `/pending 467`.
+1. **19 of the 33 operations carry the tree**, and every one of them was declared `dropped`. The
+   write path is sound; `/pending 29`'s reason 1 stands as originally measured on 2026-06-23.
+
+2. **`NUp` is a genuine, shipped law-1 violation and it was invisible to the corrected oracle too.**
+   The replacement predicate was *"claims tagging and has zero struct elements"*, and `NUp` emits
+   **45** — all pointing at page objects `api.NUp` left behind when it composed its sheets, with no
+   composed sheet carrying `/StructParents`. veraPDF ua1 agrees independently and in law 1's own
+   words: source and `Rotate` fail 5 t1 / 7.1 t9 / 7.1 t10 alike, while the n-up output adds
+   **7.1 t3, *"Content shall be marked as Artifact or tagged as real content"*, 24 failed checks.**
+   So P01.S01's heading was right and its evidence was wrong — an unusual combination, and the
+   reason the fix is reinstated rather than re-argued.
+
+3. **D9's actual question is answered for the operations that drop, and stays open for a remap.**
+   `Collect`, `RemovePages` and `SplitBySpans` drop claim and content together, which is law 1
+   satisfied honestly and needs no notice mechanism to be compliant. Whether `/ParentTree` +
+   `/StructParents` *could* be remapped to carry a kept subset is still unmeasured and still worth
+   measuring — it is now an improvement rather than a prerequisite, and it is P03's.
+
+**Why `partial` is recorded and not enforced.** `Append` keeps a live 45-element tree and leaves one
+appended page undescribed. Stripping the claim would destroy the whole tree to fix one page, and
+`p2p/readme.go` and `p2p/sigpages.go` take this path for **every ceremony document** — so the cure is
+worse than the disease at the only scale that matters. It is a declared verdict in the tag-fate
+table, and whether law 1 should be superseded to permit it is parked for Dan.
+
+**Measured, because a remedy is a claim too:** stripping the n-up output's claim does **not** remove
+7.1 t3 (the content is untagged either way) and adds 6.2 t1 and 7.1 t11, since PDF/UA requires a
+structure tree. A veraPDF failure *count* therefore scores honesty as a regression — which is why
+P01.S01's acceptance is a structural property and not a clause count, and that strike stands.
+
 
 ### D10 — The editing surface lives in the Document tab *(settled 2026-09-06 via /grill)*
 Per ADR-016, a mode is a kind of thing you do to the document. A tag tree changes the document
@@ -214,113 +231,136 @@ independently worth shipping even if the plan went no further.
   one has none.
 - The tag-fate table and its law ship as an ADR.
 
-#### P01.S01 — `nup` stops lying *(done 2026-09-11, v1.129.9)*
+#### P01.S01 — `nup` stops lying *(done 2026-09-11, v1.129.16 — shipped at v1.129.9 on a wrong measurement, reverted at v1.129.15, REINSTATED on the right one)*
 Scope: `nup` either drops `/StructTreeRoot` and `/MarkInfo` with the content it voids, or tags its
 composed page; it may not keep the claim. Refs: law 1, D2.
 Acceptance:
 - ~~A tagged input through `nup` produces no veraPDF failure the input did not already have.~~
-  **(struck 2026-09-11 — REFUTED BY MEASUREMENT, and only the option this slice defers could have
-  met it.)** Dropping the claim is what law 1 demands and it necessarily ADDS ua1 failures, because
-  PDF/UA requires a structure tree: an untagged file fails 6.2 t1 and 7.1 t11 by construction.
-  Measured on the slice's fixture — input fails {7.1 t8, 7.1 t10, 7.21.4.1 t1}; n-upped before the
-  fix fails those **plus 7.1 t3**; n-upped after the fix fails those plus 7.1 t3, 6.2 t1 and
-  7.1 t11. A ua1 failure COUNT scores honesty as a regression, so it cannot express law 1.
-- **Replacing it:** the output carries no `/MarkInfo /Marked true`, no `/StructTreeRoot` and no
-  `/StructParents` — law 1 as a structural property of the output, which is what it actually says.
-- The output carries no struct element whose `/Pg` points at a page that is not in the document.
-- A red proof: reinstating the claim without the content turns the guard red.
+  **(struck 2026-09-11 — only the option this slice defers could have met it, and the strike stands
+  after the re-measurement.)** Dropping the claim is what law 1 demands and it necessarily ADDS ua1
+  failures, because PDF/UA requires a structure tree. Re-measured on the LibreOffice document:
+  stripping the n-up output's claim does not remove 7.1 t3 and adds 6.2 t1 and 7.1 t11. A ua1
+  failure COUNT scores honesty as a regression, so it cannot express law 1.
+- ✅ **Replacing it:** the output carries no `/MarkInfo /Marked true` and no `/StructTreeRoot` —
+  law 1 as a structural property of the output, which is what it actually says.
+- ✅ The output carries no struct element whose `/Pg` points at a page that is not in the document.
+  This is now `tagState.anchored`, and it is the clause that survived both measurements intact.
+- ✅ A red proof: `TestNUpDoesNotClaimTaggingItHasNot` goes red against `return out.Bytes(), nil`,
+  which is the shipped v1.129.4 behaviour verbatim.
 
-**(pin, 2026-09-11 — the slice shipped and its FOUNDING PREMISE did not survive contact.)**
-`/pending 29`'s reason 1 says pdfcpu *"round-trips a hand-built `/StructTreeRoot`+`/MarkInfo`+
-`/ParentTree` and BDC/EMC marked content **intact** through `ReadValidateAndOptimize→WriteContext`"*,
-measured 2026-06-23, and the entry itself asks for it to be re-confirmed before anything is built on
-it. **It does not hold on pdfcpu v0.13.0 today.** A NO-OP `writeMutated` — read, validate, optimize,
-write, changing nothing — loses every `/StructElem` and every `/StructParents` while keeping
-`/StructTreeRoot` and `/MarkInfo`. The read half is fine: `api.Validate` reports the fixture clean
-and the catalog still holds `/K [8 0 R]` and a `/ParentTree` after the read. It is `WriteContext`
-that does not serialise the objects the tree points at.
+**(pin, 2026-09-11 — this slice was right, then withdrawn as wrong, then reinstated. All three states
+are recorded because the middle one is the instructive part.)**
 
-**Two consequences, and neither is this slice's to fix.** `nup` was never the destroyer — on this
-evidence *every* operation routed through `writeMutated` voids structure while keeping the claim, so
-P01.S03/S04's scope is much wider than "the operations S02 found practical". And **P05's tag-tree
-core cannot be built until the write path carries a tree**, which is a prerequisite this plan does
-not currently have a slice for. Filed as `/pending 467` with the measurement.
+The founding premise was `/pending 29`'s reason 1 — that pdfcpu round-trips a tagged document intact
+— and the slice reported it REFUTED on the strength of `bytes.Count(pdf, []byte("/StructElem"))`.
+pdfcpu writes the tree into a compressed object stream, so that count is `0` for every pdfcpu output.
+**Reason 1 was never refuted; it stands as measured on 2026-06-23.** The whole slice was reverted at
+v1.129.15 along with the enforcement, which had been stripping trees that survived.
 
-#### P01.S02 — measure the page-subset remap *(REOPENED 2026-09-11 — its measurement was made with a byte count that cannot see a compressed object stream; see D9)*
+**But `nup` was lying, and it still is at the released v1.129.4.** Parsed: the n-up output keeps
+`/Marked true` and a 45-element `/StructTreeRoot` whose every element points at a page object that is
+no longer in the page tree, with no composed sheet carrying `/StructParents`. veraPDF ua1 scores it
+7.1 t3 — *"Content shall be marked as Artifact or tagged as real content"* — with 24 failed checks,
+against an input that passes that clause. Three oracles, two of them independent of this repo.
+
+**What changed in the fix, and it is the whole difference between v1.129.9 and v1.129.16:** the drop
+is a POST-CONDITION (`honest`), asked of the output and acted on only when the tree anchors to
+nothing. v1.129.9 stripped unconditionally. `TestHonestLeavesACarriedTreeALONE` is the guard for
+that distinction and goes red — byte-for-byte, on `Rotate` and `Optimize` output — against an
+unconditional strip.
+
+
+#### P01.S02 — measure the page-subset remap *(done 2026-09-11, v1.129.16 — re-run with a parsing oracle after the first run's was refuted)*
 Scope: probe whether `/ParentTree` + `/StructParents` can be correctly remapped for a kept page
 subset against pdfcpu v0.13.0. Outcome, not code, is the deliverable; it settles D9. Refs: D9.
 Acceptance:
-- ✅ A recorded measurement, not an argument, for `Collect`, `RemovePages` and `SplitBySpans`.
-  **Widened**: the table under D9 covers `Collect`, `Rotate`, `NUp` and — the row that decides it —
-  a **no-op** `writeMutated`. `RemovePages` and `SplitBySpans` are `writeMutated`/`api` callers on the
-  same write path and are covered by that row; measuring each separately would have re-measured the
-  same write, which is the trap D9's own "preservation in place, not a remap" warning describes.
-- ✅ D9 is superseded in place with the answer, and P01.S04's scope is set by it: the three
-  operations become `dropped-with-notice`, and the guard must ENUMERATE rather than list.
-- **The fixture is a real LibreOffice-produced tagged PDF, not a hand-built one**, and that was the
-  point of running it: the hand-built fixture used at P01.S01 could not distinguish "pdfcpu drops
-  trees" from "my fixture is malformed". 14 struct elements from a producer settles it.
+- ✅ A recorded measurement, not an argument. **31 operations driven against a producer-made tagged
+  document and against the committed fixture, and the two agree operation for operation.** The table
+  is at D9.
+- ✅ D9 is settled with the answer, and it is the opposite of the first run's: the write path
+  carries trees, 19 operations preserve them, and the page-set operations drop claim and content
+  together — law 1 satisfied honestly, needing no notice to be compliant.
+- ✅ **The fixture is a real LibreOffice-produced tagged PDF**, and that was the point of running it.
+  45 struct elements from a producer.
+- ✅ **A remap is no longer a prerequisite.** It would be an improvement — carrying a tree across a
+  kept subset rather than dropping it — and it moves to P03 as such.
 
-#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.15 — the CENSUS stands; its verdicts were re-derived after the byte-count correction)*
+**(pin, 2026-09-11 — this slice was marked done, reopened the same day, and closed again. The reopen
+is why the answer is trustworthy.)** The first run used `bytes.Count(pdf, []byte("/StructElem"))`
+and concluded the write path carries nothing. **The discriminator this slice's own item demanded —
+a known-good producer-made document — WAS run, and read with the same broken instrument, so it
+confirmed the error.** A discriminator is only as good as the instrument reading it. The second run
+parses, and is corroborated by veraPDF, which is outside this repo entirely.
+
+
+#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.16 — the CENSUS stood throughout; its 33 VERDICTS were wrong and are now measured)*
 Scope: every document-touching operation declares `carried` / `refused` / `dropped-with-notice` in
 one table; a table-driven tier-1 guard over a tagged fixture asserts each verdict and fails when an
 operation has no entry. Refs: law 2, D12.
 Acceptance:
 - ✅ The guard enumerates operations from the code, not from a hand-written list. `go/ast` over
-  every exported function in `internal/pdfops` whose first parameter is `pdf []byte` and whose first
-  result is `[]byte` — **33 operations**, with a floor so an enumeration that stopped matching fails
-  loudly instead of passing empty.
-- ✅ Adding an operation with no verdict turns it red, **proved by adding one** (a `Flatten` stub;
-  red, then removed). Three more mutations red: the write door and `honest()` each ceasing to
-  enforce law 1, and a table row for an operation that does not exist.
+  every exported function in `internal/pdfops` whose first parameter is a `[]byte` and whose first
+  result is `[]byte` — **34 operations**, with a floor so an enumeration that stopped matching fails
+  loudly instead of passing empty. Matching on the SHAPE rather than the parameter NAME is what
+  found `RedactPages` and four others.
+- ✅ Adding an operation with no verdict turns it red, **proved by adding one** (`StampImages`,
+  genuinely missed; red, then driven).
+- ✅ **Every declared verdict is the MEASURED verdict**, asserted per operation —
+  `TestEveryDeclaredFateIsTheMEASUREDFate`, 29 of 34 driven with zero skips. Probed red against the
+  two verdicts history actually got wrong: `Rotate` as `dropped` and `Append` as `dropped`.
 - ✅ The fixture corpus lands under D12's corpus — `internal/pdfops/corpus_test.go`, shared by every
   tag guard, rather than inline in one test. **Generated rather than committed**, for the reason
   this package's own fixture file already gives: *"a checked-in binary fixture is opaque in review"*.
-  The producer-made LibreOffice document that P01.S02 needed is a recipe at D9, deliberately not a
-  28 KB blob.
 
-**The verdict vocabulary is one word different from the scope line, and the difference is measured.**
-`carried` / `refused` / `dropped-with-notice` became **`dropped` / `carried` / `untouched`**: nothing
-can be `carried` today (D9), no operation `refuses` a tagged input, and `untouched` is the honest
-verdict for the five operations that return a report or a ZIP rather than a document — a distinction
-the original three words could not make. **There is deliberately no verdict for "keeps the claim
-without the content"**: law 1 forbids that state, so it is not a fate an operation may declare, it is
-a failure.
+**The verdict vocabulary, and it took three attempts to get the words right.** The scope line said
+`carried` / `refused` / `dropped-with-notice`. The first build shipped `dropped` / `carried` /
+`untouched` and declared **`dropped` for all 33**, on a byte count. The vocabulary is now
+**`carried` / `dropped` / `partial` / `untouched`**, and `partial` is the word that was missing:
+a live tree that does not reach every page with content. `refused` never appeared because no
+operation refuses a tagged input.
 
-**(pin, 2026-09-11 — this slice absorbed P01.S04, because the guard could not ship red.)**
-The guard found **eight operations lying** on its first run — `Rotate`, `Optimize`, `SetLang`,
-`StripMetadata`, `StripActive`, `RemoveFilesAndMedia`, `InsertBlank`, `NormalizePageSizes` — and
-eight more with no verdict at all: `Append`, `InsertPDF`, `FillFormJSON`, `FillFormXFDF`, `SetFlags`,
-`StampFields`, `ExtractImagesZip`, `PreparePDFA`. Shipping a red guard is not shipping a guard, and
-the fix was S04's. Merging them is a granularity call, which `~/.claude/ASK.md` settles at rung 1.
+**`orphaned` is still not a verdict an operation may declare** — it is law 1's violation, and the
+guard fails it rather than recording it. That much of the original reasoning was right.
 
-**The fix is a LAW at two doors, not eight patches.** `writeMutated` and `honest()` each check law 1
-as a **post-condition** — *did this write destroy the structure while leaving the claim* — and drop
-the claim when it did. Four of the eight were fixed by the write door alone; measurement then named
-the other four as direct `api.*` callers, which is how the second door was found rather than guessed.
-Because it is a post-condition, it becomes a no-op by itself the day the write path carries a tree
-(P05's prerequisite, `/pending 467`) — there is no line to remember to delete.
+**(pin, 2026-09-11 — the census was sound and every verdict in it was false, which is a failure mode
+worth naming.)** The table shipped as 33 rows of `dropped`, derived from a byte count that cannot see
+a compressed object stream. **19 of them carry the tree intact.** Nothing caught it because the guard
+only ever asked *"does this output lie?"* under the weakest available definition of lying — it never
+compared a DECLARATION to a document. A census that cannot be wrong is not a census, and the
+correctness half (`TestEveryDeclaredFateIsTheMEASUREDFate`) is the missing assertion.
 
-#### P01.S04 — carry the tree where it can be carried *(done 2026-09-11, v1.129.14)*
+**And the weak definition hid the one real violation.** *"Claims tagging and has zero struct
+elements"* cannot see `NUp`, which emits 45 elements pointing at pages that are gone. The predicate
+written to enforce law 1 was blind to the only operation in the package that breaks it.
 
-**(pin, 2026-09-11 — marked `done` for twenty minutes and taken back, which is recorded rather than
-tidied away.)** S03's fix covers this slice's *carrying* half completely: D9 measured that nothing
-can be carried, so every operation is `dropped` and S03's guard asserts it over all 33. The marker
-went on for that reason and was **wrong**, because this slice's acceptance has three clauses and only
-one of them is about carrying. Caught by walking the acceptance ledger clause by clause instead of
-crediting the slice against its scope line — which is exactly the failure the ledger rule exists to
-prevent. What remains is below.
+
+#### P01.S04 — carry the tree where it can be carried *(done 2026-09-11, v1.129.16)*
+
+**(pin, 2026-09-11 — marked `done` on a premise that was the exact inverse of the truth.)** The
+marker first went on because *"D9 measured that nothing can be carried, so every operation is
+`dropped`"*. **19 operations carry the tree**, so this slice's carrying half was not vacuous — it
+was already satisfied, by pdfcpu, and the plan had no idea. The clause below that was struck for
+being impossible turns out to describe a live defect. Both are corrected in place.
 
 Scope: implement carrying for the operations S02 found practical; the rest become
 `dropped-with-notice` with a user-visible sentence. Includes `merge`'s argument-order defect —
 tagging survives only when the tagged file is first. Refs: D8, D9, law 2.
 Acceptance:
-- ~~`merge` preserves tagging in both argument orders, asserted per order.~~ **Overtaken by D9 and
-  replaced**: nothing preserves tagging in any order, so the defect this names — *"tagging survives
-  only when the tagged file is first"* — cannot exist. What survives is the honesty question, and it
-  is ✅ discharged: `Append` is driven in **both** argument orders and neither lies. It was a LIVE
-  defect when driven — `api.MergeRaw` takes the first document's catalog whole, so tagged-first
-  emitted a claim over a result whose struct elements were gone, and tagged-second did not.
+- ✅ `merge` is asserted per argument order, and **the defect this clause names is REAL** —
+  `api.MergeRaw` takes the first document's catalog whole, so tagged-first keeps the claim and the
+  whole 45-element tree, and tagged-second drops both.
+  ~~**Overtaken by D9: nothing preserves tagging in any order, so this defect cannot exist.**~~
+  **(struck 2026-09-11 — that reading came from a byte count. The clause was right; it was struck
+  on evidence that could not see a compressed object stream.)** What is asserted is the measured
+  fate per order: tagged-first is `partial`, tagged-second is `dropped`, and **neither is
+  `orphaned`**. Preservation in both orders is not achievable through `MergeRaw` and is not this
+  slice's to build; the honesty property is, and it holds.
+- ✅ **`partial` is a recorded verdict rather than an enforced one, and that is a decision.**
+  `Append(tagged, untagged)` leaves one appended page undescribed under a live tree. Stripping would
+  destroy 45 good elements to fix one page, and `p2p/readme.go` and `p2p/sigpages.go` take this path
+  for **every ceremony document**. Parked for Dan: whether law 1 should be superseded to permit a
+  `/StructTreeRoot` over a partially-described document, or whether P05 should artifact the appended
+  pages instead.
 - ✅ **Every `dropped-with-notice` operation actually emits its notice, asserted at the door.**
   Dan chose **a persistent banner modelled on `#fitNotice`**, 2026-09-11, over a toast — on the
   repo's own recorded reasoning about what a self-clearing toast can carry (`index.html:72`:

@@ -8,171 +8,243 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// Tag fate — `PLAN-accessibility.md` P01.S01, and `/pending 29`'s floor.
+// Tag fate — `PLAN-accessibility.md` P01, ADR-031, and `/pending 29`'s floor.
 //
 // # The law this file exists to keep
 //
-// **Nothing claims tagging it does not have.** No output may carry `/MarkInfo /Marked true`, a
+// **Nothing claims tagging it has not.** No output may carry `/MarkInfo /Marked true`, a
 // `/StructTreeRoot`, or a conformance assertion over content that is neither tagged nor marked as
 // an artifact. *A visible loss is honest; a false claim is not, and it is worse than no tagging at
 // all because it defeats the reader's own check* — a screen reader that is told a document is
 // tagged stops looking for the fallbacks it would otherwise use.
 //
-// # What was measured, because this was not a hypothesis — and the cause is not what it looks like
+// # This file has been wrong once, expensively, and the record of that is kept here
 //
-// A hand-built tagged PDF — `/MarkInfo /Marked true`, a `/StructTreeRoot` with one `/StructElem`,
-// one `/P <</MCID 0>> BDC … EMC` run, and `/StructParents 0` on the page — through `NUp(2)` on
-// pdfcpu v0.13.0 comes out with:
+// The first version measured tagging with `bytes.Count(pdf, []byte("/StructElem"))`. **pdfcpu writes
+// the structure tree into a compressed object stream**, so that count is `0` for every pdfcpu output
+// whatever it contains — a perfectly tagged document and a stripped one are identical to it. On that
+// evidence eight operations were reported as lying, enforcement was written against all of them, and
+// it **stripped tag trees that had survived intact** (v1.129.9–.14, reverted at v1.129.15, never
+// released). Everything in this file now parses. Nothing in it counts bytes.
 //
-//	/StructTreeRoot  1     (kept)
-//	/MarkInfo        1     (kept)
-//	/Marked          1     (kept — still true)
-//	/StructElem      0     (GONE)
-//	/StructParents   0     (GONE)
+// # What is true, measured three ways because two of them have been wrong before
 //
-// So the composed document still *says* it is tagged while the tree it points at has no elements
-// and no page links back to it. veraPDF confirms it differentially: the input fails ua1 clauses
-// 7.1 t8, 7.1 t10 and 7.21.4.1 t1 (fixture limitations), and the n-upped output fails **those plus
-// 7.1 t3** — a failure the input did not have.
+// On a LibreOffice-produced tagged PDF — 4 pages, `/Marked true`, 45 `/StructElem`, every page
+// carrying `/StructParents` — against pdfcpu v0.13.0:
 //
-// **But `nup` is not what destroys it.** A NO-OP `writeMutated` — read, validate, optimize, write,
-// changing nothing — produces the same loss: `/StructElem 1 → 0`, `/StructParents 1 → 0`, while
-// `/StructTreeRoot` and `/MarkInfo` survive. The READ half is fine: after
-// `ReadValidateAndOptimize` the catalog still holds a complete `/StructTreeRoot` with
-// `/K [8 0 R]` and a `/ParentTree`, and `api.Validate` reports the fixture clean. It is
-// `WriteContext` that does not serialise the objects the tree points at, because nothing in its
-// traversal reaches them — leaving a `/StructTreeRoot` whose `/K` dangles.
+//	operation              claim  elements  anchored  undescribed pages
+//	Rotate / Optimize      yes    45        45        0            carried
+//	Collect / RemovePages  no     0         —         —            dropped, honestly
+//	Append(tagged first)   yes    45        45        1            PARTIAL
+//	NUp(2)                 yes    45        **0**     2            **ORPHANED — law 1's violation**
 //
-// That refutes `/pending 29`'s reason 1 (*"round-trips … intact through
-// ReadValidateAndOptimize→WriteContext"*, measured 2026-06-23) and is filed as its own item. It
-// also means this door is needed by far more than `nup`: on this evidence EVERY operation routed
-// through `writeMutated` voids structure while keeping the claim. This slice fixes the one
-// operation its plan scopes; the rest is `PLAN-accessibility.md` P01.S03/S04's, now with a measured
-// premise instead of an assumed one.
+// *Anchored* means the element's `/Pg` is a page still in the page tree. **`NUp` composes its
+// sheets as new page objects and carries the old tree onto them**: all 45 elements point at pages
+// that are no longer in the document, no composed page carries `/StructParents`, and the result
+// says `/Marked true`. Nothing in that output is described by the tree it advertises.
 //
-// # Why DROP rather than tag the composed page
+// veraPDF agrees independently and names the law in its own words. ua1 against the same documents:
+// the source and `Rotate`'s output fail the same three clauses (5 t1, 7.1 t9, 7.1 t10 — producer
+// limitations); the n-up output fails **7.1 t3, *"Content shall be marked as Artifact or tagged as
+// real content"*, with 24 failed checks** — a failure neither the input nor `Rotate` has.
 //
-// Tagging an n-up sheet means authoring structure for a page that did not exist a moment ago, and
-// that needs the tag-tree core this plan builds four phases later. D2 is explicit that preservation
-// precedes authoring — *"tagging authored on top of a pipeline that eats tagging produces documents
-// that are accessible until the user rotates a page"* — so the floor is honesty, not coverage.
+// # Why the remedy is a POST-CONDITION and not a strip
+//
+// Dropping the claim is right exactly where the tree describes nothing that exists, because there
+// is then nothing to preserve — and it is wrong everywhere else, which is what the reverted version
+// got wrong. So `honest` asks the output a question and acts only on the answer, and `orphaned` is
+// deliberately the most conservative form of that question it can be: it refuses to strip while
+// *either* linkage survives — an element anchored to a live page, or any page carrying
+// `/StructParents`.
+//
+// **Measured, so the remedy is not itself an untested claim:** stripping the n-up output's claim
+// does not remove 7.1 t3 (the content is untagged either way) and adds 6.2 t1 and 7.1 t11, because
+// PDF/UA requires a structure tree. A veraPDF failure *count* therefore scores honesty as a
+// regression, which is why P01.S01's acceptance is a structural property and not a clause count.
 //
 // # One door
 //
-// Every operation that voids structure calls this, rather than each deleting three keys correctly.
-// That is ADR-009's shape and law 2's: the guard checks the door, not the sites that happen to be
-// right today.
+// Every operation that needs this calls `honest`, rather than each deleting two keys correctly.
+// That is ADR-009's shape and law 2's. **The guard is stronger than the door**: the tag-fate table
+// measures every operation it can drive and fails on an orphaned output whether or not that
+// operation routes through here, so an operation that starts lying tomorrow goes red without
+// anyone having remembered to wire it up.
 //
-// **The law itself is ADR-031**, which carries the measurement, the eight operations the guard
-// found, and the argument for the check being a post-condition rather than an unconditional strip.
+// **The law itself is ADR-031.**
 
-// hasTaggingClaim reports whether a document asserts that it is tagged.
+// tagState is what a document says about being tagged, set beside what it actually carries.
 //
-// Used to keep `dropTaggingClaim` from rewriting a document that never claimed anything: a rewrite
-// is not free — it re-encodes, which moves bytes and invalidates a signature — so an untagged
-// document must come through untouched.
-func hasTaggingClaim(ctx *model.Context) bool {
-	root, err := ctx.XRefTable.Catalog()
-	if err != nil {
-		return false
-	}
-	if _, ok := root["StructTreeRoot"]; ok {
-		return true
-	}
-	if mi := root["MarkInfo"]; mi != nil {
-		if d, derr := ctx.DereferenceDict(mi); derr == nil && d != nil {
-			if b := d.BooleanEntry("Marked"); b != nil && *b {
-				return true
-			}
-		}
-	}
-	return false
+// The two are separate fields on purpose: law 1 is precisely the claim that the second does not
+// support the first, and a single boolean cannot express it.
+type tagState struct {
+	readable bool // false when the document cannot be parsed at all
+	marked   bool // /MarkInfo /Marked true
+	tree     bool // /StructTreeRoot present in the catalog
+	pages    int
+	pagesSP  int // pages carrying /StructParents
+	elements int // struct elements reachable from the tree root
+	anchored int // of those, the ones whose /Pg is a page still in the page tree
+	// undescribed counts pages that have a content stream and no /StructParents. A page with no
+	// content stream at all is NOT undescribed — an inserted blank page has nothing to tag, and
+	// counting it would make `InsertBlank` a violation for adding an empty page.
+	undescribed int
 }
 
-// structureCount reports whether a document claims tagging and how many struct elements it actually
-// carries — **by PARSING, never by counting bytes.**
+// claims reports whether the document asserts tagging at all — either assertion law 1 names.
+func (s tagState) claims() bool { return s.marked || s.tree }
+
+// orphaned is law 1's violation: the document claims tagging, and the tree it advertises describes
+// nothing that is in the document.
 //
-// # The error this replaces, recorded because it cost real data
-//
-// The first version of this used `bytes.Count(pdf, []byte("/StructElem"))`. pdfcpu writes the
-// structure tree into a **compressed object stream**, so that count is **0 for every pdfcpu output**
-// — a perfectly tagged document and a stripped one are indistinguishable to it. Everything built on
-// that measurement was wrong in the same direction: the predicate reported every tagged document as
-// lying, and the "fix" then stripped tag trees that had survived intact.
-//
-// Measured with the parse, on a LibreOffice document with 14 elements: a no-op write keeps **14**,
-// `Rotate` keeps **14**, `Optimize` keeps **14**. `NUp` and `Collect` drop the root and the elements
-// together, which is honest. **No operation was lying.**
-func structureCount(pdf []byte) (claimed bool, elements int) {
+// **Both linkages have to be gone.** A tree anchors to content two ways — an element's `/Pg`
+// pointing at a live page, and a page's `/StructParents` indexing into `/ParentTree` — and this
+// refuses to strip while either survives. That conservatism is deliberate and is the direct lesson
+// of the reverted version, which stripped on a predicate that could not see the tree at all.
+func (s tagState) orphaned() bool {
+	return s.readable && s.claims() && s.anchored == 0 && s.pagesSP == 0
+}
+
+// partial is a claim over a document where the tree is live but does not reach every page that has
+// content. Recorded rather than enforced: see the tag-fate table's `partial` verdict.
+func (s tagState) partial() bool {
+	return s.readable && s.claims() && !s.orphaned() && s.undescribed > 0
+}
+
+// inspectTags parses a document and reports its tag state. **It parses; it never counts bytes.**
+func inspectTags(pdf []byte) tagState {
+	var s tagState
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
-		return false, -1 // unreadable: not a claim we can judge, and -1 says so rather than 0
+		return s // unreadable: not a claim we can judge, and readable=false says so
+	}
+	s.readable = true
+	s.pages = ctx.PageCount
+	live := map[int]bool{}
+	for p := 1; p <= s.pages; p++ {
+		d, _, _, perr := ctx.PageDict(p, false)
+		if perr != nil || d == nil {
+			continue
+		}
+		_, hasSP := d["StructParents"]
+		if hasSP {
+			s.pagesSP++
+		}
+		if !hasSP {
+			if b, cerr := ctx.PageContent(d, p); cerr == nil && len(b) > 0 {
+				s.undescribed++
+			}
+		}
+		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
+			live[ir.ObjectNumber.Value()] = true
+		}
 	}
 	cat, cerr := ctx.XRefTable.Catalog()
 	if cerr != nil {
-		return false, -1
+		return s
+	}
+	if mi, ok := cat["MarkInfo"]; ok {
+		if d, e := ctx.DereferenceDict(mi); e == nil && d != nil {
+			if b := d.BooleanEntry("Marked"); b != nil && *b {
+				s.marked = true
+			}
+		}
 	}
 	st, ok := cat["StructTreeRoot"]
 	if !ok {
-		return false, 0
+		return s
 	}
-	d, derr := ctx.DereferenceDict(st)
-	if derr != nil || d == nil {
-		return true, 0
+	s.tree = true
+	root, rerr := ctx.DereferenceDict(st)
+	if rerr != nil || root == nil {
+		return s
 	}
 	seen := map[string]bool{}
-	var walk func(o types.Object) int
-	walk = func(o types.Object) int {
-		n := 0
+	var walk func(o types.Object)
+	walk = func(o types.Object) {
 		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
 			for _, x := range arr {
-				n += walk(x)
+				walk(x)
 			}
-			return n
+			return
 		}
-		dd, e := ctx.DereferenceDict(o)
-		if e != nil || dd == nil {
-			return 0
+		d, e := ctx.DereferenceDict(o)
+		if e != nil || d == nil {
+			return
 		}
 		// A visited set, because a tree whose elements point back at their parents is ordinary and
 		// `ContentDigest`'s non-termination (`/pending 454`) is this repo's standing lesson about
 		// walking a PDF without one.
-		key := dd.String()
+		key := d.String()
 		if seen[key] {
-			return 0
+			return
 		}
 		seen[key] = true
-		if t := dd.NameEntry("Type"); t != nil && *t == "StructElem" {
-			n++
+		if t := d.NameEntry("Type"); t != nil && *t == "StructElem" {
+			s.elements++
+			if pg, ok := d["Pg"]; ok {
+				if ind, isInd := pg.(types.IndirectRef); isInd && live[ind.ObjectNumber.Value()] {
+					s.anchored++
+				}
+			}
 		}
-		if k, ok := dd["K"]; ok {
-			n += walk(k)
+		if k, ok := d["K"]; ok {
+			walk(k)
 		}
-		return n
 	}
-	return true, walk(d["K"])
+	walk(root["K"])
+	return s
 }
 
-// ClaimsTagging reports whether a document asserts that it is tagged.
-func ClaimsTagging(pdf []byte) bool {
-	claimed, _ := structureCount(pdf)
-	return claimed
-}
-
-// structureElements reports how many struct elements a document actually carries, or -1 when it
-// cannot be read.
+// ClaimsTagging reports whether a document asserts that it is tagged — **either** assertion law 1
+// names, because `/MarkInfo /Marked true` with no tree is as much a claim as a tree is.
 //
-// **Unexported, because nothing outside this package needs the count.** It was exported for a
-// moment on the assumption the server's notice would want it; the notice asks `ClaimsTagging` and
-// compares before with after, which is the question it actually has. `zerocaller_test.go` caught the
-// export with no caller on the first run after the correction.
-func structureElements(pdf []byte) int {
-	_, n := structureCount(pdf)
-	return n
+// The server's tagging notice asks this before and after a mutation; it is the only exported
+// member of this file.
+func ClaimsTagging(pdf []byte) bool { return inspectTags(pdf).claims() }
+
+// honest is the one door. It returns the document unchanged unless the document claims tagging over
+// a tree that describes nothing in it, in which case it removes the claim.
+//
+// **The unchanged path costs a parse and never a rewrite**, which matters for more than speed: a
+// rewrite re-encodes, which moves bytes and invalidates any signature over them.
+//
+// **Measured on its one caller, `NUp`** (3 runs each, wall time): 232 KB / 8pp — `api.NUp` 17 ms,
+// `honest` 9 ms (+56%); 667 KB / 172pp — 124 ms and 14 ms (+12%); 1.4 MB / 22pp — 156 ms and 123 ms
+// (+79%). Worst case a user-initiated n-up goes from 156 ms to 279 ms, which is the price of a
+// post-condition and is paid on a path nothing holds a lock over.
+//
+// **There is a cheap pre-filter available and it is deliberately NOT taken.** The catalog-level keys
+// do survive uncompressed, so a byte scan for `/StructTreeRoot` would skip the parse for the
+// overwhelmingly common untagged document. A false negative there — a catalog written into an
+// object stream, which PDF 1.5 permits — would silently switch law 1 off for `NUp` and leave no
+// trace, and that is the exact failure this file exists because of. 123 ms is cheaper than finding
+// out.
+func honest(pdf []byte) ([]byte, error) {
+	if !inspectTags(pdf).orphaned() {
+		return pdf, nil
+	}
+	return dropTaggingClaim(pdf)
 }
 
-// claimsTaggingItHasNot is law 1's violation, as a predicate — **parsed, never byte-counted.**
-func claimsTaggingItHasNot(pdf []byte) bool {
-	claimed, elements := structureCount(pdf)
-	return claimed && elements == 0
+// dropTaggingClaim removes `/StructTreeRoot` and `/MarkInfo` from the catalog.
+//
+// **Unexported and called only through `honest`**, so the decision to strip is taken in exactly one
+// place against exactly one predicate. The reverted version had the strip reachable on its own, and
+// that is how it came to run over documents whose trees were intact.
+func dropTaggingClaim(pdf []byte) ([]byte, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	cat, err := ctx.XRefTable.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	delete(cat, "StructTreeRoot")
+	delete(cat, "MarkInfo")
+	var out bytes.Buffer
+	if err := api.WriteContext(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
