@@ -6584,13 +6584,34 @@ async function runOCR() {
       btn.textContent = `OCR ${p}/${n}…`;
       const { blob, h } = await renderPageBlob(owner.pdfDocument, p, ocrScale, null, 'image/png');
       const { data } = await worker.recognize(blob);
+      // tesseract's own layout hierarchy, which it has already worked out and which this loop
+      // used to throw away. The flattened `data.words` entries carry back-pointers to the
+      // block, paragraph and line each word came from, so the tagger gets the structure for the
+      // cost of three integers per word — the objects themselves are large and mutually
+      // referential (a line holds its words; each word holds its line) and are never sent.
+      //
+      // What is sent is an IDENTITY, not an ordinal: one map keyed on the container object hands
+      // out ids 1, 2, 3… across all three kinds, so a paragraph in block 2 can never collide with
+      // one in block 1 and the server groups by equality alone. It resets per page, and 1 is the
+      // first id because 0 is the wire's "no hierarchy" value — an older client sends nothing, and
+      // the server must not read that as "block 0".
+      const idx = new Map();
+      const ord = (o) => {
+        if (!o) return 0;
+        if (!idx.has(o)) idx.set(o, idx.size + 1);
+        return idx.get(o);
+      };
       for (const word of data.words || []) {
         const t = (word.text || '').trim();
         if (!t) continue;
         // bbox is pixels (top-left origin) at ocrScale; map to PDF points
         // (bottom-left origin): x/scale, and flip Y about the page height h.
         const b = word.bbox;
-        words.push({ page: p, text: t, rect: [b.x0 / ocrScale, h - b.y1 / ocrScale, b.x1 / ocrScale, h - b.y0 / ocrScale] });
+        words.push({
+          page: p, text: t,
+          rect: [b.x0 / ocrScale, h - b.y1 / ocrScale, b.x1 / ocrScale, h - b.y0 / ocrScale],
+          block: ord(word.block), para: ord(word.paragraph), line: ord(word.line),
+        });
       }
     }
     if (!words.length) { toast('No text found to add'); return; }

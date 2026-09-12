@@ -68,11 +68,25 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 	// here would be a door no traffic reaches. The review finding that named this route as
 	// "swallowing" the error was wrong on that point; what it does swallow is the count of
 	// skipped words, which is a separate question and not this one.
-	result, err := pdfops.StampTextLayer(before, body.Words, body.Lang)
+	// **The text layer is DESCRIBED, not disclaimed** — `PLAN-accessibility.md` P06.S06.
+	//
+	// `StampTextLayer` alone leaves every word wrapped `/Artifact <</Subtype /Watermark>>`, which
+	// tells a conforming reader to skip it: the one thing that makes a scan readable was marked as
+	// not-to-be-read. `TagOCRLayer` is the same stamp with a structure tree over it, built from the
+	// block/paragraph/line indices the client now sends.
+	//
+	// `tagged` false is not an error and is not surfaced: it means the structure could not be built
+	// and the ordinary stamped layer was returned instead. A scan whose text is searchable but
+	// artifacted is what nib shipped for years; a scan with no text layer is worse than both.
+	result, tagged, err := pdfops.TagOCRLayer(before, body.Words, body.Lang)
 	if err != nil {
 		log.Printf("ocr: stamp failed (%d words, lang %q): %v", len(body.Words), body.Lang, err)
 		httpError(w, http.StatusUnprocessableEntity, "could not add the text layer")
 		return
+	}
+	if !tagged {
+		log.Printf("ocr: the text layer was stamped but could not be described (%d words, lang %q)",
+			len(body.Words), body.Lang)
 	}
 	if verr := pdfops.Validate(result); verr != nil {
 		log.Printf("ocr: stamped output failed validation (%d words): %v", len(body.Words), verr)

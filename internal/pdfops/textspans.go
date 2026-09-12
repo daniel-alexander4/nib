@@ -63,3 +63,91 @@ func textOperatorSpans(src []byte) []opSpan {
 	}
 	return out
 }
+
+// artifactSpan is one `/Artifact <<…>> BDC` marker: the byte range of the operand-plus-operator that
+// opens the sequence, so a caller can REPLACE the marker while leaving what it brackets alone.
+type artifactSpan struct {
+	start, end int // [start, end) covers `/Artifact <<…>> BDC`
+}
+
+// watermarkArtifactSpans returns, in draw order, the marker of every marked-content sequence opened
+// as a pagination watermark artifact — `PLAN-accessibility.md` P06.S06.
+//
+// # Why this exists, and why it is not a byte search
+//
+// `StampTextLayer` draws each OCR'd word through `api.TextWatermark`, and pdfcpu brackets every
+// watermark it stamps:
+//
+//	/Artifact <</Subtype /Watermark /Type /Pagination >>BDC q <cm> /GS0 gs /Fm0 Do Q EMC
+//
+// An artifact is, by definition, content a conforming reader is to skip. So nib's searchable text
+// layer — the only thing that makes a scan readable — is explicitly declared not to be read, and
+// the page satisfies ua1 7.1 t3 for it by DISCLAIMING the content rather than describing it.
+// Tagging an OCR layer is therefore a replacement of that marker, not an insertion around bare
+// content.
+//
+// A `bytes.Index` for "/Artifact" would find the same text inside a string operand or an inline
+// image's bytes. Tokenizing cannot: `Tokenize` returns a string as one token and an inline image as
+// one opaque token, so only a real operand is ever considered.
+//
+// # Why it matches the SUBTYPE and not every artifact
+//
+// A document may already carry legitimate artifacts — a running header, a page number — that nib did
+// not put there and must not re-describe as content. The watermark subtype is what nib's own stamp
+// writes, so it is what nib may claim.
+func watermarkArtifactSpans(src []byte) []artifactSpan {
+	toks := contentstream.Tokenize(src)
+	var out []artifactSpan
+
+	// The marker is `/Artifact` then a property dictionary then `BDC`. `<<` and `>>` are tokens in
+	// their own right in this package — nesting is the caller's business — so the dictionary is
+	// walked with a depth counter rather than read as one token.
+	const (
+		idle   = iota // nothing seen
+		named         // `/Artifact` seen, dictionary not yet open
+		inDict        // inside the property dictionary
+		closed        // dictionary closed, expecting BDC
+	)
+	state, start, depth, isWatermark := idle, 0, 0, false
+	reset := func() { state, depth, isWatermark = idle, 0, false }
+
+	for _, tk := range toks {
+		if tk.Kind == contentstream.Whitespace {
+			continue
+		}
+		switch state {
+		case idle:
+			if tk.Kind == contentstream.Operand && string(tk.Bytes(src)) == "/Artifact" {
+				state, start, isWatermark = named, tk.Start, false
+			}
+		case named:
+			if tk.Kind == contentstream.DictOpen {
+				state, depth = inDict, 1
+			} else {
+				reset()
+			}
+		case inDict:
+			switch tk.Kind {
+			case contentstream.DictOpen:
+				depth++
+			case contentstream.DictClose:
+				if depth--; depth == 0 {
+					state = closed
+				}
+			case contentstream.Operand:
+				// The subtype nib's own stamp writes. A document may already carry legitimate
+				// artifacts — a running header, a page number — that nib did not put there and must
+				// not re-describe as content.
+				if string(tk.Bytes(src)) == "/Watermark" {
+					isWatermark = true
+				}
+			}
+		case closed:
+			if tk.Kind == contentstream.Operator && string(tk.Bytes(src)) == "BDC" && isWatermark {
+				out = append(out, artifactSpan{start: start, end: tk.End})
+			}
+			reset()
+		}
+	}
+	return out
+}
