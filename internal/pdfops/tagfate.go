@@ -5,7 +5,6 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Tag fate — `PLAN-accessibility.md` P01, ADR-031, and `/pending 29`'s floor.
@@ -180,51 +179,30 @@ func inspectTags(pdf []byte) tagState {
 			}
 		}
 	}
-	st, ok := cat["StructTreeRoot"]
-	if !ok {
+	if _, ok := cat["StructTreeRoot"]; !ok {
 		return s
 	}
 	s.tree = true
-	root, rerr := ctx.DereferenceDict(st)
-	if rerr != nil || root == nil {
+
+	// **The walk lives in `structtree.go` now — P05.S02, D8.** It was inline here, with a visited
+	// set keyed on the dictionary's CONTENT (`d.String()`), which counted two byte-identical
+	// `/StructElem` dictionaries as ONE. Measured on a twin-element fixture: it reported
+	// `elements=1` for a document containing two. Every figure this repo recorded from that oracle
+	// was a lower bound.
+	//
+	// Re-expressing it on the model is D8's rule — *every operation in law 2 that reports `carried`
+	// routes through this one model* — and ADR-009's: two traversals of one tree, keyed
+	// differently, is the drift that was already measured rather than a risk.
+	//
+	// A tree the model REFUSES leaves the counts at zero while `s.tree` stays true, which is
+	// exactly what `orphaned()` should say about a document asserting a structure nothing can read.
+	tree, terr := readStructTree(ctx, live)
+	if terr != nil {
 		return s
 	}
-	seen := map[string]bool{}
-	described := map[int]bool{} // pages some struct element actually points at
-	var walk func(o types.Object)
-	walk = func(o types.Object) {
-		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
-			for _, x := range arr {
-				walk(x)
-			}
-			return
-		}
-		d, e := ctx.DereferenceDict(o)
-		if e != nil || d == nil {
-			return
-		}
-		// A visited set, because a tree whose elements point back at their parents is ordinary and
-		// `ContentDigest`'s non-termination (`/pending 454`) is this repo's standing lesson about
-		// walking a PDF without one.
-		key := d.String()
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		if t := d.NameEntry("Type"); t != nil && *t == "StructElem" {
-			s.elements++
-			if pg, ok := d["Pg"]; ok {
-				if ind, isInd := pg.(types.IndirectRef); isInd && live[ind.ObjectNumber.Value()] {
-					s.anchored++
-					described[ind.ObjectNumber.Value()] = true
-				}
-			}
-		}
-		if k, ok := d["K"]; ok {
-			walk(k)
-		}
-	}
-	walk(root["K"])
+	s.elements = tree.elements()
+	s.anchored = tree.anchored()
+	described := tree.describedPages()
 	for n := range hasContent {
 		if !described[n] {
 			s.undescribed++

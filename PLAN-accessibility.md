@@ -1538,15 +1538,81 @@ earlier changes nothing unless a whitespace-delimited `EI` lies between, which a
 and numbers cannot contain. It is driven on **malformed** input instead, and says so: a tokenizer's
 job includes not making a broken stream worse.
 
-#### P05.S02 — the structure tree as a typed model, read
+#### P05.S02 — the structure tree as a typed model, read *(done 2026-09-11, v1.129.47)*
 Scope: parse an existing `/StructTreeRoot` into Go — elements, `/K` children, `/S`, `/Pg`,
 `/ParentTree` — with the LibreOffice corpus fixture (45 elements, 4 pages) as the reference. Refs D8.
+
+**(grill, 2026-09-11 — confirmed, and it starts by finding a defect in the oracle its own acceptance
+is written against.)**
+
+**`inspectTags` undercounts, and it has since v1.129.16.** Its visited set is keyed on `d.String()`
+— the dictionary's CONTENT — so two struct elements with byte-identical dictionaries are counted
+**once**. Measured on a fixture with two identical `<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R >>`
+siblings: `elements=1, anchored=1`. Real documents produce identical siblings easily (an empty
+`/Span` repeated), and every figure this plan records from that oracle — the 45, the 3800/2247/1157
+— is a lower bound rather than a count.
+
+**Its blast radius is the COUNTS and not the verdicts**, which is why nothing caught it: every use
+is comparative (`after.elements < before.elements`) or a zero test (`s.elements != 0`), and a
+proportional undercount flips neither. That is also what makes it safe to fix inside this slice.
+
+**So `inspectTags` is re-expressed on the model rather than left beside it.** D8 says every operation
+reporting `carried` routes through one model; two traversals of the same tree, keyed differently, is
+ADR-009's exact failure with the drift already measured.
+
+**What a real tree actually contains, measured — because the plan's sketch lists three things and a
+real one has six.** A LibreOffice-produced HTML conversion, 36 elements:
+
+| | |
+|---|---|
+| root keys | `Type` `K` `ParentTree` **`RoleMap`** — and **no `/ParentTreeNextKey`**, so nothing may depend on it |
+| element types | **15 distinct**, and four are role-mapped custom names: `Heading 1`, `Text body`, `Table Contents`, `Table Heading`, alongside `H2` `L` `LI` `Lbl` `LBody` `Table` `TR` `TH` `TD` `Link` `Document` |
+| `/K` entry kinds | 36 indirect refs, **23 integer MCIDs**, and **one `OBJR` dict** — the `<a href>`'s annotation |
+| element keys | `S` `P` `Pg` `K` `Type` on all 36, **`/A` attributes on 23** |
+
+**`/RoleMap` is load-bearing, not decoration.** An element typed `Preformatted Text` means nothing
+without it; a model that drops it loses what every non-standard element IS.
+
+**And that is what makes the "refuse rather than partially parse" clause concrete.** The kinds a `/K`
+entry may take are enumerable — integer, indirect element, direct element dict, `MCR`, `OBJR` — so
+the model recognises each by name and **refuses an entry it cannot classify**, rather than skipping
+it and reporting a tree with fewer children than the document has.
+
+Tasks:
+- T01 — the model: tree, element, the five `/K` entry kinds, `/RoleMap`, `/A`, `/Pg` resolved to a
+  live page.
+- T02 — refusal: an unclassifiable `/K` entry or a cyclic tree is an error, not a silent drop.
+- T03 — `inspectTags` re-expressed on the model, and the undercount fixed.
+- T04 — the population: the generated fixtures, the twin-element fixture, and a REAL role-mapped
+  tree with `OBJR` and MCIDs in it.
+
 Acceptance:
-- Parsing and re-serialising an untouched tree produces a document `inspectTags` reports identically
-  — same element count, same anchored count, same `undescribed`.
-- A tree nib cannot represent is **refused rather than partially parsed**: a model that silently
-  drops what it did not understand is how a lossless round-trip becomes a lossy one.
-- The corpus is driven, not one fixture.
+- ✅ Parsing an untouched tree and re-deriving the counts produces what the document actually
+  contains. `inspectTags` is now the model, so the twin-element fixture reports **2** where it
+  reported 1, and both are compared against a **from-scratch object-keyed walk** that shares no code
+  with the model — a model checked against itself confirms itself.
+- ✅ A tree nib cannot represent is refused rather than partially parsed, and the refusal names what
+  it could not represent. **Driven through a NON-VALIDATING read, and that is a finding**: pdfcpu
+  already rejects the document (`validateStructElementKArrayElement: invalid dictType Bookmark`), so
+  the three kinds it permits are exactly the three the model represents and the refusal is
+  unreachable through nib's normal door. It is a second line of defence, it is driven as one, and
+  the test's floor asserts pdfcpu still rejects it — so the day that changes, somebody is told.
+- ✅ The corpus is driven, and the population gained the real tree it needed. Measured on a
+  LibreOffice HTML conversion: **21 elements, 14 distinct types** (`Heading 1`, `Text body`,
+  `Table Contents`, `Table Heading` role-mapped beside `H2` `L` `LI` `Lbl` `LBody` `Table` `TR` `TH`
+  `TD` `Link` `Document`), **4 role-map entries, 1 OBJR, 13 integer MCIDs** — none of which any
+  generated fixture contains. It skips loudly without LibreOffice rather than passing.
+
+**Two fixtures exist because mutation found the tests could not tell.** Disabling the visited set
+left every test green — the generated corpus is all simple trees — so `sharedElementFixture` reaches
+one element from two parents, which is ordinary and legal, and counts **4 where the document has 3**
+without it. `cyclicElementFixture` drives termination on a two-element cycle.
+
+**And the depth bound is declared as untested rather than implied tested.** Raising
+`maxStructDepth` to 100,000 leaves everything green, because the visited set stops every cycle that
+can actually be built — a cycle needs an element reached twice, which needs an indirect reference,
+which the set catches. It stays because the failure it guards is unrecoverable and the set is one
+edit away from being weakened.
 
 #### P05.S03 — `/ParentTree`, `/StructParents` and MCIDs as model invariants
 Scope: the write half, with the three things every caller currently has to remember maintained by
