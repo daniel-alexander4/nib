@@ -75,16 +75,23 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 	// `TestNoGatedExemptionOutlivesItsCoordinate` fails once that coordinate is marked done. The
 	// exemption retires itself instead of waiting to be noticed.
 	declared := map[string]string{
-		// P05.S01 built the content-stream walker; P05.S04 is the wrapping emitter that calls it,
-		// and `PLAN-text-reflow.md` P05 extends it. Nothing in production reads a content stream
-		// until then.
-		"Tokenize":             "gated — PLAN-accessibility.md P05.S04.",
-		"WriteTokens":          "gated — PLAN-accessibility.md P05.S04.",
-		"NewEdit":              "gated — PLAN-accessibility.md P05.S04.",
-		"(*Edit).InsertBefore": "gated — PLAN-accessibility.md P05.S04.",
-		"(*Edit).Apply":        "gated — PLAN-accessibility.md P05.S04.",
-		"(Token).Describe":     "gated — PLAN-accessibility.md P05.S04.",
-		"CheckDocument":        "finding — /pending 458.",
+		// **The `gated` rows that were here retired themselves**, which is the mechanism working on
+		// the first coordinate it was written for. P05.S01 built the content-stream walker with
+		// five rows gated on P05.S04; P05.S04 shipped the wrapping emitter, `Tokenize`, `NewEdit`,
+		// `InsertBefore` and `Apply` gained production callers, and
+		// `TestNoGatedExemptionOutlivesItsCoordinate` failed the moment the slice was marked done —
+		// before the commit, because the marker is written first.
+		//
+		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
+		// for them, so a coordinate would be a date nobody is keeping.
+		"WriteTokens": "test-support — the round-trip law's entry point. `Edit.Apply` with no " +
+			"edits returns the original slice WITHOUT touching tokens, so it cannot prove the " +
+			"tokenization is total and faithful; writing the tokens back is what does, and that " +
+			"property is what every later slice's correctness rests on.",
+		"(Token).Describe": "test-support — renders a token for a failure message. Named " +
+			"`Describe` and not `String` on purpose: a method called `String` that takes an " +
+			"argument is not a fmt.Stringer, so `%v` on a Token would silently print the struct.",
+		"CheckDocument": "finding — /pending 458.",
 		"(Record).Hops": "finding — /pending 443. Deleted once as dead and restored: its only use " +
 			"is a stimulus floor in record_test.go requiring a 3-party roster to report 2 hops " +
 			"before any hop-mapping assertion runs.",

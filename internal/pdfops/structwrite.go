@@ -79,12 +79,22 @@ func addMarkedElement(ctx *model.Context, tree *structTree, pageNr int, structTy
 	// Build the element. `/P` is the tree root: this is a top-level element, which is all the
 	// wrapping emitter needs and is honest about what it knows — inferring a better parent from
 	// page geometry is P08's job and would be a guess here.
-	rootRef, ok := tree.root["ParentTree"] // any indirect in the root tells us the tree is real
-	_ = rootRef
-	_ = ok
+	//
+	// **`/P` is REQUIRED, and omitting it produces a document that looks tagged and is not.**
+	// Measured: without it veraPDF reports every content item as `{mcid:0}` — marked, so the
+	// bracketing worked — and still fails ua1 7.1 t3, *content shall be marked as Artifact or
+	// tagged as real content*, because an element with no parent is not part of the tree the MCID
+	// is supposed to resolve into. The failure names the content rather than the element, which is
+	// why it reads as a wrapping problem and is not one. Every element of a real LibreOffice tree
+	// carries `/P` (36 of 36, measured at S02).
+	rootRef, err := structTreeRootRef(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
 	elem := types.Dict{
 		"Type": types.Name("StructElem"),
 		"S":    types.Name(structType),
+		"P":    *rootRef,
 		"Pg":   *pageRef,
 		"K":    types.Array{types.Integer(mcid)},
 	}
@@ -208,4 +218,23 @@ func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref 
 	}
 	pt["Nums"] = nums
 	return nil
+}
+
+// structTreeRootRef returns the indirect reference to `/StructTreeRoot`, which every element this
+// package creates needs for its `/P`.
+//
+// It reads the catalog rather than taking a reference the caller passes, because the one thing a
+// caller could get wrong here is silent: an element whose `/P` names some other object still parses,
+// still validates, and describes nothing.
+func structTreeRootRef(ctx *model.Context) (*types.IndirectRef, error) {
+	cat, err := ctx.XRefTable.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	ref, ok := cat["StructTreeRoot"].(types.IndirectRef)
+	if !ok {
+		return nil, fmt.Errorf("pdfops: /StructTreeRoot is not an indirect reference, so an " +
+			"element cannot name it as its parent")
+	}
+	return &ref, nil
 }
