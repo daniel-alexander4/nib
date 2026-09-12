@@ -101,7 +101,14 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 		// import it, and a package that reached in here would drag Nib's OCR machinery
 		// along with it. Nib is the caller that already has the fonts, so Nib supplies
 		// them.
-		return mdpdf.ConvertWithFaces(data, authoringFaces(), markdownFallbackFonts())
+		out, err := mdpdf.ConvertWithFaces(data, authoringFaces(), markdownFallbackFonts())
+		if err != nil {
+			return nil, err
+		}
+		// Nib put those faces in the document, so nib owns what it claims about them: pdfcpu
+		// writes a /CIDSet over the USED glyphs and PDF/UA 7.21.4.2 forbids one that does not
+		// cover the program. See dropCIDSets.
+		return embeddedFontsAreHonest(out), nil
 	}
 	return ConvertOfficeToPDF(data, ext)
 }
