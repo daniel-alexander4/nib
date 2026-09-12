@@ -253,9 +253,10 @@ home today.
 
 - **[ADR-031 — Nothing claims tagging it has not, and every operation declares its tag fate](031-nothing-claims-tagging-it-has-not.md)**
   — a false tagging claim is worse than a visible loss, because a screen reader told a document is
-  tagged stops reaching for the fallbacks it would otherwise use. **Eight shipped operations were
-  emitting that lie** and none was on a list; law 2's guard found them on its first run by
-  enumerating the population from the code. The check is a POST-CONDITION at two write doors, so it
-  expires on its own the day the write path carries a tree (`/pending 467`) rather than needing
-  anyone to remember to delete it. Measured, not argued: a **no-op** pdfcpu write loses 14 struct
-  elements from a LibreOffice-tagged PDF while keeping the claim.
+  tagged stops reaching for the fallbacks it would otherwise use. **Nothing violates it today**, and
+  the ADR records why the first version of it said otherwise: the evidence was a byte count of
+  `/StructElem`, and pdfcpu writes the tree into a **compressed object stream**, so that count is 0
+  for every output whatever it contains. Parsed, `Rotate` and `Optimize` carry all 14 elements of a
+  LibreOffice document and `NUp`/`Collect` drop claim and content together. The enforcement built on
+  the byte count was **stripping trees that had survived** and is gone; the census (law 2) and the
+  guard stay.

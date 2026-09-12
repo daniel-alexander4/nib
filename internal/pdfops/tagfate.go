@@ -5,6 +5,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Tag fate — `PLAN-accessibility.md` P01.S01, and `/pending 29`'s floor.
@@ -65,54 +66,6 @@ import (
 // **The law itself is ADR-031**, which carries the measurement, the eight operations the guard
 // found, and the argument for the check being a post-condition rather than an unconditional strip.
 
-// dropTaggingClaim removes every assertion that a document is tagged, and returns pdf unchanged
-// when there was no claim to remove.
-//
-// **`/StructParents` goes too, and it is not decoration.** It is the page's index into
-// `/ParentTree`; left behind after the tree is gone it points into nothing, which is a dangling
-// reference rather than a stale-but-harmless integer. `/StructParent` on annotations is the same
-// key one level down and is removed for the same reason.
-func dropTaggingClaim(pdf []byte) ([]byte, error) {
-	// **Read once to ASK, and return the original bytes when there is nothing to remove.** A
-	// rewrite is not free — it re-encodes, which moves bytes and would invalidate a signature — so
-	// a document that never claimed to be tagged must come through untouched rather than
-	// "unchanged apart from the bytes".
-	probe, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
-	if err != nil || !hasTaggingClaim(probe) {
-		return pdf, nil
-	}
-	return writeMutated(pdf, func(ctx *model.Context) error {
-		root, err := ctx.XRefTable.Catalog()
-		if err != nil {
-			return err
-		}
-		delete(root, "StructTreeRoot")
-		delete(root, "MarkInfo")
-		// The pages' own back-references. Walked through `ctx.PageDict`, which resolves the page
-		// tree rather than assuming a flat `/Kids` — a document with intermediate page-tree nodes
-		// is ordinary and a naive walk would miss every page under one.
-		n := ctx.PageCount
-		for i := 1; i <= n; i++ {
-			d, _, _, perr := ctx.PageDict(i, false)
-			if perr != nil || d == nil {
-				continue // a page that will not resolve has no claim of ours to remove
-			}
-			delete(d, "StructParents")
-			// Annotations carry the same key one level down.
-			if arr := d.ArrayEntry("Annots"); arr != nil {
-				for _, o := range arr {
-					ad, aerr := ctx.DereferenceDict(o)
-					if aerr != nil || ad == nil {
-						continue
-					}
-					delete(ad, "StructParent")
-				}
-			}
-		}
-		return nil
-	})
-}
-
 // hasTaggingClaim reports whether a document asserts that it is tagged.
 //
 // Used to keep `dropTaggingClaim` from rewriting a document that never claimed anything: a rewrite
@@ -136,59 +89,90 @@ func hasTaggingClaim(ctx *model.Context) bool {
 	return false
 }
 
-// claimKeys counts the assertions a document makes about being tagged, and the structure that would
-// have to be present for those assertions to be true. Byte-counted rather than parsed: the question
-// is what the FILE says, and a parse that silently repaired a dangling tree would answer a
-// different one.
-func claimKeys(pdf []byte) (claimed bool, elements int) {
-	claimed = bytes.Contains(pdf, []byte("/StructTreeRoot")) || bytes.Contains(pdf, []byte("/Marked"))
-	elements = bytes.Count(pdf, []byte("/StructElem"))
-	return claimed, elements
-}
-
-// claimsTaggingItHasNot is law 1's violation, as a predicate.
+// structureCount reports whether a document claims tagging and how many struct elements it actually
+// carries — **by PARSING, never by counting bytes.**
 //
-// **Deliberately not "the tree was lost".** A visible loss is honest and an intact tree is better;
-// only the middle — a document that SAYS it is tagged while carrying no structure — is the state
-// law 1 forbids, because it defeats the reader's own check.
-func claimsTaggingItHasNot(pdf []byte) bool {
-	claimed, elements := claimKeys(pdf)
-	return claimed && elements == 0
-}
-
-// honest is the door every operation that returns a document passes its bytes through.
+// # The error this replaces, recorded because it cost real data
 //
-// **It exists because `writeMutated` is not the only write path.** Four operations —
-// `InsertBlank`, `NormalizePageSizes`, `Optimize` and `Rotate` — call `api.*` directly and return
-// the buffer, so the post-condition inside `writeMutated` never saw them. Measured, not assumed:
-// with the write-door check in place, `TestNoOperationClaimsTaggingItHasNot` still named exactly
-// those four.
+// The first version of this used `bytes.Count(pdf, []byte("/StructElem"))`. pdfcpu writes the
+// structure tree into a **compressed object stream**, so that count is **0 for every pdfcpu output**
+// — a perfectly tagged document and a stripped one are indistinguishable to it. Everything built on
+// that measurement was wrong in the same direction: the predicate reported every tagged document as
+// lying, and the "fix" then stripped tag trees that had survived intact.
 //
-// ADR-009's rule is that a rule holding at more than one call site is written ONCE and every site
-// calls it. This is that one place; the sites call it instead of each remembering to.
-//
-// It passes an error straight through, so a caller can write `return honest(out.Bytes(), nil)` in
-// place of `return out.Bytes(), nil` without restructuring its error handling.
-func honest(pdf []byte, err error) ([]byte, error) {
+// Measured with the parse, on a LibreOffice document with 14 elements: a no-op write keeps **14**,
+// `Rotate` keeps **14**, `Optimize` keeps **14**. `NUp` and `Collect` drop the root and the elements
+// together, which is honest. **No operation was lying.**
+func structureCount(pdf []byte) (claimed bool, elements int) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
-		return nil, err
+		return false, -1 // unreadable: not a claim we can judge, and -1 says so rather than 0
 	}
-	if claimsTaggingItHasNot(pdf) {
-		return dropTaggingClaim(pdf)
+	cat, cerr := ctx.XRefTable.Catalog()
+	if cerr != nil {
+		return false, -1
 	}
-	return pdf, nil
+	st, ok := cat["StructTreeRoot"]
+	if !ok {
+		return false, 0
+	}
+	d, derr := ctx.DereferenceDict(st)
+	if derr != nil || d == nil {
+		return true, 0
+	}
+	seen := map[string]bool{}
+	var walk func(o types.Object) int
+	walk = func(o types.Object) int {
+		n := 0
+		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
+			for _, x := range arr {
+				n += walk(x)
+			}
+			return n
+		}
+		dd, e := ctx.DereferenceDict(o)
+		if e != nil || dd == nil {
+			return 0
+		}
+		// A visited set, because a tree whose elements point back at their parents is ordinary and
+		// `ContentDigest`'s non-termination (`/pending 454`) is this repo's standing lesson about
+		// walking a PDF without one.
+		key := dd.String()
+		if seen[key] {
+			return 0
+		}
+		seen[key] = true
+		if t := dd.NameEntry("Type"); t != nil && *t == "StructElem" {
+			n++
+		}
+		if k, ok := dd["K"]; ok {
+			n += walk(k)
+		}
+		return n
+	}
+	return true, walk(d["K"])
 }
 
 // ClaimsTagging reports whether a document asserts that it is tagged.
-//
-// **Exported for the SERVER's door, not for another operation.** Law 2's verdict is
-// `dropped-with-notice`, and the notice half needs somebody to notice — which means comparing what
-// went into an operation with what came out. The server's commit door holds both, and it is the one
-// place every mutation lands (`commitMutation`), so the comparison happens once there rather than
-// in each of 33 operations.
-//
-// Byte-counted for `claimKeys`' reason: the question is what the FILE says.
 func ClaimsTagging(pdf []byte) bool {
-	claimed, _ := claimKeys(pdf)
+	claimed, _ := structureCount(pdf)
 	return claimed
+}
+
+// structureElements reports how many struct elements a document actually carries, or -1 when it
+// cannot be read.
+//
+// **Unexported, because nothing outside this package needs the count.** It was exported for a
+// moment on the assumption the server's notice would want it; the notice asks `ClaimsTagging` and
+// compares before with after, which is the question it actually has. `zerocaller_test.go` caught the
+// export with no caller on the first run after the correction.
+func structureElements(pdf []byte) int {
+	_, n := structureCount(pdf)
+	return n
+}
+
+// claimsTaggingItHasNot is law 1's violation, as a predicate — **parsed, never byte-counted.**
+func claimsTaggingItHasNot(pdf []byte) bool {
+	claimed, elements := structureCount(pdf)
+	return claimed && elements == 0
 }

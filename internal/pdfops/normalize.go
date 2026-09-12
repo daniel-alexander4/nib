@@ -31,7 +31,7 @@ func NormalizePageSizes(pdf []byte) ([]byte, error) {
 	if err := api.Resize(bytes.NewReader(pdf), &out, nil /* all pages */, res, conf); err != nil {
 		return nil, err
 	}
-	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
+	return out.Bytes(), nil
 }
 
 // modalPageDim picks the standardization target: the most frequent page size in

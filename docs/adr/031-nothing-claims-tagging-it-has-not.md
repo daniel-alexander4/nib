@@ -24,29 +24,47 @@ their own check defeated. That asymmetry is the whole of law 1, and it is why th
 is dropping the claim rather than preserving it — honesty is reachable today and
 preservation is not.
 
-## Why this was not hypothetical
+## Nothing violates it today, and the story of finding that out is the useful part
 
-Measured 2026-09-11 against pdfcpu v0.13.0, on a real LibreOffice-produced tagged PDF with
-**14 `/StructElem`**: a **no-op** write — read, validate, optimize, write, changing
-nothing — returns a document with **zero** of them while `/StructTreeRoot` and
-`/MarkInfo /Marked true` survive. The read half is sound; `WriteContext` does not serialise
-the objects the tree points at.
+**CORRECTED 2026-09-11, the same day this ADR was written.** The first version of this
+section said a no-op pdfcpu write destroys every struct element, and that eight shipped
+operations were emitting a false claim. **Both were artefacts of one mistake**, and it is
+recorded here rather than quietly fixed because the mistake is more instructive than the
+law.
 
-So **eight shipped operations were emitting that exact lie**: `Rotate`, `Optimize`,
-`SetLang`, `StripMetadata`, `StripActive`, `RemoveFilesAndMedia`, `InsertBlank`,
-`NormalizePageSizes`. None was on anyone's list. They were found by law 2's guard on its
-first run, which is the argument for law 2 in one sentence.
+The evidence was `bytes.Count(pdf, []byte("/StructElem"))`. **pdfcpu writes the structure
+tree into a compressed object stream**, so that count is `0` for every pdfcpu output
+whatever it contains — a perfectly tagged document and a stripped one are identical to it.
 
-## The law is a POST-CONDITION, deliberately
+Parsed instead, on a LibreOffice document with 14 struct elements:
 
-`writeMutated` and `honest()` each ask, after the write: *did this destroy the structure
-while leaving the claim?* — and drop the claim when it did. They do not strip
-unconditionally.
+| | claims tagging | struct elements |
+|---|---|---|
+| source | yes | **14** |
+| no-op write | yes | **14** |
+| `Rotate(90)` | yes | **14** |
+| `Optimize` | yes | **14** |
+| `NUp(2)` | no | 0 |
+| `Collect(1)` | no | 0 |
 
-That shape matters because it **expires on its own**. The day the write path carries a tree
-— which is `/pending 467`, and P05's prerequisite — the check stops firing, with no line
-anyone has to remember to delete. An unconditional strip would have to be found and removed
-by whoever builds tagging, and would silently destroy their work until they did.
+**Nothing lies.** `Rotate` and `Optimize` carry the tree; `NUp` and `Collect` drop the claim
+and the content together, which is exactly what law 1 asks for. The enforcement written
+against the byte count was **stripping trees that had survived intact**, and it shipped for
+the length of one session before this measurement caught it.
+
+**So law 1 is a standing rule with no current violation, and that is a legitimate thing for
+an ADR to be.** What is kept is the census (law 2) and a guard that would catch a violation
+if one appeared; what is gone is any claim that one exists, and the code that acted on it.
+
+## What the byte count could not see, stated so nobody repeats it
+
+A raw `/StructElem` count answers a question about the FILE FORMAT — *does this literal
+appear uncompressed* — and was being read as a question about the DOCUMENT. Every
+downstream conclusion inherited that: a plan decision superseded, a pending item filed, four
+slices built, and an enforcement that destroyed user data.
+
+The rule it breaks is one this repo already had: *a claim about code is a hypothesis until
+you have seen the line.* A byte count over compressed output is not seeing the line.
 
 ## Why the guard enumerates rather than lists
 
@@ -67,6 +85,10 @@ It does not say nib produces accessible documents. It says nib does not lie abou
 Authoring structure is `PLAN-accessibility.md` P05 onward and is blocked on the write path
 carrying a tree at all. **Read-aloud (`/pending 408`, v1.129.7) is not this either** — a
 screen reader needs a tag tree and read-aloud builds none.
+
+It also does not say that nib's operations *preserve* tagging as a rule. Two measured ones
+do and two do not; the census records which, per operation, and that is the whole of the
+claim.
 
 ## Alternatives considered
 

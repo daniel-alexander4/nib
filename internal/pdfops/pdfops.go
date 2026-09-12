@@ -114,7 +114,7 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 	if err := api.Rotate(bytes.NewReader(pdf), &out, deg, pages, nil); err != nil {
 		return nil, err
 	}
-	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
+	return out.Bytes(), nil
 }
 
 // RemovePages drops the given pages from the PDF.
@@ -267,7 +267,7 @@ func InsertBlank(pdf []byte, afterPage int) ([]byte, error) {
 	if err := api.InsertPages(bytes.NewReader(pdf), &out, sel, false, nil, nil); err != nil {
 		return nil, err
 	}
-	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
+	return out.Bytes(), nil
 }
 
 // InsertPDF inserts the pages of other immediately BEFORE page (1-based) of pdf.
@@ -321,11 +321,10 @@ func Append(pdf, other []byte) ([]byte, error) {
 		return nil, err
 	}
 	// **`MergeRaw` takes the FIRST document's catalog whole**, so merging a tagged document with an
-	// untagged one carries that catalog's `/StructTreeRoot` and `/MarkInfo` onto a result whose
-	// pages are half somebody else's and whose struct elements are gone. Measured at P01.S04: the
-	// "tagged first" order lied and the "tagged second" order did not — which is the argument-order
-	// asymmetry this slice was written about, surviving D9 in a different form.
-	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
+	// untagged one carries that catalog's `/StructTreeRoot` onto the result. Whether that is a LIE
+	// depends on whether the elements come with it, and the answer is measured rather than assumed:
+	// see `structureCount` and the tag-fate table's merge row.
+	return out.Bytes(), nil
 }
 
 // Combine merges the given PDFs into one, in the order given — each source keeps
@@ -559,14 +558,14 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
 		return nil, err
 	}
-	// **The composed page is not the tagged one, so the claim goes with the content**
-	// (`PLAN-accessibility.md` P01.S01, law 1). Measured on pdfcpu v0.13.0: a tagged input comes out
-	// of `api.NUp` still carrying `/MarkInfo /Marked true` and a `/StructTreeRoot`, while the tree
-	// has lost every `/StructElem` and no page carries `/StructParents` — a document that says it is
-	// tagged over content nothing describes. veraPDF scores it a new ua1 7.1 t3 failure the input
-	// did not have. Dropping is honest; tagging an n-up sheet means authoring structure for a page
-	// that did not exist a moment ago, which D2 puts four phases later.
-	return dropTaggingClaim(out.Bytes())
+	// **No claim-stripping here, and the reason is the most expensive lesson in this plan.** An
+	// earlier version dropped the tagging claim after an n-up on the strength of
+	// `bytes.Count(pdf, "/StructElem")` reporting 0. pdfcpu writes the structure tree into a
+	// COMPRESSED OBJECT STREAM, so that count is 0 for every pdfcpu output whatever it contains.
+	// Parsed instead, the n-up output still carries its struct elements — on the minimal fixture and
+	// on a real LibreOffice document alike. There was never a false claim to strip, and the "fix"
+	// was destroying trees that had survived. See `structureCount`.
+	return out.Bytes(), nil
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
@@ -1884,7 +1883,7 @@ func Optimize(pdf []byte) ([]byte, error) {
 	if err := api.Optimize(bytes.NewReader(pdf), &out, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return honest(out.Bytes(), nil) // law 1 at the door — see honest()
+	return out.Bytes(), nil
 }
 
 // PageBox returns a page's MediaBox as llx, lly, urx, ury in PDF points.

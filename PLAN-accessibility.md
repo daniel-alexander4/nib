@@ -139,8 +139,17 @@ measured **preservation in place** and explicitly did **not** measure a remap. P
 before anything is planned on top of it; if it proves impractical against pdfcpu v0.13.0, those
 operations fall back to `dropped-with-notice` under law 2 and this decision is superseded in place.~~
 
-**The answer, and it is one level below the question D9 asks.** There is no subset to remap, because
-**the write path carries no struct element at all.** Measured 2026-09-11 on a real LibreOffice-
+**(CORRECTED 2026-09-11, hours after it was written. The supersession below was WRONG and is struck;
+D9 is REOPENED.)** The measurement it rests on used `bytes.Count(pdf, []byte("/StructElem"))`, and
+pdfcpu writes the structure tree into a **compressed object stream** — so that count is `0` for every
+pdfcpu output whatever it contains. Parsed instead, on the same LibreOffice document: a no-op write
+keeps all **14** elements, `Rotate` keeps 14, `Optimize` keeps 14, and `NUp`/`Collect` drop the claim
+and the content together. **The write path carries a tree.** `/pending 29`'s reason 1 stands as
+originally measured in 2026-06-23, and **D9's question — can `/ParentTree` be remapped for a kept
+page subset — is open again and unanswered.** P01.S02 must be re-run with a parsing oracle.
+
+~~**The answer, and it is one level below the question D9 asks.** There is no subset to remap, because
+**the write path carries no struct element at all.**~~ Measured 2026-09-11 on a real LibreOffice-
 produced tagged PDF (five headings/paragraphs/list items, **14 `/StructElem`**), against pdfcpu
 v0.13.0:
 
@@ -237,7 +246,7 @@ P01.S03/S04's scope is much wider than "the operations S02 found practical". And
 core cannot be built until the write path carries a tree**, which is a prerequisite this plan does
 not currently have a slice for. Filed as `/pending 467` with the measurement.
 
-#### P01.S02 — measure the page-subset remap *(done 2026-09-11, v1.129.10 — no code; the measurement IS the deliverable)*
+#### P01.S02 — measure the page-subset remap *(REOPENED 2026-09-11 — its measurement was made with a byte count that cannot see a compressed object stream; see D9)*
 Scope: probe whether `/ParentTree` + `/StructParents` can be correctly remapped for a kept page
 subset against pdfcpu v0.13.0. Outcome, not code, is the deliverable; it settles D9. Refs: D9.
 Acceptance:
@@ -252,7 +261,7 @@ Acceptance:
   point of running it: the hand-built fixture used at P01.S01 could not distinguish "pdfcpu drops
   trees" from "my fixture is malformed". 14 struct elements from a producer settles it.
 
-#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.11 — absorbs P01.S04, see below)*
+#### P01.S03 — the tag-fate table and its guard *(done 2026-09-11, v1.129.15 — the CENSUS stands; its verdicts were re-derived after the byte-count correction)*
 Scope: every document-touching operation declares `carried` / `refused` / `dropped-with-notice` in
 one table; a table-driven tier-1 guard over a tagged fixture asserts each verdict and fails when an
 operation has no entry. Refs: law 2, D12.
