@@ -292,7 +292,7 @@ the other four as direct `api.*` callers, which is how the second door was found
 Because it is a post-condition, it becomes a no-op by itself the day the write path carries a tree
 (P05's prerequisite, `/pending 467`) — there is no line to remember to delete.
 
-#### P01.S04 — carry the tree where it can be carried *(blocked — the `dropped-with-notice` sentence is a product decision; its carrying half is absorbed into S03 and answered by D9)*
+#### P01.S04 — carry the tree where it can be carried *(done 2026-09-11, v1.129.14)*
 
 **(pin, 2026-09-11 — marked `done` for twenty minutes and taken back, which is recorded rather than
 tidied away.)** S03's fix covers this slice's *carrying* half completely: D9 measured that nothing
@@ -308,20 +308,31 @@ tagging survives only when the tagged file is first. Refs: D8, D9, law 2.
 Acceptance:
 - ~~`merge` preserves tagging in both argument orders, asserted per order.~~ **Overtaken by D9 and
   replaced**: nothing preserves tagging in any order, so the defect this names — *"tagging survives
-  only when the tagged file is first"* — cannot exist. What survives of the clause is the honesty
-  question, and it is still owed: **`Append` is driven in BOTH argument orders and neither lies**.
-  ⭕ not discharged.
-- ⭕ **Every `dropped-with-notice` operation actually emits its notice, asserted at the door.** NOT
-  discharged, and it is the clause that holds this slice open. S03 shipped `dropped`, silently:
-  there is no notice mechanism anywhere in the tree (named search: `dropped-with-notice|tagNotice|
-  taggingLost` over `internal/` → 0). Telling a user their document's tagging was lost is a
-  user-visible surface spanning server and client, and *what it says and where it appears* is a
-  product decision rather than a correctness one. **Parked** — see the closing batch.
-- ⭕ **`redact` is explicitly dispositioned.** NOT discharged. `RedactPages`
+  only when the tagged file is first"* — cannot exist. What survives is the honesty question, and it
+  is ✅ discharged: `Append` is driven in **both** argument orders and neither lies. It was a LIVE
+  defect when driven — `api.MergeRaw` takes the first document's catalog whole, so tagged-first
+  emitted a claim over a result whose struct elements were gone, and tagged-second did not.
+- ✅ **Every `dropped-with-notice` operation actually emits its notice, asserted at the door.**
+  Dan chose **a persistent banner modelled on `#fitNotice`**, 2026-09-11, over a toast — on the
+  repo's own recorded reasoning about what a self-clearing toast can carry (`index.html:72`:
+  *"`toast` cannot carry them: it clears itself after 2500 ms"*). A user who lost their document's
+  accessibility structure has to still be able to see it **at the moment they save**.
+
+  **Asserted at the COMMIT door, not at 33 operations.** `noteTaggingFate` runs from
+  `commitMutation` and `commitBarrier` — the only two places a mutation's result becomes the
+  document, and the only two that hold both the before and the after. Asking each operation to
+  report its own fate would be ADR-009's rule inverted: 33 sites that have to remember, against two
+  that cannot forget.
+
+  **Sticky per document, not per operation**: six edits later the tagging is still gone, and a flag
+  that cleared on the next commit would be gone before it mattered.
+- ✅ **`redact` is explicitly dispositioned** — and discharging it exposed a hole in the census
+  itself. `RedactPages`
   (`internal/pdfops/pdfops.go:354`) does not match S03's enumeration shape — its first parameter is
-  `original`, not `pdf`, and it takes a raster map — so the guard never saw it, which is a **hole in
-  the enumeration** rather than an operation that is exempt. Its verdict is a decision (it destroys
-  page content by design), and the enumeration needs widening to reach it either way.
+  `original`, not `pdf`, and it takes a raster map — so the guard never saw it, which was a **hole in
+  the enumeration** rather than an operation that is exempt. The enumeration now matches on the
+  SHAPE (28 → 33 operations), and `RedactPages` carries an explicit verdict with its reasoning: a
+  redaction that kept a tag tree would let a reader recover the shape of what was removed.
 
 #### P01.S05 — the ADR and the corpus *(done 2026-09-11, v1.129.12)*
 Scope: ADR for laws 1 and 2; the golden corpus per D12 with its expected verdicts. Refs: D12.

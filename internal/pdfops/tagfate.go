@@ -178,3 +178,17 @@ func honest(pdf []byte, err error) ([]byte, error) {
 	}
 	return pdf, nil
 }
+
+// ClaimsTagging reports whether a document asserts that it is tagged.
+//
+// **Exported for the SERVER's door, not for another operation.** Law 2's verdict is
+// `dropped-with-notice`, and the notice half needs somebody to notice — which means comparing what
+// went into an operation with what came out. The server's commit door holds both, and it is the one
+// place every mutation lands (`commitMutation`), so the comparison happens once there rather than
+// in each of 33 operations.
+//
+// Byte-counted for `claimKeys`' reason: the question is what the FILE says.
+func ClaimsTagging(pdf []byte) bool {
+	claimed, _ := claimKeys(pdf)
+	return claimed
+}
