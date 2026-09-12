@@ -58,6 +58,14 @@ func TestEveryAuthoredDocumentGetsATitle(t *testing.T) {
 			"document being redacted and never handed to anyone on its own. Titling it would put a " +
 			"dc:title on an intermediate that is discarded three lines later, and the redacted " +
 			"document keeps whatever title it arrived with.",
+		"internal/p2p/readme.go:RenderReadme": "a FRAGMENT: its only production caller is " +
+			"AppendReadme, which passes it to pdfops.Append as the SECOND argument. Append keeps " +
+			"the first document's catalog wholesale — measured 2026-09-11, both when that document " +
+			"has a title and when it has none — so a title written here is discarded on every path " +
+			"that exists. The co-signed document's title is the user's document's own.",
+		"internal/p2p/sigpages.go:renderPage": "a FRAGMENT, for the same measured reason as " +
+			"RenderReadme: PrepareCeremonyDocument appends every signature page through " +
+			"pdfops.Append, so their catalogs never reach the finished document.",
 	}
 
 	repo, err := filepath.Abs(".")

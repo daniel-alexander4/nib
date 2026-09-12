@@ -175,7 +175,9 @@ func renderPage(text []any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pdfops.SetTitle(pdf, "Signature page")
+	// No title — a FRAGMENT, for the reason RenderReadme states in full: PrepareCeremonyDocument
+	// appends every one of these through `pdfops.Append`, which keeps the first document's catalog.
+	return pdf, nil
 }
 
 // PrepareCeremonyDocument readies pdf for a ceremony of `signers` signing parties: the

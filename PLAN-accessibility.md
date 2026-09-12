@@ -957,6 +957,24 @@ there about not reusing the resolved document as a commit target stands whole.
 document whose name derives to nothing gets no title: `"Document"` is precisely the generic label
 7.1 t9 exists to refuse, so failing the clause truthfully beats passing it falsely.
 
+**CORRECTION, 2026-09-11 at v1.129.32 — the receiving population is THREE, not five, and two of
+S01's titles were inert.** Found at P03.S02's step zero, which had to ask where each authoring
+door's `/Lang` would end up. `RenderReadme` and `renderPage` are **fragments**: their only
+production callers hand them to `pdfops.Append` as the *second* argument, and `Append`'s own doc
+comment already said what a measurement then confirmed — `MergeRaw` takes the **first** document's
+catalog whole. So a title written on either was discarded on every path that exists.
+
+**Nothing shipped broken, and the check for that is the interesting half.** If `Append` took the
+second catalog instead, a user's own contract would have been silently renamed *"About this
+co-signed document"* by a page nib stapled to the back. Measured both ways — titled first document
+and untitled — and both keep the first. `TestAppendKeepsTheFirstDocumentsCatalog` now holds that
+claim, because it is a claim about **pdfcpu** rather than about nib and is exactly the kind that
+goes stale silently.
+
+So the guard carries **three** named fragment exemptions and **three** receiving sites
+(`office.go`, `commands.go`, `export.go`). The co-signed document's title is the user's document's
+own, which nib does not invent — S01's authoring-only rule, reaching further than it looked.
+
 **Measured, the whole arc of this phase on one authored document:** 7 failing clauses → 5 after
 S01+S02. The five left are P04's (7.21.4.1 t1, fonts), P05's (6.2 t1, 7.1 t3, 7.1 t11) and the
 one nib refuses (5 t1).

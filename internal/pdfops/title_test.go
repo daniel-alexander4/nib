@@ -179,3 +179,43 @@ func TestTitleFromFilename(t *testing.T) {
 		}
 	}
 }
+
+// TestAppendKeepsTheFirstDocumentsCatalog is what holds `titledoor_test.go`'s two p2p fragment
+// exemptions upright. Those rows say a title written on the readme or a signature page is discarded
+// because `Append` keeps the first document's catalog — a claim about pdfcpu, not about nib, and the
+// kind that goes stale silently when a dependency moves.
+//
+// **Both directions are asserted, and the second is the one that matters.** If Append ever started
+// taking the SECOND document's catalog, a co-signed document would be retitled "About this
+// co-signed document" — the user's own contract, renamed by a page nib stapled to the back, with
+// nothing failing.
+func TestAppendKeepsTheFirstDocumentsCatalog(t *testing.T) {
+	frag, err := SetTitle(authoredPDF(t), "About this co-signed document")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	titled, err := SetTitle(authoredPDF(t), "The user's own contract")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Append(titled, frag)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, info, _ := titleParts(t, out); info != "The user's own contract" {
+		t.Errorf("Append(titled, fragment) Info /Title = %q, want the FIRST document's title — a "+
+			"stapled-on page has renamed the user's document", info)
+	}
+
+	// The untitled case is the common one: a user's uploaded PDF usually has no title at all.
+	out, err = Append(authoredPDF(t), frag)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	xmp, info, _ := titleParts(t, out)
+	if info != "" || xmp != "" {
+		t.Errorf("Append(untitled, fragment) picked up the fragment's catalog: Info /Title = %q, "+
+			"XMP present = %v — nib would be inventing a title for a user's document", info, xmp != "")
+	}
+}
