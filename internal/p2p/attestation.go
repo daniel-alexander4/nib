@@ -327,7 +327,7 @@ func longestPrefixThatFits(s string) int {
 	lo, hi := 1, len(rs)
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		if mdpdf.CoreWidth(string(rs[:mid]), readmeFont, blockTextPt) <= blockTextWidth() {
+		if mdpdf.CoreWidth(string(rs[:mid]), blockProxyFont, blockTextPt) <= blockTextWidth() {
 			lo = mid
 		} else {
 			hi = mid - 1
@@ -708,6 +708,21 @@ func markOneProceeding(ats []SignerAttestation, want string) {
 // number nobody wrote down is a bound that drifts when the canvas changes.
 const blockTextPt = 9
 
+// blockProxyFont is the face the block's width estimates are measured against — and it is **not a
+// font any PDF is drawn in**, which is why it is here and not shared with the readme's.
+//
+// The block is rasterised by the browser onto a canvas at `px sans-serif` (`web/app.js`,
+// `renderAttestation`) and stretched into the rect as an IMAGE. Nothing about it is a PDF text run,
+// so it embeds no font and PDF/UA's font rule has nothing to say about it. What these measurements
+// need is a stand-in with sane Latin metrics for "what will the browser's sans-serif fit", and
+// Helvetica is that.
+//
+// **It was `readmeFont` until P04.S05**, which moved the readme's own face to an embedded Roboto so
+// the page could satisfy 7.21.4.1. Following it here would have re-measured a browser canvas
+// against a font the browser is not using, silently changing which acceptance lines get truncated
+// in a document people sign.
+const blockProxyFont = "Helvetica"
+
 // blockTextWidth is the drawable width of one block line, in points: the rect's width less
 // the padding the rasteriser leaves on each side (4 canvas px at scale 3 ≈ 4 points once
 // stretched back).
@@ -770,5 +785,5 @@ func acceptsSuffix(hexFP string) string { return "  [" + shortFingerprint(hexFP)
 
 // blockLineFits is the one measurement: does `prefix+value` render in full on one block line.
 func blockLineFits(prefix, value string) bool {
-	return mdpdf.CoreWidth(prefix+value, readmeFont, blockTextPt) <= blockTextWidth()
+	return mdpdf.CoreWidth(prefix+value, blockProxyFont, blockTextPt) <= blockTextWidth()
 }

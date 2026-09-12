@@ -1,16 +1,11 @@
 package p2p
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/pdfops"
 	"nib/internal/testpdf"
@@ -77,10 +72,6 @@ func TestReadmeContainsTrustClaims(t *testing.T) {
 	}
 }
 
-// litRE matches one PDF string literal drawn with Tj. RenderReadme emits one per
-// wrapped line, so these are the page's text runs in drawing order.
-var litRE = regexp.MustCompile(`\(((?:[^()\\]|\\.)*)\) Tj`)
-
 // renderedReadme returns the text actually drawn on the readme page, flattened to
 // single-spaced words.
 //
@@ -104,63 +95,16 @@ func renderedReadme(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if err := api.ExtractContent(bytes.NewReader(pdf), []string{"1"},
-		func(r io.Reader, _ int) error { _, e := io.Copy(&buf, r); return e },
-		model.NewDefaultConfiguration()); err != nil {
-		t.Fatal(err)
-	}
-	var runs []string
-	for _, m := range litRE.FindAllStringSubmatch(buf.String(), -1) {
-		// Undo the PDF string escaping and the WinAnsi single-byte encoding, or a
-		// phrase containing a bracket arrives as `\(QES\)` and a phrase containing an
-		// em dash arrives with a raw 0x97. Both would make a POSITIVE assertion fail
-		// noisily — but they would make the load-bearing NEGATIVE assertion pass
-		// quietly, which is the direction that matters.
-		runs = append(runs, winAnsiToUTF8(pdfUnescape(m[1])))
-	}
-	flat := strings.Join(strings.Fields(strings.Join(runs, " ")), " ")
+	flat := extractedPageText(t, pdf, 1)
 	// Setup assertion, and it is not ceremony: every assertion built on this is a
 	// substring check, and an extractor that silently returned nothing would make
 	// each of them pass. Pin something the page certainly says.
 	if !strings.Contains(flat, readmeTitle) {
-		t.Fatalf("extraction returned %d runs / %d chars and does not contain the page title %q — "+
+		t.Fatalf("extraction returned %d chars and does not contain the page title %q — "+
 			"the extractor is not reading the page, so nothing below this line means anything",
-			len(runs), len(flat), readmeTitle)
+			len(flat), readmeTitle)
 	}
 	return flat
-}
-
-// pdfUnescape undoes the PDF literal escaping pdfcpu applies to `(`, `)` and `\`.
-func pdfUnescape(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' && i+1 < len(s) {
-			i++
-		}
-		b.WriteByte(s[i])
-	}
-	return b.String()
-}
-
-// winAnsiToUTF8 maps the CP1252 bytes pdfcpu emits back to runes. Only the
-// characters the readme actually uses are mapped; everything else is Latin-1,
-// which is byte-identical.
-func winAnsiToUTF8(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; c {
-		case 0x97:
-			b.WriteRune('\u2014') // em dash
-		case 0x96:
-			b.WriteRune('\u2013') // en dash
-		case 0x92:
-			b.WriteRune('\u2019') // right single quote
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
 }
 
 // The RENDERED page must no longer describe the ceremony as exactly two people.
@@ -201,9 +145,9 @@ func TestRenderedReadmeStatesEveryTrustClaim(t *testing.T) {
 // The appearance image is an opaque white fill (web/app.js renderAttestation), so a
 // collision ERASES the trust text rather than merely overlapping it.
 func TestReadmeBodyClearsTheAttestationStack(t *testing.T) {
-	lines := readmeLines()
+	lines := readmeLines(currentReadmeFaces())
 	if len(lines) == 0 {
-		t.Fatal("readmeLines() is empty, so the clearance below is vacuous")
+		t.Fatal("readmeLines is empty, so the clearance below is vacuous")
 	}
 	last, floor := readmeLastBaseline(lines), readmeFloor()
 	if last <= floor {
@@ -247,12 +191,13 @@ func TestRenderReadmeRefusesAnOverflowingBody(t *testing.T) {
 func TestEveryReadmeLineFitsTheColumn(t *testing.T) {
 	maxW := readmePageW - readmeLeft - readmeRight
 	n := 0
-	for _, ln := range readmeLines() {
+	f := currentReadmeFaces()
+	for _, ln := range readmeLines(f) {
 		if ln == "" {
 			continue
 		}
 		n++
-		if w := mdpdf.CoreWidth(ln, readmeFont, readmeFontPt); w > maxW {
+		if w := mdpdf.Width(ln, f.body, readmeFontPt, f.embedded); w > maxW {
 			t.Errorf("line runs %.2fpt past the %.0fpt column (nothing clips it, so it prints "+
 				"off the sheet): %q", w-maxW, maxW, ln)
 		}

@@ -1,17 +1,14 @@
 package ceremony
 
 import (
-	"bytes"
 	"errors"
-	"io"
-	"regexp"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/p2p"
 	"nib/internal/pdfops"
@@ -377,21 +374,34 @@ func TestTheConvenedDocumentIsBUILT(t *testing.T) {
 	}
 }
 
-// renderedText extracts one page's visible text, undoing the PDF escaping the way
-// internal/p2p's readme tests established.
+// renderedText extracts one page's visible text with poppler's `pdftotext`.
+//
+// **It read the raw content stream until P04.S05**, pulling each `(...)` literal out and using it
+// verbatim. That was correct while these pages were drawn in Base-14 core fonts; they are now drawn
+// in an embedded Type0/CID face, so a literal holds two-byte glyph indices and the old path
+// returned `\x007\x00M\x00K…`. Every assertion built on it is a substring check, so a garbled
+// extraction fails the positive ones loudly and passes the negative ones silently — the setup guard
+// below is what turned that into a visible failure.
+//
+// The same change in `internal/p2p/pagetext_test.go` records the full reasoning, including why the
+// answer is the reference extractor rather than a second hand-written decoder.
 func renderedText(t *testing.T, pdf []byte, page int) string {
 	t.Helper()
-	var buf bytes.Buffer
-	if err := api.ExtractContent(bytes.NewReader(pdf), []string{strconv.Itoa(page)},
-		func(r io.Reader, _ int) error { _, e := io.Copy(&buf, r); return e },
-		model.NewDefaultConfiguration()); err != nil {
-		t.Fatalf("extract page %d: %v", page, err)
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("SKIP (not a pass): pdftotext (poppler) is not installed, so what the convened " +
+			"document's pages SAY is unchecked in this run")
 	}
-	var runs []string
-	for _, m := range regexp.MustCompile(`\(((?:[^()\\]|\\.)*)\)`).FindAllStringSubmatch(buf.String(), -1) {
-		runs = append(runs, m[1])
+	dir := t.TempDir()
+	in := filepath.Join(dir, "page.pdf")
+	if err := os.WriteFile(in, pdf, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	flat := strings.Join(strings.Fields(strings.Join(runs, " ")), " ")
+	p := strconv.Itoa(page)
+	out, err := exec.Command("pdftotext", "-f", p, "-l", p, in, "-").Output()
+	if err != nil {
+		t.Fatalf("pdftotext page %d: %v", page, err)
+	}
+	flat := strings.Join(strings.Fields(string(out)), " ")
 	if flat == "" {
 		t.Fatalf("extraction of page %d returned nothing — no assertion on it means anything", page)
 	}

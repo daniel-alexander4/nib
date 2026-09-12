@@ -156,12 +156,17 @@ func renderSignaturePage(id CeremonyID, page, of int) ([]byte, error) {
 // renderPage is the one CreateFromJSON spec these pages share, so the paper size, origin and
 // font table are stated once rather than per page.
 func renderPage(text []any) ([]byte, error) {
+	// The same faces the readme uses, resolved the same way and for the same reason: these pages
+	// are nib's own prose and PDF/UA 7.21.4.1 wants their fonts embedded. A failed install degrades
+	// both to Base-14 together — a ceremony whose readme and signature pages disagree about their
+	// typeface would be a stranger artifact than one set entirely in Helvetica.
+	f := currentReadmeFaces()
 	spec := map[string]any{
 		"paper":  "A4P",
 		"origin": "LowerLeft",
 		"fonts": map[string]any{
-			"title": map[string]any{"name": readmeTitleFont, "size": readmeTitlePt},
-			"body":  map[string]any{"name": readmeFont, "size": readmeFontPt},
+			"title": map[string]any{"name": f.title, "size": readmeTitlePt},
+			"body":  map[string]any{"name": f.body, "size": readmeFontPt},
 		},
 		"pages": map[string]any{
 			"1": map[string]any{"content": map[string]any{"text": text}},

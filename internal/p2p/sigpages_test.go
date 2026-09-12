@@ -1,16 +1,10 @@
 package p2p
 
 import (
-	"bytes"
 	"encoding/hex"
-	"io"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/pairing"
 	"nib/internal/pdfops"
@@ -190,17 +184,7 @@ func TestAllocatedPagesLandAfterTheReadmeAndCarryAHeading(t *testing.T) {
 // for the same reason recorded there.
 func renderedPageText(t *testing.T, pdf []byte, page int) string {
 	t.Helper()
-	var buf bytes.Buffer
-	if err := api.ExtractContent(bytes.NewReader(pdf), []string{strconv.Itoa(page)},
-		func(r io.Reader, _ int) error { _, e := io.Copy(&buf, r); return e },
-		model.NewDefaultConfiguration()); err != nil {
-		t.Fatalf("extract page %d: %v", page, err)
-	}
-	var runs []string
-	for _, m := range litRE.FindAllStringSubmatch(buf.String(), -1) {
-		runs = append(runs, winAnsiToUTF8(pdfUnescape(m[1])))
-	}
-	flat := strings.Join(strings.Fields(strings.Join(runs, " ")), " ")
+	flat := extractedPageText(t, pdf, page)
 	// Setup assertion: an extractor that silently returned nothing would make every
 	// substring check above pass.
 	if flat == "" {

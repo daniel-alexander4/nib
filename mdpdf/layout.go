@@ -363,3 +363,19 @@ func splitWord(w word, maxW float64) []word {
 	}
 	return parts
 }
+
+// Width is the width of text in points when set in fontName at size pt, measured the way pdfcpu
+// will actually emit it — the exported form of the split `style.width` applies internally.
+//
+// **The `embedded` flag is not a hint, it is which of two different rules applies.** pdfcpu measures
+// a Base-14 CORE font BYTE by byte and an embedded user font RUNE by rune. Using the core rule on an
+// embedded face inflates every multi-byte word; using the rune rule on a core face under-counts
+// them, and a greedy wrapper then packs a line wider than the column it was given.
+//
+// It exists so a caller outside this package does not have to choose between `CoreWidth` and a raw
+// `font.TextWidth` call at every site — `internal/p2p`'s readme wrapper had exactly that defect once
+// (one rule, two implementations, one of them tested — ADR-009), and P04.S05 gave both of its faces
+// a switchable embedded-ness, which would have reintroduced the choice at every call.
+func Width(text, fontName string, size int, embedded bool) float64 {
+	return style{font: fontName, size: size, embedded: embedded}.width(text)
+}
