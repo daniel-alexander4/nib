@@ -25,6 +25,22 @@ type Word struct {
 	Page int        `json:"page"`
 	Rect [4]float64 `json:"rect"` // x0,y0,x1,y1 — PDF points, bottom-left origin
 	Text string     `json:"text"`
+	// Block, Para and Line are tesseract's own layout hierarchy, as INDICES within the page.
+	//
+	// The engine already has them: tesseract.js walks `blocks → paragraphs → lines → words` and
+	// hands back flattened arrays whose every word carries back-pointers to the three containers it
+	// came from. Until P06.S06 the client iterated `data.words` and sent the box and the string,
+	// dropping the layout the engine had just worked out.
+	//
+	// **Indices, not the objects.** The objects are large and mutually referential — a line holds
+	// its words and each word holds its line — so they neither serialise nor belong on a wire.
+	// Three integers per word carry everything the tagger needs.
+	//
+	// Zero for all three is what an older client sends, and it means "no hierarchy": the text layer
+	// is then stamped exactly as before. It is never read as "block 0" — see groupWords.
+	Block int `json:"block,omitempty"`
+	Para  int `json:"para,omitempty"`
+	Line  int `json:"line,omitempty"`
 }
 
 // StampTextLayer bakes an invisible, selectable text layer onto pdf — one text run

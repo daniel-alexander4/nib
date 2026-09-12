@@ -2023,15 +2023,48 @@ Acceptance:
 - On a document with NO catalog `/Lang`, `/TU` adds `7.2 t25` and nothing else — asserted, with
   `/pending 471` named as the gate, so the cost of the decision is measured rather than described.
 
-#### P06.S06 — an OCR'd scan is tagged from tesseract's own hierarchy
+#### P06.S06 — an OCR'd scan is tagged from tesseract's own hierarchy *(done 2026-09-12, v1.129.59)*
 Scope: the wire carries block/paragraph/line, and the text layer is tagged from it. **A request-field
 change**, so it meets `/pending 447`'s guard. Refs exit criterion 1, D4's observed-approximate tier.
+
+**(grill, 2026-09-11 — AMENDED, and the slice's subject changed. Five step-zero measurements.)**
+
+- **The OCR layer is not "untagged". It is marked `/Artifact`, which says it is NOT REAL CONTENT.**
+  Measured on the stamped page stream: every word is wrapped
+  `/Artifact <</Subtype /Watermark /Type /Pagination>> BDC … EMC`, because `StampTextLayer` goes
+  through `api.TextWatermark` and pdfcpu artifacts a watermark by construction. PDF/UA's whole point
+  about an artifact is that conforming readers skip it. So nib's searchable text layer — the one
+  thing that makes a scan readable at all — is explicitly declared not to be read, and the document
+  satisfies ua1 7.1 t3 for that content by DISCLAIMING it rather than describing it. **The work is
+  replacing a disclaimer, not adding structure to bare content.**
+- **Each word is its own Form XObject**, invoked `/Fm0 Do` from the page stream inside that artifact
+  bracket — the text is not in the page stream. That is good news: the MCID goes in the PAGE stream
+  around the `Do`, which is what P05's `contentstream` editor already does, rather than needing
+  `/StmOwn` refs into each XObject.
+- **The hierarchy needs no restructuring of the OCR call.** tesseract.js 5.1.1 (vendored) walks
+  `blocks → paragraphs → lines → words → symbols` and returns the flattened arrays with BACK-POINTERS
+  on every entry: a word carries `{page, block, paragraph, line}`. So the client sends three integer
+  indices per word, not a nested tree — and the objects themselves must NOT be sent, being large and
+  mutually referential.
+- **`/pending 473` was a hard blocker and is now closed** (v1.129.58). Before it, `StampTextLayer`
+  added ua1 `7.10 t1` and `7.10 t2` to every document — measured at this slice's step zero, which is
+  how the OCR door was found missing from the census entirely.
+- **PDF/UA has no line-level structure type.** `line` orders words within a paragraph and becomes no
+  element. The mapping is block → `Sect`, paragraph → `P`, word → an MCID inside that `P`.
+
 Acceptance:
-- The client sends the hierarchy it already has, and the guard that every field a handler reads is
-  one some client sends stays green.
-- An OCR'd scan passes veraPDF `ua1` except `5 t1` and anything its images owe.
-- The tree is marked **OCR-derived** per D4 and S03 — observed-approximate is written silently and
-  recorded, never passed off as exact.
+- The client sends the hierarchy it already has — three integers per word — with a reader that goes
+  RED when it stops. **`/pending 447`'s guard is not that reader and the sketch was wrong to name
+  it**: `fieldsRead` collects only `r.FormValue`, `PostFormValue` and `Query().Get` string literals,
+  so it covers form and query carriers and no JSON body at all. `/api/ocr` is JSON, so neither
+  `lang` nor `words` was ever in its population — probed: deleting the client's `block`/`para`/`line`
+  leaves it green. Filed as `/pending 477`; the reader here is a tier-2 source scan, as at S05.
+- **No word of the text layer is marked `/Artifact` any more**, and that is asserted directly on the
+  page stream rather than inferred from a clause.
+- An OCR'd scan passes veraPDF `ua1` except `5 t1` and anything its images owe, with what it still
+  owes named per clause rather than summarised.
+- The tree is marked **OCR-derived** per D4 and S03 — `sourceApproximate` is written and recorded,
+  never passed off as exact.
 
 ### P07 — The pure-Go conformance checker
 **Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and

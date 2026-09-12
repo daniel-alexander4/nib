@@ -87,6 +87,17 @@ var tagFates = map[string]tagFate{
 		out, _, err := DeclareAuthoredProseLang(b)
 		return out, err
 	}},
+	"TagOCRLayer": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		// It BUILDS a tree rather than merely keeping one, and on a document that already has one
+		// it adds to it — `ensureStructTree` is the same door `tagMarkdown` uses. The census
+		// fixture is tagged, so this row measures the add-to-an-existing-tree path, which is the
+		// one that could damage what was already there.
+		out, _, err := TagOCRLayer(b, []Word{{
+			Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice",
+			Block: 1, Para: 1, Line: 1,
+		}}, "eng")
+		return out, err
+	}},
 	"TagAuthored": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		out, _, err := TagAuthored(b)
 		return out, err

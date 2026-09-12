@@ -53,18 +53,23 @@ func WriteTokens(src []byte, tokens []Token) ([]byte, error) {
 // Collecting them keeps every offset in the ORIGINAL stream's coordinates, which is the only
 // coordinate system a caller has reason to think in.
 //
-// # What it does not do
+// # Replacement arrived when something needed it
 //
-// It does not delete or replace. `PLAN-text-reflow.md`'s P05 needs replacement and will add it; it
-// is not built here on the "one caller, one feature" rule, because an unused replace is an untested
-// replace and this package's whole value is that its output is trustworthy.
+// This block used to say replacement was deferred on the "one caller, one feature" rule — *"an
+// unused replace is an untested replace"*. `PLAN-accessibility.md` P06.S06 is the caller: an OCR
+// text layer arrives wrapped in `/Artifact <<…>> BDC`, which must become `/Span <</MCID n>> BDC`,
+// and that is a replacement and not an insertion. Deletion is still not offered, for the same
+// reason it was.
 type Edit struct {
 	src     []byte
 	inserts []insertion
 }
 
+// insertion is one queued write. `at` and `end` are ORIGINAL-stream offsets, and `end > at` makes
+// it a replacement of the span [at, end) rather than an insertion before `at`.
 type insertion struct {
 	at   int
+	end  int // == at for an insertion; > at for a replacement
 	text []byte
 	seq  int // preserves the caller's order for two insertions at the same offset
 }
@@ -78,7 +83,21 @@ func NewEdit(src []byte) *Edit { return &Edit{src: src} }
 // Two insertions at the same offset are emitted in call order, so a caller bracketing a span writes
 // the opener and the closer in the order they should appear.
 func (e *Edit) InsertBefore(at int, text []byte) *Edit {
-	e.inserts = append(e.inserts, insertion{at: at, text: append([]byte(nil), text...), seq: len(e.inserts)})
+	e.inserts = append(e.inserts, insertion{at: at, end: at, text: append([]byte(nil), text...), seq: len(e.inserts)})
+	return e
+}
+
+// Replace queues text to stand in place of the ORIGINAL stream's bytes in [start, end).
+//
+// Both offsets are in the original stream's coordinates, like InsertBefore's — that is the property
+// that lets a caller compute every edit from one tokenization and apply them in any order.
+//
+// **Overlapping replacements are refused at Apply, not silently resolved.** Two edits claiming the
+// same bytes is a caller that has miscomputed its spans, and picking a winner would produce a
+// stream that is plausible and wrong. An insertion may sit at a replacement's start or end — that
+// is a caller bracketing what it is replacing, which is legitimate and ordered by call sequence.
+func (e *Edit) Replace(start, end int, text []byte) *Edit {
+	e.inserts = append(e.inserts, insertion{at: start, end: end, text: append([]byte(nil), text...), seq: len(e.inserts)})
 	return e
 }
 
@@ -96,6 +115,10 @@ func (e *Edit) Apply() ([]byte, error) {
 			return nil, fmt.Errorf("contentstream: insertion at %d is outside the %d-byte stream",
 				in.at, len(e.src))
 		}
+		if in.end < in.at || in.end > len(e.src) {
+			return nil, fmt.Errorf("contentstream: replacement [%d,%d) is not a span inside the "+
+				"%d-byte stream", in.at, in.end, len(e.src))
+		}
 	}
 	// Stable sort by offset, then by call order. Written as an insertion sort over what is always a
 	// handful of entries rather than pulling in sort.SliceStable for two elements.
@@ -106,13 +129,32 @@ func (e *Edit) Apply() ([]byte, error) {
 			ins[j-1], ins[j] = ins[j], ins[j-1]
 		}
 	}
+	// Overlap check, over the sorted list: a replacement may not start before the previous
+	// replacement ended. Checked here rather than at Replace() because the caller computes every
+	// span against the original stream and may queue them in any order.
+	lastEnd := 0
+	for _, in := range ins {
+		if in.end > in.at {
+			if in.at < lastEnd {
+				return nil, fmt.Errorf("contentstream: replacement [%d,%d) overlaps one that ends "+
+					"at %d — two edits claiming the same bytes is a caller that has miscomputed "+
+					"its spans, and choosing between them would produce a plausible wrong stream",
+					in.at, in.end, lastEnd)
+			}
+			lastEnd = in.end
+		}
+	}
 	var buf bytes.Buffer
 	buf.Grow(len(e.src) + 64*len(ins))
 	prev := 0
 	for _, in := range ins {
-		buf.Write(e.src[prev:in.at])
+		if in.at > prev {
+			buf.Write(e.src[prev:in.at])
+		}
 		buf.Write(in.text)
-		prev = in.at
+		if in.end > prev {
+			prev = in.end
+		}
 	}
 	buf.Write(e.src[prev:])
 	return buf.Bytes(), nil
