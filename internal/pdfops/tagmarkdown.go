@@ -105,7 +105,8 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 		}
 		mi["Marked"] = types.Boolean(true)
 		cat["MarkInfo"] = mi
-		return nil
+		// D4's tier, recorded with the tree it describes: this one came from `mdpdf`'s own AST.
+		return setTagSource(ctx, sourceExact)
 	})
 	if err != nil {
 		return nil, err

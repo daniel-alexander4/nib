@@ -222,7 +222,9 @@ func TagAuthored(pdf []byte) (out []byte, wrapped int, err error) {
 		}
 		mi["Marked"] = types.Boolean(true)
 		cat["MarkInfo"] = mi
-		return nil
+		// **`Generic`, not `Exact`.** This emitter brackets a page's content knowing nothing about
+		// what it says; calling that exact would be false about the only thing the key records.
+		return setTagSource(ctx, sourceGeneric)
 	})
 	if err != nil {
 		return nil, 0, err
