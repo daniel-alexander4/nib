@@ -137,19 +137,39 @@ test('aria-selected is used only where a tab role backs it', () => {
     'no valid subject');
 });
 
-test('the mode tabs take aria-pressed, and the reason is recorded', () => {
-  // `.modetab` are plain <button> with no role="tab" (checked against index.html, below), so
-  // aria-selected would be invalid on them. They get aria-pressed. Making them a real tablist
-  // means roles, aria-controls AND arrow-key traversal — a half-built tablist is its own defect,
-  // and the traversal is P02.S04's.
-  const modetabMarkup = HTML.match(/<button class="modetab"[^>]*>/g) || [];
-  assert.ok(modetabMarkup.length >= 3,
-    `found ${modetabMarkup.length} .modetab button(s) — the scan has stopped matching`);
-  const withRole = modetabMarkup.filter((m) => m.includes('role="tab"'));
-  assert.deepEqual(withRole, [],
-    'a .modetab now carries role="tab". If the mode switcher has become a real tablist it should ' +
-    'take aria-selected through setSelected, and it needs arrow-key traversal to match — see ' +
-    'P02.S04. This test is the notice that the decision changed.');
-  assert.match(APP, /all\('\.modetab'\)\.forEach\(\(b\) => setArmed\(b,/,
-    'the mode tabs no longer route through setArmed');
+test('nothing wireTablist runs as a tablist is given aria-pressed', () => {
+  // **The test this replaces asserted the WRONG THING and shipped a defect behind it.** It read
+  // `index.html` for `role="tab"` on `.modetab`, found none — they are plain `<button>` in the
+  // markup — and concluded they should take `aria-pressed`. But `wireTablist` adds
+  // `role="tablist"`, `role="tab"`, `aria-selected` and a roving tabindex at RUNTIME
+  // (`app.js:9008`), so v1.129.23 put `aria-pressed` on elements carrying `role="tab"`: exactly
+  // the invalid pairing the three doors exist to prevent. A markup scan cannot see a runtime
+  // decision, and this one is made ten lines away in the same file.
+  //
+  // So the question is asked of the code that makes the tablist, not of the HTML.
+  const wired = [...APP.matchAll(/wireTablist\([^,]+,\s*'([^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(wired.length >= 3,
+    `found ${wired.length} wireTablist call(s) — the scan has stopped matching and this guard is ` +
+    'vacuous');
+
+  for (const sel of wired) {
+    // Every site that reflects state onto this selector must use setSelected.
+    const cls = sel.replace(/^\./, '');
+    const armed = new RegExp(`setArmed\\([^)]*${cls}|all\\('\\.${cls}'\\)[^\n]*setArmed`, 'g');
+    const hits = APP.match(armed) || [];
+    assert.deepEqual(hits, [],
+      `${sel} is run as a tablist by wireTablist, and something routes it through setArmed: ` +
+      `${hits.join(', ')}. aria-pressed on an element with role="tab" is invalid ARIA — it must ` +
+      'go through setSelected.');
+  }
+});
+
+test('the sidebar panel headers do not reach the document strip', () => {
+  // `.tab` matches two different things: the sidebar's panel headers, which carry `data-panel`,
+  // and the document strip's tabs built at `app.js:2509`, which do not — and which wireTablist
+  // runs as a real tablist. A bare `.tab` selector in the panel handler set `aria-expanded` on
+  // both, which is the same vocabulary collision one selector over.
+  assert.match(APP, /querySelectorAll\('\.tab\[data-panel\]'\)[^\n]*setExpanded/,
+    'the panel-header handler no longer scopes to [data-panel], so it reaches the document ' +
+    'strip’s tabs as well');
 });
