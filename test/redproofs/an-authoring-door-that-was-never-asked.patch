@@ -1,0 +1,15 @@
+diff --git a/internal/server/office.go b/internal/server/office.go
+index 740aefb..3d486c8 100644
+--- a/internal/server/office.go
++++ b/internal/server/office.go
+@@ -17,6 +17,10 @@ import (
+ // render it immediately — a one-step "open & convert". The converted document is
+ // upload-origin (no path), so it can be edited and saved-as but not saved in
+ // place, exactly like any uploaded file.
++func (s *Server) brandNewAuthoringDoor(data []byte) ([]byte, error) {
++	return pdfops.ConvertDocToPDF(data, ".md")
++}
++
+ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
+ 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
+ 	if !ok {

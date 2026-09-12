@@ -1,0 +1,13 @@
+diff --git a/langdoor_test.go b/langdoor_test.go
+index a6b7d07..783615d 100644
+--- a/langdoor_test.go
++++ b/langdoor_test.go
+@@ -61,7 +61,7 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
+ 			"no /Lang from anywhere — mdpdf is pure Go and was never told one."},
+ 		"internal/cli/commands.go:cmdOffice": {carries, "the CLI half of the same door, and the " +
+ 			"same reason. Named separately because ADR-009 polices SITES, not packages."},
+-		"internal/server/export.go:handleAssemble": {none, "raster pages with NO text in page " +
++		"internal/server/export.go:handleAssemble": {declares, "raster pages with NO text in page " +
+ 			"content, so ua1 7.2 t34 does not fire on this output at all (measured 2026-09-11: a " +
+ 			"titled raster document fails 5 t1, 6.2 t1, 7.1 t3 and 7.1 t11, and neither 7.2 " +
+ 			"clause). The only language-bearing content is the title, taken from the user's file " +

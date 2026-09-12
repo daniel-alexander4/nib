@@ -5141,3 +5141,21 @@ five of them agree says nothing about a sixth added without one — and the sixt
 while building the slice.
 
 `recorded` 408 → 411.
+
+## P03.S02 of `PLAN-accessibility.md` — the guard that demands an answer, not a write (v1.129.33)
+
+| proof | check | expects |
+|---|---|---|
+| `an-authoring-door-that-was-never-asked` — a seventh function that turns something into a PDF, added beside the six that exist, with nobody asked what language its output is in | `go test . -run TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom`, tier 1 | "authoring door with no language classification" |
+| `a-language-classification-the-code-contradicts` — a door classified `declares` that reaches `pdfops.SetLang` nowhere | the same check, tier 1 | "a language classification the code contradicts" |
+
+**The first row is the slice's own acceptance clause**, which reads *"a new authoring door with none
+turns the guard red, proved by adding one"*. This is that proof, recorded so it stays one rather
+than being a sentence about a run somebody did once.
+
+**The second is what separates the guard from a comment table.** `langdoor_test.go` records where
+each authoring door's language comes from — and a table of claims nobody checks keeps passing
+forever after the code stops matching it. The cross-check runs both ways: a `declares` row that
+reaches no door, and a row of any other class that does.
+
+`recorded` 411 → 413.
