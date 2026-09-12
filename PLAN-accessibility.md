@@ -1456,16 +1456,87 @@ exit criteria are firmed, or earlier if the tree turns out to carry the whole an
 
 **Firmed slices:**
 
-#### P05.S01 — the content-stream walker
+#### P05.S01 — the content-stream walker *(done 2026-09-11, v1.129.46)*
 Scope: tokenize a decoded content stream into operand/operator steps and write it back. The surface
 `PLAN-text-reflow.md`'s P05 extends. Refs D3, and that plan's P05 note.
+
+**(grill, 2026-09-11 — confirmed, with one shape change the attack made structural and two
+populations the plan did not have.)**
+
+**A token is a SPAN, not a value, and that is what makes law 1 hold.** The plan writes
+byte-identical round-trip as a property to test for; it is a property to achieve by construction. A
+token carrying a parsed value makes identity a per-lexical-form battle nobody wins — `1.0` against
+`1.` against `+1`, dictionary spacing, `#20` escapes inside names — and every one of those is a
+silent corruption of somebody's document. A token carrying `(kind, start, end)` over the original
+bytes makes identity free, and the round-trip test becomes a check that **nothing re-serialises**
+rather than a check that everything re-serialises correctly.
+
+**It is also what every later slice actually needs.** S04 brackets page content at offsets;
+`PLAN-text-reflow.md`'s P05 replaces one run's bytes. Neither needs a decoded value — both need
+boundaries and a splice. Values are decoded by whoever wants one, on the span.
+
+**Inline images are not an edge case; they are the only construct that is not self-delimiting.**
+After `ID` the bytes are raw binary whose length the content stream never states — derivable from
+`/W /H /BPC /CS` only when no filter is applied, which is not the general case. The spec's own rule
+is to scan for `EI` preceded by whitespace and sanity-check what follows. A tokenizer without that
+special case reads image bytes as operators and corrupts them. **The corpus has none** (`BI` = 0,
+measured on both fixtures), so this needs a built fixture.
+
+**And the population the plan names predates the documents nib now produces.** Measured on nib's own
+Markdown output at v1.129.45: **79 NUL bytes and a `\\` escape inside literal strings**, because
+P04 made every glyph a two-byte index. Escape handling and paren balance are load-bearing on nib's
+own files today, not on hypothetical ones — so the round-trip population is the corpus **plus nib's
+current authored output**.
+
+**It lives in `internal/contentstream`, not `internal/pdfops`.** It is the surface a second plan
+extends, it depends on nothing of nib's, and `pdfops` is already the largest package in the tree.
+
+Tasks:
+- T01 — the tokenizer: kind + span, over the whole operand/operator grammar.
+- T02 — inline images as their own token, with the `EI` rule.
+- T03 — the writer: emit spans verbatim, and splice at a chosen token boundary.
+- T04 — the round-trip law, over the corpus AND nib's own output.
+- T05 — the cost, measured on a real page.
+
 Acceptance:
-- **Law 1: an unedited page round-trips BYTE-IDENTICALLY** across the corpus — not
-  semantically-equivalently. A walker that re-emits `1.0` as `1` has already lost the argument for
-  every later slice, because nothing downstream can then tell its own change from the walker's.
-- Inline images (`BI … ID <binary> EI`), string and hex literals containing operator-looking bytes,
-  dictionaries, and nested marked content all survive. Each is a fixture, not a claim.
-- The cost of a walk is **measured on a real page**, not estimated.
+- ✅ **Law 1: an unedited page round-trips BYTE-IDENTICALLY** across the corpus — 6 pages, 2,533
+  bytes, including nib's own output. **AMENDED: the law is necessary and nowhere near sufficient**,
+  and that was found by mutation rather than by reasoning. *Every* tokenization that covers the
+  stream passes a round-trip test, including one emitting a token per byte — three separate
+  mutations (the backslash-escape rule, paren nesting, the inline-image marker) left the whole
+  round-trip suite green because every byte was still in some token and the writer still copied them
+  in order. So the lexical rules are asserted as **shape**: `TestTheTOKENIZATIONIsRight` compares the
+  token sequence, and each of its rows is a rule a mutation left undetected until it was written
+  down.
+- ✅ Inline images, strings and hex literals containing operator-looking bytes, dictionaries and
+  nested marked content all survive — each a fixture, including **every byte value 0x00–0xFF inside
+  one literal string**, and a truncation fixture that drives all 71 prefixes of a stream.
+- ✅ The cost is **measured on a real page**: a 2,093-byte page from nib's own output is 858 tokens
+  and tokenizes in **38 µs (55 MB/s, 12 allocations)** — against **1,549 µs** to read that page out
+  of the document at all. A walk is **2.4%** of the cost of obtaining the bytes, so a later slice can
+  walk every page without thinking about it. Both benchmarks ship, because a figure with no
+  comparison is an adjective.
+
+**The zero-caller guard fired, correctly, and gained a fifth prefix that expires.** The walker is
+built at S01 and first *called* at S04, so for three slices it is exported code with no production
+caller — which is a legitimate shape a plan produces, and also exactly what `/pending 442` punished
+(dead exported crypto behind a standing exemption row that outlived its reason by months). The four
+existing prefixes did not have a claim for it, so `gated — <plan> <coordinate>.` is the fifth, and
+**`TestNoGatedExemptionOutlivesItsCoordinate` fails the day that coordinate is marked done**: either
+the caller exists and the rows must go, or the slice shipped without building it and exported dead
+code has just been released. The exemption retires itself rather than waiting to be noticed.
+
+**`Write` had to be renamed `WriteTokens` to be checkable at all.** The zero-caller scan counts
+identifier occurrences, so an exported function named `Write` is indistinguishable from every
+`buf.Write` in the tree and could never be reported as uncalled — permanently exempt from the one
+check that finds dead exported code, without anybody deciding that.
+
+**One rule is honestly weaker than it looked, and it is recorded rather than dressed up.** The
+`/ID`-is-not-the-marker fix reads correctly against the grammar, and reverting it leaves every test
+green on well-formed input — because the image token is opaque, so believing the payload starts
+earlier changes nothing unless a whitespace-delimited `EI` lies between, which a dictionary of names
+and numbers cannot contain. It is driven on **malformed** input instead, and says so: a tokenizer's
+job includes not making a broken stream worse.
 
 #### P05.S02 — the structure tree as a typed model, read
 Scope: parse an existing `/StructTreeRoot` into Go — elements, `/K` children, `/S`, `/Pg`,
