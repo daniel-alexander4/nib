@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"nib/internal/pdfops"
@@ -29,10 +30,23 @@ func (s *Server) handleFormAuthor(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not read fields")
 		return
 	}
-	out, err := pdfops.AuthorForm(pdfBytes, fields)
+	// **The widgets are DESCRIBED, not just placed** — `PLAN-accessibility.md` P06.S07.
+	//
+	// `AuthorForm` gives each field a `/TU` and the page `/Tabs /S` (P06.S05) and builds no tree, so
+	// a screen reader meets an annotation nothing in the structure points at — ua1 7.18.4 t1, *"A
+	// Widget annotation shall be nested within a Form tag"*. `AuthorTaggedForm` is the same fields
+	// with a `/Form` element per widget.
+	//
+	// `tagged` false is not an error and is not surfaced: it means the tree could not be built and
+	// the ordinary authored form came back. A form whose widgets are undescribed is what nib shipped
+	// for years; no form at all is worse than both.
+	out, tagged, err := pdfops.AuthorTaggedForm(pdfBytes, fields)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not author form: "+err.Error())
 		return
+	}
+	if !tagged {
+		log.Printf("form: %d field(s) authored but not described", len(fields))
 	}
 	sendDownload(w, "fillable.pdf", "application/pdf", out)
 }

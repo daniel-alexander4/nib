@@ -182,6 +182,31 @@ func appendToRootKids(ctx *model.Context, tree *structTree, ref types.IndirectRe
 	return nil
 }
 
+// parentTreeDict resolves `/ParentTree` to its dictionary, creating an empty one if the tree has
+// none — the one place both entry shapes go through, so the nested-number-tree refusal below cannot
+// reach one writer and miss the other (ADR-009).
+func parentTreeDict(ctx *model.Context, tree *structTree) (types.Dict, error) {
+	ptObj, has := tree.root["ParentTree"]
+	if !has {
+		ptRef, err := ctx.IndRefForNewObject(types.Dict{"Nums": types.Array{}})
+		if err != nil {
+			return nil, err
+		}
+		tree.root["ParentTree"] = *ptRef
+		ptObj = *ptRef
+	}
+	pt, err := ctx.DereferenceDict(ptObj)
+	if err != nil || pt == nil {
+		return nil, fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
+	}
+	if _, nested := pt["Kids"]; nested {
+		return nil, fmt.Errorf("pdfops: this document's /ParentTree is a NESTED number tree, which " +
+			"the write half does not rebalance — refusing rather than writing an entry that a " +
+			"reader following /Kids would never find")
+	}
+	return pt, nil
+}
+
 // setParentTreeSlot puts ref at index mcid of the array for key, growing the array and creating the
 // entry as needed.
 //
@@ -195,23 +220,9 @@ func appendToRootKids(ctx *model.Context, tree *structTree, ref types.IndirectRe
 // wraps content whose MCIDs already exist and are not contiguous, so it is driven directly by
 // `TestAGapInTheParentTreeArrayIsFilledNotAppended` rather than left as an untested claim.
 func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref types.IndirectRef) error {
-	ptObj, has := tree.root["ParentTree"]
-	if !has {
-		ptRef, err := ctx.IndRefForNewObject(types.Dict{"Nums": types.Array{}})
-		if err != nil {
-			return err
-		}
-		tree.root["ParentTree"] = *ptRef
-		ptObj = *ptRef
-	}
-	pt, err := ctx.DereferenceDict(ptObj)
-	if err != nil || pt == nil {
-		return fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
-	}
-	if _, nested := pt["Kids"]; nested {
-		return fmt.Errorf("pdfops: this document's /ParentTree is a NESTED number tree, which the " +
-			"write half does not rebalance — refusing rather than writing an entry that a reader " +
-			"following /Kids would never find")
+	pt, err := parentTreeDict(ctx, tree)
+	if err != nil {
+		return err
 	}
 	nums, _ := ctx.DereferenceArray(pt["Nums"])
 
@@ -373,4 +384,75 @@ func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.Indi
 	e.Object = d
 
 	return mcid, setParentTreeSlot(ctx, tree, key, mcid, elem)
+}
+
+// setParentTreeSingle writes a `/ParentTree` entry whose value is a SINGLE reference —
+// `PLAN-accessibility.md` P06.S07.
+//
+// # The two shapes, which P05.S03 modelled and nothing had yet written
+//
+// `/ParentTree` maps a key to one of two different things, and which one depends on who owns the
+// key:
+//
+//   - a PAGE's key comes from `/StructParents` (plural) and its value is an ARRAY indexed by MCID,
+//     because one page holds many marked-content sequences. That is `setParentTreeSlot`.
+//   - an ANNOTATION's key comes from `/StructParent` (singular) and its value is ONE reference,
+//     because one annotation belongs to exactly one element. That is this.
+//
+// Writing an array where a reader expects a reference produces a tree that resolves to the wrong
+// kind of object — `readStructTree` distinguishes them and `checkStructConsistency` reports the
+// mismatch, which is why the distinction is two functions rather than one with a flag.
+func setParentTreeSingle(ctx *model.Context, tree *structTree, key int, ref types.IndirectRef) error {
+	pt, err := parentTreeDict(ctx, tree)
+	if err != nil {
+		return err
+	}
+	nums, _ := ctx.DereferenceArray(pt["Nums"])
+	for i := 0; i+1 < len(nums); i += 2 {
+		n, ok := nums[i].(types.Integer)
+		if !ok || n.Value() != key {
+			continue
+		}
+		// An existing entry at this key is the caller having picked a key that is already taken.
+		// Overwriting it would silently re-point whatever owned it at this element.
+		return fmt.Errorf("pdfops: /ParentTree key %d is already taken — overwriting it would "+
+			"re-point whatever owns it at a different element", key)
+	}
+	pt["Nums"] = append(nums, types.Integer(key), ref)
+	return nil
+}
+
+// freeParentTreeKey returns a `/ParentTree` key no entry uses, so an annotation's `/StructParent`
+// cannot collide with a page's `/StructParents` or with another annotation's.
+//
+// It scans BOTH shapes, because the two share one key space: a page array at key 3 and an
+// annotation reference at key 3 are the same entry, and the second write would destroy the first.
+func freeParentTreeKey(ctx *model.Context, tree *structTree) int {
+	arrays, singles := parentTreeEntries(ctx, tree)
+	key := 0
+	for {
+		_, isArray := arrays[key]
+		_, isSingle := singles[key]
+		if !isArray && !isSingle {
+			return key
+		}
+		key++
+	}
+}
+
+// addOBJRTo makes elem describe a whole object — in practice an annotation — rather than a range of
+// marked content.
+//
+// An `OBJR` carries `/Pg` as well as `/Obj`: a reader needs to know which page the object is on to
+// place it in reading order, and an annotation dictionary does not say.
+func addOBJRTo(ctx *model.Context, elem types.IndirectRef, obj, page types.IndirectRef) error {
+	ref, err := ctx.IndRefForNewObject(types.Dict{
+		"Type": types.Name("OBJR"),
+		"Obj":  obj,
+		"Pg":   page,
+	})
+	if err != nil {
+		return err
+	}
+	return appendToElementKids(ctx, elem, *ref)
 }

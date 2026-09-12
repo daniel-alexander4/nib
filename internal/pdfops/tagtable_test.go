@@ -87,6 +87,15 @@ var tagFates = map[string]tagFate{
 		out, _, err := DeclareAuthoredProseLang(b)
 		return out, err
 	}},
+	"AuthorTaggedForm": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		// Same drive as `AuthorForm`'s row, one door over: the census fixture is tagged, so this
+		// measures the add-to-an-existing-tree path — the one that could damage what was there.
+		out, _, err := AuthorTaggedForm(b, []FormField{{
+			Page: 1, Rect: [4]float64{10, 10, 200, 40}, Kind: "text",
+			Name: "f1", Label: "Your full name",
+		}})
+		return out, err
+	}},
 	"TagOCRLayer": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		// It BUILDS a tree rather than merely keeping one, and on a document that already has one
 		// it adds to it — `ensureStructTree` is the same door `tagMarkdown` uses. The census

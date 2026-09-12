@@ -57,6 +57,11 @@ type structKid struct {
 	// pgObj is the object number of the page this kid's content is on: from the MCR's own `/Pg`
 	// where it has one, otherwise inherited from the element. Zero when nothing named a page.
 	pgObj int
+	// pgLive says whether pgObj is still a page in the page tree — the same question `structElem`
+	// asks of its own `/Pg`, asked of the kid, because an element that owns no MCID has no `/Pg`
+	// and is anchored entirely through its kids. Added at P06.S07: a `/Form` element describing a
+	// widget anchors through an `OBJR`, and `anchored()` counted it as reaching nothing.
+	pgLive bool
 	// obj is the referenced object for kidOBJR.
 	obj int
 	raw types.Object
@@ -103,6 +108,22 @@ func (t *structTree) anchored() int {
 	for _, e := range t.elems {
 		if e.pgLive {
 			n++
+			continue
+		}
+		// **An element with no `/Pg` of its own may still reach live content through a kid**, and
+		// until P06.S07 this counted it as reaching nothing. A grouping element deliberately has no
+		// `/Pg` (`addGroupingElement` says why), and the only correct way to describe an annotation
+		// is a `/Form` element whose `OBJR` kid names the page — so a correctly tagged form scored
+		// `anchored == 0` and `orphaned()` called it a lie. An MCR kid on another page is the same
+		// shape one step over.
+		//
+		// This is strictly more accurate and not laxer: the question `orphaned()` asks is whether
+		// ANYTHING in the tree reaches live content, and a kid pointing at a live page does.
+		for _, k := range e.kids {
+			if k.pgLive {
+				n++
+				break
+			}
 		}
 	}
 	return n
@@ -235,7 +256,8 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 
 	// An integer is an MCID on the element's own page.
 	if n, ok := raw.(types.Integer); ok {
-		return &structKid{kind: kidMCID, mcid: n.Value(), pgObj: inheritPg, raw: raw}, nil
+		return &structKid{kind: kidMCID, mcid: n.Value(), pgObj: inheritPg,
+			pgLive: livePages[inheritPg], raw: raw}, nil
 	}
 
 	objNr := 0
@@ -266,7 +288,7 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 		if n := d.IntEntry("MCID"); n != nil {
 			mcid = *n
 		}
-		return &structKid{kind: kidMCR, mcid: mcid, pgObj: pg, raw: raw}, nil
+		return &structKid{kind: kidMCR, mcid: mcid, pgObj: pg, pgLive: livePages[pg], raw: raw}, nil
 	case "OBJR":
 		obj := 0
 		if ind, ok := d["Obj"].(types.IndirectRef); ok {
@@ -276,7 +298,7 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 		if ind, ok := d["Pg"].(types.IndirectRef); ok {
 			pg = ind.ObjectNumber.Value()
 		}
-		return &structKid{kind: kidOBJR, obj: obj, pgObj: pg, raw: raw}, nil
+		return &structKid{kind: kidOBJR, obj: obj, pgObj: pg, pgLive: livePages[pg], raw: raw}, nil
 	case "StructElem", "":
 		// `/Type` is OPTIONAL on a structure element (ISO 32000-1 table 323), so an untyped
 		// dictionary under a `/K` is an element. Refusing it would reject documents that are legal
