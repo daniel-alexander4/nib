@@ -556,14 +556,68 @@ and three of the six have moved. One of them this session falsified itself.)**
 
 **Firmed slices:**
 
-#### P02.S01 — keyboard creation and arrow-nudge for every annotation tool
-Scope: every annotation can be created, moved and resized without a pointer. `ArrowUp` returns 0
-across `web/app.js`, so this is the phase's live SC 2.1.1 failure and nothing about it has moved.
+#### P02.S01 — keyboard creation and arrow-nudge for every annotation tool *(done 2026-09-11, v1.129.22)*
+Scope: every placement tool can create, move and resize a mark without a pointer. `ArrowUp` returns
+0 across `web/app.js`, so this is the phase's live SC 2.1.1 failure and nothing about it has moved.
 Refs: D11, exit criterion 1.
+
+**(grill, 2026-09-11 — confirmed, amended on two counts the sketch could not see.)**
+
+**The population is 11, not "annotations".** Eleven `els.viewerWrap.addEventListener('pointerdown')`
+handlers, each gated on its own `view.*Mode` flag: `marker`, `note`, `shape`, `checkbox`,
+`dropdown`, `radio`, `border`, `edit`, `crop`, `splitBox`, `redact`. The exit criterion says
+*annotation* tool and the last three are document operations that happen to draw a box — but SC
+2.1.1 binds every pointer-only interaction, so the slice covers all eleven and the criterion's
+wording is the narrower of the two.
+
+**Nothing knows which tool is armed.** There is no accessor; mutual exclusion is **eight copies** of
+`if (view.redactMode) { view.redactMode = false; reflectRedact(); }` scattered through the arming
+sites. A keyboard door has to ask "what is armed" and today that question has no single answer.
+
+**And the sketch has no enumeration guard**, so a twelfth tool would ship pointer-only with nothing
+red. That is the same hole P01.S03's census existed to close, one file over.
+
+Tasks:
+- ✅ T01 — `armedTool()`: one accessor over the eleven `view.*Mode` flags, returning the armed
+  tool's name or `null`.
+- ~~T02 — `PLACERS`: one row per tool — mode name, default fractional size, constructor call.~~
+  **DIVERGED, and this is the slice's one real departure from its own plan.** Refused after
+  reading the handlers: **eight of the eleven are drag-to-draw**, building their mark on
+  `pointerup` from geometry derived *there* — an async page fetch, a viewport at scale 1, a clamp
+  against the page the drag started on. A table of constructors would have reimplemented all of
+  that eleven times and then drifted from it. **Replaced by synthesising a real
+  `pointerdown`/`pointerup` pair on the page div**, so the keyboard mark and the mouse mark are
+  identical *by construction* rather than by a test that checks they still match. Verified before
+  building: no handler needs an intervening `pointermove`.
+- ✅ T03 — a `keydown` door: Enter/Space with a tool armed places at the centre of the current
+  page, and focuses the new mark (a one-shot request `layoutField` consumes, because placement is
+  async for several tools).
+- ✅ T04 — arrow nudge and Shift+arrow resize on the focused overlay, one delegated handler for
+  every tool, recording undo through the existing `recordMove`.
+- ✅ T05 — the guard: `keyboardplacement.test.mjs` enumerates `view.*Mode` from the source and
+  requires every one to be served or exempted with a reason.
+- ✅ **T06, added mid-slice** — Enter belongs to whatever has focus. See the pin below.
+
 Acceptance:
-- Each tool creates a mark from the keyboard alone, asserted at tier 3.
-- Arrow keys nudge and Shift+arrow resizes the selected mark, asserted at tier 3.
-- A red proof: removing the key handler turns the assertion red.
+- Each of the eleven tools creates a mark from the keyboard alone, asserted at tier 3 and
+  **enumerated from the code rather than listed**.
+- Arrow keys nudge and Shift+arrow resizes the focused mark, asserted at tier 3.
+- **Adding a `*Mode` with no `PLACERS` row turns the guard red, proved by adding one.**
+- ✅ A red proof: removing the key handler turns the creation assertion red.
+
+**(pin — tier 3 found a defect worse than the one this slice fixes, and only tier 3 could.)** The
+first version took Enter whenever a tool was armed and called `preventDefault()`. Focus, immediately
+after arming a tool *with the keyboard*, is on the button that armed it — so that placed a mark and
+swallowed the button's own activation. **Arming the Note tool broke every button a Tab user could
+reach.** `isTypingTarget` does not cover it: it is about text entry, and a button is not a text
+field. The door now returns early on `button, a[href], select, [role="button"], [role="tab"],
+summary`, with its own assertion.
+
+**And a second thing the tier taught, recorded because it re-shaped a test rather than the code:** a
+placed note focuses its own `textarea`, where the arrow keys belong to the caret — correctly, and
+`isTypingTarget` bails before the nudge for that reason. The nudge assertion therefore drives a
+border box, which carries no text field, and the note's behaviour is pinned as its own rule so the
+reasoning cannot go stale in silence.
 
 #### P02.S02 — armed state is programmatic, not colour alone
 Scope: the 27 `classList.toggle('active')` sites that signal an armed tool gain `aria-pressed`, and
