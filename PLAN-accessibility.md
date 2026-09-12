@@ -2243,19 +2243,31 @@ one catalog key.
 
 **Firmed slices:**
 
-#### P07.S01 — a rule is a function with three verdicts
+#### P07.S01 — a rule is a function with three verdicts *(done 2026-09-12, v1.129.63)*
 Scope: the checker's spine and law 4, which is the whole design rather than a detail. A rule is a
 named function returning `pass`, `fail(what and where)`, or **`cannot check, and why`** — and the
 third never collapses into the first. One rule implemented to prove the shape, chosen for having a
 reader already: `7.1 t11` off `inspectTags`. Also corrects the stale `5 t1` gate note. Refs D6, law
 4, exit criterion 2.
 Acceptance:
-- The verdict type makes the collapse law 4 forbids **unrepresentable**, not merely avoided — a rule
-  cannot return "pass" without having run, and the guard is a mutation that tries.
+- ~~The verdict type makes the collapse law 4 forbids **unrepresentable**, not merely avoided — a
+  rule cannot return "pass" without having run, and the guard is a mutation that tries.~~
+  **AMENDED by the grill before a line was written, and again confirmed in the build:** no type can
+  stop a function writing `return Result{Verdict: Pass}` having checked nothing, so the clause as
+  written was unachievable and would have been closed over. What a type CAN stop is **absence**
+  reading as conformance — which is how this law actually gets broken, by a rule that returns early,
+  a map lookup that misses, a `make([]Result, n)`, or a helper that forgets a field. So: the zero
+  `Verdict` is `NotRun`, `NotRun` is not one of law 4's three verdicts but the state of never having
+  been asked, and no unresolved verdict counts toward conformance. Probed by making `Pass` the zero
+  value, which turns three assertions red at once.
 - A rule that cannot evaluate a document says which rule and why, and the report prints it as
   distinct from a pass.
 - The registry is enumerated from the code, with a floor, the way `tagFates` is — a rule that is
-  never registered is a clause nobody checks and looks identical to one that passes.
+  never registered is a clause nobody checks and looks identical to one that passes. **Built as a
+  `go/ast` scan over every `register(Rule{Clause: …})` literal in the package**, compared both ways
+  against what the registry holds, with two stimulus floors: a scan that parsed nothing and a
+  registry that is empty each agree with the other vacuously. Probed with a rule written in a
+  function nothing calls.
 
 #### P07.S02 — the catalog and metadata rules
 Scope: the clauses readable without a structure tree — `7.1 t8`, `7.1 t9`, `7.1 t10`, `7.2 t33`,
