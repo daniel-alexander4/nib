@@ -1418,13 +1418,49 @@ Acceptance:
 - ✅ *"or the slice closes with the finding that it is not yet reachable and says where it belongs"*
   — this clause, and it is the one the slice was written to allow.
 
-### P05 — The tag tree core
+### P05 — The tag tree core *(done 2026-09-11, v1.129.51)*
 **Goal.** The typed model of D8 plus the wrapping emitter of D3 — parse, mutate, write back, with
 `/ParentTree`, `/StructParents` and MCIDs as model invariants. This is the new capability the whole
 plan rests on and the first place nib emits content-stream operators of its own.
 
 **Exit criteria.** Round-trip of an existing tagged document is lossless; a tree built by the model
 validates under veraPDF `ua1`; wrapping is proved not to disturb the wrapped content's bytes.
+
+**Acceptance ledger — phase close, 2026-09-11 at v1.129.51.** Every clause split on `and`.
+
+| # | clause | verdict |
+|---|---|---|
+| 1a | round-trip of an existing tagged document is **lossless** | ✅ **and it had NO READER until this close asked for one.** S02 proved the model PARSES faithfully — a different claim from writing back everything it parsed, and a model quietly dropping `/A` or an `OBJR` would have passed every S02 assertion. Now driven on the REAL tree: element types, page liveness, MCIDs, OBJRs and the role map compared across a no-op write |
+| 1b | …of an **existing** document (not one nib authored) | ✅ a LibreOffice HTML conversion — role-mapped names, an `OBJR`, 13 integer MCIDs. The generated fixtures have none of the three and cannot stand in, so it skips loudly without LibreOffice |
+| 2 | a tree built by the model **validates under veraPDF ua1** | ✅ `6.2 t1`, `7.1 t3` and `7.1 t11` clear **together**, measured before and after on the same document, with the untagged one asserted to fail all three first. Nib's Markdown output then fails **`5 t1` alone** |
+| 3 | wrapping is proved **not to disturb the wrapped content's bytes** | ✅ a byte comparison of the span between the inserted operators, on a 2,093-byte real page — which is what S01's byte-identical round trip existed to make possible |
+
+**Required-run gates, enumerated** (they are a separate list from the criteria and nothing else
+walks them): the `CLAUDE.md` **slice gate does NOT fire** for any P05 slice — `git diff --name-only`
+across the phase touches no `internal/server` session/ceremony/delivery/discovery path, no
+`internal/p2p`, no `internal/rendezvous`. Tier 0 ✅, tier 1 ✅, tier 2 ✅ 343/343. Tier 3 not re-run:
+the phase changed no `web/` file.
+
+**What the phase found that no slice predicted:**
+
+- **The round-trip law is not sufficient** — every tokenization covering the stream passes it, and
+  three mutations proved it by staying green (S01).
+- **`inspectTags` had undercounted since v1.129.16**, keying its visited set on dictionary content,
+  so identical sibling elements counted as one (S02).
+- **`/ParentTree` is two structures wearing one name** — a page's entry is an array indexed by MCID,
+  an annotation's is a single reference (S03).
+- **An element with no `/P` fails a clause that names the CONTENT**, so the symptom points away from
+  the cause (S04).
+- **A symmetric loss is invisible to a before/after comparison** — dropping the role map entirely
+  left the round trip green (this close).
+- **Three comments claimed more than their code could show**, each correct and each unreachable
+  through its only caller (S01's `/ID`, S02's depth bound, S03's fill-versus-append).
+
+**And the phase's own gate retired itself on schedule.** S01 added `gated` as a fifth zero-caller
+exemption prefix with `TestNoGatedExemptionOutlivesItsCoordinate`; S04 shipped, four rows gained
+production callers, and the guard failed the moment the slice was marked done — before the commit,
+because the marker is written first. `TagAuthored` is now gated on **P06** for the same reason, so
+"deliberately unwired" cannot become "forgotten".
 
 **Shared surface.** `PLAN-text-reflow.md`'s P05 needs the same content-stream walker, for a harder
 job (rewriting operators rather than bracketing them). Whichever plan reaches it first builds it and

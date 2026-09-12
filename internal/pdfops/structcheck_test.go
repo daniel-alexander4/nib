@@ -2,6 +2,11 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -236,4 +241,122 @@ func TestAGapInTheParentTreeArrayIsFilledNotAppended(t *testing.T) {
 	if arr[0] == 0 {
 		t.Error("slot 0 lost the element that was already there")
 	}
+}
+
+// treeFingerprint is everything about a structure tree that a lossless round trip must preserve:
+// every element's type and page, its MCIDs and object references in order, and the role map.
+//
+// It is deliberately NOT the document's bytes. `writeMutated` re-serialises the whole file — object
+// numbers move, streams are recompressed — so a byte comparison would fail on every document and
+// prove nothing about the tree. What must survive is the STRUCTURE, and this is it written down.
+func treeFingerprint(t *testing.T, pdf []byte) string {
+	t.Helper()
+	tree, _ := checkTree(t, pdf)
+	var b strings.Builder
+	roles := make([]string, 0, len(tree.roleMap))
+	for k, v := range tree.roleMap {
+		roles = append(roles, k+"->"+v)
+	}
+	sort.Strings(roles)
+	fmt.Fprintf(&b, "rolemap[%s]\n", strings.Join(roles, ","))
+	for _, e := range tree.elems {
+		fmt.Fprintf(&b, "elem /%s pgLive=%v kids=", e.kind, e.pgLive)
+		for _, k := range e.kids {
+			switch k.kind {
+			case kidMCID:
+				fmt.Fprintf(&b, "mcid:%d ", k.mcid)
+			case kidMCR:
+				fmt.Fprintf(&b, "mcr:%d ", k.mcid)
+			case kidOBJR:
+				fmt.Fprintf(&b, "objr ")
+			case kidElement:
+				fmt.Fprintf(&b, "elem:/%s ", k.elem.kind)
+			}
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TestRoundTrippingAnExistingTaggedDocumentIsLossless — **P05's first exit criterion**, and it had
+// no reader until the phase close asked for one.
+//
+// S02 proved the model PARSES a tree faithfully, by comparing its count against an independent
+// object-keyed walk. That is not the same claim: parsing correctly and then writing back everything
+// you parsed are two properties, and the second is the one every later mutation rests on. A model
+// that quietly dropped `/A` attributes, or an `OBJR`, would pass every S02 assertion and lose part
+// of a user's document the first time anything wrote through it.
+//
+// The population is the REAL tree — role-mapped names, an OBJR, integer MCIDs — because the
+// generated fixtures contain none of the three and a round trip over a tree with one element kind
+// cannot lose the other two.
+func TestRoundTrippingAnExistingTaggedDocumentIsLossless(t *testing.T) {
+	if !LibreOfficeAvailable() {
+		t.Skip("SKIP (not a pass): LibreOffice is absent, so P05's exit criterion — a round trip " +
+			"of an existing tagged document is lossless — is UNCHECKED in this run. The generated " +
+			"fixtures have no RoleMap, no OBJR and no integer MCIDs, so they cannot stand in.")
+	}
+	pdf := richTaggedFixture(t)
+	before := treeFingerprint(t, pdf)
+	if strings.Count(before, "elem /") < 5 {
+		t.Fatalf("the fixture has too few elements for this to mean anything:\n%s", before)
+	}
+	if !strings.Contains(before, "objr") || !strings.Contains(before, "mcid:") {
+		t.Fatalf("the fixture lacks an OBJR or an MCID, so a round trip cannot show them "+
+			"surviving:\n%s", before)
+	}
+	// **The fingerprint compares the model against itself, so a SYMMETRIC loss is invisible.**
+	// Dropping the role map entirely leaves before and after identical and the test green — found
+	// by mutation. Every field the fingerprint carries therefore needs a floor asserting it is
+	// non-empty in the first place, or the comparison is over a smaller tree than the document has.
+	if strings.HasPrefix(before, "rolemap[]") {
+		t.Fatalf("the fingerprint records an EMPTY role map for a document that has one — the "+
+			"model is not reading it, and a round trip comparing the model to itself cannot see "+
+			"that:\n%s", before)
+	}
+
+	// A no-op mutation: read the tree, change nothing, write the document back.
+	out, err := writeMutatedTree(t, pdf, func(ctx *model.Context, tree *structTree) error {
+		if tree.elements() == 0 {
+			return errNoStructTree
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("no-op round trip: %v", err)
+	}
+
+	after := treeFingerprint(t, out)
+	if before != after {
+		t.Errorf("the tree changed across a no-op round trip\n--- before\n%s\n--- after\n%s", before, after)
+	}
+	if _, defects := checkTree(t, out); len(defects) > 0 {
+		t.Errorf("the round-tripped document is not self-consistent: %v", defects)
+	}
+}
+
+// richTaggedFixture produces a real tagged PDF with a RoleMap, an OBJR and integer MCIDs, by
+// converting HTML through LibreOffice at test time. Generated rather than committed, for the reason
+// `corpus_test.go` gives about opaque binary fixtures.
+func richTaggedFixture(t *testing.T) []byte {
+	t.Helper()
+	const html = `<html><body><h1>A heading</h1><p>Body with <b>bold</b>.</p>` +
+		`<ul><li>one</li><li>two</li></ul>` +
+		`<table border="1"><tr><th>H</th></tr><tr><td>c</td></tr></table>` +
+		`<p>A <a href="https://example.com">link</a>.</p></body></html>`
+	dir := t.TempDir()
+	in := filepath.Join(dir, "rich.html")
+	if err := os.WriteFile(in, []byte(html), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(libreOfficePath(), "-env:UserInstallation=file://"+filepath.Join(dir, "prof"),
+		"--headless", "--convert-to", "pdf", in, "--outdir", dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIP (not a pass): LibreOffice could not build the fixture: %v\n%s", err, out)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "rich.pdf"))
+	if err != nil {
+		t.Skipf("SKIP (not a pass): no converted fixture: %v", err)
+	}
+	return b
 }
