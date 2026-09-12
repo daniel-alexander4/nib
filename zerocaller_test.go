@@ -1,12 +1,15 @@
 package nib
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -55,13 +58,33 @@ import (
 // which is the only standing check that the refusal at `internal/ceremony/invitation.go`'s
 // caveat-11 block stays a refusal.
 func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
-	// The exemption map, and every row carries the reason it is not a defect. The four prefixes are
+	// The exemption map, and every row carries the reason it is not a defect. The FIVE prefixes are
 	// different claims, not a style: `interface` means the call site cannot exist textually,
 	// `test-support` means the function is exported FOR tests, `test-only` means production really
-	// does not call it and that is a judgement someone made, and `finding` means it IS the defect,
-	// recorded under a pending item rather than fixed here.
+	// does not call it and that is a judgement someone made, `finding` means it IS the defect,
+	// recorded under a pending item rather than fixed here, and `gated` means production does not
+	// call it YET.
+	//
+	// **`gated` is the newest and the only one that expires**, added at `PLAN-accessibility.md`
+	// P05.S01. It exists because a plan can legitimately build a capability one slice before the
+	// slice that consumes it — and because this repo has already paid for the alternative reading:
+	// `/pending 442` deleted exported crypto that nothing called, which had taken a fix nobody ran
+	// plus a standing exemption row that outlived its reason by months.
+	//
+	// So a `gated` row **must name the plan coordinate that will call it**, and
+	// `TestNoGatedExemptionOutlivesItsCoordinate` fails once that coordinate is marked done. The
+	// exemption retires itself instead of waiting to be noticed.
 	declared := map[string]string{
-		"CheckDocument": "finding — /pending 458.",
+		// P05.S01 built the content-stream walker; P05.S04 is the wrapping emitter that calls it,
+		// and `PLAN-text-reflow.md` P05 extends it. Nothing in production reads a content stream
+		// until then.
+		"Tokenize":             "gated — PLAN-accessibility.md P05.S04.",
+		"WriteTokens":          "gated — PLAN-accessibility.md P05.S04.",
+		"NewEdit":              "gated — PLAN-accessibility.md P05.S04.",
+		"(*Edit).InsertBefore": "gated — PLAN-accessibility.md P05.S04.",
+		"(*Edit).Apply":        "gated — PLAN-accessibility.md P05.S04.",
+		"(Token).Describe":     "gated — PLAN-accessibility.md P05.S04.",
+		"CheckDocument":        "finding — /pending 458.",
 		"(Record).Hops": "finding — /pending 443. Deleted once as dead and restored: its only use " +
 			"is a stimulus floor in record_test.go requiring a 3-party roster to report 2 hops " +
 			"before any hop-mapping assertion runs.",
@@ -233,4 +256,63 @@ func exprName(e ast.Expr) string {
 		return exprName(t.X)
 	}
 	return "?"
+}
+
+// gatedRow matches a `gated` exemption and captures the plan file and coordinate it names.
+var gatedRow = regexp.MustCompile(`^gated — (PLAN-[A-Za-z0-9-]+\.md) (P\d+(?:\.S\d+)?)\.`)
+
+// TestNoGatedExemptionOutlivesItsCoordinate — `PLAN-accessibility.md` P05.S01.
+//
+// A `gated` exemption in `zerocaller_test.go` says *production does not call this YET, and here is
+// the plan coordinate that will*. That is a legitimate claim exactly once: while the coordinate is
+// still open. The moment it ships, the row is either wrong — the caller exists and the sibling
+// staleness check will say so — or it is right and the plan did not do what it said, which is the
+// more interesting failure and the one nothing else would report.
+//
+// **This is the check `/pending 442` cost the repo for want of.** Dead exported crypto sat behind a
+// standing exemption row until somebody read it; the row itself could not tell anyone it had
+// expired. A gate with no caller is this repo's own name for a rule enforced only by a sentence
+// saying it is required.
+func TestNoGatedExemptionOutlivesItsCoordinate(t *testing.T) {
+	// Re-run the guard's own map by calling it indirectly is not possible, so the rows are read
+	// from this file's source — the one place they are written — rather than duplicated here.
+	src, err := os.ReadFile("zerocaller_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := regexp.MustCompile(`"gated — (PLAN-[A-Za-z0-9-]+\.md) (P\d+(?:\.S\d+)?)\."`).
+		FindAllStringSubmatch(string(src), -1)
+	if len(rows) == 0 {
+		t.Skip("SKIP (not a pass): no `gated` exemption is declared, so this has nothing to check")
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		planFile, coord := r[1], r[2]
+		key := planFile + " " + coord
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		plan, rerr := os.ReadFile(planFile)
+		if rerr != nil {
+			t.Errorf("a gated exemption names %s, which does not exist: %v", planFile, rerr)
+			continue
+		}
+		// The coordinate's heading, and whether it carries a done marker.
+		head := regexp.MustCompile(`(?m)^#+ ` + regexp.QuoteMeta(coord) + `\b.*$`).Find(plan)
+		if head == nil {
+			t.Errorf("a gated exemption names %s %s, which is not a heading in that plan — the "+
+				"coordinate was renamed or never existed, so the exemption points at nothing",
+				planFile, coord)
+			continue
+		}
+		if bytes.Contains(head, []byte("*(done")) {
+			t.Errorf("%s %s has SHIPPED, and exemptions are still gated on it:\n  %s\n\t"+
+				"Either the slice built the caller — in which case remove those rows — or it did "+
+				"not, and exported code nothing calls has just been released behind a reason that "+
+				"expired. /pending 442 is what the second one costs.",
+				planFile, coord, head)
+		}
+	}
+	t.Logf("%d gated coordinate(s) checked, all still open", len(seen))
 }
