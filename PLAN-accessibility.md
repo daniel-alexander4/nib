@@ -1716,15 +1716,48 @@ marked done** — before the commit, because `/createcode` writes the marker fir
 became `test-support`, since nothing schedules a caller for them and a coordinate would be a date
 nobody is keeping.
 
-#### P05.S05 — `/MarkInfo`, and a document that is honestly tagged
+#### P05.S05 — `/MarkInfo`, and a document that is honestly tagged *(done 2026-09-11, v1.129.50)*
 Scope: the clause P03 deferred here by name, plus the end-to-end proof. Refs exit criterion 2,
 ADR-031 law 1.
+
+**(grill, 2026-09-11 — confirmed, and step zero raised a question the ADR had already answered.)**
+
+**`TagAuthored` is built and deliberately NOT WIRED into the authoring doors.** The obvious next
+move is to tag every document nib writes. ADR-031 says why not, in its own words: *"A screen reader
+told a document is tagged **stops reaching for the fallbacks it would otherwise use**. A user who
+can see their tagging is gone can re-tag, re-export, or choose a different tool; a user handed a
+document that asserts structure it does not have has had their own check defeated."*
+
+A `/Div`-per-page tree asserts structure while carrying **none of the distinctions a reader
+navigates by** — no headings, no lists, no paragraph boundaries. It clears the clauses and may hand
+a user less than the untagged document would have, because the reader's own heuristics stop running.
+That is the asymmetry law 1 is built on, applied one level up: the claim is true, and it is still
+not worth making until it carries something.
+
+**P06 is where it gets wired**, with real structure from `mdpdf`'s own AST — which is that phase's
+stated goal and the thing that makes the claim worth making. The mechanism is finished here; what it
+is pointed at is P06's.
+
+Tasks:
+- T01 — `TagAuthored`: both halves in one operation, with `orphaned()` as its own post-condition.
+- T02 — the end-to-end ua1 measurement, before and after on the same document.
+
 Acceptance:
-- A nib-authored document gains `/MarkInfo /Marked true` **and** a `/StructTreeRoot` the emitter
-  populated, in one operation — never the first without the second.
-- `inspectTags` reports it un-orphaned, and `tagState.orphaned()` goes red if the two are split.
-- Measured on the ua1 oracle: **6.2 t1, 7.1 t3 and 7.1 t11 clear together**, and the delta table
-  shrinks rather than gaining a row.
+- ✅ A nib-authored document gains `/MarkInfo /Marked true` **and** a populated `/StructTreeRoot` in
+  one operation — **there is no parameter for doing one without the other**, because a caller that
+  could eventually would. A document with nothing to wrap comes back byte-identical **and without
+  `/MarkInfo`**: asserting tagging over a tree with no elements is the violation this exists to
+  avoid, not a harmless extra key.
+- ✅ `inspectTags` reports it un-orphaned, **and the predicate is proved able to see the failure** —
+  `TestSplittingTheTwoHalvesIsOrphaned` builds the `/MarkInfo`-with-no-tree document and requires
+  `orphaned()` to return true, so the clean result above is not a predicate that never fires.
+- ✅ Measured on the ua1 oracle, before and after on the same document: **`6.2 t1`, `7.1 t3` and
+  `7.1 t11` clear together**, nothing new arrives, and the untagged document is asserted to fail all
+  three first — clearing a clause that already passed proves nothing. Nib's Markdown output, titled
+  and with `/Lang`, then fails **`5 t1` alone**.
+- ➖ The ua1 delta table does not change, and that is correct: `knownUA1Deltas` is keyed on
+  `tagFates`, and `TagAuthored` is not a census operation — it takes a document and returns one, but
+  nothing in the census drives it because it is not yet reachable from any authoring door.
 
 ### P06 — Tagging what nib authors
 **Goal.** Exact structure first (D4): `mdpdf` from its AST, then authored form fields with `/TU`
