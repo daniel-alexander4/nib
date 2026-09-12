@@ -182,3 +182,58 @@ func setPageContent(ctx *model.Context, page types.Dict, b []byte) error {
 	page["Contents"] = *ref
 	return nil
 }
+
+// TagAuthored gives a document nib authored the two halves of being tagged, in one operation:
+// content bracketed in marked content that a structure tree describes, **and** `/MarkInfo
+// /Marked true` saying so.
+//
+// # Why one door and never two
+//
+// ADR-031's law 1 is that nothing claims tagging it has not. The two halves are exactly the two
+// ways to break it:
+//
+//   - `/MarkInfo /Marked true` with no tree is `tagState.orphaned()` — the state P01.S06 built a
+//     door to prevent and P03 struck `/MarkInfo` from its own floor to avoid producing.
+//   - a tree with no `/MarkInfo` is the quieter half: the document carries structure and does not
+//     say it is tagged, so a reader has no reason to look.
+//
+// A caller that could do one without the other would eventually do one without the other. There is
+// no parameter here for that reason.
+//
+// # It returns the document UNCHANGED when there was nothing to wrap
+//
+// Every page already marked, or no page with content: the bytes come back as they went in, and
+// `wrapped` is 0. A document that needed nothing costs nothing — and `/MarkInfo` is not written
+// either, because asserting tagging over a tree with no elements is the violation this exists to
+// avoid, not a harmless extra key.
+func TagAuthored(pdf []byte) (out []byte, wrapped int, err error) {
+	out, wrapped, err = tagAuthoredContent(pdf)
+	if err != nil || wrapped == 0 {
+		return pdf, wrapped, err
+	}
+	out, err = writeMutated(out, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		mi, _ := ctx.DereferenceDict(cat["MarkInfo"])
+		if mi == nil {
+			mi = types.Dict{}
+		}
+		mi["Marked"] = types.Boolean(true)
+		cat["MarkInfo"] = mi
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	// **The post-condition is the law itself.** `honest` already refuses to ship a document whose
+	// claim its content cannot support; here the claim is one this function just made, so checking
+	// it is checking our own work rather than somebody else's.
+	if s := inspectTags(out); s.orphaned() {
+		return nil, 0, fmt.Errorf("pdfops: TagAuthored produced a document that claims tagging its "+
+			"content does not support (%d element(s), %d anchored, %d page(s) with /StructParents) "+
+			"— refusing to return it", s.elements, s.anchored, s.pagesSP)
+	}
+	return out, wrapped, nil
+}

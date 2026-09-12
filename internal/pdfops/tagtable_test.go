@@ -73,11 +73,18 @@ var tagFates = map[string]tagFate{
 	// ── CARRIED. The tree survives intact. Every one of these was declared `dropped` until the
 	// census was measured rather than asserted; the byte count that produced that declaration could
 	// not see a compressed object stream, so it reported a carried tree as an empty one.
-	"Rotate":              {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Rotate(b, nil, 90) }},
-	"Optimize":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Optimize(b) }},
-	"NormalizePageSizes":  {verdict: "carried", drive: func(b []byte) ([]byte, error) { return NormalizePageSizes(b) }},
-	"SetLang":             {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetLang(b, "en-GB") }},
-	"SetTitle":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetTitle(b, "A title") }},
+	"Rotate":             {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Rotate(b, nil, 90) }},
+	"Optimize":           {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Optimize(b) }},
+	"NormalizePageSizes": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return NormalizePageSizes(b) }},
+	"SetLang":            {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetLang(b, "en-GB") }},
+	"SetTitle":           {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetTitle(b, "A title") }},
+	// TagAuthored on an ALREADY-marked document wraps nothing and returns it unchanged, which is
+	// the only thing the census can drive it with: the corpus fixture is tagged, and tagging a
+	// tagged document is the no-op this operation is built to be.
+	"TagAuthored": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		out, _, err := TagAuthored(b)
+		return out, err
+	}},
 	"TitleFromName":       {verdict: "carried", drive: func(b []byte) ([]byte, error) { return TitleFromName(b, "report.pdf") }},
 	"StripMetadata":       {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
 	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},

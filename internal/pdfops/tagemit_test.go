@@ -2,6 +2,8 @@ package pdfops
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -306,4 +308,146 @@ func TestTheEmitterClaimsGroupingAndNotRole(t *testing.T) {
 				"know", e.kind)
 		}
 	}
+}
+
+// TestTagAuthoredWritesBothHalvesOrNeither — P05.S05's first acceptance clause.
+//
+// The two halves are the two ways to break ADR-031's law 1: `/MarkInfo` with no tree is
+// `orphaned()`, and a tree with no `/MarkInfo` is a document that carries structure and does not
+// say so. One door, no parameter, because a caller that could do one without the other eventually
+// would.
+func TestTagAuthoredWritesBothHalvesOrNeither(t *testing.T) {
+	out, wrapped, err := TagAuthored(authoredPDF(t))
+	if err != nil {
+		t.Fatalf("TagAuthored: %v", err)
+	}
+	if wrapped != 1 {
+		t.Fatalf("wrapped %d page(s), want 1", wrapped)
+	}
+	s := inspectTags(out)
+	if !s.marked {
+		t.Error("the document has no /MarkInfo /Marked true — it carries structure and does not " +
+			"say it is tagged, so a reader has no reason to look")
+	}
+	if !s.tree || s.elements == 0 {
+		t.Errorf("the document has no usable tree (tree=%v elements=%d)", s.tree, s.elements)
+	}
+	if s.orphaned() {
+		t.Errorf("the document claims tagging its content does not support: %+v", s)
+	}
+	if _, defects := checkTree(t, out); len(defects) > 0 {
+		t.Errorf("the tagged document is not self-consistent: %v", defects)
+	}
+}
+
+// TestSplittingTheTwoHalvesIsOrphaned is the stimulus floor for the test above: it proves
+// `orphaned()` can actually SEE the failure the door exists to prevent, on this shape of document.
+//
+// Without it, `!s.orphaned()` above is satisfied by a predicate that never returns true.
+func TestSplittingTheTwoHalvesIsOrphaned(t *testing.T) {
+	// /MarkInfo with no tree — the half P03 struck from its own floor to avoid producing.
+	markedOnly, err := writeMutated(authoredPDF(t), func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		cat["MarkInfo"] = types.Dict{"Marked": types.Boolean(true)}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := inspectTags(markedOnly); !s.orphaned() {
+		t.Errorf("a document with /MarkInfo /Marked true and NO tree is not reported as orphaned "+
+			"(%+v) — the post-condition in TagAuthored cannot see the state it exists to refuse", s)
+	}
+}
+
+// TestTagAuthoredLeavesADocumentWithNothingToDoAlone.
+//
+// A document whose every page is already marked comes back byte-identical, and **without
+// `/MarkInfo`**: asserting tagging over a tree with no elements of nib's is the violation this
+// exists to avoid, not a harmless extra key.
+func TestTagAuthoredLeavesADocumentWithNothingToDoAlone(t *testing.T) {
+	src := untaggedFixture()
+	// Every page blank-ish: the fixture's content is present, so use one that is already marked.
+	marked := taggedFixture()
+	out, wrapped, err := TagAuthored(marked)
+	if err != nil {
+		t.Fatalf("TagAuthored: %v", err)
+	}
+	if wrapped != 0 {
+		t.Errorf("wrapped %d page(s) of an already-marked document", wrapped)
+	}
+	if !bytes.Equal(out, marked) {
+		t.Errorf("an already-marked document came back changed (%d bytes in, %d out)", len(marked), len(out))
+	}
+	_ = src
+}
+
+// TestTagAuthoredClearsTheStructureClausesTogether — P05.S05's measured clause, and P05's own exit
+// criterion: *a tree built by the model validates under veraPDF ua1*.
+//
+// It asserts the three clauses clear TOGETHER rather than individually, because that is what the
+// plan says and because each alone is reachable by a document that is lying: `6.2 t1` alone is
+// `/MarkInfo` with no tree, and `7.1 t11` alone is a tree nothing points at.
+func TestTagAuthoredClearsTheStructureClausesTogether(t *testing.T) {
+	vp := verapdfPath()
+	if vp == "" {
+		t.Skip("SKIP (not a pass): veraPDF is absent, so P05's exit criterion — a tree built by " +
+			"the model validates under ua1 — is UNCHECKED in this run")
+	}
+	src, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagged, wrapped, err := TagAuthored(src)
+	if err != nil {
+		t.Fatalf("TagAuthored: %v", err)
+	}
+	if wrapped == 0 {
+		t.Fatal("nothing was wrapped, so there is no tree to validate")
+	}
+	// The catalog floor and the language, so the comparison is about STRUCTURE and not about
+	// clauses P03 already owns.
+	titled, err := SetTitle(tagged, "P05.S05")
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := SetLang(titled, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	before := filepath.Join(dir, "before.pdf")
+	after := filepath.Join(dir, "after.pdf")
+	baseTitled, _ := SetTitle(src, "P05.S05")
+	baseFinal, _ := SetLang(baseTitled, "en")
+	if err := os.WriteFile(before, baseFinal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(after, final, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clauses := ua1FailedClauses(t, vp, []string{before, after})
+	was, is := clauses["before.pdf"], clauses["after.pdf"]
+	if was == nil || is == nil {
+		t.Fatalf("veraPDF could not validate one of the two documents (before=%v after=%v)", was, is)
+	}
+	for _, c := range []string{"6.2 t1", "7.1 t3", "7.1 t11"} {
+		if !was[c] {
+			t.Errorf("the UNTAGGED document already passes %s, so clearing it proves nothing", c)
+		}
+		if is[c] {
+			t.Errorf("%s still fails after tagging; the whole set is %v", c, sortedClauses(is))
+		}
+	}
+	// And nothing new arrived.
+	for c := range is {
+		if !was[c] {
+			t.Errorf("tagging ADDED ua1 %s", c)
+		}
+	}
+	t.Logf("before: %v\nafter:  %v", sortedClauses(was), sortedClauses(is))
 }
