@@ -1812,6 +1812,91 @@ known with certainty. The fix is a language on the CONTENT (a `/Span` carrying `
 structure element's own `/Lang` attribute), which is P05's wrapping emitter applied here. P03.S02
 deliberately did not do it twice.
 
+**(phase-open, 2026-09-11 at v1.129.51 — five measurements, and two change what the phase contains.)**
+
+| measured | result |
+|---|---|
+| what P05 left ready | `TagAuthored` wraps a page and builds a tree; **P06 replaces the TYPE, not the mechanism**. `addMarkedElement` takes a structure type and allocates the MCID; what it does not yet take is a PARENT, so a nested tree needs one more mutation |
+| `mdpdf`'s structure | it walks a real goldmark AST (`renderer.blocks`) and knows heading level, list nesting and code blocks at layout time — **and throws all of it away**: `layout` records positioned runs and nothing about what produced them |
+| the form third | **`/TU` and `/Tabs` are written NOWHERE** — named search across `internal/` returns zero. `AuthorForm` builds fields through a `CreateFromJSON` spec; neither key has ever been emitted |
+| the OCR third | tesseract's hierarchy **is available and never crosses the wire**. `web/app.js:6587` iterates `data.words` and sends `{page, text, rect}`; the vendored tesseract.js exposes `blocks → paragraphs → lines → words` (`blocks:!0`, `t.blocks.forEach`, `paragraphs:`, `lines:` all present in the bundle) |
+| the fourth source | the readme and signature pages are `CreateFromJSON` output — nib's own English prose, appended into a document whose `/Lang` may say otherwise. **The only source whose language is known with certainty** |
+
+**So the OCR third is a WIRE CHANGE before it is a tagging change**, and that is the thing the
+sketch's phrase *"recovered across the wire"* assumes rather than states. A new request field also
+meets `/pending 447`'s guard, which reads `r.FormValue`/JSON fields as `(route, field)` pairs and
+requires every field a handler reads to be one some client sends.
+
+**And `mdpdf` has the information but discards it at the layout boundary**, which is where the work
+is: `style` carries a font and a size, not a role. Teaching the layout to carry structure is a change
+to the package `PLAN-text-reflow.md` also builds on, so it is cut as its own slice.
+
+**Firmed slices:**
+
+#### P06.S01 — `mdpdf` carries its own structure to the layout
+Scope: the renderer knows heading level, list nesting and code blocks from the goldmark AST and
+throws them away at `layout.para`/`layout.code`. Carry them, as data on the run, without changing a
+single byte of what is drawn. Refs D4's observed-exact tier.
+Acceptance:
+- Every laid-out run records which AST node produced it, at a granularity that can name a heading's
+  LEVEL and a list item's DEPTH — not merely "this is a heading".
+- **The rendered bytes do not change**: the same Markdown produces the same content stream it did
+  before, asserted byte-for-byte, because this slice adds knowledge and not output.
+- `Convert`'s existing behaviour is untouched for a caller that asks for no structure.
+
+#### P06.S02 — a Markdown document is tagged from its AST
+Scope: `TagAuthored`'s mechanism pointed at S01's structure — `H1`–`H6`, `P`, `L`/`LI`/`LBody`,
+`Code` — instead of one `/Div` per page. Needs `addMarkedElement` to take a parent. Refs exit
+criterion 1, D4.
+Acceptance:
+- A Markdown document with headings, lists and a code block passes veraPDF `ua1` **except `5 t1`**,
+  which nib refuses until P07 can say a document conforms.
+- The tree's shape matches the source: a document with two headings has two heading elements, at the
+  levels the Markdown gave them, checked against the AST and not against a golden file.
+- **Nesting is real**: a list produces `L` containing `LI` containing `LBody`, read back from the
+  written document.
+
+#### P06.S03 — the tree records which source produced it
+Scope: D4's rank made visible — *"the user is told which of the three produced the tree they are
+looking at"*. Refs exit criterion 2, D4.
+Acceptance:
+- Every tree nib writes records its source, and the value survives a round trip.
+- The three sources are distinguishable in a document, by reading it rather than by trusting the
+  writer.
+- **An unmarked tree is not silently treated as exact** — the absence of the record is its own value,
+  because every tree in the field today has none.
+
+#### P06.S04 — nib's own prose declares its own language
+Scope: the defect P03.S02 measured and carried here. `AppendReadme` staples English into a document
+whose `/Lang` may say otherwise; the fix is a language on the CONTENT, which P05's emitter makes
+possible. Refs P03.S02, `/pending 471`.
+Acceptance:
+- A readme appended to a `/Lang=de` document declares its own text English, read back from the
+  composed document.
+- The user's own pages are unaffected — their language is not restated, overridden, or removed.
+- Measured on the ua1 oracle: the composed document gains no clause.
+
+#### P06.S05 — authored form fields carry `/TU` and `/Tabs`
+Scope: **neither key is written anywhere today** (named search, zero hits). `/TU` is the accessible
+name a screen reader announces for a field; `/Tabs /S` makes tab order follow the structure tree.
+Refs exit criterion 1, D4's observed-exact tier.
+Acceptance:
+- Every field `AuthorForm` places carries a `/TU`, and it is the name the user gave — not the
+  internal field name, which is what a form's own `/T` already is.
+- The page carries `/Tabs /S`.
+- An authored form passes veraPDF `ua1`'s form clauses — `7.18.1`, `7.18.3`, `7.18.4`, which
+  `knownUA1Deltas` currently records `AuthorForm` as ADDING, so the table shrinks.
+
+#### P06.S06 — an OCR'd scan is tagged from tesseract's own hierarchy
+Scope: the wire carries block/paragraph/line, and the text layer is tagged from it. **A request-field
+change**, so it meets `/pending 447`'s guard. Refs exit criterion 1, D4's observed-approximate tier.
+Acceptance:
+- The client sends the hierarchy it already has, and the guard that every field a handler reads is
+  one some client sends stays green.
+- An OCR'd scan passes veraPDF `ua1` except `5 t1` and anything its images owe.
+- The tree is marked **OCR-derived** per D4 and S03 — observed-approximate is written silently and
+  recorded, never passed off as exact.
+
 ### P07 — The pure-Go conformance checker
 **Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and
 law 5's agreement guard against veraPDF over the corpus.
