@@ -73,4 +73,18 @@ type Role struct {
 	// Level is the heading level (1-6) for RoleHeading, and the nesting depth for RoleListItem and
 	// RoleQuote. Zero for everything else.
 	Level int
+	// Block is an ordinal identifying the block-level construct this run belongs to. Runs of the
+	// same paragraph, the same code block or the same list item share one; every new construct gets
+	// the next number.
+	//
+	// **Kind and Level alone cannot express what a tagger needs**, which is the finding P06.S02's
+	// grill produced against P06.S01's first shape. Measured on a document with two consecutive
+	// paragraphs and a two-line code block: runs 1 and 2 were both `body/0` and runs 7 and 8 were
+	// both `code/0`, and those two cases need OPPOSITE treatment — the paragraphs are two elements,
+	// the code lines are two MCIDs of one. Nothing in `{Kind, Level}` distinguishes them.
+	//
+	// It is an ordinal rather than a pointer or a nesting path because the consumer walks runs in
+	// draw order and only ever asks *"is this the same block as the last one"*. A path would be a
+	// second tree to keep in step with the first.
+	Block int
 }
