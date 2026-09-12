@@ -21,6 +21,7 @@ package mdpdf
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -149,15 +150,34 @@ func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
 // because the caller's faces come from an install that can fail (an unwritable font directory)
 // and a document set in core fonts is a worse PDF, not a broken one.
 func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) {
+	// **A font install that fails on the MACHINE degrades; one that fails because the caller
+	// declared a face wrongly does not.** `PLAN-accessibility.md` P04.S03, and it is measured
+	// rather than imagined: with the pdfcpu user-font directory unwritable — a read-only or
+	// full $HOME — every Markdown conversion returned `install fallback font Roboto-Regular:
+	// permission denied` and produced nothing. That was true of the fallback pool BEFORE the base
+	// faces existed, so this is not a regression P04 introduced; P04 is what made it visible.
+	//
+	// A document set in core fonts fails one PDF/UA rule. A conversion that returns an error about
+	// a font directory fails the thing the user asked for, on a machine they may not be able to
+	// change. The first is strictly better, and `Unsupported` already reports the text a degraded
+	// document cannot print.
 	faces := coreFaces
 	if base.valid() {
 		if err := installFallbacks(base.all()); err != nil {
-			return nil, err
+			if errors.Is(err, ErrFaceMisdeclared) {
+				return nil, err
+			}
+		} else {
+			faces = base.set()
 		}
-		faces = base.set()
 	}
 	if err := installFallbacks(fallbacks); err != nil {
-		return nil, err
+		if errors.Is(err, ErrFaceMisdeclared) {
+			return nil, err
+		}
+		// The pool could not be installed; the words it exists for render as spaces, which is
+		// exactly what happens when no pool is supplied at all.
+		fallbacks = nil
 	}
 	if err := refuseAbsurdNesting(md); err != nil {
 		return nil, err

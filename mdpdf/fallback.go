@@ -2,6 +2,7 @@ package mdpdf
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,6 +54,30 @@ func (f Font) covers(r rune) bool {
 // on-disk directory, so two conversions running at once install the same face, and the
 // loser of that race must not fail the render. Mirrors internal/pdfops.InstallOCRFonts,
 // which learned the same thing.
+// ErrFaceMisdeclared marks the two install failures that are a PROGRAMMING error in the caller
+// rather than a condition on the machine: a face with no name or no bytes, and a face whose Name is
+// not the PostScript name inside its own TTF.
+//
+// **The distinction decides whether a conversion degrades or fails**, which is why it is a sentinel
+// and not a message. An unwritable font directory is the user's machine and must cost them a
+// prettier document, never the document; a wrong constant is a bug that must not be papered over
+// into silently-worse output on every machine.
+var ErrFaceMisdeclared = errors.New("mdpdf: face declared wrongly")
+
+// InstallFaces registers a base face set with pdfcpu and reports why it could not, so a caller with
+// somewhere to write a message can say that a document is about to be set in core fonts.
+//
+// `ConvertWithFaces` degrades on its own and does not need this — the two are idempotent, because
+// installing an already-installed face is a map lookup. It exists because **a silent degrade is
+// indistinguishable from working**, and this package deliberately has no logger: it lives at the
+// repo root so other projects can import it, and a logging dependency would travel with it.
+func InstallFaces(f *Faces) error {
+	if !f.valid() {
+		return fmt.Errorf("%w: the face set is incomplete", ErrFaceMisdeclared)
+	}
+	return installFallbacks(f.all())
+}
+
 func installFallbacks(fonts []Font) error {
 	if len(fonts) == 0 {
 		return nil
@@ -60,7 +85,7 @@ func installFallbacks(fonts []Font) error {
 	model.NewDefaultConfiguration() // sets font.UserFontDir
 	for _, f := range fonts {
 		if f.Name == "" || len(f.Data) == 0 {
-			return fmt.Errorf("fallback font %q has no name or no data", f.Name)
+			return fmt.Errorf("%w: fallback font %q has no name or no data", ErrFaceMisdeclared, f.Name)
 		}
 		if installedFallback(f.Name) {
 			continue
@@ -78,7 +103,7 @@ func installFallbacks(fonts []Font) error {
 			// produces a successful install of a face nothing can then refer to — and
 			// the next symptom is a panic from deep inside pdfcpu ("user font not
 			// loaded"), several frames from the cause. Said plainly here instead.
-			return fmt.Errorf("fallback font %q installed under a different name: pdfcpu names a face by the PostScript name inside the TTF, so Font.Name must be that name", f.Name)
+			return fmt.Errorf("%w: fallback font %q installed under a different name: pdfcpu names a face by the PostScript name inside the TTF, so Font.Name must be that name", ErrFaceMisdeclared, f.Name)
 		}
 		if err := registerMetrics(f.Name); err != nil {
 			return err

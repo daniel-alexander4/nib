@@ -2,6 +2,7 @@ package mdpdf
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -645,6 +647,86 @@ func TestConvertWithFacesDegradesRatherThanRefusing(t *testing.T) {
 		if hasFace(embeddedFaces(t, out), "Roboto") {
 			t.Errorf("%s: the degrade still embedded a face — a partial set must be ALL core, "+
 				"or the document mixes embedded and core faces and fails 7.21.4.1 anyway", c.name)
+		}
+	}
+}
+
+// TestAnUnwritableFontDirectoryDegradesRatherThanFailing — `PLAN-accessibility.md` P04.S03.
+//
+// The pdfcpu user-font directory lives under the user's config dir, and it can be read-only, full,
+// or owned by someone else. Before this, every Markdown conversion on such a machine returned
+// `install fallback font Roboto-Regular: permission denied` and produced nothing — **true of the
+// fallback pool long before the base faces existed.**
+//
+// The exercise is the real condition, not a stub: the directory is made unwritable with `chmod` and
+// the conversion is driven through it.
+func TestAnUnwritableFontDirectoryDegradesRatherThanFailing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("SKIP (not a pass): running as root, which ignores the directory mode this test " +
+			"depends on, so the degrade is not exercised here")
+	}
+	model.NewDefaultConfiguration()
+	orig := font.UserFontDir
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { font.UserFontDir = orig; os.Chmod(dir, 0o700) })
+	font.UserFontDir = dir
+
+	// Proving the condition is real before grading the response: an install into this directory
+	// must actually fail, or everything below passes for the wrong reason.
+	if err := installFallbacks([]Font{testFace(t, "Roboto-Bold")}); err == nil {
+		t.Fatal("setup: installing into a mode-0500 directory succeeded, so the condition this " +
+			"test exists for was never created")
+	}
+
+	base := &Faces{
+		Body:       testFace(t, "Roboto-Regular"),
+		Bold:       testFace(t, "Roboto-Bold"),
+		Italic:     testFace(t, "Roboto-Italic"),
+		BoldItalic: testFace(t, "Roboto-BoldItalic"),
+		Code:       testFace(t, "LiberationMono"),
+	}
+	out, err := ConvertWithFaces([]byte("# Heading\n\nBody text.\n"), base, nil)
+	if err != nil {
+		t.Fatalf("an unwritable font directory cost the user the whole conversion: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("the degrade produced an empty document")
+	}
+	// And it degraded to CORE rather than half-embedding: a document naming a face it could not
+	// install is worse than one that never tried.
+	if faces := embeddedFaces(t, out); hasFace(faces, "Roboto") || hasFace(faces, "LiberationMono") {
+		t.Errorf("the degraded document still names an embedded face: %v", faces)
+	}
+}
+
+// TestAMisdeclaredFaceStillFailsLoudly is the other half, and without it the degrade above swallows
+// a programming error into silently-worse output on every machine.
+func TestAMisdeclaredFaceStillFailsLoudly(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		face Font
+	}{
+		{"named by its file rather than its PostScript name",
+			Font{Name: "LiberationMono-Regular", Data: testFace(t, "LiberationMono").Data}},
+	} {
+		base := &Faces{
+			Body:       testFace(t, "Roboto-Regular"),
+			Bold:       testFace(t, "Roboto-Bold"),
+			Italic:     testFace(t, "Roboto-Italic"),
+			BoldItalic: testFace(t, "Roboto-BoldItalic"),
+			Code:       c.face,
+		}
+		_, err := ConvertWithFaces([]byte("x\n"), base, nil)
+		if err == nil {
+			t.Errorf("%s: ConvertWithFaces degraded instead of reporting a declaration error", c.name)
+			continue
+		}
+		if !errors.Is(err, ErrFaceMisdeclared) {
+			t.Errorf("%s: error is not ErrFaceMisdeclared, so the degrade cannot tell it from a "+
+				"machine condition: %v", c.name, err)
 		}
 	}
 }
