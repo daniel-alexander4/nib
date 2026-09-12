@@ -1,8 +1,11 @@
 package pdfops
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"nib/internal/testpdf"
 )
 
@@ -16,12 +19,13 @@ import (
 //
 // The correction to that was itself incomplete, and this file records the second finding as
 // carefully as the first. Parsed, on a 4-page LibreOffice document with 45 struct elements:
-// **19 of 31 operations carry the tree** — `Rotate`, `Optimize`, `SetLang`, every stamp, every
-// strip — and the page-set operations drop claim and content together, honestly. But the
-// replacement predicate was *"claims tagging and has zero elements"*, and **`NUp` emits 45**: they
-// all point at pages that are no longer in the document, and no composed sheet carries
-// `/StructParents`. The one operation that genuinely violates law 1 was invisible to the predicate
-// written to catch violations of law 1.
+// **27 of the 48 declared verdicts were wrong and every one erred the same way.** `Rotate`,
+// `Optimize`, `SetLang`, every stamp and every strip carry the tree; the page-set operations drop
+// claim and content together, honestly. But the replacement predicate was *"claims tagging and has
+// zero elements"*, and **`NUp` emits 45**: they all pointed at pages no longer in the document, and
+// no composed sheet carried `/StructParents`. The one operation that genuinely violated law 1 was
+// invisible to the predicate written to catch violations of law 1 — and P01.S06 then found that
+// even IT was preservable, because the content was intact inside the Form XObjects all along.
 //
 // veraPDF ua1 confirms it independently: source and `Rotate` fail 5 t1 / 7.1 t9 / 7.1 t10 alike;
 // the n-up output adds **7.1 t3, "Content shall be marked as Artifact or tagged as real content",
@@ -47,6 +51,120 @@ func TestNUpDoesNotClaimTaggingItHasNot(t *testing.T) {
 			"and carries the source catalog onto them, so every struct element points at a page that "+
 			"is no longer in the document. veraPDF ua1 scores this as 7.1 t3 with 24 failed checks.",
 			got, claims(out))
+	}
+}
+
+// TestNUpCARRIESTheTreeRatherThanDroppingIt — P01.S06's first two acceptance clauses.
+//
+// The phase's exit criterion asks that `nup` not regress veraPDF ua1 7.1 t3 against a tagged input,
+// and dropping the claim could never deliver it: 7.1 t3 is about the CONTENT, which stays untagged
+// either way, and dropping adds 6.2 t1 and 7.1 t11 on top. Measured on a 4-page LibreOffice
+// document after the remap, the n-up output fails **exactly what its input fails** — 5 t1, 7.1 t9,
+// 7.1 t10, all producer limitations — and adds nothing.
+//
+// This is the tier-1 form of that: every element anchored to a page that is in the document, and no
+// page with content unreachable from the tree.
+func TestNUpCARRIESTheTreeRatherThanDroppingIt(t *testing.T) {
+	src := taggedFixture()
+	before := inspectTags(src)
+	if !before.claims() || before.anchored < 1 {
+		t.Fatal("setup: the fixture is not a tagged document, so this asserts nothing")
+	}
+	out, err := NUp(src, 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := inspectTags(out)
+	if after.elements < before.elements {
+		t.Errorf("n-up kept %d of the source's %d struct elements. The content survives inside Form "+
+			"XObjects with its MCIDs intact, so the tree is re-anchorable and dropping it is a loss "+
+			"nothing forced", after.elements, before.elements)
+	}
+	if after.anchored < 1 {
+		t.Errorf("n-up emits %d element(s), none anchored to a page in the document — the remap did "+
+			"not run, or it ran and `honest` then dropped the claim", after.elements)
+	}
+	if after.undescribed != 0 {
+		t.Errorf("n-up leaves %d page(s) with content that no struct element points at; a reader "+
+			"walking the tree never reaches them", after.undescribed)
+	}
+	if got := fate(out); got != "carried" {
+		t.Errorf("n-up over a tagged input measures %q, want %q", got, "carried")
+	}
+}
+
+// TestAnUntaggedDocumentIsUNCHANGEDByTheCarry — P01.S06's fourth clause, and the population that is
+// nearly every document.
+//
+// The carry costs a parse of the source before it can know there is nothing to carry. What it must
+// never do is *change* an untagged document: the overwhelmingly common case pays a measurement and
+// nothing else.
+func TestAnUntaggedDocumentIsUNCHANGEDByTheCarry(t *testing.T) {
+	src, err := testpdf.Text("an ordinary untagged document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspectTags(src).claims() {
+		t.Fatal("setup: the plain fixture claims tagging, so this tests the wrong population")
+	}
+	out, nerr := NUp(src, 2, false)
+	if nerr != nil {
+		t.Fatal(nerr)
+	}
+	if s := inspectTags(out); s.claims() {
+		t.Errorf("n-up over an UNTAGGED document emits a tagging claim (marked=%v tree=%v). The "+
+			"carry must invent nothing", s.marked, s.tree)
+	}
+	// **And the carry DECLINED rather than merely producing nothing visible.** "Emits no claim" is
+	// true of three independent guards at once, so on its own it cannot tell a carry that declined
+	// from one that ran over a document it had no business touching. Byte identity would settle it
+	// and is unavailable: pdfcpu writes a fresh `/ID` and `/ModDate` on every composition, so two
+	// runs of the same input differ by construction (measured — same length, different bytes). So
+	// the function is asked directly, on the real production input.
+	conf := model.NewDefaultConfiguration()
+	nupConf, cerr := api.PDFNUpConfig(2, "border:off, margin:0", conf)
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	var raw bytes.Buffer
+	if e := api.NUp(bytes.NewReader(src), &raw, nil, nil, nupConf, conf); e != nil {
+		t.Fatal(e)
+	}
+	if _, ok := carryTagsThroughNUp(src, raw.Bytes()); ok {
+		t.Error("the carry reported success over an untagged source. There is no tree to re-anchor " +
+			"and nothing it could have done; reporting success means it would rewrite the " +
+			"overwhelmingly common document for no reason, and a rewrite re-encodes")
+	}
+}
+
+// TestTheCarryIsABANDONEDRatherThanShippedHalfDone — P01.S06's third clause, and the one that keeps
+// this from becoming the next version of the mistake this plan is made of.
+//
+// A partly-anchored tree is worse than an honest loss: some pages reachable, some not, under a
+// `/Marked true` claim. `carryTagsThroughNUp` is all-or-nothing by construction, and its caller
+// re-measures with `honest` rather than believing the report. This drives the abandonment path
+// directly — a document whose pages carry no `/StructParents` gives the carry nothing to match, so
+// it must decline and the claim must be dropped.
+func TestTheCarryIsABANDONEDRatherThanShippedHalfDone(t *testing.T) {
+	src := taggedFixture()
+	composed, err := Optimize(src) // a valid document that is NOT an n-up of `src`
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Its Form XObjects do not exist, so no page's content can be matched.
+	if _, ok := carryTagsThroughNUp(src, composed); ok {
+		t.Error("the carry reported success over a document that contains none of the Form XObjects " +
+			"it re-anchors. It must decline anything it does not fully understand, because the " +
+			"caller's fallback — dropping the claim — is the honest outcome and a half-remapped " +
+			"tree is not")
+	}
+	// And the same input through a source with nothing to carry.
+	plain, perr := testpdf.Text("untagged")
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	if _, ok := carryTagsThroughNUp(plain, composed); ok {
+		t.Error("the carry reported success with no tagged source pages to carry from")
 	}
 }
 

@@ -29,7 +29,7 @@ import (
 //     criterion and also the only version that can catch an operation added tomorrow.
 //  2. **Correctness — and this half did not exist until 2026-09-11.** For every operation the guard
 //     can drive, the MEASURED fate must equal the declared one. Without it the table was a list of
-//     assertions nothing checked, and **19 of its 33 rows were wrong**: every one said `dropped`
+//     assertions nothing checked, and **27 of its 48 rows were wrong**: every one said `dropped`
 //     while the operation carried the tree intact. A census that cannot be wrong is not a census.
 //  3. **Law 1 in force.** No driven operation may emit an `orphaned` output — a tagging claim over
 //     a tree that describes nothing in the document. This is asserted over the whole population
@@ -129,12 +129,15 @@ var tagFates = map[string]tagFate{
 		o, _, e := CarryAttachments(b, untaggedFixture())
 		return o, e
 	}},
-	// **`NUp` is `dropped` because `honest` makes it so, and it is the reason `honest` exists.**
-	// `api.NUp` composes new page objects and carries the source catalog onto them, so the raw
-	// output claims tagging over a tree whose every element points at a page that is gone — the one
-	// measured `orphaned` output in this package. `TestNUpDoesNotClaimTaggingItHasNot` is the
-	// dedicated guard; this row keeps it in the census.
-	"NUp": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return NUp(b, 2, false) }},
+	// **`NUp` is `carried`, and getting there took three tries.** The raw `api.NUp` output is the
+	// one measured `orphaned` document in this package: it composes new page objects and carries the
+	// source catalog onto them, leaving every element's `/Pg` naming a page that is gone. P01.S01
+	// made that honest by dropping the claim. **P01.S06 found that the content had never been
+	// destroyed** — it is intact inside Form XObjects with its MCIDs — so the tree is re-anchored
+	// instead, and the composed document keeps all 45 elements of its source. `honest` remains the
+	// backstop underneath: a remap that cannot anchor everything drops the claim rather than
+	// shipping a partial tree.
+	"NUp": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return NUp(b, 2, false) }},
 
 	// ── PARTIAL. A live tree that does not reach every page with content.
 	//
@@ -268,7 +271,7 @@ func TestEveryDeclaredFateIsTheMEASUREDFate(t *testing.T) {
 		}
 		if got != f.verdict {
 			t.Errorf("%s declares %q and measures %q (%v).\nLaw 2 is not satisfied by a table of "+
-				"assertions — the declaration has to be TRUE. 19 rows here said `dropped` about "+
+				"assertions — the declaration has to be TRUE. 27 rows here said `dropped` about "+
 				"operations that carry the tree intact, and nothing compared them to a document.",
 				name, f.verdict, got, claims(out))
 		}
