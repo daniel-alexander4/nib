@@ -99,6 +99,24 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// keeping it and deleting it is written down rather than taken quietly.
 		"TagAuthored": "finding — /pending 480.",
 
+		// ── The UA checker's report, whose caller is P07.S06.
+		//
+		// **Gated, not `test-support`, and the distinction is the one `TagAuthored` above got
+		// wrong.** These three have a NAMED coordinate that will call them: P07.S06 builds the UA
+		// export door and the report surface, and its acceptance says both the UI and the CLI reach
+		// the same door. `TestNoGatedExemptionOutlivesItsCoordinate` fails the day P07 is marked
+		// done, so if S06 does not wire them the decision cannot quietly become an omission — which
+		// is exactly how it went last time.
+		//
+		// They are not one function: `Conformant` answers "may this document be called conformant",
+		// `Failures` answers "what does it breach", and `Unresolved` answers "what did nib fail to
+		// establish". Collapsing them would let a caller ask the first and read silence on the
+		// third as conformance, which is law 4's collapse arriving through the API instead of
+		// through the enum.
+		"(Report).Conformant": "gated — PLAN-accessibility.md P07.S06.",
+		"(Report).Failures":   "gated — PLAN-accessibility.md P07.S06.",
+		"(Report).Unresolved": "gated — PLAN-accessibility.md P07.S06.",
+
 		// D4's whole point is that *the user is told* which tier produced the tree they are looking
 		// at, and nothing shows them yet. P07's exit criterion puts a conformance report in front of
 		// a user from the UI and the CLI, which is where a provenance line belongs — so this is
