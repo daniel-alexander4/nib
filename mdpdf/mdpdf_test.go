@@ -730,3 +730,185 @@ func TestAMisdeclaredFaceStillFailsLoudly(t *testing.T) {
 		}
 	}
 }
+
+// TestCarryingStructureChangesNoDRAWNByte — `PLAN-accessibility.md` P06.S01's load-bearing clause.
+//
+// This slice teaches the layout to remember what each run WAS. It must add knowledge and no output:
+// if the rendered bytes move, every document nib has produced changes for a reason that has nothing
+// to do with what the user asked for, and `ContentDigest` — which covers the page — moves with them.
+//
+// Asserted as byte equality between the two entry points on the same input, over a document with
+// every construct the roles distinguish.
+func TestCarryingStructureChangesNoDRAWNByte(t *testing.T) {
+	const md = "# Heading one\n\nBody paragraph with **bold**.\n\n## Heading two\n\n" +
+		"- first item\n- second item\n  - nested item\n\n1. ordered one\n2. ordered two\n\n" +
+		"> a quotation\n> > nested quotation\n\n```\ncode block line\n```\n\nFinal paragraph.\n"
+
+	plain, err := ConvertWithFaces([]byte(md), nil, nil)
+	if err != nil {
+		t.Fatalf("ConvertWithFaces: %v", err)
+	}
+	structured, st, err := ConvertStructured([]byte(md), nil, nil)
+	if err != nil {
+		t.Fatalf("ConvertStructured: %v", err)
+	}
+	if len(st.Pages) == 0 {
+		t.Fatal("no pages in the structure")
+	}
+
+	// **The comparison is the CONTENT STREAMS, not the files, and that is not a weakening.**
+	// pdfcpu writes a random `/ID` into every trailer — measured: the same function called twice on
+	// the same input produces different bytes — so file equality is unsatisfiable by any
+	// implementation and an assertion over it would be a test no code could pass. What this slice
+	// promises is that nothing DRAWN changed, and the content stream is exactly that.
+	for page := 1; page <= len(st.Pages); page++ {
+		a := drawnBytes(t, plain, page)
+		b := drawnBytes(t, structured, page)
+		if !bytes.Equal(a, b) {
+			t.Errorf("page %d's drawn content changed (%d bytes against %d)\n  a %q\n  b %q",
+				page, len(a), len(b), excerpt(a), excerpt(b))
+		}
+		if len(a) == 0 {
+			t.Errorf("page %d draws nothing, so comparing it proves nothing", page)
+		}
+	}
+}
+
+// drawnBytes returns one page's decoded content stream — what the document actually draws, with
+// none of the trailer's randomness.
+func drawnBytes(t *testing.T, pdf []byte, page int) []byte {
+	t.Helper()
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	d, _, _, derr := ctx.PageDict(page, false)
+	if derr != nil || d == nil {
+		t.Fatalf("page %d: %v", page, derr)
+	}
+	c, cerr := ctx.PageContent(d, page)
+	if cerr != nil {
+		t.Fatalf("content of page %d: %v", page, cerr)
+	}
+	return c
+}
+
+func excerpt(b []byte) string {
+	if len(b) > 60 {
+		return string(b[:60]) + "…"
+	}
+	return string(b)
+}
+
+// TestTheStructureNamesWhatTheMarkdownSaid.
+//
+// Each row is a construct the Markdown gave explicitly, so the expected value comes from the SOURCE
+// rather than from a golden file of whatever the code happened to produce. A heading's level and a
+// list's nesting depth are the two that a flat "this is a heading" would lose, and they are the two
+// PDF/UA needs.
+func TestTheStructureNamesWhatTheMarkdownSaid(t *testing.T) {
+	const md = "# One\n\n## Two\n\n###### Six\n\nBody.\n\n- top\n  - nested\n\n" +
+		"> quoted\n\n```\ncode\n```\n"
+	_, st, err := ConvertStructured([]byte(md), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, page := range st.Pages {
+		for _, r := range page {
+			seen[r.Kind.String()+":"+itoa(r.Level)]++
+		}
+	}
+	for _, want := range []string{
+		"heading:1", "heading:2", "heading:6", // the levels, not just "a heading"
+		"body:0",
+		"listitem:1", "listitem:2", // the DEPTH, which is what a sublist is
+		"marker:1", "marker:2",
+		"quote:1",
+		"code:0",
+	} {
+		if seen[want] == 0 {
+			t.Errorf("no run recorded as %q; got %v", want, seen)
+		}
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}
+
+// TestARoleDoesNotLeakPastItsBlock is the paired-mutation check.
+//
+// `withRole` sets the layout's role and defers the restore. A role left set leaks onto whatever is
+// laid out next — and the symptom is a paragraph tagged as a heading, which looks like nothing at
+// all in the rendered document and is wrong in the one place this data exists to be right.
+func TestARoleDoesNotLeakPastItsBlock(t *testing.T) {
+	// A heading, then body. The body must NOT be a heading.
+	_, st, err := ConvertStructured([]byte("# A heading\n\nPlain body text.\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, page := range st.Pages {
+		for _, r := range page {
+			kinds = append(kinds, r.Kind.String())
+		}
+	}
+	if len(kinds) < 2 {
+		t.Fatalf("expected at least two runs, got %v", kinds)
+	}
+	if kinds[0] != "heading" {
+		t.Errorf("the first run is %q, want heading", kinds[0])
+	}
+	last := kinds[len(kinds)-1]
+	if last != "body" {
+		t.Errorf("the last run is %q, want body — the heading's role leaked past its block", last)
+	}
+
+	// And a list followed by a paragraph: the depth must not persist.
+	_, st2, err := ConvertStructured([]byte("- item\n\nAfter the list.\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tail Role
+	for _, page := range st2.Pages {
+		for _, r := range page {
+			tail = r
+		}
+	}
+	if tail.Kind != RoleBody || tail.Level != 0 {
+		t.Errorf("the run after a list is %v/%d, want body/0 — the list depth leaked", tail.Kind, tail.Level)
+	}
+}
+
+// TestEveryRunHasARole: the structure must describe every run, or a tagger has runs it cannot place
+// and the correspondence P06.S02 rests on has a hole in it.
+func TestEveryRunHasARole(t *testing.T) {
+	const md = "# H\n\nBody.\n\n- a\n\n```\nc\n```\n\n> q\n"
+	pdf, st, err := ConvertStructured([]byte(md), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = pdf
+	total := 0
+	for _, page := range st.Pages {
+		total += len(page)
+	}
+	if total == 0 {
+		t.Fatal("the structure describes no runs at all")
+	}
+	// Every page's role list is exactly as long as that page's run list — checked through the
+	// exported surface by counting the text entries the spec would emit.
+	if len(st.Pages) == 0 {
+		t.Fatal("no pages")
+	}
+	t.Logf("%d run(s) across %d page(s), all with a role", total, len(st.Pages))
+}

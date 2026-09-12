@@ -1833,16 +1833,47 @@ to the package `PLAN-text-reflow.md` also builds on, so it is cut as its own sli
 
 **Firmed slices:**
 
-#### P06.S01 — `mdpdf` carries its own structure to the layout
+#### P06.S01 — `mdpdf` carries its own structure to the layout *(done 2026-09-11, v1.129.53)*
 Scope: the renderer knows heading level, list nesting and code blocks from the goldmark AST and
 throws them away at `layout.para`/`layout.code`. Carry them, as data on the run, without changing a
 single byte of what is drawn. Refs D4's observed-exact tier.
+
+**(grill, 2026-09-11 — confirmed, and the byte-identity clause had to be corrected before it could
+be met by any implementation.)**
+
+**Roles are POSITIONAL, not a tree.** `spec()` walks `l.runs` in order, one pdfcpu text entry per
+run, and pdfcpu emits them in that order — so the Nth run is the Nth text-drawing operator in the
+page's content stream. A caller that wants to bracket a run needs to know *which* run, and a flat
+per-page list in draw order says exactly that. A tree would have to be re-flattened to be usable,
+and the flattening is where a mismatch would hide. P06.S02 checks that correspondence rather than
+assuming it.
+
+Tasks:
+- T01 — `Role`/`Structure`, and the role on the run.
+- T02 — the renderer sets it as it walks: heading level, list depth, quote depth, code, marker.
+- T03 — `ConvertStructured`, sharing ONE body with `ConvertWithFaces`.
+
 Acceptance:
-- Every laid-out run records which AST node produced it, at a granularity that can name a heading's
-  LEVEL and a list item's DEPTH — not merely "this is a heading".
-- **The rendered bytes do not change**: the same Markdown produces the same content stream it did
-  before, asserted byte-for-byte, because this slice adds knowledge and not output.
-- `Convert`'s existing behaviour is untouched for a caller that asks for no structure.
+- ✅ Every laid-out run records which AST node produced it, **with the level and the depth** — the
+  two things a flat *"this is a heading"* would lose and the two PDF/UA needs. Asserted against the
+  SOURCE Markdown rather than a golden file of whatever the code produced.
+- ✅ ~~The rendered bytes do not change, asserted byte-for-byte.~~ **AMENDED, because the original
+  clause is unsatisfiable by any implementation**: pdfcpu writes a random `/ID` into every trailer,
+  so the same function called twice on the same input already produces different bytes (measured —
+  952 bytes both times, differing at offset 713). The clause now compares the **decoded content
+  streams**, which is what *"nothing drawn changed"* actually means and has none of the trailer's
+  randomness. Green over a document with headings, nested lists, ordered lists, nested quotes and a
+  code block.
+- ✅ `ConvertWithFaces` is untouched for a caller that asks for no structure — **it and
+  `ConvertStructured` share one body**, because two renderer walks could disagree about what they
+  produced and a structure describing a document drawn by different code is worse than none.
+
+**Four mutations red, one not.** Flattening heading levels, flattening list depth, dropping the role
+from the run, and dropping the marker path's save/restore all fail. `withRole`'s restore does not:
+removing it leaves every test green, because every arm of `block` that lays out a RUN sets its own
+role first, and `ThematicBreak` — the one that does not — emits a *box*, which carries no role. It
+stays as a guard against the arm somebody adds without reading the comment, and the comment says it
+is unreached rather than implying it is covered.
 
 #### P06.S02 — a Markdown document is tagged from its AST
 Scope: `TagAuthored`'s mechanism pointed at S01's structure — `H1`–`H6`, `P`, `L`/`LI`/`LBody`,
