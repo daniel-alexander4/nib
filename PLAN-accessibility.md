@@ -2227,6 +2227,103 @@ the reason named* — P04's second exit criterion, moved here because **nib has 
 where the refusal can name every rule a document fails rather than only the font one. `nonEmbeddedFonts()`
 is built and `pdfaBlockers` is the idiom to mirror.
 
+**(phase-open, 2026-09-12 at v1.129.61 — five facts established before the slices were cut.)**
+
+| measured | result |
+|---|---|
+| the sketch's *"nib has no UA export door"* | **holds**, and the search names itself: `grep -rniE '\bua\b|pdfua|PDF/UA' --include=*.go internal/ cmd/` minus tests and comments returns only `UDPAddr` locals in `ceremonynet.go` and `mcast.go`. `pdfa.go` is the only convert-or-refuse door that exists |
+| what the checker can actually read | **everything it needs is already built.** `inspectTags`, `readStructTree`, `checkStructConsistency`, `parentTreeEntries`, `StructureSource`, `contentstream.Tokenize`, `nonEmbeddedFonts`, `watermarkArtifactSpans` and the OC-config reader between them cover every clause P03–P06 measured |
+| the clause population | **18 clauses this repo has direct measurements of** — `5 t1`, `6.2 t1`, `7.1 t3/t8/t9/t10/t11`, `7.2 t25/t33/t34`, `7.10 t1/t2`, `7.18.1 t3`, `7.18.3 t1`, `7.18.4 t1`, `7.21.4.1 t1`, `7.21.4.2 t2`, `7.21.7 t1`. Each was taken from veraPDF against a real nib document during P03–P06, so the checker's expected verdicts are not guesses |
+| the corpus | `internal/pdfops/corpus_test.go`, **generated and readable** rather than committed binaries, and today it is essentially ONE document (`taggedFixture`). Law 5's agreement guard needs many; P06 already produces the shapes (tagged Markdown, described form, tagged scan, plain scan, untagged page, stamped page, merged pair) |
+| `5 t1`'s gate | **this phase is it.** The identification is refused *"until something can say the document conforms"* — P03.S01's decision. Two places record the gate and they disagree: `ua1oracle_test.go` says *"Refused until P05, when it is true"* and `tagmarkdown_test.go` says *"P07's job"*. **P07 is right** — writing a conformance assertion needs something that checks conformance, which P05 is not. The stale note is corrected in S01 |
+
+**`/plan-review` did NOT fire on this phase**: it is not security-, migration- or egress-heavy — no
+wire format, no stored-format version, no network path, no credential. It reads documents and writes
+one catalog key.
+
+**Firmed slices:**
+
+#### P07.S01 — a rule is a function with three verdicts
+Scope: the checker's spine and law 4, which is the whole design rather than a detail. A rule is a
+named function returning `pass`, `fail(what and where)`, or **`cannot check, and why`** — and the
+third never collapses into the first. One rule implemented to prove the shape, chosen for having a
+reader already: `7.1 t11` off `inspectTags`. Also corrects the stale `5 t1` gate note. Refs D6, law
+4, exit criterion 2.
+Acceptance:
+- The verdict type makes the collapse law 4 forbids **unrepresentable**, not merely avoided — a rule
+  cannot return "pass" without having run, and the guard is a mutation that tries.
+- A rule that cannot evaluate a document says which rule and why, and the report prints it as
+  distinct from a pass.
+- The registry is enumerated from the code, with a floor, the way `tagFates` is — a rule that is
+  never registered is a clause nobody checks and looks identical to one that passes.
+
+#### P07.S02 — the catalog and metadata rules
+Scope: the clauses readable without a structure tree — `7.1 t8`, `7.1 t9`, `7.1 t10`, `7.2 t33`,
+`7.2 t34`, and `7.10 t1`/`7.10 t2` over every optional-content configuration. P03 and `/pending 473`
+already write all of these, so each has a document that passes and a document that fails.
+Acceptance:
+- Each rule agrees with the measurement its own phase recorded, on the document that phase produced.
+- `7.10` is checked over **every** configuration dictionary (`/D` and each `/Configs` entry), because
+  the clause says *"each"* — the same population `honestOptionalContent` corrects.
+- A document with no `/Metadata` at all makes `5 t1` and `7.1 t9` **not applicable**, not passing —
+  the distinction that makes law 4's third verdict load-bearing rather than decorative.
+
+#### P07.S03 — the structure rules
+Scope: `6.2 t1`, `7.1 t3`, `7.1 t11`, `7.18.4 t1` — the clauses that need the tree and the content
+stream. `7.1 t3` is the hard one and the one nib has the most evidence about: it needs the walker to
+find content that is neither inside a marked-content sequence nor an artifact, which is exactly what
+`watermarkArtifactSpans` and `textOperatorSpans` were built to see.
+Acceptance:
+- `7.1 t3` reports the OFFENDING content, not just the verdict — P01 spent a slice discovering
+  veraPDF points at `xObject[0]/contentStream[0]/content[2]`, and a checker that only says "fails"
+  reproduces the problem it exists to solve.
+- `7.18.4 t1` follows the `OBJR` linkage both ways, as P06.S07's reader does.
+- Every document P06 produces gets the verdict P06 measured for it, per clause.
+
+#### P07.S04 — the font rules
+Scope: `7.21.4.1 t1`, `7.21.7 t1`, `7.21.4.2 t2`. `nonEmbeddedFonts()` exists and P04 built the
+`/CIDSet` reader; this is mostly wiring, plus the ToUnicode rule which is new. Refs `/pending 479`,
+which this slice's own reader will confirm or refute.
+Acceptance:
+- The three rules reproduce P04's and P06's measurements, including `AuthorForm`'s **zero** embedded
+  fonts — so `/pending 479` gets a standing reader rather than a one-off measurement.
+- A Base-14 font is reported as not embedded, and the report says which face on which page.
+
+#### P07.S05 — the oracle validates the checker
+Scope: **law 5, and the slice the whole phase rests on.** For every corpus document, nib's verdict
+per clause agrees with veraPDF's, or nib says `cannot check`. The corpus grows from one document to
+the shapes P06 produces. Refs law 5, D12, exit criterion 1.
+Acceptance:
+- Agreement is asserted **per clause per document**, both directions: nib may not fail what veraPDF
+  passes, and may not pass what veraPDF fails. `cannot check` is permitted against either and is
+  counted, so the count cannot quietly grow.
+- The corpus has a **floor**: a minimum document count and a minimum count of clauses actually
+  exercised, or the guard passes over an empty set — the shape `ua1oracle_test.go` already uses.
+- The guard SKIPS loudly when veraPDF is absent and says the criterion is unchecked, never passing.
+
+#### P07.S06 — the UA export door and the report
+Scope: the carried-in P04.S04 criterion. One door that either exports a UA-labelled document or
+refuses with **every** reason named, mirroring `pdfaBlockers`. The report is reachable from the UI
+and from the CLI. Refs P04.S04's carried criterion, exit criterion 3.
+Acceptance:
+- A document with non-embedded fonts is refused with the font named — and with every OTHER failing
+  rule named in the same refusal, which is why this phase is where the criterion could finally move.
+- The report distinguishes law 4's three verdicts visibly, and a `cannot check` is never rendered in
+  the same style as a pass.
+- Both surfaces reach the same door; the UI and CLI do not each decide what conformance means.
+
+#### P07.S07 — nib writes the identification, because now something can say it conforms
+Scope: `5 t1` — `pdfuaid:part 1` in the XMP packet. **The clause P03.S01 deliberately refused**, and
+the last one a tagged Markdown document fails. Written ONLY where the checker reports no failure and
+nothing it could not check. Refs law 1, law 4, P03.S01's decision, P06's criterion 1.
+Acceptance:
+- The identification is written only when every registered rule returned `pass` — a single `fail` or
+  a single `cannot check` withholds it, and that is asserted in both directions.
+- A tagged Markdown document then fails **no** `ua1` clause at all, which is the first time anything
+  nib produces can say that. Measured on the oracle.
+- Nothing writes the assertion outside that door, guarded the way `claimTagging` is — by routing,
+  not by agreement between sites.
+
 ### P08 — The autotagger
 **Goal.** Heuristic structure inference for arbitrary PDFs — the research-grade half, and the one
 Acrobat is actually judged on. Proposes; never asserts (law 3, D5).
