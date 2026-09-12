@@ -52,11 +52,16 @@ async function tabTo(selector, { max = 400, back = false, text = null } = {}) {
 
 // arrive searches BACKWARDS first, then forwards.
 //
-// **Because the tab order does not wrap in any budget worth spending.** Measured: with a document
-// open, 1500 forward presses visited 1344 distinct stops and never came back round to the menubar
-// — the PDF's own text layer puts a great many stops between the chrome and itself. The mode tabs
-// sit at `index.html` offset 1259, ahead of `#themeToggle` (2787) where a traversal resuming from
-// the Open dialog begins, so forwards is the long way round to a control six presses behind.
+// **Because a target BEHIND the starting point is 31 presses backwards and a lap forwards.**
+// Measured (v1.129.29): the tab order is **32 elements** and cycles cleanly — 200 presses give 32
+// distinct stops and the first recurs at index 32. The mode tabs sit at `index.html` offset 1259,
+// ahead of `#themeToggle` (2787) where a traversal resuming from the Open dialog begins.
+//
+// **An earlier version of this comment said the order "does not wrap in any budget worth
+// spending", on a measurement of 1344 stops in 1500 presses.** That was a counter recording a stop
+// whenever it differed from the previous one — ~47 laps of a 32-element cycle, not 1344 places.
+// The search that produced it was looking for a mode tab that roving tabindex deliberately keeps
+// untabbable, so it could never have hit however far it walked.
 //
 // Shift+Tab is ordinary keyboard navigation and a user reaching backwards is not cheating. What
 // would be cheating is `focus()`, which skips the question.
