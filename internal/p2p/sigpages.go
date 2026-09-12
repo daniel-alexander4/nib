@@ -180,6 +180,13 @@ func renderPage(text []any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The same content-language declaration the readme carries, for the same reason: these pages
+	// are nib's own English words and `Append` will put them inside a document whose catalog may
+	// say otherwise (P06.S04).
+	if withLang, n, lerr := pdfops.DeclareAuthoredProseLang(pdf); lerr == nil && n > 0 {
+		pdf = withLang
+	}
+
 	// No title — a FRAGMENT, for the reason RenderReadme states in full: PrepareCeremonyDocument
 	// appends every one of these through `pdfops.Append`, which keeps the first document's catalog.
 	return pdf, nil
