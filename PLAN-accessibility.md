@@ -1184,16 +1184,68 @@ page-fitting change with a live refusal already watching it.
 
 **Firmed slices:**
 
-#### P04.S01 — there is no embeddable bold, and that is the phase's first problem
+#### P04.S01 — there is no embeddable bold, and that is the phase's first problem *(done 2026-09-11, v1.129.40)*
 Scope: vendor `Roboto-Bold`, `Roboto-Italic`, `Roboto-BoldItalic` and a monospace face, install them
 through the door `InstallOCRFonts` already uses for thirteen, and point `mdpdf`'s five typography
 constants at them. Refs D7, exit criterion 1.
+
+Tasks:
+- T01 — vendor the four faces plus `Roboto-Regular`, with their notices entries.
+- T02 — `mdpdf.Faces` / `ConvertWithFaces`: the base faces become a parameter, the way the fallback
+  pool already is, and a partial set degrades to Base-14 rather than refusing.
+- T03 — `pdfops.authoringFaces()` supplies them, and the Markdown door uses it.
+- T04 — the guard, read out of the OUTPUT rather than from a list of names.
+
+**Five faces are vendored, not four.** `Roboto-Regular` is vendored too, even though pdfcpu installs
+its own copy, so all five come from ONE place and succeed or fail together — without that, an
+install failure leaves a document set in a vendored bold and pdfcpu's regular.
+
+**The monospace face is `LiberationMono`, and its name is not its file name.** pdfcpu registers a
+face under the PostScript name inside the TTF and **ignores the name it is given**, so
+`LiberationMono-Regular` installs a face nothing can reference. `mdpdf.installFallbacks` refuses
+that mismatch rather than installing under a dead name, and that refusal caught it on the first run
+— the same split `DroidSansFallback` already carries.
+
+**Measured, and the size is the part worth stating.** A one-page Markdown conversion goes from
+**1,175 bytes to 239,080** — 233 KB of it font programs, five subsetted faces. It is not the choice
+of family: the same document through a full Liberation Sans set comes out at 233,325 bytes of font
+program against Roboto's 233,717, so this is **pdfcpu's subsetter**, not the faces, and no other
+vendored family would do better. Roboto stays because it matches pdfcpu's own bundled Regular.
+
+**And one thing this slice does NOT do.** `internal/p2p`'s readme and signature pages are authored
+output too, and they still name `Helvetica`/`Helvetica-Bold` in their `CreateFromJSON` specs. They
+are **P04.S05**, because they wrap text with `mdpdf.CoreWidth` and `ErrReadmeOverflow` refuses a
+body that runs past the page — a metric change there is a page-fitting change with a live refusal
+already watching it.
+
 Acceptance:
-- `font.IsUserFont` is true for every face `mdpdf` names, **enumerated from `mdpdf`'s own constants**
-  rather than a list — a face added to `mdpdf` without being installed turns the guard red.
-- `mdpdf` output no longer fails ua1 7.21.4.1 t1, measured before and after on the same source.
-- The existing `style.width` split still routes: an embedded face is measured by rune. Proved by
-  making it measure the other way and requiring the wrap to change.
+- ~~`font.IsUserFont` is true for every face `mdpdf` names, **enumerated from `mdpdf`'s own
+  constants**.~~ **(AMENDED — the constants are the wrong population.)** The faces are now a
+  parameter, so a name list would pass while a sixth face went unsupplied. Read out of the OUTPUT
+  instead: `nonEmbeddedFonts` walks the produced document's own font dictionaries, so a face nobody
+  remembered shows up as what it is. ✅ `TestAuthoredMarkdownEmbedsEveryFontItDrawsWith`, with
+  `TestTheCoreFacesAreStillTheFallbackAndStillFail` as the stimulus floor asserting the OPPOSITE on
+  the same input — without it the guard passes on a build where `nonEmbeddedFonts` reports nothing.
+- ✅ `mdpdf` output no longer fails ua1 7.21.4.1 t1, measured before and after on the same source.
+  7.21.4.2 t2 arrives in its place and is **S02's**.
+- ✅ The `style.width` split still routes, **and the flag reaches the styles** — which the first
+  version of the test did not show, and mutation found: `faceSet.sty` returning `embedded: false`
+  left it green, because the test constructed its styles by hand.
+
+#### P04.S05 — the co-signing pages are authored output too
+Scope: `internal/p2p`'s readme and signature pages name `Helvetica` and `Helvetica-Bold` in their
+`CreateFromJSON` specs (`readme.go:106-107`, and `$body` in both files), so every co-signed document
+carries non-embedded fonts on the pages **nib itself wrote**. Refs exit criterion 1.
+
+**The risk is page fit, not fonts.** Both wrap with `mdpdf.CoreWidth` — whose own doc comment says
+*"Core fonts only … a caller with a fallback face wants that path, not this one"* — and
+`ErrReadmeOverflow` refuses a body that runs past the page. Changing the face changes every width,
+so the readme can start overflowing where it did not.
+Acceptance:
+- A rendered readme and a rendered signature page report no non-embedded fonts.
+- The readme still fits, measured against the real prose rather than a sample, with the overflow
+  refusal exercised in both directions.
+- `Append`ing them into a user document does not change that document's own fonts.
 
 #### P04.S02 — the `/CIDSet` that claims more than the font program has
 Scope: ua1 7.21.4.2 t2 on every embedded subset pdfcpu writes. The clause is conditional on the

@@ -101,7 +101,7 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 		// import it, and a package that reached in here would drag Nib's OCR machinery
 		// along with it. Nib is the caller that already has the fonts, so Nib supplies
 		// them.
-		return mdpdf.ConvertWithFonts(data, markdownFallbackFonts())
+		return mdpdf.ConvertWithFaces(data, authoringFaces(), markdownFallbackFonts())
 	}
 	return ConvertOfficeToPDF(data, ext)
 }

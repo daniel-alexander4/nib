@@ -168,10 +168,13 @@ type layout struct {
 	runs  [][]run // one slice per page
 	boxes [][]box
 	y     float64 // current baseline cursor on the last page
+	// f is the base face set, so code blocks measure and draw in the same monospace face
+	// the rest of the document was configured with rather than a package constant.
+	f faceSet
 }
 
-func newLayout() *layout {
-	l := &layout{}
+func newLayout(f faceSet) *layout {
+	l := &layout{f: f}
 	l.newPage()
 	return l
 }
@@ -250,7 +253,7 @@ func (l *layout) line(words []word, x float64) {
 // code emits preformatted lines in the monospace style, hard-wrapping any line
 // wider than the content width (Courier is fixed-pitch, so a rune count works).
 func (l *layout) code(lines []string, indent float64) {
-	sty := style{font: fontCode, size: sizeCode}
+	sty := l.f.sty(l.f.code, sizeCode)
 	maxChars := int((contentW - indent) / sty.width("M"))
 	if maxChars < 1 {
 		maxChars = 1

@@ -27,6 +27,22 @@ func readTestFont(t *testing.T) []byte {
 	return b
 }
 
+// testFace reads one vendored face from the pdfops package's font directory, the same way
+// readTestFont does — mdpdf ships no fonts of its own, and the vendored set is the one nib
+// actually authors with.
+func testFace(t *testing.T, name string) Font {
+	t.Helper()
+	file := name + ".ttf"
+	if name == "LiberationMono" {
+		file = "LiberationMono-Regular.ttf" // PostScript name and file name differ
+	}
+	b, err := os.ReadFile("../internal/pdfops/fonts/" + file)
+	if err != nil {
+		t.Skipf("no vendored TTF for %s: %v", name, err)
+	}
+	return Font{Name: name, Data: b}
+}
+
 // embeddedFaces returns the BaseFont names in a PDF, read through pdfcpu rather than by
 // searching the bytes.
 //
@@ -189,7 +205,7 @@ func TestSplitLongWord(t *testing.T) {
 // TestInlineGlue checks that `**bold**.` stays one word across the style
 // boundary, so the trailing period can never wrap onto its own line.
 func TestInlineGlue(t *testing.T) {
-	in := &inliner{}
+	in := &inliner{f: coreFaces}
 	in.bold++
 	in.addText("bold")
 	in.bold--
@@ -210,7 +226,7 @@ func TestInlineGlue(t *testing.T) {
 // TestPercentEscaping guards against pdfcpu's %-placeholder substitution
 // (%p, %P, %t, %v) mangling literal percent signs.
 func TestPercentEscaping(t *testing.T) {
-	l := newLayout()
+	l := newLayout(coreFaces)
 	l.para(plainWords("50% of pages"), 0, nil, 14)
 	spec, err := l.spec()
 	if err != nil {
@@ -504,6 +520,131 @@ func TestAbsurdNestingIsRefusedRatherThanParsedForMinutes(t *testing.T) {
 	} {
 		if _, err := Convert([]byte(src)); err != nil {
 			t.Errorf("%s was refused: %v", name, err)
+		}
+	}
+}
+
+// TestBaseFacesAreMeasuredByRune — `PLAN-accessibility.md` P04.S01.
+//
+// `style.width` picks between two measurement rules: pdfcpu counts a CORE font byte by byte and a
+// USER font rune by rune, so applying the core rule to an embedded face inflates every multi-byte
+// word and every following fragment on the line lands in the wrong place. That split was written
+// for the FALLBACK pool, where only the odd word is embedded. `ConvertWithFaces` makes it govern
+// the whole document, which is a much bigger blast radius for the same one-line mistake.
+//
+// **Asserted as a difference between two measurements of the same string**, because a width in
+// points has no obviously-right value to compare against: a string with multi-byte characters must
+// measure LESS as an embedded face than the byte rule would give it.
+func TestBaseFacesAreMeasuredByRune(t *testing.T) {
+	// Every character here is in WinAnsi, and every one past ASCII is two bytes in UTF-8 — so the
+	// byte rule over-counts it and the rune rule does not.
+	const text = "café — naïve résumé «déjà»"
+
+	face := testFace(t, "Roboto-Regular")
+	if err := installFallbacks([]Font{face}); err != nil {
+		t.Fatalf("install %s: %v", face.Name, err)
+	}
+	core := style{font: fontBody, size: sizeBody}
+	emb := style{font: face.Name, size: sizeBody, embedded: true}
+
+	byRune := emb.width(text)
+	byByte := core.width(text)
+	if byRune <= 0 || byByte <= 0 {
+		t.Fatalf("setup: a width of zero measures nothing (rune=%v byte=%v)", byRune, byByte)
+	}
+
+	// The discriminator: measure the SAME face with the flag wrong, and require it to differ.
+	wrong := style{font: face.Name, size: sizeBody, embedded: false}
+	if got := wrong.width(text); got == byRune {
+		t.Errorf("an embedded face measured under the CORE rule gave the same width (%v) as under "+
+			"the rune rule, so style.width's split is no longer doing anything and a document set "+
+			"in embedded base faces would lay out with byte-counted widths", got)
+	}
+
+	// **And the flag has to REACH those styles**, which the two checks above do not show: they
+	// construct styles by hand. Every style a supplied face set produces must carry it, or the
+	// whole document lays out under the wrong rule while `style.width` still works perfectly.
+	// Found by mutation — `faceSet.sty` returning `embedded: false` left the assertions above
+	// green.
+	fs := (&Faces{
+		Body:       Font{Name: "a", Data: []byte("x")},
+		Bold:       Font{Name: "b", Data: []byte("x")},
+		Italic:     Font{Name: "c", Data: []byte("x")},
+		BoldItalic: Font{Name: "d", Data: []byte("x")},
+		Code:       Font{Name: "e", Data: []byte("x")},
+	}).set()
+	for _, name := range []string{fs.body, fs.bold, fs.italic, fs.boldItalic, fs.code} {
+		if !fs.sty(name, sizeBody).embedded {
+			t.Errorf("faceSet.sty(%q) produced a style with embedded=false, so text in that face "+
+				"is measured byte by byte", name)
+		}
+	}
+	if coreFaces.sty(coreFaces.body, sizeBody).embedded {
+		t.Error("the CORE set now claims to be embedded, which inflates nothing and breaks the " +
+			"Base-14 path instead")
+	}
+}
+
+// TestConvertWithFacesSetsTheWholeDocumentInThem, and the control is the point: the same Markdown
+// through the core path must NOT name these faces, or the assertion is satisfied by a document
+// that would have embedded them anyway.
+func TestConvertWithFacesSetsTheWholeDocumentInThem(t *testing.T) {
+	const md = "# Heading\n\nBody with **bold** and *italic*.\n\n```\ncode\n```\n"
+	base := &Faces{
+		Body:       testFace(t, "Roboto-Regular"),
+		Bold:       testFace(t, "Roboto-Bold"),
+		Italic:     testFace(t, "Roboto-Italic"),
+		BoldItalic: testFace(t, "Roboto-BoldItalic"),
+		Code:       testFace(t, "LiberationMono"),
+	}
+	out, err := ConvertWithFaces([]byte(md), base, nil)
+	if err != nil {
+		t.Fatalf("ConvertWithFaces: %v", err)
+	}
+	faces := embeddedFaces(t, out)
+	for _, want := range []string{"Roboto-Regular", "Roboto-Bold", "Roboto-Italic", "LiberationMono"} {
+		if !hasFace(faces, want) {
+			t.Errorf("%s is not in the output's fonts: %v", want, faces)
+		}
+	}
+	plain, err := Convert([]byte(md))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasFace(embeddedFaces(t, plain), "Roboto") {
+		t.Fatal("the CORE path already names a Roboto face, so the assertion above cannot tell " +
+			"ConvertWithFaces from Convert")
+	}
+}
+
+// TestConvertWithFacesDegradesRatherThanRefusing: a partially-supplied set is the Base-14 set.
+//
+// A caller's faces come from an install that can fail, and a document set in core fonts is a worse
+// PDF rather than a broken one — so a missing face must not cost the user the conversion.
+func TestConvertWithFacesDegradesRatherThanRefusing(t *testing.T) {
+	const md = "# Heading\n\nBody.\n"
+	for _, c := range []struct {
+		name string
+		base *Faces
+	}{
+		{"nil", nil},
+		{"one face missing", &Faces{Body: testFace(t, "Roboto-Regular")}},
+		{"a face with no bytes", &Faces{
+			Body:       testFace(t, "Roboto-Regular"),
+			Bold:       testFace(t, "Roboto-Bold"),
+			Italic:     testFace(t, "Roboto-Italic"),
+			BoldItalic: testFace(t, "Roboto-BoldItalic"),
+			Code:       Font{Name: "LiberationMono"},
+		}},
+	} {
+		out, err := ConvertWithFaces([]byte(md), c.base, nil)
+		if err != nil {
+			t.Errorf("%s: ConvertWithFaces refused instead of degrading: %v", c.name, err)
+			continue
+		}
+		if hasFace(embeddedFaces(t, out), "Roboto") {
+			t.Errorf("%s: the degrade still embedded a face — a partial set must be ALL core, "+
+				"or the document mixes embedded and core faces and fails 7.21.4.1 anyway", c.name)
 		}
 	}
 }
