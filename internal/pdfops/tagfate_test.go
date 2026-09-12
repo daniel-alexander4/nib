@@ -300,6 +300,12 @@ func TestOrphanedRefusesToFireWhileEitherLinkageSurvives(t *testing.T) {
 		want bool
 	}{
 		{"claim, nothing anchored, no /StructParents", tagState{readable: true, marked: true, tree: true}, true},
+		// **`/Marked true` with no tree at all, while pages still carry `/StructParents`.** Without
+		// its own clause this scored `carried` — the census's best verdict for a document with no
+		// structure whatsoever — because the `pagesSP` conservatism was written to protect a tree's
+		// second linkage and there is no tree here for it to protect. Found by the P01 phase review.
+		{"marked true, NO tree, pages still carrying /StructParents", tagState{readable: true, marked: true, tree: false, pagesSP: 2}, true},
+		{"marked true, NO tree, no /StructParents either", tagState{readable: true, marked: true, tree: false}, true},
 		{"claim, an element anchored to a live page", tagState{readable: true, tree: true, anchored: 1}, false},
 		{"claim, a page carrying /StructParents", tagState{readable: true, tree: true, pagesSP: 1}, false},
 		{"no claim at all", tagState{readable: true, pagesSP: 1}, false},
