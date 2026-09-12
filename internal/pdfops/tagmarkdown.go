@@ -93,29 +93,19 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	// Both halves or neither — the same law `TagAuthored` holds, for the same reason.
-	out, err = writeMutated(out, func(ctx *model.Context) error {
-		cat, cerr := ctx.XRefTable.Catalog()
-		if cerr != nil {
-			return cerr
-		}
-		mi, _ := ctx.DereferenceDict(cat["MarkInfo"])
-		if mi == nil {
-			mi = types.Dict{}
-		}
-		mi["Marked"] = types.Boolean(true)
-		cat["MarkInfo"] = mi
-		// D4's tier, recorded with the tree it describes: this one came from `mdpdf`'s own AST.
-		return setTagSource(ctx, sourceExact)
-	})
+	// Both halves and the tier, through the one door (ADR-009). D4's tier here is exact: the
+	// structure came from `mdpdf`'s own AST.
+	claimed, ok, err := claimTagging(out, sourceExact)
 	if err != nil {
 		return nil, err
 	}
-	if s := inspectTags(out); s.orphaned() {
-		return nil, fmt.Errorf("pdfops: tagMarkdown produced a document claiming tagging its "+
-			"content does not support (%+v)", s)
+	// This door fails rather than falling back, because its whole product IS the tagged document —
+	// an untagged `mdpdf` render is what `ConvertWithFaces` is for, and a caller that asked for the
+	// tagged one should not silently get the other.
+	if !ok {
+		return nil, orphanedClaimError("tagMarkdown", out)
 	}
-	return out, nil
+	return claimed, nil
 }
 
 // tagOnePage brackets each run of one page and builds the elements that describe them.

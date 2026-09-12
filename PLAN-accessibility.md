@@ -1795,12 +1795,53 @@ Acceptance:
   `tagFates`, and `TagAuthored` is not a census operation — it takes a document and returns one, but
   nothing in the census drives it because it is not yet reachable from any authoring door.
 
-### P06 — Tagging what nib authors
+### P06 — Tagging what nib authors *(done 2026-09-12, v1.129.61)*
 **Goal.** Exact structure first (D4): `mdpdf` from its AST, then authored form fields with `/TU`
 names and `/Tabs`, then OCR from tesseract's block/paragraph/line refs recovered across the wire.
 
-**Exit criteria.** A markdown document, an authored form, and an OCR'd scan each pass veraPDF `ua1`;
-each tree records which of D4's three sources produced it.
+**Exit criteria.** ~~A markdown document, an authored form, and an OCR'd scan each pass veraPDF
+`ua1`; each tree records which of D4's three sources produced it.~~
+
+**AMENDED at the phase close, 2026-09-12 at v1.129.60, after measuring all three.** The first
+clause is unachievable by this phase or any other, for the same reason P01 struck its own: *"passes
+`ua1`"* includes clauses about content nib did not author, about document metadata nobody supplied,
+and about the identification nib deliberately refuses. A criterion no phase can meet is one every
+phase closes over.
+
+Measured, each document through its product pipeline:
+
+| document | fails |
+|---|---|
+| a tagged Markdown document | `5 t1` — and nothing else |
+| a described authored form | `7.1 t3` `7.1 t8` `7.1 t10` `7.21.4.1 t1` `7.21.7 t1` |
+| a tagged OCR'd scan | `7.1 t3` `7.1 t8` `7.1 t10` |
+
+Every clause in that residue belongs to one of four buckets, and **none of them is P06's**:
+
+- **deliberately refused** — `5 t1`, the PDF/UA identification. P03.S01's decision; writing it needs
+  something that can say the document conforms, which is **P07**.
+- **content nib did not author** — `7.1 t3`, the host page a form was placed onto and the scan image
+  itself. Tagging someone else's page content is P08's.
+- **document metadata nobody supplied** — `7.1 t8` and `7.1 t10`. `SetTitle` exists and clears both;
+  neither route calls it, because neither is given a title. Recorded rather than fixed here: writing
+  metadata into the user's document is the same class of decision as `/pending 471`.
+- **fonts** — `7.21.4.1 t1` and `7.21.7 t1` on the form alone. **D7 already decided this and
+  assigned it to P04, which closed without covering the form door**: measured, `AuthorForm` embeds
+  ZERO fonts where Markdown embeds 2 and the OCR layer 1. Filed as `/pending 479`.
+
+**So the criteria are, in the form that is assertable and that a standing reader checks:**
+
+1. A tagged Markdown document fails **no `ua1` clause except `5 t1`** — `TestATaggedMarkdownDocumentPassesUA1`.
+2. A described authored form **fails no clause the undescribed one did not**, and clears `7.18.4 t1`,
+   `7.1 t11` and `6.2 t1` — `TestTheDescribedFormClearsTheClauseS05CouldNot`.
+3. A tagged OCR'd scan **fails a strict subset** of what the untagged scan failed —
+   `TestTaggingAnOCRdScanCostsItNoUA1Clause`.
+4. Every tree nib writes records which of D4's sources produced it —
+   `TestEveryTreeNibWritesRecordsItsSource`, plus the per-door readers.
+
+Clauses 2 and 3 are the P01 shape ("adds nothing not written down", checked both ways) rather than a
+pass/fail count, because a clause count scores honesty as a regression — which P01 wrote down and
+this criterion had forgotten.
 
 **Carried in from P03.S02 — the one real language defect nib creates, and no catalog key can fix
 it.** `AppendReadme` staples nib's own English prose into the user's document, and `pdfops.Append`
@@ -2107,6 +2148,71 @@ Acceptance:
 - `/MarkInfo` and the tree are written together or neither, and `orphaned()` is the post-condition —
   the law `TagAuthored`, `tagMarkdown` and `TagOCRLayer` all hold.
 
+
+**Phase close — 2026-09-12, v1.129.61. Seven slices (S01–S07), the last added AT the close because
+the criteria were measured and two of them were unmet.**
+
+**Acceptance ledger**, against the amended criteria above, clause by clause:
+
+| # | clause | verdict | evidence |
+|---|---|---|---|
+| 1 | a tagged Markdown document fails no `ua1` clause except `5 t1` | **met** | `TestATaggedMarkdownDocumentPassesUA1`: *"fails only: 5 t1 (refused by decision)"* |
+| 2 | a described form fails no clause the undescribed one did not, and clears `7.18.4 t1` / `7.1 t11` / `6.2 t1` | **met** | `TestTheDescribedFormClearsTheClauseS05CouldNot`: undescribed `[6.2 t1 7.1 t10 7.1 t11 7.1 t3 7.1 t8 7.18.4 t1 7.21.4.1 t1 7.21.7 t1]` → described `[7.1 t10 7.1 t3 7.1 t8 7.21.4.1 t1 7.21.7 t1]` |
+| 3 | a tagged OCR'd scan fails a strict subset of the untagged scan | **met** | `TestTaggingAnOCRdScanCostsItNoUA1Clause`: cleared `[6.2 t1 7.1 t11]`, added nothing |
+| 4 | every tree nib writes records which of D4's sources produced it | **met** | `TestEveryTreeNibWritesRecordsItsSource`, plus `…CameFromOCRAndNotFromAnAST` (approximate) and `…CameFromNibsOwnFieldList` (exact) |
+
+**Required-run gates, enumerated separately because a gate is not a criterion and nothing else walks
+them** (measured at v1.129.61):
+
+| tier | result |
+|---|---|
+| 0 `go build ./...` | PASS |
+| 1 `go test ./...` | PASS |
+| 2 `./build/jsdomtest.sh` | **349/349** |
+| 3 `./build/uirepro.sh` | **RED — 3 failures, all pre-existing and none from this phase.** Proven in a clean `git worktree` at `7a6d0f8` (v1.129.55) before P06.S04: the identical three. Filed as `/pending 474` |
+| 4 `./build/pairrepro.sh` | PASS, both transports |
+| 4d `./build/pairrepro.sh -n 4` | PASS, 4-party baton relay, both transports |
+| 6 `./build/ceremonyrepro.sh` | **27/0** |
+
+The slice gate fired **once** in the phase — P06.S04 touched `internal/p2p` and ran tiers 4 and 6 at
+v1.129.56. S01–S03 and S05–S07 touched none of its paths and printed the line saying so.
+
+**What the phase close found that no slice did, both by measuring the criteria rather than by walking
+the inventory:**
+
+- **Four agreeing copies of the tagging law.** By S07 there were four doors building a tree, each
+  carrying its own `/MarkInfo` + tier + `orphaned()` post-condition. All four agreed — which is
+  precisely ADR-009's case, because agreement between four says nothing about the fifth door P07 will
+  add. Collapsed into `claimTagging`, with a guard that asserts **routing** rather than agreement and
+  names the offending function and file when a door bypasses it. The door also gained
+  `supportsAClaim()`: `orphaned()` cannot be asked before the claim exists, because a document making
+  no claim cannot be lying.
+- **`AuthorForm` embeds ZERO fonts** where Markdown embeds 2 and the OCR layer 1 — so a described
+  form fails `7.21.4.1 t1` and `7.21.7 t1`. D7 already decided this (*"authored text embeds its
+  fonts"*) and the rule table assigns it to **P04, which closed without covering the form door**.
+  P04's guard could not see it: it counts descriptors carrying `FontFile2` and asserts their
+  `/CIDSet` is honest, so **a door that embeds nothing contributes no descriptor and is never
+  reached** — the guard asks whether what nib embedded is honest, never whether nib embeds at all.
+  Filed as `/pending 479`.
+
+**Two slices deserve their own line because the plan was wrong about them and step zero said so
+before a line was written.** S05: `7.18.4 t1` was recorded as out of reach, and that was true only of
+dictionary KEYS — S07 cleared it with a tree. S06: the OCR layer was not "untagged" but marked
+`/Artifact <</Subtype /Watermark>>`, which tells a conforming reader to **skip** it, so the one thing
+making a scan readable was declared not-to-be-read and ua1 7.1 t3 was satisfied by disclaiming the
+content.
+
+**And one defect hid an entire slice.** `anchored()` counted an element as reaching live content only
+when the element's own `/Pg` named a live page — true only of MCID-bearing elements. A grouping
+element has no `/Pg` by design, and describing an annotation means a `/Form` element whose `OBJR` kid
+names the page, so a correctly tagged form scored `anchored == 0`, `orphaned()` called it a lie, and
+`AuthorTaggedForm` silently returned the untagged form. **The slice was inert and looked like a
+fallback working as designed.** Found by inspecting the output when `tagged=false` had no error
+behind it — the instrument that measures every slice of P05 and P06 was the thing that was wrong.
+
+**Residual doubt:** tier 3 is red for three failures this phase did not cause and cannot see from
+here, so the one gate that drives the whole app in a real browser is not currently readable as a
+gate (`/pending 474`).
 ### P07 — The pure-Go conformance checker
 **Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and
 law 5's agreement guard against veraPDF over the corpus.
