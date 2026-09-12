@@ -2066,6 +2066,47 @@ Acceptance:
 - The tree is marked **OCR-derived** per D4 and S03 — `sourceApproximate` is written and recorded,
   never passed off as exact.
 
+
+#### P06.S07 — the authored form gets a structure tree *(done 2026-09-12, v1.129.60)*
+**(added at the phase close, 2026-09-12 at v1.129.59 — the phase's own exit criteria were measured
+and TWO of them were unmet by the form. This is P01's sixth slice and P02's fifth, again: a
+criterion met by building the thing, not by striking the clause.)**
+
+Scope: `AuthorForm` writes `/TU` and `/Tabs` (S05) and **no tree at all**. So the phase's exit
+criteria fail twice over on the form — it does not pass `ua1`, and there is no tree to record a
+source for. Refs exit criteria, D4's observed-exact tier, S05's amendment, P05.S03's `kidOBJR`.
+
+Measured before firming, on veraPDF ua1:
+
+| document | clauses failed |
+|---|---|
+| authored form, no tree | `6.2 t1` · `7.1 t10` · `7.1 t11` · `7.1 t3` · `7.1 t8` · **`7.18.4 t1`** · `7.21.4.1 t1` |
+| \+ a `/Form` element per widget with an `OBJR` kid | `6.2 t1` · `7.1 t10` · `7.1 t3` · `7.1 t8` · `7.21.4.1 t1` |
+
+So **`7.18.4 t1` is reachable after all** — S05 proved only that no dictionary KEY reaches it.
+veraPDF's demand is literal: *"A Widget annotation shall be nested within a Form tag"*. Three writes
+do it, and `7.1 t11` clears with them:
+
+- a `/Form` grouping element per widget, holding `{/Type /OBJR, /Obj <widget>, /Pg <page>}`;
+- `/StructParent` (SINGULAR) on the annotation;
+- a ParentTree entry that is **a single reference, not an array** — the two shapes P05.S03 modelled
+  and which nothing has yet written. `setParentTreeSlot` fills an array slot and is the wrong door.
+
+Acceptance:
+- Every widget `AuthorForm` places is nested in a `/Form` structure element that points at it by
+  `OBJR`, and the annotation points back by `/StructParent`.
+- The ParentTree entry for an annotation is a single reference; `checkStructConsistency` sees no
+  new defect, and a page's array entry is not confused with it.
+- The product route authors through the new door, and **the census records the tagged door as adding
+  NOTHING** — `7.18.4 t1` was `AuthorForm`'s last row and the tagged door clears it. `AuthorForm`
+  keeps its row: it stays the untagged primitive `AuthorTaggedForm` builds on, the same shape
+  `StampTextLayer`/`TagOCRLayer` already have, and a row saying an untagged form is untagged is
+  true. The table's both-directions check is the reader for both halves.
+- The tree records `sourceExact`: the widget-to-field correspondence is nib's own authored input,
+  not a reading of a picture.
+- `/MarkInfo` and the tree are written together or neither, and `orphaned()` is the post-condition —
+  the law `TagAuthored`, `tagMarkdown` and `TagOCRLayer` all hold.
+
 ### P07 — The pure-Go conformance checker
 **Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and
 law 5's agreement guard against veraPDF over the corpus.
