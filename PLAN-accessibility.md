@@ -1875,17 +1875,56 @@ role first, and `ThematicBreak` — the one that does not — emits a *box*, whi
 stays as a guard against the arm somebody adds without reading the comment, and the comment says it
 is unreached rather than implying it is covered.
 
-#### P06.S02 — a Markdown document is tagged from its AST
+#### P06.S02 — a Markdown document is tagged from its AST *(done 2026-09-11, v1.129.54)*
 Scope: `TagAuthored`'s mechanism pointed at S01's structure — `H1`–`H6`, `P`, `L`/`LI`/`LBody`,
 `Code` — instead of one `/Div` per page. Needs `addMarkedElement` to take a parent. Refs exit
 criterion 1, D4.
+
+**(grill, 2026-09-11 — confirmed, and step zero found a gap in P06.S01's own shape.)**
+
+**`{Kind, Level}` could not express what a tagger needs, and a tagged pin amended S01.** Measured on
+a document with two consecutive paragraphs and a two-line code block: runs 1 and 2 were both
+`body/0`, runs 7 and 8 were both `code/0` — and the two cases need **opposite** treatment. Two
+paragraphs are two elements; two lines of one code block are two MCIDs of ONE. `Role.Block` is the
+ordinal that tells them apart, and `layout.beginBlock` is the single door that assigns it so no
+entry point can forget.
+
+**The correspondence holds and is now checked rather than assumed**, which is what S01's doc comment
+promised this slice would do: measured, a nine-run document draws nine top-level `q … Q` groups, and
+`tagOnePage` **refuses** when the counts disagree. A silent mismatch attaches every element from the
+point of divergence to the wrong content, and the document looks entirely correct.
+
+**Marked content brackets the GROUP, not the `Tj`.** The font, the colour and the text matrix that
+place a glyph are in the same `q … Q` group and belong inside the same marked-content sequence;
+bracketing the `Tj` alone describes an extent that is legal and wrong.
+
+**`/Code` is an INLINE type and a code block is not one**, so a fenced block is `/P` — *a block of
+text*, which is true. A richer mapping (`/P` holding `/Code` spans, or a custom type role-mapped as
+LibreOffice's `Preformatted Text` is) belongs with P09's structure editor.
+
+Tasks:
+- T01 — the S01 amendment: `Role.Block`, assigned in one place.
+- T02 — `addMarkedElementUnder` and `addGroupingElement`: a parent, and elements that own no content.
+- T03 — `addMCIDTo`: an element owning several MCIDs, for a wrapped paragraph.
+- T04 — `textOperatorSpans` and `tagMarkdown`, with the correspondence refused when it breaks.
+
 Acceptance:
-- A Markdown document with headings, lists and a code block passes veraPDF `ua1` **except `5 t1`**,
-  which nib refuses until P07 can say a document conforms.
-- The tree's shape matches the source: a document with two headings has two heading elements, at the
-  levels the Markdown gave them, checked against the AST and not against a golden file.
-- **Nesting is real**: a list produces `L` containing `LI` containing `LBody`, read back from the
-  written document.
+- ✅ A Markdown document with headings, lists and a code block passes veraPDF `ua1` **except
+  `5 t1`** — measured, and `5 t1` is the only clause left.
+- ✅ The tree's shape matches the source, **checked against the SOURCE**: one `#` → one `H1`, one
+  `##` → one `H2`, one list → one `L` with two `LI`, two paragraphs and one fence → three `P`. A
+  golden file would say whatever the code produced on the day it was written.
+- ✅ Nesting is real, read back from the written document: `L` → `LI` → `Lbl` + `LBody`, with every
+  `/LI` required to hold exactly one of each. A flat tree of siblings satisfies every COUNT and
+  describes a document with no list in it.
+- ✅ **And a wrapped paragraph is ONE element with several MCIDs** — the clause S01's amendment
+  exists for. Four runs of one paragraph must not become four paragraphs.
+
+**A fourth font door was found by veraPDF, not by reading.** `tagMarkdown` reaches `mdpdf` directly
+rather than through `ConvertDocToPDF`, so P04.S02's `/CIDSet` tail did not run and the TAGGED
+document failed ua1 `7.21.4.2 t2` — a clause the untagged one passes. Fixed, and
+`TestNothingNibEmbedsAFontIntoCarriesACIDSet` now drives this door too, which is exactly what its
+own comment said it was for: *a list of call sites passes when a new door is added and not routed*.
 
 #### P06.S03 — the tree records which source produced it
 Scope: D4's rank made visible — *"the user is told which of the three produced the tree they are

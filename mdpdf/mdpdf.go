@@ -320,7 +320,7 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		bodyLead := r.f.sty(r.f.body, sizeBody).leading()
 		r.l.need(0.8*float64(sty.size) + sty.leading() + 2*bodyLead + paraGap)
 		r.l.gap(0.8 * float64(sty.size))
-		defer r.withRole(Role{RoleHeading, lvl})()
+		defer r.withRole(Role{Kind: RoleHeading, Level: lvl})()
 		r.l.para(r.inline(n, sty.size), indent, marker, sty.leading())
 		r.l.gap(4)
 	case *ast.Paragraph:
@@ -371,7 +371,7 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		r.quoteDepth--
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
 		r.l.gap(codeGap)
-		defer r.withRole(Role{RoleCode, 0})()
+		defer r.withRole(Role{Kind: RoleCode})()
 		r.l.code(r.codeLines(n), indent)
 		r.l.gap(codeGap)
 	case *ast.ThematicBreak:
@@ -603,8 +603,7 @@ func (l *layout) spec() ([]byte, error) {
 // exactly the arm somebody adds without reading this. The marker path's own save/restore in
 // `layout.para` IS driven: removing it makes every list item's text report as `marker`.
 func (r *renderer) withRole(role Role) func() {
-	prev := r.l.role
-	r.l.role = role
+	prev := r.l.beginBlock(role)
 	return func() { r.l.role = prev }
 }
 
@@ -617,10 +616,10 @@ func (r *renderer) withRole(role Role) func() {
 // than left for someone to discover from the output.
 func (r *renderer) textRole() Role {
 	if r.listDepth > 0 {
-		return Role{RoleListItem, r.listDepth}
+		return Role{Kind: RoleListItem, Level: r.listDepth}
 	}
 	if r.quoteDepth > 0 {
-		return Role{RoleQuote, r.quoteDepth}
+		return Role{Kind: RoleQuote, Level: r.quoteDepth}
 	}
-	return Role{RoleBody, 0}
+	return Role{Kind: RoleBody}
 }

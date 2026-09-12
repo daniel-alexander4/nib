@@ -42,6 +42,20 @@ import (
 //     side does. The two directions are stored separately and nothing but this keeps them equal.
 func addMarkedElement(ctx *model.Context, tree *structTree, pageNr int, structType string) (
 	mcid int, elemRef *types.IndirectRef, err error) {
+	return addMarkedElementUnder(ctx, tree, pageNr, structType, nil)
+}
+
+// addMarkedElementUnder is addMarkedElement with a chosen parent — `PLAN-accessibility.md` P06.S02.
+//
+// A nil parent means the tree root, which is what P05.S04's flat one-element-per-page emitter
+// needed. Real structure nests: a list is `L` containing `LI` containing `Lbl` and `LBody`, and an
+// element whose `/P` names the root while its parent's `/K` names it is a tree that disagrees with
+// itself in the two directions a reader can walk it.
+//
+// **The parent is given rather than inferred.** Inferring one from page geometry is P08's job and
+// would be a guess here; the caller walking an AST knows exactly.
+func addMarkedElementUnder(ctx *model.Context, tree *structTree, pageNr int, structType string,
+	parent *types.IndirectRef) (mcid int, elemRef *types.IndirectRef, err error) {
 
 	if structType == "" {
 		return 0, nil, fmt.Errorf("pdfops: a structure element needs an /S")
@@ -87,14 +101,18 @@ func addMarkedElement(ctx *model.Context, tree *structTree, pageNr int, structTy
 	// is supposed to resolve into. The failure names the content rather than the element, which is
 	// why it reads as a wrapping problem and is not one. Every element of a real LibreOffice tree
 	// carries `/P` (36 of 36, measured at S02).
-	rootRef, err := structTreeRootRef(ctx)
-	if err != nil {
-		return 0, nil, err
+	parentRef := parent
+	if parentRef == nil {
+		rootRef, rerr := structTreeRootRef(ctx)
+		if rerr != nil {
+			return 0, nil, rerr
+		}
+		parentRef = rootRef
 	}
 	elem := types.Dict{
 		"Type": types.Name("StructElem"),
 		"S":    types.Name(structType),
-		"P":    *rootRef,
+		"P":    *parentRef,
 		"Pg":   *pageRef,
 		"K":    types.Array{types.Integer(mcid)},
 	}
@@ -104,7 +122,11 @@ func addMarkedElement(ctx *model.Context, tree *structTree, pageNr int, structTy
 	}
 
 	// Both directions, in one place: the tree's side and the ParentTree's side.
-	if err := appendToRootKids(ctx, tree, *ref); err != nil {
+	if parent == nil {
+		if err := appendToRootKids(ctx, tree, *ref); err != nil {
+			return 0, nil, err
+		}
+	} else if err := appendToElementKids(ctx, *parent, *ref); err != nil {
 		return 0, nil, err
 	}
 	if err := setParentTreeSlot(ctx, tree, key, mcid, *ref); err != nil {
@@ -237,4 +259,118 @@ func structTreeRootRef(ctx *model.Context) (*types.IndirectRef, error) {
 			"element cannot name it as its parent")
 	}
 	return &ref, nil
+}
+
+// addGroupingElement creates an element that has no marked content of its own — an `L` holding
+// `LI`s, or an `LI` holding an `Lbl` and an `LBody`.
+//
+// **It takes no page and registers no ParentTree entry**, because it owns no MCID. A grouping
+// element's `/Pg` is optional and its children carry the page; writing one here would name a page
+// the element's content is not on when its children span a break.
+func addGroupingElement(ctx *model.Context, tree *structTree, structType string,
+	parent *types.IndirectRef) (*types.IndirectRef, error) {
+
+	parentRef := parent
+	if parentRef == nil {
+		rootRef, err := structTreeRootRef(ctx)
+		if err != nil {
+			return nil, err
+		}
+		parentRef = rootRef
+	}
+	ref, err := ctx.IndRefForNewObject(types.Dict{
+		"Type": types.Name("StructElem"),
+		"S":    types.Name(structType),
+		"P":    *parentRef,
+		"K":    types.Array{},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil {
+		if err := appendToRootKids(ctx, tree, *ref); err != nil {
+			return nil, err
+		}
+		return ref, nil
+	}
+	return ref, appendToElementKids(ctx, *parent, *ref)
+}
+
+// appendToElementKids adds a child to an element's `/K`, normalising the forms `/K` may take: a
+// single entry, a direct array, or an indirect array.
+func appendToElementKids(ctx *model.Context, parent, child types.IndirectRef) error {
+	e, found := ctx.XRefTable.FindTableEntryForIndRef(&parent)
+	if !found || e == nil || e.Object == nil {
+		return fmt.Errorf("pdfops: the parent element (object %d) is not in the xref table",
+			parent.ObjectNumber.Value())
+	}
+	d, ok := e.Object.(types.Dict)
+	if !ok {
+		return fmt.Errorf("pdfops: the parent element (object %d) is not a dictionary",
+			parent.ObjectNumber.Value())
+	}
+	k, has := d["K"]
+	if !has || k == nil {
+		d["K"] = types.Array{child}
+		e.Object = d
+		return nil
+	}
+	if arr, aerr := ctx.DereferenceArray(k); aerr == nil && arr != nil {
+		if ind, isInd := k.(types.IndirectRef); isInd {
+			ke, kfound := ctx.XRefTable.FindTableEntryForIndRef(&ind)
+			if !kfound || ke == nil {
+				return fmt.Errorf("pdfops: an element's /K names object %d, which is not in the "+
+					"xref table", ind.ObjectNumber.Value())
+			}
+			ke.Object = append(arr, child)
+			return nil
+		}
+		d["K"] = append(arr, child)
+		e.Object = d
+		return nil
+	}
+	d["K"] = types.Array{k, child}
+	e.Object = d
+	return nil
+}
+
+// addMCIDTo allocates another marked-content id on a page and gives it to an element that already
+// exists — `PLAN-accessibility.md` P06.S02.
+//
+// **A paragraph that wraps to four lines is four runs and ONE element**, and the element owns all
+// four MCIDs. Without this an element could own only the first, and every continuation line would
+// have to become its own paragraph — which is a tree that says the document has four paragraphs
+// where it has one, and a reader navigating by paragraph would be told so.
+//
+// It keeps both directions in step exactly as `addMarkedElement` does: the MCID joins the element's
+// `/K` and the element joins the page's ParentTree array at that index.
+func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.IndirectRef) (int, error) {
+	pageDict, _, _, err := ctx.PageDict(pageNr, false)
+	if err != nil || pageDict == nil {
+		return 0, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+	}
+	sp, ok := pageDict["StructParents"].(types.Integer)
+	if !ok {
+		return 0, fmt.Errorf("pdfops: page %d has no /StructParents, so it owns no ParentTree "+
+			"entry to add a marked-content id to", pageNr)
+	}
+	key := sp.Value()
+	arrays, _ := parentTreeEntries(ctx, tree)
+	mcid := len(arrays[key])
+
+	e, found := ctx.XRefTable.FindTableEntryForIndRef(&elem)
+	if !found || e == nil || e.Object == nil {
+		return 0, fmt.Errorf("pdfops: element object %d is not in the xref table",
+			elem.ObjectNumber.Value())
+	}
+	d, isDict := e.Object.(types.Dict)
+	if !isDict {
+		return 0, fmt.Errorf("pdfops: element object %d is not a dictionary",
+			elem.ObjectNumber.Value())
+	}
+	kids, _ := ctx.DereferenceArray(d["K"])
+	d["K"] = append(kids, types.Integer(mcid))
+	e.Object = d
+
+	return mcid, setParentTreeSlot(ctx, tree, key, mcid, elem)
 }

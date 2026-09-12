@@ -180,6 +180,22 @@ type layout struct {
 	// role is the structural element runs are currently being laid out for. The renderer sets it
 	// as it walks the AST; `add` stamps it onto every run.
 	role Role
+	// blocks counts block-level constructs, so `role.Block` can tell two adjacent paragraphs apart
+	// from two lines of one.
+	blocks int
+}
+
+// beginBlock starts a new block-level construct and makes its runs carry the role.
+//
+// **Every entry point that starts a block goes through here**, so the ordinal cannot be forgotten at
+// one of them — which is the failure mode of a counter incremented at call sites. It returns the
+// previous role so the caller can restore it.
+func (l *layout) beginBlock(role Role) Role {
+	prev := l.role
+	l.blocks++
+	role.Block = l.blocks
+	l.role = role
+	return prev
 }
 
 func newLayout(f faceSet) *layout {
@@ -233,8 +249,9 @@ func (l *layout) para(words []word, indent float64, marker *word, lead float64) 
 		if i == 0 && marker != nil {
 			// The bullet or number is its own role: PDF/UA wants it as `/Lbl` beside the item's
 			// `/LBody`, and it is the one run whose text is not in the source document at all.
-			prev := l.role
-			l.role = Role{RoleMarker, prev.Level}
+			// The marker is its own block: PDF/UA wants it as `/Lbl` BESIDE the item's `/LBody`,
+			// so it must not share an ordinal with the text it labels.
+			prev := l.beginBlock(Role{Kind: RoleMarker, Level: l.role.Level})
 			l.line([]word{*marker}, marginX+indent-markerGutter)
 			l.role = prev
 		}

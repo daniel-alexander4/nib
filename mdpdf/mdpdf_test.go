@@ -912,3 +912,112 @@ func TestEveryRunHasARole(t *testing.T) {
 	}
 	t.Logf("%d run(s) across %d page(s), all with a role", total, len(st.Pages))
 }
+
+// TestAdjacentBlocksAreDistinguishable — the amendment P06.S02's grill forced on P06.S01.
+//
+// `{Kind, Level}` cannot express what a tagger needs. Measured on a document with two consecutive
+// paragraphs and a two-line code block: runs 1 and 2 were both `body/0` and runs 7 and 8 were both
+// `code/0` — and those two cases need **opposite** treatment. Two paragraphs are two elements; two
+// lines of one code block are two MCIDs of one element. `Block` is what tells them apart.
+func TestAdjacentBlocksAreDistinguishable(t *testing.T) {
+	const md = "First paragraph.\n\nSecond paragraph.\n\n```\ncode line one\ncode line two\n```\n"
+	_, st, err := ConvertStructured([]byte(md), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roles []Role
+	for _, page := range st.Pages {
+		roles = append(roles, page...)
+	}
+	if len(roles) < 4 {
+		t.Fatalf("expected at least four runs, got %d", len(roles))
+	}
+
+	// The two paragraphs: same kind, DIFFERENT block.
+	var bodies []Role
+	var codes []Role
+	for _, r := range roles {
+		switch r.Kind {
+		case RoleBody:
+			bodies = append(bodies, r)
+		case RoleCode:
+			codes = append(codes, r)
+		}
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected two body runs, got %d", len(bodies))
+	}
+	if bodies[0].Block == bodies[1].Block {
+		t.Errorf("two SEPARATE paragraphs share block %d — a tagger would make them one element",
+			bodies[0].Block)
+	}
+	// The two code lines: same kind, SAME block.
+	if len(codes) != 2 {
+		t.Fatalf("expected two code runs, got %d", len(codes))
+	}
+	if codes[0].Block != codes[1].Block {
+		t.Errorf("two lines of ONE code block have blocks %d and %d — a tagger would make them "+
+			"two elements", codes[0].Block, codes[1].Block)
+	}
+	// Every block ordinal is non-zero: a run with Block 0 belongs to no construct.
+	for i, r := range roles {
+		if r.Block == 0 {
+			t.Errorf("run %d (%s) has no block ordinal", i, r.Kind)
+		}
+	}
+}
+
+// TestAWrappedParagraphIsONEBlock: the case that makes `Block` more than a run index.
+func TestAWrappedParagraphIsONEBlock(t *testing.T) {
+	// Long enough to wrap several times.
+	long := strings.Repeat("word ", 200)
+	_, st, err := ConvertStructured([]byte(long+"\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocks = map[int]int{}
+	runs := 0
+	for _, page := range st.Pages {
+		for _, r := range page {
+			blocks[r.Block]++
+			runs++
+		}
+	}
+	if runs < 3 {
+		t.Fatalf("the paragraph produced %d run(s) — it did not wrap, so this proves nothing", runs)
+	}
+	if len(blocks) != 1 {
+		t.Errorf("a single wrapped paragraph produced %d blocks across %d runs; it is ONE element",
+			len(blocks), runs)
+	}
+}
+
+// TestAListItemAndItsMarkerAreSeparateBlocks — PDF/UA wants `/Lbl` BESIDE `/LBody`, not inside it.
+func TestAListItemAndItsMarkerAreSeparateBlocks(t *testing.T) {
+	_, st, err := ConvertStructured([]byte("- an item\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker, item Role
+	for _, page := range st.Pages {
+		for _, r := range page {
+			switch r.Kind {
+			case RoleMarker:
+				marker = r
+			case RoleListItem:
+				item = r
+			}
+		}
+	}
+	if marker.Block == 0 || item.Block == 0 {
+		t.Fatalf("expected both a marker and an item run, got marker=%v item=%v", marker, item)
+	}
+	if marker.Block == item.Block {
+		t.Errorf("the bullet and the item's text share block %d — they are /Lbl and /LBody and "+
+			"must be two elements", marker.Block)
+	}
+	if marker.Level != item.Level {
+		t.Errorf("the bullet is at level %d and its item at %d; a label belongs to its own item",
+			marker.Level, item.Level)
+	}
+}

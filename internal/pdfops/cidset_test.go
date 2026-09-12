@@ -65,6 +65,9 @@ func TestNothingNibEmbedsAFontIntoCarriesACIDSet(t *testing.T) {
 			return CreateFromJSON([]byte(`{"pages":{"1":{"content":{"text":[{"value":"a page",` +
 				`"anchor":"TopLeft","position":[72,720],"font":{"name":"` + body + `","size":12}}]}}}}`))
 		}},
+		{"a tagged Markdown document", func() ([]byte, error) {
+			return tagMarkdown([]byte(p4Markdown), authoringFaces(), markdownFallbackFonts())
+		}},
 		{"OCR text layer", func() ([]byte, error) {
 			return StampTextLayer(threePagePDF(t),
 				[]Word{{Page: 1, Rect: [4]float64{20, 40, 70, 50}, Text: "hello world"}}, "eng")
