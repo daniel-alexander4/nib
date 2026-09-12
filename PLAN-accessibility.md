@@ -1926,15 +1926,44 @@ document failed ua1 `7.21.4.2 t2` — a clause the untagged one passes. Fixed, a
 `TestNothingNibEmbedsAFontIntoCarriesACIDSet` now drives this door too, which is exactly what its
 own comment said it was for: *a list of call sites passes when a new door is added and not routed*.
 
-#### P06.S03 — the tree records which source produced it
+#### P06.S03 — the tree records which source produced it *(done 2026-09-11, v1.129.55)*
 Scope: D4's rank made visible — *"the user is told which of the three produced the tree they are
 looking at"*. Refs exit criterion 2, D4.
+
+**(grill, 2026-09-11 — confirmed, and D4's three tiers turn out to need a fourth.)**
+
+**`/StructTreeRoot` has six defined entries and none says where the tree came from** — `Type`, `K`,
+`IDTree`, `ParentTree`, `ParentTreeNextKey`, `RoleMap`, `ClassMap`. So this is a private key,
+`/NibStructureSource`, named for nib so it cannot collide with a producer's own. **Measured: it
+costs nothing** — pdfcpu validates the document and veraPDF raises no clause.
+
+**It goes on the tree root, not in the XMP**, because it is a fact about the TREE and the tree root
+is where a reader of the tree already is. Metadata is where a cataloguer looks; this is for whoever
+is deciding how far to trust the structure in front of them.
+
+**D4 names three tiers and a fourth was needed.** P05.S04's emitter brackets a page's content
+knowing nothing about what it says — that is not *exact* (it read no AST), not *approximate* (it
+derived nothing), and not *inferred* (it guessed nothing). `Generic` is the honest name, and the
+alternative was calling that tree `Exact`, which would be false about the only thing this key exists
+to say.
+
+Tasks:
+- T01 — the four tiers and the key.
+- T02 — both writing doors record theirs.
+- T03 — `StructureSource`, with **three** answers rather than two.
+
 Acceptance:
-- Every tree nib writes records its source, and the value survives a round trip.
-- The three sources are distinguishable in a document, by reading it rather than by trusting the
-  writer.
-- **An unmarked tree is not silently treated as exact** — the absence of the record is its own value,
-  because every tree in the field today has none.
+- ✅ Every tree nib writes records its source — both doors today, `tagMarkdown` as `Exact` and
+  `TagAuthored` as `Generic` — and the value **survives** `SetTitle`, `SetLang`, `Rotate` and a
+  no-op rewrite. A record pdfcpu drops on the next write is a record that lasts until the first
+  thing happens to the file.
+- ✅ The sources are distinguishable **by reading the document**, not by trusting the writer.
+- ✅ An unrecorded tree is not treated as exact. **This is the clause that matters**: every tree in
+  the field today carries no record, so a reader defaulting to the best tier would describe all of
+  them as the most trustworthy kind — ADR-031's law 1 in a new field.
+- ✅ **And a foreign value is not read as a tier.** Another producer's private key that happens to
+  share this name says nothing about D4's tiers, and guessing what it meant is worse than reporting
+  nothing.
 
 #### P06.S04 — nib's own prose declares its own language
 Scope: the defect P03.S02 measured and carried here. `AppendReadme` staples English into a document
