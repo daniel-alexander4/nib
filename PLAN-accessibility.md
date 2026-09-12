@@ -1614,16 +1614,55 @@ can actually be built — a cycle needs an element reached twice, which needs an
 which the set catches. It stays because the failure it guards is unrecoverable and the set is one
 edit away from being weakened.
 
-#### P05.S03 — `/ParentTree`, `/StructParents` and MCIDs as model invariants
+#### P05.S03 — `/ParentTree`, `/StructParents` and MCIDs as model invariants *(done 2026-09-11, v1.129.48)*
 Scope: the write half, with the three things every caller currently has to remember maintained by
 the model instead. Refs D8, D9.
+
+**(grill, 2026-09-11 — confirmed, and `/ParentTree` turns out to be two structures wearing one
+name.)** Measured on a real LibreOffice tree:
+
+	key 0 -> an ARRAY of 23 element references   ← a PAGE's entry, indexed BY MCID
+	key 1 -> a single element reference          ← an ANNOTATION's entry
+
+A page carries `/StructParents` (**plural**) and its entry is an array *whose index is the MCID*;
+an annotation or Form XObject carries `/StructParent` (**singular**) and its entry is one reference.
+The two spellings differ by one letter and mean different shapes, and a model treating the tree as
+"key → element" destroys the first.
+
+**The checker was built before the writer, and pointed at documents that already exist.** A
+post-condition nobody can evaluate is a post-condition nobody has — and running it over the corpus,
+a real tree, and **`NUp`'s output** asks P01.S06's work a question P01 never had an instrument for.
+Result: **0 defects everywhere**, which is not a null result — it is independent corroboration that
+`carryTagsThroughNUp` produces a self-consistent tree, by something other than a veraPDF clause
+count.
+
+Tasks:
+- T01 — the four invariants, as a checker over any document.
+- T02 — run it over the corpus, a real tree, `NUp` and `Rotate`.
+- T03 — `addMarkedElement`: the one mutation, with the checker as its post-condition.
+- T04 — D9's page-subset remap: measured or named unmeasured.
+
 Acceptance:
-- Adding, removing and re-parenting an element leaves `/ParentTree` and every page's
-  `/StructParents` consistent, checked by reading them back rather than by construction.
-- The page-subset remap D9 left unmeasured is either built here or **named as still unmeasured** —
-  it is the one thing in this phase the plan has never run.
-- `TestEveryDeclaredFateIsTheMEASUREDFate` is re-run: an operation whose verdict this makes
-  achievable is re-declared, or stays `dropped` with the reason.
+- ✅ **ADD** leaves `/ParentTree` and every page's `/StructParents` consistent, checked by reading
+  them back. ~~Removing and re-parenting.~~ **NOT BUILT, and that is the recorded decision rather
+  than an omission**: neither has a caller — P05.S04 wraps content, which adds — and an untested
+  mutation of a structure tree is `/pending 442`'s bet in a worse form, because its failures are
+  silent. A tree that still parses and describes the wrong content looks exactly like a correct one.
+- ✅ D9's page-subset remap is **named as still unmeasured**, which is the clause's own second
+  option. It needs `Collect`/`RemovePages` to rebuild a tree for a kept subset, and this slice built
+  the invariant checker that such a remap would have to satisfy — which is the prerequisite, not the
+  thing. Nothing in P05 needs it; **P06 is where an operation would.**
+- ➖ `TestEveryDeclaredFateIsTheMEASUREDFate` re-run: **no verdict changes.** The model makes a remap
+  *possible*; it does not make any operation carry a tree it was not already carrying, so every row
+  stays as measured. Re-declaring one on the strength of a capability nothing uses would be exactly
+  the false declaration law 2 exists to catch.
+
+**Five mutations red, and one of them exposed a claim the code could not support.** The ParentTree
+array is indexed by MCID, so growing it must FILL rather than append — and `addMarkedElement`
+allocates `mcid` as the array's length, so the two coincide on every call it makes. Swapping fill
+for append left every test green. The fill is `setParentTreeSlot`'s general contract, which P05.S04
+needs when it wraps content whose MCIDs already exist, so it is now driven directly instead of being
+an untested sentence in a comment.
 
 #### P05.S04 — the wrapping emitter
 Scope: bracket page content in `BDC`/`EMC` with MCIDs the model knows about. The first place nib
