@@ -211,31 +211,20 @@ func TagAuthored(pdf []byte) (out []byte, wrapped int, err error) {
 	if err != nil || wrapped == 0 {
 		return pdf, wrapped, err
 	}
-	out, err = writeMutated(out, func(ctx *model.Context) error {
-		cat, cerr := ctx.XRefTable.Catalog()
-		if cerr != nil {
-			return cerr
-		}
-		mi, _ := ctx.DereferenceDict(cat["MarkInfo"])
-		if mi == nil {
-			mi = types.Dict{}
-		}
-		mi["Marked"] = types.Boolean(true)
-		cat["MarkInfo"] = mi
-		// **`Generic`, not `Exact`.** This emitter brackets a page's content knowing nothing about
-		// what it says; calling that exact would be false about the only thing the key records.
-		return setTagSource(ctx, sourceGeneric)
-	})
+	// **`Generic`, not `Exact`.** This emitter brackets a page's content knowing nothing about what
+	// it says; calling that exact would be false about the only thing the key records.
+	//
+	// Through `claimTagging` (ADR-009) — the three-part law had four copies at the P06 close.
+	claimed, ok, err := claimTagging(out, sourceGeneric)
 	if err != nil {
 		return nil, 0, err
 	}
-	// **The post-condition is the law itself.** `honest` already refuses to ship a document whose
-	// claim its content cannot support; here the claim is one this function just made, so checking
-	// it is checking our own work rather than somebody else's.
-	if s := inspectTags(out); s.orphaned() {
-		return nil, 0, fmt.Errorf("pdfops: TagAuthored produced a document that claims tagging its "+
-			"content does not support (%d element(s), %d anchored, %d page(s) with /StructParents) "+
-			"— refusing to return it", s.elements, s.anchored, s.pagesSP)
+	// **This door FAILS rather than returning the untagged document**, unlike the three that build
+	// a tree from a source they were given. It has already rewritten every page's content stream to
+	// bracket it, so there is no un-wrapped document left to fall back to — returning the wrapped
+	// one with no claim would be marked content nothing points a reader at.
+	if !ok {
+		return nil, 0, orphanedClaimError("TagAuthored", out)
 	}
-	return out, wrapped, nil
+	return claimed, wrapped, nil
 }

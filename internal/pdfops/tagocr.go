@@ -201,34 +201,15 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 	if terr != nil {
 		return stamped, false, nil
 	}
-	// Both halves or neither — the law `TagAuthored` and `tagMarkdown` hold, for the same reason:
-	// a `/MarkInfo` without a tree, or a tree the catalog never claims, is a document that
-	// disagrees with itself about whether it is tagged.
-	tree, terr = writeMutated(tree, func(ctx *model.Context) error {
-		cat, cerr := ctx.XRefTable.Catalog()
-		if cerr != nil {
-			return cerr
-		}
-		mi, _ := ctx.DereferenceDict(cat["MarkInfo"])
-		if mi == nil {
-			mi = types.Dict{}
-		}
-		mi["Marked"] = types.Boolean(true)
-		cat["MarkInfo"] = mi
-		// D4's tier, recorded with the tree it describes: an OCR engine's opinion about a picture.
-		return setTagSource(ctx, sourceApproximate)
-	})
-	if terr != nil {
+	// Both halves and the tier, through the one door (ADR-009). D4's tier here is approximate: an
+	// OCR engine's opinion about a picture.
+	claimed, ok, cerr := claimTagging(tree, sourceApproximate)
+	if cerr != nil || !ok {
+		// Returning the artifacted stamp is the honest fallback and not a failure: the text layer
+		// is what the user asked for and it is intact.
 		return stamped, false, nil
 	}
-	tree = declareOCRLanguage(tree, lang)
-	if s := inspectTags(tree); s.orphaned() {
-		// The post-condition is its own check and not a comment: a claim of tagging over content
-		// that does not support it is exactly what ADR-031 law 1 forbids, and returning the
-		// untagged stamp is the honest fallback rather than a failure.
-		return stamped, false, nil
-	}
-	return tree, true, nil
+	return declareOCRLanguage(claimed, lang), true, nil
 }
 
 // declareOCRLanguage writes the recognised language onto the catalog, if the document declares none.

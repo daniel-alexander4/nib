@@ -75,27 +75,13 @@ func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, 
 	if terr != nil {
 		return authored, false, nil
 	}
-	// Both halves or neither — the law `TagAuthored`, `tagMarkdown` and `TagOCRLayer` all hold.
-	described, terr = writeMutated(described, func(ctx *model.Context) error {
-		cat, cerr := ctx.XRefTable.Catalog()
-		if cerr != nil {
-			return cerr
-		}
-		mi, _ := ctx.DereferenceDict(cat["MarkInfo"])
-		if mi == nil {
-			mi = types.Dict{}
-		}
-		mi["Marked"] = types.Boolean(true)
-		cat["MarkInfo"] = mi
-		return setTagSource(ctx, sourceExact)
-	})
-	if terr != nil {
+	// Both halves and the tier, through the one door (ADR-009). D4's tier here is exact: the caller
+	// placed and named these fields, so which element describes which widget is known.
+	claimed, ok, cerr := claimTagging(described, sourceExact)
+	if cerr != nil || !ok {
 		return authored, false, nil
 	}
-	if s := inspectTags(described); s.orphaned() {
-		return authored, false, nil
-	}
-	return described, true, nil
+	return claimed, true, nil
 }
 
 // tagWidgetsOnPage nests every widget annotation on one page in a `/Form` element, and returns how

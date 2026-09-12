@@ -131,6 +131,18 @@ func (s tagState) orphaned() bool {
 	return s.anchored == 0 && s.pagesSP == 0
 }
 
+// supportsAClaim says whether this document's structure could honestly carry a claim of tagging —
+// `orphaned()` asked BEFORE the claim exists rather than after.
+//
+// It cannot be written as `!orphaned()`, and the reason is the one thing that makes `orphaned()`
+// work: `orphaned()` returns false for a document that claims nothing, because a document making no
+// claim cannot be lying. So a document with no tree at all is not orphaned — it becomes orphaned the
+// moment `/MarkInfo` is written. A caller deciding whether to write it needs the question asked the
+// other way round.
+func (s tagState) supportsAClaim() bool {
+	return s.readable && s.tree && (s.anchored > 0 || s.pagesSP > 0)
+}
+
 // partial is a claim over a document where the tree is live but does not reach every page that has
 // content. Recorded rather than enforced: see the tag-fate table's `partial` verdict.
 func (s tagState) partial() bool {
