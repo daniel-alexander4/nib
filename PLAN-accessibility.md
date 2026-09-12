@@ -691,12 +691,38 @@ Acceptance:
 - ✅ The runtime-named exemptions are checked **against `app.js`**, in both directions, so an
   exemption cannot outlive the code that justifies it or name a button that is gone.
 
-#### P02.S04 — the keyboard-only pass, and what it finds
-Scope: a tier-3 keyboard-only traversal of open → mark up → save, asserting no trap and no stranded
-focus. It is last because S01–S03 are what make it passable. Refs: exit criterion 3.
+#### P02.S04 — the keyboard-only pass, and what it finds *(done 2026-09-11, v1.129.25)*
+Scope: a tier-3 keyboard-only traversal, asserting no trap and no stranded focus. It is last
+because S01–S03 are what make it passable. Refs: exit criterion 3, WCAG SC 2.1.2 and SC 2.4.3.
+
 Acceptance:
-- Tab order reaches every interactive control and returns; no element traps focus.
-- Focus is never left on a removed node after a modal closes.
+- ~~Tab order reaches **every interactive control** and returns~~ **(narrowed on measurement,
+  2026-09-11.)** Not assertable: 279 buttons exist and most are behind a mode, a card or an open
+  document, so a test claiming it would be measuring its own fixture setup rather than the app.
+  **Replaced with what SC 2.1.2 actually requires and what is observable**: over the population Tab
+  reaches from a real starting point, ✅ focus always moves, ✅ never stalls, ✅ never lands on
+  something invisible, and ✅ the order returns to its first stop.
+- ✅ **The trap detector is proved able to detect a trap**, not assumed — see the pin.
+- ✅ Focus is never left on a removed node after a modal closes. Already held by
+  `dialogfocus.test.mjs`, which records why this needs tier 3: jsdom's `.focus()` succeeds on
+  elements inside `hidden` containers, so the assertion is green against the defect it exists for.
+
+**(pin — the red proof for this slice was INERT, and it looked exactly like a passing one.)**
+The obvious probe is to inject `onblur="this.focus()"` and watch the detector fire. It does not
+fire, because **Nib's own CSP refuses inline handlers** — `script-src 'self' 'wasm-unsafe-eval'`
+with no `unsafe-inline`, and the browser reports *"The action has been blocked."* The probe
+produced three unrelated failures and left the detector green, which is indistinguishable from a
+detector that works.
+
+So the capability became a **standing test** rather than a one-off: it installs a trap the way the
+app could actually acquire one — a listener added through the DOM API, which is what a real
+focus-management bug is — and requires the stall to be caught. That test goes red the day the
+detector goes inert, which no amount of hand-probing can promise.
+
+**And the detector's first version reported a trap that was not there.** It keyed element identity
+on `id || className`, and every accordion header is `class="sbhead groupcard"` with no id — so
+three *different* buttons in a row read as one element. An identity function that cannot tell two
+elements apart turns "focus moved" into "focus is stuck". Re-keyed on a DOM path.
 
 **Dropped from the sketch**: the toast live region (built, `/pending 328`). `prefers-reduced-motion`,
 SC 1.4.11 and the 200%-zoom reflow assertion are **not** dropped — they are unmeasured here and stay
