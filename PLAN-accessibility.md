@@ -1664,14 +1664,57 @@ for append left every test green. The fill is `setParentTreeSlot`'s general cont
 needs when it wraps content whose MCIDs already exist, so it is now driven directly instead of being
 an untested sentence in a comment.
 
-#### P05.S04 — the wrapping emitter
+#### P05.S04 — the wrapping emitter *(done 2026-09-11, v1.129.49)*
 Scope: bracket page content in `BDC`/`EMC` with MCIDs the model knows about. The first place nib
 emits content-stream operators of its own. Refs D3.
+
+**(grill, 2026-09-11 — confirmed, and the slice's real decision is WHAT an emitter that knows no
+semantics may claim.)** It knows where a page's content is and nothing about what it says:
+
+- **`/P` would say every page is one paragraph**, which is false of any page with a heading on it.
+  That is ADR-031 law 1's species in a quieter register — a claim about content nib has not
+  examined.
+- **`/Div`** is ISO 32000-1's generic block-level grouping element. It says *this is real content,
+  grouped*, which is the whole of what this code knows.
+
+Real structure — headings as `H1`, lists as `L`/`LI`, from `mdpdf`'s own AST — is **P06**, which has
+the information this does not. P06 replaces the TYPE, not the mechanism.
+
+Tasks:
+- T01 — the emitter: wrap each unmarked page, register the element, report how many it wrapped.
+- T02 — `ensureStructTree`: create an empty tree where a document has none, refuse one it cannot
+  represent.
+- T03 — idempotence: a page already carrying marked content is left alone, decided by TOKENS.
+
 Acceptance:
-- **Wrapping does not disturb the wrapped content's bytes** — asserted as a byte comparison of the
-  span between the inserted operators, which is the phase's own exit criterion.
-- The MCIDs the emitter writes are the ones the model's `/ParentTree` points at, read back.
-- A page that is already marked content is not double-wrapped.
+- ✅ **Wrapping does not disturb the wrapped content's bytes** — asserted as a byte comparison of
+  the span between the inserted operators, on a 2,093-byte real page. This is what S01's
+  byte-identical round trip was for: the emitter inserts at two offsets and copies everything else.
+- ✅ The MCIDs the emitter writes are the ones the model's `/ParentTree` points at, **read back out
+  of the produced document** rather than remembered from the call — the two directions live in
+  different places and nothing but a check makes them the same number.
+- ✅ A page that is already marked is not double-wrapped, and **the check is TOKENIZED**: since P04
+  every glyph nib draws is a two-byte index, so a page whose text happens to contain the bytes `BDC`
+  would be skipped by a byte search and come out untagged with nothing saying why.
+
+**The slice's defect was found by measurement and it looks like something else.** The emitted
+element had no **`/P`**, and the symptom is that veraPDF reports every content item as `{mcid:0}` —
+marked, so the bracketing worked — while failing ua1 **7.1 t3**, *content shall be marked as
+Artifact or tagged as real content*. **The failure names the CONTENT, so it reads as a wrapping
+problem and is not one**: an element outside the tree is not something an MCID can resolve into.
+`/P` is required by ISO 32000-1 table 323 and every element of the real LibreOffice tree carried
+one — 36 of 36, measured at S02 and not read from the specification.
+
+**Measured end to end, with S05's `/MarkInfo` applied as a probe:** nib's Markdown output fails
+**`5 t1` and nothing else** — the conformance assertion nib refuses by decision. `6.2 t1`, `7.1 t3`,
+`7.1 t11`, `7.2 t33` and `7.2 t34` all clear.
+
+**And P05.S01's `gated` exemptions retired themselves in this slice**, which is the mechanism
+working on the first coordinate it was written for. S01 gated five zero-caller rows on `P05.S04`;
+this slice gave four of them production callers, and the guard failed **the moment the slice was
+marked done** — before the commit, because `/createcode` writes the marker first. The two survivors
+became `test-support`, since nothing schedules a caller for them and a coordinate would be a date
+nobody is keeping.
 
 #### P05.S05 — `/MarkInfo`, and a document that is honestly tagged
 Scope: the clause P03 deferred here by name, plus the end-to-end proof. Refs exit criterion 2,
