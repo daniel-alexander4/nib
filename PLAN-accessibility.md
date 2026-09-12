@@ -1152,6 +1152,80 @@ not. Refs D7.
 non-embedded fonts is refused for UA export with the reason named; `mdpdf` output passes the font
 rule under veraPDF.
 
+**(phase-open, 2026-09-11 at v1.129.38 — five measurements, and two of them change the phase.)**
+
+| measured | result |
+|---|---|
+| what `mdpdf` draws with | **five** Base-14 core faces: `Helvetica`, `-Bold`, `-Oblique`, `-BoldOblique`, `Courier` (`mdpdf/mdpdf.go:36-41`) |
+| what is available to embed | **`Roboto-Regular` and nothing else.** `font.IsUserFont` is false for `Roboto-Bold`, `-Italic`, `-BoldItalic` and `RobotoMono-Regular`; the thirteen faces nib vendors are all non-Latin script faces |
+| what embedding costs a document | 1,453 → 29,000 bytes for a one-line page — a real subset, with `/ToUnicode`, as `JAZKYI+Roboto-Regular` |
+| what embedding clears | **7.21.4.1 t1 goes** — and **7.21.4.2 t2 arrives** |
+| what vendoring costs the binary | nib already ships **7.4 MB of fonts** in a **100 MB binary**. Three Roboto styles plus a mono face is ~680 KB: **0.68% of the binary, 9% of the font payload it already carries** |
+
+**So the binary-size question dissolves before it is asked**, and the phase's real obstacles are the
+two nobody had named:
+
+- **There is no embeddable bold, italic, bold-italic or monospace.** pdfcpu bundles exactly one
+  Latin face. Clearing 7.21.4.1 for `mdpdf` therefore means *vendoring*, not *switching*.
+- **Embedding introduces a clause of its own.** ua1 7.21.4.2 t2 — *"if the FontDescriptor of an
+  embedded CID font contains a CIDSet stream, then it shall identify all CIDs present in the font
+  program, regardless of whether a CID is referenced or used"*. Measured on the subset above: the
+  `/CIDSet` is 162 bytes with **16 bits set**, which is the used-glyph count, not the program's. The
+  clause is **conditional on the stream being there at all**, and PDF/UA does not require it.
+
+**And one measurement removes work D7 assumed.** D7 says *"core-font metrics stay for layout"*.
+`mdpdf` already has both paths and picks between them — `style.width` calls `font.TextWidth` by RUNE
+for an embedded face and `CoreWidth` (byte-encoded) for a core one, with the reason written out at
+`mdpdf/layout.go:33-44`. Layout follows the face automatically. **The place that does not is
+`internal/p2p`**, whose readme and signature-page wrappers call the exported `CoreWidth`, whose own
+doc comment says *"Core fonts only … a caller with a fallback face wants that path, not this one"* —
+and `ErrReadmeOverflow` refuses a body that runs past the page, so a metric change there is a
+page-fitting change with a live refusal already watching it.
+
+**Firmed slices:**
+
+#### P04.S01 — there is no embeddable bold, and that is the phase's first problem
+Scope: vendor `Roboto-Bold`, `Roboto-Italic`, `Roboto-BoldItalic` and a monospace face, install them
+through the door `InstallOCRFonts` already uses for thirteen, and point `mdpdf`'s five typography
+constants at them. Refs D7, exit criterion 1.
+Acceptance:
+- `font.IsUserFont` is true for every face `mdpdf` names, **enumerated from `mdpdf`'s own constants**
+  rather than a list — a face added to `mdpdf` without being installed turns the guard red.
+- `mdpdf` output no longer fails ua1 7.21.4.1 t1, measured before and after on the same source.
+- The existing `style.width` split still routes: an embedded face is measured by rune. Proved by
+  making it measure the other way and requiring the wrap to change.
+
+#### P04.S02 — the `/CIDSet` that claims more than the font program has
+Scope: ua1 7.21.4.2 t2 on every embedded subset pdfcpu writes. The clause is conditional on the
+stream's presence, and PDF/UA does not require one — so the honest answer is very likely to remove
+it rather than to compute a correct one. **PDF/A-1 does require it**, so the boundary between the UA
+path and `pdfa.go`/`pdfa_gs.go` is the whole of the care here. Refs exit criterion 3.
+Acceptance:
+- An embedded-font document nib authors fails neither 7.21.4.1 t1 nor 7.21.4.2 t2.
+- The PDF/A path is measured to still carry whatever it requires — not argued.
+- The ua1 oracle's `knownUA1Deltas` shrinks rather than gaining a row.
+
+#### P04.S03 — the font install becomes load-bearing, and an unwritable `$HOME` must still work
+Scope: today a failed font install costs **non-Latin OCR only**, and `InstallOCRFonts` degrades
+rather than blocking startup (the `fault.Catch` block at `ocrfonts.go:160-171`, written after a
+read-only `$HOME` crashed nib at startup). After S01 it costs **every authored document's text**,
+and `CreateFromJSON` *errors* on an unknown font rather than substituting — so the readme and the
+signature pages would fail to render at all. Refs D7.
+Acceptance:
+- With the user font dir unwritable, authored output still renders — degraded to core fonts and
+  **saying so**, never failing.
+- The degrade is exercised, not reasoned: the test makes the directory unwritable.
+- A document that degraded is not claimed to embed its fonts (ADR-031 law 1's shape).
+
+#### P04.S04 — a document nib did not author is refused for UA export, with the reason named
+Scope: `nonEmbeddedFonts()` already exists and `pdfaBlockers` already refuses-rather-than-mislabels;
+this is the UA analogue. **There is no UA export door yet** — establish whether one is P04's or
+waits for the tree, before building a refusal for an export nothing performs. Refs exit criterion 2.
+Acceptance:
+- The refusal names the fonts, the way `pdfaBlockers` names them.
+- It is reached from a door that exists, or the slice closes with the finding that it is not yet
+  reachable and says where it belongs.
+
 ### P05 — The tag tree core
 **Goal.** The typed model of D8 plus the wrapping emitter of D3 — parse, mutate, write back, with
 `/ParentTree`, `/StructParents` and MCIDs as model invariants. This is the new capability the whole
