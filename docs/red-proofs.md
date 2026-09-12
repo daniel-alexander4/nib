@@ -5091,3 +5091,31 @@ nothing is missing that a reader would notice, and the machine holding the name 
 user wrote it. Only asserting both strings on one card can see it.
 
 `recorded` 405 → 406.
+
+## P01.S01/S03 of `PLAN-accessibility.md` — two rows, and both record a defect that already shipped
+
+The tag-fate census was re-derived against a parsing oracle after a byte count over compressed
+pdfcpu output had produced a whole phase of false conclusions. It found two more things.
+
+**Nineteen of the table's thirty-three verdicts were wrong**, every one declaring `dropped` about an
+operation that carries the tag tree intact. Nothing was red, because the guard asked only *"does
+this output lie?"* and never compared a **declaration** to a document.
+
+**And `NUp` genuinely violates law 1** — in the released v1.129.4, and invisibly to the corrected
+oracle as well. The predicate was *"claims tagging and has zero struct elements"*; `api.NUp` emits
+45, all pointing at page objects it left behind when composing its sheets. veraPDF ua1 names it in
+the law's own words: 7.1 t3, *"Content shall be marked as Artifact or tagged as real content"*,
+24 failed checks.
+
+| proof | check | expects |
+|---|---|---|
+| `honest-strips-a-tree-that-survived` — the `orphaned()` guard clause deleted, so the door strips unconditionally (v1.129.9 verbatim) | `go test ./internal/pdfops/ -run TestHonestLeavesACarriedTreeALONE`, tier 1 | "no business touching" |
+| `a-tag-fate-verdict-nothing-measures` — `Rotate` declared `dropped`, the verdict the byte count produced | `go test ./internal/pdfops/ -run TestEveryDeclaredFateIsTheMEASUREDFate`, tier 1 | "declares \"dropped\" and measures \"carried\"" |
+
+**Both defects are edits that read as simplifications**, which is why they are recorded rather than
+argued. Deleting a two-line guard from a function whose job is to strip looks like removing a
+redundant check; it is the difference between a post-condition and the version that destroyed user
+data. And a table of declarations nobody measures looks exactly like a table of declarations that
+are true.
+
+`recorded` 406 → 408.
