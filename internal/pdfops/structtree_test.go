@@ -357,11 +357,30 @@ func sharedElementFixture() []byte {
 		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
 		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
 		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] /ParentTree 13 0 R >>",
 		8: "<< /Type /StructElem /S /Sect /Pg 3 0 R /K [12 0 R] >>",
 		// 12 is the child of BOTH 8 and 10.
 		10: "<< /Type /StructElem /S /Sect /Pg 3 0 R /K [12 0 R] >>",
 		12: "<< /Type /StructElem /S /P /Pg 3 0 R >>",
+		13: "<< /Nums [0 [12 0 R]] >>",
+	})
+}
+
+// danglingStructParentsFixture gives a page a `/StructParents` key the `/ParentTree` has no entry
+// for — the page declares a row in a table that has no such row, so every MCID on it is unreachable
+// from the tree while the document still looks tagged.
+func danglingStructParentsFixture() []byte {
+	content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (x) Tj ET\nEMC\n"
+	return assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 4 >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R >>",
+		8: "<< /Type /StructElem /S /P /Pg 3 0 R /K [0] >>",
+		// The page says key 4; the tree only has key 0.
+		9: "<< /Nums [0 [8 0 R]] >>",
 	})
 }
 
