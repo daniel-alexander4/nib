@@ -142,6 +142,32 @@ func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
 	return ConvertWithFaces(md, nil, fallbacks)
 }
 
+// ConvertStructured is ConvertWithFaces plus the structure of what it drew.
+//
+// The PDF is **byte-identical** to what `ConvertWithFaces` returns for the same input: the structure
+// is read off the same layout, and nothing in `spec()` consults it. A caller that wants only a
+// document should keep using `ConvertWithFaces`; this is for one that intends to tag it.
+//
+// `Structure.Pages[i]` holds one role per run of page i+1, **in the order the runs were drawn** —
+// which is the order `spec()` emits them and therefore the order pdfcpu writes the text-drawing
+// operators. That correspondence is what makes tagging possible without this package generating its
+// own content stream, and `PLAN-accessibility.md` P06.S02 is where it is checked rather than
+// assumed.
+func ConvertStructured(md []byte, base *Faces, fallbacks []Font) ([]byte, Structure, error) {
+	pdf, l, err := convert(md, base, fallbacks)
+	if err != nil {
+		return nil, Structure{}, err
+	}
+	st := Structure{Pages: make([][]Role, len(l.runs))}
+	for i, page := range l.runs {
+		st.Pages[i] = make([]Role, len(page))
+		for j, r := range page {
+			st.Pages[i][j] = r.role
+		}
+	}
+	return pdf, st, nil
+}
+
 // ConvertWithFaces is ConvertWithFonts with the BASE faces supplied too, so the whole document
 // — not only the words the core fonts cannot print — is set in fonts embedded in the result.
 //
@@ -150,6 +176,17 @@ func ConvertWithFonts(md []byte, fallbacks []Font) ([]byte, error) {
 // because the caller's faces come from an install that can fail (an unwritable font directory)
 // and a document set in core fonts is a worse PDF, not a broken one.
 func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) {
+	pdf, _, err := convert(md, base, fallbacks)
+	return pdf, err
+}
+
+// convert is the one body ConvertWithFaces and ConvertStructured share, returning the layout so the
+// second can read the structure off the very runs the first drew.
+//
+// **One body, not two**, because the alternative is a second renderer walk that could disagree with
+// the first about what it produced — and a structure describing a document that was drawn by
+// different code is worse than no structure.
+func convert(md []byte, base *Faces, fallbacks []Font) ([]byte, *layout, error) {
 	// **A font install that fails on the MACHINE degrades; one that fails because the caller
 	// declared a face wrongly does not.** `PLAN-accessibility.md` P04.S03, and it is measured
 	// rather than imagined: with the pdfcpu user-font directory unwritable — a read-only or
@@ -165,7 +202,7 @@ func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) 
 	if base.valid() {
 		if err := installFallbacks(base.all()); err != nil {
 			if errors.Is(err, ErrFaceMisdeclared) {
-				return nil, err
+				return nil, nil, err
 			}
 		} else {
 			faces = base.set()
@@ -173,27 +210,27 @@ func ConvertWithFaces(md []byte, base *Faces, fallbacks []Font) ([]byte, error) 
 	}
 	if err := installFallbacks(fallbacks); err != nil {
 		if errors.Is(err, ErrFaceMisdeclared) {
-			return nil, err
+			return nil, nil, err
 		}
 		// The pool could not be installed; the words it exists for render as spaces, which is
 		// exactly what happens when no pool is supplied at all.
 		fallbacks = nil
 	}
 	if err := refuseAbsurdNesting(md); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	doc := goldmark.New().Parser().Parse(text.NewReader(md))
 	r := &renderer{src: md, l: newLayout(faces), fonts: fallbacks, f: faces}
 	r.blocks(doc, 0, nil)
 	spec, err := r.l.spec()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out bytes.Buffer
 	if err := api.Create(nil, bytes.NewReader(spec), &out, model.NewDefaultConfiguration()); err != nil {
-		return nil, fmt.Errorf("render pdf: %w", err)
+		return nil, nil, fmt.Errorf("render pdf: %w", err)
 	}
-	return out.Bytes(), nil
+	return out.Bytes(), r.l, nil
 }
 
 // renderer walks the goldmark AST and drives the layout.
@@ -202,6 +239,11 @@ type renderer struct {
 	l     *layout
 	fonts []Font
 	f     faceSet
+	// listDepth and quoteDepth are the nesting the walk is currently inside, so a run can record
+	// the DEPTH of the item it belongs to rather than only that it is in a list at all. PDF/UA's
+	// `L`/`LI` nesting needs the number; "this is in a list" does not describe a sublist.
+	listDepth  int
+	quoteDepth int
 }
 
 // blocks lays out the children of n. A non-nil marker (list bullet/number)
@@ -278,16 +320,21 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		bodyLead := r.f.sty(r.f.body, sizeBody).leading()
 		r.l.need(0.8*float64(sty.size) + sty.leading() + 2*bodyLead + paraGap)
 		r.l.gap(0.8 * float64(sty.size))
+		defer r.withRole(Role{RoleHeading, lvl})()
 		r.l.para(r.inline(n, sty.size), indent, marker, sty.leading())
 		r.l.gap(4)
 	case *ast.Paragraph:
+		defer r.withRole(r.textRole())()
 		r.l.para(r.inline(n, 0), indent, marker, r.f.sty(r.f.body, sizeBody).leading())
 		r.l.gap(paraGap)
 	case *ast.TextBlock: // paragraph inside a tight list item
+		defer r.withRole(r.textRole())()
 		r.l.para(r.inline(n, 0), indent, marker, r.f.sty(r.f.body, sizeBody).leading())
 		r.l.gap(tightGap)
 	case *ast.List:
 		num := t.Start
+		r.listDepth++
+		defer func() { r.listDepth-- }()
 		for li := t.FirstChild(); li != nil; li = li.NextSibling() {
 			m := word{[]frag{{"•", r.f.sty(r.f.body, sizeBody)}}}
 			if t.IsOrdered() {
@@ -319,9 +366,12 @@ func (r *renderer) block(n ast.Node, indent float64, marker *word) {
 		if next > maxBlockIndent {
 			next = maxBlockIndent
 		}
+		r.quoteDepth++
 		r.blocks(t, next, marker)
+		r.quoteDepth--
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
 		r.l.gap(codeGap)
+		defer r.withRole(Role{RoleCode, 0})()
 		r.l.code(r.codeLines(n), indent)
 		r.l.gap(codeGap)
 	case *ast.ThematicBreak:
@@ -537,4 +587,40 @@ func (l *layout) spec() ([]byte, error) {
 		"origin": "LowerLeft",
 		"pages":  pages,
 	})
+}
+
+// withRole sets the role runs are stamped with, and returns the function that restores it.
+//
+// The restore is deferred at each call site rather than reset at the end, because `block` returns
+// from several arms and a role left set would leak onto whatever the caller lays out next — the
+// classic paired-mutation bug, and one whose symptom is a paragraph tagged as a heading rather than
+// anything that looks wrong.
+//
+// **Measured: the restore is currently unreachable, and that is recorded rather than implied
+// tested.** Removing it leaves every test green, because every arm of `block` that lays out a RUN
+// sets its own role first — `ThematicBreak`, the one arm that does not, emits a `box` and boxes
+// carry no role. So the guard is against a future arm that lays out without setting one, which is
+// exactly the arm somebody adds without reading this. The marker path's own save/restore in
+// `layout.para` IS driven: removing it makes every list item's text report as `marker`.
+func (r *renderer) withRole(role Role) func() {
+	prev := r.l.role
+	r.l.role = role
+	return func() { r.l.role = prev }
+}
+
+// textRole is the role for ordinary text: a list item when the walk is inside one, a quote when
+// inside a blockquote, body otherwise.
+//
+// **A list item inside a blockquote counts as a list item**, because that is the element a reader
+// navigates by; the quote is context the `/BlockQuote` element above it carries. Nesting both into
+// one flat role is exactly the lossiness this type accepts by being flat — recorded here rather
+// than left for someone to discover from the output.
+func (r *renderer) textRole() Role {
+	if r.listDepth > 0 {
+		return Role{RoleListItem, r.listDepth}
+	}
+	if r.quoteDepth > 0 {
+		return Role{RoleQuote, r.quoteDepth}
+	}
+	return Role{RoleBody, 0}
 }

@@ -157,6 +157,12 @@ type run struct {
 	x, y float64
 	text string
 	sty  style
+	// role is the structural element this run belongs to — `PLAN-accessibility.md` P06.S01.
+	//
+	// **It changes nothing about what is drawn.** `spec()` never reads it, so the emitted PDF is
+	// byte-identical with and without it; what it adds is the ability to ANSWER what a run was,
+	// which the renderer has known all along from the goldmark AST and thrown away here.
+	role Role
 }
 
 type box struct {
@@ -171,6 +177,9 @@ type layout struct {
 	// f is the base face set, so code blocks measure and draw in the same monospace face
 	// the rest of the document was configured with rather than a package constant.
 	f faceSet
+	// role is the structural element runs are currently being laid out for. The renderer sets it
+	// as it walks the AST; `add` stamps it onto every run.
+	role Role
 }
 
 func newLayout(f faceSet) *layout {
@@ -185,7 +194,12 @@ func (l *layout) newPage() {
 	l.y = pageTop
 }
 
-func (l *layout) add(r run) { l.runs[len(l.runs)-1] = append(l.runs[len(l.runs)-1], r) }
+func (l *layout) add(r run) {
+	// The role travels with the run rather than being passed to every call site: `para`, `code` and
+	// the marker path all reach `add`, and a parameter on each is three places to forget it.
+	r.role = l.role
+	l.runs[len(l.runs)-1] = append(l.runs[len(l.runs)-1], r)
+}
 
 // need starts a new page unless h points of vertical room remain.
 func (l *layout) need(h float64) {
@@ -217,7 +231,12 @@ func (l *layout) para(words []word, indent float64, marker *word, lead float64) 
 		l.need(lead)
 		l.y -= lead
 		if i == 0 && marker != nil {
+			// The bullet or number is its own role: PDF/UA wants it as `/Lbl` beside the item's
+			// `/LBody`, and it is the one run whose text is not in the source document at all.
+			prev := l.role
+			l.role = Role{RoleMarker, prev.Level}
 			l.line([]word{*marker}, marginX+indent-markerGutter)
+			l.role = prev
 		}
 		l.line(ln, marginX+indent)
 	}
@@ -245,7 +264,7 @@ func (l *layout) line(words []word, x float64) {
 		merged = append(merged, f)
 	}
 	for _, f := range merged {
-		l.add(run{x, l.y, f.text, f.sty})
+		l.add(run{x: x, y: l.y, text: f.text, sty: f.sty})
 		x += f.sty.width(f.text)
 	}
 }
@@ -265,7 +284,7 @@ func (l *layout) code(lines []string, indent float64) {
 			l.need(lead)
 			l.y -= lead
 			if chunk != "" {
-				l.add(run{marginX + indent, l.y, chunk, sty})
+				l.add(run{x: marginX + indent, y: l.y, text: chunk, sty: sty})
 			}
 		}
 	}
