@@ -1975,16 +1975,53 @@ Acceptance:
 - The user's own pages are unaffected — their language is not restated, overridden, or removed.
 - Measured on the ua1 oracle: the composed document gains no clause.
 
-#### P06.S05 — authored form fields carry `/TU` and `/Tabs`
-Scope: **neither key is written anywhere today** (named search, zero hits). `/TU` is the accessible
-name a screen reader announces for a field; `/Tabs /S` makes tab order follow the structure tree.
-Refs exit criterion 1, D4's observed-exact tier.
+#### P06.S05 — authored form fields carry `/TU` and `/Tabs` *(done 2026-09-11, v1.129.57)*
+Scope: **neither key is written anywhere today** (named search: `grep -rn '"TU"\|/TU\b' internal/ web/`
+finds one test COMMENT and no code; `/Tabs` zero hits). `/TU` is the accessible name a screen reader
+announces for a field; `/Tabs /S` makes tab order follow the structure tree. Refs exit criterion 1,
+D4's observed-exact tier, `/pending 471`.
+
+**(grill, 2026-09-11 — AMENDED. The third acceptance clause was wrong and is replaced; step zero
+measured all four combinations on the ua1 oracle before a line was written.)**
+
+| document | ua1 form/language clauses failed |
+|---|---|
+| `AuthorForm` today | `7.18.1 t3` · `7.18.3 t1` · `7.18.4 t1` · `7.2 t34` |
+| `+ /TU` | `7.18.3 t1` · `7.18.4 t1` · **`7.2 t25`** · `7.2 t34` |
+| `+ /Tabs /S` | `7.18.1 t3` · `7.18.4 t1` · `7.2 t34` |
+| `+ both, catalog `/Lang`` | `7.18.4 t1` |
+
+Three findings reshape the slice:
+
+- **`7.18.4 t1` is OUT OF REACH here and the old clause claimed it closes.** veraPDF's words: *"A
+  Widget annotation shall be nested within a Form tag"*, failing with *"nested within null tag
+  (standard type = null) instead of Form"*. That is a structure element with an `OBJR` kid — the
+  emitter's work (P05.S03 already models `kidOBJR`), not a dictionary key. No combination of `/TU`
+  and `/Tabs` moves it.
+- **`/TU` ADDS `7.2 t25`** — *"Natural language in the TU key for form fields shall be determined"*.
+  An accessible name is text, and text needs a language. Cleared ONLY by the catalog `/Lang`;
+  `/Lang` on the field dictionary itself does nothing (measured, with the mutation confirmed to have
+  landed). `AuthorForm` works on the USER'S document, so writing that catalog key is the guess
+  P03.S02 measured and `/pending 471` parks — **so the slice writes `/TU` anyway and records
+  `7.2 t25` against the no-`/Lang` case with 471 as its gate.** Withholding an accessible name to
+  keep a clause table clean is scoring honesty as a regression, which P01 already wrote down.
+- **The label the old clause requires does not exist.** `web/app.js:6910` has exactly one user
+  string — `f.input.value` — which it trims, defaults to `field_N`, and de-dupes with a numeric
+  suffix before it becomes `/T`. `FormField` gains a `Label` carrying the RAW typed value, or `/TU`
+  is `/T` spelled twice. Where the user typed nothing there is no name to give: `/TU` is omitted,
+  because `field_3` is identical to the `/T` a reader already falls back to and is the generic
+  label `TitleFromName` refuses on the same reasoning.
+
 Acceptance:
-- Every field `AuthorForm` places carries a `/TU`, and it is the name the user gave — not the
-  internal field name, which is what a form's own `/T` already is.
-- The page carries `/Tabs /S`.
-- An authored form passes veraPDF `ua1`'s form clauses — `7.18.1`, `7.18.3`, `7.18.4`, which
-  `knownUA1Deltas` currently records `AuthorForm` as ADDING, so the table shrinks.
+- Every field `AuthorForm` places **for which the user gave a name** carries a `/TU`, and it is that
+  name — not the de-duped internal field name, which is what `/T` already is. A field the user did
+  not name carries no `/TU`, and that is asserted rather than left to happen.
+- Every page carrying a widget carries `/Tabs /S`, through one door.
+- `knownUA1Deltas["AuthorForm"]` **shrinks from three clauses to one**: `7.18.1 t3` and `7.18.3 t1`
+  go; `7.18.4 t1` stays and its row says it needs a `Form` structure element, naming the slice that
+  can close it.
+- On a document with NO catalog `/Lang`, `/TU` adds `7.2 t25` and nothing else — asserted, with
+  `/pending 471` named as the gate, so the cost of the decision is measured rather than described.
 
 #### P06.S06 — an OCR'd scan is tagged from tesseract's own hierarchy
 Scope: the wire carries block/paragraph/line, and the text layer is tagged from it. **A request-field

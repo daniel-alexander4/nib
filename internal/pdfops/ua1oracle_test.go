@@ -145,7 +145,13 @@ var knownUA1Deltas = map[string]struct {
 	// ── Annotations and form fields arriving without their accessibility metadata. This is not a
 	// defect to file; it is P06's stated goal — "authored form fields with /TU names" — and these
 	// clauses are the measurement of the gap it closes.
-	"AuthorForm": {[]string{"7.18.1 t3", "7.18.3 t1", "7.18.4 t1"}, "form fields with no /TU and untagged widgets — P06"},
+	//
+	// **`AuthorForm` shrank from three clauses to one at P06.S05** (v1.129.57): `/TU` took 7.18.1 t3
+	// and `/Tabs /S` took 7.18.3 t1. What is left is not a key and cannot be fixed by one —
+	// veraPDF's words are *"A Widget annotation shall be nested within a Form tag"*, failing with
+	// *"nested within null tag (standard type = null) instead of Form"*. That is a structure
+	// element with an `OBJR` kid, which P05.S03 already models and no phase has yet emitted.
+	"AuthorForm": {[]string{"7.18.4 t1"}, "the widget is not nested in a Form structure element — needs the emitter, not a key"},
 	"AddNotes":   {[]string{"7.18.1 t1", "7.18.3 t1"}, "annotations with no /Contents and untagged — P06"},
 
 	// ── Supplying an artefact CREATES the object other clauses inspect. With no /Metadata stream

@@ -109,7 +109,13 @@ var tagFates = map[string]tagFate{
 	}},
 	"SetFlags": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetFlags(b, []byte(`{"a":1}`)) }},
 	"AuthorForm": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
-		return AuthorForm(b, []FormField{{Page: 1, Rect: [4]float64{10, 10, 200, 40}, Kind: "text", Name: "f1"}})
+		return AuthorForm(b, []FormField{{
+			// The census drives an operation the way a CALLER does, and a caller sends the
+			// name the user typed — so the drive carries a Label. Without one this row
+			// measures the unnamed-field path and P06.S05's `/TU` clause never gets asked.
+			Page: 1, Rect: [4]float64{10, 10, 200, 40}, Kind: "text",
+			Name: "f1", Label: "Your full name",
+		}})
 	}},
 	"StampFields": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		o, _, e := StampFields(b, []Field{{Page: 1, Rect: [4]float64{10, 10, 200, 30}, Text: "t"}})

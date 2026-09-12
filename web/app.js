@@ -6907,11 +6907,19 @@ els.fieldNameGo.onclick = async () => {
     if (f.kind === 'radio' && !(f.options && f.options.length >= 2)) {
       toast('Skipped a radio group with fewer than two choices'); return; // pdfcpu requires ≥2
     }
-    const base = (f.input.value || '').trim() || ('field_' + (i + 1));
+    // The typed value is kept SEPARATELY from the name derived from it. `name` is an
+    // identifier — trimmed, defaulted to field_N, de-duped with a numeric suffix — and
+    // becomes the field's /T. `label` is what the person actually typed and becomes
+    // /TU, the name a screen reader announces. Deriving one from the other loses the
+    // distinction: "Full name" and "Full name_2" are the same field to a human and must
+    // not be announced as two different things.
+    const typed = (f.input.value || '').trim();
+    const base = typed || ('field_' + (i + 1));
     let name = base;
     for (let n = 2; seen.has(name); n++) name = base + '_' + n;
     seen.add(name);
     const spec = { page: f.page, rect: f.rect, kind: f.kind, name };
+    if (typed) spec.label = typed;
     if (f.kind === 'dropdown' || f.kind === 'radio') spec.options = f.options;
     // A radio group inherits its layout from the drawn box's aspect: a wide box
     // lays the buttons out horizontally, a tall box stacks them vertically.
