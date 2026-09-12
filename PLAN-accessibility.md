@@ -1144,13 +1144,15 @@ Acceptance:
   no row, a recorded delta that shrinks, a stale row, an `unvalidatable` row whose output
   validates, and the skip.
 
-### P04 — Embedded fonts for authored text
+### P04 — Embedded fonts for authored text *(done 2026-09-11, v1.129.44)*
 **Goal.** Clear rule 7.21.4.1 for everything nib writes, and refuse honestly for everything it does
 not. Refs D7.
 
-**Exit criteria.** Authored output embeds every font it draws with; a document carrying
-non-embedded fonts is refused for UA export with the reason named; `mdpdf` output passes the font
-rule under veraPDF.
+**Exit criteria** *(amended at the phase close, 2026-09-11)*: Authored output embeds every font it
+draws with; ~~a document carrying non-embedded fonts is refused for UA export with the reason
+named~~ **(MOVED TO P07 — there is no UA export door, by named search, and a refusal for an export
+nothing performs is a remedy nobody can run; see S04)**; `mdpdf` output passes the font rule under
+veraPDF.
 
 **(phase-open, 2026-09-11 at v1.129.38 — five measurements, and two of them change the phase.)**
 
@@ -1181,6 +1183,35 @@ for an embedded face and `CoreWidth` (byte-encoded) for a core one, with the rea
 doc comment says *"Core fonts only … a caller with a fallback face wants that path, not this one"* —
 and `ErrReadmeOverflow` refuses a body that runs past the page, so a metric change there is a
 page-fitting change with a live refusal already watching it.
+
+**Acceptance ledger — phase close, 2026-09-11 at v1.129.44.**
+
+| # | clause | verdict |
+|---|---|---|
+| 1a | authored output embeds every font it draws with — **Markdown** | ✅ no font clause at all. Read out of the produced document by `nonEmbeddedFonts`, with a stimulus floor asserting the opposite on the core path |
+| 1b | the same — **nib's own co-signing pages** | ✅ the readme and the signature pages report no non-embedded font and carry no `/CIDSet` |
+| 1c | the same — **an office conversion** | ✅ unchanged and already true: LibreOffice embeds, and a converted document fails neither font clause (measured at P03) |
+| 2 | a document carrying non-embedded fonts is refused for UA export | ➖ **MOVED TO P07.** There is no UA export door — named search, four hits, all in test files — and a refusal for an export nothing performs is a remedy nobody can run. S04 carries the reasoning |
+| 3 | `mdpdf` output passes the font rule under veraPDF | ✅ **7.21.4.1 t1 cleared, and 7.21.4.2 t2 with it** — the clause embedding introduced. nib's Markdown output now fails `5 t1` (refused by decision), the three tree clauses (P05) and the two language clauses (`/pending 471`) |
+
+**What the phase found that no slice predicted**, each by a different mechanism:
+
+- **There is no embeddable bold.** pdfcpu bundles exactly one Latin face, so the phase was a
+  vendoring job rather than a switching job (S01, at phase-open).
+- **Embedding creates a clause.** `7.21.4.1` out, `7.21.4.2` in — and pdfcpu's own comment is the
+  diagnosis (S02, from the first measurement).
+- **The pdfcpu entry points are THREE.** `CreateFromJSON` was outside S02's population, and the
+  readme failed the new clause the moment it embedded a face. Found by measuring the page (S05).
+- **`readmeFont` was serving two purposes** — the PDF's face and a proxy for a *browser canvas* that
+  draws the acceptance block as an image. Following it would have changed which lines get truncated
+  in a signed document (S05).
+- **Four tests were about to assert nothing.** The old extractor decoded single-byte WinAnsi; the
+  pages are now Type0/CID. The load-bearing assertions are NEGATIVE, so garbled text passes them
+  silently — caught only by a setup guard those helpers already carried (S05).
+- **An unwritable font directory failed every conversion, and always had** (S03).
+- **The tail more than doubled a shared primitive.** Found at this phase close by benchmarking
+  rather than reading: `CreateFromJSON` 3.8 ms → 8.7 ms, on a door called once per signature page,
+  for a check that is a no-op on any Base-14 spec. Now asked of the spec, and back to 3.8 ms.
 
 **Firmed slices:**
 
@@ -1349,14 +1380,43 @@ Acceptance:
   cross-check arm is not independently probed: the state "the notice fired and the fonts embedded
   anyway" is unreachable — using a face whose install failed panics inside pdfcpu.)*
 
-#### P04.S04 — a document nib did not author is refused for UA export, with the reason named
+#### P04.S04 — a document nib did not author is refused for UA export *(closed 2026-09-11, v1.129.44 — NO CODE, moved to P07)*
 Scope: `nonEmbeddedFonts()` already exists and `pdfaBlockers` already refuses-rather-than-mislabels;
 this is the UA analogue. **There is no UA export door yet** — establish whether one is P04's or
 waits for the tree, before building a refusal for an export nothing performs. Refs exit criterion 2.
+
+**(grill, 2026-09-11 — the second acceptance clause is the one that fired, and it fired on a search
+rather than on a judgment.)**
+
+**There is no UA export anywhere.** Named search:
+`grep -rniE "pdfua|pdf/ua|uaexport|prepareua" --include=*.go --include=*.js --include=*.html
+internal/ web/ cmd/` returns **four hits, all in this phase's own test files**, plus `pdfuaid` in
+the ADR-031 discussion. Nib has a PDF/A door (`PreparePDFA`, `ConvertPDFAGhostscript`, a route and a
+CLI command); it has no PDF/UA door of any kind.
+
+**So building the refusal now would be a remedy nobody can run.** Three reasons, and the first is
+enforced by the tree:
+
+- An exported `uaBlockers` with no caller goes **red at tier 1** — `zerocaller_test.go` exists
+  because a crypto fix once landed in code nothing called (`/pending 441`, 445).
+- A refusal is only correct relative to what the door promises, and there is no door to promise
+  anything. *"Refused for UA export"* is meaningless until something exports.
+- `~/.claude/CLAUDE.md`'s own rule: **a remedy is a claim, and it is the one nobody re-checks.**
+  Writing it into a plan as a mandatory requirement is exactly how an untested suggestion becomes
+  settled law.
+
+**It belongs at P07**, whose exit criterion already says *"the report is reachable from the UI and
+from the CLI"* — the first point at which nib has a UA surface a refusal can hang off, and the
+point at which the checker can say **which** rules a document fails rather than only this one.
+
+**Nothing is currently lying, which is why this can wait.** The only thing that would make nib
+assert UA-ness about a document is ua1 `5 t1`'s `pdfuaid:part`, and P03.S01 **refused** to write it.
+A document nib did not author is not claimed to be anything.
+
 Acceptance:
-- The refusal names the fonts, the way `pdfaBlockers` names them.
-- It is reached from a door that exists, or the slice closes with the finding that it is not yet
-  reachable and says where it belongs.
+- ➖ ~~The refusal names the fonts, the way `pdfaBlockers` names them.~~ **Not built.**
+- ✅ *"or the slice closes with the finding that it is not yet reachable and says where it belongs"*
+  — this clause, and it is the one the slice was written to allow.
 
 ### P05 — The tag tree core
 **Goal.** The typed model of D8 plus the wrapping emitter of D3 — parse, mutate, write back, with
@@ -1394,6 +1454,12 @@ law 5's agreement guard against veraPDF over the corpus.
 **Exit criteria.** The checker agrees with veraPDF on every corpus fixture or names the rule it
 cannot evaluate; no rule is reported as passing that the checker did not actually run; the report
 is reachable from the UI and from the CLI.
+
+**Carried in from P04.S04.** *A document carrying non-embedded fonts is refused for UA export with
+the reason named* — P04's second exit criterion, moved here because **nib has no UA export door**
+(named search, 2026-09-11: four hits, all in test files). This phase is where one first exists, and
+where the refusal can name every rule a document fails rather than only the font one. `nonEmbeddedFonts()`
+is built and `pdfaBlockers` is the idiom to mirror.
 
 ### P08 — The autotagger
 **Goal.** Heuristic structure inference for arbitrary PDFs — the research-grade half, and the one

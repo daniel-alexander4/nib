@@ -315,7 +315,14 @@ func CreateFromJSON(spec []byte) ([]byte, error) {
 	// forbids. THIRD of the three places nib embeds a font: mdpdf's own `api.Create`, the OCR
 	// watermark path, and here. They are three because pdfcpu is entered three different ways, and
 	// they all route through one door (ADR-009). See dropCIDSets.
-	return embeddedFontsAreHonest(out.Bytes()), nil
+	//
+	// **Asked of the SPEC rather than run unconditionally.** The tail is a parse-and-rewrite and
+	// takes `CreateFromJSON` from 3.8 ms to 8.7 ms — more than double, on a door called once per
+	// signature page — while a spec naming only Base-14 faces cannot produce a `/CIDSet` at all.
+	if specNamesAUserFont(spec) {
+		return embeddedFontsAreHonest(out.Bytes()), nil
+	}
+	return out.Bytes(), nil
 }
 
 // Append concatenates other after pdf (merge).
