@@ -5119,3 +5119,25 @@ data. And a table of declarations nobody measures looks exactly like a table of 
 are true.
 
 `recorded` 406 → 408.
+
+## P03.S01 of `PLAN-accessibility.md` — the catalog floor, and the two ways half of it is worse than none (v1.129.30)
+
+| proof | check | expects |
+|---|---|---|
+| `authored-document-with-no-title` — `handleOffice` stops routing through `pdfops.SetTitle`, so a converted document ships with no title at all | `go test . -run TestEveryAuthoredDocumentGetsATitle`, tier 1 | "authored document with no title" |
+| `a-title-nothing-displays` — `ViewerPreferences /DisplayDocTitle` never set, so the title is present and never shown | `go test ./internal/pdfops/ -run TestSetTitleWritesTheWholeCatalogFloor`, tier 1 | "a title nothing displays" |
+| `an-xmp-packet-that-does-not-parse` — the title lands as `innerxml`, so `&` in a file name reaches the stream unescaped | `go test ./internal/pdfops/ -run TestSetTitleEscapesAHostileTitle`, tier 1 | "XMP packet is not well-formed XML" |
+
+**All three defects are SILENT, and that is why they are recorded rather than argued.** None of
+them fails a build, errors a conversion, or makes a document refuse to open. The first ships a
+document that is simply missing three catalog keys; the second ships two of three, which
+`SetTitle`'s own doc comment calls a worse state than none, because a reader left on its default
+shows the file name and the title is never seen; the third ships a metadata stream no parser will
+accept, which fails the clause it was written for *and* breaks readers that would have ignored an
+absent one.
+
+The first is also ADR-009's shape in miniature. The rule holds at six call sites; checking that
+five of them agree says nothing about a sixth added without one — and the sixth was real, found
+while building the slice.
+
+`recorded` 408 → 411.

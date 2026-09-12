@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/title.go b/internal/pdfops/title.go
+index 0566ec6..9137037 100644
+--- a/internal/pdfops/title.go
++++ b/internal/pdfops/title.go
+@@ -158,7 +158,7 @@ func SetTitle(pdf []byte, title string) ([]byte, error) {
+ 		if ctx.ViewerPref == nil {
+ 			ctx.ViewerPref = &model.ViewerPreferences{}
+ 		}
+-		ctx.ViewerPref.DisplayDocTitle = &yes
++		_ = yes
+ 		xt.BindViewerPreferences()
+ 		return nil
+ 	})
