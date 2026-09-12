@@ -834,14 +834,77 @@ SC 1.4.11 and the 200%-zoom reflow assertion are **not** dropped — they are un
 sketched rather than being firmed on numbers nobody has taken.
 
 ### P03 — The catalog floor
-**Goal.** Clear the seven PDF/UA rules that need no structure at all, and fix the `/Lang` one-door
-defect. Measured: this is the largest share of the current failure for the least work.
+**Goal.** Clear the PDF/UA rules that need no structure at all, and fix the `/Lang` one-door
+defect.
 
-**Exit criteria.**
-- `/MarkInfo`, an XMP `/Metadata` stream, and `ViewerPreferences /DisplayDocTitle` on authored output.
-- `/Lang` present from every authoring and export door, enumerated from the router rather than a
-  hand-maintained list, with a guard that fails when a new door ships without one.
-- The `ua1` oracle runs in tier 1 and its skip is recorded, never credited.
+**(phase-open, 2026-09-11 — measured against a nib-authored document, and the sketch's count and
+one of its three criteria are both wrong.)** `CreateFromJSON`'s output through veraPDF ua1 fails
+**seven** clauses, and only **four** of them are catalog-only:
+
+| clause | what it wants | needs | whose |
+|---|---|---|---|
+| 7.1 t8 | an XMP `/Metadata` stream in the catalog | catalog only | **P03** |
+| 7.1 t10 | `ViewerPreferences /DisplayDocTitle true` | catalog only | **P03** |
+| 7.2 t34 | *"natural language for text in page content shall be determined"* — `/Lang` | catalog only | **P03** |
+| 6.2 t1 | `/MarkInfo` with `/Marked true` | catalog only | ⚠ **moved to P05 — see below** |
+| 7.1 t3 | content marked as artifact or tagged | a structure tree | P05 |
+| 7.1 t11 | logical structure rooted in `/StructTreeRoot` | a structure tree | P05 |
+| 7.21.4.1 t1 | font programs embedded | embedded fonts | P04 |
+
+**So "the seven rules that need no structure at all" is three, plus a fourth that must not be
+done here.** The other three are P04's and P05's, and the split falls exactly on the phase
+boundaries the plan already has — which is the sketch being right about the shape and wrong
+about the number.
+
+**`/MarkInfo` is struck from this phase's floor, and the reason is a law this plan adopted after
+the sketch was written.** Setting `/Marked true` with no `/StructTreeRoot` is precisely
+`tagState.orphaned()` — a document asserting tagging it has not got — which **ADR-031's law 1
+forbids** and which P01.S06 built a door to prevent. Clearing 6.2 t1 on its own would ship the
+state P01 exists to stop, and would be caught by P01's own guard. `/MarkInfo` therefore arrives
+**with the tree**, in P05, and the two clauses move together.
+
+**Exit criteria** *(amended at phase-open, 2026-09-11)*:
+- ~~`/MarkInfo`,~~ an XMP `/Metadata` stream **carrying `dc:title`**, and `ViewerPreferences
+  /DisplayDocTitle` on authored output — clearing ua1 7.1 t8 and 7.1 t10, measured as a before/after
+  on the same document rather than asserted.
+- `/Lang` present from every **authoring** door — the operations that CREATE a document, which
+  P01.S03's census already enumerates as `untouched` because their input is not a PDF — enumerated
+  from the code rather than a hand-maintained list, with a guard that fails when a new one ships
+  without it. Clears 7.2 t34.
+- The `ua1` oracle runs in tier 1 and its skip is recorded, never credited. **This criterion is
+  `/pending 469`**, filed at P01's close before anyone noticed the plan already schedules it here.
+
+**Firmed slices:**
+
+#### P03.S01 — the catalog floor that does not lie
+Scope: authored output carries an XMP `/Metadata` stream with `dc:title` and
+`ViewerPreferences /DisplayDocTitle true`. **Not `/MarkInfo`** — see the phase pin. Refs: exit
+criterion 1, ADR-031 law 1.
+Acceptance:
+- A nib-authored document no longer fails ua1 7.1 t8 or 7.1 t10, measured before and after on the
+  same bytes.
+- It gains no clause it did not already fail — the same differential shape P01.S06 uses.
+- `inspectTags` still reports it un-orphaned: the floor must not make it claim tagging.
+- A red proof: removing either key turns its clause red again.
+
+#### P03.S02 — `/Lang` from every door that authors a document
+Scope: every authoring operation sets `/Lang`. Measured: `SetLang` has **exactly one caller**
+(`internal/server/ocr.go:86`), so the `/Lang` that shipped at v1.78.0 reaches OCR output and
+nothing else. Refs: exit criterion 2, `/pending 29` reason 2.
+Acceptance:
+- Every operation that authors a document sets `/Lang`, **enumerated from the code** with a floor.
+- Adding an authoring operation without one turns the guard red, proved by adding one.
+- A nib-authored document no longer fails ua1 7.2 t34.
+
+#### P03.S03 — the ua1 oracle becomes a standing reader
+Scope: the veraPDF ua1 differential runs in tier 1, `t.Skip`-guarded, and its skip is **reported**
+rather than passing silently. Closes `/pending 469`. Refs: exit criterion 3.
+Acceptance:
+- A tier-1 test asserts an operation's output fails no ua1 clause its input did not.
+- With veraPDF absent it SKIPS and says so; the skip is visible in the run, never credited as a
+  pass — the failure mode `/pending 411` records, where three seed tests reported SKIP on a
+  silently-always-true condition.
+- A red proof: an operation that adds a clause turns it red.
 
 ### P04 — Embedded fonts for authored text
 **Goal.** Clear rule 7.21.4.1 for everything nib writes, and refuse honestly for everything it does
