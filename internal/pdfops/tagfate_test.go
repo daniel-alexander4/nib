@@ -88,6 +88,50 @@ func TestHonestLeavesACarriedTreeALONE(t *testing.T) {
 	}
 }
 
+// TestAPageWithABOGUSStructParentsCountsAsUndescribed — `/pending 468`'s real finding.
+//
+// **Merging two TAGGED documents produces the worst state in the package, and the census rated it
+// `carried`.** `api.MergeRaw` keeps the first document's `/StructTreeRoot` and `/ParentTree` whole
+// while every page of the second keeps its own `/StructParents` value — so an 8-page merge of two
+// 4-page documents carries a **4-entry** `/ParentTree` and eight pages indexing keys 0–3 (measured;
+// the same shape reproduces here at 2 pages and one entry).
+//
+// Pages from the second document therefore HAVE a `/StructParents`, and it resolves to structure
+// describing entirely different content. Nothing in the tree points at them, so a reader walking it
+// from the root never reaches those pages at all — under a document asserting `/Marked true`.
+//
+// The predicate asked "does this page have `/StructParents`" and so scored the page as described.
+// It now asks whether any struct element points AT the page, which is the property that matters and
+// which catches the appended-untagged and appended-tagged shapes with one question.
+func TestAPageWithABOGUSStructParentsCountsAsUndescribed(t *testing.T) {
+	src := taggedFixture()
+	both, err := Append(src, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := inspectTags(both)
+	if s.pages < 2 {
+		t.Fatalf("setup: the merge produced %d page(s); with fewer than two there is no second "+
+			"document's page to be undescribed and this test asserts nothing", s.pages)
+	}
+	if s.pagesSP != s.pages {
+		t.Fatalf("setup: %d of %d pages carry /StructParents. This test exists for the case where "+
+			"EVERY page has one and some of them lie — if pdfcpu has stopped copying the second "+
+			"document's /StructParents, the trap this guards is gone and the assertion below is "+
+			"passing for a different reason", s.pagesSP, s.pages)
+	}
+	if s.undescribed == 0 {
+		t.Errorf("a merge of two tagged documents reports every page as described: %d pages, all "+
+			"with /StructParents, %d element(s), %d anchored. The second document's pages index a "+
+			"/ParentTree that does not describe them and no element points at them — they are "+
+			"unreachable from the tree under a /Marked true claim, which is law 1's violation "+
+			"wearing a valid-looking key.", s.pages, s.elements, s.anchored)
+	}
+	if got := fate(both); got != "partial" {
+		t.Errorf("a merge of two tagged documents measures %q, want %q", got, "partial")
+	}
+}
+
 // TestTheOracleParsesRatherThanCountingBytes is the regression guard for the original mistake.
 //
 // A byte count and a parse agree on the INPUT — a hand-written PDF has `/StructElem` in plain text

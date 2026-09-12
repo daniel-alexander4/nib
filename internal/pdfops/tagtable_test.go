@@ -146,6 +146,11 @@ var tagFates = map[string]tagFate{
 	// is worse than the disease at the only scale that matters. Recorded here, parked for Dan, and
 	// the argument-order half is asserted separately below.
 	"Append": {verdict: "partial", drive: func(b []byte) ([]byte, error) { return Append(b, untaggedFixture()) }},
+	// `Combine` is `Append`'s sibling — the package's other `api.MergeRaw` caller, and it was
+	// invisible to the census until the enumeration stopped requiring a `[]byte` first parameter.
+	"Combine": {verdict: "partial", drive: func(b []byte) ([]byte, error) {
+		return Combine([][]byte{b, untaggedFixture()})
+	}},
 
 	// ── UNTOUCHED. These return a report, an archive or an attachment — not a document — so there is
 	// no output that could carry a claim.
@@ -368,15 +373,19 @@ func documentTouchingOps(t *testing.T) []string {
 	return out
 }
 
-// firstParamIsPDF accepts a first `[]byte` parameter under any name.
+// firstParamIsPDF accepts a first parameter that is a document — `[]byte` — or a slice of them,
+// `[][]byte`, under any name.
 //
-// **It used to require the name `pdf`, and that was a hole rather than a filter.** `RedactPages`
-// calls its first parameter `original`, so the enumeration never saw it — and `redact` is precisely
-// the operation P01.S04 says must be *explicitly* dispositioned because it destroys page content by
-// design. An operation escaping a law-2 census by naming its parameter differently is the census
-// failing, not the operation qualifying.
+// **This filter has been a hole twice, and both holes hid a real operation.** It first required the
+// first parameter to be *named* `pdf`: `RedactPages` calls its first parameter `original`, so the
+// enumeration never saw it — and `redact` is precisely the operation P01.S04 says must be
+// *explicitly* dispositioned. It then accepted only `[]byte`, which excluded `Combine(pdfs
+// [][]byte)` — the package's **other** `api.MergeRaw` caller, and so the other operation capable of
+// producing a document whose structure tree describes only some of its pages.
 //
-// The name is not what makes something a document-touching operation; the shape is.
+// An operation escaping a law-2 census by the shape or the name of its argument is the census
+// failing, not the operation qualifying. Neither the name nor the arity is what makes something a
+// document-touching operation.
 func firstParamIsPDF(fn *ast.FuncDecl) bool {
 	if len(fn.Type.Params.List) == 0 {
 		return false
@@ -385,7 +394,11 @@ func firstParamIsPDF(fn *ast.FuncDecl) bool {
 	if len(p.Names) == 0 {
 		return false
 	}
-	return isByteSlice(p.Type)
+	if isByteSlice(p.Type) {
+		return true
+	}
+	a, ok := p.Type.(*ast.ArrayType)
+	return ok && a.Len == nil && isByteSlice(a.Elt)
 }
 
 func firstResultIsBytes(fn *ast.FuncDecl) bool {

@@ -84,9 +84,23 @@ type tagState struct {
 	pagesSP  int // pages carrying /StructParents
 	elements int // struct elements reachable from the tree root
 	anchored int // of those, the ones whose /Pg is a page still in the page tree
-	// undescribed counts pages that have a content stream and no /StructParents. A page with no
-	// content stream at all is NOT undescribed — an inserted blank page has nothing to tag, and
-	// counting it would make `InsertBlank` a violation for adding an empty page.
+	// undescribed counts pages that have a content stream and that **no struct element points at**.
+	//
+	// **It asked about `/StructParents` until v1.129.18, and that was the wrong question.**
+	// `api.MergeRaw` merges two tagged documents by keeping the FIRST document's `/StructTreeRoot`
+	// and `/ParentTree` whole while the second document's pages keep their own `/StructParents`
+	// values — so an 8-page merge carries a 4-entry `/ParentTree` and eight pages indexing keys
+	// 0–3. Pages 5–8 therefore HAVE a `/StructParents`, which the old predicate accepted, and it
+	// resolves to structure describing entirely different content. Nothing in the tree points at
+	// them, so a screen reader walking it never reaches those pages at all — under a document that
+	// says `/Marked true`. **The census rated that state `carried`, its best verdict.**
+	//
+	// Reachability from the tree is the property that matters and it catches both shapes with one
+	// predicate: an appended untagged page (no `/StructParents`, nothing points at it) and an
+	// appended tagged page (a `/StructParents` that lies, nothing points at it).
+	//
+	// A page with no content stream at all is NOT undescribed — an inserted blank page has nothing
+	// to tag, and counting it would make `InsertBlank` a violation for adding an empty page.
 	undescribed int
 }
 
@@ -119,23 +133,26 @@ func inspectTags(pdf []byte) tagState {
 	}
 	s.readable = true
 	s.pages = ctx.PageCount
-	live := map[int]bool{}
+	live := map[int]bool{}       // object number of every page in the page tree
+	hasContent := map[int]bool{} // ... of every page carrying a non-empty content stream
 	for p := 1; p <= s.pages; p++ {
 		d, _, _, perr := ctx.PageDict(p, false)
 		if perr != nil || d == nil {
 			continue
 		}
-		_, hasSP := d["StructParents"]
-		if hasSP {
+		if _, ok := d["StructParents"]; ok {
 			s.pagesSP++
 		}
-		if !hasSP {
-			if b, cerr := ctx.PageContent(d, p); cerr == nil && len(b) > 0 {
-				s.undescribed++
-			}
+		ir, e := ctx.PageDictIndRef(p)
+		if e != nil || ir == nil {
+			continue
 		}
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-			live[ir.ObjectNumber.Value()] = true
+		n := ir.ObjectNumber.Value()
+		live[n] = true
+		// `ErrNoContent` from an absent `/Contents` is the inserted-blank-page case and is not a
+		// gap: a page with nothing on it has nothing to tag.
+		if b, cerr := ctx.PageContent(d, p); cerr == nil && len(b) > 0 {
+			hasContent[n] = true
 		}
 	}
 	cat, cerr := ctx.XRefTable.Catalog()
@@ -159,6 +176,7 @@ func inspectTags(pdf []byte) tagState {
 		return s
 	}
 	seen := map[string]bool{}
+	described := map[int]bool{} // pages some struct element actually points at
 	var walk func(o types.Object)
 	walk = func(o types.Object) {
 		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
@@ -184,6 +202,7 @@ func inspectTags(pdf []byte) tagState {
 			if pg, ok := d["Pg"]; ok {
 				if ind, isInd := pg.(types.IndirectRef); isInd && live[ind.ObjectNumber.Value()] {
 					s.anchored++
+					described[ind.ObjectNumber.Value()] = true
 				}
 			}
 		}
@@ -192,6 +211,11 @@ func inspectTags(pdf []byte) tagState {
 		}
 	}
 	walk(root["K"])
+	for n := range hasContent {
+		if !described[n] {
+			s.undescribed++
+		}
+	}
 	return s
 }
 
