@@ -656,13 +656,40 @@ Acceptance:
 - **`aria-selected` is used only where a tab role backs it**, asserted rather than assumed.
 - The exemption list names only sites that still exist.
 
-#### P02.S03 — the four buttons with no accessible name
-Scope: `themeToggle`, `updateGet`, `sessionNoticeAction`, `signAction`. **Four, not 21** — and a
-guard that enumerates rather than lists, so the number never needs re-measuring again. Refs: exit
-criterion 3.
+#### P02.S03 — the buttons with no accessible name *(done 2026-09-11, v1.129.24)*
+Scope: every button carries a name that does not depend on hover. Refs: exit criterion 3, WCAG
+SC 4.1.2.
+
+**(grill, 2026-09-11 — the count moved again, and the same way it moved at phase-open.)** The sketch
+said 21, the firmed slice said four, and the defect surface is **two**. Measured over
+`web/index.html`: **279 buttons — 272 named by their own text, 3 by `aria-label`, 2 title-only
+(`themeToggle`, `updateGet`) and 2 with no markup name at all (`sessionNoticeAction`,
+`signAction`)**. The last two set real text at runtime and are named where it counts, so they were
+never defects; a static enumeration alone would have "fixed" them with an `aria-label` that
+**overrides** their real text, which is a regression dressed as a fix.
+
+**`updateGet` was the interesting one, and worse than title-only.** It sets `textContent` to
+`v1.129.23`, and text content BEATS `title` in the accessible-name computation — so its name was a
+version string describing nothing, while a perfectly good sentence sat in the `title` where no
+keyboard user would find it. **A button can have a name and still be unnamed in every sense that
+matters**, which is why the guard does not simply ask whether a name exists.
+
+Tasks:
+- ✅ T01 — `describeButton(el, text)`: one door setting `title` and `aria-label` to the same
+  sentence, because the tooltip already held the description and only the mouse user got it.
+- ✅ T02 — the two title-only buttons route through it, `updateGet` at all three of its states.
+- ✅ T03 — the guard: enumerate every `<button>` in `index.html`; each needs text or an
+  `aria-label`, or an entry naming the `app.js` assignment that names it at runtime.
+
 Acceptance:
-- Every button with no visible text has an `aria-label`, enumerated from `index.html`.
-- Adding one without turns the guard red.
+- ✅ Every button has a name that does not depend on hover, **enumerated from `index.html`** with a
+  floor so a scan that stops matching fails loudly.
+- ✅ Adding an icon-only button with no name turns the guard red, proved by adding one.
+- ✅ **`title` alone does not satisfy the rule**, and the reason is written into the test: the name
+  computation does fall back to it, so a naive 4.1.2 check would pass — it is announced
+  inconsistently and is invisible without a mouse.
+- ✅ The runtime-named exemptions are checked **against `app.js`**, in both directions, so an
+  exemption cannot outlive the code that justifies it or name a button that is gone.
 
 #### P02.S04 — the keyboard-only pass, and what it finds
 Scope: a tier-3 keyboard-only traversal of open → mark up → save, asserting no trap and no stranded

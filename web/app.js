@@ -673,7 +673,7 @@ function showVersionBadge(version) {
   els.updatePill.classList.add('current', 'unknown');
   els.updatePill.classList.remove('latest');
   els.updateGet.textContent = `v${version || 'dev'}`;
-  els.updateGet.title = `Installed version (v${version || 'dev'}) — update status unknown, click to check`;
+  describeButton(els.updateGet, `Installed version (v${version || 'dev'}) — update status unknown, click to check`);
   els.updatePill.hidden = false;
 }
 
@@ -712,7 +712,7 @@ async function runUpdateCheck(auto) {
     els.updatePill.classList.add('current', 'latest');
     els.updatePill.classList.remove('unknown');
     els.updateGet.textContent = `v${d.current}`;
-    els.updateGet.title = d.latest ? `You’re on the latest version (v${d.current})` : `Up to date (v${d.current})`;
+    describeButton(els.updateGet, d.latest ? `You’re on the latest version (v${d.current})` : `Up to date (v${d.current})`);
     els.updatePill.hidden = false;
     if (!auto) toast(d.latest ? `You’re on the latest version (v${d.current}).` : `Up to date (v${d.current}).`);
     return;
@@ -726,7 +726,7 @@ async function runUpdateCheck(auto) {
   // version. Same reason the up-to-date and unknown states show it too.
   els.updatePill.classList.remove('current', 'latest', 'unknown');
   els.updateGet.textContent = `v${d.current}`;
-  els.updateGet.title = `Nib v${d.latest} is available — you have v${d.current}. Click to download`;
+  describeButton(els.updateGet, `Nib v${d.latest} is available — you have v${d.current}. Click to download`);
   els.updatePill.hidden = false;
   if (!auto && confirm(`Nib v${d.latest} is available (you have v${d.current}). Download it now?`)) {
     startDownload(d);
@@ -7406,6 +7406,35 @@ function pageAt(x, y) {
   }
   return null;
 }
+// ── Accessible names for icon-only buttons — `PLAN-accessibility.md` P02.S03, WCAG SC 4.1.2 ──
+//
+// **A `title` is a name of last resort, and for two buttons it was the only one.** The ARIA
+// accessible-name computation does fall back to `title`, so this is not strictly nameless — but a
+// `title` is announced inconsistently across screen readers and is invisible to anyone not using a
+// mouse, which is the population this phase is for.
+//
+// **And `updateGet` was worse than title-only.** Its `textContent` is set to `v1.129.23` at
+// runtime, and text content BEATS `title` in the name computation — so its accessible name was a
+// version string, describing nothing about what the button does, while a perfectly good sentence
+// sat in the `title` where no keyboard user would find it.
+//
+// Measured over `web/index.html`: 279 buttons, 272 named by their text, 3 by `aria-label`, **2
+// title-only** (`themeToggle`, `updateGet`) and 2 with no name in the markup at all
+// (`sessionNoticeAction`, `signAction`) — both of which set real text at runtime and are named
+// where it matters. So the defect surface is **two buttons, not the four the slice was scoped
+// against**.
+
+// describeButton gives a button the same sentence as its tooltip AND as its accessible name.
+//
+// **They are deliberately the same string.** The `title` is already the description a sighted
+// mouse user gets; the defect was that nobody else got it. Setting one without the other is how
+// they drift, and a stale `aria-label` is worse than none because it overrides the text.
+function describeButton(el, text) {
+  if (!el) return;
+  el.title = text;
+  el.setAttribute('aria-label', text);
+}
+
 // ── Armed state is programmatic, not colour alone — P02.S01's sibling, P02.S02 ─────────────
 //
 // **WCAG SC 1.4.1: colour is not the only means of conveying information, and SC 4.1.2 wants a
@@ -9198,7 +9227,7 @@ for (const el of [els.advCeremonyChk, els.advDiscoveryChk, els.advRendezvousChk,
 function applyAppearance(mode) {
   const theme = mode === 'light' ? 'light' : 'dark';
   document.documentElement.dataset.appearance = theme;
-  els.themeToggle.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+  describeButton(els.themeToggle, theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
 }
 // ── The sidebar's card colours ───────────────────────────────────────────────
 //
