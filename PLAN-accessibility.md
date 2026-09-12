@@ -1965,7 +1965,7 @@ Acceptance:
   share this name says nothing about D4's tiers, and guessing what it meant is worse than reporting
   nothing.
 
-#### P06.S04 — nib's own prose declares its own language
+#### P06.S04 — nib's own prose declares its own language *(done 2026-09-11, v1.129.56)*
 Scope: the defect P03.S02 measured and carried here. `AppendReadme` staples English into a document
 whose `/Lang` may say otherwise; the fix is a language on the CONTENT, which P05's emitter makes
 possible. Refs P03.S02, `/pending 471`.

@@ -231,6 +231,16 @@ func RenderReadme() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// **The page declares its own language on its CONTENT** — P06.S04, and the defect P03.S02
+	// measured. `AppendReadme` staples this English prose into the user's document and
+	// `pdfops.Append` keeps the FIRST document's catalog, so without this the text is declared to
+	// be in whatever language that document says. A `/Span` carrying `/Lang` lives in the page
+	// content, which is what `Append` carries across; a structure element's `/Lang` would not
+	// survive, for the same reason a title here does not.
+	if withLang, n, lerr := pdfops.DeclareAuthoredProseLang(pdf); lerr == nil && n > 0 {
+		pdf = withLang
+	}
+
 	// **No title, and that is measured rather than assumed.** This page is a FRAGMENT: its only
 	// production caller is AppendReadme, which hands it to `pdfops.Append` as the second argument,
 	// and Append takes the FIRST document's catalog wholesale — title, /Metadata, DisplayDocTitle

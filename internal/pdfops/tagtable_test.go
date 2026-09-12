@@ -81,6 +81,12 @@ var tagFates = map[string]tagFate{
 	// TagAuthored on an ALREADY-marked document wraps nothing and returns it unchanged, which is
 	// the only thing the census can drive it with: the corpus fixture is tagged, and tagging a
 	// tagged document is the no-op this operation is built to be.
+	// Declaring a content language adds marked content and no tree, so a tagged input keeps
+	// everything it had — and an untagged one gains no claim, which is the point.
+	"DeclareAuthoredProseLang": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		out, _, err := DeclareAuthoredProseLang(b)
+		return out, err
+	}},
 	"TagAuthored": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		out, _, err := TagAuthored(b)
 		return out, err
