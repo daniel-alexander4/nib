@@ -141,6 +141,12 @@ func cmdOffice(args []string) int {
 			len(bad), mdpdf.FormatRunes(bad))
 	}
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
+	if err == nil {
+		// The source file's name is the title; a name that derives to nothing gets none.
+		if t := pdfops.TitleFromFilename(in); t != "" {
+			pdf, err = pdfops.SetTitle(pdf, t)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
 			errf("LibreOffice not found — install it to convert office documents")

@@ -215,7 +215,13 @@ func RenderReadme() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pdfops.CreateFromJSON(b)
+	pdf, err := pdfops.CreateFromJSON(b)
+	if err != nil {
+		return nil, err
+	}
+	// The catalog floor (P03.S01). The title is what this page IS — a reader announcing
+	// "readme.pdf" tells someone nothing about a document they are being asked to sign beside.
+	return pdfops.SetTitle(pdf, readmeTitle)
 }
 
 // wrapText greedily wraps s into lines no wider than maxW points at the given
