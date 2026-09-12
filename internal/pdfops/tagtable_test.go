@@ -189,11 +189,17 @@ var tagFates = map[string]tagFate{
 	"CreateFromJSON":     {verdict: "untouched", why: "authors a document from a JSON spec; there is no input tagging to lose"},
 
 	// ── Declared but not driven, each with the reason. The completeness half still covers them.
-	"Encrypt":                {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},
-	"RemovePassword":         {verdict: "carried", why: "needs an already-encrypted input, which the corpus does not carry"},
-	"FillFormJSON":           {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the sibling `AuthorForm` drives the same write path and is measured"},
-	"FillFormXFDF":           {verdict: "carried", why: "as FillFormJSON"},
-	"StampTextLayer":         {verdict: "carried", why: "needs an OCR text layer and its fonts installed"},
+	"Encrypt":        {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},
+	"RemovePassword": {verdict: "carried", why: "needs an already-encrypted input, which the corpus does not carry"},
+	"FillFormJSON":   {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the sibling `AuthorForm` drives the same write path and is measured"},
+	"FillFormXFDF":   {verdict: "carried", why: "as FillFormJSON"},
+	"StampTextLayer": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		// It needs no more setup than any other row: the words are the drive's own, and the font
+		// registry is forced inside StampTextLayer itself. Left undriven, the OCR path was the one
+		// stamping door the ua1 census could not see — and it carried `/pending 473`'s defect just
+		// like the four it could.
+		return StampTextLayer(b, []Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice"}}, "eng")
+	}},
 	"ConvertPDFAGhostscript": {verdict: "dropped", why: "shells out to Ghostscript, which is optional and absent on most machines"},
 	"PreparePDFA":            {verdict: "carried", why: "its output is unreadable to the oracle on the minimal fixture; measured `carried` on the LibreOffice document (D9)"},
 	"RedactPages": {

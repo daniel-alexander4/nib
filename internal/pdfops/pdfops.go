@@ -1423,7 +1423,7 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, nil, err
 	}
-	return out.Bytes(), fits, nil
+	return honestOptionalContent(out.Bytes()), fits, nil
 }
 
 // Stamp is an image to bake onto the page at a given rectangle (PDF points,
@@ -1481,7 +1481,7 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return honestOptionalContent(out.Bytes()), nil
 }
 
 // WatermarkStyle controls how StampWatermark renders the label.
@@ -1546,7 +1546,7 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 	if err := api.AddWatermarks(bytes.NewReader(pdf), &out, nil, wm, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return honestOptionalContent(out.Bytes()), nil
 }
 
 // pageNumPositions is the corner allowlist for StampPageNumbers. The code is
@@ -1659,7 +1659,7 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return honestOptionalContent(out.Bytes()), nil
 }
 
 // pageLabelStyles maps Nib's style names to the PDF /S numbering-style codes

@@ -137,10 +137,12 @@ var knownUA1Deltas = map[string]struct {
 	// dictionary with an `/AS` key and no `/Name`. 7.10 t2 forbids `/AS` in an OC configuration
 	// dictionary outright; 7.10 t1 requires `/Name`. Two catalog keys, four operations, and
 	// `/pending 473`.
-	"StampPageNumbers": {[]string{"7.10 t1", "7.10 t2"}, "pdfcpu's OC config dict: /AS present, /Name missing — /pending 473"},
-	"StampFields":      {[]string{"7.10 t1", "7.10 t2"}, "the same"},
-	"StampImages":      {[]string{"7.10 t1", "7.10 t2"}, "the same"},
-	"StampWatermark":   {[]string{"7.10 t1", "7.10 t2"}, "the same"},
+	// ── The four stamping operations USED to add 7.10 t1 and 7.10 t2 here, and `/pending 473`
+	// named them. `honestOptionalContent` closed it at v1.129.58: pdfcpu writes the catalog's
+	// default optional-content configuration with an `/AS` array and no `/Name`, and both are
+	// forbidden by name. All four now add nothing, and the rows are gone rather than kept as a
+	// claim about code that no longer behaves that way. `StampTextLayer` was never in the census
+	// at all and had the identical defect; it is driven now.
 
 	// ── Annotations and form fields arriving without their accessibility metadata. This is not a
 	// defect to file; it is P06's stated goal — "authored form fields with /TU names" — and these

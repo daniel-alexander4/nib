@@ -93,5 +93,5 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 	// The text layer is drawn in a font nib supplied and pdfcpu embedded, so the same rule applies
 	// here as to authored Markdown: see dropCIDSets. The scan itself is the user's document and
 	// nothing else about it is touched.
-	return embeddedFontsAreHonest(out.Bytes()), nil
+	return honestOptionalContent(embeddedFontsAreHonest(out.Bytes())), nil
 }
