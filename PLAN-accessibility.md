@@ -3020,7 +3020,7 @@ before `CommitTags` runs; the review body is bounded at 8 MiB. No defect found b
   the interrupt leg's verifiers showed their words after 50 s.
 - T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
 
-### P09 — The structure editor
+### P09 — The structure editor *(done 2026-09-14, v1.129.94)*
 **Goal.** The Tags panel and Reading Order view in the Document tab (D10) — inspect, reorder,
 retype, set alt text, mark artifacts, and author table header scope.
 
@@ -3382,6 +3382,37 @@ Acceptance:
   at its work directory, so `~/verapdf` was looked for there; the account's home is consulted too.
 - **Pin — the correction region uses no pointer** (self-scan); the setup uses the harness.
 - Browser files 36 → 37. The slice gate does not fire (a test file).
+
+**(phase close, 2026-09-14, v1.129.94.)** Every clause split on `and`.
+
+| exit criterion | verdict | evidence |
+|---|---|---|
+| a tree can be corrected end to end in the UI | **met** | `test/ui/tagcorrect.test.mjs`: a producer's document with a figure missing alt text and header cells missing scope, all three corrected in the Tags panel |
+| … without leaving nib | **met** | the problems are SEEN in nib's report first (7.3 t1 fail; 7.5 t1 cannot check naming the header — S05) and seen passing there after; veraPDF is run by the test to agree, not by the person |
+| every edit is undoable through the existing history | **met** | every edit installs through `commitMutation` (`TestTheEditRouteCorrectsTheTreeAndOneUndoTakesTheBatchBack`: one batch, one undo step); tier 3 takes each correction back with Ctrl+Z, clause by clause |
+| the panel itself meets P02's keyboard bar | **met** | no trap and every stop visible (`test/ui/tagedit.test.mjs`); the whole correction flow by keyboard alone, self-scanned for pointer use, in both tier-3 files; one tab stop and the tree pattern's keys (`test/jsdom/tagtree.test.mjs`) |
+
+**Found at the close — a test comment still said the tree route did not exist** (`tags_test.go`, "no tree
+route until S06"); it now says why the test reads the document independently of that route.
+
+**Found at the close — the README described none of it.** It said Nib "can propose tags … for you to
+review" and nothing about correcting an existing tree; it gains *Review and correct an existing structure
+tree* (the panel, the edit bar, undo, the signed refusal, Show reading order).
+
+**Found at the close — S06c staled a red-proof row.** `panel-card-only-ever-opens` deletes the sidebar panel
+headers' close branch, and S06c added `drawReadingOrder()` inside that branch, so the recorded hunk no longer
+applied: tier 1's `TestEveryRedProofStillApplies` reported 1 of 413 stale. Re-recorded against the current
+code expressing the same defect (the whole branch, the new line with it); it applies, and applied it turns
+`tablist.test.mjs` red on "every sidebar card header toggles".
+
+**Required-run gates, v1.129.94:**
+- T1 `go test ./...` — green once the stale red-proof row above was re-recorded (it was the run's only failure).
+- T2 `jsdomtest.sh` — 374/374 (at S06c; nothing under `web/` or `test/jsdom/` changed after).
+- T3 `uirepro.sh` — 153 of 156 at S07, the three `/pending 474` failures only; nothing skipped.
+- T4 `pairrepro.sh` — PASS over both transports.
+- T4d `pairrepro.sh -n 4` — PASS: 4 instances, a 4-party baton relay over both transports (14 s of hops);
+  the decoy document refused on its bytes (C04).
+- T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
 
 ### P10 — Batch, CLI and the parity ledger
 **Goal.** `nib tag` and `nib a11y-check` as headless commands composing over stdin/stdout like the
