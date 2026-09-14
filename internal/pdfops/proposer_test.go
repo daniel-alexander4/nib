@@ -192,7 +192,7 @@ func TestTheProposalClearsItsFloorsOnTheTruthCorpus(t *testing.T) {
 // which itself calls no writer.
 func TestTheProposerHasNoPathToAWriter(t *testing.T) {
 	writers := map[string]bool{
-		"writeMutated": true, "setPageContent": true, "ensureStructTree": true, "addMarkedElement": true,
+		"writeMutated": true, "setPageContent": true, "ensureStructTree": true, "commitProposal": true,
 		"addMarkedElementUnder": true, "addGroupingElement": true, "addMCIDTo": true, "setParentTreeSlot": true,
 		"setParentTreeSingle": true, "claimTagging": true, "setTagSource": true, "WriteContext": true,
 		"tagOnePage": true, "tagMarkdown": true, "AuthorTaggedForm": true, "TagOCRLayer": true,
