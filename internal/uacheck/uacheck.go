@@ -109,7 +109,7 @@ type Report struct {
 }
 
 // Conformant says whether the document satisfied every rule that was asked — every clause NIB
-// implements, which P07.S07 measured to be 15 of the 106 veraPDF evaluates. It is not PDF/UA
+// implements — 17 of the 106 veraPDF evaluates since P09.S05, 15 when P07.S07 measured it. It is not PDF/UA
 // conformance, and nothing may treat it as licence to label a document (ADR-031 law 1).
 //
 // **A single `NotRun` or `CannotCheck` makes it false**, and that is law 4 in one line: a checker

@@ -134,3 +134,94 @@ func (d *Document) resourcesOf(page types.Dict) types.Dict {
 	}
 	return nil
 }
+
+// structNode is one structure element reached from the root — `PLAN-accessibility.md` P09.S05.
+type structNode struct {
+	dict types.Dict
+	// obj is the element's object number, or 0 for one written inline in its parent's `/K`.
+	obj int
+	// parent is the index of the node holding this one, or -1 for one directly under the root.
+	parent int
+	// kids are the indices of its element kids, in `/K` order.
+	kids []int
+}
+
+// structNodes walks every structure element reachable from the root, a parent before its kids.
+//
+// Marked-content ids, marked-content references and object references are skipped: they are content,
+// not elements. A dictionary with no `/S` is not an element either. The walk is bounded in depth and an
+// element reached twice is visited once, for the reason `parentTree` gives.
+func (d *Document) structNodes() []structNode {
+	root := d.dict(d.Catalog["StructTreeRoot"])
+	if root == nil {
+		return nil
+	}
+	var out []structNode
+	seen := map[int]bool{}
+	var walk func(k types.Object, parent, depth int)
+	walk = func(k types.Object, parent, depth int) {
+		if k == nil || depth > maxWalkDepth {
+			return
+		}
+		entries := []types.Object{k}
+		if arr, err := d.Ctx.DereferenceArray(k); err == nil && arr != nil {
+			entries = arr
+		}
+		for _, en := range entries {
+			obj := 0
+			if ir, ok := en.(types.IndirectRef); ok {
+				obj = ir.ObjectNumber.Value()
+				if seen[obj] {
+					continue
+				}
+			}
+			el := d.dict(en)
+			if el == nil || el.NameEntry("S") == nil {
+				continue
+			}
+			if ty := el.NameEntry("Type"); ty != nil && (*ty == "MCR" || *ty == "OBJR") {
+				continue
+			}
+			if obj != 0 {
+				seen[obj] = true
+			}
+			i := len(out)
+			out = append(out, structNode{dict: el, obj: obj, parent: parent})
+			if parent >= 0 {
+				out[parent].kids = append(out[parent].kids, i)
+			}
+			walk(el["K"], i, depth+1)
+		}
+	}
+	walk(root["K"], -1, 0)
+	return out
+}
+
+// tableAttribute returns key from elem's Table attribute object. `/A` may be one attribute object or
+// an array of them with revision numbers between; only an object owned by `/O /Table` answers.
+func (d *Document) tableAttribute(elem types.Dict, key string) types.Object {
+	if elem["A"] == nil {
+		return nil
+	}
+	o, err := d.Ctx.Dereference(elem["A"])
+	if err != nil || o == nil {
+		return nil
+	}
+	objs := []types.Object{o}
+	if arr, ok := o.(types.Array); ok {
+		objs = arr
+	}
+	for _, x := range objs {
+		ad := d.dict(x)
+		if ad == nil {
+			continue
+		}
+		if owner := ad.NameEntry("O"); owner == nil || *owner != "Table" {
+			continue
+		}
+		if v, ok := ad[key]; ok {
+			return v
+		}
+	}
+	return nil
+}

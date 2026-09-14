@@ -3216,10 +3216,45 @@ Six mutations red: the signed check, stale answered 400, an absent index read as
 slice gate does not fire: `internal/server`'s tag routes, not its session, ceremony, delivery or
 discovery paths.
 
-#### P09.S05 — the checker sees what the editor fixes: 7.3 t1 and 7.5 t1
+#### P09.S05 — the checker sees what the editor fixes: 7.3 t1 and 7.5 t1 *(done 2026-09-14, v1.129.89)*
 Scope: two `uacheck` rules, registered like the other fifteen. Refs P07, `/pending 486`.
 Acceptance:
 - The oracle agrees with veraPDF on the LibreOffice fixture and both stripped copies, per clause, both ways.
+
+**(build, 2026-09-14, v1.129.89.)** `internal/uacheck/rules_semantic.go`; a tree walk (`structNodes`) and a
+Table-attribute reader in `structure.go`, the checker's own reading, not `pdfops`' model.
+
+| measured | result |
+|---|---|
+| veraPDF's 7.3 t1 | object `SEFigure`; test `(Alt != null && Alt != '') \|\| ActualText != null` — implemented as written, through the role map |
+| veraPDF's 7.5 t1 | object **`SETD`** — every data cell, not every header; test `hasConnectedHeader != false \|\| unknownHeaders != ''`, "connected" decided by veraPDF's own algorithm |
+| the first rule, a grid of Scope directions, against veraPDF on hand-built tables | **wrong in five shapes**: veraPDF passed row-scoped headers above cells, a column-scoped header before one, headers below, a row header after, and a `Both` corner beside an unheaded cell — nib failed all five |
+| which cells veraPDF fails (object paths of 11 more tables) | **no statable rule**: in unscoped tables one cell fails and not its identically placed twin (LibreOffice's stripped table: `(1,0)` fails, `(2,0)` does not); the failing corner moves shape to shape; a `Headers` attribute on one cell stops the other failing |
+| what never failed | **a table whose every `TH` has a Scope (Row, Column or Both), or that has no `TH`** — every such shape measured; each is a Pass case in `tableCases`, re-measured by the standing agreement test |
+| the oracle | 459 of 459 (document, clause) pairs over 27 documents; the corpus gains LibreOffice's table-and-figure document, its `/Alt`- and `/Scope`-stripped copies, and a copy with row headers written through `EditStructure` |
+
+- **Pin — 7.5 t1 answers only what was measured.** Every header scoped, or none present: Pass. An unscoped
+  `TH` over a data cell that names no headers: **CannotCheck**, naming that header cell — the correction is
+  the same whichever cell veraPDF picks. A span over such a cell, and a `TD` outside any table, likewise.
+  One `knownCannotCheck` row records the stripped LibreOffice table. Rung 2, reversible: a statable model
+  of veraPDF's cell choice would turn those into Fail.
+- **Pin — the hand-built cases are a standing oracle reader.** `TestTheFigureAndTableCasesAgreeWithVeraPDF`
+  runs veraPDF over every unit case on its own clause, and requires at least 20 of them settled either
+  way — CannotCheck agrees with everything, and a rule that answered it everywhere would pass otherwise.
+  It is what found the first rule wrong; the unit expectations alone had agreed with nib.
+- **Pin — the corpus floor counts LibreOffice's documents by prefix.** Its generated floor stays 22.
+- **Amendment to S07** (below): with the stripped `/Scope`, 7.5 t1 reads *Nib could not check* and names
+  the header cell, not *fails*; after the scopes are set it passes. The criterion is the same — the problem
+  is visible and correctable in nib — and S07 asserts the verdict nib gives.
+- **Count claims** move from 15 to 17 of 106 in the README (and its standing reader), `door.go`,
+  `rules_catalog.go`, `uacheck.go` and the oracle's comment; P07's "15" stays where it records what was
+  measured then.
+
+Sixteen mutations red, each against its own assertion: the `/ActualText` branch, an empty alt, the figure
+role map, no figures as Pass, a scope name that names no direction, `Headers` naming, the bare-cell
+condition, unscoped detection, span detection, a span over cells that all name headers, `THead`/`TBody`,
+the stray `TD`, no data cells as Pass, the cell role map, the attribute owner check, and the attribute array.
+Two probes were first written so they did not compile and were redone; two survived and each got a case.
 
 #### P09.S06 — the Tags panel and the Reading Order view
 Scope: the sidebar panel second in `SIDEBAR_FOR.edit`: the tree (ARIA tree pattern), the selected
@@ -3232,8 +3267,8 @@ Acceptance:
 
 #### P09.S07 — end to end, and the exit criteria
 Scope: tier 3 — open the LibreOffice fixture with alt and scope stripped and headings mapped to `P`, see
-7.3 t1 and 7.5 t1 in nib's report, correct all three in the panel by keyboard, and see both clauses pass,
-without leaving nib.
+7.3 t1 fail and 7.5 t1 read *could not check* naming the unscoped header (S05's amendment) in nib's
+report, correct all three in the panel by keyboard, and see both clauses pass, without leaving nib.
 Acceptance:
 - veraPDF agrees on the corrected document; undo returns each clause.
 
