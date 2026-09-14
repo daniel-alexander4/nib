@@ -2767,7 +2767,7 @@ paragraphs counted as headings, recall pinned at one. MCID probes red: the artif
 truncation (once a form left a sequence open), the `EMC` floor (once truncation stopped resurrecting),
 the inline and `/Properties` lookups, the run's own field, and the old `matchingClose` fallback.
 
-#### P08.S05 — the proposer
+#### P08.S05 — the proposer *(done 2026-09-14, v1.129.77)*
 Scope: paragraphs → a proposal: element kind (`H1`–`H6`, `P`, `L`/`LI`), reading order, and the runs
 each element covers, from font size relative to the page's body size, weight, and list-marker
 prefixes. Writes nothing (law 3). Refs D5, exit criterion 1.
@@ -2776,6 +2776,47 @@ Acceptance:
   slice, as a tier-1 guard. S04 measured the floors: boundary F1 at least S03's own per document (1.00,
   1.00, 0.56) and heading F1 above zero on every document.
 - The proposer has no path to a writer — asserted by routing, not by reading its output.
+
+**(build, 2026-09-14 — step zero, the scores, and the pins.)**
+
+| measured | result |
+|---|---|
+| what separates a heading from body in LibreOffice's output | size — 18pt and 16pt against 12pt — and a bold face name |
+| how a list label is drawn | a bullet is **U+F095 in OpenSymbol**, a private-use code point and not `•`, as its own run; a number is `1.` in the body font, its own run, **flush against the item text** — so the line's first word is `1.Open` |
+| two numbered items alone in a column | ONE paragraph to S03: the column's right edge is their own width, so the short-line signal cannot fire |
+
+| document | boundaries (proposal / grouping floor) | headings | roles |
+|---|---|---|---|
+| headings, paragraphs and a list | F1 1.00 / 1.00 | F1 1.00 | `H1 P H2 P LI LI P` |
+| two columns | F1 1.00 / 1.00 | F1 1.00 | `H1 P P P P` |
+| a multi-page report | F1 0.56 / 0.56 | F1 1.00 | 7 headings, no list |
+| a numbered list (added to S04's corpus here) | **F1 1.00 / 0.89** | F1 1.00 | `H1 P LI LI LI P` |
+
+Exit criterion 1, *"proposed trees are measurably better than no tree on a stated metric"*: no tree
+scores zero recall on both numbers; the proposal scores heading F1 1.00 on every document and never
+finds boundaries worse than the grouping it starts from.
+
+- **Pin — the score floors did not catch a wrong proposal, and the first cut shipped past them.** It
+  proposed `H1 P P P P` for three numbered items — boundaries and headings both at their floors, every
+  item a paragraph — because `1.Open` matched no label. The fix reads the label from the first RUN;
+  the guard now also asserts each document's role sequence, counted from its source. **A metric that
+  scores boundaries and headings cannot see a list item called a paragraph.**
+- **Pin — body size is by characters, not runs.** A page of short headings and one long paragraph has
+  more heading runs. Probed: counting runs survived the first test, and a fixture shaped exactly that
+  way was added.
+- **Pin — no bold-only heading rule.** Nothing in the corpus needs one, and a bold lead-in sentence at
+  body size is the first thing it would misread.
+- **Pin — a heading is at most three lines.** A long passage set large is large text.
+- **Pin — `A.` is not a label.** Uppercase initials begin sentences more often than they number lists;
+  lowercase letters, digits and lowercase roman numerals are labels.
+- **Pin — the report's body paragraphs remain merged**, per S04's pin: no geometric signal separates
+  them, and the proposer adds none. Headings there are found exactly.
+- **Pin — still no production caller.** `proposeStructure` is S06's to call.
+
+Eleven mutations red: the heading scale, the line limit, the level order, body by runs, the first-run
+label, uppercase labels, private-use bullets, the label split, a list surviving a heading, a list
+surviving a paragraph, and a writer call planted in `proposer.go` for the guard. Two survived the first
+round (body by runs, a list surviving a heading) and each got a fixture.
 
 #### P08.S06 — review and commit (D5, D10, D11)
 Scope: a Tags card in the Document tab. Propose (read-only route) → the proposal drawn over the page →

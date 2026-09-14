@@ -99,7 +99,16 @@ func truthCorpus(t *testing.T) []runCorpusDoc {
 	}
 	long := convert("a multi-page report", "", report.String())
 
-	return []runCorpusDoc{lists, columns, long}
+	numbered := convert("a numbered list",
+		`<text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."/></text:list-style>`,
+		h(1, "Steps")+
+			p("Follow these steps in order, and read each one through before you begin the next one in the list.")+
+			`<text:list text:style-name="L1"><text:list-item>`+p("Open the document.")+`</text:list-item>`+
+			`<text:list-item>`+p("Check every page.")+`</text:list-item>`+
+			`<text:list-item>`+p("Save a copy.")+`</text:list-item></text:list>`+
+			p("That is all."))
+
+	return []runCorpusDoc{lists, columns, long, numbered}
 }
 
 // stripStructTree removes the tree and the claim, leaving the page content exactly as it was.
@@ -344,6 +353,7 @@ func TestTheTruthCorpusScoresTheMetricAtItsBounds(t *testing.T) {
 		"headings, paragraphs and a list": {7, 2},  // H1, P, H2, P, two list items, P
 		"two columns":                     {5, 1},  // H1 and four paragraphs
 		"a multi-page report":             {31, 7}, // H1, six H2, 24 paragraphs
+		"a numbered list":                 {6, 1},  // H1, P, three items, P
 	}
 	for _, doc := range corpus {
 		truth := readTruth(t, doc.pdf)
