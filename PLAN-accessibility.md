@@ -3053,8 +3053,11 @@ measured against LibreOffice's trees with `checkStructConsistency` as the post-c
 
 **Firmed slices:**
 
-#### P09.S01 — read an existing tree as reviewable values
-Scope: an exported read door and `GET /api/tags/tree`: each element's id, type (and the standard type
+#### P09.S01 — read an existing tree as reviewable values *(done 2026-09-14, v1.129.85)*
+**Amended at step zero:** the route moves to S06. `published.test.mjs` fails every json-tagged server
+shape with no named reader, and this one's reader is the panel — P08.S06b+c's reason, again. S01 is the
+`pdfops` door (unexported until its route calls it; the zero-caller scan covers exported names).
+Scope: a read door (its route, `GET /api/tags/tree`, ships with S06): each element's id, type (and the standard type
 its RoleMap resolves to), page, text (its MCIDs' runs through S02 of P08's reader), `/Alt`, a `TH`'s
 `/Scope`, and its kids in order. Refs D10.
 Acceptance:
@@ -3062,6 +3065,31 @@ Acceptance:
   reader; the table and figure fixture's `TH` scopes and `Figure` alt read back.
 - An element the editor cannot address (written inline, with no object number) is REPORTED, not dropped.
 - The route is read-only — the open document byte-identical, asserted.
+
+**(build, 2026-09-14, v1.129.85.)** `readStructureView` in `internal/pdfops/structview.go`.
+
+| measured | result |
+|---|---|
+| ODT as the table-and-figure source | the same shape LibreOffice's HTML import gave — `Table › TR › TH` (`/Scope /Column`) / `TD`, `Figure` with `/Alt` — and a real `H1`; 21 elements, **0 inline**. `.html` is not an office extension nib converts, and adding one to test a reader would widen what users can open, so the fixture is an ODT through `odtDocument`, which gained the table/draw/svg/xlink namespaces and embedded pictures |
+| round trip | every element of the four truth-corpus documents and the table-and-figure document, in `/K` order, object numbers and kids matching the model; text read out of the view by the truth reader's own rule equals `readTruth` block for block |
+| table and figure | standard types `Document H1 P Table TR TH P TH P TR TD P TD P TR TD P TD P P Figure`; both `TH` scopes `Column`, no other element a scope; the figure's alt "A grey square", no other element an alt |
+
+- **Pin — `standardRole` is production's now.** The truth reader and the view both resolve through it;
+  a test-only copy beside a production one is two answers to what a custom type means (ADR-009).
+- **Pin — a third run-reader exemption.** The view reads runs to match MCIDs to text, the truth reader's
+  way, and groups nothing; named in the grouping guard at the site with that reason.
+- **Pin — a `/Scope` counts only under `/O /Table`.** An attribute object is owned; the same key under
+  `Layout` means nothing about header cells.
+- **Pin — an element with no `/Pg` takes its first content's page**, directly (an MCR's own `/Pg`) or
+  through a kid. LibreOffice names `/Pg` everywhere, so only a hand-built fixture reaches it.
+- **Pin — unexported until S06.** The zero-caller scan covers exported names; the route, its reader and
+  the exported door land together.
+
+Twelve mutations red, each against its own assertion: the attribute-array branch, the owner check, alt
+decoding, kid order, the parent index, the unaddressable count, kids' text, the marked flag, the role map,
+both page fallbacks, and a swallowed no-tree error. Three survived the first round — the owner check and
+both page fallbacks — and each got a fixture. The slice gate does not fire (`pdfops` only); tiers 2–3 not
+run for this slice (no web change).
 
 #### P09.S02 — dictionary edits: retype, reorder, re-parent, alt text, header scope
 Scope: `pdfops` edits over an existing tree that touch no content stream: `/S`, a kid's position within
