@@ -4859,6 +4859,14 @@ function renderUAReport(rep) {
   }
   const body = els.uaBody;
   body.innerHTML = '';
+  // D4: the user is told which tier produced the tree. The sentence is the server's
+  // (`pdfops.DescribeStructureSource`), so the UI and `nib ua` cannot describe one tree differently.
+  if (rep.structure) {
+    const provenance = document.createElement('p');
+    provenance.className = 'ua-provenance';
+    provenance.textContent = rep.structure;
+    body.appendChild(provenance);
+  }
   results.sort((a, b) => (UA_VERDICT[a.verdict]?.order ?? 9) - (UA_VERDICT[b.verdict]?.order ?? 9));
   for (const r of results) {
     const v = UA_VERDICT[r.verdict] || { label: r.verdict, cls: 'ua-cannot' };

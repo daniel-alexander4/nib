@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -128,6 +129,57 @@ func TestAddingAMarkedElementKeepsEveryInvariant(t *testing.T) {
 	}
 	if got := tree.elements(); got != 2 {
 		t.Errorf("the document now has %d element(s), want 2 — the addition did not reach the tree", got)
+	}
+}
+
+// TestMarkingARunCostsTheSameHoweverManyRunsCameBefore — the writers are linear in the runs they mark.
+//
+// `addMarkedElementUnder` and `addMCIDTo` once rebuilt every ParentTree slot list on each call, which
+// made tagging quadratic: tier 4d's 20,000-clause Markdown fixture took over twenty minutes to convert
+// (found at `PLAN-accessibility.md` P07's close). Four times the runs must cost well under the sixteen
+// times a quadratic writer takes; the bound is eight, and the best of three runs is compared so a busy
+// machine does not read as a regression.
+//
+// **Blind spot**: the fixture has one page, so the page-tree half of that defect (`tree.page`'s cache)
+// is not exercised here — pdfcpu's `PageDict` is constant-time on a one-page document.
+func TestMarkingARunCostsTheSameHoweverManyRunsCameBefore(t *testing.T) {
+	cost := func(elements int) time.Duration {
+		best := time.Duration(0)
+		for try := 0; try < 3; try++ {
+			var took time.Duration
+			if _, err := writeMutatedTree(t, taggedFixture(), func(ctx *model.Context, tree *structTree) error {
+				start := time.Now()
+				for i := 0; i < elements; i++ {
+					_, ref, aerr := addMarkedElement(ctx, tree, 1, "P")
+					if aerr != nil {
+						return aerr
+					}
+					for k := 0; k < 3; k++ {
+						if _, merr := addMCIDTo(ctx, tree, 1, *ref); merr != nil {
+							return merr
+						}
+					}
+				}
+				took = time.Since(start)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if best == 0 || took < best {
+				best = took
+			}
+		}
+		return best
+	}
+	small, large := cost(1000), cost(4000)
+	if small <= 0 {
+		t.Fatal("marking 4000 runs took no measurable time, so the ratio below compares nothing")
+	}
+	ratio := float64(large) / float64(small)
+	t.Logf("4× the runs cost %.1f× the time (%v → %v)", ratio, small, large)
+	if ratio > 8 {
+		t.Errorf("4× the runs cost %.1f× the time (%v → %v) — the writers have gone superlinear in the "+
+			"runs already on the page", ratio, small, large)
 	}
 }
 

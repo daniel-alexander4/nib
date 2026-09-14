@@ -280,11 +280,13 @@ func (d *Document) elementForMCID(spKey, mcid int) types.Dict {
 
 // checkUAIdentification evaluates ua1 5 t1.
 //
-// **This rule cannot reach `Pass` until P07.S07, by design.** Writing `pdfuaid:part` is a claim that
-// the document conforms to PDF/UA, and ADR-031's law 1 forbids a conformance assertion nib cannot
-// support — so P03.S01 refused to write it and P07.S07 is where the checker's own verdict becomes
-// the thing that authorises it. Until then every nib document with a metadata packet fails this
-// clause, which is exactly what veraPDF says about them and exactly what the plan recorded.
+// **No nib document reaches `Pass` here, and that is decided rather than pending a slice.** Writing
+// `pdfuaid:part` claims conformance to all of PDF/UA, and P07.S07 measured that nib's checker cannot
+// support that claim: it implements 15 of the 106 rules veraPDF evaluates, and a document can pass all
+// 15 while failing one it does not check. So nib never writes the identification (ADR-031 law 1), and
+// every nib document with a metadata packet fails this clause — which is what veraPDF says about them.
+// A document from another producer that carries the identification can still pass it. How nib ever
+// honestly could write it is `/pending 486`.
 func checkUAIdentification(d *Document) Result {
 	x := readXMP(d)
 	if !x.Present {

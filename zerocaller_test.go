@@ -99,12 +99,6 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// keeping it and deleting it is written down rather than taken quietly.
 		"TagAuthored": "finding — /pending 480.",
 
-		// D4's whole point is that *the user is told* which tier produced the tree they are looking
-		// at, and nothing shows them yet. P07's exit criterion puts a conformance report in front of
-		// a user from the UI and the CLI, which is where a provenance line belongs — so this is
-		// gated there rather than left as a reader with no reader.
-		"StructureSource": "gated — PLAN-accessibility.md P07.",
-
 		"WriteTokens": "test-support — the round-trip law's entry point. `Edit.Apply` with no " +
 			"edits returns the original slice WITHOUT touching tokens, so it cannot prove the " +
 			"tokenization is total and faithful; writing the tokens back is what does, and that " +

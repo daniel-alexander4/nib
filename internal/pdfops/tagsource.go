@@ -115,3 +115,29 @@ func StructureSource(pdf []byte) (tagSource, bool) {
 	}
 	return s, true
 }
+
+// DescribeStructureSource is the sentence the accessibility report shows about where a document's
+// structure came from — D4's *"the user is told which of the three produced the tree they are
+// looking at"*, `PLAN-accessibility.md` P07.
+//
+// **One door for both surfaces** (ADR-009): the UI and `nib ua` each call it, and a guard at the repo
+// root checks that, so the two cannot describe one tree differently. An unrecorded tree gets its own
+// sentence and never borrows the best tier's — that is `StructureSource`'s second answer carried
+// through to the person reading it.
+func DescribeStructureSource(pdf []byte) string {
+	src, ok := StructureSource(pdf)
+	if !ok {
+		return "Nib has no record of where this document's structure came from — it may have none, or another program wrote it."
+	}
+	switch src {
+	case sourceExact:
+		return "Nib wrote this document's structure from what it already knew — the Markdown's headings and lists, or the form fields it placed."
+	case sourceApproximate:
+		return "This document's structure was read from a scan by text recognition (OCR) — a good guess, not the document's own account of itself."
+	case sourceInferred:
+		return "Nib inferred this document's structure from how its pages look — review it before relying on it."
+	case sourceGeneric:
+		return "This document's structure groups each page as one block and says nothing about what is on it."
+	}
+	return "Nib has no record of where this document's structure came from — it may have none, or another program wrote it."
+}

@@ -126,8 +126,10 @@ operation it runs entirely on your machine.
 rules Nib can verify itself — the accessibility standard screen readers rely on. Every clause is
 marked **passes**, **fails**, **does not apply**, or **Nib could not check**, and a clause Nib could
 not check is never shown as a pass. Each failure names what it found and where: which font on which
-page, which operator in which content stream. On the command line it's `nib ua IN`, which exits 1 and
-prints every reason when a checked clause fails or could not be checked.
+page, which operator in which content stream. The report also says where the document's structure
+came from — written by Nib from what it knew, read from a scan by OCR, or not recorded at all. On the
+command line it's `nib ua IN`, which exits 1 and prints every reason when a checked clause fails or
+could not be checked.
 
 **This is a checker, not a certificate.** Nib checks 15 of the 106 rules the reference validator
 evaluates, so a document can pass every clause Nib checks and still fail one it does not — measured:

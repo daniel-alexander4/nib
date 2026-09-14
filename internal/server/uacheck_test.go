@@ -42,7 +42,7 @@ func TestTheUAReportRouteReachesTheDoorAndPublishesEveryVerdictAsAWord(t *testin
 			t.Errorf("clause %s has no summary on the wire", r.Clause)
 		}
 	}
-	// The fixture is not PDF/UA — nothing can be until P07.S07 — so the door must refuse, and say why.
+	// The fixture fails clauses nib checks (it has no structure tree), so the door must refuse, and say why.
 	if rep.Conformant {
 		t.Error("the report says a fixture with no structure tree is conformant")
 	}
@@ -51,6 +51,10 @@ func TestTheUAReportRouteReachesTheDoorAndPublishesEveryVerdictAsAWord(t *testin
 	}
 	if !strings.Contains(strings.Join(rep.Refusals, "\n"), " fails: ") {
 		t.Errorf("no refusal names a failing clause: %q", rep.Refusals)
+	}
+	// D4: the user is told where the structure came from — and a fixture nib did not tag records nothing.
+	if !strings.Contains(rep.Structure, "no record") {
+		t.Errorf("the report's structure line for an untagged fixture reads %q", rep.Structure)
 	}
 }
 
