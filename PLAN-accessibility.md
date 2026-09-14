@@ -3354,12 +3354,34 @@ Gates: tier 2 374/374; tier 3 147 of 150, the three `/pending 474` failures only
 passes (1 on page 1 at "section 1", 2 on page 2, none once switched off). Two tier-2 mutations red: the
 toggle's `aria-pressed` and its label. The slice gate does not fire (`web/` only).
 
-#### P09.S07 — end to end, and the exit criteria
-Scope: tier 3 — open the LibreOffice fixture with alt and scope stripped and headings mapped to `P`, see
-7.3 t1 fail and 7.5 t1 read *could not check* naming the unscoped header (S05's amendment) in nib's
-report, correct all three in the panel by keyboard, and see both clauses pass, without leaving nib.
+#### P09.S07 — end to end, and the exit criteria *(done 2026-09-14, v1.129.93)*
+Scope: tier 3 — open LibreOffice's table-and-figure document with its `/Alt` and both `/Scope`s stripped,
+see 7.3 t1 fail and 7.5 t1 read *could not check* naming the unscoped header (S05's amendment) in nib's
+report, correct all three — the figure's alt text and both header cells' scope — in the panel by keyboard,
+and see both clauses pass, without leaving nib. **Amended at step zero:** "headings mapped to `P`" was
+LibreOffice's HTML import, which nib does not convert; the ODT the corpus uses writes a real `H1`, so the
+three corrections are the alt text and the two scopes.
 Acceptance:
 - veraPDF agrees on the corrected document; undo returns each clause.
+
+**(build, 2026-09-14, v1.129.93.)** `test/ui/tagcorrect.test.mjs`.
+
+| measured | result |
+|---|---|
+| where tier 3 gets a producer's document | no browser test had called LibreOffice or veraPDF, and tier 3 has no zip library: the test writes the ODT itself (a stored zip; the PNG deflated by `zlib`, whose `crc32` Node 20.20 has), converts it with `soffice`, asserts no object stream and exactly one `/Alt` and two `/Scope`, and renames them in the bytes |
+| nib's report on the broken document | 7.3 t1 **fail**; 7.5 t1 **cannot check**, `where` naming "header at row 1, cell 1" |
+| the correction, keyboard alone | Tab into the tree; arrows to the Figure; Tab to the alt field, type, Enter → 7.3 t1 **pass**. Shift+Tab back into the tree, arrows to "TH — Name", Tab to the scope picker, type-ahead to Column, Tab to Set scope, Enter → 7.5 t1 still **cannot check** (one header left); the same for "TH — Qty" → 7.5 t1 **pass** |
+| veraPDF | the stripped document fails 7.3 t1 and 7.5 t1; the document corrected in nib, read back from `/api/pdf`, passes both |
+| undo | Ctrl+Z → 7.5 t1 cannot check, "TH — Qty — no scope"; Ctrl+Z → "TH — Name — no scope", 7.3 t1 still pass; Ctrl+Z → 7.3 t1 fail |
+| tier 3 | 153 of 156, the three `/pending 474` failures only, nothing skipped |
+
+- **Finding in the test, fixed — the arrow direction depended on where the last correction left focus.**
+  The first run pressed ArrowUp from "TH — Name" toward "TH — Qty", which comes after it. The search now
+  starts at Home.
+- **Finding in the test, fixed — the oracle skipped on a machine that has it.** `uirepro.sh` points `HOME`
+  at its work directory, so `~/verapdf` was looked for there; the account's home is consulted too.
+- **Pin — the correction region uses no pointer** (self-scan); the setup uses the harness.
+- Browser files 36 → 37. The slice gate does not fire (a test file).
 
 ### P10 — Batch, CLI and the parity ledger
 **Goal.** `nib tag` and `nib a11y-check` as headless commands composing over stdin/stdout like the
