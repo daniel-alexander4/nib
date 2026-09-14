@@ -62,15 +62,15 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 	if errWhy != "" {
 		return Result{Verdict: CannotCheck, Why: errWhy}
 	}
-	if len(events) == 0 {
-		return Result{
-			Verdict: NotApplicable,
-			Why:     "no page draws anything, so there is no content to be tagged or artifacted",
-		}
-	}
 	var first *contentEvent
-	uncovered := 0
+	uncovered, pageEvents := 0, 0
 	for i := range events {
+		// Appearance streams are not content for this clause — veraPDF located no 7.1 t3 failure
+		// inside a widget's appearance on any form measured, while it did locate fonts there.
+		if events[i].appearance {
+			continue
+		}
+		pageEvents++
 		if !events[i].covered {
 			uncovered++
 			if first == nil {
@@ -78,12 +78,18 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 			}
 		}
 	}
+	if pageEvents == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "no page draws anything, so there is no content to be tagged or artifacted",
+		}
+	}
 	if first == nil {
 		return Result{Verdict: Pass}
 	}
 	why := "content is neither inside an /Artifact sequence nor inside a marked-content sequence with an MCID"
 	if uncovered > 1 {
-		why = fmt.Sprintf("%s — %d drawing operator(s) of %d, the first located here", why, uncovered, len(events))
+		why = fmt.Sprintf("%s — %d drawing operator(s) of %d, the first located here", why, uncovered, pageEvents)
 	}
 	return Result{Verdict: Fail, Why: why, Where: first.where}
 }

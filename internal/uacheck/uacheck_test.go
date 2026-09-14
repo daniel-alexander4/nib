@@ -125,11 +125,11 @@ func TestNotApplicableIsNeitherAPassNorAGap(t *testing.T) {
 // passes. The floor is what makes an emptied registry visible; P07.S02–S04 raise it as they land.
 func TestEveryRegisteredRuleIsWellFormed(t *testing.T) {
 	clauses := Clauses()
-	// Raised as rules land: S01 registered 1, S02 brought it to 9, S03 to 12. A registry that
+	// Raised as rules land: S01 registered 1, S02 brought it to 9, S03 to 12, S04 to 15. A registry that
 	// shrinks below what has shipped is a clause silently dropped, and it reads exactly like one
 	// that passes.
-	if len(clauses) < 12 {
-		t.Fatalf("the registry holds %d rule(s); P07.S03 shipped 12. A rule dropped from the "+
+	if len(clauses) < 15 {
+		t.Fatalf("the registry holds %d rule(s); P07.S04 shipped 15. A rule dropped from the "+
 			"registry is a clause nobody checks and looks identical to one that passes", len(clauses))
 	}
 	for _, c := range clauses {
