@@ -125,9 +125,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			t.Fatalf("corpus: LibreOffice is present and could not convert the fixture: %v", err)
 		}
 		docs = append(docs, oracleDoc{"LibreOffice ODT", lo})
+		docs = append(docs, tableFigureCorpus(t)...)
 	} else {
-		t.Log("NOTE (a narrower corpus, not a pass): LibreOffice is absent, so the one document " +
-			"whose structure nib did not write is missing from this run")
+		t.Log("NOTE (a narrower corpus, not a pass): LibreOffice is absent, so the documents " +
+			"whose structure nib did not write — and the only tables and figures — are missing from this run")
 	}
 	return docs
 }
@@ -222,14 +223,19 @@ type veraReport struct {
 }
 
 // knownCannotCheck records every (document, clause) where nib answers CannotCheck, with the reason.
-// **Empty, measured.** A row appearing is a gap in nib a person must look at; a row that stops
-// appearing means the gap closed and the row is a claim about code that no longer behaves that way.
-var knownCannotCheck = map[string]string{}
+// A row appearing is a gap in nib a person must look at; a row that stops appearing means the gap closed
+// and the row is a claim about code that no longer behaves that way.
+var knownCannotCheck = map[string]string{
+	// P09.S05: veraPDF fails this table, and which of its data cells it fails follows an algorithm the
+	// measurement could not state (rules_semantic.go's header). nib names the header cell with no Scope —
+	// the correction either way — rather than guess a cell-by-cell verdict.
+	"LibreOffice table and figure − /Scope / 7.5 t1": "an unscoped header over data cells that name no headers",
+}
 
 // notYetReachable records a veraPDF state a clause cannot reach on any corpus document yet, with the
 // coordinate that will make it reachable. Checked in both directions, and against the plan's marker.
 var notYetReachable = map[string]string{
-	// P07.S07 closed WITHOUT writing the identification — law 1 forbids it on a 15-of-106 checker — so
+	// P07.S07 closed WITHOUT writing the identification — law 1 forbids it on a checker covering 17 of veraPDF's 106 rules — so
 	// no nib document reaches `5 t1 passed`. The gate is the strategy decision, not a plan coordinate.
 	"5 t1 passed": "/pending 486",
 }
@@ -245,11 +251,11 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 	docs := oracleCorpus(t)
 
 	// Floor, EXACT over the generated documents: a probe that dropped one passed a `>= n-1` floor,
-	// because another document happened to reach the same state. LibreOffice's document is counted
-	// separately — its absence narrows the corpus loudly rather than failing it.
+	// because another document happened to reach the same state. LibreOffice's documents are counted
+	// separately — their absence narrows the corpus loudly rather than failing it.
 	generated := 0
 	for _, d := range docs {
-		if d.name != "LibreOffice ODT" {
+		if !strings.HasPrefix(d.name, "LibreOffice") {
 			generated++
 		}
 	}

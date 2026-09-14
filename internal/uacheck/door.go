@@ -19,8 +19,8 @@ import (
 //
 // The carried P04.S04 criterion is a REFUSAL: *"a document carrying non-embedded fonts is refused for
 // UA export with the reason named."* Writing the PDF/UA identification was to be P07.S07's, and S07's
-// measurement overturned it: nib checks 15 of the 106 rules veraPDF evaluates, and a Markdown heading
-// that skips a level passes all 15 while failing veraPDF's 7.4.2 t1. A door labelling on "every clause
+// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (17 since P09.S05), and a
+// Markdown heading that skips a level passes all of them while failing veraPDF's 7.4.2 t1. A door labelling on "every clause
 // nib checks passes" would write a conformance assertion over a non-conformant document — ADR-031 law
 // 1, by name. So nothing labels, and the word "conformant" in this package means only that.
 

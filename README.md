@@ -132,7 +132,7 @@ look and reviewed by you, or not recorded at all. On the
 command line it's `nib ua IN`, which exits 1 and prints every reason when a checked clause fails or
 could not be checked.
 
-**This is a checker, not a certificate.** Nib checks 15 of the 106 rules the reference validator
+**This is a checker, not a certificate.** Nib checks 17 of the 106 rules the reference validator
 evaluates, so a document can pass every clause Nib checks and still fail one it does not — measured:
 a heading that skips a level passes all of Nib's checks and fails veraPDF. That is also why Nib never
 writes the PDF/UA identification into a document. Nib's answers on the clauses it does check are tested
@@ -1147,7 +1147,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
 | `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
-| `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **15 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
+| `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **17 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
 | `nib fill IN --data D` | Fill a form: a JSON or **XFDF** record (`--data x.json\|.xfdf -o OUT`, the inverse of *Export form data*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |

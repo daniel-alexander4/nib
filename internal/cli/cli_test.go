@@ -1669,7 +1669,7 @@ func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
 // passing run must say so rather than let exit 0 read as "is PDF/UA".
 func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
 	// The wording is asserted on the source of the message, because producing a document that passes
-	// all fifteen clauses needs the whole tagging pipeline and is uacheck's to test.
+	// every clause nib checks needs the whole tagging pipeline and is uacheck's to test.
 	src, err := os.ReadFile("commands.go")
 	if err != nil {
 		t.Fatal(err)
