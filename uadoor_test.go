@@ -19,6 +19,7 @@ import (
 func TestTheUIAndTheCLIReachTheSameConformanceDoor(t *testing.T) {
 	fset := token.NewFileSet()
 	doorCalls := map[string]int{}
+	provenanceCalls := map[string]int{}
 	var bypasses []string
 	scanned := 0
 	err := filepath.WalkDir("internal", func(path string, d os.DirEntry, err error) error {
@@ -45,6 +46,10 @@ func TestTheUIAndTheCLIReachTheSameConformanceDoor(t *testing.T) {
 				return true
 			}
 			pkg, ok := sel.X.(*ast.Ident)
+			if ok && pkg.Name == "pdfops" && sel.Sel.Name == "DescribeStructureSource" {
+				provenanceCalls[strings.Split(filepath.ToSlash(path), "/")[1]]++
+				return true
+			}
 			if !ok || pkg.Name != "uacheck" {
 				return true
 			}
@@ -68,6 +73,11 @@ func TestTheUIAndTheCLIReachTheSameConformanceDoor(t *testing.T) {
 		if doorCalls[surface] == 0 {
 			t.Errorf("internal/%s does not call uacheck.CheckForUA, so that surface does not reach the "+
 				"door the other one does — the UI and the CLI must not each decide what conformance means", surface)
+		}
+		// D4's provenance line has one door too, or the two surfaces describe one tree differently.
+		if provenanceCalls[surface] == 0 {
+			t.Errorf("internal/%s does not call pdfops.DescribeStructureSource, so its report does not "+
+				"say which tier produced the structure, or says it in its own words", surface)
 		}
 	}
 	for _, p := range bypasses {

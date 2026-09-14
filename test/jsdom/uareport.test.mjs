@@ -48,6 +48,14 @@ test('the button reaches the report route, and the modal opens', async () => {
   assert.equal(doc.getElementById('uaModal').hidden, false, 'the report modal did not open');
 });
 
+test('the report shows the server\'s sentence about where the structure came from', async () => {
+  const sentence = 'This document\'s structure was read from a scan by text recognition (OCR).';
+  await showReport({ conformant: false, results: [{ clause: '7.1 t11', summary: 's', verdict: 'fail', why: 'no tree' }], refusals: ['x'], structure: sentence });
+  const shown = doc.querySelector('#uaBody .ua-provenance');
+  assert.ok(shown, 'the report shows no provenance line — D4 says the user is told which tier produced the tree');
+  assert.equal(shown.textContent, sentence, 'the provenance line is not the server\'s own sentence');
+});
+
 test('a clause nib could not check is never drawn the way a pass is', async () => {
   await showReport({
     conformant: false,

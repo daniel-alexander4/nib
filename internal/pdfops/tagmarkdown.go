@@ -114,9 +114,9 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 // element with several MCIDs, and a change of ordinal starts a new one. List items additionally
 // group: a run of `Lbl`/`LBody` blocks at one depth becomes one `L` holding an `LI` per pair.
 func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.Role) error {
-	d, _, _, err := ctx.PageDict(pageNr, false)
-	if err != nil || d == nil {
-		return fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+	d, _, err := tree.page(ctx, pageNr)
+	if err != nil {
+		return err
 	}
 	src, cerr := ctx.PageContent(d, pageNr)
 	if cerr != nil {

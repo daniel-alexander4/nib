@@ -2213,7 +2213,7 @@ behind it — the instrument that measures every slice of P05 and P06 was the th
 **Residual doubt:** tier 3 is red for three failures this phase did not cause and cannot see from
 here, so the one gate that drives the whole app in a real browser is not currently readable as a
 gate (`/pending 474`).
-### P07 — The pure-Go conformance checker
+### P07 — The pure-Go conformance checker *(done 2026-09-14, v1.129.71)*
 **Goal.** Nib's own PDF/UA checker (D6) and the remediation report, with law 4's three verdicts and
 law 5's agreement guard against veraPDF over the corpus.
 
@@ -2283,8 +2283,10 @@ Acceptance:
 **(grill + build, 2026-09-14 — amended in three places, all measured.)** `7.2 t34` is a THREE-way
 rule, not two: with no catalog `/Lang`, an untagged document is a provable `Fail`, but a tagged one
 is `CannotCheck` until S03 walks the tree, because an element may declare the language. `5 t1` lands
-here able to reach only `NotApplicable` and `Fail` — `Pass` becomes reachable at S07, which is the
-honest order because nothing writes the identification until then. **Two branches cannot be driven
+here able to reach only `NotApplicable` and `Fail` — ~~`Pass` becomes reachable at S07, which is the
+honest order because nothing writes the identification until then~~ **(struck at P07's close: S07 closed
+WITHOUT writing the identification, so no nib document reaches `Pass` on `5 t1`; see S07 and
+`/pending 486`)**. **Two branches cannot be driven
 end to end**: `open` reads with `ReadValidateAndOptimize`, so the checker only ever sees documents
 pdfcpu accepts — pdfcpu REFUSES a metadata stream whose `/Type` is not `/Metadata` and PANICS writing
 a non-boolean `/DisplayDocTitle`. Both branches are kept (another producer's document can arrive in
@@ -2402,9 +2404,11 @@ own language satisfies the clause. P07.S02's rule read the catalog key alone. Bo
 and each measured shape is now a corpus document so the rules cannot drift back.
 
 **The corpus also needed one fixture to reach every state.** `7.1 t9` was never FAILED by any
-product door; a packet without `dc:title` reaches it. `5 t1` is never PASSED until S07 writes the
+product door; a packet without `dc:title` reaches it. `5 t1` is never PASSED ~~until S07 writes the
 identification, and is declared not yet reachable with S07 as its gate — checked against the plan's
-marker, so S07 cannot ship without a corpus document that reaches it.
+marker, so S07 cannot ship without a corpus document that reaches it~~ **(re-gated at S07's close: S07
+wrote nothing, so the row's gate is `/pending 486`, and a pending-item gate is not checked against a plan
+marker)**.
 
 - **A default LibreOffice conversion is tagged** — an ODT came out with 12 anchored elements and
   records no nib source, which is right for a foreign producer — so real third-party structure joins
@@ -2423,11 +2427,13 @@ Acceptance:
 - Both surfaces reach the same door; the UI and CLI do not each decide what conformance means.
 
 **(grill, 2026-09-14 — AMENDED in scope, not in intent: this slice builds the door's REFUSAL and its
-report; P07.S07 attaches the export to the same door.)**
+report; ~~P07.S07 attaches the export to the same door~~ — **struck at P07's close: S07 measured that nib
+cannot honestly label a document, so the door refuses and reports and nothing exports a label.**)**
 
-- **No document can be conformant until S07.** `5 t1` fails on every document with a metadata packet
-  and has no subject on the rest, while 7.1 t8 fails those. So an export branch here would be code no
-  document can reach, and writing the identification is S07's whole subject. The carried P04.S04
+- **No document can be conformant ~~until S07~~** — and after S07's measurement, not at all by nib's
+  hand. `5 t1` fails on every document with a metadata packet and has no subject on the rest, while 7.1
+  t8 fails those. So an export branch here would be code no document can reach. ~~Writing the
+  identification is S07's whole subject.~~ **S07 refused it: a 15-of-106 checker cannot support the claim.** The carried P04.S04
   criterion is itself a refusal — *"refused for UA export with the reason named"* — and the refusal is
   what this slice builds, naming every failed clause and every clause nib could not check.
 - **The door lives in `internal/uacheck`, not `internal/pdfops`.** `uacheck`'s in-package tests import
@@ -2487,6 +2493,54 @@ fully verified output once a language source exists, or never label. `5 t1` stay
 reachable in the oracle guard, re-gated on that item rather than on this coordinate. The 7.4.2 t1
 instance itself — nib's tagged Markdown fails it whenever the source skips a heading level — is filed
 as `/pending 487`.
+
+**(phase close, 2026-09-14, v1.129.71.)**
+
+| exit criterion | verdict | evidence |
+|---|---|---|
+| the checker agrees with veraPDF on every corpus fixture or names the rule it cannot evaluate | **met** | `TestTheOracleValidatesTheChecker` — 22 generated documents plus a LibreOffice ODT, every clause compared both ways; `knownCannotCheck` is empty; `notYetReachable` holds only `5 t1 passed` (`/pending 486`) |
+| no rule is reported as passing that the checker did not actually run | **met** | `NotRun` is the zero verdict; `runOne` turns a panic into `cannot check`; `Report.Conformant` requires every result `pass` or `not applicable` |
+| the report is reachable from the UI and from the CLI | **met** | `GET /api/uacheck` + `#uaBtn`, `nib ua IN`; `TestTheUIAndTheCLIReachTheSameConformanceDoor` checks both call `uacheck.CheckForUA` |
+| carried from P04.S04: non-embedded fonts refused with the reason named | **met** | `TestUARefusesWithEveryReasonAndNamesTheFont` — `7.21.4.1 t1 fails` names Courier, beside the other failing clauses |
+
+**Found at the close — a gated exemption P07 had not discharged.** `zerocaller_test.go` exempted
+`StructureSource` as *"gated — PLAN-accessibility.md P07"*: D4 says the user is told which tier
+produced the tree, and P07's report was named as where that line belongs. Tier 1 went red on the
+marker (`TestNoGatedExemptionOutlivesItsCoordinate`). The caller is now built rather than re-gated:
+`pdfops.DescribeStructureSource` is one sentence per tier plus one for an unrecorded tree, shown by
+the report modal (`uaReportResponse.Structure`) and printed by `nib ua` on stderr; the root guard
+checks both surfaces call it, and the exemption row is removed. Six mutations red (server field, CLI
+line, CLI routing, UI render, unrecorded described as exact, generic described as exact).
+
+**Found at the close — `/pending 481`'s fix made Markdown conversion quadratic.** Tier 4d builds a
+20,000-clause Markdown fixture with `nib office`; since v1.129.65 routed conversion through
+`tagMarkdown`, that step ran over twenty minutes (process observed at 21:52 elapsed, 27 CPU-minutes).
+Tiers 0–3 never convert a large document. Profile at 2,000 clauses: untagged render 2.8 s,
+`tagMarkdown` 15.0 s — `addMarkedElementUnder` and `addMCIDTo` rebuilt every ParentTree slot list
+(`parentTreeEntries`) and walked the page tree from its root (pdfcpu `PageDict`) once per marked run.
+Fixed with a key-only lookup (`parentTreeKey`) and a per-tree page cache (`structTree.page`), which
+`tagOnePage` and `tagOCRPage` also use: 2,000 clauses 15.0 s → 5.0 s. Guarded by
+`TestMarkingARunCostsTheSameHoweverManyRunsCameBefore` — 4× the runs measured 3.9–4.7× green, 15.0×
+and 14.0× with the full scan restored in each writer separately. Blind spot declared in the test: one
+page, so the page cache is not exercised there. At 20,000 clauses: tagged conversion 142 s against
+36.6 s untagged (from over twenty minutes).
+
+**And the tier-4d failure it surfaced was mostly not tagging.** Hop 1's spoken check went up 132 s after
+the hop began, past the harness's 60 s watcher, while other runs loaded the machine. Unloaded, the
+content anchor on the convened tagged fixture is 27.3 s + 10.3 s; on the untagged render 33.5 s + 7.7 s
+for the digest and record parse alone — tagging adds ~12%. The anchor is quadratic in pages on its own
+(pdfcpu's per-page `PageDict` walk, and font programs re-decoded on every page): `/pending 488`.
+
+**Required-run gates, v1.129.71:**
+- T1 `go test ./...` — green.
+- T2 `jsdomtest.sh` — 354/354.
+- T3 `uirepro.sh` — RED for the 3 pre-existing failures (`/pending 474`: `blockink.test.mjs`, the CJK
+  CMap text, "leaves the shared server"). A fourth, `no console errors`, appeared once while a tier-1 run
+  overlapped it and did not recur on an unloaded re-run (138 pass, 3 fail).
+- T4 `pairrepro.sh` — PASS over both transports.
+- T4d `pairrepro.sh -n 4` — FAILED loaded (above), PASS unloaded on the fixed tree: 4 instances, both
+  transports, the interrupt hop's words shown after 38 s.
+- T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
 
 ### P08 — The autotagger
 **Goal.** Heuristic structure inference for arbitrary PDFs — the research-grade half, and the one

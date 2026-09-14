@@ -1643,13 +1643,16 @@ func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
 	var code int
 	stderr := captureStderr(t, func() { code = cmdUA([]string{in}) })
 	if code != 1 {
-		t.Fatalf("nib ua on a Courier page exit = %d, want 1 — nothing can be PDF/UA until P07.S07", code)
+		t.Fatalf("nib ua on a Courier page exit = %d, want 1 — the page fails clauses nib checks", code)
 	}
 	if !strings.Contains(stderr, "not PDF/UA: 7.21.4.1 t1 fails") || !strings.Contains(stderr, "Courier") {
 		t.Errorf("the refusal does not name the non-embedded font:\n%s", stderr)
 	}
 	if n := strings.Count(stderr, "not PDF/UA: "); n < 2 {
 		t.Errorf("%d refusal line(s) — the font alone is what P04.S04 could not do better than:\n%s", n, stderr)
+	}
+	if !strings.Contains(stderr, "no record of where this document's structure came from") {
+		t.Errorf("nib ua does not say where the structure came from (D4):\n%s", stderr)
 	}
 
 	// An unreadable input is an error, not a report full of failures.

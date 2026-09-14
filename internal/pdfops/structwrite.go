@@ -60,35 +60,29 @@ func addMarkedElementUnder(ctx *model.Context, tree *structTree, pageNr int, str
 	if structType == "" {
 		return 0, nil, fmt.Errorf("pdfops: a structure element needs an /S")
 	}
-	pageDict, _, _, err := ctx.PageDict(pageNr, false)
-	if err != nil || pageDict == nil {
-		return 0, nil, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+	pageDict, pageRef, err := tree.page(ctx, pageNr)
+	if err != nil {
+		return 0, nil, err
 	}
-	pageRef, err := ctx.PageDictIndRef(pageNr)
-	if err != nil || pageRef == nil {
-		return 0, nil, fmt.Errorf("pdfops: page %d has no indirect reference: %w", pageNr, err)
-	}
-
-	arrays, singles := parentTreeEntries(ctx, tree)
 
 	// The page's key, created if the page has none.
 	key, hasKey := 0, false
 	if sp, ok := pageDict["StructParents"].(types.Integer); ok {
 		key, hasKey = sp.Value(), true
-		if _, isSingle := singles[key]; isSingle {
-			return 0, nil, fmt.Errorf("pdfops: page %d declares /StructParents %d and that "+
-				"ParentTree entry is a single element, not an array — this document's tree is "+
-				"already inconsistent and adding to it would hide that", pageNr, key)
-		}
+	}
+	slots, isSingle, next := parentTreeKey(ctx, tree, key)
+	if hasKey && isSingle {
+		return 0, nil, fmt.Errorf("pdfops: page %d declares /StructParents %d and that "+
+			"ParentTree entry is a single element, not an array — this document's tree is "+
+			"already inconsistent and adding to it would hide that", pageNr, key)
 	}
 	if !hasKey {
-		key = nextParentTreeKey(arrays, singles)
+		key, slots = next, 0
 		pageDict["StructParents"] = types.Integer(key)
 	}
 
 	// The MCID is the next free slot of that key's array.
-	slots := arrays[key]
-	mcid = len(slots)
+	mcid = slots
 
 	// Build the element. `/P` is the tree root: this is a top-level element, which is all the
 	// wrapping emitter needs and is honest about what it knows — inferring a better parent from
@@ -135,21 +129,54 @@ func addMarkedElementUnder(ctx *model.Context, tree *structTree, pageNr int, str
 	return mcid, ref, nil
 }
 
-// nextParentTreeKey returns a key no entry uses. Keys are a flat namespace shared by pages,
-// annotations and Form XObjects, so "the page count" is not a safe answer.
-func nextParentTreeKey(arrays map[int][]int, singles map[int]int) int {
-	next := 0
-	for k := range arrays {
-		if k >= next {
-			next = k + 1
+// parentTreeKey reports one key's `/ParentTree` entry — how many slots its array has, or whether it
+// is a single reference — and the next key no entry uses.
+//
+// **It exists because the writers call it once per marked run.** `parentTreeEntries` builds every
+// key's slot list, so calling it per run made tagging quadratic in the document: a 20,000-clause
+// Markdown file (tier 4d's interrupt fixture) took over twenty minutes to convert where the untagged
+// render takes seconds. This walks the same `/Nums` and `/Kids` and dereferences only the one value
+// asked about.
+func parentTreeKey(ctx *model.Context, tree *structTree, key int) (slots int, single bool, next int) {
+	var walk func(o types.Object, depth int)
+	walk = func(o types.Object, depth int) {
+		if depth > maxStructDepth {
+			return
+		}
+		d, err := ctx.DereferenceDict(o)
+		if err != nil || d == nil {
+			return
+		}
+		if nums, e := ctx.DereferenceArray(d["Nums"]); e == nil && nums != nil {
+			for i := 0; i+1 < len(nums); i += 2 {
+				n, ok := nums[i].(types.Integer)
+				if !ok {
+					continue
+				}
+				if n.Value() >= next {
+					next = n.Value() + 1
+				}
+				if n.Value() != key {
+					continue
+				}
+				val := nums[i+1]
+				if arr, ae := ctx.DereferenceArray(val); ae == nil && arr != nil {
+					slots = len(arr)
+					continue
+				}
+				if _, isInd := val.(types.IndirectRef); isInd {
+					single = true
+				}
+			}
+		}
+		if kids, e := ctx.DereferenceArray(d["Kids"]); e == nil && kids != nil {
+			for _, k := range kids {
+				walk(k, depth+1)
+			}
 		}
 	}
-	for k := range singles {
-		if k >= next {
-			next = k + 1
-		}
-	}
-	return next
+	walk(tree.root["ParentTree"], 0)
+	return slots, single, next
 }
 
 // appendToRootKids adds an element to `/StructTreeRoot`'s `/K`, normalising the single-entry form.
@@ -356,9 +383,9 @@ func appendToElementKids(ctx *model.Context, parent, child types.IndirectRef) er
 // It keeps both directions in step exactly as `addMarkedElement` does: the MCID joins the element's
 // `/K` and the element joins the page's ParentTree array at that index.
 func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.IndirectRef) (int, error) {
-	pageDict, _, _, err := ctx.PageDict(pageNr, false)
-	if err != nil || pageDict == nil {
-		return 0, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+	pageDict, _, err := tree.page(ctx, pageNr)
+	if err != nil {
+		return 0, err
 	}
 	sp, ok := pageDict["StructParents"].(types.Integer)
 	if !ok {
@@ -366,8 +393,7 @@ func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.Indi
 			"entry to add a marked-content id to", pageNr)
 	}
 	key := sp.Value()
-	arrays, _ := parentTreeEntries(ctx, tree)
-	mcid := len(arrays[key])
+	mcid, _, _ := parentTreeKey(ctx, tree, key)
 
 	e, found := ctx.XRefTable.FindTableEntryForIndRef(&elem)
 	if !found || e == nil || e.Object == nil {

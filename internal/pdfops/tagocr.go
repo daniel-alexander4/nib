@@ -88,9 +88,9 @@ func groupWords(words []Word) []wordGroup {
 // tagOCRPage replaces every watermark-artifact marker on one page with real marked content, under a
 // `Sect` per tesseract block and a `P` per paragraph.
 func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word) error {
-	d, _, _, err := ctx.PageDict(pageNr, false)
-	if err != nil || d == nil {
-		return fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+	d, _, err := tree.page(ctx, pageNr)
+	if err != nil {
+		return err
 	}
 	src, cerr := ctx.PageContent(d, pageNr)
 	if cerr != nil {

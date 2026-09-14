@@ -139,6 +139,9 @@ func cmdUA(args []string) int {
 		}
 		fmt.Println(line)
 	}
+	// D4's provenance line, in the same words the UI shows (one door, ADR-009). On stderr, beside the
+	// other sentences meant for a person, so stdout stays the table.
+	errf("%s", pdfops.DescribeStructureSource(pdf))
 	if len(refusals) == 0 {
 		// Said on stderr so a script reading stdout sees only the table, and a person sees the limit.
 		errf("every clause nib checks passes (%d of PDF/UA-1's rules) — this is not a PDF/UA certificate; "+

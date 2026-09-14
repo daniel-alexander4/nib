@@ -97,6 +97,41 @@ type structTree struct {
 	elems []*structElem
 	// byObj indexes the elements that have an object number.
 	byObj map[int]*structElem
+	// pages caches the page dictionaries the writers have resolved, by page number. See `page`.
+	pages map[int]treePage
+}
+
+// treePage is one resolved page: its dictionary and the reference an element's `/Pg` names.
+type treePage struct {
+	dict types.Dict
+	ref  *types.IndirectRef
+}
+
+// page resolves a page for the structure writers, once per page per tree.
+//
+// **pdfcpu's `PageDict` walks the page tree from the root on every call**, and the writers ask for
+// the page once per marked run — so resolving it each time made tagging a long document quadratic
+// (see `parentTreeKey`). The cached dictionary is the live object in the xref table, not a copy:
+// every writer mutates a page in place (`/StructParents`, `setPageContent`'s `/Contents`), so what
+// the cache holds and what the document holds cannot diverge. It does not survive a change to the
+// page tree, and nothing that tags content adds or removes a page.
+func (t *structTree) page(ctx *model.Context, pageNr int) (types.Dict, *types.IndirectRef, error) {
+	if p, ok := t.pages[pageNr]; ok {
+		return p.dict, p.ref, nil
+	}
+	d, _, _, err := ctx.PageDict(pageNr, false)
+	if err != nil || d == nil {
+		return nil, nil, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+	}
+	ref, err := ctx.PageDictIndRef(pageNr)
+	if err != nil || ref == nil {
+		return nil, nil, fmt.Errorf("pdfops: page %d has no indirect reference: %w", pageNr, err)
+	}
+	if t.pages == nil {
+		t.pages = map[int]treePage{}
+	}
+	t.pages[pageNr] = treePage{dict: d, ref: ref}
+	return d, ref, nil
 }
 
 // elements returns how many structure elements the tree actually contains.

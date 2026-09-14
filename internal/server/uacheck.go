@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"nib/internal/pdfops"
 	"nib/internal/uacheck"
 )
 
@@ -24,6 +25,8 @@ type uaReportResponse struct {
 	Conformant bool           `json:"conformant"`
 	Results    []uaResultView `json:"results"`
 	Refusals   []string       `json:"refusals"`
+	// Structure says which of D4's tiers produced the tree, in `pdfops.DescribeStructureSource`'s words.
+	Structure string `json:"structure"`
 }
 
 // handleUACheck reports the open document against the PDF/UA-1 clauses nib checks — not a PDF/UA
@@ -37,12 +40,14 @@ func (s *Server) handleUACheck(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rep, refusals, err := uacheck.CheckForUA(s.docBytes(doc))
+	// The provenance line is read from the same bytes the report was checked against.
+	pdf := s.docBytes(doc)
+	rep, refusals, err := uacheck.CheckForUA(pdf)
 	if err != nil {
 		httpError(w, http.StatusUnprocessableEntity, "could not check the document: "+err.Error())
 		return
 	}
-	out := uaReportResponse{Conformant: rep.Conformant(), Refusals: refusals}
+	out := uaReportResponse{Conformant: rep.Conformant(), Refusals: refusals, Structure: pdfops.DescribeStructureSource(pdf)}
 	if out.Refusals == nil {
 		out.Refusals = []string{}
 	}

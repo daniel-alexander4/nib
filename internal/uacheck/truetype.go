@@ -13,8 +13,8 @@ import (
 // identify all CIDs which are present in the font program."* nib's own output carries no `/CIDSet` —
 // P04.S02 removes the one pdfcpu writes — so for nib's documents the clause has no subject. A user's
 // document from another producer, or a PDF/A-1 file that REQUIRES the stream, can carry one, and
-// answering `CannotCheck` for every such file would make S07's identification unreachable for a
-// question that is in fact decidable.
+// answering `CannotCheck` for every such file would leave the report unable to settle a question that
+// is in fact decidable.
 //
 // # What "present in the font program" means, MEASURED rather than read
 //

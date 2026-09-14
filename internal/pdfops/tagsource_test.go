@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -107,6 +108,41 @@ func TestAnUnrecordedTreeIsNotTreatedAsExact(t *testing.T) {
 			t.Errorf("%s returned %q with ok=false; the value must be empty when nothing is recorded",
 				c.name, got)
 		}
+	}
+}
+
+// TestTheReportSentenceNamesTheTierAndNeverLendsAnUnrecordedTreeTheBestOne — D4's "the user is
+// told", as the words the accessibility report shows (P07).
+func TestTheReportSentenceNamesTheTierAndNeverLendsAnUnrecordedTreeTheBestOne(t *testing.T) {
+	tagged, err := tagMarkdown([]byte(s02Markdown), authoringFaces(), markdownFallbackFonts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	generic, _, err := TagAuthored(authoredPDF(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact := DescribeStructureSource(tagged)
+	unrecorded := DescribeStructureSource(taggedFixture())
+	sentences := map[string]string{
+		"exact":      exact,
+		"generic":    DescribeStructureSource(generic),
+		"unrecorded": unrecorded,
+		"untagged":   DescribeStructureSource(untaggedFixture()),
+	}
+	for name, s := range sentences {
+		if s == "" {
+			t.Errorf("the %s document gets no sentence — the report would say nothing about its structure", name)
+		}
+	}
+	if !strings.Contains(exact, "what it already knew") {
+		t.Errorf("an exact tree is described as %q", exact)
+	}
+	if sentences["generic"] == exact || unrecorded == exact {
+		t.Error("a generic or unrecorded tree is described in the exact tier's words")
+	}
+	if !strings.Contains(unrecorded, "no record") {
+		t.Errorf("a tree nib did not record is described as %q — it must say nothing is recorded", unrecorded)
 	}
 }
 
