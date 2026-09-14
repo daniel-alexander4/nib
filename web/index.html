@@ -373,6 +373,11 @@
 <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
             </div>
+          <!-- The autotagger (PLAN-accessibility.md P08.S06c): a structure is PROPOSED and reviewed here;
+               nothing is written until the reviewer commits. Document mode, per D10. -->
+          <div class="tbgroup" data-label="Tag Structure" data-fold="4">
+<button id="tagsBtn" title="Propose headings, paragraphs and lists for screen readers, and review them before anything is written">Tag structure…</button>
+            </div>
     </div><div class="tbtab" data-tab="secure">
       <div class="tbgroup" data-label="Redact Content" data-fold="0">
 <button id="redactBtn" title="Draw redaction boxes">Redact</button>
@@ -997,6 +1002,22 @@
         For a conformance verdict use veraPDF, the reference validator, which Nib's answers are tested
         against on every build.</p>
       <div class="sigbtns"><span class="grow"></span><button id="uaClose" class="primary">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Tag structure (PLAN-accessibility.md P08.S06c): the autotagger's proposal, one row per element, each
+       retypable, ignorable and movable with ordinary controls, so the review needs no pointer.
+       Nothing is written until Commit. -->
+  <div id="tagsModal" hidden>
+    <div class="sigcard">
+      <h3>Tag structure</h3>
+      <p id="tagsSummary" class="ua-summary" role="status"></p>
+      <ol id="tagsList" class="tags-list"></ol>
+      <p class="libhint">Nib guessed these from the page — the sizes of the text, list bullets and
+        numbers, and where lines break. Check each one: change what it is, ignore what is not content,
+        and move anything that reads in the wrong order. Focusing a row outlines it on the page.
+        Nothing is written to the document until you commit, and a commit can be undone.</p>
+      <div class="sigbtns"><button id="tagsClose">Cancel</button><span class="grow"></span><button id="tagsCommit" class="primary">Commit structure</button></div>
     </div>
   </div>
 

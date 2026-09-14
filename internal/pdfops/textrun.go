@@ -229,14 +229,21 @@ func (f *runFont) textFor(code []byte) (string, bool) {
 // simpleDecoderFor returns the byte decoder a simple font's /Encoding names, or nil where reading its
 // text would be a guess.
 func simpleDecoderFor(d types.Dict) func(byte) (rune, bool) {
-	enc := d.NameEntry("Encoding")
-	if enc == nil {
+	// Presence and kind, not `NameEntry`: it returns nil for an absent key AND for a `/Differences`
+	// dictionary, and the first cut took the second for the first — decoding a font whose glyphs were
+	// renamed as though they were StandardEncoding's (found at P08.S06c).
+	encObj, hasEnc := d["Encoding"]
+	if !hasEnc {
 		if bf := d.NameEntry("BaseFont"); bf != nil && font.IsCoreFont(*bf) && *bf != "Symbol" && *bf != "ZapfDingbats" {
 			return decodeStandardPrintable
 		}
 		return nil
 	}
-	switch *enc {
+	encName, isName := encObj.(types.Name)
+	if !isName {
+		return nil
+	}
+	switch encName.Value() {
 	case "WinAnsiEncoding":
 		return charmapByteDecoder(charmap.Windows1252)
 	case "MacRomanEncoding":

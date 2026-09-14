@@ -118,8 +118,10 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// 26, not 25: `handleUACheck`, the accessibility report (PLAN-accessibility.md P07.S06). It reads
 	// the open document the way `handleScan` beside it does — read-only, a 404 when nothing is open —
 	// and it reaches `uacheck.CheckForUA`, the door `nib ua` reaches too.
-	if resolveSites != 26 {
-		t.Errorf("expected 26 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 28, not 26: `handleTagsPropose` and `handleTagsCommit` (PLAN-accessibility.md P08.S06b). Propose reads
+	// the open document like `handleUACheck`; commit rewrites it through commitMutation like `handleOCR`.
+	if resolveSites != 28 {
+		t.Errorf("expected 28 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

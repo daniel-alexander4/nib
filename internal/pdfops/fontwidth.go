@@ -31,9 +31,15 @@ import (
 // WinAnsi core font at once. Symbol and ZapfDingbats use their own maps, which no such discriminator
 // covers, so they report `none`.
 //
-// And those metrics are WinAnsi's. A simple font with no `/Encoding` uses StandardEncoding, which
-// disagrees with WinAnsi on some codes, and `/Differences` renames glyphs outright — so the std14
-// source is used only when the font says `/WinAnsiEncoding`.
+// And those metrics are WinAnsi's. A Latin core font with no `/Encoding` uses StandardEncoding, which
+// names the SAME glyphs across printable ASCII except two: 0x27 (quoteright, not quotesingle) and 0x60
+// (quoteleft, not grave). So StandardEncoding is measured over printable ASCII minus those two, and
+// nothing else; a `/Differences` dictionary renames glyphs outright and is not measured at all.
+//
+// **The first cut refused StandardEncoding entirely, and that was wrong in the costly direction**
+// (found at P08.S06c's tier 3): every run of an old PDF in a non-embedded core font with no
+// `/Encoding` measured zero wide, so its lines had no width to group by and a proposed element's
+// outline had none to draw.
 
 // widthSource says which part of a font dictionary supplied an advance.
 type widthSource string
@@ -69,6 +75,8 @@ type fontWidths struct {
 	missing    float64
 	hasMissing bool
 	core       string // the Base-14 name when the std14 source applies, else ""
+	// standard is a core font under StandardEncoding: only codes whose glyph WinAnsi shares are measured.
+	standard bool
 }
 
 // readFontWidths reads a font dictionary's advance table.
@@ -118,8 +126,15 @@ func readFontWidths(xt *model.XRefTable, fontObj types.Object) fontWidths {
 	}
 	if bf := d.NameEntry("BaseFont"); bf != nil && font.IsCoreFont(*bf) &&
 		*bf != "Symbol" && *bf != "ZapfDingbats" {
-		if enc := d.NameEntry("Encoding"); enc != nil && *enc == "WinAnsiEncoding" {
+		// Presence and kind, not `NameEntry`: that returns nil both for an absent key and for a
+		// `/Differences` DICTIONARY, and those two mean opposite things here.
+		encObj, hasEnc := d["Encoding"]
+		name, isName := encObj.(types.Name)
+		switch {
+		case isName && name.Value() == "WinAnsiEncoding":
 			f.core = *bf
+		case !hasEnc || (isName && name.Value() == "StandardEncoding"):
+			f.core, f.standard = *bf, true
 		}
 	}
 	return f
@@ -142,13 +157,19 @@ func (f fontWidths) advance(code int) (float64, widthSource) {
 	if f.hasMissing {
 		return f.missing, widthFromMissing
 	}
-	if f.core != "" && code >= 0 && code <= 0xFF && coreCodeMapped(code) {
+	if f.core != "" && code >= 0 && code <= 0xFF && coreCodeMapped(code) && (!f.standard || standardSharesWinAnsiGlyph(code)) {
 		// One code per call: CoreWidth normalises UTF-8, and two code bytes can happen to spell a valid
 		// UTF-8 sequence, which it would fold into one. A single byte never can. Measured at size 1000,
 		// where pdfcpu's user-space width IS the glyph-space width.
 		return mdpdf.CoreWidth(string([]byte{byte(code)}), f.core, 1000), widthFromStd14
 	}
 	return 0, widthNone
+}
+
+// standardSharesWinAnsiGlyph reports whether StandardEncoding names the glyph WinAnsi does at code:
+// printable ASCII, except 0x27 and 0x60, where StandardEncoding has the curly quotes.
+func standardSharesWinAnsiGlyph(code int) bool {
+	return code >= 0x20 && code <= 0x7E && code != 0x27 && code != 0x60
 }
 
 // coreCodeMapped reports whether pdfcpu's WinAnsi core metrics carry a glyph for code, rather than

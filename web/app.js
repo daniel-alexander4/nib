@@ -113,6 +113,8 @@ const els = {
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
   uaBtn: $('uaBtn'), uaModal: $('uaModal'), uaBody: $('uaBody'), uaSummary: $('uaSummary'), uaClose: $('uaClose'),
+  tagsBtn: $('tagsBtn'), tagsModal: $('tagsModal'), tagsList: $('tagsList'), tagsSummary: $('tagsSummary'),
+  tagsClose: $('tagsClose'), tagsCommit: $('tagsCommit'),
   attachBtn: $('attachBtn'), attachmentsModal: $('attachmentsModal'), attachBody: $('attachBody'),
   attachAddBtn: $('attachAddBtn'), attachInput: $('attachInput'), attachClose: $('attachClose'),
   decryptBtn: $('decryptBtn'), decryptModal: $('decryptModal'), decryptPw: $('decryptPw'),
@@ -2561,7 +2563,7 @@ const DOC_BOUND_MODALS = [
   'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
   'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
   'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal',
-  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'uaModal',
+  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'tagsModal', 'uaModal',
   'splitModal', 'timestampModal', 'tsVerifyModal',
 ];
 
@@ -4915,6 +4917,192 @@ async function openUACheck() {
 }
 els.uaBtn.onclick = openUACheck;
 els.uaClose.onclick = () => { els.uaModal.hidden = true; };
+
+// ── Tag structure: the autotagger's review (PLAN-accessibility.md P08.S06c) ─────────────────────
+//
+// D5: the same shape as Detect — propose, show, let the person change it, then commit. The proposal
+// comes from the server and is only ever a proposal (law 3); this surface edits a LIST of what the
+// server proposed and sends back every element, in the reviewer's order, with the role chosen or
+// marked ignored. The server re-proposes from the document and refuses a review that no longer
+// describes it, so nothing here needs to be trusted about the document.
+//
+// **Every control is an ordinary one** — a select, a checkbox, buttons — so the whole review is
+// operable from the keyboard (D11) without a single key handler to get wrong.
+const TAG_ROLES = ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'LI'];
+const TAG_ROLE_NAMES = {
+  H1: 'Heading 1', H2: 'Heading 2', H3: 'Heading 3', H4: 'Heading 4', H5: 'Heading 5', H6: 'Heading 6',
+  P: 'Paragraph', LI: 'List item',
+};
+let tagsReview = null; // [{ id, role, ignore, text, page, rect, pageBox, marker, list }]
+let tagsProposal = null;
+// The document the review was opened for, pinned at entry (ADR-001): both requests name it.
+let tagsOwner = null;
+
+function clearTagOutline() {
+  document.querySelectorAll('.tag-outline').forEach((el) => el.remove());
+}
+
+// showTagOutline outlines one element on its page, from the proposal's PDF-space rect and the page's
+// MediaBox. Percentages of the page div, so zoom does not move it off its text.
+function showTagOutline(row) {
+  clearTagOutline();
+  const owner = tagsOwner || view;
+  if (!owner.pdfDocument || !owner.viewer || !row.pageBox) return;
+  const [llx, lly, urx, ury] = row.pageBox;
+  const w = urx - llx, h = ury - lly;
+  if (!(w > 0 && h > 0)) return;
+  owner.viewer.currentPageNumber = row.page;
+  const pv = owner.viewer.getPageView(row.page - 1);
+  if (!pv || !pv.div) return;
+  const [x0, y0, x1, y1] = row.rect;
+  const box = document.createElement('div');
+  box.className = 'tag-outline';
+  box.style.left = `${((x0 - llx) / w) * 100}%`;
+  box.style.top = `${((ury - y1) / h) * 100}%`;
+  box.style.width = `${((x1 - x0) / w) * 100}%`;
+  box.style.height = `${((y1 - y0) / h) * 100}%`;
+  pv.div.appendChild(box);
+}
+
+function focusTagsControl(index, selector) {
+  const row = els.tagsList.children[index];
+  const el = row && row.querySelector(selector);
+  if (el) el.focus();
+}
+
+function renderTagsReview() {
+  const list = els.tagsList;
+  list.innerHTML = '';
+  const kept = tagsReview.filter((r) => !r.ignore).length;
+  const notes = [];
+  for (const u of tagsProposal.unsupported || []) notes.push(`Page ${u.page}: ${u.reason} — check its order carefully.`);
+  if ((tagsProposal.noText || []).length) {
+    notes.push(`No text on page ${tagsProposal.noText.join(', ')} — make a scan searchable (OCR) before tagging it.`);
+  }
+  els.tagsSummary.textContent = `${tagsReview.length} element(s) proposed, ${kept} kept. Nothing is written until you commit.` +
+    (notes.length ? ' ' + notes.join(' ') : '');
+  els.tagsCommit.disabled = kept === 0;
+
+  tagsReview.forEach((r, i) => {
+    const words = r.text.length > 80 ? r.text.slice(0, 80) + '…' : r.text;
+    const li = document.createElement('li');
+    li.className = 'tags-row' + (r.ignore ? ' tags-ignored' : '') + (r.role === 'LI' ? ' tags-item' : '');
+    li.dataset.id = String(r.id);
+    if (r.list >= 0) li.dataset.list = String(r.list);
+
+    const text = document.createElement('span');
+    text.className = 'tags-text';
+    text.textContent = `Page ${r.page} — ${words}`;
+    if (r.marker) text.dataset.marker = r.marker;
+
+    const role = document.createElement('select');
+    role.setAttribute('aria-label', `What this is: ${words}`);
+    for (const code of TAG_ROLES) {
+      const o = document.createElement('option');
+      o.value = code;
+      o.textContent = TAG_ROLE_NAMES[code];
+      role.appendChild(o);
+    }
+    role.value = r.role;
+    role.onchange = () => { r.role = role.value; renderTagsReview(); focusTagsControl(i, 'select'); };
+
+    const ignoreLabel = document.createElement('label');
+    const ignore = document.createElement('input');
+    ignore.type = 'checkbox';
+    ignore.checked = r.ignore;
+    ignore.onchange = () => { r.ignore = ignore.checked; renderTagsReview(); focusTagsControl(i, 'input'); };
+    ignoreLabel.append(ignore, document.createTextNode('Ignore'));
+
+    const move = (to) => {
+      const [moved] = tagsReview.splice(i, 1);
+      tagsReview.splice(to, 0, moved);
+      renderTagsReview();
+      focusTagsControl(to, to < i ? '.tags-up' : '.tags-down');
+    };
+    const up = document.createElement('button');
+    up.className = 'tags-up';
+    up.textContent = 'Move up';
+    up.setAttribute('aria-label', `Move up: ${words}`);
+    up.disabled = i === 0;
+    up.onclick = () => move(i - 1);
+    const down = document.createElement('button');
+    down.className = 'tags-down';
+    down.textContent = 'Move down';
+    down.setAttribute('aria-label', `Move down: ${words}`);
+    down.disabled = i === tagsReview.length - 1;
+    down.onclick = () => move(i + 1);
+    const show = document.createElement('button');
+    show.className = 'tags-show';
+    show.textContent = 'Show';
+    show.setAttribute('aria-label', `Show on the page: ${words}`);
+    show.onclick = () => showTagOutline(r);
+
+    li.addEventListener('focusin', () => showTagOutline(r));
+    li.append(text, role, ignoreLabel, up, down, show);
+    list.appendChild(li);
+  });
+}
+
+function closeTags() {
+  els.tagsModal.hidden = true;
+  clearTagOutline();
+}
+
+async function openTags() {
+  if (!view.pdfDocument) return toast('Open a PDF first');
+  const owner = view;
+  tagsOwner = owner;
+  tagsReview = null;
+  tagsProposal = null;
+  els.tagsSummary.textContent = 'Proposing a structure…';
+  els.tagsList.innerHTML = '';
+  els.tagsCommit.disabled = true;
+  els.tagsModal.hidden = false;
+  const doc = owner.docMeta;
+  try {
+    const res = await apiFetch('/api/tags/propose', { docId: doc && doc.id });
+    if (!res.ok) throw new Error(await errText(res, 'Could not propose a structure for this document.'));
+    tagsProposal = await res.json();
+    tagsReview = (tagsProposal.elements || []).map((e) => ({
+      id: e.id, role: e.role, ignore: false, text: e.text, page: e.page,
+      rect: e.rect, pageBox: e.pageBox, marker: e.marker || '', list: e.list,
+    }));
+    renderTagsReview();
+  } catch (e) {
+    closeTags();
+    toast(e.message || 'Could not propose a structure for this document.');
+  }
+}
+
+async function commitTags() {
+  if (!tagsReview) return;
+  const owner = tagsOwner || view;
+  const doc = owner.docMeta;
+  els.tagsCommit.disabled = true;
+  try {
+    const res = await apiFetch('/api/tags/commit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: doc && doc.id,
+      body: JSON.stringify({ elements: tagsReview.map((r) => ({ id: r.id, role: r.role, ignore: r.ignore, text: r.text })) }),
+    });
+    if (!res.ok) {
+      // The refusal is the server's own sentence — signed, stale, or malformed — and the review stays
+      // open so the person can act on it.
+      els.tagsSummary.textContent = await errText(res, 'Could not write the structure.');
+      els.tagsCommit.disabled = false;
+      return;
+    }
+    await setDocumentFromServer(await res.json(), owner);
+    closeTags();
+    toast('Structure written — Check accessibility to see it');
+  } catch (e) {
+    els.tagsSummary.textContent = e.message || 'Could not write the structure.';
+    els.tagsCommit.disabled = false;
+  }
+}
+
+els.tagsBtn.onclick = openTags;
+els.tagsClose.onclick = closeTags;
+els.tagsCommit.onclick = commitTags;
 
 // runSanitize applies a server-side removal (strip/safe). On success it reloads
 // the cleaned document and shows what remains; on failure it leaves the document
@@ -10135,6 +10323,8 @@ const DOC_REQUIRED = [
   'exportPageSplitBtn', 'pdfaBtn',
   // The accessibility report (P07.S06) checks the open document; with nothing open it has no subject.
   'uaBtn',
+  // The autotagger's review (P08.S06c) proposes a structure for the open document, and has none to propose for without one.
+  'tagsBtn',
   // Found by widening doccontrols' scan from the Edit pane to every pane (v1.120.0): all
   // three act on the open document and none was gated, so they were clickable with nothing
   // open — the same defect the drawing-row comment below records for Border/Note/Shapes.
