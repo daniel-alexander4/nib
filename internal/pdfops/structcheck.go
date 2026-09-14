@@ -32,6 +32,10 @@ import (
 
 // structDefect is one broken invariant, named in the document's own terms.
 type structDefect struct {
+	// key identifies the defect by what is broken — a page's key, an MCID, the owning object — and never
+	// by an element's type, so an edit that retypes an element does not make an old defect read as new
+	// (P09.S02 compares keys before and after an edit).
+	key  string
 	what string
 }
 
@@ -56,7 +60,7 @@ func (d structDefect) String() string { return d.what }
 //     nothing but a check makes them agree.
 func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect {
 	var out []structDefect
-	add := func(f string, a ...any) { out = append(out, structDefect{fmt.Sprintf(f, a...)}) }
+	add := func(key, f string, a ...any) { out = append(out, structDefect{key: key, what: fmt.Sprintf(f, a...)}) }
 
 	nums, single := parentTreeEntries(ctx, tree)
 
@@ -77,7 +81,7 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 		}
 		sp, ok := spRaw.(types.Integer)
 		if !ok {
-			add("page %d has a /StructParents that is not an integer (%T)", p, spRaw)
+			add(fmt.Sprintf("structparents-type page=%d", p), "page %d has a /StructParents that is not an integer (%T)", p, spRaw)
 			continue
 		}
 		key := sp.Value()
@@ -85,11 +89,11 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 		arr, isArray := nums[key]
 		if !isArray {
 			if _, isSingle := single[key]; isSingle {
-				add("page %d declares /StructParents %d, and that ParentTree entry is a single "+
+				add(fmt.Sprintf("structparents-single page=%d key=%d", p, key), "page %d declares /StructParents %d, and that ParentTree entry is a single "+
 					"element rather than an array — every MCID on the page past 0 resolves to nothing",
 					p, key)
 			} else {
-				add("page %d declares /StructParents %d, and the ParentTree has no entry %d — "+
+				add(fmt.Sprintf("structparents-missing page=%d key=%d", p, key), "page %d declares /StructParents %d, and the ParentTree has no entry %d — "+
 					"every MCID on that page is unreachable from the tree", p, key, key)
 			}
 			continue
@@ -105,7 +109,7 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 			}
 			pg := k.pgObj
 			if pg == 0 {
-				add("an element of type /%s owns /MCID %d and names no page", e.kind, k.mcid)
+				add(fmt.Sprintf("mcid-no-page obj=%d mcid=%d", e.objNr, k.mcid), "an element of type /%s owns /MCID %d and names no page", e.kind, k.mcid)
 				continue
 			}
 			key, known := pageKey[pg]
@@ -116,12 +120,12 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 			}
 			arr := nums[key]
 			if k.mcid < 0 || k.mcid >= len(arr) {
-				add("an element of type /%s claims /MCID %d, and the ParentTree array for its "+
+				add(fmt.Sprintf("mcid-range obj=%d key=%d mcid=%d", e.objNr, key, k.mcid), "an element of type /%s claims /MCID %d, and the ParentTree array for its "+
 					"page (key %d) has %d slot(s)", e.kind, k.mcid, key, len(arr))
 				continue
 			}
 			if e.objNr != 0 && arr[k.mcid] != 0 && arr[k.mcid] != e.objNr {
-				add("/MCID %d on the page with key %d maps to object %d in the ParentTree, but "+
+				add(fmt.Sprintf("mcid-owner key=%d mcid=%d obj=%d", key, k.mcid, e.objNr), "/MCID %d on the page with key %d maps to object %d in the ParentTree, but "+
 					"object %d is the element that claims it", k.mcid, key, arr[k.mcid], e.objNr)
 			}
 		}

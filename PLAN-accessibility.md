@@ -3091,7 +3091,7 @@ both page fallbacks, and a swallowed no-tree error. Three survived the first rou
 both page fallbacks — and each got a fixture. The slice gate does not fire (`pdfops` only); tiers 2–3 not
 run for this slice (no web change).
 
-#### P09.S02 — dictionary edits: retype, reorder, re-parent, alt text, header scope
+#### P09.S02 — dictionary edits: retype, reorder, re-parent, alt text, header scope *(done 2026-09-14, v1.129.86)*
 Scope: `pdfops` edits over an existing tree that touch no content stream: `/S`, a kid's position within
 its parent, a kid moved to another parent (both `/K` arrays and `/P`), `/Alt` on any element, `/Scope`
 on a `TH`. Refs D8.
@@ -3100,6 +3100,44 @@ Acceptance:
 - The stripped-`/Alt` fixture with alt restored clears veraPDF 7.3 t1; the stripped-`/Scope` fixture with
   scope restored clears 7.5 t1; neither adds a clause.
 - An edit naming an element the tree no longer has is refused as stale.
+
+**(build, 2026-09-14, v1.129.86.)** `applyStructEdits` in `internal/pdfops/structedit.go`.
+
+| measured | result |
+|---|---|
+| how LibreOffice stores what the edits touch | every `/A` DIRECT and unshared (18 dicts, 2 arrays, 0 references), every `/K` an array; other producers may do neither, so both the shared-reference and single-entry forms are driven by hand-built trees |
+| each edit on LibreOffice's own trees | retype, alt, reorder under the root, re-parent into the list, a two-edit batch, and a scope change: each visible in the re-read view, every marked element's type and text unchanged, the consistency invariants clean |
+| veraPDF on the table-and-figure document | original fails `7.1 t8`, `7.1 t10`; with `/Alt` and `/Scope` stripped it adds **7.3 t1** and **7.5 t1**; restored through three edits it fails `7.1 t8`, `7.1 t10` again — both cleared, nothing added |
+
+- **Pin — the ParentTree is not touched.** A slot names the element that owns an MCID, and no edit here
+  changes ownership; a move writes the two walk directions, the parent's `/K` and the element's `/P`.
+- **Pin — a scope edit never writes through an attribute object.** The Table attribute object is copied
+  onto the edited element; every other attribute object, references included, is kept as written.
+  Driven by two header cells sharing one indirect object.
+- **Pin — a position counts ELEMENT kids.** MCIDs interleaved in a `/K` keep their places.
+- **Pin — a batch re-reads the tree before each edit**, so a second move resolves "its current parent"
+  where the first put it.
+- **Pin — retype chooses a STANDARD type** (ISO 32000-1 §14.8.4); a custom name means something only
+  through a RoleMap, and a correction names what it means.
+- **Pin — a stale edit is its own sentence.** It is `ErrTagsStale` to `errors.Is` (so 409 at S04's route)
+  and speaks about a tree; the first cut reused P08's "the proposal does not match — propose again".
+- **Finding, fixed in the slice — `checkStructConsistency`'s defects were compared by their SENTENCE, and
+  the sentence names the element's type.** Retyping an element in a tree that already had a defect
+  changed that defect's text, so the edit read it as a new defect and refused itself. Defects now carry
+  a key of what is broken (page key, MCID, owning object) and never a type; the edit compares keys.
+- **Pin — the refusal of a defect an edit ADDS has no reachable stimulus.** None of the four edits can
+  change MCID ownership or a page's key, so no test can make an edit produce a new defect. It stays as a
+  backstop over the one invariant set the edits are argued not to touch, and is recorded as unproven
+  rather than implied covered.
+- **Pin — the tag source (D4) is not changed.** A corrected tree keeps the tier of the producer that wrote
+  it; ADR-031's claim is untouched.
+
+Twenty-one mutations red. First round, fourteen of seventeen: the type check, the retype write, alt
+escaping, alt removal, the TH-only and value checks, the attribute copy, the single attribute object kept,
+scope removal, the cycle check, `/P`, the indirect-`/K` write, and the index. Three survived — MCIDs counted
+as elements, the per-edit re-read, and the pre-existing-defect excuse — and each got a fixture; the third
+found the finding above. Then the stale error's `Is`, its wording, and sentence-keyed comparison. The slice
+gate does not fire (`pdfops` only).
 
 #### P09.S03 — mark an element's content as an artifact
 Scope: the one edit that touches content streams — its MCIDs' `BDC … EMC` become `/Artifact BMC … EMC`,
