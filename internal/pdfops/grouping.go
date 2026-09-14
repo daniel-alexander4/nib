@@ -109,7 +109,9 @@ func groupRuns(runs []textRun) pageLayout {
 func lineSegments(runs []textRun) []textLine {
 	var rs []textRun
 	for _, r := range runs {
-		if strings.TrimFunc(r.text, unicode.IsSpace) != "" {
+		// An artifact is text the document says is not content — a watermark, a running header — so it
+		// joins no line and starts no paragraph.
+		if !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != "" {
 			rs = append(rs, r)
 		}
 	}

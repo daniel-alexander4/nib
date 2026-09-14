@@ -191,6 +191,25 @@ func TestARunKnowsTheMarkedContentItIsIn(t *testing.T) {
 	}
 }
 
+// TestARunKnowsItIsAnArtifact — inside `/Artifact` by either operator, an MCID nested inside the
+// artifact does not make it content, and a sibling sequence after the artifact closes is content again.
+func TestARunKnowsItIsAnArtifact(t *testing.T) {
+	runs := walkContent(t, helveticaRes(),
+		"/Artifact BMC BT /F1 10 Tf (A) Tj ET EMC "+
+			"/Artifact <</Subtype /Watermark>> BDC BT /F1 10 Tf (B) Tj ET /P <</MCID 4>> BDC BT /F1 10 Tf (C) Tj ET EMC EMC "+
+			"/P <</MCID 5>> BDC BT /F1 10 Tf (D) Tj ET EMC "+
+			"BT /F1 10 Tf (E) Tj ET")
+	want := map[string]bool{"A": true, "B": true, "C": true, "D": false, "E": false}
+	if len(runs) != len(want) {
+		t.Fatalf("%d runs, want %d", len(runs), len(want))
+	}
+	for _, r := range runs {
+		if r.artifact != want[r.text] {
+			t.Errorf("run %q artifact=%v, want %v", r.text, r.artifact, want[r.text])
+		}
+	}
+}
+
 // TestARunKnowsTheBytesThatDrewIt — the span a commit brackets: each show operator with exactly its
 // own operands, in all four forms, and a run inside a form XObject says so.
 func TestARunKnowsTheBytesThatDrewIt(t *testing.T) {
