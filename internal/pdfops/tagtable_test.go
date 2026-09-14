@@ -206,6 +206,21 @@ var tagFates = map[string]tagFate{
 	// input is the point of it, and is measured where that belongs: `TestACommittedProposalReadsBackAsItsOwnTruth`
 	// and the ua1 differential in `TestACommitAddsNoUA1ClauseTheUntaggedDocumentLacked`.
 	"CommitTags": {verdict: "untouched", why: "refuses a document that already has a tree, so a tagged input's claim cannot be affected; an untagged input gains a tree, measured by the commit writer's own tests"},
+	// The structure editor (P09.S04): a correction to an existing tree keeps the tree and the claim over
+	// it. Driven with the edit that touches the least — an alternate description on the first element the
+	// fixture's tree lets an edit name.
+	"EditStructure": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		v, err := readStructureView(b)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range v.elements {
+			if e.id != 0 {
+				return EditStructure(b, []StructureEdit{{Kind: "alt", Element: e.id, Value: "census"}})
+			}
+		}
+		return nil, errNoStructTree
+	}},
 
 	// ── Declared but not driven, each with the reason. The completeness half still covers them.
 	"Encrypt":        {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},

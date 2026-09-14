@@ -10,6 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
 	"nib/mdpdf"
 )
 
@@ -207,5 +211,171 @@ func TestTheTagRoutesReachTheirDoors(t *testing.T) {
 		if !strings.Contains(commit, want) {
 			t.Errorf("handleTagsCommit does not call %s", want)
 		}
+	}
+	edit := fn("handleTagsEdit")
+	for _, want := range []string{"pdfops.EditStructure(", "s.commitMutation(", "sign.HasSignatureBlob("} {
+		if !strings.Contains(edit, want) {
+			t.Errorf("handleTagsEdit does not call %s", want)
+		}
+	}
+}
+
+// The structure editor's route — `PLAN-accessibility.md` P09.S04.
+
+// rootElement is one element directly under the structure tree root, as the document holds it.
+type rootElement struct {
+	obj    int
+	kind   string
+	hasAlt bool
+}
+
+// rootElements reads the elements directly under pdf's structure tree root; nil for a document with no
+// tree. The server has no tree route until S06, so a test reads the document itself.
+func rootElements(t *testing.T, pdf []byte) []rootElement {
+	t.Helper()
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := ctx.XRefTable.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := ctx.DereferenceDict(cat["StructTreeRoot"])
+	if root == nil {
+		return nil
+	}
+	kids, _ := ctx.DereferenceArray(root["K"])
+	var out []rootElement
+	for _, k := range kids {
+		ir, ok := k.(types.IndirectRef)
+		if !ok {
+			continue
+		}
+		d, _ := ctx.DereferenceDict(ir)
+		if d == nil {
+			continue
+		}
+		e := rootElement{obj: ir.ObjectNumber.Value()}
+		if n := d.NameEntry("S"); n != nil {
+			e.kind = *n
+		}
+		_, e.hasAlt = d["Alt"]
+		out = append(out, e)
+	}
+	return out
+}
+
+// committedTagsFixture opens the untagged fixture and commits its proposal as proposed.
+func committedTagsFixture(t *testing.T) (string, *http.Client, string) {
+	t.Helper()
+	base, c, csrf := openTagsFixture(t, untaggedTagsFixture(t))
+	if code, body := postTags(t, c, csrf, base+"/api/tags/commit", reviewBody(proposeOpen(t, c, base), nil)); code != http.StatusOK {
+		t.Fatalf("setup: commit = %d: %s", code, body)
+	}
+	return base, c, csrf
+}
+
+// TestTheEditRouteCorrectsTheTreeAndOneUndoTakesTheBatchBack — a retype and an alt text in one batch
+// reach the document, and ONE undo takes both back: a second undo is the commit's.
+func TestTheEditRouteCorrectsTheTreeAndOneUndoTakesTheBatchBack(t *testing.T) {
+	base, c, csrf := committedTagsFixture(t)
+	els := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if len(els) < 2 || els[0].kind != "H1" || els[1].kind != "P" || els[1].hasAlt {
+		t.Fatalf("setup: the committed tree's top level reads %+v", els)
+	}
+	code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{
+		{"kind": "retype", "element": els[0].obj, "value": "H2"},
+		{"kind": "alt", "element": els[1].obj, "value": "An opening paragraph"},
+	}})
+	if code != http.StatusOK {
+		t.Fatalf("edit = %d: %s", code, body)
+	}
+	edited := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if len(edited) != len(els) || edited[0].kind != "H2" || !edited[1].hasAlt {
+		t.Fatalf("after the edit the top level reads %+v", edited)
+	}
+	if code, body = postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("undo = %d: %s", code, body)
+	}
+	undone := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if len(undone) != len(els) || undone[0].kind != "H1" || undone[1].hasAlt {
+		t.Errorf("one undo left %+v — the batch is not one step", undone)
+	}
+	if code, body = postTags(t, c, csrf, base+"/api/undo", map[string]any{}); code != http.StatusOK {
+		t.Fatalf("second undo = %d: %s", code, body)
+	}
+	if again := rootElements(t, getBytes(t, c, base+"/api/pdf")); again != nil {
+		t.Errorf("a second undo should take back the commit, and the tree reads %+v", again)
+	}
+}
+
+// TestTheEditRouteRefusesASignedDocumentAtTheDoor — whatever the client sends, and before any edit runs.
+func TestTheEditRouteRefusesASignedDocumentAtTheDoor(t *testing.T) {
+	base, c, csrf := openTagsFixture(t, threeSigned(t))
+	before := getBytes(t, c, base+"/api/pdf")
+	code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{
+		{"kind": "alt", "element": 1, "value": "x"},
+	}})
+	if code != http.StatusConflict || !strings.Contains(body, "signed") {
+		t.Errorf("a signed document: edit = %d %q, want 409 naming the signature", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused edit changed the signed document")
+	}
+}
+
+// TestTheEditRouteTellsAStaleEditFromAMalformedOne — 409 for an element or a tree the document no
+// longer has; 400 for an edit no document could take. Nothing is written either way.
+func TestTheEditRouteTellsAStaleEditFromAMalformedOne(t *testing.T) {
+	base, c, csrf := committedTagsFixture(t)
+	els := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	before := getBytes(t, c, base+"/api/pdf")
+	for _, tc := range []struct {
+		name string
+		edit map[string]any
+		want int
+	}{
+		{"an element the tree does not have", map[string]any{"kind": "alt", "element": 999999, "value": "x"}, http.StatusConflict},
+		{"an edit that is not one", map[string]any{"kind": "paint", "element": els[0].obj}, http.StatusBadRequest},
+		{"a type that is not standard", map[string]any{"kind": "retype", "element": els[0].obj, "value": "Bogus"}, http.StatusBadRequest},
+	} {
+		code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{tc.edit}})
+		if code != tc.want {
+			t.Errorf("%s: edit = %d %q, want %d", tc.name, code, body, tc.want)
+		}
+	}
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{}}); code != http.StatusBadRequest {
+		t.Errorf("no edits: edit = %d %q, want 400", code, body)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Error("a refused edit changed the document")
+	}
+
+	untagged, uc, ucsrf := openTagsFixture(t, untaggedTagsFixture(t))
+	if code, body := postTags(t, uc, ucsrf, untagged+"/api/tags/edit", map[string]any{"edits": []map[string]any{
+		{"kind": "alt", "element": 5, "value": "x"},
+	}}); code != http.StatusConflict || strings.Contains(body, "propos") {
+		t.Errorf("a document with no tree: edit = %d %q, want 409 in a tree's terms — the tree the reviewer read is gone", code, body)
+	}
+}
+
+// TestAMoveWithNoIndexGoesToTheEnd — the route's one translation: a position the client leaves out
+// appends, where Go's zero value would have put the element first.
+func TestAMoveWithNoIndexGoesToTheEnd(t *testing.T) {
+	base, c, csrf := committedTagsFixture(t)
+	els := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if code, body := postTags(t, c, csrf, base+"/api/tags/edit", map[string]any{"edits": []map[string]any{
+		{"kind": "move", "element": els[0].obj},
+	}}); code != http.StatusOK {
+		t.Fatalf("edit = %d: %s", code, body)
+	}
+	moved := rootElements(t, getBytes(t, c, base+"/api/pdf"))
+	if len(moved) != len(els) || moved[len(moved)-1].kind != "H1" || moved[0].kind == "H1" {
+		var kinds []string
+		for _, e := range moved {
+			kinds = append(kinds, e.kind)
+		}
+		t.Errorf("a move with no index reads %v — want the heading last", kinds)
 	}
 }

@@ -3183,12 +3183,38 @@ enclosed" (no artifacted element was followed by another's sequence), the no-Par
 positive fixture's page named no key, so the path was never reached), and the per-stream shrink of the
 open-sequence stack (no form left a sequence open). The slice gate does not fire (`pdfops` only).
 
-#### P09.S04 — the routes
+#### P09.S04 — the routes *(done 2026-09-14, v1.129.88)*
 Scope: `POST /api/tags/edit` — a batch of S02/S03 edits against the tree S01 served — through
 `commitMutation`, so undo holds. Refs ADR-001, ADR-008.
 Acceptance:
 - A signed document is refused at the server door; an edit against a tree that changed is 409.
 - One batch is one undo step, and `POST /api/undo` restores the prior bytes.
+
+**(build, 2026-09-14, v1.129.88.)** `pdfops.EditStructure` (`structedit.go`) and `POST /api/tags/edit`
+(`internal/server/tags.go`).
+
+| measured | result |
+|---|---|
+| a batch through the route | a retype and an alt text on a committed proposal reach the document; ONE `POST /api/undo` takes both back, and a second takes back the commit (the tree is gone) |
+| refusals at the route | a signed document 409 naming the signature, bytes unchanged; an element the tree does not have 409; an edit kind that is not one, a non-standard type, and an empty batch 400; a document with no tree 409 — nothing written in any case |
+| a move with no `index` | appends — the route translates an absent position, where Go's zero value would have put the element first |
+| the standing guards | law 2's census drives `EditStructure` (an alt text on the fixture's first addressable element) and measures `carried`; the `resolveDoc` count 28 → 29; zero-caller satisfied by the route; `published.test.mjs` 4/4 (the request shape is anonymous, as the commit's is) |
+
+- **Pin — the route reads the tree from the document, and so do its tests.** The GET tree route and its
+  reader land with S06; until then the server tests find element object numbers by parsing `/api/pdf`,
+  and compare after an edit by position and type, since a write may renumber.
+- **Pin — a document with no tree is STALE (409), not malformed.** The reviewer was shown a tree.
+- **Finding, fixed in the slice — the no-tree refusal spoke about a proposal.** It wrapped `ErrTagsStale`
+  with `%w`, and that sentinel's own text is P08's "the proposal does not match the document any more";
+  the mutation probe's output showed it. It is `staleEdit` now, S02's tree-worded stale error, and the
+  route test refuses a 409 that mentions a proposal.
+- **Pin — the unknown-kind check is an equivalent mutation.** Without it a zero kind still reaches
+  `applyStructEdit`'s default, `ErrTagsReview`; the check is kept for the sentence it gives.
+
+Six mutations red: the signed check, stale answered 400, an absent index read as 0, the no-tree mapping,
+`commitMutation` bypassed (caught by the routing test), and the proposal wording on a missing tree. The
+slice gate does not fire: `internal/server`'s tag routes, not its session, ceremony, delivery or
+discovery paths.
 
 #### P09.S05 — the checker sees what the editor fixes: 7.3 t1 and 7.5 t1
 Scope: two `uacheck` rules, registered like the other fifteen. Refs P07, `/pending 486`.
