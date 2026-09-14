@@ -473,3 +473,105 @@ func markedFalse(t *testing.T, pdf []byte) []byte {
 		return nil
 	})
 }
+
+// pageContentEmptied replaces page 1's content with a path, so the only text left is in annotation
+// appearances.
+func pageContentEmptied(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		page, _, _, err := ctx.PageDict(1, false)
+		if err != nil {
+			return err
+		}
+		sd, err := ctx.NewStreamDictForBuf([]byte("0 0 m 10 10 l S"))
+		if err != nil {
+			return err
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		page["Contents"] = *ref
+		return nil
+	})
+}
+
+// cidSetMode is which /CIDSet withCIDSet writes.
+type cidSetMode int
+
+const (
+	// cidExact is every maxp glyph slot and nothing else — what veraPDF passes.
+	cidExact cidSetMode = iota
+	// cidPartial is only the first byte's eight CIDs — an under-claim.
+	cidPartial
+	// cidPadded is every slot plus the unused bits of the last byte — an over-claim.
+	cidPadded
+)
+
+// withCIDSet gives every TrueType font descriptor a /CIDSet of the given shape.
+//
+// **Its first version wrote 0xFF into every byte for the "full" case**, which also set the unused
+// bits of the last byte — an over-claim — so the fixture meant to pass was one veraPDF FAILS, and
+// nib's rule, checking only coverage, passed it. The law 5 check caught the disagreement.
+func withCIDSet(t *testing.T, pdf []byte, mode cidSetMode) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		added := 0
+		for _, e := range ctx.XRefTable.Table {
+			if e == nil {
+				continue
+			}
+			d, ok := e.Object.(types.Dict)
+			if !ok {
+				continue
+			}
+			if ty := d.NameEntry("Type"); ty == nil || *ty != "FontDescriptor" {
+				continue
+			}
+			ff, _, _ := ctx.DereferenceStreamDict(d["FontFile2"])
+			if ff == nil || ff.Decode() != nil {
+				continue
+			}
+			n, err := trueTypeGlyphCount(ff.Content)
+			if err != nil {
+				return err
+			}
+			set := make([]byte, (n+7)/8)
+			for cid := 0; cid < len(set)*8; cid++ {
+				on := false
+				switch mode {
+				case cidExact:
+					on = cid < n
+				case cidPartial:
+					on = cid < 8
+				case cidPadded:
+					on = true
+				}
+				if on {
+					set[cid/8] |= 0x80 >> uint(cid%8)
+				}
+			}
+			if mode == cidPadded && n%8 == 0 {
+				return fmt.Errorf("setup: numGlyphs %d is a multiple of 8, so padding bits do not exist", n)
+			}
+			sd, err := ctx.NewStreamDictForBuf(set)
+			if err != nil {
+				return err
+			}
+			if err := sd.Encode(); err != nil {
+				return err
+			}
+			ref, err := ctx.IndRefForNewObject(*sd)
+			if err != nil {
+				return err
+			}
+			d["CIDSet"] = *ref
+			added++
+		}
+		if added == 0 {
+			return fmt.Errorf("the fixture has no TrueType font descriptor to give a /CIDSet")
+		}
+		return nil
+	})
+}

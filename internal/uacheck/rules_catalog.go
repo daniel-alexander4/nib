@@ -205,7 +205,8 @@ func checkContentLanguage(d *Document) Result {
 	}
 	texts := 0
 	for _, ev := range events {
-		if !ev.text || ev.artifact {
+		// Appearance streams are outside "page content" for this clause, as they are for 7.1 t3.
+		if !ev.text || ev.artifact || ev.appearance {
 			continue
 		}
 		texts++

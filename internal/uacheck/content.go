@@ -27,12 +27,35 @@ import (
 type contentEvent struct {
 	where string // human-readable location, modelled on veraPDF's context path
 	text  bool   // a text-showing operator (Tj, TJ, ', ")
+	// appearance is whether the operator is in an annotation's appearance stream rather than page
+	// content. 7.1 t3 reads page content only — veraPDF does not apply it to appearances — while
+	// the font rules read both, because an appearance stream renders glyphs like any other stream.
+	appearance bool
+	// font is the font dictionary in force for a text operator, resolved through the stream's
+	// resources, and fontName the resource name it was selected by (`/F1`). Nil when no `Tf` had set
+	// one, which a conforming stream never does and which the font rules report as CannotCheck.
+	font     types.Dict
+	fontName string
+	fontObj  int
+	// invisible is render mode 3 (neither fill nor stroke). veraPDF does not count invisible text
+	// as "used for rendering": measured, a non-embedded Helvetica in `3 Tr` passes 7.21.4.1 and the
+	// same text drawn visibly fails it. An OCR layer is exactly this text.
+	invisible bool
 	// covered is whether some enclosing marked-content sequence is an artifact or carries an MCID —
 	// the two states 7.1 t3 accepts.
 	covered  bool
 	artifact bool // the nearest relevant enclosing sequence is an /Artifact
 	mcid     int  // the innermost MCID in force, or -1
 	spKey    int  // the /StructParents key of the stream that owns mcid, or -1
+}
+
+// textState is the part of the graphics state the font rules need. `Tf` and `Tr` are graphics
+// state, saved by `q` and restored by `Q`, and NOT reset by `BT`/`ET` — both measured against veraPDF:
+// a `3 Tr` inside `q … Q` does not survive the `Q`, and one set inside a closed `BT … ET` does survive
+// into the next text object.
+type textState struct {
+	fontName   string
+	renderMode int
 }
 
 // frame is one open marked-content sequence.
@@ -88,14 +111,84 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey}
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
 	}
+	d.walkAppearances()
 	return d.content, d.contentErr
+}
+
+// walkAppearances walks every annotation's appearance streams, as page content's sibling.
+//
+// veraPDF locates the authored form's non-embedded Helvetica at
+// `annots[0]/appearance[0]/contentStream[0]/operators[10]/font[0]` — an appearance stream renders
+// glyphs, so the font rules must read it. It is walked AFTER page content, and its events are
+// flagged, because 7.1 t3 does not apply to appearances and must not start failing forms on content
+// veraPDF does not ask about.
+func (d *Document) walkAppearances() {
+	for p := 1; p <= d.Ctx.PageCount; p++ {
+		page, _, _, err := d.Ctx.PageDict(p, false)
+		if err != nil || page == nil {
+			continue
+		}
+		annots, _ := d.Ctx.DereferenceArray(page["Annots"])
+		for i, a := range annots {
+			ad := d.dict(a)
+			if ad == nil {
+				continue
+			}
+			ap := d.dict(ad["AP"])
+			if ap == nil {
+				continue
+			}
+			for _, key := range []string{"N", "R", "D"} {
+				for state, so := range d.appearanceStreams(ap[key]) {
+					sd, _, serr := d.Ctx.DereferenceStreamDict(so)
+					if serr != nil || sd == nil {
+						continue
+					}
+					if derr := sd.Decode(); derr != nil {
+						d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s stream could not be decoded: %v", p, i, key, derr)
+						return
+					}
+					res := d.dict(sd.Dict["Resources"])
+					if res == nil {
+						res = d.resourcesOf(page)
+					}
+					label := fmt.Sprintf("page %d, annotation %d, appearance /%s", p, i, key)
+					if state != "" {
+						label += " /" + state
+					}
+					w := walker{d: d, where: label, spKey: -1, appearance: true}
+					w.walk(sd.Content, res, nil, map[int]bool{}, 0)
+				}
+			}
+		}
+	}
+}
+
+// appearanceStreams returns the streams under one /AP entry, keyed by appearance state — an entry is
+// either a stream itself or a dictionary of states (`/Off`, `/Yes`) each naming a stream.
+func (d *Document) appearanceStreams(o types.Object) map[string]types.Object {
+	out := map[string]types.Object{}
+	if o == nil {
+		return out
+	}
+	if sd, _, err := d.Ctx.DereferenceStreamDict(o); err == nil && sd != nil {
+		out[""] = o
+		return out
+	}
+	if states := d.dict(o); states != nil {
+		for k, v := range states {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // walker carries one stream's context through a walk.
 type walker struct {
-	d     *Document
-	where string
-	spKey int
+	d          *Document
+	where      string
+	spKey      int
+	appearance bool
 }
 
 // walk classifies one content stream's drawing operators, recursing into form XObjects.
@@ -108,7 +201,17 @@ func (w walker) walk(src []byte, res types.Dict, inherited []frame, chain map[in
 	if depth > 8 {
 		return
 	}
+	w.walkWithState(src, res, inherited, chain, depth, textState{})
+}
+
+// walkWithState is walk with the text state in force at the point of invocation — a form XObject
+// inherits the invoking stream's graphics state (ISO 32000-1 §8.10.1).
+func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, chain map[int]bool, depth int, ts textState) {
+	if depth > 8 {
+		return
+	}
 	stack := append([]frame(nil), inherited...)
+	gs := []textState{}
 	var operands []contentstream.Token
 	opIndex := 0
 	for _, tk := range contentstream.Tokenize(src) {
@@ -117,7 +220,7 @@ func (w walker) walk(src []byte, res types.Dict, inherited []frame, chain map[in
 			continue
 		case contentstream.InlineImage:
 			opIndex++
-			w.record(stack, false, fmt.Sprintf("%s, operator #%d `BI … EI` (inline image)", w.where, opIndex))
+			w.d.content = append(w.d.content, w.event(stack, false, fmt.Sprintf("%s, operator #%d `BI … EI` (inline image)", w.where, opIndex)))
 			operands = operands[:0]
 			continue
 		case contentstream.Operator:
@@ -140,12 +243,40 @@ func (w walker) walk(src []byte, res types.Dict, inherited []frame, chain map[in
 			if len(stack) > len(inherited) {
 				stack = stack[:len(stack)-1]
 			}
+		case "q":
+			gs = append(gs, ts)
+		case "Q":
+			if n := len(gs); n > 0 {
+				ts, gs = gs[n-1], gs[:n-1]
+			}
+		case "Tf":
+			if name := w.firstName(src, operands); name != "" {
+				ts.fontName = name
+			}
+		case "Tr":
+			for _, o := range operands {
+				if n, err := strconv.Atoi(string(o.Bytes(src))); err == nil {
+					ts.renderMode = n
+				}
+			}
 		case "Do":
 			name := w.firstName(src, operands)
-			w.doXObject(name, res, stack, chain, depth, opIndex)
+			w.doXObject(name, res, stack, chain, depth, opIndex, ts)
 		default:
 			if textOperators[op] || paintOperators[op] {
-				w.record(stack, textOperators[op], fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op))
+				ev := w.event(stack, textOperators[op], fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op))
+				if ev.text {
+					ev.fontName = ts.fontName
+					ev.invisible = ts.renderMode == 3
+					if fonts := w.d.dict(res["Font"]); fonts != nil && len(ts.fontName) > 1 {
+						raw := fonts[ts.fontName[1:]]
+						ev.font = w.d.dict(raw)
+						if ir, ok := raw.(types.IndirectRef); ok {
+							ev.fontObj = ir.ObjectNumber.Value()
+						}
+					}
+				}
+				w.d.content = append(w.d.content, ev)
 			}
 		}
 		operands = operands[:0]
@@ -153,21 +284,21 @@ func (w walker) walk(src []byte, res types.Dict, inherited []frame, chain map[in
 }
 
 // doXObject handles `Do`: an image is drawn content; a form is walked with its own resources.
-func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[int]bool, depth, opIndex int) {
+func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[int]bool, depth, opIndex int, ts textState) {
 	where := fmt.Sprintf("%s, operator #%d `%s Do`", w.where, opIndex, name)
 	xobjs := w.d.dict(res["XObject"])
 	if xobjs == nil || len(name) < 2 {
-		w.record(stack, false, where+" (unresolvable XObject)")
+		w.d.content = append(w.d.content, w.event(stack, false, where+" (unresolvable XObject)"))
 		return
 	}
 	raw := xobjs[name[1:]]
 	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
 	if err != nil || sd == nil {
-		w.record(stack, false, where+" (unresolvable XObject)")
+		w.d.content = append(w.d.content, w.event(stack, false, where+" (unresolvable XObject)"))
 		return
 	}
 	if sub := sd.Dict.NameEntry("Subtype"); sub == nil || *sub != "Form" {
-		w.record(stack, false, where+" (image)")
+		w.d.content = append(w.d.content, w.event(stack, false, where+" (image)"))
 		return
 	}
 	objNr := 0
@@ -185,7 +316,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if formRes == nil {
 		formRes = res
 	}
-	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey}
+	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance}
 	if sp, ok := sd.Dict["StructParents"].(types.Integer); ok {
 		inner.spKey = sp.Value()
 	}
@@ -193,12 +324,12 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	for k := range chain {
 		next[k] = true
 	}
-	inner.walk(sd.Content, formRes, stack, next, depth+1)
+	inner.walkWithState(sd.Content, formRes, stack, next, depth+1, ts)
 }
 
-// record adds one event, deriving its coverage from the open sequences.
-func (w walker) record(stack []frame, text bool, where string) {
-	ev := contentEvent{where: where, text: text, mcid: -1, spKey: -1}
+// event builds one event, deriving its coverage from the open sequences.
+func (w walker) event(stack []frame, text bool, where string) contentEvent {
+	ev := contentEvent{where: where, text: text, mcid: -1, spKey: -1, appearance: w.appearance}
 	for i := len(stack) - 1; i >= 0; i-- {
 		f := stack[i]
 		if f.artifact || f.mcid >= 0 {
@@ -211,7 +342,7 @@ func (w walker) record(stack []frame, text bool, where string) {
 			ev.artifact = true
 		}
 	}
-	w.d.content = append(w.d.content, ev)
+	return ev
 }
 
 // firstName returns the first name operand, or "".

@@ -2326,7 +2326,7 @@ Acceptance:
 - **P01's real tagged PDFs are gone.** `find / -name boi.pdf -o -name adgm_va.pdf` returns nothing;
   only their names survive in this plan. S05's corpus is regenerated from D9's LibreOffice recipe.
 
-#### P07.S04 — the font rules
+#### P07.S04 — the font rules *(done 2026-09-14, v1.129.67)*
 Scope: `7.21.4.1 t1`, `7.21.7 t1`, `7.21.4.2 t2`. `nonEmbeddedFonts()` exists and P04 built the
 `/CIDSet` reader; this is mostly wiring, plus the ToUnicode rule which is new. Refs `/pending 479`,
 which this slice's own reader will confirm or refute.
@@ -2335,7 +2335,31 @@ Acceptance:
   fonts — so `/pending 479` gets a standing reader rather than a one-off measurement.
 - A Base-14 font is reported as not embedded, and the report says which face on which page.
 
-#### P07.S05 — the oracle validates the checker
+**(grill + step zero, 2026-09-14 — AMENDED. Four measurements, each of which changes a rule.)**
+
+| measured on veraPDF ua1 | result |
+|---|---|
+| a non-embedded font in resources, never selected by `Tf` | passes 7.21.4.1 — **"used for rendering" is literal**, so the rule reads fonts that text operators SELECT, including in widget appearance streams (veraPDF located the form's Helvetica at `annots[0]/appearance[0]/contentStream[0]/operators[10]/font[0]`). `pdfops.nonEmbeddedFonts` walks the whole xref table and would over-report |
+| render modes | `3 Tr` (invisible) is exempt from 7.21.4.1; `7 Tr` (clip) is NOT; `Q` restores the mode and `ET` does not reset it |
+| 7.21.7 t1 | Helvetica maps with or without `/Encoding`; Symbol and ZapfDingbats do not; **invisible text is NOT exempt** — the asymmetry with 7.21.4.1 |
+| 7.21.4.2 t2's population | pdfcpu keeps 3359 glyph slots and empties all but 8. A `/CIDSet` of the non-empty glyphs FAILS; one of every `maxp` slot PASSES. **The population is `numGlyphs`**, so the rule reads `maxp` alone |
+
+**`/pending 479`'s second clause was misattributed, and is corrected in the entry.** A text-only form
+fails 7.21.4.1 t1 alone; a checkbox-only form fails 7.21.7 t1 as well — the ZapfDingbats in the
+checkbox's `/AP /N /Yes` appearance. The P06 fixture had both field kinds, so the two clauses arrived
+together and were read as cause and effect. Embedding a text face would not clear 7.21.7.
+
+**The `/CIDSet` must be EXACT, and nib had it half right until law 5 said otherwise.** The first
+rule checked only that every glyph slot was covered. The live agreement run at this slice's close
+disagreed on one document — nib passed a set veraPDF failed — and the measurement that followed:
+exactly slots 0…`numGlyphs`−1 PASSES; the same set with the last byte's unused bits on FAILS; an
+extra byte of set bits FAILS. Over-claiming is a breach, the rule now refuses it, and the fixture that
+produced the disagreement had written `0xFF` into every byte. **That is the first finding law 5's
+check produced against the checker itself**, which is the reason the law exists.
+
+**Unmeasured cases are `CannotCheck`, never inferred.** 7.21.7 for a non-Base-14 font without a
+`/ToUnicode` (including `Identity-H`) is not something this slice measured, so it is reported as a
+gap nib names rather than a verdict nib guesses. S05's corpus is where those rows get measured.
 Scope: **law 5, and the slice the whole phase rests on.** For every corpus document, nib's verdict
 per clause agrees with veraPDF's, or nib says `cannot check`. The corpus grows from one document to
 the shapes P06 produces. Refs law 5, D12, exit criterion 1.
