@@ -419,3 +419,31 @@ func TestAPropertyIsReadByNamespaceNotByPrefix(t *testing.T) {
 			got.Verdict, got.Why)
 	}
 }
+
+// TestMetadataLanguageFollowsTheLanguageAlternatives — 7.2 t33, as law 5 measured it.
+func TestMetadataLanguageFollowsTheLanguageAlternatives(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alt := func(prop, lang string) string {
+		return `<dc:` + prop + `><rdf:Alt><rdf:li xml:lang="` + lang + `">text</rdf:li></rdf:Alt></dc:` + prop + `>`
+	}
+	for _, c := range []struct {
+		name string
+		body string
+		want Verdict
+	}{
+		{"dc:title x-default, no catalog /Lang", alt("title", "x-default"), Fail},
+		{"dc:description x-default", alt("description", "x-default"), Fail},
+		{"dc:rights x-default", alt("rights", "x-default"), Fail},
+		{"dc:creator as a Seq — no language alternative", `<dc:creator><rdf:Seq><rdf:li>Someone</rdf:li></rdf:Seq></dc:creator>`, NotApplicable},
+		{"xmp:CreateDate alone", `<xmp:CreateDate>2026-09-14T00:00:00Z</xmp:CreateDate>`, NotApplicable},
+		{"dc:title with its own xml:lang, no catalog /Lang", alt("title", "en"), Pass},
+	} {
+		got := verdictOf(t, withPacketBody(t, titled, c.body), "7.2 t33")
+		if got.Verdict != c.want {
+			t.Errorf("%s: 7.2 t33 reports %v (%s), want %v — measured against veraPDF", c.name, got.Verdict, got.Why, c.want)
+		}
+	}
+}

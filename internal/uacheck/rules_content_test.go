@@ -117,11 +117,14 @@ func TestAnArtifactIsCoveredAndAnMCIDIsCoveredAndNothingElseIs(t *testing.T) {
 	}
 }
 
-// TestTheWidgetLinkageIsCheckedInBothDirections — the slice's second acceptance clause.
+// TestTheWidgetIsReadFromTheAnnotationUpAsVeraPDFReadsIt — the slice's second acceptance clause,
+// as amended by law 5.
 //
-// Each case breaks exactly one of the three things that must agree, starting from a document P06.S07
-// produced and this rule passes.
-func TestTheWidgetLinkageIsCheckedInBothDirections(t *testing.T) {
+// This test used to be `…IsCheckedInBothDirections` and required the element's OBJR to name the
+// widget back. The S05 guard found nib failing a document veraPDF passes, and the measurement was
+// one link at a time: OBJR removed → veraPDF PASSES; `/StructParent` removed → FAILS; element retyped
+// `Div` → FAILS. So the OBJR case is now a PASS row, asserted, rather than silently dropped.
+func TestTheWidgetIsReadFromTheAnnotationUpAsVeraPDFReadsIt(t *testing.T) {
 	plain, err := testpdf.Text("host")
 	if err != nil {
 		t.Fatal(err)
@@ -138,26 +141,22 @@ func TestTheWidgetLinkageIsCheckedInBothDirections(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		pdf  []byte
-		want string
+		want Verdict
+		why  string
 	}{
-		{"the annotation's /StructParent removed", widgetMutation(t, described, "drop-structparent"), "no /StructParent"},
-		{"the element retyped Div", widgetMutation(t, described, "retype-div"), `"Div"`},
-		{"the OBJR removed from the element", widgetMutation(t, described, "drop-objr"), "no OBJR"},
+		{"the annotation's /StructParent removed", widgetMutation(t, described, "drop-structparent"), Fail, "no /StructParent"},
+		{"the element retyped Div", widgetMutation(t, described, "retype-div"), Fail, `"Div"`},
+		{"the OBJR removed from the element — veraPDF passes it", widgetMutation(t, described, "drop-objr"), Pass, ""},
+		{"a custom type role-mapped to Form", widgetMutation(t, described, "rolemap-form"), Pass, ""},
 	} {
 		got := verdictOf(t, c.pdf, "7.18.4 t1")
-		if got.Verdict != Fail {
-			t.Errorf("%s: 7.18.4 t1 reports %v, want Fail", c.name, got.Verdict)
+		if got.Verdict != c.want {
+			t.Errorf("%s: 7.18.4 t1 reports %v (%s), want %v", c.name, got.Verdict, got.Why, c.want)
 			continue
 		}
-		if !strings.Contains(got.Why, c.want) {
-			t.Errorf("%s: the reason %q does not name %s", c.name, got.Why, c.want)
+		if c.why != "" && !strings.Contains(got.Why, c.why) {
+			t.Errorf("%s: the reason %q does not name %s", c.name, got.Why, c.why)
 		}
-	}
-	// And the role map is resolved: a custom type mapped to Form passes.
-	if got := verdictOf(t, widgetMutation(t, described, "rolemap-form"), "7.18.4 t1"); got.Verdict != Pass {
-		t.Errorf("a widget in a /MyField element role-mapped to /Form reports %v (%s), want Pass — "+
-			"veraPDF resolves the role map, so another producer's correct form would fail here",
-			got.Verdict, got.Why)
 	}
 }
 

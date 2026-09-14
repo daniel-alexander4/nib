@@ -46,7 +46,9 @@ func TestTheFontRulesAgreeWithWhatVeraPDFSaid(t *testing.T) {
 		{"a checkbox-only form", "7.21.7 t1", checkForm, Fail},
 		{"converted Markdown", "7.21.4.1 t1", md, Pass},
 		{"converted Markdown", "7.21.7 t1", md, Pass},
-		{"converted Markdown", "7.21.4.2 t2", md, NotApplicable},
+		// Pass, not NotApplicable: the subject is the embedded CID font, and one without a /CIDSet
+		// satisfies the clause. The S05 guard found nib and veraPDF disagreeing on exactly this.
+		{"converted Markdown", "7.21.4.2 t2", md, Pass},
 	} {
 		got := verdictOf(t, c.pdf, c.clause)
 		if got.Verdict != c.want {
@@ -126,8 +128,11 @@ func TestACIDSetMustCoverEveryGlyphSlotNotEveryUsedGlyph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := verdictOf(t, md, "7.21.4.2 t2"); got.Verdict != NotApplicable {
-		t.Fatalf("control: nib's own Markdown carries no /CIDSet and reports %v", got.Verdict)
+	if got := verdictOf(t, md, "7.21.4.2 t2"); got.Verdict != Pass {
+		t.Fatalf("control: nib's own Markdown embeds CID fonts with no /CIDSet and reports %v, want Pass", got.Verdict)
+	}
+	if got := verdictOf(t, pageWithContent("BT /F1 12 Tf 72 700 Td (abc) Tj ET"), "7.21.4.2 t2"); got.Verdict != NotApplicable {
+		t.Errorf("a page with no embedded CID font reports %v for 7.21.4.2 t2, want NotApplicable", got.Verdict)
 	}
 	exact := withCIDSet(t, md, cidExact)
 	if got := verdictOf(t, exact, "7.21.4.2 t2"); got.Verdict != Pass {

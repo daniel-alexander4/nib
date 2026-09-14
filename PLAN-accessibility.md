@@ -2302,7 +2302,12 @@ Acceptance:
 - `7.1 t3` reports the OFFENDING content, not just the verdict — P01 spent a slice discovering
   veraPDF points at `xObject[0]/contentStream[0]/content[2]`, and a checker that only says "fails"
   reproduces the problem it exists to solve.
-- `7.18.4 t1` follows the `OBJR` linkage both ways, as P06.S07's reader does.
+- ~~`7.18.4 t1` follows the `OBJR` linkage both ways, as P06.S07's reader does.~~ **AMENDED by law 5
+  at P07.S05, 2026-09-14**: veraPDF reads the clause from the annotation up. Measured one link at a
+  time — `OBJR` removed PASSES, `/StructParent` removed FAILS, element retyped `Div` FAILS — so the
+  rule no longer requires the back-link, and a document missing it is a PASS row in its test rather
+  than a failure the oracle does not report. The writer still writes the `OBJR`; the structure tree
+  needs it for a reader walking down.
 - Every document P06 produces gets the verdict P06 measured for it, per clause.
 
 **(grill + step zero, 2026-09-14 — three findings, one of them a defect P06 closed over.)**
@@ -2360,6 +2365,7 @@ check produced against the checker itself**, which is the reason the law exists.
 **Unmeasured cases are `CannotCheck`, never inferred.** 7.21.7 for a non-Base-14 font without a
 `/ToUnicode` (including `Identity-H`) is not something this slice measured, so it is reported as a
 gap nib names rather than a verdict nib guesses. S05's corpus is where those rows get measured.
+#### P07.S05 — the oracle validates the checker *(done 2026-09-14, v1.129.68)*
 Scope: **law 5, and the slice the whole phase rests on.** For every corpus document, nib's verdict
 per clause agrees with veraPDF's, or nib says `cannot check`. The corpus grows from one document to
 the shapes P06 produces. Refs law 5, D12, exit criterion 1.
@@ -2370,6 +2376,40 @@ Acceptance:
 - The corpus has a **floor**: a minimum document count and a minimum count of clauses actually
   exercised, or the guard passes over an empty set — the shape `ua1oracle_test.go` already uses.
 - The guard SKIPS loudly when veraPDF is absent and says the criterion is unchecked, never passing.
+
+**(grill + step zero, 2026-09-14 — the gap S02 handed this slice is closed, and the guard's first run
+found a subject-definition defect.)**
+
+- **This heading was missing.** P07.S04's plan amendment replaced the text through this line and did
+  not put it back, and that went into `ff92db6`. Resume scans by heading, so a session dying there
+  would have skipped this slice. Restored before any S05 work.
+- **veraPDF can tell "passed" from "no subject" after all.** `--passed` lists every rule with
+  `passedChecks` and `failedChecks`; a rule at `0`/`0` had nothing to check. So the guard asserts
+  THREE states strictly — veraPDF failed ↔ nib `Fail`, passed with checks ↔ `Pass`, no subject ↔
+  `NotApplicable` — rather than scoring nib's `Pass` and `NotApplicable` both as agreement, which
+  S02's live check had to.
+- **First run: 191 of 195 (document, clause) pairs agree strictly**, over 13 documents, with zero
+  pass/fail contradictions and every no-subject rule matching `NotApplicable` exactly. **The four
+  mismatches were one defect in nib**: 7.21.4.2 t2 on an embedded CID font with NO `/CIDSet` —
+  veraPDF runs the check and passes it, nib called it not applicable. The clause's subject is the
+  embedded CID font, not the `/CIDSet`; the rule is corrected.
+**The guard's first run, and what it found beyond the draft — 298 of 300 pairs, two more defects in
+nib.** 7.18.4 t1 (above, in S03's amended clause) and 7.2 t33, whose subject is language-alternative
+metadata text rather than the packet merely existing: measured with no catalog `/Lang`, `dc:title`,
+`dc:description` and `dc:rights` as `rdf:Alt` with `x-default` FAIL; `dc:creator` as `rdf:Seq` and
+`xmp:CreateDate` alone have NO SUBJECT; and `dc:title` with `xml:lang="en"` PASSES — an alternative's
+own language satisfies the clause. P07.S02's rule read the catalog key alone. Both rules corrected,
+and each measured shape is now a corpus document so the rules cannot drift back.
+
+**The corpus also needed one fixture to reach every state.** `7.1 t9` was never FAILED by any
+product door; a packet without `dc:title` reaches it. `5 t1` is never PASSED until S07 writes the
+identification, and is declared not yet reachable with S07 as its gate — checked against the plan's
+marker, so S07 cannot ship without a corpus document that reaches it.
+
+- **A default LibreOffice conversion is tagged** — an ODT came out with 12 anchored elements and
+  records no nib source, which is right for a foreign producer — so real third-party structure joins
+  the corpus through `ConvertOfficeToPDF`, skipped loudly only where LibreOffice is absent. HTML is
+  not an office extension nib accepts, so the fixture is a generated ODT.
 
 #### P07.S06 — the UA export door and the report
 Scope: the carried-in P04.S04 criterion. One door that either exports a UA-labelled document or

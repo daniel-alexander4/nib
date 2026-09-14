@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -158,11 +159,21 @@ func checkDisplayDocTitle(d *Document) Result {
 	return Result{Verdict: Pass}
 }
 
-// checkMetadataLanguage evaluates ua1 7.2 t33.
+// checkMetadataLanguage evaluates ua1 7.2 t33 — natural language for document metadata.
 //
-// **Only the catalog `/Lang` determines it, and that is measured.** P06's close recorded that a
-// tagged document with an XMP packet and no catalog `/Lang` fails this clause, and that adding the
-// key clears it — nib's own `x-default` on `dc:title` does not satisfy it.
+// # The subject and the ways to satisfy it, both measured by law 5's guard
+//
+// The first version of this rule said "a packet exists and the catalog has no /Lang → Fail". The
+// S05 guard found veraPDF reporting NO SUBJECT on a packet holding only `xmp:CreateDate`, and the
+// measurement that followed, one packet shape at a time with no catalog /Lang:
+//
+//	dc:title / dc:description / dc:rights as rdf:Alt, xml:lang="x-default"  → FAILED
+//	dc:creator as rdf:Seq, or xmp:CreateDate alone                          → no subject
+//	dc:title as rdf:Alt with xml:lang="en"                                  → PASSED
+//
+// So the subject is language-alternative text, and each alternative is determined either by its own
+// `xml:lang` or — for `x-default`, which names no language — by the catalog /Lang. nib's own
+// `SetTitle` writes `x-default`, which is why a titled document with no /Lang fails.
 func checkMetadataLanguage(d *Document) Result {
 	x := readXMP(d)
 	if !x.Present {
@@ -171,16 +182,29 @@ func checkMetadataLanguage(d *Document) Result {
 			Why:     "the document has no metadata stream, so there is no metadata whose language could be determined",
 		}
 	}
-	if lang := catalogLang(d); lang != "" {
+	if !x.Readable {
+		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
+	}
+	if len(x.LangAlts) == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the metadata packet holds no language-alternative text, so it has no natural language to determine",
+		}
+	}
+	if catalogLang(d) != "" {
 		return Result{Verdict: Pass}
 	}
-	return Result{
-		Verdict: Fail,
-		Why: "the catalog declares no /Lang, so the language of the document's metadata cannot be " +
-			"determined. Measured at P06: nib's own `x-default` on dc:title does not satisfy this " +
-			"clause and the catalog key does",
-		Where: "catalog",
+	for _, lang := range x.LangAlts {
+		if lang == "" || strings.EqualFold(lang, "x-default") {
+			return Result{
+				Verdict: Fail,
+				Why: fmt.Sprintf("a metadata text alternative declares xml:lang %q, which names no language, "+
+					"and the catalog declares no /Lang to supply one", lang),
+				Where: "catalog /Metadata, rdf:Alt",
+			}
+		}
 	}
+	return Result{Verdict: Pass}
 }
 
 // checkContentLanguage evaluates ua1 7.2 t34 — with the tree walk P07.S02 deferred to this slice.

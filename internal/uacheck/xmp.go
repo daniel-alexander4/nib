@@ -50,6 +50,11 @@ type xmpFacts struct {
 	Title string
 	// UAPart is the `pdfuaid:part` value, empty when the identification schema is absent.
 	UAPart string
+	// LangAlts is every item of every language alternative (`rdf:Alt`) in the packet, with the
+	// `xml:lang` it declares — "" when it declares none. These are the metadata text 7.2 t33 is
+	// about, measured: `dc:title`, `dc:description` and `dc:rights` as `rdf:Alt` give the clause a
+	// subject, while `dc:creator` (an `rdf:Seq`) and `xmp:CreateDate` do not.
+	LangAlts []string
 	// Why carries the reason when Readable is false.
 	Why string
 }
@@ -88,6 +93,8 @@ func readXMP(d *Document) xmpFacts {
 	// is Readable=false, and the rules turn that into `CannotCheck` — the document may well carry
 	// what the clause wants, and nib is the thing that could not read it.
 	var path []xml.Name
+	const nsRDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+	const nsXML = "http://www.w3.org/XML/1998/namespace"
 	for {
 		tok, terr := dec.Token()
 		if terr == io.EOF {
@@ -99,6 +106,17 @@ func readXMP(d *Document) xmpFacts {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			// An `rdf:li` directly inside an `rdf:Alt` is one language alternative.
+			if t.Name.Space == nsRDF && t.Name.Local == "li" && len(path) > 0 &&
+				path[len(path)-1].Space == nsRDF && path[len(path)-1].Local == "Alt" {
+				lang := ""
+				for _, a := range t.Attr {
+					if a.Name.Space == nsXML && a.Name.Local == "lang" {
+						lang = a.Value
+					}
+				}
+				f.LangAlts = append(f.LangAlts, lang)
+			}
 			path = append(path, t.Name)
 		case xml.EndElement:
 			if len(path) > 0 {
