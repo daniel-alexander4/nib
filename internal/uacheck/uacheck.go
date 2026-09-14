@@ -108,7 +108,9 @@ type Report struct {
 	Results []Result `json:"results"`
 }
 
-// Conformant says whether the document satisfied every rule that was asked.
+// Conformant says whether the document satisfied every rule that was asked — every clause NIB
+// implements, which P07.S07 measured to be 15 of the 106 veraPDF evaluates. It is not PDF/UA
+// conformance, and nothing may treat it as licence to label a document (ADR-031 law 1).
 //
 // **A single `NotRun` or `CannotCheck` makes it false**, and that is law 4 in one line: a checker
 // that has not finished cannot say a document conforms, and one that could not evaluate a clause

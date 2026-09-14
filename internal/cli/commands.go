@@ -103,18 +103,18 @@ func cmdPDFA(args []string) int {
 	return writeOut(out, result)
 }
 
-// cmdUA reports a document against PDF/UA-1 — `PLAN-accessibility.md` P07.S06.
+// cmdUA reports a document against the PDF/UA-1 clauses nib checks — `PLAN-accessibility.md` P07.S06.
 //
 // It reaches the same door as the UI's report (`uacheck.CheckForUA`); a repo-root guard refuses a
-// direct `uacheck.Check` here, so the CLI and the UI cannot hold two readings of conformance. It
-// writes nothing: exporting a PDF/UA-labelled document is P07.S07's, and until then no document
-// can be conformant, so the command's job is to say exactly why.
+// direct `uacheck.Check` here, so the CLI and the UI cannot hold two readings of the verdicts.
 //
-// Exit 0 means every clause nib checks passes; exit 1 means refused, with every reason on stderr —
-// failures first, then the clauses nib could not check, which are refusals and never passes.
+// **Exit 0 means every clause nib checks passes, and nothing more** — P07.S07 measured a document
+// that passes all of nib's clauses and fails veraPDF's 7.4.2 t1, which nib does not check. Exit 1
+// means a checked clause failed or could not be checked, with every reason on stderr. Neither is a
+// PDF/UA verdict, and the output says so.
 func cmdUA(args []string) int {
 	fs := flag.NewFlagSet("nib ua", flag.ContinueOnError)
-	fs.Usage = usageFunc(fs, "nib ua IN", "Check a document against PDF/UA-1, the accessibility standard. Prints every clause nib checks with its verdict — passes, fails, does not apply, or could not check — and exits 1 with every reason when the document is not PDF/UA.")
+	fs.Usage = usageFunc(fs, "nib ua IN", "Check a document against the PDF/UA-1 accessibility clauses nib can verify (not the whole standard). Prints each clause with its verdict — passes, fails, does not apply, or could not check — and exits 1 with every reason when a checked clause fails or could not be checked. Exit 0 is not a PDF/UA certificate; use veraPDF for that.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -140,6 +140,9 @@ func cmdUA(args []string) int {
 		fmt.Println(line)
 	}
 	if len(refusals) == 0 {
+		// Said on stderr so a script reading stdout sees only the table, and a person sees the limit.
+		errf("every clause nib checks passes (%d of PDF/UA-1's rules) — this is not a PDF/UA certificate; "+
+			"a document can still fail a rule nib does not check", len(rep.Results))
 		return 0
 	}
 	for _, reason := range refusals {

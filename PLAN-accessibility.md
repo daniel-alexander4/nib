@@ -2441,7 +2441,7 @@ report; P07.S07 attaches the export to the same door.)**
   lesson that colour alone is not a distinction: a cannot-check row says "? Nib could not check", is
   italic and yellow, and never carries a tick.
 
-#### P07.S07 — nib writes the identification, because now something can say it conforms
+#### P07.S07 — ~~nib writes the identification, because now something can say it conforms~~ nothing can yet say a document conforms, so nib does not write the identification *(closed 2026-09-14, v1.129.70 — NO IDENTIFICATION WRITTEN; the slice corrects an overclaim instead)*
 Scope: `5 t1` — `pdfuaid:part 1` in the XMP packet. **The clause P03.S01 deliberately refused**, and
 the last one a tagged Markdown document fails. Written ONLY where the checker reports no failure and
 nothing it could not check. Refs law 1, law 4, P03.S01's decision, P06's criterion 1.
@@ -2452,6 +2452,41 @@ Acceptance:
   nib produces can say that. Measured on the oracle.
 - Nothing writes the assertion outside that door, guarded the way `claimTagging` is — by routing,
   not by agreement between sites.
+
+**(grill, 2026-09-14 — OVERTURNED by measurement before a line was written. The acceptance above is
+struck in effect: building it would violate ADR-031's law 1, which this plan adopted.)**
+
+The premise was that P07's checker is "something that can say the document conforms". It is not, and
+the step zero that tested the premise also found the overclaim S06 had just shipped:
+
+| document — tagged Markdown, titled, `/Lang` | veraPDF: all **106** ua1 rules | nib: **15** rules |
+|---|---|---|
+| no identification | fails `5 t1` only | not conformant |
+| `pdfuaid:part 1` written into the existing packet | **fails nothing** — the first fully conformant document nib has produced | conformant |
+| a heading that skips a level, identified | **fails `7.4.2 t1`**, a rule nib does not implement | **conformant** |
+| a table, or a link, identified | fails nothing | conformant |
+
+- **"Every registered rule returned pass" is not conformance, measured.** nib implements 15 of the 106
+  rules veraPDF evaluates. The heading-skip document passes all 15 and fails the profile, so the door
+  this slice specified would have written a conformance assertion over a non-conformant document —
+  law 1's third forbidden thing, by name. Implementing 7.4.2 t1 closes that instance and not the class:
+  91 rules remain, each a place the same false label can come from.
+- **Even the one fully conformant document is not reachable through a product door.** It needs a
+  catalog `/Lang`, and the only product caller of `SetLang` is the OCR route; nib is not told a
+  Markdown document's language (`/pending 471`). A labelled Markdown export would first need that
+  decision.
+- **S06 overclaimed in words.** The README said `nib ua` exits 1 "when the document is not PDF/UA",
+  which makes exit 0 read as "is PDF/UA"; the door's doc comments said it answers "may this document be
+  called PDF/UA". The heading-skip document exits 0. What this slice builds instead is the correction —
+  every surface says *"passes every clause nib checks"* and names the coverage — with tests that fail
+  if any surface claims conformance.
+
+So nib does not write the identification, and the question of how it ever honestly could is a scope
+and priority decision filed for Dan (`/pending 486`): implement the profile, label only nib's own
+fully verified output once a language source exists, or never label. `5 t1` stays declared not yet
+reachable in the oracle guard, re-gated on that item rather than on this coordinate. The 7.4.2 t1
+instance itself — nib's tagged Markdown fails it whenever the source skips a heading level — is filed
+as `/pending 487`.
 
 ### P08 — The autotagger
 **Goal.** Heuristic structure inference for arbitrary PDFs — the research-grade half, and the one

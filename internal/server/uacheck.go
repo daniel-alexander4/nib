@@ -26,7 +26,8 @@ type uaReportResponse struct {
 	Refusals   []string       `json:"refusals"`
 }
 
-// handleUACheck reports the open document against PDF/UA-1 — `PLAN-accessibility.md` P07.S06.
+// handleUACheck reports the open document against the PDF/UA-1 clauses nib checks — not a PDF/UA
+// verdict (P07.S07 measured the gap) — `PLAN-accessibility.md` P07.S06.
 //
 // It is read-only, so it is a GET, like the hidden-content scan beside it. It reaches the same door as
 // `nib ua` (`uacheck.CheckForUA`), and a guard at the repo root refuses a direct `uacheck.Check` call
