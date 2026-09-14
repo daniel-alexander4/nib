@@ -121,8 +121,9 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// 28, not 26: `handleTagsPropose` and `handleTagsCommit` (PLAN-accessibility.md P08.S06b). Propose reads
 	// the open document like `handleUACheck`; commit rewrites it through commitMutation like `handleOCR`.
 	// 29: `handleTagsEdit` (PLAN-accessibility.md P09.S04) edits the tree of the document it names.
-	if resolveSites != 29 {
-		t.Errorf("expected 29 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 30: `handleTagsTree` (P09.S06a) reads that tree for the Tags panel, read-only like `handleTagsPropose`.
+	if resolveSites != 30 {
+		t.Errorf("expected 30 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

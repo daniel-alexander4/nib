@@ -2718,6 +2718,7 @@ function repaintForActiveView() {
   // restore of selectedPages that used to sit here went with the rebuild: it existed only
   // because buildThumbnails calls clearSelection on the view it is building.
   markSelectedThumbs(); // repaint the shared selection bar from the incoming view
+  if (tagTreeShowing()) loadTagTree(); // the tree panel is shared chrome too, so it shows the incoming document's
 
   // The search box and counter are one shared pair for N documents. Cleared rather than
   // restored: leaving A's query over B's count is the wrong-document display this whole
@@ -3136,6 +3137,8 @@ async function setDocumentFromServer(meta, target = view) {
   // and is ready the moment the user switches to it.
   buildThumbnails(gen, target).catch((e) => console.error('thumbnails failed', e));
   buildOutline(gen, target).catch((e) => console.error('outline failed', e));
+  // The tree panel is shared chrome: it follows a reload of the document it shows (an edit, an undo).
+  if (target === view && tagTreeShowing()) loadTagTree();
   // The tab's label comes from the DOCUMENT, which only exists now — addView ran before
   // this load and rendered a tab with whatever name the view had then (none, for a fresh
   // one). Re-rendered here rather than pre-seeded, so the strip cannot show a stale name
@@ -4944,9 +4947,8 @@ function clearTagOutline() {
 
 // showTagOutline outlines one element on its page, from the proposal's PDF-space rect and the page's
 // MediaBox. Percentages of the page div, so zoom does not move it off its text.
-function showTagOutline(row) {
+function showTagOutline(row, owner = tagsOwner || view) {
   clearTagOutline();
-  const owner = tagsOwner || view;
   if (!owner.pdfDocument || !owner.viewer || !row.pageBox) return;
   const [llx, lly, urx, ury] = row.pageBox;
   const w = urx - llx, h = ury - lly;
@@ -5103,6 +5105,126 @@ async function commitTags() {
 els.tagsBtn.onclick = openTags;
 els.tagsClose.onclick = closeTags;
 els.tagsCommit.onclick = commitTags;
+
+// ── The structure tree panel — `PLAN-accessibility.md` P09.S06a ──────────────────────────────────────
+//
+// The active document's EXISTING tree, whoever wrote it: every element in the order the tree holds it,
+// as an ARIA tree. One tab stop; the arrow keys walk it (Down/Up in reading order, Right to an element's
+// first kid, Left to its parent, Home/End to the ends), and focusing an element outlines it on its page —
+// P08's outline, pointed at this panel's document.
+//
+// **Pinned (ADR-001).** A load records the document it was for and a sequence number, and a response
+// that arrives after another load, or after the user switched documents, is dropped rather than drawn
+// over the document now showing.
+let tagTreeSeq = 0;
+
+function tagTreeShowing() {
+  const panel = $('tagtree');
+  return !!panel && panel.classList.contains('active');
+}
+
+async function loadTagTree() {
+  const owner = view;
+  const seq = ++tagTreeSeq;
+  const summary = $('tagTreeSummary');
+  const list = $('tagTreeList');
+  clearTagOutline();
+  if (!owner.pdfDocument || !owner.docMeta || !owner.docMeta.id) {
+    list.innerHTML = '';
+    summary.textContent = 'Open a PDF to see its structure tree.';
+    return;
+  }
+  summary.textContent = 'Reading the structure tree…';
+  try {
+    const res = await apiFetch('/api/tags/tree', { docId: owner.docMeta.id });
+    if (!res.ok) throw new Error(await errText(res, 'Could not read the structure tree.'));
+    const tree = await res.json();
+    // Checked once, after the whole answer is in: a later load or a switch while EITHER await was
+    // pending leaves this answer describing a document that is not the one on screen.
+    if (seq !== tagTreeSeq || owner !== view) return;
+    renderTagTree(tree, owner);
+  } catch (e) {
+    if (seq !== tagTreeSeq) return;
+    list.innerHTML = '';
+    summary.textContent = e.message || 'Could not read the structure tree.';
+  }
+}
+
+function tagTreeLabel(e) {
+  const words = e.text.length > 60 ? e.text.slice(0, 60) + '…' : e.text;
+  const name = e.kind !== e.standard ? `${e.standard} (${e.kind})` : e.standard;
+  const notes = [];
+  if (e.standard === 'Figure') notes.push(e.hasAlt ? `alt text: ${e.alt}` : 'no alt text');
+  if (e.standard === 'TH') notes.push(e.scope ? `scope: ${e.scope}` : 'no scope');
+  return [name, words, notes.join(', ')].filter(Boolean).join(' — ');
+}
+
+function renderTagTree(tree, owner) {
+  const list = $('tagTreeList');
+  const summary = $('tagTreeSummary');
+  list.innerHTML = '';
+  if (!tree.tagged) {
+    summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
+    return;
+  }
+  const elements = tree.elements || [];
+  summary.textContent = `${elements.length} element(s).` +
+    (tree.unaddressable ? ` ${tree.unaddressable} written inline cannot be edited.` : '');
+  const level = (i) => {
+    let d = 1;
+    for (let p = elements[i].parent; p >= 0 && d < 64; p = elements[p].parent) d++;
+    return d;
+  };
+  elements.forEach((e, i) => {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'treeitem');
+    li.setAttribute('aria-level', String(level(i)));
+    li.setAttribute('aria-selected', 'false');
+    if ((e.kids || []).length) li.setAttribute('aria-expanded', 'true');
+    li.tabIndex = i === 0 ? 0 : -1;
+    li.dataset.id = String(e.id);
+    li.style.paddingLeft = `${(level(i) - 1) * 12}px`;
+    li.textContent = tagTreeLabel(e);
+    li.addEventListener('focus', () => selectTagTreeItem(i, elements, owner));
+    list.appendChild(li);
+  });
+  list.onkeydown = (ev) => onTagTreeKey(ev, elements);
+}
+
+function selectTagTreeItem(i, elements, owner) {
+  [...$('tagTreeList').children].forEach((li, j) => {
+    li.setAttribute('aria-selected', String(j === i));
+    li.tabIndex = j === i ? 0 : -1;
+  });
+  const e = elements[i];
+  if (owner !== view || !owner.viewer) return;
+  if (e.rect && e.rect[2] > e.rect[0] && e.rect[3] > e.rect[1]) {
+    showTagOutline(e, owner);
+  } else {
+    // An element that draws no text — a figure's image — has no box to outline; its page is still where
+    // a keyboard user needs to be taken.
+    clearTagOutline();
+    if (e.page > 0) owner.viewer.currentPageNumber = e.page;
+  }
+}
+
+function onTagTreeKey(ev, elements) {
+  const items = [...$('tagTreeList').children];
+  const at = items.indexOf(document.activeElement);
+  if (at < 0) return;
+  let to = -1;
+  switch (ev.key) {
+    case 'ArrowDown': to = Math.min(at + 1, items.length - 1); break;
+    case 'ArrowUp': to = Math.max(at - 1, 0); break;
+    case 'Home': to = 0; break;
+    case 'End': to = items.length - 1; break;
+    case 'ArrowRight': to = (elements[at].kids || []).length ? elements[at].kids[0] : -1; break;
+    case 'ArrowLeft': to = elements[at].parent; break;
+    default: return;
+  }
+  ev.preventDefault();
+  if (to >= 0 && items[to]) items[to].focus();
+}
 
 // runSanitize applies a server-side removal (strip/safe). On success it reloads
 // the cleaned document and shows what remains; on failure it leaves the document
@@ -11966,6 +12088,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     $(tab.dataset.panel).classList.add('active');
     collapseGroupCards(); // one card open at a time, of either kind
     if (tab.dataset.panel === 'library') loadImages();
+    if (tab.dataset.panel === 'tagtree') loadTagTree();
   };
 });
 
@@ -11984,7 +12107,9 @@ function showPanel(name) {
 // contextual toolbar (#toolbar .tbtab) and which sidebar panels are available.
 const SIDEBAR_FOR = {
   file: ['commands', 'outline'],
-  edit: ['commands'],
+  // The structure tree (P09.S06a) is SECOND, for the reason the ceremony panel below is: the first entry
+  // is the mode's landing surface, and Document mode lands on its commands.
+  edit: ['commands', 'tagtree'],
   markup: ['commands', 'library'],
   secure: ['commands'],
   // The ceremony panel joins Collaborate (P06.S02). The mode's goal is "convene, invite, connect,

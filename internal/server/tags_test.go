@@ -218,6 +218,64 @@ func TestTheTagRoutesReachTheirDoors(t *testing.T) {
 			t.Errorf("handleTagsEdit does not call %s", want)
 		}
 	}
+	tree := fn("handleTagsTree")
+	if !strings.Contains(tree, "pdfops.ReadStructure(") || strings.Contains(tree, "commitMutation") {
+		t.Error("handleTagsTree must read through pdfops.ReadStructure and write nothing")
+	}
+}
+
+// TestTheTreeRouteReadsTheTreeAndChangesNothing — P09.S06a: the Tags panel's read leaves the document
+// byte-identical, publishes the tree the document holds, and answers a document with no tree as untagged.
+func TestTheTreeRouteReadsTheTreeAndChangesNothing(t *testing.T) {
+	base, c, _ := committedTagsFixture(t)
+	before := getBytes(t, c, base+"/api/pdf")
+	var tree tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, c, base+"/api/tags/tree"), &tree); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, getBytes(t, c, base+"/api/pdf")) {
+		t.Fatal("reading the tree changed the open document")
+	}
+	if !tree.Tagged || len(tree.Elements) == 0 {
+		t.Fatalf("a committed document reads tagged %v with %d element(s)", tree.Tagged, len(tree.Elements))
+	}
+	var top, want []string
+	for _, e := range tree.Elements {
+		if e.Parent == -1 {
+			top = append(top, e.Standard)
+		}
+	}
+	for _, r := range rootElements(t, before) {
+		want = append(want, r.kind)
+	}
+	if strings.Join(top, " ") != strings.Join(want, " ") {
+		t.Errorf("the tree's top level reads %v, the document holds %v", top, want)
+	}
+	for i, e := range tree.Elements {
+		if e.Kids == nil {
+			t.Errorf("element %d publishes null kids", i)
+		}
+		for _, k := range e.Kids {
+			if tree.Elements[k].Parent != i {
+				t.Errorf("element %d lists kid %d, whose parent reads %d", i, k, tree.Elements[k].Parent)
+			}
+		}
+		if e.Text != "" {
+			r, b := e.Rect, e.PageBox
+			if !(r[0] < r[2] && r[1] < r[3] && r[0] >= b[0] && r[2] <= b[2] && r[1] >= b[1] && r[3] <= b[3]) {
+				t.Errorf("element %d (%s %q) reads box %v on page box %v", i, e.Standard, e.Text, r, b)
+			}
+		}
+	}
+
+	untagged, uc, _ := openTagsFixture(t, untaggedTagsFixture(t))
+	var none tagTreeResponse
+	if err := json.Unmarshal(getBytes(t, uc, untagged+"/api/tags/tree"), &none); err != nil {
+		t.Fatal(err)
+	}
+	if none.Tagged || none.Elements == nil || len(none.Elements) != 0 {
+		t.Errorf("a document with no tree reads %+v — want untagged with an empty list", none)
+	}
 }
 
 // The structure editor's route — `PLAN-accessibility.md` P09.S04.

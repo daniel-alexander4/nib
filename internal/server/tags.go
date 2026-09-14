@@ -44,6 +44,30 @@ type tagProposalResponse struct {
 	NoText      []int            `json:"noText"`
 }
 
+// tagTreeElementView is one element of the open document's existing structure tree on the wire —
+// `PLAN-accessibility.md` P09.S06a.
+type tagTreeElementView struct {
+	ID       int        `json:"id"`
+	Parent   int        `json:"parent"`
+	Kids     []int      `json:"kids"`
+	Kind     string     `json:"kind"`
+	Standard string     `json:"standard"`
+	Page     int        `json:"page"`
+	Text     string     `json:"text"`
+	Alt      string     `json:"alt"`
+	HasAlt   bool       `json:"hasAlt"`
+	Scope    string     `json:"scope"`
+	Rect     [4]float64 `json:"rect"`
+	PageBox  [4]float64 `json:"pageBox"`
+}
+
+// tagTreeResponse is the open document's existing structure tree.
+type tagTreeResponse struct {
+	Tagged        bool                 `json:"tagged"`
+	Unaddressable int                  `json:"unaddressable"`
+	Elements      []tagTreeElementView `json:"elements"`
+}
+
 // maxTagReviewBytes bounds a review: one short entry per element, and a long document has thousands.
 const maxTagReviewBytes = 8 << 20
 
@@ -76,6 +100,35 @@ func (s *Server) handleTagsPropose(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, n := range prop.Unsupported {
 		out.Unsupported = append(out.Unsupported, tagPageView{Page: n.Page, Reason: n.Reason})
+	}
+	writeJSON(w, out)
+}
+
+// handleTagsTree reads the open document's existing structure tree for the Tags panel. It writes
+// nothing; a document with no tree answers untagged.
+func (s *Server) handleTagsTree(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("tags: recovered panic reading the tree: %v", rec)
+			httpError(w, http.StatusUnprocessableEntity, "could not read the structure of this document")
+		}
+	}()
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	tree, err := pdfops.ReadStructure(s.docBytes(doc))
+	if err != nil {
+		httpError(w, http.StatusUnprocessableEntity, "could not read the structure: "+strings.TrimPrefix(err.Error(), "pdfops: "))
+		return
+	}
+	out := tagTreeResponse{Tagged: tree.Tagged, Unaddressable: tree.Unaddressable, Elements: []tagTreeElementView{}}
+	for _, e := range tree.Elements {
+		// Kids is never nil: ReadStructure copies it into a fresh slice, and its own test holds that.
+		out.Elements = append(out.Elements, tagTreeElementView{
+			ID: e.ID, Parent: e.Parent, Kids: e.Kids, Kind: e.Kind, Standard: e.Standard, Page: e.Page,
+			Text: e.Text, Alt: e.Alt, HasAlt: e.HasAlt, Scope: e.Scope, Rect: e.Rect, PageBox: e.PageBox,
+		})
 	}
 	writeJSON(w, out)
 }
