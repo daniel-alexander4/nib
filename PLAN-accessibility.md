@@ -2831,6 +2831,70 @@ Acceptance:
 - The propose route reaches the page through `readPageLayout` — asserted by routing — which is the
   first production caller of S01–S03's readers (S03's pin).
 
+**(step zero, 2026-09-14 — SPLIT into three, before a line was written.)** What the slice needs, by
+named search:
+
+| measured | result |
+|---|---|
+| where D10's "Document tab" is | ADR-016's **Document** mode, id `edit` — today labelled **"Page Functions"** in `index.html`, holding page-level groups (Split, Add & Extract, Size & Number, Rotate, Combine & Compare). The Tags card goes in `data-tab="edit"` |
+| what Detect's model IS | its guesses become ordinary editable overlays (`makeField`), removed by `clearDetected`, and nothing is written until Save — propose, show, edit, commit |
+| a door that brackets show operators for an arbitrary PDF | **none.** `textOperatorSpans` brackets top-level `q … Q` groups, which is mdpdf's shape; arbitrary content need not be grouped, so a commit brackets each run's own show operator and the run reader must carry that span |
+| marked content already on a page | detectable through the run reader: runs carry the MCID they were drawn under. A stripped copy keeps LibreOffice's `BDC`s — nesting new MCIDs inside them gives content two owners |
+| a server door refusing a signed document | **none** — `grep` over `internal/server` for `sig.State` finds no handler refusing; the one `sign.Verify(...).State` check files an arrival. The commit's refusal is the first |
+
+- **P08.S06a — the commit writer** *(done 2026-09-14, v1.129.78)*. `pdfops` writes a reviewed proposal: each element's runs bracketed
+  at their show operators with an MCID, `H1`–`H6` / `P` / `L`›`LI`›`Lbl`+`LBody` through the typed tree
+  writers, `claimTagging` with `sourceInferred`. Acceptance: the committed document read back through
+  S04's truth reader returns the committed blocks exactly (round trip); `StructureSource` reads
+  `Inferred`; veraPDF adds no ua1 failure the untagged input did not have, beyond any a tagged
+  document necessarily carries (measured and written down, not assumed); it REFUSES, each driven, a
+  document that already has a tree, a page whose runs already sit under MCIDs, and an element whose
+  runs are drawn inside a form XObject (bracketing the page stream would describe the `Do`).
+- **P08.S06b — the routes.** `GET` propose (read-only, through `proposeStructure` → `readPageLayout`,
+  byte-identical document asserted, routing asserted) and `POST` commit (the reviewed elements;
+  refuses a signed document at the server door; installs through the same path as every other edit,
+  so undo holds). Acceptance: the four bullets above that concern routes.
+- **P08.S06c — the Tags card.** In the Document mode (`edit`): the proposal drawn over the page, each
+  element retypable, ignorable and reorderable keyboard-only, and a commit. Acceptance: the keyboard
+  bullet above, at tier 2 and tier 3, and the report's provenance line reading `Inferred` after a commit.
+
+**(P08.S06a build, 2026-09-14.)** `commitProposal` in `internal/pdfops/tagcommit.go`.
+
+| measured | result |
+|---|---|
+| round trip | an untagged Markdown render proposed as `H1 P H2 LI LI P` and committed reads back through S04's truth reader block for block, heading flags included; the tree holds H1 1, H2 1, P 2, L 1, LI 2, Lbl 2, LBody 2; `StructureSource` reads `Inferred` |
+| veraPDF ua1, untagged → committed | **6 clauses → 3. Cleared `6.2 t1`, `7.1 t11`, `7.1 t3`; added none.** With a paragraph ignored by the reviewer: still no clause added, and `7.1 t3` still cleared — its text became an artifact |
+| a watermarked page | `StampWatermark` draws its text in a form XObject, the proposer proposes it, and the commit REFUSES the whole page |
+
+- **Pin — the run reader now carries each run's show-operator span and whether it was drawn inside a
+  form**, because `textOperatorSpans` brackets `q … Q` groups — mdpdf's shape — and arbitrary content
+  need not be grouped. A span covers the operator and exactly its own operands (`"` has three).
+- **Pin — four refusals, each driven by a real document:** a document with a tree
+  (`ConvertDocToPDF`'s tagged output); a page whose runs sit under MCIDs with no tree (the same,
+  stripped); a run inside a form (a watermark); a proposal that no longer matches (a different
+  document, and — separately — the same document with its last character changed, where every span
+  survives and only the text differs).
+- **Pin — anything no element covers is an `/Artifact`.** A reviewer's ignored element and any run the
+  grouping dropped; left bare it is 7.1 t3.
+- **Pin — a list label is its own `Lbl` only where the document drew it as its own run.** Otherwise
+  the item is `LI › LBody`.
+- **Pin — S03's one-door guard fired on this slice, and it was right to.** `tagcommit.go` names
+  `textRun` and `readPageRuns`, and the guard forbade any file but the reader and the grouping from
+  touching a run. The commit groups nothing — it re-reads a page to match a proposal's runs by span and
+  text — so it is an EXEMPTION named at the site with its reason (ADR-009), not a third owner:
+  `groupRuns`, `lineSegments` and `pageRuns` stay forbidden to it, and a second grouping written there
+  still fails.
+- **Finding — a watermarked document cannot be committed at all.** The proposer reads the stamp's
+  text like any other and the commit refuses what is drawn in a form. The stamp is already inside an
+  `/Artifact` sequence on the page; the run reader does not yet say so, so neither the proposer nor
+  the commit can skip it. Carried to S06b as a named case rather than widened here.
+
+Nine mutations red: each of the three structural refusals, the text half of the stale check, the
+artifact bracketing, the label split, the `Inferred` tier, the element roles, and the guard against
+marking one run twice. Two survived the first round — the text check (a different document fails on
+its spans first) and the double-mark guard (no case listed an element twice) — and each got a case.
+Three span mutations red on the reader.
+
 #### P08.S07 — decide `TagAuthored` (`/pending 480`)
 Scope: 480's own terms — *"if P08 opens and does not call it, that is B."* Decided with S05's fallback in
 hand: a page the proposer cannot read has zero runs, and a zero-run page is a scan, whose path is OCR
