@@ -1675,9 +1675,10 @@ func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(src)
-	i := strings.Index(body, "func cmdUA(")
+	// The report's sentences are composed in uaReport, which `nib ua` and `nib watch --do ua` share (P10.S03).
+	i := strings.Index(body, "func uaReport(")
 	if i < 0 {
-		t.Fatal("cmdUA is gone, so this guard is reading nothing")
+		t.Fatal("uaReport is gone, so this guard is reading nothing")
 	}
 	j := strings.Index(body[i:], "\n}\n")
 	fn := body[i : i+j]

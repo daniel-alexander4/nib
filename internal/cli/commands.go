@@ -127,31 +127,51 @@ func cmdUA(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	rep, refusals, err := uacheck.CheckForUA(pdf)
+	table, notes, passed, err := uaReport(pdf)
 	if err != nil {
 		errf("%v", err)
 		return 1
+	}
+	for _, line := range table {
+		fmt.Println(line)
+	}
+	// The sentences meant for a person go to stderr, so a script reading stdout sees only the table.
+	for _, n := range notes {
+		errf("%s", n)
+	}
+	if passed {
+		return 0
+	}
+	return 1
+}
+
+// uaReport is `nib ua`'s report: the table, one line per clause, and the sentences meant for a person —
+// the provenance line and the verdict. cmdUA prints the table on stdout and the notes on stderr; `nib watch
+// --do ua` writes both into a sidecar, which has no stderr (P10.S03). One composition, so the two cannot
+// drift. passed is true only when no checked clause fails or could not be checked.
+func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
+	rep, refusals, err := uacheck.CheckForUA(pdf)
+	if err != nil {
+		return nil, nil, false, err
 	}
 	for _, r := range rep.Results {
 		line := fmt.Sprintf("%-14s %-12s %s", r.Verdict, r.Clause, uacheck.SummaryOf(r.Clause))
 		if r.Verdict != uacheck.Pass && r.Why != "" {
 			line += " — " + r.Why
 		}
-		fmt.Println(line)
+		table = append(table, line)
 	}
-	// D4's provenance line, in the same words the UI shows (one door, ADR-009). On stderr, beside the
-	// other sentences meant for a person, so stdout stays the table.
-	errf("%s", pdfops.DescribeStructureSource(pdf))
+	// D4's provenance line, in the same words the UI shows (one door, ADR-009).
+	notes = append(notes, pdfops.DescribeStructureSource(pdf))
 	if len(refusals) == 0 {
-		// Said on stderr so a script reading stdout sees only the table, and a person sees the limit.
-		errf("every clause nib checks passes (%d of PDF/UA-1's rules) — this is not a PDF/UA certificate; "+
-			"a document can still fail a rule nib does not check", len(rep.Results))
-		return 0
+		notes = append(notes, fmt.Sprintf("every clause nib checks passes (%d of PDF/UA-1's rules) — this is not a PDF/UA certificate; "+
+			"a document can still fail a rule nib does not check", len(rep.Results)))
+		return table, notes, true, nil
 	}
 	for _, reason := range refusals {
-		errf("not PDF/UA: %s", reason)
+		notes = append(notes, "not PDF/UA: "+reason)
 	}
-	return 1
+	return table, notes, false, nil
 }
 
 // cmdOffice converts a document to PDF: Markdown natively, office documents
