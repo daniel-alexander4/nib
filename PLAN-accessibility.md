@@ -3027,6 +3027,88 @@ retype, set alt text, mark artifacts, and author table header scope.
 **Exit criteria.** A tree can be corrected end to end in the UI without leaving nib; every edit is
 undoable through the existing history; the panel itself meets P02's keyboard bar.
 
+**(phase-open, 2026-09-14 at v1.129.84 — facts established before the slices were cut.)**
+
+| measured | result |
+|---|---|
+| a door that hands an EXISTING tree to the client | **none.** Exported structure doors: `StructureSource`, `DescribeStructureSource`, `ClaimsTagging`, `ProposeTags`, `CommitTags`, `AuthorTaggedForm`, `TagOCRLayer`; routes: `/api/uacheck`, `/api/tags/propose`, `/api/tags/commit`. The read model (`readStructTree`) is unexported and carries `/S`, `/Pg`, kids (element, MCID, MCR, OBJR), parent, and `/A` uninspected — no `/Alt`, no `/ActualText` |
+| a writer that CHANGES an existing element | **none.** `structwrite.go` builds ADD only (its own header says so); every production writer builds a new tree. `addMarkedElement` had no production caller after P08.S07 and was deleted at v1.129.83 |
+| `Figure`, `Table`, `TH`, `/Scope`, `/Alt` anywhere in nib's writers | **none** — mdpdf's roles are body, heading, list item, code, quote, marker |
+| a truth source for tables and figures | **LibreOffice HTML import**: `Table › TR › TH/TD`, each `TH` with `/A [<layout> <</O /Table /Scope /Column>>]`; `Figure` with `/Alt` (UTF-16). No object streams, so a same-length byte strip is a valid fixture. Its HTML headings are role-mapped `Heading 1 → P` — a real tree that is wrong, which is what an editor exists for |
+| what veraPDF says a missing `/Alt` and a missing `/Scope` cost | stripped `/Alt` adds **7.3 t1**; stripped `/Scope` adds **7.5 t1**; the original fails `5 t1`, `7.1 t9`, `7.1 t10` (metadata/title — not structure) |
+| what nib's checker sees of those | **nothing**: it registers 15 clauses (`5 t1`, `6.2 t1`, `7.1 t3/t8/t9/t10/t11`, `7.2 t33/t34`, `7.10 t1/t2`, `7.18.4 t1`, `7.21.4.1 t1`, `7.21.4.2 t2`, `7.21.7 t1`); neither 7.3 nor 7.5 |
+| where D10's panel goes | a sidebar content panel (ADR-018/020): a `.tab[data-panel]` header plus a `div.panel`, listed in `SIDEBAR_FOR.edit`, which today is `['commands']` — the first entry is the mode's landing surface, so the Tags panel is SECOND |
+| P02's keyboard bar, as tested | `keyboardpass.test.mjs` tabs from the top in the default mode and `keyboardflow.test.mjs` walks the Annotate flow; **neither reaches a Document-mode panel**, so the panel needs its own keyboard reader |
+
+**Exit criterion 1, read at phase open:** "corrected end to end without leaving nib" needs the user to SEE
+what is wrong inside nib. With neither 7.3 t1 nor 7.5 t1 checkable, a user fixing alt text or header
+scope has to leave for veraPDF to learn it was needed. **Decided (rung 2, reversible): the checker gains
+those two rules in this phase**, validated by the oracle like every other — a narrow addition to
+`/pending 486`'s coverage, not its resolution.
+
+**`/plan-review` does NOT fire**: no wire format between machines, no stored nib format, no network, no
+credential. **`/deepdive` does not fire at phase open**: the seam it would read — mutating a tree another
+producer wrote (inline elements, role maps, shared `/A` arrays, MCR kids) — is S02's and S03's step zero,
+measured against LibreOffice's trees with `checkStructConsistency` as the post-condition.
+
+**Firmed slices:**
+
+#### P09.S01 — read an existing tree as reviewable values
+Scope: an exported read door and `GET /api/tags/tree`: each element's id, type (and the standard type
+its RoleMap resolves to), page, text (its MCIDs' runs through S02 of P08's reader), `/Alt`, a `TH`'s
+`/Scope`, and its kids in order. Refs D10.
+Acceptance:
+- Every element of every LibreOffice corpus tree is represented, in `/K` order, text matching the truth
+  reader; the table and figure fixture's `TH` scopes and `Figure` alt read back.
+- An element the editor cannot address (written inline, with no object number) is REPORTED, not dropped.
+- The route is read-only — the open document byte-identical, asserted.
+
+#### P09.S02 — dictionary edits: retype, reorder, re-parent, alt text, header scope
+Scope: `pdfops` edits over an existing tree that touch no content stream: `/S`, a kid's position within
+its parent, a kid moved to another parent (both `/K` arrays and `/P`), `/Alt` on any element, `/Scope`
+on a `TH`. Refs D8.
+Acceptance:
+- Each edit leaves `checkStructConsistency` empty on every corpus tree, asserted per edit kind.
+- The stripped-`/Alt` fixture with alt restored clears veraPDF 7.3 t1; the stripped-`/Scope` fixture with
+  scope restored clears 7.5 t1; neither adds a clause.
+- An edit naming an element the tree no longer has is refused as stale.
+
+#### P09.S03 — mark an element's content as an artifact
+Scope: the one edit that touches content streams — its MCIDs' `BDC … EMC` become `/Artifact BMC … EMC`,
+its ParentTree slots are freed, and the element leaves its parent's `/K`.
+Acceptance:
+- The bracketed bytes are unchanged (the P08.S07 invariant, reused); the ParentTree no longer names the
+  element; `checkStructConsistency` is empty; veraPDF adds no clause.
+- An element whose content is drawn inside a form XObject is refused, as P08's commit refuses it.
+
+#### P09.S04 — the routes
+Scope: `POST /api/tags/edit` — a batch of S02/S03 edits against the tree S01 served — through
+`commitMutation`, so undo holds. Refs ADR-001, ADR-008.
+Acceptance:
+- A signed document is refused at the server door; an edit against a tree that changed is 409.
+- One batch is one undo step, and `POST /api/undo` restores the prior bytes.
+
+#### P09.S05 — the checker sees what the editor fixes: 7.3 t1 and 7.5 t1
+Scope: two `uacheck` rules, registered like the other fifteen. Refs P07, `/pending 486`.
+Acceptance:
+- The oracle agrees with veraPDF on the LibreOffice fixture and both stripped copies, per clause, both ways.
+
+#### P09.S06 — the Tags panel and the Reading Order view
+Scope: the sidebar panel second in `SIDEBAR_FOR.edit`: the tree (ARIA tree pattern), the selected
+element outlined on its page, and retype / move / alt text / scope / artifact on the selection; a
+reading-order overlay numbering elements on the page. Refs D10, ADR-018, ADR-020.
+Acceptance:
+- Every edit reachable keyboard-only, at tier 2 and tier 3, with the panel's own keyboard reader: no trap,
+  focus always visible, and the flow completes (P02's bar).
+- The report's clauses change after an edit and change back after undo.
+
+#### P09.S07 — end to end, and the exit criteria
+Scope: tier 3 — open the LibreOffice fixture with alt and scope stripped and headings mapped to `P`, see
+7.3 t1 and 7.5 t1 in nib's report, correct all three in the panel by keyboard, and see both clauses pass,
+without leaving nib.
+Acceptance:
+- veraPDF agrees on the corrected document; undo returns each clause.
+
 ### P10 — Batch, CLI and the parity ledger
 **Goal.** `nib tag` and `nib a11y-check` as headless commands composing over stdin/stdout like the
 other 26, folder batch via `nib watch`, docs, and an honest written comparison of what nib does and
