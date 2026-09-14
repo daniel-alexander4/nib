@@ -2269,7 +2269,7 @@ Acceptance:
   registry that is empty each agree with the other vacuously. Probed with a rule written in a
   function nothing calls.
 
-#### P07.S02 — the catalog and metadata rules
+#### P07.S02 — the catalog and metadata rules *(done 2026-09-14, v1.129.64)*
 Scope: the clauses readable without a structure tree — `7.1 t8`, `7.1 t9`, `7.1 t10`, `7.2 t33`,
 `7.2 t34`, and `7.10 t1`/`7.10 t2` over every optional-content configuration. P03 and `/pending 473`
 already write all of these, so each has a document that passes and a document that fails.
@@ -2279,6 +2279,19 @@ Acceptance:
   the clause says *"each"* — the same population `honestOptionalContent` corrects.
 - A document with no `/Metadata` at all makes `5 t1` and `7.1 t9` **not applicable**, not passing —
   the distinction that makes law 4's third verdict load-bearing rather than decorative.
+
+**(grill + build, 2026-09-14 — amended in three places, all measured.)** `7.2 t34` is a THREE-way
+rule, not two: with no catalog `/Lang`, an untagged document is a provable `Fail`, but a tagged one
+is `CannotCheck` until S03 walks the tree, because an element may declare the language. `5 t1` lands
+here able to reach only `NotApplicable` and `Fail` — `Pass` becomes reachable at S07, which is the
+honest order because nothing writes the identification until then. **Two branches cannot be driven
+end to end**: `open` reads with `ReadValidateAndOptimize`, so the checker only ever sees documents
+pdfcpu accepts — pdfcpu REFUSES a metadata stream whose `/Type` is not `/Metadata` and PANICS writing
+a non-boolean `/DisplayDocTitle`. Both branches are kept (another producer's document can arrive in
+either state) and driven by calling the rule directly; the boundary is itself asserted, so a change
+to `open` goes red. **Live verification against veraPDF: 45 of 45 verdicts agree** over five
+documents × nine clauses, with one resolution limit S05 must close — veraPDF reports passed checks
+only in aggregate, so "not listed" mixes passed with not-applicable.
 
 #### P07.S03 — the structure rules
 Scope: `6.2 t1`, `7.1 t3`, `7.1 t11`, `7.18.4 t1` — the clauses that need the tree and the content
