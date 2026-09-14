@@ -382,6 +382,12 @@ Acceptance:
   rather than `guess` — the case that proves the prefix is stripped at all.
 - `BaseFont` is advisory: what is stamped is unchanged by it, asserted against the emitted BBox.
 
+**(2026-09-14, v1.129.72 — P02, P03 and P04 are being built by `PLAN-accessibility.md` P08.S01–S03**,
+under D10's *"whichever plan reaches it first builds it; the other calls it"*. Each is held to the
+exit criteria below as written, and its marker is written here as well as there. **The 18-PDF corpus
+D12 names is not on disk** — no `*corpus*` directory under `~`, and no PDF under `~` or `/tmp` dated
+2026-09-06 — so those slices measure against a generated corpus and say so.)
+
 ### P02 — The width reader
 **Goal.** Given a page and a font, return the advance for any code, from the document's own
 dictionary, with an honest `none` when it cannot.
