@@ -230,9 +230,22 @@ func TestATaggedMarkdownDocumentPassesUA1(t *testing.T) {
 		t.Skip("SKIP (not a pass): veraPDF is absent, so P06's exit criterion — a Markdown " +
 			"document passes ua1 — is UNCHECKED in this run")
 	}
-	tagged, err := tagMarkdown([]byte(s02Markdown), authoringFaces(), markdownFallbackFonts())
+	// **Through the PRODUCT door, not `tagMarkdown`** — `/pending 481`. This test used to call
+	// `tagMarkdown` directly, and P06 closed with criterion 1 met while nothing a user could reach
+	// called that function: `ConvertDocToPDF` returned untagged Markdown the whole time. A criterion's
+	// reader reads what users get.
+	tagged, err := ConvertDocToPDF([]byte(s02Markdown), ".md")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Stimulus floor: the door must have TAGGED, or the ua1 result below is about an untagged
+	// document and "fails only 5 t1" is unreachable for a reason unrelated to the criterion.
+	if !ClaimsTagging(tagged) {
+		t.Fatal("setup: ConvertDocToPDF returned an UNTAGGED document for Markdown — the product " +
+			"door is not tagging, which is /pending 481's defect")
+	}
+	if src, ok := StructureSource(tagged); !ok || src != sourceExact {
+		t.Fatalf("setup: the converted document records source %q (recorded=%v), want %q", src, ok, sourceExact)
 	}
 	titled, err := SetTitle(tagged, "P06.S02")
 	if err != nil {
