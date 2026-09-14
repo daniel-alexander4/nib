@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -231,6 +232,114 @@ func TestAPageAndAScopeAreReadOnlyWhereTheDocumentSaysThem(t *testing.T) {
 	}
 	if inner.page != 1 {
 		t.Errorf("the division's paragraph reads page %d", inner.page)
+	}
+}
+
+// TestAnElementCarriesTheBoxOfWhatItDraws — P09.S06a: the Tags panel outlines an element from this box,
+// and the exported door carries the view unchanged.
+func TestAnElementCarriesTheBoxOfWhatItDraws(t *testing.T) {
+	if !LibreOfficeAvailable() {
+		t.Skip("LibreOffice is not installed, so the table-and-figure document cannot be generated")
+	}
+	table := tableAndFigureODT(t)
+	v, err := readStructureView(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside := func(r, b [4]float64) bool {
+		return r[0] < r[2] && r[1] < r[3] && r[0] >= b[0] && r[2] <= b[2] && r[1] >= b[1] && r[3] <= b[3]
+	}
+	tableIdx := -1
+	var headers []viewElement
+	for i, e := range v.elements {
+		switch {
+		case e.standard == "Figure":
+			if e.hasRect {
+				t.Errorf("the figure draws no text and reads a box %v", e.rect)
+			}
+		case squeeze(e.text) != "":
+			if !e.hasRect || !inside(e.rect, e.pageBox) {
+				t.Errorf("a %s drawing %q reads box %v (present %v) on page box %v", e.standard, e.text, e.rect, e.hasRect, e.pageBox)
+			}
+		}
+		if e.standard == "Table" {
+			tableIdx = i
+		}
+		if e.standard == "TH" {
+			headers = append(headers, e)
+		}
+	}
+	if tableIdx < 0 || len(headers) != 2 {
+		t.Fatalf("setup: table %d, %d header cells", tableIdx, len(headers))
+	}
+	tb := v.elements[tableIdx].rect
+	for _, e := range v.elements {
+		if e.standard == "TH" || e.standard == "TD" {
+			if r := e.rect; r[0] < tb[0] || r[1] < tb[1] || r[2] > tb[2] || r[3] > tb[3] {
+				t.Errorf("cell %q reads %v, outside its table's box %v", e.text, r, tb)
+			}
+		}
+	}
+	if headers[0].rect[2] > headers[1].rect[0] {
+		t.Errorf("header %q ends at %.1f and %q starts at %.1f — the cells' boxes overlap or are swapped", headers[0].text, headers[0].rect[2], headers[1].text, headers[1].rect[0])
+	}
+
+	tree, err := ReadStructure(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tree.Tagged || len(tree.Elements) != len(v.elements) || tree.Unaddressable != v.unaddressable {
+		t.Fatalf("ReadStructure reads tagged %v with %d element(s); the view has %d", tree.Tagged, len(tree.Elements), len(v.elements))
+	}
+	for i, e := range tree.Elements {
+		ve := v.elements[i]
+		if e.Kids == nil || e.ID != ve.id || e.Parent != ve.parent || e.Rect != ve.rect || e.PageBox != ve.pageBox || e.Standard != ve.standard || e.Scope != ve.scope || e.Alt != ve.alt {
+			t.Errorf("element %d reads %+v, the view %+v", i, e, ve)
+		}
+	}
+	src, err := untaggedMarkdown([]byte("# A title\n\nA paragraph.\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	none, err := ReadStructure(src)
+	if err != nil || none.Tagged || none.Elements == nil || len(none.Elements) != 0 {
+		t.Errorf("an untagged document reads %+v, %v — want untagged with an empty, non-nil list", none, err)
+	}
+}
+
+// TestAnElementSpanningPagesIsOutlinedWhereItStarts — the box is on the element's own page. A section
+// whose paragraphs are on two pages is outlined around its first-page paragraph only; a union across
+// pages would describe a region of page 1 that page 2's text happens to occupy.
+func TestAnElementSpanningPagesIsOutlinedWhereItStarts(t *testing.T) {
+	page := func(n int, contents int) string {
+		return fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents %d 0 R >>", contents)
+	}
+	src := assembleFixture(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R 11 0 R] /Count 2 >>",
+		3:  page(1, 4),
+		4:  streamObject("", "/P <</MCID 0>> BDC BT /F1 12 Tf 72 700 Td (Short) Tj ET EMC"),
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] >>",
+		8:  "<< /Type /StructElem /S /Sect /P 7 0 R /K [9 0 R 10 0 R] >>",
+		9:  "<< /Type /StructElem /S /P /P 8 0 R /Pg 3 0 R /K 0 >>",
+		10: "<< /Type /StructElem /S /P /P 8 0 R /Pg 11 0 R /K 0 >>",
+		11: page(2, 12),
+		12: streamObject("", "/P <</MCID 0>> BDC BT /F1 12 Tf 72 700 Td (A much longer line of text on the second page) Tj ET EMC"),
+	})
+	v, err := readStructureView(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.elements) != 3 {
+		t.Fatalf("setup: %d element(s)", len(v.elements))
+	}
+	sect, first, second := v.elements[0], v.elements[1], v.elements[2]
+	if first.page != 1 || second.page != 2 || !first.hasRect || !second.hasRect || second.rect[2] <= first.rect[2] {
+		t.Fatalf("setup: the paragraphs read page %d box %v and page %d box %v", first.page, first.rect, second.page, second.rect)
+	}
+	if sect.page != 1 || sect.rect != first.rect {
+		t.Errorf("the section reads page %d box %v — want page 1 and exactly its first-page paragraph's box %v", sect.page, sect.rect, first.rect)
 	}
 }
 

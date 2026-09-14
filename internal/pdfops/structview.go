@@ -2,6 +2,8 @@ package pdfops
 
 import (
 	"bytes"
+	"errors"
+	"math"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -57,6 +59,13 @@ type viewElement struct {
 	scope string
 	// kids are the indices of the element's element kids, in `/K` order.
 	kids []int
+	// rect is the element's extent on its page — the union of the runs drawn under its MCIDs and its
+	// kids' boxes on that page, estimated from baselines as the proposer's outline is (0.85 em up,
+	// 0.25 em down). hasRect is false for an element that draws no text, a figure's image among them.
+	// pageBox is the page's MediaBox, so a client can place rect on the page it renders (P09.S06a).
+	rect    [4]float64
+	hasRect bool
+	pageBox [4]float64
 }
 
 // readStructureView reads pdf's structure tree as reviewable values. A document with no tree is
@@ -79,6 +88,7 @@ func readStructureView(pdf []byte) (structureView, error) {
 	}
 	// ADR-009 exemption (grouping_test.go): this reads runs to match MCIDs to text and groups nothing.
 	textAt := map[[2]int]string{}
+	rectAt := map[[2]int][4]float64{}
 	for pg := 1; pg <= ctx.PageCount; pg++ {
 		pr, perr := readPageRuns(ctx, pg)
 		if perr != nil {
@@ -86,9 +96,24 @@ func readStructureView(pdf []byte) (structureView, error) {
 		}
 		for _, r := range pr.runs {
 			if r.mcid >= 0 {
-				textAt[[2]int{pg, r.mcid}] += r.text
+				key := [2]int{pg, r.mcid}
+				textAt[key] += r.text
+				box := [4]float64{r.x, r.y - 0.25*r.size, r.x + r.width, r.y + 0.85*r.size}
+				if seen, ok := rectAt[key]; ok {
+					box = unionBox(seen, box)
+				}
+				rectAt[key] = box
 			}
 		}
+	}
+	pageBoxes := map[int][4]float64{}
+	boxOfPage := func(pg int) [4]float64 {
+		if b, ok := pageBoxes[pg]; ok {
+			return b
+		}
+		b := mediaBoxOf(ctx, pg)
+		pageBoxes[pg] = b
+		return b
 	}
 
 	index := make(map[*structElem]int, len(tree.elems))
@@ -105,13 +130,22 @@ func readStructureView(pdf []byte) (structureView, error) {
 			v.parent = index[e.parent]
 		}
 		var b strings.Builder
+		type pagedBox struct {
+			page int
+			box  [4]float64
+		}
+		var boxes []pagedBox
 		for _, k := range e.kids {
 			switch k.kind {
 			case kidMCID, kidMCR:
 				v.marked = true
-				b.WriteString(textAt[[2]int{pageNr[k.pgObj], k.mcid}])
+				key := [2]int{pageNr[k.pgObj], k.mcid}
+				b.WriteString(textAt[key])
 				if v.page == 0 {
 					v.page = pageNr[k.pgObj]
+				}
+				if box, ok := rectAt[key]; ok {
+					boxes = append(boxes, pagedBox{key[0], box})
 				}
 			case kidElement:
 				if k.elem == nil {
@@ -123,9 +157,27 @@ func readStructureView(pdf []byte) (structureView, error) {
 				if v.page == 0 {
 					v.page = view.elements[j].page
 				}
+				if kid := view.elements[j]; kid.hasRect {
+					boxes = append(boxes, pagedBox{kid.page, kid.rect})
+				}
 			}
 		}
 		v.text = b.String()
+		// The box is on the element's own page: a paragraph continuing onto the next page is outlined
+		// where it starts, which is where the viewer is taken.
+		for _, pb := range boxes {
+			if pb.page != v.page {
+				continue
+			}
+			if v.hasRect {
+				v.rect = unionBox(v.rect, pb.box)
+			} else {
+				v.rect, v.hasRect = pb.box, true
+			}
+		}
+		if v.page > 0 {
+			v.pageBox = boxOfPage(v.page)
+		}
 		if o, ok := e.dict["Alt"]; ok {
 			if s, aerr := ctx.XRefTable.DereferenceStringOrHexLiteral(o, model.V10, nil); aerr == nil {
 				v.alt, v.hasAlt = s, true
@@ -179,4 +231,56 @@ func standardRole(tree *structTree, kind string) string {
 		kind = next
 	}
 	return kind
+}
+
+// unionBox is the smallest box holding both.
+func unionBox(a, b [4]float64) [4]float64 {
+	return [4]float64{math.Min(a[0], b[0]), math.Min(a[1], b[1]), math.Max(a[2], b[2]), math.Max(a[3], b[3])}
+}
+
+// StructureElement is one element of a document's existing structure tree, as the Tags panel shows
+// it — `PLAN-accessibility.md` P09.S06a.
+type StructureElement struct {
+	// ID is the object number an edit names; 0 for an element written inline.
+	ID int
+	// Parent and Kids are indices into the tree's Elements; Parent is -1 for an element under the root.
+	Parent int
+	Kids   []int
+	// Kind is `/S` as written; Standard is what the role map resolves it to.
+	Kind, Standard string
+	Page           int
+	Text, Alt      string
+	HasAlt         bool
+	Scope          string
+	// Rect is the element's estimated extent on Page in PDF user space, all zero when it draws no text;
+	// PageBox is that page's MediaBox, so a client can place Rect on the page it renders.
+	Rect, PageBox [4]float64
+}
+
+// StructureTree is a document's existing structure tree as reviewable values.
+type StructureTree struct {
+	// Tagged is false for a document with no structure tree, and Elements is then empty.
+	Tagged        bool
+	Unaddressable int
+	Elements      []StructureElement
+}
+
+// ReadStructure reads pdf's existing structure tree. It writes nothing, and a document with no tree is
+// an answer — untagged — not an error.
+func ReadStructure(pdf []byte) (StructureTree, error) {
+	v, err := readStructureView(pdf)
+	if errors.Is(err, errNoStructTree) {
+		return StructureTree{Elements: []StructureElement{}}, nil
+	}
+	if err != nil {
+		return StructureTree{}, err
+	}
+	out := StructureTree{Tagged: true, Unaddressable: v.unaddressable, Elements: make([]StructureElement, len(v.elements))}
+	for i, e := range v.elements {
+		out.Elements[i] = StructureElement{
+			ID: e.id, Parent: e.parent, Kids: append([]int{}, e.kids...), Kind: e.kind, Standard: e.standard,
+			Page: e.page, Text: e.text, Alt: e.alt, HasAlt: e.hasAlt, Scope: e.scope, Rect: e.rect, PageBox: e.pageBox,
+		}
+	}
+	return out, nil
 }

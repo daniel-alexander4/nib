@@ -3257,6 +3257,17 @@ the stray `TD`, no data cells as Pass, the cell role map, the attribute owner ch
 Two probes were first written so they did not compile and were redone; two survived and each got a case.
 
 #### P09.S06 — the Tags panel and the Reading Order view
+**(step zero, 2026-09-14 — SPLIT into three, as P08.S06 was.)** A read route and its reader, element
+geometry, a sidebar panel with an ARIA tree, five keyboard edits and a reading-order overlay are too much
+for one slice to probe honestly.
+- **P09.S06a — the read surface** *(done 2026-09-14, v1.129.90)*: `pdfops.ReadStructure` with each
+  element's box, `GET /api/tags/tree` (S01's route, moved here with its reader), and a panel showing the
+  active document's tree as an ARIA tree, the focused element outlined. Tiers 1 and 2.
+- **P09.S06b — the edits**: retype, move, alt text, scope and artifact on the selection, keyboard-only,
+  through S04's route; the panel's tier-3 keyboard reader and the report changing after an edit and back
+  after undo.
+- **P09.S06c — the Reading Order view**: the overlay numbering elements on the page.
+
 Scope: the sidebar panel second in `SIDEBAR_FOR.edit`: the tree (ARIA tree pattern), the selected
 element outlined on its page, and retype / move / alt text / scope / artifact on the selection; a
 reading-order overlay numbering elements on the page. Refs D10, ADR-018, ADR-020.
@@ -3264,6 +3275,35 @@ Acceptance:
 - Every edit reachable keyboard-only, at tier 2 and tier 3, with the panel's own keyboard reader: no trap,
   focus always visible, and the flow completes (P02's bar).
 - The report's clauses change after an edit and change back after undo.
+
+**(P09.S06a build, 2026-09-14, v1.129.90.)** `pdfops.ReadStructure` (`structview.go`), `GET /api/tags/tree`
+(`internal/server/tags.go`), the Review Structure Tree panel (`web/app.js`, `#tagtree`).
+
+| measured | result |
+|---|---|
+| where the panel's state lives | ONE shared panel loaded for the active document, not per-view DOM like the outline: it follows a load (`setDocumentFromServer`, beside `buildOutline`), a switch (`repaintForActiveView`) and its own header |
+| an element's box | the union of the runs under its MCIDs (P08's estimate, 0.85 em up, 0.25 em down) and its kids' boxes ON ITS OWN PAGE, with that page's MediaBox; LibreOffice's cells sit inside their table's box and Name left of Qty; the figure, which draws no text, has none |
+| the route | byte-identical after a read; its top level matches the document's `/K`; every kid names its parent; every text element's box inside its page; a document with no tree answers `tagged: false` with an empty list |
+| the panel at tier 2 | second in Document mode, not its landing surface; one tab stop; levels; Down/Up/Home/End/Right-to-first-kid/Left-to-parent; focus moves selection and the tab stop and takes the viewer to the element's page, a boxless figure included; an untagged document says so and names Tag structure…; an undo re-reads; a switch re-reads; a late answer for the document left behind is dropped |
+| the standing guards | `published.test.mjs` (both shapes read), the observables scan (`pdfops.StructureTree`), `resolveDoc` 29 → 30, ids, tablist and modes unchanged and green; jsdom files 65 → 66 |
+
+- **Pin — pinned once, after the whole answer.** The first cut checked the sequence and owner after the
+  fetch AND after the body; a probe removing one survived because the other held. One check, after both
+  awaits, which the late-answer test makes red.
+- **Pin — the handler trusts the door for non-nil kids.** A second nil guard in the handler could not be
+  made to fire; it was removed and `ReadStructure`'s test holds the property.
+- **Pin — the outline is on the element's first page.** A section spanning pages is outlined around its
+  first-page content; a union across pages would outline a region of page 1 that page 2's text occupies.
+  Driven by a two-page fixture after the one-page corpus let the filter's removal survive.
+- **Pin — no tier 3 in this part.** The outline's position on a rendered page and the panel's real Tab
+  order are S06b's tier-3 reader, which exercises them while editing.
+
+Twenty mutations red. Go: the box union's edges, kids' boxes, the same-page filter, the page box,
+nil elements and nil kids from the door, a null list from the handler. Client: the panel first, the header
+hook, `aria-level`, Right, Left, Home, End, the roving tab stop, a figure's page move, the untagged summary,
+the reload hook, the switch hook and the pin. Four survived their first run — the same-page filter, the pin
+(duplicated), and both refresh hooks — and each got a test; the handler's nil guard was removed as
+unfalsifiable. The slice gate does not fire (`internal/server`'s tag routes).
 
 #### P09.S07 — end to end, and the exit criteria
 Scope: tier 3 — open the LibreOffice fixture with alt and scope stripped and headings mapped to `P`, see

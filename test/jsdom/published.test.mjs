@@ -61,6 +61,9 @@ const PUBLISHED = [
   { type: 'tagProposalResponse', readers: ['web/app.js'] },
   { type: 'tagElementView', readers: ['web/app.js'] },
   { type: 'tagPageView', readers: ['web/app.js'] },
+  // The existing structure tree (P09.S06a); its reader is the Tags panel.
+  { type: 'tagTreeResponse', readers: ['web/app.js'] },
+  { type: 'tagTreeElementView', readers: ['web/app.js'] },
   { type: 'docsResponse', readers: ['web/app.js'] },
   { type: 'statusResponse', readers: ['web/app.js'] },
   // The advanced-features switch (`/pending 451`). Nested inside statusResponse and read by
