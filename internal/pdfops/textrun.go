@@ -93,6 +93,10 @@ type pageRuns struct {
 	// slice; a reader failure is an error, never this. A show operator with an empty string draws
 	// nothing and counts as nothing: counting operators instead was a distinction no caller reads.
 	noText bool
+	// sequences are the page's marked-content sequences that carry an MCID, in the order they open —
+	// those inside the forms it draws included — so a writer can find an element's content whether or
+	// not it is text (P09.S03).
+	sequences []markedSeq
 }
 
 // maxFormDepth bounds form XObject recursion. A form may draw itself; the specification forbids it and
@@ -119,7 +123,7 @@ func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
 		}
 		w := newRunWalker(ctx.XRefTable)
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
-		return pageRuns{runs: w.runs, noText: len(w.runs) == 0}, nil
+		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs}, nil
 	})
 }
 
@@ -287,6 +291,22 @@ type runWalker struct {
 	// -1 for a sequence with none, or mcArtifact. Shared across a page and the forms it draws, because
 	// a `BDC` around a `Do` tags what the form draws.
 	mcStack []int
+	// seqs are the MCID-carrying sequences seen so far; seqOpen parallels mcStack with each open
+	// sequence's index into seqs, or -1 for one that carries no MCID.
+	seqs    []markedSeq
+	seqOpen []int
+}
+
+// markedSeq is one marked-content sequence that carries an MCID: the one reading of `BDC` the tree
+// writers and the run reader share, so an element's content is found by the rule its text is read by.
+type markedSeq struct {
+	mcid int
+	// opener covers the tag, its property list and `BDC`; close covers the `EMC`, and is zero when the
+	// stream ended first. Both are offsets into the stream the sequence was read from.
+	opener, close opSpan
+	// inForm says that stream was a form XObject's; drawsForm says a form XObject is drawn inside the
+	// sequence, so its content is not all in the stream the opener is in.
+	inForm, drawsForm bool
 }
 
 // mcArtifact marks an `/Artifact` sequence on the stack: content inside it belongs to no element,
@@ -406,8 +426,11 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	toks := contentstream.Tokenize(src)
 	// A stream's sequences end with the stream: an unbalanced `EMC` inside a form cannot close the page's
 	// sequence, and a form that leaves one open cannot tag what the page draws after it.
-	base := len(w.mcStack)
+	base, seqBase := len(w.mcStack), len(w.seqOpen)
 	defer func() {
+		if len(w.seqOpen) > seqBase {
+			w.seqOpen = w.seqOpen[:seqBase]
+		}
 		// Only ever SHRINK. Reslicing to `base` when the stack is already shorter reaches back into the
 		// backing array and resurrects entries an `EMC` removed — which a probe found masking a popped
 		// page sequence as though it had never closed.
@@ -568,24 +591,42 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				}
 			}
 			w.mcStack = append(w.mcStack, entry)
+			w.seqOpen = append(w.seqOpen, -1)
 		case "BDC":
-			entry := -1
+			entry, opener := -1, -1
 			if os := last(2); os != nil {
 				if tag, ok := os[0].name(src); ok && tag == "Artifact" {
 					entry = mcArtifact
 				} else {
 					entry = w.markedContentID(os[1], res, src)
 				}
+				opener = os[0].start
 			}
 			w.mcStack = append(w.mcStack, entry)
+			if entry >= 0 && opener >= 0 {
+				w.seqs = append(w.seqs, markedSeq{mcid: entry, opener: opSpan{opener, tok.End}, inForm: depth > 0})
+				w.seqOpen = append(w.seqOpen, len(w.seqs)-1)
+			} else {
+				w.seqOpen = append(w.seqOpen, -1)
+			}
 		case "EMC":
 			if n := len(w.mcStack); n > base {
 				w.mcStack = w.mcStack[:n-1]
 			}
+			if n := len(w.seqOpen); n > seqBase {
+				if i := w.seqOpen[n-1]; i >= 0 {
+					w.seqs[i].close = opSpan{tok.Start, tok.End}
+				}
+				w.seqOpen = w.seqOpen[:n-1]
+			}
 		case "Do":
 			if os := last(1); os != nil {
-				if name, ok := os[0].name(src); ok {
-					w.drawForm(res, name, gs, depth, visiting)
+				if name, ok := os[0].name(src); ok && w.drawForm(res, name, gs, depth, visiting) {
+					for _, i := range w.seqOpen {
+						if i >= 0 {
+							w.seqs[i].drawsForm = true
+						}
+					}
 				}
 			}
 		}
@@ -684,35 +725,39 @@ func (w *runWalker) fontFor(res types.Dict, name string) *runFont {
 }
 
 // drawForm walks a form XObject at its /Matrix, under its own resources where it has them.
-func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth int, visiting map[int]bool) {
-	if res == nil || depth >= maxFormDepth {
-		return
+func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth int, visiting map[int]bool) bool {
+	if res == nil {
+		return false
 	}
 	xobjs, err := w.xt.DereferenceDict(res["XObject"])
 	if err != nil || xobjs == nil {
-		return
+		return false
 	}
 	obj, ok := xobjs[name]
 	if !ok {
-		return
+		return false
 	}
+	sd, _, serr := w.xt.DereferenceStreamDict(obj)
+	if serr != nil || sd == nil {
+		return false
+	}
+	if st := sd.Dict.NameEntry("Subtype"); st == nil || *st != "Form" {
+		return false
+	}
+	// From here it IS a form, whether or not it is walked: a sequence around it tags what it draws.
 	key := -1
 	if ir, isRef := obj.(types.IndirectRef); isRef {
 		key = ir.ObjectNumber.Value()
 		if visiting[key] {
-			return
+			return true
 		}
 	}
-	sd, _, serr := w.xt.DereferenceStreamDict(obj)
-	if serr != nil || sd == nil {
-		return
-	}
-	if st := sd.Dict.NameEntry("Subtype"); st == nil || *st != "Form" {
-		return
+	if depth >= maxFormDepth {
+		return true
 	}
 	body := streamContent(sd)
 	if body == nil {
-		return
+		return true
 	}
 	m := runIdentity
 	if arr, aerr := w.xt.DereferenceArray(sd.Dict["Matrix"]); aerr == nil && len(arr) == 6 {
@@ -732,6 +777,7 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	}
 	gs.ctm = m.mul(gs.ctm)
 	w.walk(body, formRes, gs, depth+1, visiting)
+	return true
 }
 
 // streamContent returns a stream's decoded bytes, decoding it if nothing has yet.

@@ -3139,13 +3139,49 @@ as elements, the per-edit re-read, and the pre-existing-defect excuse — and ea
 found the finding above. Then the stale error's `Is`, its wording, and sentence-keyed comparison. The slice
 gate does not fire (`pdfops` only).
 
-#### P09.S03 — mark an element's content as an artifact
+#### P09.S03 — mark an element's content as an artifact *(done 2026-09-14, v1.129.87)*
 Scope: the one edit that touches content streams — its MCIDs' `BDC … EMC` become `/Artifact BMC … EMC`,
 its ParentTree slots are freed, and the element leaves its parent's `/K`.
 Acceptance:
 - The bracketed bytes are unchanged (the P08.S07 invariant, reused); the ParentTree no longer names the
   element; `checkStructConsistency` is empty; veraPDF adds no clause.
 - An element whose content is drawn inside a form XObject is refused, as P08's commit refuses it.
+
+**(build, 2026-09-14, v1.129.87.)** `artifactElement` in `internal/pdfops/structartifact.go`, applied as
+`editArtifact` through S02's batch.
+
+| measured | result |
+|---|---|
+| how LibreOffice marks content | inline `/Tag<</MCID n>>BDC … EMC`, one sequence per leaf; the figure's sequence draws an IMAGE `Do` (`/Subtype /Image`), not a form |
+| a door that finds a sequence by MCID | **none that fits**: `watermarkArtifactSpans` finds only `/Artifact <<…>> BDC` openers, and a figure has no text runs, so run spans cannot find it. The run walker already resolves each `BDC`'s MCID (inline or `/Properties`) and sees operand starts and form descent |
+| a paragraph and a whole list artifacted on LibreOffice's tree | gone from the tree with every descendant; their ParentTree slots empty; their text still drawn, now as artifact runs; the page's tokens identical but for the openers (tokenized independently of the writer's spans) |
+| the figure artifacted | no sequence opens with its MCID; the image `Do` still drawn |
+| veraPDF, a paragraph and the figure artifacted | fails `7.1 t8`, `7.1 t10` — the original's own; nothing added |
+
+- **Pin — the run walker records every MCID-carrying sequence** (`markedSeq`: opener span, `EMC` span,
+  in a form, draws a form), and the artifact edit reads that — one reading of `BDC` for text, figures and
+  the writers. `drawForm` now answers whether the XObject IS a form, walked or not (a self-drawing or
+  too-deep form still makes a sequence around it form content).
+- **Pin — only openers change.** `/P <</MCID n>> BDC` becomes `/Artifact BMC`; the `EMC` and the bytes
+  between are untouched.
+- **Pin — six refusals, each driven:** a sequence around a form `Do`; one inside a form's own stream;
+  an MCR into a form stream (`/Stm`); an element describing an annotation (`OBJR`); a sequence enclosing
+  another element's (closed or not); an MCID the page does not draw; and the last element of the tree
+  (a claim over an empty tree, ADR-031).
+- **Pin — emptying a slot never creates a ParentTree.** `clearParentTreeSlot` returns when there is none.
+- **Pin — `removeFromParent` is the one way an element leaves where it is**, shared by the move and the
+  artifact edit.
+- **Harness note — the first mutation run was killed by the OS for memory** (each round compiled
+  `pdfops` and ran LibreOffice and veraPDF), with a mutation still on disk; it was restored from the
+  pre-run backup and verified byte-identical before anything else ran. The rerun restored in `finally`
+  and left the veraPDF test out of the per-mutation set; the one mutation only it would have caught got a
+  fixture instead.
+
+Twenty-one mutations red. Five survived their first run and each got a fixture: the in-form refusal (no
+sequence inside a form's own stream), the unclosed-enclosure branch, "any later sequence counts as
+enclosed" (no artifacted element was followed by another's sequence), the no-ParentTree guard (the
+positive fixture's page named no key, so the path was never reached), and the per-stream shrink of the
+open-sequence stack (no form left a sequence open). The slice gate does not fire (`pdfops` only).
 
 #### P09.S04 — the routes
 Scope: `POST /api/tags/edit` — a batch of S02/S03 edits against the tree S01 served — through
