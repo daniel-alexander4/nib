@@ -2410,6 +2410,8 @@ function newView() {
   v.eventBus.on('scalechanging', () => relayoutRedactMarks(v));
   v.eventBus.on('scalechanging', () => relayoutOverlays(v));
   v.eventBus.on('pagerendered', () => relayoutOverlays(v));
+  // A re-render replaces the page's children, so the Reading Order badges are drawn again (P09.S06c).
+  v.eventBus.on('pagerendered', () => { if (v === view) drawReadingOrder(); });
   v.eventBus.on('updatefindcontrolstate', ({ matchesCount }) => {
     if (v === view) renderFindCount(matchesCount);
   });
@@ -5132,6 +5134,10 @@ let tagTreeSeq = 0;
 let tagTreeElements = [];
 let tagTreeSelected = -1;
 let tagEditRestore = null;
+// The Reading Order view (P09.S06c): whether it is switched on, and which document the elements in
+// tagTreeElements were read from — the badges are drawn only on that document's pages.
+let readingOrderOn = false;
+let tagTreeView = null;
 
 function tagTreeShowing() {
   const panel = $('tagtree');
@@ -5147,6 +5153,9 @@ async function loadTagTree() {
   if (!owner.pdfDocument || !owner.docMeta || !owner.docMeta.id) {
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
+    tagTreeElements = [];
+    tagTreeView = null;
+    drawReadingOrder();
     summary.textContent = 'Open a PDF to see its structure tree.';
     return;
   }
@@ -5163,6 +5172,9 @@ async function loadTagTree() {
     if (seq !== tagTreeSeq) return;
     list.innerHTML = '';
     $('tagEditBar').hidden = true;
+    tagTreeElements = [];
+    tagTreeView = null;
+    drawReadingOrder();
     summary.textContent = e.message || 'Could not read the structure tree.';
   }
 }
@@ -5183,6 +5195,8 @@ function renderTagTree(tree, owner) {
   $('tagEditBar').hidden = true;
   tagTreeElements = [];
   tagTreeSelected = -1;
+  tagTreeView = owner;
+  drawReadingOrder();
   if (!tree.tagged) {
     summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
     return;
@@ -5226,6 +5240,7 @@ function renderTagTree(tree, owner) {
       $('tagEditStatus').textContent = 'Changed — Ctrl+Z takes it back.';
     }
   }
+  drawReadingOrder();
 }
 
 function selectTagTreeItem(i, elements, owner) {
@@ -5361,6 +5376,50 @@ function wireTagEditBar() {
   $('tagEditArtifact').onclick = () => applyTagEdit({ kind: 'artifact' });
 }
 wireTagEditBar();
+
+// ── The Reading Order view — `PLAN-accessibility.md` P09.S06c ────────────────────────────────────────
+//
+// A number on each element that draws text, in the order the tree gives it — what a screen reader reads
+// first, second, third, laid over what the eye reads — so a person sees where the two disagree. Drawn only
+// while the tree panel is open, the view is on, and the tree was read from the document on screen; drawn
+// again when the tree changes and when pdf.js re-renders a page, which replaces the page's children. The
+// badges are `aria-hidden`: the tree beside them already gives a screen reader the same order.
+
+// readingOrderEntries are the elements that get a number: leaves that draw text, with a box on a page.
+function readingOrderEntries(elements) {
+  return elements.filter((e) => {
+    const r = e.rect;
+    return !(e.kids || []).length && e.page > 0 && r && r[2] > r[0] && r[3] > r[1];
+  });
+}
+
+function drawReadingOrder() {
+  document.querySelectorAll('.tag-order').forEach((b) => b.remove());
+  if (!readingOrderOn || !tagTreeShowing() || tagTreeView !== view || !view.viewer) return;
+  readingOrderEntries(tagTreeElements).forEach((e, i) => {
+    const pv = view.viewer.getPageView?.(e.page - 1);
+    if (!pv || !pv.div || !e.pageBox) return;
+    const [llx, lly, urx, ury] = e.pageBox;
+    const w = urx - llx, h = ury - lly;
+    if (!(w > 0 && h > 0)) return;
+    const badge = document.createElement('div');
+    badge.className = 'tag-order';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.textContent = String(i + 1);
+    badge.style.left = `${((e.rect[0] - llx) / w) * 100}%`;
+    badge.style.top = `${((ury - e.rect[3]) / h) * 100}%`;
+    pv.div.appendChild(badge);
+  });
+}
+
+function setReadingOrder(on) {
+  readingOrderOn = on;
+  const toggle = $('tagOrderToggle');
+  toggle.setAttribute('aria-pressed', String(on));
+  toggle.textContent = on ? 'Hide reading order' : 'Show reading order';
+  drawReadingOrder();
+}
+$('tagOrderToggle').onclick = () => setReadingOrder(!readingOrderOn);
 
 // runSanitize applies a server-side removal (strip/safe). On success it reloads
 // the cleaned document and shows what remains; on failure it leaves the document
@@ -12213,6 +12272,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     if (tab.classList.contains('active')) {
       setExpanded(tab, false);
       $(tab.dataset.panel)?.classList.remove('active');
+      drawReadingOrder(); // the badges belong to the tree panel, and go when it does
       return;
     }
     // **`[data-panel]` scopes this to the sidebar's panel headers.** A bare `.tab` also matches
@@ -12225,6 +12285,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     collapseGroupCards(); // one card open at a time, of either kind
     if (tab.dataset.panel === 'library') loadImages();
     if (tab.dataset.panel === 'tagtree') loadTagTree();
+    drawReadingOrder();
   };
 });
 
@@ -12574,6 +12635,7 @@ function openCard(target, head) {
   if (head) all('.sbhead[data-panel]').forEach((t) => setExpanded(t, false));
   if (target && target.classList.contains('panel')) return; // the tab wiring handles panels
   all('.panel').forEach((p) => { if (p.id !== 'commands') p.classList.remove('active'); });
+  drawReadingOrder(); // opening a group card closes the tree panel, and the badges with it
 }
 
 // ── The steps of a simple sign ───────────────────────────────────────────────

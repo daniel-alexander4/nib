@@ -195,3 +195,18 @@ test('the panel follows a document switch, and a late answer for the document le
   assert.deepEqual(items().map((i) => i.dataset.id), ['20', '21'],
     'a late answer for the first document replaced the tree of the document on screen');
 });
+
+// The Reading Order view (P09.S06c). The stub viewer has no page views, so where the numbers land is
+// tier 3's (test/ui/tagedit.test.mjs); what this tier can hold is the toggle's own state.
+test('the reading order view is a toggle that says whether it is on', async () => {
+  const toggle = doc.getElementById('tagOrderToggle');
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false', 'the reading order view starts on');
+  toggle.click();
+  await settle();
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true', 'switching the view on does not say it is pressed');
+  assert.match(toggle.textContent, /Hide reading order/, 'the toggle does not offer to hide what it shows');
+  toggle.click();
+  await settle();
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false', 'switching the view off does not say so');
+  assert.match(toggle.textContent, /Show reading order/, 'the toggle does not offer to show it again');
+});

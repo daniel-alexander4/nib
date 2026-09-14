@@ -171,6 +171,30 @@ test('the correction region used no pointer at all', () => {
   }
 });
 
+// The Reading Order view — P09.S06c. After the undo above the tree is the committed proposal again: one
+// paragraph per page. Outside the correction region, so a pointer is allowed here.
+test('the reading order view numbers each element on its own page, over its text, and goes when switched off', async () => {
+  await page.click('#tagOrderToggle');
+  await page.waitForFunction(() => document.querySelectorAll('.tag-order').length === 2, null, { timeout: 20000 });
+  const badges = await page.evaluate(() => [...document.querySelectorAll('.tag-order')].map((b) => ({
+    n: b.textContent, page: b.closest('.page')?.dataset.pageNumber,
+  })));
+  assert.deepEqual(badges, [{ n: '1', page: '1' }, { n: '2', page: '2' }], `the badges read ${JSON.stringify(badges)} — want 1 on page 1 and 2 on page 2`);
+  const near = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.tag-order')].find((x) => x.textContent === '1').getBoundingClientRect();
+    const span = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')]
+      .find((s) => s.textContent.includes('section 1') && s.getBoundingClientRect().width > 0);
+    if (!span) return null;
+    const t = span.getBoundingClientRect();
+    const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
+    return { badge: [cx, cy], text: [t.left, t.top, t.right, t.bottom], near: cx >= t.left - 24 && cx <= t.right && cy >= t.top - 24 && cy <= t.bottom + 8 };
+  });
+  assert.ok(near, 'setup: page one has no laid-out span reading "section 1"');
+  assert.ok(near.near, `badge 1 is not at its element's text: ${JSON.stringify(near)}`);
+  await page.click('#tagOrderToggle');
+  await page.waitForFunction(() => document.querySelectorAll('.tag-order').length === 0, null, { timeout: 5000 });
+});
+
 test('this file leaves the shared server as it found it', async () => {
   h.answerDialogs(true);
   assert.notEqual(foundHeld, null, 'setup: the first test never ran, so there is no baseline to return to');
