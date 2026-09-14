@@ -240,29 +240,35 @@ func unionBox(a, b [4]float64) [4]float64 {
 
 // StructureElement is one element of a document's existing structure tree, as the Tags panel shows
 // it — `PLAN-accessibility.md` P09.S06a.
+//
+// The JSON tags are the tree route's field names (`internal/server/tags.go`), held equal by a server test,
+// so `nib tag tree --json` prints what the Tags panel reads (P10.S01).
 type StructureElement struct {
 	// ID is the object number an edit names; 0 for an element written inline.
-	ID int
+	ID int `json:"id"`
 	// Parent and Kids are indices into the tree's Elements; Parent is -1 for an element under the root.
-	Parent int
-	Kids   []int
+	Parent int   `json:"parent"`
+	Kids   []int `json:"kids"`
 	// Kind is `/S` as written; Standard is what the role map resolves it to.
-	Kind, Standard string
-	Page           int
-	Text, Alt      string
-	HasAlt         bool
-	Scope          string
+	Kind     string `json:"kind"`
+	Standard string `json:"standard"`
+	Page     int    `json:"page"`
+	Text     string `json:"text"`
+	Alt      string `json:"alt"`
+	HasAlt   bool   `json:"hasAlt"`
+	Scope    string `json:"scope"`
 	// Rect is the element's estimated extent on Page in PDF user space, all zero when it draws no text;
 	// PageBox is that page's MediaBox, so a client can place Rect on the page it renders.
-	Rect, PageBox [4]float64
+	Rect    [4]float64 `json:"rect"`
+	PageBox [4]float64 `json:"pageBox"`
 }
 
 // StructureTree is a document's existing structure tree as reviewable values.
 type StructureTree struct {
 	// Tagged is false for a document with no structure tree, and Elements is then empty.
-	Tagged        bool
-	Unaddressable int
-	Elements      []StructureElement
+	Tagged        bool               `json:"tagged"`
+	Unaddressable int                `json:"unaddressable"`
+	Elements      []StructureElement `json:"elements"`
 }
 
 // ReadStructure reads pdf's existing structure tree. It writes nothing, and a document with no tree is

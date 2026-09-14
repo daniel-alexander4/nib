@@ -3448,7 +3448,7 @@ their routes already call.
 
 **Firmed slices:**
 
-#### P10.S01 — `nib tag tree` and `nib tag propose`
+#### P10.S01 — `nib tag tree` and `nib tag propose` *(done 2026-09-14, v1.129.96)*
 Scope: two read-only subcommands under one `tag` verb: `tree IN` prints the existing tree in reading order
 (type, standard type, page, alt text, scope, text), `propose IN` prints the proposal; `--json` for both,
 for a script to edit and hand back.
@@ -3457,6 +3457,29 @@ Acceptance:
 - The input is byte-identical afterwards; an untagged document's `tree` says so and exits 0.
 - `--json` carries every field the route's response does, and a round trip through `commit` / `edit`
   (S02) consumes it.
+
+**(build, 2026-09-14, v1.129.96.)** `internal/cli/tag.go`; JSON tags on `pdfops.StructureTree`,
+`StructureElement`, `TagProposal`, `TagElement` and `TagPageNote`.
+
+| measured | result |
+|---|---|
+| how `--json` gets the routes' shape | the CLI cannot import the server's unexported view types, and copying them would give one shape two definitions. The doors' own values carry JSON tags named as the routes name them, and `TestTheCLIsJSONIsTheRoutesShape` (server) holds every tag, options included, equal to the matching view — the route keeps its view types and `published.test.mjs`'s reader coverage |
+| `nib tag tree` on a tagged Markdown document | one line per element in reading order — id, type (and the custom type where the role map differs), page, notes, text — each child indented under its parent; `--json` decodes back equal to `pdfops.ReadStructure`; the file byte-identical |
+| on an untagged document | nothing on stdout, "has no structure tree" on stderr naming `nib tag propose`, exit 0; `--json` reads untagged with an empty list |
+| a figure with no alt text, a header cell with no scope | say so on their lines — driven by retyping the converted document's paragraph and heading through `pdfops.EditStructure`, a tree nib can reach |
+| `nib tag propose` | one line per proposed element with id, role, page and text; unsupported pages and pages with no text on stderr; `--json` equal to `pdfops.ProposeTags` |
+| the command table's own guard | `nib tag -h` exits 0 with a usage line (`TestEveryCommandTreatsDashHTheSameWay`, now 27 commands) |
+
+- **Pin — one `tag` verb, subcommands dispatched by its first argument.** The CLI had no subcommand verb;
+  `tag` answers `-h` itself, as every verb must.
+- **Pin — the read-only subcommands write nothing**, asserted by routing: neither calls a writer.
+- **Declared, not probed:** the "written inline" count on stderr and the text clipping have no fixture.
+
+Ten mutations red: the tree reaching the proposal door, `--json` ignored, an untagged tree exiting 1, its
+message on stdout, the indentation, the notes, a renamed JSON tag (red in the CLI test and the server shape
+guard), the proposal's role, `-h` exiting 1, and an unknown subcommand exiting 0. Two survived their first
+run — the indentation and the notes — and got `TestTagTreeShowsNestingAndWhatIsMissing`. The slice gate
+does not fire (`internal/cli`, `internal/pdfops` types, a server test).
 
 #### P10.S02 — `nib tag commit` and `nib tag edit`
 Scope: `commit IN -o OUT --review REVIEW.json` writes a reviewed proposal; `edit IN -o OUT --edits EDITS.json`
