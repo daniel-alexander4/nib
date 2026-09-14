@@ -112,6 +112,7 @@ const els = {
   scanBtn: $('scanBtn'), scanModal: $('scanModal'), scanBody: $('scanBody'),
   scanStripBtn: $('scanStripBtn'), scanMetaBtn: $('scanMetaBtn'), scanSafeBtn: $('scanSafeBtn'),
   scanFlattenBtn: $('scanFlattenBtn'), scanClose: $('scanClose'),
+  uaBtn: $('uaBtn'), uaModal: $('uaModal'), uaBody: $('uaBody'), uaSummary: $('uaSummary'), uaClose: $('uaClose'),
   attachBtn: $('attachBtn'), attachmentsModal: $('attachmentsModal'), attachBody: $('attachBody'),
   attachAddBtn: $('attachAddBtn'), attachInput: $('attachInput'), attachClose: $('attachClose'),
   decryptBtn: $('decryptBtn'), decryptModal: $('decryptModal'), decryptPw: $('decryptPw'),
@@ -2560,7 +2561,7 @@ const DOC_BOUND_MODALS = [
   'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
   'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
   'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal',
-  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal',
+  'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'uaModal',
   'splitModal', 'timestampModal', 'tsVerifyModal',
 ];
 
@@ -4830,6 +4831,82 @@ async function openScan() {
 }
 els.scanBtn.onclick = openScan;
 els.scanClose.onclick = () => { els.scanModal.hidden = true; };
+
+// --- accessibility report (PDF/UA-1) ----------------------------------------
+// `PLAN-accessibility.md` P07.S06. Law 4's verdicts are kept visibly apart, in words and not in
+// colour alone (WCAG 1.4.1): a clause nib could not check is never rendered the way a pass is, and
+// the summary never says "conforms" unless the server's door said so.
+const UA_VERDICT = {
+  fail: { label: '✗ Fails', cls: 'ua-fail', order: 0 },
+  'cannot check': { label: '? Nib could not check', cls: 'ua-cannot', order: 1 },
+  'not run': { label: '? Not checked', cls: 'ua-cannot', order: 1 },
+  pass: { label: '✓ Passes', cls: 'ua-pass', order: 2 },
+  'not applicable': { label: '— Does not apply', cls: 'ua-na', order: 3 },
+};
+
+function renderUAReport(rep) {
+  const results = (rep.results || []).slice();
+  const count = (v) => results.filter((r) => r.verdict === v).length;
+  const fails = count('fail');
+  const unchecked = count('cannot check') + count('not run');
+  if (rep.conformant) {
+    els.uaSummary.textContent = 'Every clause nib checks passes.';
+  } else {
+    const parts = [];
+    if (fails) parts.push(fails + (fails === 1 ? ' clause fails' : ' clauses fail'));
+    if (unchecked) parts.push(unchecked + (unchecked === 1 ? ' clause nib could not check' : ' clauses nib could not check'));
+    els.uaSummary.textContent = 'Not PDF/UA' + (parts.length ? ' — ' + parts.join(', ') : '') + '.';
+  }
+  const body = els.uaBody;
+  body.innerHTML = '';
+  results.sort((a, b) => (UA_VERDICT[a.verdict]?.order ?? 9) - (UA_VERDICT[b.verdict]?.order ?? 9));
+  for (const r of results) {
+    const v = UA_VERDICT[r.verdict] || { label: r.verdict, cls: 'ua-cannot' };
+    const row = document.createElement('div');
+    row.className = 'sigrow ua-row ' + v.cls;
+    const verdict = document.createElement('div');
+    verdict.className = 'ua-verdict';
+    verdict.textContent = v.label;
+    const clause = document.createElement('div');
+    clause.className = 'scan-detail';
+    clause.textContent = r.clause + ' — ' + r.summary;
+    row.append(verdict, clause);
+    if (r.why && r.verdict !== 'pass') {
+      const why = document.createElement('div');
+      why.className = 'scan-where';
+      why.textContent = r.why + (r.where ? ' (' + r.where + ')' : '');
+      row.append(why);
+    }
+    body.appendChild(row);
+  }
+  // The refusals are the door's own sentences; they are shown as a list a person can copy, so the
+  // UI does not compose a second reading of why the document is refused.
+  if ((rep.refusals || []).length) {
+    const list = document.createElement('ul');
+    list.className = 'ua-refusals';
+    list.setAttribute('aria-label', 'Why this document is not PDF/UA');
+    for (const line of rep.refusals) {
+      const li = document.createElement('li');
+      li.textContent = line;
+      list.appendChild(li);
+    }
+    body.appendChild(list);
+  }
+}
+
+async function openUACheck() {
+  if (!view.pdfDocument) return toast('Open a PDF first');
+  els.uaSummary.textContent = 'Checking…';
+  els.uaBody.innerHTML = '';
+  els.uaModal.hidden = false;
+  try {
+    const res = await apiFetch('/api/uacheck');
+    if (!res.ok) throw new Error('uacheck');
+    renderUAReport(await res.json());
+  } catch { els.uaModal.hidden = true; toast('accessibility check failed'); }
+}
+els.uaBtn.onclick = openUACheck;
+els.uaClose.onclick = () => { els.uaModal.hidden = true; };
 
 // runSanitize applies a server-side removal (strip/safe). On success it reloads
 // the cleaned document and shows what remains; on failure it leaves the document
@@ -10048,6 +10125,8 @@ const DOC_REQUIRED = [
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportTableOdsBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
+  // The accessibility report (P07.S06) checks the open document; with nothing open it has no subject.
+  'uaBtn',
   // Found by widening doccontrols' scan from the Edit pane to every pane (v1.120.0): all
   // three act on the open document and none was gated, so they were clickable with nothing
   // open — the same defect the drawing-row comment below records for Border/Note/Shapes.

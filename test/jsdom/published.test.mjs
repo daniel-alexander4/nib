@@ -54,6 +54,9 @@ const PACKAGES = ['internal/server', 'internal/instance'];
 // property — `.historyEvicted` in JS, `.HistoryEvicted` in Go.
 const PUBLISHED = [
   { type: 'docResponse', readers: ['web/app.js'] },
+  // The accessibility report (P07.S06). The verdict travels as a word, not uacheck's integer.
+  { type: 'uaReportResponse', readers: ['web/app.js'] },
+  { type: 'uaResultView', readers: ['web/app.js'] },
   { type: 'docsResponse', readers: ['web/app.js'] },
   { type: 'statusResponse', readers: ['web/app.js'] },
   // The advanced-features switch (`/pending 451`). Nested inside statusResponse and read by

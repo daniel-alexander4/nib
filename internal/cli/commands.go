@@ -20,6 +20,7 @@ import (
 	"nib/internal/ots"
 	"nib/internal/pdfops"
 	"nib/internal/sign"
+	"nib/internal/uacheck"
 )
 
 // --- PDF-output transforms: IN [...] -o OUT -----------------------------------
@@ -100,6 +101,51 @@ func cmdPDFA(args []string) int {
 		return 1
 	}
 	return writeOut(out, result)
+}
+
+// cmdUA reports a document against PDF/UA-1 — `PLAN-accessibility.md` P07.S06.
+//
+// It reaches the same door as the UI's report (`uacheck.CheckForUA`); a repo-root guard refuses a
+// direct `uacheck.Check` here, so the CLI and the UI cannot hold two readings of conformance. It
+// writes nothing: exporting a PDF/UA-labelled document is P07.S07's, and until then no document
+// can be conformant, so the command's job is to say exactly why.
+//
+// Exit 0 means every clause nib checks passes; exit 1 means refused, with every reason on stderr —
+// failures first, then the clauses nib could not check, which are refusals and never passes.
+func cmdUA(args []string) int {
+	fs := flag.NewFlagSet("nib ua", flag.ContinueOnError)
+	fs.Usage = usageFunc(fs, "nib ua IN", "Check a document against PDF/UA-1, the accessibility standard. Prints every clause nib checks with its verdict — passes, fails, does not apply, or could not check — and exits 1 with every reason when the document is not PDF/UA.")
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if fs.NArg() != 1 {
+		errf("expected one input PDF, got %d", fs.NArg())
+		return 1
+	}
+	pdf, err := readInput(fs.Arg(0))
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	rep, refusals, err := uacheck.CheckForUA(pdf)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	for _, r := range rep.Results {
+		line := fmt.Sprintf("%-14s %-12s %s", r.Verdict, r.Clause, uacheck.SummaryOf(r.Clause))
+		if r.Verdict != uacheck.Pass && r.Why != "" {
+			line += " — " + r.Why
+		}
+		fmt.Println(line)
+	}
+	if len(refusals) == 0 {
+		return 0
+	}
+	for _, reason := range refusals {
+		errf("not PDF/UA: %s", reason)
+	}
+	return 1
 }
 
 // cmdOffice converts a document to PDF: Markdown natively, office documents
