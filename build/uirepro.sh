@@ -248,7 +248,7 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # describes what a fresh clone runs, not what happens to be on one machine.
 # 35 since P08.S06c (tagsreview.test.mjs): the autotagger's review needs a rendered page to prove its
 # outline lands on the element's text, which the tier-2 stub viewer cannot provide.
-expect_files=35
+expect_files=36
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

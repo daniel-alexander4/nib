@@ -4936,6 +4936,16 @@ const TAG_ROLE_NAMES = {
   H1: 'Heading 1', H2: 'Heading 2', H3: 'Heading 3', H4: 'Heading 4', H5: 'Heading 5', H6: 'Heading 6',
   P: 'Paragraph', LI: 'List item',
 };
+// STRUCT_TYPES are the standard structure types the structure editor offers (P09.S06b) — the same set
+// `pdfops.standardStructTypes` accepts, which is the door that refuses anything else; tagedit.test.mjs
+// holds the two lists equal.
+const STRUCT_TYPES = [
+  'Document', 'Part', 'Art', 'Sect', 'Div', 'BlockQuote', 'Caption', 'TOC', 'TOCI', 'Index', 'NonStruct', 'Private',
+  'P', 'H', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'L', 'LI', 'Lbl', 'LBody',
+  'Table', 'TR', 'TH', 'TD', 'THead', 'TBody', 'TFoot',
+  'Span', 'Quote', 'Note', 'Reference', 'BibEntry', 'Code', 'Link', 'Annot', 'Ruby', 'RB', 'RT', 'RP',
+  'Warichu', 'WT', 'WP', 'Figure', 'Formula', 'Form',
+];
 let tagsReview = null; // [{ id, role, ignore, text, page, rect, pageBox, marker, list }]
 let tagsProposal = null;
 // The document the review was opened for, pinned at entry (ADR-001): both requests name it.
@@ -5117,6 +5127,11 @@ els.tagsCommit.onclick = commitTags;
 // that arrives after another load, or after the user switched documents, is dropped rather than drawn
 // over the document now showing.
 let tagTreeSeq = 0;
+// The tree the panel shows, the selected element's index in it, and — across the reload an edit causes —
+// which element and control to return to (P09.S06b).
+let tagTreeElements = [];
+let tagTreeSelected = -1;
+let tagEditRestore = null;
 
 function tagTreeShowing() {
   const panel = $('tagtree');
@@ -5131,6 +5146,7 @@ async function loadTagTree() {
   clearTagOutline();
   if (!owner.pdfDocument || !owner.docMeta || !owner.docMeta.id) {
     list.innerHTML = '';
+    $('tagEditBar').hidden = true;
     summary.textContent = 'Open a PDF to see its structure tree.';
     return;
   }
@@ -5146,6 +5162,7 @@ async function loadTagTree() {
   } catch (e) {
     if (seq !== tagTreeSeq) return;
     list.innerHTML = '';
+    $('tagEditBar').hidden = true;
     summary.textContent = e.message || 'Could not read the structure tree.';
   }
 }
@@ -5163,6 +5180,9 @@ function renderTagTree(tree, owner) {
   const list = $('tagTreeList');
   const summary = $('tagTreeSummary');
   list.innerHTML = '';
+  $('tagEditBar').hidden = true;
+  tagTreeElements = [];
+  tagTreeSelected = -1;
   if (!tree.tagged) {
     summary.textContent = 'This document has no structure tree. Tag structure…, in Page Functions, proposes one.';
     return;
@@ -5189,6 +5209,23 @@ function renderTagTree(tree, owner) {
     list.appendChild(li);
   });
   list.onkeydown = (ev) => onTagTreeKey(ev, elements);
+  tagTreeElements = elements;
+  // Back to where the person was before the reload an edit caused: the same element (by object number,
+  // which an edit keeps), or the same position when the element is gone (an artifact edit removes it),
+  // and the control they used, so a keyboard user is not sent back to the top of the page.
+  if (tagEditRestore) {
+    const r = tagEditRestore;
+    tagEditRestore = null;
+    let at = r.id > 0 ? elements.findIndex((x) => x.id === r.id) : -1;
+    if (at < 0) at = Math.min(r.index, elements.length - 1);
+    if (at >= 0) {
+      selectTagTreeItem(at, elements, owner);
+      const control = r.control ? document.getElementById(r.control) : null;
+      if (control && !control.disabled && !control.closest('[hidden]')) control.focus();
+      else list.children[at].focus();
+      $('tagEditStatus').textContent = 'Changed — Ctrl+Z takes it back.';
+    }
+  }
 }
 
 function selectTagTreeItem(i, elements, owner) {
@@ -5196,6 +5233,8 @@ function selectTagTreeItem(i, elements, owner) {
     li.setAttribute('aria-selected', String(j === i));
     li.tabIndex = j === i ? 0 : -1;
   });
+  tagTreeSelected = i;
+  showTagEditBar(elements[i], i, elements);
   const e = elements[i];
   if (owner !== view || !owner.viewer) return;
   if (e.rect && e.rect[2] > e.rect[0] && e.rect[3] > e.rect[1]) {
@@ -5225,6 +5264,103 @@ function onTagTreeKey(ev, elements) {
   ev.preventDefault();
   if (to >= 0 && items[to]) items[to].focus();
 }
+
+// ── Correcting the selected element — `PLAN-accessibility.md` P09.S06b ──────────────────────────────
+//
+// Each control sends one edit through `POST /api/tags/edit`, which installs through the server's commit
+// door, so Ctrl+Z takes it back like any other change. The server refuses what cannot be applied — a type
+// that is not standard, a scope on a cell that is not a header, an element the document no longer has —
+// and its sentence is shown here rather than replaced with a second opinion.
+
+// tagSiblings is the element's parent's element kids, or the top-level elements, as indices.
+function tagSiblings(i, elements) {
+  const p = elements[i].parent;
+  if (p >= 0) return elements[p].kids || [];
+  return elements.map((x, j) => (x.parent === -1 ? j : -1)).filter((j) => j >= 0);
+}
+
+function showTagEditBar(e, i, elements) {
+  $('tagEditBar').hidden = false;
+  const editable = e.id > 0;
+  const type = $('tagEditType');
+  if (![...type.options].some((o) => o.value === e.standard)) {
+    // A custom type the document's role map does not resolve: shown as it is, so the picker never
+    // silently claims the element is something else.
+    const o = document.createElement('option');
+    o.value = e.standard;
+    o.textContent = e.standard;
+    type.appendChild(o);
+  }
+  type.value = e.standard;
+  $('tagEditAlt').value = e.alt || '';
+  const header = e.standard === 'TH';
+  $('tagEditScopeRow').hidden = !header;
+  $('tagEditScopeApply').hidden = !header;
+  $('tagEditScope').value = header ? (e.scope || '') : '';
+  const siblings = tagSiblings(i, elements);
+  const pos = siblings.indexOf(i);
+  for (const id of ['tagEditType', 'tagEditTypeApply', 'tagEditAlt', 'tagEditAltApply', 'tagEditScope', 'tagEditScopeApply', 'tagEditArtifact']) {
+    $(id).disabled = !editable;
+  }
+  $('tagEditUp').disabled = !editable || pos <= 0;
+  $('tagEditDown').disabled = !editable || pos < 0 || pos >= siblings.length - 1;
+  $('tagEditStatus').textContent = editable ? '' : 'This element is written inline in its parent, so it cannot be edited here.';
+}
+
+async function applyTagEdit(edit) {
+  const owner = view;
+  const i = tagTreeSelected;
+  const e = tagTreeElements[i];
+  if (!e || !owner.docMeta || !owner.docMeta.id) return;
+  const status = $('tagEditStatus');
+  status.textContent = 'Changing the structure…';
+  tagEditRestore = { id: e.id, index: i, control: document.activeElement ? document.activeElement.id : '' };
+  try {
+    const res = await apiFetch('/api/tags/edit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, docId: owner.docMeta.id,
+      body: JSON.stringify({ edits: [{ element: e.id, ...edit }] }),
+    });
+    if (!res.ok) {
+      tagEditRestore = null;
+      status.textContent = await errText(res, 'Could not change the structure.');
+      return;
+    }
+    await setDocumentFromServer(await res.json(), owner);
+  } catch (err) {
+    tagEditRestore = null;
+    status.textContent = err.message || 'Could not change the structure.';
+  }
+}
+
+function wireTagEditBar() {
+  const type = $('tagEditType');
+  for (const t of STRUCT_TYPES) {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = TAG_ROLE_NAMES[t] ? `${TAG_ROLE_NAMES[t]} (${t})` : t;
+    type.appendChild(o);
+  }
+  $('tagEditTypeApply').onclick = () => applyTagEdit({ kind: 'retype', value: type.value });
+  const alt = $('tagEditAlt');
+  $('tagEditAltApply').onclick = () => applyTagEdit({ kind: 'alt', value: alt.value });
+  alt.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    applyTagEdit({ kind: 'alt', value: alt.value });
+  });
+  $('tagEditScopeApply').onclick = () => applyTagEdit({ kind: 'scope', value: $('tagEditScope').value });
+  // A move names its position among the siblings; parent 0 keeps the element under the one it has.
+  const move = (delta) => {
+    const siblings = tagSiblings(tagTreeSelected, tagTreeElements);
+    const pos = siblings.indexOf(tagTreeSelected);
+    if (pos < 0) return;
+    applyTagEdit({ kind: 'move', parent: 0, index: pos + delta });
+  };
+  $('tagEditUp').onclick = () => move(-1);
+  $('tagEditDown').onclick = () => move(1);
+  $('tagEditArtifact').onclick = () => applyTagEdit({ kind: 'artifact' });
+}
+wireTagEditBar();
 
 // runSanitize applies a server-side removal (strip/safe). On success it reloads
 // the cleaned document and shows what remains; on failure it leaves the document
