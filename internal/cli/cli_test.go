@@ -1660,3 +1660,28 @@ func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
 		t.Errorf("an unreadable file exit=%d with stderr %q — it must fail as unreadable, never as a document with failing clauses", code, stderr)
 	}
 }
+
+// TestUAExitZeroSaysItIsNotACertificate — P07.S07's correction. A document can pass every clause nib
+// checks and fail one it does not (measured: a skipped heading level fails veraPDF's 7.4.2 t1), so a
+// passing run must say so rather than let exit 0 read as "is PDF/UA".
+func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
+	// The wording is asserted on the source of the message, because producing a document that passes
+	// all fifteen clauses needs the whole tagging pipeline and is uacheck's to test.
+	src, err := os.ReadFile("commands.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "func cmdUA(")
+	if i < 0 {
+		t.Fatal("cmdUA is gone, so this guard is reading nothing")
+	}
+	j := strings.Index(body[i:], "\n}\n")
+	fn := body[i : i+j]
+	if !strings.Contains(fn, "this is not a PDF/UA certificate") {
+		t.Error("cmdUA's exit-0 path no longer says it is not a PDF/UA certificate — exit 0 would read as conformance")
+	}
+	if strings.Contains(fn, "is PDF/UA\"") || strings.Contains(fn, "conforms to PDF/UA") {
+		t.Error("cmdUA claims conformance somewhere in its output")
+	}
+}

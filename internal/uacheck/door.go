@@ -9,22 +9,24 @@ import (
 //
 // # Why one door and not a report each surface builds
 //
-// The UI and the CLI both answer "may this document be called PDF/UA", and the plan's third
-// acceptance clause is that they do not each decide what conformance means. A server handler that
+// The UI and the CLI both answer "does every clause nib checks pass", and the plan's third acceptance
+// clause is that they do not each decide what the verdicts mean. A server handler that
 // called `Check` and composed its own refusal, beside a CLI command that did the same, would be two
 // readings of law 4 that agree today — ADR-009's case. So both call `CheckForUA`, and a guard at the
 // repo root refuses a direct `Check` call from either.
 //
-// # Why this door refuses and does not yet export
+// # Why this door refuses and never labels
 //
 // The carried P04.S04 criterion is a REFUSAL: *"a document carrying non-embedded fonts is refused for
-// UA export with the reason named."* Writing the PDF/UA identification is P07.S07's, and until then no
-// document can be conformant — `5 t1` fails on every document that has a metadata packet and has no
-// subject on one that has none, while 7.1 t8 fails it. So this slice builds the door's refusal and its
-// report; S07 attaches the export to the same door rather than building a second one.
+// UA export with the reason named."* Writing the PDF/UA identification was to be P07.S07's, and S07's
+// measurement overturned it: nib checks 15 of the 106 rules veraPDF evaluates, and a Markdown heading
+// that skips a level passes all 15 while failing veraPDF's 7.4.2 t1. A door labelling on "every clause
+// nib checks passes" would write a conformance assertion over a non-conformant document — ADR-031 law
+// 1, by name. So nothing labels, and the word "conformant" in this package means only that.
 
-// CheckForUA checks pdf against every rule and returns the report with the reasons it may not be
-// called PDF/UA — one sentence per failed clause and per clause nib could not settle.
+// CheckForUA checks pdf against every clause nib implements and returns the report with the reasons
+// a checked clause stops it — one sentence per failed clause and per clause nib could not settle.
+// An empty refusal list means every clause NIB CHECKS passes; it is not a PDF/UA verdict.
 //
 // **`refusals` is empty only when the report is conformant**, and a clause nib could not check is a
 // refusal just as a failure is: law 4's third verdict never collapses into the first, and a door that

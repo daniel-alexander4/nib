@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -82,5 +83,32 @@ func TestEveryRegisteredClauseHasASummaryTheReportCanShow(t *testing.T) {
 	}
 	if SummaryOf("9.9 t9") != "" {
 		t.Error("an unregistered clause has a summary")
+	}
+}
+
+// TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo — P07.S07's measured counterexample,
+// kept as a standing reader over the claims nib makes in words.
+//
+// A tagged Markdown document whose heading skips a level passes all of nib's clauses and fails
+// veraPDF's 7.4.2 t1. The code cannot close that gap without implementing the whole profile, so what
+// is asserted is that nothing a person reads calls a passing report "PDF/UA".
+func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T) {
+	for _, f := range []struct{ path, must string }{
+		{"../../README.md", "not a PDF/UA certificate"},
+		{"../../README.md", "15 of the 106"},
+		{"../../web/index.html", "can still fail one it does not"},
+		{"door.go", "nothing labels"},
+	} {
+		b, err := os.ReadFile(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), f.must) {
+			t.Errorf("%s no longer says %q — a passing report would read as a conformance verdict", f.path, f.must)
+		}
+	}
+	readme, _ := os.ReadFile("../../README.md")
+	if strings.Contains(string(readme), "when the document is not PDF/UA") {
+		t.Error("the README says nib ua exits 1 \"when the document is not PDF/UA\", which makes exit 0 read as \"is PDF/UA\" — the overclaim P07.S07 removed")
 	}
 }

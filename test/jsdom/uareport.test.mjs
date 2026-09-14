@@ -95,7 +95,14 @@ test('the summary never says the document conforms while a clause is unchecked',
 
 test('only a conformant report from the server is summarised as passing', async () => {
   await showReport({ conformant: true, results: [{ clause: '7.1 t11', summary: 'tree', verdict: 'pass' }], refusals: [] });
-  assert.equal(doc.getElementById('uaSummary').textContent, 'Every clause nib checks passes.');
+  const passing = doc.getElementById('uaSummary').textContent;
+  assert.ok(passing.startsWith('Every clause Nib checks passes'), `the passing summary reads "${passing}"`);
+  // P07.S07 measured a document that passes every clause nib checks and fails veraPDF's 7.4.2 t1.
+  // So even the best summary must say it is not a certificate, and must never say "conforms" or
+  // "is PDF/UA" as a claim.
+  assert.ok(/not a conformance certificate/.test(passing),
+    `the passing summary "${passing}" does not say it is not a certificate — nib checks part of PDF/UA`);
+  assert.ok(!/\bconforms\b|\bis PDF\/UA\b/i.test(passing), `the passing summary claims conformance: "${passing}"`);
   await showReport({ conformant: false, results: [{ clause: '7.1 t11', summary: 'tree', verdict: 'pass' }], refusals: ['x'] });
   assert.ok(doc.getElementById('uaSummary').textContent.startsWith('Not PDF/UA'),
     'the summary followed the rows instead of the server\'s conformance');

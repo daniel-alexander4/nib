@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"nib/internal/pdfops"
@@ -229,7 +230,9 @@ var knownCannotCheck = map[string]string{}
 // notYetReachable records a veraPDF state a clause cannot reach on any corpus document yet, with the
 // coordinate that will make it reachable. Checked in both directions, and against the plan's marker.
 var notYetReachable = map[string]string{
-	"5 t1 passed": "PLAN-accessibility.md P07.S07",
+	// P07.S07 closed WITHOUT writing the identification — law 1 forbids it on a 15-of-106 checker — so
+	// no nib document reaches `5 t1 passed`. The gate is the strategy decision, not a plan coordinate.
+	"5 t1 passed": "/pending 486",
 }
 
 // TestTheOracleValidatesTheChecker — law 5.
@@ -313,7 +316,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			case !cmp.reached[key] && !declared:
 				t.Errorf("no corpus document makes veraPDF report %s for %s, so nib's rule is never "+
 					"checked against that half of the clause — add a document that reaches it", s, c)
-			case !cmp.reached[key] && declared && markers[gate]:
+			case !cmp.reached[key] && declared && strings.HasPrefix(gate, "PLAN-") && markers[gate]:
 				t.Errorf("%q is declared not yet reachable until %s, and the plan marks %s done — "+
 					"the slice shipped without a corpus document that reaches it", key, gate, gate)
 			}

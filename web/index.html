@@ -991,9 +991,11 @@
       <h3>Accessibility (PDF/UA)</h3>
       <p id="uaSummary" class="ua-summary" role="status"></p>
       <div id="uaBody" class="sigdetails"></div>
-      <p class="libhint">Nib checks the PDF/UA-1 rules it can verify itself, and says plainly which
-        ones it could not check. A clause it could not check is not a pass. Its answers are tested
-        against veraPDF, the reference validator, on every build.</p>
+      <p class="libhint">Nib checks the PDF/UA-1 rules it can verify itself — part of the standard,
+        not all of it — and says plainly which ones it could not check. A clause it could not check is
+        not a pass, and a document that passes every clause Nib checks can still fail one it does not.
+        For a conformance verdict use veraPDF, the reference validator, which Nib's answers are tested
+        against on every build.</p>
       <div class="sigbtns"><span class="grow"></span><button id="uaClose" class="primary">Close</button></div>
     </div>
   </div>
