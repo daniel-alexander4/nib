@@ -2724,7 +2724,7 @@ then the right's), `columns == 2`, supported. Eleven mutations red: the join gap
 signals, the short-line signal without its first word, the unsupported report, column clustering,
 whitespace runs, the joining space, and a second-opinion file for the guard.
 
-#### P08.S04 — the truth corpus and the metric
+#### P08.S04 — the truth corpus and the metric *(done 2026-09-14, v1.129.76)*
 Scope: LibreOffice-generated documents with known structure — heading levels, paragraphs that wrap,
 bulleted and numbered lists, a two-column page — each paired with its tree-stripped copy. Refs D12,
 exit criterion 1.
@@ -2735,13 +2735,46 @@ Acceptance:
 - The corpus is generated in tier 1 when LibreOffice is present and says it is narrower when absent,
   as P07.S05's oracle does.
 
+**(build, 2026-09-14 — step zero, what the metric measured, and the pins.)**
+
+| measured | result |
+|---|---|
+| LibreOffice's tree for headings, paragraphs and a list | `Document` → `H1`, `Standard`, `H2`, `Standard`, `L` → `LI` → `Lbl` + `LBody` → `Standard`, `Standard`; RoleMap `Standard → P`; every leaf one MCID, written inline as `/Tag<</MCID n>>BDC` |
+| what matches an element to its text | **nothing, before this slice**: S02's runs carried no marked content. A second content walker for the truth would be a second answer to what a page says, so the run reader now carries the MCID in force |
+| S03's grouping scored against the truth | headings-and-list **7/7 blocks, boundary F1 1.00**; two columns **5/5, F1 1.00**; a three-page report **14 of 31 blocks, P 0.92 R 0.40 F1 0.56**. Headings 0 everywhere — unlabelled paragraphs, as expected |
+| why the report scores 0.40 | **there is no geometric signal to find.** LibreOffice's default paragraph adds no space (13.8 = the line step) and each paragraph's last line ends 28.6pt short of a 542.9pt column where the next word, "Paragraph", is ~57pt — so the short-line signal correctly does not fire. Headings break correctly. The one false boundary is a paragraph continuing across a page |
+
+- **Pin — runs carry the MCID in force.** `BDC` reads `/MCID` inline or through `/Properties`; an
+  `/Artifact` sequence masks whatever encloses it; a page's `BDC` around a `Do` tags what the form
+  draws; each stream's sequences end with the stream.
+- **Pin — two defects the truncation test found in S02's reader while this was built.**
+  `matchingClose` returned `len-1` for an unclosed opener, a reversed slice when the opener was the last
+  token — the array branch had carried it since S02, unreached because nib's Markdown draws no `TJ`
+  array. And the per-stream truncation resliced PAST the stack's length, resurrecting an entry an
+  `EMC` had popped — found only because a probe of the `EMC` floor survived. Both fixed, both driven.
+- **Pin — the strip is the test's, not `dropTaggingClaim`.** That function's comment keeps it to one
+  caller so the decision to strip is taken in one place; building a corpus is not that decision.
+- **Pin — "heading/body agreement" is scored as heading F1.** Body is everything else; an agreement
+  count rewards a proposer that calls everything body.
+- **Pin — the truth's shape is asserted from the source** (7 blocks / 2 headings, 5 / 1, 31 / 7), so a
+  truth reader that lost the list-item rule or a heading level fails rather than moving the target.
+- **Pin — S05's floors, from these measurements:** boundary F1 no lower than S03's per document
+  (1.00, 1.00, 0.56), and heading F1 above zero on every document.
+
+Metric probes red: the document start counted as a boundary, precision replaced by recall, the
+list-item rule, the strip keeping the tree, `H2` not a heading, the texts-differ refusal, grouped
+paragraphs counted as headings, recall pinned at one. MCID probes red: the artifact mask, the stream
+truncation (once a form left a sequence open), the `EMC` floor (once truncation stopped resurrecting),
+the inline and `/Properties` lookups, the run's own field, and the old `matchingClose` fallback.
+
 #### P08.S05 — the proposer
 Scope: paragraphs → a proposal: element kind (`H1`–`H6`, `P`, `L`/`LI`), reading order, and the runs
 each element covers, from font size relative to the page's body size, weight, and list-marker
 prefixes. Writes nothing (law 3). Refs D5, exit criterion 1.
 Acceptance:
 - Over the S04 corpus both metrics are above zero on every document and clear floors recorded at the
-  slice, as a tier-1 guard.
+  slice, as a tier-1 guard. S04 measured the floors: boundary F1 at least S03's own per document (1.00,
+  1.00, 0.56) and heading F1 above zero on every document.
 - The proposer has no path to a writer — asserted by routing, not by reading its output.
 
 #### P08.S06 — review and commit (D5, D10, D11)

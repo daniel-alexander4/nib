@@ -60,6 +60,10 @@ type textRun struct {
 	// the run's width `none`, because a width that is partly invented is invented.
 	widthSrc widthSource
 	codes    int
+	// mcid is the marked-content id the run was drawn under — the innermost enclosing sequence that
+	// carries one — or -1, including inside an `/Artifact` sequence. It is how a structure tree's
+	// element is matched to the text it tags (P08.S04 reads LibreOffice's tree as truth through it).
+	mcid int
 }
 
 // pageRuns is a page read as text.
@@ -253,6 +257,65 @@ type runWalker struct {
 	xt    *model.XRefTable
 	fonts map[int]*runFont
 	runs  []textRun
+	// mcStack is the marked-content sequences open at this point of the walk, innermost last: an MCID,
+	// -1 for a sequence with none, or mcArtifact. Shared across a page and the forms it draws, because
+	// a `BDC` around a `Do` tags what the form draws.
+	mcStack []int
+}
+
+// mcArtifact marks an `/Artifact` sequence on the stack: content inside it belongs to no element,
+// whatever encloses it.
+const mcArtifact = -2
+
+// currentMCID is the innermost MCID in force, or -1.
+func (w *runWalker) currentMCID() int {
+	for i := len(w.mcStack) - 1; i >= 0; i-- {
+		switch v := w.mcStack[i]; {
+		case v == mcArtifact:
+			return -1
+		case v >= 0:
+			return v
+		}
+	}
+	return -1
+}
+
+// markedContentID reads `/MCID` from a `BDC` property list, written inline or named in the resources'
+// `/Properties`.
+func (w *runWalker) markedContentID(o runOperand, res types.Dict, src []byte) int {
+	if o.opaque {
+		for j := 0; j < len(o.dict); j++ {
+			if o.dict[j].Kind != contentstream.Operand || string(o.dict[j].Bytes(src)) != "/MCID" {
+				continue
+			}
+			for k := j + 1; k < len(o.dict); k++ {
+				if o.dict[k].Kind == contentstream.Whitespace {
+					continue
+				}
+				if v, err := strconv.Atoi(string(o.dict[k].Bytes(src))); err == nil && v >= 0 {
+					return v
+				}
+				break
+			}
+		}
+		return -1
+	}
+	name, ok := o.name(src)
+	if !ok || res == nil {
+		return -1
+	}
+	props, err := w.xt.DereferenceDict(res["Properties"])
+	if err != nil || props == nil {
+		return -1
+	}
+	d, derr := w.xt.DereferenceDict(props[name])
+	if derr != nil || d == nil {
+		return -1
+	}
+	if n := d.IntEntry("MCID"); n != nil && *n >= 0 {
+		return *n
+	}
+	return -1
 }
 
 func newRunWalker(xt *model.XRefTable) *runWalker {
@@ -265,6 +328,9 @@ type runOperand struct {
 	arr    []contentstream.Token
 	isArr  bool
 	opaque bool // a dictionary operand, which no text operator takes
+	// dict holds a dictionary operand's tokens, for the one reader that looks inside: `BDC`'s
+	// property list and its `/MCID`.
+	dict []contentstream.Token
 }
 
 func (o runOperand) number(src []byte) (float64, bool) {
@@ -309,6 +375,17 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	tm, tlm := runIdentity, runIdentity
 	var ops []runOperand
 	toks := contentstream.Tokenize(src)
+	// A stream's sequences end with the stream: an unbalanced `EMC` inside a form cannot close the page's
+	// sequence, and a form that leaves one open cannot tag what the page draws after it.
+	base := len(w.mcStack)
+	defer func() {
+		// Only ever SHRINK. Reslicing to `base` when the stack is already shorter reaches back into the
+		// backing array and resurrects entries an `EMC` removed — which a probe found masking a popped
+		// page sequence as though it had never closed.
+		if len(w.mcStack) > base {
+			w.mcStack = w.mcStack[:base]
+		}
+	}()
 
 	last := func(n int) []runOperand {
 		if len(ops) < n {
@@ -355,7 +432,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			continue
 		case contentstream.DictOpen:
 			end := matchingClose(toks, i, contentstream.DictOpen, contentstream.DictClose)
-			ops = append(ops, runOperand{opaque: true})
+			ops = append(ops, runOperand{opaque: true, dict: toks[i+1 : end]})
 			i = end
 			continue
 		case contentstream.Operator:
@@ -450,6 +527,28 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				}
 				w.show(&tm, gs, pieces)
 			}
+		case "BMC":
+			entry := -1
+			if os := last(1); os != nil {
+				if tag, ok := os[0].name(src); ok && tag == "Artifact" {
+					entry = mcArtifact
+				}
+			}
+			w.mcStack = append(w.mcStack, entry)
+		case "BDC":
+			entry := -1
+			if os := last(2); os != nil {
+				if tag, ok := os[0].name(src); ok && tag == "Artifact" {
+					entry = mcArtifact
+				} else {
+					entry = w.markedContentID(os[1], res, src)
+				}
+			}
+			w.mcStack = append(w.mcStack, entry)
+		case "EMC":
+			if n := len(w.mcStack); n > base {
+				w.mcStack = w.mcStack[:n-1]
+			}
 		case "Do":
 			if os := last(1); os != nil {
 				if name, ok := os[0].name(src); ok {
@@ -464,7 +563,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 // show advances the text matrix across one show operator's glyphs and records the run.
 func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece) {
 	start := tm.mul(gs.ctm)
-	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true}
+	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true, mcid: w.currentMCID()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}
@@ -612,8 +711,14 @@ func streamContent(sd *types.StreamDict) []byte {
 	return sd.Content
 }
 
-// matchingClose returns the index of the token closing the one at i, or the last index when the
-// stream ends first — a malformed stream still tokenizes, and so still walks.
+// matchingClose returns the index of the token closing the one at i, or len(toks) when the stream ends
+// first — a malformed stream still tokenizes, and so still walks. Callers slice `toks[i+1:end]` and
+// resume at `end`, which with len(toks) takes the rest and stops.
+//
+// **It returned len(toks)-1 until P08.S04, and that panicked** when the opener was itself the last
+// token: `toks[i+1:len-1]` is a reversed slice. The array branch had that exposure from S02; the
+// truncation test found it only once the dictionary branch began slicing too, because nib's own
+// Markdown draws no `TJ` array for a truncation to cut through.
 func matchingClose(toks []contentstream.Token, i int, open, close contentstream.Kind) int {
 	depth := 0
 	for j := i; j < len(toks); j++ {
@@ -627,7 +732,7 @@ func matchingClose(toks []contentstream.Token, i int, open, close contentstream.
 			}
 		}
 	}
-	return len(toks) - 1
+	return len(toks)
 }
 
 // splitCodes cuts shown bytes into character codes: two bytes under Identity, otherwise one.
