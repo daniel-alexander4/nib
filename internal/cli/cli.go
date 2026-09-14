@@ -117,6 +117,7 @@ var commands = map[string]func([]string) int{
 	"fill":        cmdFill,
 	"export-xfdf": cmdExportXFDF,
 	"pdfa":        cmdPDFA,
+	"ua":          cmdUA,
 	"office":      cmdOffice,
 	"attachments": cmdAttachments,
 	"outline":     cmdOutline,
@@ -149,6 +150,7 @@ These subcommands run headlessly, without a browser:
   nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
   nib normalize IN -o OUT         resize every page to the doc's most common size
   nib pdfa IN -o OUT               convert to a PDF/A-2b archival candidate (--gs: via Ghostscript)
+  nib ua IN                        check against PDF/UA-1 accessibility; exits 1 with every reason
   nib office IN -o OUT             convert a document (.md/.docx/.xlsx/.odt/…) to PDF (office formats need LibreOffice)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)

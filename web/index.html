@@ -389,6 +389,7 @@
       
       <div class="tbgroup" data-label="Protect &amp; Inspect" data-fold="1">
 <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
+      <button id="uaBtn" title="Check this document against PDF/UA, the accessibility standard">Check accessibility (PDF/UA)…</button>
       <button id="attachBtn" title="View, extract, or add embedded file attachments">Attachments…</button>
       <button id="encryptBtn" title="Save a password-protected copy of this document (AES-256)">Add password protection…</button>
       <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
@@ -980,6 +981,20 @@
         hidden, at the cost of selectable text. Any removal replaces the open document with a new,
         unsigned copy — save it to keep the result.</p>
       <div class="sigbtns"><span class="grow"></span><button id="scanClose" class="primary">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Accessibility report (PDF/UA-1): every clause nib checks, with law 4's verdicts kept visibly
+       apart — a clause nib could not check is never shown the way a pass is. Read-only. -->
+  <div id="uaModal" hidden>
+    <div class="sigcard">
+      <h3>Accessibility (PDF/UA)</h3>
+      <p id="uaSummary" class="ua-summary" role="status"></p>
+      <div id="uaBody" class="sigdetails"></div>
+      <p class="libhint">Nib checks the PDF/UA-1 rules it can verify itself, and says plainly which
+        ones it could not check. A clause it could not check is not a pass. Its answers are tested
+        against veraPDF, the reference validator, on every build.</p>
+      <div class="sigbtns"><span class="grow"></span><button id="uaClose" class="primary">Close</button></div>
     </div>
   </div>
 

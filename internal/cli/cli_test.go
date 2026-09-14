@@ -1629,3 +1629,34 @@ func TestEveryCommandTreatsDashHTheSameWay(t *testing.T) {
 	}
 	t.Logf("%d commands, all exit 0 on -h", checked)
 }
+
+// TestUARefusesWithEveryReasonAndNamesTheFont — `nib ua`, P07.S06. The carried P04.S04 criterion on
+// the command line: a non-embedded font is refused by name, beside every other failing clause.
+func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
+	dir := t.TempDir()
+	textPDF, err := testpdf.Text("hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(dir, "text.pdf")
+	mustWrite(t, in, textPDF)
+	var code int
+	stderr := captureStderr(t, func() { code = cmdUA([]string{in}) })
+	if code != 1 {
+		t.Fatalf("nib ua on a Courier page exit = %d, want 1 — nothing can be PDF/UA until P07.S07", code)
+	}
+	if !strings.Contains(stderr, "not PDF/UA: 7.21.4.1 t1 fails") || !strings.Contains(stderr, "Courier") {
+		t.Errorf("the refusal does not name the non-embedded font:\n%s", stderr)
+	}
+	if n := strings.Count(stderr, "not PDF/UA: "); n < 2 {
+		t.Errorf("%d refusal line(s) — the font alone is what P04.S04 could not do better than:\n%s", n, stderr)
+	}
+
+	// An unreadable input is an error, not a report full of failures.
+	bad := filepath.Join(dir, "bad.pdf")
+	mustWrite(t, bad, []byte("not a pdf"))
+	stderr = captureStderr(t, func() { code = cmdUA([]string{bad}) })
+	if code != 1 || strings.Contains(stderr, "not PDF/UA:") {
+		t.Errorf("an unreadable file exit=%d with stderr %q — it must fail as unreadable, never as a document with failing clauses", code, stderr)
+	}
+}

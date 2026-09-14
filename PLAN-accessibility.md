@@ -2411,7 +2411,7 @@ marker, so S07 cannot ship without a corpus document that reaches it.
   the corpus through `ConvertOfficeToPDF`, skipped loudly only where LibreOffice is absent. HTML is
   not an office extension nib accepts, so the fixture is a generated ODT.
 
-#### P07.S06 — the UA export door and the report
+#### P07.S06 — the UA export door and the report *(done 2026-09-14, v1.129.69)*
 Scope: the carried-in P04.S04 criterion. One door that either exports a UA-labelled document or
 refuses with **every** reason named, mirroring `pdfaBlockers`. The report is reachable from the UI
 and from the CLI. Refs P04.S04's carried criterion, exit criterion 3.
@@ -2421,6 +2421,25 @@ Acceptance:
 - The report distinguishes law 4's three verdicts visibly, and a `cannot check` is never rendered in
   the same style as a pass.
 - Both surfaces reach the same door; the UI and CLI do not each decide what conformance means.
+
+**(grill, 2026-09-14 — AMENDED in scope, not in intent: this slice builds the door's REFUSAL and its
+report; P07.S07 attaches the export to the same door.)**
+
+- **No document can be conformant until S07.** `5 t1` fails on every document with a metadata packet
+  and has no subject on the rest, while 7.1 t8 fails those. So an export branch here would be code no
+  document can reach, and writing the identification is S07's whole subject. The carried P04.S04
+  criterion is itself a refusal — *"refused for UA export with the reason named"* — and the refusal is
+  what this slice builds, naming every failed clause and every clause nib could not check.
+- **The door lives in `internal/uacheck`, not `internal/pdfops`.** `uacheck`'s in-package tests import
+  `pdfops`, so `pdfops` importing `uacheck` is an import cycle. `uacheck.CheckForUA` returns the report
+  and the refusals; the server route (`GET /api/uacheck`, read-only like `/api/scan`) and `nib ua` both
+  call it, and a repo-root guard refuses a direct `uacheck.Check` from either surface.
+- **The verdict travels as a word.** `uacheck.Verdict` is an integer whose zero is `NotRun`; the server's
+  own response type carries the string, and it is entered in `published.test.mjs`'s table, because a
+  `writeJSON` of `uacheck.Report` would have put its fields outside the scan that guarantees each is read.
+- **"Never rendered the same as a pass" is asserted in WORDS as well as style** — WCAG 1.4.1, and P02's
+  lesson that colour alone is not a distinction: a cannot-check row says "? Nib could not check", is
+  italic and yellow, and never carries a tick.
 
 #### P07.S07 — nib writes the identification, because now something can say it conforms
 Scope: `5 t1` — `pdfuaid:part 1` in the XMP packet. **The clause P03.S01 deliberately refused**, and

@@ -115,8 +115,11 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// let the user's tab switch decide who gets called and whose invitation gets minted — and the
 	// deepdive that opened the slice is why it reads the open document at all rather than the
 	// ceremony mirror, whose bytes carry no per-hop guarantee (`/pending 437-440`).
-	if resolveSites != 25 {
-		t.Errorf("expected 25 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 26, not 25: `handleUACheck`, the accessibility report (PLAN-accessibility.md P07.S06). It reads
+	// the open document the way `handleScan` beside it does — read-only, a 404 when nothing is open —
+	// and it reaches `uacheck.CheckForUA`, the door `nib ua` reaches too.
+	if resolveSites != 26 {
+		t.Errorf("expected 26 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

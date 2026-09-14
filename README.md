@@ -121,6 +121,18 @@ from an `.xfdf` file and saves the result. On the command line it's
 Hierarchical (dotted) field names are preserved as nested fields; like every Nib
 operation it runs entirely on your machine.
 
+### Check a document for accessibility (PDF/UA)
+**Protect & Inspect → Check accessibility (PDF/UA)…** reports the open document against PDF/UA-1,
+the accessibility standard screen readers rely on. Every clause Nib checks is marked **passes**,
+**fails**, **does not apply**, or **Nib could not check** — and a clause Nib could not check is never
+shown as a pass, because it hasn't been established that it holds. Each failure names what it found
+and where: which font on which page, which operator in which content stream. On the command line
+it's `nib ua IN`, which exits 1 and prints every reason when the document is not PDF/UA.
+
+Nib does not implement all of PDF/UA; it implements what it can verify, says plainly what it can't,
+and its answers are checked against [veraPDF](https://verapdf.org/), the reference validator, on
+every build.
+
 ### Convert to PDF/A for archiving
 Need a document that archives will still open decades from now? **File → Export →
 Archival PDF (PDF/A-2b)…** converts the open document to a **PDF/A-2b candidate**:
@@ -1116,6 +1128,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
 | `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
+| `nib ua IN` | Check a document against **PDF/UA-1**, the accessibility standard: every clause Nib can verify, each marked passes / fails / does not apply / **Nib could not check** — never the last shown as a pass. Exits 1 with every reason when the document is not PDF/UA. Nib's answers are tested against veraPDF on every build. |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
 | `nib fill IN --data D` | Fill a form: a JSON or **XFDF** record (`--data x.json\|.xfdf -o OUT`, the inverse of *Export form data*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |

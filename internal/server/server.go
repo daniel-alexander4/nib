@@ -428,6 +428,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Hidden-content scan and sanitize.
 	mux.HandleFunc("GET /api/scan", s.requireUnlocked(s.handleScan))
+	mux.HandleFunc("GET /api/uacheck", s.requireUnlocked(s.handleUACheck))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
 	mux.HandleFunc("POST /api/encrypt", s.requireUnlocked(s.handleEncrypt))
 	mux.HandleFunc("POST /api/decrypt", s.requireUnlocked(s.handleDecrypt))
