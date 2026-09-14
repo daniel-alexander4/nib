@@ -2557,6 +2557,106 @@ sequenced last on purpose: everything before it ships value without it.
 P04. One rule, one door (ADR-009) — two implementations here would be two different opinions about
 where a paragraph begins, in one product.
 
+**(phase-open, 2026-09-14 at v1.129.71 — facts established before the slices were cut.)**
+
+| measured | result |
+|---|---|
+| a positioned-run reader in Go | **none.** `grep -rlnE '"Tm"\|"Td"\|"TD"\|"T\*"' --include=*.go internal mdpdf` minus tests → 0 files; the only run-shaped types are `opSpan` and `artifactSpan` (byte offsets, no geometry). `internal/contentstream` tokenizes and edits; nothing tracks text state |
+| a width reader | **none.** `grep -rnE '"Widths"\|"DW"\|\["W"\]' --include=*.go internal mdpdf` minus tests → 0. The core-font door exists: `mdpdf.CoreWidth(text, fontName string, size int)` — an **integer** size, which a reader holding `9.5` cannot pass without truncating |
+| a grouping door | **none for positioned text.** `groupWords` (`tagocr.go`) groups by tesseract's own block/paragraph/line ids — it takes a grouping, it does not infer one |
+| `PLAN-text-reflow.md` P02–P04, the dependency | **not started** — no marker on P02 (width reader), P03 (positioned runs), P04 (lines and paragraphs). Its D10 settles the order: *"Whichever plan reaches it first builds it; the other calls it."* |
+| reflow's 18-PDF font corpus (its D12) | **not on disk.** No `*corpus*` directory under `~` (depth 6); zero PDFs under `~` or `/tmp` with a 2026-09-06 mtime. The same loss P01's `boi.pdf`/`adgm_va.pdf` suffered. The ~1,660 PDFs under `~` are personal documents and are not a corpus |
+| a source of TRUTH for inferred structure | **LibreOffice 24.2.7.2 is installed**, and its default conversion is tagged (P07.S05 measured it). A document LibreOffice tags, stripped of its tree, is an arbitrary PDF whose correct answer is known |
+| pdf.js for seam S7 | vendored at `web/vendor/pdfjs/` (`pdf.min.mjs`); `pdfjs-dist` is not in `node_modules` |
+| another session in this checkout | one other `claude` process has cwd `/home/dan/repos/nib`; every file modified in the last hour is this session's and its untracked `PLAN-returned-document.md` was last written 2026-09-08 — idle, so no worktree |
+
+**Sequencing, decided (rung 2, reversible):** P08 builds `PLAN-text-reflow.md`'s P02, P03 and P04 as its
+first three slices, each against THAT plan's exit criteria as written, and each marker is written in
+both plans. Reflow's D10 already assigns the work to whichever plan arrives first; the alternative —
+parking the autotagger behind another plan nobody is building — leaves both unbuilt.
+
+**The metric exit criterion 1 needs, stated:** over the truth corpus (S04), each document's inferred
+tree is scored against LibreOffice's own tree on two numbers — **paragraph-boundary F1** and
+**heading/body agreement** — and "no tree" scores zero recall on both. A proposal is measurably better
+when both numbers are above zero on every document and their corpus means clear floors S04 records.
+
+**`/plan-review` does NOT fire**: no wire format between machines, no stored nib format, no network path,
+no credential. The commit writes a structure tree into a document the user holds, through the doors
+P05–P06 built. **`/deepdive` does not fire at phase open** — the seam it would read (Detect's
+client-side proposer vs a server-side one) is S06's step zero, measured there.
+
+**Firmed slices:**
+
+#### P08.S01 — the width reader (`PLAN-text-reflow.md` P02)
+Scope: given a font dictionary and a code, the advance — `/Widths` + `/FirstChar`, all three `/W` range
+forms, `/DW`, and the core fonts through `mdpdf.CoreWidth`. Refs reflow D2, D3, D5, law 2.
+Acceptance:
+- Every lookup returns a width AND its source (`Widths` \| `W` \| `DW` \| `std14` \| `none`); no path
+  returns a silent zero — a probe that removes the `none` branch goes red.
+- All three `/W` forms parse, each driven by a fixture carrying exactly that form, so a form missing from
+  the corpus is a coverage gap and not a pass.
+- A fractional size is measured without truncation through the core-font door (measured against a
+  `CoreWidth` call at the integer size, scaled).
+- A census over the generated corpus is a guard: a regression in coverage is red.
+
+#### P08.S02 — positioned runs (`PLAN-text-reflow.md` P03)
+Scope: read a page into runs — text, font, size, position, width — from a text-state machine over
+`contentstream.Tokenize`: `BT/ET`, `Tf`, `Tm`, `Td`, `TD`, `T*`, `TL`, `Tc`, `Tw`, `Tz`, `Ts`, `cm`,
+`q/Q`, `Tj`, `TJ`, `'`, `"`, and `Do` into form XObjects; text through `/ToUnicode` where present.
+Refs reflow D4, D6, seam S7.
+Acceptance:
+- Run text and run count agree with pdf.js `getTextContent` on the corpus (seam S7), asserted at a tier
+  that loads the vendored `pdf.min.mjs`.
+- An image-only page returns zero runs and says so structurally, not as an empty slice.
+- A malformed document is contained per reflow D6, and the containment is probed non-zero.
+
+#### P08.S03 — lines and paragraphs (`PLAN-text-reflow.md` P04)
+Scope: runs → lines → paragraphs, once. Refs reflow D10, ADR-009.
+Acceptance:
+- Paragraph counts match hand-checked expectations on corpus fixtures.
+- The grouping rule exists in one place, and a guard asserts nothing else groups positioned runs
+  (`groupWords` named as the exemption it is — tesseract's grouping, taken rather than inferred).
+- A multi-column page is either handled or reported structurally as outside the tool's competence.
+
+#### P08.S04 — the truth corpus and the metric
+Scope: LibreOffice-generated documents with known structure — heading levels, paragraphs that wrap,
+bulleted and numbered lists, a two-column page — each paired with its tree-stripped copy. Refs D12,
+exit criterion 1.
+Acceptance:
+- LibreOffice's tree is read as the truth (element types and reading order) and the stripped copy has
+  no tree — both asserted, or the metric compares nothing.
+- The two numbers above are computed per document; "no tree" scores zero recall, asserted.
+- The corpus is generated in tier 1 when LibreOffice is present and says it is narrower when absent,
+  as P07.S05's oracle does.
+
+#### P08.S05 — the proposer
+Scope: paragraphs → a proposal: element kind (`H1`–`H6`, `P`, `L`/`LI`), reading order, and the runs
+each element covers, from font size relative to the page's body size, weight, and list-marker
+prefixes. Writes nothing (law 3). Refs D5, exit criterion 1.
+Acceptance:
+- Over the S04 corpus both metrics are above zero on every document and clear floors recorded at the
+  slice, as a tier-1 guard.
+- The proposer has no path to a writer — asserted by routing, not by reading its output.
+
+#### P08.S06 — review and commit (D5, D10, D11)
+Scope: a Tags card in the Document tab. Propose (read-only route) → the proposal drawn over the page →
+the user retypes, ignores, or reorders an element → commit writes through the tree model and
+`claimTagging` with `sourceInferred`. Refs D5, D10, D11, exit criteria 2 and 3.
+Acceptance:
+- Nothing is written without a commit — a propose followed by no commit leaves the document
+  byte-identical, asserted at the route.
+- Every proposed element can be retyped, ignored and reordered, keyboard-only.
+- The commit refuses a signed document at the server door.
+- The committed tree records `Inferred`, and the report's provenance line says so.
+
+#### P08.S07 — decide `TagAuthored` (`/pending 480`)
+Scope: 480's own terms — *"if P08 opens and does not call it, that is B."* Decided with S05's fallback in
+hand: a page the proposer cannot read has zero runs, and a zero-run page is a scan, whose path is OCR
+(`TagOCRLayer`), not a `/Div`. Refs ADR-031's asymmetry, /pending 480.
+Acceptance:
+- Either a production caller exists and its output is measured no worse than the untagged document, or
+  `TagAuthored` and its `sourceGeneric` writer are deleted and the exemption row with them.
+
 ### P09 — The structure editor
 **Goal.** The Tags panel and Reading Order view in the Document tab (D10) — inspect, reorder,
 retype, set alt text, mark artifacts, and author table header scope.
