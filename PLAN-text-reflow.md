@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01 CLOSED (v1.128.69); P02 — the width reader — is next. `/createcode` drives it from P01.
+**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 — the content-stream walker — is next.
 
 ---
 

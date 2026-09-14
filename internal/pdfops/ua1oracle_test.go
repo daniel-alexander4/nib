@@ -153,7 +153,7 @@ var knownUA1Deltas = map[string]struct {
 	// veraPDF's words are *"A Widget annotation shall be nested within a Form tag"*, failing with
 	// *"nested within null tag (standard type = null) instead of Form"*. That is a structure
 	// element with an `OBJR` kid, which P05.S03 already models and no phase has yet emitted.
-	"AuthorForm": {[]string{"7.18.4 t1"}, "the widget is not nested in a Form structure element — needs the emitter, not a key"},
+	"AuthorForm": {[]string{"7.18.4 t1"}, "the widget is not nested in a Form structure element — needs a structure element written, not a key"},
 	"AddNotes":   {[]string{"7.18.1 t1", "7.18.3 t1"}, "annotations with no /Contents and untagged — P06"},
 
 	// ── Supplying an artefact CREATES the object other clauses inspect. With no /Metadata stream
