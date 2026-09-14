@@ -64,6 +64,11 @@ type textRun struct {
 	// carries one — or -1, including inside an `/Artifact` sequence. It is how a structure tree's
 	// element is matched to the text it tags (P08.S04 reads LibreOffice's tree as truth through it).
 	mcid int
+	// span is the byte range of the run's show operator and its own operands, in the stream it was
+	// drawn from — what a commit brackets in marked content (P08.S06a). inForm says that stream was a
+	// form XObject's, not the page's: bracketing the page stream there would describe the `Do`.
+	span   opSpan
+	inForm bool
 }
 
 // pageRuns is a page read as text.
@@ -331,6 +336,9 @@ type runOperand struct {
 	// dict holds a dictionary operand's tokens, for the one reader that looks inside: `BDC`'s
 	// property list and its `/MCID`.
 	dict []contentstream.Token
+	// start is where the operand begins in the stream, so a show operator's span can include its own
+	// operands.
+	start int
 }
 
 func (o runOperand) number(src []byte) (float64, bool) {
@@ -412,11 +420,15 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		tlm = runTranslate(0, -gs.tl).mul(tlm)
 		tm = tlm
 	}
-	showString := func() {
-		if os := last(1); os != nil {
-			if s, ok := os[0].str(src); ok {
-				w.show(&tm, gs, []tjPiece{{codes: s}})
-			}
+	// showString shows the string that is the operator's last operand; arity is how many operands the
+	// operator takes, so the run's span starts at the first of them and not at a stray one before.
+	showString := func(arity, end int) {
+		os := last(arity)
+		if os == nil {
+			return
+		}
+		if s, ok := os[arity-1].str(src); ok {
+			w.show(&tm, gs, []tjPiece{{codes: s}}, opSpan{os[0].start, end}, depth > 0)
 		}
 	}
 
@@ -427,17 +439,17 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			continue
 		case contentstream.ArrayOpen:
 			end := matchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
-			ops = append(ops, runOperand{arr: toks[i+1 : end], isArr: true})
+			ops = append(ops, runOperand{arr: toks[i+1 : end], isArr: true, start: tok.Start})
 			i = end
 			continue
 		case contentstream.DictOpen:
 			end := matchingClose(toks, i, contentstream.DictOpen, contentstream.DictClose)
-			ops = append(ops, runOperand{opaque: true, dict: toks[i+1 : end]})
+			ops = append(ops, runOperand{opaque: true, dict: toks[i+1 : end], start: tok.Start})
 			i = end
 			continue
 		case contentstream.Operator:
 		default:
-			ops = append(ops, runOperand{tok: tok})
+			ops = append(ops, runOperand{tok: tok, start: tok.Start})
 			continue
 		}
 
@@ -498,10 +510,10 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				tlm = tm
 			}
 		case "Tj":
-			showString()
+			showString(1, tok.End)
 		case "'":
 			nextLine()
-			showString()
+			showString(1, tok.End)
 		case "\"":
 			if os := last(3); os != nil {
 				aw, aok := os[0].number(src)
@@ -509,7 +521,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				if aok && cok {
 					gs.tw, gs.tc = aw, ac
 					nextLine()
-					showString()
+					showString(3, tok.End)
 				}
 			}
 		case "TJ":
@@ -525,7 +537,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 						}
 					}
 				}
-				w.show(&tm, gs, pieces)
+				w.show(&tm, gs, pieces, opSpan{os[0].start, tok.End}, depth > 0)
 			}
 		case "BMC":
 			entry := -1
@@ -561,9 +573,10 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 }
 
 // show advances the text matrix across one show operator's glyphs and records the run.
-func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece) {
+func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opSpan, inForm bool) {
 	start := tm.mul(gs.ctm)
-	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true, mcid: w.currentMCID()}
+	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
+		mcid: w.currentMCID(), span: span, inForm: inForm}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}

@@ -207,6 +207,16 @@ func TestAnImageOnlyPageHasNoLayout(t *testing.T) {
 func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 	owners := map[string]bool{"textrun.go": true, "grouping.go": true}
 	idents := map[string]bool{"textRun": true, "pageRuns": true, "readPageRuns": true, "lineSegments": true, "groupRuns": true}
+	// exempt names a file that reads runs for a purpose other than grouping them, and the identifiers
+	// it may use — each with why. ADR-009: a deliberate exemption is named, and it is narrow: the
+	// grouping identifiers stay forbidden to an exempt file, so a second grouping written there still
+	// fails.
+	exempt := map[string]map[string]string{
+		"tagcommit.go": {
+			"textRun":      "the commit matches a reviewed proposal's runs to the page's own by span and text before bracketing them (P08.S06a)",
+			"readPageRuns": "the commit re-reads each page it writes, so a proposal that no longer matches is refused instead of tagging the wrong bytes",
+		},
+	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +243,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 			}
 			if owners[f] {
 				ownersSeen++
+				return true
+			}
+			if _, ok := exempt[f][id.Name]; ok {
 				return true
 			}
 			t.Errorf("%s names %s — positioned runs are read in textrun.go and grouped in grouping.go only. "+

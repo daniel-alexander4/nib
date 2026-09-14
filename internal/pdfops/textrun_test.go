@@ -191,6 +191,46 @@ func TestARunKnowsTheMarkedContentItIsIn(t *testing.T) {
 	}
 }
 
+// TestARunKnowsTheBytesThatDrewIt — the span a commit brackets: each show operator with exactly its
+// own operands, in all four forms, and a run inside a form XObject says so.
+func TestARunKnowsTheBytesThatDrewIt(t *testing.T) {
+	res := helveticaRes()
+	res["XObject"] = types.Dict{"Fm0": types.StreamDict{
+		Dict:    types.Dict{"Subtype": types.Name("Form"), "Resources": helveticaRes()},
+		Content: []byte("BT /F1 10 Tf (F) Tj ET"),
+	}}
+	content := "BT /F1 10 Tf 12 TL 0 700 Td (AB) Tj [(C) -5 (D)] TJ (E) ' 1 2 (G) \" ET /Fm0 Do"
+	w := newRunWalker(widthXRef(t))
+	w.walk([]byte(content), res, newRunGState(), 0, map[int]bool{})
+	want := []struct {
+		text, bytes string
+		inForm      bool
+	}{
+		{"AB", "(AB) Tj", false},
+		{"CD", "[(C) -5 (D)] TJ", false},
+		{"E", "(E) '", false},
+		{"G", `1 2 (G) "`, false},
+		{"F", "(F) Tj", true},
+	}
+	if len(w.runs) != len(want) {
+		t.Fatalf("%d runs, want %d", len(w.runs), len(want))
+	}
+	for i, wnt := range want {
+		r := w.runs[i]
+		src := content
+		if r.inForm {
+			src = "BT /F1 10 Tf (F) Tj ET"
+		}
+		if r.span.end > len(src) || r.span.start < 0 || r.span.start > r.span.end {
+			t.Errorf("run %q has span %+v outside its %d-byte stream", r.text, r.span, len(src))
+			continue
+		}
+		if got := src[r.span.start:r.span.end]; r.text != wnt.text || got != wnt.bytes || r.inForm != wnt.inForm {
+			t.Errorf("run %q spans %q (inForm %v), want run %q spanning %q (inForm %v)", r.text, got, r.inForm, wnt.text, wnt.bytes, wnt.inForm)
+		}
+	}
+}
+
 // TestAFormXObjectIsWalkedAtItsMatrixAndASelfDrawingFormEnds.
 func TestAFormXObjectIsWalkedAtItsMatrixAndASelfDrawingFormEnds(t *testing.T) {
 	form := types.StreamDict{Dict: types.Dict{"Type": types.Name("XObject"), "Subtype": types.Name("Form"),
