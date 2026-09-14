@@ -2677,13 +2677,52 @@ Eighteen mutations red, each against its own assertion: the font reset at `BT`, 
 CIDs, the unparsed-CMap guard, `noText` inverted, containment removed, the `bfrange` increment, the
 StandardEncoding quotes, WinAnsi decoding. Three survived the first round and each got a test.
 
-#### P08.S03 — lines and paragraphs (`PLAN-text-reflow.md` P04)
+#### P08.S03 — lines and paragraphs (`PLAN-text-reflow.md` P04) *(done 2026-09-14, v1.129.75)*
 Scope: runs → lines → paragraphs, once. Refs reflow D10, ADR-009.
 Acceptance:
 - Paragraph counts match hand-checked expectations on corpus fixtures.
 - The grouping rule exists in one place, and a guard asserts nothing else groups positioned runs
   (`groupWords` named as the exemption it is — tesseract's grouping, taken rather than inferred).
 - A multi-column page is either handled or reported structurally as outside the tool's competence.
+
+**(build, 2026-09-14 — step zero, and the pins it produced.)**
+
+| measured | result |
+|---|---|
+| runs on one baseline | abut exactly: nib's Markdown draws a styled line as several runs and each begins where the last ends (176.17 → 176.17), so S01's widths are accurate enough to join by adjacency |
+| line and paragraph steps | mdpdf: line 14.85, paragraph 20.85, list item 16.85 (leading = size × 1.35, `paraGap` 6, `tightGap` 2). LibreOffice text: line 11.35, blank-line paragraph 22.70. **LibreOffice ODT default paragraph: 13.8 — identical to its line step** |
+| two columns (LibreOffice section, 0.5in gap) | both columns' lines on **identical baselines**, 36pt apart; a trailing `" "` run 3pt wide ends some lines |
+| a ragged-right line mid-paragraph | ends 24.6pt short of the column edge, because the next word did not fit |
+
+- **Pin — four signals, any one breaks a paragraph:** a size change; a vertical step over 1.25× the
+  column's median; an indent; and a short line **whose shortfall exceeds the next line's first word**.
+  Vertical spacing alone cannot be the rule — LibreOffice's default paragraph has none — and "short
+  line" alone breaks every ragged line.
+- **Pin — a baseline splits at a gap over 1.5 em.** The Markdown bullet sits 1.3 em from its text and
+  joins; the column gap is 3 em and splits. Segments then cluster into columns by overlapping extent,
+  read left to right.
+- **Pin — a layout the rule cannot separate is REPORTED.** A line spanning both columns fuses them
+  into one cluster, which then holds side-by-side lines on one baseline; that sets `unsupported` with
+  the reason rather than returning interleaved text. Exit criterion 3's "handled or explicitly
+  reported": separable columns are handled, the rest reported.
+- **Pin — the one door is `readPageLayout`, and the guard is by routing.** Nothing in `pdfops` outside
+  `textrun.go` and `grouping.go` may name a run type or call the run reader; a probe file doing so goes
+  red naming itself. `groupWords` is the stated exemption — it takes tesseract's grouping and never
+  touches a run.
+- **Pin — the first word is estimated by character share.** Glyph widths vary; the estimate is only
+  compared against a shortfall with a half-em margin, and the hand-checked corpus agrees exactly.
+- **Pin — the ODT container has one builder.** `odtDocument` in `lang_test.go` holds LibreOffice's two
+  measured refusals (a streamed `mimetype`, a zero `Modified`); `odtWithLang` and this slice's
+  two-column fixture both call it.
+- **Pin — still no production caller.** `readPageLayout` is S05's input and S06's route is its first
+  product path; **S06's acceptance now includes asserting that route calls it**, so the door cannot
+  ship test-only the way `/pending 481`'s did.
+
+Hand-checked, text compared exactly: converted Markdown 4 paragraphs; core-font pages 1 and 1;
+LibreOffice text 2; LibreOffice two columns 5 in reading order (heading, then the left column's two,
+then the right's), `columns == 2`, supported. Eleven mutations red: the join gap, each of the four
+signals, the short-line signal without its first word, the unsupported report, column clustering,
+whitespace runs, the joining space, and a second-opinion file for the guard.
 
 #### P08.S04 — the truth corpus and the metric
 Scope: LibreOffice-generated documents with known structure — heading levels, paragraphs that wrap,
@@ -2715,6 +2754,8 @@ Acceptance:
 - Every proposed element can be retyped, ignored and reordered, keyboard-only.
 - The commit refuses a signed document at the server door.
 - The committed tree records `Inferred`, and the report's provenance line says so.
+- The propose route reaches the page through `readPageLayout` — asserted by routing — which is the
+  first production caller of S01–S03's readers (S03's pin).
 
 #### P08.S07 — decide `TagAuthored` (`/pending 480`)
 Scope: 480's own terms — *"if P08 opens and does not call it, that is B."* Decided with S05's fallback in

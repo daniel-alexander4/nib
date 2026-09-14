@@ -54,6 +54,17 @@ func TestOCRLangToBCP47(t *testing.T) {
 // *there*, it is not a parsing failure on a foreign format.
 func odtWithLang(t *testing.T, text, lang, country string) []byte {
 	t.Helper()
+	return odtDocument(t,
+		`<style:style style:name="P1" style:family="paragraph">`+
+			`<style:text-properties fo:language="`+lang+`" fo:country="`+country+`"/></style:style>`,
+		`<text:p text:style-name="P1">`+text+`</text:p>`)
+}
+
+// odtDocument builds a minimal ODT from its automatic styles and its body, both as ODF XML — the one
+// place this package's tests write the container, because the container is where LibreOffice's two
+// measured refusals live (below). `P08.S03`'s two-column fixture is its second caller.
+func odtDocument(t *testing.T, automaticStyles, body string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	// The mimetype entry must be first and STORED — that is how the format is sniffed.
@@ -84,10 +95,8 @@ func odtWithLang(t *testing.T, text, lang, country string) []byte {
 			` xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"` +
 			` xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"` +
 			` xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">` +
-			`<office:automatic-styles><style:style style:name="P1" style:family="paragraph">` +
-			`<style:text-properties fo:language="` + lang + `" fo:country="` + country + `"/>` +
-			`</style:style></office:automatic-styles>` +
-			`<office:body><office:text><text:p text:style-name="P1">` + text + `</text:p></office:text></office:body>` +
+			`<office:automatic-styles>` + automaticStyles + `</office:automatic-styles>` +
+			`<office:body><office:text>` + body + `</office:text></office:body>` +
 			`</office:document-content>`},
 		{"META-INF/manifest.xml", `<?xml version="1.0" encoding="UTF-8"?>` +
 			`<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
