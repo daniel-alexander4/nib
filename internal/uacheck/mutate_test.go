@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -307,5 +308,168 @@ func withPacket(t *testing.T, pdf []byte, dcURI string) []byte {
 			`<rdf:Description rdf:about="" xmlns:dc="`+dcURI+`">`+
 			`<dc:title><rdf:Alt><rdf:li xml:lang="x-default">A named document</rdf:li></rdf:Alt></dc:title>`+
 			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// langOnEveryElement sets /Lang on every structure element reachable from the root's /K, and on
+// nothing else — so a pass can only come from the tree walk, never from the catalog.
+func langOnEveryElement(t *testing.T, pdf []byte, lang string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		if _, has := cat["Lang"]; has {
+			return fmt.Errorf("the fixture already declares a catalog /Lang, so a pass would prove nothing")
+		}
+		root, rerr := ctx.DereferenceDict(cat["StructTreeRoot"])
+		if rerr != nil || root == nil {
+			return fmt.Errorf("the fixture has no structure tree")
+		}
+		var walk func(o types.Object, depth int)
+		set := 0
+		walk = func(o types.Object, depth int) {
+			if depth > 32 {
+				return
+			}
+			if arr, err := ctx.DereferenceArray(o); err == nil && arr != nil {
+				for _, k := range arr {
+					walk(k, depth+1)
+				}
+				return
+			}
+			d, err := ctx.DereferenceDict(o)
+			if err != nil || d == nil {
+				return
+			}
+			if _, isElem := d["S"]; !isElem {
+				return
+			}
+			d["Lang"] = types.StringLiteral(lang)
+			set++
+			walk(d["K"], depth+1)
+		}
+		walk(root["K"], 0)
+		if set == 0 {
+			return fmt.Errorf("no structure element was found to give a /Lang")
+		}
+		return nil
+	})
+}
+
+// widgetMutation breaks one link of a described form's widget ↔ Form-element linkage.
+func widgetMutation(t *testing.T, pdf []byte, kind string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		page, _, _, err := ctx.PageDict(1, false)
+		if err != nil {
+			return err
+		}
+		annots, _ := ctx.DereferenceArray(page["Annots"])
+		for _, a := range annots {
+			ad, derr := ctx.DereferenceDict(a)
+			if derr != nil || ad == nil {
+				continue
+			}
+			if sub := ad.NameEntry("Subtype"); sub == nil || *sub != "Widget" {
+				continue
+			}
+			sp, ok := ad["StructParent"].(types.Integer)
+			if !ok {
+				return fmt.Errorf("the fixture's widget has no /StructParent to break")
+			}
+			if kind == "drop-structparent" {
+				delete(ad, "StructParent")
+				return nil
+			}
+			cat, _ := ctx.XRefTable.Catalog()
+			root, _ := ctx.DereferenceDict(cat["StructTreeRoot"])
+			pt, _ := ctx.DereferenceDict(root["ParentTree"])
+			nums, _ := ctx.DereferenceArray(pt["Nums"])
+			for i := 0; i+1 < len(nums); i += 2 {
+				if k, ok := nums[i].(types.Integer); !ok || k.Value() != sp.Value() {
+					continue
+				}
+				elem, eerr := ctx.DereferenceDict(nums[i+1])
+				if eerr != nil || elem == nil {
+					return fmt.Errorf("the parent tree entry does not resolve")
+				}
+				switch kind {
+				case "retype-div":
+					elem["S"] = types.Name("Div")
+				case "drop-objr":
+					elem["K"] = types.Array{}
+				case "rolemap-form":
+					elem["S"] = types.Name("MyField")
+					rm, _ := ctx.DereferenceDict(root["RoleMap"])
+					if rm == nil {
+						rm = types.Dict{}
+					}
+					rm["MyField"] = types.Name("Form")
+					root["RoleMap"] = rm
+				}
+				return nil
+			}
+			return fmt.Errorf("the widget's key %d is not in a flat /Nums", sp.Value())
+		}
+		return fmt.Errorf("no widget found")
+	})
+}
+
+// langOnTopLevelOnly sets /Lang on the structure root's DIRECT children only, and fails the fixture
+// if none of them owns an MCID directly — the case must need the ancestor walk to pass.
+func langOnTopLevelOnly(t *testing.T, pdf []byte, lang string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		root, rerr := ctx.DereferenceDict(cat["StructTreeRoot"])
+		if rerr != nil || root == nil {
+			return fmt.Errorf("the fixture has no structure tree")
+		}
+		kids := []types.Object{root["K"]}
+		if arr, err := ctx.DereferenceArray(root["K"]); err == nil && arr != nil {
+			kids = arr
+		}
+		nested := false
+		for _, k := range kids {
+			d, err := ctx.DereferenceDict(k)
+			if err != nil || d == nil {
+				continue
+			}
+			d["Lang"] = types.StringLiteral(lang)
+			// Does this top-level element hold a child ELEMENT (rather than only MCIDs)?
+			if ka, err := ctx.DereferenceArray(d["K"]); err == nil {
+				for _, c := range ka {
+					if cd, cerr := ctx.DereferenceDict(c); cerr == nil && cd != nil {
+						if _, isElem := cd["S"]; isElem {
+							nested = true
+						}
+					}
+				}
+			}
+		}
+		if !nested {
+			return fmt.Errorf("setup: no top-level element has a child element, so a pass would not " +
+				"prove the ancestor walk")
+		}
+		return nil
+	})
+}
+
+// markedFalse keeps the /MarkInfo dictionary and sets /Marked false, so presence and value are told
+// apart.
+func markedFalse(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		mi, err := ctx.DereferenceDict(cat["MarkInfo"])
+		if err != nil || mi == nil {
+			return fmt.Errorf("the fixture has no /MarkInfo to alter")
+		}
+		mi["Marked"] = types.Boolean(false)
+		return nil
 	})
 }

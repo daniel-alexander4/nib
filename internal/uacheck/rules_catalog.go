@@ -183,41 +183,74 @@ func checkMetadataLanguage(d *Document) Result {
 	}
 }
 
-// checkContentLanguage evaluates ua1 7.2 t34 — and is the rule that cannot be answered two ways.
+// checkContentLanguage evaluates ua1 7.2 t34 — with the tree walk P07.S02 deferred to this slice.
 //
-// # Why an untagged document is a provable Fail and a tagged one is not
+// With a catalog `/Lang`, every piece of text has a language and the clause passes. Without one, each
+// text-showing operator is resolved individually:
 //
-// A structure element may carry its own `/Lang`, covering the content beneath it. So with no catalog
-// `/Lang`:
+//   - inside an `/Artifact` sequence — not text a reader is given, so it needs no language;
+//   - inside an MCID sequence — the MCID resolves through the parent tree to an element, and the
+//     language is that element's `/Lang` or its nearest ancestor's (ISO 32000-1 §14.9.2);
+//   - inside neither — nothing could declare its language.
 //
-//   - **no structure tree** — nothing in the document could declare a language for its content, and
-//     the failure is established rather than suspected.
-//   - **a structure tree** — some or all of that content may be covered by an element's `/Lang`, and
-//     deciding it means walking the tree, which is P07.S03's. Reporting `Fail` here would be
-//     claiming a breach nib has not established: the exact mirror of the pass law 4 forbids, and the
-//     reason law 4's third verdict is not decoration.
-//
-// P06.S04 measured the other half of this: a `/Lang` on the CONTENT via `/Span <</Lang (en)>> BDC`
-// does NOT satisfy the clause, so marked content is not a route to a pass here.
+// P06.S04 measured the route that does NOT count: a `/Span <</Lang (en)>> BDC` on the content left
+// this clause failing, so a marked-content property list's own `/Lang` is deliberately not read.
 func checkContentLanguage(d *Document) Result {
 	if lang := catalogLang(d); lang != "" {
 		return Result{Verdict: Pass}
 	}
-	if _, hasTree := d.Catalog["StructTreeRoot"]; !hasTree {
-		return Result{
-			Verdict: Fail,
-			Why: "the catalog declares no /Lang and the document has no structure tree, so nothing " +
-				"in it could declare a language for its page content",
-			Where: "catalog",
+	events, errWhy := d.contentEvents()
+	if errWhy != "" {
+		return Result{Verdict: CannotCheck, Why: errWhy}
+	}
+	texts := 0
+	for _, ev := range events {
+		if !ev.text || ev.artifact {
+			continue
+		}
+		texts++
+		if ev.mcid < 0 {
+			return Result{
+				Verdict: Fail,
+				Why: "the catalog declares no /Lang and this text is in no tagged sequence, so " +
+					"nothing could declare its language",
+				Where: ev.where,
+			}
+		}
+		elem := d.elementForMCID(ev.spKey, ev.mcid)
+		if elem == nil {
+			return Result{
+				Verdict: Fail,
+				Why: fmt.Sprintf("the catalog declares no /Lang and MCID %d resolves to no structure "+
+					"element, so no element could declare this text's language", ev.mcid),
+				Where: ev.where,
+			}
+		}
+		if d.langOf(elem) == "" {
+			return Result{
+				Verdict: Fail,
+				Why: "the catalog declares no /Lang and neither the element describing this text " +
+					"nor any of its ancestors declares one",
+				Where: ev.where,
+			}
 		}
 	}
-	return Result{
-		Verdict: CannotCheck,
-		Why: "the catalog declares no /Lang, and whether every piece of content is covered by a " +
-			"structure element that declares one is not evaluated yet (P07.S03). Reporting a " +
-			"failure here would claim a breach that has not been established",
-		Where: "catalog",
+	if texts == 0 {
+		return Result{Verdict: NotApplicable, Why: "the document shows no text that a reader is given"}
 	}
+	return Result{Verdict: Pass}
+}
+
+// elementForMCID resolves an MCID on the stream whose /StructParents key is spKey to its element.
+func (d *Document) elementForMCID(spKey, mcid int) types.Dict {
+	if spKey < 0 {
+		return nil
+	}
+	arr, err := d.Ctx.DereferenceArray(d.parentTree()[spKey])
+	if err != nil || mcid < 0 || mcid >= len(arr) {
+		return nil
+	}
+	return d.dict(arr[mcid])
 }
 
 // checkUAIdentification evaluates ua1 5 t1.

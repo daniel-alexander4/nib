@@ -24,6 +24,14 @@ type Document struct {
 	Ctx *model.Context
 	// Catalog is the root dictionary, resolved once because nearly every rule wants it.
 	Catalog types.Dict
+
+	// pt is the resolved /ParentTree, built on first use by parentTree.
+	pt map[int]types.Object
+	// content is every page's classified drawing operators, built on first use by contentEvents.
+	content []contentEvent
+	// contentErr is why content could not be read, when it could not.
+	contentErr  string
+	contentDone bool
 }
 
 // open parses pdf for the rules to read.

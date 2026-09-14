@@ -214,36 +214,66 @@ func TestAnUnreadableMetadataPacketIsCannotCheckNotFail(t *testing.T) {
 	}
 }
 
-// TestTheContentLanguageRuleRefusesToGuessOnATaggedDocument — the three-way rule.
+// TestTheContentLanguageRuleResolvesEachPieceOfText — 7.2 t34 once the tree walk exists.
 //
-// A structure element may carry its own `/Lang`. So with no catalog `/Lang`: no tree means nothing
-// could declare it and the failure is established; a tree means it might be declared and deciding
-// needs the walk P07.S03 does. Reporting `Fail` there would claim a breach nib has not established
-// — the mirror of the pass law 4 forbids.
-func TestTheContentLanguageRuleRefusesToGuessOnATaggedDocument(t *testing.T) {
+// P07.S02 shipped this rule answering `CannotCheck` for any tagged document, because a structure
+// element may declare the language and walking the tree was S03's. S03 walks it, so the verdicts are
+// now established rather than deferred — and the one that changed is the one veraPDF already gave:
+// a tagged document whose elements declare no language FAILS.
+func TestTheContentLanguageRuleResolvesEachPieceOfText(t *testing.T) {
 	plain := plainDoc(t)
-	// Untagged, no /Lang: a provable failure.
-	if got := verdictOf(t, plain, "7.2 t34"); got.Verdict != Fail {
-		t.Errorf("an untagged document with no /Lang reports %v for 7.2 t34, want Fail — nothing "+
-			"in it could declare a language for its content", got.Verdict)
+	untaggedResult := verdictOf(t, plain, "7.2 t34")
+	if untaggedResult.Verdict != Fail {
+		t.Errorf("an untagged document with no /Lang reports %v for 7.2 t34, want Fail", untaggedResult.Verdict)
 	}
-	// Tagged, still no /Lang: not nib's to decide yet.
+	// **The reason, not just the verdict — found by probing.** Deleting the "in no tagged sequence"
+	// branch left this green, because the next guard ALSO fails an unmarked MCID-less text, with a
+	// reason about a missing element. Same verdict, different problem handed to the user.
+	if !strings.Contains(untaggedResult.Why, "in no tagged sequence") {
+		t.Errorf("untagged text is reported as %q, which does not say the text is untagged", untaggedResult.Why)
+	}
 	tagged, n, err := pdfops.TagAuthored(plain)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n == 0 {
-		t.Fatal("setup: nothing was wrapped, so the tagged case IS the untagged one and the two " +
-			"assertions cannot disagree")
+		t.Fatal("setup: nothing was wrapped, so the tagged case IS the untagged one")
 	}
+	// veraPDF FAILED this document at S02's live verification: TagAuthored writes no element /Lang.
 	got := verdictOf(t, tagged, "7.2 t34")
-	if got.Verdict != CannotCheck {
-		t.Errorf("a TAGGED document with no /Lang reports %v (%s) for 7.2 t34, want CannotCheck. "+
-			"An element may declare the language and walking the tree is P07.S03's; a Fail here "+
-			"claims a breach that has not been established", got.Verdict, got.Why)
+	if got.Verdict != Fail {
+		t.Errorf("a tagged document whose elements declare no language reports %v (%s), want Fail — "+
+			"the verdict veraPDF gave this exact document", got.Verdict, got.Why)
 	}
-	if !strings.Contains(got.Why, "P07.S03") {
-		t.Errorf("the cannot-check reason does not name what would settle it: %q", got.Why)
+	if !strings.Contains(got.Why, "ancestors") {
+		t.Errorf("the failure does not say the tree was walked for a language: %q", got.Why)
+	}
+	// And the case S02 could not reach: the ELEMENT declares the language, the catalog does not.
+	// This is the pass that makes the walk worth having — without it the rule could still be
+	// "tagged means fail".
+	withElemLang := langOnEveryElement(t, tagged, "en")
+	if cl := verdictOf(t, withElemLang, "7.2 t34"); cl.Verdict != Pass {
+		t.Errorf("a tagged document whose ELEMENTS declare /Lang and whose catalog does not reports "+
+			"%v (%s), want Pass — language inherits down the tree (ISO 32000-1 §14.9.2)", cl.Verdict, cl.Why)
+	}
+	// **Inherited, not only direct — found by probing.** The fixture above sets /Lang on EVERY
+	// element, so the walk to an ancestor was never needed and removing it left the suite green.
+	// Converted Markdown nests (L → LI → LBody owns the MCID), so a /Lang on the top-level elements
+	// ONLY must reach the text through the ancestor chain.
+	md, err := pdfops.ConvertDocToPDF([]byte("- first item\n- second item\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherited := langOnTopLevelOnly(t, md, "en")
+	if got := verdictOf(t, inherited, "7.2 t34"); got.Verdict != Pass {
+		t.Errorf("a /Lang declared only on top-level elements, with the MCIDs owned by their "+
+			"descendants, reports %v (%s at %s), want Pass — language inherits down the tree",
+			got.Verdict, got.Why, got.Where)
+	}
+	if lang := verdictOf(t, withElemLang, "7.2 t33"); lang.Verdict == Pass {
+		// Not an assertion about 7.2 t34; recorded so the two clauses are not confused: an element
+		// language says nothing about the METADATA's language.
+		t.Logf("note: 7.2 t33 reports %v on the same document", lang.Verdict)
 	}
 }
 

@@ -2293,7 +2293,7 @@ to `open` goes red. **Live verification against veraPDF: 45 of 45 verdicts agree
 documents × nine clauses, with one resolution limit S05 must close — veraPDF reports passed checks
 only in aggregate, so "not listed" mixes passed with not-applicable.
 
-#### P07.S03 — the structure rules
+#### P07.S03 — the structure rules *(done 2026-09-14, v1.129.66)*
 Scope: `6.2 t1`, `7.1 t3`, `7.1 t11`, `7.18.4 t1` — the clauses that need the tree and the content
 stream. `7.1 t3` is the hard one and the one nib has the most evidence about: it needs the walker to
 find content that is neither inside a marked-content sequence nor an artifact, which is exactly what
@@ -2304,6 +2304,27 @@ Acceptance:
   reproduces the problem it exists to solve.
 - `7.18.4 t1` follows the `OBJR` linkage both ways, as P06.S07's reader does.
 - Every document P06 produces gets the verdict P06 measured for it, per clause.
+
+**(grill + step zero, 2026-09-14 — three findings, one of them a defect P06 closed over.)**
+
+- **P06's tagged Markdown was never reachable — `/pending 481`.** The acceptance clause above needs a
+  tagged Markdown document produced through a product door, so the grep went looking for one:
+  `tagMarkdown` had callers ONLY in `_test.go` files, and `ConvertDocToPDF` called
+  `mdpdf.ConvertWithFaces` directly. Every Markdown file a user converted was untagged while P06's
+  criterion 1 was met by a test. The zero-caller scan could not see it — `tagMarkdown` is
+  unexported. Fixed in its own commit before this slice (v1.129.65), with a logged fallback to the
+  untagged render when tagging refuses, and the criterion's reader moved to the product door.
+- **The checker walks the tree itself rather than borrowing `pdfops`' model.** A checker reading
+  documents through the writer's own model agrees with the writer by construction; `pdfops`' own
+  tests keep `countElementsIndependently` for that reason. Two rules, each with one door — *how to
+  build* in `pdfops`, *what conforms* here — not ADR-009's two opinions about one.
+- **`7.2 t34` joins this slice.** P07.S02 shipped it answering `CannotCheck` for any tagged document
+  and named S03 in the reason it gives users; leaving that sentence false would be the stale-gate
+  shape `/pending 433` is about. With the walk, each piece of text resolves: artifact → no language
+  needed, MCID → element or nearest ancestor `/Lang`, neither → `Fail`. A `/Span <</Lang>>` property
+  list is deliberately NOT read, because P06.S04 measured that veraPDF does not credit it.
+- **P01's real tagged PDFs are gone.** `find / -name boi.pdf -o -name adgm_va.pdf` returns nothing;
+  only their names survive in this plan. S05's corpus is regenerated from D9's LibreOffice recipe.
 
 #### P07.S04 — the font rules
 Scope: `7.21.4.1 t1`, `7.21.7 t1`, `7.21.4.2 t2`. `nonEmbeddedFonts()` exists and P04 built the
