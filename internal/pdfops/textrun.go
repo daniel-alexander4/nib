@@ -1,0 +1,888 @@
+package pdfops
+
+import (
+	"fmt"
+	"math"
+	"strconv"
+	"unicode/utf16"
+
+	"github.com/pdfcpu/pdfcpu/pkg/font"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"golang.org/x/text/encoding/charmap"
+
+	"nib/internal/contentstream"
+)
+
+// Positioned runs — `PLAN-accessibility.md` P08.S02, which is `PLAN-text-reflow.md` P03.
+//
+// A page read into runs: one per text-showing operator (`Tj`, `TJ`, `'`, `"`), each carrying its text,
+// the font it was selected by, its effective size, where its first glyph sits in user space, and how
+// far it advances — with the width's source from the width reader (S01), so a run measured from
+// nothing says so.
+//
+// # What a run is, and what it is not
+//
+// A run is the DOCUMENT's unit: one show operator. pdf.js's `getTextContent` items are not that —
+// measured on a LibreOffice page, one `Tj` became three items split at a space. So agreement with
+// pdf.js (seam S7) is asserted on what both readers must agree on regardless of how they cut text:
+// the page's text, and the baselines it sits on. Grouping runs into lines is S03's, once.
+//
+// # Text is decoded only from what the document says
+//
+// `/ToUnicode` first. Without one, a simple font declaring `WinAnsiEncoding` or `MacRomanEncoding` is
+// decoded through that table, and a Latin core font with no `/Encoding` through StandardEncoding's
+// printable range. Anything else — `/Differences`, a Type0 font under a CMap other than Identity, a
+// symbolic font with no map — is NOT guessed: its codes still advance the text position, and the run
+// reports `decoded == false`.
+//
+// # Containment (reflow D6)
+//
+// The walk reads documents written by every PDF producer there is, through pdfcpu's dereferencing.
+// `readPageRuns` recovers a panic anywhere beneath it and returns it as an error for that page, so one
+// malformed page costs its text and not the process.
+
+// textRun is one text-showing operator's glyphs, as drawn.
+type textRun struct {
+	text    string
+	decoded bool // every code became text; false means text holds only what did
+	// font is the resource name the run was selected by (`F1`), and baseFont the font's /BaseFont.
+	font     string
+	baseFont string
+	// size is the effective size in user space: the `Tf` size scaled by the text and current
+	// transformation matrices, so a 10pt font under a 2× `cm` is 20.
+	size float64
+	// x, y is the origin of the first glyph in user space, including text rise.
+	x, y float64
+	// width is the run's total advance in user space, kerning and spacing included.
+	width float64
+	// widthSrc is the WEAKEST source among the run's glyphs — one glyph measured from nothing makes
+	// the run's width `none`, because a width that is partly invented is invented.
+	widthSrc widthSource
+	codes    int
+}
+
+// pageRuns is a page read as text.
+type pageRuns struct {
+	runs []textRun
+	// noText is true when the page draws no glyph at all, directly or through a form XObject — an
+	// image-only or blank page. Said structurally, so a scan is not left to be inferred from an empty
+	// slice; a reader failure is an error, never this. A show operator with an empty string draws
+	// nothing and counts as nothing: counting operators instead was a distinction no caller reads.
+	noText bool
+}
+
+// maxFormDepth bounds form XObject recursion. A form may draw itself; the specification forbids it and
+// documents do it anyway.
+const maxFormDepth = 12
+
+// maxToUnicodeRange bounds one `bfrange`: a 16-bit code space has 65,536 codes.
+const maxToUnicodeRange = 1 << 16
+
+// readPageRuns reads one page's positioned runs.
+func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
+	return containRunRead(pageNr, func() (pageRuns, error) {
+		d, _, attrs, err := ctx.PageDict(pageNr, false)
+		if err != nil || d == nil {
+			return pageRuns{}, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
+		}
+		content, cerr := ctx.PageContent(d, pageNr)
+		if cerr != nil && cerr != model.ErrNoContent {
+			return pageRuns{}, cerr
+		}
+		var res types.Dict
+		if attrs != nil {
+			res = attrs.Resources
+		}
+		w := newRunWalker(ctx.XRefTable)
+		w.walk(content, res, newRunGState(), 0, map[int]bool{})
+		return pageRuns{runs: w.runs, noText: len(w.runs) == 0}, nil
+	})
+}
+
+// containRunRead runs read and turns a panic into an error for the page — reflow D6's containment,
+// kept separate from the walk so its firing can be driven directly.
+func containRunRead(pageNr int, read func() (pageRuns, error)) (pr pageRuns, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			pr, err = pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text — the reader failed on this document: %v", pageNr, r)
+		}
+	}()
+	return read()
+}
+
+// runMatrix is a PDF transformation matrix [a b c d e f].
+type runMatrix [6]float64
+
+var runIdentity = runMatrix{1, 0, 0, 1, 0, 0}
+
+// mul returns m followed by n — PDF's row-vector order, so `cm` is `M.mul(CTM)`.
+func (m runMatrix) mul(n runMatrix) runMatrix {
+	return runMatrix{
+		m[0]*n[0] + m[1]*n[2], m[0]*n[1] + m[1]*n[3],
+		m[2]*n[0] + m[3]*n[2], m[2]*n[1] + m[3]*n[3],
+		m[4]*n[0] + m[5]*n[2] + n[4], m[4]*n[1] + m[5]*n[3] + n[5],
+	}
+}
+
+func (m runMatrix) apply(x, y float64) (float64, float64) {
+	return x*m[0] + y*m[2] + m[4], x*m[1] + y*m[3] + m[5]
+}
+
+func runTranslate(tx, ty float64) runMatrix { return runMatrix{1, 0, 0, 1, tx, ty} }
+
+// runGState is the graphics state a text run reads. Text state is part of the graphics state: `q`
+// saves it, `Q` restores it, and `BT`/`ET` do not reset it — measured against veraPDF at P07.S04, and
+// visible in nib's own Markdown output, which selects a font in one text object and draws in the next.
+type runGState struct {
+	ctm      runMatrix
+	fontName string
+	font     *runFont
+	size     float64
+	tc, tw   float64
+	th       float64 // Tz / 100
+	tl, ts   float64
+}
+
+func newRunGState() runGState { return runGState{ctm: runIdentity, th: 1} }
+
+// runFont is what the walk needs from a font dictionary.
+type runFont struct {
+	baseFont string
+	twoByte  bool // Identity-H or Identity-V: codes are two bytes and CID == code
+	// splittable is false for a Type0 font under a CMap this reader does not parse: its code lengths
+	// are unknown, so neither its text nor its widths can be read without guessing.
+	splittable bool
+	widths     fontWidths
+	toUni      map[string]string
+	simple     func(byte) (rune, bool)
+}
+
+func loadRunFont(xt *model.XRefTable, obj types.Object) *runFont {
+	d, err := xt.DereferenceDict(obj)
+	if err != nil || d == nil {
+		return nil
+	}
+	f := &runFont{widths: readFontWidths(xt, d), splittable: true}
+	if bf := d.NameEntry("BaseFont"); bf != nil {
+		f.baseFont = *bf
+	}
+	if st := d.NameEntry("Subtype"); st != nil && *st == "Type0" {
+		if enc := d.NameEntry("Encoding"); enc != nil && (*enc == "Identity-H" || *enc == "Identity-V") {
+			f.twoByte = true
+		} else {
+			f.splittable = false
+		}
+	}
+	if tu, ok := d["ToUnicode"]; ok {
+		if sd, _, serr := xt.DereferenceStreamDict(tu); serr == nil && sd != nil {
+			if body := streamContent(sd); body != nil {
+				f.toUni = parseToUnicode(body)
+			}
+		}
+	}
+	if !f.twoByte && f.splittable {
+		f.simple = simpleDecoderFor(d)
+	}
+	return f
+}
+
+// textFor decodes one code, or reports that the document gives no way to.
+func (f *runFont) textFor(code []byte) (string, bool) {
+	if f == nil || !f.splittable {
+		return "", false
+	}
+	if s, ok := f.toUni[string(code)]; ok {
+		return s, true
+	}
+	if f.simple != nil && len(code) == 1 {
+		if r, ok := f.simple(code[0]); ok {
+			return string(r), true
+		}
+	}
+	return "", false
+}
+
+// simpleDecoderFor returns the byte decoder a simple font's /Encoding names, or nil where reading its
+// text would be a guess.
+func simpleDecoderFor(d types.Dict) func(byte) (rune, bool) {
+	enc := d.NameEntry("Encoding")
+	if enc == nil {
+		if bf := d.NameEntry("BaseFont"); bf != nil && font.IsCoreFont(*bf) && *bf != "Symbol" && *bf != "ZapfDingbats" {
+			return decodeStandardPrintable
+		}
+		return nil
+	}
+	switch *enc {
+	case "WinAnsiEncoding":
+		return charmapByteDecoder(charmap.Windows1252)
+	case "MacRomanEncoding":
+		return charmapByteDecoder(charmap.Macintosh)
+	case "StandardEncoding":
+		return decodeStandardPrintable
+	}
+	return nil
+}
+
+func charmapByteDecoder(cm *charmap.Charmap) func(byte) (rune, bool) {
+	return func(b byte) (rune, bool) {
+		r := cm.DecodeByte(b)
+		if r == '�' || r < 0x20 || (r >= 0x7F && r < 0xA0) {
+			return 0, false
+		}
+		return r, true
+	}
+}
+
+// decodeStandardPrintable reads StandardEncoding's printable ASCII range, where it differs from ASCII
+// only at the two quotes. Codes above it name glyphs this reader does not carry a table for.
+func decodeStandardPrintable(b byte) (rune, bool) {
+	switch {
+	case b == 0x27:
+		return '’', true
+	case b == 0x60:
+		return '‘', true
+	case b >= 0x20 && b <= 0x7E:
+		return rune(b), true
+	}
+	return 0, false
+}
+
+// runWalker accumulates runs across a page and the forms it draws.
+type runWalker struct {
+	xt    *model.XRefTable
+	fonts map[int]*runFont
+	runs  []textRun
+}
+
+func newRunWalker(xt *model.XRefTable) *runWalker {
+	return &runWalker{xt: xt, fonts: map[int]*runFont{}}
+}
+
+// runOperand is one operand of an operator: a token, or a whole array.
+type runOperand struct {
+	tok    contentstream.Token
+	arr    []contentstream.Token
+	isArr  bool
+	opaque bool // a dictionary operand, which no text operator takes
+}
+
+func (o runOperand) number(src []byte) (float64, bool) {
+	if o.isArr || o.opaque || o.tok.Kind != contentstream.Operand {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(string(o.tok.Bytes(src)), 64)
+	return v, err == nil
+}
+
+func (o runOperand) name(src []byte) (string, bool) {
+	if o.isArr || o.opaque || o.tok.Kind != contentstream.Operand {
+		return "", false
+	}
+	b := o.tok.Bytes(src)
+	if len(b) < 2 || b[0] != '/' {
+		return "", false
+	}
+	return decodePDFName(b[1:]), true
+}
+
+func (o runOperand) str(src []byte) ([]byte, bool) {
+	if o.isArr || o.opaque {
+		return nil, false
+	}
+	if o.tok.Kind != contentstream.LiteralString && o.tok.Kind != contentstream.HexString {
+		return nil, false
+	}
+	return decodePDFString(o.tok.Bytes(src)), true
+}
+
+// tjPiece is one element of a `TJ` array: codes to show, or a position adjustment.
+type tjPiece struct {
+	codes    []byte
+	adjust   float64
+	isAdjust bool
+}
+
+// walk reads one content stream under res and gs.
+func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, visiting map[int]bool) {
+	var stack []runGState
+	tm, tlm := runIdentity, runIdentity
+	var ops []runOperand
+	toks := contentstream.Tokenize(src)
+
+	last := func(n int) []runOperand {
+		if len(ops) < n {
+			return nil
+		}
+		return ops[len(ops)-n:]
+	}
+	numbers := func(n int) ([]float64, bool) {
+		os := last(n)
+		if os == nil {
+			return nil, false
+		}
+		out := make([]float64, n)
+		for i, o := range os {
+			v, ok := o.number(src)
+			if !ok {
+				return nil, false
+			}
+			out[i] = v
+		}
+		return out, true
+	}
+	nextLine := func() {
+		tlm = runTranslate(0, -gs.tl).mul(tlm)
+		tm = tlm
+	}
+	showString := func() {
+		if os := last(1); os != nil {
+			if s, ok := os[0].str(src); ok {
+				w.show(&tm, gs, []tjPiece{{codes: s}})
+			}
+		}
+	}
+
+	for i := 0; i < len(toks); i++ {
+		tok := toks[i]
+		switch tok.Kind {
+		case contentstream.Whitespace, contentstream.InlineImage:
+			continue
+		case contentstream.ArrayOpen:
+			end := matchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
+			ops = append(ops, runOperand{arr: toks[i+1 : end], isArr: true})
+			i = end
+			continue
+		case contentstream.DictOpen:
+			end := matchingClose(toks, i, contentstream.DictOpen, contentstream.DictClose)
+			ops = append(ops, runOperand{opaque: true})
+			i = end
+			continue
+		case contentstream.Operator:
+		default:
+			ops = append(ops, runOperand{tok: tok})
+			continue
+		}
+
+		switch string(tok.Bytes(src)) {
+		case "q":
+			stack = append(stack, gs)
+		case "Q":
+			if n := len(stack); n > 0 {
+				gs, stack = stack[n-1], stack[:n-1]
+			}
+		case "cm":
+			if v, ok := numbers(6); ok {
+				gs.ctm = runMatrix{v[0], v[1], v[2], v[3], v[4], v[5]}.mul(gs.ctm)
+			}
+		case "BT":
+			tm, tlm = runIdentity, runIdentity
+		case "Tf":
+			if os := last(2); os != nil {
+				name, nok := os[0].name(src)
+				size, sok := os[1].number(src)
+				if nok && sok {
+					gs.fontName, gs.size, gs.font = name, size, w.fontFor(res, name)
+				}
+			}
+		case "Tc":
+			if v, ok := numbers(1); ok {
+				gs.tc = v[0]
+			}
+		case "Tw":
+			if v, ok := numbers(1); ok {
+				gs.tw = v[0]
+			}
+		case "Tz":
+			if v, ok := numbers(1); ok {
+				gs.th = v[0] / 100
+			}
+		case "TL":
+			if v, ok := numbers(1); ok {
+				gs.tl = v[0]
+			}
+		case "Ts":
+			if v, ok := numbers(1); ok {
+				gs.ts = v[0]
+			}
+		case "Td", "TD":
+			if v, ok := numbers(2); ok {
+				if string(tok.Bytes(src)) == "TD" {
+					gs.tl = -v[1]
+				}
+				tlm = runTranslate(v[0], v[1]).mul(tlm)
+				tm = tlm
+			}
+		case "T*":
+			nextLine()
+		case "Tm":
+			if v, ok := numbers(6); ok {
+				tm = runMatrix{v[0], v[1], v[2], v[3], v[4], v[5]}
+				tlm = tm
+			}
+		case "Tj":
+			showString()
+		case "'":
+			nextLine()
+			showString()
+		case "\"":
+			if os := last(3); os != nil {
+				aw, aok := os[0].number(src)
+				ac, cok := os[1].number(src)
+				if aok && cok {
+					gs.tw, gs.tc = aw, ac
+					nextLine()
+					showString()
+				}
+			}
+		case "TJ":
+			if os := last(1); os != nil && os[0].isArr {
+				var pieces []tjPiece
+				for _, at := range os[0].arr {
+					switch at.Kind {
+					case contentstream.LiteralString, contentstream.HexString:
+						pieces = append(pieces, tjPiece{codes: decodePDFString(at.Bytes(src))})
+					case contentstream.Operand:
+						if v, err := strconv.ParseFloat(string(at.Bytes(src)), 64); err == nil {
+							pieces = append(pieces, tjPiece{adjust: v, isAdjust: true})
+						}
+					}
+				}
+				w.show(&tm, gs, pieces)
+			}
+		case "Do":
+			if os := last(1); os != nil {
+				if name, ok := os[0].name(src); ok {
+					w.drawForm(res, name, gs, depth, visiting)
+				}
+			}
+		}
+		ops = ops[:0]
+	}
+}
+
+// show advances the text matrix across one show operator's glyphs and records the run.
+func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece) {
+	start := tm.mul(gs.ctm)
+	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true}
+	if gs.font != nil {
+		run.baseFont = gs.font.baseFont
+	}
+	run.x, run.y = start.apply(0, gs.ts)
+	var text []byte
+	var advance float64
+	weakest := widthSource("")
+	for _, p := range pieces {
+		if p.isAdjust {
+			tx := -p.adjust / 1000 * gs.size * gs.th
+			*tm = runTranslate(tx, 0).mul(*tm)
+			advance += tx
+			continue
+		}
+		for _, code := range splitCodes(gs.font, p.codes) {
+			run.codes++
+			w0, src := 0.0, widthNone
+			if gs.font != nil && gs.font.splittable {
+				w0, src = gs.font.widths.advance(codeValue(code))
+			}
+			weakest = weakerWidthSource(weakest, src)
+			if s, ok := gs.font.textFor(code); ok {
+				text = append(text, s...)
+			} else {
+				run.decoded = false
+			}
+			tx := w0/1000*gs.size + gs.tc
+			if len(code) == 1 && code[0] == ' ' {
+				tx += gs.tw
+			}
+			tx *= gs.th
+			*tm = runTranslate(tx, 0).mul(*tm)
+			advance += tx
+		}
+	}
+	if run.codes == 0 {
+		return
+	}
+	run.text = string(text)
+	run.width = advance * math.Hypot(start[0], start[1])
+	run.widthSrc = weakest
+	w.runs = append(w.runs, run)
+}
+
+// widthRank orders width sources from least to most trustworthy, so a run reports its weakest.
+var widthRank = map[widthSource]int{
+	widthNone: 0, widthFromDefault: 1, widthFromMissing: 2, widthFromStd14: 3,
+	widthFromDW: 4, widthFromW: 5, widthFromWidths: 5,
+}
+
+func weakerWidthSource(a, b widthSource) widthSource {
+	if a == "" {
+		return b
+	}
+	if widthRank[b] < widthRank[a] {
+		return b
+	}
+	return a
+}
+
+// fontFor resolves a font resource, cached by object number.
+func (w *runWalker) fontFor(res types.Dict, name string) *runFont {
+	if res == nil {
+		return nil
+	}
+	fonts, err := w.xt.DereferenceDict(res["Font"])
+	if err != nil || fonts == nil {
+		return nil
+	}
+	obj, ok := fonts[name]
+	if !ok {
+		return nil
+	}
+	if ir, isRef := obj.(types.IndirectRef); isRef {
+		key := ir.ObjectNumber.Value()
+		if f, cached := w.fonts[key]; cached {
+			return f
+		}
+		f := loadRunFont(w.xt, obj)
+		w.fonts[key] = f
+		return f
+	}
+	return loadRunFont(w.xt, obj)
+}
+
+// drawForm walks a form XObject at its /Matrix, under its own resources where it has them.
+func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth int, visiting map[int]bool) {
+	if res == nil || depth >= maxFormDepth {
+		return
+	}
+	xobjs, err := w.xt.DereferenceDict(res["XObject"])
+	if err != nil || xobjs == nil {
+		return
+	}
+	obj, ok := xobjs[name]
+	if !ok {
+		return
+	}
+	key := -1
+	if ir, isRef := obj.(types.IndirectRef); isRef {
+		key = ir.ObjectNumber.Value()
+		if visiting[key] {
+			return
+		}
+	}
+	sd, _, serr := w.xt.DereferenceStreamDict(obj)
+	if serr != nil || sd == nil {
+		return
+	}
+	if st := sd.Dict.NameEntry("Subtype"); st == nil || *st != "Form" {
+		return
+	}
+	body := streamContent(sd)
+	if body == nil {
+		return
+	}
+	m := runIdentity
+	if arr, aerr := w.xt.DereferenceArray(sd.Dict["Matrix"]); aerr == nil && len(arr) == 6 {
+		for i, o := range arr {
+			if v, vok := pdfNumber(w.xt, o); vok {
+				m[i] = v
+			}
+		}
+	}
+	formRes := res
+	if r, rerr := w.xt.DereferenceDict(sd.Dict["Resources"]); rerr == nil && r != nil {
+		formRes = r
+	}
+	if key >= 0 {
+		visiting[key] = true
+		defer delete(visiting, key)
+	}
+	gs.ctm = m.mul(gs.ctm)
+	w.walk(body, formRes, gs, depth+1, visiting)
+}
+
+// streamContent returns a stream's decoded bytes, decoding it if nothing has yet.
+func streamContent(sd *types.StreamDict) []byte {
+	if sd.Content != nil {
+		return sd.Content
+	}
+	if err := sd.Decode(); err != nil {
+		return nil
+	}
+	return sd.Content
+}
+
+// matchingClose returns the index of the token closing the one at i, or the last index when the
+// stream ends first — a malformed stream still tokenizes, and so still walks.
+func matchingClose(toks []contentstream.Token, i int, open, close contentstream.Kind) int {
+	depth := 0
+	for j := i; j < len(toks); j++ {
+		switch toks[j].Kind {
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
+	}
+	return len(toks) - 1
+}
+
+// splitCodes cuts shown bytes into character codes: two bytes under Identity, otherwise one.
+func splitCodes(f *runFont, b []byte) [][]byte {
+	n := 1
+	if f != nil && f.twoByte {
+		n = 2
+	}
+	out := make([][]byte, 0, len(b)/n+1)
+	for i := 0; i < len(b); i += n {
+		end := i + n
+		if end > len(b) {
+			end = len(b)
+		}
+		out = append(out, b[i:end])
+	}
+	return out
+}
+
+func codeValue(c []byte) int {
+	v := 0
+	for _, b := range c {
+		v = v<<8 | int(b)
+	}
+	return v
+}
+
+// decodePDFName decodes a name's `#xx` escapes.
+func decodePDFName(b []byte) string {
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] == '#' && i+2 < len(b) {
+			hi, hok := hexNibble(b[i+1])
+			lo, lok := hexNibble(b[i+2])
+			if hok && lok {
+				out = append(out, hi<<4|lo)
+				i += 2
+				continue
+			}
+		}
+		out = append(out, b[i])
+	}
+	return string(out)
+}
+
+// decodePDFString returns a literal or hex string token's bytes, delimiters and escapes removed.
+//
+// `contentstream` deliberately hands out spans, not values — *"a caller that does need one decodes
+// the span itself"* — so this is the reader's, and nothing in the tokenizer changes for it.
+func decodePDFString(raw []byte) []byte {
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '<' {
+		return decodeHexString(raw)
+	}
+	if raw[0] != '(' {
+		return nil
+	}
+	body := raw[1:]
+	if n := len(body); n > 0 && body[n-1] == ')' {
+		body = body[:n-1]
+	}
+	out := make([]byte, 0, len(body))
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c == '\r' {
+			// An unescaped end-of-line in a literal is read as a single newline, whatever its spelling.
+			out = append(out, '\n')
+			if i+1 < len(body) && body[i+1] == '\n' {
+				i++
+			}
+			continue
+		}
+		if c != '\\' {
+			out = append(out, c)
+			continue
+		}
+		i++
+		if i >= len(body) {
+			break
+		}
+		switch e := body[i]; e {
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case 'b':
+			out = append(out, '\b')
+		case 'f':
+			out = append(out, '\f')
+		case '(', ')', '\\':
+			out = append(out, e)
+		case '\r':
+			// A backslash at the end of a line continues the string; neither byte is content.
+			if i+1 < len(body) && body[i+1] == '\n' {
+				i++
+			}
+		case '\n':
+		default:
+			if e >= '0' && e <= '7' {
+				v := int(e - '0')
+				for n := 1; n < 3 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7'; n++ {
+					i++
+					v = v*8 + int(body[i]-'0')
+				}
+				out = append(out, byte(v))
+				continue
+			}
+			// An unknown escape: the specification says the backslash is ignored.
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func decodeHexString(raw []byte) []byte {
+	body := raw[1:]
+	if n := len(body); n > 0 && body[n-1] == '>' {
+		body = body[:n-1]
+	}
+	nibbles := make([]byte, 0, len(body))
+	for _, c := range body {
+		if v, ok := hexNibble(c); ok {
+			nibbles = append(nibbles, v)
+		}
+	}
+	if len(nibbles)%2 == 1 {
+		nibbles = append(nibbles, 0) // a missing final digit is zero
+	}
+	out := make([]byte, len(nibbles)/2)
+	for i := range out {
+		out[i] = nibbles[2*i]<<4 | nibbles[2*i+1]
+	}
+	return out
+}
+
+func hexNibble(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}
+
+// cmapItem is one operand inside a `bfchar`/`bfrange` block.
+type cmapItem struct {
+	b     []byte
+	arr   [][]byte
+	isArr bool
+}
+
+// parseToUnicode reads a `/ToUnicode` CMap's `bfchar` and `bfrange` blocks — both range forms, the
+// incrementing destination and the array of destinations — into code bytes → text.
+func parseToUnicode(src []byte) map[string]string {
+	out := map[string]string{}
+	toks := contentstream.Tokenize(src)
+	mode := ""
+	var items []cmapItem
+	for i := 0; i < len(toks); i++ {
+		t := toks[i]
+		switch t.Kind {
+		case contentstream.Whitespace:
+			continue
+		case contentstream.HexString:
+			if mode != "" {
+				items = append(items, cmapItem{b: decodeHexString(t.Bytes(src))})
+			}
+			continue
+		case contentstream.ArrayOpen:
+			end := matchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
+			if mode != "" {
+				var arr [][]byte
+				for _, at := range toks[i+1 : end] {
+					if at.Kind == contentstream.HexString {
+						arr = append(arr, decodeHexString(at.Bytes(src)))
+					}
+				}
+				items = append(items, cmapItem{arr: arr, isArr: true})
+			}
+			i = end
+			continue
+		}
+		switch string(t.Bytes(src)) {
+		case "beginbfchar":
+			mode, items = "char", nil
+		case "beginbfrange":
+			mode, items = "range", nil
+		case "endbfchar":
+			for j := 0; j+1 < len(items); j += 2 {
+				if !items[j].isArr && !items[j+1].isArr {
+					out[string(items[j].b)] = utf16Text(items[j+1].b)
+				}
+			}
+			mode, items = "", nil
+		case "endbfrange":
+			for j := 0; j+2 < len(items); j += 3 {
+				lo, hi := items[j], items[j+1]
+				if lo.isArr || hi.isArr || len(lo.b) != len(hi.b) {
+					continue
+				}
+				expandBFRange(out, lo.b, hi.b, items[j+2])
+			}
+			mode, items = "", nil
+		}
+	}
+	return out
+}
+
+func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem) {
+	l, h := codeValue(lo), codeValue(hi)
+	if h < l || h-l >= maxToUnicodeRange {
+		return
+	}
+	for k := 0; k <= h-l; k++ {
+		code := make([]byte, len(lo))
+		v := l + k
+		for b := len(code) - 1; b >= 0; b-- {
+			code[b] = byte(v)
+			v >>= 8
+		}
+		if dst.isArr {
+			if k < len(dst.arr) {
+				out[string(code)] = utf16Text(dst.arr[k])
+			}
+			continue
+		}
+		d := append([]byte(nil), dst.b...)
+		switch {
+		case len(d) >= 2:
+			u := int(d[len(d)-2])<<8 | int(d[len(d)-1])
+			u += k
+			d[len(d)-2], d[len(d)-1] = byte(u>>8), byte(u)
+		case len(d) == 1:
+			d[0] += byte(k)
+		}
+		out[string(code)] = utf16Text(d)
+	}
+}
+
+// utf16Text decodes a CMap destination, which is UTF-16BE and may carry surrogate pairs or several
+// characters (a ligature maps to two).
+func utf16Text(b []byte) string {
+	if len(b)%2 == 1 {
+		return string(b)
+	}
+	u := make([]uint16, len(b)/2)
+	for i := range u {
+		u[i] = uint16(b[2*i])<<8 | uint16(b[2*i+1])
+	}
+	return string(utf16.Decode(u))
+}

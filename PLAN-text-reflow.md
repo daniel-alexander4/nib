@@ -396,7 +396,7 @@ dictionary, with an honest `none` when it cannot.
 corpus; core fonts fall back through D3's single door; **no lookup ever returns a silent zero**
 (law 2); the corpus census is a guard, so a regression in coverage is a red test.
 
-### P03 — Positioned runs, in Go
+### P03 — Positioned runs, in Go *(done 2026-09-14, v1.129.74 — as `PLAN-accessibility.md` P08.S02; `internal/pdfops/textrun.go`. Agreement with pdf.js is asserted on page text and baselines, not item count — see that slice's pin)*
 **Goal.** Read a page into runs carrying text, font, size, position and width — the input every later
 phase consumes.
 

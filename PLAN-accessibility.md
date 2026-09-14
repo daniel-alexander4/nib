@@ -2629,7 +2629,7 @@ Census: `std14` 95, `W` 32, `Widths` 17, `none` 0. Eight mutations red, each aga
 assertion: `none` → `Widths`, the unmapped-code guard, the encoding check, the Symbol exclusion, the
 CID ceiling, the default-DW source, the descendant check, the truncated-range bound.
 
-#### P08.S02 — positioned runs (`PLAN-text-reflow.md` P03)
+#### P08.S02 — positioned runs (`PLAN-text-reflow.md` P03) *(done 2026-09-14, v1.129.74)*
 Scope: read a page into runs — text, font, size, position, width — from a text-state machine over
 `contentstream.Tokenize`: `BT/ET`, `Tf`, `Tm`, `Td`, `TD`, `T*`, `TL`, `Tc`, `Tw`, `Tz`, `Ts`, `cm`,
 `q/Q`, `Tj`, `TJ`, `'`, `"`, and `Do` into form XObjects; text through `/ToUnicode` where present.
@@ -2639,6 +2639,43 @@ Acceptance:
   that loads the vendored `pdf.min.mjs`.
 - An image-only page returns zero runs and says so structurally, not as an empty slice.
 - A malformed document is contained per reflow D6, and the containment is probed non-zero.
+
+**(build, 2026-09-14 — step zero, and the pins it produced.)**
+
+| measured | result |
+|---|---|
+| a `/ToUnicode` reader | **none.** `grep -rnE "bfchar\|bfrange"` over non-test Go → 0; pdfcpu's only CMap code WRITES one (`font/fontDict.go:584-607`) |
+| a byte → character table | none exported by pdfcpu (`DecodeUTF8ToByte` is the reverse); `golang.org/x/text` v0.40.0 is already a dependency (`xfdf.go`), so `charmap.Windows1252`/`Macintosh` cost no new module |
+| what the two producers emit | mdpdf: `Tf` in one `BT…ET`, drawing in the next with no `Tf`; position by `cm`; two-byte Identity-H codes in literal strings; `bfchar`-only CMaps. LibreOffice: `Td` + hex-string `Tj`, one-byte codes, TrueType with no `/Encoding`, `bfchar`-only CMap |
+| pdf.js in this environment | the vendored 6.0.227 build does not load in Node 20: `DOMMatrix`, then `Promise.withResolvers`, `Promise.try`, `Uint8Array.prototype.toHex` are missing, measured in that order. With those filled (no rendering path touched) `getTextContent` runs |
+| pdf.js's unit of text | **not a show operator.** One LibreOffice `Tj` became three items split at a space, and every line ends with an empty end-of-line item |
+
+- **Pin — "run text and count agree with pdf.js" is asserted as TEXT and BASELINES.** The two readers
+  cut text differently by construction, so an item count cannot agree. What both must produce however
+  they cut is the page's text (whitespace removed) and the set of baselines it sits on (half-point
+  resolution); a dropped run, a mis-decoded code or a misplaced line fails one or the other. Agreed on
+  all three corpus documents.
+- **Pin — the pdf.js side is `test/pdfjs/textcontent.mjs`**, loading the vendored build the app ships,
+  run from a tier-1 Go test when `node` is on the path. Absent, the test SKIPS and says why.
+- **Pin — the string decoder lives in `pdfops`, not `contentstream`.** That package's own comment says
+  tokens are spans and *"a caller that does need [a value] decodes the span itself"*.
+- **Pin — text is decoded only from what the document says.** `/ToUnicode`; else WinAnsi, MacRoman, or
+  StandardEncoding's printable range where the font names it. `/Differences`, a Type0 font under a
+  CMap other than Identity, and a symbolic font with no map are not guessed: the run advances and says
+  `decoded == false`. A one-byte `ToUnicode` on such a font does not make it readable.
+- **Pin — `noText` is "draws no glyph".** The first cut counted show operators; a probe found it
+  indistinguishable from counting runs except for an empty `()` show, which no caller distinguishes, so
+  the counter was removed.
+- **Pin — containment fires, and the corpus never reaches it.** A panic under the reader is driven
+  directly and returned as that page's error; every truncation of a real Markdown page (all prefixes)
+  reads without reaching it.
+- **Pin — still no production caller.** `readPageRuns` is called by tests until S03's grouping; S03's
+  acceptance carries the first product path, for the reason S01's pin gave.
+
+Eighteen mutations red, each against its own assertion: the font reset at `BT`, `Q` as a no-op, `cm`,
+`TD`'s leading, `Tc`, `Tw`, `Tz`, `Ts`, the `TJ` sign, the form `/Matrix`, the depth ceiling, one-byte
+CIDs, the unparsed-CMap guard, `noText` inverted, containment removed, the `bfrange` increment, the
+StandardEncoding quotes, WinAnsi decoding. Three survived the first round and each got a test.
 
 #### P08.S03 — lines and paragraphs (`PLAN-text-reflow.md` P04)
 Scope: runs → lines → paragraphs, once. Refs reflow D10, ADR-009.
