@@ -404,7 +404,7 @@ phase consumes.
 return zero runs and say so structurally; a malformed document is contained per D6 and the
 containment is probed non-zero.
 
-### P04 — Lines and paragraphs
+### P04 — Lines and paragraphs *(done 2026-09-14, v1.129.75 — as `PLAN-accessibility.md` P08.S03; `internal/pdfops/grouping.go`, one door `readPageLayout`)*
 **Goal.** Group runs into lines and lines into paragraphs, once, shared with `PLAN-accessibility`
 P08 (D10).
 
