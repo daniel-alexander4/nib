@@ -100,7 +100,7 @@ func TestADanglingStructParentsKeyIsReported(t *testing.T) {
 // post-condition rather than as a separate opinion.
 func TestAddingAMarkedElementKeepsEveryInvariant(t *testing.T) {
 	out, err := writeMutatedTree(t, taggedFixture(), func(ctx *model.Context, tree *structTree) error {
-		mcid, ref, aerr := addMarkedElement(ctx, tree, 1, "Span")
+		mcid, ref, aerr := addMarkedElementUnder(ctx, tree, 1, "Span", nil)
 		if aerr != nil {
 			return aerr
 		}
@@ -150,7 +150,7 @@ func TestMarkingARunCostsTheSameHoweverManyRunsCameBefore(t *testing.T) {
 			if _, err := writeMutatedTree(t, taggedFixture(), func(ctx *model.Context, tree *structTree) error {
 				start := time.Now()
 				for i := 0; i < elements; i++ {
-					_, ref, aerr := addMarkedElement(ctx, tree, 1, "P")
+					_, ref, aerr := addMarkedElementUnder(ctx, tree, 1, "P", nil)
 					if aerr != nil {
 						return aerr
 					}
@@ -196,7 +196,7 @@ func TestAddingToAPageWithNoStructParentsCreatesTheKey(t *testing.T) {
 		8: "<< /Type /StructElem /S /P /Pg 3 0 R >>",
 	})
 	out, err := writeMutatedTree(t, src, func(ctx *model.Context, tree *structTree) error {
-		_, _, aerr := addMarkedElement(ctx, tree, 1, "P")
+		_, _, aerr := addMarkedElementUnder(ctx, tree, 1, "P", nil)
 		return aerr
 	})
 	if err != nil {
@@ -241,7 +241,7 @@ func writeMutatedTree(t *testing.T, pdf []byte, f func(*model.Context, *structTr
 // TestAGapInTheParentTreeArrayIsFilledNotAppended drives `setParentTreeSlot`'s general contract,
 // which its only production caller cannot reach.
 //
-// `addMarkedElement` allocates `mcid` as the array's length, so filling and appending coincide on
+// `addMarkedElementUnder` allocates `mcid` as the array's length, so filling and appending coincide on
 // every call it makes — mutation proved it, by swapping one for the other and finding every test
 // still green. The array is indexed BY MCID, so the distinction is the whole correctness of the
 // structure: an element registered at the wrong index is an element a reader attributes to

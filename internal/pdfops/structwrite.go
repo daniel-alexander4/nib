@@ -16,7 +16,7 @@ import (
 // keeps them.
 //
 // **Only ADD is built.** The slice's acceptance named add, remove and re-parent; removing and
-// re-parenting have no caller — P05.S04 wraps content, which adds — and this repo has a standing
+// re-parenting have no caller — every tree writer builds a new tree, which adds — and this repo has a standing
 // lesson about building the other two anyway. `/pending 442` deleted exported crypto that nothing
 // called, which had cost a fix nobody ran plus an exemption row that outlived its reason. An
 // untested mutation of a structure tree is a worse version of the same bet, because its failures are
@@ -25,8 +25,8 @@ import (
 // So the clause is met for the operation that exists and recorded as unbuilt for the two that do
 // not, rather than met by three mutations of which two are theatre.
 
-// addMarkedElement adds a structure element that owns one marked-content sequence on a page, and
-// keeps every invariant `checkStructConsistency` tests.
+// addMarkedElementUnder adds a structure element that owns one marked-content sequence on a page,
+// under parent, and keeps every invariant `checkStructConsistency` tests.
 //
 // It returns the MCID the caller must write into the page's `BDC` property list — allocated here
 // rather than passed in, because the MCID and the `/ParentTree` slot are the same number and a
@@ -40,15 +40,10 @@ import (
 //     MCID, so adding MCID 7 to a four-slot array means growing it to eight, not appending.
 //   - **The element's `/K` and `/Pg`**, so the tree's side names the same content the ParentTree's
 //     side does. The two directions are stored separately and nothing but this keeps them equal.
-func addMarkedElement(ctx *model.Context, tree *structTree, pageNr int, structType string) (
-	mcid int, elemRef *types.IndirectRef, err error) {
-	return addMarkedElementUnder(ctx, tree, pageNr, structType, nil)
-}
-
-// addMarkedElementUnder is addMarkedElement with a chosen parent — `PLAN-accessibility.md` P06.S02.
 //
-// A nil parent means the tree root, which is what P05.S04's flat one-element-per-page emitter
-// needed. Real structure nests: a list is `L` containing `LI` containing `Lbl` and `LBody`, and an
+// # The parent — `PLAN-accessibility.md` P06.S02
+//
+// A nil parent means the tree root. Real structure nests: a list is `L` containing `LI` containing `Lbl` and `LBody`, and an
 // element whose `/P` names the root while its parent's `/K` names it is a tree that disagrees with
 // itself in the two directions a reader can walk it.
 //
@@ -84,9 +79,7 @@ func addMarkedElementUnder(ctx *model.Context, tree *structTree, pageNr int, str
 	// The MCID is the next free slot of that key's array.
 	mcid = slots
 
-	// Build the element. `/P` is the tree root: this is a top-level element, which is all the
-	// wrapping emitter needs and is honest about what it knows — inferring a better parent from
-	// page geometry is P08's job and would be a guess here.
+	// Build the element. `/P` is the parent the caller named, or the tree root when it named none.
 	//
 	// **`/P` is REQUIRED, and omitting it produces a document that looks tagged and is not.**
 	// Measured: without it veraPDF reports every content item as `{mcid:0}` — marked, so the
@@ -241,10 +234,10 @@ func parentTreeDict(ctx *model.Context, tree *structTree) (types.Dict, error) {
 // in a four-slot array creates slots 4, 5 and 6 as nulls. An append would put the element at index 4
 // and every later lookup would find the wrong element or none.
 //
-// **`addMarkedElement` never exercises that**, and saying so is the point: it allocates `mcid` as
+// **`addMarkedElementUnder` never exercises that**, and saying so is the point: it allocates `mcid` as
 // `len(arr)`, so fill and append coincide on every call it makes — swapping one for the other leaves
-// its tests green. The fill is the general contract of this helper, which P05.S04 will need when it
-// wraps content whose MCIDs already exist and are not contiguous, so it is driven directly by
+// its tests green. The fill is the general contract of this helper, which any writer placing content
+// whose MCIDs already exist and are not contiguous needs, so it is driven directly by
 // `TestAGapInTheParentTreeArrayIsFilledNotAppended` rather than left as an untested claim.
 func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref types.IndirectRef) error {
 	pt, err := parentTreeDict(ctx, tree)
@@ -380,7 +373,7 @@ func appendToElementKids(ctx *model.Context, parent, child types.IndirectRef) er
 // have to become its own paragraph — which is a tree that says the document has four paragraphs
 // where it has one, and a reader navigating by paragraph would be told so.
 //
-// It keeps both directions in step exactly as `addMarkedElement` does: the MCID joins the element's
+// It keeps both directions in step exactly as `addMarkedElementUnder` does: the MCID joins the element's
 // `/K` and the element joins the page's ParentTree array at that index.
 func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.IndirectRef) (int, error) {
 	pageDict, _, err := tree.page(ctx, pageNr)
