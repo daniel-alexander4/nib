@@ -232,14 +232,10 @@ func TestTheContentLanguageRuleResolvesEachPieceOfText(t *testing.T) {
 	if !strings.Contains(untaggedResult.Why, "in no tagged sequence") {
 		t.Errorf("untagged text is reported as %q, which does not say the text is untagged", untaggedResult.Why)
 	}
-	tagged, n, err := pdfops.TagAuthored(plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n == 0 {
-		t.Fatal("setup: nothing was wrapped, so the tagged case IS the untagged one")
-	}
-	// veraPDF FAILED this document at S02's live verification: TagAuthored writes no element /Lang.
+	tagged := committedProposal(t, plain)
+	// A committed proposal writes no element /Lang. veraPDF failed exactly that shape at S02's live
+	// verification, on the generic emitter's document this fixture replaced — and the oracle guard
+	// measures this one against veraPDF too.
 	got := verdictOf(t, tagged, "7.2 t34")
 	if got.Verdict != Fail {
 		t.Errorf("a tagged document whose elements declare no language reports %v (%s), want Fail — "+

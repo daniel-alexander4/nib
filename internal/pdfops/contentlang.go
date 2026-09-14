@@ -46,9 +46,9 @@ const AuthoredProseLang = "en"
 // declareContentLang brackets every page's content in a `/Span` carrying lang.
 //
 // It returns the number of pages it bracketed, so a caller can tell *nothing needed doing* from
-// *nothing was done* — the same distinction `tagAuthoredContent` draws and for the same reason.
+// *nothing was done* — the two are the same bytes and different facts.
 //
-// **Idempotent by the same rule as the wrapping emitter**: a page already carrying marked content
+// **Idempotent**: a page already carrying marked content
 // is left alone, because a second bracket would nest a language inside a producer's own marked
 // content and no reader can be asked to resolve that.
 func declareContentLang(pdf []byte, lang string) (out []byte, bracketed int, err error) {
@@ -98,7 +98,7 @@ func declareContentLang(pdf []byte, lang string) (out []byte, bracketed int, err
 		// `writeMutated` rewrites the whole file whether or not the callback changed anything, so
 		// without this a second call returns a different document — measured, 93,891 bytes against
 		// 93,886 — and a caller checking idempotence by comparing bytes would be told the operation
-		// is not. The same rule `TagAuthored` follows: a document that needed nothing costs nothing.
+		// is not. A document that needed nothing costs nothing.
 		return pdf, 0, nil
 	}
 	return out, bracketed, nil

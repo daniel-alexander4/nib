@@ -19,10 +19,7 @@ func TestTheStructureRulesAgreeWithWhatP06Measured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrapped, n, err := pdfops.TagAuthored(plain)
-	if err != nil || n == 0 {
-		t.Fatalf("setup: TagAuthored wrapped %d page(s): %v", n, err)
-	}
+	wrapped := committedProposal(t, plain)
 	fields := []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 700, 300, 720}, Kind: "text", Name: "n", Label: "Your name"}}
 	undescribed, err := pdfops.AuthorForm(plain, fields)
 	if err != nil {
@@ -47,8 +44,8 @@ func TestTheStructureRulesAgreeWithWhatP06Measured(t *testing.T) {
 		{"an untagged page", plain, "7.1 t3", Fail},
 		{"an untagged page", plain, "7.18.4 t1", NotApplicable},
 
-		{"a wrapped page", wrapped, "6.2 t1", Pass},
-		{"a wrapped page", wrapped, "7.1 t3", Pass},
+		{"a committed proposal", wrapped, "6.2 t1", Pass},
+		{"a committed proposal", wrapped, "7.1 t3", Pass},
 
 		// P06.S07's measurement: the undescribed form fails 7.18.4 t1 and the described one passes.
 		// Both fail 7.1 t3 — the HOST page's text is untagged, which is what its content owes.
@@ -200,12 +197,9 @@ func TestMarkInfoReadsTheVALUEAndNotJustTheDictionary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrapped, n, err := pdfops.TagAuthored(plain)
-	if err != nil || n == 0 {
-		t.Fatalf("setup: wrapped %d: %v", n, err)
-	}
+	wrapped := committedProposal(t, plain)
 	if got := verdictOf(t, wrapped, "6.2 t1"); got.Verdict != Pass {
-		t.Fatalf("control: a wrapped page reports %v for 6.2 t1", got.Verdict)
+		t.Fatalf("control: a committed proposal reports %v for 6.2 t1", got.Verdict)
 	}
 	got := verdictOf(t, markedFalse(t, wrapped), "6.2 t1")
 	if got.Verdict != Fail {

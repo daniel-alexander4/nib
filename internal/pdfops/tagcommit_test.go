@@ -284,6 +284,17 @@ func TestACommitAddsNoUA1ClauseTheUntaggedDocumentLacked(t *testing.T) {
 	if len(removed) == 0 {
 		t.Error("committing a tree cleared no ua1 clause at all — the structure is not reaching the checker")
 	}
+	// P05's exit criterion, carried here from the deleted generic emitter's test (P08.S07): the three
+	// structure clauses clear TOGETHER, because each alone is reachable by a document that is lying —
+	// `6.2 t1` alone is `/MarkInfo` with no tree, `7.1 t11` alone a tree nothing points at.
+	for _, c := range []string{"6.2 t1", "7.1 t3", "7.1 t11"} {
+		if !before[c] {
+			t.Errorf("the untagged document already passes %s, so clearing it proves nothing", c)
+		}
+		if after[c] {
+			t.Errorf("%s still fails after the commit", c)
+		}
+	}
 	ig := cl["ignored.pdf"]
 	if ig == nil {
 		t.Fatal("veraPDF could not validate the document with an ignored element")

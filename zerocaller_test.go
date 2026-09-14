@@ -84,20 +84,6 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		//
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
-		// **`TagAuthored` is unwired BY DECISION, and this row is what keeps that a decision.**
-		// P05.S05 built it and deliberately did not point it at the authoring doors: a `/Div`-per-
-		// page tree asserts structure carrying none of the distinctions a reader navigates by, and
-		// ADR-031's asymmetry says that can hand a user less than the untagged document.
-		//
-		// **This row WAS `gated — PLAN-accessibility.md P06.`, and the gate fired at P06's close
-		// with its premise falsified.** It said P06 would wire this with real structure from
-		// mdpdf's AST; P06 built three typed doors of its own instead (`tagMarkdown`,
-		// `AuthorTaggedForm`, `TagOCRLayer`) and left the generic wrapper alone. No coordinate in
-		// the plan is its caller — P07 is the conformance checker and P08 infers real structure
-		// rather than bracketing a page generically — so re-gating would be inventing a caller to
-		// keep a row alive, which is what the gate check exists to prevent. The decision between
-		// keeping it and deleting it is written down rather than taken quietly.
-		"TagAuthored": "finding — /pending 480.",
 
 		"WriteTokens": "test-support — the round-trip law's entry point. `Edit.Apply` with no " +
 			"edits returns the original slice WITHOUT touching tokens, so it cannot prove the " +

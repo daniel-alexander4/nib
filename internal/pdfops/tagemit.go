@@ -1,73 +1,21 @@
 package pdfops
 
 import (
-	"fmt"
-
 	"nib/internal/contentstream"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
-// The wrapping emitter — `PLAN-accessibility.md` P05.S04, D3.
+// Shared structure-tree plumbing — what every door that writes a tree uses.
 //
-// **The first place nib emits content-stream operators of its own**, which is why S01 built a
-// walker whose round trip is byte-identical: everything here is an insertion at an offset, and the
-// content between the inserted operators is never re-serialised.
-//
-// # The honest structure type, which is the slice's real decision
-//
-// This emitter knows where a page's content is and **nothing about what it says**. So the element
-// it creates must claim grouping without claiming role:
-//
-//   - `/P` would say every page is one paragraph, which is false of any page with a heading on it.
-//     ADR-031's law 1 is about not claiming what you have not got, and "this heading is a
-//     paragraph" is a claim of exactly that kind — a quieter one than `/MarkInfo` with no tree, and
-//     the same species.
-//   - `/Div` is ISO 32000-1's generic block-level grouping element. It says *this is real content,
-//     grouped* and nothing else, which is the whole of what this code knows.
-//
-// Real structure — headings as `H1`, lists as `L`/`LI`, from `mdpdf`'s own AST — is **P06**, which
-// has the information this does not. The two are not competing: P06 replaces the type, not the
-// mechanism.
-//
-// # What it refuses to do
-//
-// A page that already carries marked content is left alone. Wrapping it again would produce nested
-// marked content whose inner MCIDs belong to a producer's tree and whose outer one belongs to
-// nib's, and no reader can be expected to make sense of a page described twice.
-const authoredStructType = "Div"
-
-// tagAuthoredContent wraps every unmarked page's content in a `BDC`/`EMC` pair and builds the
-// structure tree that describes it.
-//
-// It returns the number of pages it wrapped, so a caller can tell "nothing needed doing" from
-// "nothing was done" — the two are the same bytes and different facts.
-func tagAuthoredContent(pdf []byte) (out []byte, wrapped int, err error) {
-	out, err = writeMutated(pdf, func(ctx *model.Context) error {
-		live := map[int]bool{}
-		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
-		tree, terr := ensureStructTree(ctx, live)
-		if terr != nil {
-			return terr
-		}
-		for p := 1; p <= ctx.PageCount; p++ {
-			did, werr := wrapOnePage(ctx, tree, p)
-			if werr != nil {
-				return werr
-			}
-			if did {
-				wrapped++
-			}
-		}
-		return nil
-	})
-	return out, wrapped, err
-}
+// **This file held P05.S04's generic wrapping emitter and `TagAuthored`, deleted at
+// `PLAN-accessibility.md` P08.S07 (`/pending 480`).** It bracketed a whole page's content in one
+// `/Div`, because it knew nothing about what the content said. P05.S05 left it unwired by decision,
+// P06 built typed doors instead, and P08's proposer and commit writer tag what that emitter could
+// only group. Its own entry's rule — *"if P08 opens and does not call it, that is B"* — was met: P08
+// proposes from the page, and a page with no text is OCR's, not a generic `/Div`'s. What every
+// other door needs from it stays here.
 
 // ensureStructTree returns the document's parsed tree, creating an empty one when it has none.
 func ensureStructTree(ctx *model.Context, live map[int]bool) (*structTree, error) {
@@ -100,45 +48,6 @@ func ensureStructTree(ctx *model.Context, live map[int]bool) (*structTree, error
 	}
 	cat["StructTreeRoot"] = *rootRef
 	return readStructTree(ctx, live)
-}
-
-// wrapOnePage brackets one page's content stream and registers the element that describes it.
-//
-// It reports whether it wrapped, which is false for a page already carrying marked content and for
-// a page with no content at all.
-func wrapOnePage(ctx *model.Context, tree *structTree, pageNr int) (bool, error) {
-	d, _, _, err := ctx.PageDict(pageNr, false)
-	if err != nil || d == nil {
-		return false, nil // a page that does not resolve is not this operation's business
-	}
-	src, cerr := ctx.PageContent(d, pageNr)
-	if cerr == model.ErrNoContent || len(src) == 0 {
-		// A blank page has nothing to tag. Not a failure — `InsertBlank` makes these.
-		return false, nil
-	}
-	if cerr != nil {
-		return false, cerr
-	}
-	if alreadyMarked(src) {
-		return false, nil
-	}
-
-	mcid, _, aerr := addMarkedElement(ctx, tree, pageNr, authoredStructType)
-	if aerr != nil {
-		return false, aerr
-	}
-
-	// **Insertions at offsets in the ORIGINAL stream**, so the wrapped bytes are copied and never
-	// re-serialised — S01's whole reason for existing. The trailing newline before `EMC` matters:
-	// a content stream ending in an operator with no separator would run `EMC` onto it.
-	edited, eerr := contentstream.NewEdit(src).
-		InsertBefore(0, []byte(fmt.Sprintf("/%s <</MCID %d>> BDC\n", authoredStructType, mcid))).
-		InsertBefore(len(src), []byte("\nEMC")).
-		Apply()
-	if eerr != nil {
-		return false, eerr
-	}
-	return true, setPageContent(ctx, d, edited)
 }
 
 // alreadyMarked reports whether a content stream carries marked content of its own.
@@ -181,50 +90,4 @@ func setPageContent(ctx *model.Context, page types.Dict, b []byte) error {
 	}
 	page["Contents"] = *ref
 	return nil
-}
-
-// TagAuthored gives a document nib authored the two halves of being tagged, in one operation:
-// content bracketed in marked content that a structure tree describes, **and** `/MarkInfo
-// /Marked true` saying so.
-//
-// # Why one door and never two
-//
-// ADR-031's law 1 is that nothing claims tagging it has not. The two halves are exactly the two
-// ways to break it:
-//
-//   - `/MarkInfo /Marked true` with no tree is `tagState.orphaned()` — the state P01.S06 built a
-//     door to prevent and P03 struck `/MarkInfo` from its own floor to avoid producing.
-//   - a tree with no `/MarkInfo` is the quieter half: the document carries structure and does not
-//     say it is tagged, so a reader has no reason to look.
-//
-// A caller that could do one without the other would eventually do one without the other. There is
-// no parameter here for that reason.
-//
-// # It returns the document UNCHANGED when there was nothing to wrap
-//
-// Every page already marked, or no page with content: the bytes come back as they went in, and
-// `wrapped` is 0. A document that needed nothing costs nothing — and `/MarkInfo` is not written
-// either, because asserting tagging over a tree with no elements is the violation this exists to
-// avoid, not a harmless extra key.
-func TagAuthored(pdf []byte) (out []byte, wrapped int, err error) {
-	out, wrapped, err = tagAuthoredContent(pdf)
-	if err != nil || wrapped == 0 {
-		return pdf, wrapped, err
-	}
-	// **`Generic`, not `Exact`.** This emitter brackets a page's content knowing nothing about what
-	// it says; calling that exact would be false about the only thing the key records.
-	//
-	// Through `claimTagging` (ADR-009) — the three-part law had four copies at the P06 close.
-	claimed, ok, err := claimTagging(out, sourceGeneric)
-	if err != nil {
-		return nil, 0, err
-	}
-	// **This door FAILS rather than returning the untagged document**, unlike the three that build
-	// a tree from a source they were given. It has already rewritten every page's content stream to
-	// bracket it, so there is no un-wrapped document left to fall back to — returning the wrapped
-	// one with no claim would be marked content nothing points a reader at.
-	if !ok {
-		return nil, 0, orphanedClaimError("TagAuthored", out)
-	}
-	return claimed, wrapped, nil
 }

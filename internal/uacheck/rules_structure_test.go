@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 )
 
@@ -22,14 +21,7 @@ func TestStructTreeRootAgreesWithWhatP05AndP06Measured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tagged, n, err := pdfops.TagAuthored(plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n == 0 {
-		t.Fatal("setup: nothing was wrapped, so the tagged case below is the untagged one and the " +
-			"two assertions cannot disagree")
-	}
+	tagged := committedProposal(t, plain)
 
 	for _, c := range []struct {
 		name string
@@ -39,7 +31,7 @@ func TestStructTreeRootAgreesWithWhatP05AndP06Measured(t *testing.T) {
 		// veraPDF failed 7.1 t11 on every untagged nib document measured in P03–P06.
 		{"an untagged page", plain, Fail},
 		// And passed it on every document with a tree that reaches content — P05.S05 onward.
-		{"a wrapped page", tagged, Pass},
+		{"a committed proposal", tagged, Pass},
 	} {
 		rep, err := Check(c.pdf)
 		if err != nil {
