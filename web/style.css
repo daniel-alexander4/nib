@@ -580,6 +580,11 @@ body > div[id$="Modal"] {
 .tagedit [hidden] { display: none; }
 .tagedit input[type="text"] { min-width: 0; width: 12em; }
 .tagedit p { flex: 1 1 100%; margin: 0; }
+/* The Reading Order view (P09.S06c): a number at each element's top-left corner, over the page. */
+.tag-order { position: absolute; z-index: 6; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 8px; background: var(--blue); color: var(--base); font: 600 10px/16px system-ui, sans-serif;
+  text-align: center; pointer-events: none; transform: translate(-50%, -50%); }
+#tagOrderToggle { margin-bottom: 6px; }
 .ua-refusals { font-size: 12px; margin: 10px 0 0; padding-left: 18px; color: var(--text); }
 /* Compare (text diff): inline word diff, removed struck-through red, added green. */
 .difftext { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.5;

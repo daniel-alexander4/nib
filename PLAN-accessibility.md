@@ -3256,7 +3256,7 @@ condition, unscoped detection, span detection, a span over cells that all name h
 the stray `TD`, no data cells as Pass, the cell role map, the attribute owner check, and the attribute array.
 Two probes were first written so they did not compile and were redone; two survived and each got a case.
 
-#### P09.S06 — the Tags panel and the Reading Order view
+#### P09.S06 — the Tags panel and the Reading Order view *(done 2026-09-14, v1.129.92 — in three parts, S06a–S06c)*
 **(step zero, 2026-09-14 — SPLIT into three, as P08.S06 was.)** A read route and its reader, element
 geometry, a sidebar panel with an ARIA tree, five keyboard edits and a reading-order overlay are too much
 for one slice to probe honestly.
@@ -3266,7 +3266,7 @@ for one slice to probe honestly.
 - **P09.S06b — the edits** *(done 2026-09-14, v1.129.91)*: retype, move, alt text, scope and artifact on the selection, keyboard-only,
   through S04's route; the panel's tier-3 keyboard reader and the report changing after an edit and back
   after undo.
-- **P09.S06c — the Reading Order view**: the overlay numbering elements on the page.
+- **P09.S06c — the Reading Order view** *(done 2026-09-14, v1.129.92)*: the overlay numbering elements on the page.
 
 Scope: the sidebar panel second in `SIDEBAR_FOR.edit`: the tree (ARIA tree pattern), the selected
 element outlined on its page, and retype / move / alt text / scope / artifact on the selection; a
@@ -3333,6 +3333,26 @@ Set scope's value, the artifact kind, restore by id, restore to the control, the
 disabling, the first sibling moving up, a scope offered on a heading, the bar shown on select, the bar
 hidden on re-render, and a refusal's stale restore. Three survived their first run and each got a test.
 jsdom files 66 → 67; browser files 35 → 36. Tier 2 373/373 after the guard fix.
+
+**(P09.S06c build, 2026-09-14, v1.129.92.)** The Reading Order view (`#tagOrderToggle`, `drawReadingOrder`).
+
+| measured | result |
+|---|---|
+| what a page re-render does to what nib adds to a page div | replaces it — the overlays already re-attach on `pagerendered` for that reason, so the badges are drawn again there too |
+| what gets a number | every leaf element that draws text and has a box, in the tree's order; a figure's image has no box and no number, and a grouping element is numbered through its leaves |
+| where a badge sits | the element's top-left corner, in percentages of its page div, as P08's outline is — so zoom does not move it |
+| when badges show | only while the view is on, the tree panel is open, AND the tree was read from the document on screen — a switch cannot put one document's numbers on another's pages; closing the panel or opening a group card takes them away |
+| the tier-3 corpus shape | after S06b's undo, the committed proposal: one paragraph per page, so 1 on page 1 over "section 1", 2 on page 2 |
+
+- **Pin — the badges are `aria-hidden`.** The tree beside them gives a screen reader the same order; a
+  second, positional announcement of it would be noise.
+- **Pin — tier 2 holds only the toggle.** The stub viewer has no page views, so where a number lands is
+  tier 3's single test; its placement, numbering and the panel-close hooks are not mutation-probed, because
+  each probe would cost a full tier-3 run. Declared, not implied covered.
+
+Gates: tier 2 374/374; tier 3 147 of 150, the three `/pending 474` failures only — the reading order test
+passes (1 on page 1 at "section 1", 2 on page 2, none once switched off). Two tier-2 mutations red: the
+toggle's `aria-pressed` and its label. The slice gate does not fire (`web/` only).
 
 #### P09.S07 — end to end, and the exit criteria
 Scope: tier 3 — open the LibreOffice fixture with alt and scope stripped and headings mapped to `P`, see
