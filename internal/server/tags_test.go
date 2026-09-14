@@ -210,13 +210,15 @@ func TestTheTagRoutesReachTheirDoors(t *testing.T) {
 		t.Error("handleTagsPropose does not reach pdfops.ProposeTags")
 	}
 	commit := fn("handleTagsCommit")
-	for _, want := range []string{"pdfops.CommitTags(", "s.commitMutation(", "sign.HasSignatureBlob("} {
+	// The signed refusal is tagwrite's, shared with the CLI (P10.S02); `tagdoor_test.go` holds that nothing
+	// reaches the pdfops writers around it.
+	for _, want := range []string{"tagwrite.Commit(", "s.commitMutation("} {
 		if !strings.Contains(commit, want) {
 			t.Errorf("handleTagsCommit does not call %s", want)
 		}
 	}
 	edit := fn("handleTagsEdit")
-	for _, want := range []string{"pdfops.EditStructure(", "s.commitMutation(", "sign.HasSignatureBlob("} {
+	for _, want := range []string{"tagwrite.Edit(", "s.commitMutation("} {
 		if !strings.Contains(edit, want) {
 			t.Errorf("handleTagsEdit does not call %s", want)
 		}

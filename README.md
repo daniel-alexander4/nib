@@ -1232,6 +1232,8 @@ together.
 `booklet`, `decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`,
 `pagenum`, `pages`, `rotate`, and `sanitize` take `-w`/`--in-place` to rewrite each file
 given instead of writing a single `-o` output — the batch form for a folder.
+`tag commit` and `tag edit` take `-w` too, over exactly one file, because a review or a batch of
+edits describes one document.
 Each rewrite is atomic (written through a temp file and renamed over the
 original, so a failure never corrupts it) and preserves the file's permissions.
 **A signed PDF is refused in place**, by every one of those commands and by

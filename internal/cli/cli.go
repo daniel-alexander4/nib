@@ -154,6 +154,8 @@ These subcommands run headlessly, without a browser:
   nib ua IN                        check the PDF/UA-1 clauses nib verifies (not a certificate)
   nib tag tree IN [--json]         print the document's existing structure tree (its tags)
   nib tag propose IN [--json]      print the structure nib would propose, without writing it
+  nib tag commit IN -o OUT --review REVIEW.json   write a reviewed proposal (or -w IN)
+  nib tag edit IN -o OUT --edits EDITS.json       correct the existing tree, as one batch (or -w IN)
   nib office IN -o OUT             convert a document (.md/.docx/.xlsx/.odt/…) to PDF (office formats need LibreOffice)
   nib pagenum IN -o OUT           stamp running page numbers / Bates numbering
                                   (--continuous threads one counter across FILE…)
