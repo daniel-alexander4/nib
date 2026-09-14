@@ -12,9 +12,9 @@ import (
 // Four corrections a person makes to a tree someone else wrote, none of which touches a content stream:
 // an element's type, its place among its parent's kids or under another parent, its alternate
 // description, and a header cell's scope. Marking content as an artifact is the one edit that rewrites
-// page content, and it is S03's.
+// page content; it is applied through the same batch and lives in `structartifact.go` (S03).
 //
-// # Why the ParentTree is never touched here
+// # Why the dictionary edits never touch the ParentTree
 //
 // A ParentTree slot names the element that OWNS a marked-content id, and none of these edits changes
 // who owns what: a moved element takes its MCIDs with it. What a move changes is the two directions the
@@ -40,6 +40,7 @@ const (
 	editMove
 	editAlt
 	editScope
+	editArtifact
 )
 
 // structEdit is one correction to an existing tree.
@@ -165,6 +166,8 @@ func applyStructEdit(ctx *model.Context, tree *structTree, ed structEdit) error 
 		}
 	case editMove:
 		return moveElement(ctx, tree, e, ed)
+	case editArtifact:
+		return artifactElement(ctx, tree, e)
 	default:
 		return fmt.Errorf("%w: unknown edit", ErrTagsReview)
 	}
@@ -232,30 +235,15 @@ func moveElement(ctx *model.Context, tree *structTree, e *structElem, ed structE
 			return fmt.Errorf("%w: element %d cannot be moved inside itself", ErrTagsReview, ed.elem)
 		}
 	}
-	holder := func(p *structElem) types.Dict {
-		if p == nil {
-			return tree.root
-		}
-		return p.dict
+	ref, err := removeFromParent(ctx, tree, e)
+	if err != nil {
+		return err
 	}
-
-	fromKids, setFrom := kidsArray(ctx, holder(e.parent))
-	var ref *types.IndirectRef
-	kept := fromKids[:0:0]
-	for _, en := range fromKids {
-		if ir, ok := en.(types.IndirectRef); ok && ir.ObjectNumber.Value() == e.objNr && ref == nil {
-			r := ir
-			ref = &r
-			continue
-		}
-		kept = append(kept, en)
+	holder := tree.root
+	if to != nil {
+		holder = to.dict
 	}
-	if ref == nil {
-		return fmt.Errorf("pdfops: element %d is not listed in its parent's /K, so it cannot be moved out of it", e.objNr)
-	}
-	setFrom(kept)
-
-	toKids, setTo := kidsArray(ctx, holder(to))
+	toKids, setTo := kidsArray(ctx, holder)
 	at := len(toKids)
 	if ed.index >= 0 {
 		seen := 0
@@ -288,6 +276,32 @@ func moveElement(ctx *model.Context, tree *structTree, e *structElem, ed structE
 	}
 	e.dict["P"] = *types.NewIndirectRef(to.objNr, gen)
 	return nil
+}
+
+// removeFromParent takes e out of its parent's `/K` — the root's, for a top-level element — and returns
+// the reference that listed it. Shared by a move and an artifact edit, the two ways an element leaves
+// where it is.
+func removeFromParent(ctx *model.Context, tree *structTree, e *structElem) (*types.IndirectRef, error) {
+	holder := tree.root
+	if e.parent != nil {
+		holder = e.parent.dict
+	}
+	kids, set := kidsArray(ctx, holder)
+	var ref *types.IndirectRef
+	kept := kids[:0:0]
+	for _, en := range kids {
+		if ir, ok := en.(types.IndirectRef); ok && ir.ObjectNumber.Value() == e.objNr && ref == nil {
+			r := ir
+			ref = &r
+			continue
+		}
+		kept = append(kept, en)
+	}
+	if ref == nil {
+		return nil, fmt.Errorf("pdfops: element %d is not listed in its parent's /K, so it cannot be taken out of it", e.objNr)
+	}
+	set(kept)
+	return ref, nil
 }
 
 // kidsArray is holder's `/K` as an array, and the function that writes an array back where `/K` lives —

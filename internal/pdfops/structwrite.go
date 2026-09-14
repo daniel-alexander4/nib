@@ -273,6 +273,44 @@ func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref 
 	return nil
 }
 
+// clearParentTreeSlot empties index mcid of the array for key — the content that slot named is no
+// longer owned by any element (`PLAN-accessibility.md` P09.S03's artifact edit). A tree with no
+// ParentTree, no entry for key, or a slot past the array's end has nothing to clear, and one is not
+// created to be emptied.
+func clearParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int) error {
+	if _, has := tree.root["ParentTree"]; !has {
+		return nil
+	}
+	pt, err := parentTreeDict(ctx, tree)
+	if err != nil {
+		return err
+	}
+	nums, _ := ctx.DereferenceArray(pt["Nums"])
+	for i := 0; i+1 < len(nums); i += 2 {
+		n, ok := nums[i].(types.Integer)
+		if !ok || n.Value() != key {
+			continue
+		}
+		arr, aerr := ctx.DereferenceArray(nums[i+1])
+		if aerr != nil || arr == nil || mcid < 0 || mcid >= len(arr) {
+			return nil
+		}
+		arr = append(types.Array{}, arr...)
+		arr[mcid] = nil
+		// An indirect slot array is updated where it lives, or the entry keeps pointing at the old one.
+		if ind, isInd := nums[i+1].(types.IndirectRef); isInd {
+			if en, found := ctx.XRefTable.FindTableEntryForIndRef(&ind); found && en != nil {
+				en.Object = arr
+				return nil
+			}
+		}
+		nums[i+1] = arr
+		pt["Nums"] = nums
+		return nil
+	}
+	return nil
+}
+
 // structTreeRootRef returns the indirect reference to `/StructTreeRoot`, which every element this
 // package creates needs for its `/P`.
 //
