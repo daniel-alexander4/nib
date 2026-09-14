@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -78,6 +79,9 @@ var standardStructTypes = map[string]bool{
 type staleEdit struct{ elem int }
 
 func (e staleEdit) Error() string {
+	if e.elem == 0 {
+		return "pdfops: this document has no structure tree any more — read it again"
+	}
 	return fmt.Sprintf("pdfops: element %d is not in this document's structure tree any more — read the tree again", e.elem)
 }
 
@@ -85,6 +89,47 @@ func (e staleEdit) Is(target error) bool { return target == ErrTagsStale }
 
 // tableScopes are the values `/Scope` may take.
 var tableScopes = map[string]bool{"Row": true, "Column": true, "Both": true}
+
+// StructureEdit is one correction to an existing structure tree, as a reviewer sends it —
+// `PLAN-accessibility.md` P09.S04.
+type StructureEdit struct {
+	// Kind is retype, move, alt, scope or artifact.
+	Kind string
+	// Element is the edited element's object number.
+	Element int
+	// Value is the new type (retype), the alternate description (alt; "" removes it), or the scope
+	// (scope: Row, Column, Both; "" removes it).
+	Value string
+	// Parent is a move's new parent by object number; 0 keeps the current one. Index is the position
+	// among that parent's element kids; negative appends.
+	Parent, Index int
+}
+
+// structEditKinds maps a StructureEdit's Kind onto the edit it names.
+var structEditKinds = map[string]editKind{
+	"retype": editRetype, "move": editMove, "alt": editAlt, "scope": editScope, "artifact": editArtifact,
+}
+
+// EditStructure applies edits, in order and as one batch, to pdf's existing structure tree. An element
+// the tree does not have — or a document that has no tree any more — is ErrTagsStale; an edit that is
+// malformed on its own terms is ErrTagsReview.
+func EditStructure(pdf []byte, edits []StructureEdit) ([]byte, error) {
+	internal := make([]structEdit, len(edits))
+	for i, e := range edits {
+		k, ok := structEditKinds[e.Kind]
+		if !ok {
+			return nil, fmt.Errorf("%w: %q is not an edit — retype, move, alt, scope or artifact", ErrTagsReview, e.Kind)
+		}
+		internal[i] = structEdit{kind: k, elem: e.Element, value: e.Value, parent: e.Parent, index: e.Index}
+	}
+	out, err := applyStructEdits(pdf, internal)
+	if errors.Is(err, errNoStructTree) {
+		// The reviewer was shown a tree; a document without one is a document that changed since. Not a
+		// `%w` of ErrTagsStale, whose own sentence is about a proposal.
+		return nil, staleEdit{}
+	}
+	return out, err
+}
 
 // applyStructEdits applies edits, in order, to pdf's structure tree. An element the tree does not have
 // is ErrTagsStale; an edit that is malformed on its own terms is ErrTagsReview.
