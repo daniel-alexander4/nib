@@ -3263,7 +3263,7 @@ for one slice to probe honestly.
 - **P09.S06a — the read surface** *(done 2026-09-14, v1.129.90)*: `pdfops.ReadStructure` with each
   element's box, `GET /api/tags/tree` (S01's route, moved here with its reader), and a panel showing the
   active document's tree as an ARIA tree, the focused element outlined. Tiers 1 and 2.
-- **P09.S06b — the edits**: retype, move, alt text, scope and artifact on the selection, keyboard-only,
+- **P09.S06b — the edits** *(done 2026-09-14, v1.129.91)*: retype, move, alt text, scope and artifact on the selection, keyboard-only,
   through S04's route; the panel's tier-3 keyboard reader and the report changing after an edit and back
   after undo.
 - **P09.S06c — the Reading Order view**: the overlay numbering elements on the page.
@@ -3304,6 +3304,35 @@ hook, `aria-level`, Right, Left, Home, End, the roving tab stop, a figure's page
 the reload hook, the switch hook and the pin. Four survived their first run — the same-page filter, the pin
 (duplicated), and both refresh hooks — and each got a test; the handler's nil guard was removed as
 unfalsifiable. The slice gate does not fire (`internal/server`'s tag routes).
+
+**(P09.S06b build, 2026-09-14, v1.129.91.)** The edit bar under the tree (`#tagEditBar`, `web/app.js`).
+
+| measured | result |
+|---|---|
+| a select that applies on `change` | refused as a design: Chromium fires `change` on each arrow press through a closed select, so a keyboard user browsing types would send an edit and a reload per step. Every change is applied by its button, or Enter in the alt field |
+| the controls, at tier 2 | Change type, Set alt text (button and Enter), Set scope (offered only on a header cell), Move up/down (disabled at the ends of the siblings), Mark as decoration — each sends exactly one edit naming the selected element and its document; an inline element disables them all and says why |
+| after an edit | the tree is re-read; the same element is selected — followed to its new position after a move — and focus returns to the control used, with "Ctrl+Z takes it back"; a refusal shows the server's sentence, moves nothing, and leaves nothing for the next read to act on; a tree re-read as untagged hides the bar |
+| the type list | the picker offers exactly `pdfops.standardStructTypes`, read from the Go source by the jsdom guard — the server stays the door that refuses anything else |
+| what the tier-3 flow can move in the report | a committed Markdown proposal has no figure or table, so 7.3 and 7.5 are not applicable and no alt or scope edit could move the report; **a paragraph retyped as Figure fails 7.3 t1, alt text passes it, and Ctrl+Z fails it again** — three real product states |
+| tier 3, first run | the keyboard flow (Tab into the tree and bar, type-ahead to Figure, Enter, alt text, Enter, Tab off the field, Ctrl+Z) moved 7.3 t1 fail → pass → fail through `/api/uacheck`, and Tab left the panel with every stop visible. **The outline check failed**: it compared the outline with a text-layer span still at `[0,0,0,0]`, because the commit had reloaded the document and the text layer is rebuilt after the page. The test now waits for the span to have a box |
+| tier 3, second and third runs | the second waited 20 s on the FIRST matching span and it never laid out; the lookup now takes any matching span with a box and says what it saw if none has one. Third run: **146 of 149, the three `/pending 474` failures only** — every case of `test/ui/tagedit.test.mjs` passes, the outline check included |
+
+- **Pin — Ctrl+Z is pressed off the text field.** A field holding text owns Ctrl+Z (`ownsUndo`), and the
+  claim is the document's undo.
+- **Pin — the undeclared-call guard fired, and was right to.** `wireTagEditBar` was an immediately invoked
+  function, which the heuristic cannot see as a declaration; it is a declared function called once, per
+  the guard's own instruction not to widen its exception list.
+- **Pin — the tier-3 file's correction region uses no pointer**, and a self-scan fails on `page.click`,
+  `page.mouse` or a harness helper there; the setup (open, commit, open the panel) uses the harness.
+- **Pin — the client's mutations were probed at tier 2**, where each run takes seconds; a tier-3 run per
+  mutation would cost ten minutes, so tier 3's reader rests on its self-scan and on the failure its first
+  run produced.
+
+Fifteen client mutations red: the retype kind, Enter in the alt field, a move's index, a move's parent,
+Set scope's value, the artifact kind, restore by id, restore to the control, the Ctrl+Z hint, inline
+disabling, the first sibling moving up, a scope offered on a heading, the bar shown on select, the bar
+hidden on re-render, and a refusal's stale restore. Three survived their first run and each got a test.
+jsdom files 66 → 67; browser files 35 → 36. Tier 2 373/373 after the guard fix.
 
 #### P09.S07 — end to end, and the exit criteria
 Scope: tier 3 — open the LibreOffice fixture with alt and scope stripped and headings mapped to `P`, see

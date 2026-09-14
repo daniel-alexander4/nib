@@ -574,6 +574,12 @@ body > div[id$="Modal"] {
 .tagtree [role="treeitem"] { font-size: 12px; padding: 3px 4px; border-radius: 4px; overflow-wrap: anywhere; color: var(--subtext0); }
 .tagtree [role="treeitem"][aria-selected="true"] { background: var(--surface0); color: var(--text); }
 .tagtree [role="treeitem"]:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+/* The edit bar under the tree (P09.S06b). Its label rows set display, so `hidden` needs its own rule. */
+.tagedit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--surface0); }
+.tagedit label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; }
+.tagedit [hidden] { display: none; }
+.tagedit input[type="text"] { min-width: 0; width: 12em; }
+.tagedit p { flex: 1 1 100%; margin: 0; }
 .ua-refusals { font-size: 12px; margin: 10px 0 0; padding-left: 18px; color: var(--text); }
 /* Compare (text diff): inline word diff, removed struck-through red, added green. */
 .difftext { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.5;

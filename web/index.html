@@ -529,6 +529,21 @@
       <div id="tagtree" class="panel">
         <p id="tagTreeSummary" class="libhint"></p>
         <ul id="tagTreeList" class="tagtree" role="tree" aria-label="Structure tree"></ul>
+        <!-- What can be changed about the selected element (P09.S06b). Native controls only, and every
+             change is applied by a button (or Enter in the alt field) — a select that applied on change
+             would send an edit for every arrow press a keyboard user makes through its options. -->
+        <div id="tagEditBar" class="tagedit" hidden>
+          <label>Type <select id="tagEditType"></select></label>
+          <button id="tagEditTypeApply">Change type</button>
+          <label>Alt text <input id="tagEditAlt" type="text"></label>
+          <button id="tagEditAltApply">Set alt text</button>
+          <label id="tagEditScopeRow">Scope <select id="tagEditScope"><option value="">None</option><option value="Row">Row</option><option value="Column">Column</option><option value="Both">Both</option></select></label>
+          <button id="tagEditScopeApply">Set scope</button>
+          <button id="tagEditUp">Move up</button>
+          <button id="tagEditDown">Move down</button>
+          <button id="tagEditArtifact" title="Take this element out of the structure tree and mark what it draws as decoration a screen reader skips">Mark as decoration</button>
+          <p id="tagEditStatus" class="libhint" role="status"></p>
+        </div>
       </div>
       <div id="library" class="panel">
         <p class="libhint libnote">Visual marks only — a drawn signature, initials or stamp is a picture on the page, not a cryptographic signature. Use <strong>Finalize &amp; sign</strong>, on the <strong>Secure</strong> tab, to add a cryptographic signature.</p>
