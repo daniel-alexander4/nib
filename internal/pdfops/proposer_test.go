@@ -195,7 +195,7 @@ func TestTheProposerHasNoPathToAWriter(t *testing.T) {
 		"writeMutated": true, "setPageContent": true, "ensureStructTree": true, "addMarkedElement": true,
 		"addMarkedElementUnder": true, "addGroupingElement": true, "addMCIDTo": true, "setParentTreeSlot": true,
 		"setParentTreeSingle": true, "claimTagging": true, "setTagSource": true, "WriteContext": true,
-		"tagOnePage": true, "TagAuthored": true, "tagMarkdown": true, "AuthorTaggedForm": true, "TagOCRLayer": true,
+		"tagOnePage": true, "tagMarkdown": true, "AuthorTaggedForm": true, "TagOCRLayer": true,
 	}
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "proposer.go", nil, 0)

@@ -27,7 +27,7 @@ import (
 // is deciding whether to trust the structure in front of them.
 const tagSourceKey = "NibStructureSource"
 
-// tagSource is one of D4's tiers, plus the one D4 does not have a name for.
+// tagSource is one of D4's three tiers.
 type tagSource string
 
 const (
@@ -41,20 +41,17 @@ const (
 	// sourceInferred is the autotagger's proposal over an arbitrary PDF. D4's inferred — proposed
 	// for review rather than written, and named here so a tree carrying it can be recognised.
 	sourceInferred tagSource = "Inferred"
-	// sourceGeneric is grouping with NO semantic claim: P05.S04's emitter, which brackets a page's
-	// content as one `/Div` because it knows nothing about what the content says.
-	//
-	// **D4 has three tiers and this is a fourth**, added because the alternative is calling that
-	// tree `Exact` — and a reader told a `/Div`-per-page tree is exact has been told something
-	// false about the only thing this key exists to say.
-	sourceGeneric tagSource = "Generic"
+	// A fourth tier, `Generic`, named P05.S04's `/Div`-per-page emitter so its tree was never called
+	// exact. The emitter was deleted at P08.S07 (`/pending 480`) and the tier with it: no production
+	// door ever wrote it, so no document in the field carries it, and a stray `Generic` now reads as
+	// unrecorded — `StructureSource`'s rule for any value this code does not write.
 )
 
 // valid reports whether s is one of the four. A value outside them is a document written by
 // something other than this code, and reading it as a tier would be a guess.
 func (s tagSource) valid() bool {
 	switch s {
-	case sourceExact, sourceApproximate, sourceInferred, sourceGeneric:
+	case sourceExact, sourceApproximate, sourceInferred:
 		return true
 	}
 	return false
@@ -136,8 +133,6 @@ func DescribeStructureSource(pdf []byte) string {
 		return "This document's structure was read from a scan by text recognition (OCR) — a good guess, not the document's own account of itself."
 	case sourceInferred:
 		return "Nib inferred this document's structure from how its pages look — review it before relying on it."
-	case sourceGeneric:
-		return "This document's structure groups each page as one block and says nothing about what is on it."
 	}
 	return "Nib has no record of where this document's structure came from — it may have none, or another program wrote it."
 }

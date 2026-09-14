@@ -8,7 +8,34 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfops"
 )
+
+// committedProposal tags pdf the way a person using the product does: the autotagger proposes, every
+// element is accepted as proposed, and the commit writes it (`PLAN-accessibility.md` P08.S06). It is
+// this package's "a tagged page" fixture since P08.S07 deleted `pdfops.TagAuthored`, the generic `/Div`
+// emitter it replaced — and it is a product door, so a rule test built on it measures what a user
+// can actually produce.
+func committedProposal(t *testing.T, pdf []byte) []byte {
+	t.Helper()
+	prop, err := pdfops.ProposeTags(pdf)
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	if len(prop.Elements) == 0 {
+		t.Fatal("setup: nothing was proposed, so the document would stay untagged and every tagged case would be the untagged one")
+	}
+	review := make([]pdfops.TagReview, len(prop.Elements))
+	for i, e := range prop.Elements {
+		review[i] = pdfops.TagReview{ID: e.ID, Role: e.Role, Text: e.Text}
+	}
+	out, err := pdfops.CommitTags(pdf, review)
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return out
+}
 
 // Mutation helpers for the rule tests — `PLAN-accessibility.md` P07.S02.
 //

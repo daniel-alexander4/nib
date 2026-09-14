@@ -193,13 +193,11 @@ func TestAKeyIsNeverHandedOutTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A document whose page already owns a ParentTree key, from the wrapping emitter.
-	wrapped, n, err := TagAuthored(base)
+	// A document whose page already owns a ParentTree key, from a committed proposal (the generic
+	// emitter this came from was deleted at P08.S07).
+	wrapped, err := commitProposal(base, proposeFor(t, base).elements)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if n == 0 {
-		t.Skip("TagAuthored wrapped no page, so there is no pre-existing key to collide with")
 	}
 	out, tagged, err := AuthorTaggedForm(wrapped, s07Fields())
 	if err != nil {
@@ -336,7 +334,7 @@ func TestTheFormsTreeSaysItCameFromNibsOwnFieldList(t *testing.T) {
 //
 // `/MarkInfo` and the tree go together or neither goes: a catalog claiming `Marked true` over a
 // document with nothing in its tree is `orphaned()`, which ADR-031 law 1 forbids and which
-// `TagAuthored`, `tagMarkdown` and `TagOCRLayer` all hold as their own post-condition.
+// `tagMarkdown`, `TagOCRLayer` and `commitProposal` all hold as their own post-condition.
 //
 // What must not happen is losing the form. A form whose widgets are undescribed is what nib shipped
 // for years; a document with no fields is worse than both.

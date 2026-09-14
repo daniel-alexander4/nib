@@ -14,9 +14,10 @@ import (
 
 // TestEveryTreeNibWritesRecordsItsSource — S03's first acceptance clause.
 //
-// The population is every door in this package that writes a structure tree. It is two today and
-// grows with P06.S05 and P06.S06; a door added without a source is a tree whose trustworthiness
-// nobody can ask about, which is the whole of what D4 says the user must be told.
+// The population is every door in this package that writes a structure tree: `tagMarkdown` and the
+// commit writer here, and `AuthorTaggedForm` and `TagOCRLayer` in their own files' tests. A door added
+// without a source is a tree whose trustworthiness nobody can ask about, which is the whole of what D4
+// says the user must be told.
 func TestEveryTreeNibWritesRecordsItsSource(t *testing.T) {
 	for _, c := range []struct {
 		door string
@@ -27,10 +28,13 @@ func TestEveryTreeNibWritesRecordsItsSource(t *testing.T) {
 		{"tagMarkdown", func() ([]byte, error) {
 			return tagMarkdown([]byte(s02Markdown), authoringFaces(), markdownFallbackFonts())
 		}, sourceExact, "it reads mdpdf's own goldmark AST"},
-		{"TagAuthored", func() ([]byte, error) {
-			out, _, err := TagAuthored(authoredPDF(t))
-			return out, err
-		}, sourceGeneric, "it brackets a page knowing nothing about what the content says"},
+		{"commitProposal", func() ([]byte, error) {
+			src, err := untaggedMarkdown([]byte(s02Markdown))
+			if err != nil {
+				return nil, err
+			}
+			return commitProposal(src, proposeFor(t, src).elements)
+		}, sourceInferred, "its structure was inferred from how the page looks, then reviewed"},
 	} {
 		out, err := c.make()
 		if err != nil {
@@ -118,7 +122,11 @@ func TestTheReportSentenceNamesTheTierAndNeverLendsAnUnrecordedTreeTheBestOne(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	generic, _, err := TagAuthored(authoredPDF(t))
+	src, err := untaggedMarkdown([]byte(s02Markdown))
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed, err := commitProposal(src, proposeFor(t, src).elements)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +134,7 @@ func TestTheReportSentenceNamesTheTierAndNeverLendsAnUnrecordedTreeTheBestOne(t 
 	unrecorded := DescribeStructureSource(taggedFixture())
 	sentences := map[string]string{
 		"exact":      exact,
-		"generic":    DescribeStructureSource(generic),
+		"inferred":   DescribeStructureSource(committed),
 		"unrecorded": unrecorded,
 		"untagged":   DescribeStructureSource(untaggedFixture()),
 	}
@@ -138,8 +146,11 @@ func TestTheReportSentenceNamesTheTierAndNeverLendsAnUnrecordedTreeTheBestOne(t 
 	if !strings.Contains(exact, "what it already knew") {
 		t.Errorf("an exact tree is described as %q", exact)
 	}
-	if sentences["generic"] == exact || unrecorded == exact {
-		t.Error("a generic or unrecorded tree is described in the exact tier's words")
+	if sentences["inferred"] == exact || unrecorded == exact {
+		t.Error("an inferred or unrecorded tree is described in the exact tier's words")
+	}
+	if !strings.Contains(sentences["inferred"], "inferred") {
+		t.Errorf("an inferred tree is described as %q — the reader must be told it was inferred", sentences["inferred"])
 	}
 	if !strings.Contains(unrecorded, "no record") {
 		t.Errorf("a tree nib did not record is described as %q — it must say nothing is recorded", unrecorded)

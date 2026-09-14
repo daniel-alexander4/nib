@@ -80,8 +80,7 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	}
 	textField := []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 700, 300, 720}, Kind: "text", Name: "n", Label: "Name"}}
 
-	wrapped, _, err := pdfops.TagAuthored(plain)
-	w := must("wrapped", wrapped, err)
+	w := oracleDoc{"committed proposal", committedProposal(t, plain)}
 	tf, err := pdfops.AuthorForm(plain, textField)
 	cf, cerr := pdfops.AuthorForm(plain, []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 660, 112, 672}, Kind: "check", Name: "a", Label: "I agree"}})
 	df, _, derr := pdfops.AuthorTaggedForm(plain, textField)
@@ -106,11 +105,11 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	docs = append(docs,
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},
 		oracleDoc{"Markdown + padded CIDSet", withCIDSet(t, md, cidPadded)},
-		oracleDoc{"wrapped + element /Lang", langOnEveryElement(t, w.pdf, "en")},
+		oracleDoc{"committed proposal + element /Lang", langOnEveryElement(t, w.pdf, "en")},
 		oracleDoc{"stamped + /AS restored", withASOnDefault(t, st)},
 		oracleDoc{"stamped − /Name", withoutNameOnDefault(t, st)},
 		oracleDoc{"titled + DisplayDocTitle false", withDisplayDocTitle(t, mdt, false)},
-		oracleDoc{"wrapped + Marked false", markedFalse(t, w.pdf)},
+		oracleDoc{"committed proposal + Marked false", markedFalse(t, w.pdf)},
 		oracleDoc{"described form − OBJR", widgetMutation(t, df, "drop-objr")},
 		oracleDoc{"packet without dc:title", withoutDCTitle(t, mdt)},
 		// The shapes law 5's first run measured, pinned so the rules cannot drift back:

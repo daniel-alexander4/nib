@@ -2942,13 +2942,38 @@ marking one run twice. Two survived the first round — the text check (a differ
 its spans first) and the double-mark guard (no case listed an element twice) — and each got a case.
 Three span mutations red on the reader.
 
-#### P08.S07 — decide `TagAuthored` (`/pending 480`)
+#### P08.S07 — decide `TagAuthored` (`/pending 480`) *(done 2026-09-14, v1.129.81 — DELETED)*
 Scope: 480's own terms — *"if P08 opens and does not call it, that is B."* Decided with S05's fallback in
 hand: a page the proposer cannot read has zero runs, and a zero-run page is a scan, whose path is OCR
 (`TagOCRLayer`), not a `/Div`. Refs ADR-031's asymmetry, /pending 480.
 Acceptance:
 - Either a production caller exists and its output is measured no worse than the untagged document, or
   `TagAuthored` and its `sourceGeneric` writer are deleted and the exemption row with them.
+
+**(build, 2026-09-14, v1.129.81 — B, by `/pending 480`'s own rule.)** P08 proposes from the page and
+commits through S06a's writer; a page with no text is OCR's. Nothing in P08 calls the generic `/Div`
+emitter, and 480 said *"if P08 opens and does not call it, that is B."*
+
+| measured | result |
+|---|---|
+| production callers of `TagAuthored` | none — named search over Go, docs and scripts; the only references outside the plan's history were tests |
+| test uses it served | a "tagged page" fixture in four `uacheck` rule tests and the oracle corpus; a page owning a ParentTree key in `tagform_test.go`; its own emitter tests in `tagemit_test.go`; a census row; the `Generic` tier's rows in `tagsource_test.go` and `claimtagging_test.go` |
+| the replacement fixture | `committedProposal` in `uacheck` — propose, accept, commit: a PRODUCT door. The oracle guard re-measured nib's checker against veraPDF on the committed-proposal document and its two mutations, and agreed |
+
+- **Deleted:** `TagAuthored`, `tagAuthoredContent`, `wrapOnePage`, `authoredStructType`, the `Generic`
+  tier and its report sentence, the census row, the `zerocaller_test.go` exemption, and the emitter-only
+  tests (the `/Div`-not-role decision, the already-marked no-op, the veraPDF clause test — whose
+  "6.2 t1, 7.1 t3 and 7.1 t11 clear TOGETHER" check moved into the commit writer's ua1 differential).
+- **Kept, because other doors use them:** `ensureStructTree`, `setPageContent`, `alreadyMarked` (and its
+  token test), the orphaned floor.
+- **Re-pointed at the commit writer, because they are invariants every tree writer owes:** removing
+  exactly what was inserted gives back the page's own bytes; the MCIDs in the stream are the ones the
+  tree claims; every element's `/P` names the object whose `/K` holds it (the writer nests, so not always
+  the root); both halves of the claim are written together. Four mutations red, one per invariant — and
+  the first run of the byte test failed on a test bug (the pattern stripping inserted openers did not
+  match `/H1`), which the widened pattern fixed.
+- **Pin — the tier set is D4's three again.** No production door ever wrote `Generic`, so no document in
+  the field carries it; a stray value reads as unrecorded.
 
 ### P09 — The structure editor
 **Goal.** The Tags panel and Reading Order view in the Document tab (D10) — inspect, reorder,

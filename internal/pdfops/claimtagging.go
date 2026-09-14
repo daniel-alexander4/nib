@@ -36,7 +36,7 @@ import (
 //
 // It returns `ok` false — and the document unchanged — when the content could not honestly carry the
 // claim, because every caller's honest answer to that is the same: return the untagged document it
-// already has. A caller that would rather fail says so itself; `TagAuthored` and `tagMarkdown` do.
+// already has. A caller that would rather fail says so itself; `tagMarkdown` and `commitProposal` do.
 // An `err` is reserved for a write that could not be performed at all, which is a different thing
 // and which no caller should read as "this document cannot be described".
 //
