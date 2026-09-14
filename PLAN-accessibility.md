@@ -2542,7 +2542,7 @@ for the digest and record parse alone — tagging adds ~12%. The anchor is quadr
   transports, the interrupt hop's words shown after 38 s.
 - T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
 
-### P08 — The autotagger
+### P08 — The autotagger *(done 2026-09-14, v1.129.82)*
 **Goal.** Heuristic structure inference for arbitrary PDFs — the research-grade half, and the one
 Acrobat is actually judged on. Proposes; never asserts (law 3, D5).
 
@@ -2974,6 +2974,51 @@ emitter, and 480 said *"if P08 opens and does not call it, that is B."*
   match `/H1`), which the widened pattern fixed.
 - **Pin — the tier set is D4's three again.** No production door ever wrote `Generic`, so no document in
   the field carries it; a stray value reads as unrecorded.
+
+**(phase close, 2026-09-14, v1.129.82.)** Every clause split on `and`.
+
+| exit criterion | verdict | evidence |
+|---|---|---|
+| over the corpus, proposed trees are measurably better than no tree | **met** | `TestTheTruthCorpusScoresTheMetricAtItsBounds` — no tree scores zero recall on both numbers; `TestTheProposalClearsItsFloorsOnTheTruthCorpus` — four LibreOffice documents, heading F1 1.00 on each, boundary F1 1.00 / 1.00 / 0.56 / 1.00, each at or above the grouping it starts from, role sequences asserted. Both ran (not skipped) at the close |
+| … on a stated metric | **met** | paragraph-boundary F1 and heading F1, stated at phase open and computed by `scoreBlocks` (`TestTheMetricScoresAWorkedExample`) |
+| every proposal is reviewable | **met** | `GET /api/tags/propose` → the Tags card draws each element's outline on its page (`test/ui/tagsreview.test.mjs`) |
+| … and editable before it is written | **met** | retype, ignore and reorder, keyboard-only, at tier 2 and tier 3; `TestAReviewIsAppliedInItsOwnOrderWithItsOwnRoles` reads the edits back out of the committed tree |
+| nothing is written silently | **met** | propose leaves the open document byte-identical (`TestTheProposeRouteReadsAndChangesNothing`); the proposer has no path to a writer (`TestTheProposerHasNoPathToAWriter`); the commit is an explicit POST that installs as an undoable edit, records `Inferred`, and the report says so. S07 deleted the only other writer of structure over arbitrary pages (`TagAuthored`) |
+| carried from S03: a multi-column page handled or reported | **met** | separable columns handled (5/5 blocks in reading order), a fused layout `unsupported` with its reason (`TestALayoutTheRuleCannotReadIsReportedNotGuessed`) |
+
+**Found at the close — text still describing the deleted emitter, and a README with no Tags card.**
+`README.md` said Nib "does not yet author" tags and listed three provenance sources, not four; it now
+has a *Tag an untagged document's structure* section and names the inferred tier. `PLAN-text-reflow.md`'s
+status line still said P02 was next. `ua1oracle_test.go`'s `AuthorForm` reason said "needs the emitter".
+
+**Measured at the close — the review doors' cost, because P07's close found a quadratic writer only tier
+4d could see.** A converted Markdown document of repeated heading / wrapped paragraph / two-item list
+sections, all elements accepted, timed in-process, unloaded:
+
+| elements | propose | commit |
+|---|---|---|
+| 200 | 6 ms | 43 ms |
+| 800 | 31 ms | 204 ms |
+| 3,200 | 109 ms | 754 ms |
+| 12,800 | 461 ms | 3.3 s |
+
+Each 4× step costs 4.2–5.0× (propose) and 4.4–4.7× (commit): linear over 200–12,800 elements. Not
+measured beyond that, and not on a LibreOffice document or one with many fonts per page.
+
+**Phase review.** Cross-slice read of the server routes and the client: the commit is pinned to the
+document the review was opened on (ADR-001, `tagsOwner`), grows the document only through
+`commitMutation`'s `byteCapLocked` (ADR-008), passes the ceremony freeze, and refuses a signed document
+before `CommitTags` runs; the review body is bounded at 8 MiB. No defect found beyond the stale text above.
+
+**Required-run gates, v1.129.82:**
+- T1 `go test ./...` — green.
+- T2 `jsdomtest.sh` — 359/359.
+- T3 `uirepro.sh` — RED for the 3 pre-existing failures only (`/pending 474`: `blockink.test.mjs`, the CJK
+  CMap text, "leaves the shared server"); 140 pass, 3 fail of 143.
+- T4 `pairrepro.sh` — PASS over both transports.
+- T4d `pairrepro.sh -n 4` — PASS: 4 instances, a 4-party baton relay over both transports (11 s of hops);
+  the interrupt leg's verifiers showed their words after 50 s.
+- T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
 
 ### P09 — The structure editor
 **Goal.** The Tags panel and Reading Order view in the Document tab (D10) — inspect, reorder,

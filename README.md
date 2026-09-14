@@ -127,7 +127,8 @@ rules Nib can verify itself — the accessibility standard screen readers rely o
 marked **passes**, **fails**, **does not apply**, or **Nib could not check**, and a clause Nib could
 not check is never shown as a pass. Each failure names what it found and where: which font on which
 page, which operator in which content stream. The report also says where the document's structure
-came from — written by Nib from what it knew, read from a scan by OCR, or not recorded at all. On the
+came from — written by Nib from what it knew, read from a scan by OCR, inferred from how the pages
+look and reviewed by you, or not recorded at all. On the
 command line it's `nib ua IN`, which exits 1 and prints every reason when a checked clause fails or
 could not be checked.
 
@@ -136,6 +137,19 @@ evaluates, so a document can pass every clause Nib checks and still fail one it 
 a heading that skips a level passes all of Nib's checks and fails veraPDF. That is also why Nib never
 writes the PDF/UA identification into a document. Nib's answers on the clauses it does check are tested
 against [veraPDF](https://verapdf.org/) on every build; for a conformance verdict, use veraPDF.
+
+### Tag an untagged document's structure
+**Page Functions → Tag structure…** reads the open document's pages and proposes its headings,
+paragraphs and list items from how they look — larger text as headings, drawn bullets and numbers as
+list items. Nothing is written while you review: each proposed element is outlined on its page, and
+you can change its type, ignore it, or move it earlier or later in the reading order, all from the
+keyboard. **Commit** writes the structure and records that it was inferred, so the accessibility report
+says so; **Undo** takes it back. It refuses a document that is already tagged (it will not write a
+second structure over the first), a signed document (tagging would break the signature), and a page
+whose text is drawn in a way it cannot mark without describing something else. Text on the page that
+you ignore is marked as decoration rather than left unaccounted for. The proposal is a starting point,
+not an answer — multi-column pages it cannot separate, and body paragraphs with no visible spacing
+between them, are the known weak spots.
 
 ### Convert to PDF/A for archiving
 Need a document that archives will still open decades from now? **File → Export →
@@ -507,8 +521,9 @@ closing are once-per-document acts, so they are cards in the **File** tab's side
 
 ### Accessibility structure — what Nib does and does not claim
 A PDF can carry **tags**: a structure a screen reader uses to read it in the right order, tell a
-heading from a paragraph, and navigate. Nib does not yet author them — that is real work in progress
-— and this section is about the half that is already true.
+heading from a paragraph, and navigate. Nib tags the documents it writes from Markdown, the forms it
+authors and the scans it recognises, and can propose tags for any other document for you to review
+(**Tag structure…**, above). This section is about what happens to tags a document already has.
 
 **Nib will not claim tagging it has not got.** Most editing operations keep a document's tag
 structure — rotate, optimise, set the language, add a note or an attachment, stamp a watermark or
