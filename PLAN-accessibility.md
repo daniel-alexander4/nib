@@ -2587,7 +2587,7 @@ client-side proposer vs a server-side one) is S06's step zero, measured there.
 
 **Firmed slices:**
 
-#### P08.S01 — the width reader (`PLAN-text-reflow.md` P02)
+#### P08.S01 — the width reader (`PLAN-text-reflow.md` P02) *(done 2026-09-14, v1.129.73)*
 Scope: given a font dictionary and a code, the advance — `/Widths` + `/FirstChar`, all three `/W` range
 forms, `/DW`, and the core fonts through `mdpdf.CoreWidth`. Refs reflow D2, D3, D5, law 2.
 Acceptance:
@@ -2598,6 +2598,36 @@ Acceptance:
 - A fractional size is measured without truncation through the core-font door (measured against a
   `CoreWidth` call at the integer size, scaled).
 - A census over the generated corpus is a guard: a regression in coverage is red.
+
+**(build, 2026-09-14 — what the step zero measured, and the pins it produced.)**
+
+| measured | result |
+|---|---|
+| width forms nib's generated documents carry | converted Markdown: Type0 fonts, `/W` on the descendant, form `c [w …]` only; the core-font page: Courier, no `/Widths`; LibreOffice (`txt`): TrueType `/Widths` with `/FirstChar 0` over a re-encoded 25-code subset. **No generated document carries `cfirst clast w` or `/DW`** — both are driven by hand-built dictionaries |
+| a CID width parser to reuse | none: pdfcpu v0.13.0 writes `/W` (`font/fontDict.go:896`) and validates `/DW` and never reads either |
+| pdfcpu's core metrics on a code its WinAnsi map lacks | **1000, unmarked** (`internal/corefont/metrics.CoreFontCharWidth`). 40 of 256 codes |
+
+- **Pin — two sources the acceptance did not list.** The specification supplies them and a viewer
+  uses them: `MissingWidth` (the descriptor's width outside `/Widths`) and a CID font's default `/DW`
+  of 1000 when none is declared — named `DW default`, apart from a declared `DW`, so a census can tell
+  an assumed number from a stated one.
+- **Pin — the core-font path refuses what pdfcpu invents.** The 1000 substitute is detected by
+  measuring the code in Courier, where every real glyph is 600; Symbol and ZapfDingbats have maps no
+  such test covers and read `none`. And the metrics are WinAnsi's, so the std14 source applies only
+  under `/WinAnsiEncoding` — a core font with no `/Encoding` is StandardEncoding and reads `none`.
+- **Pin — one code per `CoreWidth` call, at size 1000.** `CoreWidth` folds valid UTF-8, and two code
+  bytes can spell it; one byte never can. Its size is an int, and at 1000 its user-space width is the
+  glyph-space width, which `advanceAt` scales to any real size.
+- **Pin — "all three `/W` forms"** is read as `c [w]`, `c [w1 … wn]` and `cfirst clast w`; the
+  specification defines two shapes and the first is the one-element case of the second. A `cfirst
+  clast` range is clamped to 16 bits.
+- **Pin — no production caller yet.** `readFontWidths` is unexported and called only by tests until
+  S02; `/pending 481` is what a door with test-only callers costs, so S02's acceptance is where its
+  first product caller is asserted.
+
+Census: `std14` 95, `W` 32, `Widths` 17, `none` 0. Eight mutations red, each against its own
+assertion: `none` → `Widths`, the unmapped-code guard, the encoding check, the Symbol exclusion, the
+CID ceiling, the default-DW source, the descendant check, the truncated-range bound.
 
 #### P08.S02 — positioned runs (`PLAN-text-reflow.md` P03)
 Scope: read a page into runs — text, font, size, position, width — from a text-state machine over

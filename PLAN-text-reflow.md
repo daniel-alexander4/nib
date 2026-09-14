@@ -388,7 +388,7 @@ exit criteria below as written, and its marker is written here as well as there.
 D12 names is not on disk** — no `*corpus*` directory under `~`, and no PDF under `~` or `/tmp` dated
 2026-09-06 — so those slices measure against a generated corpus and say so.)
 
-### P02 — The width reader
+### P02 — The width reader *(done 2026-09-14, v1.129.73 — as `PLAN-accessibility.md` P08.S01; `internal/pdfops/fontwidth.go`)*
 **Goal.** Given a page and a font, return the advance for any code, from the document's own
 dictionary, with an honest `none` when it cannot.
 
