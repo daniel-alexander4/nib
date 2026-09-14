@@ -40,6 +40,14 @@ func TestRunsJoinIntoLinesAndAColumnGapSplitsThem(t *testing.T) {
 	if len(segs) != 1 || segs[0].text != "• second item with bold" {
 		t.Fatalf("a bullet line read as %+v, want one line \"• second item with bold\"", segs)
 	}
+	// An artifact on the same baseline — a watermark crossing the line — is not part of it.
+	stamped := lineSegments([]textRun{
+		run("real text", 72, 500, 60, 12),
+		{text: "DRAFT", x: 132, y: 500, width: 60, size: 12, artifact: true},
+	})
+	if len(stamped) != 1 || stamped[0].text != "real text" {
+		t.Errorf("an artifact run joined a line: %+v", stamped)
+	}
 	cols := lineSegments([]textRun{
 		run("left column", 56.8, 685.4, 229.4, 12),
 		run("right column", 324.1, 685.4, 231.1, 12),

@@ -2884,10 +2884,15 @@ named search:
   text — so it is an EXEMPTION named at the site with its reason (ADR-009), not a third owner:
   `groupRuns`, `lineSegments` and `pageRuns` stay forbidden to it, and a second grouping written there
   still fails.
-- **Finding — a watermarked document cannot be committed at all.** The proposer reads the stamp's
-  text like any other and the commit refuses what is drawn in a form. The stamp is already inside an
-  `/Artifact` sequence on the page; the run reader does not yet say so, so neither the proposer nor
-  the commit can skip it. Carried to S06b as a named case rather than widened here.
+- **Finding, FIXED at v1.129.79 — a watermarked document could not be committed at all.** The
+  proposer read the stamp's text like any other and the commit refused what was drawn in a form. The
+  stamp was already inside an `/Artifact` sequence on the page; the run reader did not say so. Runs
+  now carry `artifact` (any open `/Artifact` sequence, by `BMC` or `BDC`, including an MCID nested
+  inside one), and the grouping skips them — one door, so reflow gets the same answer: an artifact is
+  not a paragraph. A watermarked page now proposes only its body and commits. The in-form refusal
+  keeps a real fixture: the same stamp with its `/Artifact` marker replaced by `/Span BMC`, whose
+  form-drawn text is then content. Both mutations red — the flag never set, and the grouping keeping
+  artifact runs.
 
 Nine mutations red: each of the three structural refusals, the text half of the stale check, the
 artifact bracketing, the label split, the `Inferred` tier, the element roles, and the guard against

@@ -69,6 +69,20 @@ type textRun struct {
 	// form XObject's, not the page's: bracketing the page stream there would describe the `Do`.
 	span   opSpan
 	inForm bool
+	// artifact is whether the run was drawn inside an `/Artifact` sequence — content the document
+	// itself says is not content, a watermark or a running header. Grouping skips it, so an artifact
+	// is never proposed as a paragraph (P08.S06a's watermark finding).
+	artifact bool
+}
+
+// inArtifact reports whether an `/Artifact` sequence is open at this point of the walk.
+func (w *runWalker) inArtifact() bool {
+	for _, v := range w.mcStack {
+		if v == mcArtifact {
+			return true
+		}
+	}
+	return false
 }
 
 // pageRuns is a page read as text.
@@ -576,7 +590,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opSpan, inForm bool) {
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
-		mcid: w.currentMCID(), span: span, inForm: inForm}
+		mcid: w.currentMCID(), span: span, inForm: inForm, artifact: w.inArtifact()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}

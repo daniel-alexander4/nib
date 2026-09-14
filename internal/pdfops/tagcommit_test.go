@@ -11,6 +11,8 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
+	"nib/internal/contentstream"
 )
 
 // The commit writer — `PLAN-accessibility.md` P08.S06a.
@@ -128,17 +130,59 @@ func TestTheCommitRefusesWhatItCannotDescribeHonestly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The watermark sits inside `/Artifact` on the page, so it is never proposed — and a watermarked
+	// document commits. Until the run reader said so, the stamp was proposed as a paragraph and the
+	// whole page was refused (S06a's finding).
 	sp := proposeFor(t, stamped)
-	inForm := false
 	for _, el := range sp.elements {
+		if strings.Contains(el.text, "DRAFT") {
+			t.Errorf("the watermark was proposed as content: %q", el.text)
+		}
+	}
+	if _, cerr := commitProposal(stamped, sp.elements); cerr != nil {
+		t.Errorf("a watermarked document could not be committed: %v", cerr)
+	}
+
+	// The same stamp with its artifact marker replaced: now the form's text IS content, drawn inside a
+	// form XObject, and the commit must refuse to describe the `Do` in its place.
+	bare, err := writeMutated(stamped, func(ctx *model.Context) error {
+		for pg := 1; pg <= ctx.PageCount; pg++ {
+			d, _, _, derr := ctx.PageDict(pg, false)
+			if derr != nil {
+				return derr
+			}
+			src, cerr := ctx.PageContent(d, pg)
+			if cerr != nil {
+				return cerr
+			}
+			edit := contentstream.NewEdit(src)
+			for _, m := range watermarkArtifactSpans(src) {
+				edit.Replace(m.start, m.end, []byte("/Span BMC"))
+			}
+			out, aerr := edit.Apply()
+			if aerr != nil {
+				return aerr
+			}
+			if serr := setPageContent(ctx, d, out); serr != nil {
+				return serr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp := proposeFor(t, bare)
+	inForm := false
+	for _, el := range bp.elements {
 		for _, r := range elementRuns(el) {
 			inForm = inForm || r.inForm
 		}
 	}
 	if !inForm {
-		t.Fatal("setup: the watermark's text was not read as drawn inside a form, so the refusal below is not driven")
+		t.Fatal("setup: with its artifact marker gone the stamp's text was not proposed as drawn inside a form, so the refusal below is not driven")
 	}
-	if _, cerr := commitProposal(stamped, sp.elements); !errors.Is(cerr, errCommitInForm) {
+	if _, cerr := commitProposal(bare, bp.elements); !errors.Is(cerr, errCommitInForm) {
 		t.Errorf("text drawn inside a form XObject: err = %v, want errCommitInForm", cerr)
 	}
 
