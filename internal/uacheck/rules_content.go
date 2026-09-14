@@ -94,12 +94,20 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 	return Result{Verdict: Fail, Why: why, Where: first.where}
 }
 
-// checkWidgetsInFormElements evaluates ua1 7.18.4 t1, following the linkage in BOTH directions.
+// checkWidgetsInFormElements evaluates ua1 7.18.4 t1 — in the direction veraPDF reads it.
 //
-// A widget is nested in a Form tag when three things agree: the annotation's `/StructParent` resolves
-// through the parent tree to an element, that element's standard type is `Form` (through the role
-// map), and that element's `OBJR` kid names the annotation back. P06.S07 built exactly this, and a
-// checker reading only one direction would pass a tree that disagrees with itself.
+// A widget is nested in a Form tag when its `/StructParent` resolves through the parent tree to an
+// element whose standard type is `Form` (through the role map).
+//
+// # Why this rule does NOT require the element's OBJR back-link
+//
+// P06.S07 and P07.S03 built "both directions" into this rule — the annotation pointing at the
+// element AND the element's `OBJR` naming the annotation back — and law 5's guard found nib
+// stricter than the clause. Measured, one link at a time: removing the `OBJR` PASSES 7.18.4 t1;
+// removing `/StructParent` FAILS it; retyping the element `Div` FAILS it. The clause is read from the
+// annotation up. The `OBJR` is still what lets a tree-walking reader reach the widget, and
+// `pdfops.AuthorTaggedForm` still writes it — but no ua1 clause nib checks fails without it, and a
+// checker reporting a failure the oracle does not is wrong in exactly the way law 5 exists to catch.
 func checkWidgetsInFormElements(d *Document) Result {
 	widgets := 0
 	for p := 1; p <= d.Ctx.PageCount; p++ {
@@ -150,39 +158,10 @@ func checkWidgetsInFormElements(d *Document) Result {
 					Where:   where,
 				}
 			}
-			if !d.objrNames(elem, ir.ObjectNumber.Value()) {
-				return Result{
-					Verdict: Fail,
-					Why: "the Form element the widget points at has no OBJR naming the widget back, so " +
-						"a reader walking the tree never reaches it",
-					Where: where,
-				}
-			}
 		}
 	}
 	if widgets == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document has no widget annotations"}
 	}
 	return Result{Verdict: Pass}
-}
-
-// objrNames reports whether elem's `/K` holds an OBJR whose `/Obj` is object objNr.
-func (d *Document) objrNames(elem types.Dict, objNr int) bool {
-	kids := []types.Object{elem["K"]}
-	if arr, err := d.Ctx.DereferenceArray(elem["K"]); err == nil && arr != nil {
-		kids = arr
-	}
-	for _, k := range kids {
-		kd := d.dict(k)
-		if kd == nil {
-			continue
-		}
-		if ty := kd.NameEntry("Type"); ty == nil || *ty != "OBJR" {
-			continue
-		}
-		if o, ok := kd["Obj"].(types.IndirectRef); ok && o.ObjectNumber.Value() == objNr {
-			return true
-		}
-	}
-	return false
 }

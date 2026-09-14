@@ -575,3 +575,28 @@ func withCIDSet(t *testing.T, pdf []byte, mode cidSetMode) []byte {
 		return nil
 	})
 }
+
+// withoutDCTitle keeps a metadata packet and removes its dc:title, so 7.1 t9 has a subject and fails
+// — the one state of the fifteen clauses the S05 corpus did not reach until this fixture existed.
+func withoutDCTitle(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/">`+
+			`<xmp:CreateDate>2026-09-14T00:00:00Z</xmp:CreateDate>`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withPacketBody installs a metadata packet whose rdf:Description holds body, with the dc and xmp
+// namespaces bound — the shapes law 5's guard measured 7.2 t33 against.
+func withPacketBody(t *testing.T, pdf []byte, body string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">`+
+			body+`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}

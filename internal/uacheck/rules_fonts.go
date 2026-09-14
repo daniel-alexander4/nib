@@ -226,8 +226,9 @@ func checkFontsMapToUnicode(d *Document) Result {
 // checkCIDSetsComplete evaluates ua1 7.21.4.2 t2 over the CID fonts text selects — the set must be
 // EXACT, neither omitting a glyph slot nor claiming one the program does not hold.
 //
-// The clause is conditional on a /CIDSet existing. nib's own output never carries one (P04.S02
-// removes pdfcpu's), so for nib's documents this is `NotApplicable`. For a document that does, the
+// The clause is conditional on a /CIDSet existing, but its SUBJECT is every embedded CID font: a
+// font with no /CIDSet satisfies it and passes, which is what veraPDF reports. nib's own output never
+// carries a /CIDSet (P04.S02 removes pdfcpu's), so its embedded fonts pass. For a document that does, the
 // population the set must cover is `maxp.numGlyphs` — measured: a set of the non-empty glyphs FAILS
 // and a set of every glyph slot PASSES — so the rule reads only the program's `maxp` table.
 func checkCIDSetsComplete(d *Document) Result {
@@ -247,11 +248,20 @@ func checkCIDSetsComplete(d *Document) Result {
 		if fd == nil {
 			continue
 		}
+		_, ff2 := fd["FontFile2"]
+		_, ff3 := fd["FontFile3"]
+		if !ff2 && !ff3 {
+			continue
+		}
+		// **The subject is the embedded CID font, not the /CIDSet — measured by law 5.** veraPDF
+		// runs this check on every embedded CID font descriptor and PASSES one with no /CIDSet: the
+		// condition is inside the check, not a filter on its population. nib answered NotApplicable
+		// here until the S05 guard found four documents disagreeing.
+		withSet++
 		csObj, has := fd["CIDSet"]
 		if !has {
 			continue
 		}
-		withSet++
 		where := fmt.Sprintf("%s, font %s (%s)", f.where, f.name, baseFontName(f.dict))
 		cs, _, err := d.Ctx.DereferenceStreamDict(csObj)
 		if err != nil || cs == nil || cs.Decode() != nil {
@@ -289,7 +299,7 @@ func checkCIDSetsComplete(d *Document) Result {
 		}
 	}
 	if withSet == 0 {
-		return Result{Verdict: NotApplicable, Why: "no CID font used by text carries a /CIDSet"}
+		return Result{Verdict: NotApplicable, Why: "no embedded CID font is used by text"}
 	}
 	return Result{Verdict: Pass}
 }
