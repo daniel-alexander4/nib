@@ -207,6 +207,12 @@ var tagFates = map[string]tagFate{
 	"ConvertDocToPDF":    {verdict: "untouched", why: "its input is not a PDF — it produces one from an office document"},
 	"ConvertOfficeToPDF": {verdict: "untouched", why: "as ConvertDocToPDF"},
 	"CreateFromJSON":     {verdict: "untouched", why: "authors a document from a JSON spec; there is no input tagging to lose"},
+	// The autotagger's commit (P08.S06b). Not driven: the census fixture is TAGGED, and a tagged input is
+	// exactly what this refuses (`errCommitTagged`) — so it returns no document whose claim could be
+	// read, and the claim of the document it was given is never touched. What it does to an UNTAGGED
+	// input is the point of it, and is measured where that belongs: `TestACommittedProposalReadsBackAsItsOwnTruth`
+	// and the ua1 differential in `TestACommitAddsNoUA1ClauseTheUntaggedDocumentLacked`.
+	"CommitTags": {verdict: "untouched", why: "refuses a document that already has a tree, so a tagged input's claim cannot be affected; an untagged input gains a tree, measured by the commit writer's own tests"},
 
 	// ── Declared but not driven, each with the reason. The completeness half still covers them.
 	"Encrypt":        {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},

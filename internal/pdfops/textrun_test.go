@@ -335,6 +335,12 @@ func TestASimpleFontIsDecodedOnlyThroughTheTableItNames(t *testing.T) {
 			t.Errorf("%s: code %#x → %q (%v), want %q (%v)", c.name, c.code, got, ok, c.want, c.ok)
 		}
 	}
+	// A /Differences dictionary is not an absent /Encoding, though `NameEntry` reads both as nil.
+	diff := font("Helvetica", "")
+	diff["Encoding"] = types.Dict{"Type": types.Name("Encoding"), "Differences": types.Array{types.Integer(97), types.Name("B")}}
+	if got, ok := loadRunFont(widthXRef(t), diff).textFor([]byte{'a'}); ok {
+		t.Errorf("a font with /Differences decoded 'a' as %q — its glyphs are renamed, and this reader has no table for the names", got)
+	}
 }
 
 // TestAnImageOnlyPageReturnsNoRunsAndSaysSo — P03's second exit criterion, structurally.

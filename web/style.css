@@ -560,6 +560,15 @@ body > div[id$="Modal"] {
 .ua-row.ua-pass .ua-verdict { color: var(--green); }
 .ua-row.ua-na .ua-verdict { color: var(--subtext0); font-weight: 400; }
 .ua-provenance { font-size: 12px; margin: 0 0 8px; color: var(--text); }
+/* Tag structure review (P08.S06c): one row per proposed element, ordinary controls only. An ignored row
+   is struck through AND says so in its checkbox — never by colour alone. */
+.tags-list { list-style: decimal; margin: 0 0 8px; padding-left: 22px; max-height: 50vh; overflow-y: auto; }
+.tags-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--surface0); }
+.tags-row.tags-item { margin-left: 14px; }
+.tags-row.tags-ignored .tags-text { text-decoration: line-through; color: var(--subtext0); }
+.tags-text { flex: 1 1 100%; font-size: 12px; overflow-wrap: anywhere; }
+.tags-row label { font-size: 12px; display: inline-flex; gap: 3px; align-items: center; }
+.tag-outline { position: absolute; outline: 2px solid var(--blue); outline-offset: 1px; pointer-events: none; z-index: 5; }
 .ua-refusals { font-size: 12px; margin: 10px 0 0; padding-left: 18px; color: var(--text); }
 /* Compare (text diff): inline word diff, removed struck-through red, added green. */
 .difftext { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.5;

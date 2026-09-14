@@ -246,7 +246,9 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # 23 = the files this repo has committed. A 24th, `windowstream.test.mjs`, is untracked in this
 # working copy — another session's in-flight work — and it is deliberately NOT counted: the number
 # describes what a fresh clone runs, not what happens to be on one machine.
-expect_files=34
+# 35 since P08.S06c (tagsreview.test.mjs): the autotagger's review needs a rendered page to prove its
+# outline lands on the element's text, which the tier-2 stub viewer cannot provide.
+expect_files=35
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

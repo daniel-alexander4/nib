@@ -57,6 +57,10 @@ const PUBLISHED = [
   // The accessibility report (P07.S06). The verdict travels as a word, not uacheck's integer.
   { type: 'uaReportResponse', readers: ['web/app.js'] },
   { type: 'uaResultView', readers: ['web/app.js'] },
+  // The autotagger's proposal (P08.S06b); its reader is the Tags card (P08.S06c).
+  { type: 'tagProposalResponse', readers: ['web/app.js'] },
+  { type: 'tagElementView', readers: ['web/app.js'] },
+  { type: 'tagPageView', readers: ['web/app.js'] },
   { type: 'docsResponse', readers: ['web/app.js'] },
   { type: 'statusResponse', readers: ['web/app.js'] },
   // The advanced-features switch (`/pending 451`). Nested inside statusResponse and read by

@@ -2613,8 +2613,13 @@ Acceptance:
   an assumed number from a stated one.
 - **Pin — the core-font path refuses what pdfcpu invents.** The 1000 substitute is detected by
   measuring the code in Courier, where every real glyph is 600; Symbol and ZapfDingbats have maps no
-  such test covers and read `none`. And the metrics are WinAnsi's, so the std14 source applies only
-  under `/WinAnsiEncoding` — a core font with no `/Encoding` is StandardEncoding and reads `none`.
+  such test covers and read `none`. And the metrics are WinAnsi's, so the std14 source applies under
+  `/WinAnsiEncoding`, and under StandardEncoding (named, or implied by no `/Encoding`) for printable
+  ASCII except 0x27 and 0x60, whose glyphs StandardEncoding names differently. **Revised at P08.S06c:**
+  this pin first said a core font with no `/Encoding` reads `none` throughout, and tier 3 found the cost
+  — an old PDF's runs measured zero wide, so a proposed element had no width to outline. A `/Differences`
+  dictionary still reads `none`; `NameEntry` returns nil for it as for an absent key, which the decoder
+  had confused too.
 - **Pin — one code per `CoreWidth` call, at size 1000.** `CoreWidth` folds valid UTF-8, and two code
   bytes can spell it; one byte never can. Its size is an int, and at 1000 its user-space width is the
   glyph-space width, which `advanceAt` scales to any real size.
@@ -2818,7 +2823,7 @@ label, uppercase labels, private-use bullets, the label split, a list surviving 
 surviving a paragraph, and a writer call planted in `proposer.go` for the guard. Two survived the first
 round (body by runs, a list surviving a heading) and each got a fixture.
 
-#### P08.S06 — review and commit (D5, D10, D11)
+#### P08.S06 — review and commit (D5, D10, D11) *(done 2026-09-14, v1.129.80 — in three parts, S06a–S06c)*
 Scope: a Tags card in the Document tab. Propose (read-only route) → the proposal drawn over the page →
 the user retypes, ignores, or reorders an element → commit writes through the tree model and
 `claimTagging` with `sourceInferred`. Refs D5, D10, D11, exit criteria 2 and 3.
@@ -2850,11 +2855,11 @@ named search:
   document necessarily carries (measured and written down, not assumed); it REFUSES, each driven, a
   document that already has a tree, a page whose runs already sit under MCIDs, and an element whose
   runs are drawn inside a form XObject (bracketing the page stream would describe the `Do`).
-- **P08.S06b — the routes.** `GET` propose (read-only, through `proposeStructure` → `readPageLayout`,
+- **P08.S06b — the routes** *(done 2026-09-14, v1.129.80, shipped with S06c)*. `GET` propose (read-only, through `proposeStructure` → `readPageLayout`,
   byte-identical document asserted, routing asserted) and `POST` commit (the reviewed elements;
   refuses a signed document at the server door; installs through the same path as every other edit,
   so undo holds). Acceptance: the four bullets above that concern routes.
-- **P08.S06c — the Tags card.** In the Document mode (`edit`): the proposal drawn over the page, each
+- **P08.S06c — the Tags card** *(done 2026-09-14, v1.129.80)*. In the Document mode (`edit`): the proposal drawn over the page, each
   element retypable, ignorable and reorderable keyboard-only, and a commit. Acceptance: the keyboard
   bullet above, at tier 2 and tier 3, and the report's provenance line reading `Inferred` after a commit.
 
@@ -2893,6 +2898,43 @@ named search:
   keeps a real fixture: the same stamp with its `/Artifact` marker replaced by `/Span BMC`, whose
   form-drawn text is then content. Both mutations red — the flag never set, and the grouping keeping
   artifact runs.
+
+**(P08.S06b + S06c build, 2026-09-14, v1.129.80 — one commit, because `published.test.mjs` fails a
+wire shape that has no reader in the client, and the propose response's reader IS the card.)**
+
+`pdfops.ProposeTags` / `CommitTags` (`tagreview.go`) are the exported doors; `GET /api/tags/propose`
+and `POST /api/tags/commit` (`internal/server/tags.go`) the routes; a "Tag Structure" group in the
+Document mode and `#tagsModal` the card.
+
+| measured | result |
+|---|---|
+| a review applied to the committed tree | reorder, retype (P → H3) and ignore each read back through S04's truth reader in the reviewed order; lists recomputed from the reviewed order |
+| a review that no longer describes the document | the count, an element's text, an unknown or doubled id, a role nobody can choose, everything ignored — `ErrTagsStale` → 409, `ErrTagsReview` → 400 |
+| the routes | propose leaves the open document byte-identical; commit installs through `commitMutation` and `POST /api/undo` takes it back; the report's provenance reads "inferred" after a commit and not after the undo; a signed document (`threeSigned`) is refused 409 and left unchanged |
+| a 409 in the client | `apiFetch` returns the response and ALSO reconciles tabs against `/api/docs` — the tier-2 case stubs a server that still holds the document, and the review stays open with the server's sentence |
+| the outline, in a real browser | **zero width on the first run**: the tier-3 fixture's Helvetica has no `/Encoding`, and S01's width reader refused StandardEncoding, so every run measured `none` and every element's rect collapsed. See the width pin revised under S01 |
+| tier 3's cleanup | this file closed its document and then saw a 3-page document it never opened: the server still held one an earlier file leaked (`/pending 474`) and the app activated it. Page divs cannot tell that from a leak of this file's own, so the cleanup counts `/api/docs` |
+
+- **Pin — two defects in S01/S02's readers, found only by drawing an outline.** The width reader refused
+  StandardEncoding outright (so lines had no width to group by, and outlines none to draw), and the
+  text decoder read a `/Differences` dictionary as an absent `/Encoding` — `NameEntry` returns nil for
+  both. Both fixed by presence-and-kind; four mutations red.
+- **Pin — the signed-document refusal is the first of its kind at the server.** `refuseSignatureErasure`
+  refuses an edit that ERASES a signature; tagging leaves it present and broken, which that door allows,
+  so the commit route refuses a signature blob outright.
+- **Pin — four standing guards fired and each was right**: the published-observable scan (the returned
+  `pdfops.TagProposal` needed a named reader; its nested types are not discovered), law 2's census
+  (`CommitTags` declared `untouched` — it refuses a tagged input), `published.test.mjs`, and the
+  `resolveDoc` count (26 → 28).
+- **Pin — the outline is an estimate**: 0.85 em above and 0.25 em below each baseline; page rotation and
+  CropBox are not applied.
+
+Mutations red — tier 2: the commit echoing no text, a move that does not reorder, an ignore dropped, a
+refusal that closes the review, focus that does not move the viewer. Server: the signed refusal, a stale
+review answered 400, the commit never installed. `pdfops`: the StandardEncoding quote exclusion,
+StandardEncoding refused, `/Differences` taken for absent (widths and decoder). Gates: tier 1 green; tier
+2 359/359; tier 3 140 pass, 3 fail — the three `/pending 474` failures; the slice gate does not fire
+(`internal/server`'s tag routes, not its session, ceremony, delivery or discovery paths).
 
 Nine mutations red: each of the three structural refusals, the text half of the stale check, the
 artifact bracketing, the label split, the `Inferred` tier, the element roles, and the guard against

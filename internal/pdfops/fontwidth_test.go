@@ -115,10 +115,30 @@ func TestTheCoreFontPathRefusesTheNumbersPdfcpuInvents(t *testing.T) {
 	if w, src := readFontWidths(xt, helv).advance(unmapped[0]); src != widthNone {
 		t.Errorf("an unmapped code in Helvetica returned %v from %q — pdfcpu's substituted 1000, reported as the document's width", w, src)
 	}
-	// The same font with no /Encoding is StandardEncoding, whose codes WinAnsi's metrics do not describe.
-	noEnc := types.Dict{"Subtype": types.Name("Type1"), "BaseFont": types.Name("Helvetica")}
-	if _, src := readFontWidths(xt, noEnc).advance('A'); src != widthNone {
-		t.Errorf("a core font with no /Encoding was measured with WinAnsi metrics (source %q)", src)
+	// StandardEncoding — named, or implied by no /Encoding at all — names WinAnsi's glyphs across
+	// printable ASCII except the two quotes. So 'A' is measured, and the quotes and everything above
+	// 0x7E are not. (The first cut refused all of it; a tier-3 outline of zero width found that.)
+	for _, withName := range []bool{false, true} {
+		std := types.Dict{"Subtype": types.Name("Type1"), "BaseFont": types.Name("Helvetica")}
+		if withName {
+			std["Encoding"] = types.Name("StandardEncoding")
+		}
+		fw := readFontWidths(xt, std)
+		if w, src := fw.advance('A'); src != widthFromStd14 || w != mdpdf.CoreWidth("A", "Helvetica", 1000) {
+			t.Errorf("StandardEncoding (named=%v): 'A' read %v from %q — it names the glyph WinAnsi does", withName, w, src)
+		}
+		for _, c := range []int{0x27, 0x60, 0xE1} {
+			if _, src := fw.advance(c); src != widthNone {
+				t.Errorf("StandardEncoding (named=%v): code %#x read from %q — its glyph differs from WinAnsi's there, or is past printable ASCII", withName, c, src)
+			}
+		}
+	}
+	// A /Differences dictionary renames glyphs this reader has no table for, and it must not be taken
+	// for an absent /Encoding — `NameEntry` returns nil for both.
+	diff := types.Dict{"Subtype": types.Name("Type1"), "BaseFont": types.Name("Helvetica"),
+		"Encoding": types.Dict{"Type": types.Name("Encoding"), "Differences": types.Array{types.Integer(65), types.Name("B")}}}
+	if _, src := readFontWidths(xt, diff).advance('A'); src != widthNone {
+		t.Errorf("a /Differences encoding was measured with WinAnsi metrics (source %q)", src)
 	}
 	for _, name := range []string{"Symbol", "ZapfDingbats"} {
 		sym := types.Dict{"Subtype": types.Name("Type1"), "BaseFont": types.Name(name), "Encoding": types.Name("WinAnsiEncoding")}

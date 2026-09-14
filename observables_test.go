@@ -255,7 +255,12 @@ var published = map[string][]string{
 	"pdfops.AttachmentInfo":    {"internal/cli/commands.go", "internal/server/attachments.go", "web/app.js"},
 	"pdfops.OutlineItem":       {"internal/cli/commands.go", "web/app.js"},
 	"pdfops.ScanReport":        {"internal/server/scan.go", "web/app.js"},
-	"pdfops.SplitPart":         {"internal/server/export.go", "internal/cli/commands.go"},
+	// The autotagger's proposal (PLAN-accessibility.md P08.S06b). Its reader is the propose route, which
+	// copies every field onto the wire; the wire shapes' reader is the Tags card, checked by
+	// `published.test.mjs`. Only the RETURNED type is discovered — `TagElement` and `TagPageNote` are
+	// reached through its fields, and naming them here was refused by the scan as undiscovered.
+	"pdfops.TagProposal": {"internal/server/tags.go"},
+	"pdfops.SplitPart":   {"internal/server/export.go", "internal/cli/commands.go"},
 	// `pdfops.Fit` was parked field-by-field in `unreadKnown` for two slices while it had no
 	// consumer — measured at P01.S01, put on the wire at P01.S02, and read here at P01.S03.
 	// **The park is deleted rather than kept as a comment**, because its own stated deletion
