@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"nib/mdpdf"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ func pageContentOf(t *testing.T, pdf []byte, pageNr int) []byte {
 // the document's own drawing changed, the walker re-serialised something and every later claim
 // about "nib did not alter your content" is false.
 func TestWrappingDoesNotDisturbTheWrappedBytes(t *testing.T) {
-	src, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	src, err := untaggedMarkdown([]byte(p4Markdown))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +398,7 @@ func TestTagAuthoredClearsTheStructureClausesTogether(t *testing.T) {
 		t.Skip("SKIP (not a pass): veraPDF is absent, so P05's exit criterion — a tree built by " +
 			"the model validates under ua1 — is UNCHECKED in this run")
 	}
-	src, err := ConvertDocToPDF([]byte(p4Markdown), ".md")
+	src, err := untaggedMarkdown([]byte(p4Markdown))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,4 +451,21 @@ func TestTagAuthoredClearsTheStructureClausesTogether(t *testing.T) {
 		}
 	}
 	t.Logf("before: %v\nafter:  %v", sortedClauses(was), sortedClauses(is))
+}
+
+// untaggedMarkdown renders Markdown the way `ConvertDocToPDF` did before `/pending 481` wired tagging
+// in: real `mdpdf` output with nib's faces, and no structure.
+//
+// **These tests are about the GENERIC wrapper**, and it wraps nothing on a page that is already
+// marked — by design, because a second bracket would nest inside a producer's own marked content.
+// Once the product door began tagging, `ConvertDocToPDF` stopped being a fixture for them: both went
+// red with "wrapped 0 page(s)", which was the wiring working and not a regression. The fixture they
+// need is the untagged render, so this names it rather than relying on a door whose output changed.
+func untaggedMarkdown(md []byte) ([]byte, error) {
+	faces := authoringFaces()
+	out, err := mdpdf.ConvertWithFaces(md, faces, markdownFallbackFonts())
+	if err != nil {
+		return nil, err
+	}
+	return embeddedFontsAreHonest(out), nil
 }

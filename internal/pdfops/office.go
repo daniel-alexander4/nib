@@ -112,13 +112,30 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 			log.Printf("markdown: the authoring faces could not be installed, so this document is "+
 				"set in Base-14 core fonts and will not embed them: %v", ferr)
 		}
-		out, err := mdpdf.ConvertWithFaces(data, faces, markdownFallbackFonts())
+		// **Tagged from the document's own structure — `/pending 481`.** P06.S02 built
+		// `tagMarkdown` and P06 closed on it, and until this line nothing a user could reach ever
+		// called it: this door went straight to `mdpdf.ConvertWithFaces`, so every converted
+		// Markdown file was untagged while the phase's criterion was met by a test. The
+		// zero-caller scan could not see it, because `tagMarkdown` is unexported.
+		//
+		// `tagMarkdown` refuses rather than tag content by a position it cannot trust (the
+		// run count and the structure disagree). **A refusal must not cost the user the
+		// conversion**, so it falls back to the untagged render and says so — an untagged PDF is
+		// what this door always returned, and no PDF is worse than both.
+		fallbacks := markdownFallbackFonts()
+		tagged, terr := tagMarkdown(data, faces, fallbacks)
+		if terr == nil {
+			return tagged, nil
+		}
+		log.Printf("markdown: the document converted but could not be tagged, so it is returned "+
+			"without structure: %v", terr)
+		out, err := mdpdf.ConvertWithFaces(data, faces, fallbacks)
 		if err != nil {
 			return nil, err
 		}
 		// Nib put those faces in the document, so nib owns what it claims about them: pdfcpu
 		// writes a /CIDSet over the USED glyphs and PDF/UA 7.21.4.2 forbids one that does not
-		// cover the program. See dropCIDSets.
+		// cover the program. See dropCIDSets. (`tagMarkdown` runs the same tail itself.)
 		return embeddedFontsAreHonest(out), nil
 	}
 	return ConvertOfficeToPDF(data, ext)
