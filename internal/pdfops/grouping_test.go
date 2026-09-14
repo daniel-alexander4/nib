@@ -224,6 +224,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 			"textRun":      "the commit matches a reviewed proposal's runs to the page's own by span and text before bracketing them (P08.S06a)",
 			"readPageRuns": "the commit re-reads each page it writes, so a proposal that no longer matches is refused instead of tagging the wrong bytes",
 		},
+		"structview.go": {
+			"readPageRuns": "the structure view matches an existing tree's MCIDs to the text drawn under them, the truth reader's way, and groups nothing (P09.S01)",
+		},
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

@@ -131,18 +131,6 @@ func stripStructTree(t *testing.T, pdf []byte) []byte {
 	return out.Bytes()
 }
 
-// standardRole resolves a structure type through the document's role map.
-func standardRole(tree *structTree, kind string) string {
-	for i := 0; i < 10; i++ {
-		next, ok := tree.roleMap[kind]
-		if !ok || next == kind {
-			return kind
-		}
-		kind = next
-	}
-	return kind
-}
-
 func isHeadingRole(role string) bool {
 	switch role {
 	case "H", "H1", "H2", "H3", "H4", "H5", "H6":

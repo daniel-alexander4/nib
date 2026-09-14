@@ -60,10 +60,16 @@ func odtWithLang(t *testing.T, text, lang, country string) []byte {
 		`<text:p text:style-name="P1">`+text+`</text:p>`)
 }
 
+// odtPicture is a file an ODT body refers to by `xlink:href`, carried in the container and its manifest.
+type odtPicture struct {
+	name, mediaType string
+	data            []byte
+}
+
 // odtDocument builds a minimal ODT from its automatic styles and its body, both as ODF XML — the one
 // place this package's tests write the container, because the container is where LibreOffice's two
 // measured refusals live (below). `P08.S03`'s two-column fixture is its second caller.
-func odtDocument(t *testing.T, automaticStyles, body string) []byte {
+func odtDocument(t *testing.T, automaticStyles, body string, pictures ...odtPicture) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -89,11 +95,19 @@ func odtDocument(t *testing.T, automaticStyles, body string) []byte {
 	// failure reproducible. Each entry carries a real `Modified` — Go's `zip.Create` leaves it at
 	// the zero value, which writes an invalid `1980-00-00` date that LibreOffice refuses to load
 	// ("source file could not be loaded", measured 2026-09-11) while `unzip -l` reads it happily.
+	pictureEntries := ""
+	for _, p := range pictures {
+		pictureEntries += `<manifest:file-entry manifest:full-path="` + p.name + `" manifest:media-type="` + p.mediaType + `"/>`
+	}
 	parts := []struct{ name, body string }{
 		{"content.xml", `<?xml version="1.0" encoding="UTF-8"?>` +
 			`<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"` +
 			` xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"` +
 			` xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"` +
+			` xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"` +
+			` xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"` +
+			` xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"` +
+			` xmlns:xlink="http://www.w3.org/1999/xlink"` +
 			` xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">` +
 			`<office:automatic-styles>` + automaticStyles + `</office:automatic-styles>` +
 			`<office:body><office:text>` + body + `</office:text></office:body>` +
@@ -102,6 +116,7 @@ func odtDocument(t *testing.T, automaticStyles, body string) []byte {
 			`<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
 			`<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>` +
 			`<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
+			pictureEntries +
 			`</manifest:manifest>`},
 	}
 	for _, part := range parts {
@@ -110,6 +125,15 @@ func odtDocument(t *testing.T, automaticStyles, body string) []byte {
 			t.Fatal(err)
 		}
 		if _, err := fw.Write([]byte(part.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range pictures {
+		fw, err := zw.CreateHeader(&zip.FileHeader{Name: p.name, Method: zip.Deflate, Modified: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.Write(p.data); err != nil {
 			t.Fatal(err)
 		}
 	}
