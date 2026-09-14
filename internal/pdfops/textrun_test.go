@@ -156,6 +156,41 @@ func TestTheTextStateMachine(t *testing.T) {
 	}
 }
 
+// TestARunKnowsTheMarkedContentItIsIn — the MCID in force, each way a document can state it, and the
+// two ways it must NOT be inherited: from outside an `/Artifact`, and across a form's unbalanced `EMC`.
+func TestARunKnowsTheMarkedContentItIsIn(t *testing.T) {
+	res := helveticaRes()
+	res["Properties"] = types.Dict{"MC0": types.Dict{"MCID": types.Integer(5)}}
+	res["XObject"] = types.Dict{
+		// Closes more than it opened: must not close the page's sequence around the Do.
+		"Fm0": types.StreamDict{
+			Dict:    types.Dict{"Subtype": types.Name("Form"), "Resources": helveticaRes()},
+			Content: []byte("BT /F1 10 Tf (F) Tj ET EMC EMC"),
+		},
+		// Opens and never closes: must not tag what the page draws after it.
+		"Fm1": types.StreamDict{
+			Dict:    types.Dict{"Subtype": types.Name("Form"), "Resources": helveticaRes()},
+			Content: []byte("/Span <</MCID 11>> BDC BT /F1 10 Tf (H) Tj ET"),
+		},
+	}
+	runs := walkContent(t, res, "EMC "+ // a stray EMC with nothing open must not panic or pop
+		"/P <</MCID 3>> BDC BT /F1 10 Tf (A) Tj ET EMC "+
+		"BT /F1 10 Tf (B) Tj ET "+
+		"/Span /MC0 BDC BT /F1 10 Tf (C) Tj ET EMC "+
+		"/P <</MCID 7>> BDC /Artifact BMC BT /F1 10 Tf (D) Tj ET EMC BT /F1 10 Tf (E) Tj ET EMC "+
+		"/P<</MCID 9>>BDC /Fm0 Do BT /F1 10 Tf (G) Tj ET EMC "+
+		"/Fm1 Do BT /F1 10 Tf (I) Tj ET")
+	want := map[string]int{"A": 3, "B": -1, "C": 5, "D": -1, "E": 7, "F": 9, "G": 9, "H": 11, "I": -1}
+	if len(runs) != len(want) {
+		t.Fatalf("%d run(s), want %d: %+v", len(runs), len(want), runs)
+	}
+	for _, r := range runs {
+		if r.mcid != want[r.text] {
+			t.Errorf("run %q has MCID %d, want %d", r.text, r.mcid, want[r.text])
+		}
+	}
+}
+
 // TestAFormXObjectIsWalkedAtItsMatrixAndASelfDrawingFormEnds.
 func TestAFormXObjectIsWalkedAtItsMatrixAndASelfDrawingFormEnds(t *testing.T) {
 	form := types.StreamDict{Dict: types.Dict{"Type": types.Name("XObject"), "Subtype": types.Name("Form"),
@@ -299,6 +334,17 @@ func TestTheRunReaderIsContained(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "page 7") {
 		t.Fatalf("a panic under the reader returned err=%v — the containment did not fire, or does not name the page", err)
+	}
+
+	// Streams that end on an opener, driven directly: the Markdown fixture below draws no `TJ` array,
+	// so its truncations never cut one open — which is how an array-branch panic shipped in S02.
+	for _, tail := range []string{"BT /F1 10 Tf [", "BT /F1 10 Tf [(A) -5", "/P <<", "/P << /MCID", "/P <</MCID 3>> BDC [<<"} {
+		if _, perr := containRunRead(1, func() (pageRuns, error) {
+			walkContent(t, helveticaRes(), tail)
+			return pageRuns{}, nil
+		}); perr != nil {
+			t.Errorf("a stream ending %q reached the containment: %v", tail, perr)
+		}
 	}
 
 	md, err := ConvertDocToPDF([]byte("# Heading\n\nA paragraph with **bold**.\n\n- one\n"), ".md")
