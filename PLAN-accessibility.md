@@ -3414,7 +3414,7 @@ code expressing the same defect (the whole branch, the new line with it); it app
   the decoy document refused on its bytes (C04).
 - T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
 
-### P10 — Batch, CLI and the parity ledger
+### P10 — Batch, CLI and the parity ledger *(done 2026-09-14, v1.129.100)*
 **Goal.** `nib tag` and `nib a11y-check` as headless commands composing over stdin/stdout like the
 other 26, folder batch via `nib watch`, docs, and an honest written comparison of what nib does and
 does not do against Acrobat feature by feature.
