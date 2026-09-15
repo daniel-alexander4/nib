@@ -250,6 +250,8 @@ type statusResponse struct {
 	Appearance        string   `json:"appearance,omitempty"`     // dark | light (saved theme preference)
 	CardHue           string   `json:"cardHue,omitempty"`        // all | blue|mauve|green|peach|red|yellow (sidebar card colours)
 	ViewLayout        string   `json:"viewLayout,omitempty"`     // pages (default, sent as empty) | continuous
+	ReadAloudVoice    string   `json:"readAloudVoice,omitempty"` // a browser voice name; empty is the browser default
+	ReadAloudRate     float64  `json:"readAloudRate,omitempty"`  // read-aloud speed; 0 is the default (1)
 	// Advanced is which exotic subsystems are switched on. **Always sent, never omitted** — the
 	// client hides a surface when a feature is off, and an absent object would be read as "the
 	// server did not say", which is a third state nothing implements. Nil before the seed runs,
@@ -277,6 +279,8 @@ func (s *Server) currentStatus() statusResponse {
 		st.Appearance = set.Appearance
 		st.CardHue = set.CardHue
 		st.ViewLayout = set.ViewLayout
+		st.ReadAloudVoice = set.ReadAloudVoice
+		st.ReadAloudRate = set.ReadAloudRate
 		if set.Advanced != nil {
 			st.Advanced = &advancedStatus{
 				Ceremony:   set.Advanced.Ceremony,

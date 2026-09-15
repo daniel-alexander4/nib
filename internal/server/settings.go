@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"nib/internal/vault"
 )
@@ -20,6 +21,10 @@ type settingsRequest struct {
 	// ViewLayout is "pages" or "continuous"; anything else is refused rather than stored, so a
 	// future build cannot be handed a layout name this one invented.
 	ViewLayout *string `json:"viewLayout"`
+	// ReadAloudVoice is a voice NAME from the browser's list, "" for the default; ReadAloudRate is
+	// the speed, 1 for the default (/pending 482). Both are stored as absence when they are the default.
+	ReadAloudVoice *string  `json:"readAloudVoice"`
+	ReadAloudRate  *float64 `json:"readAloudRate"`
 	// Advanced is the four subsystem switches, sent whole.
 	//
 	// **A nested object rather than four top-level pointers**, because the partial-update shape
@@ -40,6 +45,14 @@ type advancedRequest struct {
 
 // maxRecentHighlightColors caps the stored most-recently-used highlight palette.
 const maxRecentHighlightColors = 5
+
+// The read-aloud bounds (/pending 482): a voice name is a label, and the speeds are the ones the
+// Settings card offers.
+const (
+	maxVoiceNameBytes = 200
+	minReadAloudRate  = 0.5
+	maxReadAloudRate  = 2
+)
 
 var hexColorRe = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 
@@ -124,6 +137,29 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// does not send it; this is what makes that a property of the product rather than a habit.
 		default:
 			httpError(w, http.StatusBadRequest, "invalid viewLayout")
+			return
+		}
+	}
+	if req.ReadAloudVoice != nil {
+		// A voice name is the browser's label, stored and handed back; it is bounded and refused if it
+		// carries control characters, so the vault cannot be made to hold something that is not a label.
+		name := *req.ReadAloudVoice
+		if len(name) > maxVoiceNameBytes || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+			httpError(w, http.StatusBadRequest, "invalid readAloudVoice")
+			return
+		}
+		cur.ReadAloudVoice = name
+	}
+	if req.ReadAloudRate != nil {
+		// 1 is the default and is stored as absence, for ViewLayout's reason. The range is the one the
+		// client offers; a rate outside it is refused rather than clamped into a speed nobody chose.
+		switch rate := *req.ReadAloudRate; {
+		case rate == 1:
+			cur.ReadAloudRate = 0
+		case rate >= minReadAloudRate && rate <= maxReadAloudRate:
+			cur.ReadAloudRate = rate
+		default:
+			httpError(w, http.StatusBadRequest, "invalid readAloudRate")
 			return
 		}
 	}

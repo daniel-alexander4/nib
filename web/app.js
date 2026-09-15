@@ -430,6 +430,10 @@ function applyStatus(st) {
     // per document — and `|| 'pages'` is the same absent-means-default rule the server
     // stores by, kept in one shape on both sides.
     applyViewLayout(st.viewLayout || 'pages', false);
+    // Read-aloud voice and speed (/pending 482): absent means the browser's default, as the server stores.
+    readAloudVoice = st.readAloudVoice || '';
+    readAloudRate = st.readAloudRate || 1;
+    reflectReadAloudSettings();
     // Nil is what a vault answers before the seed has run, and it means all-off — the same
     // reading `advancedOn` gives it on the server, kept identical on both sides.
     applyAdvanced(st.advanced || {});
@@ -11955,6 +11959,64 @@ function speech() {
 
 let readingAloud = false;
 
+// ── The voice and the speed (`/pending 482`) ──
+//
+// **The voice list belongs to the MACHINE's browser, not to Nib**, so what is stored is a voice NAME
+// and it is looked up in `getVoices()` at speak time. A name this browser does not have is not an
+// error and never silence: the utterance simply gets no `.voice`, and the browser speaks with its
+// default. **`getVoices()` answers `[]` before the engine has loaded** (Chromium), so the picker is
+// filled when `voiceschanged` fires and again whenever it takes focus — never only once at start-up.
+// **The voice is not chosen from the document's language**: that would decide `/pending 471`, which
+// this may only consume once something tells Nib what language a document is in.
+let readAloudVoice = '';
+let readAloudRate = 1;
+
+function speechVoices() {
+  const sp = speech();
+  try { return (sp && typeof sp.getVoices === 'function' && sp.getVoices()) || []; } catch { return []; }
+}
+
+function reflectReadAloudSettings() {
+  const sel = $('readAloudVoiceSel');
+  if (sel) {
+    const voices = [...speechVoices()].sort((a, b) => (a.lang || '').localeCompare(b.lang || '') || a.name.localeCompare(b.name));
+    const option = (label, value) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      return o;
+    };
+    const opts = [option('Browser default', '')];
+    for (const v of voices) opts.push(option(v.lang ? `${v.name} (${v.lang})` : v.name, v.name));
+    // A stored voice this browser lacks stays visible as the choice it is, rather than the picker
+    // quietly showing "Browser default" over a setting that says otherwise.
+    if (readAloudVoice && !voices.some((v) => v.name === readAloudVoice)) {
+      opts.push(option(`${readAloudVoice} (not available here)`, readAloudVoice));
+    }
+    sel.replaceChildren(...opts);
+    sel.value = readAloudVoice;
+  }
+  const rate = $('readAloudRateSel');
+  if (rate) rate.value = String(readAloudRate);
+}
+
+{
+  const sp = speech();
+  if (sp && typeof sp.addEventListener === 'function') sp.addEventListener('voiceschanged', reflectReadAloudSettings);
+  const sel = $('readAloudVoiceSel');
+  if (sel) {
+    sel.addEventListener('focus', reflectReadAloudSettings);
+    sel.addEventListener('change', () => { readAloudVoice = sel.value; saveSettings({ readAloudVoice }); });
+  }
+  const rate = $('readAloudRateSel');
+  if (rate) {
+    rate.addEventListener('change', () => {
+      readAloudRate = Number(rate.value) || 1;
+      saveSettings({ readAloudRate });
+    });
+  }
+}
+
 function reflectReadAloud() {
   if (!els.readAloudBtn) return;
   els.readAloudBtn.setAttribute('aria-pressed', String(readingAloud));
@@ -11998,6 +12060,10 @@ async function startReadAloud() {
   readingAloud = true;
   reflectReadAloud();
   const u = new (window.SpeechSynthesisUtterance || globalThis.SpeechSynthesisUtterance)(text);
+  // The stored voice, if this browser has it; otherwise nothing is set and the default speaks.
+  const chosen = readAloudVoice && speechVoices().find((v) => v.name === readAloudVoice);
+  if (chosen) u.voice = chosen;
+  if (readAloudRate !== 1) u.rate = readAloudRate;
   // Ending through the same door as every other exit, so the button cannot be left saying "Stop
   // reading" over a queue that has already drained.
   u.onend = () => { readingAloud = false; reflectReadAloud(); };
