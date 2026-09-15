@@ -186,7 +186,8 @@ func inspectTags(pdf []byte) tagState {
 	}
 	if mi, ok := cat["MarkInfo"]; ok {
 		if d, e := ctx.DereferenceDict(mi); e == nil && d != nil {
-			if b := d.BooleanEntry("Marked"); b != nil && *b {
+			// readBool dereferences: `BooleanEntry` reads an indirect /Marked as absent (/pending 489).
+			if readBool(ctx.XRefTable, d["Marked"]) {
 				s.marked = true
 			}
 		}

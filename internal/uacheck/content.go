@@ -47,6 +47,9 @@ type contentEvent struct {
 	artifact bool // the nearest relevant enclosing sequence is an /Artifact
 	mcid     int  // the innermost MCID in force, or -1
 	spKey    int  // the /StructParents key of the stream that owns mcid, or -1
+	// lang is whether some enclosing marked-content sequence declares a `/Lang` — how a producer states
+	// the language of a run of text on the content itself (`/pending 489`).
+	lang bool
 }
 
 // textState is the part of the graphics state the font rules need. `Tf` and `Tr` are graphics
@@ -63,6 +66,8 @@ type frame struct {
 	artifact bool
 	mcid     int
 	spKey    int
+	// lang is whether the sequence's own property list declares a `/Lang`.
+	lang bool
 }
 
 // textOperators and paintOperators are the operators that put something on the page.
@@ -234,7 +239,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 		case "BMC":
 			stack = append(stack, frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1})
 		case "BDC":
-			f := frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1}
+			f := frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1, lang: w.langOfBDC(src, operands, res)}
 			if m, ok := w.mcidOf(src, operands, res); ok {
 				f.mcid, f.spKey = m, w.spKey
 			}
@@ -341,8 +346,50 @@ func (w walker) event(stack []frame, text bool, where string) contentEvent {
 		if f.artifact && ev.mcid < 0 {
 			ev.artifact = true
 		}
+		if f.lang {
+			ev.lang = true
+		}
 	}
 	return ev
+}
+
+// langOfBDC reports whether a `BDC` declares a `/Lang`, in an inline property dictionary or in a named
+// property list in the stream's resources, through the checker's one `/Lang` reader.
+func (w walker) langOfBDC(src []byte, operands []contentstream.Token, res types.Dict) bool {
+	// Inline: /Span << … /Lang (en-US) … >> BDC — the value is a literal or a hex string operand.
+	for i, tk := range operands {
+		if tk.Kind != contentstream.Operand || string(tk.Bytes(src)) != "/Lang" || i+1 >= len(operands) {
+			continue
+		}
+		v := operands[i+1].Bytes(src)
+		switch {
+		case len(v) >= 2 && v[0] == '(' && v[len(v)-1] == ')':
+			return w.d.declaresLang(types.StringLiteral(v[1 : len(v)-1]))
+		case len(v) >= 2 && v[0] == '<' && v[len(v)-1] == '>':
+			return w.d.declaresLang(types.HexLiteral(v[1 : len(v)-1]))
+		}
+	}
+	// Named: /Span /P0 BDC, resolved through /Resources /Properties.
+	names := 0
+	for _, tk := range operands {
+		if tk.Kind != contentstream.Operand {
+			continue
+		}
+		b := tk.Bytes(src)
+		if len(b) == 0 || b[0] != '/' {
+			continue
+		}
+		names++
+		if names < 2 {
+			continue
+		}
+		if props := w.d.dict(w.d.dict(res["Properties"])[string(b[1:])]); props != nil {
+			if w.d.declaresLang(props["Lang"]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // firstName returns the first name operand, or "".

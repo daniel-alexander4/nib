@@ -4,8 +4,6 @@ import (
 	"encoding/xml"
 	"io"
 	"strings"
-
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Reading the XMP packet — `PLAN-accessibility.md` P07.S02.
@@ -50,11 +48,14 @@ type xmpFacts struct {
 	Title string
 	// UAPart is the `pdfuaid:part` value, empty when the identification schema is absent.
 	UAPart string
-	// LangAlts is every item of every language alternative (`rdf:Alt`) in the packet, with the
-	// `xml:lang` it declares — "" when it declares none. These are the metadata text 7.2 t33 is
+	// LangAlts is every language alternative (`rdf:Alt`) in the packet, each as the `xml:lang` of its
+	// items in order — "" for an item that declares none. These are the metadata text 7.2 t33 is
 	// about, measured: `dc:title`, `dc:description` and `dc:rights` as `rdf:Alt` give the clause a
 	// subject, while `dc:creator` (an `rdf:Seq`) and `xmp:CreateDate` do not.
-	LangAlts []string
+	//
+	// **Grouped per Alt, because the rule is about an Alt** (`/pending 489`): an Alt holding `x-default`
+	// AND a real language is determined, and a flat list could not tell that Alt from two Alts.
+	LangAlts [][]string
 	// Why carries the reason when Readable is false.
 	Why string
 }
@@ -106,16 +107,20 @@ func readXMP(d *Document) xmpFacts {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			// An `rdf:li` directly inside an `rdf:Alt` is one language alternative.
+			if t.Name.Space == nsRDF && t.Name.Local == "Alt" {
+				f.LangAlts = append(f.LangAlts, []string{})
+			}
+			// An `rdf:li` directly inside an `rdf:Alt` is one item of that alternative.
 			if t.Name.Space == nsRDF && t.Name.Local == "li" && len(path) > 0 &&
-				path[len(path)-1].Space == nsRDF && path[len(path)-1].Local == "Alt" {
+				path[len(path)-1].Space == nsRDF && path[len(path)-1].Local == "Alt" && len(f.LangAlts) > 0 {
 				lang := ""
 				for _, a := range t.Attr {
 					if a.Name.Space == nsXML && a.Name.Local == "lang" {
 						lang = a.Value
 					}
 				}
-				f.LangAlts = append(f.LangAlts, lang)
+				last := len(f.LangAlts) - 1
+				f.LangAlts[last] = append(f.LangAlts[last], lang)
 			}
 			path = append(path, t.Name)
 		case xml.EndElement:
@@ -150,20 +155,14 @@ func readXMP(d *Document) xmpFacts {
 	return f
 }
 
-// catalogLang returns the catalog's `/Lang`, trimmed.
+// catalogDeclaresLang reports whether the catalog declares a `/Lang` — present counts, even empty
+// (`Document.declaresLang` says why).
 //
-// **The catalog key is the only thing that determines a document's language for `7.2 t33` and
-// `7.2 t34`, measured rather than assumed.** P06.S04 put a `/Lang` on the CONTENT via
-// `/Span <</Lang (en)>> BDC` and 7.2 t34 still failed; P06.S05 put one on a form FIELD dictionary
-// and 7.2 t25 still failed. Both times the catalog key cleared it and nothing else did.
-func catalogLang(d *Document) string {
-	s, _ := d.Catalog["Lang"].(types.StringLiteral)
-	if s == "" {
-		return ""
-	}
-	dec, err := types.StringLiteralToString(s)
-	if err != nil {
-		return strings.TrimSpace(string(s))
-	}
-	return strings.TrimSpace(dec)
+// **What else determines a language, measured on veraPDF's own corpus (`/pending 489`).** For 7.2 t33
+// only the catalog key or an `rdf:Alt` item naming a real language does. For 7.2 t34 a marked-content
+// `/Lang` does too (`7.2-t34-pass-c.pdf`). This comment used to say P06.S04 had measured the content
+// route failing; that section records no such measurement, and the corpus says the opposite. P06.S05's
+// measurement stands: a `/Lang` on a form FIELD dictionary does not clear 7.2 t25.
+func catalogDeclaresLang(d *Document) bool {
+	return d.declaresLang(d.Catalog["Lang"])
 }

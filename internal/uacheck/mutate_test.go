@@ -310,8 +310,8 @@ func docWithViewerPref(t *testing.T, pdf []byte, key string, value types.Object)
 	return &Document{Ctx: ctx, Catalog: cat}
 }
 
-// withUAPart rewrites the metadata packet to declare a PDF/UA part, so `5 t1`'s wrong-value branch
-// can be told from its absent-value branch.
+// withUAPart rewrites the metadata packet to declare a PDF/UA part, so a wrong value (`5 t2`) can be
+// told from an absent identification (`5 t1`).
 func withUAPart(t *testing.T, pdf []byte, part string) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
 		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+

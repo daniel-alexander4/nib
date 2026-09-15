@@ -363,10 +363,15 @@ func TestTheTitleDisplayRuleReadsTheVALUEAndNotJustTheKey(t *testing.T) {
 // TestAWrongIdentificationIsDistinguishedFromAMissingOne.
 //
 // **Also found by probing.** Deleting the "no pdfuaid:part" branch left the suite green, because the
-// next guard catches an empty value too and returns `Fail` with a different message — a dead
-// conjunct hidden by its own successor. The verdicts are the same and the REASONS are not, and a
+// next guard caught an empty value too and returned `Fail` with a different message — a dead
+// conjunct hidden by its own successor. The verdicts were the same and the REASONS were not, and a
 // user told *"pdfuaid:part is \"\""* has been handed a different problem from *"there is no
 // pdfuaid:part"*.
+//
+// **Two clauses since `/pending 489`, as veraPDF has them.** veraPDF's 5 t1 is the identification's
+// presence and its 5 t2 the part's value (measured on its corpus file `5-t02-fail-a.pdf`), so a
+// missing identification fails 5 t1 and has no 5 t2 subject, while a wrong part passes 5 t1 and fails
+// 5 t2 — still naming the value, so the two cases stay distinguishable to a user.
 func TestAWrongIdentificationIsDistinguishedFromAMissingOne(t *testing.T) {
 	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
 	if err != nil {
@@ -380,15 +385,24 @@ func TestAWrongIdentificationIsDistinguishedFromAMissingOne(t *testing.T) {
 		t.Errorf("an ABSENT identification is reported as %q, which does not say it is absent",
 			missing.Why)
 	}
-	wrong := verdictOf(t, withUAPart(t, titled, "2"), "5 t1")
+	if got := verdictOf(t, titled, "5 t2"); got.Verdict != NotApplicable {
+		t.Errorf("an ABSENT identification reports %v for 5 t2 (%s), want NotApplicable — there is no part value to judge", got.Verdict, got.Why)
+	}
+	part2 := withUAPart(t, titled, "2")
+	if got := verdictOf(t, part2, "5 t1"); got.Verdict != Pass {
+		t.Errorf("a document declaring pdfuaid:part 2 reports %v for 5 t1 (%s), want Pass — the identification is present", got.Verdict, got.Why)
+	}
+	wrong := verdictOf(t, part2, "5 t2")
 	if wrong.Verdict != Fail {
-		t.Errorf("a document declaring pdfuaid:part 2 reports %v for 5 t1, want Fail — nib checks "+
-			"against PDF/UA-1 and cannot speak for part 2", wrong.Verdict)
+		t.Errorf("a document declaring pdfuaid:part 2 reports %v for 5 t2, want Fail — a PDF/UA-1 file declares part 1", wrong.Verdict)
 	}
 	if !strings.Contains(wrong.Why, `"2"`) {
 		t.Errorf("a WRONG identification is reported as %q, which does not name the value found — "+
 			"so it reads as the absent case and the two branches are indistinguishable to a user",
 			wrong.Why)
+	}
+	if got := verdictOf(t, withUAPart(t, titled, "1"), "5 t2"); got.Verdict != Pass {
+		t.Errorf("a document declaring pdfuaid:part 1 reports %v for 5 t2 (%s), want Pass", got.Verdict, got.Why)
 	}
 }
 

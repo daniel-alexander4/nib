@@ -2328,8 +2328,11 @@ Acceptance:
 - **`7.2 t34` joins this slice.** P07.S02 shipped it answering `CannotCheck` for any tagged document
   and named S03 in the reason it gives users; leaving that sentence false would be the stale-gate
   shape `/pending 433` is about. With the walk, each piece of text resolves: artifact → no language
-  needed, MCID → element or nearest ancestor `/Lang`, neither → `Fail`. A `/Span <</Lang>>` property
-  list is deliberately NOT read, because P06.S04 measured that veraPDF does not credit it.
+  needed, MCID → element or nearest ancestor `/Lang`, neither → `Fail`. ~~A `/Span <</Lang>>` property
+  list is deliberately NOT read, because P06.S04 measured that veraPDF does not credit it.~~ **Struck by
+  `/pending 489`, 2026-09-14: P06.S04's section records no such measurement, and veraPDF passes 7.2 t34
+  on its own corpus file `7.2-t34-pass-c.pdf`, whose text declares its language only on a marked-content
+  sequence. The rule now credits a property list's `/Lang`; `internal/uacheck/veracorpus_test.go` holds it.**
 - **P01's real tagged PDFs are gone.** `find / -name boi.pdf -o -name adgm_va.pdf` returns nothing;
   only their names survive in this plan. S05's corpus is regenerated from D9's LibreOffice recipe.
 

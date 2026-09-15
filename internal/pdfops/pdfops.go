@@ -138,6 +138,34 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 	return carryLang(pdf, out.Bytes())
 }
 
+// readLang resolves a `/Lang` value to its text — direct or indirect, a literal string or a hex one —
+// and is the ONE way this package reads a language (`/pending 489`). The readers it replaced each
+// accepted a narrower subset: `declareOCRLanguage` a direct literal only, so an author's hex or
+// indirect `/Lang` looked absent and tesseract's language was written over it; `carryLang` refused a
+// hex string, so a page operation dropped it. `internal/uacheck` keeps its own reader on purpose — the
+// checker does not share the writer's readings (uacheck/structure.go) — and langreader_test.go is
+// the guard that no bare cast comes back in this package.
+func readLang(xt *model.XRefTable, obj types.Object) string {
+	if obj == nil {
+		return ""
+	}
+	s, err := xt.DereferenceStringOrHexLiteral(obj, model.V10, nil)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// readBool resolves a boolean that may be stored indirectly (`/Marked 42 0 R`), the one way this
+// package reads one from a document.
+func readBool(xt *model.XRefTable, obj types.Object) bool {
+	if obj == nil {
+		return false
+	}
+	b, err := xt.DereferenceBoolean(obj, model.V10)
+	return err == nil && b != nil && b.Value()
+}
+
 // carryLang copies the catalog's /Lang across a page operation, and NOT the rest of the
 // catalog's page-independent state — the sections below are why.
 //
@@ -209,8 +237,10 @@ func carryLang(src, dst []byte) ([]byte, error) {
 	// to be in the new context: /Lang vanishing, a different string, or a dict — and a dict
 	// fails validateStringEntry, after which every pdfops entry point refuses the document,
 	// so the user could no longer open, save or sign it.
-	lang, err := sctx.XRefTable.DereferenceStringLiteral(sroot["Lang"], model.V10, nil)
-	if err != nil || lang == "" {
+	// And a HEX string too (`/pending 489`): the dereferencing call used here before refused a
+	// `HexLiteral`, so a page operation silently dropped a language written that way.
+	lang := readLang(sctx.XRefTable, sroot["Lang"])
+	if lang == "" {
 		return dst, nil
 	}
 	return writeMutated(dst, func(ctx *model.Context) error {
@@ -218,7 +248,8 @@ func carryLang(src, dst []byte) ([]byte, error) {
 		if cerr != nil {
 			return cerr
 		}
-		root["Lang"] = lang
+		// A language tag is ASCII (BCP 47), so a literal string carries it exactly.
+		root["Lang"] = types.StringLiteral(lang)
 		return nil
 	})
 }

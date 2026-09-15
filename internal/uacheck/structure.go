@@ -99,25 +99,22 @@ func (d *Document) standardType(elem types.Dict) string {
 	return name
 }
 
-// langOf returns the natural language declared by elem or its nearest ancestor that declares one,
-// walking `/P` up to the structure tree root.
+// declaresLangFor reports whether elem or any ancestor declares a `/Lang`, walking `/P` up to the
+// structure tree root — present counts, even empty (`declaresLang` says why).
 //
 // Language inherits down the tree (ISO 32000-1 §14.9.2), which is what lets one `/Lang` on a
 // `Document` element cover every paragraph beneath it.
-func (d *Document) langOf(elem types.Dict) string {
+func (d *Document) declaresLangFor(elem types.Dict) bool {
 	for depth := 0; elem != nil && depth < maxWalkDepth; depth++ {
 		if ty := elem.NameEntry("Type"); ty != nil && *ty == "StructTreeRoot" {
-			return ""
+			return false
 		}
-		if s, ok := elem["Lang"].(types.StringLiteral); ok && len(s) > 0 {
-			if dec, err := types.StringLiteralToString(s); err == nil && dec != "" {
-				return dec
-			}
-			return string(s)
+		if d.declaresLang(elem["Lang"]) {
+			return true
 		}
 		elem = d.dict(elem["P"])
 	}
-	return ""
+	return false
 }
 
 // resourcesOf returns a page's `/Resources`, climbing `/Parent` for the inherited case.

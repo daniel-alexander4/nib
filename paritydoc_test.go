@@ -140,7 +140,7 @@ func TestTheAccessibilityParityLedgerNamesEveryFeatureAndCitesEveryClaim(t *test
 	if named < 4 {
 		t.Fatalf("found %d nib tag subcommand(s) — the pattern no longer reads cmdTag", named)
 	}
-	for _, must := range []string{"--do ua", "--do tag", "17 of the 106"} {
+	for _, must := range []string{"--do ua", "--do tag", "18 of the 106"} {
 		if !strings.Contains(doc, must) {
 			t.Errorf("the ledger does not say %q", must)
 		}

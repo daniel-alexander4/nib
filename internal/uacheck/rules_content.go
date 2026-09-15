@@ -40,8 +40,7 @@ func checkMarkInfo(d *Document) Result {
 			Where:   "catalog",
 		}
 	}
-	b, ok := mi["Marked"].(types.Boolean)
-	if !ok || !bool(b) {
+	if marked, ok := d.boolValue(mi["Marked"]); !ok || !marked {
 		return Result{
 			Verdict: Fail,
 			Why:     "/MarkInfo does not say /Marked true, so a reader is never told to use the structure tree",
