@@ -21,33 +21,35 @@ import (
 // tagged by a list that described something else.
 
 // TagElement is one proposed element as a reviewer sees it.
+// The JSON tags are the proposal route's field names (`internal/server/tags.go`), held equal by a server
+// test, so `nib tag propose --json` prints what the Tags card reads (P10.S01).
 type TagElement struct {
-	ID     int
-	Role   string
-	Page   int
-	Text   string
-	Marker string
-	List   int
+	ID     int    `json:"id"`
+	Role   string `json:"role"`
+	Page   int    `json:"page"`
+	Text   string `json:"text"`
+	Marker string `json:"marker,omitempty"`
+	List   int    `json:"list"`
 	// Rect is the element's extent on its page in PDF user space: left, bottom, right, top. The
 	// vertical extent is ESTIMATED from baselines and size (0.85 em up, 0.25 em down) — enough to
 	// point at an element, not a measurement of its glyph boxes.
-	Rect [4]float64
+	Rect [4]float64 `json:"rect"`
 	// PageBox is the page's MediaBox — llx, lly, urx, ury — so a client can place Rect on the page it
 	// renders. Page rotation and CropBox are not applied.
-	PageBox [4]float64
+	PageBox [4]float64 `json:"pageBox"`
 }
 
 // TagPageNote is a page whose layout the grouping reported, and why.
 type TagPageNote struct {
-	Page   int
-	Reason string
+	Page   int    `json:"page"`
+	Reason string `json:"reason"`
 }
 
 // TagProposal is a document's proposed structure, as reviewable values.
 type TagProposal struct {
-	Elements    []TagElement
-	Unsupported []TagPageNote
-	NoText      []int
+	Elements    []TagElement  `json:"elements"`
+	Unsupported []TagPageNote `json:"unsupported"`
+	NoText      []int         `json:"noText"`
 }
 
 // TagReview is one element as the reviewer left it.

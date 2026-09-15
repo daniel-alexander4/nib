@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
+	"nib/internal/pdfops"
 	"nib/mdpdf"
 )
 
@@ -221,6 +224,39 @@ func TestTheTagRoutesReachTheirDoors(t *testing.T) {
 	tree := fn("handleTagsTree")
 	if !strings.Contains(tree, "pdfops.ReadStructure(") || strings.Contains(tree, "commitMutation") {
 		t.Error("handleTagsTree must read through pdfops.ReadStructure and write nothing")
+	}
+}
+
+// TestTheCLIsJSONIsTheRoutesShape — P10.S01. `nib tag tree --json` and `nib tag propose --json` print the
+// pdfops doors' values; the routes answer with this package's views of the same values. Two definitions of
+// one shape drift unless something holds them equal, and this is it: every field's JSON tag, options
+// included, the same on both sides.
+func TestTheCLIsJSONIsTheRoutesShape(t *testing.T) {
+	tags := func(v any) []string {
+		rt := reflect.TypeOf(v)
+		var out []string
+		for i := 0; i < rt.NumField(); i++ {
+			tag := rt.Field(i).Tag.Get("json")
+			if tag == "" {
+				t.Errorf("%s.%s carries no json tag, so its JSON name is the Go name and nothing holds it", rt.Name(), rt.Field(i).Name)
+			}
+			out = append(out, tag)
+		}
+		sort.Strings(out)
+		return out
+	}
+	for _, c := range []struct{ door, route any }{
+		{pdfops.StructureTree{}, tagTreeResponse{}},
+		{pdfops.StructureElement{}, tagTreeElementView{}},
+		{pdfops.TagProposal{}, tagProposalResponse{}},
+		{pdfops.TagElement{}, tagElementView{}},
+		{pdfops.TagPageNote{}, tagPageView{}},
+	} {
+		d, r := tags(c.door), tags(c.route)
+		if strings.Join(d, " ") != strings.Join(r, " ") {
+			t.Errorf("%T prints %v and the route's %T answers %v — the CLI and the panel would read different shapes",
+				c.door, d, c.route, r)
+		}
 	}
 }
 
