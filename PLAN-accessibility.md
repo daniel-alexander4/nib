@@ -2497,6 +2497,14 @@ reachable in the oracle guard, re-gated on that item rather than on this coordin
 instance itself — nib's tagged Markdown fails it whenever the source skips a heading level — is filed
 as `/pending 487`.
 
+**PIN 2026-09-14 (v1.129.107) — both forward pointers above are discharged; the class is not.**
+`/pending 489` made `5 t1 passed` reachable (`notYetReachable` is empty) and added 5 t2. `/pending 487`
+renumbers Markdown headings so they nest and adds 7.4.2 t1, so the heading-skip row above no longer
+reproduces: the checker covers 19 of 106. The class this section names stands, measured on the same
+base document with one paragraph retyped through `EditStructure`: `/Formula` passes all 19 and fails
+7.7 t1, `/Note` fails 7.9 t1, `/H` fails 7.4.4 t2/t3. Every surface now cites `/Formula`, held by
+`internal/uacheck/counterexample_test.go`, which fails when nib starts catching it.
+
 **(phase close, 2026-09-14, v1.129.71.)**
 
 | exit criterion | verdict | evidence |

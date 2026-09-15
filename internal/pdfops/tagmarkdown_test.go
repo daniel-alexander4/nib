@@ -72,6 +72,9 @@ func TestTheTreeShapeMatchesTheMarkdown(t *testing.T) {
 
 // TestAHeadingLevelSurvivesToTheTree: the level, not just the heading-ness. A tree that calls every
 // heading `H1` gives a reader one flat level to navigate by and is a different document.
+//
+// **`######` under `###` is H4, not H6, since `/pending 487`.** This test used to pin H6 there, which is a
+// skip from H3 — a tree that fails PDF/UA 7.4.2 t1. The hierarchy survives; the gap does not.
 func TestAHeadingLevelSurvivesToTheTree(t *testing.T) {
 	out, err := tagMarkdown([]byte("# One\n\n## Two\n\n### Three\n\n###### Six\n"),
 		authoringFaces(), markdownFallbackFonts())
@@ -79,9 +82,44 @@ func TestAHeadingLevelSurvivesToTheTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	kinds := elementKinds(t, out)
-	for _, want := range []string{"H1", "H2", "H3", "H6"} {
+	for _, want := range []string{"H1", "H2", "H3", "H4"} {
 		if kinds[want] != 1 {
 			t.Errorf("%d /%s, want 1; whole tree: %v", kinds[want], want, kinds)
+		}
+	}
+	if kinds["H6"] != 0 {
+		t.Errorf("%d /H6 — the source's jump from ### to ###### survived as a skipped level; whole tree: %v", kinds["H6"], kinds)
+	}
+}
+
+// TestHeadingsNestWithoutSkippingALevel — `/pending 487`, over sequences, read back in tree order.
+func TestHeadingsNestWithoutSkippingALevel(t *testing.T) {
+	for _, c := range []struct {
+		md   string
+		want []string
+	}{
+		{"# A\n\n### B\n", []string{"H1", "H2"}},
+		{"## A\n\n### B\n", []string{"H1", "H2"}},
+		{"# A\n\n### B\n\n# C\n\n## D\n", []string{"H1", "H2", "H1", "H2"}},
+		{"# A\n\n## B\n\n#### C\n\n## D\n\n### E\n", []string{"H1", "H2", "H3", "H2", "H3"}},
+		{"# A\n\n## B\n\n### C\n", []string{"H1", "H2", "H3"}},
+	} {
+		out, err := tagMarkdown([]byte(c.md), authoringFaces(), markdownFallbackFonts())
+		if err != nil {
+			t.Fatal(err)
+		}
+		tree, defects := checkTree(t, out)
+		if len(defects) > 0 {
+			t.Fatalf("%q: not self-consistent: %v", c.md, defects)
+		}
+		var got []string
+		for _, e := range tree.elems {
+			if len(e.kind) == 2 && e.kind[0] == 'H' {
+				got = append(got, e.kind)
+			}
+		}
+		if strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Errorf("%q tags its headings %v, want %v", c.md, got, c.want)
 		}
 	}
 }
