@@ -3550,13 +3550,35 @@ mutation and went red. The first-run survivor — dropping the temp file's chmod
 after the move to `atomicfile` it is probed as the mode argument. The slice gate does not fire
 (`internal/cli` only).
 
-#### P10.S04 — the docs and the parity ledger
+#### P10.S04 — the docs and the parity ledger *(done 2026-09-14, v1.129.99)*
 Scope: the README's CLI table and *How Nib compares* gain accessibility; `docs/accessibility-parity.md` compares
 nib with Acrobat Pro's accessibility tools feature by feature, each Acrobat claim cited to Adobe's own
 documentation, each nib claim to a test.
 Acceptance:
 - Every gap is named — the ones this phase decided above among them — and a guard fails when a named
   feature has no row.
+
+**(build, 2026-09-14, v1.129.99.)** `docs/accessibility-parity.md` (new), `paritydoc_test.go` (new), README.
+
+| measured | result |
+|---|---|
+| reaching Adobe's documentation | `helpx.adobe.com` answered HTTP 403 to WebFetch, to `curl` with a browser user agent, and to its experience-fragment URL. The Internet Archive held 2026 snapshots of the five pages cited (fetched with `--compressed`; without it the bodies read as binary and every topic search returned 0 hits). Every Acrobat quotation comes from those snapshots, and the doc says so under *Sources* |
+| what the searches corrected | two assumed gaps were false. Nib has **Read aloud** (`/pending 408`, `readaloud.test.mjs`), and the fields Nib authors carry `/TU` (`formtu_test.go`). Two assumed presences were absent: no route or control sets an existing document's language or title (searched: `server.go` routes for lang/title/properties/metadata, and `index.html` ids, where the only language select is OCR's), and no route names an existing form's fields (`server.go` form routes). Text export exists (`#exportTextBtn`), but no test mentions it (searched `test/` and Go test names), so its row is *Unmeasured* |
+| the ledger | 23 rows over 5 Adobe pages: 14 Partial, 5 Gap, 2 Unmeasured, 2 Nib only, and no Parity. A *Gaps, named* section lists every Gap and Unmeasured row, plus what each Partial row lacks. Where the cited pages describe no scope control or PDF/UA identifier writing, the doc says "Not described on the cited pages" |
+| the guard | `TestTheAccessibilityParityLedgerNamesEveryFeatureAndCitesEveryClaim`: every Acrobat cell cites an `[A#]` that resolves to a helpx URL under *Sources*; every cited Go test exists (walked from `*_test.go`, at least 500 names); every cited JS test title is in its file; every Parity, Partial or Nib-only row cites a test; every feature named on Adobe's pages has a row (a list, because Acrobat has no code here to enumerate); every accessibility route is enumerated from `server.go` (6) and every `nib tag` subcommand from `cmdTag` (4). `TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo` now also holds the ledger's "17 of the 106" |
+| the README | *How Nib compares* points to the ledger. It gains no table row, because Foxit and PDF-XChange were not measured and the table's other columns would be guesses. The CLI table gains `nib tag tree`, `propose`, `commit` and `edit`; the watch row gained `ua` at S03 |
+
+- **Pin — no Parity row.** On every feature both pages describe, Acrobat's documented reach exceeds what a Nib
+  test shows. *Partial* rows name the missing part in the Nib cell, and the named-gaps list repeats it.
+- **Pin — the Adobe citations are snapshots.** A snapshot can lag the live page. The guard checks that a
+  citation exists, not that its words still match Adobe's current page.
+- **Declared, not probed:** the row-cell count check, and the guard's too-few-rows, too-few-routes and
+  too-few-tests floors.
+
+Eleven mutations red: a cited Go test renamed, a source removed, the Reflow row renamed, a route
+unmentioned, a JS title changed, a Partial row's evidence removed, "17 of the 106" removed (both guards),
+an undefined status, an Acrobat claim without a source, `nib tag edit` unmentioned, and a new
+`/api/tags/roles` route in `server.go`. The slice gate does not fire (docs and tests only).
 
 ---
 
