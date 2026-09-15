@@ -220,12 +220,9 @@
            items — the pattern the accordion replaced. -->
       <div class="tbgroup" data-label="Open a Document" data-fold="1">
       <button id="openMenuItem">Open…</button>
+      <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
       <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
       <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
-      <!-- The recent list, inline. It was a dropdown; here the card holds it, under its own label
-           (/pending 485) — an unlabelled column of file names reads as more open buttons. -->
-      <p class="libhint" id="recentLabel">Open Recent</p>
-      <div class="recentSlot" role="group" aria-labelledby="recentLabel"></div>
             </div>
       <div class="tbgroup" data-label="Save a Copy" data-fold="2">
       <button id="saveFlatBtn">Save flattened PDF</button>
@@ -1268,7 +1265,7 @@
   </div>
 
   <!-- Open a PDF by path (browse the filesystem so the file keeps a real path:
-       it can be saved in place and is remembered in Recent) -->
+       it can be saved in place and is remembered in Open Recent) -->
   <div id="openModal" hidden>
     <div class="sigcard">
       <h3>Open a PDF</h3>
@@ -1285,6 +1282,19 @@
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="openCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open Recent: the files opened before, newest first. A dialog like Open…, reached by its own
+       button in the File card; the list is read from the server each time it opens. -->
+  <div id="recentModal" hidden>
+    <div class="sigcard">
+      <h3>Open Recent</h3>
+      <ul id="recentList" class="dirlist"></ul>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="recentCancel">Cancel</button>
       </div>
     </div>
   </div>

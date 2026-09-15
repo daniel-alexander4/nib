@@ -80,7 +80,7 @@ const EXEMPT = new Set([
   // They get up-front reasons rather than a blanket skip, per ADR-009.
   //
   // These CREATE or receive a document, so requiring one would be circular:
-  'openMenuItem', 'officeOpenBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
+  'openMenuItem', 'openRecentBtn', 'officeOpenBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
   // Gated by their own state, not by the registry: saveBtn follows canSave, the find
   // buttons follow the search results, and closeAllBtn is hidden below two documents.
   'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',
