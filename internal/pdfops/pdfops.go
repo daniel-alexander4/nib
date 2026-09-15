@@ -258,24 +258,24 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 	return dst, dropped, nil
 }
 
-// InsertBlank inserts a blank page immediately after the given page (1-based).
-// With a nil page config the blank inherits that page's MediaBox, so the inserted
-// sheet matches its neighbour's size.
-func InsertBlank(pdf []byte, afterPage int) ([]byte, error) {
+// InsertBlank inserts a blank page immediately before or after the given page (1-based)
+// — before page 1 prepends, after the last page appends (/pending 483). With a nil page
+// config the blank inherits that page's MediaBox, so the inserted sheet matches its
+// neighbour's size. `before` is pdfcpu's own flag, passed through.
+func InsertBlank(pdf []byte, page int, before bool) ([]byte, error) {
 	var out bytes.Buffer
-	sel := []string{strconv.Itoa(afterPage)}
-	if err := api.InsertPages(bytes.NewReader(pdf), &out, sel, false, nil, nil); err != nil {
+	sel := []string{strconv.Itoa(page)}
+	if err := api.InsertPages(bytes.NewReader(pdf), &out, sel, before, nil, nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
 }
 
-// InsertPDF inserts the pages of other immediately BEFORE page (1-based) of pdf.
-// Inserting before page 1 prepends other to the document; to add pages at the
-// very end use Append. Together with Append this covers every position. There is
-// no native pdfcpu positional merge, so it composes via splice (Collect + merge),
-// the same split-and-glue replacePage uses.
-func InsertPDF(pdf, other []byte, page int) ([]byte, error) {
+// InsertPDF inserts the pages of other immediately before or after page (1-based) of pdf.
+// Before page 1 prepends; after the last page is Append with this document's language
+// carried (splice omits an empty right side). There is no native pdfcpu positional merge,
+// so it composes via splice (Collect + merge), the same split-and-glue replacePage uses.
+func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
 	n, err := PageCount(pdf)
 	if err != nil {
 		return nil, err
@@ -283,7 +283,10 @@ func InsertPDF(pdf, other []byte, page int) ([]byte, error) {
 	if page < 1 || page > n {
 		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
 	}
-	return splice(pdf, page-1, page, n, other)
+	if before {
+		return splice(pdf, page-1, page, n, other)
+	}
+	return splice(pdf, page, page+1, n, other)
 }
 
 // DuplicatePage returns pdf with page (1-based) duplicated in place: the copy is
@@ -2038,7 +2041,7 @@ func Booklet(pdf []byte, border bool) ([]byte, error) {
 	// middle of a sheet, which is the one arrangement that cannot be folded into a booklet.
 	padded := pdf
 	for pad := (4 - n%4) % 4; pad > 0; pad-- {
-		padded, err = InsertBlank(padded, n)
+		padded, err = InsertBlank(padded, n, false)
 		if err != nil {
 			return nil, fmt.Errorf("could not pad to a whole sheet: %w", err)
 		}

@@ -825,10 +825,10 @@ hover a thumbnail to rotate (either direction) or delete a single page.
 rotate, delete, or **move the whole selection to the front or back** (⤒ / ⤓) from the
 bar above the thumbnails — or **drag a selected thumbnail** to slide the whole group to
 any spot, keeping its order. **Extract pages…** saves a range (type `1-3, 5`) as a new PDF without
-touching the open document, and **Insert blank page** drops a fresh page — matching
-its neighbour's size — after the current one. **Duplicate page** drops a copy of the
-current page right after it, and **Insert PDF…** splices another PDF in before the
-current page (before page 1 to prepend a cover; use **+ Append PDF** for the end).
+touching the open document, and **Blank page before** / **Blank page after** drop a fresh page —
+matching its neighbour's size — on that side of the current one. **Duplicate page** drops a copy of the
+current page right after it, and **Insert PDF before…** / **Insert PDF after…** splice another PDF in on
+that side of the current page (before page 1 to prepend a cover, after the last page to add to the end).
 **Page numbers…** stamps a running
 number onto every page at the corner you choose — add a prefix and a zero-pad
 width for Bates numbering (e.g. `ABC` + width 6 → `ABC000001`), or tick "of N" for

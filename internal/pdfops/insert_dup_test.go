@@ -2,16 +2,18 @@ package pdfops
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
+	"nib/internal/testpdf"
 )
 
 // TestInsertPDF proves InsertPDF places the other document's pages immediately
-// BEFORE the chosen page (before page 1 prepends), in order, leaving the host
-// pages intact. Pages are built at distinct sizes so order — not just count — is
-// provable by dimensions.
+// before or after the chosen page, in order, leaving the host pages intact. Pages
+// are built at distinct sizes so order — not just count — is provable by dimensions.
 func TestInsertPDF(t *testing.T) {
 	conf := model.NewDefaultConfiguration()
 	base, err := ImagesToPDF([]RasterPage{
@@ -32,95 +34,109 @@ func TestInsertPDF(t *testing.T) {
 	baseDims, _ := api.PageDims(bytes.NewReader(base), conf)
 	otherDims, _ := api.PageDims(bytes.NewReader(other), conf)
 
-	// Insert before page 2: page1, other1, other2, page2, page3.
-	mid, err := InsertPDF(base, other, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, _ := api.PageDims(bytes.NewReader(mid), conf)
-	exp := [][2]int{{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0, 2}} // {kind, idx}: base0, other0, other1, base1, base2
-	if len(got) != len(exp) {
-		t.Fatalf("insert before 2: count = %d, want %d", len(got), len(exp))
-	}
-	for i, e := range exp {
-		ref := baseDims[e[1]]
-		if e[0] == 1 {
-			ref = otherDims[e[1]]
+	// Each case lists the result as {kind, idx}: kind 0 is a base page, 1 an inserted one.
+	b0, b1, b2, o0, o1 := [2]int{0, 0}, [2]int{0, 1}, [2]int{0, 2}, [2]int{1, 0}, [2]int{1, 1}
+	for _, tc := range []struct {
+		name   string
+		page   int
+		before bool
+		want   [][2]int
+	}{
+		{"before page 1 prepends", 1, true, [][2]int{o0, o1, b0, b1, b2}},
+		{"before page 2", 2, true, [][2]int{b0, o0, o1, b1, b2}},
+		{"after page 1", 1, false, [][2]int{b0, o0, o1, b1, b2}},
+		{"after page 2", 2, false, [][2]int{b0, b1, o0, o1, b2}},
+		{"after the last page appends", 3, false, [][2]int{b0, b1, b2, o0, o1}},
+	} {
+		out, err := InsertPDF(base, other, tc.page, tc.before)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
 		}
-		if !sameDim(got[i], ref) {
-			t.Errorf("insert before 2: page %d = %v, want %v", i+1, got[i], ref)
+		got, _ := api.PageDims(bytes.NewReader(out), conf)
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: count = %d, want %d", tc.name, len(got), len(tc.want))
+		}
+		for i, e := range tc.want {
+			ref := baseDims[e[1]]
+			if e[0] == 1 {
+				ref = otherDims[e[1]]
+			}
+			if !sameDim(got[i], ref) {
+				t.Errorf("%s: page %d = %v, want %v", tc.name, i+1, got[i], ref)
+			}
 		}
 	}
 
-	// Insert before page 1 prepends: other1, other2, page1, page2, page3.
-	pre, err := InsertPDF(base, other, 1)
+	// After the last page is Append, page for page.
+	after, _ := InsertPDF(base, other, 3, false)
+	appended, err := Append(base, other)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pd, _ := api.PageDims(bytes.NewReader(pre), conf)
-	if len(pd) != 5 {
-		t.Fatalf("prepend: count = %d, want 5", len(pd))
+	ad, _ := api.PageDims(bytes.NewReader(after), conf)
+	pd, _ := api.PageDims(bytes.NewReader(appended), conf)
+	if len(ad) != len(pd) {
+		t.Fatalf("after the last page has %d pages and Append %d", len(ad), len(pd))
 	}
-	if !sameDim(pd[0], otherDims[0]) || !sameDim(pd[1], otherDims[1]) || !sameDim(pd[2], baseDims[0]) {
-		t.Errorf("prepend: order wrong — got %v,%v,%v want other0,other1,base0", pd[0], pd[1], pd[2])
+	for i := range pd {
+		if !sameDim(ad[i], pd[i]) {
+			t.Errorf("after the last page differs from Append at page %d: %v vs %v", i+1, ad[i], pd[i])
+		}
 	}
 
-	if _, err := InsertPDF(base, other, 0); err == nil {
-		t.Error("insert at page 0 should error")
-	}
-	if _, err := InsertPDF(base, other, 4); err == nil {
-		t.Error("insert past the last page should error")
+	for _, before := range []bool{true, false} {
+		if _, err := InsertPDF(base, other, 0, before); err == nil {
+			t.Errorf("insert at page 0 (before=%v) should error", before)
+		}
+		if _, err := InsertPDF(base, other, 4, before); err == nil {
+			t.Errorf("insert past the last page (before=%v) should error", before)
+		}
 	}
 }
 
-// TestDuplicatePage proves DuplicatePage emits the chosen page twice, in place,
-// leaving the rest untouched — including the page-1 and last-page edges.
-func TestDuplicatePage(t *testing.T) {
-	conf := model.NewDefaultConfiguration()
-	base, err := ImagesToPDF([]RasterPage{
-		rasterPage(t, 80, 110),
-		rasterPage(t, 120, 90),
-		rasterPage(t, 200, 150),
-	})
+// TestInsertBlankGoesOnTheSideAsked — before page 1 prepends, after the last page appends. A blank
+// takes its neighbour's size, so "before page p" and "after page p" have the same widths and only the
+// content can tell them apart: each base page draws its own word, and the blank is the page that draws
+// nothing.
+func TestInsertBlankGoesOnTheSideAsked(t *testing.T) {
+	base, err := testpdf.Text("first", "second")
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseDims, _ := api.PageDims(bytes.NewReader(base), conf)
-
-	// Duplicate page 2: page1, page2, page2, page3.
-	dup, err := DuplicatePage(base, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, _ := api.PageDims(bytes.NewReader(dup), conf)
-	want := []int{0, 1, 1, 2}
-	if len(got) != len(want) {
-		t.Fatalf("duplicate page 2: count = %d, want 4", len(got))
-	}
-	for i, b := range want {
-		if !sameDim(got[i], baseDims[b]) {
-			t.Errorf("duplicate page 2: page %d = %v, want base[%d] %v", i+1, got[i], b, baseDims[b])
+	for _, tc := range []struct {
+		name   string
+		page   int
+		before bool
+		want   []string // each page's text in the result; "" is the blank
+	}{
+		{"before page 1 prepends", 1, true, []string{"", "first", "second"}},
+		{"after page 1", 1, false, []string{"first", "", "second"}},
+		{"before page 2", 2, true, []string{"first", "", "second"}},
+		{"after the last page appends", 2, false, []string{"first", "second", ""}},
+	} {
+		out, err := InsertBlank(base, tc.page, tc.before)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
 		}
-	}
-
-	// Edge: duplicate the first page.
-	first, _ := DuplicatePage(base, 1)
-	fd, _ := api.PageDims(bytes.NewReader(first), conf)
-	if len(fd) != 4 || !sameDim(fd[0], baseDims[0]) || !sameDim(fd[1], baseDims[0]) || !sameDim(fd[2], baseDims[1]) {
-		t.Errorf("duplicate page 1: got %v, want base0,base0,base1,base2", fd)
-	}
-
-	// Edge: duplicate the last page.
-	last, _ := DuplicatePage(base, 3)
-	ld, _ := api.PageDims(bytes.NewReader(last), conf)
-	if len(ld) != 4 || !sameDim(ld[2], baseDims[2]) || !sameDim(ld[3], baseDims[2]) {
-		t.Errorf("duplicate last page: got %v, want …,base2,base2", ld)
-	}
-
-	if _, err := DuplicatePage(base, 0); err == nil {
-		t.Error("duplicate page 0 should error")
-	}
-	if _, err := DuplicatePage(base, 4); err == nil {
-		t.Error("duplicate past the last page should error")
+		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ctx.PageCount != len(tc.want) {
+			t.Fatalf("%s: count = %d, want %d", tc.name, ctx.PageCount, len(tc.want))
+		}
+		for pg := 1; pg <= ctx.PageCount; pg++ {
+			pr, err := readPageRuns(ctx, pg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text string
+			for _, r := range pr.runs {
+				text += r.text
+			}
+			if strings.TrimSpace(text) != tc.want[pg-1] {
+				t.Errorf("%s: page %d reads %q, want %q", tc.name, pg, text, tc.want[pg-1])
+			}
+		}
 	}
 }

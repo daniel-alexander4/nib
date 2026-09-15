@@ -73,7 +73,7 @@ func TestABookletIsPaddedToAWholeSheet(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i := 1; i < tc.pages; i++ {
-			if src, err = InsertBlank(src, i); err != nil {
+			if src, err = InsertBlank(src, i, false); err != nil {
 				t.Fatal(err)
 			}
 		}

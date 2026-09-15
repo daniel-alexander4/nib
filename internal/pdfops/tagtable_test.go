@@ -145,7 +145,7 @@ var tagFates = map[string]tagFate{
 	// adds a page with no content stream at all, and a page with nothing on it has nothing to tag —
 	// counting it as undescribed would make adding an empty page a law-1 violation. See
 	// `tagState.undescribed`.
-	"InsertBlank": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return InsertBlank(b, 1) }},
+	"InsertBlank": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return InsertBlank(b, 1, false) }},
 
 	// ── DROPPED. The claim goes with the content it described, which is law 1 satisfied honestly.
 	// These are the page-set and page-composition operations: the tree cannot survive a subset it no
@@ -158,7 +158,7 @@ var tagFates = map[string]tagFate{
 	"SplitPage":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
 	"SplitRegions":  {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
 	"Booklet":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},
-	"InsertPDF":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1) }},
+	"InsertPDF":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
 	"CarryAttachments": {verdict: "dropped", drive: func(b []byte) ([]byte, error) {
 		o, _, e := CarryAttachments(b, untaggedFixture())
 		return o, e

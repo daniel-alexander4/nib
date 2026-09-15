@@ -72,7 +72,7 @@ func TestWhatEachDocumentPrimitiveDoesToASignature(t *testing.T) {
 		{"Rotate", breaks, "/api/pages op=rotate",
 			func(b []byte) ([]byte, error) { return Rotate(b, []string{"1"}, 90) }},
 		{"InsertBlank", breaks, "/api/pages op=insertblank",
-			func(b []byte) ([]byte, error) { return InsertBlank(b, 1) }},
+			func(b []byte) ([]byte, error) { return InsertBlank(b, 1, false) }},
 		{"Append", breaks, "/api/pages op=append",
 			func(b []byte) ([]byte, error) { return Append(b, base) }},
 		{"RemovePages", erases, "/api/pages op=delete",
