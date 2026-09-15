@@ -227,9 +227,9 @@ const els = {
   reloadBtn: $('reloadBtn'), // Undo/Redo left the toolbar in v1.125.0; Ctrl+Z is the route (ADR-023)
   docTitle: $('docTitle'), docTitleName: $('docTitleName'), docDirty: $('docDirty'),
   rotateLeftBtn: $('rotateLeftBtn'), rotateRightBtn: $('rotateRightBtn'),
-  extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'),
+  extractBtn: $('extractBtn'), insertBlankBtn: $('insertBlankBtn'), insertBlankBeforeBtn: $('insertBlankBeforeBtn'),
   duplicatePageBtn: $('duplicatePageBtn'),
-  insertPdfBtn: $('insertPdfBtn'), insertPdfInput: $('insertPdfInput'),
+  insertPdfBtn: $('insertPdfBtn'), insertPdfAfterBtn: $('insertPdfAfterBtn'), insertPdfInput: $('insertPdfInput'),
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
@@ -5962,6 +5962,7 @@ async function pageOp(op, extra = {}) {
   if (extra.deg != null) form.append('deg', String(extra.deg));
   if (extra.file) form.append('append', extra.file, 'append.pdf');
   if (extra.page != null) form.append('page', String(extra.page));
+  if (extra.side) form.append('side', extra.side);
   if (extra.cols != null) form.append('cols', String(extra.cols));
   if (extra.rows != null) form.append('rows', String(extra.rows));
   if (extra.resize) form.append('resize', '1');
@@ -6091,9 +6092,10 @@ function moveSelected(toFront) {
 els.selMoveFrontBtn.onclick = () => moveSelected(true);
 els.selMoveBackBtn.onclick = () => moveSelected(false);
 
-// Insert a blank page after the page on screen — a replace-in-place mutation, so
-// it routes through pageOp like rotate/delete (the blank matches the neighbour).
-els.insertBlankBtn.onclick = () => pageOp('insertblank', { page: view.viewer.currentPageNumber });
+// Insert a blank page before or after the page on screen (/pending 483) — a replace-in-place
+// mutation, so it routes through pageOp like rotate/delete (the blank matches the neighbour).
+els.insertBlankBeforeBtn.onclick = () => pageOp('insertblank', { page: view.viewer.currentPageNumber, side: 'before' });
+els.insertBlankBtn.onclick = () => pageOp('insertblank', { page: view.viewer.currentPageNumber, side: 'after' });
 
 // Duplicate the page on screen — the copy lands right after it (replace-in-place
 // mutation, same pageOp rail as insert-blank).
@@ -6101,13 +6103,17 @@ els.duplicatePageBtn.onclick = async () => {
   if (await pageOp('duplicate', { page: view.viewer.currentPageNumber })) toast('Page duplicated');
 };
 
-// Insert another PDF BEFORE the page on screen (before page 1 prepends; use
-// "+ Append PDF" for the end). Reuses pageOp's `file` field (the `append` part).
-els.insertPdfBtn.onclick = () => els.insertPdfInput.click();
+// Insert another PDF before or after the page on screen (/pending 483; before page 1 prepends,
+// after the last page appends). Both buttons share the one file input, and each sets the side just
+// before opening it, so a pick always carries the side of the button that opened the picker.
+// Reuses pageOp's `file` field (the `append` part).
+let insertPdfSide = 'before';
+els.insertPdfBtn.onclick = () => { insertPdfSide = 'before'; els.insertPdfInput.click(); };
+els.insertPdfAfterBtn.onclick = () => { insertPdfSide = 'after'; els.insertPdfInput.click(); };
 els.insertPdfInput.onchange = async () => {
   const file = els.insertPdfInput.files[0];
   els.insertPdfInput.value = '';
-  if (file && await pageOp('insertpdf', { file, page: view.viewer.currentPageNumber })) toast('PDF inserted');
+  if (file && await pageOp('insertpdf', { file, page: view.viewer.currentPageNumber, side: insertPdfSide })) toast('PDF inserted');
 };
 
 // --- extract a page range into a new PDF -------------------------------------
@@ -10655,7 +10661,7 @@ const DOC_REQUIRED = [
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
   'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
-  'extractBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
+  'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'closeBtn', 'reloadBtn',
   // Find opens onto the open document; with nothing open there is nothing to search.

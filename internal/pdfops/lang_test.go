@@ -273,14 +273,17 @@ func TestInsertingADocumentKeepsTHISDocumentsLanguage(t *testing.T) {
 		t.Fatalf("setup: the inserted document already carries /Lang %q, so this cannot tell a "+
 			"carried language from an inherited one", got)
 	}
-	for _, at := range []int{1, 2, 3} {
-		out, err := InsertPDF(src, other, at)
-		if err != nil {
-			t.Fatalf("InsertPDF at %d: %v", at, err)
-		}
-		if got := catalogLang(t, out); got != "en-GB" {
-			t.Errorf("InsertPDF at page %d returned /Lang %q, want \"en-GB\" — the inserted "+
-				"document's catalog has replaced this document's", at, got)
+	// Both sides (/pending 483): after the last page is the tail case, before page 1 the head case.
+	for _, before := range []bool{true, false} {
+		for _, at := range []int{1, 2, 3} {
+			out, err := InsertPDF(src, other, at, before)
+			if err != nil {
+				t.Fatalf("InsertPDF at %d (before=%v): %v", at, before, err)
+			}
+			if got := catalogLang(t, out); got != "en-GB" {
+				t.Errorf("InsertPDF at page %d (before=%v) returned /Lang %q, want \"en-GB\" — the inserted "+
+					"document's catalog has replaced this document's", at, before, got)
+			}
 		}
 	}
 }

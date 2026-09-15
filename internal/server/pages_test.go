@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -97,6 +99,126 @@ func TestInsertBlankUpdatesDocument(t *testing.T) {
 	pdfResp.Body.Close()
 	if n, _ := pdfops.PageCount(got); n != 4 {
 		t.Errorf("current document page count = %d, want 4 (blank inserted)", n)
+	}
+}
+
+// TestTheInsertDoorsTakeASide — /pending 483. Each door reads `side`; without one it keeps the side it
+// always had; a side that is neither is refused and the document is unchanged. An inserted PDF's side is
+// read from page widths (its page differs from its neighbours); a blank copies its neighbour's size, so its
+// side is read from which page has no content stream.
+func TestTheInsertDoorsTakeASide(t *testing.T) {
+	doc, err := pdfops.ImagesToPDF([]pdfops.RasterPage{
+		{Image: pageImage(t, 160, 220), W: 80, H: 110},
+		{Image: pageImage(t, 200, 150), W: 100, H: 75},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert, err := pdfops.ImagesToPDF([]pdfops.RasterPage{{Image: pageImage(t, 80, 120), W: 40, H: 60}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// post returns the status, the document after, and the document before — a refused op must leave
+	// the open document byte-identical.
+	post := func(fields map[string]string, withInsert bool) (int, []byte, []byte) {
+		t.Helper()
+		ts, path := startServer(t)
+		c, csrf := authedClient(t, ts)
+		openByPath(t, ts.URL, c, csrf, path)
+		beforeResp, _ := c.Get(ts.URL + "/api/pdf")
+		prior, _ := io.ReadAll(beforeResp.Body)
+		beforeResp.Body.Close()
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+		fw.Write(doc)
+		if withInsert {
+			af, _ := mw.CreateFormFile("append", "insert.pdf")
+			af.Write(insert)
+		}
+		for k, v := range fields {
+			mw.WriteField(k, v)
+		}
+		mw.Close()
+		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/pages", mw.FormDataContentType(), &buf)
+		resp.Body.Close()
+		pdfResp, _ := c.Get(ts.URL + "/api/pdf")
+		got, _ := io.ReadAll(pdfResp.Body)
+		pdfResp.Body.Close()
+		return resp.StatusCode, got, prior
+	}
+	widths := func(pdf []byte) []float64 {
+		t.Helper()
+		dims, err := api.PageDims(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var w []float64
+		for _, d := range dims {
+			w = append(w, math.Round(d.Width))
+		}
+		return w
+	}
+	blankAt := func(pdf []byte) []int {
+		t.Helper()
+		ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var at []int
+		for pg := 1; pg <= ctx.PageCount; pg++ {
+			d, _, _, err := ctx.PageDict(pg, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A blank page draws nothing: pdfcpu reports it as having no content, or its stream is empty.
+			content, err := ctx.XRefTable.PageContent(d, pg)
+			if errors.Is(err, model.ErrNoContent) || (err == nil && len(bytes.TrimSpace(content)) == 0) {
+				at = append(at, pg)
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		}
+		return at
+	}
+
+	for _, tc := range []struct {
+		name   string
+		fields map[string]string
+		pdf    bool
+		want   []float64
+		blank  []int
+	}{
+		{"a PDF with no side goes before", map[string]string{"op": "insertpdf", "page": "2"}, true, []float64{80, 40, 100}, nil},
+		{"a PDF before page 1", map[string]string{"op": "insertpdf", "page": "1", "side": "before"}, true, []float64{40, 80, 100}, nil},
+		{"a PDF after page 1", map[string]string{"op": "insertpdf", "page": "1", "side": "after"}, true, []float64{80, 40, 100}, nil},
+		{"a PDF after the last page", map[string]string{"op": "insertpdf", "page": "2", "side": "after"}, true, []float64{80, 100, 40}, nil},
+		{"a blank with no side goes after", map[string]string{"op": "insertblank", "page": "1"}, false, []float64{80, 80, 100}, []int{2}},
+		{"a blank before page 1", map[string]string{"op": "insertblank", "page": "1", "side": "before"}, false, []float64{80, 80, 100}, []int{1}},
+		{"a blank after the last page", map[string]string{"op": "insertblank", "page": "2", "side": "after"}, false, []float64{80, 100, 100}, []int{3}},
+	} {
+		code, got, _ := post(tc.fields, tc.pdf)
+		if code != http.StatusOK {
+			t.Fatalf("%s: status %d", tc.name, code)
+		}
+		if w := widths(got); fmt.Sprint(w) != fmt.Sprint(tc.want) {
+			t.Errorf("%s: page widths %v, want %v", tc.name, w, tc.want)
+		}
+		if tc.blank != nil {
+			if b := blankAt(got); fmt.Sprint(b) != fmt.Sprint(tc.blank) {
+				t.Errorf("%s: blank page(s) at %v, want %v", tc.name, b, tc.blank)
+			}
+		}
+	}
+
+	for _, op := range []string{"insertblank", "insertpdf"} {
+		code, got, prior := post(map[string]string{"op": op, "page": "1", "side": "middle"}, op == "insertpdf")
+		if code != http.StatusBadRequest {
+			t.Errorf("%s with side=middle: status %d, want 400", op, code)
+		}
+		if !bytes.Equal(got, prior) {
+			t.Errorf("%s with side=middle changed the open document", op)
+		}
 	}
 }
 

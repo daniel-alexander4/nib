@@ -80,12 +80,16 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		result, err = pdfops.Collect(pdfBytes, pages)
 		result, err = carryAttachments(pdfBytes, result, err)
 	case "insertblank":
-		afterPage, pErr := strconv.Atoi(r.FormValue("page"))
+		page, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
 			httpError(w, http.StatusBadRequest, "insert needs a whole-number page")
 			return
 		}
-		result, err = pdfops.InsertBlank(pdfBytes, afterPage)
+		before, ok2 := insertSide(w, r, false) // a blank page has always gone after
+		if !ok2 {
+			return
+		}
+		result, err = pdfops.InsertBlank(pdfBytes, page, before)
 	case "append":
 		other, ok2 := formFileBytes(w, r, "append")
 		if !ok2 {
@@ -93,16 +97,20 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err = pdfops.Append(pdfBytes, other)
 	case "insertpdf":
-		beforePage, pErr := strconv.Atoi(r.FormValue("page"))
+		page, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
 			httpError(w, http.StatusBadRequest, "insert needs a whole-number page")
+			return
+		}
+		before, ok2 := insertSide(w, r, true) // an inserted PDF has always gone before
+		if !ok2 {
 			return
 		}
 		other, ok2 := formFileBytes(w, r, "append") // the secondary PDF reuses the append file field
 		if !ok2 {
 			return
 		}
-		result, err = pdfops.InsertPDF(pdfBytes, other, beforePage)
+		result, err = pdfops.InsertPDF(pdfBytes, other, page, before)
 	case "duplicate":
 		pageNum, pErr := strconv.Atoi(r.FormValue("page"))
 		if pErr != nil {
@@ -199,6 +207,22 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))
+}
+
+// insertSide reads an insert's `side` — "before" or "after" the page — and reports whether it goes
+// before. An absent side keeps the door's own default (/pending 483: each door offered one side, and a
+// caller that sends none still gets it); anything else is answered 400 and reported not ok.
+func insertSide(w http.ResponseWriter, r *http.Request, defaultBefore bool) (before, ok bool) {
+	switch r.FormValue("side") {
+	case "":
+		return defaultBefore, true
+	case "before":
+		return true, true
+	case "after":
+		return false, true
+	}
+	httpError(w, http.StatusBadRequest, "side must be before or after")
+	return false, false
 }
 
 // splitPages parses a comma-separated page selection ("1,3,5"); empty means all.

@@ -122,7 +122,7 @@ func TestPageOps(t *testing.T) {
 		t.Errorf("after extract subset: count = %d, want 2", n)
 	}
 
-	inserted, err := InsertBlank(pdf, 2)
+	inserted, err := InsertBlank(pdf, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
