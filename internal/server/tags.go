@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -9,7 +8,7 @@ import (
 	"strings"
 
 	"nib/internal/pdfops"
-	"nib/internal/sign"
+	"nib/internal/tagwrite"
 )
 
 // The tag review routes — `PLAN-accessibility.md` P08.S06b.
@@ -145,49 +144,19 @@ func (s *Server) handleTagsCommit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The request shape is anonymous: the server is its only reader, and a named type would be a
-	// published shape the client never reads.
-	var body struct {
-		Elements []struct {
-			ID     int    `json:"id"`
-			Role   string `json:"role"`
-			Ignore bool   `json:"ignore"`
-			Text   string `json:"text"`
-		} `json:"elements"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxTagReviewBytes)).Decode(&body); err != nil {
+	// The request shape is the door's (`tagwrite.DecodeReview`), which `nib tag commit` reads too.
+	reviews, err := tagwrite.DecodeReview(io.LimitReader(r.Body, maxTagReviewBytes))
+	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not read the review")
 		return
 	}
 	// Read ONCE: this is the state the undo entry records (commitMutation's contract).
 	before := s.docBytes(doc)
-	// **The refusal lives here, at the server door** — S06's acceptance, and reflow D11's rule for the
-	// same reason: a UI that disables the button is not the door. Structure changes the bytes every
-	// signature covers, so a signed document is refused rather than broken.
-	if sign.HasSignatureBlob(before) {
-		httpError(w, http.StatusConflict, "this document is signed, and adding structure would change the bytes its signatures cover — tag a document before it is signed")
-		return
-	}
-	reviews := make([]pdfops.TagReview, len(body.Elements))
-	for i, e := range body.Elements {
-		reviews[i] = pdfops.TagReview{ID: e.ID, Role: e.Role, Ignore: e.Ignore, Text: e.Text}
-	}
-	result, err := pdfops.CommitTags(before, reviews)
-	if err != nil {
-		reason := strings.TrimPrefix(err.Error(), "pdfops: ")
-		switch {
-		case errors.Is(err, pdfops.ErrTagsStale):
-			httpError(w, http.StatusConflict, reason)
-		case errors.Is(err, pdfops.ErrTagsReview):
-			httpError(w, http.StatusBadRequest, reason)
-		default:
-			httpError(w, http.StatusUnprocessableEntity, "could not write the structure: "+reason)
-		}
-		return
-	}
-	if verr := pdfops.Validate(result); verr != nil {
-		log.Printf("tags: committed output failed validation: %v", verr)
-		httpError(w, http.StatusUnprocessableEntity, "could not write the structure")
+	// **The refusal is the door's, not this handler's** — S06's acceptance, and reflow D11's rule for the
+	// same reason: a UI that disables the button is not the door. `tagwrite.Commit` refuses a signed
+	// document for this route and for `nib tag commit` alike (P10.S02).
+	result, err := tagwrite.Commit(before, reviews)
+	if tagWriteFailed(w, err, "could not write the structure") {
 		return
 	}
 	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
@@ -209,56 +178,42 @@ func (s *Server) handleTagsEdit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Anonymous for the reason the commit's request is: the server is its only reader.
-	var body struct {
-		Edits []struct {
-			Kind    string `json:"kind"`
-			Element int    `json:"element"`
-			Value   string `json:"value"`
-			Parent  int    `json:"parent"`
-			// Index is a pointer so an absent position means "at the end", not "first".
-			Index *int `json:"index"`
-		} `json:"edits"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxTagReviewBytes)).Decode(&body); err != nil {
+	// The door's request shape: an absent index appends, not "first" (`tagwrite.DecodeEdits`).
+	edits, err := tagwrite.DecodeEdits(io.LimitReader(r.Body, maxTagReviewBytes))
+	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not read the edits")
 		return
 	}
 	before := s.docBytes(doc)
-	// The same door, for the same reason, as the commit: a correction changes the bytes every signature
-	// covers.
-	if sign.HasSignatureBlob(before) {
-		httpError(w, http.StatusConflict, "this document is signed, and correcting its structure would change the bytes its signatures cover — correct it before it is signed")
-		return
-	}
-	edits := make([]pdfops.StructureEdit, len(body.Edits))
-	for i, e := range body.Edits {
-		index := -1
-		if e.Index != nil {
-			index = *e.Index
-		}
-		edits[i] = pdfops.StructureEdit{Kind: e.Kind, Element: e.Element, Value: e.Value, Parent: e.Parent, Index: index}
-	}
-	result, err := pdfops.EditStructure(before, edits)
-	if err != nil {
-		reason := strings.TrimPrefix(err.Error(), "pdfops: ")
-		switch {
-		case errors.Is(err, pdfops.ErrTagsStale):
-			httpError(w, http.StatusConflict, reason)
-		case errors.Is(err, pdfops.ErrTagsReview):
-			httpError(w, http.StatusBadRequest, reason)
-		default:
-			httpError(w, http.StatusUnprocessableEntity, "could not edit the structure: "+reason)
-		}
-		return
-	}
-	if verr := pdfops.Validate(result); verr != nil {
-		log.Printf("tags: edited output failed validation: %v", verr)
-		httpError(w, http.StatusUnprocessableEntity, "could not edit the structure")
+	// The same door as the commit's, and the one `nib tag edit` reaches: it refuses a signed document.
+	result, err := tagwrite.Edit(before, edits)
+	if tagWriteFailed(w, err, "could not edit the structure") {
 		return
 	}
 	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))
+}
+
+// tagWriteFailed answers a refused structure write and reports whether it did: a signed document or a
+// stale review 409, a malformed one 400, anything else 422 under what (a result that did not validate is
+// logged, not shown).
+func tagWriteFailed(w http.ResponseWriter, err error, what string) bool {
+	if err == nil {
+		return false
+	}
+	reason := strings.TrimPrefix(err.Error(), "pdfops: ")
+	switch {
+	case errors.Is(err, tagwrite.ErrSigned), errors.Is(err, pdfops.ErrTagsStale):
+		httpError(w, http.StatusConflict, reason)
+	case errors.Is(err, pdfops.ErrTagsReview):
+		httpError(w, http.StatusBadRequest, reason)
+	case errors.Is(err, tagwrite.ErrInvalid):
+		log.Printf("tags: %s: %v", what, err)
+		httpError(w, http.StatusUnprocessableEntity, what)
+	default:
+		httpError(w, http.StatusUnprocessableEntity, what+": "+reason)
+	}
+	return true
 }

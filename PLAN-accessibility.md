@@ -3481,7 +3481,7 @@ guard), the proposal's role, `-h` exiting 1, and an unknown subcommand exiting 0
 run — the indentation and the notes — and got `TestTagTreeShowsNestingAndWhatIsMissing`. The slice gate
 does not fire (`internal/cli`, `internal/pdfops` types, a server test).
 
-#### P10.S02 — `nib tag commit` and `nib tag edit`
+#### P10.S02 — `nib tag commit` and `nib tag edit` *(done 2026-09-14, v1.129.97)*
 Scope: `commit IN -o OUT --review REVIEW.json` writes a reviewed proposal; `edit IN -o OUT --edits EDITS.json`
 applies a batch; both `-w` in place. Refs law 3 (a written review is the review), ADR-009.
 Acceptance:
@@ -3489,6 +3489,35 @@ Acceptance:
   not a fourth copy of the check.
 - A stale review or edit exits 1 with the door's sentence; a malformed one exits 2 (usage).
 - The README's `-w` list names both.
+
+**(build, 2026-09-14, v1.129.97.)** `internal/tagwrite` (new), `internal/cli/tag.go`, `internal/server/tags.go`.
+
+| measured | result |
+|---|---|
+| where the one door can live | not `pdfops`: `sign`'s internal tests import `pdfops` (`go list -f '{{.TestImports}}'`), so `pdfops` importing `sign` is a cycle. `internal/tagwrite` imports both and holds three rules the two surfaces shared or would have copied — the signed refusal, validating the result, and decoding the request bodies (an absent `index` appends) |
+| the server after the move | both handlers call `tagwrite.Commit` / `tagwrite.Edit` and map its errors in one helper; every test in `tags_test.go` passes unchanged in status and wording (11 tests) |
+| `nib tag commit` | `nib tag propose --json` is a review that keeps every role; committing it to `-o` tags the output and leaves the input byte-identical; `-w` tags the input and prints `rewritten` |
+| `nib tag edit` | a retype plus alt text by the id `nib tag tree` printed lands as a Figure with that alt text |
+| a signed document | refused by both subcommands in both modes with the door's sentence, exit 1, nothing written, the input byte-identical |
+| stale vs malformed | an element the tree does not have, or a review of other text: exit 1 with the door's sentence. An edit that is not one, a request that is not JSON, or no request file: exit 2. Nothing written in any case |
+| routing | `tagdoor_test.go` walks every non-test file under `internal/`: `server` and `cli` each call both doors, and nothing outside `internal/tagwrite` calls `pdfops.CommitTags` or `pdfops.EditStructure` |
+
+- **Pin — `-w` rewrites exactly one file.** A review or a batch of edits names element ids of one document,
+  so the batch form every other `-w` command has would apply one document's request to another's.
+- **Pin — a signed document is refused with `-o` too**, unlike `transformInPlace`'s rule (in place only):
+  that is the server's rule, and the door is shared. The two rules also read signatures differently —
+  `sign.HasSignatureBlob` here, `sign.Verify(...).State != Unsigned` there — and this slice does not
+  reconcile them.
+- **Declared, not probed:** the `-o`/`-w` conflict message and a request file that cannot be opened.
+
+Twelve mutations red: each signed refusal removed (tagwrite, cli and server tests), validation skipped, an
+absent index read as 0 (tagwrite and the server's move test), the review dropping `ignore`, a malformed
+request exiting 1, a review error not exiting 2, `-w` writing nothing, `-w` taking many files, a missing
+request file exiting 1, the CLI calling `pdfops.CommitTags` directly (cli test and the routing guard), and
+the server answering a signed document other than 409. First-run survivors: validation skipped (got
+`TestAResultThatDoesNotValidateIsNotReturned`), and the CLI edit refusal, which the CLI test missed
+because its fixture was named `signed.pdf` and the error names the file (renamed; the assertion is now
+the door's sentence). The slice gate does not fire (`internal/tagwrite`, `internal/cli`, the tag routes).
 
 #### P10.S03 — a folder gets the report
 Scope: `nib watch DIR --do ua` writes `FILE.ua.txt` beside each PDF; `--do tag` is refused with the reason.

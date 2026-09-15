@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"nib/internal/pdfops"
+	"nib/internal/tagwrite"
 )
 
 // cmdTag is the structure editor on the command line — `PLAN-accessibility.md` P10.
@@ -37,9 +39,101 @@ func cmdTag(args []string) int {
 		return tagTree(args[1:])
 	case "propose":
 		return tagPropose(args[1:])
+	case "commit":
+		return tagWrite(args[1:], "commit")
+	case "edit":
+		return tagWrite(args[1:], "edit")
 	}
-	errf("unknown tag subcommand %q — tree or propose (run \"nib tag -h\")", args[0])
+	errf("unknown tag subcommand %q — tree, propose, commit or edit (run \"nib tag -h\")", args[0])
 	return 1
+}
+
+// tagWrite is `nib tag commit` and `nib tag edit` (P10.S02): read the request file, write through the
+// tagwrite door the Tags panel's routes reach — which refuses a signed document — and write the result
+// to -o or, with -w, over the one input. A stale request exits 1 with the door's sentence; a request
+// that is malformed on its own terms exits 2.
+func tagWrite(args []string, mode string) int {
+	fs := flag.NewFlagSet("nib tag "+mode, flag.ContinueOnError)
+	var out, request string
+	var inPlace bool
+	outFlag(fs, &out)
+	inPlaceFlag(fs, &inPlace)
+	requestFlag, usage := "review", "nib tag commit IN -o OUT --review REVIEW.json  |  nib tag commit -w IN --review REVIEW.json"
+	about := "Write a reviewed proposal as the document's structure. REVIEW.json is {\"elements\": [{\"id\", \"role\", \"ignore\", \"text\"}]};\n" +
+		"\"nib tag propose --json\" prints one that keeps every proposed role. A signed document is refused."
+	if mode == "edit" {
+		requestFlag, usage = "edits", "nib tag edit IN -o OUT --edits EDITS.json  |  nib tag edit -w IN --edits EDITS.json"
+		about = "Correct the existing structure tree as one batch. EDITS.json is {\"edits\": [{\"kind\", \"element\", \"value\",\n" +
+			"\"parent\", \"index\"}]} — kind retype, move, alt, scope or artifact; element an id from \"nib tag tree\".\n" +
+			"A signed document is refused."
+	}
+	fs.StringVar(&request, requestFlag, "", "the request file")
+	fs.Usage = usageFunc(fs, usage, about)
+	if code, ok := parse(fs, args); !ok {
+		return code
+	}
+	if request == "" {
+		errf("missing --%s (the request file)", requestFlag)
+		return 2
+	}
+	var in string
+	if inPlace {
+		if out != "" {
+			errf("-o/--out cannot be combined with -w/--in-place")
+			return 1
+		}
+		// A request describes one document, so -w rewrites exactly one.
+		if fs.NArg() != 1 || fs.Arg(0) == "-" {
+			errf("-w rewrites the one document the request describes — give exactly one file")
+			return 1
+		}
+		in = fs.Arg(0)
+	} else {
+		var code int
+		if in, code = singleInput(fs, out); code != 0 {
+			return code
+		}
+	}
+	f, err := os.Open(request)
+	if err != nil {
+		errf("%v", err)
+		return 1
+	}
+	var result []byte
+	pdf, rerr := readInput(in)
+	if rerr != nil {
+		f.Close()
+		errf("%v", rerr)
+		return 1
+	}
+	if mode == "commit" {
+		var reviews []pdfops.TagReview
+		if reviews, err = tagwrite.DecodeReview(f); err == nil {
+			result, err = tagwrite.Commit(pdf, reviews)
+		}
+	} else {
+		var edits []pdfops.StructureEdit
+		if edits, err = tagwrite.DecodeEdits(f); err == nil {
+			result, err = tagwrite.Edit(pdf, edits)
+		}
+	}
+	f.Close()
+	if err != nil {
+		errf("%s: %s", inputName(in), strings.TrimPrefix(strings.TrimPrefix(err.Error(), "pdfops: "), "tagwrite: "))
+		if errors.Is(err, tagwrite.ErrMalformed) || errors.Is(err, pdfops.ErrTagsReview) {
+			return 2
+		}
+		return 1
+	}
+	if inPlace {
+		if err := writeAtomic(in, result); err != nil {
+			errf("%s: %v", in, err)
+			return 1
+		}
+		fmt.Printf("%s: rewritten\n", in)
+		return 0
+	}
+	return writeOut(out, result)
 }
 
 // tagTree prints the document's existing structure tree.
