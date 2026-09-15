@@ -3422,6 +3422,64 @@ does not do against Acrobat feature by feature.
 **Exit criteria.** The CLI covers what the UI can do; the ledger names every parity gap that
 remains, with no gap silently omitted.
 
+**(phase-open, 2026-09-14 at v1.129.95 — facts established before the slices were cut.)**
+
+| measured | result |
+|---|---|
+| the CLI's verbs | **28, not 26** (`internal/cli/cli.go` `commands`). Transforms read `IN` (or `-` for stdin) and write `-o OUT` (or `-` for stdout, refused onto a terminal) or `-w FILE…` in place, through `runTransform`; `cli_test.go` walks every verb and `verify_test.go` holds the README's `-w` list to the verbs that take it |
+| what the UI can do for accessibility | the report (`/api/uacheck`); propose and commit tags (`/api/tags/propose`, `/api/tags/commit`); read an existing tree (`/api/tags/tree`); edit it — retype, move, alt text, scope, artifact (`/api/tags/edit`); the Reading Order view (visual); an OCR text layer that is tagged (`/api/ocr`) |
+| what the CLI already covers of that | **the report only**: `nib ua IN`, through the same door as the UI (`uacheck.CheckForUA`, guarded since P07.S06). Nothing in `internal/cli` calls `ProposeTags`, `CommitTags`, `ReadStructure`, `EditStructure` or `TagOCRLayer` |
+| where the UI's OCR RECOGNITION runs | **in the browser**: the client collects tesseract's words and posts them to `/api/ocr`, which only builds the tagged layer (`app.js`). A headless command has no recogniser, so it has no words to tag |
+| language and title | no UI door of their own: `SetLang` runs inside OCR, `TitleFromName` inside export and conversion |
+| `nib watch` | polls a folder with `--do timestamp|optimize|sanitize`; unattended `sign` is refused by design (a passphrase in a daemon's environment) |
+| an existing comparison with Acrobat | the README's *How Nib compares* table — no accessibility row. No accessibility parity document exists |
+
+**Decided (rung 2, reversible):**
+- **The check verb is `nib ua`, not a new `nib a11y-check`.** It already is the headless check, guarded as the
+  one door since P07; a second verb for it would be a second name to document and nothing else.
+- **`nib watch` does not tag unattended.** Law 3 and D5 — a proposal is reviewed before it is written — make
+  `--do tag` the one batch operation this plan forbids by name. What a folder CAN be given is the report.
+- **OCR tagging is a named ledger gap, not a command.** Recognition is the browser's; a CLI that took a
+  word list would be a tagging door with no recogniser behind it.
+
+**`/plan-review` does NOT fire**: no wire format between machines, no stored nib format, no network path, no
+credential. **`/deepdive` does not fire**: the commands reach doors S01–S04 of P09 and P08.S06 built and
+their routes already call.
+
+**Firmed slices:**
+
+#### P10.S01 — `nib tag tree` and `nib tag propose`
+Scope: two read-only subcommands under one `tag` verb: `tree IN` prints the existing tree in reading order
+(type, standard type, page, alt text, scope, text), `propose IN` prints the proposal; `--json` for both,
+for a script to edit and hand back.
+Acceptance:
+- Both reach `pdfops.ReadStructure` / `pdfops.ProposeTags` — the doors the routes reach — asserted by routing.
+- The input is byte-identical afterwards; an untagged document's `tree` says so and exits 0.
+- `--json` carries every field the route's response does, and a round trip through `commit` / `edit`
+  (S02) consumes it.
+
+#### P10.S02 — `nib tag commit` and `nib tag edit`
+Scope: `commit IN -o OUT --review REVIEW.json` writes a reviewed proposal; `edit IN -o OUT --edits EDITS.json`
+applies a batch; both `-w` in place. Refs law 3 (a written review is the review), ADR-009.
+Acceptance:
+- A signed document is refused — through ONE door the server's two handlers and these two commands share,
+  not a fourth copy of the check.
+- A stale review or edit exits 1 with the door's sentence; a malformed one exits 2 (usage).
+- The README's `-w` list names both.
+
+#### P10.S03 — a folder gets the report
+Scope: `nib watch DIR --do ua` writes `FILE.ua.txt` beside each PDF; `--do tag` is refused with the reason.
+Acceptance:
+- The report sidecar is the same table `nib ua` prints; the refusal names law 3.
+
+#### P10.S04 — the docs and the parity ledger
+Scope: the README's CLI table and *How Nib compares* gain accessibility; `docs/accessibility-parity.md` compares
+nib with Acrobat Pro's accessibility tools feature by feature, each Acrobat claim cited to Adobe's own
+documentation, each nib claim to a test.
+Acceptance:
+- Every gap is named — the ones this phase decided above among them — and a guard fails when a named
+  feature has no row.
+
 ---
 
 ## Out of scope
