@@ -118,6 +118,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"packet: dc:creator Seq only", withPacketBody(t, mdt,
 			`<dc:creator><rdf:Seq><rdf:li>Someone</rdf:li></rdf:Seq></dc:creator>`)},
 		oracleDoc{"described form − /StructParent", widgetMutation(t, df, "drop-structparent")},
+		// 5 t1 and 5 t2 in both directions (`/pending 489`). No product door writes the identification
+		// (`/pending 486`), so these are mutations, named for the value they declare.
+		oracleDoc{"Markdown + title + pdfuaid:part 1", withUAPart(t, mdt, "1")},
+		oracleDoc{"Markdown + title + pdfuaid:part 2", withUAPart(t, mdt, "2")},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -235,9 +239,9 @@ var knownCannotCheck = map[string]string{
 // notYetReachable records a veraPDF state a clause cannot reach on any corpus document yet, with the
 // coordinate that will make it reachable. Checked in both directions, and against the plan's marker.
 var notYetReachable = map[string]string{
-	// P07.S07 closed WITHOUT writing the identification — law 1 forbids it on a checker covering 17 of veraPDF's 106 rules — so
-	// no nib document reaches `5 t1 passed`. The gate is the strategy decision, not a plan coordinate.
-	"5 t1 passed": "/pending 486",
+	// Empty since `/pending 489`. It held `5 t1 passed`, gated on /pending 486, because no nib document
+	// carries the identification; the corpus now reaches both halves of 5 t1 and 5 t2 through the two
+	// `pdfuaid:part` mutations above. No product door writes the identification — that is still 486.
 }
 
 // TestTheOracleValidatesTheChecker — law 5.
@@ -259,7 +263,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 22
+	const wantGenerated = 24
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

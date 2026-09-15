@@ -251,7 +251,9 @@ func declareOCRLanguage(pdf []byte, lang string) []byte {
 		if cerr != nil {
 			return cerr
 		}
-		if s, ok := cat["Lang"].(types.StringLiteral); ok && len(s) > 0 {
+		// Through the package's one language reader, so an author's hex or indirect /Lang counts as
+		// saying so (/pending 489) — a direct-literal cast read those as absent and overwrote them.
+		if readLang(ctx.XRefTable, cat["Lang"]) != "" {
 			return nil // the document already says; an OCR run does not overrule an author
 		}
 		cat["Lang"] = types.StringLiteral(tag)

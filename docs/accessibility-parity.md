@@ -14,14 +14,14 @@ accessibility routes or `nib tag` subcommands appears nowhere here.
 cell says which part is missing. *Gap* — Nib does not do it. *Nib only* — the cited pages describe no
 counterpart. *Unmeasured* — Nib has the control, and no test shows what it does.
 
-One number frames the checker rows. Nib checks **17 of the 106** rules veraPDF evaluates for PDF/UA-1, so
+One number frames the checker rows. Nib checks **18 of the 106** rules veraPDF evaluates for PDF/UA-1, so
 a document can pass every clause Nib checks and still fail one it does not.
 
 ## The ledger
 
 | Feature | Acrobat Pro (Adobe's documentation) | Nib | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| Accessibility Check | "verifies whether the document conforms to accessibility standards, such as PDF/UA and WCAG 2.0" [A1]; an item it cannot check is reported as needing a manual check [A1] | `nib ua IN` and **Check accessibility** (`/api/uacheck`) check 17 of the 106 rules veraPDF evaluates. A clause Nib could not check is never shown as a pass. There is no WCAG check | `TestATableIsCheckedOnlyWhereVeraPDFsAnswerIsKnown`, `TestUAExitZeroSaysItIsNotACertificate`, `TestTheUIAndTheCLIReachTheSameConformanceDoor` | Partial |
+| Accessibility Check | "verifies whether the document conforms to accessibility standards, such as PDF/UA and WCAG 2.0" [A1]; an item it cannot check is reported as needing a manual check [A1] | `nib ua IN` and **Check accessibility** (`/api/uacheck`) check 18 of the 106 rules veraPDF evaluates. A clause Nib could not check is never shown as a pass. There is no WCAG check | `TestATableIsCheckedOnlyWhereVeraPDFsAnswerIsKnown`, `TestUAExitZeroSaysItIsNotACertificate`, `TestTheUIAndTheCLIReachTheSameConformanceDoor` | Partial |
 | Fix from the check's results | "Fix accessibility issues (Acrobat Pro)" [A1] | The report offers no fix. Corrections are made in **Review Structure Tree**, one element at a time | — | Gap |
 | Automatically tag PDF | "Select All tools > Prepare for accessibility > Automatically tag PDF. If there are any issues, the Add Tags Report appears in the navigation pane." [A1]; "Most tables are properly recognized using this command" [A2] | **Tag structure…** and `nib tag propose` propose headings, paragraphs and list items from how the pages look (`/api/tags/propose`). Nothing is written until a person reviews it and commits (`/api/tags/commit`, `nib tag commit`). No tables or figures are proposed | `TestHeadingLevelsFollowTheDistinctLargerSizes`, `TestAReviewIsAppliedInItsOwnOrderWithItsOwnRoles`, `TestTagCommitWritesTheProposalItReviewed` | Partial |
 | Remove and replace existing tags | "Acrobat can retag an already tagged document after you first remove all existing tags from the tree." [A2] | Tagging refuses a document that is already tagged, and there is no way to remove a tree | — | Gap |
@@ -41,7 +41,7 @@ a document can pass every clause Nib checks and still fail one it does not.
 | Reflow | "Reflow capability, displaying PDF text in large type and converting multicolumn layouts to a single, readable column." [A5] | None: a search of `web/` for a reflow view found none | — | Gap |
 | Save as accessible text | "read the saved text file in a word-processing application and emulate the end-user experience of readers who use a braille printer" [A1] | **Document text (.txt)** export exists. No test reads what it writes | — | Unmeasured |
 | Tag annotations | "choose Tag Annotations from the Options menu. Comments or markups that you add to the PDF are tagged automatically." [A3] | Not measured for this ledger | — | Unmeasured |
-| PDF/UA identification in the file | Not described on the cited pages | Never written. A checker covering 17 of the 106 rules cannot support the claim (`/pending 486`) | `TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo` | Gap |
+| PDF/UA identification in the file | Not described on the cited pages | Never written. A checker covering 18 of the 106 rules cannot support the claim (`/pending 486`) | `TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo` | Gap |
 | Command line | Not described on the cited pages | `nib ua`, `nib tag tree`, `nib tag propose`, `nib tag commit` and `nib tag edit` reach the doors the app's routes reach, and a signed document is refused through the same door | `TestTheTagCommandsReachTheRoutesDoors`, `TestEveryStructureWriteReachesTheSignedDocumentDoor` | Nib only |
 | Structure kept through edits | Not described on the cited pages | Edits that keep tags carry them. Edits that destroy tags remove the claim and say so | `TestCarryingStructureChangesNoDRAWNByte`, `TestDroppingATaggingClaimIsRecordedOnTheDocument` | Nib only |
 

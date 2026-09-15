@@ -46,6 +46,11 @@ func init() {
 		Check:   checkUAIdentification,
 	})
 	register(Rule{
+		Clause:  "5 t2",
+		Summary: `the value of "pdfuaid:part" shall be the part number of the International Standard to which the file conforms`,
+		Check:   checkUAPartValue,
+	})
+	register(Rule{
 		Clause:  "7.10 t1",
 		Summary: "each optional content configuration dictionary shall contain the Name key",
 		Check:   checkOptionalContentName,
@@ -185,21 +190,41 @@ func checkMetadataLanguage(d *Document) Result {
 	if !x.Readable {
 		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
 	}
-	if len(x.LangAlts) == 0 {
+	items := 0
+	for _, alt := range x.LangAlts {
+		items += len(alt)
+	}
+	if items == 0 {
 		return Result{
 			Verdict: NotApplicable,
 			Why:     "the metadata packet holds no language-alternative text, so it has no natural language to determine",
 		}
 	}
-	if catalogLang(d) != "" {
+	if catalogDeclaresLang(d) {
 		return Result{Verdict: Pass}
 	}
-	for _, lang := range x.LangAlts {
-		if lang == "" || strings.EqualFold(lang, "x-default") {
+	// **An Alt is undetermined only when NO item in it names a language** (`/pending 489`). This rule
+	// failed on the first `x-default` item, and veraPDF's own corpus has 16 passing files whose one Alt
+	// holds `x-default` AND a real language such as `en-US` — every one a false Fail. veraPDF's test is
+	// `xDefault == false || gContainsCatalogLang == true`; `xDefault` ships only as compiled code, so its
+	// meaning is inferred from those files, and it agrees with P07.S05's own two measurements (`x-default`
+	// alone fails, `xml:lang="en"` passes). The corpus run in veracorpus_test.go holds the inference.
+	for _, alt := range x.LangAlts {
+		if len(alt) == 0 {
+			continue
+		}
+		determined := false
+		for _, lang := range alt {
+			if lang != "" && !strings.EqualFold(lang, "x-default") {
+				determined = true
+				break
+			}
+		}
+		if !determined {
 			return Result{
 				Verdict: Fail,
-				Why: fmt.Sprintf("a metadata text alternative declares xml:lang %q, which names no language, "+
-					"and the catalog declares no /Lang to supply one", lang),
+				Why: fmt.Sprintf("a metadata text alternative offers only xml:lang %q, which names no language, "+
+					"and the catalog declares no /Lang to supply one", alt[0]),
 				Where: "catalog /Metadata, rdf:Alt",
 			}
 		}
@@ -213,14 +238,20 @@ func checkMetadataLanguage(d *Document) Result {
 // text-showing operator is resolved individually:
 //
 //   - inside an `/Artifact` sequence — not text a reader is given, so it needs no language;
+//   - inside a marked-content sequence whose property list declares `/Lang` — that is its language;
 //   - inside an MCID sequence — the MCID resolves through the parent tree to an element, and the
 //     language is that element's `/Lang` or its nearest ancestor's (ISO 32000-1 §14.9.2);
-//   - inside neither — nothing could declare its language.
+//   - inside none of those — nothing could declare its language.
 //
-// P06.S04 measured the route that does NOT count: a `/Span <</Lang (en)>> BDC` on the content left
-// this clause failing, so a marked-content property list's own `/Lang` is deliberately not read.
+// **A marked-content `/Lang` counts** (`/pending 489`). This rule used to skip it, citing a P06.S04
+// measurement that its section never recorded. veraPDF's test is `gContainsCatalogLang == true ||
+// Lang != null` on each text item, and veraPDF passes 7.2 t34 on its own corpus file
+// `7.2-t34-pass-c.pdf`, whose text declares its language only that way — measured 2026-09-14, and held
+// by veracorpus_test.go.
 func checkContentLanguage(d *Document) Result {
-	if lang := catalogLang(d); lang != "" {
+	// A declared catalog /Lang determines every piece of text — present counts, even empty: veraPDF's
+	// test is `gContainsCatalogLang`, and an empty value is 7.2 t29's failure, which nib does not check.
+	if catalogDeclaresLang(d) {
 		return Result{Verdict: Pass}
 	}
 	events, errWhy := d.contentEvents()
@@ -234,6 +265,9 @@ func checkContentLanguage(d *Document) Result {
 			continue
 		}
 		texts++
+		if ev.lang {
+			continue // the enclosing sequence's own /Lang determines this text's language
+		}
 		if ev.mcid < 0 {
 			return Result{
 				Verdict: Fail,
@@ -251,7 +285,7 @@ func checkContentLanguage(d *Document) Result {
 				Where: ev.where,
 			}
 		}
-		if d.langOf(elem) == "" {
+		if !d.declaresLangFor(elem) {
 			return Result{
 				Verdict: Fail,
 				Why: "the catalog declares no /Lang and neither the element describing this text " +
@@ -282,7 +316,7 @@ func (d *Document) elementForMCID(spKey, mcid int) types.Dict {
 //
 // **No nib document reaches `Pass` here, and that is decided rather than pending a slice.** Writing
 // `pdfuaid:part` claims conformance to all of PDF/UA, and P07.S07 measured that nib's checker cannot
-// support that claim: it implements 17 of the 106 rules veraPDF evaluates (15 when that was measured),
+// support that claim: it implements 18 of the 106 rules veraPDF evaluates (15 when that was measured),
 // and a document can pass all of them while failing one it does not check. So nib never writes the identification (ADR-031 law 1), and
 // every nib document with a metadata packet fails this clause — which is what veraPDF says about them.
 // A document from another producer that carries the identification can still pass it. How nib ever
@@ -307,10 +341,39 @@ func checkUAIdentification(d *Document) Result {
 			Where: "catalog /Metadata, pdfuaid:part",
 		}
 	}
+	// **The part's VALUE is not this clause** (`/pending 489`). This rule also failed a packet whose part
+	// is not "1", and veraPDF's corpus file `5-t02-fail-a.pdf` (pdfuaid:part "2") showed veraPDF passes
+	// 5 t1 there and fails 5 t2: its 5 t1 test is `containsPDFUAIdentification == true` and its 5 t2 test
+	// `part == 1`. So the value moved to its own clause, `checkUAPartValue`, where the report still names
+	// it — a wrong identification stays distinguishable from a missing one, under the clause veraPDF uses.
+	return Result{Verdict: Pass}
+}
+
+// checkUAPartValue evaluates ua1 5 t2: `pdfuaid:part` is 1 (`/pending 489`).
+//
+// veraPDF's subject is the identification itself (`PDFUAIdentification`), so a packet that carries none
+// has no subject here — 5 t1 reports the absence — and only a present identification can pass or fail.
+func checkUAPartValue(d *Document) Result {
+	x := readXMP(d)
+	if !x.Present {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the document has no metadata stream, so there is no identification whose part could be checked",
+		}
+	}
+	if !x.Readable {
+		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
+	}
+	if x.UAPart == "" {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the metadata packet carries no pdfuaid:part, so there is no value to check (5 t1 reports the absence)",
+		}
+	}
 	if x.UAPart != "1" {
 		return Result{
 			Verdict: Fail,
-			Why:     fmt.Sprintf("pdfuaid:part is %q; nib checks against PDF/UA-1", x.UAPart),
+			Why:     fmt.Sprintf("pdfuaid:part is %q; a PDF/UA-1 file declares part 1", x.UAPart),
 			Where:   "catalog /Metadata, pdfuaid:part",
 		}
 	}
