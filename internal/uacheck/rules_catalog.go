@@ -316,7 +316,7 @@ func (d *Document) elementForMCID(spKey, mcid int) types.Dict {
 //
 // **No nib document reaches `Pass` here, and that is decided rather than pending a slice.** Writing
 // `pdfuaid:part` claims conformance to all of PDF/UA, and P07.S07 measured that nib's checker cannot
-// support that claim: it implements 18 of the 106 rules veraPDF evaluates (15 when that was measured),
+// support that claim: it implements 19 of the 106 rules veraPDF evaluates (15 when that was measured),
 // and a document can pass all of them while failing one it does not check. So nib never writes the identification (ADR-031 law 1), and
 // every nib document with a metadata packet fails this clause — which is what veraPDF says about them.
 // A document from another producer that carries the identification can still pass it. How nib ever

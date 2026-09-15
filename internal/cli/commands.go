@@ -108,8 +108,10 @@ func cmdPDFA(args []string) int {
 // It reaches the same door as the UI's report (`uacheck.CheckForUA`); a repo-root guard refuses a
 // direct `uacheck.Check` here, so the CLI and the UI cannot hold two readings of the verdicts.
 //
-// **Exit 0 means every clause nib checks passes, and nothing more** — P07.S07 measured a document
-// that passes all of nib's clauses and fails veraPDF's 7.4.2 t1, which nib does not check. Exit 1
+// **Exit 0 means every clause nib checks passes, and nothing more** — measured: a document whose
+// paragraph is tagged `/Formula` with no alternate text passes all of nib's clauses and fails veraPDF's
+// 7.7 t1, which nib does not check (P07.S07's first example, a skipped heading level, is checked since
+// `/pending 487`; `uacheck/counterexample_test.go` holds the current one). Exit 1
 // means a checked clause failed or could not be checked, with every reason on stderr. Neither is a
 // PDF/UA verdict, and the output says so.
 func cmdUA(args []string) int {

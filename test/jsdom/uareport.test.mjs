@@ -105,7 +105,8 @@ test('only a conformant report from the server is summarised as passing', async 
   await showReport({ conformant: true, results: [{ clause: '7.1 t11', summary: 'tree', verdict: 'pass' }], refusals: [] });
   const passing = doc.getElementById('uaSummary').textContent;
   assert.ok(passing.startsWith('Every clause Nib checks passes'), `the passing summary reads "${passing}"`);
-  // P07.S07 measured a document that passes every clause nib checks and fails veraPDF's 7.4.2 t1.
+  // A document can pass every clause nib checks and fail veraPDF: measured, a paragraph tagged /Formula
+  // with no alternate text fails 7.7 t1 (internal/uacheck/counterexample_test.go).
   // So even the best summary must say it is not a certificate, and must never say "conforms" or
   // "is PDF/UA" as a claim.
   assert.ok(/not a conformance certificate/.test(passing),

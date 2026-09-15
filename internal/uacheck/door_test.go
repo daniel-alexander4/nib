@@ -86,17 +86,19 @@ func TestEveryRegisteredClauseHasASummaryTheReportCanShow(t *testing.T) {
 	}
 }
 
-// TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo — P07.S07's measured counterexample,
-// kept as a standing reader over the claims nib makes in words.
+// TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo — a standing reader over the claims nib
+// makes in words.
 //
-// A tagged Markdown document whose heading skips a level passes all of nib's clauses and fails
-// veraPDF's 7.4.2 t1. The code cannot close that gap without implementing the whole profile, so what
-// is asserted is that nothing a person reads calls a passing report "PDF/UA".
+// P07.S07's counterexample was a tagged Markdown document whose heading skipped a level: it passed all
+// of nib's clauses and failed veraPDF's 7.4.2 t1. `/pending 487` made nib check that rule, and the class
+// remains — a paragraph tagged `/Formula` with no alternate text passes all of them and fails 7.7 t1,
+// held by `counterexample_test.go`. The code cannot close the class without implementing the whole
+// profile, so what is asserted here is that nothing a person reads calls a passing report "PDF/UA".
 func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T) {
 	for _, f := range []struct{ path, must string }{
 		{"../../README.md", "not a PDF/UA certificate"},
-		{"../../README.md", "18 of the 106"},
-		{"../../docs/accessibility-parity.md", "18 of the 106"},
+		{"../../README.md", "19 of the 106"},
+		{"../../docs/accessibility-parity.md", "19 of the 106"},
 		{"../../web/index.html", "can still fail one it does not"},
 		{"door.go", "nothing labels"},
 	} {

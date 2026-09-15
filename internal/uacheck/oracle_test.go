@@ -122,6 +122,9 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// (`/pending 486`), so these are mutations, named for the value they declare.
 		oracleDoc{"Markdown + title + pdfuaid:part 1", withUAPart(t, mdt, "1")},
 		oracleDoc{"Markdown + title + pdfuaid:part 2", withUAPart(t, mdt, "2")},
+		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
+		// structure editor's own door retypes a correctly nested heading one level too deep.
+		oracleDoc{"Markdown, second heading retyped H3 (skips a level)", headingSkipped(t)},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -135,6 +138,34 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			"whose structure nib did not write — and the only tables and figures — are missing from this run")
 	}
 	return docs
+}
+
+// headingSkipped is converted Markdown whose second heading the structure editor retyped H3, so the tree
+// goes H1 → H3: the 7.4.2 t1 failure no product door writes since `/pending 487`.
+func headingSkipped(t *testing.T) []byte {
+	t.Helper()
+	md, err := pdfops.ConvertDocToPDF([]byte("# Top\n\n## Next\n"), ".md")
+	if err != nil {
+		t.Fatalf("corpus: %v", err)
+	}
+	tree, err := pdfops.ReadStructure(md)
+	if err != nil {
+		t.Fatalf("corpus: %v", err)
+	}
+	id := 0
+	for _, e := range tree.Elements {
+		if e.Standard == "H2" && e.ID > 0 {
+			id = e.ID
+		}
+	}
+	if id == 0 {
+		t.Fatalf("corpus: the converted Markdown has no addressable H2 to retype: %+v", tree.Elements)
+	}
+	out, err := pdfops.EditStructure(md, []pdfops.StructureEdit{{Kind: "retype", Element: id, Value: "H3", Index: -1}})
+	if err != nil {
+		t.Fatalf("corpus: retyping the H2: %v", err)
+	}
+	return out
 }
 
 // oracleODT is a minimal ODT with a heading, a paragraph and a list. `mimetype` is stored first and
@@ -263,7 +294,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 24
+	const wantGenerated = 25
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

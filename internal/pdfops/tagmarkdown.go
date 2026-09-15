@@ -59,6 +59,47 @@ func structTypeFor(r mdpdf.Role) string {
 	return "P"
 }
 
+// nestHeadingLevels renumbers the document's headings so each level nests under the one before —
+// `/pending 487`.
+//
+// PDF/UA-1 7.4.2 t1, as veraPDF judges it on its own corpus: the first numbered heading is H1, and a
+// descent never skips a level, while a heading may return to any shallower level. Markdown lets an author
+// write `#` then `###`, and mapping the source level straight through wrote H1 then H3 — a tree that fails
+// the clause whatever the author meant, and nib's own report could not see it until the checker learned the
+// rule in the same change. The relative hierarchy is kept: a heading is one level deeper than the nearest
+// earlier heading whose SOURCE level is shallower, and H1 when there is none.
+//
+// Document-wide, because a section runs across pages; a heading block that straddles a page break is
+// renumbered identically on both sides, since it pops back to the same parent.
+func nestHeadingLevels(pages [][]mdpdf.Role) {
+	type open struct{ src, out int }
+	var stack []open
+	for p := range pages {
+		roles := pages[p]
+		for i := 0; i < len(roles); {
+			j := i
+			for j < len(roles) && roles[j].Block == roles[i].Block {
+				j++
+			}
+			if roles[i].Kind == mdpdf.RoleHeading {
+				src := roles[i].Level
+				for len(stack) > 0 && stack[len(stack)-1].src >= src {
+					stack = stack[:len(stack)-1]
+				}
+				out := 1
+				if len(stack) > 0 {
+					out = stack[len(stack)-1].out + 1
+				}
+				stack = append(stack, open{src, out})
+				for k := i; k < j; k++ {
+					roles[k].Level = out
+				}
+			}
+			i = j
+		}
+	}
+}
+
 // tagMarkdown converts Markdown and tags the result from its own structure.
 func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, error) {
 	pdf, st, err := mdpdf.ConvertStructured(md, base, fallbacks)
@@ -72,6 +113,7 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 	// its own comment said it was for: *a list of call sites passes when a third door is added and
 	// not routed*.
 	pdf = embeddedFontsAreHonest(pdf)
+	nestHeadingLevels(st.Pages)
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		live := map[int]bool{}
 		for p := 1; p <= ctx.PageCount; p++ {
