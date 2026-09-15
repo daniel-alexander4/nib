@@ -1173,7 +1173,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
-| `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize` on each PDF added to `DIR`, until interrupted. |
+| `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize`/`ua` on each PDF added to `DIR`, until interrupted. |
 | `nib discover` | Report what link-local peer discovery can see from this machine: which interfaces were joined and why, whether announcements left, and what came back. Local network only. |
 | `nib rendezvous` | Report whether the BitTorrent DHT that remote co-signing uses is reachable, and what this machine's public address looks like from outside. **Contacts the public internet** — it prints a notice before it opens a socket. Publishes nothing unless you add `--self-test`, which also publishes one throwaway record and fetches it back. |
 | `nib version` | Print the version. |
@@ -1248,13 +1248,16 @@ set — a no-echo prompt, so it's never on the command line where other processe
 could see it. Add `--tsa URL` to fix the signing time with an RFC3161 timestamp
 authority.
 
-`nib watch DIR --do timestamp|optimize|sanitize` runs that operation on each PDF
+`nib watch DIR --do timestamp|optimize|sanitize|ua` runs that operation on each PDF
 dropped into `DIR` and keeps running until you stop it (Ctrl-C) — the "process
 my inbox" / scheduled-job workflow. It polls (no background file-watching
 dependency), waits for each file to finish copying before acting, and handles
 each file once. `timestamp` writes a `.ots` sidecar; `optimize`/`sanitize`
 rewrite in place — and so skip any signed PDF that lands in the directory,
-reporting it, rather than silently invalidating its signatures. Run `nib <command> -h` for a command's own flags.
+reporting it, rather than silently invalidating its signatures. `ua` writes the report `nib ua`
+prints — the table and its verdict — to `FILE.ua.txt` beside each PDF and touches nothing else.
+`--do tag` is refused: a proposed structure is reviewed before it is written, and a watch has no
+one to review it; use `nib tag propose` and `nib tag commit`. Run `nib <command> -h` for a command's own flags.
 
 ---
 

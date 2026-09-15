@@ -167,7 +167,7 @@ These subcommands run headlessly, without a browser:
   nib discover [--seconds N]      report what link-local peer discovery can see here
   nib rendezvous [--seconds N]    report whether the DHT remote co-signing uses is
                                   reachable (contacts the public internet)
-  nib watch DIR --do OP           run timestamp/optimize/sanitize on each new PDF
+  nib watch DIR --do OP           run timestamp/optimize/sanitize/ua on each new PDF
   nib version                     print the version
 
 Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,

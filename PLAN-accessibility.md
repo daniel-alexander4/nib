@@ -3519,10 +3519,36 @@ the server answering a signed document other than 409. First-run survivors: vali
 because its fixture was named `signed.pdf` and the error names the file (renamed; the assertion is now
 the door's sentence). The slice gate does not fire (`internal/tagwrite`, `internal/cli`, the tag routes).
 
-#### P10.S03 — a folder gets the report
+#### P10.S03 — a folder gets the report *(done 2026-09-14, v1.129.98)*
 Scope: `nib watch DIR --do ua` writes `FILE.ua.txt` beside each PDF; `--do tag` is refused with the reason.
 Acceptance:
 - The report sidecar is the same table `nib ua` prints; the refusal names law 3.
+
+**(build, 2026-09-14, v1.129.98.)** `internal/cli/watch.go`, `internal/cli/commands.go`.
+
+| measured | result |
+|---|---|
+| "the same table" | `nib ua`'s report moved into `uaReport` (table lines, then the provenance and verdict sentences); `cmdUA` prints the table on stdout and the sentences on stderr, and the watch writes both into the sidecar, which has no stderr. On an untagged document the sidecar begins with `nib ua`'s stdout byte for byte and holds every stderr sentence; the status says "not PDF/UA" where `nib ua` exits 1; the document is byte-identical |
+| the no-certificate guard | `TestUAExitZeroSaysItIsNotACertificate` read `cmdUA`'s body; it reads `uaReport`'s now, where the sentence is composed |
+| the sidecar write | through `atomicfile.WriteDurable`, not `writeAtomic`. `writeAtomic` resolves a symlink first, deliberately, for a path the user named; the sidecar's path is the directory's. A symlink planted at `FILE.ua.txt` pointing outside the directory is replaced, and the outside file is unchanged. Two guards chose the writer: a hand-rolled temp-plus-rename failed `TestEveryHandRolledAtomicWriteIsDeclared`, and `atomicfile.Write` failed `TestTheInPlaceRewriteIsDurableNotMerelyAtomic` (every write in `internal/cli` is durable). The mode is 0644 |
+| `--do tag` | exit 1 before the directory is examined, naming law 3 and `nib tag propose` / `nib tag commit`; `watchOps` holds no `tag` |
+| the other listings | the flag help, the usage string, the `--do` error, `printUsage`, the README table row and the watch paragraph all name `ua` |
+
+- **Pin — a document failing a checked clause is a report, not a failed action.** `watchUA` returns success
+  with a status naming the sidecar, so the scan marks the file processed and does not retry it on every scan.
+- **Pin — a signed document is reported like any other.** The watch writes only the sidecar, so
+  `watchTransform`'s signed skip does not apply.
+- **Declared, not probed:** the passing status wording (no fixture passes every clause nib checks), and a
+  sidecar write that fails.
+
+Nine mutations red: the tag refusal removed, `ua` removed from `watchOps`, the sidecar without the sentences,
+the sidecar without the table, the sidecar written with `os.WriteFile` (through the symlink), the status
+inverted, the provenance line dropped (`TestUARefusesWithEveryReasonAndNamesTheFont` and the root
+conformance-door guard), the certificate sentence dropped, and the sidecar mode 0600. Three first-run
+"reds" were compile failures from unused variables or an unused import; each was re-run as a compiling
+mutation and went red. The first-run survivor — dropping the temp file's chmod — got the mode assertion;
+after the move to `atomicfile` it is probed as the mode argument. The slice gate does not fire
+(`internal/cli` only).
 
 #### P10.S04 — the docs and the parity ledger
 Scope: the README's CLI table and *How Nib compares* gain accessibility; `docs/accessibility-parity.md` compares

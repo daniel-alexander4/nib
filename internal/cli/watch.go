@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"nib/internal/atomicfile"
 	"nib/internal/ots"
 	"nib/internal/pdfops"
 	"syscall"
@@ -29,10 +30,10 @@ func cmdWatch(args []string) int {
 	fs := flag.NewFlagSet("nib watch", flag.ContinueOnError)
 	var op string
 	var interval int
-	fs.StringVar(&op, "do", "", "operation per PDF: timestamp | optimize | sanitize (required)")
+	fs.StringVar(&op, "do", "", "operation per PDF: timestamp | optimize | sanitize | ua (required)")
 	fs.IntVar(&interval, "interval", 2, "seconds between directory scans")
-	fs.Usage = usageFunc(fs, "nib watch DIR --do timestamp|optimize|sanitize",
-		"Watch DIR and run an operation on each PDF added to it, until interrupted.\ntimestamp writes a .ots sidecar; optimize/sanitize rewrite the file in place.")
+	fs.Usage = usageFunc(fs, "nib watch DIR --do timestamp|optimize|sanitize|ua",
+		"Watch DIR and run an operation on each PDF added to it, until interrupted.\ntimestamp writes a .ots sidecar; optimize/sanitize rewrite the file in place;\nua writes the accessibility report \"nib ua\" prints to FILE.ua.txt.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -41,9 +42,17 @@ func cmdWatch(args []string) int {
 		return 1
 	}
 	dir := fs.Arg(0)
+	// Tagging is the one batch operation refused by name (`PLAN-accessibility.md` P10): inferred structure is
+	// a proposal a person reviews before it is written, and a watch has no one to review it.
+	if op == "tag" {
+		errf("--do tag is refused: inferred structure is a proposal, never an assertion (accessibility law 3), " +
+			"and a watch has no one to review it — run \"nib tag propose\" and \"nib tag commit\" instead, " +
+			"or --do ua for each file's report")
+		return 1
+	}
 	act, ok := watchOps[op]
 	if !ok {
-		errf("--do must be one of: timestamp, optimize, sanitize")
+		errf("--do must be one of: timestamp, optimize, sanitize, ua")
 		return 1
 	}
 	info, err := os.Stat(dir)
@@ -68,6 +77,7 @@ var watchOps = map[string]watchAction{
 	"timestamp": watchTimestamp,
 	"optimize":  func(p string) (string, error) { return watchTransform(p, pdfops.Optimize, "optimized") },
 	"sanitize":  func(p string) (string, error) { return watchTransform(p, sanitize, "sanitized") },
+	"ua":        watchUA,
 }
 
 // fileState is the size+mtime fingerprint used to tell when a file has settled.
@@ -238,6 +248,33 @@ func watchTimestamp(path string) (string, error) {
 		return "", err
 	}
 	return "timestamped", nil
+}
+
+// watchUA writes `nib ua`'s report beside path as FILE.ua.txt — `PLAN-accessibility.md` P10.S03. It
+// writes only the sidecar, so a signed document is reported like any other. A document that fails a
+// checked clause is a report, not a failed action: the status says which.
+func watchUA(path string) (string, error) {
+	data, err := readNoFollow(path)
+	if err != nil {
+		return "", err
+	}
+	table, notes, passed, err := uaReport(data)
+	if err != nil {
+		return "", err
+	}
+	body := strings.Join(table, "\n") + "\n\n" + strings.Join(notes, "\n") + "\n"
+	// Through the atomic door — durable, as every write in this package is (atomicdurable_test.go) — and
+	// NOT through writeAtomic: that one resolves a symlink first, deliberately, for a path the user named.
+	// This path is the directory's, and a rename replaces the entry rather than following it, so a symlink
+	// planted at FILE.ua.txt by the actor scanOnce's note describes is replaced instead of written through
+	// to a file outside the directory.
+	if err := atomicfile.WriteDurable(path+".ua.txt", []byte(body), 0o644); err != nil {
+		return "", err
+	}
+	if passed {
+		return "checked (every clause nib checks passes)", nil
+	}
+	return "checked (not PDF/UA — see " + filepath.Base(path) + ".ua.txt)", nil
 }
 
 func watchTransform(path string, fn func([]byte) ([]byte, error), done string) (string, error) {
