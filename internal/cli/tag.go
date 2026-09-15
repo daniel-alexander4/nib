@@ -22,9 +22,12 @@ import (
 // responses: a script reads exactly what the panel reads.
 func cmdTag(args []string) int {
 	usage := func(w *os.File) {
-		fmt.Fprint(w, "usage: nib tag tree IN [--json]  |  nib tag propose IN [--json]\n\n"+
-			"Read a document's structure. tree prints the tags it already has, in reading order;\n"+
-			"propose prints the structure nib would propose for it. Neither writes anything.\n"+
+		fmt.Fprint(w, "usage: nib tag tree|propose IN [--json]\n"+
+			"       nib tag commit IN -o OUT --review REVIEW.json\n"+
+			"       nib tag edit IN -o OUT --edits EDITS.json\n\n"+
+			"Read and write a document's structure. tree prints the tags it already has, in reading order, and\n"+
+			"propose prints the structure nib would propose; neither writes anything. commit writes a reviewed\n"+
+			"proposal and edit corrects the existing tree (-w rewrites the one input); both refuse a signed document.\n"+
 			"Run \"nib tag SUBCOMMAND -h\" for a subcommand's flags.\n")
 	}
 	if len(args) == 0 {
