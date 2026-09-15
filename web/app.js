@@ -423,9 +423,6 @@ function applyStatus(st) {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
-    // The File card's Open Recent list (/pending 485). It lives in the sidebar now, where no `.menu`
-    // ever opens, so `showMenu` alone never filled it: fill it at boot and after every install.
-    refreshRecent();
     // Apply saved preferences: theme and the auto-update toggle.
     applyAppearance(st.appearance || 'dark');
     applyCardHue(st.cardHue || 'all');
@@ -3445,9 +3442,6 @@ async function installOpened(meta) {
       if (v) setDirty(v, openedDirty(meta));
     }
   }
-  // Every open route installs through here, so this is the one place the Open Recent list is
-  // refreshed after an open (/pending 485) — whatever the server recorded is on screen without a reload.
-  if (opened) refreshRecent();
   return opened;
 }
 
@@ -9490,7 +9484,7 @@ els.openDir.onchange = () => openBrowse(els.openDir.value.trim());
 // One controller for both bars (the menubar's Edit/View and the toolbar's
 // Recent/Save/Export/More): click a top label to open it, hover to switch while
 // another is open, click a command (or click-outside / Escape) to close. Inputs
-// inside a dropdown don't close it. The Recent menu refreshes its list on open.
+// inside a dropdown don't close it.
 let openMenu = null;
 // **Focus goes back to the trigger, or it goes to `<body>`** (/pending 327). Removing
 // `.open` puts the focused item into a `display: none` subtree, and the browser then
@@ -9526,7 +9520,6 @@ function showMenu(menu) {
   menu.classList.add('open');
   menu.querySelector('.menutop')?.setAttribute('aria-expanded', 'true');
   openMenu = menu;
-  if (menu.querySelector('.recentSlot')) refreshRecent();
 }
 
 // Stamped at boot from the live DOM rather than written into index.html — the same
@@ -9902,26 +9895,36 @@ els.themeToggle.onclick = () => {
   saveSettings({ appearance: next });
 };
 
+// Open Recent is a dialog like Open…, behind its own button in the File card. The list is read from
+// the server every time the dialog opens, so it is never stale and nothing has to refresh it in between.
 async function refreshRecent() {
   const res = await apiFetch('/api/recent');
   const recent = (res.ok ? await res.json() : []) || []; // tolerate a null body
-  for (const slot of all('.recentSlot')) { // one slot: the File mode card's (the File menu is long gone)
-    slot.innerHTML = '';
-    if (!recent.length) {
-      const empty = document.createElement('div');
-      empty.className = 'menuitem idle'; empty.textContent = 'No recent files';
-      slot.appendChild(empty);
-      continue;
-    }
-    for (const e of recent) {
-      const b = document.createElement('button');
-      // The server sends the display name: only it can tell where a path ends.
-      b.textContent = e.name; b.title = e.path;
-      b.onclick = () => openPath(e.path);
-      slot.appendChild(b);
-    }
+  const list = $('recentList');
+  list.replaceChildren();
+  if (!recent.length) {
+    const empty = document.createElement('li');
+    empty.textContent = 'No recent files';
+    list.appendChild(empty);
+    return;
+  }
+  for (const e of recent) {
+    // A button inside each row, so every entry is reachable and operable from the keyboard.
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    // The server sends the display name: only it can tell where a path ends.
+    b.textContent = e.name; b.title = e.path;
+    b.onclick = () => { $('recentModal').hidden = true; openPath(e.path); };
+    li.appendChild(b);
+    list.appendChild(li);
   }
 }
+$('openRecentBtn').onclick = async () => {
+  await refreshRecent();
+  $('recentModal').hidden = false;
+  $('recentList').querySelector('button')?.focus();
+};
+$('recentCancel').onclick = () => { $('recentModal').hidden = true; };
 
 // Annotation tools (M4 Text + M8 Highlight/Draw): mutually exclusive toggles of
 // the pdf.js editor mode. Each is baked into the PDF by saveDocument(). Modes
