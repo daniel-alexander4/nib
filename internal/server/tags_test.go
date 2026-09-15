@@ -288,7 +288,8 @@ type rootElement struct {
 }
 
 // rootElements reads the elements directly under pdf's structure tree root; nil for a document with no
-// tree. The server has no tree route until S06, so a test reads the document itself.
+// tree. Read from the document itself, independently of the tree route, so the route's answer
+// (`TestTheTreeRouteReadsTheTreeAndChangesNothing`) is compared with something that does not share its code.
 func rootElements(t *testing.T, pdf []byte) []rootElement {
 	t.Helper()
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())

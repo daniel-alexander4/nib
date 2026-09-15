@@ -1,12 +1,13 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -11646,11 +11646,6 @@
+@@ -12269,12 +12269,6 @@
      // Form data and Multiple documents toggled on a second click, Pages and Outline re-opened
      // and could not be put away, so half the sidebar's pills answered a second click by doing
      // nothing. Code that wants a panel SHOWN rather than toggled goes through showPanel().
 -    if (tab.classList.contains('active')) {
 -      setExpanded(tab, false);
 -      $(tab.dataset.panel)?.classList.remove('active');
+-      drawReadingOrder(); // the badges belong to the tree panel, and go when it does
 -      return;
 -    }
      // **`[data-panel]` scopes this to the sidebar's panel headers.** A bare `.tab` also matches

@@ -151,6 +151,23 @@ you ignore is marked as decoration rather than left unaccounted for. The proposa
 not an answer — multi-column pages it cannot separate, and body paragraphs with no visible spacing
 between them, are the known weak spots.
 
+### Review and correct an existing structure tree
+**Page Functions → Review Structure Tree** shows the open document's tags as a tree — whoever wrote them,
+Nib or another program — in the order a screen reader reads them. Arrow keys walk it (Down and Up in
+reading order, Right into an element, Left out to its parent), and the element you are on is outlined on
+its page. A figure with no alternative text says so, and so does a table header cell with no scope.
+
+Select an element and change what is wrong with it: its **type** (a paragraph that should be a heading,
+say), its **alt text** (what a screen reader says for a figure), a header cell's **scope** (whether it
+heads its row, its column or both), its **place** among its neighbours, or **Mark as decoration** for
+something that is not content at all — a running header a program tagged as a paragraph. Every change is a
+button or Enter, so a keyboard user can browse the choices without changing anything, and **Undo** takes
+each one back. The accessibility report shows the result: set the missing alt text and the figure clause
+passes. A signed document is refused, because a correction changes the bytes its signatures cover.
+
+**Show reading order** numbers each element on the page in the order a screen reader reads it, so you can
+see where that differs from the order your eye reads.
+
 ### Convert to PDF/A for archiving
 Need a document that archives will still open decades from now? **File → Export →
 Archival PDF (PDF/A-2b)…** converts the open document to a **PDF/A-2b candidate**:
@@ -522,8 +539,9 @@ closing are once-per-document acts, so they are cards in the **File** tab's side
 ### Accessibility structure — what Nib does and does not claim
 A PDF can carry **tags**: a structure a screen reader uses to read it in the right order, tell a
 heading from a paragraph, and navigate. Nib tags the documents it writes from Markdown, the forms it
-authors and the scans it recognises, and can propose tags for any other document for you to review
-(**Tag structure…**, above). This section is about what happens to tags a document already has.
+authors and the scans it recognises, can propose tags for any other document for you to review
+(**Tag structure…**, above), and lets you correct the tags a document already has (**Review Structure
+Tree**, above). This section is about what happens to those tags when the document is edited.
 
 **Nib will not claim tagging it has not got.** Most editing operations keep a document's tag
 structure — rotate, optimise, set the language, add a note or an attachment, stamp a watermark or
