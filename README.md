@@ -759,7 +759,7 @@ reason it is separated from everything the document says about itself.
 ### Open a document
 **Open…** (File tab, or Ctrl+O) takes a typed path or URL, or browses your
 filesystem. Browsing opens the file *by path*, so it can be saved back in place
-and shows up under **Recent** — unlike dragging a file onto the window, which
+and shows up under **Open Recent** in the File card — unlike dragging a file onto the window, which
 uploads a copy with nowhere to save to.
 
 A file that isn't a PDF is refused with a message rather than opening an empty

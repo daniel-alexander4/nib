@@ -423,6 +423,9 @@ function applyStatus(st) {
     csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
+    // The File card's Open Recent list (/pending 485). It lives in the sidebar now, where no `.menu`
+    // ever opens, so `showMenu` alone never filled it: fill it at boot and after every install.
+    refreshRecent();
     // Apply saved preferences: theme and the auto-update toggle.
     applyAppearance(st.appearance || 'dark');
     applyCardHue(st.cardHue || 'all');
@@ -3425,6 +3428,7 @@ els.closeAllBtn.onclick = requestClose;
 // opened has no unsaved work by definition; setDocumentFromServer sets the flag for
 // everything that reaches it, and this is the one caller for which that is wrong.
 async function installOpened(meta) {
+  let opened;
   if (views.length === 1 && !view.pdfDocument) {
     // Named explicitly, though `view` is also the default. The condition guarantees
     // there is exactly one view, so the default would be correct — but "every reload
@@ -3433,13 +3437,17 @@ async function installOpened(meta) {
     // cannot read a condition three lines up.
     await setDocumentFromServer(meta, view);
     setDirty(view, openedDirty(meta));
-    return !!view.pdfDocument;
+    opened = !!view.pdfDocument;
+  } else {
+    opened = await openInNewView(meta);
+    if (opened) {
+      const v = views.find((x) => x.docMeta && meta.id && x.docMeta.id === meta.id);
+      if (v) setDirty(v, openedDirty(meta));
+    }
   }
-  const opened = await openInNewView(meta);
-  if (opened) {
-    const v = views.find((x) => x.docMeta && meta.id && x.docMeta.id === meta.id);
-    if (v) setDirty(v, openedDirty(meta));
-  }
+  // Every open route installs through here, so this is the one place the Open Recent list is
+  // refreshed after an open (/pending 485) — whatever the server recorded is on screen without a reload.
+  if (opened) refreshRecent();
   return opened;
 }
 
