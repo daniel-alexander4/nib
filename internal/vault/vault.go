@@ -167,6 +167,14 @@ type Settings struct {
 	// layout they never chose. Every field in this struct is `omitempty` and `Contents.Version`
 	// records why that matters.
 	ViewLayout string `json:"viewLayout,omitempty"`
+	// ReadAloudVoice is the name of the voice read-aloud uses, and ReadAloudRate its speed (/pending
+	// 482). Empty and 0 are the browser's default voice and speed — the absence-is-default rule
+	// ViewLayout states, and for its reason. A name the machine does not have is not an error: the
+	// voice list belongs to the browser, so the client falls back to the default and still speaks.
+	// No `contentsVersion` bump: an older build that drops these keys returns the user to the default
+	// voice, which is the harmless class, not the ceremony-secrets class the version exists for.
+	ReadAloudVoice string  `json:"readAloudVoice,omitempty"`
+	ReadAloudRate  float64 `json:"readAloudRate,omitempty"`
 	// Advanced is which of the exotic subsystems are switched ON.
 	//
 	// **A POINTER, and that is the whole design.** Dan's rule is *default off*, so the four bools

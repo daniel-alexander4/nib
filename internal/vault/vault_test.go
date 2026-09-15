@@ -89,7 +89,7 @@ func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if s := v.Settings(); s.Appearance != "dark" || s.DisableAutoUpdate {
 		t.Fatalf("default settings = %+v, want {Appearance:dark DisableAutoUpdate:false}", s)
 	}
-	if err := v.SetSettings(Settings{Appearance: "light", DisableAutoUpdate: true}); err != nil {
+	if err := v.SetSettings(Settings{Appearance: "light", DisableAutoUpdate: true, ReadAloudVoice: "Daniel", ReadAloudRate: 1.25}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,7 +97,7 @@ func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSSH: %v", err)
 	}
-	if s := reopened.Settings(); s.Appearance != "light" || !s.DisableAutoUpdate {
+	if s := reopened.Settings(); s.Appearance != "light" || !s.DisableAutoUpdate || s.ReadAloudVoice != "Daniel" || s.ReadAloudRate != 1.25 {
 		t.Errorf("settings not round-tripped: %+v", s)
 	}
 }

@@ -483,6 +483,15 @@
      look at and not find it on. -->
 <button data-forward="themeToggle">Switch theme</button>
             </div>
+      <!-- Read aloud's voice and speed (`/pending 482`). The voice list is the browser's, filled by
+           app.js when the speech engine reports it; a stored voice this machine lacks is shown as such
+           and read-aloud falls back to the default voice rather than going quiet. -->
+      <div class="tbgroup" data-label="Read Aloud" data-fold="4">
+<label class="menuitem">Voice <select id="readAloudVoiceSel"><option value="">Browser default</option></select></label>
+      <label class="menuitem">Speed <select id="readAloudRateSel">
+        <option value="0.75">Slower</option><option value="1">Normal</option><option value="1.25">Faster</option><option value="1.5">Fastest</option>
+      </select></label>
+            </div>
       <div class="tbgroup" data-label="Colours" data-fold="6">
 <!-- The sidebar's card colours. `all` is the six-accent rotation ADR-019 measured; the six
      single hues are that same hue at stepped tints, darkest step equal to the measured one.
