@@ -3580,6 +3580,35 @@ unmentioned, a JS title changed, a Partial row's evidence removed, "17 of the 10
 an undefined status, an Acrobat claim without a source, `nib tag edit` unmentioned, and a new
 `/api/tags/roles` route in `server.go`. The slice gate does not fire (docs and tests only).
 
+**(phase close, 2026-09-14.)** Every clause split on `and`.
+
+| exit criterion | verdict | evidence |
+|---|---|---|
+| the CLI covers the report | **met** | `nib ua`, through the UI's door since P07.S06 (`TestTheUIAndTheCLIReachTheSameConformanceDoor`) |
+| … proposing and committing tags | **met** | `nib tag propose` reaches `pdfops.ProposeTags`, as the route does (`TestTheTagCommandsReachTheRoutesDoors`); `nib tag commit` reaches `tagwrite.Commit`, as the route does (`TestEveryStructureWriteReachesTheSignedDocumentDoor`) |
+| … reading an existing tree | **met** | `nib tag tree`, with `--json` in the route's shape (`TestTheCLIsJSONIsTheRoutesShape`) |
+| … editing it (retype, move, alt, scope, artifact) | **met** | `nib tag edit` takes the route's request body through one decoder (`TestTagEditAppliesTheBatch`, `TestDecodingReadsTheRequestShapes`) |
+| … the Reading Order view | **not met, named** | the view draws numbers on the rendered page, and a headless command has no page to draw on. `nib tag tree` prints the same order as text. A ledger row, not an omission |
+| … an OCR text layer that is tagged | **not met, named** | recognition runs in the browser (phase-open measurement), so the CLI has no words to tag. Decided at phase open; in the ledger's *Recognize text* row and its gaps list |
+| folder batch via `nib watch` | **met, as decided** | `--do ua` writes the report per file; `--do tag` is refused naming law 3 (S03) |
+| the ledger names every parity gap that remains | **met, within what it can see** | 23 rows; *Gaps, named* lists every Gap and Unmeasured row and what each Partial row lacks |
+| … with no gap silently omitted | **met, bounded** | `paritydoc_test.go` fails on a feature from the five cited Adobe pages with no row, and on an accessibility route or `nib tag` subcommand the ledger does not mention. It cannot see a feature Adobe documents on a page the ledger does not cite |
+
+**Found at the close — `nib tag -h` still described only the read subcommands.** `cmdTag`'s usage said
+"tree | propose … Neither writes anything", which S02 made false. It was fixed after the phase gates below
+ran on v1.129.99, a string-only change to the help text.
+
+**Required-run gates, v1.129.99:**
+- T1 `go test ./...` — green at each slice close and at v1.129.99; re-run on the `internal/cli` help-text
+  fix at v1.129.100.
+- T2 `jsdomtest.sh` — 374/374.
+- T3 `uirepro.sh` — 153 of 156, the three `/pending 474` failures only (blockink, the CJK CMap, "leaves the
+  shared server"); nothing skipped.
+- T4 `pairrepro.sh` — PASS over both transports.
+- T4d `pairrepro.sh -n 4` — PASS: a non-signing convener carried a 4-instance ceremony through 3 hops over
+  both transports (13 s of hops).
+- T6 `ceremonyrepro.sh` — 27 pass, 0 fail.
+
 ---
 
 ## Out of scope
