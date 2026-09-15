@@ -49,6 +49,11 @@ How Nib's feature set lines up against the three best-known PDF editors.
 
 <sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only). § No account, no telemetry, no analytics, and every editing feature works with no network at all. A few features do reach the network — timestamping, timestamp verification, opening a document by URL, remote co-signing, and the update check — each one started by you and never in the background. All of them are listed in [What leaves your computer](#what-leaves-your-computer).</sub>
 
+**Accessibility is compared separately**, with Acrobat Pro only, in
+[docs/accessibility-parity.md](docs/accessibility-parity.md). There, feature by feature, each Acrobat claim
+is quoted from Adobe's documentation, each Nib claim names the test that shows it, and every gap is listed.
+It has no row in the table above because Foxit and PDF-XChange were not measured.
+
 Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
 doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
 table is about the jobs Nib *does* cover, and where it works differently.
@@ -1166,6 +1171,10 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
 | `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
 | `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **17 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
+| `nib tag tree IN [--json]` | Print the document's existing structure tree in reading order: each element's id, type, page, missing alt text or header scope, and text. `--json` is the shape the app reads. |
+| `nib tag propose IN [--json]` | Print the headings, paragraphs and list items Nib would propose. Writes nothing. |
+| `nib tag commit IN -o OUT --review REVIEW.json` | Write a reviewed proposal (`nib tag propose --json` is a review that keeps every role). A signed document is refused. |
+| `nib tag edit IN -o OUT --edits EDITS.json` | Correct the existing tree as one batch — retype, move, alt, scope, artifact — by the ids `nib tag tree` prints. A signed document is refused. |
 | `nib pagenum IN -o OUT` | Stamp running page numbers or Bates numbering (`--prefix ABC --pad 6 --position br --total`). `--continuous (-w \| --out-dir DIR) FILE…` threads one counter across a whole file set (multi-file Bates production). |
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
 | `nib fill IN --data D` | Fill a form: a JSON or **XFDF** record (`--data x.json\|.xfdf -o OUT`, the inverse of *Export form data*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |
