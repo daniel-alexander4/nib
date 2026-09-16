@@ -1404,6 +1404,38 @@
     </div>
   </div>
 
+  <!-- Downloading a new release (ADR-039). The pill used to hand the URL to the browser, which
+       meant no progress, no destination and no next step — a page cannot watch a transfer it does
+       not own, and cannot read the browser's download folder.
+
+       **It offers "Show in folder", never "Run".** `build.sh` publishes no checksum and no
+       signature, so nothing can verify the bytes; Nib writes the file non-executable and stops
+       there, which is what README promises ("it never installs or replaces itself").
+
+       Structure is the house pattern — `body > div[id$="Modal"]` with a `.sigcard` and an `h3` —
+       so it inherits the scrim, role="dialog", aria-modal, aria-labelledby, the focus trap,
+       stacking and Escape with no code. `#dlCancel` is the id Escape reaches for, and it owns the
+       abort: Escape CLICKS that button rather than hiding the dialog, so the cleanup runs. -->
+  <div id="downloadModal" hidden>
+    <div class="sigcard">
+      <h3>Download Nib</h3>
+      <p id="dlWhat" class="libhint"></p>
+      <label>Folder <input id="dlDir" type="text" placeholder="~/nib" /></label>
+      <p id="dlWhere" class="libhint"></p>
+      <!-- role="status" + aria-live="polite", and the client dedupes on rendered text before
+           writing here — the same guard `#srvWaitTiers` carries, so a percentage tick does not
+           re-announce the region on every frame. -->
+      <p id="dlProgress" role="status" aria-live="polite"></p>
+      <p id="dlError" class="cererror" hidden></p>
+      <div class="rowend">
+        <span class="grow"></span>
+        <button id="dlCancel">Cancel</button>
+        <button id="dlReveal" hidden>Show in folder</button>
+        <button id="dlGo" class="primary">Download</button>
+      </div>
+    </div>
+  </div>
+
   <div id="pageNumModal" hidden>
     <div class="sigcard">
       <h3>Page numbers</h3>

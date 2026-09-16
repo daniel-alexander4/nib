@@ -17,6 +17,8 @@
 package atomicfile
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -65,6 +67,71 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	}
 	return os.Rename(tmpName, path)
 }
+
+// WriteFrom streams src to path via a temp file and a rename: ATOMIC, and deliberately not durable,
+// the same choice `Write` makes and for the same reason — a caller that can re-derive its output
+// does not need an fsync. Nib's use is a release artifact, which is re-downloadable by definition.
+//
+// **The fourth door exists because the other three take `[]byte`, and some writes cannot.** The
+// release download is ~95 MB (measured); buffering it whole to reach an atomic door would spend the
+// memory the streaming exists to avoid, and hand-rolling temp-plus-rename at the call site is the
+// second implementation `atomicdoor_test.go` and `atomicroute_test.go` both exist to refuse. Those
+// two guards caught exactly that draft, which is why this door is here rather than a declared
+// exemption: `atomicroute_test.go` has no exemption mechanism at all — it fails on any `os.Rename`
+// in `internal/server` — so the only honest answer was to move the rename into the door.
+//
+// onProgress, when non-nil, is called with the running total after each chunk. It is the caller's
+// throttle point, not this door's: it fires per read, and a caller that turns every call into an
+// event will flood whatever it is feeding.
+//
+// limit bounds what will be written; a source exceeding it stops with ErrTooLarge and leaves
+// nothing behind. A remote `Content-Length` is a claim, and a stream that trusts it fills the disk.
+func WriteFrom(path string, src io.Reader, perm os.FileMode, limit int64, onProgress func(int64)) (int64, error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
+	if err != nil {
+		return 0, err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds; the cleanup on every failure path
+	buf := make([]byte, 256<<10)
+	var total int64
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if limit > 0 && total+int64(n) > limit {
+				tmp.Close()
+				return total, ErrTooLarge
+			}
+			if _, werr := tmp.Write(buf[:n]); werr != nil {
+				tmp.Close()
+				return total, werr
+			}
+			total += int64(n)
+			if onProgress != nil {
+				onProgress(total)
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			tmp.Close()
+			return total, rerr
+		}
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return total, err
+	}
+	if err := tmp.Close(); err != nil {
+		return total, err
+	}
+	return total, os.Rename(tmpName, path)
+}
+
+// ErrTooLarge is returned by WriteFrom when the source exceeds the caller's limit.
+var ErrTooLarge = errors.New("atomicfile: source exceeds the write limit")
 
 // CreateDurable creates path holding data, REFUSING if anything already exists there, and syncs
 // the file and its parent directory before returning.

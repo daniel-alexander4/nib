@@ -124,6 +124,9 @@ const els = {
   encryptPw2: $('encryptPw2'), encryptGo: $('encryptGo'), encryptCancel: $('encryptCancel'), encryptError: $('encryptError'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
+  downloadModal: $('downloadModal'), dlWhat: $('dlWhat'), dlDir: $('dlDir'), dlWhere: $('dlWhere'),
+  dlProgress: $('dlProgress'), dlError: $('dlError'), dlCancel: $('dlCancel'),
+  dlReveal: $('dlReveal'), dlGo: $('dlGo'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
   keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
@@ -699,16 +702,80 @@ function showVersionBadge(version) {
   els.updatePill.hidden = false;
 }
 
-// startDownload fetches the release. The OS/arch asset serves as an attachment,
-// so assigning location downloads in place without user activation; the release
-// page (fallback when no asset matches) needs a tab — if that open is ever
-// blocked, the pill stays red and a second click re-offers it.
+// startDownload opens the download dialog (ADR-039).
+//
+// **It used to be `location.assign(d.downloadUrl)`** — the BROWSER fetched the asset, so Nib never
+// saw the bytes and could report neither progress nor where the file went. The page cannot fix that
+// on its own either: a real release asset answers with no `Access-Control-Allow-Origin` on either
+// hop, so fetching it here to watch the bytes is blocked outright. The server does the transfer and
+// pushes progress on the window stream.
+//
+// The no-asset case is unchanged: no build matches this OS/arch, so there is nothing to download
+// and the release page opens in a tab.
 function startDownload(d) {
-  if (d.downloadUrl) {
-    toast(`Downloading Nib v${d.latest}…`);
-    location.assign(d.downloadUrl);
-  } else {
+  if (!d.downloadUrl) {
     window.open(d.url, '_blank', 'noopener');
+    return;
+  }
+  dlLatest = d.latest;
+  els.dlWhat.textContent = `Nib v${d.latest} for this computer. You have v${d.current}.`;
+  els.dlProgress.textContent = '';
+  els.dlError.hidden = true;
+  els.dlReveal.hidden = true;
+  els.dlGo.hidden = false;
+  els.dlGo.disabled = false;
+  dlShownText = '';
+  els.downloadModal.hidden = false;
+  // The folder the file will land in, resolved by the server so the path shown is the path
+  // written — the same door the Save As dialog uses, and the reason this dialog can name a
+  // destination at all where `downloadBlob` can only say "check your Downloads folder".
+  showDownloadDir(els.dlDir.value);
+}
+
+// dlLatest is the version the open dialog is offering; dlShownText is the last progress line
+// actually rendered, so an unchanged line is never written back into an aria-live region.
+let dlLatest = '';
+let dlShownText = '';
+
+// showDownloadDir asks the server what folder a path resolves to and displays it. An empty box
+// means ~/nib, which the server fills in — the client never guesses a path or joins one.
+async function showDownloadDir(path) {
+  try {
+    const res = await apiFetch(`/api/listdir?path=${encodeURIComponent(path || '')}`);
+    if (!res.ok) return;
+    const info = await res.json();
+    els.dlWhere.textContent = `Saves to ${info.path}`;
+  } catch { /* the dialog still works; the destination line just stays as it was */ }
+}
+
+// applyDownloadEvent renders a `download` event from the window stream.
+//
+// Dedupes on the RENDERED TEXT before writing, the guard `#srvWaitTiers` already carries: the
+// server throttles to whole percents, and this stops even those from re-announcing a line that
+// did not change.
+function applyDownloadEvent(ev) {
+  if (els.downloadModal.hidden) return;
+  let line = '';
+  if (ev.status === 'running') {
+    line = ev.total > 0
+      ? `Downloading — ${ev.percent}% of ${Math.round(ev.total / 1048576)} MB`
+      : 'Downloading…';
+  } else if (ev.status === 'done') {
+    line = `Downloaded to ${ev.path}`;
+    els.dlReveal.hidden = false;
+    els.dlGo.hidden = true;
+  } else if (ev.status === 'cancelled') {
+    line = 'Download cancelled.';
+    els.dlGo.disabled = false;
+  } else if (ev.status === 'failed') {
+    line = '';
+    els.dlError.textContent = ev.problem || 'The download did not finish.';
+    els.dlError.hidden = false;
+    els.dlGo.disabled = false;
+  }
+  if (line !== dlShownText) {
+    els.dlProgress.textContent = line;
+    dlShownText = line;
   }
 }
 
@@ -750,10 +817,64 @@ async function runUpdateCheck(auto) {
   els.updateGet.textContent = `v${d.current}`;
   describeButton(els.updateGet, `Nib v${d.latest} is available — you have v${d.current}. Click to download`);
   els.updatePill.hidden = false;
-  if (!auto && confirm(`Nib v${d.latest} is available (you have v${d.current}). Download it now?`)) {
-    startDownload(d);
-  }
+  // **The dialog replaces the confirm() for this path (ADR-039).** v1.95.0 chose a native
+  // `confirm()` on the rule that custom modals are for structured input only — and a yes/no was all
+  // the old flow had to ask, because the browser did the rest. This one reports progress, names a
+  // destination and offers a next step, which is structured output the idiom cannot carry.
+  if (!auto) startDownload(d);
 }
+
+// ── The download dialog's controls ───────────────────────────────────────────
+//
+// **Cancel owns the abort**, and that is the Escape contract rather than a preference: the global
+// handler CLICKS a dialog's `…Cancel` instead of hiding it, precisely so the cleanup runs. Hiding
+// the dialog without telling the server would leave a ~95 MB transfer running with nothing on
+// screen and no way to stop it.
+els.dlCancel.onclick = async () => {
+  els.downloadModal.hidden = true;
+  try {
+    await apiFetch('/api/update/download/cancel', { method: 'POST' });
+  } catch { /* the dialog is closed either way; the server stops on its own context */ }
+};
+
+els.dlGo.onclick = async () => {
+  els.dlGo.disabled = true;
+  els.dlError.hidden = true;
+  dlShownText = '';
+  els.dlProgress.textContent = 'Starting…';
+  const body = new FormData();
+  body.append('dir', els.dlDir.value.trim());
+  try {
+    const res = await apiFetch('/api/update/download', { method: 'POST', body });
+    if (!res.ok) {
+      els.dlError.textContent = await errText(res, 'Could not start the download.');
+      els.dlError.hidden = false;
+      els.dlProgress.textContent = '';
+      dlShownText = '';
+      els.dlGo.disabled = false;
+      return;
+    }
+    // Progress arrives on the window stream, not in this response: the request returns as soon as
+    // the transfer is under way, so a ~95 MB download does not hold a request open in silence.
+    const started = await res.json();
+    els.dlWhere.textContent = `Saves to ${started.path}`;
+  } catch {
+    els.dlError.textContent = 'Could not start the download.';
+    els.dlError.hidden = false;
+    els.dlGo.disabled = false;
+  }
+};
+
+els.dlReveal.onclick = async () => {
+  try {
+    const res = await apiFetch('/api/update/reveal', { method: 'POST' });
+    if (!res.ok) toast(await errText(res, 'Could not open that folder.'));
+  } catch { toast('Could not open that folder.'); }
+};
+
+// Re-resolve the destination as the user edits it, so the line under the box is always the folder
+// the server would actually write to rather than the text typed at it.
+els.dlDir.onchange = () => showDownloadDir(els.dlDir.value);
 
 els.updateDismiss.onclick = () => { els.updatePill.hidden = true; };
 // The pill is the manual check: any click (yellow, green, or red) re-checks —
@@ -13478,6 +13599,12 @@ els.quitBtn.onclick = () => quitNib();
 try {
   const windowStream = new EventSource('/api/window');
   // The server pushes this on connect and on every change — never on a clock. See the route.
+  // The release download's progress and outcome (ADR-039) — a second named event on the stream a
+  // window already holds, never a second EventSource: each connection counts as a window, so
+  // another one would inflate that count and defeat the idle exit that fires at zero.
+  windowStream.addEventListener('download', (e) => {
+    try { applyDownloadEvent(JSON.parse(e.data)); } catch { /* a malformed frame is not worth a throw */ }
+  });
   windowStream.addEventListener('armed', (e) => {
     try {
       const v = JSON.parse(e.data);
