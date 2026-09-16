@@ -203,7 +203,7 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 	}
 	// Both halves and the tier, through the one door (ADR-009). D4's tier here is approximate: an
 	// OCR engine's opinion about a picture.
-	claimed, ok, cerr := claimTagging(tree, sourceApproximate)
+	claimed, ok, cerr := claimTagging(stamped, tree, sourceApproximate)
 	if cerr != nil || !ok {
 		// Returning the artifacted stamp is the honest fallback and not a failure: the text layer
 		// is what the user asked for and it is intact.

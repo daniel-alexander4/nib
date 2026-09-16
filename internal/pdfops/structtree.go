@@ -164,15 +164,19 @@ func (t *structTree) anchored() int {
 	return n
 }
 
-// describedPages returns the object numbers of pages some element points at.
+// describedPages returns the object numbers of pages whose CONTENT some element references — by an
+// MCID, or an MCR naming its page.
+//
+// **Not every page an element names** (`/pending 495`). An OBJR's `/Pg` says which page an annotation
+// sits on, and an element's own `/Pg` says where its MCIDs would be; neither describes a byte of the
+// page's content stream. Counting them, a form authored on an untagged text PDF — one `/Form` element
+// per widget and nothing else — read as a document with no undescribed page, while veraPDF failed its
+// body text on 7.1 t3.
 func (t *structTree) describedPages() map[int]bool {
 	out := map[int]bool{}
 	for _, e := range t.elems {
-		if e.pgLive {
-			out[e.pgObj] = true
-		}
 		for _, k := range e.kids {
-			if k.pgObj != 0 {
+			if (k.kind == kidMCID || k.kind == kidMCR) && k.pgObj != 0 {
 				out[k.pgObj] = true
 			}
 		}

@@ -42,6 +42,12 @@ import (
 // the caller the form** — a structure that cannot be built returns the authored document as
 // `AuthorForm` would have produced it, with `tagged` false, because a form whose widgets are
 // undescribed is what nib shipped for years and a document with no fields is worse than both.
+//
+// **On a document whose own text is untagged it also returns `tagged` false** (`/pending 495`). The
+// widgets are all this door can describe, so claiming tagging there would claim it over a body nothing
+// describes — ADR-031 law 1, and veraPDF's 7.1 t3. `claimTagging` refuses that claim; the door describes
+// widgets INTO a document that is already tagged, and builds a tree from nothing only where the page
+// draws no text at all.
 func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, err error) {
 	authored, err := AuthorForm(pdf, fields)
 	if err != nil {
@@ -77,7 +83,7 @@ func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, 
 	}
 	// Both halves and the tier, through the one door (ADR-009). D4's tier here is exact: the caller
 	// placed and named these fields, so which element describes which widget is known.
-	claimed, ok, cerr := claimTagging(described, sourceExact)
+	claimed, ok, cerr := claimTagging(authored, described, sourceExact)
 	if cerr != nil || !ok {
 		return authored, false, nil
 	}

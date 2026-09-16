@@ -107,10 +107,8 @@ func widgetLinkages(t *testing.T, pdf []byte) []widgetLinkage {
 // OBJR, and the annotation names the element through its `/StructParent`. One without the other is a
 // structure that disagrees with itself.
 func TestEveryWidgetIsNestedInAFormElementThatPointsBack(t *testing.T) {
-	base, err := testpdf.Text("a form")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A tagged host: on an untagged one the door describes nothing and claims nothing (`/pending 495`).
+	base := formHost(t)
 	out, tagged, err := AuthorTaggedForm(base, s07Fields())
 	if err != nil {
 		t.Fatal(err)
@@ -152,10 +150,7 @@ func TestEveryWidgetIsNestedInAFormElementThatPointsBack(t *testing.T) {
 // an array indexed by MCID; an ANNOTATION's (from `/StructParent`, singular) gives one reference.
 // Writing an array where a reader expects a reference resolves to the wrong kind of object.
 func TestAnAnnotationsParentTreeEntryIsASingleReferenceNotAnArray(t *testing.T) {
-	base, err := testpdf.Text("a form")
-	if err != nil {
-		t.Fatal(err)
-	}
+	base := formHost(t)
 	out, tagged, err := AuthorTaggedForm(base, s07Fields())
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +233,10 @@ func TestTheDescribedFormClearsTheClauseS05CouldNot(t *testing.T) {
 		t.Skip("SKIP (not a pass): veraPDF is absent, so P06's exit criterion for the authored " +
 			"form is UNCHECKED in this run.")
 	}
-	base, err := testpdf.Text("a form")
+	// **The host is the conformant census document, and that is the correction** (`/pending 495`). This
+	// test ran on `testpdf.Text`, whose body already failed 7.1 t3 — so the described form's claim of
+	// tagging over that untagged body added nothing to the differential and went unseen.
+	base, err := LabelUA(labelReady(t, censusMarkdown()), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +264,7 @@ func TestTheDescribedFormClearsTheClauseS05CouldNot(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var files []string
-	for n, b := range map[string][]byte{"plain.pdf": plain, "described.pdf": described} {
+	for n, b := range map[string][]byte{"host.pdf": base, "plain.pdf": plain, "described.pdf": described} {
 		p := filepath.Join(dir, n)
 		if err := os.WriteFile(p, b, 0o600); err != nil {
 			t.Fatal(err)
@@ -275,8 +273,14 @@ func TestTheDescribedFormClearsTheClauseS05CouldNot(t *testing.T) {
 	}
 	cl := ua1FailedClauses(t, vp, files)
 	before, after := cl["plain.pdf"], cl["described.pdf"]
-	if before == nil || after == nil {
-		t.Fatal("veraPDF could not validate one of the pair, so there is no differential")
+	if before == nil || after == nil || cl["host.pdf"] == nil {
+		t.Fatal("veraPDF could not validate one of the documents, so there is no differential")
+	}
+	// The stimulus the old host lacked: the document the form is authored on does not already fail 7.1
+	// t3, so a claim over content nothing describes shows as an added clause.
+	if cl["host.pdf"]["7.1 t3"] || before["7.1 t3"] {
+		t.Fatalf("setup: the host (%v) or its undescribed form (%v) already fails 7.1 t3, so a claim over "+
+			"undescribed content could not be seen", sortedClauses(cl["host.pdf"]), sortedClauses(before))
 	}
 	// The stimulus: the undescribed form must actually fail the clause, or clearing it is vacuous.
 	if !before["7.18.4 t1"] {
@@ -309,9 +313,17 @@ func TestTheDescribedFormClearsTheClauseS05CouldNot(t *testing.T) {
 // named them, so which element describes which widget is KNOWN. That is D4's exact tier, the same
 // footing as `mdpdf`'s AST and unlike an OCR engine's reading of a picture.
 func TestTheFormsTreeSaysItCameFromNibsOwnFieldList(t *testing.T) {
-	base, err := testpdf.Text("a form")
+	// A page that draws nothing: the one host on which the form door builds a tree from nothing, so the
+	// tier is the door's own and not the host's (`lowerTier`, `/pending 495`).
+	base, err := InsertBlank(formHost(t), 0, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if base, err = RemovePages(base, []string{"2"}); err != nil {
+		t.Fatal(err)
+	}
+	if s := inspectTags(base); s.tree {
+		t.Fatalf("setup: the blank host carries a tree (%+v), so the tier below would be the host's", s)
 	}
 	out, tagged, err := AuthorTaggedForm(base, s07Fields())
 	if err != nil {
@@ -339,10 +351,7 @@ func TestTheFormsTreeSaysItCameFromNibsOwnFieldList(t *testing.T) {
 // What must not happen is losing the form. A form whose widgets are undescribed is what nib shipped
 // for years; a document with no fields is worse than both.
 func TestTheFormSURVIVESATreeItCannotBeGiven(t *testing.T) {
-	base, err := testpdf.Text("a form")
-	if err != nil {
-		t.Fatal(err)
-	}
+	base := formHost(t)
 	out, tagged, err := AuthorTaggedForm(base, s07Fields())
 	if err != nil {
 		t.Fatal(err)

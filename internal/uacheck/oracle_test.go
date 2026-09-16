@@ -83,12 +83,15 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	w := oracleDoc{"committed proposal", committedProposal(t, plain)}
 	tf, err := pdfops.AuthorForm(plain, textField)
 	cf, cerr := pdfops.AuthorForm(plain, []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 660, 112, 672}, Kind: "check", Name: "a", Label: "I agree"}})
-	df, _, derr := pdfops.AuthorTaggedForm(plain, textField)
+	// Both tagging doors add to the committed proposal (`/pending 495`): over `plain`'s own untagged text they
+	// now claim nothing. Not a picture for the OCR layer: its text is then invisible only, and 7.21.4.1 t1
+	// reads NotApplicable where veraPDF passes — a checker question outside that item.
+	df, _, derr := pdfops.AuthorTaggedForm(w.pdf, textField)
 	md, merr := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n\n- one\n- two\n"), ".md")
 	mdt, terr := pdfops.SetTitle(md, "A named document")
 	mdl, lerr := pdfops.SetLang(mdt, "en")
 	st, serr := pdfops.StampWatermark(plain, "DRAFT", pdfops.WatermarkStyle{})
-	ocr, _, oerr := pdfops.TagOCRLayer(plain, []pdfops.Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice", Block: 1, Para: 1, Line: 1}}, "eng")
+	ocr, _, oerr := pdfops.TagOCRLayer(w.pdf, []pdfops.Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice", Block: 1, Para: 1, Line: 1}}, "eng")
 
 	docs := []oracleDoc{
 		{"plain page", plain},
@@ -100,7 +103,7 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		must("Markdown + title", mdt, terr),
 		must("Markdown + title + lang", mdl, lerr),
 		must("stamped page", st, serr),
-		must("tagged OCR scan", ocr, oerr),
+		must("OCR layer tagged into a committed proposal", ocr, oerr),
 	}
 	docs = append(docs,
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},

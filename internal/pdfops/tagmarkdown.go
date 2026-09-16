@@ -137,7 +137,7 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 	}
 	// Both halves and the tier, through the one door (ADR-009). D4's tier here is exact: the
 	// structure came from `mdpdf`'s own AST.
-	claimed, ok, err := claimTagging(out, sourceExact)
+	claimed, ok, err := claimTagging(nil, out, sourceExact)
 	if err != nil {
 		return nil, err
 	}

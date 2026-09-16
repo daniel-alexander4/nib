@@ -57,6 +57,17 @@ func (s tagSource) valid() bool {
 	return false
 }
 
+// lowerTier is the less trustworthy of two tiers. A tree built partly by one door and partly by another
+// is only as far to be trusted as its weakest part, because the tier is read as a fact about the whole
+// tree (`/pending 495`: a form described into an OCR'd document recorded `Exact`).
+func lowerTier(a, b tagSource) tagSource {
+	rank := map[tagSource]int{sourceInferred: 1, sourceApproximate: 2, sourceExact: 3}
+	if rank[a] <= rank[b] {
+		return a
+	}
+	return b
+}
+
 // setTagSource records which tier produced the tree.
 func setTagSource(ctx *model.Context, src tagSource) error {
 	if !src.valid() {

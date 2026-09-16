@@ -25,7 +25,8 @@ func TestTheStructureRulesAgreeWithWhatP06Measured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	described, tagged, err := pdfops.AuthorTaggedForm(plain, fields)
+	// Described into the committed proposal: on the untagged page the door claims nothing (`/pending 495`).
+	described, tagged, err := pdfops.AuthorTaggedForm(wrapped, fields)
 	if err != nil || !tagged {
 		t.Fatalf("setup: AuthorTaggedForm tagged=%v: %v", tagged, err)
 	}
@@ -48,11 +49,12 @@ func TestTheStructureRulesAgreeWithWhatP06Measured(t *testing.T) {
 		{"a committed proposal", wrapped, "7.1 t3", Pass},
 
 		// P06.S07's measurement: the undescribed form fails 7.18.4 t1 and the described one passes.
-		// Both fail 7.1 t3 — the HOST page's text is untagged, which is what its content owes.
+		// The described form's host is the committed proposal, so its text is tagged and 7.1 t3 passes;
+		// on the untagged page it used to fail 7.1 t3 under a claim of tagging (`/pending 495`).
 		{"an undescribed form", undescribed, "7.18.4 t1", Fail},
 		{"a described form", described, "7.18.4 t1", Pass},
 		{"a described form", described, "6.2 t1", Pass},
-		{"a described form", described, "7.1 t3", Fail},
+		{"a described form", described, "7.1 t3", Pass},
 
 		// P06.S02, through the door /pending 481 wired.
 		{"converted Markdown", markdown, "6.2 t1", Pass},
@@ -126,7 +128,7 @@ func TestTheWidgetIsReadFromTheAnnotationUpAsVeraPDFReadsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	described, tagged, err := pdfops.AuthorTaggedForm(plain, []pdfops.FormField{
+	described, tagged, err := pdfops.AuthorTaggedForm(committedProposal(t, plain), []pdfops.FormField{
 		{Page: 1, Rect: [4]float64{100, 700, 300, 720}, Kind: "text", Name: "n", Label: "Your name"},
 	})
 	if err != nil || !tagged {
