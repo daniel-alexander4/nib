@@ -111,11 +111,15 @@ func imageToPage(p RasterPage) ([]byte, error) {
 // Rotate rotates the given pages (e.g. []string{"1","3-5"}, or nil for all) by
 // deg degrees (90, 180, 270, or negatives).
 func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.Rotate(bytes.NewReader(pdf), &out, deg, pages, nil); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.ROTATE
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		sel, err := api.PagesForPageSelection(ctx.PageCount, pages, true, true)
+		if err != nil {
+			return err
+		}
+		return pdfcpu.RotatePages(ctx, sel, deg)
+	})
 }
 
 // RemovePages drops the given pages from the PDF.
@@ -295,12 +299,18 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 // config the blank inherits that page's MediaBox, so the inserted sheet matches its
 // neighbour's size. `before` is pdfcpu's own flag, passed through.
 func InsertBlank(pdf []byte, page int, before bool) ([]byte, error) {
-	var out bytes.Buffer
-	sel := []string{strconv.Itoa(page)}
-	if err := api.InsertPages(bytes.NewReader(pdf), &out, sel, before, nil, nil); err != nil {
-		return nil, err
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.INSERTPAGESAFTER
+	if before {
+		conf.Cmd = model.INSERTPAGESBEFORE
 	}
-	return out.Bytes(), nil
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		sel, err := api.PagesForPageSelection(ctx.PageCount, []string{strconv.Itoa(page)}, true, true)
+		if err != nil {
+			return err
+		}
+		return ctx.InsertBlankPages(sel, nil, before)
+	})
 }
 
 // InsertPDF inserts the pages of other immediately before or after page (1-based) of pdf.
@@ -367,6 +377,8 @@ func Append(pdf, other []byte) ([]byte, error) {
 	if err := api.MergeRaw(rs, &out, false, nil); err != nil {
 		return nil, err
 	}
+	// The first document's catalog carries its PDF/UA identification onto content it never described,
+	// so the merge drops it (`/pending 492`) — after the write, because `MergeRaw` has its own read.
 	// **`MergeRaw` takes the FIRST document's catalog whole**, so merging a tagged document with an
 	// untagged one carries that catalog's `/StructTreeRoot` onto the result — and the argument order
 	// decides it: tagged-first keeps the claim, tagged-second drops it. Measured, the result is
@@ -375,7 +387,7 @@ func Append(pdf, other []byte) ([]byte, error) {
 	// rather than an oversight — stripping would destroy a whole live tree to fix one page, and this
 	// is the path `p2p/readme.go` and `p2p/sigpages.go` take for every ceremony document. See the
 	// tag-fate table's `partial` verdict and `PLAN-accessibility.md` D9.
-	return out.Bytes(), nil
+	return withoutUAClaim(out.Bytes())
 }
 
 // Combine merges the given PDFs into one, in the order given — each source keeps
@@ -397,7 +409,7 @@ func Combine(pdfs [][]byte) ([]byte, error) {
 	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return withoutUAClaim(out.Bytes()) // as Append: the first catalog's claim does not cover the rest
 }
 
 // RedactPages rebuilds a PDF so that each page given in raster (1-based page
@@ -631,7 +643,12 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// the orphan check 88 ms, the whole shipped path 559 ms — so the carry costs ~324 ms and buys
 	// 3800 elements that were previously dropped. Four of the six real-world PDFs to hand are tagged
 	// (3800, 2247, 1157 and 128 elements) and the carry preserves every element of all four.
-	raw := out.Bytes()
+	// The composition keeps the source catalog, PDF/UA identification included, over sheets it never
+	// described — dropped first, so every return below is past it (`/pending 492`).
+	raw, err := withoutUAClaim(out.Bytes())
+	if err != nil {
+		return nil, err
+	}
 	if !inspectTags(raw).orphaned() {
 		return raw, nil
 	}
@@ -1994,11 +2011,11 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 // and ~nil on already-tight or image-dominated files. For real shrinkage of a
 // scan, the caller rasterizes to JPEG instead.
 func Optimize(pdf []byte) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.Optimize(bytes.NewReader(pdf), &out, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.OPTIMIZE
+	// The optimization IS the read: `ReadValidateAndOptimize` is what `api.Optimize` does before it
+	// writes, so the operation needs no step of its own.
+	return rewriteWithConf(pdf, conf, func(*model.Context) error { return nil })
 }
 
 // PageBox returns a page's MediaBox as llx, lly, urx, ury in PDF points.

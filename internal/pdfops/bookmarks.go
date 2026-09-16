@@ -8,6 +8,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // OutlineItem is one bookmark in the document outline, flattened: a title, the
@@ -73,21 +74,30 @@ func SetOutline(pdf []byte, items []OutlineItem) ([]byte, error) {
 	}
 
 	if len(items) == 0 {
-		var out bytes.Buffer
-		if err := api.RemoveBookmarks(bytes.NewReader(pdf), &out, nil); err != nil {
-			if errors.Is(err, api.ErrNoOutlines) {
-				return pdf, nil // nothing to clear
+		conf := model.NewDefaultConfiguration()
+		conf.Cmd = model.REMOVEBOOKMARKS
+		out, err := rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+			ok, err := pdfcpu.RemoveBookmarks(ctx)
+			if err != nil {
+				return err
 			}
-			return nil, err
+			if !ok {
+				return api.ErrNoOutlines
+			}
+			return nil
+		})
+		if errors.Is(err, api.ErrNoOutlines) {
+			return pdf, nil // nothing to clear — the document's own bytes, unwritten
 		}
-		return out.Bytes(), nil
+		return out, err
 	}
 
-	var out bytes.Buffer
-	if err := api.AddBookmarks(bytes.NewReader(pdf), &out, buildBookmarkTree(items), true, nil); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.ADDBOOKMARKS
+	bms := buildBookmarkTree(items)
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		return pdfcpu.AddBookmarks(ctx, bms, true)
+	})
 }
 
 // buildBookmarkTree reconstructs the nested bookmark tree from a flat, leveled

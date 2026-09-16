@@ -37,8 +37,18 @@ import (
 	"errors"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
+
+// propertyConf is the configuration `api.AddProperties` / `api.RemoveProperties` read with when handed
+// one, as nib always did: relaxed validation, and the command named.
+func propertyConf(cmd model.CommandMode) *model.Configuration {
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	conf.Cmd = cmd
+	return conf
+}
 
 // flagsKey is the Info-dict property holding the encoded flag set.
 const flagsKey = "NibFlags"
@@ -71,12 +81,15 @@ func FlagsJSON(pdf []byte) ([]byte, error) {
 // actually carries the flags before handing it to the caller — the emailed
 // document is worthless if the placeholders silently failed to embed.
 func SetFlags(pdf, flagsJSON []byte) ([]byte, error) {
-	var out bytes.Buffer
 	enc := base64.StdEncoding.EncodeToString(flagsJSON)
-	if err := api.AddProperties(bytes.NewReader(pdf), &out, map[string]string{flagsKey: enc}, model.NewDefaultConfiguration()); err != nil {
+	// `api.AddProperties` also validates keys and values for characters a PDF string cannot hold; the key
+	// is a constant and the value base64, so there is nothing for that check to find here.
+	res, err := rewriteWithConf(pdf, propertyConf(model.ADDPROPERTIES), func(ctx *model.Context) error {
+		return pdfcpu.PropertiesAdd(ctx, map[string]string{flagsKey: enc})
+	})
+	if err != nil {
 		return nil, err
 	}
-	res := out.Bytes()
 	if got, err := FlagsJSON(res); err != nil || !bytes.Equal(got, flagsJSON) {
 		return nil, errFlagsRoundTrip
 	}
@@ -89,9 +102,14 @@ func ClearFlags(pdf []byte) ([]byte, error) {
 	if raw, err := FlagsJSON(pdf); err != nil || len(raw) == 0 {
 		return pdf, err
 	}
-	var out bytes.Buffer
-	if err := api.RemoveProperties(bytes.NewReader(pdf), &out, []string{flagsKey}, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return rewriteWithConf(pdf, propertyConf(model.REMOVEPROPERTIES), func(ctx *model.Context) error {
+		ok, err := pdfcpu.PropertiesRemove(ctx, []string{flagsKey})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("no property removed") // api.RemoveProperties' own refusal
+		}
+		return nil
+	})
 }

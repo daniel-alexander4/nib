@@ -1008,6 +1008,11 @@ func cmdSign(args []string) int {
 		errf("%v", err)
 		return 1
 	}
+	// A signature is a change nib cannot verify kept the document PDF/UA conformant, so the identification
+	// goes BEFORE it (`/pending 492`); an already-signed input keeps it rather than lose its signature.
+	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); derr == nil {
+		pdf = dropped
+	}
 	signed, err := sign.SignExternal(pdf, p12, pass, sign.Options{Name: name, Reason: reason, When: time.Now().UTC(), TSAURL: tsa})
 	if err != nil {
 		if errors.Is(err, sign.ErrWrongPassphrase) {

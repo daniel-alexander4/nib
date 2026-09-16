@@ -50,10 +50,14 @@ func TestADocumentCanPassEveryClauseNibChecksAndStillFailVeraPDF(t *testing.T) {
 	if para == 0 {
 		t.Fatal("setup: no addressable paragraph to retype")
 	}
-	formula, err := pdfops.EditStructure(base, []pdfops.StructureEdit{{Kind: "retype", Element: para, Value: "Formula", Index: -1}})
+	edited, err := pdfops.EditStructure(base, []pdfops.StructureEdit{{Kind: "retype", Element: para, Value: "Formula", Index: -1}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Labelled AFTER the edit, the way a producer labels what it finishes: the structure editor is a change,
+	// and a change drops an identification nib did not verify (ADR-032) — so the label written before it is
+	// gone, and the example is a document that claims conformance at the moment it is handed over.
+	formula := withUAPart(t, edited, "1")
 	r, err := Check(formula)
 	if err != nil {
 		t.Fatal(err)

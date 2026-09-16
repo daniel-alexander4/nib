@@ -109,7 +109,11 @@ var tagFates = map[string]tagFate{
 	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
 	"RemoveFilesAndMedia": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},
 	"ClearFlags":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return ClearFlags(b) }},
-	"SetOutline":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetOutline(b, []OutlineItem{{Title: "x", Page: 1}}) }},
+	// Driven UNSIGNED, the branch that rewrites; the signed branch returns the input and cannot touch a tree.
+	"DropUAIdentificationUnlessSigned": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return DropUAIdentificationUnlessSigned(b, false)
+	}},
+	"SetOutline": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return SetOutline(b, []OutlineItem{{Title: "x", Page: 1}}) }},
 	"SetPageLabels": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return SetPageLabels(b, []PageLabelRange{{Start: 1, Style: "decimal"}})
 	}},

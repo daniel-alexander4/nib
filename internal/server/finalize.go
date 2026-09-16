@@ -80,6 +80,13 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A signature is a change nib cannot verify kept the document PDF/UA conformant, so the
+	// identification goes BEFORE it (`/pending 492`) — never after, which would break the signature.
+	// A document already carrying one keeps its claim rather than lose that signature.
+	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdfBytes, sign.HasSignatureBlob(pdfBytes)); derr == nil {
+		pdfBytes = dropped
+	}
+
 	// Sign with the native vault identity (default) or, when chosen, an imported
 	// PKCS#12 certificate decoded fresh from its passphrase for this one signature.
 	opts := sign.Options{Reason: p.Reason, When: time.Now(), TSAURL: p.TSAURL}

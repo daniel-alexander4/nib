@@ -1,9 +1,9 @@
 package pdfops
 
 import (
-	"bytes"
+	"errors"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -36,9 +36,16 @@ func AddNotes(pdf []byte, notes []Note) ([]byte, error) {
 		ann := model.NewTextAnnotation(*rect, 0, nt.Text, "", "", 0, nil, "", nil, nil, "", "", 0, 0, 0, false, "Note")
 		m[nt.Page] = append(m[nt.Page], &ann)
 	}
-	var out bytes.Buffer
-	if err := api.AddAnnotationsMap(bytes.NewReader(pdf), &out, m, nil); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.ADDANNOTATIONS
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		ok, err := pdfcpu.AddAnnotationsMap(ctx, m, false)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("pdfcpu: AddAnnotationsMap: No annotations added") // api.AddAnnotationsMap's own refusal
+		}
+		return nil
+	})
 }

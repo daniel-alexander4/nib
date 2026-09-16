@@ -260,3 +260,13 @@ home today.
   LibreOffice document and `NUp`/`Collect` drop claim and content together. The enforcement built on
   the byte count was **stripping trees that had survived** and is gone; the census (law 2) and the
   guard stay.
+
+- **[ADR-032 — A PDF/UA identification survives only what nib verified; any change drops it](032-a-conformance-identification-survives-only-what-nib-verified.md)**
+  — ADR-031's law one field over. `pdfuaid:part` claims the whole document conforms, and pdfcpu carried
+  it through every write: on veraPDF's own corpus `AddNotes` and `StampWatermark` kept it while failing
+  7.18.1 t1 and 7.21.4.1 t1. nib checks 19 of 106 rules, so it cannot know an edit kept conformance, and
+  every change drops the claim — **inside the rewrite the change already performs**, never as a second
+  write, because the first plan (drop at the commit doors) was refuted by a trace: save has no door,
+  reload shares one, convene is byte-bound to its mirror, and a second write can land after a signature.
+  **Declared gap:** a signed document keeps its claim, since dropping it would destroy the signature.
+  `/pending 492`; it unblocks `/pending 486`.
