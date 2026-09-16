@@ -352,17 +352,98 @@ carried**, because they are page-indexed and copying them across a reorder *"sen
 worse than not having one, because it is wrong rather than absent"*. An in-place prune would start keeping them by
 construction, so it must drop them explicitly. (Measured: `Collect` and `RemovePages` drop `/PageLabels` today.)
 
-#### P02.S04a — Collect owns its own page selection
+#### P02.S04a — Collect owns its own page selection *(done 2026-09-16, v1.129.141)*
 Scope: replace `api.Collect`/`api.RemovePages` with an in-place page-tree rewrite in the source context — the
-ordered, repeat-preserving selection `PagesForPageCollection` produces; the `Pages` hierarchy kept intact so
-inherited attributes survive; a repeated page cloned as a real page object; `/Dests` naming dropped pages pruned;
-`/Outlines` and `/PageLabels` dropped explicitly (the decision above); AcroForm fields whose widgets are gone.
-**No structure-tree work at all.** Refs: D5.
+ordered, repeat-preserving selection `PagesForPageCollection` produces; ~~the `Pages` hierarchy kept intact so
+inherited attributes survive~~ **(struck by the grill, 2026-09-16 — see the pin below)**; a repeated page cloned as
+a real page object; `/Dests` naming dropped pages pruned; `/Outlines` and `/PageLabels` dropped explicitly (the
+decision above); AcroForm fields whose widgets are gone. **No structure-tree work at all.** Refs: D5.
+
+**(grill pin, 2026-09-16 — the premise "keep the hierarchy so inheritance survives by construction" is FALSE,
+measured.)** Two facts settle it. First, the client sends a whole-document permutation (`web/app.js:6036`), and a
+cross-subtree reorder MOVES a page to a different parent — at which point what it inherits changes, which is the
+exact thing hierarchy-preservation was adopted to protect. Second, keeping the hierarchy is not parity anyway:
+`api.Collect` already materializes `/Resources`, `/MediaBox` and `/Rotate` onto every page and emits a FLAT tree
+(`pkg/pdfcpu/page.go:137-146`). So this slice emits a flat `/Pages` with all **four** inherited attributes
+materialized totally — `InheritedPageAttrs` is exactly `{Resources, MediaBox, CropBox, Rotate}`
+(`model/xreftable.go:1698-1704`). Measured bonus: pdfcpu never materializes `/CropBox`, so an inherited crop box is
+LOST by today's `Collect` (probe: effective crop width 380 → nil); materializing all four fixes that in passing.
+
+**(grill pin, 2026-09-16 — the drop list is an ALLOWLIST, because in-place inverts a whitelist into a blacklist.)**
+`api.Collect` builds a fresh context, so only what pdfcpu migrates survives; rewriting in place means everything
+survives unless explicitly dropped, and the plan's four-item list is ~14 items. Measured, today's catalog after a
+subset is exactly `{Type, Pages, Names}` (+ `/Lang`, + `/AcroForm` where a field survives), and the source `/Info`
+— including `NibFlags` — does NOT survive. So the catalog and trailer are REBUILT from an allowlist rather than
+pruned, and an unenumerated key fails safe. The one that is not merely hygiene: a surviving `/StructTreeRoot` is
+written deeply and its elements' `/Pg` re-anchors a DROPPED page dict and its `/Contents`, so "delete page 4" would
+ship page 4's text. `/MarkInfo` drops WITH the tree — kept alone it is the single shape `orphaned()` fires on.
+
+**(grill pin, 2026-09-16 — the signature fate stays `erases`, by explicit deletion.)** An in-place rewrite would
+let the blob survive as rubble, flipping `Collect`/`RemovePages` from `erases` to `breaks`. That silently reroutes
+four gates: ADR-013's three `DocHash` anchors are all gated on "no signature" and would go QUIET rather than fire;
+`p2p.ContributionProgress` hard-refuses `sign.Invalid` (`internal/p2p/l3.go:287-291`), making a reordered ceremony
+document permanently un-contributable; `sign.SignApproval` refuses a document whose AcroForm still carries
+`/DocMDP`; and `DropUAIdentificationUnlessSigned` reads "signed" at three sites. It would also falsify the
+sentence the client already shows the user (`web/app.js:2845`). Whether an edited signed document should read
+`invalid` or `unsigned` was already SETTLED — `/pending 455`, closed v1.128.98, decided as option B:
+the refusal OBSERVES the bytes rather than predicting from the route, and option C (*"make every
+route produce `invalid`"*) was refused at the line because redaction assembles a new document. So
+keeping `erases` is continuity with a decision taken, not a fresh judgment.
+
+Tasks:
+- T01 — `pageselect.go`: one walk of the source page tree accumulating inherited `{Resources, MediaBox, CropBox,
+  Rotate}`, producing the ordered leaf list. Not `ctx.PageDict` per page (`/pending 476`: that is O(pages²)).
+- T02 — selection through `api.PagesForPageCollection`; reject `≤0` and out-of-range before use; report in nib's
+  voice, never pdfcpu's `pdfcpu: no page selected`.
+- T03 — materialize all four inherited attributes onto each kept page, TOTALLY (an explicit `/Rotate 0` where a
+  new ancestor would otherwise shadow), and emit a fresh flat `/Pages`: `/Kids` in selection order, `/Count`,
+  `/Parent` repointed, `ctx.PageCount` set.
+- T04 — a repeated page is deep-cloned (page dict, `/Annots`, each annot with a fresh `/P`). Mandatory:
+  `ErrPageTreeDuplicate` (`model/recursion.go:80`, on the write path as well as validation) refuses a page
+  object seen twice.
+- T05 — the catalog/trailer allowlist: keep `{Type, Pages}` + `/Lang` + pruned `/AcroForm` + `/Names` reduced to a
+  pruned `/Dests` (through `Node.Remove`, since `BindNameTrees` rebinds at write time). Everything else dropped.
+- T06 — delete the AcroForm signature fields and `/SigFlags`, so a page operation still erases a signature.
+- T07 — `Collect`, `RemovePages` (complement, ascending) and `collectWithoutStructure` route through the one
+  primitive; `carryLang`'s two calls in the subset doors go (`/Lang` survives in place; three parses become one).
+- T08 — the fixtures the repo lacks: nested inheriting tree, named destination, a form widget on a droppable page,
+  an attachment + dropped-page canary, page-object identity, order identity.
+
+**(built, 2026-09-16 — what the slice's own code review added to the T-list, recorded because the plan must
+describe what was built.)** Three divergences and five additions, all from the review rather than from the
+author:
+
+- **T03's explicit `/Rotate 0` was NOT written, and does not need to be.** It was there to stop a new ancestor
+  shadowing a page with no rotation of its own — but the flat `/Pages` this slice emits carries none of the four
+  attributes, so there is nothing to shadow. Writing a `0` would add a key no document had.
+- **T05 grew a second half.** Reducing `ctx.Names` is not sufficient: `BindNameTrees` re-binds the cache onto the
+  catalog and only ever UPDATES the key it knows about (`xreftable.go:1363`), never removing a sibling — so the
+  catalog's own `/Names` dictionary is rebuilt too. Without it a surviving destination carried `/EmbeddedFiles`
+  out with it and a redaction shipped the source's attachments, measured with the payload readable in the bytes.
+- **T06 grew four.** The signature pass now runs over EVERY page and BEFORE anything is cloned (a clone otherwise
+  copies a signature widget onto the duplicate); it scans page `/Annots` for a merged `/FT /Sig` never listed in
+  `/Fields`; it drops `/XFA`, which carries a whole XML copy of the form dataset and can hold its own signature;
+  and it prunes `/CO`. Its earlier shape also removed non-signature siblings under a shared parent, which is
+  integrity loss rather than erasure.
+- **Three things no T named**, each closing a way a DROPPED page stayed reachable — and pdfcpu writes by
+  reachability, so reachable means its `/Contents` is in the output: a kept field's `/Kids` is rewritten (it
+  still named widgets on dropped pages); an annotation on a kept page whose `/Dest` or `/A /D` names a dropped
+  page is unlinked; and the trailer's permanent `/ID[0]` is cleared, which the rebuild used to mint fresh.
+- **T08 delivered more fixtures than it listed**: a tagged document (nothing else here is tagged, so the
+  allowlist's `/StructTreeRoot` entry was graded by nothing), a signature split from its widget, a field shared
+  across two pages, and a dictionary-shaped destination.
+
 Acceptance:
 - Every assertion the current subset tests make still holds — parity is the bar, not improvement.
-- A nested page tree whose pages inherit `/Resources` and `/MediaBox` renders identically after a subset.
+- The catalog+trailer key set after `Collect`/`RemovePages` equals today's implementation's, measured both ways,
+  on a fixture carrying an outline, labels, an attachment, a destination, metadata, a tree and `/Info`.
+- A nested page tree whose pages inherit `/Resources`, `/MediaBox`, `/CropBox` and `/Rotate` renders identically
+  after a subset AND after an arbitrary reorder.
 - A named destination pointing at a dropped page does not survive as a dangling reference.
-- `DuplicatePage` emits two distinct page objects, not one object named twice.
+- `DuplicatePage` emits two distinct page objects, not one object named twice, each with its own `/Annots`.
+- The signature fate stays `erases` and the tag-fate rows stay `dropped`; a marker string from a dropped page is
+  absent from the output BYTES, not merely unlinked.
+
 
 #### P02.S04b — subset operations carry the tree
 Scope: with the selection in nib's hands, prune the source tree in place — elements by `/Pg`, ParentTree `/Nums`
