@@ -20,26 +20,39 @@
 
     <!-- Mode tabs: the single navigation model. Selecting one swaps the
          contextual toolbar (#toolbar) and the sidebar panels (see setMode).
-         the File tab carries open/save/export plus page navigation; the
-         settings gear is the only chrome dropdown left. -->
+         the File tab carries open/save/export plus page navigation.
+
+         **Accessibility is the seventh, and it is not cut the way the other six are**
+         (ADR-035). ADR-016 cuts a mode by what you DO to the document; accessibility is a
+         concern that spans marking up, changing pages and inspecting, and its controls were
+         scattered across three of them — Tag structure in Page Functions, Check accessibility
+         in Secure's Protect & Inspect, the structure tree hanging off `SIDEBAR_FOR.edit`.
+         It sits beside Page Functions because that is where two of the three already were. -->
     <nav class="modetabs">
       <button class="modetab" data-tab="file">File</button>
       <button class="modetab" data-tab="markup">Mark Up</button>
       <button class="modetab" data-tab="edit">Page Functions</button>
+      <button class="modetab" data-tab="accessibility">Accessibility</button>
       <button class="modetab" data-tab="secure">Secure</button>
       <button class="modetab" data-tab="collaborate">Signing</button>
       <button class="modetab" data-tab="settings">Settings</button>
     </nav>
 
-    <!-- The same five modes as one dropdown, for widths where the tabs no longer fit.
+    <!-- The same seven modes as one dropdown, for widths where the tabs no longer fit.
          Only one of .modetabs / .modemenu is ever displayed (style.css), so this is a
-         presentation swap rather than a second navigation model: both drive setMode. -->
+         presentation swap rather than a second navigation model: both drive setMode.
+
+         The two lists must hold the same ids: below 719px `.modetabs` is `display: none`,
+         so a mode missing from here is simply unreachable, silently. modes.test.mjs asserts
+         it, and it is also why the visibility switch (ADR-036) hides through ONE door that
+         takes both. -->
     <div class="menu modemenu">
       <button class="menutop" id="modeMenuTop" aria-label="Current mode">File</button>
       <div class="dropdown">
         <button data-modejump="file">File</button>
         <button data-modejump="markup">Mark Up</button>
         <button data-modejump="edit">Page Functions</button>
+        <button data-modejump="accessibility">Accessibility</button>
         <button data-modejump="secure">Secure</button>
         <button data-modejump="collaborate">Signing</button>
         <button data-modejump="settings">Settings</button>
@@ -295,9 +308,11 @@
             </div>
       <div class="tbgroup" data-label="Close Document" data-fold="4">
       <button id="closeBtn" title="Close this document and return to the empty state (Nib keeps running)" disabled>Close</button>
-      <!-- Appears at two open documents, matching the tab strip's own rule, because with
-      one document open Close view and Close all are the same act and offering both
-      would be two buttons for one outcome. syncTabs toggles it. -->
+      <!-- Appears at two open documents, because with one document open Close view and Close all
+      are the same act and offering both would be two buttons for one outcome. syncTabs toggles it.
+      **This is no longer the tab strip's rule** (ADR-037): the strip appears at one document and
+      this button does not. The two were one predicate and are now two — what these words MEAN is
+      a different question from whether there is a document worth showing a tab for. -->
       <button id="closeAllBtn" title="Close every open document and return to the empty state" hidden>Close all</button>
             </div>
     </div><div class="tbtab" data-tab="markup">
@@ -305,36 +320,8 @@
 <button id="detectBtn" title="Detect blank lines to fill">Detect fields</button>
       <button id="autofillBtn">Autofill from profile</button>
       <button id="editProfileBtn">Edit autofill profile…</button>
-            </div><div class="tbgroup" data-label="Annotate &amp; Draw" data-fold="0">
-<button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
-      <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
-      <span id="hlColors" class="hlcolors" hidden>
-        <span id="hlSwatches" class="hlswatches"></span>
-        <label class="hlcustom" title="Pick any highlight color"><input id="hlCustom" type="color" value="#fff066" /></label>
-      </span>
-      <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
-      <button id="borderBtn" title="Draw a colored outline box — a border with no fill">Border</button>
-      <span id="borderWidth" class="borderwidth" hidden>
-        <label title="Border thickness, in points">Thickness <input id="borderWidthInput" type="number" min="1" max="10" step="0.5" value="2" /> pt</label>
-      </span>
-      <button id="noteBtn" title="Drop a comment — a sticky note you can read on click">Note</button>
-      <button id="dropdownBtn" title="Draw a dropdown field, type its options — becomes a real fillable choice field in Save as fillable form…">Dropdown</button>
-      <button id="radioBtn" title="Draw a radio-button group, type its choices — becomes a real fillable choice field in Save as fillable form…">Radio</button>
-      <button id="checkboxBtn" title="Place a checkbox (click on the page) — becomes a real fillable checkbox in Save as fillable form…">Checkbox</button>
-      <button id="shapeBtn" title="Draw a line, arrow, rectangle, or ellipse">Shapes</button>
-      <span id="shapeOpts" class="shapeopts" hidden>
-        <button type="button" class="shapetype active" data-shape="line" title="Line">╱</button>
-        <button type="button" class="shapetype" data-shape="arrow" title="Arrow">↗</button>
-        <button type="button" class="shapetype" data-shape="rect" title="Rectangle">▭</button>
-        <button type="button" class="shapetype" data-shape="ellipse" title="Ellipse">◯</button>
-        <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
-      </span>
-            </div>      
-          <div class="tbgroup" data-label="Fill Forms from Data" data-fold="1">
-<button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
-      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
             </div>
-    <div class="tbgroup" data-label="Edit Page Text" data-fold="5">
+      <div class="tbgroup" data-label="Edit Page Text" data-fold="5">
 <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
       <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
             </div>
@@ -388,6 +375,35 @@
         <option value="300">Best — 300 DPI</option>
       </select>
             </div>
+      <div class="tbgroup" data-label="Annotate &amp; Draw" data-fold="0">
+<button id="textToolBtn" data-mode="FREETEXT" title="Add a text box (click on the page)">Text</button>
+      <button id="highlightToolBtn" data-mode="HIGHLIGHT" title="Highlight text">Highlight</button>
+      <span id="hlColors" class="hlcolors" hidden>
+        <span id="hlSwatches" class="hlswatches"></span>
+        <label class="hlcustom" title="Pick any highlight color"><input id="hlCustom" type="color" value="#fff066" /></label>
+      </span>
+      <button id="drawToolBtn" data-mode="INK" title="Freehand draw">Draw</button>
+      <button id="borderBtn" title="Draw a colored outline box — a border with no fill">Border</button>
+      <span id="borderWidth" class="borderwidth" hidden>
+        <label title="Border thickness, in points">Thickness <input id="borderWidthInput" type="number" min="1" max="10" step="0.5" value="2" /> pt</label>
+      </span>
+      <button id="noteBtn" title="Drop a comment — a sticky note you can read on click">Note</button>
+      <button id="dropdownBtn" title="Draw a dropdown field, type its options — becomes a real fillable choice field in Save as fillable form…">Dropdown</button>
+      <button id="radioBtn" title="Draw a radio-button group, type its choices — becomes a real fillable choice field in Save as fillable form…">Radio</button>
+      <button id="checkboxBtn" title="Place a checkbox (click on the page) — becomes a real fillable checkbox in Save as fillable form…">Checkbox</button>
+      <button id="shapeBtn" title="Draw a line, arrow, rectangle, or ellipse">Shapes</button>
+      <span id="shapeOpts" class="shapeopts" hidden>
+        <button type="button" class="shapetype active" data-shape="line" title="Line">╱</button>
+        <button type="button" class="shapetype" data-shape="arrow" title="Arrow">↗</button>
+        <button type="button" class="shapetype" data-shape="rect" title="Rectangle">▭</button>
+        <button type="button" class="shapetype" data-shape="ellipse" title="Ellipse">◯</button>
+        <label class="check" title="Fill rectangle / ellipse"><input id="shapeFill" type="checkbox" /> Fill</label>
+      </span>
+            </div>      
+          <div class="tbgroup" data-label="Fill Forms from Data" data-fold="1">
+<button id="fillCsvBtn" title="Mail-merge a spreadsheet onto this form — one filled PDF per row, as a ZIP">Fill from spreadsheet…</button>
+      <button id="importXfdfBtn" title="Fill this form from an XFDF data file (the Acrobat/Foxit interchange format)">Import form data (XFDF)…</button>
+            </div>
     </div><div class="tbtab" data-tab="edit">
       
       
@@ -421,10 +437,21 @@
 <button id="combineBtn" title="Combine several PDFs into one new document">Combine PDFs…</button>
       <button id="compareBtn" title="Compare this document with another PDF — text diff, side by side, or a visual difference map">Compare…</button>
             </div>
-          <!-- The autotagger (PLAN-accessibility.md P08.S06c): a structure is PROPOSED and reviewed here;
-               nothing is written until the reviewer commits. Document mode, per D10. -->
-          <div class="tbgroup" data-label="Tag Structure" data-fold="4">
+    </div><div class="tbtab" data-tab="accessibility">
+      <!-- ADR-035. Three controls that were in three different modes, gathered into one.
+           The autotagger (PLAN-accessibility.md P08.S06c) PROPOSES a structure and nothing is
+           written until the reviewer commits; the report checks 19 of veraPDF's 106 rules and
+           never shows a clause it could not check as a pass; the Review Structure Tree panel is
+           this mode's second sidebar surface (SIDEBAR_FOR), as it was Page Functions' second.
+
+           PLAN-accessibility.md's D10 placed tagging in `edit` per ADR-016. That placement is
+           superseded here, not contradicted: D10 answered "which of the five", and this adds a
+           sixth answer it did not have. -->
+      <div class="tbgroup" data-label="Tag Structure" data-fold="4">
 <button id="tagsBtn" title="Propose headings, paragraphs and lists for screen readers, and review them before anything is written">Tag structure…</button>
+            </div>
+      <div class="tbgroup" data-label="Check Accessibility" data-fold="5">
+<button id="uaBtn" title="Check this document against PDF/UA, the accessibility standard">Check accessibility (PDF/UA)…</button>
             </div>
     </div><div class="tbtab" data-tab="secure">
       <div class="tbgroup" data-label="Redact Content" data-fold="0">
@@ -442,7 +469,6 @@
       
       <div class="tbgroup" data-label="Protect &amp; Inspect" data-fold="1">
 <button id="scanBtn" title="Find and remove hidden code &amp; content">Scan for hidden content…</button>
-      <button id="uaBtn" title="Check this document against PDF/UA, the accessibility standard">Check accessibility (PDF/UA)…</button>
       <button id="attachBtn" title="View, extract, or add embedded file attachments">Attachments…</button>
       <button id="encryptBtn" title="Save a password-protected copy of this document (AES-256)">Add password protection…</button>
       <button id="decryptBtn" title="Remove an open password or owner restrictions from a PDF you can open">Remove password protection…</button>
@@ -520,6 +546,30 @@
       <label class="menuitem"><input id="advRendezvousChk" type="checkbox" /> Reach peers over the internet</label>
       <label class="menuitem"><input id="advTimestampChk" type="checkbox" /> Timestamping (OpenTimestamps)</label>
       <p id="advError" class="cererror" hidden></p>
+            </div>
+      <!-- Which main-menu tabs show (ADR-036). Dan, 2026-09-16: "It should be enabled/disabled in
+           the advanced settings menu. If an item is disabled in the advanced settings, it should
+           not show in the main menu."
+
+           **Its own card, deliberately NOT four more boxes inside Advanced features above.** That
+           card's contract is "switching one off STOPS it", enforced at the door that does the
+           thing; this one changes nothing but what the menu offers. Putting a cosmetic switch in a
+           card that says otherwise makes the card lie — and fusing the two mechanisms would hide
+           the `collaborate` TAB when ceremonies are switched off, taking co-signing and Simple
+           Sign with it, which is the collision `test/jsdom/advanced.test.mjs` exists to catch.
+
+           **Settings has no box.** The switch that would undo a hidden Settings lives inside
+           Settings. -->
+      <div class="tbgroup" data-label="Main menu" data-fold="7">
+<p class="libhint">Which tabs show across the top. Hiding one only removes it from the menu — nothing
+  about the document changes, and its keyboard shortcuts still work. Settings cannot be hidden.</p>
+<label class="menuitem"><input class="modeChk" data-mode="file" type="checkbox" checked /> File</label>
+      <label class="menuitem"><input class="modeChk" data-mode="markup" type="checkbox" checked /> Mark Up</label>
+      <label class="menuitem"><input class="modeChk" data-mode="edit" type="checkbox" checked /> Page Functions</label>
+      <label class="menuitem"><input class="modeChk" data-mode="accessibility" type="checkbox" checked /> Accessibility</label>
+      <label class="menuitem"><input class="modeChk" data-mode="secure" type="checkbox" checked /> Secure</label>
+      <label class="menuitem"><input class="modeChk" data-mode="collaborate" type="checkbox" checked /> Signing</label>
+      <p id="modeError" class="cererror" hidden></p>
             </div>
       <div class="tbgroup" data-label="Appearance" data-fold="4">
 <!-- The same sun/moon toggle that lives in the status cluster (ADR-021), forwarded. In the
@@ -653,10 +703,13 @@
          containers are absolutely positioned (pdf.js requires it), so the strip would
          float over the page content rather than sit above it. -->
     <div id="viewerCol">
-      <!-- The document switcher (P06.S01). Hidden while one document is open, so a
-           single-document session looks exactly as it did before tabs; it appears at
-           two. Buttons are built by syncTabs() in app.js from the `views` array —
-           the server holds the documents, the strip is client state. -->
+      <!-- The document switcher (P06.S01). Shown as soon as ONE document is open (ADR-037); it
+           was hidden below two until then, which left the open document named nowhere but the
+           toolbar title. Still hidden with nothing open — there is no document to put in a tab,
+           and `views` always holds one (empty) view, so the test is whether any view holds a
+           document rather than how many views there are. Buttons are built by syncTabs() in
+           app.js from the `views` array — the server holds the documents, the strip is client
+           state. -->
       <div id="tabstrip" role="tablist" aria-label="Open documents" hidden></div>
       <!-- The convener's setup SHEET (P03.S01, D3). Setup is form work — a roster picker and two
            fields — and does not fit a 200px sidebar; `#sidebar { width: 200px }` and two rails at a

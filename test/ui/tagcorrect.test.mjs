@@ -137,7 +137,7 @@ test('setup: the producer\'s broken document is open, and nib\'s report names bo
   brokenPath = brokenDocument(DIR);
   foundHeld = await heldDocs();
   await h.openDocument(brokenPath, 1);
-  await h.mode('edit');
+  await h.mode('accessibility'); // ADR-035: the tree panel moved out of Page Functions with the two buttons
   await page.click('.tab[data-panel="tagtree"]');
   await page.waitForFunction(() => document.querySelectorAll('#tagTreeList [role="treeitem"]').length >= 20, null, { timeout: 20000 });
   const figure = await result('7.3 t1');

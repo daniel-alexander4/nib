@@ -35,6 +35,10 @@ const h = await boot({
       })
       : { present: false }),
     '/api/peers': { self: 'f'.repeat(64), peers: [] },
+    // Closing the LAST document is a close-all: `closeView` hands off to `requestClose`, which
+    // posts here. Reached since ADR-037, because the strip now survives down to one document and
+    // the focus-fallback case moved to closing that one.
+    '/api/close': { status: 'ok' },
     '/api/open': (opts) => {
       const { path: p } = JSON.parse(opts.body);
       const name = p.split('/').pop();
@@ -105,12 +109,27 @@ test('closing a tab from its × leaves focus on the tab strip, or on the menubar
   assert.ok(doc.activeElement && doc.activeElement.classList.contains('tab'),
     `focus fell to ${doc.activeElement && doc.activeElement.tagName} after closing a tab — a keyboard user is thrown to the top of the page`);
 
-  // And when the strip itself disappears (one document left), focus lands on the menubar.
+  // Down to ONE document, which since ADR-037 still has a strip and still has a tab — so focus
+  // stays in the strip rather than falling back. This step used to be the fallback case, and it
+  // is now the last chance to prove the ordinary path once more.
   const x2 = tabs()[1].querySelector('.tabclose');
   x2.focus();
   x2.click();
   await settle(30);
-  assert.equal(tabs().length, 0, 'setup: the strip did not go away with one document left');
+  assert.equal(tabs().length, 1,
+    'closing down to one document emptied the strip — ADR-037 shows it at one, and the tab that '
+    + 'remains is the open document');
+  assert.ok(doc.activeElement && doc.activeElement.classList.contains('tab'),
+    `focus fell to ${doc.activeElement && doc.activeElement.tagName} after closing down to one `
+    + 'document, where a tab is still there to hold it');
+
+  // And when the strip itself disappears — which is now closing the LAST document — focus lands on
+  // the menubar. The property is unchanged; the point at which it fires moved by one close.
+  const x3 = tabs()[0].querySelector('.tabclose');
+  x3.focus();
+  x3.click();
+  await settle(30);
+  assert.equal(tabs().length, 0, 'setup: the strip did not go away when the last document closed');
   const menubarFirst = doc.getElementById('menubar')?.querySelector('button');
   assert.equal(doc.activeElement, menubarFirst,
     `focus fell to ${doc.activeElement && doc.activeElement.tagName} when the tab strip went away`);

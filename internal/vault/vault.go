@@ -180,6 +180,24 @@ type Settings struct {
 	// voice, which is the harmless class, not the ceremony-secrets class the version exists for.
 	ReadAloudVoice string  `json:"readAloudVoice,omitempty"`
 	ReadAloudRate  float64 `json:"readAloudRate,omitempty"`
+	// HiddenModes are the main-menu tabs this user has switched OFF (ADR-036). Empty means every
+	// mode shows, which is the default and the absence, per ViewLayout's rule above.
+	//
+	// **It stores HIDDEN, not VISIBLE, and that is the opposite choice to `Advanced` below.**
+	// Both are picking the polarity whose DROPPED key degrades safely, and the safe direction is
+	// not the same: `Advanced` stores enabled so that a lost key leaves four network-touching
+	// features off, and this stores hidden so that a lost key leaves every mode REACHABLE. Store
+	// "visible" instead and an older build that drops the key makes the whole menu disappear —
+	// including Settings, which is where the switch that would undo it lives.
+	//
+	// **Not a pointer, unlike `Advanced`.** There is no seeding step here and no second writer, so
+	// "never asked" and "asked, and nothing is hidden" need not be distinguishable: both mean show
+	// everything, and they mean it for the same reason.
+	//
+	// The server refuses an id that is not a mode, and refuses `settings` outright — see
+	// `hideableModes`. A vault holding an id a later build retires is harmless: the client hides
+	// what it finds and ignores what it does not.
+	HiddenModes []string `json:"hiddenModes,omitempty"`
 	// Advanced is which of the exotic subsystems are switched ON.
 	//
 	// **A POINTER, and that is the whole design.** Dan's rule is *default off*, so the four bools
