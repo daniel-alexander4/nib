@@ -445,6 +445,10 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// however long that is. There is no read deadline to survive: the server is constructed with
 	// no timeouts (cmd/nib/main.go).
 	ctx := r.Context()
+	// What this connection last put on the wire, so each event is sent only when it moves. Per
+	// connection, never shared: a window that arrives mid-download must receive the current state
+	// on its first pass, which a server-wide "last sent" would skip.
+	var lastArmed, lastDownload string
 	for {
 		// **SUBSCRIBE BEFORE READING, and the other order was a lost wakeup (/pending 464).**
 		//
@@ -466,6 +470,11 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		// Holding the channel first closes it: a change after this line closes a channel this
 		// loop already has, and the select returns at once.
 		changed := s.sess.armedChanges()
+		// **The download's wake is taken in the same breath as the armed one, and BEFORE either
+		// state is read** — `/pending 464`'s rule applied to a second broadcaster. Subscribing to
+		// one and then reading both would reopen exactly the window that bug lived in, for
+		// whichever channel was obtained last.
+		dlChanged := s.dl.changes()
 		// **What is armed, not merely whether.** "Names a live ceremony specifically, not
 		// generically" (P01.S06) cannot be met from a bool, and the name is the ceremony's own
 		// INTENT — the convener's words for what this proceeding is — never a fingerprint, which
@@ -475,14 +484,36 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		if merr != nil {
 			return
 		}
-		if _, err := w.Write(append(append([]byte("event: armed\ndata: "), payload...), '\n', '\n')); err != nil {
+		// **Emit on DIFFERENCE, not on every wake.** Two broadcasters share this loop now, so a
+		// download's percentage tick would otherwise re-send the armed state a hundred times per
+		// download — and that state drives a close prompt, not a progress line. Comparing the
+		// marshalled payload is the cheapest honest test of "did this actually change".
+		if string(payload) != lastArmed {
+			if _, err := w.Write(append(append([]byte("event: armed\ndata: "), payload...), '\n', '\n')); err != nil {
+				return
+			}
+			lastArmed = string(payload)
+			flusher.Flush()
+		}
+		// The download's progress and outcome (ADR-039). Same stream deliberately: each connection
+		// is counted as a window (above), so a second EventSource would inflate that count and
+		// defeat the idle exit that fires at zero.
+		dlPayload, dlErr := marshalDownload(s.dl.snapshot())
+		if dlErr != nil {
 			return
 		}
-		flusher.Flush()
+		if string(dlPayload) != lastDownload {
+			if _, err := w.Write(append(append([]byte("event: download\ndata: "), dlPayload...), '\n', '\n')); err != nil {
+				return
+			}
+			lastDownload = string(dlPayload)
+			flusher.Flush()
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-changed:
+		case <-dlChanged:
 		}
 	}
 }

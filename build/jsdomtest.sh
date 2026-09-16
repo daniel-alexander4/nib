@@ -98,7 +98,9 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # driven rather than scanned, because a scan cannot see an await between a capture and a write.
 # 74 since /pending 506 (clientdoors.test.mjs): the wrong-passphrase report, keyboard reach, tab-close
 # focus, and the disarm-all and keyboard doors.
-Nib_expect_files=74
+# 75 since ADR-039 (downloaddialog.test.mjs): the release download's dialog — progress from the
+# window stream, the destination named, a terminal state, and Cancel telling the server.
+Nib_expect_files=75
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

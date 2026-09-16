@@ -1173,6 +1173,18 @@ the version pill still checks either way). Nib only notifies and downloads — i
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
 swapping the binary).
 
+When a newer release exists, clicking the pill opens a download window: it shows **which folder the
+file will land in** (`~/nib` unless you change it), reports progress while it downloads, and when it
+finishes gives you **Show in folder**. Nib fetches the build itself rather than handing the job to
+your browser, which is what lets it tell you where the file went — a web page cannot see your
+browser's download folder.
+
+**It stops at the file, deliberately.** Nib does not run or install what it downloaded, and writes it
+without the execute bit. Nib's releases are published without checksums or signatures, so there is
+nothing for Nib to check the bytes against — and running an unverified program it fetched over the
+network is not something it will do on your behalf. Cancelling, or a failure part-way, leaves no
+half-finished file behind.
+
 ### Options
 
 | Variable | Effect |

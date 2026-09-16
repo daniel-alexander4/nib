@@ -178,6 +178,15 @@ type Server struct {
 	idleExit atomic.Bool
 	// idle is P01.S04's grace and its two cancel counters (D4).
 	idle idleExitTimer
+	// dl is the one release download this process will run, broadcast to every window (ADR-039).
+	//
+	// **Here rather than on `session`**, which is the ceremony's state: a download is not a
+	// proceeding, has no roster and no arm, and outlives nothing. It sits beside `windows` because
+	// it shares their stream — the progress rides the connection a window already holds, so it
+	// costs no second EventSource and cannot inflate the window count the idle exit reads.
+	//
+	// Carries its own mutex, so it stays out of the `mu` block below.
+	dl downloadState
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
@@ -334,6 +343,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ssh/repoint", requirePublicLoopback(s.handleRepoint))
 
 	// Protected — require the vault unlocked (+ CSRF on writes).
+	//
+	// **The download is HERE and the check is above, and the split is the point (ADR-039).**
+	// `/api/update/check` is public because it only queries out; these two write bytes into the
+	// user's filesystem and cancel a transfer, which is the act `POST /api/write` performs and
+	// takes the same guard. Inheriting the check's `requirePublicLoopback` would have made a
+	// disk-writing route reachable without a CSRF token.
+	mux.HandleFunc("POST /api/update/download", s.requireUnlocked(s.handleUpdateDownload))
+	mux.HandleFunc("POST /api/update/download/cancel", s.requireUnlocked(s.handleUpdateDownloadCancel))
+	mux.HandleFunc("POST /api/update/reveal", s.requireUnlocked(s.handleUpdateReveal))
 	mux.HandleFunc("GET /api/vault/export", s.requireUnlocked(s.handleVaultExport))
 	mux.HandleFunc("POST /api/vault/import", s.requireUnlocked(s.handleVaultImport))
 	mux.HandleFunc("GET /api/lan/heard", s.requireUnlocked(s.handleLANHeard))
