@@ -7,6 +7,8 @@ import (
 	"go/token"
 	"strings"
 	"testing"
+
+	"nib/internal/testpdf"
 )
 
 // The review doors — `PLAN-accessibility.md` P08.S06b.
@@ -167,5 +169,33 @@ func TestTheReviewDoorsRouteThroughTheProposer(t *testing.T) {
 				t.Errorf("%s does not call %s", fn, m)
 			}
 		}
+	}
+}
+
+// TestIgnoringEveryElementOnAPageStillCommitsIt — tier 3's keyboard review ignores page two's only
+// paragraph and commits; after /pending 495's claim check that page's text was left unmarked, the claim
+// was refused and the review could not commit. The ignored page's text is an artifact instead.
+func TestIgnoringEveryElementOnAPageStillCommitsIt(t *testing.T) {
+	src, err := testpdf.Text("section 1 opening paragraph", "section 2 closing paragraph")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, err := ProposeTags(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv := reviewAll(pr)
+	last := len(rv) - 1
+	// Stimulus first: the ignored element is the only one on its page, so nothing kept reaches it.
+	if len(rv) != 2 || pr.Elements[last].Page == pr.Elements[0].Page {
+		t.Fatalf("setup: want one element on each of two pages, got %+v", pr.Elements)
+	}
+	rv[last].Ignore = true
+	out, err := CommitTags(src, rv)
+	if err != nil {
+		t.Fatalf("a review that ignored every element on a page could not commit: %v", err)
+	}
+	if n, rerr := unmarkedTextRuns(out); rerr != nil || n != 0 {
+		t.Errorf("%d text run(s) left neither tagged nor an artifact (err %v)", n, rerr)
 	}
 }

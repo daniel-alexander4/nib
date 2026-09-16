@@ -50,8 +50,15 @@ var (
 	errCommitStale  = errors.New("pdfops: the proposal does not match the document any more — propose again")
 )
 
-// commitProposal writes a reviewed proposal into pdf.
-func commitProposal(pdf []byte, elements []proposedElement) ([]byte, error) {
+// commitProposal writes a reviewed proposal into pdf, and also commits alsoPages — pages whose every
+// proposed element the reviewer ignored.
+//
+// **A page with nothing kept is still a committed page** (found at the P01 runpending sweep's tier 3,
+// a regression of `/pending 495`): its text has to be bracketed as an artifact like any other uncovered
+// run, or it is content neither tagged nor an artifact under the claim this writer makes, and
+// `claimTagging` refuses the whole commit — the keyboard review that ignored page two's paragraph could
+// no longer commit at all.
+func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([]byte, error) {
 	if len(elements) == 0 {
 		return nil, errors.New("pdfops: an empty proposal describes nothing, so there is nothing to commit")
 	}
@@ -72,7 +79,13 @@ func commitProposal(pdf []byte, elements []proposedElement) ([]byte, error) {
 		}
 		pages := map[int]*committedPage{}
 		var order []int
+		pageNrs := make([]int, 0, len(elements)+len(alsoPages))
 		for _, el := range elements {
+			pageNrs = append(pageNrs, el.page)
+		}
+		pageNrs = append(pageNrs, alsoPages...)
+		for _, pageNr := range pageNrs {
+			el := proposedElement{page: pageNr}
 			if _, seen := pages[el.page]; seen {
 				continue
 			}
