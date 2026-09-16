@@ -61,7 +61,9 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 				defer fault.Catch(&err)
 				return add(ctx, emb)
 			}(); err != nil {
-				if emb {
+				// Text no face can bake (`stampText`) is the caller's error, not the face's: retrying it in
+				// Base-14 reads the document twice and logs a face failure that did not happen.
+				if emb && !errors.Is(err, ErrStampTextUnrepresentable) {
 					return embeddedStampError{err}
 				}
 				return err

@@ -410,3 +410,36 @@ func TestAnUnforeseenEmbeddedFailureRetriesInCoreFaces(t *testing.T) {
 		t.Errorf("the retry was silent (log: %q)", msg)
 	}
 }
+
+// TestTextNoFaceCanBakeIsNotRetriedAsAFaceFailure — found in the tier-1 log at P01.S04: a page-number
+// prefix pdfcpu cannot render literally failed on the embedded path, was logged as "stamping in the
+// embedded faces failed", and read the document a second time to fail identically in Base-14.
+func TestTextNoFaceCanBakeIsNotRetriedAsAFaceFailure(t *testing.T) {
+	if !stampFacesInstalled() {
+		t.Skip("SKIP (not a pass): the embedded faces are unavailable here, so there is no embedded path to misread")
+	}
+	logged := captureLog(t)
+	var attempts int
+	_, err := stampTextWatermarks(threePagePDF(t), true, []string{"LiberationSans"}, func(ctx *model.Context, embedded bool) error {
+		attempts++
+		_, serr := stampText("100%% done")
+		return serr
+	})
+	// Stimulus first: the text really is unbakeable, so the error is the caller's.
+	if _, serr := stampText("100%% done"); !errors.Is(serr, ErrStampTextUnrepresentable) {
+		t.Fatalf("setup: the text is bakeable after all (%v), so nothing here is the caller's error", serr)
+	}
+	if !errors.Is(err, ErrStampTextUnrepresentable) {
+		t.Errorf("the caller's unbakeable text came back as %v, want ErrStampTextUnrepresentable", err)
+	}
+	if attempts != 1 {
+		t.Errorf("%d attempts: unbakeable text was retried in Base-14 faces", attempts)
+	}
+	if msg := logged.String(); strings.Contains(msg, "embedded faces failed") {
+		t.Errorf("unbakeable text was logged as a face failure: %s", msg)
+	}
+	// And through a real door, the one the log line came from.
+	if _, perr := StampPageNumbers(threePagePDF(t), PageNumberStyle{Prefix: "100%% done"}); !errors.Is(perr, ErrStampTextUnrepresentable) {
+		t.Errorf("StampPageNumbers with an unbakeable prefix returned %v", perr)
+	}
+}
