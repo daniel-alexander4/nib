@@ -131,11 +131,27 @@ that is what the new one had found:** its one-page hand-built fixture already fa
 7.21.4.1 t1, so every operation adding one of those was invisible to it. The decision holds — one census is every
 writing phase's reader — and the slice became a rebase and a merge.
 
-#### P01.S02 — notes are `/Annot` elements
+#### P01.S02 — notes are `/Annot` elements *(done 2026-09-16, v1.129.115)*
 Scope: `AddNotes` on a tagged document nests each note, sets `/Contents` and `/Tabs S`. Refs: D3.
 Acceptance:
 - The census row for `AddNotes` adds nothing.
 - An untagged document gains no tree from a note (ADR-031: no claim over nothing).
+Tasks: *(written at slice-grill time, 2026-09-16; deep-dive: one caller, `handleBake`, notes last)*
+1. T01 — generalise `tagWidgetsOnPage` to `describeAnnotationsOnPage(subtype, elemType)`: the widget door
+   and the note door are the same three writes (ADR-009).
+2. T02 — `setStructureTabOrder(ctx)` so `/Tabs /S` rides `AddNotes`'s own rewrite; `setWidgetTabOrder` calls it.
+3. T03 — `AddNotes` describes each note as an `/Annot` only when the catalog already has a `/StructTreeRoot`;
+   `/Tabs /S` on every annotated page either way.
+4. T04 — drop `AddNotes` from `knownUA1Deltas`; a writes test and an untagged-document test.
+5. T05 — *(from the slice review, `code-reviews/v1.129.114-2026-09-16.md`)* describe notes in page order, and in a
+   second pass that returns the notes undescribed when nib cannot model the tree, so a note never fails the bake.
+
+**(review pin, 2026-09-16, P01.S02)** **T03 as written made a note able to fail a save.** Describing inside
+`AddNotes`'s one rewrite returned the parser's refusal of a third-party tree as the operation's error — `handleBake`
+answers 500 and the client aborts the save. `AuthorTaggedForm` already had the right shape (never cost the caller the
+form), and the notes door now has it too. The only such tree reachable through pdfcpu's relaxed read is an element
+with no `/S`: pdfcpu refuses a bare MCID or MCR under the root, and its structure depth limit (100) fires before nib's
+(200).
 
 #### P01.S03 — stamped text embeds its face
 Scope: `StampFields`, `StampPageNumbers`, `StampWatermark` draw in the authoring face. Refs: D4.

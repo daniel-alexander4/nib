@@ -184,21 +184,27 @@ func authorFormIn(pdf []byte, fields []FormField, face string) ([]byte, error) {
 // fields to gain a clause.
 func setWidgetTabOrder(pdf []byte) ([]byte, error) {
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
-		for p := 1; p <= ctx.PageCount; p++ {
-			d, _, _, derr := ctx.PageDict(p, false)
-			if derr != nil || d == nil {
-				continue
-			}
-			annots, aerr := ctx.DereferenceArray(d["Annots"])
-			if aerr != nil || len(annots) == 0 {
-				continue
-			}
-			d["Tabs"] = types.Name("S")
-		}
+		setStructureTabOrder(ctx)
 		return nil
 	})
 	if err != nil {
 		return pdf, nil
 	}
 	return out, nil
+}
+
+// setStructureTabOrder is the rule itself, on a parsed document, so an operation that already holds
+// one — `AddNotes` — applies it inside its own rewrite instead of paying for a second (ADR-009).
+func setStructureTabOrder(ctx *model.Context) {
+	for p := 1; p <= ctx.PageCount; p++ {
+		d, _, _, derr := ctx.PageDict(p, false)
+		if derr != nil || d == nil {
+			continue
+		}
+		annots, aerr := ctx.DereferenceArray(d["Annots"])
+		if aerr != nil || len(annots) == 0 {
+			continue
+		}
+		d["Tabs"] = types.Name("S")
+	}
 }
