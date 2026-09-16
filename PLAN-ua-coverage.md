@@ -249,18 +249,36 @@ then binds one XObject to two sources and overwrites `/StructParents` — a part
 - nib's census and construct fixtures hold no MCR, OBJR, annotation or RoleMap — each slice below that meets one
   owes its own fixture.
 
-#### P02.S01 — a carry is complete, or it is not a carry
+#### P02.S01 — a carry is complete, or it is not a carry *(done 2026-09-16, v1.129.135)*
 Scope: a completeness predicate beside `orphaned` (`tagfate.go:124`) — no dead element, MCR or OBJR `/Pg`; every
 ParentTree key owned by a live page, XObject or annotation; `checkStructConsistency` empty; no MCID-bearing
-XObject drawn twice — and `NUp` routed through it. Refs: D5.
+XObject drawn twice. **The `NUp` routing moves to S02** (grill, 2026-09-16 — see the measurement below). Refs: D5.
 Acceptance:
 - The identical-pages `NUp` output and a twin-element/MCR fixture fail it; distinct-pages `NUp` passes.
 - A correct producer tree with a key owned by a Form XObject passes it.
+Tasks:
+- T01 — `structureCarriedCompletely(ctx, tree) []structDefect`: the four conditions in one door, reusing
+  `checkStructConsistency` and `parentTreeEntries`.
+- T02 — the owner walk gains a form XObject's `/StructParents` (plural), the residue `allocParentTreeKey`
+  declares unwalked; one walk shared with the allocator.
+- T03 — draws per XObject counted by tokenizing each page's content (`contentstream`), never a byte scan.
+- T04 — an MCR fixture and a doubly-drawn-form fixture committed, each probed red against its own condition.
+- T05 — the predicate is a reader this slice only; `NUp` keeps its route until S02.
+
+**(grill, 2026-09-16 — MEASURED at the grill, v1.129.134, not reasoned.)** Through `NUp(2)`: the corpus fixture
+is clean on all four conditions (and its one ParentTree key is owned by a form XObject's `/StructParents`, which
+is the passing clause above); the census has **4 of 8 keys owned by nobody and 2 MCID-bearing XObjects drawn 3
+times each**; a hand-built MCR fixture leaves **1 dead MCR `/Pg`**; the twin fixture leaves **1 dead element
+`/Pg`**. All four report `carried` today, which is the defect. **Routing `NUp` through the gate in THIS slice
+would flip the census n-up to `dropped`** — reddening `TestNoOperationAddsAUA1ClauseItsInputDidNotFail` in both
+directions (the `7.20 t2` row goes stale, five `pageSetLoss` clauses appear) and regressing n-up wherever pdfcpu
+merges equal forms. The corpus fixture passes the gate, so the tier-1 fate guards are indifferent.
 
 #### P02.S02 — the n-up carry, repaired
 Scope: `tagcarry.go` — visited set by object number, MCR/OBJR `/Pg` repointed and counted, one XObject never bound
 to two sources, a non-optimizing read so equal forms stay distinct; a standing identical-pages `NUp` regression.
-Refs: D5, `/pending 503`'s two tagcarry defects.
+**`NUp` is routed through S01's completeness predicate HERE**, in the commit that repairs the carry, so the census
+row and the both-ways check move together (grill of S01, 2026-09-16). Refs: D5, `/pending 503`'s two tagcarry defects.
 Acceptance:
 - The census `NUp` row disappears (no 7.20 t2), landing with the carry fix so the both-ways check stays green.
 - The four real tagged PDFs keep every element through `NUp`.
