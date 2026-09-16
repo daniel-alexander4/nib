@@ -64,11 +64,24 @@ test('the field is pre-filled from this computer\'s language', () => {
   assert.equal(field.value, 'en');
 });
 
+test('the pre-fill is sent as a language but never as one the user chose', async () => {
+  // Before any change event: the value is the pre-fill. /pending 486 rests a conformance claim only on
+  // a language someone picked, so this must not say "chosen".
+  const prefilled = await convert();
+  assert.equal(prefilled.get('lang'), 'en', 'control: the pre-filled language is still sent');
+  assert.equal(prefilled.get('langChosen'), null, 'the pre-fill was reported as the user\'s choice');
+});
+
 test('converting sends the chosen language, and nothing when it is cleared', async () => {
   field.value = 'de';
-  assert.equal((await convert()).get('lang'), 'de');
+  field.dispatchEvent(new h.window.Event('change'));
+  const chosen = await convert();
+  assert.equal(chosen.get('lang'), 'de');
+  assert.equal(chosen.get('langChosen'), '1', 'a language the user picked was not reported as chosen');
   field.value = '';
+  field.dispatchEvent(new h.window.Event('change'));
   const cleared = await convert();
   assert.equal(cleared.get('lang'), null, 'a cleared field still sent a language');
+  assert.equal(cleared.get('langChosen'), null, 'a cleared field still claimed a chosen language');
   assert.ok(cleared.get('file'), 'control: the file is still sent');
 });

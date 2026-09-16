@@ -30,8 +30,28 @@ type opSpan struct{ start, end int }
 // `Tokenize` returns each as one opaque token — so image bytes that happen to spell `Q` cannot close
 // a group.
 func textOperatorSpans(src []byte) []opSpan {
-	toks := contentstream.Tokenize(src)
 	var out []opSpan
+	for _, g := range drawingGroups(src) {
+		if g.showsText {
+			out = append(out, g.opSpan)
+		}
+	}
+	return out
+}
+
+// drawingGroup is one top-level `q … Q` group and whether it shows text.
+type drawingGroup struct {
+	opSpan
+	showsText bool
+}
+
+// drawingGroups is the one walk over a content stream's top-level groups, text and not. The groups that
+// show no text are what `textOperatorSpans` leaves out — `mdpdf`'s thematic-break rule is one — and a
+// tagger must still declare them, as an artifact, or veraPDF fails 7.1 t3 over them (measured). One walk
+// for both, so the two lists can never disagree about where a group begins (ADR-009).
+func drawingGroups(src []byte) []drawingGroup {
+	toks := contentstream.Tokenize(src)
+	var out []drawingGroup
 	depth, start, showsText := 0, -1, false
 	for _, tk := range toks {
 		if tk.Kind != contentstream.Operator {
@@ -46,9 +66,7 @@ func textOperatorSpans(src []byte) []opSpan {
 		case "Q":
 			depth--
 			if depth == 0 && start >= 0 {
-				if showsText {
-					out = append(out, opSpan{start, tk.End})
-				}
+				out = append(out, drawingGroup{opSpan{start, tk.End}, showsText})
 				start, showsText = -1, false
 			}
 			if depth < 0 {

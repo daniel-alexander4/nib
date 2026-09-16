@@ -3576,7 +3576,12 @@ els.officeInput.onchange = async () => {
   form.append('file', file);
   // The Document language field (/pending 471). Empty is "not specified" and sends nothing, so the
   // server keeps whatever the conversion carried.
-  if (els.docLang && els.docLang.value) form.append('lang', els.docLang.value);
+  if (els.docLang && els.docLang.value) {
+    form.append('lang', els.docLang.value);
+    // The user CHOSE this language, rather than keeping the pre-fill — the one case the server may rest
+    // a PDF/UA conformance claim on (/pending 486, ADR-033).
+    if (els.docLang.dataset.chosen === '1') form.append('langChosen', '1');
+  }
   toast('Converting to PDF…');
   try {
     const res = await apiFetch('/api/office', { method: 'POST', body: form });
@@ -3590,6 +3595,8 @@ els.officeInput.onchange = async () => {
 // then stands for the rest of the session.
 if (els.docLang) {
   els.docLang.value = docLangForLocale(navigator.language, [...els.docLang.options].map((o) => o.value));
+  // A real change event is the user choosing; the pre-fill above fires none, so it stays unchosen.
+  els.docLang.addEventListener('change', () => { els.docLang.dataset.chosen = '1'; });
 }
 
 async function openURL(url) {

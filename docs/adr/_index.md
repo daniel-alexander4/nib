@@ -270,3 +270,11 @@ home today.
   reload shares one, convene is byte-bound to its mirror, and a second write can land after a signature.
   **Declared gap:** a signed document keeps its claim, since dropping it would destroy the signature.
   `/pending 492`; it unblocks `/pending 486`.
+
+- **[ADR-033 — nib writes the PDF/UA identification only on its own Markdown conversion, with a language someone chose](033-nib-labels-only-its-own-markdown-conversion.md)**
+  — `/pending 486`, option B. One door (`pdfops.LabelUA`), two callers (`nib office`, `/api/office`),
+  Markdown only, and five named refusals: language not chosen, untagged, no `/Lang`, no displayed title,
+  no packet. The claim rests on **veraPDF's measurement of the conversion** across every construct mdpdf
+  renders — never on nib's 19-of-106 checker — and a guard fails when mdpdf learns a node kind the fixture
+  lacks. The one construct that failed, the thematic break's rule, is now an `/Artifact`. A pre-filled
+  language earns no label, because veraPDF checks that a language is present, not that it is right.

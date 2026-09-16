@@ -241,6 +241,15 @@ func cmdOffice(args []string) int {
 			errf("%v", err)
 			return 1
 		}
+		// A Markdown conversion with a language someone named earns the PDF/UA identification (`/pending
+		// 486`, ADR-033). A refusal is a note, not a failure: the PDF asked for is written either way.
+		if pdfops.SupportedMarkdownExt(ext) {
+			if labelled, lerr := pdfops.LabelUA(pdf, true); lerr == nil {
+				pdf = labelled
+			} else {
+				errf("note: not labelled PDF/UA: %v", lerr)
+			}
+		}
 	}
 	return writeOut(out, pdf)
 }
