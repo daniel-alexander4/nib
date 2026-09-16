@@ -14950,17 +14950,6 @@ function parkCeremonySheet(moveFocus = true) {
 // to open. Binding on the way back makes "I opened the sheet, then went and opened the lease" a
 // supported path instead of a silent one, and re-pointing an EXISTING binding stays impossible.
 function bindCeremonySetupDoc() {
-  // **A binding to a document that is no longer open is released (/pending 506).** Monotone was the
-  // rule, and it held one step too far: close the bound document during the excursion and the pin
-  // named an id nothing held, so every Convene answered 409 while the sheet — reading `views` and
-  // finding nothing — told the user the document "is bound as soon as you come back". It never was,
-  // because this door refused to bind over a non-null id, and the only reset (a fresh Convene) is
-  // the button that RESUMES while parked. Releasing a dead pin is not re-pointing a live one: there
-  // is no document for the ceremony to be silently moved away from, and the line below says, in the
-  // same breath, which document it is now bound to.
-  if (ceremonySetupDoc !== null && !views.some((v) => v.docMeta && v.docMeta.id === ceremonySetupDoc)) {
-    ceremonySetupDoc = null;
-  }
   if (ceremonySetupDoc === null) {
     ceremonySetupDoc = (view.docMeta && view.docMeta.id) || null;
   }
@@ -15291,24 +15280,6 @@ async function conveneFromPanel() {
     });
   }
   if (!roster.length) { say('Choose at least one other person to sign.'); return; }
-  // **The bound document may have been closed from the tab strip behind the sheet (/pending 506).**
-  // Posting then would pin an id the server no longer holds (409, every time), and a null pin is
-  // worse — `docFor` answers it with the ACTIVE document. So this press rebinds through the one door
-  // and stops, which puts the new "This ceremony will be built from …" sentence in front of the user
-  // before anything is convened. The next press convenes the document it names.
-  //
-  // Two cases and not "any null": a null pin with NO document open posts as it always has, and the
-  // server's own refusal names the problem; a null pin while a document IS open would be answered with
-  // that document, silently, so it takes the visible rebind too.
-  const deadPin = ceremonySetupDoc !== null && !views.some((v) => v.docMeta && v.docMeta.id === ceremonySetupDoc);
-  const silentPin = ceremonySetupDoc === null && views.some((v) => v.docMeta && v.docMeta.id);
-  if (deadPin || silentPin) {
-    bindCeremonySetupDoc();
-    say(ceremonySetupDoc
-      ? 'The document this setup was for is no longer open. Check the document named above, then press Convene again.'
-      : 'Open the document this ceremony is for first — choose "See the document".');
-    return;
-  }
   const expires = document.getElementById('cerExpires')?.value || '';
   if (!expires) { say('Set the date this ceremony stays open until.'); return; }
   const body = {
