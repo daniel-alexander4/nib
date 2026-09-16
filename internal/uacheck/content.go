@@ -110,8 +110,8 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 			return d.content, d.contentErr
 		}
 		spKey := -1
-		if sp, ok := page["StructParents"].(types.Integer); ok {
-			spKey = sp.Value()
+		if sp, ok := d.intValue(page["StructParents"]); ok {
+			spKey = sp
 		}
 		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey}
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
@@ -203,18 +203,18 @@ type walker struct {
 // the forms currently being walked, so a form that draws itself stops rather than recursing forever
 // — while the SAME form invoked twice from one page is still walked twice, as it is drawn twice.
 func (w walker) walk(src []byte, res types.Dict, inherited []frame, chain map[int]bool, depth int) {
-	if depth > 8 {
-		return
-	}
 	w.walkWithState(src, res, inherited, chain, depth, textState{})
 }
+
+// maxFormDepth bounds how deeply form XObjects are walked inside one another. Lower than `maxWalkDepth`
+// because a form invoked twice at every level is walked twice at every level, so the cost is exponential
+// in the depth. **Reaching it is `contentErr`, never a silent stop** (`/pending 496`): the forms below were
+// never read, and until then twelve forms of untagged text read as a page that draws nothing.
+const maxFormDepth = 8
 
 // walkWithState is walk with the text state in force at the point of invocation — a form XObject
 // inherits the invoking stream's graphics state (ISO 32000-1 §8.10.1).
 func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, chain map[int]bool, depth int, ts textState) {
-	if depth > 8 {
-		return
-	}
 	stack := append([]frame(nil), inherited...)
 	gs := []textState{}
 	var operands []contentstream.Token
@@ -302,7 +302,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 		w.d.content = append(w.d.content, w.event(stack, false, where+" (unresolvable XObject)"))
 		return
 	}
-	if sub := sd.Dict.NameEntry("Subtype"); sub == nil || *sub != "Form" {
+	if w.d.name(sd.Dict["Subtype"]) != "Form" {
 		w.d.content = append(w.d.content, w.event(stack, false, where+" (image)"))
 		return
 	}
@@ -311,6 +311,14 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 		objNr = ir.ObjectNumber.Value()
 	}
 	if chain[objNr] {
+		// A form drawing itself: its content is already being walked once up the chain, so nothing is unread.
+		return
+	}
+	if depth+1 > maxFormDepth {
+		if w.d.contentErr == "" {
+			w.d.contentErr = fmt.Sprintf("form XObjects nest deeper than %d levels (%s); nib stops walking there, "+
+				"so what the deeper forms draw was never read", maxFormDepth, where)
+		}
 		return
 	}
 	if derr := sd.Decode(); derr != nil {
@@ -322,8 +330,8 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 		formRes = res
 	}
 	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance}
-	if sp, ok := sd.Dict["StructParents"].(types.Integer); ok {
-		inner.spKey = sp.Value()
+	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
+		inner.spKey = sp
 	}
 	next := map[int]bool{objNr: true}
 	for k := range chain {
@@ -431,8 +439,8 @@ func (w walker) mcidOf(src []byte, operands []contentstream.Token, res types.Dic
 		}
 		props := w.d.dict(w.d.dict(res["Properties"])[string(b[1:])])
 		if props != nil {
-			if n := props.IntEntry("MCID"); n != nil {
-				return *n, true
+			if n, ok := w.d.intValue(props["MCID"]); ok {
+				return n, true
 			}
 		}
 	}

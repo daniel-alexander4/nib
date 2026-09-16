@@ -54,8 +54,12 @@ func nodeWhere(n structNode, kind string) string {
 // checkFigureAlt evaluates ua1 7.3 t1: every Figure (through the role map) has a non-empty `/Alt` or an
 // `/ActualText`.
 func checkFigureAlt(d *Document) Result {
+	nodes, unread := d.structNodes()
+	if unread != "" {
+		return Result{Verdict: CannotCheck, Why: unread}
+	}
 	figures := 0
-	for _, n := range d.structNodes() {
+	for _, n := range nodes {
 		if d.standardType(n.dict) != "Figure" {
 			continue
 		}
@@ -71,7 +75,7 @@ func checkFigureAlt(d *Document) Result {
 		return Result{
 			Verdict: Fail,
 			Why:     "a Figure has neither an alternate description (/Alt) nor replacement text (/ActualText), so a screen reader has nothing to say for it",
-			Where:   nodeWhere(n, *n.dict.NameEntry("S")),
+			Where:   nodeWhere(n, d.name(n.dict["S"])),
 		}
 	}
 	if figures == 0 {
@@ -82,16 +86,13 @@ func checkFigureAlt(d *Document) Result {
 
 // checkTableHeaders evaluates ua1 7.5 t1 as far as veraPDF's answer was measured — see the file header.
 func checkTableHeaders(d *Document) Result {
-	nodes := d.structNodes()
-	attrIs := func(cell types.Dict, key string, test func(types.Object) bool) bool {
-		o, err := d.Ctx.Dereference(d.tableAttribute(cell, key))
-		return err == nil && o != nil && test(o)
+	nodes, unread := d.structNodes()
+	if unread != "" {
+		return Result{Verdict: CannotCheck, Why: unread}
 	}
 	scoped := func(th types.Dict) bool {
-		return attrIs(th, "Scope", func(o types.Object) bool {
-			n, ok := o.(types.Name)
-			return ok && (n == "Row" || n == "Column" || n == "Both")
-		})
+		n := d.name(d.tableAttribute(th, "Scope"))
+		return n == "Row" || n == "Column" || n == "Both"
 	}
 	namesHeaders := func(td types.Dict) bool {
 		h, err := d.Ctx.DereferenceArray(d.tableAttribute(td, "Headers"))
@@ -99,7 +100,7 @@ func checkTableHeaders(d *Document) Result {
 	}
 	spanned := func(cell types.Dict) bool {
 		for _, key := range []string{"RowSpan", "ColSpan"} {
-			if attrIs(cell, key, func(o types.Object) bool { v, ok := o.(types.Integer); return ok && v.Value() > 1 }) {
+			if v, ok := d.intValue(d.tableAttribute(cell, key)); ok && v > 1 {
 				return true
 			}
 		}

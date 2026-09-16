@@ -30,8 +30,13 @@ func init() {
 
 // checkHeadingNesting evaluates ua1 7.4.2 t1.
 func checkHeadingNesting(d *Document) Result {
+	nodes, unread := d.structNodes()
+	if unread != "" {
+		// The order of the headings past the bound is unknown, so no heading sequence can be said to hold.
+		return Result{Verdict: CannotCheck, Why: unread}
+	}
 	prev := 0
-	for _, n := range d.structNodes() {
+	for _, n := range nodes {
 		level, ok := numberedHeading(d.standardType(n.dict))
 		if !ok {
 			continue

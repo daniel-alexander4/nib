@@ -78,13 +78,7 @@ func readXMP(d *Document) xmpFacts {
 	if err != nil || sd == nil {
 		return xmpFacts{Present: true, Why: "the catalog's /Metadata does not resolve to a stream"}
 	}
-	f := xmpFacts{Present: true}
-	if n := sd.Dict.NameEntry("Type"); n != nil {
-		f.StreamType = *n
-	}
-	if n := sd.Dict.NameEntry("Subtype"); n != nil {
-		f.StreamSubtype = *n
-	}
+	f := xmpFacts{Present: true, StreamType: d.name(sd.Dict["Type"]), StreamSubtype: d.name(sd.Dict["Subtype"])}
 	if derr := sd.Decode(); derr != nil {
 		f.Why = "the metadata stream could not be decoded: " + derr.Error()
 		return f

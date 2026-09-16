@@ -146,15 +146,16 @@ func checkDisplayDocTitle(d *Document) Result {
 			Where:   "catalog /ViewerPreferences",
 		}
 	}
-	b, isBool := v.(types.Boolean)
+	// Resolved, not cast: `/DisplayDocTitle 9 0 R` is legal, and a cast read it as the wrong type (`/pending 496`).
+	b, isBool := d.boolValue(v)
 	if !isBool {
 		return Result{
 			Verdict: Fail,
-			Why:     fmt.Sprintf("/DisplayDocTitle is %T, want a boolean", v),
+			Why:     "/DisplayDocTitle does not resolve to a boolean, want a boolean",
 			Where:   "catalog /ViewerPreferences /DisplayDocTitle",
 		}
 	}
-	if !bool(b) {
+	if !b {
 		return Result{
 			Verdict: Fail,
 			Why:     "/DisplayDocTitle is false, so a viewer shows the file name rather than the document's own title",
@@ -276,7 +277,10 @@ func checkContentLanguage(d *Document) Result {
 				Where: ev.where,
 			}
 		}
-		elem := d.elementForMCID(ev.spKey, ev.mcid)
+		elem, unread := d.elementForMCID(ev.spKey, ev.mcid)
+		if elem == nil && unread != "" {
+			return Result{Verdict: CannotCheck, Why: unread, Where: ev.where}
+		}
 		if elem == nil {
 			return Result{
 				Verdict: Fail,
@@ -285,7 +289,11 @@ func checkContentLanguage(d *Document) Result {
 				Where: ev.where,
 			}
 		}
-		if !d.declaresLangFor(elem) {
+		declared, unread := d.declaresLangFor(elem)
+		if unread != "" {
+			return Result{Verdict: CannotCheck, Why: unread, Where: ev.where}
+		}
+		if !declared {
 			return Result{
 				Verdict: Fail,
 				Why: "the catalog declares no /Lang and neither the element describing this text " +
@@ -300,16 +308,23 @@ func checkContentLanguage(d *Document) Result {
 	return Result{Verdict: Pass}
 }
 
-// elementForMCID resolves an MCID on the stream whose /StructParents key is spKey to its element.
-func (d *Document) elementForMCID(spKey, mcid int) types.Dict {
+// elementForMCID resolves an MCID on the stream whose /StructParents key is spKey to its element. When it
+// finds none, the second result is why the parent tree was not wholly read, if it was not — the key may be
+// in the part nib never reached.
+func (d *Document) elementForMCID(spKey, mcid int) (types.Dict, string) {
 	if spKey < 0 {
-		return nil
+		return nil, ""
 	}
-	arr, err := d.Ctx.DereferenceArray(d.parentTree()[spKey])
+	pt, unread := d.parentTree()
+	entry, found := pt[spKey]
+	if !found {
+		return nil, unread
+	}
+	arr, err := d.Ctx.DereferenceArray(entry)
 	if err != nil || mcid < 0 || mcid >= len(arr) {
-		return nil
+		return nil, ""
 	}
-	return d.dict(arr[mcid])
+	return d.dict(arr[mcid]), ""
 }
 
 // checkUAIdentification evaluates ua1 5 t1.
@@ -392,8 +407,9 @@ func checkOptionalContentName(d *Document) Result {
 		return *res
 	}
 	for _, c := range configs {
-		n, isStr := c.dict["Name"].(types.StringLiteral)
-		if !isStr || len(n) == 0 {
+		// Resolved, not cast: an indirect or hex-string /Name is a name (`/pending 496`).
+		n, isStr := d.text(c.dict["Name"])
+		if !isStr || n == "" {
 			return Result{
 				Verdict: Fail,
 				Why: "an optional-content configuration dictionary has no /Name, or an empty one. " +

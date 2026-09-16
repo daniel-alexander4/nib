@@ -25,11 +25,18 @@ type Document struct {
 	// Catalog is the root dictionary, resolved once because nearly every rule wants it.
 	Catalog types.Dict
 
-	// pt is the resolved /ParentTree, built on first use by parentTree.
-	pt map[int]types.Object
+	// pt is the resolved /ParentTree, built on first use by parentTree, and ptErr is why part of it was not
+	// read, when part was not.
+	pt    map[int]types.Object
+	ptErr string
+	// nodes is every structure element reached from the root, built on first use by structNodes, and
+	// nodesErr is why part of the tree was not read, when part was not.
+	nodes     []structNode
+	nodesErr  string
+	nodesDone bool
 	// content is every page's classified drawing operators, built on first use by contentEvents.
 	content []contentEvent
-	// contentErr is why content could not be read, when it could not.
+	// contentErr is why content could not be read, or not all of it, when it could not.
 	contentErr  string
 	contentDone bool
 }
@@ -89,6 +96,47 @@ func (d *Document) boolValue(obj types.Object) (value, ok bool) {
 		return false, false
 	}
 	return b.Value(), true
+}
+
+// # The typed-value door — `/pending 496`
+//
+// Any PDF value may be stored as an indirect object, and a reader that casts a dictionary entry straight to
+// `types.Integer` or calls pdfcpu's `NameEntry` sees `42 0 R` as the wrong type. Six rules did, and it cut
+// both ways: `/DisplayDocTitle 9 0 R` failed 7.1 t10 on a document veraPDF passes, and a Figure whose `/S`
+// was indirect was not a Figure, so its missing alternate text passed 7.3 t1. Every typed read in this
+// package goes through these, and `TestTheRulesReadTypedValuesOnlyThroughTheDoor` refuses one that does not.
+
+// intValue resolves an integer that may be stored indirectly.
+func (d *Document) intValue(obj types.Object) (int, bool) {
+	if obj == nil {
+		return 0, false
+	}
+	i, err := d.Ctx.XRefTable.DereferenceInteger(obj)
+	if err != nil || i == nil {
+		return 0, false
+	}
+	return i.Value(), true
+}
+
+// name resolves a name that may be stored indirectly, or "" when obj is absent or not a name.
+func (d *Document) name(obj types.Object) string {
+	if obj == nil {
+		return ""
+	}
+	n, err := d.Ctx.XRefTable.DereferenceName(obj, model.V10, nil)
+	if err != nil {
+		return ""
+	}
+	return n.Value()
+}
+
+// text resolves a string — literal or hex, direct or indirect — and reports whether obj was one.
+func (d *Document) text(obj types.Object) (string, bool) {
+	if obj == nil {
+		return "", false
+	}
+	s, err := d.Ctx.XRefTable.DereferenceStringOrHexLiteral(obj, model.V10, nil)
+	return s, err == nil
 }
 
 // dict resolves obj to a dictionary, or nil.

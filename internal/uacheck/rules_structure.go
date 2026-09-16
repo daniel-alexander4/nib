@@ -40,11 +40,24 @@ func checkStructTreeRoot(d *Document) Result {
 			Where:   "catalog /StructTreeRoot",
 		}
 	}
-	if ty := root.NameEntry("Type"); ty != nil && *ty != "StructTreeRoot" {
+	if ty := d.name(root["Type"]); ty != "" && ty != "StructTreeRoot" {
 		return Result{
 			Verdict: Fail,
-			Why:     fmt.Sprintf("the object the catalog names as /StructTreeRoot has /Type /%s", *ty),
+			Why:     fmt.Sprintf("the object the catalog names as /StructTreeRoot has /Type /%s", ty),
 			Where:   "catalog /StructTreeRoot",
+		}
+	}
+	// `/K` may legally be a single element rather than an array. **Asked before the array read**
+	// (`/pending 496`): an array read of a dictionary is an error, so this branch sat below a `CannotCheck`
+	// that every single-element root reached first.
+	if single := d.dict(root["K"]); single != nil {
+		if d.name(single["S"]) != "" {
+			return Result{Verdict: Pass}
+		}
+		return Result{
+			Verdict: CannotCheck,
+			Why:     "the structure root's /K is a single dictionary that is not a structure element",
+			Where:   "/StructTreeRoot /K",
 		}
 	}
 	// **A root with no kids is the state ADR-031 law 1 is about**, and it is a fail rather than a
@@ -59,12 +72,6 @@ func checkStructTreeRoot(d *Document) Result {
 		}
 	}
 	if len(kids) == 0 {
-		// `/K` may legally be a single element rather than an array.
-		if single := d.dict(root["K"]); single != nil {
-			if _, isElem := single["S"]; isElem {
-				return Result{Verdict: Pass}
-			}
-		}
 		return Result{
 			Verdict: Fail,
 			Why:     "the structure root has no children, so the catalog claims logical structure that holds nothing",

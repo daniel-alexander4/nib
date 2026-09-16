@@ -120,7 +120,7 @@ func checkWidgetsInFormElements(d *Document) Result {
 			if ad == nil {
 				continue
 			}
-			if sub := ad.NameEntry("Subtype"); sub == nil || *sub != "Widget" {
+			if d.name(ad["Subtype"]) != "Widget" {
 				continue
 			}
 			widgets++
@@ -134,7 +134,7 @@ func checkWidgetsInFormElements(d *Document) Result {
 				}
 			}
 			where = fmt.Sprintf("page %d, widget annotation (object %d)", p, ir.ObjectNumber.Value())
-			sp, hasSP := ad["StructParent"].(types.Integer)
+			sp, hasSP := d.intValue(ad["StructParent"])
 			if !hasSP {
 				return Result{
 					Verdict: Fail,
@@ -142,11 +142,16 @@ func checkWidgetsInFormElements(d *Document) Result {
 					Where:   where,
 				}
 			}
-			elem := d.dict(d.parentTree()[sp.Value()])
+			pt, unread := d.parentTree()
+			entry, found := pt[sp]
+			if !found && unread != "" {
+				return Result{Verdict: CannotCheck, Why: unread, Where: where}
+			}
+			elem := d.dict(entry)
 			if elem == nil {
 				return Result{
 					Verdict: Fail,
-					Why:     fmt.Sprintf("the widget's /StructParent %d names no element in the parent tree", sp.Value()),
+					Why:     fmt.Sprintf("the widget's /StructParent %d names no element in the parent tree", sp),
 					Where:   where,
 				}
 			}
