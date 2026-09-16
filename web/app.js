@@ -13769,7 +13769,7 @@ function ceremonyCard(c, mayAct) {
   //   - `convenedHere(c)` — `me` and `convener` both KNOWN and equal. Extracted at P04.S03, when a
   //     second control needed the same test: a rule holding at more than one call site is written
   //     once and every site calls it (ADR-009).
-  if (mayAct && c.state === 'ok' && c.ended && convenedHere(c)) {
+  if (convenerMayDeliver(c, mayAct, false)) {
     card.appendChild(ceremonyDeliver(c));
   }
   // **Re-issuing (D11), which is the delivery button's population with the LIFECYCLE inverted.**
@@ -13834,7 +13834,18 @@ function ceremonyCard(c, mayAct) {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       next.textContent = '';
-      next.appendChild(await ceremonyNextLine(c, mayAct));
+      const line = await ceremonyNextLine(c, mayAct);
+      next.appendChild(line);
+      // **A finished document with no end state on record offers delivery here (/pending 497).**
+      // The server now attests `completed` at the last hop, so `c.ended` is the ordinary way the
+      // Deliver control appears. This is for the ceremony that finished on an older build, or whose
+      // mint failed: its card was built with Stop and Re-issue and no Deliver, under a line saying
+      // everyone has signed. The deliver route writes the missing attestation itself.
+      if (line.dataset.state === 'complete' && !c.ended && convenerMayDeliver(c, mayAct, true)) {
+        card.querySelector('.cerstop')?.remove();
+        card.querySelector('.cerreissue')?.remove();
+        if (!card.querySelector('.cerdeliver')) card.insertBefore(ceremonyDeliver(c), next);
+      }
       // **A worklist REPLACES the roster above it** (P04.S02, and the phase close is where it was
       // actually made to). Without this the card went from 32 rows to 59 — measured — which is the
       // opposite of what the threshold is for: the rendering that appears when the roster stops
@@ -13851,6 +13862,16 @@ function ceremonyCard(c, mayAct) {
   // card is the one with the least on it.
   if (mayAct) card.appendChild(ceremonyName(c));
   return card;
+}
+
+// convenerMayDeliver is the ONE test for offering "Send everyone their copy" (ADR-009, /pending 497).
+//
+// `complete` is the server's `/api/ceremony/next` answer when the caller has one, and `false` when
+// the card is being built — the listing never opens a document, so it cannot know. A proceeding that
+// has ended (any attested state) or whose document is complete has something to deliver; the rest
+// of the conditions are the card's standing ones, documented where it calls this.
+function convenerMayDeliver(c, mayAct, complete) {
+  return !!(mayAct && c.state === 'ok' && (c.ended || complete) && convenedHere(c));
 }
 
 // ceremonyName builds the control that gives a proceeding a name on THIS machine.
@@ -14565,6 +14586,9 @@ async function ceremonyNextLine(c, mayAct) {
   }
   if (d.state === 'complete') {
     p.textContent = 'Everyone has signed. This ceremony is finished.';
+    // Carried on the element so the card can act on the SERVER's answer (/pending 497) rather than
+    // re-deriving completeness from anything it holds.
+    p.dataset.state = 'complete';
     return p;
   }
   if (d.state !== 'waiting') {

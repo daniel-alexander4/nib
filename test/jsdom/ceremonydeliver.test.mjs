@@ -74,9 +74,21 @@ const listing = {
       id: '5'.repeat(32), state: 'ok', intent: 'A ceremony that knows neither party',
       ended: 'completed', roster,
     },
+    // **Mine, every party has signed, and NO end state on record (/pending 497).** A ceremony that
+    // finished on a build that never attested `completed`, or whose last-hop mint failed. Its card
+    // is built with Stop and Re-issue; only the server's `complete` answer can say otherwise.
+    {
+      id: '6'.repeat(32), state: 'ok', intent: 'A ceremony everyone signed on an older build',
+      me: ME, convener: ME, roster,
+    },
   ],
   ended: [],
 };
+
+// `/api/ceremony/next` answers `complete` for ceremony 6 only. The harness hands a route its
+// options and not its URL, so every card asking gets this body — and every card but 6 must refuse
+// it on the echoed id, which is the guard `ceremonyNextLine` exists to keep.
+const nextAnswer = { ceremony: '6'.repeat(32), state: 'complete' };
 
 // Three of four: Bob is reached, Cy already had it, Dee ended the proceeding, and the fourth leg
 // fails. Every branch of the outcome shape in one answer.
@@ -110,6 +122,7 @@ const { document: doc, settle } = await boot({
       return round;
     },
     '/api/ceremony/delivery': () => { progressAsks += 1; return progress; },
+    '/api/ceremony/next': () => nextAnswer,
   },
 });
 
@@ -130,8 +143,8 @@ test('the convener gets a delivery control, and only on the ceremony that earns 
   // SETUP: all four cards rendered. Without this every absence below is satisfied by a panel
   // that drew nothing at all, which is the vacuous green this whole assertion set turns on.
   const cards = host.querySelectorAll('.cercard');
-  assert.equal(cards.length, 5,
-    `the panel drew ${cards.length} cards for 5 ceremonies — nothing below is being tested`);
+  assert.equal(cards.length, 6,
+    `the panel drew ${cards.length} cards for 6 ceremonies — nothing below is being tested`);
 
   assert.ok(cardFor(host, '1'.repeat(32)).querySelector('.cerdeliverbtn'),
     'the convener of an ENDED ceremony has no way to send anyone their copy. That is the whole ' +
@@ -157,6 +170,46 @@ test('the convener gets a delivery control, and only on the ceremony that earns 
     'a ceremony that knows NEITHER its position nor its convener offers the delivery round. Both ' +
     "fields are unknown-when-empty by their own doctrine, so `'' === ''` must not read as a " +
     'match — this is the arm a mutation proved the previous fixture could not reach.');
+});
+
+// /pending 497 — a finished document with no end state on record.
+//
+// The card said "Everyone has signed. This ceremony is finished." and offered Stop and Re-issue and
+// no delivery: Stop needs `!c.ended`, Deliver needs `c.ended`, and nothing had ever written
+// `completed`. The server now attests it at the last hop; this is the card for a ceremony that
+// finished before that, where only `/api/ceremony/next` knows the document is complete.
+test('a complete ceremony with no end state offers delivery and withdraws Stop', async () => {
+  const host = await showPanel();
+  const card = cardFor(host, '6'.repeat(32));
+  // SETUP: the card was built as a live proceeding's — Stop present, no Deliver. Without this the
+  // absence of Stop below could be a card that never had one.
+  assert.ok(card.querySelector('.cerstopbtn'), 'setup: the unended convener card has no Stop control');
+  assert.equal(card.querySelector('.cerdeliverbtn'), null,
+    'setup: the unended card already offers delivery, so nothing below is about the next answer');
+
+  card.querySelector('.cernextbtn').click();
+  await settle();
+  // STIMULUS: the server's answer reached this card.
+  assert.match(card.textContent, /Everyone has signed/, 'setup: the next answer was not rendered');
+
+  assert.ok(card.querySelector('.cerdeliverbtn'),
+    'a ceremony whose every party has signed offers no way to send anyone their copy. The card ' +
+    'reads "Everyone has signed" and the only proceeding-level control is Stop — /pending 497.');
+  assert.equal(card.querySelector('.cerstopbtn'), null,
+    'Stop is still offered on a finished proceeding. A stop attests "the convener ended it before ' +
+    'every party had signed" to every party, write-once, which is false here.');
+  assert.equal(card.querySelector('.cerreissuebtn'), null,
+    'Re-issue is still offered on a finished proceeding, where nobody is left to invite.');
+
+  // The echoed id is what keeps this to ceremony 6: card 3 gets the same body and must not act.
+  const other = cardFor(host, '3'.repeat(32));
+  other.querySelector('.cernextbtn').click();
+  await settle();
+  assert.equal(other.querySelector('.cerdeliverbtn'), null,
+    'a `complete` answer for a DIFFERENT ceremony offered delivery on this card — the echoed id ' +
+    'is not being checked before the card acts on it.');
+  assert.ok(other.querySelector('.cerstopbtn'),
+    'a `complete` answer for a different ceremony withdrew this card\'s Stop.');
 });
 
 test('a round that reached three of four says so, and skipped means two different things', async () => {

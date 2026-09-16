@@ -85,10 +85,11 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 	// **The ceremony switch, at the door that CREATES a proceeding** (`/pending 451`). Convening
 	// and accepting are the two ways this machine becomes party to one; the sweep that keeps a
 	// proceeding live is gated in `rearmCeremonies`, and between them there is no way in.
-	if refuseIfOff(w, s.unlockedVault(), featCeremony) {
+	// The request's pinned vault, not `s.unlockedVault()` (/pending 500); see handleCeremonyAccept.
+	v := vaultFrom(r)
+	if refuseIfOff(w, v, featCeremony) {
 		return
 	}
-	v := vaultFrom(r)
 	doc, ok := s.resolveDoc(w, r)
 	if !ok {
 		return
@@ -679,8 +680,9 @@ func rosterHas(roster []ceremony.Party, fp string) bool {
 // The three existing sites are deliberately NOT moved onto it here: they sit inside
 // `runDeliveryRound`, `endCeremony` and `roundIsFinished`, each of which already holds a `myFP` it
 // uses for other things, and rewriting three live delivery paths to prove a point about a fourth is
-// how a review fix becomes its own defect. This door exists, it is the one new callers take, and
-// the migration is `/pending 432`.
+// how a review fix becomes its own defect. This door exists and it is the one new callers take.
+// The migration was filed as `/pending 432`, which no status file carries any longer; it is
+// unscheduled, and this sentence no longer points at an item that does not exist (/pending 500).
 func convenedByMe(v *vault.Vault, rec ceremony.Record) (bool, error) {
 	cert, _, err := identity(v)
 	if err != nil {

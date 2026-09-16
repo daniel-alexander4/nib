@@ -1061,6 +1061,11 @@ func (s *Server) mirrorHop(final []byte) {
 				"continue the ceremony after a restart. Reason: "+err.Error())
 		return
 	}
+	// **And a hop that FINISHED the document ends the proceeding, attested (/pending 497).** Under
+	// D22's hub this door is the convener's, and nothing else ever wrote `completed`: see
+	// `attestIfCompleteAfterHop`. After the mirror write, so the end state never names a document
+	// this machine failed to keep.
+	s.attestIfCompleteAfterHop(rec, final)
 	// **No delivery arm here, and the first cut of P08.S05g put one here wrongly.** `mirrorHop` is
 	// the INITIATOR's mirror writer, and under D22's hub the initiator of every hop is the
 	// convener — which delivers rather than waits. The receiving party's mirror is written by

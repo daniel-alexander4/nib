@@ -1,6 +1,6 @@
 --- a/internal/server/delivery.go
 +++ b/internal/server/delivery.go
-@@ -558,13 +558,6 @@
+@@ -816,16 +816,6 @@
  	if err != nil {
  		return err
  	}
@@ -8,8 +8,11 @@
 -		if strings.EqualFold(prior, partyFP) {
 -			return nil // idempotent: the same decline recorded twice
 -		}
+-		// `fpPrefix`, not `[:12]` (/pending 500): `prior` is whatever the marker file holds, and a
+-		// planted or truncated one shorter than twelve bytes panicked HERE, building the refusal —
+-		// on the p2p goroutine inside `endCeremony`, where a recovered panic reaches nobody.
 -		return fmt.Errorf("this proceeding is already recorded as ended by %s, so it cannot also "+
--			"be ended by %s — an end state is reached once", prior[:12], partyFP[:12])
+-			"be ended by %s — an end state is reached once", fpPrefix(prior), fpPrefix(partyFP))
 -	}
  	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
  		return err

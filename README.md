@@ -692,7 +692,10 @@ before the next hop starts — including the document's own bytes, so a party ca
 a different document under the same proceeding.
 
 When the proceeding ends, the convener runs a **delivery round** from the Ceremony panel —
-*Send everyone their copy* — and every party gets the finished document. Nib reports each party
+*Send everyone their copy* — and every party gets the finished document. A proceeding every party
+has signed is **complete**, and the convener's Nib records that the moment the last signature
+arrives: from then on it can be delivered and no longer stopped, because stopping tells every
+party it ended before everyone signed. Nib reports each party
 separately, because a round that reached three of four is not a failure: you are told who has
 their copy, who already had it from an earlier run, and who could not be reached and why. Pressing
 it again retries only the ones still missing; a party who already acknowledged is skipped rather

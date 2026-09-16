@@ -1,10 +1,10 @@
 --- a/internal/server/ceremonynext.go
 +++ b/internal/server/ceremonynext.go
-@@ -252,9 +252,11 @@
+@@ -274,9 +274,11 @@
  	roster := l3RosterFrom(rec.Roster, hex.EncodeToString(rh), rec.Intent)
  	// **One walk, two readings** (ADR-009). `NextContributor` is itself a thin reading of this, so
  	// calling it here as well would verify the document a second time for an answer already held.
--	pr, nerr := p2p.ContributionProgress(pdf, roster)
+-	pr, nerr := ceremonyProgress(rec, pdf)
 -	if nerr == nil && pr.Complete {
 -		nerr = p2p.ErrCeremonyComplete
 +	_ = pdf
