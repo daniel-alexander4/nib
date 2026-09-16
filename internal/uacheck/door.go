@@ -24,7 +24,9 @@ import (
 // now; the class is not — a paragraph tagged `/Formula` with no alternate text passes all 19 and fails 7.7 t1
 // (`counterexample_test.go`). A door labelling on "every clause
 // nib checks passes" would write a conformance assertion over a non-conformant document — ADR-031 law
-// 1, by name. So nothing labels, and the word "conformant" in this package means only that.
+// 1, by name. So nothing labels on this checker's say-so, and the word "conformant" in this package means only
+// that. The one label nib writes is `pdfops.LabelUA`'s, on its own Markdown conversion, and it rests on
+// veraPDF's measurement of that conversion, not on this report (ADR-033).
 
 // CheckForUA checks pdf against every clause nib implements and returns the report with the reasons
 // a checked clause stops it — one sentence per failed clause and per clause nib could not settle.

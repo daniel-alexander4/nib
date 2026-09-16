@@ -69,6 +69,19 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// The PDF/UA identification (`/pending 486`, ADR-033) — on nib's own Markdown conversion only, and
+		// only when the user CHOSE the language (`langChosen`), because the field's pre-fill is this
+		// computer's language and a conformance claim cannot rest on a guess. A refusal costs the user
+		// nothing but the label: the conversion they asked for is already done.
+		if pdfops.SupportedMarkdownExt(ext) {
+			labelled, lerr := pdfops.LabelUA(pdf, r.FormValue("langChosen") == "1")
+			switch {
+			case lerr == nil:
+				pdf = labelled
+			case !errors.Is(lerr, pdfops.ErrUALanguageNotAsserted):
+				log.Printf("office: %s was not labelled PDF/UA: %v", header.Filename, lerr)
+			}
+		}
 	}
 
 	// Present the converted PDF under the source name with a .pdf extension. Recorded ON

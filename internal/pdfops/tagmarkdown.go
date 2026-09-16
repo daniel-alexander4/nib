@@ -238,6 +238,16 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 		i = j
 	}
 
+	// **What draws and says nothing is an artifact** — a thematic break's rule is a filled box with no
+	// text. Left unmarked it is content neither tagged nor an artifact, and veraPDF fails 7.1 t3 over it
+	// (measured on a labelled conversion: the one mdpdf construct that failed). Same edit, same walk.
+	for _, g := range drawingGroups(src) {
+		if !g.showsText {
+			edit.InsertBefore(g.start, []byte("/Artifact BMC\n"))
+			edit.InsertBefore(g.end, []byte("\nEMC"))
+		}
+	}
+
 	edited, eerr := edit.Apply()
 	if eerr != nil {
 		return eerr

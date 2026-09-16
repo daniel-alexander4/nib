@@ -109,6 +109,19 @@ var tagFates = map[string]tagFate{
 	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
 	"RemoveFilesAndMedia": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},
 	"ClearFlags":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return ClearFlags(b) }},
+	// `/pending 486`: it writes only the catalog's XMP packet. Driven on the fixture titled and declared in a
+	// language, the two conditions the census fixture lacks, so the row measures a write and not a refusal.
+	"LabelUA": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		titled, err := SetTitle(b, "Census")
+		if err != nil {
+			return nil, err
+		}
+		withLang, err := SetLang(titled, "en")
+		if err != nil {
+			return nil, err
+		}
+		return LabelUA(withLang, true)
+	}},
 	// Driven UNSIGNED, the branch that rewrites; the signed branch returns the input and cannot touch a tree.
 	"DropUAIdentificationUnlessSigned": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return DropUAIdentificationUnlessSigned(b, false)

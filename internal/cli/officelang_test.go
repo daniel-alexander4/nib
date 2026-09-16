@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"nib/internal/testpdf"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -48,6 +50,15 @@ func TestOfficeDeclaresTheLanguageItIsTold(t *testing.T) {
 	}
 	if got := officeCatalogLang(t, readPDF(t, told)); got != "de-AT" {
 		t.Errorf("office --lang DE-at declares /Lang %q, want the canonical de-AT", got)
+	}
+
+	// `/pending 486`: a named language on nib's own Markdown conversion earns the PDF/UA identification, and
+	// the same conversion without one does not.
+	if ok, err := testpdf.ClaimsUA(readPDF(t, plain)); err != nil || ok {
+		t.Errorf("a Markdown conversion with no --lang claims PDF/UA (err %v) — nobody named its language", err)
+	}
+	if ok, err := testpdf.ClaimsUA(readPDF(t, told)); err != nil || !ok {
+		t.Errorf("a Markdown conversion with --lang does not claim PDF/UA (err %v)", err)
 	}
 }
 

@@ -140,8 +140,13 @@ could not be checked.
 **This is a checker, not a certificate.** Nib checks 19 of the 106 rules the reference validator
 evaluates, so a document can pass every clause Nib checks and still fail one it does not — measured:
 a paragraph tagged as a formula with no alternate text passes all of Nib's checks and fails veraPDF. That is also why Nib never
-writes the PDF/UA identification into a document. Nib's answers on the clauses it does check are tested
+writes the PDF/UA identification on the strength of its own report. Nib's answers on the clauses it does check are tested
 against [veraPDF](https://verapdf.org/) on every build; for a conformance verdict, use veraPDF.
+
+**The one document Nib does label PDF/UA is its own Markdown conversion**, and only when you chose the
+document's language — `nib office notes.md -o notes.pdf --lang en`, or picking a Document language in the
+app rather than leaving the pre-filled one. That claim rests on veraPDF measuring every construct Nib's
+Markdown renderer produces as conformant, not on Nib's checker, and any later change to the document removes it.
 
 For the same reason, **when Nib changes a document that claims PDF/UA conformance, the claim is removed**
 — whoever wrote it. Nib cannot tell whether an edit kept the document conformant, and a claim that

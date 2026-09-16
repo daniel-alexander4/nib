@@ -46,6 +46,11 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		if f.drive == nil {
 			continue
 		}
+		// The one exemption, by name: `LabelUA` is the door that WRITES the identification, on nib's own
+		// Markdown conversion, with veraPDF's measurement behind it (ADR-033). Every other row must drop it.
+		if name == "LabelUA" {
+			continue
+		}
 		out, err := f.drive(src)
 		if err != nil {
 			t.Logf("%s: not exercised on this fixture (%v)", name, err)
