@@ -143,6 +143,37 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 	return carryLang(pdf, out.Bytes())
 }
 
+// collectWithoutStructure is `Collect` for the one caller that must never inherit a structure carry
+// — redaction (`PLAN-ua-coverage.md` P02.S03).
+//
+// # It exists BEFORE the carry it refuses, and that is the point
+//
+// P02.S04 makes `Collect` prune the source tree and carry it onto the pages it keeps, and every
+// caller of `Collect` inherits that by construction — including `RedactPages`, which builds its runs
+// of untouched pages through it. A tree carried over a redacted document is not cosmetic: structure
+// elements describe what the page SAID, so a reader walking the tree recovers the headings, the
+// reading order and the shape of the very content the raster replaced, and `/ActualText` or `/Alt`
+// on a grouping element can carry the words themselves. The census already records redaction's
+// verdict as a DECISION rather than an oversight (`tagFates`' RedactPages row); this is the code
+// that keeps the decision true once `Collect` starts carrying.
+//
+// # Why it is bound at the call site rather than measured at the output
+//
+// Today the two functions do the same thing, because `api.Collect` drops the tree on its own. So an
+// assertion over redacted BYTES — "no element survives" — passes for `api.Collect`'s reason and not
+// for this one, and would go on passing if `RedactPages` were pointed back at `Collect` tomorrow.
+// The binding is therefore asserted where it can fail: `TestRedactionNeverRoutesThroughTheCarryingCollect`
+// reads the call graph. The output-level reader becomes discriminating only when S04 lands, and until
+// then it is a backstop rather than coverage — recorded in the phase inventory's S03 section, and
+// policed by nothing, which is why S04 owes it a red probe against a carrying `Collect`.
+func collectWithoutStructure(pdf []byte, order []string) ([]byte, error) {
+	var out bytes.Buffer
+	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
+		return nil, err
+	}
+	return carryLang(pdf, out.Bytes())
+}
+
 // readLang resolves a `/Lang` value to its text — direct or indirect, a literal string or a hex one —
 // and is the ONE way this package reads a language (`/pending 489`). The readers it replaced each
 // accepted a narrower subset: `declareOCRLanguage` a direct literal only, so an author's hex or
@@ -445,7 +476,10 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 			}
 			j++
 		}
-		seg, err := Collect(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
+		// **`collectWithoutStructure`, never `Collect`** (P02.S03): from S04 `Collect` carries the
+		// source tree onto the pages it keeps, and a tree carried across a redaction describes what
+		// the redacted pages said. The routing is guarded, because the two are identical today.
+		seg, err := collectWithoutStructure(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
 		if err != nil {
 			return nil, err
 		}

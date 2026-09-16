@@ -304,11 +304,28 @@ census through `NUp(2)`:** 4 of 8 keys owned by nobody and 2 forms drawn 3x each
 XObject; veraPDF `7.20 t2` + `5 t1` → **`5 t1` alone** (ADR-032's deliberate failure); +4% bytes
 (102,072 → 106,118). Radius: `SplitPage` and `Crop` produce no forms; `Booklet` produces 8.
 
-#### P02.S03 — redaction does not carry
+#### P02.S03 — redaction does not carry *(done 2026-09-16, v1.129.137)*
 Scope: `RedactPages` explicitly refuses a structure carry, before any subset carry exists. Refs: the census's
 recorded RedactPages decision.
 Acceptance:
 - A redacted document carries no element from the source tree, measured, with `Collect` carrying.
+Tasks:
+- T01 — `collectWithoutStructure`: today's `Collect` body under a name that will never gain the carry.
+- T02 — `RedactPages` binds to it; the two are identical until S04, so the binding is the deliverable.
+- T03 — an AST routing guard (`TestRedactionNeverRoutesThroughTheCarryingCollect`), the house idiom from
+  `TestTheReviewDoorsRouteThroughTheProposer`: redaction calls the non-carrying door and never `Collect`.
+- T04 — the door is not a stub: it still selects pages and still carries `/Lang`.
+- T05 — the output-level assertion ships as a declared GAP, not as coverage.
+
+**(grill, 2026-09-16.)** The acceptance clause says *"with `Collect` carrying"* and `Collect` does not carry until
+S04 — so an assertion over redacted BYTES is **vacuous today**: `api.Collect` drops the tree on its own, so "no
+element survives" is true whatever `RedactPages` calls, and would stay true if redaction were pointed back at the
+carrying primitive. The discriminating reader is therefore the CALL GRAPH, and the byte-level reader is recorded in the
+phase inventory's S03 section as a backstop that cannot yet fail. **It is not declared to the inventory gate**, whose
+`## Known gaps` mechanism excuses a slice with no section and says nothing about a row that exists but is inert; the
+obligation sits with S04, which must probe it red against a carrying `Collect`. This is the same failure shape as S02's abandoned-
+carry test, which passed with its gate disabled because its fixture was orphaned — asserted properties must be
+able to fail for the reason they name.
 
 #### P02.S04 — subset operations carry the tree
 Scope: `Collect`/`RemovePages` prune the source tree in place and carry `/MarkInfo`, `/Metadata`,
