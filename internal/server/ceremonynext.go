@@ -261,6 +261,10 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 	// all, so that failure is `unavailable` rather than a roster with an empty commitment: L3
 	// treats an empty `Commitment` as "the caller has none to offer" and would carry on checking
 	// order against a roster whose integrity nothing established.
+	//
+	// **Through `ceremonyProgress`, which the stop, the deliver refusal and the completion mint
+	// also ask (/pending 497)**, so "complete" on this card and "complete" at the route that acts on
+	// it are one reading. A roster that cannot be digested is `unavailable` there too.
 	rh, herr := rec.RosterHash()
 	if herr != nil {
 		writeJSON(w, ceremonyNextResponse{Ceremony: id, State: "unavailable",
@@ -270,7 +274,7 @@ func (s *Server) handleCeremonyNext(w http.ResponseWriter, r *http.Request) {
 	roster := l3RosterFrom(rec.Roster, hex.EncodeToString(rh), rec.Intent)
 	// **One walk, two readings** (ADR-009). `NextContributor` is itself a thin reading of this, so
 	// calling it here as well would verify the document a second time for an answer already held.
-	pr, nerr := p2p.ContributionProgress(pdf, roster)
+	pr, nerr := ceremonyProgress(rec, pdf)
 	if nerr == nil && pr.Complete {
 		nerr = p2p.ErrCeremonyComplete
 	}

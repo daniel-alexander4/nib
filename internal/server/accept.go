@@ -78,10 +78,12 @@ type acceptResponse struct {
 
 func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 	// The ceremony switch's other creating door — see handleCeremonyConvene.
-	if refuseIfOff(w, s.unlockedVault(), featCeremony) {
+	// The request's pinned vault, not `s.unlockedVault()` (/pending 500): `auth.go`'s contract is
+	// that a protected handler reads the vault pinned to its request, and every later line here does.
+	v := vaultFrom(r)
+	if refuseIfOff(w, v, featCeremony) {
 		return
 	}
-	v := vaultFrom(r)
 	var req acceptRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
@@ -155,6 +157,39 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **A different proceeding may not take over this ceremony id's slot (/pending 318, door 2).**
+	//
+	// `AddCeremonyInvitation` upserts BY CEREMONY, so accepting an invitation whose id collides
+	// with one already stored replaces it silently. That is worse than the mirror half it pairs
+	// with: `armInvitation` resolves `req.Ceremony` from the vault, so after the swap the panel row
+	// still labelled *ceremony X* arms for the attacker's ceremony Y — the user's "continue" button
+	// points at a different proceeding, against a peer who passes the spoken check because they are
+	// legitimately pinned.
+	//
+	// **BEFORE the pin, and it was after it (/pending 500).** The 409 below says nothing was
+	// accepted, and `pinCeremonyRoster` had already pinned the colliding invitation's convener —
+	// scoped to THIS id, the legitimate ceremony's — so they passed the pinned-peer check behind
+	// `/api/session/arm` and `send` for the life of the vault. /pending 364's defect through a second
+	// door. A compensating prune could not fix it the way the 500 branch below does: the scope it
+	// would prune is the legitimate ceremony's own, and it would take that proceeding's pin with it.
+	// Refusing before anything is written is the only order in which "nothing was accepted" is true.
+	//
+	// Same discriminator as `WriteMirror`'s door and for the same reasons: `RosterHash` is what the
+	// convener signed and it covers every axis. It is already required non-empty above, so there is
+	// nothing to fall back on. A stored invitation that no longer parses is treated as absent
+	// rather than as a collision — local damage must not block an honest accept, which is the
+	// asymmetry `refuseDifferentProceeding` argues at the other door.
+	if prev, ok := v.CeremonyInvitationFor(inv.ID); ok {
+		if old, perr := ceremony.ParseInvitation(prev); perr == nil && old.RosterHash != inv.RosterHash {
+			httpError(w, http.StatusConflict,
+				"another ceremony is already stored under this id on this machine, and it is not "+
+					"this one. Accepting would replace it, and the entry you already have would "+
+					"then continue somebody else's proceeding. One of the two has to be convened "+
+					"again.")
+			return
+		}
+	}
+
 	// **The convener alone, and D22 is why.** `hopBetween` refuses any pair that does not have
 	// the convener at one end, so this party can never be on a hop with anybody else; pinning
 	// the rest of the roster would pin up to thirty peers it can never dial. See
@@ -193,32 +228,9 @@ func (s *Server) handleCeremonyAccept(w http.ResponseWriter, r *http.Request) {
 	// `pinnedLabel` — the check the pin exists to satisfy — and fail at `ceremonyFor` with nothing
 	// to parse, on a machine whose user was told the invitation was accepted. A 500 that names both
 	// halves is the honest answer; a logged warning would leave the user to discover it at the
-	// moment the baton arrives.
+	// moment the baton arrives. (The id-collision refusal that used to sit here runs before the pin
+	// now — see above, /pending 500.)
 	//
-	// **A different proceeding may not take over this ceremony id's slot (/pending 318, door 2).**
-	//
-	// `AddCeremonyInvitation` upserts BY CEREMONY, so accepting an invitation whose id collides
-	// with one already stored replaces it silently. That is worse than the mirror half it pairs
-	// with: `armInvitation` resolves `req.Ceremony` from the vault, so after the swap the panel row
-	// still labelled *ceremony X* arms for the attacker's ceremony Y — the user's "continue" button
-	// points at a different proceeding, against a peer who passes the spoken check because they are
-	// legitimately pinned.
-	//
-	// Same discriminator as `WriteMirror`'s door and for the same reasons: `RosterHash` is what the
-	// convener signed and it covers every axis. It is already required non-empty above, so there is
-	// nothing to fall back on. A stored invitation that no longer parses is treated as absent
-	// rather than as a collision — local damage must not block an honest accept, which is the
-	// asymmetry `refuseDifferentProceeding` argues at the other door.
-	if prev, ok := v.CeremonyInvitationFor(inv.ID); ok {
-		if old, perr := ceremony.ParseInvitation(prev); perr == nil && old.RosterHash != inv.RosterHash {
-			httpError(w, http.StatusConflict,
-				"another ceremony is already stored under this id on this machine, and it is not "+
-					"this one. Accepting would replace it, and the entry you already have would "+
-					"then continue somebody else's proceeding. One of the two has to be convened "+
-					"again.")
-			return
-		}
-	}
 	// The TRIMMED text, not `req.Invitation`: what is stored is what `ParseInvitation` accepted.
 	if err := v.AddCeremonyInvitation(inv.ID, text); err != nil {
 		httpError(w, http.StatusInternalServerError,

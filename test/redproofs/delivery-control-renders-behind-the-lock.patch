@@ -1,11 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -11561,7 +11561,7 @@
-   //   - `convenedHere(c)` — `me` and `convener` both KNOWN and equal. Extracted at P04.S03, when a
-   //     second control needed the same test: a rule holding at more than one call site is written
-   //     once and every site calls it (ADR-009).
--  if (mayAct && c.state === 'ok' && c.ended && convenedHere(c)) {
-+  if (c.state === 'ok' && c.ended && convenedHere(c)) {
-     card.appendChild(ceremonyDeliver(c));
-   }
-   // **Re-issuing (D11), which is the delivery button's population with the LIFECYCLE inverted.**
+@@ -13858,7 +13858,7 @@
+ // has ended (any attested state) or whose document is complete has something to deliver; the rest
+ // of the conditions are the card's standing ones, documented where it calls this.
+ function convenerMayDeliver(c, mayAct, complete) {
+-  return !!(mayAct && c.state === 'ok' && (c.ended || complete) && convenedHere(c));
++  return !!(c.state === 'ok' && (c.ended || complete) && convenedHere(c));
+ }
+ 
+ // ceremonyName builds the control that gives a proceeding a name on THIS machine.

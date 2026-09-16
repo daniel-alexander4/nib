@@ -536,7 +536,9 @@ func (s *Server) raceWithRendezvous(parent context.Context, cer *ceremonyID, can
 	// lifetime and end it on return. `deliverToParty`'s `defer cer.close()` fires the moment this
 	// function returns, and `close()`'s own doc says tearing down `rz`/`end` under a live publish
 	// can take the process with it — so the discarded WaitGroup was the difference between a
-	// bounded wait and a use-after-close. One rule, both doors.
+	// bounded wait and a use-after-close. One rule, both doors. (Since /pending 376 a leg usually
+	// BORROWS the round's endpoint and `close()` leaves a borrowed one alone; the hazard stands for
+	// a leg that fell back to its own, and for the round's shared endpoint when the round returns.)
 	feedCtx, feedCancel := context.WithCancel(ctx)
 	in, feedWG := s.feedCeremonyRace(feedCtx, cer, cands, peerFP, label, name)
 	// The ceremony QUIC dial goes out the shared endpoint (S08, caveat 7).

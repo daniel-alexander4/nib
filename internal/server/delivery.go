@@ -398,6 +398,14 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 	//
 	// It is a check and not a lock: the slot can still be taken between here and `armIn`, which is
 	// why that door keeps its own refusal. This removes the ordinary case, not the race.
+	// **A slot held for THIS ceremony is not a collision (/pending 500).** The delivery arm below
+	// serves a resumed hop too, and `serveOneSession`'s success return re-arms delivery for the
+	// ceremony it just signed — from inside that very arm. Refusing there raised "Nib could not
+	// listen for your copy" for a party whose arm was standing, and the round then spent
+	// `connectDeadline` on them. The arm that holds the slot is the one this call wants.
+	if s.sess.deliverySlotHeldFor(inv.ID) {
+		return nil
+	}
 	if s.sess.slotTaken(armDelivery) {
 		return errors.New("a delivery arm is already open on this machine")
 	}
@@ -528,6 +536,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 			defer safe.Recover("delivery publish")
 			publishWhenSlow(armCtx, cer, transportQUIC, browseWindow)
 		}()
+		openedHop := false
 		for {
 			conn, aerr := ln.Accept()
 			if aerr != nil {
@@ -575,15 +584,20 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 				// `TestTheUnattendedGatesHaveOneDoor` keeps that honest structurally: routing
 				// here goes through `serveOneSession`, which is `p2p.Receive`'s one call site
 				// and constructs the real Confirmer and Verifier.
-				_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
+				_, final, _ := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
 					cer, conn, cert, key, convenerLabel, sessionModeDelivery, myFP, role, true)
-				if final != nil {
+				// Opened ONCE: the convener re-delivers the same hop after a lost channel, and this
+				// arm now stays up to receive the copy, so a second serve must not stack a tab.
+				if final != nil && !openedHop {
+					openedHop = true
 					s.openArrival(convenerLabel, cer, final)
 				}
-				if xerr == nil {
-					return // the hop completed here; this arm is spent
-				}
-				continue // a failed hop does not spend the arm, as a failed leg does not
+				// **A served hop does NOT spend the arm, and it used to (/pending 500).** This party
+				// has just signed and is now waiting for its copy of the finished document — which is
+				// exactly what a delivery arm is for. Returning here disarmed it the moment the hop
+				// completed, so the round found nobody listening. The arm is spent by the DELIVERY
+				// leg below, as it always was; a hop served or failed leaves it standing.
+				continue
 			}
 			_, derr := s.deliverOneLeg(conn.Channel, cer, nil, nil, false)
 			conn.Close()
@@ -806,13 +820,25 @@ func markEndedBy(id, partyFP string) error {
 		if strings.EqualFold(prior, partyFP) {
 			return nil // idempotent: the same decline recorded twice
 		}
+		// `fpPrefix`, not `[:12]` (/pending 500): `prior` is whatever the marker file holds, and a
+		// planted or truncated one shorter than twelve bytes panicked HERE, building the refusal —
+		// on the p2p goroutine inside `endCeremony`, where a recovered panic reaches nobody.
 		return fmt.Errorf("this proceeding is already recorded as ended by %s, so it cannot also "+
-			"be ended by %s — an end state is reached once", prior[:12], partyFP[:12])
+			"be ended by %s — an end state is reached once", fpPrefix(prior), fpPrefix(partyFP))
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	return atomicfile.WriteDurable(path, []byte(partyFP+"\n"), 0o600)
+}
+
+// fpPrefix is the first twelve characters of a fingerprint for a sentence, or all of it when it is
+// shorter — a value read off disk is not known to be a whole fingerprint.
+func fpPrefix(fp string) string {
+	if len(fp) > 12 {
+		return fp[:12]
+	}
+	return fp
 }
 
 // endedBy reports the party that ended this proceeding as recorded, or "" when none is.
@@ -904,6 +930,17 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		return nil, errors.New("only the convener delivers a finished document: this machine is " +
 			"a party to this ceremony, not the one that convened it")
 	}
+	// **One round per ceremony at a time, held by the server (/pending 497).** The client's
+	// `disabled` lives on a button a panel rebuild replaces, and the server had no guard, so a
+	// second press — or the stop's inline round beside a delivery — walked the same parties
+	// concurrently: two legs dialling one party's single delivery slot, and progress rows keyed
+	// per party written by both. Taken here, inside the one door every round goes through, so the
+	// deliver route and the stop route cannot disagree about it.
+	release, held := s.holdRound(rec.ID)
+	if !held {
+		return nil, errRoundInFlight
+	}
+	defer release()
 	// **What the round carries depends on how the proceeding ENDED (P08.S05e, C06).** A completed
 	// ceremony delivers the finished document; a declined one delivers the convener's signed
 	// termination, because there is no finished document and the parties who already signed are
@@ -1348,12 +1385,37 @@ func (s *Server) handleCeremonyDeliver(w http.ResponseWriter, r *http.Request) {
 	}
 	// **The roster is checked before a round starts, and the claim that used to stand here was
 	// bigger than the code.** It said the document is verified against `checkDelivered`'s
-	// completeness test before it is sent; no completeness test runs here, and since P08.S05e the
-	// round may not send the document at all — a declined proceeding carries the convener's
-	// attestation instead. What this genuinely refuses is a round with nobody to walk.
+	// completeness test before it is sent; no such check ran here, and since P08.S05e the round may
+	// not send the document at all — a declined proceeding carries the convener's attestation
+	// instead. What this refuses is a round with nobody to walk; completeness is asked below, and
+	// only when no end state is on record (/pending 497).
 	if len(rec.Roster) == 0 {
 		httpError(w, http.StatusConflict, "that ceremony's record carries no roster")
 		return
+	}
+	// **A proceeding that has not ENDED has nothing to deliver, and a complete one is attested
+	// first (/pending 497).** With no termination on record the round used to ship the mirror
+	// document as though it were finished: every recipient then refused it at `checkDelivered`'s
+	// completeness clause, so a convener who pressed deliver mid-proceeding spent up to
+	// `connectDeadline` per party to be told N times that nobody would take a partial file. On a
+	// COMPLETE document with no termination — a ceremony finished on an older build, or one whose
+	// last-hop mint failed — the missing `completed` is written here, through the same door.
+	if _, terr := ceremony.ReadTermination(defaultOutputDir(), rec); errors.Is(terr, ceremony.ErrNoTermination) {
+		if _, aerr := attestCompletion(v, rec, pdf); aerr != nil {
+			switch {
+			case errors.Is(aerr, errNotComplete):
+				httpError(w, http.StatusConflict, "this proceeding has not ended: not every signing "+
+					"party has signed, so there is no finished document to send. To end it now, "+
+					"stop it")
+			case errors.Is(aerr, errNotTheConvener):
+				httpError(w, http.StatusConflict, "only the convener delivers a finished document: "+
+					"this machine is a party to this ceremony, not the one that convened it")
+			default:
+				httpError(w, http.StatusConflict, "Nib could not record that this proceeding is "+
+					"complete, so it will not start a round: "+aerr.Error())
+			}
+			return
+		}
 	}
 	addrs := make(map[string]string, len(req.Addresses))
 	for k, val := range req.Addresses {
@@ -1817,6 +1879,29 @@ type deliveryLeg struct {
 type legKey struct {
 	ceremony string
 	party    string // lower-cased fingerprint; see beginLeg
+}
+
+// errRoundInFlight: a delivery round for this ceremony is already running on this machine.
+var errRoundInFlight = errors.New("a delivery round for this ceremony is already running on this " +
+	"machine — wait for it to finish, and run it again afterwards for anyone it could not reach")
+
+// holdRound takes the single in-flight round for one ceremony, or reports it taken. Check-and-take
+// under one lock, for `holdHop`'s reason.
+func (s *Server) holdRound(id string) (func(), bool) {
+	s.legMu.Lock()
+	defer s.legMu.Unlock()
+	if s.rounds == nil {
+		s.rounds = map[string]bool{}
+	}
+	if s.rounds[id] {
+		return func() {}, false
+	}
+	s.rounds[id] = true
+	return func() {
+		s.legMu.Lock()
+		delete(s.rounds, id)
+		s.legMu.Unlock()
+	}, true
 }
 
 // beginLeg publishes the leg about to be attempted, and returns the function that clears it.

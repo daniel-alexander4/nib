@@ -105,6 +105,27 @@ func (s *Server) handleCeremonyStop(w http.ResponseWriter, r *http.Request) {
 			"this ceremony has already ended ("+prev.State+"), so there is nothing to stop")
 		return
 	}
+	// **Refused on a COMPLETE document (/pending 497).** `stopped` means *"the convener ended it
+	// before every party had signed"* — `ceremony.StateStopped`'s own doc and the sentence
+	// `tellEndState` sends every party — so on a finished document it is a false attestation, and a
+	// write-once one. A proceeding whose parties have all signed has reached D28's `completed`,
+	// which only the delivery round follows.
+	//
+	// **An unreadable document refuses too**, rather than stopping on a proceeding this machine
+	// cannot say is unfinished: the attestation would be a claim about progress nothing checked.
+	pr, perr := ceremonyProgress(rec, pdf)
+	if perr != nil {
+		httpError(w, http.StatusConflict,
+			"Nib could not read how far this proceeding has got, so it will not attest that it "+
+				"stopped before everyone signed: "+perr.Error())
+		return
+	}
+	if pr.Complete {
+		httpError(w, http.StatusConflict,
+			"every party has already signed, so this proceeding is complete and there is nothing "+
+				"to stop — send everyone their copy instead")
+		return
+	}
 	t, terr := ceremony.SignTermination(rec, ceremony.StateStopped, cert, key)
 	if terr != nil {
 		httpError(w, http.StatusInternalServerError, "could not attest the stop: "+terr.Error())

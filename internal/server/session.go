@@ -372,6 +372,24 @@ func (se *session) slotTaken(kind armKind) bool {
 	return se.collidesLocked(kind)
 }
 
+// deliverySlotHeldFor reports whether the delivery slot is held by an arm for THIS ceremony id
+// (/pending 500).
+//
+// The delivery arm serves a resumed HOP as well as the delivery leg (`armForDelivery`'s role
+// split, /pending 385), and `serveOneSession`'s success return re-arms delivery for the ceremony it
+// just signed. Asked of `slotTaken` alone, that re-arm found the very arm running the hop and
+// refused — so a slot held for the same ceremony is this party's delivery arm already, and only a
+// slot held for another ceremony is a collision.
+func (se *session) deliverySlotHeldFor(id string) bool {
+	if id == "" {
+		return false
+	}
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	a := se.arms[armDelivery]
+	return a != nil && a.cer != nil && a.cer.inv.ID == id
+}
+
 // armIn is the ONE mutator that installs an arm (ADR-009). Both doors route through it, and so
 // will the delivery round's (P08.S05d).
 //
@@ -1636,11 +1654,11 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// **Two arm paths living in two functions is the same count S05d and S05e each found**, and
 	// this is the third thing that had to be added to both and reached one.
 	//
-	// The bound is a CONSTANT and D16's amendment asks for a ceremony-scoped one — the record's
-	// `Expires`. That is not buildable here: an arm holds an invitation, and the invitation carries
-	// no deadline. Giving it one is `/pending 247`, whose own grill found the field would be
-	// consumed at arm time while nothing could check it until the document arrives. So the honest
-	// bound today is the same ceiling the other path uses, and the refinement waits on that item.
+	// **The bound is no longer a constant (corrected for /pending 500).** This paragraph said it was
+	// and that D16's ceremony-scoped bound was not buildable here; since P02.S02 `armWindowFor` →
+	// `hopWindowFor` reads the record's `Expires` wherever this machine holds a record, and falls
+	// back to `MaxCeremonyLife` where it does not (the invitation still carries no deadline,
+	// `/pending 247`). See `hopWindowFor` for which way round that falls.
 	armWindow := armWindowFor(armInteractive, cer)
 	armedUntil := time.Now().Add(armWindow)
 	// postSign is the re-delivery window's deadline, zero until this arm has signed. opened keeps

@@ -217,6 +217,10 @@ type Server struct {
 	// leg that has already started and read by a watcher, where this one has to be taken and
 	// refused atomically before anything starts.
 	hops map[legKey]bool
+	// rounds is the delivery round in flight per ceremony id, guarded by legMu (/pending 497).
+	// Also a LOCK: two rounds on one ceremony walked the same parties at once, and the only thing
+	// that stopped a second was a button's `disabled` — which a panel rebuild replaces.
+	rounds map[string]bool
 
 	// punchMu guards punchBudgets: D33's per-(hop, side) packet counters, keyed by
 	// **`(ceremony id, hop)`** (P07.S09b; re-keyed P08.S05h). Held here because a "side" is this
