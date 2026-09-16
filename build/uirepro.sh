@@ -118,15 +118,22 @@ go build -o "$WORK/nib" ./cmd/nib || { echo "FAIL: could not build nib" >&2; exi
 # (helpers_test.go) and never rely on HOME for the vault at all. HOME is still set
 # because it isolates ~/.ssh, which is the other half.
 mkdir -p "$WORK/home" "$WORK/config"
+# NIB_NO_UPDATE_CHECK=1 makes this tier HERMETIC. Without it the app calls
+# /api/update/check at boot, the server reaches out to github.com, and where that is
+# unreachable — offline, behind a proxy, on a plane — it answers 502 and the browser
+# logs "Failed to load resource: … 502". smoke.test.mjs's "boots without console errors"
+# then fails for a reason that has nothing to do with the code under test. Observed
+# exactly that way. build/winrepro.sh has always set this; the two harnesses had drifted
+# on the same concern, which is the sort of difference nobody notices until one of them
+# fails somewhere the other does not.
+#
+# **This comment sat BETWEEN the `\`-continued lines until /pending 505**, and a comment ends a
+# continuation: `HOME=… XDG_CONFIG_HOME=…` became a plain shell assignment on its own line, and
+# nib started with neither in its environment-prefix. HOME still reached it only because HOME is
+# already exported (so the assignment changed the exported value for the rest of this script);
+# XDG_CONFIG_HOME reached it only on a machine that already exported it. Isolation by accident,
+# the exact thing the paragraph above says this block exists to stop.
 HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" \
-  # NIB_NO_UPDATE_CHECK=1 makes this tier HERMETIC. Without it the app calls
-  # /api/update/check at boot, the server reaches out to github.com, and where that is
-  # unreachable — offline, behind a proxy, on a plane — it answers 502 and the browser
-  # logs "Failed to load resource: … 502". smoke.test.mjs's "boots without console errors"
-  # then fails for a reason that has nothing to do with the code under test. Observed
-  # exactly that way. build/winrepro.sh has always set this; the two harnesses had drifted
-  # on the same concern, which is the sort of difference nobody notices until one of them
-  # fails somewhere the other does not.
   NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 NIB_ADDR="127.0.0.1:$PORT" "$WORK/nib" >"$WORK/nib.log" 2>&1 &
 SERVER_PID=$!
 

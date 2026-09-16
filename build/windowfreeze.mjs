@@ -56,7 +56,21 @@ if (opens() !== 1) { console.log('SETUP FAILED — no stream, so nothing below i
 
 const cdp = await page.context().newCDPSession(page);
 
+// **Each observation asserts its STIMULUS (/pending 505).** Both used to print `open=1` and stop,
+// and "the stream stayed open while frozen" reads identically when the page was never frozen — a
+// CDP call the browser accepted and ignored, or a "hidden" tab a headless browser still reports as
+// visible. So the page records its own lifecycle, and each observation is refused (exit 2) unless
+// the state it claims to measure was actually reached.
+await page.evaluate(() => {
+  window.__life = [];
+  window.__ticks = 0;
+  document.addEventListener('freeze', () => window.__life.push('freeze'));
+  document.addEventListener('resume', () => window.__life.push('resume'));
+  setInterval(() => { window.__ticks++; }, 100);
+});
+
 // ── Observation 1: explicit freeze ──────────────────────────────────────────
+const ticksBefore = await page.evaluate(() => window.__ticks);
 await cdp.send('Page.setWebLifecycleState', { state: 'frozen' });
 await sleep(20_000);
 console.log(`[frozen +20s]  open=${opens()}`);
@@ -65,6 +79,15 @@ console.log(`[frozen +90s]  open=${opens()}`);
 await cdp.send('Page.setWebLifecycleState', { state: 'active' });
 await sleep(3_000);
 console.log(`[thawed]       open=${opens()}`);
+const life = await page.evaluate(() => ({ events: window.__life, ticks: window.__ticks }));
+// 90 s at 100 ms is ~900 ticks for a page that kept running; a frozen one runs none (a few may
+// fire around the transitions, and 3 s after the thaw is ~30).
+const ranWhileFrozen = life.ticks - ticksBefore;
+console.log(`[stimulus]     lifecycle events ${JSON.stringify(life.events)}, ${ranWhileFrozen} timer tick(s) across the freeze`);
+if (!life.events.includes('freeze') || ranWhileFrozen > 100) {
+  console.log('STIMULUS FAILED — the page did not freeze (no freeze event, or its timers kept running), so the frozen readings above measure an ACTIVE page');
+  srv.kill(); await browser.close(); process.exit(2);
+}
 
 // ── Observation 2: backgrounded past the automatic threshold ────────────────
 // A second tab takes the foreground, so the first is a genuinely hidden page rather than one
@@ -72,6 +95,13 @@ console.log(`[thawed]       open=${opens()}`);
 const other = await ctx.newPage();
 await other.goto('about:blank');
 await other.bringToFront();
+await sleep(2_000);
+const visibility = await page.evaluate(() => document.visibilityState);
+console.log(`[stimulus]     the backgrounded page reports visibilityState=${visibility}`);
+if (visibility !== 'hidden') {
+  console.log('STIMULUS FAILED — the "backgrounded" page is still visible (a headless browser may never hide a tab), so the hidden readings would measure a foreground page');
+  srv.kill(); await browser.close(); process.exit(2);
+}
 const start = Date.now();
 for (const at of [60, 180, 300, 360, 420]) {
   while ((Date.now() - start) / 1000 < at) await sleep(2_000);
@@ -82,8 +112,15 @@ for (const at of [60, 180, 300, 360, 420]) {
 await page.close();
 for (let i = 0; i < 40 && opens() !== 0; i++) await sleep(250);
 console.log(`[closed]       open=${opens()}   <- control: this must be 0`);
+const controlHeld = opens() === 0;
 
 console.log('\n--- server log ---');
 console.log(logText().split('\n').filter((l) => l.includes('window ')).join('\n'));
 await browser.close();
 srv.kill();
+// The control is ASSERTED, not only printed: if closing the page does not drop the count, every
+// "still 1" above is a counter that never moves, and the run must not read as an answer.
+if (!controlHeld) {
+  console.log('CONTROL FAILED — closing the page did not bring the open count to 0, so the readings above cannot distinguish an open stream from a stuck counter');
+  process.exit(1);
+}

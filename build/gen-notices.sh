@@ -54,6 +54,16 @@ emit ""
 # --- Go modules linked into the binary -------------------------------------
 mods="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./cmd/nib | grep -v '^$' | sort -u | grep -v '^nib$')"
 
+# The MPL-2.0 modules, collected FROM THE WALK rather than named by hand (/pending 505).
+#
+# The note at the end of this file used to name the one MPL module it knew about and say it was
+# "reached only from tests" — true when written, false from the release that linked the DHT into
+# `./cmd/nib`, and false about the count too: the walk linked four MPL-2.0 modules
+# (`anacrolix/dht/v2`, `anacrolix/torrent`, `anacrolix/generics`, `anacrolix/log`) while the
+# note named one. A licence file on a distributed binary cannot carry an enumeration nobody
+# reconciles, so the list is the walk's own. `TestEveryMPLModuleIsNamedInTheNote` reads it back.
+mpl_mods=()
+
 while IFS= read -r mod; do
   read -r ver dir < <(go list -m -f '{{.Version}} {{.Dir}}' "$mod")
   emit "## ${mod} ${ver}"
@@ -65,6 +75,17 @@ while IFS= read -r mod; do
       cat "$dir/$name" >>"$tmp"
       emit '```'
       found=1
+      if grep -q 'Mozilla Public License' "$dir/$name"; then
+        mpl_mods+=("${mod} ${ver}")
+        # The §3.3 sentence in the note below rests on no covered SOURCE file carrying Exhibit B
+        # (the licence text itself quotes Exhibit B, so the LICENSE file is not what is searched).
+        # Checked here rather than asserted, so a dependency that adds it stops the regenerate.
+        if grep -rlq --include='*.go' 'Incompatible With Secondary Licenses' "$dir"; then
+          echo "gen-notices: ${mod} carries the MPL-2.0 Exhibit B notice in a source file; the" >&2
+          echo "             note's §3.3 paragraph would be false — rewrite it before regenerating" >&2
+          exit 1
+        fi
+      fi
       break
     fi
   done
@@ -129,31 +150,45 @@ if [ -d web/vendor/pdfjs/cmaps ]; then
   emit ""
 fi
 
-# quic-go and the DHT are Go modules, so the module walk above already attributes them —
-# but their licences are the two the plan had to clear before either could be chosen
-# (caveat 6 wants AGPL-compatible, and the DHT's MPL-2.0 is compatible only through §3.3's
-# Secondary License clause, which names AGPLv3). Naming that here means a future reader does
-# not have to re-derive the compatibility argument from the module list.
-emit "## Note on the two transport dependencies"
+# The one class of licence in the walk that is not permissive gets its obligations stated, and
+# the modules it covers are the walk's own list (see `mpl_mods` above) — never a hand-typed one.
+# The earlier form of this note said the DHT was "reached only from tests" long after
+# `internal/rendezvous` linked it into the shipped binary.
+#
+# The statement is of the licence's TERMS, which are fixed text; it makes no claim about how a
+# particular release discharges §3.2, because that is a fact about the release and not about
+# this file.
+emit "## Note on the Mozilla Public License 2.0 dependencies"
 emit ""
-emit "\`github.com/quic-go/quic-go\` is **MIT**. \`github.com/anacrolix/dht/v2\` is the"
-emit "**Mozilla Public License 2.0**, which is compatible with the AGPLv3 through MPL 2.0"
-emit "§3.3 — it permits distribution under a Secondary License, and the AGPLv3 is named as"
-emit "one."
-emit ""
-emit "**quic-go is now linked in** (P02.S05, v1.109.53): the session transport dials and listens"
-emit "over QUIC, so it appears in the module walk above of its own accord, exactly as the"
-emit "earlier form of this note said it would."
-emit ""
-emit "**The DHT is not, yet.** It is reached only from tests — nothing in the shipped product"
-emit "attaches a DHT to a socket until P04 — so the walk above, which attributes exactly what"
-emit "ships, does not list it. That is right, and its licence argument is recorded here now, at"
-emit "the point the choice was made, rather than left to be re-derived later."
-emit ""
-emit "\`golang.org/x/time\` (**BSD-3-Clause**) is in the same position and is listed as a direct"
-emit "requirement for the same reason: P02.S03's demultiplexer test gives each DHT server its"
-emit "own rate limiter, because \`dht.DefaultSendLimiter\` is a process-wide global. It is"
-emit "reached only from tests and so does not appear in the walk above either."
+if [ "${#mpl_mods[@]}" -eq 0 ]; then
+  emit "No module linked into \`./cmd/nib\` is under the Mozilla Public License 2.0."
+else
+  emit "These modules are linked into the shipped \`nib\` binary and are under the **Mozilla"
+  emit "Public License 2.0** (MPL-2.0), a file-level copyleft licence rather than a permissive"
+  emit "one. Its full text is reproduced in each module's section above."
+  emit ""
+  for m in "${mpl_mods[@]}"; do
+    emit "- \`${m% *}\` ${m#* }"
+  done
+  emit ""
+  emit "What MPL-2.0 requires of a distribution that includes them:"
+  emit ""
+  emit "- **The covered files stay under MPL-2.0.** The licence applies file by file. Nib"
+  emit "  distributes these modules unmodified; any modification to one of their files would"
+  emit "  itself be MPL-2.0 and would have to be made available in source form (§3.1)."
+  emit "- **Executable form carries source availability (§3.2).** Whoever distributes a binary"
+  emit "  containing them must make the Source Code Form of the covered files available and"
+  emit "  tell recipients how to obtain it, at no more than the cost of distribution. The exact"
+  emit "  versions are the ones listed above; their source is published at each module's"
+  emit "  upstream repository and on the Go module proxy under those versions."
+  emit "- **The notices are preserved (§3.4).** Recipients may not be denied the licence text or"
+  emit "  the covered files' notices, which is part of what this file is for."
+  emit "- **Combination with the AGPLv3 (§3.3).** Nib is a Larger Work under §3.3. MPL-2.0"
+  emit "  names the GNU AGPL v3.0 as a Secondary License, so, because none of these files"
+  emit "  carries the Exhibit B \"Incompatible With Secondary Licenses\" notice, the covered"
+  emit "  files may additionally be distributed under the AGPLv3 as part of Nib, while remaining"
+  emit "  available under MPL-2.0 to any recipient who prefers it."
+fi
 emit ""
 emit "---"
 emit ""

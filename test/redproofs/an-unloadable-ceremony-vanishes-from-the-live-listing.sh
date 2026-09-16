@@ -8,4 +8,8 @@
 # finding and deleting the folder by hand, which is where the user already is.
 TIER="tier 6 — ./build/ceremonyrepro.sh"
 PROVE="./build/ceremonyrepro.sh"
-EXPECT="C12"
+# **Not "C12" (/pending 505).** That string is printed by CLAUSE 11's two SETUP failures
+# (`no "C12 setup" …`) and by its PASS line (`… degrades ONLY its own entry (C12)`), so a run
+# that failed anywhere else while this clause passed or never set up re-proved this row. The
+# token is the sentence only the vanished-entry branch prints.
+EXPECT="VANISHED from the listing rather than degrading"

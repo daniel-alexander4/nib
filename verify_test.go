@@ -208,7 +208,9 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// normalised: the guard's job is to find the words a reader is sent to, not to prefer a
 		// house style over what the file says.
 		{"build/ceremonyrepro.sh", "Where it stops"},
-		{"CONTRIBUTING.md", "Cannot see: a hop completing"},
+		// Was "Cannot see: a hop completing", pinned here while CLAUSE 22 had been completing one
+		// for a whole phase — so this guard held a false ceiling in place (/pending 505).
+		{"CONTRIBUTING.md", "Cannot see: a hop found without an address, or more than one hop"},
 	} {
 		body := contract
 		if c.file != "CONTRIBUTING.md" {
@@ -404,9 +406,38 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CONTRIBUTING.md claims every tier has been proven red, and docs/red-proofs.md — the record of it — is missing: %v", err)
 		}
-		for _, tier := range []string{"Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5"} {
+		for _, tier := range []string{"Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5", "Tier 6"} {
 			if !strings.Contains(string(ledger), tier) {
 				t.Errorf("docs/red-proofs.md has no entries for %s, so the contract's claim is unbacked for that tier", tier)
+			}
+		}
+		// **And a REPLAYABLE row per tier, not only a heading (/pending 505).** The loop above
+		// skipped Tier 6 for as long as the tier existed, and a mention in prose satisfies it
+		// either way. `test/redproofs/*.sh` is what `redproof.sh` can re-run, so each tier that
+		// has rows must keep at least one.
+		//
+		// Tier 5 is the declared exception: its red proofs are recorded in the ledger's tables
+		// (`docs/red-proofs.md`, "Tier 5 — ./build/mcastrepro.sh") and none has been captured as
+		// a replayable row, because `mcastrepro.sh` needs an unprivileged network namespace the
+		// replay harness does not assume. That is a real gap and it is named here, not hidden.
+		rows, gerr := filepath.Glob("test/redproofs/*.sh")
+		if gerr != nil {
+			t.Fatal(gerr)
+		}
+		perTier := map[string]int{}
+		tierRe := regexp.MustCompile(`(?m)^TIER="tier ([0-9]+)`)
+		for _, r := range rows {
+			b, rerr := os.ReadFile(r)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if m := tierRe.FindSubmatch(b); m != nil {
+				perTier[string(m[1])]++
+			}
+		}
+		for _, n := range []string{"1", "2", "3", "4", "6"} {
+			if perTier[n] == 0 {
+				t.Errorf("test/redproofs/ has no replayable row for tier %s — the contract's \"proven red\" claim for that tier is backed by prose nobody can re-run (rows per tier: %v)", n, perTier)
 			}
 		}
 	}

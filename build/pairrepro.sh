@@ -338,9 +338,9 @@ unfinished_clause() {
   local arms="$1"; shift
   local what="$1"
   local before after used
-  before="$(offlink_packets)"
+  offlink_read before
   "$@"
-  after="$(offlink_packets)"
+  offlink_read after
   used=$(( after - before ))
   UNFINISHED_USED=$(( UNFINISHED_USED + used ))
   UNFINISHED_ARMS=$(( UNFINISHED_ARMS + arms ))
@@ -368,6 +368,20 @@ for o in d.get("nftables",[]):
     for e in r.get("expr",[]):
         if "counter" in e: t += e["counter"]["packets"]
 print(t)'
+}
+
+# offlink_read VAR — read the counter into VAR, and FAIL rather than hand back an unreadable count
+# (/pending 505). `offlink_packets` prints nothing when `nft` is missing or the table is gone, and
+# every caller does arithmetic or string comparison on the result: `$(( "" - "" ))` is 0 and
+# `[ "" = "" ]` is true, so an instrument that read NOTHING reported "no off-link packets" — the
+# criterion's pass, produced by the counter being absent. Runs in the calling shell, not a
+# subshell, so `fail` actually stops the run; the variable is set by name.
+offlink_read() {
+  local __v
+  __v="$(offlink_packets)"
+  [[ "$__v" =~ ^[0-9]+$ ]] \
+    || fail "the off-link packet counter could not be read (got '${__v}') — nft is missing or the egress table is gone, and a blank count would have compared as ZERO packets off the link"
+  printf -v "$1" '%s' "$__v"
 }
 
 
@@ -438,7 +452,7 @@ if [ "$N" = "2" ]; then
   ALL_PORTS=( "${API_PORTS[@]}" "${SESSION_PORTS[@]}" )
 fi
 
-URLS=(); HOMES=(); PIDS=(); WATCHERS=()
+URLS=(); HOMES=(); PIDS=()
 for i in $(seq 1 "$N"); do
   URLS+=( "http://127.0.0.1:${API_PORTS[$((i-1))]}" )
   HOMES+=( "" )   # filled once WORK exists
@@ -481,7 +495,16 @@ cleanup() { # exit-status
   fi
   # Watchers first: they poll the instances, and killing the instances first
   # leaves them spinning against a dead port for the rest of their timeout.
-  for pid in "${WATCHERS[@]:-}"; do [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1; done
+  #
+  # **They are this shell's background JOBS, read from `jobs -p` (/pending 505).** A `WATCHERS`
+  # array was declared, read here and below, and never appended to anywhere — every
+  # `watch_verify … &` keeps its pid in a function-local (`watch_a`, `watch_b`, …) — so this loop
+  # killed nothing and the teardown's "no survivors" check was over an empty list. `jobs -p` is
+  # the population that actually exists. A watcher started inside a SUBSHELL (the ceremony
+  # pipeline) is not this shell's job and is still not reached; those poll with their own timeout.
+  local -a watchers=()
+  mapfile -t watchers < <(jobs -p)
+  for pid in "${watchers[@]:-}"; do [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1; done
   for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1; done
   # **Wait for them to actually be GONE, and do not use `wait` to do it.** The
   # instance pids come out of a command substitution, so they are children of a
@@ -489,12 +512,12 @@ cleanup() { # exit-status
   # returns instantly with an error, which is the degenerate "waited" that proves
   # nothing. `kill` is asynchronous too, so checking `kill -0` immediately after it
   # reports every instance as a survivor. Poll instead, and only then assert.
-  for pid in "${WATCHERS[@]:-}" "${PIDS[@]:-}"; do
+  for pid in "${watchers[@]:-}" "${PIDS[@]:-}"; do
     [ -n "$pid" ] || continue
     for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.05; done
   done
   local alive=""
-  for pid in "${WATCHERS[@]:-}" "${PIDS[@]:-}"; do
+  for pid in "${watchers[@]:-}" "${PIDS[@]:-}"; do
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
   done
   if [ -n "$alive" ]; then
@@ -2456,18 +2479,18 @@ PYLIVE
 # and Nib announces on an IPv6 group.
 egress_preamble() {
   local before mid provoked
-  before="$(offlink_packets)"
+  offlink_read before
   timeout 2 bash -c 'exec 3<>/dev/tcp/1.1.1.1/80' 2>/dev/null || true
-  mid="$(offlink_packets)"
+  offlink_read mid
   [ "$mid" -gt "$before" ] \
     || fail "the off-link counter did not move for an IPv4 connect to 1.1.1.1 ($before -> $mid) — it cannot see outbound IPv4, so asserting zero below would prove nothing"
   timeout 2 bash -c 'exec 3<>/dev/tcp/2606:4700:4700::1111/80' 2>/dev/null || true
-  provoked="$(offlink_packets)"
+  offlink_read provoked
   [ "$provoked" -gt "$mid" ] \
     || fail "the off-link counter did not move for an IPv6 connect ($mid -> $provoked) — it is IPv6-BLIND, which is what an \`ip daddr\` rule in an inet table is by itself, and Nib announces on an IPv6 group"
   echo "egress counter proven live in both families: $before -> $mid (v4) -> $provoked (v6)"
   nft reset counters table inet egress >/dev/null 2>&1 || true
-  baseline="$(offlink_packets)"
+  offlink_read baseline
 }
 
 if [ "$N" != "2" ]; then
@@ -3375,10 +3398,19 @@ PYWORDS
   # **A regression here is most likely a hold that stopped renewing**, not a new eager caller: the
   # bootstrap has an AST guard asserting it has exactly one door and the arm's half does not.
   if [ "$LAN" = "1" ]; then
-    after="$(offlink_packets)"
+    offlink_read after
     [ "$after" = "$baseline" ] \
       || fail "a $N-party LAN run emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic, and this went to ZERO at P07.S05e over 16 hops and two transports. This is a REGRESSION, not a known remainder. Probe per instance: a stack trace on ensureBootstrapped names the caller, and link_report says what each end hears. Bisect by clause first — an off-link count per clause is four lines of `date` and `offlink_packets` around each call, and it is what attributed the P08.S09 red to a single one."
-    echo "[lan] $(( (N - 1) * 2 )) hops, FOUR delivery rounds (each relay runs one and re-runs it after the injected failure), an end-state round over two transports and a close-out on three parties, and nothing left the link"
+    # **Says only what ran (/pending 505).** This line named "an end-state round over two
+    # transports and a close-out on three parties" at every N, while `decline_round` and
+    # `close_out_round` both return early below four parties — so a `--lan -n 3` run claimed two
+    # clauses it had skipped.
+    if [ "$N" -ge 4 ]; then
+      lan_tail="an end-state round over two transports and a close-out on three parties"
+    else
+      lan_tail="but NOT the decline's end-state round or the close-out, which need four parties and were skipped at N=$N"
+    fi
+    echo "[lan] $(( (N - 1) * 2 )) hops, FOUR delivery rounds (each relay runs one and re-runs it after the injected failure), $lan_tail, and nothing left the link"
   fi
 
   # ── The two clauses that deliberately leave a proceeding unfinished ───────────
@@ -3425,7 +3457,7 @@ if [ "$LAN" = "1" ]; then
   ceremony quic lan "$WORK/final.lan.quic.pdf" 1 2
   WORDS_LAN_QUIC="$WORDS"
 
-  after="$(offlink_packets)"
+  offlink_read after
   [ "$after" = "$baseline" ] \
     || fail "the ceremony emitted $((after - baseline)) packets destined off the link — P03's exit criterion says a LAN ceremony completes with NO outbound internet traffic"
   echo "PASS: a ceremony completed over BOTH transports with no address and no transport (${ELAPSED_TOTAL}s of hops)"

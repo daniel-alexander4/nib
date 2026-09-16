@@ -3182,26 +3182,34 @@ Upstream: <https://github.com/adobe-type-tools/cmap-resources>.
 
 ---
 
-## Note on the two transport dependencies
+## Note on the Mozilla Public License 2.0 dependencies
 
-`github.com/quic-go/quic-go` is **MIT**. `github.com/anacrolix/dht/v2` is the
-**Mozilla Public License 2.0**, which is compatible with the AGPLv3 through MPL 2.0
-§3.3 — it permits distribution under a Secondary License, and the AGPLv3 is named as
-one.
+These modules are linked into the shipped `nib` binary and are under the **Mozilla
+Public License 2.0** (MPL-2.0), a file-level copyleft licence rather than a permissive
+one. Its full text is reproduced in each module's section above.
 
-**quic-go is now linked in** (P02.S05, v1.109.53): the session transport dials and listens
-over QUIC, so it appears in the module walk above of its own accord, exactly as the
-earlier form of this note said it would.
+- `github.com/anacrolix/dht/v2` v2.24.0
+- `github.com/anacrolix/generics` v0.0.0-20230816105729-c755655aee45
+- `github.com/anacrolix/log` v0.15.2
+- `github.com/anacrolix/torrent` v1.48.1-0.20230103142631-c20f73d53e9f
 
-**The DHT is not, yet.** It is reached only from tests — nothing in the shipped product
-attaches a DHT to a socket until P04 — so the walk above, which attributes exactly what
-ships, does not list it. That is right, and its licence argument is recorded here now, at
-the point the choice was made, rather than left to be re-derived later.
+What MPL-2.0 requires of a distribution that includes them:
 
-`golang.org/x/time` (**BSD-3-Clause**) is in the same position and is listed as a direct
-requirement for the same reason: P02.S03's demultiplexer test gives each DHT server its
-own rate limiter, because `dht.DefaultSendLimiter` is a process-wide global. It is
-reached only from tests and so does not appear in the walk above either.
+- **The covered files stay under MPL-2.0.** The licence applies file by file. Nib
+  distributes these modules unmodified; any modification to one of their files would
+  itself be MPL-2.0 and would have to be made available in source form (§3.1).
+- **Executable form carries source availability (§3.2).** Whoever distributes a binary
+  containing them must make the Source Code Form of the covered files available and
+  tell recipients how to obtain it, at no more than the cost of distribution. The exact
+  versions are the ones listed above; their source is published at each module's
+  upstream repository and on the Go module proxy under those versions.
+- **The notices are preserved (§3.4).** Recipients may not be denied the licence text or
+  the covered files' notices, which is part of what this file is for.
+- **Combination with the AGPLv3 (§3.3).** Nib is a Larger Work under §3.3. MPL-2.0
+  names the GNU AGPL v3.0 as a Secondary License, so, because none of these files
+  carries the Exhibit B "Incompatible With Secondary Licenses" notice, the covered
+  files may additionally be distributed under the AGPLv3 as part of Nib, while remaining
+  available under MPL-2.0 to any recipient who prefers it.
 
 ---
 

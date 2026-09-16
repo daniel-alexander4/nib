@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -44,6 +45,18 @@ import (
 // It also reads the WORKING TREE rather than an export of HEAD, which is the one place it is
 // STRICTER than the harness: it fails on the edit that stales a row, before that edit is committed,
 // which is exactly when the fix is a one-line context refresh rather than an archaeology problem.
+//
+// # It applies patches the way `redproof.sh` does — with patch(1)'s default fuzz — on purpose
+//
+// An agent in the /pending 505 sweep reported "48 patches fail to apply against a clean HEAD, yet
+// this test passes". Measured for /pending 505, from the repository root: **0 of 414** fail under
+// `patch -p1 --dry-run --forward` (this test's and the harness's invocation), and **53** fail
+// under `--fuzz=0` — the strictness `git apply --check` also has, since git apply takes no fuzz.
+// `a-left-ceremony-reads-as-damage` applies at an offset of 2,308 lines with fuzz 1;
+// `empty-address-refused` at 124 lines with fuzz 2. Those rows are not stale as the harness
+// defines stale: `redproof.sh` applies them, and whether the fuzzed hunk still expresses its
+// defect is the SECOND failure mode, which only a replay can judge. Tightening this test to zero
+// fuzz would disagree with the harness it stands in for and fail 53 rows the harness replays.
 func TestEveryRedProofStillApplies(t *testing.T) {
 	// Skips cleanly when its one dependency is absent, matching how tiers 2-4 treat theirs — a
 	// fresh clone with no `patch(1)` still runs everything else rather than reporting a failure
@@ -96,5 +109,85 @@ func TestEveryRedProofStillApplies(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		t.Logf("%d of %d rows are stale; %d still apply", len(stale), len(patches), len(patches)-len(stale))
+	}
+}
+
+// TestNoRedProofTokenIsItsTestsName — /pending 505.
+//
+// `redproof.sh` accepts a red only when the check's output carries the row's EXPECT token, because
+// a deleted or uncompilable check also exits non-zero. That is defeated when the token is part of
+// the test's own NAME: `node --test` prints every test title, passing or failing, and `go test`
+// prints `--- FAIL: TestName` for any failure in it — so a row whose token is its title re-proves
+// on ANY red in that file, including one that has nothing to do with the recorded defect.
+// `empty-state-message` was exactly that (EXPECT "empty-state message", title "no empty-state
+// message is generated content").
+//
+// It reads the two row shapes whose test names are recoverable from PROVE: `node --test <file>`
+// (titles parsed from the file) and `go test … -run <names>`. A harness row (`build/*.sh`) has no
+// title to compare against; its token is checked for being unique to the failing branch by review,
+// which is the residue named in /pending 505's close.
+func TestNoRedProofTokenIsItsTestsName(t *testing.T) {
+	rows, err := filepath.Glob("test/redproofs/*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := func(src, name string) (string, bool) {
+		m := regexp.MustCompile(`(?m)^` + name + `="((?:[^"\\]|\\.)*)"\s*$`).FindStringSubmatch(src)
+		if m == nil {
+			return "", false
+		}
+		// Undo the shell's double-quote escapes, which are the only ones that matter here.
+		return regexp.MustCompile(`\\([\\"$`+"`"+`])`).ReplaceAllString(m[1], "$1"), true
+	}
+	title := regexp.MustCompile(`\btest\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|` + "`((?:[^`\\\\]|\\\\.)*)`" + `)`)
+	interp := regexp.MustCompile(`\$\{[^}]*\}`)
+	var nodeRows, goRows int
+	for _, r := range rows {
+		b, rerr := os.ReadFile(r)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		src := string(b)
+		prove, ok1 := field(src, "PROVE")
+		expect, ok2 := field(src, "EXPECT")
+		if !ok1 || !ok2 || expect == "" {
+			continue // a missing EXPECT is redproof.sh's own hard error
+		}
+		name := strings.TrimSuffix(filepath.Base(r), ".sh")
+		if m := regexp.MustCompile(`^node --test (\S+)`).FindStringSubmatch(prove); m != nil {
+			nodeRows++
+			tb, ferr := os.ReadFile(m[1])
+			if ferr != nil {
+				t.Errorf("red proof %s runs %s, which does not exist: %v", name, m[1], ferr)
+				continue
+			}
+			for _, tm := range title.FindAllStringSubmatch(string(tb), -1) {
+				text := tm[1] + tm[2] + tm[3]
+				// A template title is checked segment by segment: the interpolations are not text.
+				for _, seg := range append([]string{text}, interp.Split(text, -1)...) {
+					if seg != "" && strings.Contains(seg, expect) {
+						t.Errorf("red proof %s: EXPECT %q is inside the test title %q, which node prints whether "+
+							"that test passes or fails — any red in %s re-proves this row. Use a phrase only the "+
+							"assertion's failure message prints.", name, expect, text, m[1])
+						break
+					}
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(prove, "go test") {
+			goRows++
+			for _, tn := range regexp.MustCompile(`\bTest\w+`).FindAllString(prove, -1) {
+				if strings.Contains(tn, expect) {
+					t.Errorf("red proof %s: EXPECT %q is part of the test name %s, which `--- FAIL:` prints on any "+
+						"failure in that test. Use a phrase only the assertion's failure message prints.", name, expect, tn)
+				}
+			}
+		}
+	}
+	// Floors: the set holds 45 node rows and 323 go rows. Far fewer means the PROVE parse stopped
+	// matching and every row passed by being read by nothing.
+	if nodeRows < 40 || goRows < 300 {
+		t.Fatalf("parsed %d `node --test` and %d `go test` red-proof rows; the set holds ~45 and ~323 — the row parse is not reading PROVE", nodeRows, goRows)
 	}
 }
