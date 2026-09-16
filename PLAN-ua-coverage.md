@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119); P02 is next. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119); P02 opened — slices firmed, three blocked on Dan. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -228,16 +228,74 @@ callers are the two form doors and `/pending 479`'s gate test)*
 **Exit criteria.** Each census row adds nothing, or its remaining loss is declared with the reason a carry is
 impossible; the tag-fate table's verdicts move from `dropped` to what is measured.
 
-*Sketch:* one slice per carry shape — subset (`Collect`, `DuplicatePage`), geometry (`Crop`, `SplitPage`,
-`SplitRegions`), composition (`Booklet`, `InsertPDF`), and `CarryAttachments`. Deep-dive the tree writer at
-phase-open.
+**(census pin, 2026-09-15, P01.S01 — CORRECTED at phase-open, 2026-09-16)** ~~veraPDF does not accept a tree
+re-anchored into Form XObjects~~. **Measured by the phase-open deep-dive
+(`deepdives/2026-09-15-page-set-operations-and-the-structure-tree.md`):** it does. 7.20 t2 is veraPDF's
+*"Form XObject contains MCIDs and is referenced more than once"*, and the census document has 8 pages but 4
+distinct contents, so pdfcpu's optimize merges equal forms and one XObject is drawn twice. On distinct pages
+`NUp`'s carry adds only 5 t1 (ADR-032's exclusion). The carry itself re-merges them (its optimizing read), and
+then binds one XObject to two sources and overwrites `/StructParents` — a partial carry `honest` cannot see.
 
-**(census pin, 2026-09-15, P01.S01)** **The precedent is not clean.** On a multi-page document `NUp` adds
-**7.20 t2** — *"The content of Form XObjects shall be incorporated into structure elements"*: its carry
-re-anchors the tree into the composed sheets' Form XObjects, and veraPDF does not accept that. The one-page
-grill measurement could not see it (nothing to compose). So D5's "`NUp` is the precedent" holds for the MCID
-remap and not for Form XObject incorporation, and `Booklet`'s carry — also a composition — inherits the same
-question. P02 owes `NUp` too.
+**(phase-open, 2026-09-16)** What the dive traced, and what re-cut the sketch:
+- **Subset** (`Collect`, `RemovePages`, `DuplicatePage`): pages keep `/StructParents` and MCIDs; the catalog's
+  `/StructTreeRoot`, `/MarkInfo`, `/Metadata`, `/ViewerPreferences` are dropped. A carry by pruning the source
+  tree was measured `carried` and veraPDF-compliant, reorders included.
+- **Booklet** is `InsertBlank → Collect → NUp`: it drops only because `Collect` does. It needs no slice.
+- **InsertPDF** is `Collect + Append` — subset and merge, not composition.
+- **CarryAttachments** never touches structure; its census row measures the untagged fixture, not the operation.
+- **Nothing today can see a partial carry:** `orphaned()` fires only when nothing is anchored.
+- **`RedactPages` builds its runs through `Collect`**, so a subset carry would carry a tree over redacted content
+  unless redaction explicitly refuses it first.
+- nib's census and construct fixtures hold no MCR, OBJR, annotation or RoleMap — each slice below that meets one
+  owes its own fixture.
+
+#### P02.S01 — a carry is complete, or it is not a carry
+Scope: a completeness predicate beside `orphaned` (`tagfate.go:124`) — no dead element, MCR or OBJR `/Pg`; every
+ParentTree key owned by a live page, XObject or annotation; `checkStructConsistency` empty; no MCID-bearing
+XObject drawn twice — and `NUp` routed through it. Refs: D5.
+Acceptance:
+- The identical-pages `NUp` output and a twin-element/MCR fixture fail it; distinct-pages `NUp` passes.
+- A correct producer tree with a key owned by a Form XObject passes it.
+
+#### P02.S02 — the n-up carry, repaired
+Scope: `tagcarry.go` — visited set by object number, MCR/OBJR `/Pg` repointed and counted, one XObject never bound
+to two sources, a non-optimizing read so equal forms stay distinct; a standing identical-pages `NUp` regression.
+Refs: D5, `/pending 503`'s two tagcarry defects.
+Acceptance:
+- The census `NUp` row disappears (no 7.20 t2), landing with the carry fix so the both-ways check stays green.
+- The four real tagged PDFs keep every element through `NUp`.
+
+#### P02.S03 — redaction does not carry
+Scope: `RedactPages` explicitly refuses a structure carry, before any subset carry exists. Refs: the census's
+recorded RedactPages decision.
+Acceptance:
+- A redacted document carries no element from the source tree, measured, with `Collect` carrying.
+
+#### P02.S04 — subset operations carry the tree
+Scope: `Collect`/`RemovePages` prune the source tree in place and carry `/MarkInfo`, `/Metadata`,
+`/ViewerPreferences` (identification dropped, ADR-032); `DuplicatePage` clones the repeated page under a new key;
+refuse a nested page tree or ParentTree. `Booklet`'s rows flip with it; `CarryAttachments`' census rows measure
+`Collect(src)`. Refs: D5.
+Acceptance:
+- `Collect`, `RemovePages`, `DuplicatePage`, `Booklet` census rows add nothing; tag-fate verdicts `carried`.
+- A fixture with an OBJR-referenced annotation on a kept and on a dropped page.
+
+#### P02.S05 — crop carries the tree *(blocked — Dan: may a structure tree describe content a crop has clipped from view but not removed?)*
+Scope: `Crop` wraps pages in place instead of rebuilding them. Measured compliant even at a 5% window; the
+question is what a reader should hear. Refs: D5.
+
+#### P02.S06 — split pages *(blocked — Dan: clone each tile's subtree, so every tile reads the whole page, or drop the claim; either way an ADR)*
+Scope: `SplitPage`, `SplitRegions`. Tiles are clones of the page dict carrying the whole content. Refs: D5.
+
+#### P02.S07 — merges graft the second tree *(blocked — Dan: superseding ADR-031's recorded `partial` decision for Append/Combine, which every ceremony document takes)*
+Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root
+`/K` and RoleMaps; `InsertPDF` inherits it with S04. Refs: D5, ADR-031.
+
+#### P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries
+Scope: replace element-level `/Stm` (`tagcarry.go:240`) with MCR dictionaries carrying `/Pg` and `/Stm`, after
+reading ISO 32000-1 tables 323–324 and one screen-reader run. Refs: D5.
+Acceptance:
+- The spec reading is quoted; veraPDF and uacheck still pass the carried `NUp`.
 
 ### P03 — Checker: structure-tree containment and roles (~40 rules)
 **Goal.** Tables, lists, TOC, headings, notes, Form/Link elements and role maps, each agreeing with veraPDF on
