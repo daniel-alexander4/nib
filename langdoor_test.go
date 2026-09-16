@@ -36,7 +36,7 @@ import (
 func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 	const (
 		declares = "declares" // routes through pdfops.SetLang — verified against the code
-		told     = "told"     // reaches pdfops.SetLang only when the user names a language, and otherwise carries
+		told     = "told"     // reaches pdfops.SetLang when the request carries a language, and otherwise carries
 		carries  = "carries"  // the primitive's own output already has one, from something that knew
 		none     = "none"     // no determination exists; the gap is named
 		fragment = "fragment" // the catalog is discarded before anyone receives the document
@@ -45,7 +45,10 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 
 	// Keyed `<file>:<enclosing function>`, the same keys the title guard uses.
 	where := map[string]row{
-		"internal/server/office.go:handleOffice": {carries, "an office conversion comes out of " +
+		"internal/server/office.go:handleOffice": {told, "the Document language field (/pending 471, " +
+			"Dan's option B) sends `lang`, pre-filled with the machine's locale from navigator.language " +
+			"and changeable or clearable by the user; a value is declared through pdfops.SetLang. " +
+			"Cleared, the door carries, for this reason: an office conversion comes out of " +
 			"LibreOffice already carrying a /Lang, and nib passes it through. **It is NOT derived " +
 			"from the source document** — that was this slice's first answer and measurement " +
 			"refuted it: three DOCX files declaring w:lang de-DE, th-TH and fr-FR, and an ODT " +

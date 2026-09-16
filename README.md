@@ -222,6 +222,10 @@ nib office notes.md -o notes.pdf
 nib office vertrag.docx -o vertrag.pdf --lang de
 ```
 
+In the app, the **Document language** list beside *Open & convert to PDF…* does the
+same: it starts at this computer's language, and whatever it names is declared on
+the converted document; set it to *not specified* to declare nothing new.
+
 `--lang` declares the language the document is written in, so a screen reader
 pronounces it correctly. Without it the CLI declares none for Markdown, and an
 office conversion keeps LibreOffice's, which is the converting machine's locale

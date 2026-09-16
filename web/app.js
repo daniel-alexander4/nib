@@ -28,6 +28,7 @@ import {
   dedupeGroups,
   buildTextRows,
 } from './detect.js';
+import { docLangForLocale } from './doclang.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
 import pixelmatch from './vendor/pixelmatch/pixelmatch.mjs';
 
@@ -60,7 +61,7 @@ const PDFJS_OPTS = { cMapUrl: './vendor/pdfjs/cmaps/', cMapPacked: true };
 const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
-  officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'),
+  officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -3573,6 +3574,9 @@ els.officeInput.onchange = async () => {
   if (!file) return;
   const form = new FormData();
   form.append('file', file);
+  // The Document language field (/pending 471). Empty is "not specified" and sends nothing, so the
+  // server keeps whatever the conversion carried.
+  if (els.docLang && els.docLang.value) form.append('lang', els.docLang.value);
   toast('Converting to PDF…');
   try {
     const res = await apiFetch('/api/office', { method: 'POST', body: form });
@@ -3582,6 +3586,11 @@ els.officeInput.onchange = async () => {
     toast('could not convert file');
   }
 };
+// Pre-filled once, from this computer's language (/pending 471, option B). The user's own choice
+// then stands for the rest of the session.
+if (els.docLang) {
+  els.docLang.value = docLangForLocale(navigator.language, [...els.docLang.options].map((o) => o.value));
+}
 
 async function openURL(url) {
   const res = await apiFetch('/api/open-url', {

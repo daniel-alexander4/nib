@@ -60,6 +60,16 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// The Document language field — `/pending 471`. The client pre-fills it with the machine's
+	// locale and the user can change or clear it; whatever arrives is declared, replacing the
+	// converter's own /Lang. Refused rather than dropped: a document installed without the language
+	// the request named is the silent wrong answer the field exists to prevent.
+	if lang := r.FormValue("lang"); lang != "" {
+		if pdf, err = pdfops.SetLang(pdf, lang); err != nil {
+			httpError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	// Present the converted PDF under the source name with a .pdf extension. Recorded ON
 	// the document, so /api/docs and a reload report it too — see document.name.
