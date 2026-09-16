@@ -274,14 +274,35 @@ would flip the census n-up to `dropped`** — reddening `TestNoOperationAddsAUA1
 directions (the `7.20 t2` row goes stale, five `pageSetLoss` clauses appear) and regressing n-up wherever pdfcpu
 merges equal forms. The corpus fixture passes the gate, so the tier-1 fate guards are indifferent.
 
-#### P02.S02 — the n-up carry, repaired
-Scope: `tagcarry.go` — visited set by object number, MCR/OBJR `/Pg` repointed and counted, one XObject never bound
-to two sources, a non-optimizing read so equal forms stay distinct; a standing identical-pages `NUp` regression.
-**`NUp` is routed through S01's completeness predicate HERE**, in the commit that repairs the carry, so the census
-row and the both-ways check move together (grill of S01, 2026-09-16). Refs: D5, `/pending 503`'s two tagcarry defects.
+#### P02.S02 — the n-up carry, repaired *(done 2026-09-16, v1.129.136)*
+Scope: `tagcarry.go` — visited set by object number, MCR/OBJR `/Pg` repointed and counted, and each placement
+given its OWN form XObject so no object is drawn under two semantic parents. **`NUp` is routed through S01's
+completeness predicate HERE**, in the commit that repairs the carry, so the census row and the both-ways check
+move together (grill of S01, 2026-09-16). Refs: D5, `/pending 503`'s two tagcarry defects.
 Acceptance:
 - The census `NUp` row disappears (no 7.20 t2), landing with the carry fix so the both-ways check stays green.
-- The four real tagged PDFs keep every element through `NUp`.
+- A real tagged PDF keeps every element through `NUp` (LibreOffice-gated, as the corpus recipe is uncommitted).
+Tasks:
+- T01 — un-fuse: a placement whose form object an earlier placement already anchored gets a cloned dictionary,
+  a new xref slot, and that sheet's resource entry repointed at it.
+- T02 — the walk's visited set keys on the OBJECT NUMBER, not `d.String()`.
+- T03 — an `MCR` or `OBJR` kid's own `/Pg` is repointed and counted, not skipped.
+- T04 — `NUp` routes through `structureCarriedCompletely`; a carry that is not complete is abandoned to `honest`.
+- T05 — standing readers: an identical-pages `NUp`, the MCR and twin fixtures, and `Booklet` (which is
+  `InsertBlank → Collect → NUp` and inherits the whole defect — measured: 8 forms).
+- T06 — the `knownUA1Deltas` row `"NUp": {"7.20 t2"}` is removed in this commit; the table is checked both ways.
+
+**(grill, 2026-09-16 — the plan's fourth bullet is REFUTED by measurement.)** "A non-optimizing read so equal
+forms stay distinct" cannot work: pdfcpu fuses byte-equal form XObjects inside `optimizeFontAndImages`, which
+`OptimizeXRefTable` calls **ungated** and **silently** (the "redundant xobject" logging is on the image path).
+`OptimizeResourceDicts=false` changes nothing, and the optimizing reads are several —`rewriteContext`
+(`scan.go:482`) and `dropUAIdentificationBytes` (`uaid.go:290`) each have their own, and `withoutUAClaim` runs
+BEFORE the carry is called. Caught in the act: `OptimizeXRefTable` alone on a plainly-read context rewrote
+`Fm4->416` to `Fm4->424`. A fused form cannot be anchored at all — `/StructParents` is one key on one object and
+a form drawn on three sheets needs three — so the carry un-fuses what the optimizer fused. **Measured on the
+census through `NUp(2)`:** 4 of 8 keys owned by nobody and 2 forms drawn 3x each → 8 keys each owned by its own
+XObject; veraPDF `7.20 t2` + `5 t1` → **`5 t1` alone** (ADR-032's deliberate failure); +4% bytes
+(102,072 → 106,118). Radius: `SplitPage` and `Crop` produce no forms; `Booklet` produces 8.
 
 #### P02.S03 — redaction does not carry
 Scope: `RedactPages` explicitly refuses a structure carry, before any subset carry exists. Refs: the census's

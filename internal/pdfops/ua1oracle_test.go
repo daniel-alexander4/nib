@@ -126,9 +126,13 @@ var knownUA1Deltas = map[string]struct {
 	// The census drives it as `CarryAttachments(fixture, untaggedFixture())`: the destination is a
 	// genuinely different document, so its lost tree, metadata, language and font are the destination's.
 	"CarryAttachments": {append(append([]string{}, pageSetLoss...), "7.2 t34", "7.21.4.1 t1"), "the destination is the census's untagged fixture, not the census document — P02"},
-	// Needs several pages to show: the carry re-anchors the tree into the composed sheets' Form
-	// XObjects, and veraPDF does not count that content as incorporated into structure elements.
-	"NUp": {[]string{"7.20 t2"}, "the carried tree's Form XObject content is not incorporated per 14.7.2 — P02"},
+	// **`NUp` had a `7.20 t2` row until P02.S02 and no longer does.** The clause was veraPDF's
+	// `isUniqueSemanticParent` — *"Form XObject contains MCIDs and is referenced more than once"* —
+	// and the cause was nib's own carry anchoring a form that pdfcpu's optimize pass had fused
+	// across sheets. The carry un-fuses now, so the census n-up fails nothing but `5 t1`, which
+	// every operation fails by design (ADR-032). Measured, not assumed: this row's removal is the
+	// both-ways half of that fix, and leaving it here would fail this table for a clause that no
+	// longer appears.
 
 	// ── Untagged content arrives from somewhere else: the second document's own pages.
 	"Append":  {[]string{"7.1 t3", "7.21.4.1 t1"}, "the appended document is untagged and Base-14: ADR-031's recorded `partial` decision"},
