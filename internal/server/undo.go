@@ -454,6 +454,24 @@ func (s *Server) trimHistoryLocked(grown *document) {
 	}
 }
 
+// stillHeldLocked re-tests, under the hold that will move the history, that the document docFor
+// resolved is still registered. Caller holds s.mu; on a refusal this RELEASES it and writes the 409.
+// A nil document (nothing open, no header) passes through to the caller's own branch.
+//
+// **Undo and redo resolved a document, released the lock, took it again and moved its history
+// without asking whether it had been closed in between (/pending 499)** — so an undo racing a
+// close shuffled the rings of a document nobody held and answered 200 with its metadata: a success
+// reply for work that was discarded, the defect commitMutation's registration test exists to end.
+// 409 because that is what a document the server no longer holds is (ADR-004).
+func (s *Server) stillHeldLocked(w http.ResponseWriter, doc *document) bool {
+	if doc == nil || s.isRegisteredLocked(doc) {
+		return true
+	}
+	s.mu.Unlock()
+	httpError(w, http.StatusConflict, errDocClosed.Error())
+	return false
+}
+
 // handleUndo reverts the document to the state before the last undoable operation,
 // moving the current state onto the redo stack. With nothing to undo it simply
 // returns the current state. The client reloads the bytes from /api/pdf.
@@ -469,6 +487,9 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if !s.stillHeldLocked(w, doc) {
+		return
+	}
 	if doc == nil || len(doc.undo) == 0 {
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse(doc))
@@ -504,6 +525,9 @@ func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if !s.stillHeldLocked(w, doc) {
+		return
+	}
 	if doc == nil || len(doc.redo) == 0 {
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse(doc))

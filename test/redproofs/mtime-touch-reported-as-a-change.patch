@@ -1,18 +1,23 @@
 diff --git a/internal/server/diskstate.go b/internal/server/diskstate.go
-index 72ae758..c6c75d4 100644
+index 9019805..1896bf5 100644
 --- a/internal/server/diskstate.go
 +++ b/internal/server/diskstate.go
-@@ -132,12 +132,5 @@ func diskChanged(path string, rec *diskState) bool {
+@@ -165,17 +165,7 @@ func diskCheck(path string, rec *diskState) (changed bool, refreshed *diskState)
  		fresh.ModTime().Equal(rec.info.ModTime()) {
- 		return false
+ 		return false, nil
  	}
 -	if fresh.Size() != rec.info.Size() {
--		return true
+-		return true, nil
 -	}
 -	onDisk, err := os.ReadFile(path)
 -	if err != nil {
--		return false
+-		return false, nil
 -	}
--	return sha256.Sum256(onDisk) != rec.sum
-+	return true
+-	if sha256.Sum256(onDisk) != rec.sum {
+-		return true, nil
+-	}
+-	return false, &diskState{info: fresh, sum: rec.sum}
++	return true, nil
  }
+ 
+ // handleReload re-reads the file under an open document and installs those bytes into the

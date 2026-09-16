@@ -1,8 +1,8 @@
 diff --git a/internal/server/server.go b/internal/server/server.go
-index e87f97f..a5f496f 100644
+index ac98ff5..336f41a 100644
 --- a/internal/server/server.go
 +++ b/internal/server/server.go
-@@ -774,16 +774,16 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+@@ -1020,11 +1020,6 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
  	// no way past it is not the safe option here: the edits live in the browser, so a hard
  	// block would strand the user's unsaved work behind the very warning meant to protect
  	// it. The default is refuse; the override is explicit, per-request, and never sticky.
@@ -11,8 +11,10 @@ index e87f97f..a5f496f 100644
 -			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
 -		return
 -	}
- 	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
- 	if err := atomicfile.WriteDurable(doc.path, data, 0o600); err != nil {
+ 	// **ADR-008's byte cap, and this door was a sixth writer of doc.data that nothing refused
+ 	// (/pending 499).** The posted bytes become the document below, so a save that grows it past
+ 	// the aggregate ceiling is a growth door like every other. Checked BEFORE the write so a refusal
+@@ -1043,6 +1038,11 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
  		httpError(w, http.StatusInternalServerError, "could not write file")
  		return
  	}

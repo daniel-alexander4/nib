@@ -107,6 +107,25 @@ func CreateDurable(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+// ReplaceDurable is WriteDurable for a file the USER owns: an existing regular file keeps its
+// permission bits, and perm applies only when path does not exist yet.
+//
+// **Why a fourth door rather than a change to WriteDurable (/pending 499).** WriteDurable applies
+// perm to the temp file and renames it over the destination, so saving a user's 0644 original left
+// it 0600 — a document shared with a group or served by a local web server stopped being readable
+// the moment Nib saved it, with no message. But WriteDurable's other callers (the vault, the
+// ceremony mirror) WANT the mode forced: a vault that somehow became 0644 must not stay that way on
+// the next write. So the choice is the caller's, and it is made at the call site.
+//
+// Only the permission bits are carried, never ownership, and the stat happens just before the write:
+// a mode changed in that gap is lost, which is the same bound diskChanged states about itself.
+func ReplaceDurable(path string, data []byte, perm os.FileMode) error {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+		perm = fi.Mode().Perm()
+	}
+	return WriteDurable(path, data, perm)
+}
+
 // WriteDurable writes data to path via a temp file, fsync, rename and a parent-directory
 // fsync.
 //

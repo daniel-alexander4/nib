@@ -1,6 +1,8 @@
 # docs/red-proofs.md, tier 1: "A stale Save overwrites a file that changed on disk" (/pending 333, v1.117.289)
 #
-# The defect: handleSave's precondition sits AFTER atomicfile.WriteDurable instead of before it.
+# The defect: handleSave's precondition sits AFTER atomicfile.ReplaceDurable instead of before it.
+# (Re-recorded at /pending 499, when the write became ReplaceDurable and the byte-cap check joined
+# the gap between precondition and write; the defect expressed is unchanged.)
 # The route still answers 412 and the banner still appears — and the user's file is already gone,
 # because the write happened first.
 #

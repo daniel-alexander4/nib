@@ -32,6 +32,12 @@ let openReply = {
   signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
 };
 
+// /pending 499: when set, /api/reload answers the server's signature-erasure refusal unless the
+// request carries the acknowledgement — a signed copy open over a file that is not signed.
+let reloadRefusesSigned = false;
+// The acknowledgement each reload request carried (null when it carried none), in order.
+const reloadAcks = [];
+
 const h = await boot({
   routes: {
     '/api/open': () => openReply,
@@ -42,7 +48,17 @@ const h = await boot({
     // The remedy. The server has re-read the file, so its answer is the same document
     // with the flag DOWN — which is what lets these tests tell a reload that happened
     // from one that was merely attempted.
-    '/api/reload': () => ({ ...openReply, diskChanged: false }),
+    '/api/reload': (opts) => {
+      const body = opts && opts.body;
+      const ack = body && typeof body.get === 'function' ? body.get('acceptSignatureLoss') : null;
+      reloadAcks.push(ack);
+      if (reloadRefusesSigned && ack !== '1') {
+        // The server's own sentence carries the phrase the client listens for (SIGNATURE_ERASURE_TOKEN).
+        return new Response(JSON.stringify({ error: 'this document carries a signature, and this operation would rebuild it in a way that leaves no record it was ever signed — not a broken signature a reader can point at, but nothing at all. Confirm that you want that, and Nib will do it' }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } });
+      }
+      return { ...openReply, diskChanged: false };
+    },
   },
 });
 const { document: doc, settle } = h;
@@ -229,6 +245,79 @@ test('a document reloaded by itself is not left looking unsaved', async () => {
   await settle();
   assert.equal(h.confirms.length, asked,
     'closing a document that Nib had just reloaded from disk prompted about unsaved changes — the reload left it marked dirty, so the user is asked to discard work that only the reload appeared to create');
+});
+
+// /pending 499 — the reload refusal promised a confirm the route could not take. The server now
+// reads the acknowledgement; these hold the client half: the button asks, a yes retries WITH it, a
+// no sends nothing more, and the reload nobody asked for never asks at all.
+test('reloading a signed copy over an unsigned file asks, and a yes retries with the acknowledgement', async () => {
+  openReply = { ...openReply, id: 'd-signed-yes', diskChanged: true, canUndo: false };
+  await openDocument();
+  reloadRefusesSigned = true;
+  h.setConfirmAnswer(true);
+  try {
+    setNextDocument({ numPages: 2, outline: null });
+    const from = h.calls.length;
+    const asked = h.confirms.length;
+    const acks = reloadAcks.length;
+    reload().click();
+    await settle();
+
+    const reloads = h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload'));
+    // STIMULUS: the first request really was refused, or the retry below has nothing to answer.
+    assert.equal(reloadAcks[acks], null, 'precondition: the first reload already carried an acknowledgement');
+    assert.equal(h.confirms.length, asked + 1,
+      'the server refused the reload as a signature erasure and the user was never asked — the refusal says "Confirm that you want that", and the button that received it offered no way to');
+    assert.match(h.confirms[h.confirms.length - 1], /signed/i, 'the question does not say the open copy is signed');
+    assert.match(h.confirms[h.confirms.length - 1], /file on disk/i, 'the question does not say it is the FILE that carries no signature');
+    assert.equal(reloads.length, 2, 'the user said yes and the reload was not retried');
+    assert.equal(reloadAcks[acks + 1], '1', 'the retry did not carry acceptSignatureLoss, so the server refuses it again');
+  } finally {
+    reloadRefusesSigned = false;
+  }
+});
+
+test('a no to that question sends nothing more', async () => {
+  openReply = { ...openReply, id: 'd-signed-no', diskChanged: true, canUndo: false };
+  await openDocument();
+  reloadRefusesSigned = true;
+  h.setConfirmAnswer(false);
+  try {
+    const from = h.calls.length;
+    const asked = h.confirms.length;
+    reload().click();
+    await settle();
+    assert.equal(h.confirms.length, asked + 1, 'precondition: the user was asked');
+    assert.equal(h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload')).length, 1,
+      'the user said no and the signed copy was replaced anyway');
+  } finally {
+    reloadRefusesSigned = false;
+    h.setConfirmAnswer(true);
+  }
+});
+
+test('the reload nobody asked for never asks about a signature', async () => {
+  openReply = { ...openReply, id: 'd-signed-auto', diskChanged: false, canUndo: false };
+  await openDocument();
+  openReply = { ...openReply, diskChanged: true };
+  reloadRefusesSigned = true;
+  // A yes, deliberately: were the automatic path to ask, the retry would then fire and be counted
+  // below as well, so the defect is visible twice rather than hidden behind a default.
+  h.setConfirmAnswer(true);
+  try {
+    const from = h.calls.length;
+    const asked = h.confirms.length;
+    h.window.dispatchEvent(new h.window.Event('focus'));
+    await settle();
+    const reloads = h.calls.slice(from).filter((c) => c.url.startsWith('/api/reload')).length;
+    assert.ok(reloads >= 1, 'precondition: the automatic reload did not fire, so its silence proves nothing');
+    assert.equal(h.confirms.length, asked,
+      'a reload the user did not ask for put a signature question in front of her — that question belongs to the button, and the banner stays up to carry it');
+    assert.equal(reloads, 1,
+      'the automatic reload retried with the acknowledgement — a signed copy was replaced by a file that is not signed without the user doing anything');
+  } finally {
+    reloadRefusesSigned = false;
+  }
 });
 
 test('the banner is announced to a screen reader', () => {

@@ -171,6 +171,10 @@ type idleExitTimer struct {
 	exited    bool // RequestExit is idempotent: two causes can race, and close() twice panics
 	byWindow  atomic.Uint64
 	byHandoff atomic.Uint64
+	// arrivedHook runs inside windowArrived between the cancel and the count, with `mu` held. Nil
+	// outside tests; it lets a test observe that the two share one lock hold, which no schedule can
+	// show. A field rather than a package var so a test setting it races nothing else.
+	arrivedHook func()
 }
 
 // IdleExit is the channel `run()` selects on as its THIRD exit cause.
@@ -253,33 +257,81 @@ func (s *Server) armIdleExitGrace() {
 	}
 	s.idle.armedAt = time.Now()
 	log.Printf("%s %s", idleExitGraceMsg, idleExitGrace)
-	s.idle.timer = time.AfterFunc(idleExitGrace, func() {
-		defer safe.Recover("idle exit")
-		s.idle.mu.Lock()
-		// Re-checked under the lock: `AfterFunc` can already be running when `cancelIdleExit`
-		// takes the lock, and `Stop` returning false is exactly that case. Clearing the field is
-		// what the cancel observes, so a fire that finds it nil has been cancelled and must not
-		// close the channel.
-		if s.idle.timer == nil {
-			s.idle.mu.Unlock()
-			return
-		}
-		s.idle.timer = nil
+	s.idle.timer = time.AfterFunc(idleExitGrace, s.idleGraceElapsed)
+}
+
+// idleGraceElapsed is the grace's timer body: exit, unless a window is here after all.
+//
+// **The count is re-read under `idle.mu` at the moment of firing (/pending 499), and the arm-time
+// check alone did not close the race.** `handleWindow` cancelled, THEN counted, as two steps: a
+// window B could cancel (finding no timer), window A's deferred arm could then take the lock and
+// read `Live() == 0`, and only then B's count moved — so a grace ran with B open and exited Nib
+// under it ten seconds later. Reproduced by the phase-close review at v1.129.118.
+//
+// Two halves, and each needs the other. `windowArrived` moves B's cancel and count under ONE hold of
+// this lock, so a count read under it can never be between the two; and this re-check is where
+// that read happens, at the only moment the answer decides anything.
+func (s *Server) idleGraceElapsed() {
+	defer safe.Recover("idle exit")
+	s.idle.mu.Lock()
+	// `AfterFunc` can already be running when `cancelIdleExit` takes the lock, and `Stop`
+	// returning false is exactly that case. Clearing the field is what the cancel observes, so a
+	// fire that finds it nil has been cancelled and must not close the channel.
+	if s.idle.timer == nil {
 		s.idle.mu.Unlock()
-		log.Printf("%s", idleExitFiringMsg)
-		s.RequestExit(exitCauseLastWindow)
-	})
+		return
+	}
+	s.idle.timer = nil
+	if live := s.windows.Live(); live != 0 {
+		s.idle.mu.Unlock()
+		log.Printf("%s (%d open)", idleExitStoodDownMsg, live)
+		return
+	}
+	s.idle.mu.Unlock()
+	log.Printf("%s", idleExitFiringMsg)
+	s.RequestExit(exitCauseLastWindow)
+}
+
+// idleExitStoodDownMsg is the line a grace that found a window at its end leaves behind — the only
+// trace that the interleaving above happened on a user's machine.
+const idleExitStoodDownMsg = "idle-exit grace ended with a window open; not exiting"
+
+// windowArrived is a window connecting: cancel any grace and count the window, under ONE hold of
+// `idle.mu`. Returns the new count.
+//
+// **The cancel still happens BEFORE the count moves, and the order is an observable property.**
+// Incrementing first leaves a window in which the count says a window is here and the grace is still
+// running — so anything that reads the count and then the grace sees a state the server is never
+// actually in. A test caught it at one run in three.
+func (s *Server) windowArrived() int64 {
+	s.idle.mu.Lock()
+	t, at := s.stopIdleExitLocked(idleExitCauseWindow)
+	if s.idle.arrivedHook != nil {
+		s.idle.arrivedHook()
+	}
+	n := s.windows.n.Add(1)
+	s.idle.mu.Unlock()
+	logIdleCancel(t, at, idleExitCauseWindow)
+	return n
 }
 
 // cancelIdleExit stops a running grace and counts WHY. Returns whether there was one to stop, so an
 // ordinary window connect does not count a cancel that did not happen.
 func (s *Server) cancelIdleExit(cause string) bool {
-	// **The stop and its count happen under ONE lock hold, and they did not at first.** Clearing
-	// the timer and then counting leaves a window in which the grace is cancelled and the counter
-	// has not moved — so an observer that checks "is it cancelled" and then reads the cause sees a
-	// cancel attributed to nobody. A test caught it; the counters are a diagnostic, so nothing
-	// would have failed in production, and that is exactly the kind of gap that survives.
 	s.idle.mu.Lock()
+	t, at := s.stopIdleExitLocked(cause)
+	s.idle.mu.Unlock()
+	return logIdleCancel(t, at, cause)
+}
+
+// stopIdleExitLocked clears a running grace and counts its cause. Caller holds `idle.mu`.
+//
+// **The stop and its count happen under ONE lock hold, and they did not at first.** Clearing the
+// timer and then counting leaves a window in which the grace is cancelled and the counter has not
+// moved — so an observer that checks "is it cancelled" and then reads the cause sees a cancel
+// attributed to nobody. A test caught it; the counters are a diagnostic, so nothing would have
+// failed in production, and that is exactly the kind of gap that survives.
+func (s *Server) stopIdleExitLocked(cause string) (*time.Timer, time.Time) {
 	t, at := s.idle.timer, s.idle.armedAt
 	s.idle.timer = nil
 	if t != nil {
@@ -290,7 +342,12 @@ func (s *Server) cancelIdleExit(cause string) bool {
 			s.idle.byWindow.Add(1)
 		}
 	}
-	s.idle.mu.Unlock()
+	return t, at
+}
+
+// logIdleCancel stops the timer a cancel took and logs it, outside the lock. Reports whether there
+// was one.
+func logIdleCancel(t *time.Timer, at time.Time, cause string) bool {
 	if t == nil {
 		return false
 	}
@@ -357,13 +414,8 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// still has it.
 	_, _ = w.Write([]byte("retry: " + strconv.Itoa(int(sseRetry/time.Millisecond)) + "\n\n"))
 	flusher.Flush()
-	// **The cancel happens BEFORE the count moves, and the order is an observable property.**
-	// Incrementing first leaves a window in which the count says a window is here and the grace is
-	// still running — so anything that reads the count and then the grace sees a state the server
-	// is never actually in. A test caught it at one run in three, and a reader in the field would
-	// have seen it far more rarely and had nothing to go on.
-	s.cancelIdleExit(idleExitCauseWindow)
-	n := s.windows.n.Add(1)
+	// Cancel then count, under one hold of `idle.mu` — see windowArrived for why both halves.
+	n := s.windowArrived()
 	log.Printf("%s (%d open)", windowConnectedMsg, n)
 	defer func() {
 		left := s.windows.n.Add(-1)

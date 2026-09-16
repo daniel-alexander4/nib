@@ -224,7 +224,8 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	// The only copy: the signature on it cannot be re-derived identically, so a save that
 	// reports success must mean the bytes are on disk (atomicfile.WriteDurable's own rule).
-	if err := atomicfile.WriteDurable(target, data, 0o600); err != nil {
+	// ReplaceDurable: an overwrite keeps the replaced file's mode (/pending 499); a new file is 0600.
+	if err := atomicfile.ReplaceDurable(target, data, 0o600); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}

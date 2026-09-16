@@ -2580,7 +2580,8 @@ and the stale copy was still being served twenty hours later.
 
 `stale-save-overwrites-changed-file` is the one that matters, and it is a **placement** row
 rather than a detection row. Its patch does not break the detector; it moves the refusal to
-after `atomicfile.WriteDurable`. The route still answers 412 and the banner still appears, and
+after the write (`atomicfile.WriteDurable` then; `ReplaceDurable` since /pending 499, which
+re-recorded the patch). The route still answers 412 and the banner still appears, and
 the user's file is already gone. **A status-only assertion cannot tell those two apart** — both
 spellings return 412 — so the check reads the bytes on disk. This is the general shape worth
 carrying: where a guard protects a destructive act, the assertion has to be on the thing being
@@ -2594,7 +2595,8 @@ shipped permanently armed, which trains the user to ignore the banner and costs 
 bug it warns about.
 
 `mtime-touch-reported-as-a-change` guards the direction a detector is never tested in. Its
-patch makes `diskChanged` answer on identity, size and mtime without comparing content, so a
+patch makes the detector (`diskChanged`, whose body is `diskCheck` since /pending 499) answer on
+identity, size and mtime without comparing content, so a
 bare `touch` or a byte-identical rewrite reports as changed. The failure is a **false
 statement** — "This file has changed on disk" is untrue of identical bytes — and a detector
 that answers too eagerly puts a banner over every document, which is the same outcome as no

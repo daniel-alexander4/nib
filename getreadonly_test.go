@@ -107,7 +107,7 @@ func TestEveryMutatingGETIsBehindTheLoopbackDoor(t *testing.T) {
 
 	// The verbs. Each is a direct write, and the last group is the doors this repo hung off a GET.
 	writes := []string{
-		"WriteFile", "WriteDurable", "Rename", "RemoveAll", "MkdirAll", "Remove",
+		"WriteFile", "WriteDurable", "ReplaceDurable", "CreateDurable", "Rename", "RemoveAll", "MkdirAll", "Remove",
 		"PruneCeremonyPeers", "PruneCeremonySecrets", "PruneCeremonyInvitations",
 		"AddCeremonyPeer", "AddCeremonySecret", "AddCeremonyInvitation",
 		"closeOutEnded", "closeOutCeremony", "CloseOutMirror", "WriteMirror", "WriteMe",

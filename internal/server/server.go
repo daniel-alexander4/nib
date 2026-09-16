@@ -320,7 +320,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/window", requirePublicLoopback(s.handleWindow))
 	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
 	mux.HandleFunc("POST /api/quit", requirePublicLoopback(s.handleQuit))
-	mux.HandleFunc("GET /api/update/check", s.handleUpdateCheck)
+	// Behind the loopback door although it writes nothing here (/pending 499): it ACTS — an outbound
+	// request to GitHub on every hit — so any page in the user's browser could make Nib phone out with
+	// an <img src>. The UI's own fetch is same-origin and passes; the version pill is unaffected.
+	mux.HandleFunc("GET /api/update/check", requirePublicLoopback(s.handleUpdateCheck))
 	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
 	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))
 	mux.HandleFunc("POST /api/ssh/unlock", requirePublicLoopback(s.handleUnlock))
@@ -332,7 +335,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/lan/heard", s.requireUnlocked(s.handleLANHeard))
 	// The in-product form of `nib discover` (/pending 23). `requireUnlocked` like its
 	// neighbour: it announces on the link, which is an action, not a read.
-	mux.HandleFunc("GET /api/lan/test", s.requireUnlocked(s.handleNetworkTest))
+	// And behind the loopback door for that reason (/pending 499): requireUnlocked checks origin on
+	// non-GET methods only, so an announcement was one cross-site <img src> away.
+	mux.HandleFunc("GET /api/lan/test", requirePublicLoopback(s.requireUnlocked(s.handleNetworkTest)))
 	mux.HandleFunc("GET /api/ssh/keys", s.requireUnlocked(s.handleKeysList))
 	mux.HandleFunc("POST /api/ssh/keys", s.requireUnlocked(s.handleKeysAdd))
 	mux.HandleFunc("POST /api/ssh/keys/remove", s.requireUnlocked(s.handleKeysRemove))
@@ -445,7 +450,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/finalize", s.requireUnlocked(s.handleFinalize))
 	mux.HandleFunc("POST /api/timestamp", s.requireUnlocked(s.handleTimestamp))
 	mux.HandleFunc("POST /api/timestamp/verify", s.requireUnlocked(s.handleTimestampVerify))
-	mux.HandleFunc("GET /api/identity", s.requireUnlocked(s.handleIdentity))
+	// Loopback door (/pending 499): `identity()` MINTS and stores a signing identity on first use, so
+	// this GET writes the vault — and requireUnlocked checks origin on non-GET methods only.
+	mux.HandleFunc("GET /api/identity", requirePublicLoopback(s.requireUnlocked(s.handleIdentity)))
 	mux.HandleFunc("GET /api/identity/external", s.requireUnlocked(s.handleExternalSignerGet))
 	mux.HandleFunc("POST /api/identity/external", s.requireUnlocked(s.handleExternalSignerImport))
 	mux.HandleFunc("POST /api/identity/external/remove", s.requireUnlocked(s.handleExternalSignerRemove))
@@ -1018,8 +1025,21 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 			"this file has changed on disk since Nib opened it, so saving would replace the changed file with the copy you have open")
 		return
 	}
+	// **ADR-008's byte cap, and this door was a sixth writer of doc.data that nothing refused
+	// (/pending 499).** The posted bytes become the document below, so a save that grows it past
+	// the aggregate ceiling is a growth door like every other. Checked BEFORE the write so a refusal
+	// leaves the user's file untouched, and again under the commit's own lock below, which is the
+	// authoritative test. 409 through the same mapping the commit doors use (ADR-008).
+	s.mu.Lock()
+	capErr := s.byteCapLocked(doc, data)
+	s.mu.Unlock()
+	if wroteCommitFailure(w, capErr) {
+		return
+	}
 	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
-	if err := atomicfile.WriteDurable(doc.path, data, 0o600); err != nil {
+	// ReplaceDurable rather than WriteDurable: the file is the user's, so it keeps the mode it had
+	// (/pending 499 — a 0644 original used to come back 0600 after every save).
+	if err := atomicfile.ReplaceDurable(doc.path, data, 0o600); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}
@@ -1033,6 +1053,15 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	if !s.isRegisteredLocked(doc) {
 		s.mu.Unlock()
 		httpError(w, http.StatusConflict, "that document was closed while it was being saved")
+		return
+	}
+	// The authoritative cap test, under the hold that assigns. Reached only when another document
+	// grew in the window since the check above. The bytes are on disk — the user asked for them
+	// there — but the document is NOT re-stamped, so it reports the file as changed and the banner
+	// says so, rather than holding bytes past the ceiling or claiming the file matches.
+	if err := s.byteCapLocked(doc, data); err != nil {
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "the file was saved, but Nib cannot hold the saved copy open: "+err.Error())
 		return
 	}
 	doc.data = data
@@ -1560,7 +1589,18 @@ func (s *Server) docResponse(doc *document) docResponse {
 	vlt := s.vault
 	s.mu.Unlock()
 
-	resp.DiskChanged = diskChanged(path, recorded)
+	changed, refreshed := diskCheck(path, recorded)
+	resp.DiskChanged = changed
+	if refreshed != nil {
+		// Touched, not changed: keep the fresh stat so the next response takes the cheap path
+		// (diskCheck says what this cost). Only onto the baseline this check read — a save or
+		// reload that re-stamped in the meantime owns the newer one — and only while registered.
+		s.mu.Lock()
+		if doc.disk == recorded && s.isRegisteredLocked(doc) {
+			doc.disk = refreshed
+		}
+		s.mu.Unlock()
+	}
 	resp.UnverifiedSigners = unverifiedSigners(vlt, resp.Signature)
 
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
