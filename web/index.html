@@ -236,6 +236,22 @@
       <button id="openRecentBtn" title="Open a file you have opened before">Open Recent…</button>
       <button id="officeOpenBtn" title="Open a Markdown or Word/Excel/PowerPoint/OpenDocument file by converting it to PDF (office formats require LibreOffice)">Open &amp; convert to PDF…</button>
       <input id="officeInput" type="file" accept=".md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp" hidden />
+      <!-- Shown only when the server could not find LibreOffice (`applyStatus`). Until now the
+           absence was communicated by the file picker quietly narrowing to Markdown, so a user
+           with a .docx met it as their file simply not appearing in the dialog.
+
+           Authored here and hidden, rather than built in JS: the link is a STATIC href, so no
+           response body can choose where the page navigates (ADR-039's reasoning, applied to
+           navigation rather than to download), and the innerHTML census in escape.test.mjs has a
+           literal to read. Worded as a fact about the SEARCH — nib looks on PATH and in the stock
+           install locations, and cannot see a copy installed anywhere else, so "isn't installed"
+           would be a claim it cannot support. -->
+      <p id="officeMissing" class="libhint" role="status" aria-live="polite" hidden>Nib couldn't find
+        <strong>LibreOffice</strong>, so Word, Excel, PowerPoint and OpenDocument files can't be
+        converted — Markdown still can. Get it from
+        <a href="https://www.libreoffice.org/" target="_blank" rel="noopener">libreoffice.org</a>,
+        then check again.</p>
+      <button id="officeRecheck" type="button" hidden>Check again for LibreOffice</button>
       <!-- /pending 471: the language a converted document is declared in, for screen readers.
            Pre-filled from this computer's language; "Not specified" declares nothing new. -->
       <select id="docLang" aria-label="Document language" title="The language the document is written in — declared for screen readers when it is converted">
@@ -1257,7 +1273,11 @@
         (re-embedding fonts and converting colour).</p>
       <p class="libhint"><strong>Verify the result with veraPDF.</strong> Nib can't validate PDF/A
         conformance itself, so this is a candidate, not a certified file.</p>
-      <div id="pdfaStatus" class="libhint"></div>
+      <!-- role/aria-live because this line CHANGES while the dialog is open (WCAG SC 4.1.3): it
+           is written on every run and carries the refusal's reason. It had neither, so a screen
+           reader announced nothing when a conversion was refused — the same gap /pending 328 fixed
+           for toast(), one dialog further in. #dlProgress next door already does this. -->
+      <div id="pdfaStatus" class="libhint" role="status" aria-live="polite"></div>
       <div class="sigbtns">
         <button id="pdfaGo" class="primary">Convert &amp; save…</button>
         <button id="pdfaGsGo" hidden>Convert with Ghostscript</button>

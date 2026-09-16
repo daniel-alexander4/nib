@@ -53,8 +53,16 @@ func (s *Server) handleOffice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
-			httpError(w, http.StatusBadRequest, "LibreOffice is not installed")
+		// One door classifies it (ADR-009, `pdfops.MissingToolFor`); the WORDING is this
+		// surface's own, per the rule `handoff.go` states — ADR-009 unifies the checks and
+		// explicitly does not require every site to print the same sentence.
+		//
+		// The body stays a flat sentence with no URL in it. The web client carries its own
+		// link, authored statically in index.html, because a remedy URL on the wire would let
+		// a response body choose where the page navigates — the reasoning ADR-039 used to
+		// refuse a route that accepts a URL.
+		if tool, ok := pdfops.MissingToolFor(err); ok {
+			httpError(w, http.StatusBadRequest, "Nib "+tool.NotFound()+", so it cannot convert this document.")
 		} else {
 			httpError(w, http.StatusBadRequest, err.Error())
 		}

@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"nib/mdpdf"
@@ -31,9 +30,17 @@ import (
 // so the residual risk is the same class as opening the document in LibreOffice
 // directly. Fidelity is LibreOffice's: complex documents may convert imperfectly.
 
-// ErrLibreOfficeMissing is returned when no LibreOffice binary is on PATH, so the
-// caller can degrade gracefully (CLI hint, hidden GUI menu item) rather than fail
-// obscurely.
+// ErrLibreOfficeMissing is returned when no LibreOffice binary can be found, so the caller
+// can degrade gracefully rather than fail obscurely. Both surfaces classify it through
+// `MissingToolFor` and then say it in their own voice: the CLI prints a sentence naming the
+// remedy, and the File card reveals a line that carries the vendor link.
+//
+// This comment used to promise a "hidden GUI menu item" and `web/app.js` claimed the convert
+// button was "hidden otherwise" — neither was ever built, and the button has always been
+// visible with only the file picker narrowing. The text is the surface that exists.
+//
+// The string itself never reaches a user: every door intercepts the sentinel and substitutes
+// its own wording, which is why widening discovery did not require rewording it.
 var ErrLibreOfficeMissing = errors.New("LibreOffice (soffice) is not installed")
 
 // ErrUnsupportedOffice is returned for an input whose extension isn't in the
@@ -142,28 +149,21 @@ func ConvertDocToPDF(data []byte, ext string) ([]byte, error) {
 	return ConvertOfficeToPDF(data, ext)
 }
 
-var loPath struct {
-	sync.Once
-	p string
-}
+var loCache toolCache
 
-// libreOfficePath returns the LibreOffice executable path (cached), or "" if none
-// is installed. The binary is "soffice" (also symlinked "libreoffice") on Unix and
-// "soffice.exe" on Windows, all of which exec.LookPath resolves.
+// libreOfficePath returns the LibreOffice executable path, or "" if none is found.
+//
+// PATH first — "soffice", also symlinked "libreoffice", and "soffice.exe" on Windows, which
+// exec.LookPath resolves via PATHEXT. Then the stock install locations, because the default
+// macOS and Windows installs are NOT on PATH and a PATH-only probe reports them as absent.
+// `toolpath.go` carries the reasoning, including why a found path is cached for the process
+// and an empty answer is re-probed on every call.
 func libreOfficePath() string {
-	loPath.Do(func() {
-		for _, name := range []string{"soffice", "libreoffice"} {
-			if p, err := exec.LookPath(name); err == nil {
-				loPath.p = p
-				return
-			}
-		}
-	})
-	return loPath.p
+	return loCache.find([]string{"soffice", "libreoffice"}, libreOfficeCandidates())
 }
 
-// LibreOfficeAvailable reports whether LibreOffice is installed, so a caller can
-// offer office conversion (and the UI can show/hide it).
+// LibreOfficeAvailable reports whether LibreOffice can be found, so a caller can offer office
+// conversion (and the UI can say so when it cannot).
 func LibreOfficeAvailable() bool { return libreOfficePath() != "" }
 
 // ConvertOfficeToPDF converts an office document (DOCX/XLSX/ODT/… — ext is the
