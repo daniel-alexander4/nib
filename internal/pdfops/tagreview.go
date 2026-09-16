@@ -121,6 +121,7 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 	}
 	seen := map[int]bool{}
 	var ordered []proposedElement
+	var ignoredPages []int // a page whose elements are all ignored is still committed — see commitProposal
 	for _, r := range reviewed {
 		if r.ID < 0 || r.ID >= len(p.elements) || seen[r.ID] {
 			return nil, fmt.Errorf("%w: element %d is unknown or listed twice", ErrTagsReview, r.ID)
@@ -131,6 +132,7 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 			return nil, fmt.Errorf("%w (element %d)", errCommitStale, r.ID)
 		}
 		if r.Ignore {
+			ignoredPages = append(ignoredPages, el.page)
 			continue
 		}
 		if !reviewRoles[r.Role] {
@@ -156,7 +158,7 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 		}
 		ordered[i].list = lists - 1
 	}
-	return commitProposal(pdf, ordered)
+	return commitProposal(pdf, ordered, ignoredPages...)
 }
 
 func mediaBoxOf(ctx *model.Context, pageNr int) [4]float64 {
