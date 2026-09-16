@@ -173,10 +173,8 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 			"%d run(s) — refusing to tag content by position when the two do not correspond",
 			pageNr, len(spans), len(roles))
 	}
-	if len(spans) == 0 {
-		return nil
-	}
-
+	// No early return for a page with no text (`/pending 504`): what such a page draws — a rule, or
+	// mdpdf's blank-page placeholder — still has to be marked an artifact below.
 	edit := contentstream.NewEdit(src)
 	var listRef, itemRef *types.IndirectRef
 	listLevel := 0

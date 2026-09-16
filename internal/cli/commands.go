@@ -434,7 +434,7 @@ func writeSplitFiles(dir string, parts []pdfops.SplitPart) int {
 			errf("unsafe file name %q", p.Name)
 			return 1
 		}
-		if err := os.WriteFile(full, p.Data, 0o644); err != nil {
+		if err := writeNamed(full, p.Data); err != nil {
 			errf("%v", err)
 			return 1
 		}
@@ -688,7 +688,7 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 			errf("unsafe file name %q", base)
 			return 1
 		}
-		if err := os.WriteFile(full, res, 0o644); err != nil {
+		if err := writeNamed(full, res); err != nil {
 			errf("%v", err)
 			return 1
 		}
@@ -1019,7 +1019,13 @@ func cmdSign(args []string) int {
 	}
 	// A signature is a change nib cannot verify kept the document PDF/UA conformant, so the identification
 	// goes BEFORE it (`/pending 492`); an already-signed input keeps it rather than lose its signature.
-	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); derr == nil {
+	// A document pdfcpu cannot read is signed as it was read, per ADR-032 ("passed through too, logged").
+	// This dropped the error silently (`/pending 504`), so a claim the signature then sealed permanently
+	// left no trace. Warned, not refused: the ADR decides a metadata step never costs the signature.
+	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); derr != nil {
+		errf("warning: the PDF/UA identification could not be checked, so %s is signed as it was read — "+
+			"if it claims PDF/UA, the signature now seals that claim: %v", inputName(in), derr)
+	} else {
 		pdf = dropped
 	}
 	signed, err := sign.SignExternal(pdf, p12, pass, sign.Options{Name: name, Reason: reason, When: time.Now().UTC(), TSAURL: tsa})
@@ -1240,7 +1246,7 @@ func timestampCreate(files []string, force bool) int {
 			worst = max(worst, 1)
 			continue
 		}
-		if err := os.WriteFile(proofPath, proof, 0o644); err != nil {
+		if err := writeNamed(proofPath, proof); err != nil {
 			errf("%v", err)
 			worst = max(worst, 1)
 			continue
@@ -1440,7 +1446,7 @@ func writeOutput(out string, data []byte) error {
 		_, err := os.Stdout.Write(data)
 		return err
 	}
-	return os.WriteFile(out, data, 0o644)
+	return writeNamed(out, data)
 }
 
 // inputName labels an input in messages: "-" reads as "<stdin>".

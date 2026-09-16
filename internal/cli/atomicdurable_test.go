@@ -57,6 +57,15 @@ func TestTheInPlaceRewriteIsDurableNotMerelyAtomic(t *testing.T) {
 				"WriteDurable. Write is atomic and NOT durable: a crash in the writeback window "+
 				"leaves a truncated file where the original was, after \"rewritten\" was printed.", n)
 		}
+		// `/pending 504`: four output paths and the watch's proof sidecar wrote with `os.WriteFile`, which
+		// truncates in place (`-o` naming the input destroyed the only copy) and follows a planted symlink.
+		// Every file goes through `writeNamed` or `atomicfile.WriteDurable`; the door's own device exemption,
+		// in cli.go, is the one call allowed.
+		if c := strings.Count(stripComments(src), "os.WriteFile("); c > 0 && (n != "cli.go" || c > 1) {
+			t.Errorf("%s calls os.WriteFile %d time(s). It truncates the target before writing — -o naming "+
+				"the input loses the only copy — and follows a symlink planted in a watched directory. "+
+				"Write through writeNamed (a path the user named) or atomicfile.WriteDurable (a sidecar).", n, c)
+		}
 	}
 	// STIMULUS. A scan that read the wrong directory, or a package that stopped writing files,
 	// produces the same clean result as a correct one.
