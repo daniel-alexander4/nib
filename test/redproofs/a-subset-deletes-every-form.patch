@@ -1,0 +1,11 @@
+--- a/internal/pdfops/pageselect.go
++++ b/internal/pdfops/pageselect.go
+@@ -378,7 +378,7 @@
+ 		return nil
+ 	}
+ 	live := map[int]bool{}
+-	for _, page := range keptPages {
++	for _, page := range keptPages[:0] {
+ 		for _, a := range derefArray(xt, page["Annots"]) {
+ 			if ar, ok := a.(types.IndirectRef); ok {
+ 				live[ar.ObjectNumber.Value()] = true

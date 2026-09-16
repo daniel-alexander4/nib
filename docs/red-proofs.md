@@ -5195,3 +5195,61 @@ reason, and every guard fixed below was probed red once before it counted.
 | `windowfreeze.mjs` | It printed `open=1` without asserting that the page ever froze or was hidden, and it printed the control without asserting it | reading. Not run here (seven minutes) |
 | `verify_test.go`'s red-proof ledger check | It listed Tiers 1–5 and skipped Tier 6, and a prose mention satisfied every tier. It now also requires a replayable row for tiers 1, 2, 3, 4 and 6. **Tier 5 has none**, which is declared in the test | relabelling the three tier-6 rows turns it red |
 | `TestEveryRedProofStillApplies`, reported as missing 48 stale patches | **Not vacuous.** 0 of 414 fail under the harness's own `patch -p1 --dry-run --forward`; 53 fail only under zero fuzz, which is `git apply --check`'s strictness, not `redproof.sh`'s | measured per patch from the repository root |
+
+## P02.S04a of `PLAN-ua-coverage.md` — page selection moves into the source context (v1.129.141)
+
+`Collect` and `RemovePages` stopped wrapping `api.Collect`/`api.RemovePages`, which build a fresh
+pdfcpu context, and became an in-place page-tree rewrite — because a structure tree cannot be
+transplanted across a new context, and the next slice has to carry one. The rewrite **inverts a
+whitelist into a blacklist**: everything the fresh context silently left behind now survives unless
+this code drops it. Seventeen mutations were run against the result and all seventeen went red; the
+three defects worth recording are below, and every one of them was green under the whole suite.
+
+| proof | check | expects |
+|---|---|---|
+| `a-subset-deletes-every-form` — the surviving-widget set was collected by rebuilding each kept page's reference with `types.NewIndirectRef`, which returns a `*IndirectRef`, and `DereferenceDict` switches on `case IndirectRef`. Every page dereferenced to **nil**, the set was always empty, and **every subset deleted the whole `/AcroForm`** — against a previous implementation that carefully migrated the fields whose widgets survived | `go test ./internal/pdfops/ -run TestASubsetKeepsTheFormFieldsWhoseWidgetsSurvive -count=1` | `(what the previous implementation kept)` |
+
+**Why the suite was green over it.** Every form fixture in `internal/pdfops` is a single page, so no
+test had ever subset a form. It was found by mutating a *different* guard — the signature drop — and
+asking why that mutation survived.
+
+**Two more defects of the same family, fixed in the same change and recorded here as prose rather
+than as rows, because each is proved by an assertion that already exists rather than by a patch of
+its own.** Both are *re-anchoring*: pdfcpu writes by reachability, so unlinking a page is normally
+enough — but anything still reachable from the catalog that NAMES that page brings its `/Contents`
+back, and "removed" becomes "hidden".
+
+- **A kept field kept a widget on a dropped page.** Pruning `/Fields` alone leaves a surviving
+  field's `/Kids` pointing at its other widgets, whose `/P` names a page the operation dropped.
+  `TestAKeptFieldDoesNotKeepAWidgetOnADroppedPage` asserts the dropped page's text is absent from the
+  output **bytes**, not from the page tree.
+- **A link on a kept page pointed at a dropped one.** `TestALinkToADroppedPageIsUnlinked`, same byte
+  assertion. pdfcpu's own migration does not solve this either — it patches the reference through a
+  lookup the dropped page is absent from, yielding `0 0 R`.
+
+**And one leak that is the return of a shipped incident.** `BindNameTrees` re-binds `ctx.Names` onto
+the catalog at write time and only ever *updates* the key it knows about — it never removes a
+sibling. So clearing the cache is sufficient exactly when `/Names` is deleted outright, which happens
+only when **no destination survives**. Give the same document one surviving destination and
+`/EmbeddedFiles` rode out with it: an extract, a split or a redaction shipped the source's
+attachments, with `SECRET PAYROLL` readable in the output bytes — the v1.117.0 incident above,
+re-armed. The catalog's own `/Names` dictionary is now rebuilt, and
+`TestASurvivingDestinationDoesNotDragTheAttachmentsWithIt` fails if either half is removed. Every
+attachment fixture in the package uses documents with no destinations, which is why nothing saw it.
+
+**Why the signature is erased deliberately rather than allowed to become a broken one.** An in-place
+rewrite keeps the blob with a stale `/ByteRange`, which reads like an improvement and is not: four
+gates key on a document having no signature. ADR-013's three `DocHash` anchors are gated on "unsigned"
+and would go *quiet* rather than fire; `p2p.ContributionProgress` hard-refuses `sign.Invalid`, so a
+reordered ceremony document could never be contributed to again; `sign.SignApproval` refuses a
+document whose AcroForm still carries `/DocMDP`; and `DropUAIdentificationUnlessSigned` reads
+"signed" at three call sites. Whether an edited signed document should read `invalid` or `unsigned`
+is not an open question: `/pending 455` closed at v1.128.98 deciding the refusal observes bytes, and
+refused the alternative of forcing every route to `invalid` because redaction cannot preserve a
+signature at all. Keeping `erases` is continuity with that. The guard was itself
+proved inert first: disabling it left `TestWhatEachDocumentPrimitiveDoesToASignature` green, because
+a nib signature field carries no widget on any page and the AcroForm prune erases it anyway. It earns
+its place only on a document signed elsewhere with a **visible** signature, which is what
+`TestASubsetErasesASignatureWhoseWidgetIsOnAKeptPage` builds.
+
+`recorded` 414 → 415.

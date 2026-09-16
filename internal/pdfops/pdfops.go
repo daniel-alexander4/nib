@@ -122,13 +122,55 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 	})
 }
 
+// subset is the one read-change-write every page-selection door shares. `pick` turns the
+// document's page count into the 1-based, ordered, repeat-preserving list of pages to keep.
+//
+// `model.COLLECT` is chosen deliberately and is not cosmetic: pdfcpu's writer strips `Names`,
+// `Dests`, `Outlines`, `OpenAction`, `StructTreeRoot` and `OCProperties` whenever
+// `ApplyReducedFeatureSet()` is true (SPLIT, TRIM, EXTRACTPAGES, IMPORTIMAGES), and inverts the page
+// selection under REMOVEPAGES. COLLECT does neither, so what this code writes is what comes out.
+func subset(pdf []byte, pick func(total int) ([]int, error)) ([]byte, error) {
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.COLLECT
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		keep, err := pick(ctx.PageCount)
+		if err != nil {
+			return err
+		}
+		return selectPages(ctx, keep)
+	})
+}
+
+// selectionError re-voices pdfcpu's complaint about a page selection as nib's own. The raw text is
+// `pdfcpu: no page selected`, which names a library the user did not choose to use.
+func selectionError(err error) error {
+	return fmt.Errorf("pdfops: that page selection could not be used: %s",
+		strings.TrimPrefix(err.Error(), "pdfcpu: "))
+}
+
 // RemovePages drops the given pages from the PDF.
 func RemovePages(pdf []byte, pages []string) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.RemovePages(bytes.NewReader(pdf), &out, pages, nil); err != nil {
-		return nil, err
-	}
-	return carryLang(pdf, out.Bytes())
+	return subset(pdf, func(total int) ([]int, error) {
+		remaining, err := api.RemainingPagesForPageRemoval(total, pages, false)
+		if err != nil {
+			return nil, selectionError(err)
+		}
+		// The set's keys persist with value false for the pages that were removed, so the filter
+		// is on the VALUE and not on presence. Removal is inherently ascending.
+		keep := make([]int, 0, len(remaining))
+		for n, live := range remaining {
+			if live {
+				keep = append(keep, n)
+			}
+		}
+		sort.Ints(keep)
+		if len(keep) == 0 {
+			// pdfcpu wrote no output at all in this case, so the old door returned zero bytes and
+			// no error, and the server installed an empty document.
+			return nil, fmt.Errorf("pdfops: that would remove every page of this document")
+		}
+		return keep, nil
+	})
 }
 
 // Collect keeps only the given pages, in the exact order given (e.g.
@@ -136,11 +178,21 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 // page-selection primitive: reordering, deletion-by-omission, and extracting a
 // subset into a new PDF all route through it.
 func Collect(pdf []byte, order []string) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
-		return nil, err
+	return subset(pdf, collectPick(order))
+}
+
+// collectPick is the selection RULE the two collect doors share. They share the rule and not the
+// door on purpose: S04b gives `Collect` a structure carry, and a `collectWithoutStructure` written
+// as a call to `Collect` would inherit it silently — which is the single thing that door exists to
+// prevent.
+func collectPick(order []string) func(int) ([]int, error) {
+	return func(total int) ([]int, error) {
+		keep, err := api.PagesForPageCollection(total, order)
+		if err != nil {
+			return nil, selectionError(err)
+		}
+		return keep, nil
 	}
-	return carryLang(pdf, out.Bytes())
 }
 
 // collectWithoutStructure is `Collect` for the one caller that must never inherit a structure carry
@@ -159,19 +211,16 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 //
 // # Why it is bound at the call site rather than measured at the output
 //
-// Today the two functions do the same thing, because `api.Collect` drops the tree on its own. So an
-// assertion over redacted BYTES — "no element survives" — passes for `api.Collect`'s reason and not
-// for this one, and would go on passing if `RedactPages` were pointed back at `Collect` tomorrow.
-// The binding is therefore asserted where it can fail: `TestRedactionNeverRoutesThroughTheCarryingCollect`
-// reads the call graph. The output-level reader becomes discriminating only when S04 lands, and until
+// Today the two functions do the same thing, because the shared primitive drops the structure tree
+// for BOTH of them — `/StructTreeRoot` is simply not on the catalog allowlist. So an assertion over
+// redacted BYTES — "no element survives" — passes for the allowlist's reason and not for this one,
+// and would go on passing if `RedactPages` were pointed back at `Collect` tomorrow. The binding is
+// therefore asserted where it can fail: `TestRedactionNeverRoutesThroughTheCarryingCollect` reads
+// the call graph. The output-level reader becomes discriminating only when S04b lands, and until
 // then it is a backstop rather than coverage — recorded in the phase inventory's S03 section, and
-// policed by nothing, which is why S04 owes it a red probe against a carrying `Collect`.
+// policed by nothing, which is why S04b owes it a red probe against a carrying `Collect`.
 func collectWithoutStructure(pdf []byte, order []string) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.Collect(bytes.NewReader(pdf), &out, order, nil); err != nil {
-		return nil, err
-	}
-	return carryLang(pdf, out.Bytes())
+	return subset(pdf, collectPick(order))
 }
 
 // readLang resolves a `/Lang` value to its text — direct or indirect, a literal string or a hex one —

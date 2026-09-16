@@ -96,7 +96,7 @@ func TestTheNonCarryingDoorStillKeepsTheDocumentsLanguage(t *testing.T) {
 
 // TestRedactionEmitsNoStructureTree — the backstop, and it is honest about what it cannot see.
 //
-// This passes today because `api.Collect` drops the tree, not because of anything P02.S03 built. It
+// This passes today because the shared page-selection primitive drops the tree — `/StructTreeRoot` is simply not on the catalog allowlist, not because of anything P02.S03 built. It
 // is here so that the property is asserted from the outside at all, and it becomes discriminating
 // the moment `Collect` carries. Until then the routing guard above is the reader that can go red.
 func TestRedactionEmitsNoStructureTree(t *testing.T) {
