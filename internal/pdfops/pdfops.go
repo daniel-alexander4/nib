@@ -148,7 +148,7 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 //
 // # It exists BEFORE the carry it refuses, and that is the point
 //
-// P02.S04 makes `Collect` prune the source tree and carry it onto the pages it keeps, and every
+// P02.S04b makes `Collect` prune the source tree and carry it onto the pages it keeps, and every
 // caller of `Collect` inherits that by construction — including `RedactPages`, which builds its runs
 // of untouched pages through it. A tree carried over a redacted document is not cosmetic: structure
 // elements describe what the page SAID, so a reader walking the tree recovers the headings, the
@@ -476,7 +476,7 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 			}
 			j++
 		}
-		// **`collectWithoutStructure`, never `Collect`** (P02.S03): from S04 `Collect` carries the
+		// **`collectWithoutStructure`, never `Collect`** (P02.S03): from S04b `Collect` carries the
 		// source tree onto the pages it keeps, and a tree carried across a redaction describes what
 		// the redacted pages said. The routing is guarded, because the two are identical today.
 		seg, err := collectWithoutStructure(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
