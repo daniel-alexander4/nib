@@ -500,9 +500,13 @@ func setParentTreeSingle(ctx *model.Context, tree *structTree, key int, ref type
 //   - **every page's `/StructParents` and every page annotation's `/StructParent`**, which name a key
 //     whether or not the ParentTree still has it — reusing one re-points that object at a new element.
 //
-// Form XObjects can carry `/StructParent` too and are not walked: finding them means walking every
-// resource dictionary, and a producer that wrote one without a ParentTree entry and without raising
-// `/ParentTreeNextKey` is one no key choice can be safe against. That residue is declared, not missed.
+// **Form XObjects carry a key too, and since P02.S01 they ARE walked.** This paragraph used to
+// declare them as residue — *"finding them means walking every resource dictionary"* — and the
+// carry is what made it bite: `carryTagsThroughNUp` writes `/StructParents` onto the form XObject it
+// builds from each source page, so after an n-up every key in the tree is claimed by an XObject and
+// by nothing else, and an allocator blind to them would hand out a key that is already spent. The
+// walk is `parentTreeOwners` (`structcomplete.go`), shared with the completeness predicate so the
+// question "who owns this key" has one answer (ADR-009) rather than two that can disagree.
 //
 // # Once per tree
 //
@@ -514,25 +518,12 @@ func allocParentTreeKey(ctx *model.Context, tree *structTree) int {
 		return tree.keyFloor
 	}
 	_, _, floor := parentTreeKey(ctx, tree, -1)
-	raise := func(o types.Object) {
-		if v, ok := pdfNumber(ctx.XRefTable, o); ok && v >= 0 && int(v)+1 > floor {
-			floor = int(v) + 1
-		}
-	}
 	if nk, ok := pdfNumber(ctx.XRefTable, tree.root["ParentTreeNextKey"]); ok && int(nk) > floor {
 		floor = int(nk)
 	}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
-		if err != nil || d == nil {
-			continue
-		}
-		raise(d["StructParents"])
-		annots, _ := ctx.DereferenceArray(d["Annots"])
-		for _, a := range annots {
-			if ad, aerr := ctx.DereferenceDict(a); aerr == nil && ad != nil {
-				raise(ad["StructParent"])
-			}
+	for key := range parentTreeOwners(ctx) {
+		if key+1 > floor {
+			floor = key + 1
 		}
 	}
 	tree.keyFloor, tree.keyFloorKnown = floor, true
