@@ -61,6 +61,20 @@ func withTip(spec map[string]any, label string) map[string]any {
 // writes a proper catalog /AcroForm with generated appearance streams. Fields are
 // authored blank (a template to distribute), not pre-filled.
 func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
+	// **Base-14 Helvetica on purpose, and it costs PDF/UA 7.21.4.1** (`/pending 479`). The obvious
+	// fix — the embedded face `AuthoredTextFaces` gives every other authoring door — breaks FILLING:
+	// pdfcpu v0.13.0 writes a filled value as one-byte text against the Identity-H font
+	// (`model.PrepBytes` skips the glyph encoding for a form's own fill font), so "Zoë Ñúñez"
+	// renders as a missing-glyph box, and v0.15.0 refuses the fill outright. Both server fill doors
+	// (CSV, XFDF) would ship that on every form nib authors, and their tests read the value back
+	// rather than the appearance, so they stay green over it.
+	// `TestPdfcpuStillCannotFillAFieldSetInAnEmbeddedFace` goes red when that changes.
+	return authorFormIn(pdf, fields, "Helvetica")
+}
+
+// authorFormIn is AuthorForm with the face its field text is set in named, so the test that
+// watches `/pending 479`'s gate exercises the exact spec AuthorForm ships.
+func authorFormIn(pdf []byte, fields []FormField, face string) ([]byte, error) {
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("no fields to author")
 	}
@@ -131,8 +145,8 @@ func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
 	doc := map[string]any{
 		"origin": "LowerLeft",
 		"fonts": map[string]any{
-			"input": map[string]any{"name": "Helvetica", "size": 10},
-			"label": map[string]any{"name": "Helvetica", "size": 9}, // radio button value labels
+			"input": map[string]any{"name": face, "size": 10},
+			"label": map[string]any{"name": face, "size": 9}, // radio button value labels
 		},
 		"pages": pages,
 	}
