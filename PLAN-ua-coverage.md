@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 in progress** — S01–S03 done. There is no P00 — nib needs no bootstrap.
+**Status: P01 in progress** — S01–S04 done; the phase close is next. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -139,7 +139,8 @@ Acceptance:
 Tasks: *(written at slice-grill time, 2026-09-16; deep-dive: one caller, `handleBake`, notes last)*
 1. T01 — generalise `tagWidgetsOnPage` to `describeAnnotationsOnPage(subtype, elemType)`: the widget door
    and the note door are the same three writes (ADR-009).
-2. T02 — `setStructureTabOrder(ctx)` so `/Tabs /S` rides `AddNotes`'s own rewrite; `setWidgetTabOrder` calls it.
+2. T02 — `setStructureTabOrder(ctx)` so `/Tabs /S` rides `AddNotes`'s own rewrite; the form door calls it too
+   (inside its own rewrite since P01.S04).
 3. T03 — `AddNotes` describes each note as an `/Annot` only when the catalog already has a `/StructTreeRoot`;
    `/Tabs /S` on every annotated page either way.
 4. T04 — drop `AddNotes` from `knownUA1Deltas`; a writes test and an untagged-document test.
@@ -185,11 +186,20 @@ glyph ids would have been rewritten silently. Such a document now gets its stamp
 still fails for edits on documents that carry their own Liberation or Roboto, which LibreOffice output commonly
 does. Recorded as a pending item.
 
-#### P01.S04 — the form door keeps the metadata
+#### P01.S04 — the form door keeps the metadata *(done 2026-09-16, v1.129.117)*
 Scope: `AuthorTaggedForm` carries the catalog `/Metadata`. Refs: —
 Acceptance:
 - Its census row adds no 7.1 t8.
 - 7.21.4.1 stays declared against `/pending 479`.
+Tasks: *(written at slice-grill time, 2026-09-16; deep-dive not fired — one function, `authorFormIn`, whose three
+callers are the two form doors and `/pending 479`'s gate test)*
+1. T01 — measured first: `api.Create` over an existing document drops exactly one catalog key, `/Metadata`;
+   `create.FromJSON` inside `rewriteWithConf` keeps it. `authorFormIn` creates inside nib's rewrite, and the tab
+   order rides the same pass (`setWidgetTabOrder`'s second rewrite goes). **The cause, found by the slice review and
+   re-read:** pdfcpu's post-process `ValidateContext`, on by default, deletes the catalog `/Metadata`
+   (`validate/metaData.go`); the door keeps it by not validating after creating, as no other nib rewrite does.
+2. T02 — both form doors' census rows drop 7.1 t8; a test reads the catalog `/Metadata` back from both doors and
+   that the kept packet carries no PDF/UA identification (ADR-032).
 
 ### P02 — Page-set operations carry the structure
 **Goal.** `Collect`, `Crop`, `DuplicatePage`, `Booklet`, `SplitPage`, `SplitRegions`, `InsertPDF` and

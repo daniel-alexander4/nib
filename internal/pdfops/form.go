@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/create"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -56,8 +56,8 @@ func withTip(spec map[string]any, label string) map[string]any {
 
 // AuthorForm adds real fillable AcroForm widgets (text fields, checkboxes) to the
 // existing pages of pdf at the given rects, producing a blank fillable form — the
-// document's existing content (e.g. a scan) is preserved; pdfcpu's api.Create with
-// an existing reader appends the widgets onto the existing pages' /Annots and
+// document's existing content (e.g. a scan) is preserved; pdfcpu's create.FromJSON on
+// the document's own context appends the widgets onto the existing pages' /Annots and
 // writes a proper catalog /AcroForm with generated appearance streams. Fields are
 // authored blank (a template to distribute), not pre-filled.
 func AuthorForm(pdf []byte, fields []FormField) ([]byte, error) {
@@ -154,47 +154,33 @@ func authorFormIn(pdf []byte, fields []FormField, face string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	if err := api.Create(bytes.NewReader(pdf), bytes.NewReader(b), &out, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return setWidgetTabOrder(out.Bytes())
-}
-
-// setWidgetTabOrder writes `/Tabs /S` on every page that carries an annotation, so
-// tab order follows the document's structure instead of the order the widgets happen
-// to sit in `/Annots`.
-//
-// # Why it is a post-pass and not part of the JSON
-//
-// pdfcpu's create schema has no page-level `Tabs`, so there is nowhere to say it going
-// in. Measured on veraPDF ua1: without this an authored form fails **7.18.3 t1**, and
-// with it that clause goes — `/TU` does not move it and this does not move `/TU`'s.
-//
-// # Why every annotated page and not just the pages this call placed fields on
-//
-// The clause is about a PAGE with annotations, not about who put them there. A document
-// that already had a widget on page 3 keeps failing on page 3 if the rule is scoped to
-// this call's fields, and the user cannot tell the difference from a bug. `S` is the
-// only value that means structure order; the alternatives (`R`, `C`) are geometric and
-// say nothing about reading order.
-//
-// **It never fails the author.** A form that could not be given a tab order is still a
-// form, and refusing the whole operation over an ordering key would cost the user the
-// fields to gain a clause.
-func setWidgetTabOrder(pdf []byte) ([]byte, error) {
-	out, err := writeMutated(pdf, func(ctx *model.Context) error {
+	// **Inside nib's rewrite, not `api.Create`, and deliberately NOT validated after creating** —
+	// `PLAN-ua-coverage.md` P01.S04. `api.Create` runs `ValidateContext` when `PostProcessValidate` is set,
+	// which pdfcpu's shipped config does, and that validation deletes the catalog `/Metadata`
+	// (`validate/metaData.go` `validateMetadataStream`): measured on a labelled conversion, it was the one
+	// catalog entry lost (PDF/UA 7.1 t8), and a `ValidateContext` put back inside this closure loses it
+	// again. No other nib rewrite validates after writing either. The rewrite also drops an unverified
+	// PDF/UA identification from the packet it keeps (ADR-032).
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.CREATE
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		if err := create.FromJSON(ctx, bytes.NewReader(b)); err != nil {
+			return err
+		}
+		// `/Tabs /S` on every page that carries an annotation, so tab order follows the document's
+		// structure instead of the order the widgets sit in `/Annots`. pdfcpu's create schema has no
+		// page-level `Tabs`, so it is set here. Measured on veraPDF ua1: without it an authored form
+		// fails **7.18.3 t1**. Every annotated page and not just this call's: the clause is about a PAGE
+		// with annotations, not about who put them there.
 		setStructureTabOrder(ctx)
 		return nil
 	})
-	if err != nil {
-		return pdf, nil
-	}
-	return out, nil
 }
 
-// setStructureTabOrder is the rule itself, on a parsed document, so an operation that already holds
-// one — `AddNotes` — applies it inside its own rewrite instead of paying for a second (ADR-009).
+// setStructureTabOrder writes `/Tabs /S` on every page that carries an annotation — PDF/UA 7.18.3 — on a
+// parsed document, so each door that places annotations (`authorFormIn`, `AddNotes`) applies it inside
+// the rewrite it already pays for (ADR-009). `S` is the only value that means structure order; `R` and `C`
+// are geometric and say nothing about reading order.
 func setStructureTabOrder(ctx *model.Context) {
 	for p := 1; p <= ctx.PageCount; p++ {
 		d, _, _, derr := ctx.PageDict(p, false)
