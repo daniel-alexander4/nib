@@ -968,8 +968,8 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 		endState = &t
 	case terr == nil:
 		// A COMPLETED ceremony — the only state that delivers a document — so the finished file is
-		// the payload, as it always was; and the attestation still goes to the rendezvous, because
-		// a pre-hop party is owed "it is over" whichever way it ended.
+		// the payload, as it always was; and the attestation still goes to the rendezvous for a party
+		// who holds no delivery arm to be reached through (see the publish loop below).
 		endState = &t
 	case errors.Is(terr, ceremony.ErrNoTermination):
 		// The ordinary case — the proceeding has not ended — and it must never read as damage.
@@ -1169,6 +1169,18 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	if endState != nil {
 		for _, t := range tasks {
 			if out[t.slot].Delivered {
+				continue
+			}
+			// **A completed ceremony publishes only for a party who does not sign.** The pull is for
+			// a party with no delivery arm to reach, and in a completed ceremony every SIGNING party has
+			// signed and armed for delivery, so the round's re-run reaches them and a publish is
+			// off-link traffic with no reader — ADR-011's zero. It is what put 12 packets off the link
+			// in tier 4's `--lan -n 4` run once v1.129.132 gave a completed ceremony an end state, on
+			// the leg that run fails on purpose (bisected to /pending 497's commit). A party the roster
+			// marks as not signing (`Party.Signs`, which convene does not restrict to the convener)
+			// never arms for delivery, so it is still published for. Declined and stopped rounds are
+			// unchanged: their undelivered parties include pre-hop signers the pull exists for.
+			if ceremony.DeliversDocument(endState.State) && t.party.Signs {
 				continue
 			}
 			s.publishEndStateFor(ctx, t.inv, *endState, shared)
