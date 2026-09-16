@@ -111,7 +111,6 @@ var knownUA1Deltas = map[string]struct {
 	why     string
 }{
 	// ── Annotations and form fields.
-	"AddNotes":         {[]string{"7.18.1 t1", "7.18.3 t1"}, "notes are not /Annot elements yet — PLAN-ua-coverage.md P01.S02"},
 	"AuthorTaggedForm": {[]string{"7.1 t8", "7.21.4.1 t1"}, "7.1 t8: the form door loses the metadata (P01.S04); 7.21.4.1: Helvetica field text (/pending 479, pdfcpu cannot fill an embedded face)"},
 	"AuthorForm":       {[]string{"7.1 t8", "7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Metadata P01.S04, fonts /pending 479"},
 

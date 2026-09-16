@@ -60,7 +60,7 @@ func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, 
 		}
 		described := 0
 		for p := 1; p <= ctx.PageCount; p++ {
-			n, err := tagWidgetsOnPage(ctx, tree, p)
+			n, err := describeAnnotationsOnPage(ctx, tree, p, "Widget", "Form")
 			if err != nil {
 				return err
 			}
@@ -84,12 +84,14 @@ func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, 
 	return claimed, true, nil
 }
 
-// tagWidgetsOnPage nests every widget annotation on one page in a `/Form` element, and returns how
-// many it described.
+// describeAnnotationsOnPage nests every annotation of one subtype on one page in its own structure
+// element — a `Widget` in a `/Form` (P06.S07), a `Text` note in an `/Annot` (`PLAN-ua-coverage.md`
+// P01.S02) — and returns how many it described. **One door for both**, because the three writes are the
+// same writes and only the subtype and the element type differ (ADR-009).
 //
-// A widget that already carries a `/StructParent` is left alone: something already describes it, and
-// a second element pointing at the same annotation gives a reader two answers to one question.
-func tagWidgetsOnPage(ctx *model.Context, tree *structTree, pageNr int) (int, error) {
+// An annotation that already carries a `/StructParent` is left alone: something already describes it,
+// and a second element pointing at the same annotation gives a reader two answers to one question.
+func describeAnnotationsOnPage(ctx *model.Context, tree *structTree, pageNr int, subtype types.Name, elemType string) (int, error) {
 	d, _, _, err := ctx.PageDict(pageNr, false)
 	if err != nil || d == nil {
 		return 0, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
@@ -116,13 +118,13 @@ func tagWidgetsOnPage(ctx *model.Context, tree *structTree, pageNr int) (int, er
 		if derr != nil || ad == nil {
 			continue
 		}
-		if sub, _ := ad["Subtype"].(types.Name); sub != "Widget" {
+		if sub, _ := ad["Subtype"].(types.Name); sub != subtype {
 			continue
 		}
 		if _, already := ad["StructParent"]; already {
 			continue
 		}
-		elemRef, gerr := addGroupingElement(ctx, tree, "Form", nil)
+		elemRef, gerr := addGroupingElement(ctx, tree, elemType, nil)
 		if gerr != nil {
 			return n, gerr
 		}
