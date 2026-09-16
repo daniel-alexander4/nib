@@ -89,7 +89,9 @@ func TestSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if s := v.Settings(); s.Appearance != "dark" || s.DisableAutoUpdate {
 		t.Fatalf("default settings = %+v, want {Appearance:dark DisableAutoUpdate:false}", s)
 	}
-	if err := v.SetSettings(Settings{Appearance: "light", DisableAutoUpdate: true, ReadAloudVoice: "Daniel", ReadAloudRate: 1.25}); err != nil {
+	if err := v.UpdateSettings(func(s *Settings) {
+		s.Appearance, s.DisableAutoUpdate, s.ReadAloudVoice, s.ReadAloudRate = "light", true, "Daniel", 1.25
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -636,7 +638,9 @@ func TestVaultWithRemovedToolbarStyleKeyStillOpens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.SetSettings(Settings{Appearance: "light", DisableAutoUpdate: true}); err != nil {
+	if err := v.UpdateSettings(func(s *Settings) {
+		s.Appearance, s.DisableAutoUpdate = "light", true
+	}); err != nil {
 		t.Fatal(err)
 	}
 

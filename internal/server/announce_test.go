@@ -216,9 +216,9 @@ func TestTheAnnouncerStopsAtItsWindow(t *testing.T) {
 func announcingServer(t *testing.T) *Server {
 	t.Helper()
 	srv, v := unlockedServer(t)
-	cur := v.Settings()
-	cur.Advanced = &vault.Advanced{Discovery: true}
-	if err := v.SetSettings(cur); err != nil {
+	if err := v.UpdateSettings(func(s *vault.Settings) {
+		s.Advanced = &vault.Advanced{Discovery: true}
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return srv

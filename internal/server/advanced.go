@@ -124,16 +124,29 @@ func (s *Server) SeedAdvanced(v *vault.Vault) {
 	if v == nil {
 		return
 	}
-	cur := v.Settings()
-	if cur.Advanced != nil {
-		return // already answered, by the seed or by the user
-	}
+	// **The read of `hasLiveCeremony` is OUTSIDE the lock, and has to be.** It scans
+	// `~/nib/ceremonies`, and `UpdateSettings` runs its function while holding the vault's mutex —
+	// filesystem I/O under that lock, on the unlock path, is not a trade worth making. The cost is
+	// that `live` can be a moment stale, which is the same staleness this seed has always had.
 	live := hasLiveCeremony()
-	cur.Advanced = &vault.Advanced{Ceremony: live, Discovery: live, Rendezvous: live}
+	// **The "already answered" test moved INSIDE the lock, and that is the fix (`/pending 519`).**
+	// It used to read the settings, decide, and write back — three steps with the lock held for the
+	// first and the last, so a user's save landing in between was overwritten by the stale copy.
+	// Asked under the lock it becomes a compare-and-set: whatever else is happening, the seed cannot
+	// overwrite an answer that already exists.
+	//
+	// Nothing in this function calls back into the vault, which `UpdateSettings` requires — its
+	// mutex is not reentrant and a call here would deadlock rather than fail.
+	//
 	// Best-effort, deliberately: a vault that cannot be written is a vault the user has bigger
 	// problems with, and refusing to start over a preference would be the wrong trade. The cost of
 	// the write failing is that the seed runs again next time and reaches the same answer.
-	_ = v.SetSettings(cur)
+	_ = v.UpdateSettings(func(s *vault.Settings) {
+		if s.Advanced != nil {
+			return // already answered, by the seed or by the user
+		}
+		s.Advanced = &vault.Advanced{Ceremony: live, Discovery: live, Rendezvous: live}
+	})
 }
 
 // hasLiveCeremony reports whether this machine holds a proceeding that has not ended.

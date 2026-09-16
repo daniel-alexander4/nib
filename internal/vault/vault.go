@@ -1252,12 +1252,59 @@ func (v *Vault) Settings() Settings {
 	return s
 }
 
-// SetSettings replaces the stored UI preferences and persists the vault.
-func (v *Vault) SetSettings(s Settings) error {
+// UpdateSettings applies mutate to the stored preferences under ONE hold of the lock, and persists.
+//
+// **It replaced `SetSettings`, which is deleted rather than kept beside it (`/pending 519`).** That
+// took a whole `Settings` value, so every caller first read one, changed a field and passed it back —
+// the read-modify-write pair this exists to make atomic. Leaving it available would leave the defect
+// available: the next caller to reach for the obvious setter reintroduces the lost update, and the
+// zero-caller guard would not notice because the tests still used it. Tests that set a preference
+// go through this door too, which is what makes the concurrency property one door away from every
+// caller rather than a convention.
+//
+// # The lost update it exists to stop (`/pending 519`)
+//
+// `Settings()` returns a COPY under the lock and `SetSettings()` writes the whole struct back under
+// the lock: each call is atomic and **the pair is not**. Two writers did exactly that pair on the
+// same vault — the server's `SeedAdvanced`, which runs on the unlock goroutine, and its settings
+// route. Measured interleaving: the seed read `Advanced == nil`, the user's save wrote the advanced
+// switches on, and the seed then wrote its stale copy back with them all off. The user's choice
+// vanished with no error, and because the whole struct goes back, every other preference set in that
+// window went with it.
+//
+// **The window is a real one, not a test artefact**: the seed runs after the close-out sweep, the
+// delivery re-arm and a DHT socket open, so it lands hundreds of milliseconds past unlock — which is
+// when a user is in Settings. It surfaced as a tier-1 failure whose message named a product string.
+//
+// # mutate runs UNDER the lock, so it must not touch this vault or do I/O
+//
+// `v.mu` is a plain `sync.Mutex` and is not reentrant: a mutate function that calls `Settings()`,
+// `SetSettings()` or any other method here **deadlocks**, and it would hang rather than fail, which
+// is the one failure shape a test cannot report crisply. Neither caller does, and both say so at the
+// call site. Validation, refusals and anything that reads the filesystem belong OUTSIDE — the server's
+// settings route validates and answers 4xx before it gets here, and passes in only the settled values.
+//
+// # It rolls back a failed save, which is `/pending 510`'s pattern on its first site
+//
+// A mutator that assigns and then fails to persist leaves memory ahead of disk, so the running Nib
+// behaves as though a change was stored that the next launch will not have. 510 asks for one door
+// that snapshots, applies, saves and restores on error, across 23 sites; this is that door for one
+// field, proven here before it is generalised.
+func (v *Vault) UpdateSettings(mutate func(*Settings)) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	before := v.contents.Settings
+	s := v.contents.Settings
+	if s.Appearance == "" {
+		s.Appearance = "dark" // the same default `Settings` fills in, so a mutate sees one shape
+	}
+	mutate(&s)
 	v.contents.Settings = s
-	return v.save()
+	if err := v.save(); err != nil {
+		v.contents.Settings = before
+		return err
+	}
+	return nil
 }
 
 // Recent returns a copy of recently opened file paths, newest first.
