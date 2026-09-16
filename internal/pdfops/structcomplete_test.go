@@ -164,39 +164,53 @@ func TestACompletelyCarriedTreeHasNoDefects(t *testing.T) {
 	}
 }
 
-// TestAnMCRKidLeftBehindByTheCarryIsADefect — condition 2, on the kid rather than the element.
-func TestAnMCRKidLeftBehindByTheCarryIsADefect(t *testing.T) {
-	src := mcrFixture()
-	if d := completeness(t, src); len(d) > 0 {
-		t.Fatalf("setup: the MCR fixture is already incomplete before the n-up, so the assertion "+
-			"below would pass on a build that does nothing:%s", defectLines(d))
+// deadPgFixture builds a tagged one-page document in which `what` — an element's own `/Pg`, or its
+// MCR kid's — names object 5, the font. Object 5 exists and is not a page, so the reference is
+// exactly what a carry leaves behind when it repoints some references and not others.
+//
+// **These were driven through `NUp` until P02.S02 repaired the carry**, and that is why they are
+// built by hand now: the operation no longer produces either defect, so a test that still drove it
+// would assert nothing and pass for the wrong reason. The predicate's job is to SEE a dead `/Pg`,
+// and that is what these two ask, on documents that have one.
+func deadPgFixture(what string) []byte {
+	content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (words) Tj ET\nEMC\n"
+	elem := "<< /Type /StructElem /S /P /P 7 0 R /Pg 5 0 R /K [0] >>"
+	if what == "kid" {
+		elem = "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [<< /Type /MCR /Pg 5 0 R /MCID 0 >>] >>"
 	}
-	out, err := NUp(src, 2, false)
-	if err != nil {
-		t.Fatal(err)
+	return assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 >>",
+		8: elem,
+		9: "<< /Nums [0 [8 0 R]] >>",
+	})
+}
+
+// TestAnMCRKidNamingADeadPageIsADefect — condition 2, on the kid rather than the element.
+func TestAnMCRKidNamingADeadPageIsADefect(t *testing.T) {
+	src := deadPgFixture("kid")
+	if got := fate(src); got == "orphaned" {
+		t.Fatalf("setup: the fixture is orphaned, so `orphaned()` already catches it and this "+
+			"asserts nothing about the completeness predicate (fate %q)", got)
 	}
-	if got := fate(out); got != "carried" {
-		t.Fatalf("setup: the n-up output measures %q, not %q — this fixture no longer drives the "+
-			"case, which is a carry REPORTING success while leaving a kid behind", got, "carried")
-	}
-	d := completeness(t, out)
+	d := completeness(t, src)
 	if !defectsKeyed(d, "dead-kid-pg") {
-		t.Errorf("the carry left an MCR kid naming a page that is no longer in the page tree, and "+
-			"the predicate did not report it. `fate` says %q and `orphaned` is false, so nothing "+
-			"else in this repo can see it:%s", fate(out), defectLines(d))
+		t.Errorf("an MCR kid names an object that is not a page in the page tree, and the predicate "+
+			"did not report it. `fate` says %q and `orphaned` is false, so nothing else in this "+
+			"repo can see it:%s", fate(src), defectLines(d))
 	}
 }
 
-// TestATwinElementLeftBehindByTheCarryIsADefect — condition 2, on an element's own `/Pg`.
-func TestATwinElementLeftBehindByTheCarryIsADefect(t *testing.T) {
-	src := twinElementFixture()
-	out, err := NUp(src, 2, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := completeness(t, out)
+// TestAnElementNamingADeadPageIsADefect — condition 2, on an element's own `/Pg`.
+func TestAnElementNamingADeadPageIsADefect(t *testing.T) {
+	src := deadPgFixture("elem")
+	d := completeness(t, src)
 	if !defectsKeyed(d, "dead-pg") {
-		t.Errorf("the carry left an element naming a dead page and the predicate did not report "+
+		t.Errorf("an element names an object that is not a page and the predicate did not report "+
 			"it:%s", defectLines(d))
 	}
 }
@@ -226,14 +240,15 @@ func TestAFormDrawnTwiceUnderMarkedContentIsADefect(t *testing.T) {
 	}
 }
 
-// TestTheCensusNUpIsNotCompletelyCarried — conditions 3 and 4 on the real shape, and the reason
-// `NUp` is not yet routed through this predicate.
+// TestTheCensusNUpIsCompletelyCarried — P02.S02's acceptance, in tier-1 form.
 //
-// The census has 8 pages and 4 distinct page contents, so pdfcpu's optimize merges the equal form
-// XObjects and the carry binds one XObject to two source pages: measured at the grill as 4 of 8
-// `/ParentTree` keys owned by nobody and 2 MCID-bearing forms drawn 3 times each. It reports
-// `carried`.
-func TestTheCensusNUpIsNotCompletelyCarried(t *testing.T) {
+// **This test asserted the opposite until S02 landed**, and the inversion is the slice. The census
+// has 8 pages over 4 distinct page contents, so pdfcpu's optimize pass fused the equal form
+// XObjects and the carry anchored one object once per sheet: 4 of 8 `/ParentTree` keys owned by
+// nobody and 2 MCID-bearing forms drawn 3 times each, all of it reported `carried`. The carry
+// un-fuses now, so the real document composes to a tree that is complete — and veraPDF agrees,
+// which is what the removal of `knownUA1Deltas`' `NUp` row asserts one file over.
+func TestTheCensusNUpIsCompletelyCarried(t *testing.T) {
 	src, lerr := LabelUA(labelReady(t, censusMarkdown()), true)
 	if lerr != nil {
 		t.Fatalf("setup: the census document could not be labelled: %v", lerr)
@@ -241,21 +256,18 @@ func TestTheCensusNUpIsNotCompletelyCarried(t *testing.T) {
 	if d := completeness(t, src); len(d) > 0 {
 		t.Fatalf("setup: the census document is incomplete before any operation:%s", defectLines(d))
 	}
+	if n, perr := PageCount(src); perr != nil || n < 3 {
+		t.Fatalf("setup: the census has %d page(s) (err %v); the fusion needs several sheets to show", n, perr)
+	}
 	out, err := NUp(src, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := fate(out); got != "carried" {
-		t.Fatalf("setup: the census n-up measures %q — the point of this reader is that a document "+
-			"reporting %q is not completely carried", got, "carried")
+		t.Fatalf("the census n-up measures %q, want %q — a carry that is abandoned drops the claim, "+
+			"which is honest but is not what a repaired carry should do here", got, "carried")
 	}
-	d := completeness(t, out)
-	if !defectsKeyed(d, "unowned-key") {
-		t.Errorf("the census n-up leaves /ParentTree keys nothing claims and the predicate did not "+
-			"report it:%s", defectLines(d))
-	}
-	if !defectsKeyed(d, "shared-form") {
-		t.Errorf("the census n-up shares a marked-content form between sheets and the predicate did "+
-			"not report it:%s", defectLines(d))
+	if d := completeness(t, out); len(d) > 0 {
+		t.Errorf("the census n-up is not completely carried:%s", defectLines(d))
 	}
 }

@@ -655,8 +655,15 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// **The carry is verified, not believed.** `honest` re-measures the remapped document and drops
 	// the claim if it is still orphaned, so a bug in the remap degrades to the previous behaviour
 	// rather than shipping a false claim.
+	//
+	// **`orphaned` is too weak a question to be the only one asked (P02.S02).** It fires only when a
+	// tree anchors to NOTHING, so a carry that repointed most of what it found passed it and
+	// shipped: a twin element left on a dead page, an MCR kid the walk skipped, a form fused across
+	// sheets whose single `/StructParents` could not name them all. `completeOrHonest` asks whether
+	// the tree the carry produced is one the document can actually reach, and abandons it to the
+	// honest loss when it is not.
 	if carried, ok := carryTagsThroughNUp(pdf, raw); ok {
-		return honest(carried)
+		return completeOrHonest(carried, raw)
 	}
 	// **Through `honest`, not straight to the strip**, even though `orphaned` is already known true
 	// here and this pays for a second parse. `dropTaggingClaim` having exactly one caller is what

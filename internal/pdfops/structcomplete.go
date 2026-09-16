@@ -1,12 +1,14 @@
 package pdfops
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
 
 	"nib/internal/contentstream"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -312,6 +314,55 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 	chain[nr] = true
 	countFormDraws(ctx, body, inner, counts, chain, depth+1)
 	delete(chain, nr)
+}
+
+// completeOrHonest ships a carried document only when the carry is COMPLETE, and falls back to the
+// honest loss when it is not — P02.S02's gate, and the caller `NUp` routes through.
+//
+// # Why this is a door rather than three lines inside `NUp`
+//
+// A test that drove `NUp` and asserted "the output is complete" would be **vacuous**: once the carry
+// is repaired, no document `NUp` composes produces an incomplete tree, so such a test passes because
+// the case never arises rather than because the gate works. Given its own door, the gate has its own
+// stimulus — a document that really is incompletely carried — and a reader that can go red.
+//
+// # It re-measures rather than believing the carry's report
+//
+// `carryTagsThroughNUp` already returns false on anything it does not understand, and that is not
+// the same question. Its report says *"I repointed everything I found"*; this asks *"is what you
+// produced a tree the document can actually reach"*, which is the question `orphaned()` answers too
+// weakly to be the only one asked (`structureCarriedCompletely`'s own header says what it cannot
+// see). Three of the four conditions below shipped for months under a carry reporting success.
+func completeOrHonest(carried, raw []byte) ([]byte, error) {
+	if carryIsComplete(carried) {
+		return honest(carried)
+	}
+	return honest(raw)
+}
+
+// carryIsComplete reads a document and asks `structureCarriedCompletely` of it.
+//
+// **An unreadable or unmodellable document is NOT complete.** A carry whose output this cannot parse
+// is one nothing downstream can parse either, and answering "complete" on a failed read would make
+// the gate report its own blindness as a pass — the vacuous-green shape this slice exists to remove.
+func carryIsComplete(pdf []byte) bool {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return false
+	}
+	live := map[int]bool{}
+	for p := 1; p <= ctx.PageCount; p++ {
+		ir, e := ctx.PageDictIndRef(p)
+		if e != nil || ir == nil {
+			continue
+		}
+		live[ir.ObjectNumber.Value()] = true
+	}
+	tree, terr := readStructTree(ctx, live)
+	if terr != nil {
+		return false
+	}
+	return len(structureCarriedCompletely(ctx, tree)) == 0
 }
 
 // carriesMCID reports whether a content stream marks any content with an `/MCID` — the property that
