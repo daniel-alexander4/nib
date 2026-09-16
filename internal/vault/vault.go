@@ -590,7 +590,15 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		v := &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}
 		// Saved immediately: an unlock that did not persist the new path leaves the user
 		// in key-missing on the next launch, having been told it was fixed.
+		//
+		// **Not routed through mutateLocked, and that is deliberate (/pending 510).** The door
+		// exists so a failed write cannot leave MEMORY ahead of disk; here the failure discards
+		// the whole Vault, so there is no memory left to be ahead of anything. What this path
+		// did owe is the scrub its two siblings above perform — `zero(key)` on every discard —
+		// and it was the one discard in this loop that dropped the unwrapped content key on the
+		// heap instead.
 		if serr := v.Save(); serr != nil {
+			zero(key)
 			return nil, serr
 		}
 		return v, nil
@@ -788,8 +796,9 @@ func (v *Vault) AddKey(pubLine, keyPath string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrBadKey, err)
 	}
-	v.ssh = append(v.ssh, Slot{PubKey: pubLine, KeyPath: keyPath, Wrapped: wrapped})
-	return v.save()
+	return v.mutateLocked(func() {
+		v.ssh = append(v.ssh, Slot{PubKey: pubLine, KeyPath: keyPath, Wrapped: wrapped})
+	})
 }
 
 // RemoveKey drops the slot for pubLine. It refuses to remove the only enrolled
@@ -814,8 +823,9 @@ func (v *Vault) RemoveKey(pubLine string) error {
 	if keyID(v.ssh[idx].PubKey) == keyID(v.current) {
 		return ErrCurrentKey
 	}
-	v.ssh = append(v.ssh[:idx], v.ssh[idx+1:]...)
-	return v.save()
+	return v.mutateLocked(func() {
+		v.ssh = append(v.ssh[:idx], v.ssh[idx+1:]...)
+	})
 }
 
 // keyID returns the comparable identity of an authorized_keys line — its
@@ -961,8 +971,16 @@ func (v *Vault) AddImage(name, mime string, data []byte) (Image, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	img := Image{ID: newID(), Name: name, MIME: mime, Data: data}
-	v.contents.Images = append(v.contents.Images, img)
-	return img, v.save()
+	// The zero Image on failure, not the one that was rolled back: it used to return `img,
+	// v.save()`, so a caller that looked at the value before the error held an id the vault does
+	// not have — memory ahead of disk at the API boundary rather than inside it.
+	err := v.mutateLocked(func() {
+		v.contents.Images = append(v.contents.Images, img)
+	})
+	if err != nil {
+		return Image{}, err
+	}
+	return img, nil
 }
 
 // DeleteImage removes the image with the given id and persists the vault. A
@@ -975,14 +993,18 @@ func (v *Vault) DeleteImage(id string) error {
 			return ErrReadOnlyImage
 		}
 	}
-	out := v.contents.Images[:0]
-	for _, img := range v.contents.Images {
-		if img.ID != id {
-			out = append(out, img)
+	// The filter is IN PLACE — `Images[:0]` reuses the backing array — so it must run after the
+	// door's snapshot, not before it. Outside the closure a failed save would leave the array
+	// already compacted with the old length restored over it.
+	return v.mutateLocked(func() {
+		out := v.contents.Images[:0]
+		for _, img := range v.contents.Images {
+			if img.ID != id {
+				out = append(out, img)
+			}
 		}
-	}
-	v.contents.Images = out
-	return v.save()
+		v.contents.Images = out
+	})
 }
 
 // Identity returns the stored signing identity; ok is false if none exists yet.
@@ -1028,11 +1050,12 @@ func (v *Vault) SetIdentityIfAbsent(certPEM, keyPEM []byte) (cert, key []byte, e
 		// Somebody else won. Hand back theirs, not the caller's.
 		return append([]byte(nil), id.CertPEM...), append([]byte(nil), id.KeyPEM...), nil
 	}
-	v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
-	if serr := v.save(); serr != nil {
-		// Leave no identity behind that the disk does not have: a later caller must mint again
-		// rather than inherit one this process failed to persist.
-		v.contents.Identity = nil
+	// Leave no identity behind that the disk does not have: a later caller must mint again rather
+	// than inherit one this process failed to persist. That restore was hand-rolled here; it is
+	// the door's now (/pending 510), which is why this site no longer names `save`.
+	if serr := v.mutateLocked(func() {
+		v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
+	}); serr != nil {
 		return nil, nil, serr
 	}
 	return append([]byte(nil), certPEM...), append([]byte(nil), keyPEM...), nil
@@ -1058,16 +1081,18 @@ func (v *Vault) ExternalSigner() (*ExternalSigner, bool) {
 func (v *Vault) SetExternalSigner(p12, certPEM, chainPEM []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.contents.ExternalSigner = &ExternalSigner{P12: p12, CertPEM: certPEM, ChainPEM: chainPEM}
-	return v.save()
+	return v.mutateLocked(func() {
+		v.contents.ExternalSigner = &ExternalSigner{P12: p12, CertPEM: certPEM, ChainPEM: chainPEM}
+	})
 }
 
 // ClearExternalSigner removes the imported signing identity and persists.
 func (v *Vault) ClearExternalSigner() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.contents.ExternalSigner = nil
-	return v.save()
+	return v.mutateLocked(func() {
+		v.contents.ExternalSigner = nil
+	})
 }
 
 // PinnedPeers returns a copy of the pinned-peer list.
@@ -1111,51 +1136,62 @@ func (v *Vault) AddCeremonyPeer(fingerprint []byte, label, ceremony string) erro
 func (v *Vault) addPinned(fingerprint []byte, label, ceremony string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	// The search is its own loop, above the door: finding the seat is a READ, and the write that
+	// follows has to be the only thing inside the snapshot.
+	idx := -1
 	for i := range v.contents.PinnedPeers {
 		if bytes.Equal(v.contents.PinnedPeers[i].Fingerprint, fingerprint) {
-			// **A ceremony pin never RENAMES an existing pin (P07.S02b).**
-			//
-			// The doc comment above already said an existing pin is never downgraded, and the
-			// code honoured that for `Ceremony` and not for `Label` — so accepting an
-			// invitation would have overwritten the user's own private nickname for a peer
-			// they had pinned themselves, with whatever label the convener published. That is
-			// a stranger editing this user's peer list by inviting them, and it was invisible
-			// because `AddCeremonyPeer` had no production caller until this slice gave it one.
-			//
-			// The user's own pin (ceremony == "") still updates the label, because that IS the
-			// user renaming their own peer, which is what AddPinnedPeer is for.
-			if ceremony == "" {
-				v.contents.PinnedPeers[i].Label = label
-				// Promotion is one-way: a user pin stays a user pin, and a ceremony pin
-				// becomes a user pin the moment the user pins it themselves. Every scope goes
-				// with it — a pin the user has made their own must not be taken away by a
-				// prune for a ceremony that happened to introduce them.
-				v.contents.PinnedPeers[i].Ceremonies = nil
-			} else {
-				if v.contents.PinnedPeers[i].Label == "" {
-					// An unnamed pin is not a name to protect. This is the only case where a
-					// ceremony may write a label onto a pin it did not create.
-					v.contents.PinnedPeers[i].Label = label
-				}
-				// A user pin (no scopes) is NOT given one: a ceremony must not be able to
-				// make a relationship the user established revocable.
-				if len(v.contents.PinnedPeers[i].Ceremonies) > 0 {
-					v.contents.PinnedPeers[i].Ceremonies = addScope(
-						v.contents.PinnedPeers[i].Ceremonies, ceremony)
-				}
-			}
-			return v.save()
+			idx = i
+			break
 		}
 	}
-	fresh := PinnedPeer{
-		Fingerprint: append([]byte(nil), fingerprint...),
-		Label:       label,
+	if idx < 0 {
+		fresh := PinnedPeer{
+			Fingerprint: append([]byte(nil), fingerprint...),
+			Label:       label,
+		}
+		if ceremony != "" {
+			fresh.Ceremonies = []string{ceremony}
+		}
+		return v.mutateLocked(func() {
+			v.contents.PinnedPeers = append(v.contents.PinnedPeers, fresh)
+		})
 	}
-	if ceremony != "" {
-		fresh.Ceremonies = []string{ceremony}
-	}
-	v.contents.PinnedPeers = append(v.contents.PinnedPeers, fresh)
-	return v.save()
+	return v.mutateLocked(func() {
+		// An element of a SHARED backing array, which is why this edit belongs inside the
+		// door rather than in front of it.
+		p := &v.contents.PinnedPeers[idx]
+		// **A ceremony pin never RENAMES an existing pin (P07.S02b).**
+		//
+		// The doc comment above already said an existing pin is never downgraded, and the
+		// code honoured that for `Ceremony` and not for `Label` — so accepting an
+		// invitation would have overwritten the user's own private nickname for a peer
+		// they had pinned themselves, with whatever label the convener published. That is
+		// a stranger editing this user's peer list by inviting them, and it was invisible
+		// because `AddCeremonyPeer` had no production caller until this slice gave it one.
+		//
+		// The user's own pin (ceremony == "") still updates the label, because that IS the
+		// user renaming their own peer, which is what AddPinnedPeer is for.
+		if ceremony == "" {
+			p.Label = label
+			// Promotion is one-way: a user pin stays a user pin, and a ceremony pin
+			// becomes a user pin the moment the user pins it themselves. Every scope goes
+			// with it — a pin the user has made their own must not be taken away by a
+			// prune for a ceremony that happened to introduce them.
+			p.Ceremonies = nil
+			return
+		}
+		if p.Label == "" {
+			// An unnamed pin is not a name to protect. This is the only case where a
+			// ceremony may write a label onto a pin it did not create.
+			p.Label = label
+		}
+		// A user pin (no scopes) is NOT given one: a ceremony must not be able to
+		// make a relationship the user established revocable.
+		if len(p.Ceremonies) > 0 {
+			p.Ceremonies = addScope(p.Ceremonies, ceremony)
+		}
+	})
 }
 
 // PruneCeremonyPeers removes every pin created by the named ceremony, leaving pins the
@@ -1195,8 +1231,10 @@ func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
 			kept = append(kept, p) // another ceremony still needs this peer
 		}
 	}
-	v.contents.PinnedPeers = kept
-	return n, v.save()
+	if err := v.mutateLocked(func() { v.contents.PinnedPeers = kept }); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // addScope returns scopes with id present exactly once, preserving order.
@@ -1230,8 +1268,7 @@ func (v *Vault) RemovePinnedPeer(fingerprint []byte) error {
 			kept = append(kept, p)
 		}
 	}
-	v.contents.PinnedPeers = kept
-	return v.save()
+	return v.mutateLocked(func() { v.contents.PinnedPeers = kept })
 }
 
 // Profile returns a copy of the autofill field name -> value map (never nil).
@@ -1254,8 +1291,7 @@ func (v *Vault) SetProfile(p map[string]string) error {
 	for k, val := range p {
 		cp[k] = val
 	}
-	v.contents.Profile = cp
-	return v.save()
+	return v.mutateLocked(func() { v.contents.Profile = cp })
 }
 
 // Settings returns the user's UI preferences, with defaults filled in for an
@@ -1302,27 +1338,25 @@ func (v *Vault) Settings() Settings {
 // call site. Validation, refusals and anything that reads the filesystem belong OUTSIDE — the server's
 // settings route validates and answers 4xx before it gets here, and passes in only the settled values.
 //
-// # It rolls back a failed save, which is `/pending 510`'s pattern on its first site
+// # It rolls back a failed save, and the rollback is no longer written here
 //
 // A mutator that assigns and then fails to persist leaves memory ahead of disk, so the running Nib
-// behaves as though a change was stored that the next launch will not have. 510 asks for one door
-// that snapshots, applies, saves and restores on error, across 23 sites; this is that door for one
-// field, proven here before it is generalised.
+// behaves as though a change was stored that the next launch will not have. This door proved that
+// restore on one field; `/pending 510` generalised it to `mutateLocked`, which every mutator in
+// this file now routes through — including this one. The snapshot is the marshalled payload
+// rather than the `before := v.contents.Settings` copy that used to sit here, because a struct
+// copy shares backing arrays with what it is meant to restore.
 func (v *Vault) UpdateSettings(mutate func(*Settings)) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	before := v.contents.Settings
 	s := v.contents.Settings
 	if s.Appearance == "" {
 		s.Appearance = "dark" // the same default `Settings` fills in, so a mutate sees one shape
 	}
+	// The caller's function runs on a LOCAL copy, outside the door: it comes from another
+	// package, so the one closure the door snapshots around stays this package's own.
 	mutate(&s)
-	v.contents.Settings = s
-	if err := v.save(); err != nil {
-		v.contents.Settings = before
-		return err
-	}
-	return nil
+	return v.mutateLocked(func() { v.contents.Settings = s })
 }
 
 // Recent returns a copy of recently opened file paths, newest first.
@@ -1346,8 +1380,7 @@ func (v *Vault) AddRecent(path string) error {
 			break
 		}
 	}
-	v.contents.Recent = out
-	return v.save()
+	return v.mutateLocked(func() { v.contents.Recent = out })
 }
 
 func newID() string {
@@ -1431,6 +1464,85 @@ func (v *Vault) save() error {
 		return err
 	}
 	return writeFileAtomic(v.path, out)
+}
+
+// mutateLocked applies apply to the vault held in memory, persists the result, and puts memory
+// back exactly as it was when the write fails. Callers already hold v.mu — the contract save()
+// states above, and for its reason.
+//
+// # The rule, and why it is ONE door (ADR-009, /pending 510)
+//
+// A mutator that assigns and then fails to persist leaves memory AHEAD of disk: the running Nib
+// behaves as though the change was stored, and the next launch disagrees. Nineteen mutators here
+// assigned and then saved, over twenty-two call sites. FOUR restored by hand —
+// SetIdentityIfAbsent, PruneCeremonyInvitations, PruneCeremonySecrets, and UpdateSettings, which
+// proved the shape on one field (/pending 519) — and fifteen did not. That is fifteen places the
+// rule did not reach and four copies of it where it did. This is that shape over everything save()
+// persists, and TestEveryVaultMutationGoesThroughOneDoor asserts the ROUTING rather than comparing
+// the copies.
+//
+// # The snapshot is the MARSHALLED payload, and that is the whole correctness of it
+//
+// A struct copy — `before := v.contents` — shares every slice's backing array, the profile map and
+// the two pointers, so "restore" puts a header back over bytes the mutation has already
+// overwritten. It is vacuous at four of the sites routed here and looks right at every one of
+// them: DeleteImage filters `Images[:0]` IN PLACE; AddCeremonySecret writes through
+// `&v.contents.CeremonySecrets[i]`, having already zeroed the secret it replaces; and
+// AddCeremonyInvitation and addPinned each assign into an element of a shared array. A rollback
+// test written over a plain string field passes under either copy, which is how a shallow
+// snapshot ships.
+//
+// Marshalling is deep by construction AND total — it covers a field nobody has added yet, where a
+// hand-written deep copy silently stops covering one the day it is added, which is the same silent
+// vacuity in slower motion. Measured against the save it precedes: 167µs for a vault holding three
+// 50 KB images and 6.3µs for one holding none, against 10.4ms and 12.9ms for save() itself, whose
+// durable write dominates. It is taken BEFORE apply runs, so a payload this build cannot marshal
+// fails with nothing yet changed.
+//
+// v.ssh is snapshotted one level deep, and that is enough — stated rather than assumed: RemoveKey
+// shifts the slice IN PLACE, so the copy must own its array, and nothing anywhere mutates a Slot's
+// Wrapped bytes in place.
+//
+// # apply runs UNDER the lock, so it must not touch this vault and must not do I/O
+//
+// v.mu is a plain sync.Mutex and is not reentrant: an apply that calls a Vault method deadlocks,
+// and it would hang rather than fail, which is the one failure shape a test cannot report crisply.
+// Validation and refusals belong at the caller, before it gets here. That is also why this takes
+// the lock FROM its caller rather than acquiring it: a mutator that had to read, release, then
+// call a locking door would be the lost update /pending 519 removed.
+func (v *Vault) mutateLocked(apply func()) error {
+	before, err := json.Marshal(v.contents)
+	if err != nil {
+		return err
+	}
+	// Scrubbed like save() scrubs its own plaintext, and for the same reason: this buffer is a
+	// second copy of Identity.KeyPEM and ExternalSigner.P12, and it exists on every AddRecent.
+	defer zero(before)
+	slots := append([]Slot(nil), v.ssh...)
+
+	apply()
+
+	serr := v.save()
+	if serr == nil {
+		return nil
+	}
+	// Through decodeContents, not a bare json.Unmarshal: TestEveryContentsDecodeGoesThroughTheDoor
+	// says exactly one function may decode a payload, and a rollback is no reason for a fifth
+	// site. Its version gate cannot refuse these bytes — they are this process's own contents,
+	// marshalled a few lines above and never newer than what this build writes — so the door
+	// costs nothing here and keeps that rule at one site.
+	//
+	// The failure is unreachable by construction and reported rather than swallowed, because the
+	// alternative is leaving memory silently ahead of disk, which is the state this door exists to
+	// prevent. encoding/json allocates for every string and base64 field, so nothing in `restored`
+	// aliases `before` and the deferred scrub cannot reach it.
+	restored, uerr := decodeContents(before)
+	if uerr != nil {
+		return fmt.Errorf("%w (and the vault in memory could not be rolled back: %v)", serr, uerr)
+	}
+	v.contents = restored
+	v.ssh = slots
+	return serr
 }
 
 func readEnvelope(dir string) (*envelope, error) {
@@ -1583,24 +1695,37 @@ func (v *Vault) AddCeremonySecret(ceremony string, fingerprint, secret []byte) e
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	idx := -1
 	for i := range v.contents.CeremonySecrets {
-		s := &v.contents.CeremonySecrets[i]
-		if s.Ceremony == ceremony && bytes.Equal(s.Fingerprint, fingerprint) {
-			// Zero the one being replaced. PruneCeremonySecrets does this fourteen lines
-			// below with the reason at the line — "do not let the old backing array outlive
-			// it" — and re-issuing an invitation drops a 32-byte secret exactly as removing
-			// one does. Same rule, and it was applied at one of the two places it applies.
-			zero(s.Secret)
-			s.Secret = append([]byte(nil), secret...)
-			return v.save()
+		if v.contents.CeremonySecrets[i].Ceremony == ceremony &&
+			bytes.Equal(v.contents.CeremonySecrets[i].Fingerprint, fingerprint) {
+			idx = i
+			break
 		}
 	}
-	v.contents.CeremonySecrets = append(v.contents.CeremonySecrets, CeremonySecret{
-		Ceremony:    ceremony,
-		Fingerprint: append([]byte(nil), fingerprint...),
-		Secret:      append([]byte(nil), secret...),
+	if idx < 0 {
+		return v.mutateLocked(func() {
+			v.contents.CeremonySecrets = append(v.contents.CeremonySecrets, CeremonySecret{
+				Ceremony:    ceremony,
+				Fingerprint: append([]byte(nil), fingerprint...),
+				Secret:      append([]byte(nil), secret...),
+			})
+		})
+	}
+	return v.mutateLocked(func() {
+		s := &v.contents.CeremonySecrets[idx]
+		// Zero the one being replaced. PruneCeremonySecrets does this below with the reason at
+		// the line — "do not let the old backing array outlive it" — and re-issuing an
+		// invitation drops a 32-byte secret exactly as removing one does. Same rule, and it was
+		// applied at one of the two places it applies.
+		//
+		// It zeroes BEFORE the write where the prune zeroes after, and the door is what makes
+		// the difference safe: this scrub destroys an array the snapshot has already copied, so
+		// a failed save puts the old secret back. The prune's `going` slices are not copied
+		// anywhere, so scrubbing those early would be the loss it describes.
+		zero(s.Secret)
+		s.Secret = append([]byte(nil), secret...)
 	})
-	return v.save()
 }
 
 // AddCeremonyInvitation stores this machine's own invitation for one ceremony and persists.
@@ -1624,13 +1749,15 @@ func (v *Vault) AddCeremonyInvitation(ceremony, invitation string) error {
 	defer v.mu.Unlock()
 	for i := range v.contents.CeremonyInvitations {
 		if v.contents.CeremonyInvitations[i].Ceremony == ceremony {
-			v.contents.CeremonyInvitations[i].Invitation = invitation
-			return v.save()
+			return v.mutateLocked(func() {
+				v.contents.CeremonyInvitations[i].Invitation = invitation
+			})
 		}
 	}
-	v.contents.CeremonyInvitations = append(v.contents.CeremonyInvitations,
-		CeremonyInvitation{Ceremony: ceremony, Invitation: invitation})
-	return v.save()
+	return v.mutateLocked(func() {
+		v.contents.CeremonyInvitations = append(v.contents.CeremonyInvitations,
+			CeremonyInvitation{Ceremony: ceremony, Invitation: invitation})
+	})
 }
 
 // SetCeremonyDraft stores the convener's unfinished setup, replacing any previous one.
@@ -1642,8 +1769,7 @@ func (v *Vault) AddCeremonyInvitation(ceremony, invitation string) error {
 func (v *Vault) SetCeremonyDraft(draft string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.contents.CeremonyDraft = draft
-	return v.save()
+	return v.mutateLocked(func() { v.contents.CeremonyDraft = draft })
 }
 
 // CeremonyDraft returns the stored setup draft, or "" and false when there is none.
@@ -1665,8 +1791,7 @@ func (v *Vault) ClearCeremonyDraft() error {
 	if v.contents.CeremonyDraft == "" {
 		return nil
 	}
-	v.contents.CeremonyDraft = ""
-	return v.save()
+	return v.mutateLocked(func() { v.contents.CeremonyDraft = "" })
 }
 
 // CeremonyInvitationFor returns this machine's stored invitation for one ceremony.
@@ -1710,12 +1835,10 @@ func (v *Vault) PruneCeremonyInvitations(ceremony string) (int, error) {
 	if n == 0 {
 		return 0, nil // nothing to write, and a save() here would be a disk write per decline
 	}
-	before := v.contents.CeremonyInvitations
-	v.contents.CeremonyInvitations = kept
 	// Restore on a failed save, for PruneCeremonySecrets' reason: the in-memory and on-disk views
-	// of the vault must not disagree about what this machine still holds.
-	if err := v.save(); err != nil {
-		v.contents.CeremonyInvitations = before
+	// of the vault must not disagree about what this machine still holds. The restore was written
+	// here; it is the door's now (/pending 510).
+	if err := v.mutateLocked(func() { v.contents.CeremonyInvitations = kept }); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -1744,15 +1867,15 @@ func (v *Vault) PruneCeremonySecrets(ceremony string) (int, error) {
 		}
 		kept = append(kept, s)
 	}
-	before := v.contents.CeremonySecrets
-	v.contents.CeremonySecrets = kept
 	// **Zero only once the removal is DURABLE.** The first draft zeroed inside the loop, so a
 	// failing save() left the on-disk vault still holding every secret while the in-memory
 	// copies were already scrubbed — key material at rest with nothing in the process that
-	// could re-write or re-read it, and the caller (unconvene) discards the error. Restoring
-	// the slice on failure keeps the two views of the vault agreeing.
-	if err := v.save(); err != nil {
-		v.contents.CeremonySecrets = before
+	// could re-write or re-read it, and the caller (unconvene) discards the error. The door's
+	// restore keeps the two views of the vault agreeing; the scrub stays out here, after it, so
+	// it runs only on the durable path — `going` points into the arrays that were live when the
+	// snapshot was taken, and a rollback re-reads the secrets from that snapshot rather than
+	// from them.
+	if err := v.mutateLocked(func() { v.contents.CeremonySecrets = kept }); err != nil {
 		return 0, err
 	}
 	for _, sec := range going {
