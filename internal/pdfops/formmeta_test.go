@@ -45,3 +45,31 @@ func TestTheFormDoorsKeepTheCatalogMetadata(t *testing.T) {
 		}
 	}
 }
+
+// TestFillingAFormKeepsTheCatalogMetadata — the P01 phase-close review: `api.FillForm`'s post-processing
+// validation deleted the catalog /Metadata, the loss P01.S04 removed from authoring, on every fill door.
+func TestFillingAFormKeepsTheCatalogMetadata(t *testing.T) {
+	base, err := LabelUA(labelReady(t, censusMarkdown()), true)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	authored, err := AuthorForm(base, []FormField{{Page: 1, Rect: [4]float64{10, 10, 200, 40}, Kind: "text", Name: "f1", Label: "Your full name"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus first: the form being filled carries a titled packet.
+	if p := catalogPacket(t, authored); p == "" || !packetHasTitle(p) {
+		t.Fatal("setup: the authored form has no titled /Metadata, so keeping it through a fill is vacuous")
+	}
+	filled, err := FillFormJSON(authored, []byte(`{"forms":[{"textfield":[{"name":"f1","value":"Ann"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := catalogPacket(t, filled)
+	if kept == "" || !packetHasTitle(kept) {
+		t.Errorf("filling the form dropped the catalog /Metadata or its title (PDF/UA 7.1 t8)")
+	}
+	if testpdf.PacketClaimsUA(kept) {
+		t.Errorf("filling kept a PDF/UA identification through a change (ADR-032)")
+	}
+}

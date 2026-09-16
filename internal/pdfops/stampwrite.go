@@ -70,6 +70,7 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 			}
 			if emb {
 				dropCIDSetsOf(ctx, faces)
+				repairToUnicodeOf(ctx, faces)
 			}
 			// A stamp whose configuration could not be corrected is still a stamp.
 			_ = correctOptionalContent(ctx)
@@ -202,4 +203,104 @@ func pdfcpuToUnicode(cmap string) (map[uint16]rune, error) {
 			return nil, errNotPdfcpuCMap
 		}
 	}
+}
+
+// repairToUnicodeOf rewrites the ToUnicode map of each subset font of faces that pdfcpu wrote in a form
+// its own reader refuses — found by the P01 phase-close review, and reproduced.
+//
+// pdfcpu's writer (`font/fontDict.go` `bf`) declares the block after each hundredth entry one entry too
+// long, so a face with more than 100 used glyphs ends in a block that promises an entry it does not
+// hold — at exactly 200 glyphs, `1 beginbfchar` straight into `endbfchar`. Its reader
+// (`usedGIDsFromCMap`) refuses that, and so does `fontNotNibs`, which asks what pdfcpu asks. So the
+// second bake of any edit long enough to use a hundred glyphs refused nib's own font and drew in
+// Base-14, failing 7.21.4.1 again. Re-counting the blocks changes no mapping, only the counts.
+func repairToUnicodeOf(ctx *model.Context, faces []string) {
+	want := map[string]bool{}
+	for _, f := range faces {
+		want[f] = true
+	}
+	for _, e := range ctx.XRefTable.Table {
+		if e == nil {
+			continue
+		}
+		d, ok := e.Object.(types.Dict)
+		if !ok || d.NameEntry("Type") == nil || *d.NameEntry("Type") != "Font" {
+			continue
+		}
+		if st := d.NameEntry("Subtype"); st == nil || *st != "Type0" {
+			continue
+		}
+		bf := d.NameEntry("BaseFont")
+		if bf == nil {
+			continue
+		}
+		base := *bf
+		if i := strings.IndexByte(base, '+'); i == 6 {
+			base = base[i+1:]
+		}
+		if !want[base] {
+			continue
+		}
+		ref, isRef := d["ToUnicode"].(types.IndirectRef)
+		if !isRef {
+			continue
+		}
+		entry, found := ctx.FindTableEntryForIndRef(&ref)
+		if !found {
+			continue
+		}
+		sd, isStream := entry.Object.(types.StreamDict)
+		if !isStream || sd.Decode() != nil {
+			continue
+		}
+		if _, err := pdfcpuToUnicode(string(sd.Content)); err == nil {
+			continue // already in the form pdfcpu reads
+		}
+		fixed, ok := recountBFChar(string(sd.Content))
+		if !ok {
+			continue
+		}
+		sd.Content = []byte(fixed)
+		if sd.Encode() != nil {
+			continue
+		}
+		entry.Object = sd
+	}
+}
+
+// recountBFChar re-emits a ToUnicode map's `bfchar` entries in blocks of at most 100 with true counts,
+// keeping everything before `endcodespacerange` and from `endcmap` on. It refuses (false) a map with
+// anything but `bfchar` blocks between the two, since that is not pdfcpu's shape to repair.
+func recountBFChar(cmap string) (string, bool) {
+	const head = "endcodespacerange\n"
+	i := strings.Index(cmap, head)
+	j := strings.Index(cmap, "endcmap")
+	if i < 0 || j < i {
+		return "", false
+	}
+	var entries []string
+	for _, l := range strings.Split(cmap[i+len(head):j], "\n") {
+		switch {
+		case l == "" || l == "endbfchar" || strings.HasSuffix(l, " beginbfchar"):
+		case strings.HasPrefix(l, "<"):
+			entries = append(entries, l)
+		default:
+			return "", false
+		}
+	}
+	var b strings.Builder
+	b.WriteString(cmap[:i+len(head)])
+	for k := 0; k == 0 || k < len(entries); k += 100 {
+		end := k + 100
+		if end > len(entries) {
+			end = len(entries)
+		}
+		fmt.Fprintf(&b, "%d beginbfchar\n", end-k)
+		for _, l := range entries[k:end] {
+			b.WriteString(l + "\n")
+		}
+		b.WriteString("endbfchar\n")
+	}
+	b.WriteString(cmap[j:])
+	return b.String(), true
 }

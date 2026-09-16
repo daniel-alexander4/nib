@@ -137,7 +137,19 @@ func specNamesAUserFont(spec []byte) bool {
 // UNCHANGED rather than an error — the fonts are embedded either way, and failing a conversion over
 // a metadata clean-up is the shape P03's phase-close review had to undo at three other sites.
 func embeddedFontsAreHonest(pdf []byte) []byte {
-	out, err := dropCIDSets(pdf)
+	return embeddedFacesAreHonest(pdf, nil)
+}
+
+// embeddedFacesAreHonest is embeddedFontsAreHonest for a door that embeds its faces into a document it
+// did not author — the OCR text layer over a user's scan — and so drops the `/CIDSet` only of the faces
+// it drew, as the stamps do (`dropCIDSetsOf`). Nil faces means every descriptor, for the doors whose
+// whole output is nib's. Found by the P01 phase-close review: the stamps were scoped and the OCR door
+// was not, one rule applied two ways (ADR-009).
+func embeddedFacesAreHonest(pdf []byte, faces []string) []byte {
+	out, err := writeMutated(pdf, func(ctx *model.Context) error {
+		dropCIDSetsOf(ctx, faces)
+		return nil
+	})
 	if err != nil {
 		return pdf
 	}

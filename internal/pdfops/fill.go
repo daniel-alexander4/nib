@@ -5,11 +5,14 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/create"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // FillFormJSON fills pdf's AcroForm fields from a pdfcpu form-data JSON document
@@ -17,11 +20,87 @@ import (
 // the filled PDF. Fields are matched by id or name. Any existing signature is
 // removed by the fill, since the content changes (pdfcpu does this unconditionally).
 func FillFormJSON(pdf, data []byte) ([]byte, error) {
-	var out bytes.Buffer
-	if err := api.FillForm(bytes.NewReader(pdf), bytes.NewReader(data), &out, model.NewDefaultConfiguration()); err != nil {
+	return fillForm(pdf, data)
+}
+
+// fillForm is pdfcpu's `api.FillForm` inside nib's own rewrite, and the one fill door every caller uses —
+// found by the `PLAN-ua-coverage.md` P01 phase-close review.
+//
+// **Why not `api.FillForm`:** its post-processing ends in `ValidateContext`, and that validation deletes
+// the catalog `/Metadata` (`validate/metaData.go`) — PDF/UA 7.1 t8, the same loss P01.S04 removed from
+// form AUTHORING. Measured: a form authored with its metadata came back from a fill without it. This is
+// the wrapper's steps in its order — read with `FILLFORMFIELDS`, drop any signature (the content
+// changes), refuse invalid JSON, an empty group and an option value the field does not offer, fill,
+// update the page tree — without the post-write validation no other nib rewrite performs. The rewrite
+// also drops an unverified PDF/UA identification (ADR-032).
+func fillForm(pdf, data []byte) ([]byte, error) {
+	if !json.Valid(data) {
+		return nil, api.ErrInvalidJSON
+	}
+	var fg form.FormGroup
+	if err := json.Unmarshal(data, &fg); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	if len(fg.Forms) == 0 {
+		return nil, api.ErrNoFormData
+	}
+	f := fg.Forms[0]
+	if err := optionValuesOffered(f.RadioButtonGroups, f.ComboBoxes, f.ListBoxes); err != nil {
+		return nil, err
+	}
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.FILLFORMFIELDS
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		ctx.RemoveSignature()
+		ok, pages, err := form.FillForm(ctx, form.FillDetails(&f, nil), f.Pages, form.JSON)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return api.ErrNoFormFieldsAffected
+		}
+		_, _, err = create.UpdatePageTree(ctx, pages, nil)
+		return err
+	})
+}
+
+// optionValuesOffered is pdfcpu's unexported `validateOptionValues` (`api/form.go`), copied so the fill
+// door refuses exactly what `api.FillForm` refused. **Copied with its quirk:** a numeric value within
+// range returns success for the WHOLE form, not just that field — changing that is a behaviour change,
+// and this move is not one. It takes the three option-bearing field lists rather than the form, so the
+// zero-caller scan, which indexes identifiers by name, does not read pdfcpu's `form.Form` as a caller of
+// `testpdf.Form`.
+func optionValuesOffered(rbgs []*form.RadioButtonGroup, cbs []*form.ComboBox, lbs []*form.ListBox) error {
+	check := func(name, v string, options []string) (done bool, err error) {
+		if v == "" || len(options) == 0 || types.MemberOf(v, options) {
+			return false, nil
+		}
+		if i, aerr := strconv.Atoi(v); aerr == nil && i < len(options) {
+			return true, nil
+		}
+		return true, fmt.Errorf("pdfcpu: fill field name: \"%s\" unknown value: \"%s\" - options: [%v]\n", name, v, strings.Join(options, ", "))
+	}
+	for _, rbg := range rbgs {
+		if done, err := check(rbg.Name, rbg.Value, rbg.Options); done {
+			return err
+		}
+	}
+	for _, cb := range cbs {
+		if cb.Editable {
+			continue
+		}
+		if done, err := check(cb.Name, cb.Value, cb.Options); done {
+			return err
+		}
+	}
+	for _, lb := range lbs {
+		for _, v := range lb.Values {
+			if done, err := check(lb.Name, v, lb.Options); done {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // FillFormCSV mail-merges pdf against a wide CSV — row 0 holds field names (or
@@ -139,11 +218,7 @@ func fillFromValues(pdf, skelJSON []byte, values map[string][]string, checked fu
 	if err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	if err := api.FillForm(bytes.NewReader(pdf), bytes.NewReader(b), &out, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return fillForm(pdf, b)
 }
 
 // rowValues turns a CSV record into the name→value(s) map fillFromValues consumes,

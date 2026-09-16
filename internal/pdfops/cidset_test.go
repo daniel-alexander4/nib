@@ -219,3 +219,55 @@ func TestAStampDropsOnlyTheCIDSetsOfTheFacesItDrew(t *testing.T) {
 		t.Error("a stamp removed the /CIDSet of a font it did not draw")
 	}
 }
+
+// descriptorCIDSets reports, for each FontDescriptor whose FontName ends in "+"+face, whether it carries a
+// /CIDSet — so a test can tell a door's own face from the document's.
+func descriptorCIDSets(t *testing.T, pdf []byte, face string) (found, withCIDSet int) {
+	t.Helper()
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("re-read/validate: %v", err)
+	}
+	for _, e := range ctx.XRefTable.Table {
+		if e == nil {
+			continue
+		}
+		d, ok := e.Object.(types.Dict)
+		if !ok {
+			continue
+		}
+		if ty, _ := d["Type"].(types.Name); ty != "FontDescriptor" {
+			continue
+		}
+		if name, _ := d["FontName"].(types.Name); len(name) > 7 && string(name[6:]) == "+"+face {
+			found++
+			if _, has := d["CIDSet"]; has {
+				withCIDSet++
+			}
+		}
+	}
+	return found, withCIDSet
+}
+
+// TestTheOCRLayerLeavesTheDocumentsOwnCIDSetsAlone — the P01 phase-close review: the stamps dropped only
+// the /CIDSet of the faces they drew, and the OCR door dropped every one in the user's scan.
+func TestTheOCRLayerLeavesTheDocumentsOwnCIDSetsAlone(t *testing.T) {
+	host, err := mdpdfRaw(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus first: the host's own font carries a /CIDSet for the door to leave alone.
+	if found, with := descriptorCIDSets(t, host, "Roboto-Regular"); found == 0 || with == 0 {
+		t.Fatalf("setup: the host has %d Roboto-Regular descriptor(s), %d with a /CIDSet", found, with)
+	}
+	out, err := StampTextLayer(host, []Word{{Page: 1, Rect: [4]float64{20, 40, 70, 50}, Text: "สวัสดี"}}, "tha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, with := descriptorCIDSets(t, out, "NotoSansThai-Regular"); found == 0 || with != 0 {
+		t.Errorf("the OCR face: %d descriptor(s), %d still with a /CIDSet", found, with)
+	}
+	if _, with := descriptorCIDSets(t, out, "Roboto-Regular"); with == 0 {
+		t.Error("the OCR layer removed the /CIDSet of a font it did not draw")
+	}
+}
