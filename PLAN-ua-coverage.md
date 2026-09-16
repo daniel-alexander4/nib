@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 in progress** — S01–S04 done; the phase close is next. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119); P02 is next. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -95,7 +95,7 @@ ADR-033 stands. Widening the label is a decision for Dan after the checker track
 
 ## Build order
 
-### P01 — The writing-side census, and the three cheap losses
+### P01 — The writing-side census, and the three cheap losses *(done 2026-09-16, v1.129.119 — one criterion clause open, named below)*
 **Goal.** A standing measurement of what every nib operation does to a conformant document, and the fixes for
 the losses that are not a structure carry: notes, stamped text and the form door's metadata.
 
@@ -105,6 +105,26 @@ the losses that are not a structure carry: notes, stamped text and the form door
 - `AddNotes`, the three stamping operations and `AuthorTaggedForm` add no clause.
 - The page-set, merge and `StripMetadata` losses are declared by name in the census, each pointing at its phase
   or its reason.
+
+**(phase close, 2026-09-16, v1.129.119)** Acceptance ledger, clause by clause:
+- [x] a census drives every operation that has a tag-fate drive — `ua1oracle_test.go:198`; a job with no output fails (`:246`).
+- [x] and fails on any ua1 clause added that is not declared — both directions (`:286`); probed red at S01 and at S03.
+- [x] `AddNotes` adds no clause — row removed, census green (S02).
+- [x] the three stamping operations add no clause — rows removed, census green (S03).
+- [ ] **`AuthorTaggedForm` adds no clause — NOT MET, parked:** 7.1 t8 is gone (S04), 7.21.4.1 t1 stays declared against
+  `/pending 479`, deferred on pdfcpu filling a field set in an embedded face (S04's own acceptance kept it).
+- [x] page-set losses declared by name, each pointing at its phase — `pageSetLoss` rows name P02.
+- [x] merge losses declared — `Append`/`Combine` rows name ADR-031's recorded `partial`.
+- [x] `StripMetadata`'s loss declared with its reason — permanent, by design.
+
+Required-run gates: tiers 0–3 at every slice close and at v1.129.119 (tier 3: `/pending 474`'s three known reds only).
+Tier 4 and tier 6 **did not fire**: no P01 slice touched `internal/server`'s session, ceremony, delivery or discovery
+paths, `internal/p2p` or `internal/rendezvous`.
+
+Full-repo review: `code-reviews/v1.129.118-2026-09-16.md` — the three findings P01 introduced or falsified are fixed
+(a stamped face past 100 glyphs, filling a form dropping `/Metadata`, the OCR door's unscoped `/CIDSet` drop); seven
+criticals and the rest are pre-existing and filed as `/pending 495`–`506`. Closure sweep: no pending item was gated on
+P01; `/pending 319` closed by the review's sweep.
 
 #### P01.S01 — the census *(done 2026-09-15, v1.129.114)*
 Scope: a veraPDF test over the tag-fate population on a labelled Markdown conversion, with a declared-losses

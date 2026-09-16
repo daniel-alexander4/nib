@@ -443,3 +443,31 @@ func TestTextNoFaceCanBakeIsNotRetriedAsAFaceFailure(t *testing.T) {
 		t.Errorf("StampPageNumbers with an unbakeable prefix returned %v", perr)
 	}
 }
+
+// TestASecondStampKeepsEmbeddingAFaceOfManyGlyphs — found by the P01 phase-close review: pdfcpu declares
+// the ToUnicode block after each hundredth entry one entry too long, so a stamp that used more than 100
+// glyphs wrote a map its own reader — and nib's reuse check — refuse, and the next bake drew Base-14.
+func TestASecondStampKeepsEmbeddingAFaceOfManyGlyphs(t *testing.T) {
+	text := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:!?()[]{}<>@#$^&*-_=+|/~" +
+		"ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ"
+	one, _, err := StampFields(threePagePDF(t), []Field{{Page: 1, Rect: [4]float64{20, 400, 580, 420}, Text: text, Font: "Helvetica", Size: 6}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus first: the first stamp really used over 100 glyphs, so the block boundary is crossed.
+	_, cmap, ok := faceStreams(t, one, "LiberationSans")
+	if !ok || strings.Count(string(cmap), "\n<") <= 100 {
+		t.Fatalf("setup: the stamped face maps %d glyph(s), not over 100", strings.Count(string(cmap), "\n<"))
+	}
+	if _, perr := pdfcpuToUnicode(string(cmap)); perr != nil {
+		t.Errorf("the first stamp wrote a ToUnicode map pdfcpu's reader refuses")
+	}
+	logged := captureLog(t)
+	two, _, err := StampFields(one, []Field{{Page: 1, Rect: [4]float64{20, 300, 580, 320}, Text: "again", Font: "Helvetica", Size: 12}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing := fontsNotEmbedded(t, two); len(missing) > 0 {
+		t.Errorf("the second stamp drew unembedded fonts %v (log: %s)", missing, logged.String())
+	}
+}

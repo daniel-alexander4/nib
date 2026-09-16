@@ -242,7 +242,7 @@ var tagFates = map[string]tagFate{
 	// ── Declared but not driven, each with the reason. The completeness half still covers them.
 	"Encrypt":        {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},
 	"RemovePassword": {verdict: "carried", why: "needs an already-encrypted input, which the corpus does not carry"},
-	"FillFormJSON":   {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the sibling `AuthorForm` drives the same write path and is measured"},
+	"FillFormJSON":   {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the fill door is driven on an authored form by `TestFillingAFormKeepsTheCatalogMetadata`, since it no longer shares AuthorForm's write path"},
 	"FillFormXFDF":   {verdict: "carried", why: "as FillFormJSON"},
 	"StampTextLayer": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		// It needs no more setup than any other row: the words are the drive's own, and the font
