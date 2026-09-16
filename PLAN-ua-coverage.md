@@ -106,13 +106,30 @@ the losses that are not a structure carry: notes, stamped text and the form door
 - The page-set, merge and `StripMetadata` losses are declared by name in the census, each pointing at its phase
   or its reason.
 
-#### P01.S01 — the census
+#### P01.S01 — the census *(done 2026-09-15, v1.129.114)*
 Scope: a veraPDF test over the tag-fate population on a labelled Markdown conversion, with a declared-losses
 table. Refs: D2.
 Acceptance:
 - An undeclared added clause fails, naming the operation and the clause.
 - A declaration whose loss no longer happens fails too, so the table cannot outlive the defect.
 - No veraPDF: skips as UNMEASURED.
+Tasks: *(written at slice-grill time, 2026-09-15; T01–T02 re-cut by the slice review the same day)*
+1. T01 — ~~`internal/pdfops/uacensus_test.go`: a new census~~ **Rebase the census that already exists**,
+   `TestNoOperationAddsAUA1ClauseItsInputDidNotFail` (`ua1oracle_test.go`, `PLAN-accessibility.md` P03.S03), onto
+   a labelled conversion of several pages, and delete the duplicate the slice first built.
+2. T02 — merge the two declaration tables into `knownUA1Deltas`: one row per operation that loses a clause
+   today, each naming P01.S02–S04, P02, `/pending 479`, ADR-031's `partial`, or a permanent reason. 5 t1 is
+   excluded for all (ADR-032). `knownUnvalidatable` empties (`RemovePages` validates on several pages).
+3. T03 — the stimulus floor flips from "the fixture fails something" to "the document is conformant", keep the
+   missing-job and both-ways checks, then probe each direction red.
+
+**(review pin, 2026-09-15, P01.S01)** **D2's premise was wrong: the census existed.** The slice built a second one
+beside `TestNoOperationAddsAUA1ClauseItsInputDidNotFail`, which already drove `tagFates` through one veraPDF batch
+with a both-ways table — and "What is already true" above does not mention it. The slice review
+(`code-reviews/v1.129.113-2026-09-15.md`) caught the duplicate. **The existing census had a resolution gap, and
+that is what the new one had found:** its one-page hand-built fixture already failed 7.1 t8, 7.1 t10 and
+7.21.4.1 t1, so every operation adding one of those was invisible to it. The decision holds — one census is every
+writing phase's reader — and the slice became a rebase and a merge.
 
 #### P01.S02 — notes are `/Annot` elements
 Scope: `AddNotes` on a tagged document nests each note, sets `/Contents` and `/Tabs S`. Refs: D3.
@@ -142,6 +159,13 @@ impossible; the tag-fate table's verdicts move from `dropped` to what is measure
 *Sketch:* one slice per carry shape — subset (`Collect`, `DuplicatePage`), geometry (`Crop`, `SplitPage`,
 `SplitRegions`), composition (`Booklet`, `InsertPDF`), and `CarryAttachments`. Deep-dive the tree writer at
 phase-open.
+
+**(census pin, 2026-09-15, P01.S01)** **The precedent is not clean.** On a multi-page document `NUp` adds
+**7.20 t2** — *"The content of Form XObjects shall be incorporated into structure elements"*: its carry
+re-anchors the tree into the composed sheets' Form XObjects, and veraPDF does not accept that. The one-page
+grill measurement could not see it (nothing to compose). So D5's "`NUp` is the precedent" holds for the MCID
+remap and not for Form XObject incorporation, and `Booklet`'s carry — also a composition — inherits the same
+question. P02 owes `NUp` too.
 
 ### P03 — Checker: structure-tree containment and roles (~40 rules)
 **Goal.** Tables, lists, TOC, headings, notes, Form/Link elements and role maps, each agreeing with veraPDF on

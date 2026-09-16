@@ -86,98 +86,81 @@ func sortedClauses(s map[string]bool) []string {
 	return out
 }
 
-// knownUA1Deltas records, per operation, the ua1 clauses its output adds to the ones its input
-// already failed — **and the reason each one is there**. An operation with no row must add nothing.
+// knownUA1Deltas records, per operation, the ua1 clauses its output adds to the conformant census
+// document — **and the reason each one is there**. An operation with no row must add nothing.
 //
 // # Why a table of deltas and not a flat "adds nothing"
 //
 // P01 struck that acceptance for itself and wrote down why: *"dropping is what law 1 demands and
 // necessarily ADDS failures, since PDF/UA requires a tree, so a ua1 failure COUNT scores honesty as
-// a regression."* An operation declared `dropped` in `tagFates` gives up the tree on purpose, and
-// 6.2 t1 / 7.1 t11 / 7.1 t3 are what a missing tree LOOKS like to a clause counter. A guard that
-// failed on those would be demanding the dishonest option.
+// a regression."* An operation that gives up the tree on purpose adds the clauses a missing tree
+// looks like, and a guard that failed on those would be demanding the dishonest option.
 //
-// So the rule is not "adds nothing"; it is **"adds nothing that is not written down here"** — and
-// it is checked in both directions, like `tagFates`. A clause that appears is a regression; a
-// clause that stops appearing means something was fixed and the row is now a claim about code that
-// no longer exists.
+// So the rule is not "adds nothing"; it is **"adds nothing that is not written down here"** — and it
+// is checked in both directions, like `tagFates`. A clause that appears is a regression; a clause
+// that stops appearing means something was fixed and the row is now a claim about code that no
+// longer exists. Every row names the phase or item that owes it (`PLAN-ua-coverage.md`), or why the
+// loss is permanent.
+//
+// **5 t1 is excluded for every operation** (ADR-032: any change drops the PDF/UA identification), so
+// it appears in no row.
+var pageSetLoss = []string{"6.2 t1", "7.1 t10", "7.1 t11", "7.1 t3", "7.1 t8"}
+
 var knownUA1Deltas = map[string]struct {
 	clauses []string
 	why     string
 }{
-	// ── The tree goes, on purpose. `tagFates` declares every one of these `dropped`, and these
-	// three clauses are the shape of a missing tree.
-	"Booklet":       {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "declared `dropped`: the tree goes and these three are what its absence looks like"},
-	"Collect":       {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
-	"DuplicatePage": {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
+	// ── Annotations and form fields.
+	"AddNotes":         {[]string{"7.18.1 t1", "7.18.3 t1"}, "notes are not /Annot elements yet — PLAN-ua-coverage.md P01.S02"},
+	"AuthorTaggedForm": {[]string{"7.1 t8", "7.21.4.1 t1"}, "7.1 t8: the form door loses the metadata (P01.S04); 7.21.4.1: Helvetica field text (/pending 479, pdfcpu cannot fill an embedded face)"},
+	"AuthorForm":       {[]string{"7.1 t8", "7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Metadata P01.S04, fonts /pending 479"},
 
-	// ── These four also added 7.2 t34 when this table was first written, because they dropped the
-	// catalog `/Lang` as well as the tree. **That was `/pending 472`, and it is fixed** at v1.129.36
-	// — `splice` and both of `Crop`'s exits now route through `carryLang`. The rows shrank as part
-	// of the fix, which is what the both-ways check is FOR: a delta table that only fails on added
-	// clauses becomes a list of permanent excuses.
-	"Crop":         {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "tree loss only, since /pending 472"},
-	"InsertPDF":    {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
-	"SplitPage":    {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
-	"SplitRegions": {[]string{"6.2 t1", "7.1 t11", "7.1 t3"}, "the same"},
+	// ── Stamped text in a Base-14 face. Invisible to this census until it was rebased: the old
+	// fixture already failed 7.21.4.1 itself.
+	"StampFields":      {[]string{"7.21.4.1 t1"}, "stamped text in a Base-14 face — P01.S03"},
+	"StampPageNumbers": {[]string{"7.21.4.1 t1"}, "stamped text in a Base-14 face — P01.S03"},
+	"StampWatermark":   {[]string{"7.21.4.1 t1"}, "stamped text in a Base-14 face — P01.S03"},
 
-	// `CarryAttachments` kept its 7.2 t34 and is NOT part of 472: the census drives it as
-	// `CarryAttachments(fixture, untaggedFixture())`, so the destination is a genuinely different
-	// document and having no `/Lang` of the source's is correct. It was in the filed item until the
-	// drive call was read. A differential reports what it measured, not what it measured it on.
-	"CarryAttachments": {[]string{"6.2 t1", "7.1 t11", "7.1 t3", "7.2 t34"}, "the destination is a DIFFERENT document — a property of the drive call, not a defect"},
+	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`.
+	"Collect":       {pageSetLoss, "a page subset drops the structure tree and metadata — P02"},
+	"RemovePages":   {pageSetLoss, "a page subset drops the structure tree and metadata — P02"},
+	"DuplicatePage": {pageSetLoss, "rebuilt through Collect — P02"},
+	"Crop":          {pageSetLoss, "rebuilt page by page — P02"},
+	"SplitPage":     {pageSetLoss, "rebuilt page by page — P02"},
+	"SplitRegions":  {pageSetLoss, "rebuilt page by page — P02"},
+	"Booklet":       {pageSetLoss, "composed onto new sheets — P02"},
+	"InsertPDF":     {append(append([]string{}, pageSetLoss...), "7.21.4.1 t1"), "spliced through Collect, with an untagged Base-14 document inserted — P02"},
+	// The census drives it as `CarryAttachments(fixture, untaggedFixture())`: the destination is a
+	// genuinely different document, so its lost tree, metadata, language and font are the destination's.
+	"CarryAttachments": {append(append([]string{}, pageSetLoss...), "7.2 t34", "7.21.4.1 t1"), "the destination is the census's untagged fixture, not the census document — P02"},
+	// Needs several pages to show: the carry re-anchors the tree into the composed sheets' Form
+	// XObjects, and veraPDF does not count that content as incorporated into structure elements.
+	"NUp": {[]string{"7.20 t2"}, "the carried tree's Form XObject content is not incorporated per 14.7.2 — P02"},
 
-	// ── Untagged content arrives from somewhere else. Both merge a second document in, and the
-	// pages that come with it are neither tagged nor marked as artifact — true of the second
-	// document, and nothing either operation did to the first.
-	"Append":  {[]string{"7.1 t3"}, "the appended document's own pages are untagged"},
-	"Combine": {[]string{"7.1 t3"}, "the same, for every document after the first"},
+	// ── Untagged content arrives from somewhere else: the second document's own pages.
+	"Append":  {[]string{"7.1 t3", "7.21.4.1 t1"}, "the appended document is untagged and Base-14: ADR-031's recorded `partial` decision"},
+	"Combine": {[]string{"7.1 t3", "7.21.4.1 t1"}, "as Append, for every document after the first"},
 
-	// ── Stamping creates an optional-content group, and pdfcpu builds its configuration
-	// dictionary with an `/AS` key and no `/Name`. 7.10 t2 forbids `/AS` in an OC configuration
-	// dictionary outright; 7.10 t1 requires `/Name`. Two catalog keys, four operations, and
-	// `/pending 473`.
-	// ── The four stamping operations USED to add 7.10 t1 and 7.10 t2 here, and `/pending 473`
-	// named them. `honestOptionalContent` closed it at v1.129.58: pdfcpu writes the catalog's
-	// default optional-content configuration with an `/AS` array and no `/Name`, and both are
-	// forbidden by name. All four now add nothing, and the rows are gone rather than kept as a
-	// claim about code that no longer behaves that way. `StampTextLayer` was never in the census
-	// at all and had the identical defect; it is driven now.
-
-	// ── Annotations and form fields arriving without their accessibility metadata. This is not a
-	// defect to file; it is P06's stated goal — "authored form fields with /TU names" — and these
-	// clauses are the measurement of the gap it closes.
-	//
-	// **`AuthorForm` shrank from three clauses to one at P06.S05** (v1.129.57): `/TU` took 7.18.1 t3
-	// and `/Tabs /S` took 7.18.3 t1. What is left is not a key and cannot be fixed by one —
-	// veraPDF's words are *"A Widget annotation shall be nested within a Form tag"*, failing with
-	// *"nested within null tag (standard type = null) instead of Form"*. That is a structure
-	// element with an `OBJR` kid, which P05.S03 already models and no phase has yet emitted.
-	"AuthorForm": {[]string{"7.18.4 t1"}, "the widget is not nested in a Form structure element — needs a structure element written, not a key"},
-	"AddNotes":   {[]string{"7.18.1 t1", "7.18.3 t1"}, "annotations with no /Contents and untagged — P06"},
-
-	// ── Supplying an artefact CREATES the object other clauses inspect. With no /Metadata stream
-	// at all, 5 t1 has no subject and is not evaluated; an honest one makes it applicable. Clearing
-	// it means writing `pdfuaid:part`, a conformance assertion over untagged content, which is the
-	// third thing ADR-031 law 1 forbids by name.
-	//
-	// **The gate is P07, not P05, and this line said P05 until P07 opened.** Writing a conformance
-	// assertion needs something that can CHECK conformance, which the tag-tree core is not.
-	// `tagmarkdown_test.go` had it right ("P07's job") and these two records disagreed for a
-	// phase — the shape /pending 433 is about: naming a gate is not checking it is still shut.
-	"SetTitle":      {[]string{"5 t1"}, "the XMP packet makes the PDF/UA-identification clause applicable; asserting it would be the lie ADR-031 forbids"},
-	"TitleFromName": {[]string{"5 t1"}, "the same door, reached the ordinary way — it is SetTitle with a file name and a best-effort contract"},
+	"StripMetadata": {[]string{"7.1 t8"}, "permanent: removing identifying metadata is what the operation is for"},
 }
 
-// knownUnvalidatable records operations whose output on THIS fixture veraPDF cannot validate at
-// all, with the reason. A row here is a claim that the cause is the fixture rather than the
-// operation, and it has to say which.
-var knownUnvalidatable = map[string]string{
-	"RemovePages": "the census fixture is one page and the drive call removes page 1, so the " +
-		"output has ZERO pages and veraPDF has no document to validate. A fixture artefact, not a " +
-		"product result — `RemovePages` on a real multi-page document is exercised by " +
-		"pdfops_test.go. It is recorded rather than skipped because an unvalidatable output and a " +
-		"clean one are indistinguishable to a differential.",
+// knownUnvalidatable records operations whose output on THIS document veraPDF cannot validate at all,
+// with the reason. A row here is a claim that the cause is the document rather than the operation.
+//
+// Empty since the census was rebased onto a document of several pages: `RemovePages` was the one row,
+// because the old one-page fixture lost its only page. The map and both of its checks stay, so the
+// next unvalidatable output has to be named rather than read as clean.
+var knownUnvalidatable = map[string]string{}
+
+// censusMarkdown is long enough to lay out across several pages, so the page-set operations act on a
+// document they can take pages out of.
+func censusMarkdown() string {
+	var b strings.Builder
+	b.WriteString("# The census document\n\n")
+	for i := 1; i <= 40; i++ {
+		b.WriteString("## Section\n\nA paragraph of ordinary prose, long enough to wrap across the measure of the page and give each page real content.\n\n- a list item\n- another\n\n")
+	}
+	return b.String()
 }
 
 // TestNoOperationAddsAUA1ClauseItsInputDidNotFail is the criterion, asked of every operation in the
@@ -194,16 +177,24 @@ func TestNoOperationAddsAUA1ClauseItsInputDidNotFail(t *testing.T) {
 			"in this run. Set NIB_VERAPDF, put verapdf on PATH, or install to ~/verapdf.")
 	}
 
-	// Stimulus floor. A fixture that is not tagged, or that already fails everything, makes every
-	// assertion below satisfiable by an operation that destroys the document.
-	src := taggedFixture()
-	if s := inspectTags(src); !s.claims() || s.anchored < 1 {
-		t.Fatal("setup: the corpus fixture is not a tagged document, so this differential would " +
-			"be measuring nothing")
+	// The census document: a Markdown conversion nib labels PDF/UA, which veraPDF scores conformant.
+	//
+	// **Rebased from `taggedFixture()` (2026-09-15, PLAN-ua-coverage.md P01.S01), and why.** That fixture is
+	// one hand-built page that already fails 7.1 t8, 7.1 t10 and 7.21.4.1 t1 — so any operation ADDING one
+	// of those was invisible to a differential against it, and three stamping operations, the form door
+	// and every page-set operation were adding exactly those. On a conformant document every added clause
+	// shows. Several pages, because `RemovePages` left the one-page fixture with nothing to validate and
+	// `NUp`'s 7.20 t2 needs sheets to compose.
+	src, lerr := LabelUA(labelReady(t, censusMarkdown()), true)
+	if lerr != nil {
+		t.Fatalf("setup: the census document could not be labelled: %v", lerr)
+	}
+	if n, perr := PageCount(src); perr != nil || n < 3 {
+		t.Fatalf("setup: the census document has %d page(s) (err %v); the page-set operations need several", n, perr)
 	}
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "00-input.pdf")
+	srcPath := filepath.Join(dir, "00-base.pdf")
 	if err := os.WriteFile(srcPath, src, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -240,16 +231,18 @@ func TestNoOperationAddsAUA1ClauseItsInputDidNotFail(t *testing.T) {
 	}
 
 	clauses := ua1FailedClauses(t, vp, files)
-	base, ok := clauses["00-input.pdf"]
+	base, ok := clauses["00-base.pdf"]
 	if !ok || base == nil {
 		t.Fatalf("veraPDF could not validate the input fixture, so there is no baseline to "+
 			"differ against (report had %d job(s))", len(clauses))
 	}
-	if len(base) == 0 {
-		t.Fatal("setup: the fixture fails NO ua1 clause, which makes every `adds nothing new` " +
-			"result below vacuous in the other direction — check the fixture is the tagged corpus")
+	// Stimulus before response: the document the operations were given passes every clause, or every
+	// "added" below is measured against a baseline that already failed — the gap this census was rebased
+	// to close.
+	if len(base) > 0 {
+		t.Fatalf("setup: the census document is not PDF/UA-1 conformant by veraPDF (%v), so an added clause "+
+			"it already fails could not be seen", sortedClauses(base))
 	}
-	t.Logf("baseline: the tagged fixture fails %d ua1 clause(s): %v", len(base), sortedClauses(base))
 
 	seenOps := map[string]bool{}
 	for file, name := range byFile {
@@ -278,7 +271,7 @@ func TestNoOperationAddsAUA1ClauseItsInputDidNotFail(t *testing.T) {
 
 		var added []string
 		for c := range got {
-			if !base[c] {
+			if !base[c] && c != "5 t1" { // ADR-032: every change drops the identification
 				added = append(added, c)
 			}
 		}
