@@ -23,9 +23,7 @@ import (
 // through Settings.
 func setAdvanced(t *testing.T, v *vault.Vault, a *vault.Advanced) {
 	t.Helper()
-	cur := v.Settings()
-	cur.Advanced = a
-	if err := v.SetSettings(cur); err != nil {
+	if err := v.UpdateSettings(func(s *vault.Settings) { s.Advanced = a }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -231,9 +229,7 @@ func seedableVault(t *testing.T) *vault.Vault {
 // setAdvancedNil puts the vault back to never-been-asked.
 func setAdvancedNil(t *testing.T, v *vault.Vault) {
 	t.Helper()
-	cur := v.Settings()
-	cur.Advanced = nil
-	if err := v.SetSettings(cur); err != nil {
+	if err := v.UpdateSettings(func(s *vault.Settings) { s.Advanced = nil }); err != nil {
 		t.Fatal(err)
 	}
 }

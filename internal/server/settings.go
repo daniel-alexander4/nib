@@ -184,7 +184,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Timestamp:  req.Advanced.Timestamp,
 		}
 	}
-	if err := v.SetSettings(cur); err != nil {
+	// **Applied under ONE hold of the lock (`/pending 519`).** Everything above is validation and
+	// refusal — five branches answer 4xx and return, and the advanced branch reads the filesystem
+	// through `hasLiveCeremony` — so it all happens BEFORE the door, and what goes inside is only
+	// the settled values. `UpdateSettings` runs this function while holding the vault's mutex, which
+	// is not reentrant: nothing in here may call back into `v`.
+	//
+	// `cur` was read at the top of the handler and the fields the request did not name still carry
+	// what was stored then, so this assigns the whole struct rather than the changed fields — which
+	// is what `SetSettings` did. The difference the door makes is that a concurrent writer can no
+	// longer land between that read and this write; the seed, the other writer, now no-ops under the
+	// same lock when the user has already answered.
+	if err := v.UpdateSettings(func(s *vault.Settings) { *s = cur }); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not save settings")
 		return
 	}

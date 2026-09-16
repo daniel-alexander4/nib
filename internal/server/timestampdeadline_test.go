@@ -47,7 +47,9 @@ func attestedProof(digest [32]byte, height uint64) []byte {
 // the whole verification a budget. An explorer that never answers is the stimulus.
 func TestTimestampVerifyEndsWithinItsBudget(t *testing.T) {
 	s, v := unlockedServer(t)
-	if err := v.SetSettings(vault.Settings{Advanced: &vault.Advanced{Timestamp: true}}); err != nil {
+	if err := v.UpdateSettings(func(s *vault.Settings) {
+		s.Advanced = &vault.Advanced{Timestamp: true}
+	}); err != nil {
 		t.Fatal(err)
 	}
 	release := make(chan struct{})
