@@ -122,7 +122,7 @@ func TestStampWidthMatchesEmittedBBox(t *testing.T) {
 			// The door itself, held to the same oracle: a divergence here and a
 			// clean Fit above would mean fitFor is not using it.
 			fontName, pts := stampStyle(f)
-			if got := stampWidth(tc.text, fontName, pts); math.Abs(got-want) > eps {
+			if got := stampWidth(tc.text, fontName, pts, stampFacesInstalled()); math.Abs(got-want) > eps {
 				t.Errorf("stampWidth = %.2fpt, pdfcpu emitted a %.2fpt box (%s)", got, want, tc.why)
 			}
 			n++
@@ -139,11 +139,15 @@ func TestStampWidthMatchesEmittedBBox(t *testing.T) {
 //
 // This is the assertion that would have caught the plan's own prescription.
 func TestTrapStringsSeparateTheWrongRulesFromTheRight(t *testing.T) {
-	naive := func(s string) float64 { return mdpdf.CoreWidth(s, "Helvetica", 12) }
-	escaped := func(s string) float64 { return mdpdf.CoreWidth(strings.ReplaceAll(s, "%", "%%"), "Helvetica", 12) }
+	// The wrong RULES, in the face that is drawn — a face difference would "catch" every string and
+	// make the floor pass for a reason that is not the traps.
+	emb := stampFacesInstalled()
+	face := drawnFace("Helvetica", emb)
+	naive := func(s string) float64 { return mdpdf.Width(s, face, 12, emb) }
+	escaped := func(s string) float64 { return mdpdf.Width(strings.ReplaceAll(s, "%", "%%"), face, 12, emb) }
 	naiveCaught, escapedCaught := 0, 0
 	for _, tc := range trapStrings {
-		right := stampWidth(tc.text, "Helvetica", 12)
+		right := stampWidth(tc.text, "Helvetica", 12, stampFacesInstalled())
 		if math.Abs(naive(tc.text)-right) > 0.01 {
 			naiveCaught++
 		}
@@ -173,7 +177,7 @@ func TestStampWidthMeasuresTheFaceThatIsActuallyStamped(t *testing.T) {
 		t.Fatal(err)
 	}
 	const text = "Plain ASCII"
-	helvetica := stampWidth(text, "Helvetica", 12)
+	helvetica := stampWidth(text, "Helvetica", 12, stampFacesInstalled())
 	for _, name := range []string{"Arial", "", "NotAFont", "helvetica", "Comic Sans MS"} {
 		f := Field{Page: 1, Rect: [4]float64{50, 400, 150, 420}, Text: text, Font: name, Size: 12}
 		fontName, pts := stampStyle(f)
@@ -181,7 +185,7 @@ func TestStampWidthMeasuresTheFaceThatIsActuallyStamped(t *testing.T) {
 			t.Errorf("stampStyle(%q) = %q, want the Helvetica the stamp will actually use", name, fontName)
 		}
 		// Does not panic, and agrees with the face pdfcpu emits.
-		got := stampWidth(f.Text, fontName, pts)
+		got := stampWidth(f.Text, fontName, pts, stampFacesInstalled())
 		if math.Abs(got-helvetica) > 0.01 {
 			t.Errorf("font %q measured %.2fpt, want the stamped face's %.2fpt", name, got, helvetica)
 		}
@@ -249,7 +253,7 @@ var anchorCmRE = regexp.MustCompile(`([0-9.]+) [0-9.]+ cm[^D]*/Fm[0-9]+ Do`)
 // reports the opposite answer.
 func TestFitAccountsForTheAnchorInset(t *testing.T) {
 	const text = "Plain ASCII"
-	w := stampWidth(text, "Helvetica", 12) // 61.36pt
+	w := stampWidth(text, "Helvetica", 12, stampFacesInstalled()) // 61.28pt drawn in LiberationSans (61.36pt in core Helvetica)
 	// Box chosen so 2pt is the WHOLE verdict: the text fits the raw rectangle and
 	// does not fit it once the anchor inset is taken off. So a fit measured against
 	// the wrong one does not merely report a different number — it reaches a
@@ -257,7 +261,7 @@ func TestFitAccountsForTheAnchorInset(t *testing.T) {
 	rectW := w + stampInsetPt/2
 	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + rectW, 420}, Text: text, Font: "Helvetica", Size: 12}
 
-	got, outcome, _, boxPt := resolveFit(f)
+	got, outcome, _, boxPt := resolveFit(f, stampFacesInstalled())
 	if boxPt >= rectW {
 		t.Fatalf("box %.2f did not subtract the %.0fpt inset from a %.2fpt rectangle",
 			boxPt, stampInsetPt, rectW)
@@ -293,7 +297,10 @@ func TestFitAccountsForTheAnchorInset(t *testing.T) {
 
 	// And the ordinary case stays negative and distinguishable from "not measured".
 	roomy := Field{Page: 1, Rect: [4]float64{50, 400, 50 + w + 40, 420}, Text: text, Font: "Helvetica", Size: 12}
-	ro, rw, rb := func() (FitOutcome, float64, float64) { _, o, w, b := resolveFit(roomy); return o, w, b }()
+	ro, rw, rb := func() (FitOutcome, float64, float64) {
+		_, o, w, b := resolveFit(roomy, stampFacesInstalled())
+		return o, w, b
+	}()
 	if rf := fitFor(0, roomy, 1, ro, rw, rb); rf.OverrunPt >= 0 || rf.Outcome != FitAsDrawn {
 		t.Errorf("a comfortably-fitting field reported overrun %.2fpt outcome %q, want negative and %q",
 			rf.OverrunPt, rf.Outcome, FitAsDrawn)
@@ -498,7 +505,7 @@ var tfRE = regexp.MustCompile(`/F[0-9]+ ([0-9.]+) Tf`)
 // others, and the table asserts all four values are covered.
 func TestEachFitOutcomeIsReachableAndDistinct(t *testing.T) {
 	const line = "Plain ASCII"
-	w12 := stampWidth(line, "Helvetica", 12) // 61.36pt
+	w12 := stampWidth(line, "Helvetica", 12, stampFacesInstalled()) // 61.28pt drawn in LiberationSans (61.36pt in core Helvetica)
 
 	cases := []struct {
 		name string
@@ -532,7 +539,7 @@ func TestEachFitOutcomeIsReachableAndDistinct(t *testing.T) {
 	seen := map[FitOutcome]bool{}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, got, _, _ := resolveFit(tc.f)
+			_, got, _, _ := resolveFit(tc.f, stampFacesInstalled())
 			if got != tc.want {
 				t.Errorf("outcome %q, want %q (%s)", got, tc.want, tc.why)
 			}
@@ -555,12 +562,13 @@ func TestWrapIsGatedOnMeasuredVerticalRoom(t *testing.T) {
 	const text = "alpha bravo charlie delta echo foxtrot"
 	const pts = 12
 	boxW := 130.0 - (50 + stampInsetPt)
-	lines := mdpdf.WrapCore(text, "Helvetica", pts, boxW)
+	emb := stampFacesInstalled()
+	lines := mdpdf.Wrap(text, drawnFace("Helvetica", emb), pts, boxW, emb)
 	if len(lines) < 2 {
 		t.Fatalf("fixture is inert: the text wraps to %d line(s), so there is no height "+
 			"question to ask", len(lines))
 	}
-	need := float64(len(lines)) * mdpdf.CoreLineHeight("Helvetica", pts)
+	need := float64(len(lines)) * mdpdf.LineHeight(drawnFace("Helvetica", emb), pts)
 
 	// Exactly enough room, and one point less.
 	for _, tc := range []struct {
@@ -574,7 +582,7 @@ func TestWrapIsGatedOnMeasuredVerticalRoom(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			y0 := 400.0
 			f := Field{Page: 1, Rect: [4]float64{50, y0, 130, y0 + stampInsetPt + tc.h}, Text: text, Font: "Helvetica", Size: pts}
-			if _, got, _, _ := resolveFit(f); got != tc.want {
+			if _, got, _, _ := resolveFit(f, stampFacesInstalled()); got != tc.want {
 				t.Errorf("%d lines need %.2fpt and the box offers %.2fpt: outcome %q, want %q",
 					len(lines), need, tc.h, got, tc.want)
 			}
@@ -610,9 +618,9 @@ func TestShrinkStopsAtTheFloorAndNeverJumpsUp(t *testing.T) {
 		}
 	}
 	// From 12pt, text that fits only at its ratio floor comes back SHRUNK at that size.
-	w9 := stampWidth("Plain ASCII", "Helvetica", shrinkFloorFor(12))
+	w9 := stampWidth("Plain ASCII", "Helvetica", shrinkFloorFor(12), stampFacesInstalled())
 	atFloor := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w9, 420}, Text: "Plain ASCII", Font: "Helvetica", Size: 12}
-	if got, outcome, _, _ := resolveFit(atFloor); outcome != FitShrunk || int(got.Size) != shrinkFloorFor(12) {
+	if got, outcome, _, _ := resolveFit(atFloor, stampFacesInstalled()); outcome != FitShrunk || int(got.Size) != shrinkFloorFor(12) {
 		t.Errorf("text that fits exactly at the ratio floor came back %q at %.0fpt, want %q at %d",
 			outcome, got.Size, FitShrunk, shrinkFloorFor(12))
 	}
@@ -627,14 +635,14 @@ func TestShrinkStopsAtTheFloorAndNeverJumpsUp(t *testing.T) {
 func TestShrinkRefusesToRewriteThePageAndReportsInstead(t *testing.T) {
 	const line = "Plain ASCII"
 	// A box that only 6pt would fit — below 12pt's ratio floor of 9pt.
-	w6 := stampWidth(line, "Helvetica", stampFloorPt)
-	if w6 >= stampWidth(line, "Helvetica", shrinkFloorFor(12)) {
+	w6 := stampWidth(line, "Helvetica", stampFloorPt, stampFacesInstalled())
+	if w6 >= stampWidth(line, "Helvetica", shrinkFloorFor(12), stampFacesInstalled()) {
 		t.Fatalf("fixture is inert: %.2fpt at the absolute floor is not narrower than the "+
 			"ratio floor's width, so no box can sit between them", w6)
 	}
 	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w6, 420}, Text: line, Font: "Helvetica", Size: 12}
 
-	got, outcome, _, _ := resolveFit(f)
+	got, outcome, _, _ := resolveFit(f, stampFacesInstalled())
 	if outcome != FitOverran {
 		t.Errorf("outcome %q at %.0fpt: text needing %dpt from an asked-for 12pt must be "+
 			"REPORTED, not shrunk past the ratio bound — a silent halving rewrites the page",
@@ -646,9 +654,9 @@ func TestShrinkRefusesToRewriteThePageAndReportsInstead(t *testing.T) {
 	}
 	// The control: raise the box to the ratio floor's width and it DOES shrink, so the
 	// refusal above is the bound firing rather than shrink being broken.
-	w9 := stampWidth(line, "Helvetica", shrinkFloorFor(12))
+	w9 := stampWidth(line, "Helvetica", shrinkFloorFor(12), stampFacesInstalled())
 	ok := Field{Page: 1, Rect: [4]float64{50, 400, 50 + stampInsetPt + w9, 420}, Text: line, Font: "Helvetica", Size: 12}
-	if _, oc, _, _ := resolveFit(ok); oc != FitShrunk {
+	if _, oc, _, _ := resolveFit(ok, stampFacesInstalled()); oc != FitShrunk {
 		t.Fatalf("the control did not shrink (%q) — the refusal above proves nothing", oc)
 	}
 }
@@ -694,7 +702,7 @@ func TestShrinkIsWhatTheTfReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	const line = "Plain ASCII"
-	w12 := stampWidth(line, "Helvetica", 12)
+	w12 := stampWidth(line, "Helvetica", 12, stampFacesInstalled())
 	f := Field{Page: 1, Rect: [4]float64{50, 400, 50 + w12*0.95, 420}, Text: line, Font: "Helvetica", Size: 12}
 
 	_, fits, err := StampFields(pdf, []Field{f})
@@ -707,7 +715,7 @@ func TestShrinkIsWhatTheTfReports(t *testing.T) {
 	if _, asked := stampStyle(f); fits[0].StampedPt >= asked {
 		t.Errorf("StampedPt %d is not below the %dpt asked for", fits[0].StampedPt, asked)
 	}
-	resolved, _, _, _ := resolveFit(f)
+	resolved, _, _, _ := resolveFit(f, stampFacesInstalled())
 	if got := emittedTfSize(t, pdf, resolved); math.Abs(got-float64(fits[0].StampedPt)) > 0.01 {
 		t.Errorf("StampedPt says %d, pdfcpu emitted %.2fpt", fits[0].StampedPt, got)
 	}

@@ -88,6 +88,13 @@ func installFallbacks(fonts []Font) error {
 			return fmt.Errorf("%w: fallback font %q has no name or no data", ErrFaceMisdeclared, f.Name)
 		}
 		if installedFallback(f.Name) {
+			// On disk is not in memory. Another process — or another goroutine, between its install and
+			// its own registerMetrics — may have written it after pdfcpu loaded its registry, and the
+			// first measurement would then panic. Registering is a map lookup when it is already there,
+			// and a half-written .gob fails to decode here, which degrades instead of panicking later.
+			if err := registerMetrics(f.Name); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := font.InstallFontFromBytes(font.UserFontDir, f.Name, f.Data); err != nil {

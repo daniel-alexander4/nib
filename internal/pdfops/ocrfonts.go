@@ -7,6 +7,7 @@ import (
 	"nib/mdpdf"
 	"os"
 	"path/filepath"
+	"strings"
 	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
@@ -18,9 +19,12 @@ import (
 // invisible run extracts via /ToUnicode (see ocr.go). pdfcpu's bundled Roboto
 // covers Latin, Cyrillic and Greek, but not Thai or Devanagari — those scripts
 // need their own embedded font, installed into pdfcpu's user-font dir. (This is
-// the only font Nib vendors itself; Roboto comes from inside pdfcpu.)
+// not the only face Nib vendors: see authoringFontFiles and stampFaceFor.)
 
 //go:embed fonts/NotoSansThai-Regular.ttf fonts/NotoSansDevanagari-Regular.ttf fonts/NotoSansArabic-Regular.ttf fonts/NotoSansHebrew-Regular.ttf fonts/NotoSansBengali-Regular.ttf fonts/NotoSansTamil-Regular.ttf fonts/NotoSansTelugu-Regular.ttf fonts/NotoSansKannada-Regular.ttf fonts/NotoSansMalayalam-Regular.ttf fonts/NotoSansGujarati-Regular.ttf fonts/NotoSansGurmukhi-Regular.ttf fonts/DroidSansFallbackFull.ttf fonts/NanumGothic-Regular.ttf fonts/Roboto-Regular.ttf fonts/Roboto-Bold.ttf fonts/Roboto-Italic.ttf fonts/Roboto-BoldItalic.ttf fonts/LiberationMono-Regular.ttf
+//go:embed fonts/LiberationMono-Bold.ttf fonts/LiberationMono-Italic.ttf fonts/LiberationMono-BoldItalic.ttf
+//go:embed fonts/LiberationSans-Regular.ttf fonts/LiberationSans-Bold.ttf fonts/LiberationSans-Italic.ttf fonts/LiberationSans-BoldItalic.ttf
+//go:embed fonts/LiberationSerif-Regular.ttf fonts/LiberationSerif-Bold.ttf fonts/LiberationSerif-Italic.ttf fonts/LiberationSerif-BoldItalic.ttf
 var ocrFontFS embed.FS
 
 // The faces nib AUTHORS text in — `PLAN-accessibility.md` P04.S01.
@@ -331,4 +335,64 @@ func AuthoredTextFaces() (body, bold string, embedded bool) {
 		return "Helvetica", "Helvetica-Bold", false
 	}
 	return faces.Body.Name, faces.Bold.Name, true
+}
+
+// stampFaceFor maps each core text face `StampFields` honours (`coreFonts`) to the embedded face it
+// is DRAWN in — `PLAN-ua-coverage.md` P01.S03, PDF/UA 7.21.4.1.
+//
+// **Liberation, not the authoring faces, and the reason is what a stamped field is.** Its core face is
+// chosen to match the document run an edit replaces (`classifyFont` in the client), and the fit
+// verdict, the shrink and the wrap are all measured in that face. Liberation Sans, Serif and Mono are
+// metric-compatible with Helvetica, Times and Courier — measured within 0.21% at 12pt, and identical
+// for Courier — so drawing in them keeps every measurement and the client's preview. Roboto has no
+// serif, and its widths are not Helvetica's.
+var stampFaceFor = map[string]string{
+	"Helvetica": "LiberationSans", "Helvetica-Bold": "LiberationSans-Bold",
+	"Helvetica-Oblique": "LiberationSans-Italic", "Helvetica-BoldOblique": "LiberationSans-BoldItalic",
+	"Times-Roman": "LiberationSerif", "Times-Bold": "LiberationSerif-Bold",
+	"Times-Italic": "LiberationSerif-Italic", "Times-BoldItalic": "LiberationSerif-BoldItalic",
+	"Courier": "LiberationMono", "Courier-Bold": "LiberationMono-Bold",
+	"Courier-Oblique": "LiberationMono-Italic", "Courier-BoldOblique": "LiberationMono-BoldItalic",
+}
+
+// stampFacesInstalled installs the three Liberation families and reports whether stamped text can be
+// drawn in them.
+//
+// **All or nothing, and never silent** — the two rules `AuthoredTextFaces` keeps. A field drawn in an
+// embedded face beside one in a core face still fails 7.21.4.1 and is harder to reason about than
+// either, and a document set in core fonts looks entirely correct while failing it, so the degrade is
+// logged. Installing an installed face is a stat and a map lookup.
+func stampFacesInstalled() bool {
+	read := func(name string) mdpdf.Font {
+		file := name
+		if !strings.Contains(name, "-") {
+			file += "-Regular" // the PostScript name of a regular face carries no style; its file does
+		}
+		bb, err := ocrFontFS.ReadFile("fonts/" + file + ".ttf")
+		if err != nil {
+			return mdpdf.Font{}
+		}
+		return mdpdf.Font{Name: name, Data: bb}
+	}
+	for _, fam := range []string{"LiberationSans", "LiberationSerif", "LiberationMono"} {
+		faces := &mdpdf.Faces{
+			Body: read(fam), Bold: read(fam + "-Bold"), Italic: read(fam + "-Italic"),
+			BoldItalic: read(fam + "-BoldItalic"), Code: read("LiberationMono"),
+		}
+		if err := mdpdf.InstallFaces(faces); err != nil {
+			log.Printf("stamped text: the embedded faces are unavailable, so stamped text is set in "+
+				"Base-14 core fonts and will not embed them: %v", err)
+			return false
+		}
+	}
+	return true
+}
+
+// drawnFace is the face a stamped field is drawn in: the embedded face for its core face when the
+// faces installed, the core face otherwise.
+func drawnFace(core string, embedded bool) string {
+	if name, ok := stampFaceFor[core]; ok && embedded {
+		return name
+	}
+	return core
 }

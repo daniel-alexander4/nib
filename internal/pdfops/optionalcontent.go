@@ -36,27 +36,7 @@ import (
 // each one a `/Name`, so a stamp costs the document neither ua1 clause. See the file header for the
 // measurement that made removing `/AS` safe.
 func honestOptionalContent(pdf []byte) []byte {
-	out, err := writeMutated(pdf, func(ctx *model.Context) error {
-		root, rerr := ctx.XRefTable.Catalog()
-		if rerr != nil {
-			return rerr
-		}
-		ocp, oerr := ctx.DereferenceDict(root["OCProperties"])
-		if oerr != nil || ocp == nil {
-			return nil // nothing stamped an optional-content group; nothing to correct
-		}
-		for _, key := range configDictKeys(ctx, ocp) {
-			d, derr := ctx.DereferenceDict(key)
-			if derr != nil || d == nil {
-				continue
-			}
-			delete(d, "AS")
-			if _, has := d["Name"]; !has {
-				d["Name"] = types.StringLiteral("Default")
-			}
-		}
-		return nil
-	})
+	out, err := writeMutated(pdf, correctOptionalContent)
 	if err != nil {
 		// A stamp that could not have its configuration corrected is still a stamp. Failing here
 		// would cost the user the operation to gain a clause, which is the trade P01 already
@@ -64,6 +44,30 @@ func honestOptionalContent(pdf []byte) []byte {
 		return pdf
 	}
 	return out
+}
+
+// correctOptionalContent is honestOptionalContent's change, for a door already inside a rewrite
+// (`stampTextWatermarks`) — one rule, one door (ADR-009).
+func correctOptionalContent(ctx *model.Context) error {
+	root, rerr := ctx.XRefTable.Catalog()
+	if rerr != nil {
+		return rerr
+	}
+	ocp, oerr := ctx.DereferenceDict(root["OCProperties"])
+	if oerr != nil || ocp == nil {
+		return nil // nothing stamped an optional-content group; nothing to correct
+	}
+	for _, key := range configDictKeys(ctx, ocp) {
+		d, derr := ctx.DereferenceDict(key)
+		if derr != nil || d == nil {
+			continue
+		}
+		delete(d, "AS")
+		if _, has := d["Name"]; !has {
+			d["Name"] = types.StringLiteral("Default")
+		}
+	}
+	return nil
 }
 
 // configDictKeys returns every optional-content CONFIGURATION dictionary in the catalog — the

@@ -81,6 +81,15 @@ func CoreWidth(text, fontName string, size int) float64 {
 // coercion belongs at the caller's door, not behind a zero-check here that would
 // only convert one wrong answer into another.
 func CoreLineHeight(fontName string, size int) float64 {
+	return LineHeight(fontName, size)
+}
+
+// LineHeight is `CoreLineHeight` for an embedded face as well: the same pdfcpu call, which reads an
+// installed face's own metrics. **They are not interchangeable in value** — measured at 12pt,
+// `LiberationSans` is 15.384 against Helvetica's 13.872, although their advance widths agree within
+// 0.21% — so a caller asking whether N lines fit must ask in the face it draws. The zero-on-unknown
+// hazard `CoreLineHeight` states applies unchanged: the name must be one the caller installed.
+func LineHeight(fontName string, size int) float64 {
 	return font.LineHeight(fontName, size)
 }
 
@@ -101,7 +110,14 @@ func CoreLineHeight(fontName string, size int) float64 {
 // rather than allowed to overrun; existing newlines in text are honoured as forced
 // breaks and each segment is wrapped independently.
 func WrapCore(text, fontName string, size int, maxW float64) []string {
-	sty := style{font: fontName, size: size}
+	return Wrap(text, fontName, size, maxW, false)
+}
+
+// Wrap is `WrapCore` for a face that may be embedded, with `embedded` choosing the measuring rule
+// exactly as it does for `Width`. One engine behind both, so a stamped field set in an embedded face
+// is not wrapped by a second breaker (ADR-009).
+func Wrap(text, fontName string, size int, maxW float64, embedded bool) []string {
+	sty := style{font: fontName, size: size, embedded: embedded}
 	var out []string
 	for _, seg := range strings.Split(text, "\n") {
 		var words []word

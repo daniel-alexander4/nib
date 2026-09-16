@@ -72,6 +72,16 @@ func TestNothingNibEmbedsAFontIntoCarriesACIDSet(t *testing.T) {
 			return StampTextLayer(threePagePDF(t),
 				[]Word{{Page: 1, Rect: [4]float64{20, 40, 70, 50}, Text: "hello world"}}, "eng")
 		}},
+		// The stamps, `PLAN-ua-coverage.md` P01.S03 — on a document that embeds no face of its own, so a
+		// stamp's font is a NEW descriptor. On the census document the watermark reused the Markdown's
+		// Roboto, whose CIDSet was already gone, and passed without routing through the door.
+		{"stamped fields", func() ([]byte, error) {
+			o, _, err := StampFields(threePagePDF(t),
+				[]Field{{Page: 1, Rect: [4]float64{50, 400, 300, 420}, Text: "Replaced text", Font: "Times-Roman", Size: 12}})
+			return o, err
+		}},
+		{"watermark", func() ([]byte, error) { return StampWatermark(threePagePDF(t), "DRAFT", WatermarkStyle{}) }},
+		{"page numbers", func() ([]byte, error) { return StampPageNumbers(threePagePDF(t), PageNumberStyle{}) }},
 	} {
 		out, err := c.make()
 		if err != nil {
@@ -179,5 +189,33 @@ func TestTheCIDSetTailIsSkippedForACoreFontSpec(t *testing.T) {
 		if got := specNamesAUserFont([]byte(c.spec)); got != c.want {
 			t.Errorf("%s: specNamesAUserFont = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// TestAStampDropsOnlyTheCIDSetsOfTheFacesItDrew — `dropCIDSetsOf` with faces named leaves every other
+// descriptor's /CIDSet alone: a stamp drew those faces, and the user's own fonts are their file's.
+func TestAStampDropsOnlyTheCIDSetsOfTheFacesItDrew(t *testing.T) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(threePagePDF(t)), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(fontName string) types.Dict {
+		set, serr := ctx.XRefTable.IndRefForNewObject(types.Dict{})
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		d := types.Dict{"Type": types.Name("FontDescriptor"), "FontName": types.Name(fontName), "CIDSet": *set}
+		if _, err := ctx.XRefTable.IndRefForNewObject(d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	drawn, users := add("ABCDEF+LiberationSans"), add("GHIJKL+MinionPro-Regular")
+	dropCIDSetsOf(ctx, []string{"LiberationSans"})
+	if _, still := drawn["CIDSet"]; still {
+		t.Error("the stamp's own face kept its /CIDSet")
+	}
+	if _, kept := users["CIDSet"]; !kept {
+		t.Error("a stamp removed the /CIDSet of a font it did not draw")
 	}
 }

@@ -11243,17 +11243,18 @@ const FIT_OVERRAN_ADVICE = 'shorten it or redraw the box';
 
 // applyFitReport makes the on-screen overlay agree with what was actually baked.
 //
-// The server decides the fit, because the measurement lives in one place: pdfcpu's
-// core-font metrics, reached through mdpdf.CoreWidth. The browser cannot reproduce
-// that decision without a second implementation of it (its own font metrics are not
-// the AFM tables), so the client does not guess — it reads the answer back.
+// The server decides the fit, because the measurement lives in one place: the metrics of
+// the face pdfcpu draws in (metric-compatible Liberation, or the Base-14 face when that
+// cannot install), reached through mdpdf.Width. The browser cannot reproduce that
+// decision without a second implementation of it (its own font metrics are not those
+// tables), so the client does not guess — it reads the answer back.
 //
 // **The rule is about text stamped AS TEXT, and `ctx.measureText` elsewhere in this
 // file does not break it.** `stampURL` and `textStampURL` measure a string to size a
 // canvas they are about to rasterise; those bake through StampImages as pixels, so
 // the image is by construction the size it was measured at and there is no fit
 // question to get wrong. The case that matters is the one where pdfcpu lays out
-// glyphs from AFM widths and the browser would have to predict where they land.
+// glyphs from font widths and the browser would have to predict where they land.
 //
 // **Pinned like every other post-await write.** `sources` was captured before the
 // round trip; in between, the user may have deleted an overlay, switched documents,

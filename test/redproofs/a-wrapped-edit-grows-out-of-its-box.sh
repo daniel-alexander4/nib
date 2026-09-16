@@ -11,8 +11,8 @@
 # trades a horizontal overrun for a vertical one, and the vertical one is worse: the
 # horizontal case runs into the margin, the vertical case runs into other text.
 #
-# The gate is a measurement, not a heuristic — lines x mdpdf.CoreLineHeight against the box's
-# own height — and the guard drives BOTH sides of the boundary with the same text, so a wrap
+# The gate is a measurement, not a heuristic — lines x mdpdf.LineHeight in the DRAWN face
+# (Liberation since PLAN-ua-coverage.md P01.S03; re-recorded then) against the box's own height — and the guard drives BOTH sides of the boundary with the same text, so a wrap
 # that ignored height entirely cannot pass by picking a friendlier fixture.
 TIER="tier 1 — go test"
 PROVE="go test ./internal/pdfops/ -run 'TestWrapIsGatedOnMeasuredVerticalRoom|TestEachFitOutcomeIsReachableAndDistinct' -count=1"

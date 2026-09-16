@@ -1,11 +1,11 @@
 --- a/internal/pdfops/pdfops.go
 +++ b/internal/pdfops/pdfops.go
-@@ -1160,7 +1160,7 @@
- 	// the previous line. A box drawn around one line of text has room for one line,
- 	// so wrapping it would trade a horizontal overrun for a vertical one.
- 	if lines := mdpdf.WrapCore(f.Text, fontName, pts, boxW); len(lines) > 1 {
--		if float64(len(lines))*mdpdf.CoreLineHeight(fontName, pts) <= boxH+fitTolerancePt {
+@@ -1411,7 +1411,7 @@
+ 	// is not (15.384 against 13.872 at 12pt).
+ 	drawn := drawnFace(fontName, embedded)
+ 	if lines := mdpdf.Wrap(f.Text, drawn, pts, boxW, embedded); len(lines) > 1 {
+-		if float64(len(lines))*mdpdf.LineHeight(drawn, pts) <= boxH+fitTolerancePt {
 +		if _ = boxH; true {
  			out := f
  			out.Text = strings.Join(lines, "\n")
- 			return out, FitWrapped, stampWidth(out.Text, fontName, pts), boxW
+ 			return out, FitWrapped, stampWidth(out.Text, fontName, pts, embedded), boxW
