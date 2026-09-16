@@ -197,11 +197,13 @@ invitation the other binary accepts" cannot be asked there at all. It also cover
 refusals that need two identities to be meaningful — an arm before accepting (the step
 D21 removes), a contribution out of roster order — and asserts the invitation secret is
 in none of the convener's `~/nib` files (D29).
-**Cannot see: a hop completing.** B never signs here; the L3 clause asserts B is
-REFUSED for trying. Driving a hop through needs a rendezvous and a second armed
-listener, which is tier 4. And two processes on one machine are not two machines: one
-loopback, one clock, one filesystem, one kernel, so it says nothing about NAT or the
-DHT. → **tier 4**
+**Cannot see: a hop found without an address, or more than one hop.** CLAUSE 22
+completes ONE hop — B signs and the convener gets Bob's signature back through
+`/api/ceremony/hop` with no invitation in the request — but the dial is handed B's
+loopback address, because there is no link announcement on loopback to find it by.
+The no-address hop, an N-party relay and the delivery round across it are tier 4. And
+two processes on one machine are not two machines: one loopback, one clock, one
+filesystem, one kernel, so it says nothing about NAT or the DHT. → **tier 4**
 
 **Its number is not its rank.** Tier 6 is cheaper and narrower than tiers 4 and 5 —
 one machine, no namespace — and the numbers are the order the harnesses were built,

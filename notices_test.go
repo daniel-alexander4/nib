@@ -200,6 +200,51 @@ func TestEveryVendoredThingIsInTheNotices(t *testing.T) {
 	t.Logf("%d vendored dir(s), %d font face(s), all credited", dirs, faces)
 }
 
+// TestEveryMPLModuleIsNamedInTheNote — /pending 505.
+//
+// The end-of-file note named ONE MPL-2.0 module and said it was "reached only from tests", while
+// the module walk above it attributed four MPL-2.0 modules linked into `./cmd/nib`. The generator
+// now builds the note's list from the walk; this reads the COMMITTED file back and requires every
+// module section whose licence text is MPL-2.0 to be named in the note, so a hand-written list,
+// or a walk that stopped feeding the note, fails here rather than in a distribution.
+func TestEveryMPLModuleIsNamedInTheNote(t *testing.T) {
+	b, err := os.ReadFile("THIRD-PARTY-NOTICES.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	const noteHead = "## Note on the Mozilla Public License 2.0 dependencies"
+	i := strings.Index(body, noteHead)
+	if i < 0 {
+		t.Fatalf("THIRD-PARTY-NOTICES.md has no %q section, so the MPL-2.0 obligations are stated nowhere", noteHead)
+	}
+	note := body[i+len(noteHead):]
+	if j := strings.Index(note, "\n## "); j >= 0 {
+		note = note[:j]
+	}
+	// Module sections are `## <module path> <version>` followed by the licence in a fence.
+	sect := regexp.MustCompile("(?m)^## ((?:github\\.com|golang\\.org|gopkg\\.in|go\\.[a-z]+|[a-z0-9.-]+\\.[a-z]+)/\\S+) (\\S+)\n\n```\n([^\n]*)")
+	var mpl int
+	for _, m := range sect.FindAllStringSubmatch(body, -1) {
+		if !strings.Contains(m[3], "Mozilla Public License") {
+			continue
+		}
+		mpl++
+		if !strings.Contains(note, "`"+m[1]+"`") {
+			t.Errorf("%s %s is under MPL-2.0 and linked into ./cmd/nib, and the MPL note does not name it — "+
+				"its §3.2 source-availability obligation is then stated for a set that omits it", m[1], m[2])
+		}
+	}
+	// The floor: the walk links four today. Zero would mean the section regexp stopped matching,
+	// and every module would pass by being looked at by nothing.
+	if mpl < 4 {
+		t.Fatalf("found %d MPL-2.0 module section(s); ./cmd/nib links at least 4 (anacrolix/dht/v2, torrent, generics, log) — the scan is not reading the module sections", mpl)
+	}
+	if strings.Contains(note, "only from tests") {
+		t.Errorf("the MPL note says a module is reached only from tests; every module in the walk is linked into the shipped binary by construction")
+	}
+}
+
 // TestTheNoticesPreambleNamesNoLicenseClass — the preamble may not summarise the set by
 // naming license classes, because that summary cannot stay true.
 //

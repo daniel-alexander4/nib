@@ -575,14 +575,36 @@ test('views is mutated in exactly three places, and each re-renders the strip', 
   // (a guard flagging a doc comment that quoted the idiom it policed).
   const lines = CODE.split('\n').filter((l) => !l.trim().startsWith('//'));
   const mutations = [];
+  const aliases = [];
+  const MUTATORS = [
+    // Every in-place Array mutator, not only the five the seam happens to use (/pending 505):
+    // `views.sort()` or `views.reverse()` reorders the set the strip renders exactly as a splice
+    // does, and was invisible to the old list.
+    /(?<![.\w$])views\s*\.\s*(push|splice|pop|shift|unshift|sort|reverse|fill|copyWithin)\s*\(/g,
+    // `=(?!=)` — assignment, not comparison. Without the negative lookahead
+    // `views.length === 1` (a READ, in installOpened) counts as a mutation, and the
+    // count is then wrong in the direction that makes the guard cry wolf until
+    // someone loosens it.
+    /(?<![.\w$])views\s*\.\s*length\s*=(?!=)/g,
+    // An index write — `views[i] = v` replaces a document under the strip. Compound
+    // assignments too; `views[i] === v` is a read.
+    /(?<![.\w$])views\s*\[[^\]]*\]\s*([-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)/g,
+    // A rebinding of the name itself (only possible if the `const` is ever relaxed).
+    /(?<![.\w$]|const\s|let\s|var\s)views\s*=(?!=)/g,
+  ];
   lines.forEach((line, i) => {
-    if (/(?<![.\w$])views\s*\.\s*(push|splice|pop|shift|unshift)\s*\(/.test(line)
-      // `=(?!=)` — assignment, not comparison. Without the negative lookahead
-      // `views.length === 1` (a READ, in installOpened) counts as a mutation, and the
-      // count is then wrong in the direction that makes the guard cry wolf until
-      // someone loosens it.
-      || /(?<![.\w$])views\s*\.\s*length\s*=(?!=)/.test(line)) {
-      mutations.push({ line: i + 1, text: line.trim() });
+    // Counted per MATCH, not per line (/pending 505, found by its own probe): a line that already
+    // held one mutation absorbed a second — `views.push(v); views.sort();` counted once, so the
+    // total stayed 4 with five mutators in the file.
+    for (const re of MUTATORS) {
+      for (const _ of line.matchAll(re)) mutations.push({ line: i + 1, text: line.trim() });
+    }
+    // An ALIAS: the array bound to another name, or handed to a call, can be mutated through
+    // that name with no `views` on the line at all — so the count above would stay 4 while a
+    // fifth mutator existed. Iterating (`of views`), spreading (`...views`) and member reads
+    // are not aliases; a bare `views` after `=`, `(`, `,`, `:`, `[` or `return` is.
+    if (/(?:(?<![=!<>])=(?!=)|[(,:[]|\breturn)\s*views\s*(?:[;,)\]}]|$)/.test(line)) {
+      aliases.push({ line: i + 1, text: line.trim() });
     }
   });
 
@@ -590,14 +612,23 @@ test('views is mutated in exactly three places, and each re-renders the strip', 
   // clears and pushes. A count rather than a location check, because the helpers move.
   assert.equal(mutations.length, 4,
     `views is mutated in ${mutations.length} places, want 4 (addView, removeView, resetViews×2) — a mutation outside the seam leaves the tab strip describing documents the app does not hold:\n  ${mutations.map((m) => `${m.line}: ${m.text}`).join('\n  ')}`);
+  assert.deepEqual(aliases, [],
+    `views is bound to another name or passed to a call — a mutation through the alias is invisible to the count above:\n  ${aliases.map((m) => `${m.line}: ${m.text}`).join('\n  ')}`);
 
   // And each of the three re-renders. Sliced per function rather than searched
   // file-wide: a single syncTabs() anywhere would satisfy a file-wide scan while two of
   // the three mutators silently skipped it.
+  //
+  // **Comments stripped from the body first (/pending 505).** `CODE` drops whole-line `//`
+  // comments only, so `views.push(v); // syncTabs() is called by the caller` satisfied a plain
+  // `includes('syncTabs()')` with no call anywhere.
   for (const fn of ['addView', 'removeView', 'resetViews']) {
     const start = CODE.indexOf(`function ${fn}(`);
-    const body = CODE.slice(start, CODE.indexOf('\n}', start));
-    assert.ok(body.includes('syncTabs()'),
+    assert.ok(start >= 0, `setup: function ${fn}( is gone`);
+    const body = CODE.slice(start, CODE.indexOf('\n}', start))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
+    assert.match(body, /(?<![.\w$])syncTabs\s*\(\s*\)/,
       `${fn} mutates views without re-rendering the strip — the strip and the app disagree from that call on`);
   }
 });

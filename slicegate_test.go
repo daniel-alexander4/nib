@@ -70,18 +70,36 @@ func TestEveryCommitTouchingATriggerPathRecordsTheSliceGate(t *testing.T) {
 // test can see", and the ceremony package is where the record, the mirror and the termination
 // live — every one of them read by two machines. Narrower than the sentence would let a
 // mirror-format change through, which is the shape both regressions the rule records took.
+//
+// **Widened at /pending 505 to what tiers 4 and 6 actually drive.** The server list named the
+// ceremony's own files and none of the network half those tiers exist for: the arm and accept
+// path (`accept`, `arm*`, `arrival*`, `rearm`), the dial and its races (`dial*`, `race*`,
+// `rerace`, `glare`, `punch`, `identityrace`), the link and its announcements (`lan*`,
+// `announce*`, `discover*` — which also covers the old `discovery` — `browsequiet`, `linkhold`,
+// `lazybootstrap`), candidates and port mapping (`candidate*`, `portmap*`), the pinned-peer
+// routes (`peers`), the hop and its pre-hop legs (`hop*`, `prehop*`, `walklegs`, `endstatepull`),
+// the consent and spoken-check gates a two-process run parks on (`consent*`, `spokencheck`),
+// the shared socket and transports (`shared*`, `allquic`, `dualfamily`) and `rendezvous*`. Three
+// packages every one of those reaches joined the list for the same reason: `internal/udpmux` (the
+// one socket QUIC and the DHT share), `internal/portmap` (every arm asks it, and its budget is
+// spent inside a tier-4 hop), and `internal/addrscope` (which candidates are dialled at all).
+// Measured against history before widening: no commit from the baseline on touches a newly
+// named path without recording the gate, so the widening needs no second baseline.
 func touchesSliceGateTrigger(files []string) bool {
 	for _, f := range files {
 		switch {
 		case strings.HasPrefix(f, "internal/p2p/"),
 			strings.HasPrefix(f, "internal/rendezvous/"),
 			strings.HasPrefix(f, "internal/ceremony/"),
-			strings.HasPrefix(f, "internal/discovery/"):
+			strings.HasPrefix(f, "internal/discovery/"),
+			strings.HasPrefix(f, "internal/udpmux/"),
+			strings.HasPrefix(f, "internal/portmap/"),
+			strings.HasPrefix(f, "internal/addrscope/"):
 			return true
 		}
 		if strings.HasPrefix(f, "internal/server/") {
 			base := strings.TrimPrefix(f, "internal/server/")
-			for _, p := range []string{"session", "ceremony", "delivery", "discovery", "closeout", "convene", "cosign", "leave"} {
+			for _, p := range sliceGateServerPrefixes {
 				if strings.HasPrefix(base, p) {
 					return true
 				}
@@ -89,6 +107,27 @@ func touchesSliceGateTrigger(files []string) bool {
 		}
 	}
 	return false
+}
+
+// sliceGateServerPrefixes — the `internal/server/` file-name prefixes tiers 4 and 6 drive. See
+// touchesSliceGateTrigger for why each is here.
+var sliceGateServerPrefixes = []string{
+	// the ceremony's own files (the original list; `discover` subsumes `discovery`)
+	"session", "ceremony", "delivery", "discover", "closeout", "convene", "cosign", "leave",
+	// arm, accept and arrival
+	"accept", "arm", "arrival", "rearm",
+	// the dial and its races
+	"dial", "race", "rerace", "glare", "punch", "identityrace",
+	// the link, announcements and the rendezvous
+	"lan", "announce", "browsequiet", "linkhold", "lazybootstrap", "rendezvous",
+	// candidates, port mapping and pinned peers
+	"candidate", "portmap", "peers",
+	// the hop and its legs
+	"hop", "prehop", "walklegs", "endstatepull",
+	// the gates a two-process run parks on
+	"consent", "spokencheck",
+	// the shared socket and the transports
+	"shared", "allquic", "dualfamily",
 }
 
 // recordsSliceGate reports whether a commit message says what happened to the gate.
@@ -118,7 +157,24 @@ func TestTheSliceGatePredicatesAreNotVacuous(t *testing.T) {
 		{"a ceremony change", []string{"internal/ceremony/mirror.go"}, true},
 		{"rendezvous", []string{"internal/rendezvous/dht.go"}, true},
 		{"a comment-only delivery change is STILL a trigger", []string{"internal/server/delivery.go", "README.md"}, true},
+		// /pending 505 — the network half tiers 4 and 6 drive, one row per family so a dropped
+		// prefix fails by name.
+		{"the accept route", []string{"internal/server/accept.go"}, true},
+		{"the arm's progress", []string{"internal/server/armprogress.go"}, true},
+		{"glare", []string{"internal/server/glare.go"}, true},
+		{"the LAN link", []string{"internal/server/lan.go"}, true},
+		{"hole punching", []string{"internal/server/punch.go"}, true},
+		{"the re-race", []string{"internal/server/rerace.go"}, true},
+		{"the port mapper", []string{"internal/server/portmapper.go"}, true},
+		{"pinned peers", []string{"internal/server/peers.go"}, true},
+		{"the discover route", []string{"internal/server/discover.go"}, true},
+		{"the shared socket", []string{"internal/server/sharedsocket_test.go"}, true},
+		{"the demultiplexer", []string{"internal/udpmux/mux.go"}, true},
+		{"port mapping", []string{"internal/portmap/upnp.go"}, true},
+		{"address scope", []string{"internal/addrscope/scope.go"}, true},
 		{"an unrelated server file", []string{"internal/server/export.go"}, false},
+		{"the save route is not the network", []string{"internal/server/saveas.go"}, false},
+		{"the window stream is not the network", []string{"internal/server/window.go"}, false},
 		{"pdfops", []string{"internal/pdfops/pdfops.go"}, false},
 		{"docs only", []string{"README.md", "docs/adr/030-x.md"}, false},
 		{"web only", []string{"web/app.js"}, false},

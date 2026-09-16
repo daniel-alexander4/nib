@@ -5175,3 +5175,23 @@ be a word in a table. `a-language-classification-the-code-contradicts` was re-re
 change, because its context lines included the `cmdOffice` row this one reclassifies.
 
 `recorded` 413 → 414.
+
+## `/pending 505` — the verification harnesses checked as subjects
+
+No new row; `recorded` stays 414. Two rows' tokens changed, because each re-proved for the wrong
+reason, and every guard fixed below was probed red once before it counted.
+
+| The check | Why it was vacuous | What exposed it |
+|---|---|---|
+| `empty-state-message`'s EXPECT | `"empty-state message"` is inside the test title, and `node --test` prints every title whether it passes or fails, so any red in `theme.test.mjs` re-proved the row. Now the assertion's own message; re-proved with `./build/redproof.sh empty-state-message`. `TestNoRedProofTokenIsItsTestsName` refuses the shape for every `node --test` and `go test` row | the phase-close review |
+| `an-unloadable-ceremony-vanishes-from-the-live-listing`'s EXPECT | `"C12"` is printed by CLAUSE 11's two setup failures and by its PASS line. Now the sentence only the vanished-entry branch prints. **Owed a tier-6 replay** | the same review |
+| `escape.test.mjs`: "a dialog that focuses its own field keeps it", "focus cannot leave an open dialog" | `if (!m \|\| !pw) return;` and `if (outside) {…}` passed with no assertion when their element was missing. Both are now asserted setup, and the focus that tests the trap records its own `focusin` | probing each lookup missing its element: red on the setup assertion |
+| `view.test.mjs`'s three-mutators guard | It missed `sort`/`reverse`/`fill`/`copyWithin`, index writes, rebinding and aliases. A trailing `// syncTabs()` satisfied the re-render check. **And its own probe found a fourth hole**: it counted matching LINES, so `views.push(v); views.sort();` counted once | probes J3a–J6; the same-line sort stayed green until the count was per match |
+| `ceremonyrepro.sh` CLAUSE 5's secret search | It searched for hex only, while the invitation carries the secret as a JSON `[]byte`, which is base64. It also ran before anything reached B's `~/nib`. Now it searches every encoding, proves the search can find a planted base64 copy, and re-reads both machines after CLAUSE 22 lands a hop (22b). **Owed a tier-6 run** | a unit probe of the extracted functions: the old hex-only search missed the base64 file |
+| `ceremonyrepro.sh`'s ceiling "No hop completes here", pinned by `verify_test.go` as "Cannot see: a hop completing" | CLAUSE 22 has completed a hop since P01.S02b. The guard was holding a false ceiling in place | the review. Restoring the old sentence turns `TestVerifyContractIsTrue` red |
+| `mcastrepro.sh` | It ran six discovery tests and grepped PASS for three, so the other three could be renamed with the tier green. Now one list builds both the run pattern and the assertions | a unit probe: a missing `TestTwoSocketsCanShareThePort` is now refused |
+| `pairrepro.sh`'s off-link counter | Output that was empty (no `nft`, no table) compared as zero packets through `$((…))` and `[ "" = "" ]`. `offlink_read` fails instead. Also: `WATCHERS` was never appended to, so teardown killed nothing, and the LAN banner claimed two clauses that return early below four parties | a unit probe of `offlink_read` with an empty and an error reading |
+| `winrepro.sh`'s `checknot` | An empty response contains no needle, so "a real folder is quiet" passed on a body that never came back | a unit probe with an empty haystack |
+| `windowfreeze.mjs` | It printed `open=1` without asserting that the page ever froze or was hidden, and it printed the control without asserting it | reading. Not run here (seven minutes) |
+| `verify_test.go`'s red-proof ledger check | It listed Tiers 1–5 and skipped Tier 6, and a prose mention satisfied every tier. It now also requires a replayable row for tiers 1, 2, 3, 4 and 6. **Tier 5 has none**, which is declared in the test | relabelling the three tier-6 rows turns it red |
+| `TestEveryRedProofStillApplies`, reported as missing 48 stale patches | **Not vacuous.** 0 of 414 fail under the harness's own `patch -p1 --dry-run --forward`; 53 fail only under zero fuzz, which is `git apply --check`'s strictness, not `redproof.sh`'s | measured per patch from the repository root |

@@ -24,9 +24,12 @@
 # filesystem, one kernel. It says nothing about NAT, about the DHT, or about a peer that
 # is genuinely elsewhere — that is `pairrepro.sh` (tier 4) and the two-machine VERIFY item.
 #
-# **No hop completes here.** B never signs: the L3 clause below asserts that B is REFUSED
-# for trying to, which is the point at this coordinate. Driving a hop to completion needs
-# a rendezvous and a second armed listener, and that is P07.S03a's N-party driver.
+# **One hop completes here, and only with its address handed over.** CLAUSE 22 drives a hop
+# through `/api/ceremony/hop` to Bob's signature coming back, with no invitation in the request —
+# but the dial is given B's loopback address, because there is no link announcement on loopback
+# to find it by. The no-address hop, an N-party relay and the delivery round across it are tier 4
+# (`pairrepro.sh`). (This paragraph said "No hop completes here" until /pending 505, for a whole
+# phase after CLAUSE 22 made it false; `verify_test.go` was pinning the false sentence.)
 #
 # It skips cleanly when its dependencies are absent, like tiers 2 and 3.
 set -uo pipefail
@@ -41,7 +44,17 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 is not installed"; e
 command -v sha256sum >/dev/null 2>&1 || { echo "SKIP: sha256sum is not installed"; exit 0; }
 
 WORK="$(mktemp -d)"
-trap 'kill ${A_PID:-0} ${B_PID:-0} 2>/dev/null; wait 2>/dev/null; rm -rf "$WORK"' EXIT
+# ONE trap, set once (/pending 505). A second `trap … EXIT` further down used to REPLACE this one,
+# dropping the `rm -rf` — every run leaked its work dir — and neither ever stopped the locked
+# instance CLAUSE 12 starts. And never `kill ${X_PID:-0}`: `kill 0` signals the whole process
+# GROUP, so a build failure before any instance started sent SIGTERM to whatever ran this script.
+reap() {
+  local p
+  for p in ${A_PID:-} ${B_PID:-} ${L_PID:-} ${LOCK_PID:-}; do kill "$p" 2>/dev/null; done
+  wait 2>/dev/null
+  rm -rf "$WORK"
+}
+trap reap EXIT
 SP="$WORK"
 go build -o "$SP/nib" ./cmd/nib || { echo "FAIL: could not build nib" >&2; exit 1; }
 go run build/genpdf.go "$SP/lease.pdf" "the lease" >/dev/null 2>&1
@@ -84,7 +97,6 @@ post(){ # $1=name $2=path $3=json -> body in $SP/resp.json, prints status
 get(){ local n=$1 b; eval "b=\$${n}_BASE"; curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" "$b$2"; }
 jq_(){ python3 -c "import json,sys;d=json.load(open('$SP/resp.json'));print($1)" 2>/dev/null; }
 
-trap 'kill ${A_PID:-0} ${B_PID:-0} 2>/dev/null; wait 2>/dev/null' EXIT
 start A; start B
 A_FP=$(get A /api/peers | python3 -c "import json,sys;print(json.load(sys.stdin)['fingerprint'])")
 B_FP=$(get B /api/peers | python3 -c "import json,sys;print(json.load(sys.stdin)['fingerprint'])")
@@ -174,12 +186,42 @@ if [ "$code" = 200 ]; then ok "after accepting, B arms with no manual pin anywhe
 post B /api/session/disarm '{}' >/dev/null
 
 # CLAUSE 5 — the secret is not under ~/nib on EITHER machine.
-SEC=$(python3 -c "
+#
+# **Every encoding the secret travels in, not only hex (/pending 505).** The invitation carries it
+# as a JSON `[]byte`, which Go serialises as standard BASE64 — so a regression writing the decoded
+# invitation, or any JSON holding it, to `~/nib` would put base64 on disk and a hex-only search
+# would read every such file and report it clean. The needles are hex (both cases), standard and
+# URL-safe base64, padded and not.
+secret_forms() { # $1 = invitation -> one needle per line
+  python3 - "$1" <<'PYSEC'
+import base64, json, sys
+t = sys.argv[1]
+body = t.split(':', 1)[1].rsplit('.', 1)[0]
+d = json.loads(base64.urlsafe_b64decode(body + '=' * (-len(body) % 4)))
+raw = base64.b64decode(d['secret'])
+if len(raw) < 16:
+    sys.exit("secret_forms: the invitation's secret decoded to %d byte(s) — too short to search for" % len(raw))
+std, url = base64.b64encode(raw).decode(), base64.urlsafe_b64encode(raw).decode()
+for f in sorted({raw.hex(), raw.hex().upper(), std, std.rstrip('='), url, url.rstrip('=')}):
+    print(f)
+PYSEC
+}
+# secret_hits FILE NEEDLES -> exit 0 when any needle is in FILE. Fixed-string, case-SENSITIVE
+# (base64 is case-significant; hex is listed in both cases above).
+secret_hits() { grep -qF -f "$2" "$1"; }
+NEEDLES="$SP/secret.needles"
+secret_forms "$INV" >"$NEEDLES" || { no "secret search setup" "could not derive the invitation secret's encodings"; }
+# STIMULUS: the search must be able to FIND the secret in the encoding it actually travels in, or
+# a zero below is a search that cannot see. A planted file carrying only the base64 form must hit.
+mkdir -p "$SP/plant"
+python3 -c "
 import base64,json,sys
 t='$INV'; body=t.split(':',1)[1].rsplit('.',1)[0]
-pad='='*(-len(body)%4)
-d=json.loads(base64.urlsafe_b64decode(body+pad))
-print(base64.b64decode(d['secret']).hex())")
+d=json.loads(base64.urlsafe_b64decode(body+'='*(-len(body)%4)))
+open('$SP/plant/invitation.json','w').write(json.dumps({'secret': d['secret']}))"
+if ! secret_hits "$SP/plant/invitation.json" "$NEEDLES"; then
+  no "secret search stimulus" "a file holding the secret as the JSON base64 it travels in was NOT found by the search — every zero below would be blind"
+fi
 # **The count is PER MACHINE, and it used to be aggregate (fixed 2026-08-29, P08.S01).**
 #
 # The stimulus guard was `files -eq 0` summed over both homes, and the `-d` test skipped a home
@@ -199,7 +241,7 @@ for n in A B; do
   if [ -d "$h/nib" ]; then
     while IFS= read -r f; do
       c=$((c+1))
-      grep -qiF "$SEC" "$f" && { echo "        secret in $f"; hits=$((hits+1)); }
+      secret_hits "$f" "$NEEDLES" && { echo "        secret in $f"; hits=$((hits+1)); }
     done < <(find "$h/nib" -type f)
   fi
   SEEN[$n]=$c
@@ -220,7 +262,7 @@ elif [ "$hits" -ne 0 ]; then
   no "secret residue" "$hits file(s) carry it"
 elif [ "${SEEN[B]}" -eq 0 ]; then
   # Not a failure, and not a silent pass either: the invitee's side is named as unexercised.
-  ok "the secret is in none of the ${SEEN[A]} file(s) under the convener's ~/nib (D29) — the invitee has no ~/nib in this tier (no hop completes, and its invitation is in the sealed vault), so its zero is structural and is NOT evidence"
+  ok "the secret is in none of the ${SEEN[A]} file(s) under the convener's ~/nib (D29) — the invitee has no ~/nib yet at this clause (no hop has completed, and its invitation is in the sealed vault), so its zero is structural and is NOT evidence; CLAUSE 22b re-reads both machines after a hop lands"
 else
   ok "the invitation secret is in none of the ${SEEN[A]} file(s) on the convener nor the ${SEEN[B]} on the invitee (D29)"
 fi
@@ -744,6 +786,7 @@ sys.exit(0 if sig.get('state')=='valid' and 'Bob' in names else 1)" 2>/dev/null;
           # convener got back. This slice has already produced one case that asserted a status code
           # and was satisfied by a different gate entirely.
           ok "A ADVANCED its own ceremony through /api/ceremony/hop and Bob's signature came back — NO INVITATION and no transport in the request"
+          HOP2_OK=1
         else
           no "hop completes" "200 but Bob is not a valid signer: $(head -c 300 "$SP/hop2.json")"
         fi
@@ -752,6 +795,39 @@ sys.exit(0 if sig.get('state')=='valid' and 'Bob' in names else 1)" 2>/dev/null;
   fi
 fi
 
+# CLAUSE 22b — the secret search again, AFTER a hop has landed on the invitee (/pending 505).
+#
+# CLAUSE 5 runs before anything writes to B's ~/nib, so its invitee half is structural by
+# construction and it says so. This is the read that half was waiting for: CLAUSE 22 completed a
+# hop, so B now holds that ceremony's mirror — the one directory an invitation secret leaking into
+# the mirror would land in. Both invitations' secrets, both machines, every file, and B's count of
+# files under the hop's own mirror must be non-zero, or "we looked at the invitee" is still untrue.
+if [ "${HOP2_OK:-0}" != 1 ]; then
+  no "post-hop secret search" "CLAUSE 22's hop did not complete, so the invitee's ~/nib was never given the content this search exists to read"
+else
+  secret_forms "$INV2" >>"$NEEDLES" || no "post-hop secret search setup" "could not derive the second invitation's encodings"
+  hits=0
+  declare -A SEEN2=()
+  for n in A B; do
+    eval "h=\$${n}_HOME"
+    c=0
+    while IFS= read -r f; do
+      c=$((c+1))
+      secret_hits "$f" "$NEEDLES" && { echo "        secret in $f"; hits=$((hits+1)); }
+    done < <(find "$h/nib" -type f 2>/dev/null)
+    SEEN2[$n]=$c
+  done
+  mirror_b=$(find "$B_HOME/nib/ceremonies/$CID2" -type f 2>/dev/null | wc -l)
+  if [ "${SEEN2[A]}" -eq 0 ] || [ "${SEEN2[B]}" -eq 0 ]; then
+    no "post-hop secret search" "A read ${SEEN2[A]} file(s) and B read ${SEEN2[B]} — after a completed hop both must hold content, so a side was not read"
+  elif [ "$mirror_b" -eq 0 ]; then
+    no "post-hop secret search" "B holds no file under ~/nib/ceremonies/$CID2 after the hop — the mirror this search is about was not there to read"
+  elif [ "$hits" -ne 0 ]; then
+    no "secret residue after a hop" "$hits file(s) carry an invitation secret"
+  else
+    ok "after a completed hop, neither invitation secret is in any of the ${SEEN2[A]} file(s) on the convener or the ${SEEN2[B]} on the invitee ($mirror_b in the hop's own mirror), in hex or base64 (D29)"
+  fi
+fi
 
 # CLAUSE 23 — the convener STOPS a ceremony, and the parties are told in the same act (/pending 428).
 #

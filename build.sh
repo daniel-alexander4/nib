@@ -22,6 +22,10 @@ for arg in "$@"; do
   esac
 done
 VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo dev)}"
+# Refuse a dirty tree or a version HEAD does not carry BEFORE anything is built or pushed.
+if [ "$PUBLISH" = "1" ]; then
+  ./build/publish-preflight.sh "$VERSION"
+fi
 DIST="dist"
 rm -rf "$DIST"
 mkdir -p "$DIST"

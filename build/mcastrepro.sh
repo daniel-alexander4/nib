@@ -65,6 +65,24 @@ go test -c -o "$TESTBIN" ./internal/discovery/ >/dev/null
 SRVBIN="$BINDIR/server.test"
 go test -c -o "$SRVBIN" ./internal/server/ >/dev/null
 
+# The tests this tier runs, named ONCE (/pending 505). The `-test.run` pattern and the PASS
+# assertions below are both built from these lists: the run line used to name six discovery tests
+# and the greps checked three, so `TestTheSocketJoinsTheInterfacesItChose`,
+# `TestOwnAnnouncementsAreFilteredByNonceNotAddress` and `TestTwoSocketsCanShareThePort` could be
+# renamed — matching nothing, running nothing, printing nothing — with this tier still green.
+DISC_TESTS=(
+  TestTwoProcessesDiscoverEachOther
+  TestTheSocketJoinsTheInterfacesItChose
+  TestOwnAnnouncementsAreFilteredByNonceNotAddress
+  TestTwoSocketsCanShareThePort
+  TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group
+  TestAnOffLinkUnicastIsDroppedByTheReadLoop
+)
+SRV_TESTS=(TestARealAnnouncementResolvesToACandidate)
+join_re() { local IFS='|'; printf '^(%s)$' "$*"; }
+DISC_RE="$(join_re "${DISC_TESTS[@]}")"
+SRV_RE="$(join_re "${SRV_TESTS[@]}")"
+
 run() {
   unshare -rn bash -c '
     set -e
@@ -95,9 +113,9 @@ run() {
     # is covered by the tier-1 table test, not by this namespace. A dummy also lacks
     # the MULTICAST flag and joins anyway, which is why the selection does not require
     # it: the kernel does not enforce it.
-    NIB_MCAST_NETNS=1 "$0" -test.run "TestTwoProcessesDiscoverEachOther|TestTheSocketJoinsTheInterfacesItChose|TestOwnAnnouncementsAreFilteredByNonceNotAddress|TestTwoSocketsCanShareThePort|TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group|TestAnOffLinkUnicastIsDroppedByTheReadLoop" -test.v
-    NIB_MCAST_NETNS=1 "$1" -test.run "TestARealAnnouncementResolvesToACandidate" -test.v
-  ' "$TESTBIN" "$SRVBIN"
+    NIB_MCAST_NETNS=1 "$0" -test.run "$2" -test.v
+    NIB_MCAST_NETNS=1 "$1" -test.run "$3" -test.v
+  ' "$TESTBIN" "$SRVBIN" "$DISC_RE" "$SRV_RE"
 }
 
 OUT="$(mktemp)"
@@ -114,12 +132,12 @@ grep -q -- "--- PASS: TestTwoProcessesDiscoverEachOther" "$OUT" \
   || fail "TestTwoProcessesDiscoverEachOther did not PASS inside the namespace — if it SKIPPED, the namespace was not detected and this harness verified nothing"
 grep -q "DISCOVERED" "$OUT" \
   || fail "no process reported discovering another; the pass above is not about discovery"
-grep -q -- "--- PASS: TestAnOffLinkUnicastIsDroppedByTheReadLoop" "$OUT" \
-  || fail "the off-link ingress test did not PASS — the scope check is unexercised"
-grep -q -- "--- PASS: TestAnIPv6OnlyInterfaceIsSkippedForTheIPv4Group" "$OUT" \
-  || fail "the IPv6-only interface test did not PASS — the Windows IPv4-join divergence is unexercised"
-grep -q -- "--- PASS: TestARealAnnouncementResolvesToACandidate" "$OUT" \
-  || fail "the resolution test did not PASS inside the namespace"
+# Every named test PASSED — each one, from the same list the run line was built from. The
+# trailing ` (` pins the exact name, so `TestX` cannot be satisfied by a `TestXAndMore`.
+for t in "${DISC_TESTS[@]}" "${SRV_TESTS[@]}"; do
+  grep -qF -- "--- PASS: $t (" "$OUT" \
+    || fail "$t did not PASS inside the namespace — renamed, skipped, or not run; this tier names it and must see it pass"
+done
 grep -q "RESOLVED" "$OUT" \
   || fail "no announcement was resolved to a candidate; the pass above is not about resolution"
 grep -q -- "--- SKIP" "$OUT" \

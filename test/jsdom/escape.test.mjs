@@ -185,7 +185,10 @@ test('opening a dialog moves focus into it', async () => {
 test('a dialog that focuses its own field keeps it', async () => {
   const m = doc.getElementById('decryptModal');
   const pw = doc.getElementById('decryptPw');
-  if (!m || !pw) return; // the dialog was renamed; the population guards above will say so
+  // Asserted, never `return`ed past (/pending 505): an early return made a rename of either id
+  // report this test PASSED while it asserted nothing — the population guards above count
+  // dialogs, and would not notice this one field going.
+  assert.ok(m && pw, 'setup: #decryptModal or #decryptPw is gone from index.html, so this regression guard is guarding nothing — point it at another dialog that focuses its own field');
   m.hidden = false;
   pw.focus();
   await settle();
@@ -199,15 +202,26 @@ test('focus cannot leave an open dialog', async () => {
   const m = doc.getElementById('aboutModal');
   m.hidden = false;
   await settle();
-  const outside = doc.getElementById('menubar')?.querySelector('button');
-  if (outside) {
+  try {
+    // Both halves of the stimulus asserted (/pending 505). The old `if (outside) {…}` passed with
+    // no assertion at all when the menubar lost its buttons; and a focus() that never landed —
+    // leaving focus where the open put it, inside the dialog — would satisfy the trap check below
+    // without the trap having run. The focusin is recorded, the same shape stackCase uses.
+    const outside = doc.getElementById('menubar')?.querySelector('button');
+    assert.ok(outside, 'setup: #menubar has no button, so there is nothing outside the dialog to try to focus and the trap is unexercised');
+    let reached = false;
+    const mark = () => { reached = true; };
+    outside.addEventListener('focusin', mark);
     outside.focus();
     await settle();
+    outside.removeEventListener('focusin', mark);
+    assert.ok(reached, 'setup: focusing the menubar button never happened, so the trap was not exercised');
     assert.ok(m.contains(doc.activeElement) || doc.activeElement === m,
       'focus escaped to the toolbar behind an open dialog — with aria-modal="true" the reader has been told that element does not exist');
+  } finally {
+    m.hidden = true;
+    await settle();
   }
-  m.hidden = true;
-  await settle();
 });
 
 // /pending 498. Two dialogs open at once, in the order the co-sign flow opens them: the co-sign

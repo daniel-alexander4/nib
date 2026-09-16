@@ -91,8 +91,17 @@ check() {
 }
 
 # checknot NAME HAYSTACK NEEDLE — assert NEEDLE does NOT appear.
+#
+# **An EMPTY haystack is a failure, not a pass (/pending 505).** Every absence below is read from
+# a response or a listing, and a curl that got no answer, a route that returned nothing, or a log
+# that was never written all contain no needle. "a real folder is quiet" passed on an empty body
+# that way — the listing never came back and the check reported the folder quiet.
 checknot() {
-  if printf '%s' "$2" | grep -qF -- "$3"; then
+  if [ -z "$2" ]; then
+    echo "  FAIL $1"
+    echo "         nothing to search: the response or listing was EMPTY, so an absence proves nothing"
+    FAILED=1
+  elif printf '%s' "$2" | grep -qF -- "$3"; then
     echo "  FAIL $1"
     echo "         unwanted substring present: $3"
     echo "         got: $2"
