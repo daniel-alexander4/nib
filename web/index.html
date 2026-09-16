@@ -57,7 +57,7 @@
       </button>
       <span id="updatePill" hidden>
         <button id="updateGet" type="button" title="Download the latest version for your system"></button>
-        <button id="updateDismiss" type="button" title="Dismiss">✕</button>
+        <button id="updateDismiss" type="button" title="Dismiss" aria-label="Dismiss">✕</button>
       </span>
       <!-- Armed-session indicator. It survives a Close deliberately: arming a session is
            an independent act, so closing the document does NOT disarm — and a completed
@@ -77,7 +77,7 @@
       <span id="sessionNotice" role="alert" hidden>
         <span id="sessionNoticeText"></span>
         <button id="sessionNoticeAction" type="button" hidden></button>
-        <button id="sessionNoticeDismiss" type="button" title="Dismiss">✕</button>
+        <button id="sessionNoticeDismiss" type="button" title="Dismiss" aria-label="Dismiss">✕</button>
       </span>
       <span id="sigBadge" class="badge badge-none" title="Signature status">no document</span>
       <button id="sigDetailsBtn" class="badge-link" hidden title="Signature details">details</button>
@@ -1780,7 +1780,7 @@
         <select id="ssnPeer"></select></label>
       <p id="ssnNoPeers" class="libhint" hidden>Pin the other person's fingerprint first, under
         <strong>Identity &amp; peers</strong>.</p>
-      <label>Their address (host:port they're listening on)
+      <label>Their address (optional — leave blank to find them on this network)
         <input id="ssnAddr" type="text" placeholder="e.g. 203.0.113.4:8443" spellcheck="false" /></label>
       <div id="ssnProgress" class="libhint" hidden>Connecting and sending…</div>
       <div class="sigbtns">

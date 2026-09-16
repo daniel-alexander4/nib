@@ -58,7 +58,11 @@ func (s *Server) handleExternalSignerImport(w http.ResponseWriter, r *http.Reque
 	leaf, chain, err := sign.ParseP12(p12, r.FormValue("passphrase"))
 	if err != nil {
 		if errors.Is(err, sign.ErrWrongPassphrase) {
-			httpError(w, http.StatusUnauthorized, "wrong passphrase, or not a PKCS#12 file")
+			// 422, never 401 (/pending 506). The web client reads every 401 as "the vault is locked" —
+			// apiFetch refreshes the status and throws before any handler sees the response — so a
+			// wrong certificate passphrase answered 401 showed the user nothing at all. This is a fact
+			// about the request, not about the session.
+			httpError(w, http.StatusUnprocessableEntity, "wrong passphrase, or not a PKCS#12 file")
 			return
 		}
 		httpError(w, http.StatusBadRequest, "could not read certificate: "+err.Error())

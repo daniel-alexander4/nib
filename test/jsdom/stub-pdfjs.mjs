@@ -151,6 +151,10 @@ export function getDocument() {
     destroy: async () => {},
   };
   lastDocument = doc;
-  task.promise = Promise.resolve(doc);
+  // `gate` holds the load open until the test resolves it — opt-in, like `fail` and `renders`. Added
+  // for /pending 498's overlapping opens: a load that resolves in one microtask cannot be overlapped
+  // deterministically, and a race test that passes because the timing happened not to collide is
+  // a green over a race that never ran.
+  task.promise = cfg.gate ? cfg.gate.then(() => doc) : Promise.resolve(doc);
   return task;
 }

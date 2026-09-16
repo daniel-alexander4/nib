@@ -116,7 +116,8 @@ test('each cause is named separately, with its own count', () => {
 // classifyFont had collapsed it to one of twelve. Without it the server cannot tell
 // an exact width measurement from Helvetica standing in for a display face.
 test('the edit carries the document\'s own font name to the server', () => {
-  const walk = fnBody('collectFieldsWithSources', 'function collectFieldsWithSources(owner = view)');
+  // `exclude` since /pending 506: Save as fillable form leaves the fields it authors out of the bake.
+  const walk = fnBody('collectFieldsWithSources', 'function collectFieldsWithSources(owner = view, exclude = null)');
   assert.match(walk, /baseFont: f\.baseFont \|\| ''/,
     'the posted field drops baseFont, so every fit verdict reaches the server as though it '
       + 'were measured in the document\'s own face when it may be a stand-in');
@@ -131,7 +132,10 @@ test('there is one field-collection walk, not two', () => {
   assert.match(CODE, /function collectFields\(owner = view\) \{ return collectFieldsWithSources\(owner\)\.fields; \}/,
     'collectFields no longer delegates — a second copy of the filter decides which overlays '
       + 'bake, and the fit report\'s indices would address the wrong ones (ADR-009)');
-  const walks = CODE.match(/for \(const f of owner\.overlayFields\) \{\s*if \(f\.kind === 'text'/g) || [];
+  // Re-derived, not loosened (/pending 506): the walk gained one line — the fillable form's exclusion —
+  // between its head and the kind test. A second copy of the walk, with or without that line, still
+  // counts.
+  const walks = CODE.match(/for \(const f of owner\.overlayFields\) \{\s*(?:if \(exclude && exclude\.has\(f\)\) continue;[^\n]*\n\s*)?if \(f\.kind === 'text'/g) || [];
   assert.equal(walks.length, 1,
     `${walks.length} walks decide which overlay fields bake; there must be exactly one`);
 });

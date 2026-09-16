@@ -34,6 +34,7 @@ const PEER = { fingerprint: 'a'.repeat(64), label: 'Ada' };
 let initiateAddress;   // the `address` field of the most recent /api/session/initiate POST
 let quoteCalls = 0;    // /api/cosign/quote hits — reached only if the refusal is gone
 let armBind;           // the `bind` field of the most recent /api/session/arm POST (S12 twin)
+let sendAddress;       // the `address` field of the most recent /api/session/send POST (/pending 506)
 
 const h = await boot({
   routes: {
@@ -52,6 +53,11 @@ const h = await boot({
     '/api/cosign/quote': () => {
       quoteCalls++;
       return { lines: ['I agree to sign this document.'], rect: [0, 0, 120, 40], when: '2026-08-22T00:00:00Z' };
+    },
+    // /pending 506: the one-way Send's twin of the initiate below.
+    '/api/session/send': (opts) => {
+      sendAddress = opts.body.get('address');
+      return { sent: true };
     },
     '/api/session/initiate': (opts) => {
       // opts.body is the FormData sessionInit() builds; `address` is the field S12
@@ -110,6 +116,25 @@ test('the typed-address fallback still reaches the initiate from behind the disc
   // wiring. A value typed there is the manual tier (D8 tier 5), which stays reachable.
   await coSign('203.0.113.4:8443');
   assert.equal(initiateAddress, '203.0.113.4:8443', 'the typed address did not reach the initiate POST');
+});
+
+// /pending 506. S12 removed the empty-address refusal from the co-sign and left its copy in the
+// one-way Send, so `handleSessionSend`'s LAN branch (an empty address browses the link for the pinned
+// peer) was unreachable from the only client that calls it.
+test('sending a document with an empty address posts over the ladder, like the co-sign', async () => {
+  doc.getElementById('sessionSendBtn').click();
+  await settle();
+  const peerSel = doc.getElementById('ssnPeer');
+  assert.ok(peerSel.options.length >= 1, 'setup: the send dialog\'s peer select was never populated');
+  peerSel.value = PEER.fingerprint;
+  doc.getElementById('ssnAddr').value = '';
+  sendAddress = undefined;
+  doc.getElementById('ssnGo').click();
+  await settle();
+  assert.equal(sendAddress, '',
+    'Send refused an empty address, so the LAN path the server offers for exactly that case cannot be reached');
+  doc.getElementById('sessionSendModal').hidden = true;
+  await settle();
 });
 
 test('the address input is inside the advanced disclosure, not on the default surface', async () => {

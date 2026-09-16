@@ -105,7 +105,8 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		}
 		signed, err = sign.SignExternal(pdfBytes, es.P12, p.Passphrase, opts)
 		if errors.Is(err, sign.ErrWrongPassphrase) {
-			httpError(w, http.StatusUnauthorized, "wrong passphrase")
+			// 422, not 401 — see handleExternalSignerImport (/pending 506).
+			httpError(w, http.StatusUnprocessableEntity, "wrong passphrase")
 			return
 		}
 	} else {

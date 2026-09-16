@@ -988,7 +988,11 @@ els.managePeersBtn.onclick = () => { els.peersModal.hidden = false; loadPeers();
 // Remove button. The status line reads the public cert — no passphrase needed.
 async function loadExtSigner() {
   try {
-    const info = await (await apiFetch('/api/identity/external')).json();
+    const res = await apiFetch('/api/identity/external');
+    // A refusal body parsed as the answer read `present: undefined` and said "None imported" about
+    // a vault that may hold one (/pending 506's info list).
+    if (!res.ok) { els.extSignerStatus.textContent = ''; return; }
+    const info = await res.json();
     if (info.present) {
       const exp = info.notAfter ? ' · expires ' + new Date(info.notAfter).toLocaleDateString() : '';
       els.extSignerStatus.textContent = 'Imported: ' + (info.subject || 'certificate') +
@@ -1007,7 +1011,11 @@ els.extP12Import.onclick = async () => {
   form.append('p12', file, file.name);
   form.append('passphrase', els.extP12Pass.value);
   const res = await apiFetch('/api/identity/external', { method: 'POST', body: form });
-  if (res.status === 401) { els.extP12Pass.focus(); return toast('Wrong passphrase, or not a PKCS#12 file'); }
+  // **422, not 401 (/pending 506).** `apiFetch` treats EVERY 401 as "the vault locked": it refreshes
+  // the status and throws before this line runs, so the branch that used to read 401 here was dead —
+  // a wrong passphrase showed nothing at all and left an unhandled rejection. The server now answers
+  // a wrong certificate passphrase with 422, which is a fact about the request rather than the session.
+  if (res.status === 422) { els.extP12Pass.focus(); return toast('Wrong passphrase, or not a PKCS#12 file'); }
   if (!res.ok) { toast(await errText(res, 'Could not import certificate')); return; }
   els.extP12Pass.value = ''; els.extP12File.value = '';
   loadExtSigner();
@@ -1076,22 +1084,28 @@ async function renderAttestation(lines, rect) {
 async function cosign() {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
+  // **And the document with it (/pending 498).** The name was captured and the bytes were not:
+  // `bakedForm()` ran after the quote and the attestation render, so a switch in that window
+  // signed whichever document was active by then — its bytes, under this document's quote and
+  // this document's filename. A signature on the wrong document, named as the right one.
+  const owner = view;
+  const opDoc = owner.docMeta;
   const fingerprint = els.cosignPeer.value;
   if (!fingerprint) return;
   const intent = els.cosignIntent.value;
   els.cosignModal.hidden = true;
   const qr = await apiFetch('/api/cosign/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fingerprint, intent }),
+    body: JSON.stringify({ fingerprint, intent }), docId: opDoc && opDoc.id,
   });
   if (!qr.ok) { toast(await errText(qr, 'could not start co-signing')); return; }
   const q = await qr.json();
   const png = await renderAttestation(q.lines, q.rect);
 
-  const form = await bakedForm();
+  const form = await bakedForm(owner);
   form.append('params', JSON.stringify({ fingerprint, intent, when: q.when }));
   form.append('appearance', png, 'attestation.png');
-  const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form });
+  const sr = await apiFetch('/api/cosign/sign', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!sr.ok) { toast(await errText(sr, 'could not co-sign')); return; }
   openSaveAs(await sr.blob(), exportName + '-cosigned.pdf', 'Save co-signed PDF');
 }
@@ -1215,6 +1229,16 @@ function reflectArmed(on) {
 
 let noticeShownAt = '';
 
+// rescueDocId is the document a "Signed, but not saved" notice's "Save a copy…" saves: the arrival
+// `openArrivalInNewView` installed, recorded by id at the moment it installed it (/pending 498).
+//
+// The button used to save whichever document was ACTIVE at the click. That was the arrival only
+// until the user touched the tab strip — and the notice is sticky and persists, so the likeliest
+// click is some time later, on the user's own document, which was then saved under
+// `-cosigned.pdf` while the co-signed bytes stayed unsaved in the other tab. Cleared when a new
+// notice arrives, because the notice is raised on the poll BEFORE the arrival is installed.
+let rescueDocId = '';
+
 // reflectNotice is the READER for sessionStatus.notice — the sticky failure surface P08.S08
 // built and nothing consumed.
 //
@@ -1236,6 +1260,8 @@ function reflectNotice(n) {
   // screen reader forever, while a genuinely new failure does re-announce.
   if (n.at === noticeShownAt) return;
   noticeShownAt = n.at;
+  // A new failure has its own document or none — see rescueDocId.
+  rescueDocId = '';
   els.sessionNoticeText.textContent = n.detail ? n.summary + ' — ' + n.detail : n.summary;
   // `what` is the stable key a surface can branch on — that is its declared purpose, and it
   // exists so the branch is on a key rather than on the prose of `summary`, which is a sentence
@@ -1246,7 +1272,14 @@ function reflectNotice(n) {
   // rescue possible: `signed-not-saved`'s own detail says "The document is open — save a copy
   // somewhere with space". `hop-not-mirrored` has no local document to offer, so it gets the
   // sentence and no button rather than a control that would do nothing.
-  const rescuable = n.what === 'signed-not-saved' || n.what === 'received-not-saved';
+  //
+  // **`received-not-saved` is NOT rescuable, and offering it saved the wrong document (/pending
+  // 498).** A one-way receive whose write failed returns `ErrNotStored` before `addDoc` runs
+  // (session.go `saveReceived`): no tab is opened, and the server's own detail says "arm again and
+  // ask them to resend". The button nonetheless saved the ACTIVE document — the user's own, not
+  // the one that arrived — as `<name>-cosigned.pdf`. Only a co-sign that could not persist leaves
+  // its bytes in a tab.
+  const rescuable = n.what === 'signed-not-saved';
   els.sessionNoticeAction.hidden = !rescuable;
   els.sessionNoticeAction.textContent = rescuable ? 'Save a copy…' : '';
   els.sessionNotice.hidden = false;
@@ -1834,6 +1867,7 @@ async function openArrivalInNewView() {
     // view holding no document. Before the strip existed that was invisible; it is the
     // sort of thing a new surface exposes rather than causes.
     if (!(await installOpened(meta))) return;
+    if (meta.id) rescueDocId = meta.id;
   } catch { toast('co-signed, but could not refresh the view'); }
 }
 
@@ -1971,8 +2005,10 @@ async function sendableForm() {
 async function sendToPeer() {
   const opt = els.ssnPeer.selectedOptions[0];
   if (!opt) return;
+  // **An empty address is the LAN path, not a mistake** (/pending 506) — `handleSessionSend` resolves
+  // it by browsing the link for the pinned peer, exactly as P05.S12 made the co-sign initiate do. The
+  // refusal that stood here made that path unreachable from Send while Co-sign had lost it long ago.
   const address = els.ssnAddr.value.trim();
-  if (!address) { toast('Enter the peer address'); return; }
   els.ssnGo.disabled = true; els.ssnProgress.hidden = false;
   try {
     const form = await sendableForm();
@@ -2509,7 +2545,11 @@ function syncTabs() {
   // Rebuilding wholesale is the right call for eight buttons — see above — but it
   // destroys the focused element, and "the control you were on vanished" is a real
   // regression for anyone not using a mouse, not a cosmetic one.
-  const focusedIndex = [...strip.children].indexOf(document.activeElement);
+  //
+  // **Focus WITHIN a tab, not only ON one (/pending 506).** Closing a tab is a press on its ×, which
+  // is a child of the tab — so `indexOf(activeElement)` read -1, the rebuild destroyed the ×, and
+  // focus fell to <body>: a keyboard user who closed a document was thrown to the top of the page.
+  const focusedIndex = [...strip.children].findIndex((c) => c.contains(document.activeElement));
   const several = views.length > 1;
   // The two close controls track the same threshold as the strip. With one document
   // open, "Close view" and "Close all" name the same act, so the app shows one button
@@ -2522,7 +2562,12 @@ function syncTabs() {
   els.closeAllBtn.hidden = !several;
   strip.hidden = !several;
   strip.textContent = '';
-  if (!several) return;
+  if (!several) {
+    // The strip itself is gone, so there is no tab to land on — the menubar's first control, which is
+    // the fallback the dialog focus-restore uses for the same situation.
+    if (focusedIndex >= 0) document.getElementById('menubar')?.querySelector('button')?.focus();
+    return;
+  }
   for (const v of views) {
     // A DIV with role="tab", not a <button>. The close affordance is a real <button>
     // inside it, and a button inside a button is invalid HTML that browsers reparent —
@@ -3082,7 +3127,10 @@ async function setDocumentFromServer(meta, target = view) {
   // NOT marked stale: a newer load is already in flight for this view and owns what it
   // shows. Marking here would leave a banner the successful load then has to clear, and
   // the window in between is exactly when the user is looking.
-  if (gen !== target.docGen) return; // a newer load superseded this one
+  // A newer load superseded this one. Its pdf.js document is destroyed on the way out — nothing else
+  // holds it, and returning without this kept a whole parsed document (and its worker state) alive for
+  // the life of the page (/pending 506's info list). Same idiom as the other destroy sites.
+  if (gen !== target.docGen) { doc.loadingTask?.destroy?.().catch(() => {}); return; }
   target.stale = ''; // this render IS the document `docMeta` names
   // Recorded on the TARGET, not painted directly, for the reason the block above gives:
   // a background load must not put its banner over the document the user is reading.
@@ -3399,20 +3447,21 @@ els.repointGo.onclick = () => repointKey();
 // informs leaves the user knowing something is armed and with no way to reach it.
 els.armedPill.onclick = () => { els.sessionRecvModal.hidden = false; };
 els.sessionNoticeDismiss.onclick = () => { els.sessionNotice.hidden = true; };
-// The recovery action. It saves the ACTIVE document, which is the one the arrival opened —
-// `openArrivalInNewView` puts it in its own view and activates it, and the notice is raised on
-// the same poll. Deliberately the ordinary Save-As flow rather than a bespoke route: the bytes
-// are already here, and a second download path for the same document would be a second thing to
-// keep correct.
+// The recovery action. It saves the ARRIVAL — `rescueDocId`, recorded when
+// `openArrivalInNewView` installed it — and never simply the active document, which is the arrival
+// only until the user switches tabs (/pending 498). Deliberately the ordinary Save-As flow rather
+// than a bespoke route: the bytes are already here, and a second download path for the same
+// document would be a second thing to keep correct.
 els.sessionNoticeAction.onclick = async () => {
-  const d = view && view.docMeta;
-  if (!d || !d.id) { toast('No document is open to save'); return; }
+  const target = rescueDocId && views.find((v) => v.docMeta && v.docMeta.id === rescueDocId);
+  const d = target && target.docMeta;
+  if (!d || !d.id) { toast('The co-signed document is no longer open'); return; }
   // **Both the id and the NAME are captured here, at operation entry** (ADR-001). The first
   // cut called `exportBase()` after the await, and tier 2's pinning guard went red on it: an
   // export that names its file when the fetch RESOLVES names it for whatever document is
   // current then, which for a rescue is the one case where the user has two documents open and
-  // is about to lose one of them.
-  const exportName = exportBase();
+  // is about to lose one of them. Named from the TARGET view, which need not be the active one.
+  const exportName = baseNameOf(target);
   const res = await apiFetch('/api/pdf?id=' + encodeURIComponent(d.id), { docId: d.id });
   if (!res.ok) { toast('Could not read the document to save it'); return; }
   openSaveAs(await res.blob(), (exportName || 'document') + '-cosigned.pdf', 'Save a copy');
@@ -3441,15 +3490,27 @@ els.closeAllBtn.onclick = requestClose;
 // everything that reaches it, and this is the one caller for which that is wrong.
 async function installOpened(meta) {
   let opened;
-  if (views.length === 1 && !view.pdfDocument) {
-    // Named explicitly, though `view` is also the default. The condition guarantees
-    // there is exactly one view, so the default would be correct — but "every reload
-    // names the view it lands in" is a law that is worth nothing if it is followed
-    // except where someone judged it unnecessary, and the guard that enforces it
-    // cannot read a condition three lines up.
-    await setDocumentFromServer(meta, view);
-    setDirty(view, openedDirty(meta));
-    opened = !!view.pdfDocument;
+  // **`installing` is a claim on the empty view, taken synchronously (/pending 498).** The test
+  // below reads "no document yet", and the document does not arrive until the load's awaits have
+  // run — so two opens overlapping (a second Open during a slow first load, or the co-sign
+  // arrival landing during one) both took this branch and both loaded into the same view. The
+  // second replaced the first, and the first stayed open on the server with no tab: the orphan
+  // P06.S01 exists to end. The claim sends the second open to its own view.
+  if (views.length === 1 && !view.pdfDocument && !view.installing) {
+    const target = view;
+    target.installing = true;
+    try {
+      // Named explicitly, though `view` is also the default. The condition guarantees
+      // there is exactly one view, so the default would be correct — but "every reload
+      // names the view it lands in" is a law that is worth nothing if it is followed
+      // except where someone judged it unnecessary, and the guard that enforces it
+      // cannot read a condition three lines up.
+      await setDocumentFromServer(meta, target);
+    } finally {
+      target.installing = false;
+    }
+    setDirty(target, openedDirty(meta));
+    opened = !!target.pdfDocument;
   } else {
     opened = await openInNewView(meta);
     if (opened) {
@@ -4577,8 +4638,17 @@ async function openSigDetails() {
     body.appendChild(note);
   }
   els.sigDetailsModal.hidden = false;
-  augmentSigDetails(rows);
+  augmentSigDetails(rows, view, ++sigDetailsSeq);
 }
+
+// sigDetailsSeq names the signature-details panel currently being built (/pending 498).
+//
+// The panel draws its rows synchronously and then appends the verdicts that need the server —
+// "One proceeding", "Complete — all N signed", "Not on this ceremony's roster" — after an await.
+// Those were appended to `#sigDetailsBody` whatever it held by then, so a switch and a reopen in
+// that window put document A's completeness verdict under document B's signers. Of everything in
+// this file, a false sentence about who signed is the one a receiving reviewer relies on.
+let sigDetailsSeq = 0;
 
 // ATTESTATION_TAG_VERSION is the attestation format version this build can read — the client half
 // of `p2p.attestationTagVersion`. A signature declaring a higher one is reported as unreadable
@@ -4594,10 +4664,10 @@ const ATTESTATION_TAG_VERSION = 1;
 // key + whether the viewer has pinned them. The parse + cross-binding are done in
 // Go (p2p); this only renders. Wording stays key-level — it confirms each party
 // attests to the other's fingerprint, not a CA-vouched identity.
-async function augmentSigDetails(rows) {
+async function augmentSigDetails(rows, owner = view, seq = sigDetailsSeq) {
   let atts, body;
   try {
-    const res = await apiFetch('/api/attestations');
+    const res = await apiFetch('/api/attestations', { docId: owner.docMeta && owner.docMeta.id });
     if (!res.ok) return;
     // The WHOLE body, not only the attestations: `obliged`/`signed` are the ceremony's
     // completeness (C16/C18) and live beside the list rather than inside it, because they are a
@@ -4605,6 +4675,8 @@ async function augmentSigDetails(rows) {
     body = await res.json();
     atts = body.attestations || [];
   } catch { return; }
+  // The panel these rows belong to must still be the one on screen — see sigDetailsSeq.
+  if (seq !== sigDetailsSeq || owner !== view || els.sigDetailsModal.hidden) return;
   const attested = [];
   atts.forEach((a, i) => {
     // **Every co-signing signature gets a row, including the one that accepts nobody
@@ -5767,7 +5839,7 @@ async function buildThumbnails(gen = view.docGen, owner = view) {
     rotL.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 270 }); };
     const rot = document.createElement('button'); rot.textContent = '↻'; rot.title = 'Rotate right';
     rot.onclick = (e) => { e.stopPropagation(); if (owner === view) pageOp('rotate', { pages: String(n), deg: 90 }); };
-    const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete page';
+    const del = document.createElement('button'); del.textContent = '×'; describeButton(del, 'Delete page');
     del.onclick = (e) => { e.stopPropagation(); if (owner === view && owner.pdfDocument.numPages > 1) pageOp('delete', { pages: String(n) }); };
     acts.append(rotL, rot, del);
 
@@ -5983,10 +6055,10 @@ els.thumbs.addEventListener('dragend', onThumbDragEnd);
 // another — past the pin, with a success toast, and with the undo history cleared
 // by the commit so there was no way back.
 //
-// It is reachable: activateView's only call site is the co-sign arrival poll, which
-// fires on a timer the user does not control, and a bake on a large document takes
-// seconds. save() is the operation that already did this correctly and is the shape
-// copied here.
+// It is reachable: a click on the tab strip switches documents at any moment, and so does
+// the co-sign arrival poll, on a timer the user does not control — and a bake on a large
+// document takes seconds. save() is the operation that already did this correctly and is
+// the shape copied here.
 async function pageOp(op, extra = {}) {
   const owner = view;
   const opDoc = owner.docMeta;
@@ -6044,8 +6116,12 @@ els.appendInput.onchange = () => {
 let splitSrc = null; // offscreen render of the page being split
 
 async function openSplit() {
-  if (!view.pdfDocument) return;
-  const page = await view.pdfDocument.getPage(view.viewer.currentPageNumber);
+  // Captured before the render (/pending 498): the preview is of this document's page, and the
+  // dialog it opens splits the ACTIVE document's current page — so opening it after a switch
+  // showed one document's cut lines over a split of another's.
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  const page = await owner.pdfDocument.getPage(owner.viewer.currentPageNumber);
   const base = page.getViewport({ scale: 1 });
   const vp = page.getViewport({ scale: Math.min(2, 900 / base.width) });
   const cv = document.createElement('canvas');
@@ -6053,6 +6129,7 @@ async function openSplit() {
   const c = cv.getContext('2d');
   c.fillStyle = '#fff'; c.fillRect(0, 0, cv.width, cv.height);
   await page.render({ canvasContext: c, viewport: vp }).promise;
+  if (owner !== view) return;
   splitSrc = cv;
   drawSplitPreview();
   els.splitModal.hidden = false;
@@ -6346,7 +6423,7 @@ function renderPageLabels() {
     prefix.type = 'text'; prefix.className = 'outline-title'; prefix.placeholder = 'Prefix (optional)';
     prefix.value = r.prefix; prefix.oninput = () => { r.prefix = prefix.value; updatePlPreview(); };
     const del = document.createElement('button');
-    del.className = 'keydel'; del.textContent = '✕'; del.title = 'Remove range'; del.disabled = plRanges.length <= 1;
+    del.className = 'keydel'; del.textContent = '✕'; describeButton(del, 'Remove range'); del.disabled = plRanges.length <= 1;
     del.onclick = () => { plRanges.splice(i, 1); renderPageLabels(); };
     row.append(page, style, first, prefix, del);
     els.plList.appendChild(row);
@@ -6433,7 +6510,10 @@ async function buildOutline(gen = view.docGen, owner = view) {
       const a = document.createElement('a');
       a.textContent = it.title;
       a.style.paddingLeft = 4 + depth * 12 + 'px';
-      a.onclick = () => owner.linkService.goToDestination(it.dest);
+      // An <a> with no href is not focusable and has no role — see makeActivatable. It is a link in
+      // meaning (it moves within the document), so it says so.
+      a.setAttribute('role', 'link');
+      makeActivatable(a, () => owner.linkService.goToDestination(it.dest));
       owner.outlineList.appendChild(a);
       if (it.items?.length) render(it.items, depth + 1);
     }
@@ -6477,19 +6557,28 @@ function renderOutlineEditor() {
     outdent.textContent = '←'; outdent.title = 'Un-nest'; outdent.disabled = it.level === 0;
     outdent.onclick = () => { it.level = Math.max(0, it.level - 1); renderOutlineEditor(); };
     const del = document.createElement('button');
-    del.className = 'keydel'; del.textContent = '✕'; del.title = 'Delete';
+    del.className = 'keydel'; del.textContent = '✕'; describeButton(del, 'Delete bookmark');
     del.onclick = () => { view.outlineItems.splice(i, 1); renderOutlineEditor(); };
     row.append(title, page, indent, outdent, del);
     list.appendChild(row);
   });
 }
 async function openOutlineEditor() {
-  if (!view.pdfDocument) return;
+  // Captured before the read (/pending 498). The outline was fetched for one document and written
+  // onto whichever view was active when it returned, and the editor then opened on THAT one — so
+  // Save outline, which pins correctly from its own entry, posted document A's bookmarks into
+  // document B. A switch during the read closes the editor's reason to open at all: this document
+  // is no longer on screen, so nothing opens.
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  let items = [];
   try {
-    const res = await apiFetch('/api/outline');
+    const res = await apiFetch('/api/outline', { docId: owner.docMeta && owner.docMeta.id });
     if (!res.ok) throw new Error('outline');
-    view.outlineItems = ((await res.json()).items || []).map((it) => ({ title: it.title, page: it.page, level: it.level }));
-  } catch { view.outlineItems = []; }
+    items = ((await res.json()).items || []).map((it) => ({ title: it.title, page: it.page, level: it.level }));
+  } catch { items = []; }
+  if (owner !== view) return;
+  owner.outlineItems = items;
   renderOutlineEditor();
   els.outlineModal.hidden = false;
 }
@@ -6570,7 +6659,7 @@ function makeStamp(src, aspect, frac, opts, pv, owner = view) {
   const handle = document.createElement('span');
   handle.className = 'stamp-resize';
   const del = document.createElement('button');
-  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove stamp';
+  del.className = 'stamp-del'; del.textContent = '×'; describeButton(del, 'Remove stamp');
   el.append(img, handle, del);
   f.el = el;
 
@@ -6657,17 +6746,17 @@ async function loadImages() {
     name.className = 'name';
     name.textContent = m.name;
     card.append(img, name);
-    card.onclick = (e) => {
+    makeActivatable(card, (e) => {
       if (e.target.closest('.del')) return;
       const src = '/api/images/' + m.id;
       if (view.fillTarget) resolveFillTarget(src); else placeStamp(src);
-    };
+    }, 'Place ' + m.name);
     // Built-in (binary-shipped) signatures are read-only — no delete control.
     if (!m.builtin) {
       const del = document.createElement('button');
       del.className = 'del';
       del.textContent = '×';
-      del.title = 'Delete';
+      describeButton(del, 'Delete ' + m.name);
       del.onclick = async (e) => {
         e.stopPropagation();
         const r = await apiFetch('/api/images/' + m.id, { method: 'DELETE' });
@@ -6878,7 +6967,13 @@ function downloadBlob(blob, name) {
 // a user tells two documents apart in a workflow whose whole point is which document
 // was signed.
 function exportBase() {
-  const b = (view.originalName || view.docMeta.name || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
+  return baseNameOf(view);
+}
+
+// baseNameOf is exportBase for a NAMED view, for the one caller whose document is not the active
+// one by construction — the co-sign rescue, which saves the arrival wherever it now sits.
+function baseNameOf(v) {
+  const b = ((v && (v.originalName || (v.docMeta && v.docMeta.name))) || 'document').replace(/\.[Pp][Dd][Ff]$/, '');
   return b || 'document';
 }
 
@@ -6918,7 +7013,7 @@ async function browseDir(path, t = saveAsDirEls(), onFile = null) {
     const li = document.createElement('li');
     li.textContent = label;
     if (cls) li.className = cls;
-    if (onclick) li.onclick = onclick;
+    if (onclick) makeActivatable(li, onclick);
     t.list.appendChild(li);
   };
   // Say why it's empty, so an unreadable folder can't pass for an empty one.
@@ -7019,8 +7114,11 @@ function updateBsPreview() {
 }
 
 async function openBookmarkSplit() {
-  if (!view.pdfDocument) return;
-  const outline = await view.pdfDocument.getOutline();
+  // Captured before the outline read, for the same reason as openSplit (/pending 498).
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  const outline = await owner.pdfDocument.getOutline();
+  if (owner !== view) return;
   if (!outline || !outline.length) { toast('This PDF has no bookmarks to split by'); return; }
   bsOutline = outline;
   els.bsPrefix.value = '';
@@ -7034,10 +7132,14 @@ async function bookmarkSplitGo() {
   if (!dir) return toast('Choose a folder');
   const count = bsOutline.length;
   if (!confirm(`Write ${count} file${count === 1 ? '' : 's'} to ${dir}? Files with the same name will be replaced.`)) return;
-  const form = await bakedForm();
+  // The document is the one the dialog was opened on — a switch closes this dialog, so the active
+  // view at the click is that one — captured before the bake so the files are cut from its bytes.
+  const owner = view;
+  const opDoc = owner.docMeta;
+  const form = await bakedForm(owner);
   form.append('dir', dir);
   form.append('prefix', els.bsPrefix.value);
-  const res = await apiFetch('/api/split-bookmarks', { method: 'POST', body: form });
+  const res = await apiFetch('/api/split-bookmarks', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) { toast(await errText(res, 'could not split')); return; }
   const meta = await res.json();
   els.bookmarkSplitModal.hidden = true;
@@ -7463,9 +7565,9 @@ els.saveEditableBtn.onclick = async () => {
 // bottom-left (y = the baseline) — the same space rectPoints produces, so field
 // rects and text positions compare directly. Empty on an image-only page (no
 // text layer). Mirrors the text gather in the Detect / Edit-text handlers.
-async function pageTextItems(n) {
+async function pageTextItems(n, owner = view) {
   try {
-    const tc = await (await view.pdfDocument.getPage(n)).getTextContent();
+    const tc = await (await owner.pdfDocument.getPage(n)).getTextContent();
     return tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({
       str: it.str, x: it.transform[4], y: it.transform[5],
       w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]),
@@ -7508,17 +7610,24 @@ function suggestFieldName(rect, items) {
 
 let pendingAuthor = []; // candidate fields awaiting naming in fieldNameModal
 els.saveFillableBtn.onclick = async () => {
-  if (!view.pdfDocument) return;
-  pendingAuthor = collectAuthorFields();
-  if (!pendingAuthor.length) { toast('Run Detect or place text/checkbox fields first'); return; }
+  // Captured at entry (/pending 498). The fields are collected from this document, the naming pass
+  // awaits one text read per page, and the naming dialog then opened on whichever view was active
+  // — offering document A's fields, with their element references into A's pages, for authoring
+  // against document B. A switch during the naming pass opens nothing.
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  const fields = collectAuthorFields();
+  if (!fields.length) { toast('Run Detect or place text/checkbox fields first'); return; }
   // Pre-name each field from the form's own text (see suggestFieldName); each
   // page's text layer is fetched once. Conservative, so anything unclear — and
   // every field on an image-only scan — stays field_N.
   const textByPage = new Map();
-  for (const f of pendingAuthor) {
-    if (!textByPage.has(f.page)) textByPage.set(f.page, await pageTextItems(f.page));
+  for (const f of fields) {
+    if (!textByPage.has(f.page)) textByPage.set(f.page, await pageTextItems(f.page, owner));
     f.suggested = suggestFieldName(f.rect, textByPage.get(f.page));
   }
+  if (owner !== view) return;
+  pendingAuthor = fields;
   els.fieldNameList.innerHTML = '';
   pendingAuthor.forEach((f, i) => {
     const row = document.createElement('label');
@@ -7547,6 +7656,8 @@ els.fieldNameCancel.onclick = () => { els.fieldNameModal.hidden = true; clearNam
 els.fieldNameGo.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
+  const owner = view;
+  const opDoc = owner.docMeta;
   els.fieldNameModal.hidden = true;
   clearNamingHilite();
   // Normalize names client-side so authoring never hits pdfcpu's empty/duplicate
@@ -7583,14 +7694,24 @@ els.fieldNameGo.onclick = async () => {
     fields.push(spec);
   });
   if (!fields.length) return;
-  // Post the base document WITHOUT baking the overlay fields — they become widgets.
-  const saved = view.pdfDocument.annotationStorage.size > 0
-    ? await view.pdfDocument.saveDocument()
-    : await view.pdfDocument.getData();
+  // **The document as the user sees it, minus only the fields being authored (/pending 506).** This
+  // posted the RAW bytes — `saveDocument()`/`getData()` — so everything else Nib draws through the
+  // bake was missing from the fillable form: text edits, stamps and signatures placed from the
+  // library, borders, shapes, notes, and the covers under edited text (which put the original words
+  // back). The authored fields themselves stay out, because they become widgets and a burned-in copy
+  // would sit underneath each one.
+  const exclude = new Set(pendingAuthor.map((f) => f.src).filter(Boolean));
+  let saved;
+  try {
+    saved = await bakedBytes(opDoc && opDoc.id, owner, exclude);
+  } catch (e) {
+    toast(e.message || 'could not apply edits');
+    return;
+  }
   const form = new FormData();
   form.append('pdf', new Blob([saved], { type: 'application/pdf' }), 'doc.pdf');
   form.append('fields', JSON.stringify(fields));
-  const res = await apiFetch('/api/form/author', { method: 'POST', body: form });
+  const res = await apiFetch('/api/form/author', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) { toast('could not create fillable form'); return; }
   openSaveAs(await res.blob(), exportName + '-fillable.pdf', 'Save fillable PDF');
 };
@@ -7836,7 +7957,8 @@ els.fzGo.onclick = async () => {
     passphrase: signAs === 'external' ? els.fzPassphrase.value : '',
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
-  if (res.status === 401) { els.fzPassphrase.focus(); els.fzPassphrase.select(); return toast('Wrong certificate passphrase'); }
+  // 422 for the same reason as the certificate import above: a 401 never reaches this line.
+  if (res.status === 422) { els.fzPassphrase.focus(); els.fzPassphrase.select(); return toast('Wrong certificate passphrase'); }
   if (!res.ok) { toast('Could not finalize'); return; }
   els.finalizeModal.hidden = true;
   els.fzPassphrase.value = '';
@@ -7925,17 +8047,24 @@ function timestampVerifyMessage(r) {
 
 // Autofill: set matching form-field values from the saved profile.
 els.autofillBtn.onclick = async () => {
-  if (!view.pdfDocument) return toast('Open a PDF first');
+  // Captured at entry (/pending 498). Two awaits sit before the first write, and the writes went to
+  // whichever document was active by then — filling a form the user had not asked to fill, with a
+  // toast telling them to review it. A switch in either window stops the fill before anything is
+  // written: the click was about a document that is no longer on screen.
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
   const res = await apiFetch('/api/profile');
   const profile = res.ok ? await res.json() : {};
+  if (owner !== view) return;
   if (!Object.keys(profile).length) return toast('No profile yet — edit it first');
-  const objs = await view.pdfDocument.getFieldObjects();
+  const objs = await owner.pdfDocument.getFieldObjects();
+  if (owner !== view) return;
   if (!objs) return toast('This PDF has no form fields');
   let count = 0;
   for (const [name, arr] of Object.entries(objs)) {
     if (profile[name] === undefined) continue;
     for (const o of arr) {
-      view.pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] });
+      owner.pdfDocument.annotationStorage.setValue(o.id, { value: profile[name] });
       // **And the element, if one is on screen already.** pdf.js builds a widget's input
       // FROM storage at render time and never pushes a later storage change into an
       // element it has already made — and `refresh()` below does not rebuild the
@@ -7943,7 +8072,7 @@ els.autofillBtn.onclick = async () => {
       // landed, the toast reported N fields filled, and the form the user was looking at
       // did not move. Storage stays the write of record: it is what a page not yet
       // rendered reads when it renders.
-      const el = view.container.querySelector(`[data-element-id="${CSS.escape(o.id)}"]`);
+      const el = owner.container.querySelector(`[data-element-id="${CSS.escape(o.id)}"]`);
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
         || (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'radio'))) {
         el.value = profile[name];
@@ -7951,7 +8080,7 @@ els.autofillBtn.onclick = async () => {
       count++;
     }
   }
-  view.viewer.refresh?.();
+  owner.viewer.refresh?.();
   toast(count ? `Filled ${count} field(s) — review and Save` : 'No matching field names');
 };
 
@@ -8094,6 +8223,30 @@ function describeButton(el, text) {
   if (!el) return;
   el.title = text;
   el.setAttribute('aria-label', text);
+}
+
+// makeActivatable gives a click-only element the keyboard half of its click — the ONE door for that
+// rule (ADR-009, /pending 506, WCAG 2.1.1 Level A).
+//
+// Three surfaces were operable only with a pointer: the library's image cards (a <div> with an
+// onclick), the outline sidebar's entries (an <a> with no href, which is not focusable at all), and
+// the folder browser's rows (an <li> with an onclick) behind Open, Save As and both splits. So Place
+// a signature, jump to a bookmark and choose a folder had no keyboard path. Role, tab stop and
+// Enter/Space are set together here, because each of the three alone is a control a reader announces
+// and the keyboard cannot use, or one the keyboard reaches and a reader cannot name.
+//
+// A key pressed on a control INSIDE the element (the card's delete button) is that control's, never
+// the card's.
+function makeActivatable(el, action, label) {
+  if (!el) return;
+  el.tabIndex = 0;
+  if (!el.getAttribute('role')) el.setAttribute('role', 'button');
+  if (label) el.setAttribute('aria-label', label);
+  el.onclick = action;
+  el.onkeydown = (e) => {
+    if (e.target !== el) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); action(e); }
+  };
 }
 
 // ── Armed state is programmatic, not colour alone — P02.S01's sibling, P02.S02 ─────────────
@@ -8458,10 +8611,10 @@ function relayoutRedactMarks(owner) {
 // straight into view.redactMarks. Because pdf.js fragments a run at arbitrary points and
 // buildTextRows joins fragments with a space, a "compact" string drops those
 // injected boundary spaces (cx === NaN) so a pattern split across runs still matches.
-async function scanTextMatches(patterns) {
+async function scanTextMatches(patterns, owner = view) {
   const marks = [];
-  for (let n = 1; n <= view.pdfDocument.numPages; n++) {
-    const page = await view.pdfDocument.getPage(n);
+  for (let n = 1; n <= owner.pdfDocument.numPages; n++) {
+    const page = await owner.pdfDocument.getPage(n);
     // Match + build the box in the UNROTATED viewport, where buildTextRows' "text
     // advances horizontally" assumption holds; vp is the rendered viewport (page
     // /Rotate applied) the finished box is mapped back into — what the apply bake
@@ -8537,14 +8690,22 @@ els.rtFind.onclick = async () => {
   }
   if (!patterns.length) { els.rtStatus.textContent = 'Enter a word/phrase or tick a pattern.'; return; }
   els.rtStatus.textContent = 'Searching…';
-  const marks = await scanTextMatches(patterns);
+  // Captured before the page walk (/pending 498). The walk awaits every page and read
+  // `view.pdfDocument` on each, then pushed the marks onto whichever view was active at the end —
+  // so a switch mid-search could mix two documents' pages into one scan and land the boxes on a
+  // document they were not measured on. A redaction box over the wrong words is the failure this
+  // tool cannot afford: the real matches stay unmarked and the apply reports success. A switch
+  // closes this dialog, so the search result has no one to report to and is dropped.
+  const owner = view;
+  const marks = await scanTextMatches(patterns, owner);
+  if (owner !== view) return;
   if (!marks.length) {
     els.rtStatus.textContent = 'No matches found in the text layer (a scan? run OCR first).';
     return;
   }
   const pages = new Set(marks.map((m) => m.page));
-  view.redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
-  relayoutRedactMarks(view);
+  owner.redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
+  relayoutRedactMarks(owner);
   els.redactTextModal.hidden = true;
   toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.`);
 };
@@ -8633,6 +8794,12 @@ els.applyBoxSplitBtn.onclick = async () => {
   const page = owner.sbPage;
   const rectsFrac = owner.splitRects.slice();
   const base = (await owner.pdfDocument.getPage(page)).getViewport({ scale: 1 }); // PDF points
+  // **And the operation itself stops if the document changed (/pending 498).** Capturing the
+  // regions was half of it: `pageOp` captures `view` at ITS entry — after the await above — and so
+  // does its signature-loss confirm, so a switch here split the other document's page with this
+  // document's regions. Nothing has been disarmed yet, so the regions stay drawn on their own
+  // document and Apply works when the user comes back to it.
+  if (owner !== view) return;
   const f = { pageW: base.width, pageH: base.height };
   const rects = rectsFrac.map((m) => rectPoints(f, [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]));
   owner.splitBoxMode = false;
@@ -8948,12 +9115,28 @@ function setEditingEnabled(on) {
 
 function setSignLocked(locked) {
   view.signLocked = locked;
-  if (locked) { // leaving any active editing tool behind would be a dead, disabled mode
-    setMarkerMode(null);
-    if (view.redactMode) { view.redactMode = false; reflectRedact(); els.viewerWrap.style.cursor = ''; }
-    if (view.editMode) { view.editMode = false; reflectEdit(); els.viewerWrap.style.cursor = ''; }
-  }
+  if (locked) disarmEditingTools(); // leaving any active editing tool behind would be a dead, disabled mode
   applySignLock();
+}
+
+// disarmEditingTools puts down every tool that draws on the page — the ONE door for "nothing is
+// armed" (ADR-009, /pending 506).
+//
+// **The lock used to call `setMarkerMode(null)` and trust it to do this, and it does nothing of the
+// kind.** Every `exit*()` in setMarkerMode sits inside `if (m)`: it steps OUT of the other tools
+// only when a flag tool is being armed, so `setMarkerMode(null)` disarms the flags and nothing else.
+// Locking the marks therefore left Border, Note, Shape, Dropdown, Radio, Checkbox, Crop and
+// Split-by-box armed — their buttons disabled by the lock, so the armed tool could no longer even
+// be clicked off — and left a pdf.js Text/Highlight/Draw mode live on a document the toast had just
+// called "can no longer be edited". Every exit is a no-op when its tool is not armed.
+function disarmEditingTools() {
+  setMarkerMode(null);
+  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
+  if (view.editMode) { view.editMode = false; reflectEdit(); }
+  exitSplitBox(); exitBorder(); exitShape(); exitCrop();
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
+  if (view.activeTool) setTool(view.activeTool); // setTool toggles: the armed mode again is off
+  els.viewerWrap.style.cursor = '';
 }
 
 // applySignLock reflects view.signLocked across the whole UI. Safe to call whenever the
@@ -9070,7 +9253,7 @@ function buildMarker(type, frac, page, record = true, owner = view) {
   label.className = 'marker-label';
   label.textContent = MARKER_LABELS[type];
   const del = document.createElement('button');
-  del.className = 'marker-del'; del.textContent = '×'; del.title = 'Remove flag';
+  del.className = 'marker-del'; del.textContent = '×'; describeButton(del, 'Remove flag');
   del.onclick = (e) => { e.stopPropagation(); if (flagsEditable()) removeField(f, true, owner); };
   el.append(label, del);
   f.el = el;
@@ -9596,13 +9779,15 @@ document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) clos
 // that the same button, clicked, removes. Every one of the 37 has such a control and they
 // follow one naming convention, checked across the whole file.
 //
-// The LAST open dialog in document order is the one dismissed: dialogs stack in that
-// order, and Escape means "the one in front of me".
+// The dialog dismissed is `topModal()`'s — the one OPENED last, which is the one in front.
+// It used to be the last in DOCUMENT order, and those differ: the co-sign dialog
+// (#sessionInitModal) sits after the spoken check (#verifyModal) in index.html and is the
+// one opened first, so Escape clicked the co-sign dialog's Cancel — disabled while the
+// request is in flight — and the four words stayed up with no key that could answer them.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   closeMenu();
-  const open = [...document.querySelectorAll('div[id$="Modal"]:not([hidden])')];
-  const top = open[open.length - 1];
+  const top = topModal();
   if (!top) return;
   e.preventDefault();
   const dismiss = top.querySelector('button[id$="Cancel"], button[id$="Close"]');
@@ -9724,6 +9909,34 @@ document.addEventListener('focusin', (e) => {
   if (focusTrail.length > 2) focusTrail.shift();
 });
 
+// modalOrder is the open dialogs in the order they OPENED, oldest first (/pending 498).
+//
+// **Document order is not stacking order, and three things read it as if it were.** Every
+// dialog shares one `z-index: 110`, so among open ones the later in index.html paints on top;
+// the focus trap and Escape both took the last in document order too. All three agree, and
+// all three are wrong whenever a dialog opens over one that comes LATER in the file — which is
+// exactly the co-sign flow: `sessionInit` keeps #sessionInitModal open while its request is in
+// flight, and the spoken check opens #verifyModal (earlier in index.html) on top of it. The
+// four words painted underneath, the trap pulled focus back to the co-sign dialog, and Escape
+// hit its Cancel, which is disabled for the duration.
+//
+// Maintained by the per-dialog observer below — the one place that already sees every
+// open and close — and read through ONE door, `topModal()` (ADR-009), by the trap, by Escape,
+// and by the paint order the observer writes.
+const modalOrder = [];
+
+// topModal is the dialog in front: the most recently opened one still open. A dialog unhidden
+// in this tick has not reached the observer yet (its record arrives a microtask later), so any
+// open dialog missing from `modalOrder` is newer than every one in it — it goes last, in
+// document order among themselves, which is the best information there is for that instant.
+function topModal() {
+  const open = [...document.querySelectorAll(modalSelector + ':not([hidden])')];
+  if (!open.length) return null;
+  const pending = open.filter((m) => !modalOrder.includes(m));
+  if (pending.length) return pending[pending.length - 1];
+  return modalOrder.filter((m) => !m.hidden).pop() || null;
+}
+
 // Containment. On focusin, if the topmost open dialog does not contain the target, pull
 // focus back to the dialog itself. Reading the live DOM each time rather than computing
 // first/last focusable at open time, because six of these dialogs build their rows AFTER
@@ -9734,8 +9947,7 @@ document.addEventListener('focusin', (e) => {
 // given tabindex="-1" above, so the focus call always succeeds. Do not "simplify" that
 // tabindex away.
 document.addEventListener('focusin', (e) => {
-  const open = [...document.querySelectorAll(modalSelector + ':not([hidden])')];
-  const top = open[open.length - 1];
+  const top = topModal();
   if (!top || top.contains(e.target)) return;
   top.focus();
 });
@@ -9754,6 +9966,16 @@ for (const m of document.querySelectorAll(modalSelector)) {
     // restore-focus on each of those would teleport the user on every tab change.
     if (open === wasOpen) return;
     wasOpen = open;
+    // Stacking first, and before the focus call below: `m.focus()` fires focusin, and the trap
+    // reads `topModal()` — which must already say this dialog is in front, or it would pull
+    // focus straight back to the one underneath. The z-index is the paint half of the same
+    // fact; the stylesheet's 110 stays the base, and each dialog above the first sits one
+    // higher, so what is drawn in front is what the keyboard is talking to.
+    const at = modalOrder.indexOf(m);
+    if (at !== -1) modalOrder.splice(at, 1);
+    if (open) modalOrder.push(m);
+    else m.style.zIndex = '';
+    modalOrder.forEach((d, i) => { d.style.zIndex = i ? String(110 + i) : ''; });
     if (open) {
       // The most recent focus that is NOT already inside this dialog. Five dialogs focus
       // their own field synchronously right after unhiding (decryptPw, encryptPw,
@@ -10128,7 +10350,7 @@ function makeBox(frac, opts, owner = view) {
   const handle = document.createElement('span');
   handle.className = 'stamp-resize';
   const del = document.createElement('button');
-  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove border';
+  del.className = 'stamp-del'; del.textContent = '×'; describeButton(del, 'Remove border');
   el.append(handle, del);
   f.el = el;
 
@@ -10224,7 +10446,7 @@ function makeDropdown(frac, opts, owner = view) {
   const handle = document.createElement('span');
   handle.className = 'stamp-resize';
   const del = document.createElement('button');
-  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove dropdown';
+  del.className = 'stamp-del'; del.textContent = '×'; describeButton(del, 'Remove dropdown');
   el.append(input, caret, handle, del);
   f.el = el; f.optsInput = input;
 
@@ -10323,7 +10545,7 @@ function makeRadio(frac, opts, owner = view) {
   const handle = document.createElement('span');
   handle.className = 'stamp-resize';
   const del = document.createElement('button');
-  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove radio group';
+  del.className = 'stamp-del'; del.textContent = '×'; describeButton(del, 'Remove radio group');
   el.append(input, caret, handle, del);
   f.el = el; f.optsInput = input;
 
@@ -10520,7 +10742,7 @@ function makeShape(frac, opts, owner = view) {
   const handle = document.createElement('span');
   handle.className = 'stamp-resize';
   const del = document.createElement('button');
-  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove shape';
+  del.className = 'stamp-del'; del.textContent = '×'; describeButton(del, 'Remove shape');
   el.append(canvas, handle, del);
   f.el = el; f.canvas = canvas;
 
@@ -10638,7 +10860,7 @@ function makeNote(frac, opts, owner = view) {
   const icon = document.createElement('span');
   icon.className = 'note-icon'; icon.textContent = '🗨';
   const del = document.createElement('button');
-  del.className = 'stamp-del'; del.textContent = '×'; del.title = 'Remove note';
+  del.className = 'stamp-del'; del.textContent = '×'; describeButton(del, 'Remove note');
   head.append(icon, del);
   const ta = document.createElement('textarea');
   ta.className = 'note-text'; ta.placeholder = 'Comment…';
@@ -11225,9 +11447,10 @@ function collectFields(owner = view) { return collectFieldsWithSources(owner).fi
 // implementations of "which overlays bake", and they would disagree the first time
 // either changed — the ADR-009 defect this repo has already paid for. One walk,
 // two outputs.
-function collectFieldsWithSources(owner = view) {
+function collectFieldsWithSources(owner = view, exclude = null) {
   const fields = [], sources = [];
   for (const f of owner.overlayFields) {
+    if (exclude && exclude.has(f)) continue; // becoming a form widget, not a mark — see fieldNameGo
     if (f.kind === 'text' && f.el.value.trim() !== '') {
       fields.push({ page: f.page, rect: rectPoints(f, f.frac), text: f.el.value });
       sources.push(f);
@@ -11378,12 +11601,13 @@ function clearFitNotice() {
 // typed value is ignored: authored fields are blank (a distributable template).
 function collectAuthorFields() {
   const out = [];
+  // `src` is the overlay record itself, so the bake can leave exactly these out (fieldNameGo).
   for (const f of view.overlayFields) {
     if (f.kind === 'text' || f.kind === 'check') {
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, el: f.el });
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, el: f.el, src: f });
     } else if (f.kind === 'dropdown' || f.kind === 'radio') {
       const options = f.optsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
-      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, options, el: f.el });
+      out.push({ page: f.page, rect: rectPoints(f, f.frac), kind: f.kind, options, el: f.el, src: f });
     }
   }
   return out;
@@ -11405,9 +11629,10 @@ function collectCovers(owner = view) {
 // collectStamps gathers image stamps: placed images/quick-stamps (library id or
 // inline PNG), circled choices (a pill/ellipse PNG over the picked option), and
 // checkbox X's.
-function collectStamps(owner = view) {
+function collectStamps(owner = view, exclude = null) {
   const out = [];
   for (const f of owner.overlayFields) {
+    if (exclude && exclude.has(f)) continue; // an authored checkbox is a widget, not an X — see fieldNameGo
     if (f.kind === 'stamp') {
       const rect = rectPoints(f, f.frac);
       if (f.imageId) out.push({ page: f.page, rect, image: f.imageId });
@@ -11434,7 +11659,9 @@ function collectStamps(owner = view) {
 // docId threads the CALLER's capture down. bakedBytes is entered from operations that
 // have usually already awaited, so its own entry is not a safe capture point — the
 // default exists only for the call sites that enter it first thing.
-async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view) {
+// `exclude` is a Set of overlay records to leave OUT of the bake — the one caller is Save as fillable
+// form, whose fields become AcroForm widgets and must not also be burned in underneath them.
+async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view, exclude = null) {
   // The request was already pinned by docId; the PREDICATE that decides whether to strip
   // NibFlags was not. Read after the bake round-trip, a save of a flagged document that
   // raced a switch got the OTHER document's answer, and the finished signed file kept its
@@ -11453,8 +11680,8 @@ async function bakedBytes(docId = view.docMeta && view.docMeta.id, owner = view)
   // the first caller to use it would have baked one document's pages with another
   // document's fields, stamps, covers and notes. No caller passed it, so nothing
   // exposed that.
-  const { fields, sources: fieldSources } = collectFieldsWithSources(owner);
-  const stamps = collectStamps(owner);
+  const { fields, sources: fieldSources } = collectFieldsWithSources(owner, exclude);
+  const stamps = collectStamps(owner, exclude);
   const covers = collectCovers(owner);
   const notes = collectNotes(owner);
   let out = saved;
@@ -11497,11 +11724,15 @@ async function bakedForm(owner = view) {
   return form;
 }
 
+let detectSeq = 0;
 els.detectBtn.onclick = async () => {
   // Captured at entry: a page render and a getTextContent sit between here and the
   // makeField calls at the end, and each of those builds a field for THIS document.
   const owner = view;
   if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
+  // Numbered (/pending 506's info list): two presses overlapping both cleared first and both added
+  // after their awaits, so every detected field appeared twice, stacked. Only the latest press adds.
+  const seq = ++detectSeq;
   clearDetected();
   const n = owner.viewer.currentPageNumber;
   const pv = owner.viewer.getPageView(n - 1);
@@ -11542,6 +11773,8 @@ els.detectBtn.onclick = async () => {
       return { str: it.str, x: t[4], y: t[5], w: it.width * dvp.scale, h: Math.abs(it.height * dvp.scale) };
     });
   } catch { /* image-only PDF: no text layer, skip word matching */ }
+  // A newer press owns the fields now, or the document is no longer the one on screen.
+  if (seq !== detectSeq || owner !== view) return;
   const ynItems = findYesNo(textItems);
 
   const inCell = (x, y) => cells.some((c) => x >= c.x0 - 2 && x <= c.x1 + 2 && y >= c.y0 - 2 && y <= c.y1 + 2);
@@ -12066,12 +12299,18 @@ function reflectReadAloud() {
   els.readAloudBtn.textContent = readingAloud ? 'Stop reading' : 'Read aloud';
 }
 
+// readAloudSeq numbers the starts, so a start still reading its page's text when the user stops, or
+// starts again, speaks nothing when that read returns (/pending 506's info list). Before it, Stop
+// during the read was overridden a moment later: the late start set `readingAloud` and spoke.
+let readAloudSeq = 0;
+
 // stopReadAloud is the ONE way reading ends, and every route out calls it (ADR-009's shape).
 //
 // There are five: pressing the button again, turning the page, switching document, closing the
 // document, and the utterance finishing. Without one door the flag and the speech queue drift
 // apart, and the symptom is a button that says "Stop reading" over silence.
 function stopReadAloud() {
+  readAloudSeq++;
   const sp = speech();
   if (sp && sp.cancel) sp.cancel();
   readingAloud = false;
@@ -12084,13 +12323,18 @@ async function startReadAloud() {
     toast('This browser cannot read aloud');
     return;
   }
-  if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  const n = view.viewer ? view.viewer.currentPageNumber : 1;
+  const owner = view;
+  if (!owner.pdfDocument) { toast('Open a PDF first'); return; }
+  const seq = ++readAloudSeq;
+  const n = owner.viewer ? owner.viewer.currentPageNumber : 1;
   let text = '';
   try {
-    const tc = await (await view.pdfDocument.getPage(n)).getTextContent();
+    const tc = await (await owner.pdfDocument.getPage(n)).getTextContent();
     for (const it of tc.items) { text += it.str; if (it.hasEOL) text += ' '; }
   } catch { /* image-only page: no text layer, handled below */ }
+  // Stopped, restarted, or switched away during the read — see readAloudSeq. A switch does not pass
+  // through stopReadAloud here (nothing is reading yet), so the document is checked too.
+  if (seq !== readAloudSeq || owner !== view) return;
   text = text.replace(/\s+/g, ' ').trim();
   if (!text) {
     // **The honest sentence, and it names the remedy.** A scanned page has no text layer, so there
@@ -13102,8 +13346,13 @@ function toast(msg) {
   }
   toastEl.textContent = msg;
   toastEl.classList.add('show');
-  setTimeout(() => toastEl.classList.remove('show'), 2500);
+  // One timer, restarted (/pending 506's info list). Each toast used to arm its own 2.5 s hide and
+  // none was cancelled, so a message shown 2 s after another was hidden by the FIRST one's timer half
+  // a second in — the second sentence was on screen too briefly to read.
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2500);
 }
+let toastTimer = 0;
 
 // Backstop for async handlers without their own try/catch: an operation that
 // throws (a failed bake, a mid-flight abort) surfaces as a toast instead of a
@@ -14701,6 +14950,17 @@ function parkCeremonySheet(moveFocus = true) {
 // to open. Binding on the way back makes "I opened the sheet, then went and opened the lease" a
 // supported path instead of a silent one, and re-pointing an EXISTING binding stays impossible.
 function bindCeremonySetupDoc() {
+  // **A binding to a document that is no longer open is released (/pending 506).** Monotone was the
+  // rule, and it held one step too far: close the bound document during the excursion and the pin
+  // named an id nothing held, so every Convene answered 409 while the sheet — reading `views` and
+  // finding nothing — told the user the document "is bound as soon as you come back". It never was,
+  // because this door refused to bind over a non-null id, and the only reset (a fresh Convene) is
+  // the button that RESUMES while parked. Releasing a dead pin is not re-pointing a live one: there
+  // is no document for the ceremony to be silently moved away from, and the line below says, in the
+  // same breath, which document it is now bound to.
+  if (ceremonySetupDoc !== null && !views.some((v) => v.docMeta && v.docMeta.id === ceremonySetupDoc)) {
+    ceremonySetupDoc = null;
+  }
   if (ceremonySetupDoc === null) {
     ceremonySetupDoc = (view.docMeta && view.docMeta.id) || null;
   }
@@ -15031,6 +15291,24 @@ async function conveneFromPanel() {
     });
   }
   if (!roster.length) { say('Choose at least one other person to sign.'); return; }
+  // **The bound document may have been closed from the tab strip behind the sheet (/pending 506).**
+  // Posting then would pin an id the server no longer holds (409, every time), and a null pin is
+  // worse — `docFor` answers it with the ACTIVE document. So this press rebinds through the one door
+  // and stops, which puts the new "This ceremony will be built from …" sentence in front of the user
+  // before anything is convened. The next press convenes the document it names.
+  //
+  // Two cases and not "any null": a null pin with NO document open posts as it always has, and the
+  // server's own refusal names the problem; a null pin while a document IS open would be answered with
+  // that document, silently, so it takes the visible rebind too.
+  const deadPin = ceremonySetupDoc !== null && !views.some((v) => v.docMeta && v.docMeta.id === ceremonySetupDoc);
+  const silentPin = ceremonySetupDoc === null && views.some((v) => v.docMeta && v.docMeta.id);
+  if (deadPin || silentPin) {
+    bindCeremonySetupDoc();
+    say(ceremonySetupDoc
+      ? 'The document this setup was for is no longer open. Check the document named above, then press Convene again.'
+      : 'Open the document this ceremony is for first — choose "See the document".');
+    return;
+  }
   const expires = document.getElementById('cerExpires')?.value || '';
   if (!expires) { say('Set the date this ceremony stays open until.'); return; }
   const body = {
@@ -15207,6 +15485,10 @@ function renderInvitations(d) {
   // the map is what makes the second one a one-line addition rather than a rewrite; an unknown
   // code still shows its text, because a warning nobody renders is a soft refusal nobody hears.
   const WARN_CONTROL = { 'sitting-ceiling': 'cerPeerPick' };
+  // A bound warning lives OUTSIDE `e.result`, beside its control, so clearing the result never reached
+  // it: every convene added another copy under the picker (/pending 506's info list). The previous
+  // convene's bound warnings go first; this result's are the only ones that describe it.
+  for (const old of document.querySelectorAll('.cerwarn[data-warn]')) old.remove();
   for (const wmsg of (d.warnings || [])) {
     const p = document.createElement('p');
     p.className = 'cerwarn';

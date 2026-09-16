@@ -210,6 +210,72 @@ test('focus cannot leave an open dialog', async () => {
   await settle();
 });
 
+// /pending 498. Two dialogs open at once, in the order the co-sign flow opens them: the co-sign
+// dialog first (sessionInit keeps it up while its request is in flight), then the spoken check on
+// top. #verifyModal comes BEFORE #sessionInitModal in index.html, so every reader of "the last in
+// document order" — the trap, Escape, and the shared z-index's paint order — picked the co-sign
+// dialog underneath. Driven in BOTH opening orders, because a fix that simply reversed document
+// order would pass the first and fail the second.
+async function stack(firstId, secondId) {
+  const first = doc.getElementById(firstId), second = doc.getElementById(secondId);
+  first.hidden = false;
+  await settle();
+  second.hidden = false;
+  await settle();
+  // The stimulus, asserted before anything is graded: both are open.
+  assert.equal(first.hidden || second.hidden, false, 'setup: the two dialogs are not both open');
+  return { first, second };
+}
+async function unstack(...ms) { for (const m of ms) m.hidden = true; await settle(); }
+
+for (const [firstId, secondId, cancelId] of [
+  ['sessionInitModal', 'verifyModal', 'verifyCancel'],
+  ['verifyModal', 'sessionInitModal', 'sinCancel'],
+]) {
+  test(`with ${secondId} opened over ${firstId}, the one opened last is in front for Escape, focus and paint`, async () => {
+    const { first, second } = await stack(firstId, secondId);
+    // Closed in a finally: a red here must not leave both dialogs open for the next case, which
+    // would then fail on inherited stacking rather than on its own condition (seen while probing).
+    try { await stackCase(first, second, cancelId); } finally { await unstack(first, second); }
+  });
+}
+
+async function stackCase(first, second, cancelId) {
+  const firstId = first.id, secondId = second.id;
+  {
+    const cancel = doc.getElementById(cancelId);
+    const other = [...first.querySelectorAll('button')].find((b) => !b.disabled);
+    assert.ok(cancel && other, 'setup: a dialog control is missing from index.html');
+
+    // Focus: a control in the dialog UNDERNEATH must not keep focus. The focusin is recorded, so a
+    // focus() that never landed (and left focus where the open put it) cannot pass for a trap.
+    let reached = false;
+    const mark = () => { reached = true; };
+    other.addEventListener('focusin', mark);
+    other.focus();
+    await settle();
+    other.removeEventListener('focusin', mark);
+    assert.ok(reached, `setup: focusing a control in ${firstId} never happened, so the trap was not exercised`);
+    assert.ok(second.contains(doc.activeElement) || doc.activeElement === second,
+      `focus was allowed into ${firstId} while ${secondId} was open over it — the trap is guarding the dialog underneath`);
+
+    // Paint: the one in front must stack above the one behind. The stylesheet's 110 is the base,
+    // so an empty inline value reads as 110.
+    const z = (m) => Number(m.style.zIndex || 110);
+    assert.ok(z(second) > z(first),
+      `${secondId} (z ${z(second)}) does not paint above ${firstId} (z ${z(first)}) — the dialog in front is drawn underneath`);
+
+    // Escape: it must reach the front dialog's own cancel, and only that one.
+    let hit = 0;
+    const spy = () => { hit++; };
+    cancel.addEventListener('click', spy);
+    esc();
+    await settle();
+    cancel.removeEventListener('click', spy);
+    assert.equal(hit, 1, `Escape did not click ${cancelId} — it dismissed ${firstId}, the dialog underneath`);
+  }
+}
+
 // ## What this cannot see
 //
 // - **Whether a focus target is actually rendered.** jsdom ignores `hidden` and has no
