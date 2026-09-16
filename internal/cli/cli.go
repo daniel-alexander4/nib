@@ -149,6 +149,7 @@ These subcommands run headlessly, without a browser:
   nib encrypt IN -o OUT           add AES-256 password protection (--password-file)
   nib decrypt IN -o OUT           remove password protection / owner restrictions
   nib nup IN -o OUT --n N         place N pages per sheet (2/4/6/9/16…)
+  nib booklet IN -o OUT           impose for saddle-stitch printing (print flipping on the short edge)
   nib normalize IN -o OUT         resize every page to the doc's most common size
   nib pdfa IN -o OUT               convert to a PDF/A-2b archival candidate (--gs: via Ghostscript)
   nib ua IN                        check the PDF/UA-1 clauses nib verifies (not a certificate)
@@ -250,9 +251,31 @@ func inPlaceFlag(fs *flag.FlagSet, p *bool) {
 // mode onto it, then renames over path (an atomic replace on every target OS).
 // A failed write or transform therefore never corrupts or relaxes the original.
 func writeAtomic(path string, data []byte) error {
-	info, err := os.Stat(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return err
+	}
+	return writeNamed(path, data)
+}
+
+// writeNamed is the one door every file this package writes goes through (`/pending 504`): a path
+// the user named, or one derived inside a directory they named. It is writeAtomic without the
+// requirement that the file already exist — a new file gets mode 0644, an existing one keeps its own.
+//
+// **Why not `os.WriteFile`, which four output paths used.** It truncates the target and then
+// writes, so `nib optimize a.pdf -o a.pdf` — or `--out-dir` pointed at the input's own folder —
+// destroyed the only copy the instant the output began, and a failure part-way left neither.
+// Through `WriteDurable` the original stays whole until the new bytes are on disk.
+//
+// **The one named exemption: a target that exists and is not a regular file** — `-o /dev/null`, a
+// named pipe. Renaming over a device is not what anyone asked for, and there is no copy to protect,
+// so those are written straight through.
+func writeNamed(path string, data []byte) error {
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return os.WriteFile(path, data, 0o644)
+		}
+		perm = info.Mode().Perm()
 	}
 	// Follow a symlink to its target before writing. os.Stat already follows one to
 	// read the mode, but CreateTemp+Rename replaces the LINK — so an in-place
@@ -279,7 +302,7 @@ func writeAtomic(path string, data []byte) error {
 	// The stat above and the `EvalSymlinks` below stay HERE rather than moving into the door:
 	// following a link is right for a path the user named on the command line and wrong for
 	// `atomicfile`'s other callers, which write inside `~/nib` and the config dir.
-	return atomicfile.WriteDurable(path, data, info.Mode().Perm())
+	return atomicfile.WriteDurable(path, data, perm)
 }
 
 // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,

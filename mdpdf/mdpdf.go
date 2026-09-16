@@ -557,18 +557,20 @@ func (l *layout) spec() ([]byte, error) {
 				"font":  map[string]any{"name": r.sty.font, "size": r.sty.size},
 			})
 		}
-		if len(texts) == 0 && len(l.boxes[i]) == 0 {
-			// pdfcpu rejects empty page content; a lone space keeps blank pages valid.
-			texts = []any{map[string]any{
-				"value": " ",
-				"pos":   []any{marginX, pageTop},
-				"font":  map[string]any{"name": fontBody, "size": sizeBody},
-			}}
+		boxes := l.boxes[i]
+		if len(texts) == 0 && len(boxes) == 0 {
+			// pdfcpu rejects empty page content, so a blank page draws something. **A box, never
+			// text** (`/pending 504`): the page's text operators must be exactly its runs, one
+			// each, because `Structure` describes them by position. A lone-space run here was a
+			// text operator no role described, so every document with a text-less page — a code
+			// block ending in blank lines that spill onto their own page, or a Markdown file with
+			// nothing printable — could not be tagged. Zero-sized, so nothing is visible.
+			boxes = []box{{x: marginX, y: pageTop}}
 		}
 		content["text"] = texts
-		if len(l.boxes[i]) > 0 {
+		if len(boxes) > 0 {
 			var bx []any
-			for _, b := range l.boxes[i] {
+			for _, b := range boxes {
 				bx = append(bx, map[string]any{
 					"pos":     []any{b.x, b.y},
 					"width":   b.w,

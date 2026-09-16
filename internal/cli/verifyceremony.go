@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -112,7 +113,9 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport 
 	rec, err := ceremony.CheckRecord(pdf, now)
 	if err != nil {
 		// No record at all is the ordinary case and is not a finding. Anything else is.
-		if strings.Contains(err.Error(), "no ceremony record") {
+		// By identity, not by text (`/pending 504`): `ErrNoRecord` is the sentinel `Extract` returns,
+		// and a reworded message would otherwise turn every ordinary document into an unreadable one.
+		if errors.Is(err, ceremony.ErrNoRecord) {
 			return ceremonyReport{}
 		}
 		return ceremonyReport{present: true, unreadable: err.Error()}

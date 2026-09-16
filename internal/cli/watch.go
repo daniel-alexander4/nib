@@ -139,11 +139,35 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 		errf("%v", err)
 		return
 	}
+	present := make(map[string]bool, len(entries))
+	// **A name that leaves the directory is forgotten** (`/pending 504`). Everything below is keyed by
+	// path, and `processed` was never cleared, so a file deleted and later replaced by a NEW file of the
+	// same name — the next scan from the same scanner, `invoice.pdf` again — was ignored for the rest
+	// of the run. Absence is the one signal that cannot come from the watch's own in-place rewrite: that
+	// is a rename over the entry, which is never missing from a listing.
+	//
+	// Deferred, so every return path prunes; the ReadDir failure above returns before this exists, so a
+	// transient listing error never forgets the whole directory.
+	defer func() {
+		for _, m := range []map[string]fileState{seen, failed} {
+			for p := range m {
+				if !present[p] {
+					delete(m, p)
+				}
+			}
+		}
+		for p := range processed {
+			if !present[p] {
+				delete(processed, p)
+			}
+		}
+	}()
 	for _, e := range entries {
 		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".pdf") {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
+		present[path] = true
 		if processed[path] {
 			continue
 		}
@@ -244,7 +268,11 @@ func watchTimestamp(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(proof, p, 0o644); err != nil {
+	// Through the atomic door, as watchUA's sidecar is and for its reason (`/pending 504`): this path is
+	// the directory's, and `os.WriteFile` followed a symlink planted at FILE.pdf.ots to a file outside
+	// it. A rename replaces the entry instead. Durable, because a proof is not re-derivable — it
+	// anchors the moment it was made.
+	if err := atomicfile.WriteDurable(proof, p, 0o644); err != nil {
 		return "", err
 	}
 	return "timestamped", nil
