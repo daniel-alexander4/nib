@@ -1,6 +1,13 @@
-// Package tagwrite is the one door every structure write goes through — `PLAN-accessibility.md` P10.S02.
+// Package tagwrite is the one door every USER-DIRECTED structure write goes through — committing a proposal
+// or editing an existing tree (`PLAN-accessibility.md` P10.S02).
 //
-// Two surfaces write structure: the Tags panel's routes (`internal/server/tags.go`) and `nib tag commit` /
+// **It is not the door for every structure write, and this comment said it was until `/pending 503`.** The
+// operations that author structure as part of producing a document — `TagOCRLayer`, `AuthorTaggedForm`,
+// the Markdown conversion's `tagMarkdown`, the n-up carry (`carryTagsThroughNUp`) — write a tree inside
+// `pdfops` and never pass here, so this package's signed refusal does not reach them. What guards those is
+// each one's own caller, not this door.
+//
+// Two surfaces write structure on a person's say-so: the Tags panel's routes (`internal/server/tags.go`) and `nib tag commit` /
 // `nib tag edit` (`internal/cli/tag.go`). Each needs the same three rules — a signed document is refused,
 // the written document must validate, and a request body reads the same way — and ADR-009 says a rule
 // holding at more than one site is written once. `pdfops` cannot hold the refusal: `sign`'s own tests

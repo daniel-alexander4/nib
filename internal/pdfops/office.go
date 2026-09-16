@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,9 +204,24 @@ func ConvertOfficeToPDF(data []byte, ext string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, soffice,
 		"--headless", "--nologo", "--nofirststartwizard",
-		"-env:UserInstallation=file://"+profile, // isolated profile → safe to run concurrently
+		"-env:UserInstallation="+fileURL(filepath.ToSlash(profile)), // isolated profile → safe to run concurrently
 		"--convert-to", "pdf", "--outdir", outDir,
 		inPath,
 	)
 	return runConvert(ctx, cmd, filepath.Join(outDir, "in.pdf"), "LibreOffice")
+}
+
+// fileURL spells a slash-separated local path as a `file:` URL, for LibreOffice's `-env:UserInstallation`
+// (`/pending 503`).
+//
+// `"file://"+path` is right only for an absolute POSIX path. A Windows temp directory is
+// `C:\Users\…\Temp\nib-office-…`, which that spelling makes `file://C:\Users…` — `C:` in the host position
+// and backslashes a URL does not have — and a user name with a space in it is not a URL at all. So the
+// caller hands the path slash-separated (`filepath.ToSlash`, the identity on Unix), a drive-letter path
+// gets the root slash a URL path needs, and `net/url` escapes the rest.
+func fileURL(slashPath string) string {
+	if !strings.HasPrefix(slashPath, "/") {
+		slashPath = "/" + slashPath
+	}
+	return (&url.URL{Scheme: "file", Path: slashPath}).String()
 }

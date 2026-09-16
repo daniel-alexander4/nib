@@ -128,6 +128,37 @@ func TestPreparePDFA(t *testing.T) {
 	}
 }
 
+// TestPreparePDFAKeepsTheDocumentsTitle — `/pending 503`. The PDF/A packet replaces the catalog's, and it
+// carried only the identification: a titled document lost `dc:title` and kept `DisplayDocTitle true`.
+func TestPreparePDFAKeepsTheDocumentsTitle(t *testing.T) {
+	src, err := ImagesToPDF([]RasterPage{rasterPage(t, 400, 600)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const escaped = "Lease &amp; &lt;Schedule A&gt;"
+	titled, err := SetTitle(src, "Lease & <Schedule A>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := catalogPacket(t, titled); !strings.Contains(p, escaped) {
+		t.Fatalf("setup: the titled document's own packet does not carry the title:\n%s", p)
+	}
+	out, blockers, err := PreparePDFA(titled)
+	if err != nil || len(blockers) != 0 {
+		t.Fatalf("PreparePDFA: err=%v blockers=%v", err, blockers)
+	}
+	p := catalogPacket(t, out)
+	if !strings.Contains(p, "<pdfaid:part>2</pdfaid:part>") {
+		t.Fatalf("setup: the converted packet is not the PDF/A one:\n%s", p)
+	}
+	if !strings.Contains(p, `<dc:title><rdf:Alt><rdf:li xml:lang="x-default">`+escaped+`</rdf:li></rdf:Alt></dc:title>`) {
+		t.Errorf("the PDF/A packet dropped the document's title while its viewer preferences still ask for it:\n%s", p)
+	}
+	if verapdfPath() != "" {
+		requireVeraPDFCompliant(t, out, "2b")
+	}
+}
+
 // TestPreparePDFARefusesNonEmbeddedFonts: a document that references a font
 // without embedding it (testpdf.Text uses the standard-14 Courier) cannot be made
 // conformant, so PreparePDFA refuses it with a font blocker and no output.

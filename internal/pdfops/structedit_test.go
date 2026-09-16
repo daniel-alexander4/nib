@@ -270,6 +270,42 @@ func editFixture() []byte {
 	})
 }
 
+// TestAReorderUnderAnInlineParentNeverNamesObjectZero — `/pending 503`. A move that keeps an element under
+// a parent written inline wrote `/P 0 0 R`: the parent has no object number, and a reference was built from
+// it anyway.
+func TestAReorderUnderAnInlineParentNeverNamesObjectZero(t *testing.T) {
+	src := assembleFixture(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+		4:  "<< /Length 1 >>\nstream\n \nendstream",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] >>",
+		8:  "<< /Type /StructElem /S /Sect /P 7 0 R /K [<< /S /P /K [9 0 R 10 0 R] >>] >>",
+		9:  "<< /Type /StructElem /S /Span /P 8 0 R >>",
+		10: "<< /Type /StructElem /S /Span /P 8 0 R >>",
+	})
+	out, err := applyStructEdits(src, []structEdit{{kind: editMove, elem: 10, index: 0}})
+	if err != nil {
+		t.Fatalf("reordering an element under its inline parent failed: %v", err)
+	}
+	ctx, sect := rawElement(t, out, 8)
+	k, _ := ctx.DereferenceArray(sect["K"])
+	if len(k) != 1 {
+		t.Fatalf("setup: the section's /K reads %v", sect["K"])
+	}
+	inline, _ := ctx.DereferenceDict(k[0])
+	kids, _ := ctx.DereferenceArray(inline["K"])
+	if first, ok := kids[0].(types.IndirectRef); len(kids) != 2 || !ok || first.ObjectNumber.Value() != 10 {
+		t.Fatalf("setup: the reorder did not happen — the inline parent's /K reads %v", inline["K"])
+	}
+	// Exactly the reference it had. Not merely "not object 0": pdfcpu renumbers a `0 65535 R` on write to a
+	// dangling reference with some other number (measured: `15 65535 R`), which a not-zero check reads as fine.
+	_, moved := rawElement(t, out, 10)
+	if p, ok := moved["P"].(types.IndirectRef); !ok || p.ObjectNumber.Value() != 8 || p.GenerationNumber.Value() != 0 {
+		t.Errorf("the moved element's /P is %v, want 8 0 R — a reference built from an inline parent names no element", moved["P"])
+	}
+}
+
 // TestAnEditThatDoesNotDescribeTheTreeIsRefused — stale is ErrTagsStale (409 at the route), malformed
 // is ErrTagsReview (400).
 func TestAnEditThatDoesNotDescribeTheTreeIsRefused(t *testing.T) {

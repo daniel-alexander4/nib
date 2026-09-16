@@ -20,6 +20,22 @@ func run(text string, x, y, width, size float64) textRun {
 	return textRun{text: text, x: x, y: y, width: width, size: size, decoded: true}
 }
 
+// TestRotatedTextIsReportedNotReadAsUpright — `/pending 503`. The same runs with and without one turned
+// baseline, so the report is the rotation's and not the layout's.
+func TestRotatedTextIsReportedNotReadAsUpright(t *testing.T) {
+	runs := func(turned bool) []textRun {
+		label := run("Confidential draft", 30, 400, 90, 10)
+		label.rotated = turned
+		return []textRun{run("A first line of body text.", 72, 700, 200, 12), run("A second line.", 72, 685, 90, 12), label}
+	}
+	if got := groupRuns(runs(false)).unsupported; got != "" {
+		t.Fatalf("setup: the upright page is already reported unsupported (%q), so a report below would not be the rotation's", got)
+	}
+	if got := groupRuns(runs(true)).unsupported; !strings.Contains(got, "rotated") {
+		t.Errorf("a page with a rotated run reports %q — it was grouped as upright text and nothing said so", got)
+	}
+}
+
 func paragraphTexts(l pageLayout) []string {
 	out := make([]string, len(l.paragraphs))
 	for i, p := range l.paragraphs {

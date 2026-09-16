@@ -99,6 +99,11 @@ type structTree struct {
 	byObj map[int]*structElem
 	// pages caches the page dictionaries the writers have resolved, by page number. See `page`.
 	pages map[int]treePage
+	// keyFloor is the lowest `/ParentTree` key nothing has claimed, once `allocParentTreeKey` has
+	// worked it out; keyFloorKnown says whether it has. Every new entry raises it (`claimParentTreeKey`),
+	// so the walk that finds it runs once per tree rather than once per annotation.
+	keyFloor      int
+	keyFloorKnown bool
 }
 
 // treePage is one resolved page: its dictionary and the reference an element's `/Pg` names.

@@ -10,7 +10,9 @@ import (
 	"testing"
 )
 
-// Every structure write reaches one door — `PLAN-accessibility.md` P10.S02.
+// Every user-directed structure write (a commit, an edit) reaches one door — `PLAN-accessibility.md` P10.S02.
+// The operations that author a tree while producing a document (OCR, forms, Markdown) do not route here;
+// `internal/tagwrite`'s package comment names them.
 //
 // ADR-009's guard shape: routing. `internal/server` and `internal/cli` must each call `tagwrite.Commit`
 // and `tagwrite.Edit`, and nothing outside `internal/tagwrite` may call `pdfops.CommitTags` or

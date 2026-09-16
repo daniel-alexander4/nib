@@ -1,11 +1,13 @@
 package pdfops
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
 	"nib/internal/contentstream"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -87,7 +89,10 @@ func groupWords(words []Word) []wordGroup {
 
 // tagOCRPage replaces every watermark-artifact marker on one page with real marked content, under a
 // `Sect` per tesseract block and a `P` per paragraph.
-func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word) error {
+//
+// pre is how many watermark markers the page drew BEFORE the text layer was stamped
+// (`watermarkMarkersBefore`).
+func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word, pre int) error {
 	d, _, err := tree.page(ctx, pageNr)
 	if err != nil {
 		return err
@@ -98,6 +103,17 @@ func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word) 
 	}
 	markers := watermarkArtifactSpans(src)
 
+	// **Only the markers the stamp ADDED can be words** (`/pending 503`). A page that already drew a
+	// watermark — nib's own page numbers, a DRAFT stamp — carries that marker too, and pdfcpu splices an
+	// on-top stamp AFTER the page's existing content (`patchFirstContentStreamForWatermark`), so the page's
+	// own markers are the prefix and the words are the suffix. Counting all of them let one skipped word
+	// make the totals agree: the page number "1" became the first word's MCID and the document claimed tags.
+	if pre > len(markers) {
+		return fmt.Errorf("pdfops: page %d drew %d watermark artifact(s) before the text layer and %d "+
+			"after — a stamp cannot remove one, so these are not the same page", pageNr, pre, len(markers))
+	}
+	markers = markers[pre:]
+
 	// **The correspondence, checked — the same rule `tagOnePage` states and for the same reason.**
 	// A mismatch attaches every element from the point of divergence to the wrong word, and the
 	// document looks entirely correct. The count can differ legitimately: `StampTextLayer` SKIPS a
@@ -105,9 +121,9 @@ func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word) 
 	// ordinary outcome of an unrepresentable glyph — and it is still a correspondence this code
 	// cannot establish by position.
 	if len(markers) != len(words) {
-		return fmt.Errorf("pdfops: page %d draws %d watermark artifact(s) and %d word(s) were "+
+		return fmt.Errorf("pdfops: the text layer added %d watermark artifact(s) to page %d and %d word(s) were "+
 			"stamped — refusing to describe content by position when the two do not correspond",
-			pageNr, len(markers), len(words))
+			len(markers), pageNr, len(words))
 	}
 	if len(markers) == 0 {
 		return nil
@@ -177,6 +193,10 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 	for _, w := range words {
 		byPage[w.Page] = append(byPage[w.Page], w)
 	}
+	pre, perr := watermarkMarkersBefore(pdf, byPage)
+	if perr != nil {
+		return stamped, false, nil
+	}
 	tree, terr := writeMutated(stamped, func(ctx *model.Context) error {
 		live := map[int]bool{}
 		for p := 1; p <= ctx.PageCount; p++ {
@@ -192,7 +212,7 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 			if len(byPage[p]) == 0 {
 				continue
 			}
-			if err := tagOCRPage(ctx, st, p, byPage[p]); err != nil {
+			if err := tagOCRPage(ctx, st, p, byPage[p], pre[p]); err != nil {
 				return err
 			}
 		}
@@ -210,6 +230,31 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 		return stamped, false, nil
 	}
 	return declareOCRLanguage(claimed, lang), true, nil
+}
+
+// watermarkMarkersBefore counts the watermark-artifact markers each page with words already draws, before
+// the text layer is stamped — see `tagOCRPage`. One extra parse of the input on the OCR route.
+func watermarkMarkersBefore(pdf []byte, byPage map[int][]Word) (map[int]int, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]int{}
+	for p := range byPage {
+		if p < 1 || p > ctx.PageCount {
+			continue
+		}
+		d, _, _, derr := ctx.PageDict(p, false)
+		if derr != nil || d == nil {
+			return nil, fmt.Errorf("pdfops: page %d does not resolve: %v", p, derr)
+		}
+		// A page with no readable content draws no marker. If the stamp could not patch it either, the count
+		// after stamping disagrees with the words and `tagOCRPage` refuses.
+		if src, cerr := ctx.PageContent(d, p); cerr == nil {
+			out[p] = len(watermarkArtifactSpans(src))
+		}
+	}
+	return out, nil
 }
 
 // declareOCRLanguage writes the recognised language onto the catalog, if the document declares none.

@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -93,16 +94,46 @@ func groupRuns(runs []textRun) pageLayout {
 	columns := columnsOf(segments)
 	var out pageLayout
 	out.columns = len(columns)
+	// **Rotated text is reported, not read as upright** (`/pending 503`). Every rule below measures a line
+	// as a horizontal baseline with x growing rightward. A run whose baseline turns — a vertical margin
+	// label, a landscape table on a portrait page — was grouped as if it were upright and nothing said so,
+	// so where it sits in reading order and which paragraph it joins were never established. Exit criterion
+	// 3 allows a layout to be handled OR reported; this reports, and the page is still proposed.
+	if n := rotatedRuns(runs); n > 0 {
+		noteUnsupported(&out, fmt.Sprintf("%d run(s) of text are drawn rotated, and the grouping reads every line as upright", n))
+	}
 	for ci, col := range columns {
 		sort.SliceStable(col, func(i, j int) bool { return col[i].y > col[j].y })
 		for i := 1; i < len(col); i++ {
 			if sameBaseline(col[i-1], col[i]) {
-				out.unsupported = "text sits side by side on one baseline in a way the grouping cannot separate into columns"
+				noteUnsupported(&out, "text sits side by side on one baseline in a way the grouping cannot separate into columns")
 			}
 		}
 		out.paragraphs = append(out.paragraphs, paragraphsOf(col, ci)...)
 	}
 	return out
+}
+
+// noteUnsupported adds a reason the page's layout is outside the rule, keeping any reason already given.
+func noteUnsupported(l *pageLayout, why string) {
+	switch {
+	case l.unsupported == "":
+		l.unsupported = why
+	case !strings.Contains(l.unsupported, why):
+		l.unsupported += "; " + why
+	}
+}
+
+// rotatedRuns counts the runs grouping would read that are drawn rotated — the same population
+// `lineSegments` keeps: not an artifact, not blank.
+func rotatedRuns(runs []textRun) int {
+	n := 0
+	for _, r := range runs {
+		if r.rotated && !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // lineSegments joins runs into lines: same baseline, and no gap wider than joinGapEm.

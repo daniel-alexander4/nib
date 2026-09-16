@@ -11,6 +11,19 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
+// TestTheProfileIsAFileURLOnEveryPlatform — `/pending 503`. `"file://"+path` made a Windows profile
+// `file://C:\Users\…`, with the drive in the host position and no escaping.
+func TestTheProfileIsAFileURLOnEveryPlatform(t *testing.T) {
+	for in, want := range map[string]string{
+		"/tmp/nib-office-1/profile":                                 "file:///tmp/nib-office-1/profile",
+		"C:/Users/Jo Smith/AppData/Local/Temp/nib-office-1/profile": "file:///C:/Users/Jo%20Smith/AppData/Local/Temp/nib-office-1/profile",
+	} {
+		if got := fileURL(in); got != want {
+			t.Errorf("fileURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // minimalDOCX builds the smallest valid Word document carrying one line of text —
 // enough for LibreOffice to convert. Avoids a binary test fixture.
 func minimalDOCX(t *testing.T, text string) []byte {

@@ -199,6 +199,10 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 		return false, nil
 	}
 	if err := sd.Decode(); err != nil {
+		// Not a silent retention, measured (`/pending 503`): both callers reach here only after
+		// `api.ReadValidateAndOptimize`, which decodes the catalog's `/Metadata` itself and refuses the whole
+		// document when it cannot — `/Filter /Crypt` fails the read with "Invalid filter", a stream that is not
+		// the Flate it declares with "zlib: invalid header". So no edit reaches a packet this line would skip.
 		return false, nil
 	}
 	if !bytes.Contains(sd.Content, []byte(pdfuaidNS)) {
@@ -232,6 +236,26 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 func withoutUAClaim(pdf []byte) ([]byte, error) {
 	out, _, err := dropUAIdentificationBytes(pdf)
 	return out, err
+}
+
+// rewriteOrDropClaim is the tail for a best-effort correction of bytes pdfcpu has just written — a stamp's
+// optional-content configuration, an embedded face's CIDSet (`/pending 503`).
+//
+// The correction may fail and the operation must still succeed. But the bytes it would have fallen back to
+// are pdfcpu's own output, and pdfcpu carries a PDF/UA identification through unchanged: `StampImages` and
+// the OCR text layer returned a labelled document still claiming conformance whenever the correction
+// failed. So a failed correction still drops the claim, in a rewrite with nothing else in it. Only bytes
+// pdfcpu cannot read come back as they were — and then nothing in this package could have edited them.
+//
+// It is one write, never two: the drop-only rewrite runs only when the first did not produce output.
+func rewriteOrDropClaim(pdf []byte, fn func(*model.Context) error) []byte {
+	if out, err := writeMutated(pdf, fn); err == nil {
+		return out
+	}
+	if out, err := withoutUAClaim(pdf); err == nil {
+		return out
+	}
+	return pdf
 }
 
 // DropUAIdentificationUnlessSigned is the door for bytes that change a document OUTSIDE this package —

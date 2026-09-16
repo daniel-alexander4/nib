@@ -33,6 +33,10 @@ var ErrGhostscriptMissing = errors.New("Ghostscript (gs) is not installed")
 
 const gsConvertTimeout = 2 * time.Minute
 
+// convertWaitDelay is how long a converter's I/O may outlive its killed process tree before `runConvert`
+// returns anyway — see `runConvert`.
+const convertWaitDelay = 2 * time.Second
+
 var gsPath struct {
 	sync.Once
 	p string
@@ -105,6 +109,14 @@ func ConvertPDFAGhostscript(pdf []byte) ([]byte, error) {
 func runConvert(ctx context.Context, cmd *exec.Cmd, outPath, tool string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	// **The timeout has to end the conversion, not only the process nib started** (`/pending 503`).
+	// `soffice` is a launcher: it starts `soffice.bin`, and `CommandContext` kills only the launcher. A hung
+	// `soffice.bin` kept converting past the timeout, and because it inherited the stderr pipe, `Run` waited
+	// on it — the timeout returned nothing until the grandchild chose to exit. So the whole tree is killed
+	// on cancel (`killTreeOnCancel`, per platform), and `WaitDelay` bounds the wait for any descendant that
+	// escaped the tree and still holds the pipe.
+	killTreeOnCancel(cmd)
+	cmd.WaitDelay = convertWaitDelay
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("%s timed out converting this document", tool)

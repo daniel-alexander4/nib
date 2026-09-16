@@ -65,14 +65,14 @@ func addMarkedElementUnder(ctx *model.Context, tree *structTree, pageNr int, str
 	if sp, ok := pageDict["StructParents"].(types.Integer); ok {
 		key, hasKey = sp.Value(), true
 	}
-	slots, isSingle, next := parentTreeKey(ctx, tree, key)
+	slots, isSingle, _ := parentTreeKey(ctx, tree, key)
 	if hasKey && isSingle {
 		return 0, nil, fmt.Errorf("pdfops: page %d declares /StructParents %d and that "+
 			"ParentTree entry is a single element, not an array — this document's tree is "+
 			"already inconsistent and adding to it would hide that", pageNr, key)
 	}
 	if !hasKey {
-		key, slots = next, 0
+		key, slots = allocParentTreeKey(ctx, tree), 0
 		pageDict["StructParents"] = types.Integer(key)
 	}
 
@@ -268,6 +268,7 @@ func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref 
 		nums[at] = arr
 	} else {
 		nums = append(nums, types.Integer(key), arr)
+		claimParentTreeKey(ctx, tree, key)
 	}
 	pt["Nums"] = nums
 	return nil
@@ -476,24 +477,82 @@ func setParentTreeSingle(ctx *model.Context, tree *structTree, key int, ref type
 			"re-point whatever owns it at a different element", key)
 	}
 	pt["Nums"] = append(nums, types.Integer(key), ref)
+	claimParentTreeKey(ctx, tree, key)
 	return nil
 }
 
-// freeParentTreeKey returns a `/ParentTree` key no entry uses, so an annotation's `/StructParent`
-// cannot collide with a page's `/StructParents` or with another annotation's.
+// allocParentTreeKey returns a `/ParentTree` key nothing has claimed, so an annotation's `/StructParent`
+// or a page's `/StructParents` cannot collide with anything already in the document. It is the ONE key
+// allocator (ADR-009); it does not record the key — the entry's writer does, through
+// `claimParentTreeKey`.
 //
-// It scans BOTH shapes, because the two share one key space: a page array at key 3 and an
-// annotation reference at key 3 are the same entry, and the second write would destroy the first.
-func freeParentTreeKey(ctx *model.Context, tree *structTree) int {
-	arrays, singles := parentTreeEntries(ctx, tree)
-	key := 0
-	for {
-		_, isArray := arrays[key]
-		_, isSingle := singles[key]
-		if !isArray && !isSingle {
-			return key
+// # Above everything, never into a hole (`/pending 503`)
+//
+// The key it returns is past the highest of four things, because each is a claim on the key space a
+// hole-filling search cannot see:
+//
+//   - **every key the ParentTree has**, in both shapes — a page array at key 3 and an annotation
+//     reference at key 3 are the same entry, and the second write would destroy the first;
+//   - **`/ParentTreeNextKey`**, the document's own statement of which keys are spent. A key below it with
+//     no entry is not free: the tool that wrote it may have removed the entry and not the object naming
+//     it, and another tool honouring the key will allocate from it next. The first cut filled the lowest
+//     hole, measured on `taggedFixture`: a form's widget took key 1 while `/ParentTreeNextKey` stayed 1;
+//   - **every page's `/StructParents` and every page annotation's `/StructParent`**, which name a key
+//     whether or not the ParentTree still has it — reusing one re-points that object at a new element.
+//
+// Form XObjects can carry `/StructParent` too and are not walked: finding them means walking every
+// resource dictionary, and a producer that wrote one without a ParentTree entry and without raising
+// `/ParentTreeNextKey` is one no key choice can be safe against. That residue is declared, not missed.
+//
+// # Once per tree
+//
+// The walk runs on the first call and is cached on the tree; every entry written after it raises the
+// floor. Walking the ParentTree per annotation cost 2.28 s of `AuthorTaggedForm`'s 6.13 s for a
+// 400-field form (profiled, v1.129.128).
+func allocParentTreeKey(ctx *model.Context, tree *structTree) int {
+	if tree.keyFloorKnown {
+		return tree.keyFloor
+	}
+	_, _, floor := parentTreeKey(ctx, tree, -1)
+	raise := func(o types.Object) {
+		if v, ok := pdfNumber(ctx.XRefTable, o); ok && v >= 0 && int(v)+1 > floor {
+			floor = int(v) + 1
 		}
-		key++
+	}
+	if nk, ok := pdfNumber(ctx.XRefTable, tree.root["ParentTreeNextKey"]); ok && int(nk) > floor {
+		floor = int(nk)
+	}
+	for p := 1; p <= ctx.PageCount; p++ {
+		d, _, _, err := ctx.PageDict(p, false)
+		if err != nil || d == nil {
+			continue
+		}
+		raise(d["StructParents"])
+		annots, _ := ctx.DereferenceArray(d["Annots"])
+		for _, a := range annots {
+			if ad, aerr := ctx.DereferenceDict(a); aerr == nil && ad != nil {
+				raise(ad["StructParent"])
+			}
+		}
+	}
+	tree.keyFloor, tree.keyFloorKnown = floor, true
+	return floor
+}
+
+// claimParentTreeKey records that key now has a `/ParentTree` entry: `/ParentTreeNextKey` moves past it,
+// and so does the cached floor. Called by the two writers that create an entry (`setParentTreeSlot`,
+// `setParentTreeSingle`), so no entry can be created without it.
+//
+// **`/ParentTreeNextKey` is optional and nib writes it anyway once it adds a key.** A reader may ignore
+// it — a LibreOffice tree carries none — but a tool that honours it allocates from it, and a stale value
+// hands that tool a key nib has just used.
+func claimParentTreeKey(ctx *model.Context, tree *structTree, key int) {
+	next := key + 1
+	if tree.keyFloorKnown && tree.keyFloor < next {
+		tree.keyFloor = next
+	}
+	if cur, ok := pdfNumber(ctx.XRefTable, tree.root["ParentTreeNextKey"]); !ok || int(cur) < next {
+		tree.root["ParentTreeNextKey"] = types.Integer(next)
 	}
 }
 

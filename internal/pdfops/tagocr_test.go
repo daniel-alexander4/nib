@@ -104,6 +104,76 @@ func TestNoWordOfTheTextLayerIsMarkedAsSomethingToSKIP(t *testing.T) {
 	}
 }
 
+// ocrRunsOf reads page 1's runs by text.
+func ocrRunsOf(t *testing.T, pdf []byte) map[string]textRun {
+	t.Helper()
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	pr, err := readPageRuns(ctx, 1)
+	if err != nil {
+		t.Fatalf("runs: %v", err)
+	}
+	out := map[string]textRun{}
+	for _, r := range pr.runs {
+		out[r.text] = r
+	}
+	return out
+}
+
+// TestAWatermarkThePageAlreadyDrewIsNeverAnOCRWord — `/pending 503`. The page's own watermark markers
+// were counted against the words, so on a numbered scan where one word could not be stamped the totals
+// agreed and the page number "1" became the first word's MCID, with the document claiming tags.
+func TestAWatermarkThePageAlreadyDrewIsNeverAnOCRWord(t *testing.T) {
+	numbered, err := StampPageNumbers(scannedPage(t), PageNumberStyle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(watermarkArtifactSpans(pageStream(t, numbered, 1))); n != 1 {
+		t.Fatalf("setup: the numbered scan draws %d watermark marker(s), want the page number's 1", n)
+	}
+
+	// The coincidence: one word stampText refuses, so 1 page number + 3 stamped words = 4 words.
+	skipped := ocrWords()
+	skipped[1].Text = "100%% done"
+	plain, err := StampTextLayer(numbered, skipped, "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(watermarkArtifactSpans(pageStream(t, plain, 1))); n != len(skipped) {
+		t.Fatalf("setup: the stamped page draws %d markers for %d words — the totals do not coincide, so "+
+			"this case cannot tell a count of all markers from a count of the added ones", n, len(skipped))
+	}
+	out, tagged, err := TagOCRLayer(numbered, skipped, "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := ocrRunsOf(t, out)["1"]; !ok || r.mcid != -1 || !r.artifact {
+		t.Errorf("the page number reads mcid=%d artifact=%v (present %v, tagged=%v): a watermark the page "+
+			"already drew was described as an OCR word", r.mcid, r.artifact, ok, tagged)
+	}
+
+	// And every word stamped: the added markers correspond, so the page is tagged around its page number.
+	out, tagged, err = TagOCRLayer(numbered, ocrWords(), "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tagged {
+		t.Fatal("a numbered scan whose every word was stamped was not tagged — the page number's marker " +
+			"was counted against the words")
+	}
+	runs := ocrRunsOf(t, out)
+	if r := runs["1"]; r.mcid != -1 || !r.artifact {
+		t.Errorf("the page number reads mcid=%d artifact=%v, want still an artifact", r.mcid, r.artifact)
+	}
+	for _, w := range ocrWords() {
+		if r, ok := runs[w.Text]; !ok || r.mcid < 0 {
+			t.Errorf("word %q reads mcid=%d (present %v), want its own MCID", w.Text, r.mcid, ok)
+		}
+	}
+}
+
 // TestAParagraphIsONEElementNotOneElementPerWord — the hierarchy is used, not merely received.
 //
 // Four words in two paragraphs of one block. The tree that describes them is one `Sect` holding two

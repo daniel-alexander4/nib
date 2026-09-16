@@ -1,6 +1,9 @@
 package contentstream
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 // Tokenize splits a decoded content stream into tokens covering it **completely and without
 // overlap**: `tokens[0].Start == 0`, each token's `End` is the next one's `Start`, and the last
@@ -211,9 +214,11 @@ func scanInlineImage(src []byte, i int) int {
 	// tokens, so a plain scan for the keyword is safe only if it is a keyword — hence the
 	// delimiter checks on each side.
 	j := i + 2
+	idAt := -1
 	for j+1 < len(src) {
 		if src[j] == 'I' && src[j+1] == 'D' && startsAKeyword(src, j) &&
 			(j+2 >= len(src) || !isRegular(src[j+2])) {
+			idAt = j
 			j += 2
 			break
 		}
@@ -227,6 +232,9 @@ func scanInlineImage(src []byte, i int) int {
 	if j < len(src) && isWhite(src[j]) {
 		j++
 	}
+	if end, ok := asciiEncodedImageEnd(src, i+2, idAt, j); ok {
+		return end
+	}
 	for j+1 < len(src) {
 		if src[j] == 'E' && src[j+1] == 'I' && j > 0 && isWhite(src[j-1]) &&
 			(j+2 >= len(src) || !isRegular(src[j+2])) {
@@ -235,6 +243,67 @@ func scanInlineImage(src []byte, i int) int {
 		j++
 	}
 	return len(src)
+}
+
+// asciiEncodedImageEnd finds the end of an inline image whose OUTERMOST filter is an ASCII encoding, where
+// the payload states its own end — `>` for ASCIIHexDecode, `~>` for ASCII85Decode — and `EI` may follow
+// it with no whitespace between (`/pending 503`: `ID 00>EI Q BT … Tj ET` swallowed everything after the
+// image, so that text vanished from every reader built on this package).
+//
+// **It is exact, not a heuristic**, which is why it runs before the whitespace rule rather than instead of
+// it: an ASCIIHex payload holds only hex digits and whitespace, and an ASCII85 payload holds `!`–`u`, `z`
+// and whitespace, so the first `>` or `~>` after `ID` IS the end-of-data marker and nothing in the data
+// can imitate it. Any other filter, or none, leaves ok false and the caller's whitespace rule decides.
+//
+// dictFrom and idAt bound the image dictionary; data is the first payload byte.
+func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
+	if idAt < dictFrom {
+		return 0, false
+	}
+	dict := src[dictFrom:idAt]
+	var first string
+	toks := Tokenize(dict)
+	for k := 0; k < len(toks) && first == ""; k++ {
+		key := string(toks[k].Bytes(dict))
+		if toks[k].Kind != Operand || (key != "/F" && key != "/Filter") {
+			continue
+		}
+		for m := k + 1; m < len(toks); m++ {
+			switch toks[m].Kind {
+			case Whitespace, ArrayOpen:
+				continue
+			case Operand:
+				if v := toks[m].Bytes(dict); len(v) > 0 && v[0] == '/' {
+					first = string(v)
+				}
+			}
+			break
+		}
+		if first == "" {
+			return 0, false // a filter key whose value is not a name: not a shape this can read
+		}
+	}
+	var eod []byte
+	switch first {
+	case "/AHx", "/ASCIIHexDecode":
+		eod = []byte(">")
+	case "/A85", "/ASCII85Decode":
+		eod = []byte("~>")
+	default:
+		return 0, false
+	}
+	at := bytes.Index(src[data:], eod)
+	if at < 0 {
+		return 0, false
+	}
+	m := data + at + len(eod)
+	for m < len(src) && isWhite(src[m]) {
+		m++
+	}
+	if m+1 < len(src) && src[m] == 'E' && src[m+1] == 'I' && (m+2 >= len(src) || !isRegular(src[m+2])) {
+		return m + 2, true
+	}
+	return 0, false
 }
 
 // startsAKeyword reports whether position j begins a bare keyword rather than continuing something
