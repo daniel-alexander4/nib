@@ -78,15 +78,24 @@ func (c *Client) Map(ctx context.Context, proto Protocol, internalPort uint16) (
 	// The first obtain suggests the internal port as the external one; a refresh suggests the
 	// port the router already granted, for stability (grill C7). suggestedExternal == 0 lets the
 	// router choose.
-	return c.mapWithSuggestion(ctx, proto, internalPort, internalPort)
+	return c.mapWithSuggestion(ctx, proto, internalPort, internalPort, nil)
 }
 
 // Refresh renews an existing mapping, asking the router to keep the same external port so the
 // address already published stays valid (grill C7/P2). Returns the new Mapping — whose external
 // port the caller must compare to the old one, because the router MAY assign a different port
 // and that is item 20's stale-record case, not something Refresh can prevent.
+//
+// A PCP mapping is renewed under its OWN nonce (RFC 6887 §11.2.1); see tryPCP. Any other
+// mechanism has no nonce to carry, and a PCP attempt made on its behalf mints one as a first
+// obtain would.
 func (c *Client) Refresh(ctx context.Context, m Mapping) (Mapping, netip.Addr, error) {
-	nm, ext, err := c.mapWithSuggestion(ctx, m.Protocol, m.InternalPort, m.ExternalPort)
+	var prior *[12]byte
+	if m.via == mechPCP {
+		n := m.nonce
+		prior = &n
+	}
+	nm, ext, err := c.mapWithSuggestion(ctx, m.Protocol, m.InternalPort, m.ExternalPort, prior)
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
@@ -100,8 +109,9 @@ func (c *Client) Refresh(ctx context.Context, m Mapping) (Mapping, netip.Addr, e
 }
 
 // mapWithSuggestion is Map with an explicit suggested external port — the entry point the S07
-// refresh uses to ask the router to keep the same external port.
-func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internalPort, suggestedExternal uint16) (Mapping, netip.Addr, error) {
+// refresh uses to ask the router to keep the same external port. pcpNonce is the mapping's PCP
+// nonce on a refresh of a PCP mapping, and nil otherwise.
+func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internalPort, suggestedExternal uint16, pcpNonce *[12]byte) (Mapping, netip.Addr, error) {
 	if err := ctx.Err(); err != nil {
 		return Mapping{}, netip.Addr{}, err // already abandoned; no socket, no wait
 	}
@@ -124,7 +134,7 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 	// PCP and NAT-PMP need the gateway; UPnP does not (it self-discovers over SSDP), so a
 	// missing gateway skips the first two rather than ending the whole tier (diff-grill #3).
 	if gw.IsValid() {
-		if m, ext, err := c.tryGatewayProtocols(ctx, gw, proto, internalPort, suggestedExternal); err == nil {
+		if m, ext, err := c.tryGatewayProtocols(ctx, gw, proto, internalPort, suggestedExternal, pcpNonce); err == nil {
 			return m, ext, nil
 		} else if ctx.Err() != nil {
 			return Mapping{}, netip.Addr{}, ctx.Err()
@@ -162,7 +172,7 @@ func (c *Client) mapWithSuggestion(ctx context.Context, proto Protocol, internal
 // tryGatewayProtocols runs the two socket protocols (PCP then NAT-PMP) against the gateway on
 // one dial. Split out so `Map` reads as "gateway protocols, then UPnP" and the no-gateway path
 // simply skips this.
-func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, proto Protocol, internalPort, suggestedExternal uint16) (Mapping, netip.Addr, error) {
+func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, proto Protocol, internalPort, suggestedExternal uint16, pcpNonce *[12]byte) (Mapping, netip.Addr, error) {
 	conn, err := net.Dial("udp", gw.String())
 	if err != nil {
 		return Mapping{}, netip.Addr{}, ErrNoMapping
@@ -177,7 +187,7 @@ func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, pro
 	// the first draft of that fix only checked this function's RETURN, which was always
 	// ErrNoMapping.
 	var refused error
-	if m, ext, err := c.tryPCP(ctx, conn, proto, clientIP, internalPort, suggestedExternal); err == nil {
+	if m, ext, err := c.tryPCP(ctx, conn, proto, clientIP, internalPort, suggestedExternal, pcpNonce); err == nil {
 		m.via = mechPCP
 		return m, ext, nil
 	} else if ctx.Err() != nil {
@@ -199,9 +209,22 @@ func (c *Client) tryGatewayProtocols(ctx context.Context, gw netip.AddrPort, pro
 	return Mapping{}, netip.Addr{}, ErrNoMapping
 }
 
-// exchange sends req and returns the first response, retransmitting once inside perAttempt (or
-// the ctx deadline, whichever is sooner) to ride out a single lost datagram.
-func exchange(ctx context.Context, conn net.Conn, req []byte, onSent func()) ([]byte, error) {
+// exchange sends req and returns the first datagram that ANSWERS it, retransmitting once inside
+// perAttempt (or the ctx deadline, whichever is sooner) to ride out a single lost datagram.
+//
+// **"Answers" is decided by the caller, and a datagram that does not answer is read past, not
+// returned** (/pending 501). This used to return the first datagram of any kind. A gateway slower
+// than the half-window answers BOTH the request and its retransmission, so the second reply was
+// still queued on the socket when the next exchange began, and that exchange read it as its own:
+// NAT-PMP's external-address request got the duplicate MAP reply, decoded it as a wrong opcode,
+// and a working router produced no mapping at all. Both RFCs say the same thing — RFC 6887 §8.3,
+// "If the response does not match a previous PCP request, the response is ignored" — and
+// ignoring means keeping on listening for the one that does.
+//
+// The retransmission's own window runs to the deadline rather than to a second half, so a reply
+// to the FIRST send that lands after the resend is still taken: both requests are the same
+// request (same nonce and ports, and both RFCs make a repeated MAP idempotent).
+func exchange(ctx context.Context, conn net.Conn, req []byte, onSent func(), answers func([]byte) bool) ([]byte, error) {
 	first := true
 	deadline := time.Now().Add(perAttempt)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
@@ -219,33 +242,66 @@ func exchange(ctx context.Context, conn net.Conn, req []byte, onSent func()) ([]
 			onSent()
 			first = false
 		}
-		half := time.Now().Add(perAttempt / 2)
-		if half.After(deadline) {
-			half = deadline
+		window := time.Now().Add(perAttempt / 2)
+		if attempt > 0 || window.After(deadline) {
+			window = deadline
 		}
-		conn.SetReadDeadline(half)
-		n, err := conn.Read(buf)
-		if err == nil {
-			return buf[:n], nil
+		conn.SetReadDeadline(window)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				break // this window's deadline, or an ICMP refusal on the connected socket
+			}
+			if answers(buf[:n]) {
+				return buf[:n], nil
+			}
+			// Not an answer to this request — a reply to an earlier one, or noise. Keep
+			// listening inside the same window; the read deadline still bounds it.
 		}
-		// A ctx cancel mid-Read is observed only when this read deadline (perAttempt/2) fires,
-		// so cancellation on the UDP path is bounded-but-not-prompt (diff-grill #5, accepted:
-		// the whole call is budget-bounded and the mapping is best-effort).
-		if time.Now().After(deadline) || ctx.Err() != nil {
+		// A ctx cancel mid-Read is observed only when this read deadline fires, so cancellation
+		// on the UDP path is bounded-but-not-prompt (diff-grill #5, accepted: the whole call is
+		// budget-bounded and the mapping is best-effort).
+		if !time.Now().Before(deadline) || ctx.Err() != nil {
 			break
 		}
 	}
 	return nil, fmt.Errorf("portmap: no response")
 }
 
-func (c *Client) tryPCP(ctx context.Context, conn net.Conn, proto Protocol, clientIP netip.Addr, internalPort, suggestedExternal uint16) (Mapping, netip.Addr, error) {
+// decided reports whether a decode outcome settles an exchange: a decoded answer, or a refusal the
+// router addressed to THIS request. Every other decode error describes a datagram that is not an
+// answer at all, which exchange reads past.
+func decided(err error) bool { return err == nil || errors.Is(err, ErrResultCode) }
+
+// tryPCP runs one PCP MAP exchange. nonce is the mapping's existing nonce on a refresh and nil on
+// a first obtain, which mints one.
+//
+// **A refresh MUST carry the nonce the mapping was created with** — RFC 6887 §11.2.1: "When
+// renewing a mapping, the PCP client MUST use the same Mapping Nonce value that was used in the
+// original mapping request." It is not a formality: §11.3 has the server answer a MAP for an
+// existing internal address, protocol and port "with a different Mapping Nonce" with
+// NOT_AUTHORIZED, so a refresh that minted a fresh nonce was refused by a conforming router —
+// and read here as a refusal, the lease then ran out under a mapping the caller believed renewed.
+func (c *Client) tryPCP(ctx context.Context, conn net.Conn, proto Protocol, clientIP netip.Addr, internalPort, suggestedExternal uint16, prior *[12]byte) (Mapping, netip.Addr, error) {
 	var nonce [12]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
+	if prior != nil {
+		nonce = *prior
+	} else if _, err := rand.Read(nonce[:]); err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}
 	req := EncodePCPMap(proto, nonce, clientIP, internalPort, suggestedExternal, DefaultLeaseSec)
 	resp, err := exchange(ctx, conn, req, func() {
 		c.sent(Mapping{Protocol: proto, InternalPort: internalPort, via: mechPCP, nonce: nonce})
+	}, func(b []byte) bool {
+		// A reply in another protocol version is the server's version answer and settles the
+		// exchange at once: RFC 6887 §9, "If the version number in the UNSUPP_VERSION response is
+		// zero then that means this is a NAT-PMP server" — and RFC 6886 §3.5 sends that answer as
+		// an 8-byte version-0 datagram, which must end PCP promptly rather than wait out the window.
+		if len(b) > 0 && b[0] != pcpVersion {
+			return true
+		}
+		_, _, derr := DecodePCPMap(b, proto, nonce, internalPort)
+		return decided(derr)
 	})
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
@@ -265,6 +321,9 @@ func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, i
 	}
 	resp, err := exchange(ctx, conn, req, func() {
 		c.sent(Mapping{Protocol: proto, InternalPort: internalPort, via: mechNATPMP})
+	}, func(b []byte) bool {
+		_, derr := DecodeNATPMPMap(b, proto, internalPort)
+		return decided(derr)
 	})
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
@@ -277,7 +336,13 @@ func (c *Client) tryNATPMP(ctx context.Context, conn net.Conn, proto Protocol, i
 	// failure here is not fatal to the mapping — the port is mapped — but without the IP there
 	// is no candidate to publish, so it is treated as a miss.
 	extReq := EncodeNATPMPExternalAddress()
-	extResp, err := exchange(ctx, conn, extReq, nil) // creates no mapping; nothing to record
+	// Creates no mapping, so nothing to record. The answer filter is what keeps the MAP exchange's
+	// duplicate reply — still queued when a slow gateway answered the retransmission too — from
+	// being read as this request's answer (/pending 501).
+	extResp, err := exchange(ctx, conn, extReq, nil, func(b []byte) bool {
+		_, derr := DecodeNATPMPExternalAddress(b)
+		return decided(derr)
+	})
 	if err != nil {
 		return Mapping{}, netip.Addr{}, err
 	}

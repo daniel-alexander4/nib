@@ -172,7 +172,7 @@ func TestMapWithSuggestionRequestsThePort(t *testing.T) {
 	defer cancel()
 	// The mock echoes the internal port and assigns its own external, so we assert the WIRE by
 	// intercepting: mapWithSuggestion(proto, internal, suggestedExternal=51999).
-	if _, _, err := c.mapWithSuggestion(ctx, UDP, 40404, 51999); err != nil {
+	if _, _, err := c.mapWithSuggestion(ctx, UDP, 40404, 51999, nil); err != nil {
 		t.Fatal(err)
 	}
 	// (The mock does not honor the suggestion, which is realistic; the point of T02's stability

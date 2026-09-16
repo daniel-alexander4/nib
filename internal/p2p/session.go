@@ -809,11 +809,6 @@ type Accepter interface {
 	Accept(peerFP, doc []byte) (accept bool, err error)
 }
 
-// SendDocument runs the dialing side of a one-way transfer: it sends the document and
-// waits for the receiver's acknowledgement that the user accepted it. Nothing is
-// signed and nothing comes back — the pinned-mTLS channel is a plain authenticated
-// courier, used to hand a flagged PDF to a peer for signing or to return the signed
-// result. The pin is enforced by the TLS config, exactly as in Initiate.
 // PeerGates says whether the far side of a transfer runs human gates on it.
 //
 // **It describes the RECEIVER, and the sender cannot infer it (P08.S05d).** `SendDocument`'s third
@@ -843,6 +838,11 @@ func remoteDecisionFor(g PeerGates) time.Duration {
 	return remoteDecisionDeadline
 }
 
+// SendDocument runs the dialing side of a one-way transfer: it sends the document and
+// waits for the receiver's acknowledgement that the user accepted it. Nothing is
+// signed and nothing comes back — the pinned-mTLS channel is a plain authenticated
+// courier, used to hand a flagged PDF to a peer for signing or to return the signed
+// result. The pin is enforced by the TLS config, exactly as in Initiate.
 func SendDocument(ch Channel, pdf []byte, myFingerprint []byte, v Verifier, g PeerGates) error {
 	if err := ch.check(); err != nil {
 		return err
@@ -933,11 +933,6 @@ func ReceiveDocument(ch Channel, a Accepter, myFingerprint []byte, v Verifier) (
 	return inbound, nil
 }
 
-// coSignExchange is the transport-agnostic core of the receiving side: given the
-// document the connected (and TLS-pinned) peer signed, it verifies the peer's
-// attestation binds to this channel, gets the user's consent, contributes this
-// user's acceptance signature, and returns the co-signed result. A future gRPC
-// transport would be another adapter calling this same function.
 // ReDeliverer lets the receiving side short-circuit the co-sign when it has ALREADY produced a
 // signature for this exact document on a prior, lost channel — idempotent re-delivery (P05.S10,
 // D18/D24). Contribute is non-deterministic (random ECDSA nonce + a wall-clock timestamp), so a
@@ -974,6 +969,11 @@ type ReDeliverer interface {
 	Store(inbound, final []byte) error
 }
 
+// coSignExchange is the transport-agnostic core of the receiving side: given the
+// document the connected (and TLS-pinned) peer signed, it verifies the peer's
+// attestation binds to this channel, gets the user's consent, contributes this
+// user's acceptance signature, and returns the co-signed result. A future gRPC
+// transport would be another adapter calling this same function.
 func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer, rd ReDeliverer, roster Roster) ([]byte, error) {
 	ats := ReadAttestations(inbound)
 	inCeremony := len(roster.Entries) > 0

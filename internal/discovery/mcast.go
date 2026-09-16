@@ -191,6 +191,12 @@ func open(all []net.Interface, nonce [nonceLen]byte) (*Socket, error) {
 	if err := s.p6.SetControlMessage(ipv6.FlagInterface, true); err != nil {
 		s.noCM.Store(true)
 	}
+	// Errors discarded on purpose, because a failure here cannot widen the scope: hopLimit is 1,
+	// and 1 is already the default — RFC 1112 §6.1: an upper layer that does not specify a
+	// time-to-live "should default to 1 for all multicast IP datagrams", and RFC 3493 §5.2: "If
+	// IPV6_MULTICAST_HOPS is not set, the default is 1 (same as IPv4 today)". A socket that refuses
+	// the set keeps sending link-scoped. Recording it would put a field in Stats whose every value
+	// means the same thing on the wire (/pending 501).
 	_ = s.p4.SetMulticastTTL(hopLimit)
 	_ = s.p6.SetMulticastHopLimit(hopLimit)
 

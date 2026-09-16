@@ -358,9 +358,22 @@ func TestTheRetryWithholdsTheShippedList(t *testing.T) {
 		t.Error("the retry does not offer the invitation's seed, which is the one thing it " +
 			"exists to try")
 	}
-	if len(retry) != len(cached)+len(inv) {
-		t.Errorf("the retry list has %d entries, want %d (cache + invitation)", len(retry),
-			len(cached)+len(inv))
+	// The CACHE is withheld too (/pending 501). The shipped list is only loaded when the cache is
+	// empty, so on a warm and dead cache — the machine invitation seeds exist for — withholding
+	// the shipped list alone withheld nothing, and a cached node answering the retry was credited
+	// to the invitation.
+	if !containsAddr(ordinary, "127.0.0.1:1") {
+		t.Fatal("setup: the ordinary list does not carry the cached node, so its absence below " +
+			"would say nothing")
+	}
+	if containsAddr(retry, "127.0.0.1:1") {
+		t.Error("the retry still offers the cached node — anything it gains from there is " +
+			"credited to the invitation, and the eclipse disclosure then names a stranger's list " +
+			"for a table this machine's own cache built")
+	}
+	if len(retry) != len(inv) {
+		t.Errorf("the retry list has %d entries, want %d (the invitation's seeds only)", len(retry),
+			len(inv))
 	}
 
 	// And the invitation contributes nothing before Bootstrap decides to try it: the caller

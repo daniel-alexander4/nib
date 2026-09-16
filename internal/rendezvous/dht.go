@@ -215,8 +215,8 @@ type Server struct {
 	dir  string
 	once sync.Once
 
-	// live is cancelled by Close, and inFlight counts the Publish/Fetch calls that must
-	// finish before Close returns.
+	// live is cancelled by Close, and inFlight counts the calls that must finish before Close
+	// returns — every verb that reaches the network: Publish, Fetch, Bootstrap, Ping, ProbeSelf.
 	//
 	// **Close used to do neither.** It saved the node cache and called dht.Server.Close,
 	// which sets a flag and does `go s.socket.Close()` — so an in-flight traversal kept
@@ -497,7 +497,15 @@ func (s *Server) Stats() Stats {
 // And it returns `ToError()` rather than `res.Err`, because a node that answers with a
 // KRPC *error reply* leaves `Err` nil: the query succeeded, the answer was "no". Read
 // the old way, a node refusing us counted as a healthy one.
+//
+// Admitted through `enter` like every verb that reaches the network, so Close cancels and joins
+// it rather than tearing the DHT down underneath it (/pending 501).
 func (s *Server) Ping(ctx context.Context, addr *net.UDPAddr) error {
+	ctx, leave, err := s.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	res := s.dht.Query(ctx, dht.NewAddr(addr), "ping", dht.QueryInput{})
 	return res.ToError()
 }
@@ -510,8 +518,23 @@ func (s *Server) Ping(ctx context.Context, addr *net.UDPAddr) error {
 // returns the `ip` field** the probe reads. A router-only table yields zero
 // observations, so "bootstrapped" and "able to see ourselves" are two states and this
 // is the step between them.
+//
+// # It is admitted through `enter`, and it was the verb that most needed to be (/pending 501)
+//
+// Publish and Fetch were; Bootstrap, Ping and ProbeSelf were not, so `Close` neither cancelled nor
+// waited for them. A session teardown cancels the connect goroutine and closes the ceremony
+// without joining it (`disarmWhen`), so `Close` could run while this was mid-retry: `saveNodes`
+// read `invSeedsTried` before the retry set it, or read `invSeedsUsed` before the table the
+// invitation's seeds had just filled was attributed, and wrote a stranger-seeded table into the
+// cache — then `dht.Close` ran under a traversal still in flight. Admitted, the retry finishes
+// (on a cancelled context, so promptly) before the cache is written.
 func (s *Server) Bootstrap(ctx context.Context) error {
-	err := s.bootstrapOnce(ctx)
+	ctx, leave, err := s.enter(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
+	err = s.bootstrapOnce(ctx)
 
 	// Invitation seeds are a LAST RESORT, and the trigger is demonstrated failure rather
 	// than an empty cache file.
@@ -624,12 +647,21 @@ func (s *Server) bootstrapOnce(ctx context.Context) error {
 // Withholding it is also the more honest shape: the retry exists because that list
 // demonstrably produced nothing, so a last resort that keeps asking the thing that failed is
 // not a last resort.
+//
+// **The CACHE is withheld too, and the first version of this window forgot it** (/pending 501).
+// It withheld only the shipped list, which `Open` loads only when the cache is EMPTY — so on the
+// machine invitation seeds exist for, a warm and dead cache, the shipped list was already absent
+// and the window withheld nothing at all. The cached nodes kept being emitted, a cached node that
+// answered the second time was credited to the invitation, and `InvitationSeedsUsed` then told
+// the operator a stranger's list built a table the machine's own cache had built. The retry's
+// precondition is that the table is still empty after the cache was tried, which is the same
+// demonstrated failure that withholds the shipped list.
 func startingNodes(cached []krpc.NodeInfo, shipped []*net.UDPAddr, inv []netip.AddrPort, onlyInv bool) []dht.Addr {
 	out := make([]dht.Addr, 0, len(cached)+len(shipped)+len(inv))
-	for _, n := range cached {
-		out = append(out, dht.NewAddr(n.Addr.UDP()))
-	}
 	if !onlyInv {
+		for _, n := range cached {
+			out = append(out, dht.NewAddr(n.Addr.UDP()))
+		}
 		for _, a := range shipped {
 			out = append(out, dht.NewAddr(a))
 		}
@@ -857,10 +889,16 @@ func (s *Server) saveNodes() error {
 	// eclipse chain bounds what a hostile seed can do *during* a ceremony; this is what
 	// stops it becoming permanent.
 	//
-	// The cost is one cold start next time, which is exactly the situation invitation
-	// seeds exist to rescue.
+	// The cost is nothing: not writing leaves the previous cache file exactly as it was.
+	//
+	// **Keyed on TRIED, not USED** (/pending 501). `invSeedsTried` is the moment the seeds enter
+	// `StartingNodes`, and from then on EVERY traversal starts from them — Publish and Fetch
+	// included, not only Bootstrap's retry. `invSeedsUsed` is set only if the retry itself left
+	// a table, so a retry that found nothing followed by a Fetch that filled the table from the
+	// seeds read "not from a stranger" and was written down. Once the seeds are tried, no table
+	// this process holds can be attributed, so none is saved.
 	s.mu.Lock()
-	fromStranger := s.invSeedsUsed
+	fromStranger := s.invSeedsTried
 	s.mu.Unlock()
 	if fromStranger {
 		return nil

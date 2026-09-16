@@ -116,7 +116,15 @@ type SelfAddress struct {
 //
 // L1: nothing this returns may influence which peer is accepted. It changes messages and
 // tier preference; the pin check never sees it.
+//
+// Admitted through `enter`, so Close cancels its sixteen queries and waits for them instead of
+// closing the DHT under them (/pending 501).
 func (s *Server) ProbeSelf(ctx context.Context) (SelfAddress, error) {
+	ctx, leave, err := s.enter(ctx)
+	if err != nil {
+		return SelfAddress{}, err
+	}
+	defer leave()
 	ctx, cancel := context.WithTimeout(ctx, probeBudget)
 	defer cancel()
 

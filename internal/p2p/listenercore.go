@@ -179,11 +179,26 @@ func (l *listenerCore) Accept() (*Conn, error) {
 // doors and a third transport arriving with neither. `loop` is a func FIELD, so a bare
 // `go l.loop()` also has no declaration for the guard to resolve it through — the wrapper is
 // what makes the coverage visible as well as true.
+//
+// **Every exit of the loop closes the listener, a panic included** (/pending 501). Both loops end
+// through `Close` on their own error paths, but a panic unwound past those calls: `safe.Recover`
+// kept the process alive and nothing ever closed `done`, so `Accept` blocked until somebody else
+// closed the listener — the whole arm window — on a listener that could no longer accept anything.
+// The deferred close runs before the recover, while the panic unwinds. `setCloseErr` is
+// first-cause-wins and `Close` is idempotent, so on an ordinary exit both are no-ops.
 func (l *listenerCore) start() {
 	l.once.Do(func() {
 		go func() {
 			defer safe.Recover("accept loop")
+			defer func() {
+				l.setCloseErr(errAcceptLoopEnded)
+				_ = l.Close()
+			}()
 			l.loop()
 		}()
 	})
 }
+
+// errAcceptLoopEnded is the cause recorded when the accept loop ended without saying why — which
+// only a panic does, since both loops record their own cause first.
+var errAcceptLoopEnded = errors.New("the accept loop ended")

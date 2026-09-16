@@ -148,17 +148,6 @@ var (
 	ErrVersion = errors.New("unsupported announcement version")
 )
 
-// Transport names the socket an armed session is listening on, as one wire byte.
-//
-// It is an enumeration on the wire and not a string, so the parser's whole job is a
-// range check: a name would let an announcement choose how many bytes this package
-// allocates and how they are compared, for a field with two legal values.
-//
-// **These constants are NOT internal/p2p's**, and the duplication is deliberate rather
-// than an oversight. `TestNothingHereCanReachAnIdentity` forbids this package importing
-// p2p, vault or sign — that guard is what makes L1 structural instead of remembered —
-// so the wire encoding is owned here and `internal/server` maps between the two at the
-// layer that holds both. A shared constant would be a shared import.
 // HopNone marks an announcement from an arm that carries no ceremony — the manual and LAN
 // receive paths, which have no hop to serve.
 //
@@ -173,6 +162,17 @@ const (
 	maxHop      = hopNoneWire - 1
 )
 
+// Transport names the socket an armed session is listening on, as one wire byte.
+//
+// It is an enumeration on the wire and not a string, so the parser's whole job is a
+// range check: a name would let an announcement choose how many bytes this package
+// allocates and how they are compared, for a field with two legal values.
+//
+// **These constants are NOT internal/p2p's**, and the duplication is deliberate rather
+// than an oversight. `TestNothingHereCanReachAnIdentity` forbids this package importing
+// p2p, vault or sign — that guard is what makes L1 structural instead of remembered —
+// so the wire encoding is owned here and `internal/server` maps between the two at the
+// layer that holds both. A shared constant would be a shared import.
 type Transport uint8
 
 const (
