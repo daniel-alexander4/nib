@@ -152,9 +152,11 @@ func TestACompletelyCarriedTreeHasNoDefects(t *testing.T) {
 		t.Fatal("no /ParentTree key is owned by anything after the carry, so condition 3 is vacuous here")
 	}
 	form := false
-	for _, who := range owners {
-		if strings.HasPrefix(who, "form XObject") {
-			form = true
+	for _, claimants := range owners {
+		for _, who := range claimants {
+			if strings.HasPrefix(who, "form XObject") {
+				form = true
+			}
 		}
 	}
 	if !form {
@@ -202,6 +204,46 @@ func TestAnMCRKidNamingADeadPageIsADefect(t *testing.T) {
 		t.Errorf("an MCR kid names an object that is not a page in the page tree, and the predicate "+
 			"did not report it. `fate` says %q and `orphaned` is false, so nothing else in this "+
 			"repo can see it:%s", fate(src), defectLines(d))
+	}
+}
+
+// sharedKeyFixture is two pages carrying the SAME `/StructParents`, with one row of elements between
+// them — what `DuplicatePage` produces once a subset carries its tree, since it is
+// `Collect(pdf, ["1-p", "p-"])` and `Collect` preserves a repeated page.
+func sharedKeyFixture() []byte {
+	content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (same) Tj ET\nEMC\n"
+	return assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R 13 0 R] /Count 2 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 >>",
+		8: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] >>",
+		9: "<< /Nums [0 [8 0 R]] >>",
+		13: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> " +
+			"/Contents 14 0 R /StructParents 0 >>",
+		14: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+	})
+}
+
+// TestTwoPagesSharingOneParentTreeKeyIsADefect — condition 5, and the hole S04 would have walked into.
+//
+// **Measured before it was written down**: `parentTreeOwners` answered `map[0:page 1]` on this
+// fixture while two pages claimed key 0, `checkStructConsistency` reported nothing, and
+// `structureCarriedCompletely` reported nothing — so a duplicated page under a carried tree would
+// have shipped with one row of elements describing one of its two claimants.
+func TestTwoPagesSharingOneParentTreeKeyIsADefect(t *testing.T) {
+	src := sharedKeyFixture()
+	if got := fate(src); got == "orphaned" {
+		t.Fatalf("setup: the fixture is orphaned, so `orphaned()` catches it and this says nothing "+
+			"about the completeness predicate (fate %q)", got)
+	}
+	d := completeness(t, src)
+	if !defectsKeyed(d, "shared-key") {
+		t.Errorf("two pages claim /ParentTree key 0 and the predicate did not report it. One key "+
+			"names one row of elements: the elements describe one page, and the other page's "+
+			"content is reached through references naming its twin:%s", defectLines(d))
 	}
 }
 

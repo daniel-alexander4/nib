@@ -72,6 +72,11 @@ const maxFormDrawDepth = 8
 //  4. **No MCID-bearing form XObject is drawn more than once.** Its marked content would then have
 //     two semantic parents, which is veraPDF's 7.20 t2 (`isUniqueSemanticParent`) and is
 //     unresolvable rather than merely untidy: one `/StructParents` key cannot name two places.
+//  5. **No `/ParentTree` key is claimed by more than one owner** — condition 4 read from the other
+//     side. Two pages carrying the same `/StructParents` share one row of elements, so the elements
+//     describe one of them and the other's content is described by references that name its twin.
+//     `DuplicatePage` is `Collect(pdf, ["1-p", "p-"])` and `Collect` preserves a repeat, so from
+//     P02.S04 — where a subset carries the tree — this is what duplicating a page produces.
 func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDefect {
 	out := append([]structDefect{}, checkStructConsistency(ctx, tree)...)
 	add := func(key, f string, a ...any) { out = append(out, structDefect{key: key, what: fmt.Sprintf(f, a...)}) }
@@ -98,7 +103,7 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 	arrays, singles := parentTreeEntries(ctx, tree)
 	owners := parentTreeOwners(ctx)
 	for key, slots := range arrays {
-		if _, owned := owners[key]; !owned {
+		if len(owners[key]) == 0 {
 			add(fmt.Sprintf("unowned-key key=%d", key),
 				"/ParentTree key %d holds an array of %d element slot(s) and no page, annotation or "+
 					"form XObject claims it — nothing in the document can reach those elements",
@@ -106,10 +111,20 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 		}
 	}
 	for key := range singles {
-		if _, owned := owners[key]; !owned {
+		if len(owners[key]) == 0 {
 			add(fmt.Sprintf("unowned-key key=%d", key),
 				"/ParentTree key %d holds a single element reference and no page, annotation or "+
 					"form XObject claims it", key)
+		}
+	}
+	for key, who := range owners {
+		if len(who) > 1 {
+			sorted := append([]string(nil), who...)
+			sort.Strings(sorted)
+			add(fmt.Sprintf("shared-key key=%d", key),
+				"/ParentTree key %d is claimed by %d owners (%s). One key names one row of elements, "+
+					"so those elements describe one claimant and the other's content is reached "+
+					"through references that name its twin", key, len(who), strings.Join(sorted, ", "))
 		}
 	}
 
@@ -140,16 +155,21 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 // MCIDs carries `/StructParents` (plural, an array entry indexed by MCID); one treated as a single
 // content item carries `/StructParent` (singular). They differ by a letter, mean different shapes,
 // and either one names a key that is spent.
-func parentTreeOwners(ctx *model.Context) map[int]string {
-	out := map[int]string{}
+//
+// **EVERY claimant is returned, not the first, and keeping the first hid a defect.** This map was
+// `key -> owner` and discarded any later claim, so two pages carrying the same `/StructParents`
+// reported as one owned key and the completeness check passed. Measured on a two-page fixture
+// sharing key 0: `parentTreeOwners` answered `map[0:page 1]` while the document had two claimants,
+// and `checkStructConsistency` reported nothing either — so nothing in this repo could see the
+// shape `DuplicatePage` produces once a subset carries its tree (condition 5).
+func parentTreeOwners(ctx *model.Context) map[int][]string {
+	out := map[int][]string{}
 	claim := func(o types.Object, what string) {
 		v, ok := pdfNumber(ctx.XRefTable, o)
 		if !ok || v < 0 {
 			return
 		}
-		if _, taken := out[int(v)]; !taken {
-			out[int(v)] = what
-		}
+		out[int(v)] = append(out[int(v)], what)
 	}
 	for p := 1; p <= ctx.PageCount; p++ {
 		d, _, _, err := ctx.PageDict(p, false)
