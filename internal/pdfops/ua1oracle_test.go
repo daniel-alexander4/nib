@@ -114,12 +114,6 @@ var knownUA1Deltas = map[string]struct {
 	"AuthorTaggedForm": {[]string{"7.1 t8", "7.21.4.1 t1"}, "7.1 t8: the form door loses the metadata (P01.S04); 7.21.4.1: Helvetica field text (/pending 479, pdfcpu cannot fill an embedded face)"},
 	"AuthorForm":       {[]string{"7.1 t8", "7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Metadata P01.S04, fonts /pending 479"},
 
-	// ── Stamped text in a Base-14 face. Invisible to this census until it was rebased: the old
-	// fixture already failed 7.21.4.1 itself.
-	"StampFields":      {[]string{"7.21.4.1 t1"}, "stamped text in a Base-14 face — P01.S03"},
-	"StampPageNumbers": {[]string{"7.21.4.1 t1"}, "stamped text in a Base-14 face — P01.S03"},
-	"StampWatermark":   {[]string{"7.21.4.1 t1"}, "stamped text in a Base-14 face — P01.S03"},
-
 	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`.
 	"Collect":       {pageSetLoss, "a page subset drops the structure tree and metadata — P02"},
 	"RemovePages":   {pageSetLoss, "a page subset drops the structure tree and metadata — P02"},

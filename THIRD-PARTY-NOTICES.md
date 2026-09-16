@@ -3420,12 +3420,16 @@ at <http://www.apache.org/licenses/LICENSE-2.0>. Upstream:
 
 ---
 
-## Liberation Mono
+## Liberation Sans, Liberation Serif, Liberation Mono
 
-Vendored under `internal/pdfops/fonts/` (`LiberationMono-Regular.ttf`) and installed
-into pdfcpu's font registry as the monospace face for authored code blocks, for the
-same reason as the Roboto weights above: `Courier` is a Base-14 core font and cannot
-be embedded. Copyright (c) Red Hat, Inc., with Reserved Font Name "Liberation",
+Vendored under `internal/pdfops/fonts/` (`LiberationSans-*.ttf`, `LiberationSerif-*.ttf`
+and `LiberationMono-*.ttf`, regular, bold, italic and bold italic) and installed into
+pdfcpu's font registry: Liberation Mono as the monospace face for authored code
+blocks, and all three families as the faces stamped text and edits are drawn in,
+because they are metrically compatible with the Base-14 Helvetica, Times and Courier
+a stamped field is measured in — for the same reason as the Roboto weights above: a
+Base-14 core font cannot be embedded. Version 2.1.5. Copyright (c) Red Hat, Inc., with
+Reserved Font Name "Liberation",
 licensed under the SIL Open Font License, Version 1.1 (the full license text is
 reproduced in the Noto Sans section above). Upstream:
 <https://github.com/liberationfonts/liberation-fonts>.

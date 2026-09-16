@@ -357,9 +357,9 @@ func CreateFromJSON(spec []byte) ([]byte, error) {
 	}
 	// A spec may name an embedded face — `internal/p2p`'s readme and signature pages do, since
 	// P04.S05 — and pdfcpu then writes a `/CIDSet` over the USED glyphs, which PDF/UA 7.21.4.2
-	// forbids. THIRD of the three places nib embeds a font: mdpdf's own `api.Create`, the OCR
-	// watermark path, and here. They are three because pdfcpu is entered three different ways, and
-	// they all route through one door (ADR-009). See dropCIDSets.
+	// forbids. One of the places nib embeds a font: mdpdf's own `api.Create`, the OCR watermark
+	// path, the text stamps (`stampTextWatermarks`), and here. They are several because pdfcpu is
+	// entered several ways, and they all route through one door (ADR-009). See dropCIDSets.
 	//
 	// **Asked of the SPEC rather than run unconditionally.** The tail is a parse-and-rewrite and
 	// takes `CreateFromJSON` from 3.8 ms to 8.7 ms — more than double, on a door called once per
@@ -1088,9 +1088,10 @@ type Field struct {
 	Font string     `json:"font,omitempty"` // a Base-14 core font name; defaults to Helvetica
 	// BaseFont is the document's OWN font name for the run this edit replaces, as
 	// pdf.js reports it ("Courier", "Helvetica-Bold", "ABCDEF+MinionPro-Regular").
-	// Optional and advisory: pdfcpu can stamp only the Base-14 faces, so Font is
-	// still what gets drawn. What this decides is whether that substitution makes
-	// the WIDTH MEASUREMENT exact, near enough, or a guess — see FontFidelity.
+	// Optional and advisory: Font is still what gets measured, and it is drawn in
+	// Font's metric-compatible embedded face (`stampFaceFor`). What this decides is
+	// whether that substitution makes the WIDTH MEASUREMENT exact, near enough, or a
+	// guess — see FontFidelity.
 	BaseFont string  `json:"baseFont,omitempty"`
 	Size     float64 `json:"size,omitempty"`  // explicit point size; 0 = derive from rect height
 	Color    string  `json:"color,omitempty"` // #RRGGBB; "" = black
@@ -1161,7 +1162,7 @@ func stampStyle(f Field) (string, int) {
 }
 
 // stampWidth is the width in points of text as StampFields will actually draw
-// it: the widest of its lines, measured through mdpdf.CoreWidth.
+// it: the widest of its lines, measured through mdpdf.Width in the face drawn.
 //
 // Three things it does that a direct CoreWidth call does not, each measured
 // against the form-XObject BBox pdfcpu emits — which is the number that decides
@@ -1180,10 +1181,17 @@ func stampStyle(f Field) (string, int) {
 //     /api/bake. Coercing first is not a guard bolted on top: it is the same
 //     value that already decides which face is stamped, so the measurement and
 //     the emission cannot describe different fonts.
-func stampWidth(text, fontName string, pts int) float64 {
+//
+// And it measures the face that is DRAWN (`drawnFace`), by that face's rule: the
+// metric-compatible embedded face when the faces installed, the core face when they
+// did not. The two agree within 0.21%, which is not within this function's oracle —
+// the emitted BBox — so measuring the core face for an embedded draw would be close
+// and wrong.
+func stampWidth(text, fontName string, pts int, embedded bool) float64 {
+	drawn := drawnFace(fontName, embedded)
 	widest := 0.0
 	for _, line := range strings.Split(text, "\n") {
-		if w := mdpdf.CoreWidth(line, fontName, pts); w > widest {
+		if w := mdpdf.Width(line, drawn, pts, embedded); w > widest {
 			widest = w
 		}
 	}
@@ -1371,12 +1379,12 @@ func fontFidelityFor(baseFont, stamped string) FontFidelity {
 // replacement one point smaller still looks like the line it replaced, whereas one
 // broken across two lines does not. Wrap is the fallback for the case shrinking
 // cannot reach, not the first resort.
-func resolveFit(f Field) (Field, FitOutcome, float64, float64) {
+func resolveFit(f Field, embedded bool) (Field, FitOutcome, float64, float64) {
 	fontName, pts := stampStyle(f)
 	boxW := f.Rect[2] - (f.Rect[0] + stampInsetPt)
 	boxH := f.Rect[3] - (f.Rect[1] + stampInsetPt)
 
-	if w := stampWidth(f.Text, fontName, pts); w <= boxW+fitTolerancePt {
+	if w := stampWidth(f.Text, fontName, pts, embedded); w <= boxW+fitTolerancePt {
 		return f, FitAsDrawn, w, boxW
 	}
 
@@ -1384,7 +1392,7 @@ func resolveFit(f Field) (Field, FitOutcome, float64, float64) {
 	// further than the ratio bound, because past that a shrink stops looking like the
 	// line it replaced and starts silently rewriting the page.
 	for p := pts - 1; p >= shrinkFloorFor(pts); p-- {
-		if w := stampWidth(f.Text, fontName, p); w <= boxW+fitTolerancePt {
+		if w := stampWidth(f.Text, fontName, p, embedded); w <= boxW+fitTolerancePt {
 			out := f
 			out.Size = float64(p)
 			return out, FitShrunk, w, boxW
@@ -1399,15 +1407,18 @@ func resolveFit(f Field) (Field, FitOutcome, float64, float64) {
 	// lines grow upward, over whatever sits above the box. On a text document that is
 	// the previous line. A box drawn around one line of text has room for one line,
 	// so wrapping it would trade a horizontal overrun for a vertical one.
-	if lines := mdpdf.WrapCore(f.Text, fontName, pts, boxW); len(lines) > 1 {
-		if float64(len(lines))*mdpdf.CoreLineHeight(fontName, pts) <= boxH+fitTolerancePt {
+	// Height in the drawn face too: Liberation's widths are Helvetica's, its line height
+	// is not (15.384 against 13.872 at 12pt).
+	drawn := drawnFace(fontName, embedded)
+	if lines := mdpdf.Wrap(f.Text, drawn, pts, boxW, embedded); len(lines) > 1 {
+		if float64(len(lines))*mdpdf.LineHeight(drawn, pts) <= boxH+fitTolerancePt {
 			out := f
 			out.Text = strings.Join(lines, "\n")
-			return out, FitWrapped, stampWidth(out.Text, fontName, pts), boxW
+			return out, FitWrapped, stampWidth(out.Text, fontName, pts, embedded), boxW
 		}
 	}
 
-	return f, FitOverran, stampWidth(f.Text, fontName, pts), boxW
+	return f, FitOverran, stampWidth(f.Text, fontName, pts, embedded), boxW
 }
 
 // fitFor records one resolved field. Both halves of the measurement come from
@@ -1430,52 +1441,75 @@ func fitFor(i int, f Field, page int, outcome FitOutcome, w, boxW float64) Fit {
 // Fields skipped as empty produce no Fit, so callers key on Fit.Field rather than
 // on position.
 func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
-	wms := map[int][]*model.Watermark{}
-	var fits []Fit
-	for i, f := range fields {
+	// Before any read: which faces this stamp will draw, and whether its text can be baked at all.
+	// An unrepresentable field is the caller's error, and it must not look like an embedded-face
+	// failure worth retrying.
+	faces := map[string]bool{}
+	for _, f := range fields {
 		if strings.TrimSpace(f.Text) == "" {
 			continue
 		}
-		// Resolve BEFORE anything is derived from the field: resolveFit returns the
-		// field as it should actually be emitted (a smaller size, or text broken
-		// across lines), so everything below describes what is really stamped. The
-		// field is rebound deliberately — measuring one field and stamping another is
-		// the whole defect this pair of slices exists to end.
-		f, outcome, wPt, boxPt := resolveFit(f)
-		fontName, pts := stampStyle(f)
-		color := "#000000"
-		if hexColor.MatchString(f.Color) {
-			color = f.Color
-		}
-		// Anchor the text near the field's bottom-left (small inset), in points.
-		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.1f %.1f, fillcolor:%s, rotation:0",
-			fontName, pts, f.Rect[0]+stampInsetPt, f.Rect[1]+stampInsetPt, color)
-		ftext, err := stampText(f.Text)
-		if err != nil {
+		if _, err := stampText(f.Text); err != nil {
 			return nil, nil, err
 		}
-		if ftext == "" {
-			continue
-		}
-		wm, err := api.TextWatermark(ftext, desc, true, false, types.POINTS)
-		if err != nil {
-			return nil, nil, err
-		}
-		page := f.Page
-		if page < 1 {
-			page = 1
-		}
-		wms[page] = append(wms[page], wm)
-		fits = append(fits, fitFor(i, f, page, outcome, wPt, boxPt))
+		fontName, _ := stampStyle(f)
+		faces[drawnFace(fontName, true)] = true
 	}
-	if len(wms) == 0 {
-		return pdf, fits, nil
+	if len(faces) == 0 {
+		return pdf, nil, nil
 	}
-	var out bytes.Buffer
-	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
+	names := make([]string, 0, len(faces))
+	for n := range faces {
+		names = append(names, n)
+	}
+	var fits []Fit
+	// PDF/UA 7.21.4.1 — `PLAN-ua-coverage.md` P01.S03. One answer per attempt, decided before any
+	// field is measured, so every field is measured and drawn by the same one.
+	out, err := stampTextWatermarks(pdf, stampFacesInstalled(), names, func(ctx *model.Context, embedded bool) error {
+		fits = nil
+		wms := map[int][]*model.Watermark{}
+		for i, f := range fields {
+			if strings.TrimSpace(f.Text) == "" {
+				continue
+			}
+			// Resolve BEFORE anything is derived from the field: resolveFit returns the
+			// field as it should actually be emitted (a smaller size, or text broken
+			// across lines), so everything below describes what is really stamped. The
+			// field is rebound deliberately — measuring one field and stamping another is
+			// the whole defect this pair of slices exists to end.
+			f, outcome, wPt, boxPt := resolveFit(f, embedded)
+			fontName, pts := stampStyle(f)
+			color := "#000000"
+			if hexColor.MatchString(f.Color) {
+				color = f.Color
+			}
+			// Anchor the text near the field's bottom-left (small inset), in points.
+			desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.1f %.1f, fillcolor:%s, rotation:0",
+				drawnFace(fontName, embedded), pts, f.Rect[0]+stampInsetPt, f.Rect[1]+stampInsetPt, color)
+			ftext, err := stampText(f.Text)
+			if err != nil {
+				return err
+			}
+			if ftext == "" {
+				continue
+			}
+			wm, err := api.TextWatermark(ftext, desc, true, false, types.POINTS)
+			if err != nil {
+				return err
+			}
+			page := f.Page
+			if page < 1 {
+				page = 1
+			}
+			wms[page] = append(wms[page], wm)
+			fits = append(fits, fitFor(i, f, page, outcome, wPt, boxPt))
+		}
+		return pdfcpu.AddWatermarksSliceMap(ctx, wms)
+	})
+	if err != nil {
 		return nil, nil, err
 	}
-	return honestOptionalContent(out.Bytes()), fits, nil
+	return out, fits, nil
 }
 
 // Stamp is an image to bake onto the page at a given rectangle (PDF points,
@@ -1586,19 +1620,30 @@ func StampWatermark(pdf []byte, text string, st WatermarkStyle) ([]byte, error) 
 		return pdf, nil
 	}
 	st = st.sanitize()
-	desc := fmt.Sprintf("fontname:Helvetica, scalefactor:%.3f rel, fillcolor:%s, opacity:%.3f, rotation:%d, position:c",
-		st.Scale, st.Color, st.Opacity, st.Angle)
-	// Always drawn on top: a "behind" watermark is hidden by any page with an
-	// opaque background, inconsistently per page — opacity gives the subtle look.
-	wm, err := api.TextWatermark(wtext, desc, true, false, types.POINTS)
-	if err != nil {
-		return nil, err
-	}
-	var out bytes.Buffer
-	if err := api.AddWatermarks(bytes.NewReader(pdf), &out, nil, wm, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return honestOptionalContent(out.Bytes()), nil
+	// nib's own text, so nib's own face (PDF/UA 7.21.4.1, `PLAN-ua-coverage.md` P01.S03); Helvetica,
+	// said in the log, when the face cannot install or the document already carries one pdfcpu would
+	// rewrite. Nothing measures a watermark — it is scaled relative to the page — so the face's
+	// metrics decide nothing here.
+	face, _, embedded := AuthoredTextFaces()
+	return stampTextWatermarks(pdf, embedded, []string{face}, func(ctx *model.Context, embedded bool) error {
+		name := "Helvetica"
+		if embedded {
+			name = face
+		}
+		desc := fmt.Sprintf("fontname:%s, scalefactor:%.3f rel, fillcolor:%s, opacity:%.3f, rotation:%d, position:c",
+			name, st.Scale, st.Color, st.Opacity, st.Angle)
+		// Always drawn on top: a "behind" watermark is hidden by any page with an
+		// opaque background, inconsistently per page — opacity gives the subtle look.
+		wm, err := api.TextWatermark(wtext, desc, true, false, types.POINTS)
+		if err != nil {
+			return err
+		}
+		every := types.IntSet{}
+		for p := 1; p <= ctx.PageCount; p++ {
+			every[p] = true
+		}
+		return pdfcpu.AddWatermarks(ctx, every, wm)
+	})
 }
 
 // pageNumPositions is the corner allowlist for StampPageNumbers. The code is
@@ -1681,37 +1726,41 @@ func StampPageNumbers(pdf []byte, st PageNumberStyle) ([]byte, error) {
 	// DELETE the character, which is an alteration of what was typed, just a quiet one.
 	prefix := st.Prefix
 	ox, oy := pageNumOffset(pos)
-
-	wms := map[int][]*model.Watermark{}
-	for i := 1; i <= n; i++ {
-		label := fmt.Sprintf("%s%0*d", prefix, pad, start+i-1)
-		if st.OfTotal {
-			last := start + n - 1 // this file's last number…
-			if st.Total > 0 {
-				last = st.Total // …or the set's grand total in a continuous run
+	// nib's own text in nib's own face, as `StampWatermark`. pdfcpu anchors the label at the corner,
+	// so no width of nib's decides where it lands.
+	face, _, embedded := AuthoredTextFaces()
+	return stampTextWatermarks(pdf, embedded, []string{face}, func(ctx *model.Context, embedded bool) error {
+		name := "Helvetica"
+		if embedded {
+			name = face
+		}
+		wms := map[int][]*model.Watermark{}
+		for i := 1; i <= n; i++ {
+			label := fmt.Sprintf("%s%0*d", prefix, pad, start+i-1)
+			if st.OfTotal {
+				last := start + n - 1 // this file's last number…
+				if st.Total > 0 {
+					last = st.Total // …or the set's grand total in a continuous run
+				}
+				label += " of " + strconv.Itoa(last)
 			}
-			label += " of " + strconv.Itoa(last)
+			desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:%s, offset:%.1f %.1f, fillcolor:%s, rotation:0",
+				name, size, pos, ox, oy, color)
+			ltext, err := stampText(label)
+			if err != nil {
+				return err
+			}
+			if ltext == "" {
+				continue
+			}
+			wm, err := api.TextWatermark(ltext, desc, true, false, types.POINTS)
+			if err != nil {
+				return err
+			}
+			wms[i] = append(wms[i], wm)
 		}
-		desc := fmt.Sprintf("fontname:Helvetica, points:%d, scalefactor:1 abs, position:%s, offset:%.1f %.1f, fillcolor:%s, rotation:0",
-			size, pos, ox, oy, color)
-		ltext, err := stampText(label)
-		if err != nil {
-			return nil, err
-		}
-		if ltext == "" {
-			continue
-		}
-		wm, err := api.TextWatermark(ltext, desc, true, false, types.POINTS)
-		if err != nil {
-			return nil, err
-		}
-		wms[i] = append(wms[i], wm)
-	}
-	var out bytes.Buffer
-	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return honestOptionalContent(out.Bytes()), nil
+		return pdfcpu.AddWatermarksSliceMap(ctx, wms)
+	})
 }
 
 // pageLabelStyles maps Nib's style names to the PDF /S numbering-style codes

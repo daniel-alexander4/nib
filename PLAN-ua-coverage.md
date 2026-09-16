@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: unbuilt.** No slice has started. There is no P00 — nib needs no bootstrap.
+**Status: P01 in progress** — S01–S03 done. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -153,11 +153,37 @@ form), and the notes door now has it too. The only such tree reachable through p
 with no `/S`: pdfcpu refuses a bare MCID or MCR under the root, and its structure depth limit (100) fires before nib's
 (200).
 
-#### P01.S03 — stamped text embeds its face
+#### P01.S03 — stamped text embeds its face *(done 2026-09-16, v1.129.116)*
 Scope: `StampFields`, `StampPageNumbers`, `StampWatermark` draw in the authoring face. Refs: D4.
 Acceptance:
 - Their census rows add nothing.
 - A Base-14 fallback when faces cannot install is still reported, not silent.
+Tasks: *(written at slice-grill time, 2026-09-16; deep-dive not fired — the seam is `resolveFit`'s measurement, read
+in full at `pdfops.go` 1136–1411, and `mdpdf`'s width/wrap doors, read at `layout.go` 22–126 and 403–417)*
+1. T01 — vendor Liberation Sans and Serif (four styles each) and Liberation Mono's other three, with their notice.
+   **Not the authoring face for `StampFields`, and the scope line above is amended by measurement:** a field's face
+   is chosen to MATCH the document run it replaces (`classifyFont`), and the fit verdict, the shrink and the wrap are
+   all measured in that core face. Liberation is metric-compatible with all twelve core text faces — measured within
+   0.21% of Helvetica and Times at 12pt, identical to Courier — so the embedded draw keeps every measurement and the
+   client's preview. Roboto has no serif and moves the widths. *Assumed:* ~4.1 MB of binary for it.
+2. T02 — `stampFacesInstalled()` and `stampFaceFor`: the core→Liberation map, installed all-or-nothing through
+   `mdpdf.InstallFaces`; on failure log and draw the core names.
+3. T03 — `StampFields` draws in the mapped face and measures with the embedded rule (`mdpdf.Width`); wrapping gains
+   an embedded-aware `mdpdf.Wrap` that `WrapCore` delegates to (ADR-009).
+4. T04 — `StampWatermark` and `StampPageNumbers` draw in `AuthoredTextFaces`' body face.
+5. T05 — drop the three census rows; a test reads the output's fonts for all twelve core names, and one proves the
+   fallback reports.
+6. T06 — *(from the census)* the stamps route through `embeddedFontsAreHonest`'s rule: pdfcpu's used-glyph `/CIDSet`
+   on a Liberation subset (glyphs 0 and 87, set names 87) failed 7.21.4.2 t2.
+7. T07 — *(from the slice review, `code-reviews/v1.129.115-2026-09-16.md`)* one read-change-write per stamp
+   (`stampTextWatermarks`), which draws embedded only when a same-named font already in the document is one nib's
+   face describes exactly, and retries in Base-14 on an embedded failure.
+
+**(review pin, 2026-09-16, P01.S03)** **pdfcpu reuses a document's font by NAME and rebuilds it from nib's TTF.** A
+LibreOffice document's own `LiberationSans` failed the bake outright (`corrupt fontDict`), and a subset with other
+glyph ids would have been rewritten silently. Such a document now gets its stamps in Base-14, logged — so 7.21.4.1
+still fails for edits on documents that carry their own Liberation or Roboto, which LibreOffice output commonly
+does. Recorded as a pending item.
 
 #### P01.S04 — the form door keeps the metadata
 Scope: `AuthorTaggedForm` carries the catalog `/Metadata`. Refs: —

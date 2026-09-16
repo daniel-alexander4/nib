@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -37,29 +38,52 @@ import (
 //
 // # Where it is applied
 //
-// The two doors where nib EMBEDS a font of its own: the Markdown conversion and the OCR text
-// layer. It is deliberately not applied to documents nib merely rewrites — a `/CIDSet` in a user's
+// The doors where nib EMBEDS a font of its own: the Markdown conversion, the OCR text layer, and —
+// since `PLAN-ua-coverage.md` P01.S03 — the three text stamps, which remove only the streams of the
+// faces they drew (`dropCIDSetsOf`, from `stampTextWatermarks`). It is deliberately not applied to documents nib merely rewrites — a `/CIDSet` in a user's
 // own document is their file's business, and an office conversion's fonts come from LibreOffice,
 // which does not produce this defect (measured: a converted document fails neither font clause).
 func dropCIDSets(pdf []byte) ([]byte, error) {
 	return writeMutated(pdf, func(ctx *model.Context) error {
-		for _, e := range ctx.XRefTable.Table {
-			if e == nil || e.Object == nil {
-				continue
-			}
-			d, ok := e.Object.(types.Dict)
-			if !ok {
-				continue
-			}
-			// FontDescriptor is the only dictionary that carries the key, and checking /Type
-			// rather than the key's presence means a stray "CIDSet" elsewhere is left alone.
-			if ty, _ := d["Type"].(types.Name); ty != "FontDescriptor" {
-				continue
-			}
-			delete(d, "CIDSet")
-		}
+		dropCIDSetsOf(ctx, nil)
 		return nil
 	})
+}
+
+// dropCIDSetsOf is dropCIDSets inside a rewrite a door is already paying for. With faces named, only
+// those faces' descriptors lose the stream: a stamp drew those faces and nothing else, and a
+// `/CIDSet` in the user's own fonts is their file's business. With none, every descriptor, as the
+// doors that write a whole document nib authored.
+func dropCIDSetsOf(ctx *model.Context, faces []string) {
+	only := map[string]bool{}
+	for _, f := range faces {
+		only[f] = true
+	}
+	for _, e := range ctx.XRefTable.Table {
+		if e == nil || e.Object == nil {
+			continue
+		}
+		d, ok := e.Object.(types.Dict)
+		if !ok {
+			continue
+		}
+		// FontDescriptor is the only dictionary that carries the key, and checking /Type
+		// rather than the key's presence means a stray "CIDSet" elsewhere is left alone.
+		if ty, _ := d["Type"].(types.Name); ty != "FontDescriptor" {
+			continue
+		}
+		if len(only) > 0 {
+			name, _ := d["FontName"].(types.Name)
+			base := string(name)
+			if i := strings.IndexByte(base, '+'); i == 6 {
+				base = base[i+1:] // the subset tag names the subsetting, not the face
+			}
+			if !only[base] {
+				continue
+			}
+		}
+		delete(d, "CIDSet")
+	}
 }
 
 // specNamesAUserFont reports whether a pdfcpu "create" spec mentions any font pdfcpu has registered
