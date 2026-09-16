@@ -5,7 +5,7 @@
  		return nil, err
  	}
 -	if !carried || carryIsComplete(out) {
-+	if true {
++	if !carried || true {
  		return out, nil
  	}
  	return subset(pdf, pick)
