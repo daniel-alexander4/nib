@@ -76,7 +76,7 @@ const maxFormDrawDepth = 8
 //     side. Two pages carrying the same `/StructParents` share one row of elements, so the elements
 //     describe one of them and the other's content is described by references that name its twin.
 //     `DuplicatePage` is `Collect(pdf, ["1-p", "p-"])` and `Collect` preserves a repeat, so from
-//     P02.S04 — where a subset carries the tree — this is what duplicating a page produces.
+//     P02.S04b — where a subset carries the tree — this is what duplicating a page produces.
 func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDefect {
 	out := append([]structDefect{}, checkStructConsistency(ctx, tree)...)
 	add := func(key, f string, a ...any) { out = append(out, structDefect{key: key, what: fmt.Sprintf(f, a...)}) }

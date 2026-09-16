@@ -327,14 +327,52 @@ obligation sits with S04, which must probe it red against a carrying `Collect`. 
 carry test, which passed with its gate disabled because its fixture was orphaned — asserted properties must be
 able to fail for the reason they name.
 
-#### P02.S04 — subset operations carry the tree
-Scope: `Collect`/`RemovePages` prune the source tree in place and carry `/MarkInfo`, `/Metadata`,
-`/ViewerPreferences` (identification dropped, ADR-032); `DuplicatePage` clones the repeated page under a new key;
-refuse a nested page tree or ParentTree. `Booklet`'s rows flip with it; `CarryAttachments`' census rows measure
-`Collect(src)`. Refs: D5.
+**(re-cut 2026-09-16, before building.)** S04 was one slice — *"prune the source tree in place and carry the
+catalog keys"* — and the investigation found that the prune it names is **not an addition to `Collect` but a
+replacement of it**, which is a different and much larger change than the phrase suggests. Three measured facts
+forced the split:
+
+- **A tree cannot be transplanted across `api.Collect`.** That path builds a NEW context (`ExtractPages` →
+  `CreateContextWithXRefTable`), so every object number changes. pdfcpu's own `migrateObject`/`migrateIndRef` are
+  **unexported**, and a hand-rolled deep copy would silently mis-point MCR `/Stm` and OBJR references in real
+  producer documents, because nib cannot see pdfcpu's remapping. Nib's fixtures have neither, so the failure would
+  not show here.
+- **So the prune must run in the SOURCE context**, where object numbers are stable and the tree work is local —
+  which means nib takes over page selection from pdfcpu, and inherits `/Dests` migration, AcroForm fields whose
+  widgets were on dropped pages, and repeats needing genuine page-object clones (two `/Kids` entries naming one
+  page object IS the shared-key defect condition 5 now catches).
+- **It must NOT flatten the page tree**, which the phase-open dive's probe did. Measured on a hand-built nested
+  fixture read plainly: pages genuinely inherit (`ownResources=false`, `ownMediaBox=false`). Keeping the `Pages`
+  hierarchy and only rewriting `/Kids` preserves inheritance by construction; flattening makes nib responsible for
+  resolving it. The dive's probe passed only because the census has no inheritance, no dests, no AcroForm and no
+  nested tree — the population that cannot exercise any of these risks.
+
+Also governing, and already recorded at `pdfops.go:225`: `/Outlines` and `/PageLabels` are **deliberately not
+carried**, because they are page-indexed and copying them across a reorder *"sends the reader to the wrong place —
+worse than not having one, because it is wrong rather than absent"*. An in-place prune would start keeping them by
+construction, so it must drop them explicitly. (Measured: `Collect` and `RemovePages` drop `/PageLabels` today.)
+
+#### P02.S04a — Collect owns its own page selection
+Scope: replace `api.Collect`/`api.RemovePages` with an in-place page-tree rewrite in the source context — the
+ordered, repeat-preserving selection `PagesForPageCollection` produces; the `Pages` hierarchy kept intact so
+inherited attributes survive; a repeated page cloned as a real page object; `/Dests` naming dropped pages pruned;
+`/Outlines` and `/PageLabels` dropped explicitly (the decision above); AcroForm fields whose widgets are gone.
+**No structure-tree work at all.** Refs: D5.
+Acceptance:
+- Every assertion the current subset tests make still holds — parity is the bar, not improvement.
+- A nested page tree whose pages inherit `/Resources` and `/MediaBox` renders identically after a subset.
+- A named destination pointing at a dropped page does not survive as a dangling reference.
+- `DuplicatePage` emits two distinct page objects, not one object named twice.
+
+#### P02.S04b — subset operations carry the tree
+Scope: with the selection in nib's hands, prune the source tree in place — elements by `/Pg`, ParentTree `/Nums`
+filtered, a cloned page's subtree cloned under a fresh key — and carry `/MarkInfo`, `/Metadata`,
+`/ViewerPreferences` (identification dropped, ADR-032); refuse a nested ParentTree. `Booklet`'s rows flip with it;
+`CarryAttachments`' census rows measure `Collect(src)`. Refs: D5.
 Acceptance:
 - `Collect`, `RemovePages`, `DuplicatePage`, `Booklet` census rows add nothing; tag-fate verdicts `carried`.
 - A fixture with an OBJR-referenced annotation on a kept and on a dropped page.
+- S03's `TestRedactionEmitsNoStructureTree` is probed RED against a carrying `Collect` — the debt S03 recorded.
 
 #### P02.S05 — crop carries the tree *(blocked — Dan: may a structure tree describe content a crop has clipped from view but not removed?)*
 Scope: `Crop` wraps pages in place instead of rebuilding them. Measured compliant even at a 5% window; the

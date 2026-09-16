@@ -12,10 +12,10 @@ import (
 // **The routing guard is the real one, and the output assertion below is NOT.** `api.Collect` drops
 // the structure tree on its own today, so "the redacted document carries no element" is true for
 // that reason whatever `RedactPages` calls — it would stay green if redaction were pointed back at
-// the carrying primitive tomorrow. The discrimination lives in the call graph until P02.S04 makes
+// the carrying primitive tomorrow. The discrimination lives in the call graph until P02.S04b makes
 // `Collect` carry. The phase inventory's S03 section records that in prose and **nothing polices
 // it** — `inventorycheck`'s `## Known gaps` excuses a slice with no section, which is a different
-// thing entirely — so S04 owes this test a red probe against a carrying `Collect`.
+// thing entirely — so S04b owes this test a red probe against a carrying `Collect`.
 
 // callsIn returns, for every function declared in one file of this package, the set of plain
 // function names it calls. It is the same shape as `TestTheReviewDoorsRouteThroughTheProposer`'s
@@ -60,13 +60,13 @@ func TestRedactionNeverRoutesThroughTheCarryingCollect(t *testing.T) {
 			"primitive which will never carry a tree; without the door there is nothing to bind to")
 	}
 	if !calls["RedactPages"]["collectWithoutStructure"] {
-		t.Error("RedactPages does not route through collectWithoutStructure. From P02.S04 `Collect` " +
+		t.Error("RedactPages does not route through collectWithoutStructure. From P02.S04b `Collect` " +
 			"carries the source tree onto the pages it keeps, and a tree carried across a redaction " +
 			"describes what the redacted pages said — the headings, the reading order, and whatever " +
 			"/Alt or /ActualText the producer wrote, which is the shape the raster was meant to destroy")
 	}
 	if calls["RedactPages"]["Collect"] {
-		t.Error("RedactPages calls Collect. That is the carrying primitive from P02.S04 onwards, and " +
+		t.Error("RedactPages calls Collect. That is the carrying primitive from P02.S04b onwards, and " +
 			"a redaction that inherits the carry re-describes the content it destroyed")
 	}
 }
