@@ -182,7 +182,19 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		}
 	}
 	if len(places) != len(sources) {
-		return nil, false // some page's content is not accounted for; do not ship a partial tree
+		// Every page this capture KEPT has been matched to a form. **It does not say every page of
+		// the document has been** — `capturePageSources` skips a page with no `/StructParents` and a
+		// page whose content is empty, so both sides of this comparison exclude it and the guard
+		// cannot see one (/pending 535).
+		//
+		// Measured rather than argued, because the comment here used to claim more than it checks:
+		// a two-page fixture whose second page has `/StructParents` and empty content, and one whose
+		// second page has content and no `/StructParents`, both come out of `NUp` with the carry
+		// abandoned and the claim dropped — `honest` deletes `/StructTreeRoot`, and the fate reads
+		// as the honest loss. The skipped page is caught downstream by `dead-pg` rather than here,
+		// which is a worse diagnosis and the same outcome. So this is the guard it is, not the guard
+		// it read as.
+		return nil, false
 	}
 
 	// ── Give each PLACEMENT a form XObject of its own, carrying the /StructParents its source page had.

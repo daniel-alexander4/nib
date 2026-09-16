@@ -248,6 +248,7 @@ var tagFates = map[string]tagFate{
 	"ConvertDocToPDF":    {verdict: "untouched", why: "its input is not a PDF — it produces one from an office document"},
 	"ConvertOfficeToPDF": {verdict: "untouched", why: "as ConvertDocToPDF"},
 	"CreateFromJSON":     {verdict: "untouched", why: "authors a document from a JSON spec; there is no input tagging to lose"},
+	"ImageToDocument":    {verdict: "untouched", why: "its input is a PNG or JPEG, not a PDF — it produces a one-page document from an image, and an image carries no structure tree to keep or lose"},
 	// The autotagger's commit (P08.S06b). Not driven: the census fixture is TAGGED, and a tagged input is
 	// exactly what this refuses (`errCommitTagged`) — so it returns no document whose claim could be
 	// read, and the claim of the document it was given is never touched. What it does to an UNTAGGED

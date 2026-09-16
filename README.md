@@ -209,6 +209,22 @@ Either way, because no pure-Go PDF/A validator exists, Nib can't certify the res
 itself — it produces a *candidate* you should **verify with
 [veraPDF](https://verapdf.org/)** before relying on it for archival.
 
+### Open an image
+
+Open a **PNG or JPEG** the way you open a PDF — by path, by dragging it onto the
+window, or by double-clicking it when Nib is your handler. It becomes a one-page
+document you can mark up, annotate, redact and export like any other.
+
+The page is the image's **physical size**: pixels divided by the density the file
+declares (`pHYs` for PNG, JFIF for JPEG), or **96 dpi** where it declares none — so
+a 1920×1080 screenshot opens at about 1440×810 points, close to the size it had on
+screen. A photo carrying an EXIF orientation opens **upright**; the four mirrored
+orientations are not corrected, and open as an unrotated image.
+
+An opened image is **not saved back over itself**. The file on disk is a PNG and the
+document is a PDF built from it, so **Save** offers **Save As** rather than replacing
+your original.
+
 ### Open an office or Markdown document
 **File → Open & convert to PDF…** opens a Markdown, Word, Excel, PowerPoint, or
 OpenDocument file (`.md/.markdown`, `.docx/.doc/.odt/.rtf/.txt`,
