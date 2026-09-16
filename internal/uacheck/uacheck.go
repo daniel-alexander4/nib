@@ -129,14 +129,18 @@ func (r Report) Conformant() bool {
 	return true
 }
 
-// Unresolved returns the clauses that were not settled either way — `CannotCheck` and `NotRun`.
+// Unresolved returns the clauses that were not settled either way — `CannotCheck`, `NotRun`, and any value
+// outside the enum.
 //
 // It exists so a caller cannot ask "did anything fail" and treat silence as conformance: the two
-// questions are separate and this is the second one.
+// questions are separate and this is the second one. **It is defined as the complement of the other two
+// answers** — neither conformant nor `Fail` — rather than as a list of verdicts (`/pending 496`): listed,
+// a `Verdict(42)` was neither failed nor unresolved, so `Refusals` came back empty for a report
+// `Conformant` refused, and `nib ua` printed "every clause nib checks passes" over it.
 func (r Report) Unresolved() []Result {
 	var out []Result
 	for _, res := range r.Results {
-		if res.Verdict == CannotCheck || res.Verdict == NotRun {
+		if !res.Verdict.conformant() && res.Verdict != Fail {
 			out = append(out, res)
 		}
 	}
@@ -220,6 +224,10 @@ func runOne(rule Rule, d *Document) (res Result) {
 	// the zero value: a rule that returns a bare `Result{}` has answered nothing, and `NotRun` is
 	// what that is — reported, never smoothed into a pass.
 	res.Clause = rule.Clause
+	if res.Verdict < NotRun || res.Verdict > NotApplicable {
+		// A value outside the enum has answered nothing a reader can interpret; it is reported as what it is.
+		res.Verdict, res.Why = NotRun, fmt.Sprintf("the rule returned verdict %d, which is none of the five", int(res.Verdict))
+	}
 	if res.Verdict == NotRun && res.Why == "" {
 		res.Why = "the rule returned no verdict"
 	}

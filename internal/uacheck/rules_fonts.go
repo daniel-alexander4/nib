@@ -74,21 +74,18 @@ func (d *Document) usedFonts() ([]*usedFont, string) {
 }
 
 // baseFontName returns /BaseFont without a subset prefix (`ABCDEF+Roboto` → `Roboto`).
-func baseFontName(font types.Dict) string {
-	n := font.NameEntry("BaseFont")
-	if n == nil {
-		return ""
+func (d *Document) baseFontName(font types.Dict) string {
+	n := d.name(font["BaseFont"])
+	if i := strings.IndexByte(n, '+'); i == 6 {
+		return n[7:]
 	}
-	if i := strings.IndexByte(*n, '+'); i == 6 {
-		return (*n)[7:]
-	}
-	return *n
+	return n
 }
 
 // descriptorOf returns the FontDescriptor that holds a font's program — a Type0 font's lives on its
 // descendant.
 func (d *Document) descriptorOf(font types.Dict) types.Dict {
-	if st := font.NameEntry("Subtype"); st != nil && *st == "Type0" {
+	if d.name(font["Subtype"]) == "Type0" {
 		kids, err := d.Ctx.DereferenceArray(font["DescendantFonts"])
 		if err != nil || len(kids) == 0 {
 			return nil
@@ -125,7 +122,7 @@ func checkFontsEmbedded(d *Document) Result {
 				Where:   f.where,
 			}
 		}
-		if st := f.dict.NameEntry("Subtype"); st != nil && *st == "Type3" {
+		if d.name(f.dict["Subtype"]) == "Type3" {
 			continue
 		}
 		fd := d.descriptorOf(f.dict)
@@ -143,7 +140,7 @@ func checkFontsEmbedded(d *Document) Result {
 		return Result{
 			Verdict: Fail,
 			Why: fmt.Sprintf("font %s (%s) draws visible text and its program is not embedded, so how "+
-				"the glyphs look depends on whatever the reader substitutes", f.name, baseFontName(f.dict)),
+				"the glyphs look depends on whatever the reader substitutes", f.name, d.baseFontName(f.dict)),
 			Where: f.where,
 		}
 	}
@@ -191,11 +188,8 @@ func checkFontsMapToUnicode(d *Document) Result {
 		if _, ok := f.dict["ToUnicode"]; ok {
 			continue
 		}
-		base := baseFontName(f.dict)
-		st := ""
-		if s := f.dict.NameEntry("Subtype"); s != nil {
-			st = *s
-		}
+		base := d.baseFontName(f.dict)
+		st := d.name(f.dict["Subtype"])
 		if st == "Type1" && standardLatinFaces[base] {
 			continue
 		}
@@ -241,7 +235,7 @@ func checkCIDSetsComplete(d *Document) Result {
 		if f.unresolve {
 			continue
 		}
-		if st := f.dict.NameEntry("Subtype"); st == nil || *st != "Type0" {
+		if d.name(f.dict["Subtype"]) != "Type0" {
 			continue
 		}
 		fd := d.descriptorOf(f.dict)
@@ -262,7 +256,7 @@ func checkCIDSetsComplete(d *Document) Result {
 		if !has {
 			continue
 		}
-		where := fmt.Sprintf("%s, font %s (%s)", f.where, f.name, baseFontName(f.dict))
+		where := fmt.Sprintf("%s, font %s (%s)", f.where, f.name, d.baseFontName(f.dict))
 		cs, _, err := d.Ctx.DereferenceStreamDict(csObj)
 		if err != nil || cs == nil || cs.Decode() != nil {
 			return Result{Verdict: CannotCheck, Why: "the /CIDSet stream could not be read", Where: where}
@@ -278,7 +272,7 @@ func checkCIDSetsComplete(d *Document) Result {
 		if len(kids) > 0 {
 			if desc := d.dict(kids[0]); desc != nil {
 				if m, ok := desc["CIDToGIDMap"]; ok {
-					if n, isName := m.(types.Name); !isName || n != "Identity" {
+					if d.name(m) != "Identity" {
 						return Result{Verdict: CannotCheck, Why: "the CID font maps CIDs to glyphs through a /CIDToGIDMap stream, which nib does not resolve", Where: where}
 					}
 				}
