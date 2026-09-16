@@ -291,3 +291,16 @@ home today.
   keeps only the first `/ParentTree` and `CutPage` leaves `/StructParents` on tiles: P02.S05/S06/S07 own that.
   Extends ADR-031 (five census verdicts flip; a subset joins `Append` as a `partial` producer) and ADR-009
   (one primitive, two wrappers, one declared exemption with a test that the two claimant walks agree).
+
+- **[ADR-039 — the download is Nib's, and the install is not](039-the-download-is-nibs-and-the-install-is-not.md)**
+  — Dan's ask for progress, a destination and a next step. Nib fetches the release itself and streams
+  it to a folder the user can see (`~/nib` by default), reporting progress as a new `event: download`
+  on the window stream it already holds — never a second `EventSource`, because each connection counts
+  as a window. **Measured, not argued:** a page cannot do this itself — a real release asset answers
+  with no `Access-Control-Allow-Origin` on either hop — and the asset is ~95 MB behind a signed URL
+  good for about an hour. **The install half is refused**: `build.sh` publishes no checksum and no
+  signature, so nothing can verify the bytes; the file is written `0o644` and the dialog offers *Show
+  in folder*, keeping README's promise that Nib never installs or replaces itself. The route takes a
+  folder and never a URL, reveal takes no path at all, and both sit behind `requireUnlocked` + CSRF
+  rather than the check route's public loopback gate. Supersedes v1.95.0's `confirm()` +
+  `location.assign` download.
