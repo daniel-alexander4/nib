@@ -81,18 +81,23 @@ func TestDroppingATaggingClaimIsRecordedOnTheDocument(t *testing.T) {
 	srv.registerLocked(doc)
 	srv.mu.Unlock()
 
-	// **`Collect`, not `Rotate`, and the difference is the correction this file carries.** Measured
-	// by PARSING (a byte count cannot see a compressed object stream): `Rotate` and `Optimize` carry
-	// the structure tree through intact, while `Collect` and `NUp` drop the claim and the content
-	// together. An earlier version of this test used `Rotate` on the belief that every operation
-	// destroyed tagging, which was an artefact of the byte count and not true of any real document.
-	out, err := pdfops.Collect(src, []string{"1"})
+	// **`Crop`, not `Rotate` and no longer `Collect`, and each change was forced by a measurement.**
+	// Measured by PARSING (a byte count cannot see a compressed object stream): `Rotate` and
+	// `Optimize` carry the structure tree through intact, so the first version of this test — which
+	// used `Rotate` on the belief that every operation destroyed tagging — was asserting nothing.
+	// `Collect` replaced it and then stopped dropping too: `PLAN-ua-coverage.md` P02.S04b prunes the
+	// source tree onto the pages a subset keeps, and this fixture is ONE page, so `Collect(["1"])` is
+	// the identity selection and the claim survives it whole. `Crop` still rebuilds each page and
+	// still drops the claim with the structure — until P02.S05, which is blocked on the question of
+	// what a crop should say. The setup guard below is what will say so when that lands.
+	out, err := pdfops.Crop(src, [4]float64{0.05, 0.05, 0.05, 0.05}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pdfops.ClaimsTagging(out) {
-		t.Fatal("setup: Collect still claims tagging, so there is no loss for the notice to record " +
-			"and this test is about the wrong thing")
+		t.Fatal("setup: the operation still claims tagging, so there is no loss for the notice to " +
+			"record and this test is about the wrong thing. Every page-set operation that still " +
+			"drops a tree is listed in `tagFates`; pick one that measures `dropped`")
 	}
 	if err := srv.commitMutation(doc, src, out, false); err != nil {
 		t.Fatal(err)
@@ -146,7 +151,8 @@ func TestTheNoticeIsStickyAcrossLaterEdits(t *testing.T) {
 	srv.registerLocked(doc)
 	srv.mu.Unlock()
 
-	dropped, err := pdfops.Collect(src, []string{"1"})
+	// `Crop`, for the reason the first test records: a one-page `Collect` now carries the tree.
+	dropped, err := pdfops.Crop(src, [4]float64{0.05, 0.05, 0.05, 0.05}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

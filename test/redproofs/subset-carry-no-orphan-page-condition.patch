@@ -1,0 +1,11 @@
+--- a/internal/pdfops/structcomplete.go
++++ b/internal/pdfops/structcomplete.go
+@@ -410,7 +410,7 @@
+ 	// subset's carry gave the tree a new way to do it; it is asked here rather than in
+ 	// `structureCarriedCompletely` because it is a property of the DOCUMENT and not of the tree, and
+ 	// `orphanPageObjects`' header says why it dereferences rather than type-asserting.
+-	return len(structureCarriedCompletely(ctx, tree)) == 0 && len(orphanPageObjects(ctx, live)) == 0
++	return len(structureCarriedCompletely(ctx, tree)) == 0
+ }
+ 
+ // carriesMCID reports whether a content stream marks any content with an `/MCID` — the property that

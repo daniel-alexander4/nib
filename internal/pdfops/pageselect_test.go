@@ -1167,10 +1167,14 @@ func TestALinkToADroppedPageIsUnlinked(t *testing.T) {
 	}
 }
 
-// TestATaggedSubsetKeepsNoStructureTree grades the allowlist's sharpest entry. Every other fixture
-// here is untagged, so `/StructTreeRoot` and `/MarkInfo` were being dropped by a rule nothing
-// exercised — and `/MarkInfo` kept without a tree is the single shape `orphaned()` fires on.
-func TestATaggedSubsetKeepsNoStructureTree(t *testing.T) {
+// TestATaggedSubsetEARNSItsStructureKeys grades the allowlist's sharpest pair from the other side.
+//
+// **It asserted the opposite until P02.S04b**, and the inversion is the slice: the catalog is still a
+// default-deny allowlist, and `/StructTreeRoot` and `/MarkInfo` are now restored ON TOP of it, only
+// when the carry pruned the tree onto the pages kept and found it still anchored to them. So the keys
+// are earned rather than allowlisted, and a refused carry writes exactly the document this test used
+// to assert. The refusal's own reader is `TestACarryThatAnchorsNothingIsRefused`.
+func TestATaggedSubsetEARNSItsStructureKeys(t *testing.T) {
 	src := repeatedPagesFixture()
 	before := readCtx(t, src)
 	broot, err := before.XRefTable.Catalog()
@@ -1190,10 +1194,17 @@ func TestATaggedSubsetKeepsNoStructureTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"StructTreeRoot", "MarkInfo"} {
-		if _, has := root[k]; has {
-			t.Errorf("a subset kept /%s; the tree describes pages that are gone, and /MarkInfo "+
-				"without a tree is the one shape orphaned() fires on", k)
+		if _, has := root[k]; !has {
+			t.Errorf("a subset of a tagged document did not carry /%s. The two go together: a tree "+
+				"without the claim describes a document that does not say it is tagged, and "+
+				"/MarkInfo without a tree is the one shape orphaned() fires on", k)
 		}
+	}
+	// The dropped page's element went with it, so nothing in the tree names a page that is gone.
+	if v, defects, orphans, elems := carryOf(t, out); v != "carried" || len(defects) > 0 || len(orphans) > 0 || elems != 1 {
+		t.Errorf("the carried subset is %s with %d defect(s), %d orphan page(s) and %d element(s), "+
+			"want a clean carried document holding the one element that describes the page it kept",
+			v, len(defects), len(orphans), elems)
 	}
 }
 
@@ -1309,7 +1320,10 @@ func TestSelectPagesRefusesASelectionItCannotHonour(t *testing.T) {
 		{"zero", []int{0}, "is not in this document"},
 		{"negative", []int{-1}, "is not in this document"},
 	} {
-		_, err := writeMutated(src, func(ctx *model.Context) error { return selectPages(ctx, c.keep) })
+		_, err := writeMutated(src, func(ctx *model.Context) error {
+			_, serr := selectPages(ctx, c.keep, false)
+			return serr
+		})
 		if err == nil {
 			t.Errorf("%s: expected a refusal, got none", c.name)
 			continue

@@ -278,3 +278,16 @@ home today.
   renders — never on nib's 19-of-106 checker — and a guard fails when mdpdf learns a node kind the fixture
   lacks. The one construct that failed, the thematic break's rule, is now an `/Artifact`. A pre-filled
   language earns no label, because veraPDF checks that a language is present, not that it is right.
+
+- **[ADR-034 — a page subset carries the structure of the pages it keeps, and a subset feeding a composition does not](034-a-subset-carries-the-structure-of-the-pages-it-keeps.md)**
+  — `PLAN-ua-coverage.md` P02.S04b, D5. The tree is pruned in place, in the source context S04a made
+  stable; an element dies when it loses every kid and **never** because its own `/Pg` died (measured:
+  LibreOffice writes `/Pg` on 523 of 523 elements, and the other rule empties the tree on 5 of 7 real
+  documents); an OBJR's liveness is its `/Obj`'s; rows are renumbered `0..n-1`, because the source's keys
+  are its page indices; a repeat gets its own key and a deep-cloned subtree. **The gate reads the bytes it
+  wrote** and an incomplete carry falls back to the honest loss, which is why the refusals are free. `/IDTree`,
+  a carried element's `/AF` and a changed element's `/T` are dropped as declared losses — each re-anchors a
+  removed page or an embedded file. A subset whose result is COMPOSED does not carry, because `api.MergeRaw`
+  keeps only the first `/ParentTree` and `CutPage` leaves `/StructParents` on tiles: P02.S05/S06/S07 own that.
+  Extends ADR-031 (five census verdicts flip; a subset joins `Append` as a `partial` producer) and ADR-009
+  (one primitive, two wrappers, one declared exemption with a test that the two claimant walks agree).

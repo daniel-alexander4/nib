@@ -241,7 +241,7 @@ then binds one XObject to two sources and overwrites `/StructParents` — a part
   `/StructTreeRoot`, `/MarkInfo`, `/Metadata`, `/ViewerPreferences` are dropped. A carry by pruning the source
   tree was measured `carried` and veraPDF-compliant, reorders included.
 - **Booklet** is `InsertBlank → Collect → NUp`: it drops only because `Collect` does. It needs no slice.
-- **InsertPDF** is `Collect + Append` — subset and merge, not composition.
+- ~~**InsertPDF** is `Collect + Append` — subset and merge, not composition.~~ **Struck at S04b, measured:** the merge IS the composition. `api.MergeRaw` keeps only the first document's catalog and `/ParentTree`, so a carried left segment plus a tagged inserted document gives pages that hold one document's content and resolve to the other's elements. `splice` takes the non-carrying door; **P02.S07 owns it**, not S04.
 - **CarryAttachments** never touches structure; its census row measures the untagged fixture, not the operation.
 - **Nothing today can see a partial carry:** `orphaned()` fires only when nothing is anchored.
 - **`RedactPages` builds its runs through `Collect`**, so a subset carry would carry a tree over redacted content
@@ -445,15 +445,229 @@ Acceptance:
   absent from the output BYTES, not merely unlinked.
 
 
-#### P02.S04b — subset operations carry the tree
+#### P02.S04b — subset operations carry the tree *(done 2026-09-16, v1.129.142)*
 Scope: with the selection in nib's hands, prune the source tree in place — elements by `/Pg`, ParentTree `/Nums`
 filtered, a cloned page's subtree cloned under a fresh key — and carry `/MarkInfo`, `/Metadata`,
 `/ViewerPreferences` (identification dropped, ADR-032); refuse a nested ParentTree. `Booklet`'s rows flip with it;
 `CarryAttachments`' census rows measure `Collect(src)`. Refs: D5.
+
+**(grill pin, 2026-09-16 — the naive carry measures `carried`, and that is why the prune is the slice.)** Keeping
+the four catalog keys and pruning NOTHING was measured on the census document (8 pages, 364 elements, flat
+`/ParentTree`): `Collect(src, ["1"])` comes out **`carried` — the census's best verdict — while being a lie.**
+217 completeness defects (7 unowned `/ParentTree` rows, ~210 dead-`/Pg` elements), 91,481 → 103,753 bytes, and
+**229,859 decoded stream bytes in a one-page output**, because the dropped pages' content streams are still
+reachable through the surviving elements' `/Pg`. This is S04a's re-anchoring hazard arriving through the tree,
+and `fate`/`orphaned()` cannot see it — only `structureCarriedCompletely` (S01) can. So the slice's reader is
+the completeness predicate, never the fate table, and the fate table's `carried` is a necessary condition only.
+
+**(grill pin, 2026-09-16 — a subset that feeds a COMPOSITION does not carry, and three operations therefore do
+not change.)** Measured: (a) `api.MergeRaw` keeps only the FIRST document's catalog and `/ParentTree`, so a
+tagged document merged in after a carrying subset keeps its own `/StructParents` values pointing into the first
+document's rows — a WRONG reverse link, the shape `tagState.undescribed` already records, and one the `partial`
+verdict cannot distinguish from an honestly undescribed page; (b) pdfcpu's `CutPage` drops the tree outright
+(`tree=false`, `elements=0`) but LEAVES `/StructParents` on the tiles it emits, which is the same shape one step
+over. So `splice` (behind `InsertPDF`, and behind `replacePage` → `SplitPage`/`SplitRegions`) and `normalizePage`
+route through the NON-carrying door, and `InsertPDF`, `SplitPage`, `SplitRegions` keep today's `dropped`
+verdicts. That is not a deferral of D5 but a refusal to pre-empt **P02.S05/S06/S07, all three marked blocked on
+Dan, whose question this is.** `SplitByBookmarks` and `SplitBySpans` are pure subsets with nothing composed
+after them, so they carry, correctly and for free.
+
+**(grill pin, 2026-09-16 — the containment is FOUR call sites, not two, and one of them is pure waste.)**
+The attack enumerated every `Collect`/`RemovePages` caller from the code rather than from the design, and
+`SplitRegions` has a `Collect` of its own on the tagged SOURCE (`pdfops.go:900`) that no reading of `splice`
+reaches. Measured on a 73-page tagged document: the carry takes its prologue from ~37 ms to ~172 ms (4.6×) and
+`normalizePage`'s `CutPage` then destroys the tree anyway, so the verdict is byte-for-byte the same `dropped`
+— 100% waste. `SplitPage`'s `Collect(tilesBuf, ["2-"])` (`pdfops.go:805`) is benign only while `CutPage` drops
+the tree, and an unnamed site is a live carry the day that changes. So the non-carrying door takes **four**
+callers, each named at its site: `splice`, `normalizePage`, `SplitRegions`' own selection, and `SplitPage`'s
+tile selection.
+
+**(built, 2026-09-16 — the splitters DO carry, and the grill's reason for exempting them was a wrong number.)**
+The attack measured one 73-page tagged document into 73 files at **2.416 s → ≈7.9 s (3.3×)** and recommended
+routing `SplitBySpans` and `SplitByBookmarks` through the non-carrying door; that pin was written, the two call
+sites were changed, and `/pending 531` was filed to undo it later. **Measured with the real prune instead of the
+attack's prototype: 3.844 s → 4.378 s, 1.14×, all 73 parts `carried`, the fallback never firing.** The 3.3×
+priced a failure path the finished code does not take — the prototype kept every element, so `carryIsComplete`
+returned false on all 73 parts and each paid a second full read-change-write. The splitters are pure subsets
+with nothing composed after them, D5 says they carry, and at 14% they do. `/pending 531` closed the same day it
+was filed; the lesson is `CLAUDE.md`'s *"a REMEDY IS A CLAIM, and it is the one nobody re-checks"*, and this is
+the instance — the remedy rode in on the finding's credibility and was one stopwatch from being wrong.
+
+The gate's own cost is real and stays filed as **`/pending 530`**: `carryIsComplete` runs
+`checkStructConsistency`, `parentTreeOwners` and `formDrawCounts` as **three independent page sweeps**, each
+calling `ctx.PageDict` per page, and `PageDict` walks the tree from the root every call with no cache
+(`model/xreftable.go:2141-2169`) — the O(pages²) shape `pageselect.go:79-81` already records as a measured 6 s
+of a 27 s digest.
+
+**(built, 2026-09-16 — what the carry COSTS, measured against the REAL implementation.)** Tagged text-only
+documents, a full reverse permutation (the worst case: nothing is pruned, so every element is carried), single
+runs on this machine — ratios are the signal, absolutes vary with load:
+
+| pages | source | plain `Collect` | carrying | bytes | the gate alone | complete? |
+|---|---|---|---|---|---|---|
+| 8 | 103,451 B | 6 ms / 96,882 B | 14 ms / 103,393 B | 1.07× | 5 ms | yes |
+| 37 | 151,406 B | 18 ms / 120,481 B | 72 ms / 151,120 B | 1.25× | 31 ms | yes |
+| 73 | 211,491 B | 41 ms / 149,909 B | 145 ms / 211,110 B | 1.41× | 61 ms | yes |
+| 146 | 332,739 B | 77 ms / 209,414 B | 294 ms / 332,259 B | 1.59× | 145 ms | yes |
+
+So a tagged reorder is **2.3–4.0× slower**, the gate is 40–50% of that, and the output is up to 1.59× larger —
+which is what a true tree costs. A half-document prune at each size comes out `carried` too, so the honest
+fallback never fires on a well-formed document. Accepted for a tagged document, on a route with no timeout
+anywhere (`cmd/nib/main.go:160` sets none, and `web/app.js:14337` says the client deliberately has none). The
+byte ratios match the attack's prototype exactly and its timings did not; making the gate one page sweep rather
+than three is `/pending 530`.
+
+Two consequences worth writing down rather than discovering: a full-document reorder's output is now **~1.0× its
+input rather than ~0.7×** (measured 211,491 → 211,110 B, within 400 bytes either way), so **ADR-005's byte cap
+becomes newly reachable on a rearrangement, after the work is paid for** — the refusal then reads *"close a large
+one first"* on a page reorder; and every later undo entry is 1.07–1.59× bigger against ADR-003's global pool.
+
+**(grill pin, 2026-09-16 — `types.Dict.Clone()` does NOT deep-copy a subtree, and D-5 rested on it.)**
+`Dict.Clone` recurses through `v.Clone()` and `IndirectRef.Clone()` returns `ir2 := ir` — a copy of the
+REFERENCE (`types/dict.go:43-52`, `types/types.go:564-567`). An element's `/K` holds indirect references to its
+children, so cloning the top element yields a clone whose children **are the originals**, and then repointing
+"the clone's kids' `/Pg`" mutates the source subtree — `/pending 503`'s defect arriving from the other side.
+The subtree clone therefore recurses through indirect references and allocates one new object per element with
+`IndRefForNewObject`, which is what `clonePage` already hand-rolls for annotations and says why
+(`pageselect.go:266-268`). `StreamDict.Clone()` is the same trap one level over: `sd1 := sd` shares the `Raw`
+and `Content` backing arrays (`types/streamdict.go:68-82`).
+
+**(grill pin, 2026-09-16 — a carry that anchors NOTHING passes the completeness gate, so the refusal is its
+own.)** A prune can legitimately empty the tree: keep only pages no element describes and `structureCarriedCompletely`
+is vacuously clean (no elements to walk, no keys to own), while `orphaned()` answers false because the kept
+page's stale `/StructParents` still counts as an anchor (`tagfate.go:132-140`). The carry therefore refuses
+unless the pruned tree still anchors something (`tree.anchored() > 0`), and that refusal lives in the carry —
+**not** in `structureCarriedCompletely`, which `NUp` shares (ADR-009). With it, `orphaned` is unreachable on a
+carried output by construction (completeness condition 3 forces an owned key, so `pagesSP > 0`), which is
+asserted rather than assumed so the success path costs one parse and not two.
+
+**(grill pin, 2026-09-16 — the gate reads the WRITTEN BYTES, and the fallback is the honest loss.)** An
+in-context check cannot see what the write and the next optimizing read do: `clonePage` shares content streams,
+so a duplicated page whose content draws an MCID-bearing form XObject draws it twice, which is condition 4 and
+is exactly S02's fusion lesson one operation over. So the carry writes, `carryIsComplete` re-reads, and an
+incomplete carry re-runs the selection with the carry off — the same shape as `completeOrHonest`. A source with
+no `/StructTreeRoot` skips all of it, so the untagged document and the redaction path pay nothing.
+
+Tasks:
+- T01 — `structcarry.go`: `carryStructure(ctx, root, kept)` — the prune, in the source context. Elements,
+  MCRs and OBJRs whose effective `/Pg` left the page tree are REMOVED from their parent's `/K`, never left
+  dangling; an element that loses every kid goes; an element whose own `/Pg` died but whose MCR/OBJR kids live
+  loses the `/Pg` and keeps the kids. An empty root `/K` is no carry.
+- T02 — `/ParentTree`: rows whose key no longer has an owner are dropped, and a surviving slot naming a removed
+  element is emptied. ~~Ownership is `parentTreeOwners` (S01), shared rather than restated (ADR-009)~~
+  **— it could not be, and the exemption is declared at the site AND asserted by a test.** Renumbering has to
+  WRITE a claimant's key back and `parentTreeOwners` returns descriptions (`"page 1"`), so the write side is
+  `eachParentTreeClaim`, a second walk of the same three places. A declaration alone does not stop two walks
+  drifting, so `TestTheClaimantWalksAgreeOnWhoOwnsAKey` compares their answers on three documents: a drift in
+  the write side's direction silently drops the carry to the honest loss, and the other direction ships a row
+  nothing can reach. The nested-number-tree refusal IS shared — `parentTreeDict`'s, already the one door.
+- T03 — a repeated page gets its own key and its own elements: `allocParentTreeKey` for each source key the
+  clone's own objects claimed (`/StructParents`, and each cloned annotation's `/StructParent`), the row's
+  elements deep-cloned once each, `/Pg` and an OBJR's `/Obj` repointed at the clone, each clone inserted into
+  its original's parent `/K` immediately after the original, rows written through `setParentTreeSlot`.
+- T04 — the four catalog keys are EARNED: `catalogAllowlist` keeps its default-deny shape and the carry re-adds
+  `{StructTreeRoot, MarkInfo, Metadata, ViewerPreferences}` only on success. ADR-032 is already discharged —
+  `rewriteContext` drops the identification before `fn` runs.
+- T05 — the doors: one primitive `selectPages(ctx, keep, carry bool) (carried bool, err error)`, and the two
+  named wrappers ~~`selectPagesCarrying` / `selectPages`~~ **at the BYTES level instead — `subsetCarrying` and
+  `subset`** (built 2026-09-16), because the output gate the carry needs can only read the bytes it wrote and
+  so has to live where the write completes. `Collect` and `RemovePages` take the carrying one;
+  `collectWithoutStructure` takes the plain one, and its callers are `RedactPages`, `splice`, `normalizePage`,
+  `SplitRegions`' own selection and `SplitPage`'s tile selection, each exemption named at its site (ADR-009).
+  **The two splitters carry** — see the measurement above.
+- T06 — the output gate, the anchors-nothing refusal, and the honest fallback (the pins above).
+- T07 — the census flips: `Collect`, `RemovePages`, `DuplicatePage`, `Booklet` → `carried`, their `pageSetLoss`
+  rows in `knownUA1Deltas` removed; `CarryAttachments` re-driven with `Collect(src)` as its destination, which
+  is what the server's delete and reorder routes actually do (`internal/server/pages.go:77-81`).
+- T08 — the two inherited debts: S03's `TestRedactionEmitsNoStructureTree` probed RED against a carrying
+  `Collect`, and the S04a inventory's **G6** row — the AST routing guard reads `RedactPages`' callees only, so
+  it says nothing about what `collectWithoutStructure` itself calls.
+- T10 — the two server tests whose SETUP asserts that `Collect` drops the claim
+  (`internal/server/tagnotice_test.go:89-96` and `:149-158`, on a ONE-page fixture, so the carry is the
+  identity selection and both `t.Fatal`) repointed at an operation this slice keeps at `dropped`.
+- T09 — the fixtures the repo lacks (measured absent: the census document has **no MCR, no OBJR, no RoleMap and
+  no annotations at all**): an OBJR-referenced annotation on a kept AND on a dropped page, a nested
+  `/ParentTree`, a RoleMap, an MCR kid naming another page, an annotation carrying `/StructParent`, and a page
+  drawing an MCID-bearing form XObject for the duplicate case.
+
+**(built, 2026-09-16 — three things the slice's own code review added to the record.)**
+
+- **The subset PRESERVES its input's fate rather than setting it, and the census's single declared verdict
+  cannot say that.** `Collect` declares `carried`; measured on `Append(taggedFixture, untagged)` — the
+  `api.MergeRaw` shape every ceremony document takes — a reorder of that document comes out **`partial`**, and
+  keeping only the undescribed page comes out `dropped`. Before this slice `dropped` was unconditional. **A
+  subset does not MAKE a partial document**: the appended page was already undescribed under `/Marked true`,
+  and what the old behaviour did was launder that by destroying the whole live tree — which ADR-031 records as
+  the cure being worse than the disease at the only scale that matters. Preserving it is continuity with a
+  decision taken. `TestASubsetPRESERVESItsInputsFateRatherThanSettingIt` is the reader, and it is stronger than
+  the census row because it grades four inputs rather than one.
+- **`carryIsComplete` is SHARED with `NUp`, and it gained a condition.** The orphan-page condition — no
+  `/Type /Page` object outside the page tree — is a property of the document rather than of the tree, so it
+  went into the shared gate deliberately while the anchors-nothing refusal stayed in the carry. `NUp` was
+  measured before and after: still `carried`, veraPDF differential still green. No T named it; recorded here.
+- **`/Metadata` and `/ViewerPreferences` are conditional on the source carrying a `dc:title`.** T04 says the
+  carry re-adds four keys; it re-adds two unconditionally and two only where there is a title to state, because
+  `/DisplayDocTitle true` over no title is the one state `SetTitle`'s own door refuses (*"a viewer told to
+  display a title it cannot find shows an empty chrome bar"*). A titleless tagged document's carried subset
+  emits `{Lang, MarkInfo, Pages, StructTreeRoot, Type}`.
+
+**(built, 2026-09-16 — what the slice's own code review CHANGED, recorded because the plan must describe
+what was built.)** Four reviewers over the diff, three of them measuring; nine defects in code I had written
+and reasoned about, every one measured rather than argued:
+
+- **A removed element was RESURRECTED by the clone path, `/AF` and all.** `carryOntoClone` read a
+  `/ParentTree` row before the removed elements were cleared out of it, so `DuplicatePage` deep-copied an
+  element the prune had taken out — one that kept the `/AF` and `/T` the prune strips only from survivors —
+  and attached the copy to the tree. Measured: `Collect(src, ["1","1"])` shipped the source's embedded payload
+  and its filename with `fate=carried`, **0** completeness defects and **0** orphan pages, so the gate
+  certified it, and `pruneNames` had already deleted `/EmbeddedFiles` so `Attachments()` reported none. Fixed
+  by ORDER: `clearRemovedFromRows` now runs before any clone.
+- **An element's own `/Pg` decided its fate ONCE, across different parents.** Memoizing on the object alone
+  cached a judgment taken under a dead page. Measured: the same fixture came out `carried` keeping page 1 and
+  **`dropped`** keeping page 2. The memo is keyed on the object AND the inherited page.
+- **A copied child's `/P` named the ORIGINAL's parent** — a tree that disagrees with itself in the two
+  directions a reader walks it, with no reader in this package to see it (`internal/uacheck`'s
+  `declaresLangFor` climbs `/P`). `kidsOf` now takes the copy's ref and writes it.
+- **The OBJR rule contradicted its own comment.** Requiring a live page unconditionally destroyed a grouping
+  `/Form` element with no `/Pg` — the one shape PDF/UA asks for, and what `anchored()`'s kid-walk was added for
+  at P06.S07. A page is now checked only where one is NAMED.
+- **`eachParentTreeClaim` was wrong three ways**: a form XObject in two pages' resources was offered twice, the
+  second time with the key the first offer had just written (`[0 4 1 101]`, four offers for three objects); the
+  enumeration was Go map order, so a carried subset's `/Nums` numbering differed run to run (`[0 2 3]` on 15 of
+  24 reads, `[0 3 2]` on 9); and an annotation's `/AP` appearance stream claims a key and was reached by
+  neither walk — measured, its row was dropped while the stream went on naming it, with the output reported
+  clean. One shared visited set, sorted names, and `/AP` walked. `parentTreeOwners` got the shared set too.
+- **A corrupt source row failed the whole operation.** `of()` returned an error on a slot naming an absent
+  object, so `DuplicatePage` refused the document outright — 0 bytes — where the same document's `Collect`
+  succeeded. A defect in the SOURCE produces the honest loss; the slot is skipped.
+- **A refusal reached after renumbering left `/StructParents` rewritten** on objects that survive the
+  allowlist, against this file's "a refusal costs nothing and needs no rollback". Renumbering is now last,
+  after the final refusal.
+- **`carryTitleFloor` could fail the operation and broke `SetTitle`'s one-door rule.** It had four error
+  returns and ran after the structure keys were restored; and it wrote the XMP packet and the preference while
+  skipping `/Info`'s `/Title` — exactly the two-of-three state that door's header exists to prevent. It now
+  returns a bool (a failure drops the carry), and writes through `setInfoTitle`.
+- **`/DisplayDocTitle` was INVENTED, not carried.** Measured: a source saying `false` and a source saying
+  nothing both came out `true`. A subset states what the document stated.
+- **`orphanPageObjects` was O(pages²)** via `PageDictIndRef` per page — 238 ms at 800 pages against **175 µs**
+  for its whole xref sweep. It takes the caller's live set now.
+
+**And five instruments could not fail for the reasons they named**, each proved by mutation:
+`TestACarriedOutputIsNeverOrphaned` passed over an empty population (all three cases skipped) while being
+cited in production as the reason the gate reads the document once; the nested-`/ParentTree` test's control
+read the fixture's own bytes rather than a `Collect` of them; `TestACarryThatAnchorsNothingIsRefused` passed on
+a build that refused everything; the "AND a reorder" clause had no reader; and **a carry that deleted
+`/RoleMap` from every subset left the entire suite green**, veraPDF included — an element typed `/Para` means
+nothing without the map that says it is a `/P`. `carryOf` also reported "clean" for a tree it could not parse.
+All six now have readers, plus a stimulus for the orphan-page condition, which had never been seen to decide
+the gate.
+
 Acceptance:
 - `Collect`, `RemovePages`, `DuplicatePage`, `Booklet` census rows add nothing; tag-fate verdicts `carried`.
 - A fixture with an OBJR-referenced annotation on a kept and on a dropped page.
 - S03's `TestRedactionEmitsNoStructureTree` is probed RED against a carrying `Collect` — the debt S03 recorded.
+- **(added at the grill)** `structureCarriedCompletely` is EMPTY for every carried output, and a dropped page's
+  marker string is absent from the output's decoded streams — the fate table cannot see either.
 
 #### P02.S05 — crop carries the tree *(blocked — Dan: may a structure tree describe content a crop has clipped from view but not removed?)*
 Scope: `Crop` wraps pages in place instead of rebuilding them. Measured compliant even at a 5% window; the
@@ -464,7 +678,7 @@ Scope: `SplitPage`, `SplitRegions`. Tiles are clones of the page dict carrying t
 
 #### P02.S07 — merges graft the second tree *(blocked — Dan: superseding ADR-031's recorded `partial` decision for Append/Combine, which every ceremony document takes)*
 Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root
-`/K` and RoleMaps; `InsertPDF` inherits it with S04. Refs: D5, ADR-031.
+`/K` and RoleMaps; ~~`InsertPDF` inherits it with S04~~ **— it does not: S04b routes `splice` through the non-carrying door and defers `InsertPDF` here in full** (struck 2026-09-16). Refs: D5, ADR-031.
 
 #### P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries
 Scope: replace element-level `/Stm` (`tagcarry.go:240`) with MCR dictionaries carrying `/Pg` and `/Stm`, after

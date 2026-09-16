@@ -575,10 +575,22 @@ Tree**, above). This section is about what happens to those tags when the docume
 structure — rotate, optimise, set the language, add a note or an attachment, stamp a watermark or
 page numbers, and the tags come through intact. **Printing 2-up keeps them too**, which is the one
 you would expect to lose them: the pages are composed onto new sheets and the structure is carried
-across with them. The operations that rebuild the page set — extract pages, delete pages, crop,
-split, booklet — do destroy the structure, and they remove the *claim* along with it rather than
-leaving the file looking accessible. A screen reader told a document is tagged stops reaching for
-the fallbacks it would otherwise use, so a false claim is worse than a visible loss.
+across with them. **Choosing which pages to keep now keeps the tags too** — extracting pages,
+deleting pages, reordering, duplicating a page, splitting into separate files and making a booklet:
+the structure of the pages you keep is carried onto them, and the structure of the pages you removed
+goes with those pages.
+
+**The operations that rebuild or combine pages still lose them**, and they remove the *claim* along
+with the structure rather than leaving the file looking accessible: cropping, splitting one page into
+tiles, and inserting another PDF into this one — and redaction, which destroys page content by
+design, so no structure describing it could still be true. A screen reader told a document
+is tagged stops reaching for the fallbacks it would otherwise use, so a false claim is worse than a
+visible loss.
+
+Two honest limits on what a carried structure can promise. A description written about a section that
+spanned pages you removed still describes that whole section, because there is no way to trim such a
+description without making it wrong rather than merely incomplete. And duplicating a page gives the
+copy its own structure, read item by item alongside the original's rather than as a second block.
 
 **And it tells you when it happens.** If you open a document that arrived with accessibility
 structure and an edit removes it, a notice stays on screen — not a message that flashes past — until

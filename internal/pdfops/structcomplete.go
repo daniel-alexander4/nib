@@ -38,14 +38,16 @@ import (
 //
 // All four report `carried`. That is the defect, and none of it is visible to `orphaned()`.
 //
-// # It is a READER this slice, and that is deliberate
+// # Who routes through it
 //
-// `NUp` is NOT routed through this yet — S02 does that, in the commit that repairs the carry. Wiring
-// it here would flip the census n-up from `carried` to `dropped`, which reddens
-// `TestNoOperationAddsAUA1ClauseItsInputDidNotFail` in both directions at once (its `7.20 t2` row
-// goes stale AND five `pageSetLoss` clauses appear) and would regress n-up on every document where
-// pdfcpu merges equal forms — a real loss shipped for the length of one slice. The predicate and its
-// repair land together.
+// `NUp` since P02.S02, through `completeOrHonest`, in the commit that repaired its carry — the
+// predicate and its repair landed together, because wiring it a slice earlier would have flipped the
+// census n-up to `dropped` and regressed every document where pdfcpu merges equal forms. A page
+// SUBSET since P02.S04b, through `subsetCarrying`'s output gate. **Both share `carryIsComplete`, so
+// a condition added here changes both**: S04b's orphan-page condition was measured against `NUp`
+// before it landed (`TestEveryDeclaredFateIsTheMEASUREDFate` and the veraPDF differential, both
+// still green, n-up still `carried`), and the refusals that are a property of the CARRY rather than
+// of the tree deliberately stayed out of it (`carryStructure`'s anchors-nothing refusal).
 //
 // # Not a PDF/UA verdict
 //
@@ -164,6 +166,14 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 // shape `DuplicatePage` produces once a subset carries its tree (condition 5).
 func parentTreeOwners(ctx *model.Context) map[int][]string {
 	out := map[int][]string{}
+	// ONE visited set across every page: a form XObject in two pages' resources is one object
+	// claiming one key, and a fresh set per page would report it as two owners of that key —
+	// condition 5's exact shape, which would make such a document's carry unable ever to pass the
+	// gate. (Measured through `api.ReadValidateAndOptimize`, the only read path `carryIsComplete`
+	// uses, the duplicate did NOT reproduce — the optimize pass consolidates the resource dicts. It
+	// reproduces on a plainly-read context, which `structcheck`'s callers use, so the set is shared
+	// rather than left to depend on which read path got here.)
+	seenForms := map[int]bool{}
 	claim := func(o types.Object, what string) {
 		v, ok := pdfNumber(ctx.XRefTable, o)
 		if !ok || v < 0 {
@@ -187,7 +197,7 @@ func parentTreeOwners(ctx *model.Context) map[int][]string {
 		if rerr != nil || res == nil {
 			continue
 		}
-		eachFormXObject(ctx, res, map[int]bool{}, 0, func(nr int, sd *types.StreamDict) {
+		eachFormXObject(ctx, res, seenForms, 0, func(nr int, sd *types.StreamDict) {
 			claim(sd.Dict["StructParents"], fmt.Sprintf("form XObject %d", nr))
 			claim(sd.Dict["StructParent"], fmt.Sprintf("form XObject %d", nr))
 		})
@@ -208,8 +218,18 @@ func eachFormXObject(ctx *model.Context, res types.Dict, seen map[int]bool, dept
 	if err != nil || xobjs == nil {
 		return
 	}
-	for _, v := range xobjs {
-		ir, isRef := v.(types.IndirectRef)
+	// **By SORTED name, because a Go map's iteration order is randomised** and a caller that hands
+	// out `/ParentTree` keys in visit order would then number two claimants differently run to run —
+	// measured, a page with two claiming form XObjects enumerated `[0 2 3]` on 15 of 24 reads of the
+	// same bytes and `[0 3 2]` on the other 9. The set of objects offered never varied; which key
+	// each got did.
+	names := make([]string, 0, len(xobjs))
+	for n := range xobjs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		ir, isRef := xobjs[n].(types.IndirectRef)
 		if !isRef {
 			continue
 		}
@@ -382,7 +402,15 @@ func carryIsComplete(pdf []byte) bool {
 	if terr != nil {
 		return false
 	}
-	return len(structureCarriedCompletely(ctx, tree)) == 0
+	// **A page the operation removed must not still be IN the file**, which is a different question
+	// from every condition above and the only one that catches a class rather than a shape. The five
+	// conditions ask whether the tree contradicts itself; this asks whether the tree — or anything
+	// else — is still holding a page dictionary the page tree no longer lists, and pdfcpu writes by
+	// reachability, so a held page is a page whose `/Contents` ships. Added at P02.S04b, where a
+	// subset's carry gave the tree a new way to do it; it is asked here rather than in
+	// `structureCarriedCompletely` because it is a property of the DOCUMENT and not of the tree, and
+	// `orphanPageObjects`' header says why it dereferences rather than type-asserting.
+	return len(structureCarriedCompletely(ctx, tree)) == 0 && len(orphanPageObjects(ctx, live)) == 0
 }
 
 // carriesMCID reports whether a content stream marks any content with an `/MCID` — the property that
