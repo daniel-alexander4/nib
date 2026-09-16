@@ -135,26 +135,47 @@ func (s *Server) diskOf(doc *document) *diskState {
 //     change in the gap — the same TOCTOU bound isRegistered states about itself. It
 //     narrows the window from unbounded to microseconds; it does not close it.
 func diskChanged(path string, rec *diskState) bool {
+	changed, _ := diskCheck(path, rec)
+	return changed
+}
+
+// diskCheck is diskChanged, plus the baseline to keep when the file was touched but not changed.
+//
+// **Without the refresh, a touch cost a full read and hash on EVERY document response, forever
+// (/pending 499).** The cheap path needs identity, size and mtime to agree with the baseline, and a
+// touch moves the mtime while the bytes stay equal — so the baseline never matched again and each
+// response re-read the whole file outside the lock. Measured on this machine, per call, against an
+// untouched file at ~5 µs: **4 ms at 1 MiB, 48 ms at 10 MiB, 193 ms at 50 MiB, 517 ms at 200 MiB**.
+// Sync clients and backup tools touch files routinely, so a large document open under one paid
+// half a second on every operation.
+//
+// `refreshed` is non-nil only when the content matched and the stat did not: it pairs the fresh
+// stat with the SAME recorded hash. The stat precedes the read, so a rewrite landing after the read
+// leaves a stat that no longer matches the file and the next check re-reads — the safe direction.
+func diskCheck(path string, rec *diskState) (changed bool, refreshed *diskState) {
 	if path == "" || rec == nil {
-		return false
+		return false, nil
 	}
 	fresh, err := os.Stat(path)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	if os.SameFile(rec.info, fresh) &&
 		fresh.Size() == rec.info.Size() &&
 		fresh.ModTime().Equal(rec.info.ModTime()) {
-		return false
+		return false, nil
 	}
 	if fresh.Size() != rec.info.Size() {
-		return true
+		return true, nil
 	}
 	onDisk, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return false, nil
 	}
-	return sha256.Sum256(onDisk) != rec.sum
+	if sha256.Sum256(onDisk) != rec.sum {
+		return true, nil
+	}
+	return false, &diskState{info: fresh, sum: rec.sum}
 }
 
 // handleReload re-reads the file under an open document and installs those bytes into the
@@ -214,7 +235,16 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// so there is no second read that could disagree with it and record an undo target the
 	// document never held.
 	before := s.docBytes(doc)
-	if err := s.commitMutation(doc, before, data, false); wroteCommitFailure(w, err) {
+	// **The acknowledgement is read, and hard-coding `false` here was a dead end (/pending 499).**
+	// A signed document whose file now holds unsigned bytes is refused by the erasure door with a
+	// sentence ending "Confirm that you want that, and Nib will do it" — and this route read no
+	// field to confirm with, so the manual Reload button answered the same 409 forever. The erasure
+	// check is KEPT rather than exempted for a reload: ADR-014 makes a reload inherit every rule of
+	// the commit door and write no predicate of its own, and an automatic reload silently replacing
+	// a signed copy with an unsigned file is exactly the loss the door exists to ask about. The
+	// client's automatic path stays silent on the refusal; the button asks.
+	acceptLoss := r.FormValue("acceptSignatureLoss") == "1"
+	if err := s.commitMutation(doc, before, data, acceptLoss); wroteCommitFailure(w, err) {
 		return
 	}
 	s.mu.Lock()

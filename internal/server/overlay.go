@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"nib/internal/pdfops"
 )
@@ -93,7 +94,14 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 			case q.Image != "":
 				img, ok := v.Image(q.Image)
 				if !ok {
-					continue
+					// **Refused, not skipped (/pending 499).** A placed signature or initials stamp
+					// whose image was since deleted from the library used to vanish from the baked
+					// output while the save, print or sign it fed reported success — the one
+					// overlay the user is most likely to check for afterwards. The client aborts
+					// the whole operation on a failed bake and shows this sentence.
+					httpError(w, http.StatusBadRequest, "a stamp on page "+strconv.Itoa(q.Page)+
+						" uses an image that is no longer in your library — remove that stamp and place it again")
+					return
 				}
 				png = img.Data
 			case q.PNG != "":

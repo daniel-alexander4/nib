@@ -87,10 +87,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// D16: a path already open is activated, not opened twice. Two tabs on one path are
 	// two independent working copies of the same file, and whichever saves last silently
 	// discards the other's work.
-	if doc := s.docForPath(path); doc != nil {
-		s.mu.Lock()
-		s.activeID = doc.id
-		s.mu.Unlock()
+	if s.focusPath(path) {
 		writeJSON(w, handoffResponse{Result: "focused"})
 		return
 	}
@@ -161,6 +158,28 @@ func (s *Server) docForPath(path string) *document {
 		}
 	}
 	return nil
+}
+
+// focusPath activates the open document holding path, finding and activating it under ONE hold.
+// Empty paths never match, for docForPath's reason.
+//
+// **The lookup and the assignment used to take the lock twice (/pending 499)**, so a close landing
+// between them set `activeID` to a document the registry had just dropped — every unpinned route
+// then answered "no document open" while others were. One hold makes that unreachable rather than
+// re-tested.
+func (s *Server) focusPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range s.docs {
+		if d.path == path {
+			s.activeID = d.id
+			return true
+		}
+	}
+	return false
 }
 
 // queuePendingOpen holds a path handed off to a locked instance until it unlocks.

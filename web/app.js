@@ -2873,14 +2873,17 @@ const SIGNATURE_ERASURE_TOKEN = 'no record it was ever signed';
 // and the precedent for it.
 //
 // Returns false for every other refusal, so an ordinary 409 still reaches its own handler.
-async function acceptedSignatureLoss(res) {
+//
+// `question` replaces the default sentence where "rebuilds it" is not what happens — a reload
+// installs the file's own bytes rather than rebuilding anything.
+async function acceptedSignatureLoss(res, question) {
   if (!res || res.status !== 409) return false;
   let body = '';
   try { body = await res.clone().text(); } catch { return false; }
   if (!body.includes(SIGNATURE_ERASURE_TOKEN)) return false;
-  return confirm('This document is signed, and this change rebuilds it in a way that leaves no '
+  return confirm(question || ('This document is signed, and this change rebuilds it in a way that leaves no '
     + 'record it was ever signed — not a broken signature someone can point at, but nothing at '
-    + 'all. Continue?');
+    + 'all. Continue?'));
 }
 
 // --- open / load -------------------------------------------------------------
@@ -3007,6 +3010,16 @@ async function reloadFromDisk(target, auto = false) {
   let res;
   try {
     res = await apiFetch('/api/reload', { method: 'POST', docId: d.id });
+    // A signed copy open over a file that is not signed: the server refuses to replace it without
+    // a yes (/pending 499). Only the reload the user ASKED for asks — the automatic one stays silent
+    // and leaves the banner and its button up, which is where this question then gets put.
+    if (!auto && await acceptedSignatureLoss(res, 'The copy of ' + (d.name || 'this document')
+      + ' you have open is signed, and the file on disk is not. Reloading replaces the signed copy '
+      + 'with the file, which carries no record it was ever signed. Continue?')) {
+      const form = new FormData();
+      form.append('acceptSignatureLoss', '1');
+      res = await apiFetch('/api/reload', { method: 'POST', body: form, docId: d.id });
+    }
   } catch {
     console.warn('reload from disk: the server was unreachable');
     return false;

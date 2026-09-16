@@ -1,6 +1,7 @@
 # docs/red-proofs.md, tier 1: "A bare touch is reported as a change" (/pending 333, v1.117.289)
 #
-# The defect: diskChanged answers on identity/size/mtime alone and never compares content. A file
+# The defect: diskCheck (behind diskChanged since /pending 499, which re-recorded this patch)
+# answers on identity/size/mtime alone and never compares content. A file
 # whose mtime moved but whose bytes are identical — `touch`, a backup restored over itself, a sync
 # client rewriting the same bytes — is then reported as changed.
 #
