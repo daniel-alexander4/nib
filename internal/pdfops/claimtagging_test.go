@@ -128,7 +128,7 @@ func TestTheDoorRefusesToClaimWhatTheContentCannotSupport(t *testing.T) {
 		t.Fatalf("setup: the fixture already carries a structure tree (%+v), so the refusal below "+
 			"is not being tested", s)
 	}
-	out, ok, err := claimTagging(plain, sourceInferred)
+	out, ok, err := claimTagging(plain, plain, sourceInferred)
 	if err != nil {
 		t.Fatalf("the door errored instead of refusing: %v", err)
 	}

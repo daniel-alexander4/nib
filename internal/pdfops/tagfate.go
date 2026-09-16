@@ -5,6 +5,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Tag fate — `PLAN-accessibility.md` P01, ADR-031, and `/pending 29`'s floor.
@@ -101,7 +102,14 @@ type tagState struct {
 	// A page with no content stream at all is NOT undescribed — an inserted blank page has nothing
 	// to tag, and counting it would make `InsertBlank` a violation for adding an empty page.
 	undescribed int
+	// source is the tier `setTagSource` recorded on the tree, or "" when none is recorded (or the value
+	// is not one this code writes). `claimTagging` reads it so a door adding to a tree never raises it.
+	source tagSource
 }
+
+// claimsHonestly is a document that already makes a claim its structure can carry — the input a door
+// may add to without making a new claim of its own (`claimTagging`, `/pending 495`).
+func (s tagState) claimsHonestly() bool { return s.marked && s.supportsAClaim() }
 
 // claims reports whether the document asserts tagging at all — either assertion law 1 names.
 func (s tagState) claims() bool { return s.marked || s.tree }
@@ -196,6 +204,11 @@ func inspectTags(pdf []byte) tagState {
 		return s
 	}
 	s.tree = true
+	if root, rerr := ctx.DereferenceDict(cat["StructTreeRoot"]); rerr == nil && root != nil {
+		if n, isName := root[tagSourceKey].(types.Name); isName && tagSource(n.Value()).valid() {
+			s.source = tagSource(n.Value())
+		}
+	}
 
 	// **The walk lives in `structtree.go` now — P05.S02, D8.** It was inline here, with a visited
 	// set keyed on the dictionary's CONTENT (`d.String()`), which counted two byte-identical

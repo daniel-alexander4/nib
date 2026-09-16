@@ -37,9 +37,10 @@ func (s *Server) handleFormAuthor(w http.ResponseWriter, r *http.Request) {
 	// Widget annotation shall be nested within a Form tag"*. `AuthorTaggedForm` is the same fields
 	// with a `/Form` element per widget.
 	//
-	// `tagged` false is not an error and is not surfaced: it means the tree could not be built and
-	// the ordinary authored form came back. A form whose widgets are undescribed is what nib shipped
-	// for years; no form at all is worse than both.
+	// `tagged` false is not an error and is not surfaced: it means the tree could not be built, or the
+	// document's own text is untagged so describing only the widgets would claim tagging over a body
+	// nothing describes (`/pending 495`), and the ordinary authored form came back. A form whose widgets
+	// are undescribed is what nib shipped for years; no form at all is worse than both.
 	out, tagged, err := pdfops.AuthorTaggedForm(pdfBytes, fields)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not author form: "+err.Error())
