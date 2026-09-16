@@ -8,6 +8,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -464,8 +465,28 @@ func Validate(pdf []byte) error {
 // caches are populated), applies fn, and writes the result back. It is the
 // shared read→mutate→write shape for the surgical removals.
 func writeMutated(pdf []byte, fn func(*model.Context) error) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	return rewriteContext(pdf, model.NewDefaultConfiguration(), fn)
+}
+
+// rewriteWithConf is the shape of a pdfcpu `api` wrapper — read with ITS configuration (the `Cmd` it
+// sets, the relaxed validation some set), apply one context operation, write — with nib's rules in the
+// middle, which a wrapper gives no place for (`/pending 492`). `fault.Catch` because every wrapper it
+// replaces has one: pdfcpu reports some failures by panicking.
+func rewriteWithConf(pdf []byte, conf *model.Configuration, fn func(*model.Context) error) (out []byte, err error) {
+	defer fault.Catch(&err)
+	return rewriteContext(pdf, conf, fn)
+}
+
+// rewriteContext is the one read-change-write both doors share.
+func rewriteContext(pdf []byte, conf *model.Configuration, fn func(*model.Context) error) ([]byte, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
 	if err != nil {
+		return nil, err
+	}
+	// Every change drops a PDF/UA identification nib did not verify (`/pending 492`), and it drops it
+	// HERE, inside the rewrite the operation is already paying for — never as a second write that could
+	// land after a signature. Before `fn`, so a door that verified its output can write one back.
+	if _, err := dropUAIdentification(ctx); err != nil {
 		return nil, err
 	}
 	if err := fn(ctx); err != nil {

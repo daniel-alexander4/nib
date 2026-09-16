@@ -983,6 +983,15 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusConflict, err.Error())
 			return
 		}
+		// Edited bytes — pdf.js form fills and annotations reach the server ONLY here, through no
+		// operation of nib's — lose a PDF/UA identification nib cannot verify survived the edit
+		// (`/pending 492`). Before the write, so the file and the document agree. An unchanged save is
+		// not an edit and keeps its claim.
+		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); derr != nil {
+			log.Printf("save: the PDF/UA identification could not be checked, so the bytes are saved as posted: %v", derr)
+		} else {
+			data = dropped
+		}
 	}
 	// **Refused before the write, because after it there is nothing left to refuse.**
 	//
@@ -1679,6 +1688,20 @@ func (s *Server) docBytes(doc *document) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return doc.data
+}
+
+// holdsBytes reports whether some open document's bytes are exactly data — the one question Save As can
+// ask about bytes that arrive naming no document. Equal lengths first, so the common case is a length
+// compare per open document (ADR-005 caps them at eight).
+func (s *Server) holdsBytes(data []byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range s.docs {
+		if len(d.data) == len(data) && bytes.Equal(d.data, data) {
+			return true
+		}
+	}
+	return false
 }
 
 // loopbackOnly admits a request only when both the connecting peer and the

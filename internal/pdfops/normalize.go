@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -27,11 +28,15 @@ func NormalizePageSizes(pdf []byte) ([]byte, error) {
 	}
 	target := modalPageDim(dims)
 	res := &model.Resize{PageDim: &target} // EnforceOrient false: respect each page's orientation
-	var out bytes.Buffer
-	if err := api.Resize(bytes.NewReader(pdf), &out, nil /* all pages */, res, conf); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	resizeConf := model.NewDefaultConfiguration()
+	resizeConf.Cmd = model.RESIZE
+	return rewriteWithConf(pdf, resizeConf, func(ctx *model.Context) error {
+		pages, err := api.PagesForPageSelection(ctx.PageCount, nil /* all pages */, true, true)
+		if err != nil {
+			return err
+		}
+		return pdfcpu.Resize(ctx, pages, res)
+	})
 }
 
 // modalPageDim picks the standardization target: the most frequent page size in

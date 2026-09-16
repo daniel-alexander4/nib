@@ -10,12 +10,16 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"nib/internal/pdfops"
+	"nib/internal/sign"
 )
 
 // expandHome turns a leading "~" into the user's home directory, so the UI can
@@ -173,6 +177,17 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "could not read data")
 		return
+	}
+	// `/pending 492`. This route names no document, so "was it edited" is asked of the bytes: equal to an
+	// open document's, they are that document and keep its PDF/UA identification; anything else is an
+	// export or an edit nib cannot vouch for, and loses it. A signed file keeps it (a rewrite would break
+	// the signature) — see DropUAIdentificationUnlessSigned.
+	if !s.holdsBytes(data) {
+		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); derr != nil {
+			log.Printf("save as: the PDF/UA identification could not be checked, so the bytes are written as posted: %v", derr)
+		} else {
+			data = dropped
+		}
 	}
 	// **The last silent door** (/pending 340). This route wrote to `target` with no
 	// existence check at all: typing the name of a file that is already there replaced it,

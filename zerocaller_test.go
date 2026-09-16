@@ -102,6 +102,11 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 
 		"Form": "test-support — internal/testpdf exists for tests and Form has 111 callers across " +
 			"44 test files. A package whose whole purpose is fixtures cannot have production callers.",
+		"WithUAIdentification": "test-support — /pending 492's labelled fixture, shared by the pdfops, " +
+			"server and cli tests so every door is tested against the same claim; it writes the " +
+			"identification directly, which is exactly what production must never do unverified.",
+		"ClaimsUA": "test-support — /pending 492's namespace-aware claim reader for those same tests. " +
+			"Production drops a claim and never needs to ask whether one survived.",
 
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",

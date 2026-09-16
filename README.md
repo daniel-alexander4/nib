@@ -143,6 +143,11 @@ a paragraph tagged as a formula with no alternate text passes all of Nib's check
 writes the PDF/UA identification into a document. Nib's answers on the clauses it does check are tested
 against [veraPDF](https://verapdf.org/) on every build; for a conformance verdict, use veraPDF.
 
+For the same reason, **when Nib changes a document that claims PDF/UA conformance, the claim is removed**
+— whoever wrote it. Nib cannot tell whether an edit kept the document conformant, and a claim that
+outlives the edit that broke it is worse than no claim. The one exception is a signed document: removing
+the claim would break the signature, so it is left as it was.
+
 ### Tag an untagged document's structure
 **Page Functions → Tag structure…** reads the open document's pages and proposes its headings,
 paragraphs and list items from how they look — larger text as headings, drawn bullets and numbers as
