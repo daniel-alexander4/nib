@@ -64,6 +64,11 @@ var bitcoinMagic = []byte{0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01}
 // the specific refusal rather than being satisfied by any error at all.
 var ErrProofTooComplex = errors.New("proof is too complex to verify safely")
 
+// maxPendingUpgrades bounds the calendar fetches one proof can force. A stamp nib or the reference
+// client makes carries one pending commitment per calendar — four, today (DefaultCalendars) — so
+// eight admits a merged proof and refuses a file whose only purpose is the fan-out.
+const maxPendingUpgrades = 8
+
 // op tags we execute. Nib's own proofs (stamped via the standard calendars) take
 // a sha256-only path to Bitcoin, but third-party proofs may hash with any of the
 // spec's crypto ops, so compute handles all four — sha256, ripemd160, sha1, and
@@ -126,6 +131,26 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 		return &VerifyResult{State: StateMismatch}, nil
 	}
 
+	// **The upgrade loop is bounded before it sends anything** (/pending 502).
+	//
+	// Every pending sequence is one sequential GET to the calendar URL the (untrusted) file names,
+	// and the parser admits up to maxProofInstructions of them: 500 were reproduced from a 17 KB
+	// `.ots`, all to one host. maxAttestationsExamined below bounded the explorer half of this
+	// function and left this half open. Counted up front rather than as attempts, so a hostile
+	// file costs no request at all — and refused rather than truncated, because silently skipping
+	// the sequences past a cap would let eight bogus calendars placed first report a genuine proof
+	// as "pending", which is the prepend denial the attestation loop already refuses to allow.
+	nPending := 0
+	for _, s := range p.seqs {
+		if s.height == 0 && s.calURL != "" {
+			nPending++
+		}
+	}
+	if nPending > maxPendingUpgrades {
+		return nil, fmt.Errorf("%w: it carries %d pending calendar commitments and at most %d are "+
+			"fetched", ErrProofTooComplex, nPending, maxPendingUpgrades)
+	}
+
 	var attested []sequence
 	updated := make([]sequence, 0, len(p.seqs)) // every sequence, upgraded where possible
 	pending := false
@@ -145,6 +170,12 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 				updated = append(updated, s) // calendar hasn't confirmed yet — keep pending
 			}
 		}
+	}
+	// An upgrade that failed because the caller's deadline passed is not a calendar saying "not
+	// yet": reporting it as pending would tell the user their proof is unconfirmed when nib simply
+	// ran out of time asking.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("verification ran out of time: %w", err)
 	}
 	if len(attested) == 0 {
 		if pending {
@@ -309,6 +340,11 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int,
 	// verification, came from one unagreed source; a hostile explorer cannot forge that a
 	// proof verifies (agreement on the root still has to hold against the others) but it
 	// could re-date a genuine attestation, and it can always be the fastest responder.
+	// A threshold below one would let zero answers through to `results[0]` below, a panic on an
+	// exported entry point. No caller passes one today; the floor is the function's, not theirs.
+	if minAgree < 1 {
+		minAgree = 1
+	}
 	var (
 		mu      sync.Mutex
 		results []res

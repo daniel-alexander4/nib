@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"nib/internal/sshkey"
 
@@ -36,6 +37,10 @@ const keyLen = 32 // AES-256 content key
 var (
 	// ErrNotFound: no vault file at the given location.
 	ErrNotFound = errors.New("no vault")
+	// ErrUnreadable: a vault file is present and cannot be read — unreadable, corrupt, or written
+	// by a newer Nib. Distinct from ErrKeyMissing so status can say which (/pending 502): a corrupt
+	// vault reported as a missing key sent the user looking for a key that was never the problem.
+	ErrUnreadable = errors.New("the vault file cannot be read")
 	// ErrKeyMissing: a vault exists but no enrolled SSH key could unlock it
 	// (the private key file is missing, moved, or doesn't match).
 	ErrKeyMissing = errors.New("ssh key unavailable")
@@ -385,18 +390,50 @@ func Path(dir string) string { return filepath.Join(dir, fileName) }
 
 // DefaultDir is where Nib keeps its vault, per-OS: ~/.config/nib,
 // ~/Library/Application Support/nib, or %AppData%\nib.
+//
+// **Always absolute** (/pending 502). With no config directory resolvable (no $HOME and no
+// $XDG_CONFIG_HOME, or no %AppData%) this fell back to ".", so the vault — the only copy of the
+// signing identity — was created wherever the process happened to be started, and the next
+// launch from anywhere else found none and offered first-run setup. The home directory is tried
+// next; the last resort is still the working directory, but anchored once so every path derived
+// from it in this process names the same place.
 func DefaultDir() string {
 	base, err := os.UserConfigDir()
 	if err != nil {
-		base = "."
+		if home, herr := os.UserHomeDir(); herr == nil {
+			base = filepath.Join(home, ".config")
+		} else if abs, aerr := filepath.Abs("."); aerr == nil {
+			base = abs
+		} else {
+			base = "."
+		}
 	}
 	return filepath.Join(base, "nib")
 }
 
 // Exists reports whether a vault file is present in dir.
+//
+// A stranded Create placeholder is not a vault (/pending 502): see strandedPlaceholder.
 func Exists(dir string) bool {
-	_, err := os.Stat(Path(dir))
-	return err == nil
+	fi, err := os.Stat(Path(dir))
+	return err == nil && !strandedPlaceholder(fi)
+}
+
+// placeholderStale is how old a zero-byte vault file must be before it is taken for a placeholder
+// whose Create never finished. Create holds its placeholder for the length of one seal and one
+// write — milliseconds — so a minute cannot mistake an in-flight Create for an abandoned one.
+const placeholderStale = time.Minute
+
+// strandedPlaceholder reports whether fi is Create's O_EXCL placeholder left behind by a process
+// that died between claiming the name and writing the vault.
+//
+// **Zero bytes is never a vault**: save() writes a JSON envelope, and WriteDurable replaces the file
+// whole. Before this a crash inside that window left the empty file for good — Exists called it a
+// vault, readEnvelope called it corrupt, status reported "key-missing" and enrol answered 409, so
+// the only way out was deleting a file the user has never heard of. Self-healing: it degrades to
+// first-run setup instead.
+func strandedPlaceholder(fi os.FileInfo) bool {
+	return fi.Mode().IsRegular() && fi.Size() == 0 && time.Since(fi.ModTime()) > placeholderStale
 }
 
 // Slots returns the enrolled key slots (for status display) without unlocking.
@@ -434,6 +471,14 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 	// placeholder is zero bytes; Save overwrites it a moment later through the atomic path,
 	// which is what gives the real contents their durability.
 	f, err := os.OpenFile(Path(dir), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil && os.IsExist(err) {
+		// A placeholder a dead Create stranded is reclaimed, and the claim is made again through
+		// O_EXCL — so of two processes reclaiming it at once, the kernel still admits one.
+		if fi, serr := os.Lstat(Path(dir)); serr == nil && strandedPlaceholder(fi) {
+			_ = os.Remove(Path(dir))
+			f, err = os.OpenFile(Path(dir), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		}
+	}
 	if err != nil {
 		if os.IsExist(err) {
 			return nil, errors.New("vault already exists")
@@ -450,7 +495,16 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 		_ = os.Remove(Path(dir))
 		return nil, err
 	}
-	return v, v.Save()
+	// **The same rule for a failed Save** (/pending 502). It returned `v, v.Save()`, so a Save
+	// that failed — a full disk, a read-only config directory — left the zero-byte placeholder
+	// behind, and from then on every launch reported "key-missing" and enrol answered 409, with no
+	// way out but deleting a file the user has never heard of. WriteDurable fails before its
+	// rename or at it, so on an error the file at Path is still this call's placeholder.
+	if err := v.Save(); err != nil {
+		_ = os.Remove(Path(dir))
+		return nil, err
+	}
+	return v, nil
 }
 
 // OpenSSH unlocks the vault by trying each enrolled key slot's private key.
@@ -565,7 +619,7 @@ func openSSH(dir string, passphrase []byte) (*Vault, error) {
 		zero(plain) // scrub the decrypted plaintext (carries the signing key), as Migrate does
 		if err != nil {
 			zero(key) // discard path: the unwrapped content key won't be retained — scrub it too
-			return nil, fmt.Errorf("corrupt vault contents: %w", err)
+			return nil, fmt.Errorf("%w: corrupt vault contents: %w", ErrUnreadable, err)
 		}
 		return &Vault{path: Path(dir), key: key, ssh: env.SSH, current: slot.PubKey, contents: c, builtinImages: loadBuiltinSignatures()}, nil
 	}
@@ -1320,11 +1374,11 @@ func readEnvelope(dir string) (*envelope, error) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("corrupt vault: %w", err)
+		return nil, fmt.Errorf("%w: corrupt vault: %w", ErrUnreadable, err)
 	}
 	// **The refusal lives HERE, not at each caller.** It was written at three of the six
 	// readEnvelope callers, and the three it missed were the three where it matters most or
@@ -1338,7 +1392,7 @@ func readEnvelope(dir string) (*envelope, error) {
 	// from a newer build — a v1 password vault is OLDER and still passes, which is what
 	// Migrate needs.
 	if err := checkEnvelopeVersion(env.Version); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
 	return &env, nil
 }
@@ -1406,7 +1460,9 @@ func WriteFileAtomicDurable(path string, data []byte) error { return writeFileAt
 // now has one door for the three consumers that need it (this, the vault import, and the
 // ceremony mirror); it had two implementations with different contracts before, and this
 // file's own comment above records what that cost.
-func writeFileAtomic(path string, data []byte) error {
+//
+// A var so a test can make a Save fail after Create has claimed the name.
+var writeFileAtomic = func(path string, data []byte) error {
 	return atomicfile.WriteDurable(path, data, 0o600)
 }
 

@@ -267,7 +267,7 @@ const all = (sel) => document.querySelectorAll(sel);
 // enrolls a key (or migrates an old password vault); after that the vault opens
 // with no prompt. csrf is the per-process token issued when the vault unlocks.
 let csrf = null;
-let authState = 'setup'; // setup | migrate | key-missing | ready
+let authState = 'setup'; // setup | migrate | key-missing | key-locked | vault-unreadable | ready
 
 // repointKey is the key-missing recovery: unlock with a key the user points at, and have
 // the server rewrite the slot's recorded path so the NEXT launch finds it too. Without
@@ -542,6 +542,20 @@ function applyStatus(st) {
     return;
   }
 
+  // A vault file that is present and unreadable (/pending 502). It used to arrive as key-missing,
+  // whose screen sends the user hunting for a key no key can fix. Nothing here touches the file —
+  // it may be the only copy of the signing identity — so the way out is stated, and Retry re-reads.
+  if (st.state === 'vault-unreadable') {
+    els.authTitle.textContent = "Nib's vault can't be read";
+    els.authHint.textContent = `Nib found its vault (${st.vaultPath || 'vault.nib'}) but could not read it: ${st.problem || 'unknown problem'}. It holds your signing identity, so Nib has not changed it. Put back a copy from a backup, or move that file somewhere safe and press Retry to set Nib up again.`;
+    els.authWarn.hidden = true;
+    els.keyChoice.hidden = true;
+    els.repointRow.hidden = true;
+    els.introBlock.hidden = true;
+    els.authSubmit.textContent = 'Retry';
+    return;
+  }
+
   // Populate the existing-key dropdown from detected ~/.ssh keys.
   els.keySelect.innerHTML = '';
   for (const path of st.candidates || []) {
@@ -629,7 +643,7 @@ els.authForm.addEventListener('submit', async (e) => {
   // the key-missing screen showed an error about a control the user could not see, and
   // never re-read the status. The documented way out of a misplaced key was dead; the
   // repoint button beside it was the only one that worked.
-  if (authState === 'key-missing') { await refreshStatus(); return; }
+  if (authState === 'key-missing' || authState === 'vault-unreadable') { await refreshStatus(); return; }
 
   const mode = selectedKeyMode();
   const body = { password: els.authPw.value };

@@ -18,6 +18,8 @@ import (
 	"filippo.io/age"
 	"filippo.io/age/agessh"
 	"golang.org/x/crypto/ssh"
+
+	"nib/internal/atomicfile"
 )
 
 // Wrap seals secret to the SSH public key given as an authorized_keys line
@@ -150,19 +152,15 @@ func Generate(privPath string) (pubLine string, err error) {
 	//
 	// This makes the contract the kernel's job rather than a check beside it, and the
 	// existing TestGenerateRefusesOverwrite now tests the real mechanism.
-	f, err := os.OpenFile(privPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	//
+	// Durable as well (/pending 502): this is the only copy of the new private key, and the vault
+	// sealed to it is written with an fsync — so without one here a power loss could keep the
+	// vault and lose the key that opens it. atomicfile.CreateDurable is O_EXCL plus the syncs.
+	if err := atomicfile.CreateDurable(privPath, pem.EncodeToMemory(block), 0o600); err != nil {
 		if os.IsExist(err) {
 			return "", os.ErrExist
 		}
 		return "", err
-	}
-	if _, werr := f.Write(pem.EncodeToMemory(block)); werr != nil {
-		f.Close()
-		return "", werr
-	}
-	if cerr := f.Close(); cerr != nil {
-		return "", cerr
 	}
 	sshPub, err := ssh.NewPublicKey(pub)
 	if err != nil {

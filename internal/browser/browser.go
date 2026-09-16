@@ -55,10 +55,10 @@ func Open(url string) (*exec.Cmd, error) {
 			// A short wait is the whole fix: a browser that is going to fail this way
 			// fails at once, and one that is working is still running. It costs a
 			// quarter-second on the failing path and nothing on the working one.
-			if alive(cmd, appModeSettle) {
+			if launched(cmd, appModeSettle) {
 				return cmd, nil
 			}
-			// It died. Fall through to the tab fallback rather than serving a window
+			// It failed. Fall through to the tab fallback rather than serving a window
 			// nobody can see.
 		}
 		// fall through to the tab fallback if the app-mode launch failed
@@ -80,20 +80,29 @@ func Open(url string) (*exec.Cmd, error) {
 // the failure it catches is immediate by nature: the process is gone before it draws.
 const appModeSettle = 250 * time.Millisecond
 
-// alive reports whether cmd is still running after d, reaping it either way.
+// launched reports whether an app-mode launch worked: cmd is still running after d, OR it
+// exited within d with status 0. It reaps cmd either way.
 //
 // It replaces the bare reap on the app-mode path: the goroutine still waits, so nothing
 // lingers as a zombie, but the result is now observed instead of discarded.
-func alive(cmd *exec.Cmd, d time.Duration) bool {
-	done := make(chan struct{})
+//
+// **An early exit with status 0 is the browser handing the window to itself** (/pending 502).
+// With Chrome, Edge or Brave already running, the launched process passes `--app=` to the
+// running one over its process-singleton socket and exits normally at once; the window opens.
+// Chromium's own handling of that case returns its normal exit code. This used to read "not
+// alive" and fall through to the tab opener, so a user with their browser open got the app
+// window AND a second tab of the same page. The failures this wait exists to catch — a
+// profile in use by another host, confinement, a policy — exit non-zero. Read, not launched:
+// no browser was started on a display to establish this.
+func launched(cmd *exec.Cmd, d time.Duration) bool {
+	done := make(chan error, 1)
 	go func() {
 		defer safe.Recover("browser reap")
-		_ = cmd.Wait()
-		close(done)
+		done <- cmd.Wait()
 	}()
 	select {
-	case <-done:
-		return false // exited within the settle window
+	case err := <-done:
+		return err == nil // exited within the settle window: status 0 is a hand-off
 	case <-time.After(d):
 		return true
 	}

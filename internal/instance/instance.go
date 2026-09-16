@@ -182,6 +182,24 @@ func TokenMatches(presented, expected string) bool {
 // launch must not hang behind that: the user double-clicked a file.
 const probeTimeout = 2 * time.Second
 
+// ErrNotLoopback refuses a record naming anything but a loopback host:port.
+var ErrNotLoopback = errors.New("the instance record does not name a loopback address")
+
+// checkLoopback is the one address rule for every request made to a recorded instance.
+//
+// A record must name a loopback address. Nothing writes anything else today, but a tampered or
+// hand-edited record must not turn a probe or a hand-off into an outbound request to somewhere
+// else entirely — nib is never network-exposed, and that includes as a client.
+func checkLoopback(addr string) error {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotLoopback, err)
+	}
+	if !addrscope.Loopback(addr) {
+		return ErrNotLoopback
+	}
+	return nil
+}
+
 // Probe asks whether the instance the record names is alive AND is a Nib holding this
 // record's token.
 //
@@ -199,14 +217,7 @@ func Probe(rec Record) bool {
 	if rec.Addr == "" || rec.Token == "" {
 		return false
 	}
-	// A record must name a loopback address. Nothing writes anything else today, but a
-	// tampered or hand-edited record must not turn a probe into an outbound request to
-	// somewhere else entirely — nib is never network-exposed, and that includes as a
-	// client.
-	if _, _, err := net.SplitHostPort(rec.Addr); err != nil {
-		return false
-	}
-	if !addrscope.Loopback(rec.Addr) {
+	if checkLoopback(rec.Addr) != nil {
 		return false
 	}
 	req, err := http.NewRequest(http.MethodGet, "http://"+rec.Addr+"/api/instance", nil)
@@ -235,6 +246,12 @@ func Probe(rec Record) bool {
 func HandOff(rec Record, path, myVersion string) (result string, reason string, err error) {
 	if rec.Handoff == "" {
 		return "", "", errors.New("the instance record carries no hand-off secret")
+	}
+	// The same door as Probe's (/pending 502). The one production caller probes first, so this
+	// is not reachable from it today — but HandOff sends the hand-off SECRET, the more sensitive
+	// of the two requests, and was the one that did not check where it was sending it.
+	if err := checkLoopback(rec.Addr); err != nil {
+		return "", "", err
 	}
 	body, err := json.Marshal(map[string]string{"path": path})
 	if err != nil {

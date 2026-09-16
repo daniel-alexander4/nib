@@ -66,6 +66,47 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmpName, path)
 }
 
+// CreateDurable creates path holding data, REFUSING if anything already exists there, and syncs
+// the file and its parent directory before returning.
+//
+// **The third door, because neither of the other two can say "never replace".** Both rename over
+// the destination, which is correct for a file being updated and wrong for one whose previous
+// occupant is irreplaceable: a newly generated private key lands where the user's existing SSH
+// identity may already be. O_EXCL makes the refusal the kernel's, and the syncs are the reason this
+// is not a bare OpenFile — sshkey.Generate wrote the only copy of a new key without one while the
+// vault sealed to that key was written durably (/pending 502), so a power loss could keep the lock
+// and lose the key.
+//
+// A failed write removes what it created — O_EXCL guarantees the file is this call's own. The
+// error for an existing path satisfies os.IsExist / errors.Is(err, fs.ErrExist).
+func CreateDurable(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	fail := func(err error) error {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	// Best-effort, as in WriteDurable: the file is complete and synced.
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
+}
+
 // WriteDurable writes data to path via a temp file, fsync, rename and a parent-directory
 // fsync.
 //
