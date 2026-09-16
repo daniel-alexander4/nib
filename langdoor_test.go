@@ -36,6 +36,7 @@ import (
 func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 	const (
 		declares = "declares" // routes through pdfops.SetLang — verified against the code
+		told     = "told"     // reaches pdfops.SetLang only when the user names a language, and otherwise carries
 		carries  = "carries"  // the primitive's own output already has one, from something that knew
 		none     = "none"     // no determination exists; the gap is named
 		fragment = "fragment" // the catalog is discarded before anyone receives the document
@@ -59,8 +60,11 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 			"TestAConvertersLanguageDoesNotComeFromTheDocument and " +
 			"TestNibDoesNotReplaceAConvertersLanguage. The markdown branch of the same door gets " +
 			"no /Lang from anywhere — mdpdf is pure Go and was never told one."},
-		"internal/cli/commands.go:cmdOffice": {carries, "the CLI half of the same door, and the " +
-			"same reason. Named separately because ADR-009 polices SITES, not packages."},
+		"internal/cli/commands.go:cmdOffice": {told, "the CLI half of the same door. `--lang` is " +
+			"the user saying what language the document is in, so it is declared through " +
+			"pdfops.SetLang (whose LangTag door refuses anything it cannot declare); with no " +
+			"--lang it carries, for handleOffice's reason. /pending 471. Named separately because " +
+			"ADR-009 polices SITES, not packages."},
 		"internal/server/export.go:handleAssemble": {none, "raster pages with NO text in page " +
 			"content, so ua1 7.2 t34 does not fire on this output at all (measured 2026-09-11: a " +
 			"titled raster document fails 5 t1, 6.2 t1, 7.1 t3 and 7.1 t11, and neither 7.2 " +
@@ -90,10 +94,10 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 		}
 		hit[s.key] = true
 		switch {
-		case r.class == declares && !s.calls["SetLang"]:
+		case (r.class == declares || r.class == told) && !s.calls["SetLang"]:
 			contradicted = append(contradicted, fmt.Sprintf(
-				"%s is classified %q and never reaches pdfops.SetLang", s.pos, declares))
-		case r.class != declares && s.calls["SetLang"]:
+				"%s is classified %q and never reaches pdfops.SetLang", s.pos, r.class))
+		case r.class != declares && r.class != told && s.calls["SetLang"]:
 			contradicted = append(contradicted, fmt.Sprintf(
 				"%s is classified %q and DOES reach pdfops.SetLang — the row is describing code "+
 					"that no longer exists", s.pos, r.class))
@@ -108,9 +112,10 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 	for _, u := range unclassified {
 		t.Errorf("authoring door with no language classification: %s\n\tSay where this document's "+
 			"language comes from by adding a row to `where` in this file: %q if it routes through "+
-			"pdfops.SetLang, %q if its own output already carries one, %q if nobody can determine "+
-			"it, %q if the catalog never reaches a reader. A reason is required in every case.",
-			u, declares, carries, none, fragment)
+			"pdfops.SetLang, %q if it does so only when the user names a language, %q if its own "+
+			"output already carries one, %q if nobody can determine it, %q if the catalog never "+
+			"reaches a reader. A reason is required in every case.",
+			u, declares, told, carries, none, fragment)
 	}
 	for _, c := range contradicted {
 		t.Errorf("a language classification the code contradicts: %s", c)

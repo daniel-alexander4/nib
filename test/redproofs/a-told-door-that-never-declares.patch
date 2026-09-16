@@ -1,0 +1,13 @@
+diff --git a/internal/cli/commands.go b/internal/cli/commands.go
+index c6c30ef..0e43a02 100644
+--- a/internal/cli/commands.go
++++ b/internal/cli/commands.go
+@@ -237,7 +237,7 @@ func cmdOffice(args []string) int {
+ 	// document. Fatal rather than warned: a PDF written without the language asked for is exactly
+ 	// the silent wrong answer the flag exists to prevent.
+ 	if lang != "" {
+-		if pdf, err = pdfops.SetLang(pdf, lang); err != nil {
++		if _, err = pdfops.LangTag(lang); err != nil {
+ 			errf("%v", err)
+ 			return 1
+ 		}

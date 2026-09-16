@@ -181,9 +181,10 @@ func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
 // extension selects the conversion, so it needs a real file path (not stdin).
 func cmdOffice(args []string) int {
 	fs := flag.NewFlagSet("nib office", flag.ContinueOnError)
-	var out string
+	var out, lang string
 	outFlag(fs, &out)
-	fs.Usage = usageFunc(fs, "nib office IN -o OUT",
+	fs.StringVar(&lang, "lang", "", "the language the document is written in, as a BCP 47 tag (e.g. de, fr-CA), declared for screen readers. Without it nib declares none; an office conversion keeps LibreOffice's, which is this machine's locale, not the document's")
+	fs.Usage = usageFunc(fs, "nib office IN -o OUT [--lang TAG]",
 		"Convert a document (.md/.docx/.xlsx/.odt/.pptx/…) to PDF. Markdown converts natively; office formats need LibreOffice installed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -230,6 +231,16 @@ func cmdOffice(args []string) int {
 			errf("%v", err)
 		}
 		return 1
+	}
+	// The person running the command said what language this is — `/pending 471`. It replaces the
+	// converter's /Lang, which is the machine's locale rather than a determination about the
+	// document. Fatal rather than warned: a PDF written without the language asked for is exactly
+	// the silent wrong answer the flag exists to prevent.
+	if lang != "" {
+		if pdf, err = pdfops.SetLang(pdf, lang); err != nil {
+			errf("%v", err)
+			return 1
+		}
 	}
 	return writeOut(out, pdf)
 }

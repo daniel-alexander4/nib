@@ -27,6 +27,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"golang.org/x/text/language"
 )
 
 // pdfHeaderWindow is how far into a file the %PDF- header may sit. ISO 32000-1
@@ -1797,24 +1798,47 @@ func SetPageLabels(pdf []byte, ranges []PageLabelRange) ([]byte, error) {
 // like "en" or "th"). Assistive technology reads it to choose the right
 // pronunciation and voice — the WCAG "language of page" primitive. Spliced onto
 // the catalog the same way SetPageLabels attaches /PageLabels. An empty tag is
-// rejected.
+// rejected, and so is anything LangTag refuses.
 func SetLang(pdf []byte, lang string) ([]byte, error) {
 	if strings.TrimSpace(lang) == "" {
 		return nil, fmt.Errorf("no document language given")
+	}
+	tag, err := LangTag(lang)
+	if err != nil {
+		return nil, err
 	}
 	return writeMutated(pdf, func(ctx *model.Context) error {
 		root, err := ctx.XRefTable.Catalog()
 		if err != nil {
 			return err
 		}
-		// Unescaped deliberately, and only safe because of where lang comes from:
-		// OCRLangToBCP47 is a map lookup over a fixed table, so a tag is always a
-		// short ASCII BCP 47 code with no PDF string metacharacter in it. Anything
-		// that ever routes a user-supplied string here must escape it the way
-		// SetPageLabels does — a StringLiteral is written verbatim.
-		root["Lang"] = types.StringLiteral(lang)
+		// Unescaped, and safe because LangTag is the door: its output is a canonical
+		// BCP 47 tag, letters, digits and hyphens only, so no PDF string metacharacter
+		// can reach this StringLiteral, which is written verbatim.
+		root["Lang"] = types.StringLiteral(tag)
 		return nil
 	})
+}
+
+// LangTag is the one door a language passes before nib declares it in a document
+// (`/pending 471`). It returns the canonical BCP 47 form ("EN-us" → "en-US") or
+// refuses.
+//
+// **It refuses rather than guesses**, for the reason ADR-031's law 1 gives: a wrong
+// /Lang is a false statement a screen reader acts on, and an absent one is silence.
+// So an ill-formed tag is refused, a well-formed subtag no registry knows ("xx", a
+// typo) is refused, and "und" — BCP 47's own word for "undetermined" — is refused,
+// because declaring it says nothing while looking like a declaration.
+func LangTag(s string) (string, error) {
+	tag, err := language.Parse(strings.TrimSpace(s))
+	if err != nil {
+		return "", fmt.Errorf("%q is not a language nib can declare — give a BCP 47 tag such as en, de or fr-CA: %w", s, err)
+	}
+	canon := tag.String()
+	if canon == "und" || strings.HasPrefix(canon, "und-") {
+		return "", fmt.Errorf("%q declares no language (und is BCP 47 for undetermined) — give the language the document is written in", s)
+	}
+	return canon, nil
 }
 
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
