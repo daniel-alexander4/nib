@@ -83,29 +83,100 @@ func (d *Document) parentTree() (map[int]types.Object, string) {
 }
 
 // standardType resolves an element's `/S` through the tree's `/RoleMap` to a standard structure
-// type.
+// type, and says why it could not when it could not (`/pending 507`).
 //
 // A producer may call a form element `/MyFormField` and map it to `/Form`; veraPDF resolves the map
-// and so must this, or a correctly tagged form from another producer fails 7.18.4. The hop count is
-// bounded because a role map can map a name to itself.
-func (d *Document) standardType(elem types.Dict) string {
+// and so must this, or a correctly tagged form from another producer fails 7.18.4.
+//
+// # Why the chain is followed to its end and not for ten hops
+//
+// It used to stop after ten hops and **return the intermediate name**, which read exactly like an
+// element of that type. Measured against veraPDF 1.30.2 on a one-heading document whose `/S` is
+// `/T0` and whose role map chains `T0 → … → T29 → H3`: veraPDF resolves all thirty hops and FAILS
+// 7.4.2 t1 (a document's first numbered heading is H1), while nib answered `NotApplicable` — "the
+// structure tree has no numbered heading" — because the tenth name was `T10` and `T10` is not a
+// heading. The same chain ending `H1` veraPDF passes and nib also called not applicable, so the bound
+// lost a real failure AND a real pass. A hop bound reported as `CannotCheck` would have kept the
+// second loss: veraPDF settles these, so a checker that cannot is a checker with less reach.
+//
+// A role map is a finite dictionary, so following it terminates: every step either stops or reaches a
+// name not yet on the path. **Only a CYCLE is unresolvable**, and that is the second result — a
+// verdict no rule may turn into a pass. A name mapped to ITSELF is a fixed point, not a cycle: it
+// resolves to itself, which is what the ten-hop loop did and what leaves the corpus unmoved.
+//
+// **The cycle is not hypothetical**: veraPDF's own corpus carries one, in `7.1 General/7.1-t05-fail-d.pdf`
+// (`/Standard → /Text body → /Standard`), which is the file written to fail ua1 7.1 t5 — *"RoleMap shall
+// not contain a circular mapping"*. nib does not implement 7.1 t5, and it answered `NotApplicable` and
+// `Pass` over that file's elements; it now answers `CannotCheck` for the three rules that ask an element's
+// type. That is the whole corpus's only cycle: 0 false pass and 0 false fail either way, and `corpusReach`
+// unmoved, because those three pairs were never settled.
+//
+// Measured cost with the per-document memo below, on a 5,000-entry role map forming one chain with
+// 5,000 elements each starting at a different point in it — the worst shape there is: 1.9 ms for all
+// 5,000 resolutions, against 1.8 ms for the ten-hop bound that resolved none of them.
+func (d *Document) standardType(elem types.Dict) (standard string, unresolved string) {
 	name := d.name(elem["S"])
 	if name == "" {
-		return ""
+		return "", ""
 	}
-	root := d.dict(d.Catalog["StructTreeRoot"])
-	if root == nil {
-		return name
+	if d.roles == nil {
+		d.roles = map[string]roleResolution{}
 	}
-	roleMap := d.dict(root["RoleMap"])
-	for hop := 0; hop < 10 && roleMap != nil; hop++ {
-		mapped := d.name(roleMap[name])
-		if mapped == "" || mapped == name {
+	if r, done := d.roles[name]; done {
+		return r.standard, r.unresolved
+	}
+	var roleMap types.Dict
+	if root := d.dict(d.Catalog["StructTreeRoot"]); root != nil {
+		roleMap = d.dict(root["RoleMap"])
+	}
+	var path []string
+	onPath := map[string]bool{}
+	var res roleResolution
+	for at := name; ; {
+		if r, done := d.roles[at]; done {
+			// Reached a name resolved earlier: everything on this path resolves the same way.
+			res = r
 			break
 		}
-		name = mapped
+		if onPath[at] {
+			res = roleResolution{unresolved: fmt.Sprintf("the role map sends /%s back to /%s, a loop with no standard "+
+				"structure type at the end of it, so nib cannot say what type this element has", path[len(path)-1], at)}
+			break
+		}
+		onPath[at] = true
+		path = append(path, at)
+		mapped := ""
+		if roleMap != nil {
+			mapped = d.name(roleMap[at])
+		}
+		if mapped == "" || mapped == at {
+			res = roleResolution{standard: at}
+			break
+		}
+		at = mapped
 	}
-	return name
+	for _, p := range path {
+		d.roles[p] = res
+	}
+	return res.standard, res.unresolved
+}
+
+// standardTypes resolves every node's standard type in one call, indexed like nodes, with the first
+// element whose role map could not be followed as the second result.
+//
+// It is the shape `structNodes` and `parentTree` already have — one call, two results, one guard at the
+// top of the rule — so a rule that walks the tree cannot answer over an element it could not type.
+func (d *Document) standardTypes(nodes []structNode) ([]string, string) {
+	out := make([]string, len(nodes))
+	unresolved := ""
+	for i, n := range nodes {
+		std, why := d.standardType(n.dict)
+		out[i] = std
+		if why != "" && unresolved == "" {
+			unresolved = why
+		}
+	}
+	return out, unresolved
 }
 
 // declaresLangFor reports whether elem or any ancestor declares a `/Lang`, walking `/P` up to the

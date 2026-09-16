@@ -114,7 +114,16 @@ func checkWidgetsInFormElements(d *Document) Result {
 		if err != nil || page == nil {
 			return Result{Verdict: CannotCheck, Why: fmt.Sprintf("page %d does not resolve", p)}
 		}
-		annots, _ := d.Ctx.DereferenceArray(page["Annots"])
+		annots, aerr := d.Ctx.DereferenceArray(page["Annots"])
+		if aerr != nil {
+			// An /Annots nib cannot read is not a page with no widgets (`/pending 507`). A dangling
+			// reference is NOT this: it dereferences to null with no error, which is a page saying it
+			// has no annotations. Measured against pdfcpu v0.13.0, `open`'s validator refuses every
+			// wrong-typed /Annots before a rule runs ("validateArrayEntry: dict=pageDict entry=Annots
+			// invalid type"), so nothing reaches this today — the guard is here because the silent `_`
+			// rested on that and said so nowhere.
+			return Result{Verdict: CannotCheck, Why: fmt.Sprintf("page %d's /Annots could not be read: %v", p, aerr)}
+		}
 		for i, a := range annots {
 			ad := d.dict(a)
 			if ad == nil {
@@ -155,7 +164,12 @@ func checkWidgetsInFormElements(d *Document) Result {
 					Where:   where,
 				}
 			}
-			if ty := d.standardType(elem); ty != "Form" {
+			ty, untyped := d.standardType(elem)
+			if untyped != "" {
+				// The element may well be a Form; nib could not follow the role map to find out.
+				return Result{Verdict: CannotCheck, Why: untyped, Where: where}
+			}
+			if ty != "Form" {
 				return Result{
 					Verdict: Fail,
 					Why:     fmt.Sprintf("the widget is nested in a %q element, not Form", ty),

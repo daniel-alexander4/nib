@@ -58,9 +58,14 @@ func checkFigureAlt(d *Document) Result {
 	if unread != "" {
 		return Result{Verdict: CannotCheck, Why: unread}
 	}
+	std, untyped := d.standardTypes(nodes)
+	if untyped != "" {
+		// An element nib cannot type may be the Figure, so "the document has no Figure" is not nib's to say.
+		return Result{Verdict: CannotCheck, Why: untyped}
+	}
 	figures := 0
-	for _, n := range nodes {
-		if d.standardType(n.dict) != "Figure" {
+	for i, n := range nodes {
+		if std[i] != "Figure" {
 			continue
 		}
 		figures++
@@ -90,6 +95,11 @@ func checkTableHeaders(d *Document) Result {
 	if unread != "" {
 		return Result{Verdict: CannotCheck, Why: unread}
 	}
+	std, untyped := d.standardTypes(nodes)
+	if untyped != "" {
+		// An element nib cannot type may be the Table, the row or the cell, so no grid here is settled.
+		return Result{Verdict: CannotCheck, Why: untyped}
+	}
 	scoped := func(th types.Dict) bool {
 		n := d.name(d.tableAttribute(th, "Scope"))
 		return n == "Row" || n == "Column" || n == "Both"
@@ -110,8 +120,8 @@ func checkTableHeaders(d *Document) Result {
 	dataCells, tables := 0, 0
 	inTable := map[int]bool{}
 	var unsettled, where string
-	for ti, tn := range nodes {
-		if d.standardType(tn.dict) != "Table" {
+	for ti := range nodes {
+		if std[ti] != "Table" {
 			continue
 		}
 		tables++
@@ -123,11 +133,11 @@ func checkTableHeaders(d *Document) Result {
 				return
 			}
 			for _, k := range nodes[i].kids {
-				switch d.standardType(nodes[k].dict) {
+				switch std[k] {
 				case "TR":
 					var row []int
 					for _, c := range nodes[k].kids {
-						if st := d.standardType(nodes[c].dict); st == "TH" || st == "TD" {
+						if st := std[c]; st == "TH" || st == "TD" {
 							row = append(row, c)
 							inTable[c] = true
 						}
@@ -147,7 +157,7 @@ func checkTableHeaders(d *Document) Result {
 				if spanned(el) {
 					spans = true
 				}
-				switch d.standardType(el) {
+				switch std[cell] {
 				case "TH":
 					if !scoped(el) && unscoped == "" {
 						unscoped = fmt.Sprintf("row %d, cell %d", r+1, c+1)
@@ -171,7 +181,7 @@ func checkTableHeaders(d *Document) Result {
 		}
 	}
 	for i, n := range nodes {
-		if d.standardType(n.dict) == "TD" && !inTable[i] {
+		if std[i] == "TD" && !inTable[i] {
 			dataCells++
 			unsettled = "a TD sits outside any Table's rows, so there is no grid to find its headers in"
 			where = nodeWhere(n, "TD")

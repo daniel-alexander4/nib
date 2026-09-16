@@ -35,9 +35,14 @@ func checkHeadingNesting(d *Document) Result {
 		// The order of the headings past the bound is unknown, so no heading sequence can be said to hold.
 		return Result{Verdict: CannotCheck, Why: unread}
 	}
+	std, untyped := d.standardTypes(nodes)
+	if untyped != "" {
+		// An element nib cannot type may be a heading, and one unplaced heading moves the whole sequence.
+		return Result{Verdict: CannotCheck, Why: untyped}
+	}
 	prev := 0
-	for _, n := range nodes {
-		level, ok := numberedHeading(d.standardType(n.dict))
+	for i, n := range nodes {
+		level, ok := numberedHeading(std[i])
 		if !ok {
 			continue
 		}
