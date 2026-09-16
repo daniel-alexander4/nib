@@ -1364,7 +1364,6 @@ func (v *Vault) Save() error {
 	return v.save()
 }
 
-// save is Save without locking, for callers that already hold v.mu.
 // envelopeVersion is what this build writes, and the highest it will open.
 const envelopeVersion = 2
 
@@ -1404,6 +1403,7 @@ func checkEnvelopeVersion(v int) error {
 	return nil
 }
 
+// save is Save without locking, for callers that already hold v.mu.
 func (v *Vault) save() error {
 	// Stamp the payload version on every write, so a file this build saves is readable back
 	// as this build's. Set here rather than at each mutator for the reason save() is the one

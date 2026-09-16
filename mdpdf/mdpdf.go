@@ -246,8 +246,6 @@ type renderer struct {
 	quoteDepth int
 }
 
-// blocks lays out the children of n. A non-nil marker (list bullet/number)
-// attaches to the first child only.
 // maxNestDepth bounds container nesting BEFORE the document is parsed.
 //
 // **The cost is goldmark's parser, and it is super-linear in nesting depth.** Measured, on
@@ -304,6 +302,8 @@ func refuseAbsurdNesting(md []byte) error {
 	return nil
 }
 
+// blocks lays out the children of n. A non-nil marker (list bullet/number)
+// attaches to the first child only.
 func (r *renderer) blocks(n ast.Node, indent float64, marker *word) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		r.block(c, indent, marker)

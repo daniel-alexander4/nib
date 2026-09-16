@@ -144,7 +144,6 @@ var (
 	ErrCandidateContext = errors.New("the candidate record belongs to another ceremony or hop")
 )
 
-// CandidateRecord is one party's endpoints at one hop.
 // Transport names the socket an endpoint's port belongs to.
 //
 // **A byte, and this package's own, not internal/discovery's.** ADR-010 established the
@@ -199,6 +198,7 @@ type Endpoint struct {
 
 func (e Endpoint) String() string { return e.Addr.String() + "/" + e.Transport.String() }
 
+// CandidateRecord is one party's endpoints at one hop.
 type CandidateRecord struct {
 	Version int
 	// CeremonyID binds the record to this ceremony. Without it a roster member who is in

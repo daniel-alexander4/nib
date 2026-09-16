@@ -374,6 +374,13 @@ func (s *Server) peerAddresses(w http.ResponseWriter, v *vault.Vault, address, t
 // one timeout rather than N, so concurrency is the bound.
 const lanDialTimeout = 6 * time.Second
 
+// racedConn is what the racer needs of a won connection: to be closed if it loses the drain. The
+// racer is generic over it so ONE implementation serves both the stream-opened dial (*p2p.Conn,
+// the manual/co-sign/send paths) and the handshaked dial the symmetric-racing coordinator needs
+// (*p2p.HandshakedConn, P05.S09), rather than a second copy of its cap/dedup/trickle/drain logic
+// (ADR-009).
+type racedConn interface{ Close() error }
+
 // raceCandidates dials every candidate concurrently and returns the first that answers as
 // the pinned peer, closing the rest.
 //
@@ -416,13 +423,6 @@ const lanDialTimeout = 6 * time.Second
 // never returned: each dial was bounded and the race was not, and an HTTP handler hung
 // forever. Found by reviewing this slice's own diff. The deadline is now the caller's
 // context and the loop watches it.
-// racedConn is what the racer needs of a won connection: to be closed if it loses the drain. The
-// racer is generic over it so ONE implementation serves both the stream-opened dial (*p2p.Conn,
-// the manual/co-sign/send paths) and the handshaked dial the symmetric-racing coordinator needs
-// (*p2p.HandshakedConn, P05.S09), rather than a second copy of its cap/dedup/trickle/drain logic
-// (ADR-009).
-type racedConn interface{ Close() error }
-
 func raceCandidates[T racedConn](parent context.Context, in <-chan candidate, dial func(context.Context, candidate) (T, error)) (T, error) {
 	var zero T
 	// A cancellable child: cancelling on a win is what stops the losers, and it must not

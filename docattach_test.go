@@ -149,6 +149,214 @@ func TestEveryDocCommentNamesItsOwnFunction(t *testing.T) {
 	}
 }
 
+// TestEveryTypeConstAndVarDocNamesItsOwnDeclaration — /pending 511, the half of the rule above
+// that reads `type`, `const` and `var`.
+//
+// # Why the function guard could not see any of it
+//
+// The walk above inspects `*ast.FuncDecl` and nothing else, and a doc block glued to the one
+// below it binds to whatever declaration comes NEXT — which is a `const`, `var` or `type` as
+// often as a function. When it is, BOTH ends go quiet: the `GenDecl` is never inspected, and the
+// function whose doc was swallowed now has `fd.Doc == nil`, which that walk skips as merely
+// undocumented. Measured on a tree that guard had been green on for a fortnight: **nineteen**,
+// across 18 files and 10 packages — `ContentDigest`'s 58-line essay on `ContentDigestVersion`,
+// the whole design note for `ceremony.Convene` on `ConveneRequest`, `Vault.save`'s one-liner on
+// `envelopeVersion`, and `internal/cli.Run`'s on `buildVersion`.
+//
+// # The rule is the JS half's below, not the Go half's above, and that was measured
+//
+// Go's convention is that a doc opens with the name of the thing it documents, and asking that
+// of `type`/`const`/`var` flagged **53** of 558 documented declarations on the tree that filed
+// this. Grouped declarations are most of it: a `const (...)` doc describes the GROUP ("The
+// groups and the port.", "D16's clocks, and the two figures that are law rather than tuning")
+// and names no single spec. A single one is as often a topic sentence — "The two service types
+// an IGD exposes a port-mapping control on", "The one length-prefix encoder every signed
+// preimage in this package uses." A guard with 53 flags and 19 real ones is one that gets
+// turned off inside a day, which is the argument the JS half already had to make for itself.
+//
+// So this fires only where the text COMMITS to a subject: the first line opens `// <name>` where
+// `<name>` is declared at the top level of the same file, and is not a name this declaration
+// itself introduces. A banner names nothing and is silent; a topic sentence names nothing and is
+// silent; and both are exactly the cases the name-first rule got wrong. Twenty flags on the tree
+// that filed this, nineteen of them real and one exempted below.
+//
+// # The blind spot, declared because it is the price of the narrow rule
+//
+// A doc that opens about something declared in ANOTHER file of the same package is invisible
+// here, as is one whose misplaced paragraph is not the block's first. Both are the JS half's
+// blind spots too, for the same reason and with the same arithmetic behind the choice.
+func TestEveryTypeConstAndVarDocNamesItsOwnDeclaration(t *testing.T) {
+	// Docs that open by naming a declared thing and are nonetheless correctly placed. As above,
+	// every entry carries its reason.
+	//
+	// **One, and it is the shape a narrow rule cannot express**: a declared identifier that is
+	// also an ordinary English word at the head of a sentence.
+	exempt := map[string]string{
+		"internal/ots/verify.go:opAppend": "the doc opens \"op tags we execute\" — English prose " +
+			"about OpenTimestamps opcodes, which collides with the `op` struct declared 320 lines " +
+			"below it and describes the const block it sits on",
+	}
+
+	// A doc block's first line claiming a subject: `// name …`. The leading space is load-bearing
+	// — it is what keeps `//go:embed` and the other directives out, since `go` would otherwise
+	// match any file that also declares one.
+	opens := regexp.MustCompile(`^//\s+([A-Za-z_][\w]*)\b`)
+
+	fset := token.NewFileSet()
+	var bad []string
+	seenExempt := map[string]bool{}
+	decls := 0
+	documented := 0
+	claiming := 0
+
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".claude", "node_modules", "web", "docs", "test":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, perr := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if perr != nil {
+			return perr
+		}
+
+		// Every name declared at the top level of this file. Built first, because the rule's
+		// "is this a subject or an English word" test is membership in this set.
+		declared := map[string]bool{}
+		for _, decl := range f.Decls {
+			switch dd := decl.(type) {
+			case *ast.FuncDecl:
+				declared[dd.Name.Name] = true
+			case *ast.GenDecl:
+				for _, sp := range dd.Specs {
+					for _, n := range specNames(sp) {
+						declared[n] = true
+					}
+				}
+			}
+		}
+
+		check := func(doc *ast.CommentGroup, names []string, pos token.Pos) {
+			if doc == nil || len(doc.List) == 0 || len(names) == 0 {
+				return
+			}
+			documented++
+			o := opens.FindStringSubmatch(doc.List[0].Text)
+			if o == nil || !declared[o[1]] {
+				return // names no subject — a banner or a topic sentence, not this rule's business
+			}
+			claiming++
+			for _, n := range names {
+				if o[1] == n {
+					return
+				}
+			}
+			key := filepath.ToSlash(path) + ":" + names[0]
+			if _, ok := exempt[key]; ok {
+				seenExempt[key] = true
+				return
+			}
+			first := strings.TrimSpace(strings.TrimPrefix(doc.List[0].Text, "//"))
+			if len(first) > 72 {
+				first = first[:72]
+			}
+			bad = append(bad, fmt.Sprintf("%s:%d %v — doc opens about %s: %q",
+				filepath.ToSlash(path), fset.Position(pos).Line, names, o[1], first))
+		}
+
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok == token.IMPORT {
+				continue
+			}
+			decls++
+			// A parenthesised group's doc covers every spec in it, so any of their names
+			// satisfies it; an unparenthesised one has exactly the one spec either way.
+			var all []string
+			for _, sp := range gd.Specs {
+				all = append(all, specNames(sp)...)
+			}
+			check(gd.Doc, all, gd.Pos())
+			// And a spec inside a group carries its own doc, which is the same rule one level
+			// in: four of the glued pairs found by the loose rule sat on a spec, not a group.
+			for _, sp := range gd.Specs {
+				switch s := sp.(type) {
+				case *ast.TypeSpec:
+					check(s.Doc, specNames(sp), sp.Pos())
+				case *ast.ValueSpec:
+					check(s.Doc, specNames(sp), sp.Pos())
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// STIMULUS, and the third floor is the load-bearing one, exactly as both halves beside this
+	// one found. Measured 2026-09-16: 676 declarations, 747 documented blocks over them (a group
+	// and its specs each count), 696 of which name a declared subject. A walk that stops reading
+	// the tree leaves the first floor to catch it; a `parser.ParseComments` dropped leaves the
+	// second; and a broken `opens` regex leaves only the third, while the run reads exactly like
+	// a clean one.
+	if decls < 600 {
+		t.Fatalf("the walk found only %d type/const/var declarations — it is not reading the "+
+			"tree, and a clean result from a walk that read nothing is the vacuous green this "+
+			"guard exists to refuse", decls)
+	}
+	if documented < 650 {
+		t.Fatalf("the walk found only %d documented declarations of %d — it is not parsing "+
+			"comments (0), so no doc could ever be checked", documented, decls)
+	}
+	if claiming < 600 {
+		t.Fatalf("the walk found only %d docs that name a declared subject, of %d documented — "+
+			"it is finding declarations and checking none of them, which reads exactly like a "+
+			"clean run", claiming, documented)
+	}
+
+	for key := range exempt {
+		if !seenExempt[key] {
+			t.Errorf("the exemption %q no longer matches anything: either the doc was fixed and "+
+				"the entry should go, or the declaration was renamed and the exemption now covers "+
+				"nothing while reading as though it covers something", key)
+		}
+	}
+
+	sort.Strings(bad)
+	if len(bad) > 0 {
+		t.Errorf("%d doc comment(s) sit on a type, const or var they do not name (/pending 511). "+
+			"The block opens by naming a subject declared elsewhere in the same file, so that "+
+			"declaration has no doc and this one carries a paragraph about something else — and "+
+			"a function on the receiving end of this reads as merely undocumented to "+
+			"TestEveryDocCommentNamesItsOwnFunction:\n  %s", len(bad), strings.Join(bad, "\n  "))
+	}
+}
+
+// specNames is every identifier a single `type`/`const`/`var` spec introduces. A `ValueSpec` can
+// introduce several (`var a, b = f()`), and any of them satisfies a doc that names one.
+func specNames(sp ast.Spec) []string {
+	switch s := sp.(type) {
+	case *ast.TypeSpec:
+		return []string{s.Name.Name}
+	case *ast.ValueSpec:
+		out := make([]string, 0, len(s.Names))
+		for _, n := range s.Names {
+			out = append(out, n.Name)
+		}
+		return out
+	}
+	return nil
+}
+
 // TestEveryJSDocCommentNamesItsOwnDeclaration — /pending 383, the web half of the rule above.
 //
 // # Why a second test rather than a wider walk

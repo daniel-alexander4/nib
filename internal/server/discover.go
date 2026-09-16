@@ -236,19 +236,7 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 	return candidate{}, false
 }
 
-// browsePeers listens for the window and returns the pinned peers it found, most
-// recently seen first, one entry per peer.
-//
-// Announcements repeat, so the same peer is seen several times in two seconds; the
-// caller wants a candidate list, not a packet log.
-// It returns EVERY distinct address seen, not one per peer.
-//
-// Deduping by fingerprint alone was a defect with a security consequence: two different
-// HOSTS can claim one name — the name is broadcast in the clear every 500 ms and is
-// displayed beside a signature, so it is not a secret — and the loser was thrown away
-// rather than returned. An attacker announcing faster than the real peer therefore
-// captured the browse outright and the genuine address was unreachable to any caller.
-// Keyed on fingerprint AND address, so the caller gets both and can try both.
+// maxLANCandidates bounds what one browse may hand to the dialer. See browsePeers.
 //
 // # And CAPPED, because that fix created the next attack
 //
@@ -271,7 +259,6 @@ func resolve(pins []vault.PinnedPeer, s discovery.Seen, want int) (candidate, bo
 // concurrently, so N dead candidates cost ONE timeout and the concurrency is the bound. The
 // cap still matters — it bounds how many sockets one browse can aim — but it is no longer
 // the thing standing between an on-link flood and a wedged handler.
-// maxLANCandidates bounds what one browse may hand to the dialer. See browsePeers.
 const maxLANCandidates = 8
 
 // browseQuiet is how long a browse keeps listening after the last NEW candidate.
@@ -309,6 +296,17 @@ const browseQuiet = announceEvery + 250*time.Millisecond
 
 // browsePeers listens for the window and returns the pinned peers it found. `want` is the hop the
 // caller is dialling for; `discovery.HopNone` means any. See resolve.
+//
+// Announcements repeat, so the same peer is seen several times in two seconds; the
+// caller wants a candidate list, not a packet log.
+// It returns EVERY distinct address seen, not one per peer.
+//
+// Deduping by fingerprint alone was a defect with a security consequence: two different
+// HOSTS can claim one name — the name is broadcast in the clear every 500 ms and is
+// displayed beside a signature, so it is not a secret — and the loser was thrown away
+// rather than returned. An attacker announcing faster than the real peer therefore
+// captured the browse outright and the genuine address was unreachable to any caller.
+// Keyed on fingerprint AND address, so the caller gets both and can try both.
 func browsePeers(b browser, pins []vault.PinnedPeer, window time.Duration, want int) []candidate {
 	deadline := time.Now().Add(window)
 	seen := map[string]candidate{}

@@ -11,29 +11,7 @@ import (
 	"nib/internal/sign"
 )
 
-// Convene is the pre-signing pass: the first place in the product that ever constructs a
-// ceremony.Record (P07.S02a).
-//
-// # Why it lives in this package and imports p2p
-//
-// Measured at the slice grill on a clean tree: `internal/ceremony` MAY import `internal/p2p`
-// in production code — build, vet AND test-compile all green. Only the reverse edge cycles,
-// through record_test.go, and that cycle is invisible to `go build`. So the door sits beside
-// the Record it builds and calls p2p for the geometry.
-//
-// Two alternatives were refused. A door in `internal/server` would put the convene-side
-// predicate on one side of a package boundary and Record.Verify's on the other — one rule,
-// two implementations, which is what already produced three disagreeing fingerprint
-// comparisons. And injecting PrepareCeremonyDocument as a func parameter, to dodge the
-// import, would let a test pass a no-op: the ordering guard would then go green with the
-// readme never appended, which is this repo's signature failure.
-//
-// # The order, and which arrows anything enforces
-//
-// readme+pages -> docHash -> Sign -> Embed -> first signature. Only the LAST arrow is
-// enforced by the callee (Embed refuses a signed document). The rest are enforced by being
-// in one function that nobody can enter halfway — which is the whole reason this is a door
-// rather than a sequence a route performs.
+// ConveneRequest is Convene's input.
 type ConveneRequest struct {
 	// Roster is the parties in SIGNING ORDER. The convener need not be in it; see Convene.
 	Roster []Party
@@ -186,6 +164,30 @@ var (
 	ErrNoDeliveryBudget = errors.New("convene was called without a delivery budget")
 )
 
+// Convene is the pre-signing pass: the first place in the product that ever constructs a
+// ceremony.Record (P07.S02a).
+//
+// # Why it lives in this package and imports p2p
+//
+// Measured at the slice grill on a clean tree: `internal/ceremony` MAY import `internal/p2p`
+// in production code — build, vet AND test-compile all green. Only the reverse edge cycles,
+// through record_test.go, and that cycle is invisible to `go build`. So the door sits beside
+// the Record it builds and calls p2p for the geometry.
+//
+// Two alternatives were refused. A door in `internal/server` would put the convene-side
+// predicate on one side of a package boundary and Record.Verify's on the other — one rule,
+// two implementations, which is what already produced three disagreeing fingerprint
+// comparisons. And injecting PrepareCeremonyDocument as a func parameter, to dodge the
+// import, would let a test pass a no-op: the ordering guard would then go green with the
+// readme never appended, which is this repo's signature failure.
+//
+// # The order, and which arrows anything enforces
+//
+// readme+pages -> docHash -> Sign -> Embed -> first signature. Only the LAST arrow is
+// enforced by the callee (Embed refuses a signed document). The rest are enforced by being
+// in one function that nobody can enter halfway — which is the whole reason this is a door
+// rather than a sequence a route performs.
+//
 // Convene runs the whole pre-signing pass and returns the convened document, its record and
 // one invitation per party.
 //

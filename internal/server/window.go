@@ -177,13 +177,6 @@ type idleExitTimer struct {
 	arrivedHook func()
 }
 
-// IdleExit is the channel `run()` selects on as its THIRD exit cause.
-//
-// **A channel and not a teardown call, and that is D6.** `run()`'s teardown is four steps and only
-// two of them are visible there — `DisarmSession()` and `srv.Close()` run inline, then the LIFO
-// defers `stop()` and `instance.Remove(cfgDir)` — which is why `main()` is `os.Exit(run())` at all.
-// A third *cause* that called teardown itself would be a third teardown, and the failure that
-// prevents is the stale instance record returning by a new door (ADR-009).
 // Exit causes, for the log line that says WHY this process is going.
 const (
 	exitCauseLastWindow = "the last window closed"
@@ -218,6 +211,13 @@ func (s *Server) RequestExit(cause string) {
 // Nib went away and they want to know what decided that.
 const exitingMsg = "exiting: "
 
+// IdleExit is the channel `run()` selects on as its THIRD exit cause.
+//
+// **A channel and not a teardown call, and that is D6.** `run()`'s teardown is four steps and only
+// two of them are visible there — `DisarmSession()` and `srv.Close()` run inline, then the LIFO
+// defers `stop()` and `instance.Remove(cfgDir)` — which is why `main()` is `os.Exit(run())` at all.
+// A third *cause* that called teardown itself would be a third teardown, and the failure that
+// prevents is the stale instance record returning by a new door (ADR-009).
 func (s *Server) IdleExit() <-chan struct{} {
 	s.idle.mu.Lock()
 	defer s.idle.mu.Unlock()

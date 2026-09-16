@@ -188,6 +188,45 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 	})
 }
 
+// ContentDigestVersion identifies WHAT this build hashes, and it is bound into the digest.
+//
+// **Without it, improving the coverage accuses a counterparty of tampering.** v1.116.18 changed
+// what ContentDigest covers without moving anything: a record written by the previous build
+// passed the version gate and then failed the hash comparison with *"the document does not
+// match the ceremony record… these are not the same document"*, when the cause was a Nib point
+// release. Every one of the coverage gaps found since needs another change, so this has to be
+// a version, not a constant that happens to be right today.
+//
+// Bump it whenever the set of hashed axes changes. `Record.FormatVersion` is a different
+// number answering a different question (what the roster preimage binds); a digest change does
+// not need to move that, but it does need to move this.
+//
+// **Bumped to 3 (2026-08-24, P07.S02).** The embedded-files name tree is now covered — see
+// CeremonyRecordName and the attachment block in ContentDigest for what was measured.
+//
+// **And the constant was doing only half its job until this slice.** It was bound INTO the
+// digest and carried nowhere beside it — three occurrences in the whole tree, all in this
+// file — so nothing could ever compare two versions. Binding a version inside a hash changes
+// the number; it cannot produce a sentence, because the reader has nothing to read. A build
+// with version 3 meeting a record written under 2 therefore produced the exact accusation the
+// paragraph above says this constant prevents. `Record` now carries the digest version it was
+// written under, so the mismatch is reported as a skew (D32) rather than as tampering.
+const ContentDigestVersion = 3
+
+// CeremonyRecordName is the one embedded file ContentDigest must NOT hash.
+//
+// It lives here rather than in `internal/ceremony` because the exclusion is a property of the
+// digest, and `internal/pdfops` cannot import `internal/ceremony` (that package imports this
+// one). `ceremony.AttachmentName` is defined as this constant, so there is one name and not
+// two that can drift — ADR-009.
+//
+// **Why it is excluded, and it is not a preference:** the record contains `DocHash`, which is
+// this digest of the document the record is embedded in. A digest that covered the record
+// would be a fixed point — the value would have to be known before it could be computed.
+// Measured stable both ways at the P07.S02 grill: embedding the record leaves the digest
+// byte-identical, before and after this slice widened the coverage.
+const CeremonyRecordName = "nib-ceremony.json"
+
 // ContentDigest is a SHA-256 over the page count and every page's content stream, in
 // order — a projection of the document that survives operations which change its bytes.
 //
@@ -246,45 +285,6 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // Decoded content is hashed where the filter decodes, and the raw stream where it does not,
 // with a marker distinguishing the two — otherwise a document whose filter this build cannot
 // decode would hash identically to one where the decode produced nothing.
-// ContentDigestVersion identifies WHAT this build hashes, and it is bound into the digest.
-//
-// **Without it, improving the coverage accuses a counterparty of tampering.** v1.116.18 changed
-// what ContentDigest covers without moving anything: a record written by the previous build
-// passed the version gate and then failed the hash comparison with *"the document does not
-// match the ceremony record… these are not the same document"*, when the cause was a Nib point
-// release. Every one of the coverage gaps found since needs another change, so this has to be
-// a version, not a constant that happens to be right today.
-//
-// Bump it whenever the set of hashed axes changes. `Record.FormatVersion` is a different
-// number answering a different question (what the roster preimage binds); a digest change does
-// not need to move that, but it does need to move this.
-//
-// **Bumped to 3 (2026-08-24, P07.S02).** The embedded-files name tree is now covered — see
-// CeremonyRecordName and the attachment block in ContentDigest for what was measured.
-//
-// **And the constant was doing only half its job until this slice.** It was bound INTO the
-// digest and carried nowhere beside it — three occurrences in the whole tree, all in this
-// file — so nothing could ever compare two versions. Binding a version inside a hash changes
-// the number; it cannot produce a sentence, because the reader has nothing to read. A build
-// with version 3 meeting a record written under 2 therefore produced the exact accusation the
-// paragraph above says this constant prevents. `Record` now carries the digest version it was
-// written under, so the mismatch is reported as a skew (D32) rather than as tampering.
-const ContentDigestVersion = 3
-
-// CeremonyRecordName is the one embedded file ContentDigest must NOT hash.
-//
-// It lives here rather than in `internal/ceremony` because the exclusion is a property of the
-// digest, and `internal/pdfops` cannot import `internal/ceremony` (that package imports this
-// one). `ceremony.AttachmentName` is defined as this constant, so there is one name and not
-// two that can drift — ADR-009.
-//
-// **Why it is excluded, and it is not a preference:** the record contains `DocHash`, which is
-// this digest of the document the record is embedded in. A digest that covered the record
-// would be a fixed point — the value would have to be known before it could be computed.
-// Measured stable both ways at the P07.S02 grill: embedding the record leaves the digest
-// byte-identical, before and after this slice widened the coverage.
-const CeremonyRecordName = "nib-ceremony.json"
-
 func ContentDigest(pdf []byte) (string, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
