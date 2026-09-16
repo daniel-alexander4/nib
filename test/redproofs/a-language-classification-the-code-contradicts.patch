@@ -1,11 +1,11 @@
 diff --git a/langdoor_test.go b/langdoor_test.go
-index a6b7d07..783615d 100644
+index 3fce6dd..118d34a 100644
 --- a/langdoor_test.go
 +++ b/langdoor_test.go
-@@ -61,7 +61,7 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
- 			"no /Lang from anywhere — mdpdf is pure Go and was never told one."},
- 		"internal/cli/commands.go:cmdOffice": {carries, "the CLI half of the same door, and the " +
- 			"same reason. Named separately because ADR-009 polices SITES, not packages."},
+@@ -65,7 +65,7 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
+ 			"pdfops.SetLang (whose LangTag door refuses anything it cannot declare); with no " +
+ 			"--lang it carries, for handleOffice's reason. /pending 471. Named separately because " +
+ 			"ADR-009 polices SITES, not packages."},
 -		"internal/server/export.go:handleAssemble": {none, "raster pages with NO text in page " +
 +		"internal/server/export.go:handleAssemble": {declares, "raster pages with NO text in page " +
  			"content, so ua1 7.2 t34 does not fire on this output at all (measured 2026-09-11: a " +

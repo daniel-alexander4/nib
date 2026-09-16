@@ -219,7 +219,14 @@ picker narrows to Markdown, and the CLI verb reports it's missing:
 ```
 nib office report.docx -o report.pdf
 nib office notes.md -o notes.pdf
+nib office vertrag.docx -o vertrag.pdf --lang de
 ```
+
+`--lang` declares the language the document is written in, so a screen reader
+pronounces it correctly. Without it the CLI declares none for Markdown, and an
+office conversion keeps LibreOffice's, which is the converting machine's locale
+rather than the document's — a German contract converted on an English machine
+is declared English.
 
 Each conversion runs in its own temporary directory with an isolated LibreOffice
 profile and a timeout. As with Ghostscript, LibreOffice *interprets* the document

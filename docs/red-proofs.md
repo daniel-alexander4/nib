@@ -5159,3 +5159,17 @@ forever after the code stops matching it. The cross-check runs both ways: a `dec
 reaches no door, and a row of any other class that does.
 
 `recorded` 411 → 413.
+
+## `/pending 471` — the language guard learns `told` (v1.129.109)
+
+| proof | check | expects |
+|---|---|---|
+| `a-told-door-that-never-declares` — `nib office --lang` validates the language and never writes it, while the table classifies `cmdOffice` as `told` | `go test . -run TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom`, tier 1 | "is classified \"told\" and never reaches pdfops.SetLang" |
+
+**`told` is a door that declares only when the user names a language, and otherwise carries.** The
+cross-check treats it as `declares` for reaching `pdfops.SetLang` — a `told` row that reaches no door
+is contradicted, and so is a row of any other class that does. Without this row the new class would
+be a word in a table. `a-language-classification-the-code-contradicts` was re-recorded in the same
+change, because its context lines included the `cmdOffice` row this one reclassifies.
+
+`recorded` 413 → 414.
