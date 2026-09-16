@@ -114,18 +114,21 @@ var knownUA1Deltas = map[string]struct {
 	"AuthorTaggedForm": {[]string{"7.21.4.1 t1"}, "Helvetica field text (/pending 479, pdfcpu cannot fill an embedded face)"},
 	"AuthorForm":       {[]string{"7.18.4 t1", "7.21.4.1 t1"}, "the UNTAGGED door; the app authors through AuthorTaggedForm. Fonts /pending 479"},
 
-	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`.
-	"Collect":       {pageSetLoss, "a page subset drops the structure tree and metadata — P02"},
-	"RemovePages":   {pageSetLoss, "a page subset drops the structure tree and metadata — P02"},
-	"DuplicatePage": {pageSetLoss, "rebuilt through Collect — P02"},
-	"Crop":          {pageSetLoss, "rebuilt page by page — P02"},
-	"SplitPage":     {pageSetLoss, "rebuilt page by page — P02"},
-	"SplitRegions":  {pageSetLoss, "rebuilt page by page — P02"},
-	"Booklet":       {pageSetLoss, "composed onto new sheets — P02"},
-	"InsertPDF":     {append(append([]string{}, pageSetLoss...), "7.21.4.1 t1"), "spliced through Collect, with an untagged Base-14 document inserted — P02"},
-	// The census drives it as `CarryAttachments(fixture, untaggedFixture())`: the destination is a
-	// genuinely different document, so its lost tree, metadata, language and font are the destination's.
-	"CarryAttachments": {append(append([]string{}, pageSetLoss...), "7.2 t34", "7.21.4.1 t1"), "the destination is the census's untagged fixture, not the census document — P02"},
+	// ── **`Collect`, `DuplicatePage`, `Booklet` and `CarryAttachments` have NO row since P02.S04b**,
+	// and their absence is the slice's strongest measurement: a subset prunes the source tree onto
+	// the pages it keeps, so each adds nothing at all to a conformant document where it previously
+	// added all five of `pageSetLoss`. `RemovePages` is the one subset that still adds a clause, and
+	// it is not a loss of structure:
+	"RemovePages": {[]string{"7.4.2 t1"}, "its drive removes page 1, which carries the document's " +
+		"only /H1 — so the remaining document genuinely starts at /H2 and genuinely mis-nests. " +
+		"The tree is carried; the heading it needed went with the page the caller asked to delete"},
+
+	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`, each because
+	// its own slice is blocked on Dan: crop P02.S05, the splits P02.S06, the merge graft P02.S07.
+	"Crop":         {pageSetLoss, "rebuilt page by page — P02.S05, blocked"},
+	"SplitPage":    {pageSetLoss, "rebuilt page by page — P02.S06, blocked"},
+	"SplitRegions": {pageSetLoss, "rebuilt page by page — P02.S06, blocked"},
+	"InsertPDF":    {append(append([]string{}, pageSetLoss...), "7.21.4.1 t1"), "spliced through the NON-carrying door, with an untagged Base-14 document inserted — P02.S07, blocked"},
 	// **`NUp` had a `7.20 t2` row until P02.S02 and no longer does.** The clause was veraPDF's
 	// `isUniqueSemanticParent` — *"Form XObject contains MCIDs and is referenced more than once"* —
 	// and the cause was nib's own carry anchoring a form that pdfcpu's optimize pass had fused

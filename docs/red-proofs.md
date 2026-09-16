@@ -5253,3 +5253,47 @@ its place only on a document signed elsewhere with a **visible** signature, whic
 `TestASubsetErasesASignatureWhoseWidgetIsOnAKeptPage` builds.
 
 `recorded` 414 → 415.
+
+## P02.S04b of `PLAN-ua-coverage.md` — a subset carries the structure of the pages it keeps (v1.129.142)
+
+`Collect` and `RemovePages` now prune the source structure tree onto the pages they keep. **Twenty-two
+mutations were run; twenty went red, and the two survivors were proven coverage holes that are now
+closed.** The three rows below are the ones where the *green* was the finding rather than the red.
+
+| proof | check | expects |
+|---|---|---|
+| `a-carry-that-deletes-the-rolemap` — `delete(tree.root, "RoleMap")` beside the `/IDTree` drop | `go test ./internal/pdfops/ -run TestACarriedTreeKeepsItsRoleMap -count=1` | `the carried RoleMap is map[], want the source's map[Para:P]` |
+| `the-gate-never-refuses` — `subsetCarrying`'s `if !carried \|\| carryIsComplete(out)` replaced by `if true`, so an incomplete carry ships instead of falling back | `go test ./internal/pdfops/ -run TestTheOutputGateFallsBackToTheHonestLoss -count=1` | `the duplicate shipped a tagging claim … over a form XObject drawn twice` |
+| `no-orphan-page-condition` — `&& len(orphanPageObjects(ctx, live)) == 0` removed from `carryIsComplete` | `go test ./internal/pdfops/ -run TestTheOrphanPageConditionDECIDESTheGate -count=1` | `the output claims tagging (tree=true marked=true) over a document that still holds a page the subset removed` |
+
+**All three were GREEN across the whole suite before their readers existed** — the RoleMap deletion,
+the disabled gate and the missing orphan condition each left `go test ./internal/pdfops/` passing with
+veraPDF included. The RoleMap is the sharpest: `subsetFixture`'s own doc names it as one of the shapes
+the census document lacks, so obj 38 was the only RoleMap in the repo and nothing read it, and an
+element typed `/Para` means nothing without the map that says it is a `/P`.
+
+**The debt P02.S03 recorded is discharged, and discharging it corrected the test.**
+`TestRedactionEmitsNoStructureTree` was written as a backstop that "becomes discriminating the moment
+`Collect` carries". It did not: `RedactPages` was probed against the carrying primitive and the test
+stayed **green**, because rasterising page 1 puts an `ImagesToPDF` output first in the segment list and
+`api.MergeRaw` keeps the FIRST document's catalog — so the merged result had no tree however the
+untouched run was collected. The door under test ran and the assertion could not see it. Rasterising the
+SECOND page makes segment 1 the untouched run, and the probe then goes red on its own assertion:
+
+| proof | check | expects |
+|---|---|---|
+| `redaction-routed-through-the-carrying-door` — `RedactPages`' `collectWithoutStructure` replaced by `Collect` | `go test ./internal/pdfops/ -run TestRedactionEmitsNoStructureTree -count=1` | `the redacted document carries a structure tree. Its elements describe what the rasterised pages said` |
+
+**Two survivors, both real, both closed.** Sharing `eachParentTreeClaim`'s visited set across pages
+survived every existing reader, because all three of the agreement test's documents derive from a
+fixture with **no form XObject** — the shape the two claimant walks differ most on.
+`TestTheClaimantWalksAgreeAboutAFormXObjectDrawnOnTwoPages` closes it and goes red (`the write-side walk
+offers the form's key 2 time(s), want 1`). Deleting a claimant's key when its row did not survive
+survived too, and `TestAClaimOnAMissingRowIsDELETEDFromTheClaimant` closes that.
+
+**And one survivor that is not a hole.** Removing the carry's `anchored() > 0` refusal left
+`TestASubsetPRESERVESItsInputsFateRatherThanSettingIt` green — correctly, because that refusal has its
+own reader (`TestACarryThatAnchorsNothingIsRefused`, red under the same mutation) and the PRESERVES test
+is about a different property. A survivor is a hole only where nothing else covers the line.
+
+`recorded` 415 → 419.

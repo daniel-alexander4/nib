@@ -164,20 +164,51 @@ var tagFates = map[string]tagFate{
 	// `tagState.undescribed`.
 	"InsertBlank": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return InsertBlank(b, 1, false) }},
 
+	// ── The SUBSET operations, `dropped` until P02.S04b and `carried` since. They prune the source
+	// tree onto the pages they keep, in the source context, where object numbers are stable — and
+	// the reader that grades the prune is `structureCarriedCompletely`, not this table: a tree that
+	// keeps every element and re-anchors nothing measures `carried` here while holding the dropped
+	// pages' content streams. `TestASubsetCarriesTheStructureOfThePagesItKeeps` is that reader.
+	//
+	// **These four rows are measured on a ONE-PAGE fixture, so `Collect(["1"])` is the identity
+	// selection and no page is dropped at all.** Saying so is the point: this table cannot see the
+	// prune, `RemovePages` is not even driven here (it would remove the document's only page), and
+	// the multi-page readers are in `subsetcarry_test.go` and in the veraPDF census.
+	"Collect": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Collect(b, []string{"1"}) }},
+	// **`RemovePages`' drive reaches one of this table's two readers and not the other**, and saying
+	// so is the point: the corpus fixture is ONE page, so removing page 1 leaves no document and
+	// `TestEveryDeclaredFateIsTheMEASUREDFate` logs "not exercised" — while the veraPDF differential
+	// drives the same row on the 8-page census document, where it measures a real deletion and is
+	// the reason this row's `knownUA1Deltas` entry exists. The slice's own readers
+	// (`TestASubsetKeepsAnElementWhoseOwnPageIsGone`, `TestACarriedTreeKeepsItsRoleMap`) drive it on
+	// documents a page can come out of. Nilling the drive to satisfy the undriven-must-say-why rule
+	// was tried and is wrong: it took the row out of the differential too, which is the stronger
+	// measurement of the two.
+	"RemovePages":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
+	"DuplicatePage": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
+	// `Booklet` is `InsertBlank`×pad → `Collect` → `NUp`: it dropped only because `Collect` did, and
+	// it carries now because `Collect` carries and `NUp` has carried since P01.S06.
+	"Booklet": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},
+
 	// ── DROPPED. The claim goes with the content it described, which is law 1 satisfied honestly.
-	// These are the page-set and page-composition operations: the tree cannot survive a subset it no
-	// longer describes, and pdfcpu drops root and elements together rather than keeping a dangling
-	// claim. That is D9's question answered — for a KEPT subset the remap is still open.
-	"Collect":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Collect(b, []string{"1"}) }},
-	"RemovePages":   {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
-	"Crop":          {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Crop(b, [4]float64{0.05, 0.05, 0.05, 0.05}, nil) }},
-	"DuplicatePage": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
-	"SplitPage":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
-	"SplitRegions":  {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
-	"Booklet":       {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},
-	"InsertPDF":     {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
-	"CarryAttachments": {verdict: "dropped", drive: func(b []byte) ([]byte, error) {
-		o, _, e := CarryAttachments(b, untaggedFixture())
+	// These rebuild pages geometrically or compose two documents, and each is a slice of its own that
+	// is BLOCKED on Dan: crop is P02.S05, the two splits P02.S06, the merge graft P02.S07. Their
+	// subsets deliberately route through `collectWithoutStructure` rather than inherit the carry —
+	// see that door's header for what a merge does to a carried tree.
+	"Crop":         {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Crop(b, [4]float64{0.05, 0.05, 0.05, 0.05}, nil) }},
+	"SplitPage":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
+	"SplitRegions": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
+	"InsertPDF":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
+	// **Its destination is a subset of the census document, not the untagged fixture** (P02.S04b).
+	// The old drive measured what an untagged destination looks like — the destination's own loss,
+	// not the operation's — and the server's delete and reorder routes do exactly this: a subset,
+	// then the source's attachments carried onto it (`internal/server/pages.go:77-81`).
+	"CarryAttachments": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		dst, err := Collect(b, []string{"1-"})
+		if err != nil {
+			return nil, err
+		}
+		o, _, e := CarryAttachments(b, dst)
 		return o, e
 	}},
 	// **`NUp` is `carried`, and getting there took three tries.** The raw `api.NUp` output is the

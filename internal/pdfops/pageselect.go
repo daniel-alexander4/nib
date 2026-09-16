@@ -54,9 +54,18 @@ import (
 // materializing the whole set fixes that in passing.
 var inheritableKeys = [...]string{"Resources", "MediaBox", "CropBox", "Rotate"}
 
-// catalogAllowlist is the complete set of catalog keys a subset may emit. Measured against the old
+// catalogAllowlist is the set of catalog keys a subset may emit BY DEFAULT. Measured against the old
 // implementation: a subset's catalog was exactly {Type, Pages, Names}, plus /Lang where nib re-added
 // it and /AcroForm where a field survived. Anything not named here is dropped.
+//
+// **It is no longer the complete set, and the difference is earned rather than listed.** Since
+// P02.S04b a successful structure carry re-adds `/StructTreeRoot`, `/MarkInfo`, a rebuilt
+// `/Metadata` and a `/DisplayDocTitle`-only `/ViewerPreferences` ON TOP of this list — never into it.
+// The default-deny shape is what that preserves: a key this code has never heard of is still
+// dropped, and the four above appear only when `carryStructure` has pruned the tree onto the pages
+// kept and found it still anchored to them. Measured, a carried subset's catalog is
+// {Lang, MarkInfo, Metadata, Pages, StructTreeRoot, Type, ViewerPreferences} against the
+// non-carrying door's {Lang, Pages, Type}.
 var catalogAllowlist = map[string]bool{
 	"Type":     true,
 	"Pages":    true,
@@ -148,26 +157,32 @@ func collectLeaves(xt *model.XRefTable, root types.Dict) ([]pageLeaf, types.Indi
 
 // selectPages rewrites ctx's page tree to hold exactly the pages named by keep — 1-based, in the
 // order given, repeats allowed — and reduces the catalog to what a subset is allowed to carry.
-func selectPages(ctx *model.Context, keep []int) error {
+//
+// **`carry` asks for the source structure tree to be pruned onto the pages kept** (P02.S04b), and the
+// return value says whether it was: the catalog's structure keys are restored only when the carry
+// succeeded, so a refusal produces exactly the honest loss this primitive produced before that slice.
+// It is one flag on one door rather than two implementations, and the two named wrappers at the
+// `subset` level are where each caller's choice is recorded (ADR-009).
+func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	xt := ctx.XRefTable
 	root, err := xt.Catalog()
 	if err != nil {
-		return err
+		return false, err
 	}
 	leaves, pagesRef, err := collectLeaves(xt, root)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(keep) == 0 {
-		return fmt.Errorf("pdfops: that selection does not name any page of this document")
+		return false, fmt.Errorf("pdfops: that selection does not name any page of this document")
 	}
 	for _, n := range keep {
 		if n < 1 || n > len(leaves) {
-			return fmt.Errorf("pdfops: page %d is not in this document, which has %d page(s)", n, len(leaves))
+			return false, fmt.Errorf("pdfops: page %d is not in this document, which has %d page(s)", n, len(leaves))
 		}
 	}
 	if len(leaves) == 1 && leaves[0].ref.ObjectNumber.Value() == pagesRef.ObjectNumber.Value() {
-		return fmt.Errorf("pdfops: this document's page tree has no pages under its root")
+		return false, fmt.Errorf("pdfops: this document's page tree has no pages under its root")
 	}
 
 	// The signature goes BEFORE anything is cloned. `clonePage` deep-copies a page's annotations
@@ -188,25 +203,31 @@ func selectPages(ctx *model.Context, keep []int) error {
 	// returned nil, `live` was always empty, and every subset deleted the entire AcroForm. No
 	// fixture in this package could see it: every form fixture is one page.
 	keptDicts := make([]types.Dict, 0, len(keep))
+	// The same pages again, with what the structure carry needs of them: which are copies, and
+	// which of the copy's annotation objects stands for which of the source's.
+	pages := make([]keptPage, 0, len(keep))
 	for _, n := range keep {
 		leaf := leaves[n-1]
 		ref, dic := leaf.ref, leaf.dic
+		isClone := false
+		var annotOf map[int]types.IndirectRef
 		if placed[ref.ObjectNumber.Value()] {
 			// A page named twice must become a second OBJECT: pdfcpu refuses a page tree that
 			// reaches one object twice (`ErrPageTreeDuplicate`, model/recursion.go:80, on the WRITE path as well as validation), so the
 			// clone is mandatory rather than a nicety. `DuplicatePage` is the caller that needs it.
-			cloneRef, cerr := clonePage(xt, dic, pagesRef)
+			cloneRef, mapping, cerr := clonePage(xt, dic, pagesRef)
 			if cerr != nil {
-				return cerr
+				return false, cerr
 			}
-			ref = *cloneRef
+			ref, isClone, annotOf = *cloneRef, true, mapping
 			if dic = derefDict(xt, ref); dic == nil {
-				return fmt.Errorf("pdfops: a duplicated page could not be read back")
+				return false, fmt.Errorf("pdfops: a duplicated page could not be read back")
 			}
 		}
 		placed[ref.ObjectNumber.Value()] = true
 		keptPages[ref.ObjectNumber.Value()] = true
 		keptDicts = append(keptDicts, dic)
+		pages = append(pages, keptPage{ref: ref, dic: dic, clone: isClone, annotOf: annotOf})
 		for _, k := range inheritableKeys {
 			if v, ok := leaf.inh[k]; ok {
 				dic[k] = v
@@ -219,17 +240,36 @@ func selectPages(ctx *model.Context, keep []int) error {
 	// The root /Pages node is reused so the catalog's reference stays valid, but its contents are
 	// replaced wholesale — anything it carried was either inherited (now materialized onto the
 	// pages) or is stale.
-	pages := derefDict(xt, pagesRef)
-	if pages == nil {
-		return fmt.Errorf("pdfops: this document's page tree root could not be read")
+	pagesNode := derefDict(xt, pagesRef)
+	if pagesNode == nil {
+		return false, fmt.Errorf("pdfops: this document's page tree root could not be read")
 	}
-	for k := range pages {
-		delete(pages, k)
+	for k := range pagesNode {
+		delete(pagesNode, k)
 	}
-	pages["Type"] = types.Name("Pages")
-	pages["Kids"] = kids
-	pages["Count"] = types.Integer(len(kids))
+	pagesNode["Type"] = types.Name("Pages")
+	pagesNode["Kids"] = kids
+	pagesNode["Count"] = types.Integer(len(kids))
 	ctx.PageCount = len(kids)
+
+	// **The carry runs BEFORE the allowlist and its keys are restored after it.** That order is what
+	// makes a refusal free: the prune needs `/StructTreeRoot` still on the catalog to read the tree
+	// at all, and anything it leaves behind becomes unreachable the moment the allowlist drops the
+	// key — so a refused carry writes exactly the document this primitive wrote before P02.S04b,
+	// with no rollback and no second pass.
+	carried := false
+	var treeRoot, markInfo types.Object
+	title := ""
+	var showTitle *bool
+	if carry {
+		treeRoot, markInfo = root["StructTreeRoot"], root["MarkInfo"]
+		title = documentTitle(ctx, root)
+		showTitle = displayDocTitle(ctx)
+		var cerr error
+		if carried, cerr = carryStructure(ctx, root, pages); cerr != nil {
+			return false, cerr
+		}
+	}
 
 	for k := range root {
 		if !catalogAllowlist[k] {
@@ -237,10 +277,10 @@ func selectPages(ctx *model.Context, keep []int) error {
 		}
 	}
 	if err := pruneAcroForm(xt, root, keptDicts); err != nil {
-		return err
+		return false, err
 	}
 	if err := pruneNames(xt, root, keptPages); err != nil {
-		return err
+		return false, err
 	}
 	unlinkDestinations(xt, keptDicts, keptPages)
 	// The trailer's /ID[0] is a PERMANENT document identifier: pdfcpu preserves it and mints only
@@ -256,7 +296,28 @@ func selectPages(ctx *model.Context, keep []int) error {
 			}
 		}
 	}
-	return nil
+
+	if !carried {
+		return false, nil
+	}
+	root["StructTreeRoot"] = treeRoot
+	// `/MarkInfo` goes WITH the tree and is not invented: a document whose tree carried no
+	// `/MarkInfo /Marked true` does not gain one here.
+	if markInfo != nil {
+		root["MarkInfo"] = markInfo
+	}
+	// **A failure here drops the carry rather than the operation.** Its errors are nib's own and it
+	// runs after the structure keys are back, so returning one would add a failure mode
+	// `carryStructure`'s header disclaims and leave state to roll back; taking the keys away again
+	// produces exactly the honest loss the rest of the carry produces.
+	if !carryTitleFloor(ctx, root, title, showTitle) {
+		delete(root, "StructTreeRoot")
+		delete(root, "MarkInfo")
+		delete(root, "Metadata")
+		delete(root, "ViewerPreferences")
+		return false, nil
+	}
+	return true, nil
 }
 
 // clonePage produces a genuinely separate page object: its own dictionary, its own /Annots array,
@@ -266,10 +327,13 @@ func selectPages(ctx *model.Context, keep []int) error {
 // /StructParent is a single ParentTree key, so one annotation object on two pages is contradictory
 // on both counts — and a shared widget would put one form field on two pages. Content streams,
 // resources and everything they reach ARE shared: they are read-only to this operation.
-func clonePage(xt *model.XRefTable, src types.Dict, parent types.IndirectRef) (*types.IndirectRef, error) {
+// It also reports WHICH copy stands for which original. An `OBJR` in the structure tree names an
+// annotation, and the copy of that OBJR has to name the copy of the annotation (P02.S04b) — a
+// mapping only this function can produce, since it is the only place the correspondence exists.
+func clonePage(xt *model.XRefTable, src types.Dict, parent types.IndirectRef) (*types.IndirectRef, map[int]types.IndirectRef, error) {
 	dic, ok := src.Clone().(types.Dict)
 	if !ok {
-		return nil, fmt.Errorf("pdfops: a page could not be duplicated")
+		return nil, nil, fmt.Errorf("pdfops: a page could not be duplicated")
 	}
 	annots := derefArray(xt, src["Annots"])
 	delete(dic, "Annots")
@@ -277,8 +341,9 @@ func clonePage(xt *model.XRefTable, src types.Dict, parent types.IndirectRef) (*
 
 	ref, err := xt.IndRefForNewObject(dic)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	annotOf := map[int]types.IndirectRef{}
 	if len(annots) > 0 {
 		cloned := make(types.Array, 0, len(annots))
 		for _, a := range annots {
@@ -293,7 +358,10 @@ func clonePage(xt *model.XRefTable, src types.Dict, parent types.IndirectRef) (*
 			nd["P"] = *ref
 			nref, aerr := xt.IndRefForNewObject(nd)
 			if aerr != nil {
-				return nil, aerr
+				return nil, nil, aerr
+			}
+			if ar, isRef := a.(types.IndirectRef); isRef {
+				annotOf[ar.ObjectNumber.Value()] = *nref
 			}
 			cloned = append(cloned, *nref)
 		}
@@ -301,7 +369,7 @@ func clonePage(xt *model.XRefTable, src types.Dict, parent types.IndirectRef) (*
 			dic["Annots"] = cloned
 		}
 	}
-	return ref, nil
+	return ref, annotOf, nil
 }
 
 // dropSignature removes every signature from the document — the fields, their widgets, and the

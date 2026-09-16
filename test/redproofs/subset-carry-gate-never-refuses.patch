@@ -1,0 +1,11 @@
+--- a/internal/pdfops/pdfops.go
++++ b/internal/pdfops/pdfops.go
+@@ -193,7 +193,7 @@
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	if !carried || carryIsComplete(out) {
++	if true {
+ 		return out, nil
+ 	}
+ 	return subset(pdf, pick)

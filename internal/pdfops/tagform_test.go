@@ -419,7 +419,10 @@ func TestTheFormsTreeSaysItCameFromNibsOwnFieldList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if base, err = RemovePages(base, []string{"2"}); err != nil {
+	// **The NON-carrying door, since P02.S04b.** `RemovePages` now prunes the source tree onto the
+	// pages it keeps, so subsetting a tagged host leaves a tagged host — and the tier measured below
+	// would be that tree's rather than the form door's own. The setup guard is what said so.
+	if base, err = collectWithoutStructure(base, []string{"1"}); err != nil {
 		t.Fatal(err)
 	}
 	if s := inspectTags(base); s.tree {

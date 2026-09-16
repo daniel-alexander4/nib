@@ -1,0 +1,10 @@
+--- a/internal/pdfops/structcarry.go
++++ b/internal/pdfops/structcarry.go
+@@ -130,6 +130,7 @@
+ 	// An `/IDTree` naming elements a subset removed is wrong whatever else is true of it.
+ 	delete(tree.root, "IDTree")
+ 	delete(tree.root, "AF")
++	delete(tree.root, "RoleMap")
+ 
+ 	// **The rows are cleaned of removed elements BEFORE anything is cloned, and the order is the
+ 	// fix for a measured leak.** `carryOntoClone` copies the elements a `/ParentTree` row names, and

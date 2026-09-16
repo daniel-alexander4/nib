@@ -83,9 +83,19 @@ func TestEveryClaimOfTaggingGoesThroughTheOneDoor(t *testing.T) {
 	}
 
 	// `claimTagging` is the door; `inspectTags` and the fate table READ the key and are not claims.
+	//
+	// **`selectPages` is named here because it PRESERVES a claim rather than making one** — the
+	// escape this guard's own message offers. It writes back the very `/MarkInfo` object the source
+	// document had, and only when `carryStructure` has pruned the tree onto the pages kept and found
+	// it still anchors content; a document whose tree carried no `/MarkInfo` does not gain one, and
+	// the output is gated on `carryIsComplete` besides (`PLAN-ua-coverage.md` P02.S04b). It also
+	// cannot call the door: `claimTagging` takes and returns BYTES, and this runs inside one
+	// read-change-write on a `*model.Context`, so routing through it would mean a second parse and a
+	// second write of a document mid-selection.
 	readers := map[string]bool{
 		door:          true,
 		"inspectTags": true,
+		"selectPages": true,
 	}
 	var offenders []string
 	for fn, file := range funcsWriting {

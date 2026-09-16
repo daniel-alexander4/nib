@@ -130,15 +130,73 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 // `ApplyReducedFeatureSet()` is true (SPLIT, TRIM, EXTRACTPAGES, IMPORTIMAGES), and inverts the page
 // selection under REMOVEPAGES. COLLECT does neither, so what this code writes is what comes out.
 func subset(pdf []byte, pick func(total int) ([]int, error)) ([]byte, error) {
-	conf := model.NewDefaultConfiguration()
-	conf.Cmd = model.COLLECT
-	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+	return rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
 		keep, err := pick(ctx.PageCount)
 		if err != nil {
 			return err
 		}
-		return selectPages(ctx, keep)
+		_, err = selectPages(ctx, keep, false)
+		return err
 	})
+}
+
+// subsetConf is the configuration both subset doors read with.
+func subsetConf() *model.Configuration {
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.COLLECT
+	return conf
+}
+
+// subsetCarrying is `subset` with the source structure tree pruned onto the pages kept
+// (`PLAN-ua-coverage.md` P02.S04b, D5), gated on the bytes it wrote.
+//
+// # Why the gate reads the OUTPUT and not the context
+//
+// An in-context check cannot see what the write and the next optimizing read do between them.
+// `clonePage` shares a page's content stream, so a duplicated page whose content draws an
+// MCID-bearing form XObject draws it twice — completeness condition 4 — and it is pdfcpu's optimizing
+// READ that fuses and reveals equal forms, which is P02.S02's lesson one operation over. So the carry
+// writes, the gate re-reads, and an incomplete carry falls back to the honest loss. It is the shape
+// `completeOrHonest` already has for `NUp`.
+//
+// # The three things that make it affordable
+//
+// A document with no `/StructTreeRoot` never carries, so `carried` comes back false and the gate is
+// never reached — which is a precondition and not a fast path: `carryIsComplete` answers FALSE for an
+// untagged document (`readStructTree` returns `errNoStructTree`), so a gate that ran unconditionally
+// would fall back on every untagged document forever. The verify reads the OUTPUT, which for a subset
+// is smaller than the input. And the second write happens only when the carry failed.
+//
+// Measured against THIS implementation on tagged text-only documents, full reverse permutation (the
+// worst case — nothing is pruned, so every element is carried): 8 pages 6→14 ms, 37 pages 18→72 ms,
+// 73 pages 41→145 ms, 146 pages 77→294 ms, with the gate itself 5/31/61/145 ms and the output
+// 1.07×–1.59× larger. So a tagged reorder is 2.3–4.0× slower and that is what a true tree costs;
+// nothing on these routes has a timeout (`cmd/nib/main.go:176` sets none, and `web/app.js` says the
+// client deliberately has none).
+//
+// **The ratio is still climbing past that range.** Measured further by the slice's own review: 291
+// pages 699 ms → 2.84 s (4.1×), 582 pages 1.81 s → 8.89 s (**4.9×**), the gate ~half of it. That is
+// the O(pages²) `ctx.PageDict` shape, and making the gate one page sweep instead of three is
+// `/pending 530`. Absolute times vary two-to-fourfold with machine load; the ratios and the byte
+// growth are what reproduce.
+func subsetCarrying(pdf []byte, pick func(total int) ([]int, error)) ([]byte, error) {
+	carried := false
+	out, err := rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
+		keep, perr := pick(ctx.PageCount)
+		if perr != nil {
+			return perr
+		}
+		c, serr := selectPages(ctx, keep, true)
+		carried = c
+		return serr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !carried || carryIsComplete(out) {
+		return out, nil
+	}
+	return subset(pdf, pick)
 }
 
 // selectionError re-voices pdfcpu's complaint about a page selection as nib's own. The raw text is
@@ -150,7 +208,7 @@ func selectionError(err error) error {
 
 // RemovePages drops the given pages from the PDF.
 func RemovePages(pdf []byte, pages []string) ([]byte, error) {
-	return subset(pdf, func(total int) ([]int, error) {
+	return subsetCarrying(pdf, func(total int) ([]int, error) {
 		remaining, err := api.RemainingPagesForPageRemoval(total, pages, false)
 		if err != nil {
 			return nil, selectionError(err)
@@ -178,7 +236,7 @@ func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 // page-selection primitive: reordering, deletion-by-omission, and extracting a
 // subset into a new PDF all route through it.
 func Collect(pdf []byte, order []string) ([]byte, error) {
-	return subset(pdf, collectPick(order))
+	return subsetCarrying(pdf, collectPick(order))
 }
 
 // collectPick is the selection RULE the two collect doors share. They share the rule and not the
@@ -195,8 +253,37 @@ func collectPick(order []string) func(int) ([]int, error) {
 	}
 }
 
-// collectWithoutStructure is `Collect` for the one caller that must never inherit a structure carry
-// — redaction (`PLAN-ua-coverage.md` P02.S03).
+// collectWithoutStructure is `Collect` for the callers that must not inherit its structure carry.
+// It is ONE door and each exemption is named at its call site (ADR-009); there are two reasons for
+// being here and they are different.
+//
+// **Redaction** (`PLAN-ua-coverage.md` P02.S03) — the tree describes content the raster destroyed.
+// That is the sections below.
+//
+// **A subset whose result is then COMPOSED** — `splice` (behind `InsertPDF`, and behind
+// `replacePage` and so `SplitPage`/`SplitRegions`), `normalizePage`, `SplitRegions`' own page
+// selection and `SplitPage`'s tile selection. Measured, and it is not a deferral of D5:
+//
+//   - `api.MergeRaw` keeps only the FIRST document's catalog and `/ParentTree`, so a tagged document
+//     merged in after a carrying subset keeps its own `/StructParents` values pointing into the first
+//     document's rows. Driven on two tagged documents: the merged file's pages 3 and 4 hold document
+//     B's content and resolve to document A's elements, `/ActualText` included — a positive false
+//     statement about what the page says, where the honest loss states nothing. The `partial` verdict
+//     cannot tell that from a page nothing describes.
+//   - pdfcpu's `CutPage` drops the tree outright but LEAVES `/StructParents` on the tiles it emits,
+//     which is the same shape one step over.
+//
+// **`SplitBySpans` and `SplitByBookmarks` are NOT on this door, and the grill said they should be.**
+// They call a subset once per part on the whole source, capped at 500 parts, and the attack projected
+// a 73-page tagged document into 73 files at 2.4 s → ≈7.9 s (3.3×) — enough to keep them
+// non-carrying. **Measured with the real prune: 3.844 s → 4.378 s, 1.14×, with all 73 parts coming
+// out `carried` and the fallback never firing.** The 3.3× was a property of the naive carry the
+// attack had to hand, whose gate fell back on every part and so paid a second full write each time;
+// and the gate reads the OUTPUT, which for a one-page part is one page. They are pure subsets with
+// nothing composed after them, so D5 says they carry, and at 14% they do.
+//
+// P02.S05 (crop), S06 (split) and S07 (the merge graft) are all blocked on Dan in the plan, and this
+// is their question; a carry reaching these doors would answer it by accident.
 //
 // # It exists BEFORE the carry it refuses, and that is the point
 //
@@ -802,7 +889,12 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 		return nil, err
 	}
 	// CutPage prepends a full-size outline/preview page; drop it, keep the tiles.
-	tiles, err := Collect(tilesBuf.Bytes(), []string{"2-"})
+	//
+	// **`collectWithoutStructure`, and naming it is the point.** `CutPage`'s output has no
+	// `/StructTreeRoot` for a carry to find, so today the carrying door would be a no-op here — but
+	// that is a fact about pdfcpu rather than a decision anyone made, and an unnamed site becomes a
+	// live carry the day it changes. P02.S06 owns what a tile should say.
+	tiles, err := collectWithoutStructure(tilesBuf.Bytes(), []string{"2-"})
 	if err != nil {
 		return nil, err
 	}
@@ -825,9 +917,13 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 // with rightStart = leftEnd+1 it keeps every original page (a pure insert of mid
 // at that boundary).
 func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
+	// **`collectWithoutStructure`, because what follows is a MERGE.** `Append` below takes the first
+	// segment's catalog whole, so a carried tree would describe the left side while the inserted
+	// document's pages kept `/StructParents` values resolving into it — measured as a page asserting
+	// another document's words. See that door's own header; P02.S07 owns the graft.
 	segments := make([][]byte, 0, 3)
 	if leftEnd >= 1 {
-		left, err := Collect(pdf, []string{fmt.Sprintf("1-%d", leftEnd)})
+		left, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("1-%d", leftEnd)})
 		if err != nil {
 			return nil, err
 		}
@@ -835,7 +931,7 @@ func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) 
 	}
 	segments = append(segments, mid)
 	if rightStart <= n {
-		right, err := Collect(pdf, []string{fmt.Sprintf("%d-", rightStart)})
+		right, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("%d-", rightStart)})
 		if err != nil {
 			return nil, err
 		}
@@ -897,7 +993,11 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
 	}
 
-	pageOnly, err := Collect(pdf, []string{strconv.Itoa(page)})
+	// **`collectWithoutStructure`: this is a real subset of a tagged source feeding a composition.**
+	// `normalizePage` below runs it through `CutPage`, which destroys the tree — so a carry here does
+	// a full prune and a verify parse and is then thrown away. Measured on a 73-page tagged document:
+	// the prologue goes from ~37 ms to ~172 ms for a byte-for-byte identical result.
+	pageOnly, err := collectWithoutStructure(pdf, []string{strconv.Itoa(page)})
 	if err != nil {
 		return nil, err
 	}
@@ -1037,7 +1137,8 @@ func normalizePage(pdf []byte) ([]byte, error) {
 	if err := api.WriteContext(ctxDest, &buf); err != nil {
 		return nil, err
 	}
-	return Collect(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
+	// Non-carrying: `CutPage` has just rebuilt these pages and the tree went with them.
+	return collectWithoutStructure(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
 }
 
 // resolveFracRect converts a top-left-origin fraction box [fx, fy, fw, fh] (0..1)

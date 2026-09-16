@@ -94,16 +94,22 @@ func TestTheNonCarryingDoorStillKeepsTheDocumentsLanguage(t *testing.T) {
 	}
 }
 
-// TestRedactionEmitsNoStructureTree — the backstop, and it is honest about what it cannot see.
+// TestRedactionEmitsNoStructureTree — the backstop, DISCRIMINATING since P02.S04b, and it took two
+// corrections to get there.
 //
-// This passes today because the shared page-selection primitive drops the tree — `/StructTreeRoot` is simply not on the catalog allowlist, not because of anything P02.S03 built. It
-// is here so that the property is asserted from the outside at all, and it becomes discriminating
-// the moment `Collect` carries. Until then the routing guard above is the reader that can go red.
+// **P02.S03 recorded this as a debt: probe it RED against a carrying `Collect`.** Done, and the
+// first attempt failed to go red — which is what the debt was for. Rasterising page 1 puts an
+// `ImagesToPDF` output first in the segment list, and `api.MergeRaw` keeps the FIRST document's
+// catalog, so the merged result had no tree however the untouched run was collected. The door under
+// test ran and the assertion could not see it.
+//
+// So the rasterised page is **not the first one**: segment 1 is the untouched run, its catalog is
+// the one the merge keeps, and a carry there reaches the output. Probed with `RedactPages` pointed
+// at the carrying primitive: this goes red on exactly its own assertion.
 func TestRedactionEmitsNoStructureTree(t *testing.T) {
-	// **Two pages, one rasterised**, so the redaction has an UNTOUCHED run and actually reaches
-	// `collectWithoutStructure`. The first cut used the one-page corpus fixture and rasterised its
-	// only page: every segment was an image, the door under test never ran, and the test passed in
-	// 0.01s having exercised nothing of this slice.
+	// **Two pages, the SECOND rasterised.** An earlier cut used the one-page corpus fixture and
+	// rasterised its only page: every segment was an image, the door under test never ran, and the
+	// test passed in 0.01s having exercised nothing.
 	src := repeatedPagesFixture()
 	if !inspectTags(src).claims() {
 		t.Fatal("setup: the fixture claims no tagging, so redacting it asserts nothing")
@@ -112,7 +118,7 @@ func TestRedactionEmitsNoStructureTree(t *testing.T) {
 		t.Fatalf("setup: the fixture has %d page(s) (err %v); without an untouched run the "+
 			"redaction never calls the door this slice is about", n, perr)
 	}
-	out, err := RedactPages(src, map[int]RasterPage{1: rasterPage(t, 200, 200)})
+	out, err := RedactPages(src, map[int]RasterPage{2: rasterPage(t, 200, 200)})
 	if err != nil {
 		t.Skipf("SKIP (not a pass): the redaction path refused the fixture: %v", err)
 	}
