@@ -127,7 +127,7 @@ Hierarchical (dotted) field names are preserved as nested fields; like every Nib
 operation it runs entirely on your machine.
 
 ### Check a document for accessibility (PDF/UA)
-**Protect & Inspect → Check accessibility (PDF/UA)…** reports the open document against the PDF/UA-1
+**Accessibility → Check accessibility (PDF/UA)…** reports the open document against the PDF/UA-1
 rules Nib can verify itself — the accessibility standard screen readers rely on. Every clause is
 marked **passes**, **fails**, **does not apply**, or **Nib could not check**, and a clause Nib could
 not check is never shown as a pass. Each failure names what it found and where: which font on which
@@ -154,7 +154,7 @@ outlives the edit that broke it is worse than no claim. The one exception is a s
 the claim would break the signature, so it is left as it was.
 
 ### Tag an untagged document's structure
-**Page Functions → Tag structure…** reads the open document's pages and proposes its headings,
+**Accessibility → Tag structure…** reads the open document's pages and proposes its headings,
 paragraphs and list items from how they look — larger text as headings, drawn bullets and numbers as
 list items. Nothing is written while you review: each proposed element is outlined on its page, and
 you can change its type, ignore it, or move it earlier or later in the reading order, all from the
@@ -167,7 +167,7 @@ not an answer — multi-column pages it cannot separate, and body paragraphs wit
 between them, are the known weak spots.
 
 ### Review and correct an existing structure tree
-**Page Functions → Review Structure Tree** shows the open document's tags as a tree — whoever wrote them,
+**Accessibility → Review Structure Tree** shows the open document's tags as a tree — whoever wrote them,
 Nib or another program — in the order a screen reader reads them. Arrow keys walk it (Down and Up in
 reading order, Right into an element, Left out to its parent), and the element you are on is outlined on
 its page. A figure with no alternative text says so, and so does a table header cell with no scope.
@@ -498,6 +498,13 @@ something Nib saw. It's a checklist, not a wizard: nothing is enforced, but two 
 update preference, the theme toggle, About — and **Colours**, which sets the sidebar's card
 colours: leave it on *All colours* for the six-accent rotation, or pick one hue and the cards
 become that colour in six steps.
+
+**Main menu** is where you cut the menu down to what you use. Untick a tab and it goes from the
+top of the window — nothing about your documents changes, and the keyboard shortcuts still work,
+so hiding **File** does not stop **Ctrl+S** saving. Settings has no box: it is where the switch
+lives, so hiding it would leave you no way back. This is a separate thing from *Advanced
+features* above it, and the difference matters — unticking a tab here only takes it out of the
+menu, while switching a feature off there stops the feature itself.
 
 **The version pill** (top right) always shows the version you are running. It is yellow
 until a check runs, green when you are on the latest release, and red when a newer one
@@ -962,10 +969,15 @@ Navigation keys stand down while you're typing in a field or a dialog is open, s
 they never get in the way of editing.
 
 ### How the commands are arranged
-The commands live on six tabs across the top — **File**, **Mark Up**, **Page
-Functions**, **Secure**, **Signing** and **Settings** — with a sidebar carrying the
-panels for the tab you are on. There is no layout choice: an earlier build offered
+The commands live on seven tabs across the top — **File**, **Mark Up**, **Page
+Functions**, **Accessibility**, **Secure**, **Signing** and **Settings** — with a sidebar
+carrying the panels for the tab you are on. There is no layout choice: an earlier build offered
 Menus / Toolbar / Both, and the picker was never implemented on the client side.
+
+**Accessibility is the odd one out, deliberately.** Every other tab is named for something you
+do to the document; that one is named for a property of it, because the three controls it holds
+— proposing tags, checking the result, correcting an element — otherwise sit in three different
+tabs (ADR-035).
 
 ### Dark or light
 Tap the **sun/moon** button in the top-right to switch between the dark

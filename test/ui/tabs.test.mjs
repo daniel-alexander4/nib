@@ -451,10 +451,13 @@ test('an armed annotation tool belongs to its document, not to the toolbar', asy
 test('a reload with ONE document open comes back showing it', async () => {
   // The N=1 case, stated separately in the acceptance because it is the defect that
   // predates tabs: before this slice a reload came back showing ZERO documents while the
-  // server still held one, and the strip is hidden at one document, so nothing about the
-  // multi-document path would have caught it.
+  // server still held one.
+  //
+  // **The strip is SHOWN at one document since ADR-037** — it was hidden below two when this
+  // test was written, which is why the wait below used to be for `hidden === true`. One tab is
+  // now the observable for "exactly one document is open", which is what this test is about.
   await page.click(`${tabSel(2)} .tabclose`);
-  await page.waitForFunction(() => document.getElementById('tabstrip').hidden === true);
+  await page.waitForFunction(() => document.querySelectorAll('#tabstrip .tab').length === 1);
   const only = await page.$eval('.pageCount', (el) => el.textContent);
   assert.equal(await page.$$eval('.viewerContainer', (els) => els.length), 1,
     'setup: more than one document is still open, so this is not the N=1 case');
@@ -467,6 +470,9 @@ test('a reload with ONE document open comes back showing it', async () => {
     'a reload with one document open came back to the launch state — the client never asked what the server holds');
   assert.equal(await page.$$eval('.viewerContainer', (els) => els.length), 1,
     'the reload did not restore exactly the one open document');
-  assert.equal(await page.$eval('#tabstrip', (el) => el.hidden), true,
-    'the strip is showing with one document open');
+  assert.equal(await page.$eval('#tabstrip', (el) => el.hidden), false,
+    'the strip is hidden after a reload with one document open — ADR-037 shows it at one, and a '
+    + 'reload is the path where the client rebuilds the strip from what the server holds');
+  assert.equal(await page.$$eval('#tabstrip .tab', (els) => els.length), 1,
+    'the reload came back with a strip that does not hold exactly the one restored document');
 });
