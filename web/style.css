@@ -789,8 +789,8 @@ body > div[id$="Modal"] {
   background: var(--crust);
 }
 
-/* The document switcher. Appears at two open documents (syncTabs toggles [hidden]),
-   so a single-document session is chrome-identical to what it was before tabs. */
+/* The document switcher. Appears as soon as one document is open (ADR-037; syncTabs toggles
+   [hidden]), and stays hidden with nothing open. It was hidden below two documents until then. */
 #tabstrip {
   display: flex;
   align-items: stretch;

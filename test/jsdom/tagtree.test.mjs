@@ -91,13 +91,15 @@ async function openPanel() {
   await settle();
 }
 
-test('the panel is offered in Document mode, second, and loads the active document\'s tree when opened', async () => {
+test('the panel is offered in Accessibility mode, second, and loads the active document\'s tree when opened', async () => {
   await openDoc(ONE, 3);
-  doc.querySelector('.modetab[data-tab="edit"]').click();
+  // Accessibility mode since ADR-035; it was Document/`edit` until then, and the panel moved with
+  // the two buttons that were in Page Functions and Secure.
+  doc.querySelector('.modetab[data-tab="accessibility"]').click();
   await settle();
-  assert.equal(head().hidden, false, 'Document mode does not offer the structure tree panel');
+  assert.equal(head().hidden, false, 'Accessibility mode does not offer the structure tree panel');
   assert.equal(doc.getElementById('tagtree').classList.contains('active'), false,
-    'Document mode LANDED on the tree panel — its landing surface is its commands, and the tree is second');
+    'Accessibility mode LANDED on the tree panel — its landing surface is its commands, and the tree is second');
   const before = treeCalls();
   await openPanel();
   assert.ok(treeCalls() > before, 'opening the panel did not read the tree');

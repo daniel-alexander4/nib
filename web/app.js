@@ -438,6 +438,9 @@ function applyStatus(st) {
     // Nil is what a vault answers before the seed has run, and it means all-off — the same
     // reading `advancedOn` gives it on the server, kept identical on both sides.
     applyAdvanced(st.advanced || {});
+    // Which main-menu tabs the user has switched off (ADR-036). Absent means none, which is the
+    // default and the absence the vault stores by — the same shape on both sides.
+    applyModeVisibility(st.hiddenModes || []);
     // Saved highlight palette (most-recently-used colors); fall back to defaults.
     recentHlColors = (st.recentHighlightColors && st.recentHighlightColors.length)
       ? st.recentHighlightColors.slice(0, 5) : DEFAULT_HL_COLORS.slice();
@@ -2536,8 +2539,9 @@ function resetViews(keep) {
 // describes a set of documents the app does not hold, which is the whole thing the single
 // mutator seam exists to prevent. Cheap and total beats clever and drifting.
 //
-// The strip is hidden below two documents: the logged phase-open default, so a
-// single-document session is chrome-identical to what it was before tabs.
+// The strip appears as soon as a document is open (ADR-037). It was hidden below two until then —
+// "chrome-identical to what it was before tabs" — and the cost of that was a document with no name
+// anywhere except the toolbar title, and a strip that arrived only once a second one was opened.
 function syncTabs() {
   const strip = els.tabstrip;
   if (!strip) return; // the jsdom harness boots the real index.html, so this is defensive only
@@ -2551,18 +2555,27 @@ function syncTabs() {
   // focus fell to <body>: a keyboard user who closed a document was thrown to the top of the page.
   const focusedIndex = [...strip.children].findIndex((c) => c.contains(document.activeElement));
   const several = views.length > 1;
-  // The two close controls track the same threshold as the strip. With one document
-  // open, "Close view" and "Close all" name the same act, so the app shows one button
-  // reading "Close" — chrome-identical to before tabs, which is the whole point of the
-  // appear-at-two rule.
+  // **The strip and the close controls are two predicates now (ADR-037), and they were one.**
+  // They answer different questions: "is there a document to put in a tab" and "are there enough
+  // documents for Close view and Close all to mean different things". Splitting them is the whole
+  // of this change on the client side.
+  //
+  // **Not `views.length >= 1`.** `views` always holds one view — the empty one the app launches
+  // with (`const views = [view]`) — so that test is true with NOTHING open and would put an empty
+  // strip on the launch screen. The question is whether any view holds a document, which is the
+  // same thing `#viewerWrap.has-doc` and the toolbar title already key on.
+  const anyDoc = views.some((v) => v.pdfDocument);
+  // The two close controls keep the appear-at-two threshold. With one document open, "Close view"
+  // and "Close all" name the same act, so the app shows one button reading "Close" — that
+  // reasoning is about what the two words MEAN and is untouched by the strip becoming visible.
   els.closeBtn.textContent = several ? 'Close view' : 'Close';
   els.closeBtn.title = several
     ? 'Close this document and switch to the next one'
     : 'Close this document and return to the empty state (Nib keeps running)';
   els.closeAllBtn.hidden = !several;
-  strip.hidden = !several;
+  strip.hidden = !anyDoc;
   strip.textContent = '';
-  if (!several) {
+  if (!anyDoc) {
     // The strip itself is gone, so there is no tab to land on — the menubar's first control, which is
     // the fallback the dialog focus-restore uses for the same situation.
     if (focusedIndex >= 0) document.getElementById('menubar')?.querySelector('button')?.focus();
@@ -3273,6 +3286,17 @@ function closeDocument() {
   const doc = view.pdfDocument;
   view.pdfDocument = null;
   view.docGen++;
+  // **Re-render the strip AFTER the document is gone, not before (ADR-037).** `resetViews` above
+  // re-rendered — but it ran while `view.pdfDocument` was still set, and since ADR-037 the strip's
+  // visibility is a question about which views hold DOCUMENTS rather than how many views there
+  // are. So the last render of the close saw an open document and left the strip on screen with
+  // nothing in it.
+  //
+  // The three-mutator law (`addView`/`removeView`/`resetViews`, each re-rendering) is not enough
+  // on its own any more: it covers every change to the SET, and this is a change to a view's
+  // contents with the set unmoved. `tearDownView` needs nothing extra — it nulls first and calls
+  // `removeView` after, so its render already sees the cleared view.
+  syncTabs();
 
   els.compareModal.hidden = true;
   closeCmpDoc();
@@ -10116,6 +10140,75 @@ for (const el of [els.advCeremonyChk, els.advDiscoveryChk, els.advRendezvousChk,
   if (el) el.onchange = saveAdvanced;
 }
 
+// ── Which main-menu tabs show (ADR-036) ──────────────────────────────────────
+//
+// **A different axis from the advanced-features switch above, and they must not be fused.**
+// That one answers "does this feature run at all" and is enforced at the door that does the thing;
+// this one answers "do I want this tab in my menu" and is enforced nowhere else, because there is
+// nothing to enforce — every command a hidden mode holds is still reachable by its keyboard
+// shortcut, and nothing about the document changes. Fusing them would hide the `collaborate` TAB
+// when ceremonies are off, which takes co-signing and Simple Sign with it.
+//
+// **The mode set is read from the DOM, never listed here.** `.modetab` is the markup's own
+// statement of what the modes are; a list in this file would be a fourth one to keep in step.
+let hiddenModes = [];
+
+// firstVisibleMode is where the app lands when the mode it was about to show is hidden. Settings
+// can never be hidden, so the fallback chain always terminates.
+function firstVisibleMode() {
+  // `all` is querySelectorAll, so it answers a NodeList: iterable, but with no `find`. Spread
+  // first rather than reaching for an Array method that is not there.
+  const b = [...all('.modetab')].find((x) => !x.hidden);
+  return b ? b.dataset.tab : 'settings';
+}
+
+// applyModeVisibility hides both lists through ONE door (ADR-009). Two lists, because below 719px
+// `.modetabs` is `display: none` and the `[data-modejump]` dropdown is the only way in — so hiding
+// a mode in one and not the other leaves it either reachable at one width and not the other, or
+// visible in a menu that no longer has a pane. `modes.test.mjs` compares list MEMBERSHIP and cannot
+// see this: both lists still hold every id.
+function applyModeVisibility(list, fromServer = true) {
+  // `settings` is dropped rather than refused here: the server already refuses it, and a vault
+  // written by some future build that holds it must not be able to strand this one.
+  hiddenModes = (list || []).filter((t) => t !== 'settings');
+  const hide = new Set(hiddenModes);
+  // `hidden`, not a class — `[hidden] { display: none !important }` is this stylesheet's own rule
+  // and beats any class on cascade origin, the same reason `applyAdvanced` uses it.
+  for (const b of all('.modetab')) b.hidden = hide.has(b.dataset.tab);
+  for (const b of all('[data-modejump]')) b.hidden = hide.has(b.dataset.modejump);
+  for (const c of all('.modeChk')) c.checked = !hide.has(c.dataset.mode);
+  // The mode showing cannot be one that just disappeared, or the user is left in a pane with no
+  // tab above it — the same silent shape a missing SIDEBAR_FOR entry produces.
+  if (hide.has(document.body.dataset.tab)) setMode(firstVisibleMode());
+  if (fromServer) { const e = $('modeError'); if (e) e.hidden = true; }
+}
+
+// saveModeVisibility sends the whole set, and applies the server's answer rather than the request —
+// `saveAdvanced`'s reasoning, and for its reason: a refusal must not leave a box saying something
+// this machine does not hold.
+async function saveModeVisibility() {
+  const want = [...all('.modeChk')].filter((c) => !c.checked).map((c) => c.dataset.mode);
+  try {
+    const res = await apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hiddenModes: want }),
+    });
+    if (!res.ok) {
+      const e = $('modeError');
+      if (e) { e.textContent = await errText(res, 'Could not change that setting.'); e.hidden = false; }
+      applyModeVisibility(hiddenModes, false);
+      return;
+    }
+    applyModeVisibility(want);
+  } catch {
+    const e = $('modeError');
+    if (e) { e.textContent = 'Could not change that setting.'; e.hidden = false; }
+    applyModeVisibility(hiddenModes, false);
+  }
+}
+
+for (const el of all('.modeChk')) el.onchange = saveModeVisibility;
+
 // Appearance: dark (Mocha, default) or light (Latte). Drives a data attribute on <html> (not
 // body, where the layout attr lives) so the palette override reaches html's own background; the
 // saved value is applied in applyStatus and persisted on toggle.
@@ -12675,10 +12768,15 @@ function showPanel(name) {
 // contextual toolbar (#toolbar .tbtab) and which sidebar panels are available.
 const SIDEBAR_FOR = {
   file: ['commands', 'outline'],
-  // The structure tree (P09.S06a) is SECOND, for the reason the ceremony panel below is: the first entry
-  // is the mode's landing surface, and Document mode lands on its commands.
-  edit: ['commands', 'tagtree'],
+  edit: ['commands'],
   markup: ['commands', 'library'],
+  // The structure tree (P09.S06a) is SECOND, for the reason the ceremony panel below is: the first entry
+  // is the mode's landing surface, and Accessibility lands on its commands.
+  //
+  // **It moved here from `edit` with ADR-035**, along with the two buttons that were in Page
+  // Functions and Secure. The panel is the one piece of this mode that is not a command card, and
+  // it is the reason the mode has a second entry at all.
+  accessibility: ['commands', 'tagtree'],
   secure: ['commands'],
   // The ceremony panel joins Collaborate (P06.S02). The mode's goal is "convene, invite, connect,
   // review, sign, deliver as a sidebar panel rather than a tab of modals", and this is the panel.
@@ -12757,6 +12855,12 @@ function syncModeMenu(tab) {
   if (top && src) top.textContent = src.textContent;
 }
 function setMode(tab) {
+  // **A hidden mode is never landed on, whoever asked** (ADR-036). The mode tabs are not the only
+  // way in: `goCard`/`goPanel` jump across modes from a card, the marker-fill path sends the user
+  // to the Library, and the ceremony resume path selects Signing. Guarding here rather than at
+  // those sites is ADR-009 — the rule gets one door, and a caller added later inherits it.
+  const btn = document.querySelector(`.modetab[data-tab="${tab}"]`);
+  if (btn && btn.hidden) tab = firstVisibleMode();
   document.body.dataset.tab = tab;
   syncModeMenu(tab);
   // **`aria-selected`, because `wireTablist` makes these a real tablist at runtime**

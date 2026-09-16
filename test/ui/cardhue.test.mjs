@@ -31,6 +31,8 @@ test('choosing a hue repaints every card into one colour', async () => {
   // The mode with the most cards, so the whole six-step ladder is on screen at once. It was
   // Document/`edit` until v1.128.25 moved Edit Page Text and Recognize Text to Mark Up, which
   // left that mode with five — measured, as `only 5 cards are showing`. Settings has six.
+  // ADR-035 then took Tag Structure out of `edit` as well, which is why this reads Settings and
+  // not the mode with the most cards at any given moment.
   await h.mode('settings');
   const rainbow = await cards();
   assert.ok(rainbow.length >= 6,

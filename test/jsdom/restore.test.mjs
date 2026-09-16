@@ -92,18 +92,24 @@ test('a 409 drops the tab for a document the server no longer holds', async () =
   await settle();
   await settle(); // the reconcile is fired but not awaited, by design — the caller's own refusal handling runs first
 
-  // Counted as CONTAINERS, not tabs. The strip is hidden below two documents (S01's
-  // appear-at-two rule), so at one document the tab count is 0 whether the
-  // reconciliation dropped one view or both — the observable the first draft chose
-  // could not tell the right outcome from the worst one.
+  // Counted as CONTAINERS, not tabs. The first draft counted tabs and could not tell the right
+  // outcome from the worst one: the strip was hidden below two documents, so at one document the
+  // tab count was 0 whether the reconciliation had dropped one view or both.
+  //
+  // **ADR-037 shows the strip at one document, so the tab count CAN tell them apart now** — and
+  // this still counts containers, because the container is what the user is looking at and the
+  // strip is a rendering of the same array. The tab count is asserted below as well, so a strip
+  // that stopped agreeing with `views` fails here rather than silently.
   assert.equal(doc.querySelectorAll('.viewerContainer').length, 1,
     'the reconciliation did not leave exactly the one document the server still holds');
+  assert.equal(doc.querySelectorAll('#tabstrip .tab').length, 1,
+    'the strip does not hold exactly one tab after the reconciliation dropped one of two documents');
   assert.ok(doc.querySelector('.viewerContainer:not([hidden])'),
     'no view is visible after the reconciliation');
   assert.equal(doc.getElementById('viewerWrap').className, 'has-doc',
     'the app fell back to the launch state while the server still held a document');
-  assert.equal(doc.getElementById('tabstrip').hidden, true,
-    'the strip is still showing with one document open');
+  assert.equal(doc.getElementById('tabstrip').hidden, false,
+    'the strip is hidden with one document open — ADR-037 shows it at one');
   scanStatus = 200;
 });
 

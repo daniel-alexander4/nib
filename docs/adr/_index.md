@@ -291,3 +291,29 @@ home today.
   keeps only the first `/ParentTree` and `CutPage` leaves `/StructParents` on tiles: P02.S05/S06/S07 own that.
   Extends ADR-031 (five census verdicts flip; a subset joins `Append` as a `partial` producer) and ADR-009
   (one primitive, two wrappers, one declared exemption with a test that the two claimant walks agree).
+
+- **[ADR-035 — accessibility is a mode, because it was a concern spread across three](035-accessibility-is-a-mode.md)**
+  — Dan's instruction. Tag structure… (Page Functions), Check accessibility (Secure) and the Review
+  Structure Tree panel (`SIDEBAR_FOR.edit`) gather into a seventh mode between Page Functions and
+  Secure. Extends ADR-016 rather than reversing it: ADR-016 cuts by what you DO to the document, and
+  a concern that spans three verbs is what forced these three apart in the first place. ADR-025 is
+  the precedent — Settings earned a mode on the same instruction for the same reason.
+  `PLAN-accessibility.md` D10's placement is superseded; its reasoning is not. The seventh tab's
+  width against the 719px fold threshold is `/pending 532`.
+
+- **[ADR-036 — the menu is the user's to cut, and that is a different switch from Advanced features](036-the-menu-is-the-users-to-cut.md)**
+  — Dan's instruction. Any main-menu tab can be switched off from a **Main menu** card in Settings,
+  stored as `Settings.HiddenModes`. **A second mechanism, deliberately not the advanced-features
+  switch**: that one stops a feature at the door and cuts at panel granularity *never* at the mode
+  (hiding the Signing tab would take co-signing with it, which `advanced.test.mjs` asserts); this
+  one is presentational and cuts only at the mode. One door hides both mode lists, `setMode`
+  redirects off a hidden mode whoever asked, `settings` is not hideable, and the Go whitelist is
+  held against the markup by `TestEveryHideableModeIsARealTab`.
+
+- **[ADR-037 — the document switcher appears at one document, and the close controls do not](037-the-strip-appears-at-one-document.md)**
+  — Dan's instruction. The strip shows whenever a document is open and hides only when none is;
+  `#closeBtn`'s label and `#closeAllBtn` keep the appear-at-two threshold, because "is there a
+  document to tab" and "do Close view and Close all differ" are different questions that shared one
+  predicate. **Not `views.length >= 1`**: `views` always holds the empty launch view, so that test
+  would put an empty strip on the launch screen. Supersedes the appear-at-two rule, which was never
+  an ADR — it lived as a comment in three files.

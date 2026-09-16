@@ -25,6 +25,12 @@ type settingsRequest struct {
 	// the speed, 1 for the default (/pending 482). Both are stored as absence when they are the default.
 	ReadAloudVoice *string  `json:"readAloudVoice"`
 	ReadAloudRate  *float64 `json:"readAloudRate"`
+	// HiddenModes is the whole set of switched-off main-menu tabs, sent as one list (ADR-036).
+	//
+	// A list rather than one id and a bool, for `Advanced`'s reason one field down: a partial
+	// update cannot express "configured, and nothing is hidden". An empty array arriving means the
+	// user unticked the last box; an absent field means they were changing something else.
+	HiddenModes *[]string `json:"hiddenModes"`
 	// Advanced is the four subsystem switches, sent whole.
 	//
 	// **A nested object rather than four top-level pointers**, because the partial-update shape
@@ -53,6 +59,21 @@ const (
 	minReadAloudRate  = 0.5
 	maxReadAloudRate  = 2
 )
+
+// hideableModes are the main-menu tabs a user may switch off (ADR-036).
+//
+// **`settings` is deliberately absent, and that is a safety property rather than a preference.**
+// The control that un-hides a mode is a card inside Settings, so a hidden Settings could only be
+// undone by editing the vault — a state the product cannot talk its way out of.
+//
+// **A second source of truth for the mode set, and the repo's own answer to that is a test rather
+// than cleverness.** `web/index.html` declares the modes and this list must agree with it;
+// `TestEveryHideableModeIsARealTab` compares the two, the same shape `theme.test.mjs` uses to hold
+// the stylesheet, the Go whitelist and the picker together. A mode added to the markup and not to
+// this list is refused by the route with no symptom anywhere else.
+var hideableModes = map[string]bool{
+	"file": true, "markup": true, "edit": true, "accessibility": true, "secure": true, "collaborate": true,
+}
 
 var hexColorRe = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 
@@ -161,6 +182,32 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		default:
 			httpError(w, http.StatusBadRequest, "invalid readAloudRate")
 			return
+		}
+	}
+	if req.HiddenModes != nil {
+		// Refused rather than filtered, for the reason `viewLayout` above is: a request naming a
+		// mode this build does not have is a client and a server that disagree about the menu, and
+		// silently dropping the unknown id stores a set the user did not choose while answering
+		// "ok". `settings` is refused by the same branch — it is not in `hideableModes`.
+		seen := map[string]bool{}
+		out := make([]string, 0, len(*req.HiddenModes))
+		for _, m := range *req.HiddenModes {
+			if !hideableModes[m] {
+				httpError(w, http.StatusBadRequest, "invalid hiddenModes: "+m)
+				return
+			}
+			if seen[m] {
+				continue
+			}
+			seen[m] = true
+			out = append(out, m)
+		}
+		// Empty is stored as absence, per `HiddenModes`' own rule: nothing hidden and never asked
+		// are one state, and both mean every mode shows.
+		if len(out) == 0 {
+			cur.HiddenModes = nil
+		} else {
+			cur.HiddenModes = out
 		}
 	}
 	if req.Advanced != nil {
