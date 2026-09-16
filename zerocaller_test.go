@@ -141,7 +141,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "web", "test", "docs":
+			case ".git", ".claude", "node_modules", "web", "test", "docs":
 				return filepath.SkipDir
 			}
 			return nil

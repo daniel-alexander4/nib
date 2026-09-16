@@ -178,7 +178,7 @@ func TestTheDigestGatesAskTheSameQuestionOneWay(t *testing.T) {
 		}
 		if info.IsDir() {
 			switch info.Name() {
-			case ".git", "node_modules", "dist", "vendor", "web":
+			case ".git", ".claude", "node_modules", "dist", "vendor", "web":
 				return filepath.SkipDir
 			}
 			return nil
