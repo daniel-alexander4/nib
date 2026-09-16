@@ -69,6 +69,11 @@ const MUTATING = [
   // to the ACTIVE document is not a theoretical mis-address for this route: an unpinned
   // call would reload the file underneath whichever tab the user had switched to.
   '/api/reload',
+  // /pending 498. Both commit through `commitMutation` (tags.go) and were missing from this list
+  // since P09 added them — so a fourth call site dropping its pin would have passed. Nothing was
+  // broken (both sites pass `docId`); what was missing is the reverse check below that makes the
+  // NEXT committing route impossible to leave out.
+  '/api/tags/commit', '/api/tags/edit',
   // **`/api/ceremony/accept` is deliberately NOT here (P07.S02b).** The membership rule is
   // "commits into or destroys a document", and accept does neither: it parses an invitation and
   // writes a vault pin, carries no X-Nib-Doc, and cannot touch any document's bytes. Listing it
@@ -93,6 +98,51 @@ test('every route in the MUTATING inventory is a real POST route on the server',
   }
 });
 
+// The REVERSE direction, and the one that let two routes sit outside MUTATING (/pending 498).
+//
+// The test above says every name in the list is a real route; nothing said every route that
+// commits into a document is in the list. `/api/tags/commit` and `/api/tags/edit` both commit
+// through `commitMutation` and were absent, so an unpinned call to either would have passed.
+// Membership is read from the server: a POST route whose handler calls `commitMutation`,
+// `commitBarrier`, or writes `doc.data` directly (handleSave, undo/redo) must be listed.
+//
+// Ceiling, stated: one level deep. A handler that commits through a helper of its own is not seen;
+// every committing handler today calls the door directly, and the floor below is what notices if
+// that stops being true (the count drops).
+function committingRoutes(mux, goFiles) {
+  const bodies = new Map();
+  for (const src of goFiles) {
+    for (const m of src.matchAll(/^func \(s \*Server\) (handle\w+)\([^]*?^\}$/gm)) bodies.set(m[1], m[0]);
+  }
+  const out = [];
+  for (const m of mux.matchAll(/"POST (\/api\/[^"]+)",[^\n]*?s\.(handle\w+)\)/g)) {
+    const body = bodies.get(m[2]) || '';
+    if (/\bs\.commitMutation\(|\bs\.commitBarrier\(|\bdoc\.data = /.test(body)) out.push(m[1]);
+  }
+  return out;
+}
+
+test('every route whose handler commits into a document is in the MUTATING inventory', () => {
+  const dir = path.join(REPO, 'internal', 'server');
+  const mux = fs.readFileSync(path.join(dir, 'server.go'), 'utf8');
+  const goFiles = fs.readdirSync(dir).filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
+    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'));
+
+  // Stimulus first: a planted committing handler must be found, or silence below means nothing.
+  const planted = committingRoutes(
+    'mux.HandleFunc("POST /api/planted", s.requireUnlocked(s.handlePlanted))',
+    ['func (s *Server) handlePlanted(w http.ResponseWriter, r *http.Request) {\n\tif err := s.commitMutation(doc, a, b, false); err != nil {\n\t}\n}'],
+  );
+  assert.deepEqual(planted, ['/api/planted'], 'the reverse check cannot find a committing handler it was handed');
+
+  const committing = committingRoutes(mux, goFiles);
+  assert.ok(committing.length >= 14,
+    `only ${committing.length} committing routes found — the handler scan is not reading internal/server`);
+  const missing = committing.filter((r) => !MUTATING.includes(r));
+  assert.deepEqual(missing, [],
+    `these routes commit into a document and are not in MUTATING, so an unpinned call to them passes the guard: ${missing.join(', ')}`);
+});
+
 // scanUnpinned finds every apiFetch that MUTATES a document without naming which one.
 //
 // **The `await` condition is gone, and removing it is /pending 410.** The scan used to require an
@@ -115,57 +165,66 @@ test('every route in the MUTATING inventory is a real POST route on the server',
 // to its close, and a call is mutating when it carries a `method:` that is not literally `'GET'` —
 // no `method:` at all is `apiFetch`'s GET default, and a method the scan cannot read is treated as
 // mutating rather than waved through.
-function scanUnpinned(src) {
-  const funcs = [];
-  const header = /^(?:async function (\w+)|const (\w+) = async|\s*async (\w+)\()/gm;
-  let m;
-  while ((m = header.exec(src)) !== null) {
-    const name = m[1] || m[2] || m[3];
-    // The body's opening brace, which is NOT simply the next `{`. A default
-    // parameter puts one inside the parameter list — `async function pageOp(op,
-    // extra = {})` — and taking the first brace captured `{}` as the entire body.
-    //
-    // That is not a hypothetical: pageOp is the single entry point for twenty
-    // document operations and was unpinned, and this scanner reported clean,
-    // because it never read a line of it. The guard whose whole job is to catch an
-    // unpinned mutating call could not see the most dangerous one in the file.
-    // Walk the parameter list to its matching close paren first, then take the
-    // brace after it.
-    const lp = src.indexOf('(', m.index);
-    if (lp === -1) continue;
-    let pd = 0, afterParams = -1;
-    for (let j = lp; j < src.length; j++) {
-      if (src[j] === '(') pd++;
-      else if (src[j] === ')') { pd--; if (pd === 0) { afterParams = j; break; } }
-    }
-    if (afterParams === -1) continue;
-    const open = src.indexOf('{', afterParams);
-    if (open === -1) continue;
-    let depth = 0, end = open;
-    for (let j = open; j < src.length; j++) {
-      if (src[j] === '{') depth++;
-      else if (src[j] === '}') { depth--; if (depth === 0) { end = j; break; } }
-    }
-    funcs.push({ name, body: src.slice(open, end + 1) });
+//
+// **Every `apiFetch(` in the file, not every one inside a recognised function header (/pending
+// 498).** The scan used to find functions by three header shapes — `async function X`, `const X =
+// async`, `async X(` — and read only their bodies. `els.x.onclick = async () => {` matches none of
+// them, and that is the shape of Flatten (two `/api/assemble` posts), Attach a file, and Save
+// outline: 35 of 118 call sites, four of them mutating posts, were never read. All four happen to
+// carry `docId`; nothing would have said so the day one did not. The header is now used only to
+// NAME the site in a report — the call sites themselves are found by the call, wherever it is.
+//
+// And the route is read from any string in the first argument, not only a leading `'literal'`:
+// `apiFetch(gs ? '/api/pdfa?engine=gs' : '/api/pdfa', …)` and a template both hide their route
+// from a quote-anchored match. A mutating POST whose first argument holds NO literal the scan can
+// read is reported, because "I could not tell which route" must not read as "not a mutating one".
+function siteName(src, index) {
+  const header = /^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)|^\s*(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(|^\s*async\s+(\w+)\(|^\s*els\.(\w+)\.(\w+)\s*=/gm;
+  let name = '(top level)', m;
+  while ((m = header.exec(src)) !== null && m.index < index) {
+    name = m[1] || m[2] || m[3] || `${m[4]}.${m[5]}`;
   }
+  return name;
+}
 
+function apiFetchSites(src) {
+  const sites = [];
+  const call = /(?<![\w$.])apiFetch\(/g;
+  let c;
+  while ((c = call.exec(src)) !== null) {
+    if (/function\s+$/.test(src.slice(Math.max(0, c.index - 24), c.index))) continue; // the definition
+    // The call's OWN arguments, paren-matched from `apiFetch(` to its close. The predecessor read a
+    // fixed 400-character tail, which runs off the end of a call whose options carry a comment —
+    // `conveneFromPanel`'s pin sits at character 700 of its own call — and runs INTO the next call
+    // on a short one.
+    let pd = 0, args = '', firstEnd = -1;
+    const open = c.index + 'apiFetch'.length;
+    for (let j = open; j < src.length; j++) {
+      const ch = src[j];
+      if (ch === '(' || ch === '[' || ch === '{') pd++;
+      else if (ch === ')' || ch === ']' || ch === '}') { pd--; if (pd === 0) { args = src.slice(c.index, j + 1); break; } }
+      else if (ch === ',' && pd === 1 && firstEnd === -1) firstEnd = j;
+    }
+    if (!args) args = src.slice(c.index);
+    const first = src.slice(open + 1, firstEnd === -1 ? c.index + args.length - 1 : firstEnd);
+    const routes = [...first.matchAll(/(['"`])(\/api\/[^'"`?$]*)/g)].map((x) => x[2]);
+    sites.push({ index: c.index, args, routes, line: src.slice(0, c.index).split('\n').length });
+  }
+  return sites;
+}
+
+function scanUnpinned(src) {
   const out = [];
-  for (const { name, body } of funcs) {
-    const call = /apiFetch\(\s*'([^']+)'/g;
-    let c;
-    while ((c = call.exec(body)) !== null) {
-      const route = c[1].split('?')[0];
-      if (!MUTATING.some((r) => route.startsWith(r))) continue;
-      // The call's OWN arguments, paren-matched from `apiFetch(` to its close. The
-      // predecessor read a fixed 400-character tail, which runs off the end of a call
-      // whose options carry a comment — `conveneFromPanel`'s pin sits at character 700
-      // of its own call — and runs INTO the next call on a short one.
-      let pd = 0, args = '';
-      for (let j = c.index; j < body.length; j++) {
-        if (body[j] === '(') pd++;
-        else if (body[j] === ')') { pd--; if (pd === 0) { args = body.slice(c.index, j + 1); break; } }
-      }
-      if (!args) args = body.slice(c.index);
+  for (const site of apiFetchSites(src)) {
+    const name = siteName(src, site.index);
+    // Exact, now that the query string is cut at `?` by the route reader: a prefix match would let
+    // a future `/api/pages-preview` inherit `/api/pages`'s membership by spelling alone.
+    const mutating = site.routes.filter((route) => MUTATING.includes(route));
+    const opaque = site.routes.length === 0;
+    if (!mutating.length && !opaque) continue;
+    const route = mutating[0] || '(unreadable route)';
+    {
+      let args = site.args;
       // **Comments stripped, and this was found by a mutation probe going green.** Replacing the
       // pin with `// docId removed` left the site reading as pinned, because the shorthand test is
       // a word match and the word was in a comment. Every options object in this file carries
@@ -182,7 +241,7 @@ function scanUnpinned(src) {
       // Both forms count: `docId: expr` and the ES6 shorthand `docId`. Missing the
       // shorthand made three pinned helpers read as unpinned.
       if (/\bdocId\s*[,:}\s]/.test(args)) continue;
-      out.push({ name, route });
+      out.push({ name, route, line: site.line });
     }
   }
   return out;
@@ -267,12 +326,59 @@ async function commented() {
   assert.deepEqual(scanUnpinned(commented).map((f) => f.name), ['commented'],
     'a comment mentioning docId satisfies the pin test, so a site is exempted by explaining '
     + 'itself — and every options object in this file carries comments');
+
+  // **/pending 498's shape: the handler no header matched.** Flatten, Attach and Save outline are
+  // all written like this, and the header-bounded scan read none of them.
+  const handler = `
+els.flattenBtn.onclick = async () => {
+  const pages = await render();
+  const res = await apiFetch('/api/assemble', { method: 'POST', body: form });
+};`;
+  assert.deepEqual(scanUnpinned(handler).map((f) => f.name), ['flattenBtn.onclick'],
+    'an unpinned mutating POST inside `els.x.onclick = async () =>` is invisible — 35 of the file\'s '
+    + 'call sites are written that way, four of them mutating');
+
+  // A route chosen by a ternary, or built in a template, hides from a quote-anchored match.
+  const ternary = `
+async function pick() {
+  const res = await apiFetch(fast ? '/api/redact?fast=1' : '/api/redact', { method: 'POST', body: b });
+}`;
+  assert.deepEqual(scanUnpinned(ternary).map((f) => f.route), ['/api/redact'],
+    'a mutating route selected by a ternary is not read, so the call is waved through');
+  const tmpl = `
+async function tmpl() {
+  const res = await apiFetch(\`/api/pages?op=\${op}\`, { method: 'POST', body: b });
+}`;
+  assert.deepEqual(scanUnpinned(tmpl).map((f) => f.route), ['/api/pages'],
+    'a mutating route written as a template literal is not read');
+
+  // And a POST whose route the scan cannot read at all is reported, not assumed harmless.
+  const opaqueRoute = `
+async function opaqueRoute() {
+  const res = await apiFetch(url, { method: 'POST', body: b });
+}`;
+  assert.deepEqual(scanUnpinned(opaqueRoute).map((f) => f.route), ['(unreadable route)'],
+    'a POST to a route the scan cannot read is waved through');
 });
 
 test('no mutating call is unpinned', () => {
-  const found = scanUnpinned(APP).map((f) => f.name);
-  const unexpected = [...new Set(found)].filter((n) => !KNOWN_UNPINNED.includes(n));
-  assert.deepEqual(unexpected, [],
+  // The population, asserted before the verdict: an empty report is also what a scan reading
+  // nothing produces. Three floors, one per way this scan has already been blind.
+  const sites = apiFetchSites(APP);
+  assert.ok(sites.length >= 100,
+    `only ${sites.length} apiFetch call sites found — the file has well over a hundred, so the scan is not reading it`);
+  const mutatingPosts = sites.filter((s) => s.routes.some((r) => MUTATING.includes(r)) && /method\s*:/.test(s.args)
+    && !/method:\s*'GET'/.test(s.args));
+  assert.ok(mutatingPosts.length >= 20,
+    `only ${mutatingPosts.length} mutating POST sites found — the scan is not seeing the file's document operations`);
+  // …and specifically the ones the header-bounded scan could not see (/pending 498).
+  const inHandlers = mutatingPosts.filter((s) => siteName(APP, s.index).includes('.'));
+  assert.ok(inHandlers.length >= 4,
+    `only ${inHandlers.length} mutating POST sites inside \`els.x.y = async () =>\` handlers — the scan has gone back to reading function headers only`);
+
+  const found = scanUnpinned(APP);
+  const unexpected = found.filter((f) => !KNOWN_UNPINNED.includes(f.name));
+  assert.deepEqual(unexpected.map((f) => `${f.name} → ${f.route} at app.js:${f.line}`), [],
     'an unpinned mutating call — its payload predates the id it is addressed with, so it acts on whatever document is current when the request goes out');
 });
 

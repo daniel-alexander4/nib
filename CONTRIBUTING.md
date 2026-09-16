@@ -243,7 +243,12 @@ a local `CLAUDE.md`.
    An operation that bakes document A's bytes and then posts them must name A, or
    the server applies them to whatever is active when the request arrives. Capture
    the id before the first `await` and pass it as `apiFetch`'s `docId`.
-   *Guarded by* `test/jsdom/pinning.test.mjs` — "no mutating call is unpinned".
+   *Guarded by* `test/jsdom/pinning.test.mjs` — "no mutating call is unpinned" (every
+   `apiFetch(` call site, wherever it sits) and "every route whose handler commits into
+   a document is in the MUTATING inventory" (read from `internal/server`). The request
+   is only half of it: an operation that captures nothing, awaits, and then reads the
+   live `view` — to bake, write marks, open a dialog or append a verdict — breaks the
+   law with every request correctly addressed. *Guarded by* `test/jsdom/racepins.test.mjs`.
 
    The law has a **third** failure mode on the client, and it fails independently of
    the other two: a gesture holding a `setPointerCapture` keeps receiving

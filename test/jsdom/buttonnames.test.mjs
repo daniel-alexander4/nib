@@ -68,6 +68,34 @@ test('every button has a name that does not depend on hover', () => {
     'it to NAMED_AT_RUNTIME with the app.js assignment that names it.');
 });
 
+// /pending 506. A glyph is text, so a button whose text is `×` or `✕` HAS a name — "times", or
+// "multiplication x" — and the census above passes it. Its `title` ("Remove flag") loses to the text
+// in the name computation, exactly the updateGet case below. Eleven delete controls built in app.js
+// and two in index.html were announced that way.
+const GLYPHS = /^[×✕✖✗⨯xX]$/;
+
+test('a button whose only text is a × glyph is named for what it removes', () => {
+  // index.html: the census above treats the glyph as a name.
+  const bare = buttons().filter((b) => GLYPHS.test(b.text) && !b.hasLabel).map((b) => b.id || b.attrs.trim());
+  assert.deepEqual(bare, [], `these buttons are announced as their glyph: ${bare.join(', ')} — give each an aria-label`);
+
+  // app.js: every site that writes a glyph as a button's text must name it in the same statement run.
+  const lines = APP.split('\n');
+  const sites = [];
+  lines.forEach((l, i) => {
+    if (/\.textContent = '[×✕]'/.test(l)) sites.push(i);
+  });
+  // Stimulus: the scan must find the population it exists for.
+  assert.ok(sites.length >= 10, `only ${sites.length} glyph-text site(s) found in app.js — the scan has stopped matching`);
+  // Two lines either side: the tab strip's × is labelled on the line BEFORE its text is set.
+  const unnamed = sites.filter((i) => {
+    const window = lines.slice(Math.max(0, i - 2), i + 3).join('\n');
+    return !/describeButton\(|setAttribute\('aria-label'/.test(window);
+  }).map((i) => `app.js:${i + 1}: ${lines[i].trim()}`);
+  assert.deepEqual(unnamed, [],
+    `these glyph buttons are announced as "times" — name them with describeButton(el, 'Remove …'):\n  ${unnamed.join('\n  ')}`);
+});
+
 test('every runtime-named button is actually named in app.js', () => {
   // The exemption list is the hole in the rule above, so it is checked against the code rather
   // than trusted. An entry whose evidence has gone is a button that is now silently unnamed.

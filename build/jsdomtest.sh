@@ -92,7 +92,13 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # passing, and both slices reported it green. **P03.S04 adds no jsdom file at all**; this bump is
 # the earlier drift being repaired by the next slice that ran the harness and read its last line,
 # which is the fourth instance's shape again (a person needing the number, not a check).
-Nib_expect_files=72
+# 72 since /pending 502 (vaultunreadable.test.mjs): a present-but-unreadable vault gets its own
+# screen, whose Retry re-reads status and never enrols.
+# 73 since /pending 498 (racepins.test.mjs): the document-switch races behind the pinning guard,
+# driven rather than scanned, because a scan cannot see an await between a capture and a write.
+# 74 since /pending 506 (clientdoors.test.mjs): the wrong-passphrase report, keyboard reach, tab-close
+# focus, and the disarm-all and keyboard doors.
+Nib_expect_files=74
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2
