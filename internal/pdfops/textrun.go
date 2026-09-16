@@ -73,6 +73,18 @@ type textRun struct {
 	// itself says is not content, a watermark or a running header. Grouping skips it, so an artifact
 	// is never proposed as a paragraph (P08.S06a's watermark finding).
 	artifact bool
+	// rotated is whether the run's baseline is not upright left-to-right in user space — turned, vertical or
+	// mirrored (`baselineTurns`). Grouping measures lines as horizontal baselines, so it reports a page
+	// carrying one rather than reading it as upright (`/pending 503`).
+	rotated bool
+}
+
+// baselineTurns reports whether text drawn under m runs anywhere but rightward along +x: the text-space x
+// axis mapped to user space points more than a degree away. A skew (`c`) leaves the baseline flat and is
+// not a turn; a page's `/Rotate` is not in the content matrix and turns every line alike, which grouping
+// in unrotated space reads consistently.
+func baselineTurns(m runMatrix) bool {
+	return math.Abs(math.Atan2(m[1], m[0])) > math.Pi/180
 }
 
 // inArtifact reports whether an `/Artifact` sequence is open at this point of the walk.
@@ -105,6 +117,11 @@ const maxFormDepth = 12
 
 // maxToUnicodeRange bounds one `bfrange`: a 16-bit code space has 65,536 codes.
 const maxToUnicodeRange = 1 << 16
+
+// maxToUnicodeExpansion bounds the codes one CMap's ranges may expand to in TOTAL: two full 16-bit code
+// spaces. A font nib can split has at most one (a simple font 256 codes, Identity-H 65,536), so the second
+// is headroom for ranges that overlap, not for more distinct codes.
+const maxToUnicodeExpansion = 2 << 16
 
 // readPageRuns reads one page's positioned runs.
 func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
@@ -643,6 +660,7 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 		run.baseFont = gs.font.baseFont
 	}
 	run.x, run.y = start.apply(0, gs.ts)
+	run.rotated = baselineTurns(start)
 	var text []byte
 	var advance float64
 	weakest := widthSource("")
@@ -973,8 +991,17 @@ type cmapItem struct {
 
 // parseToUnicode reads a `/ToUnicode` CMap's `bfchar` and `bfrange` blocks — both range forms, the
 // incrementing destination and the array of destinations — into code bytes → text.
+//
+// # A total budget, not only a per-range one (`/pending 503`)
+//
+// `maxToUnicodeRange` bounds ONE range, and one range is not the cost: a 2.2 KB CMap of a hundred
+// overlapping full-plane ranges expanded 6.5 million codes into 65,536 entries, 5.1 s and 110 MB, reached
+// from `ProposeTags` and `CommitTags` on any page drawn in that font. So every range spends from
+// `maxToUnicodeExpansion`, and a range that does not fit what is left is not expanded — its codes read as
+// undecoded, which the run already reports, rather than as a stall.
 func parseToUnicode(src []byte) map[string]string {
 	out := map[string]string{}
+	budget := maxToUnicodeExpansion
 	toks := contentstream.Tokenize(src)
 	mode := ""
 	var items []cmapItem
@@ -1020,7 +1047,7 @@ func parseToUnicode(src []byte) map[string]string {
 				if lo.isArr || hi.isArr || len(lo.b) != len(hi.b) {
 					continue
 				}
-				expandBFRange(out, lo.b, hi.b, items[j+2])
+				expandBFRange(out, lo.b, hi.b, items[j+2], &budget)
 			}
 			mode, items = "", nil
 		}
@@ -1028,11 +1055,12 @@ func parseToUnicode(src []byte) map[string]string {
 	return out
 }
 
-func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem) {
+func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem, budget *int) {
 	l, h := codeValue(lo), codeValue(hi)
-	if h < l || h-l >= maxToUnicodeRange {
+	if h < l || h-l >= maxToUnicodeRange || h-l+1 > *budget {
 		return
 	}
+	*budget -= h - l + 1
 	for k := 0; k <= h-l; k++ {
 		code := make([]byte, len(lo))
 		v := l + k

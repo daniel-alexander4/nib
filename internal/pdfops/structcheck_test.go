@@ -19,6 +19,21 @@ import (
 // The structure tree's consistency invariants and its one mutation — P05.S03.
 
 // checkTree reads a document and returns its tree's defects.
+// TestANullParentTreeSlotUnderAClaimedMCIDIsADefect — `/pending 503`. Invariant 4 was checked only where
+// the slot named SOME object; a null slot under an MCID an element claims passed.
+func TestANullParentTreeSlotUnderAClaimedMCIDIsADefect(t *testing.T) {
+	if _, defects := checkTree(t, keyFixture("/ParentTreeNextKey 1", "", nil)); len(defects) != 0 {
+		t.Fatalf("setup: the owned fixture already has defects %v, so a defect below would not be the null slot's", defects)
+	}
+	_, defects := checkTree(t, keyFixture("/ParentTreeNextKey 1", "", map[int]string{9: "<< /Nums [0 [null]] >>"}))
+	for _, d := range defects {
+		if strings.HasPrefix(d.key, "mcid-unowned ") {
+			return
+		}
+	}
+	t.Errorf("MCID 0 is claimed by object 8 and its ParentTree slot is null, and the check reports %v", defects)
+}
+
 func checkTree(t *testing.T, pdf []byte) (*structTree, []structDefect) {
 	t.Helper()
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())

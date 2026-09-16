@@ -36,14 +36,10 @@ import (
 // each one a `/Name`, so a stamp costs the document neither ua1 clause. See the file header for the
 // measurement that made removing `/AS` safe.
 func honestOptionalContent(pdf []byte) []byte {
-	out, err := writeMutated(pdf, correctOptionalContent)
-	if err != nil {
-		// A stamp that could not have its configuration corrected is still a stamp. Failing here
-		// would cost the user the operation to gain a clause, which is the trade P01 already
-		// refused in the other direction.
-		return pdf
-	}
-	return out
+	// A stamp that could not have its configuration corrected is still a stamp. Failing here would cost
+	// the user the operation to gain a clause, which is the trade P01 already refused in the other
+	// direction — but the uncorrected bytes still lose their PDF/UA claim (`rewriteOrDropClaim`).
+	return rewriteOrDropClaim(pdf, correctOptionalContent)
 }
 
 // correctOptionalContent is honestOptionalContent's change, for a door already inside a rewrite

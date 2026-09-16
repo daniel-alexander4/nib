@@ -106,13 +106,31 @@ func readFontWidths(xt *model.XRefTable, fontObj types.Object) fontWidths {
 		return f
 	}
 
+	// **A Type3 font's widths are in ITS glyph space, not thousandths** (`/pending 503`). Every other simple
+	// font's glyph space is 1/1000 of text space; a Type3 font says what its own is in `/FontMatrix`, and a
+	// `/Widths` entry of 50 under `[0.01 0 0 0.01 0 0]` is half an em, not a twentieth. Reading it as
+	// thousandths made every Type3 run's width wrong by the matrix's factor, with a source of `Widths`
+	// vouching for it. The horizontal advance is the width times the matrix's `a`, rescaled to the
+	// thousandths `advance` reports in. A Type3 font with no usable matrix has no width it can state.
+	scale := 1.0
+	if st := d.NameEntry("Subtype"); st != nil && *st == "Type3" {
+		m, merr := xt.DereferenceArray(d["FontMatrix"])
+		if merr != nil || len(m) != 6 {
+			return f
+		}
+		a, aok := pdfNumber(xt, m[0])
+		if !aok || a == 0 {
+			return f
+		}
+		scale = a * 1000
+	}
 	if arr, aerr := xt.DereferenceArray(d["Widths"]); aerr == nil && arr != nil {
 		if fc, ok := pdfNumber(xt, d["FirstChar"]); ok {
 			f.firstChar = int(fc)
 			f.widths = make([]float64, len(arr))
 			for i, o := range arr {
 				if v, vok := pdfNumber(xt, o); vok {
-					f.widths[i] = v
+					f.widths[i] = v * scale
 				} else {
 					f.widths[i] = math.NaN()
 				}
@@ -121,7 +139,7 @@ func readFontWidths(xt *model.XRefTable, fontObj types.Object) fontWidths {
 	}
 	if fd, ferr := xt.DereferenceDict(d["FontDescriptor"]); ferr == nil && fd != nil {
 		if v, ok := pdfNumber(xt, fd["MissingWidth"]); ok {
-			f.missing, f.hasMissing = v, true
+			f.missing, f.hasMissing = v*scale, true
 		}
 	}
 	if bf := d.NameEntry("BaseFont"); bf != nil && font.IsCoreFont(*bf) &&

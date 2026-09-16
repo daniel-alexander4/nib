@@ -124,7 +124,15 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 					"page (key %d) has %d slot(s)", e.kind, k.mcid, key, len(arr))
 				continue
 			}
-			if e.objNr != 0 && arr[k.mcid] != 0 && arr[k.mcid] != e.objNr {
+			switch {
+			case e.objNr == 0:
+				// An element written inline has no object number, so no ParentTree slot can name it.
+			case arr[k.mcid] == 0:
+				// A null slot says no element owns the content while this one claims it — invariant 4 read
+				// from the ParentTree's side, and it passed until `/pending 503`.
+				add(fmt.Sprintf("mcid-unowned key=%d mcid=%d obj=%d", key, k.mcid, e.objNr), "/MCID %d on the page with key %d maps to no element in the ParentTree (a null "+
+					"slot), but object %d is the element that claims it", k.mcid, key, e.objNr)
+			case arr[k.mcid] != e.objNr:
 				add(fmt.Sprintf("mcid-owner key=%d mcid=%d obj=%d", key, k.mcid, e.objNr), "/MCID %d on the page with key %d maps to object %d in the ParentTree, but "+
 					"object %d is the element that claims it", k.mcid, key, arr[k.mcid], e.objNr)
 			}

@@ -146,12 +146,8 @@ func embeddedFontsAreHonest(pdf []byte) []byte {
 // whole output is nib's. Found by the P01 phase-close review: the stamps were scoped and the OCR door
 // was not, one rule applied two ways (ADR-009).
 func embeddedFacesAreHonest(pdf []byte, faces []string) []byte {
-	out, err := writeMutated(pdf, func(ctx *model.Context) error {
+	return rewriteOrDropClaim(pdf, func(ctx *model.Context) error {
 		dropCIDSetsOf(ctx, faces)
 		return nil
 	})
-	if err != nil {
-		return pdf
-	}
-	return out
 }

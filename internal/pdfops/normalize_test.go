@@ -10,6 +10,21 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
+// TestTheModalPageSizeIsTheSameOnEveryRun — `/pending 503`. 500×800 and 400×1000 tie on count and area;
+// ranked by those alone the target followed Go's randomised map order.
+func TestTheModalPageSizeIsTheSameOnEveryRun(t *testing.T) {
+	dims := []types.Dim{{Width: 500, Height: 800}, {Width: 400, Height: 1000}}
+	first := modalPageDim(dims)
+	for i := 0; i < 200; i++ {
+		if got := modalPageDim(dims); got != first {
+			t.Fatalf("call %d chose %v and the first call chose %v — the same document normalises to a different size per run", i+2, got, first)
+		}
+	}
+	if got := modalPageDim([]types.Dim{dims[1], dims[0]}); got != first {
+		t.Errorf("the same sizes in the other order chose %v, not %v", got, first)
+	}
+}
+
 func appendAll(t *testing.T, pdfs ...[]byte) []byte {
 	t.Helper()
 	out := pdfs[0]

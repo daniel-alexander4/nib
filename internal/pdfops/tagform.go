@@ -25,7 +25,7 @@ import (
 //
 // P05.S03 modelled both ParentTree shapes and nothing had ever written the second;
 // `setParentTreeSlot` fills an array slot and is the wrong door for an annotation.
-// `setParentTreeSingle` and `freeParentTreeKey` are S07's, and the key search scans both shapes
+// `setParentTreeSingle` is S07's and `allocParentTreeKey` the key door, and the key search scans both shapes
 // because they share one key space — a page array at key 3 and an annotation reference at key 3 are
 // the same entry, and the second write destroys the first.
 //
@@ -137,7 +137,7 @@ func describeAnnotationsOnPage(ctx *model.Context, tree *structTree, pageNr int,
 		if oerr := addOBJRTo(ctx, *elemRef, ar, *pageRef); oerr != nil {
 			return n, oerr
 		}
-		key := freeParentTreeKey(ctx, tree)
+		key := allocParentTreeKey(ctx, tree)
 		if perr := setParentTreeSingle(ctx, tree, key, *elemRef); perr != nil {
 			return n, perr
 		}

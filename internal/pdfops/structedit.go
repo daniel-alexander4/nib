@@ -315,6 +315,13 @@ func moveElement(ctx *model.Context, tree *structTree, e *structElem, ed structE
 		e.dict["P"] = *rootRef
 		return nil
 	}
+	if to.objNr == 0 {
+		// The parent is written inline, so no reference can name it — and only a reorder under the parent
+		// the element already has reaches here, since `ed.parent` names a new parent by object number. The
+		// element's `/P` already says what a reference can; `0 0 R` names the xref free-list head
+		// (`/pending 503`).
+		return nil
+	}
 	gen := 0
 	if en, ok := ctx.XRefTable.Table[to.objNr]; ok && en != nil && en.Generation != nil {
 		gen = *en.Generation

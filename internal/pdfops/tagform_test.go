@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -181,7 +182,7 @@ func TestAnAnnotationsParentTreeEntryIsASingleReferenceNotAnArray(t *testing.T) 
 // TestAKeyIsNeverHandedOutTwice — the key space the two ParentTree shapes SHARE.
 //
 // A page array at key 3 and an annotation reference at key 3 are the same entry, so the second write
-// destroys the first. `freeParentTreeKey` scans both shapes; this drives the case where a page
+// destroys the first. `allocParentTreeKey` scans both shapes; this drives the case where a page
 // already owns keys, which is every document P05's emitter has touched.
 func TestAKeyIsNeverHandedOutTwice(t *testing.T) {
 	base, err := testpdf.Text("a form")
@@ -223,6 +224,105 @@ func TestAKeyIsNeverHandedOutTwice(t *testing.T) {
 	}
 	if _, defects := checkTree(t, out); len(defects) > 0 {
 		t.Errorf("tree defects after describing a form on an already-tagged page: %v", defects)
+	}
+}
+
+// parentTreeNextKeyOf reads `/StructTreeRoot /ParentTreeNextKey`, or -1 when absent.
+func parentTreeNextKeyOf(t *testing.T, pdf []byte) (nextKey, maxKey int) {
+	t.Helper()
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	tree, terr := readStructTree(ctx, map[int]bool{})
+	if terr != nil {
+		t.Fatalf("tree: %v", terr)
+	}
+	nextKey, maxKey = -1, -1
+	if n, ok := pdfNumber(ctx.XRefTable, tree.root["ParentTreeNextKey"]); ok {
+		nextKey = int(n)
+	}
+	arrays, singles := parentTreeEntries(ctx, tree)
+	for k := range arrays {
+		maxKey = max(maxKey, k)
+	}
+	for k := range singles {
+		maxKey = max(maxKey, k)
+	}
+	return nextKey, maxKey
+}
+
+// keyFixture is `taggedFixture` with the root's `/ParentTreeNextKey` and the page's `/Annots` given.
+func keyFixture(nextKey, annots string, extra map[int]string) []byte {
+	content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (Tagged heading) Tj ET\nEMC\n"
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 " + annots + " >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R " + nextKey + " >>",
+		8: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] >>",
+		9: "<< /Nums [0 [8 0 R]] >>",
+	}
+	for n, o := range extra {
+		objs[n] = o
+	}
+	return assembleFixture(objs)
+}
+
+// TestAWrittenKeyMovesParentTreeNextKeyPastIt — `/pending 503`. A form described on a tree that declares
+// `/ParentTreeNextKey 1` used key 1 and left the declaration at 1, so the next tool honouring it would
+// allocate key 1 again and re-point the widget at its own element.
+func TestAWrittenKeyMovesParentTreeNextKeyPastIt(t *testing.T) {
+	src := taggedFixture()
+	if nk, mk := parentTreeNextKeyOf(t, src); nk != 1 || mk != 0 {
+		t.Fatalf("setup: the fixture declares /ParentTreeNextKey %d over a highest key of %d, want 1 over 0", nk, mk)
+	}
+	out, tagged, err := AuthorTaggedForm(src, s07Fields())
+	if err != nil || !tagged {
+		t.Fatalf("setup: AuthorTaggedForm tagged=%v err=%v — no key was written, so nothing below is tested", tagged, err)
+	}
+	nk, mk := parentTreeNextKeyOf(t, out)
+	if mk < 1 {
+		t.Fatalf("setup: the described form added no ParentTree key (highest %d)", mk)
+	}
+	if nk <= mk {
+		t.Errorf("/ParentTreeNextKey is %d and the ParentTree holds key %d: a tool allocating from the "+
+			"declaration takes a key nib already used", nk, mk)
+	}
+}
+
+// TestNoKeyAnythingAlreadyClaimsIsHandedOut — `/pending 503`, the hole a lowest-free-key search fills.
+// Each case plants ONE claim the ParentTree's own entries do not show, so each is its own condition.
+func TestNoKeyAnythingAlreadyClaimsIsHandedOut(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		src   []byte
+		taken int // every key at or below this is claimed
+	}{
+		{"keys below /ParentTreeNextKey", keyFixture("/ParentTreeNextKey 3", "", nil), 2},
+		{"an annotation's /StructParent with no entry", keyFixture("", "/Annots [10 0 R]", map[int]string{
+			10: "<< /Type /Annot /Subtype /Link /Rect [72 600 200 620] /Border [0 0 0] /StructParent 1 >>",
+		}), 1},
+	} {
+		out, tagged, err := AuthorTaggedForm(c.src, s07Fields())
+		if err != nil || !tagged {
+			t.Fatalf("%s: setup: AuthorTaggedForm tagged=%v err=%v", c.name, tagged, err)
+		}
+		links := widgetLinkages(t, out)
+		if len(links) != len(s07Fields()) {
+			t.Fatalf("%s: setup: %d widget(s) read back, want %d", c.name, len(links), len(s07Fields()))
+		}
+		for i, l := range links {
+			if l.structParent < 0 {
+				t.Fatalf("%s: setup: widget %d was given no /StructParent", c.name, i)
+			}
+			if l.structParent <= c.taken {
+				t.Errorf("%s: widget %d was given key %d, which the document already claims (every key "+
+					"through %d)", c.name, i, l.structParent, c.taken)
+			}
+		}
 	}
 }
 

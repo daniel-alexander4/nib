@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	_ "embed"
+	"encoding/xml"
 	"sort"
 	"strings"
 
@@ -36,22 +37,42 @@ import (
 //go:embed sRGB2014.icc
 var srgbICC []byte
 
-// xmpPDFA2B is the minimal conformant XMP packet for a PDF/A-2b file: it carries
-// only the mandatory PDF/A identification (pdfaid:part 2, conformance B). Emitting
+// xmpPDFA2B is the minimal conformant XMP packet for a PDF/A-2b file: the
+// mandatory PDF/A identification (pdfaid:part 2, conformance B) and, when the
+// document has one, its title (see below). Emitting
 // nothing else sidesteps the Info↔XMP property-consistency rule that trips up
 // PDF/A-1 — PDF/A-2 does not require the document information dictionary to be
-// mirrored, so a pdfaid-only packet is both sufficient and safest. The packet is
-// stored as an unfiltered stream (a PDF/A requirement, so any tool can read it).
-const xmpPDFA2B = "<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" +
-	"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n" +
-	" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" +
-	"  <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\">\n" +
-	"   <pdfaid:part>2</pdfaid:part>\n" +
-	"   <pdfaid:conformance>B</pdfaid:conformance>\n" +
-	"  </rdf:Description>\n" +
-	" </rdf:RDF>\n" +
-	"</x:xmpmeta>\n" +
-	"<?xpacket end=\"w\"?>"
+// mirrored. The packet is stored as an unfiltered stream (a PDF/A requirement, so
+// any tool can read it).
+//
+// **The title is carried because this packet REPLACES the document's own**
+// (`/pending 503`). A document `SetTitle` gave the catalog floor carries
+// `dc:title` and `ViewerPreferences /DisplayDocTitle true`; a pdfaid-only packet
+// dropped the first and kept the second, which is the state `SetTitle` calls worse
+// than none — a viewer told to show a title it cannot find. The title is the Info
+// dictionary's, which `SetTitle` writes identically, and `dc` is a schema PDF/A-2
+// predefines, so it needs no extension schema.
+func xmpPDFA2B(title string) []byte {
+	var b bytes.Buffer
+	b.WriteString("<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" +
+		"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n" +
+		" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" +
+		"  <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\"" +
+		" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n" +
+		"   <pdfaid:part>2</pdfaid:part>\n" +
+		"   <pdfaid:conformance>B</pdfaid:conformance>\n")
+	if title != "" {
+		b.WriteString("   <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">")
+		// EscapeText's error is its writer's, and a bytes.Buffer's Write never returns one.
+		_ = xml.EscapeText(&b, []byte(title))
+		b.WriteString("</rdf:li></rdf:Alt></dc:title>\n")
+	}
+	b.WriteString("  </rdf:Description>\n" +
+		" </rdf:RDF>\n" +
+		"</x:xmpmeta>\n" +
+		"<?xpacket end=\"w\"?>")
+	return b.Bytes()
+}
 
 // PreparePDFA converts pdf into a PDF/A-2b archival candidate. When the document
 // can be made conformant it returns the converted bytes (blockers nil). When a
@@ -241,7 +262,7 @@ func injectPDFAMarkers(ctx *model.Context) error {
 
 	// PDF/A identification XMP — must be an UNFILTERED stream (FilterPipeline nil
 	// → Encode writes it uncompressed). Overwrites any pre-existing /Metadata.
-	xmpSD := &types.StreamDict{Dict: types.NewDict(), Content: []byte(xmpPDFA2B)}
+	xmpSD := &types.StreamDict{Dict: types.NewDict(), Content: xmpPDFA2B(xt.Title)}
 	xmpSD.InsertName("Type", "Metadata")
 	xmpSD.InsertName("Subtype", "XML")
 	if err := xmpSD.Encode(); err != nil {

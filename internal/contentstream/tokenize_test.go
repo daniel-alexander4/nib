@@ -197,6 +197,41 @@ func TestAnInlineImageIsOneOpaqueToken(t *testing.T) {
 	}
 }
 
+// TestTextAfterAnASCIIEncodedInlineImageSurvives — `/pending 503`. An ASCIIHex payload ends at `>`, and
+// `EI` may follow it with no whitespace; the whitespace-only rule swallowed the rest of the stream into
+// the image token, so the text drawn after it was not text to any reader built on these tokens.
+func TestTextAfterAnASCIIEncodedInlineImageSurvives(t *testing.T) {
+	for _, c := range []struct{ name, image string }{
+		{"ASCIIHex, abbreviated", "BI /W 1 /H 1 /BPC 8 /CS /G /F /AHx ID 00>EI"},
+		{"ASCIIHex, in an array", "BI /W 1 /H 1 /BPC 8 /CS /G /Filter [/ASCIIHexDecode] ID 0 0>EI"},
+		{"ASCII85", "BI /W 1 /H 1 /BPC 8 /CS /G /F /A85 ID !!~>EI"},
+	} {
+		src := []byte("q " + c.image + " Q BT /F1 12 Tf (after) Tj ET")
+		toks := roundTrips(t, c.name, src)
+		var img *Token
+		for i := range toks {
+			if toks[i].Kind == InlineImage {
+				img = &toks[i]
+			}
+		}
+		if img == nil {
+			t.Fatalf("%s: setup: no inline-image token at all", c.name)
+		}
+		if got := string(img.Bytes(src)); got != c.image {
+			t.Errorf("%s: the image token is %q, want exactly %q", c.name, got, c.image)
+		}
+		tj := false
+		for _, tk := range toks {
+			if tk.Kind == Operator && string(tk.Bytes(src)) == "Tj" {
+				tj = true
+			}
+		}
+		if !tj {
+			t.Errorf("%s: no Tj operator after the image — the text drawn after it vanished into the image token", c.name)
+		}
+	}
+}
+
 // TestApplyWithNoEditsReturnsTheOriginalBytes.
 //
 // An operation that decides it has nothing to change must cost the document nothing — not a

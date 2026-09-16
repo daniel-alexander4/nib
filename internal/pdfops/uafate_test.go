@@ -2,9 +2,12 @@ package pdfops
 
 import (
 	"bytes"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
 	"nib/internal/testpdf"
 )
@@ -22,6 +25,22 @@ func labelledFixture(t *testing.T) []byte {
 		t.Fatalf("setup: %v", err)
 	}
 	return out
+}
+
+// TestAFailedCorrectionStillDropsTheClaim — `/pending 503`. `StampImages` and the OCR text layer fall back
+// to pdfcpu's own output when their correction fails, and that output carries the identification through.
+func TestAFailedCorrectionStillDropsTheClaim(t *testing.T) {
+	src := labelledFixture(t)
+	if !claimsUA(t, catalogPacket(t, src)) {
+		t.Fatal("setup: the labelled fixture does not claim PDF/UA")
+	}
+	out := rewriteOrDropClaim(src, func(*model.Context) error { return errors.New("the correction failed") })
+	if bytes.Equal(out, src) {
+		t.Fatal("a failed correction returned the labelled bytes unchanged, claim and all")
+	}
+	if claimsUA(t, catalogPacket(t, out)) {
+		t.Error("a failed correction kept the document's PDF/UA identification")
+	}
 }
 
 // TestNoOperationCarriesAnIdentificationItDidNotVerify — `/pending 492`, over the tag-fate census's whole

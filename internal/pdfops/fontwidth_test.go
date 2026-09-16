@@ -41,6 +41,31 @@ func nums(vs ...float64) types.Array {
 	return a
 }
 
+// TestAType3WidthIsReadInItsOwnGlyphSpace — `/pending 503`. `/Widths` 50 under `/FontMatrix [0.01 0 0 0.01
+// 0 0]` is 500 thousandths; read as thousandths it was 50, a tenth of the glyph, reported as `Widths`.
+func TestAType3WidthIsReadInItsOwnGlyphSpace(t *testing.T) {
+	xt := widthXRef(t)
+	type3 := func(matrix types.Object) types.Dict {
+		d := types.Dict{"Type": types.Name("Font"), "Subtype": types.Name("Type3"),
+			"FirstChar": types.Integer(65), "Widths": nums(50),
+			"FontDescriptor": types.Dict{"MissingWidth": types.Integer(20)}}
+		if matrix != nil {
+			d["FontMatrix"] = matrix
+		}
+		return d
+	}
+	f := readFontWidths(xt, type3(nums(0.01, 0, 0, 0.01, 0, 0)))
+	if w, src := f.advance(65); !approxEqual(w, 500) || src != widthFromWidths {
+		t.Errorf("code 65 reads %v from %s, want 500 from Widths — the width was not scaled by /FontMatrix", w, src)
+	}
+	if w, src := f.advance(66); !approxEqual(w, 200) || src != widthFromMissing {
+		t.Errorf("code 66 reads %v from %s, want 200 from MissingWidth — the descriptor's width is in the same glyph space", w, src)
+	}
+	if w, src := readFontWidths(xt, type3(nil)).advance(65); src != widthNone {
+		t.Errorf("a Type3 font with no /FontMatrix reads %v from %s, want none — it has no scale to state a width in", w, src)
+	}
+}
+
 // TestEveryWidthLookupNamesItsSource — S01's first clause: a width AND where it came from, with `none`
 // where the dictionary says nothing. Each source is driven by a dictionary carrying exactly it.
 func TestEveryWidthLookupNamesItsSource(t *testing.T) {

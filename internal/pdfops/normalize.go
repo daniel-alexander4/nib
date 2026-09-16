@@ -58,8 +58,12 @@ func modalPageDim(dims []types.Dim) types.Dim {
 	}
 	var best key
 	var bestN int
+	// The ranking is a TOTAL order — count, then area, then width — because `count` is a map and Go
+	// randomises its iteration. With area as the last key, 500×800 and 400×1000 (both 400,000 pt²) tied
+	// and the target depended on which the loop met first, so one document normalised to a different page
+	// size on different runs (`/pending 503`). Equal area and equal width is the same key.
 	for k, n := range count {
-		if n > bestN || (n == bestN && k.w*k.h > best.w*best.h) {
+		if n > bestN || (n == bestN && (k.w*k.h > best.w*best.h || (k.w*k.h == best.w*best.h && k.w > best.w))) {
 			best, bestN = k, n
 		}
 	}

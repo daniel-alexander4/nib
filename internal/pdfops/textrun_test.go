@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -34,6 +35,22 @@ func walkContent(t *testing.T, res types.Dict, content string) []textRun {
 }
 
 func helv(text string) float64 { return mdpdf.CoreWidth(text, "Helvetica", 1000) }
+
+// TestARunKnowsWhetherItsBaselineTurns — `/pending 503`, the reader half of rotated-text reporting.
+func TestARunKnowsWhetherItsBaselineTurns(t *testing.T) {
+	got := map[string]bool{}
+	for _, r := range walkContent(t, helveticaRes(), "BT /F1 12 Tf 1 0 0 1 100 300 Tm (Flat) Tj ET "+
+		"BT /F1 12 Tf 1 0 0.3 1 100 400 Tm (Skewed) Tj ET "+
+		"BT /F1 12 Tf 0 1 -1 0 100 100 Tm (Up) Tj ET "+
+		"BT /F1 12 Tf -1 0 0 -1 300 300 Tm (Upside) Tj ET") {
+		got[r.text] = r.rotated
+	}
+	for text, want := range map[string]bool{"Flat": false, "Skewed": false, "Up": true, "Upside": true} {
+		if v, ok := got[text]; !ok || v != want {
+			t.Errorf("run %q reads rotated=%v (present %v), want %v", text, v, ok, want)
+		}
+	}
+}
 
 // TestAPDFStringDecodesEveryEscapeForm — the reader's half of what `contentstream` leaves as spans.
 func TestAPDFStringDecodesEveryEscapeForm(t *testing.T) {
@@ -92,6 +109,28 @@ endcmap`))
 	huge := parseToUnicode([]byte("1 beginbfrange <000000> <FFFFFF> <0041> endbfrange"))
 	if len(huge) != 0 {
 		t.Errorf("a range of 2^24 codes expanded to %d entries — one line in a document allocating without limit", len(huge))
+	}
+}
+
+// TestACMapHasATotalExpansionBudget — `/pending 503`. Each range was bounded and their sum was not: a
+// hundred overlapping full-plane ranges in 2.2 KB cost 5.1 s and 110 MB. Asserted on WHICH ranges
+// expanded, not on a clock: range n maps code 0000 to the letter n, so the surviving value names the last
+// range that was expanded.
+func TestACMapHasATotalExpansionBudget(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("100 beginbfrange\n")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, "<0000> <FFFF> <%04X>\n", 0x41+i)
+	}
+	b.WriteString("endbfrange\n")
+	got := parseToUnicode([]byte(b.String()))["\x00\x00"]
+	if got != "B" {
+		t.Errorf("code 0000 maps to %q: ranges past the second full plane were still expanded (want %q, "+
+			"the second range's value — %q would be the hundredth)", got, "B", string(rune(0x41+99)))
+	}
+	// The floor under the budget: ONE full plane is a real Identity-H font's whole ToUnicode.
+	if plane := parseToUnicode([]byte("1 beginbfrange <0000> <FFFF> <0041> endbfrange")); len(plane) != 1<<16 {
+		t.Errorf("one full-plane range expanded to %d entries, want %d — the budget refuses a real font", len(plane), 1<<16)
 	}
 }
 
