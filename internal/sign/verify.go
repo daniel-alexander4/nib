@@ -13,6 +13,7 @@ package sign
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/verify"
@@ -87,8 +88,13 @@ func Verify(data []byte) Status {
 	// surface for every unsigned document — which is what an upload usually is — and leaves it only
 	// for documents that genuinely claim a signature.
 	//
-	// **It is a reduction, not a fix**, and the residue is filed. A malformed document that DOES
-	// carry `/ByteRange` still reaches the parser and can still take the process.
+	// **It is a reduction, not a fix**, and the residue is filed (/pending 502). A malformed document
+	// that DOES carry `/ByteRange` still reaches the parser and can still take the process. Measured:
+	// 4 of 2,482 single-bit flips of a signed fixture, every one a damaged `/Filter` key on the object
+	// stream. The runaway needs a buffer with `allowEOF` set, and in the verify path only the object-
+	// stream lexer sets it (`read.go:890`), so it is object-stream content that is lexed past its end.
+	// v0.2.0 of the library bounds `readLiteralString` but cannot be adopted: pdfsign calls
+	// `Reader.Resolve`, which v0.2.0 removed — and its `readHexString` still spins at EOF.
 	if !scanForSignatureBlob(data) {
 		return Status{State: Unsigned}
 	}
@@ -274,7 +280,17 @@ func scanForSignatureBlob(pdf []byte) bool {
 // `sawSignature` reports whether THIS walk found a signature field at all, and it exists
 // because "no signature here" and "the signatures cover everything" were the same return
 // value — which is what let a disagreement between the two enumerations read as clean.
+//
+// **A panic in the walk is an error, not a crash** (/pending 502). `digitorus/pdf` panics from its
+// lazy Key/Index dereferences on ordinary corruption — 1,047 of 2,482 single-bit flips of a signed
+// fixture — and `Verify` reaches this walk on the p2p arm, where no per-request recover applies.
+// An error here routes through `addedAfterVerdict`, which is fail-closed.
 func trailingContentAfterLastSignature(pdf []byte) (trailing, sawSignature bool, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			trailing, sawSignature, err = false, false, fmt.Errorf("read pdf: %v", rec)
+		}
+	}()
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
 		return false, false, err

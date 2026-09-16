@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
@@ -39,6 +40,11 @@ func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
 	}
 	sendDownload(w, "document.ots", "application/octet-stream", proof)
 }
+
+// timestampVerifyBudget is the most one verification may spend on the network. The worst honest
+// case is every calendar of a four-calendar proof timing out in turn (4 × 20 s) followed by one
+// explorer round; two minutes covers that and still ends. A var so a test can shorten it.
+var timestampVerifyBudget = 2 * time.Minute
 
 // handleTimestampVerify checks an uploaded .ots proof against the posted document.
 // It hashes the document, confirms the proof is for it, upgrades any still-pending
@@ -87,7 +93,13 @@ func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 	digest := sha256.Sum256(pdfBytes)
 	// untrustedFetchClient: the calendar URL fetched during an upgrade comes from
 	// the uploaded (untrusted) .ots, so it must not be allowed to reach LAN hosts.
-	res, err := ots.VerifyProof(r.Context(), untrustedFetchClient, sources, minAgree, proof, digest)
+	// A deadline on the whole verification, not only on each GET (/pending 502). The per-request
+	// timeouts inside `ots` bound one fetch; nothing bounded the sequence of them, so a proof that
+	// passed every count cap could still hold this request — and its outbound connections — for as
+	// long as its calendars cared to trickle.
+	ctx, cancel := context.WithTimeout(r.Context(), timestampVerifyBudget)
+	defer cancel()
+	res, err := ots.VerifyProof(ctx, untrustedFetchClient, sources, minAgree, proof, digest)
 	if err != nil {
 		httpError(w, http.StatusUnprocessableEntity, err.Error())
 		return

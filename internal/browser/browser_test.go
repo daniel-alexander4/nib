@@ -135,18 +135,30 @@ func TestABrowserThatStartsAndDiesIsNotReportedAsSuccess(t *testing.T) {
 		t.Skipf("no sleep binary here: %v", err)
 	}
 	defer func() { _ = long.Process.Kill() }()
-	if !alive(long, 100*time.Millisecond) {
+	if !launched(long, 100*time.Millisecond) {
 		t.Fatal("setup: a running process was reported as dead, so this test cannot " +
 			"distinguish the case it is for")
 	}
 
-	// The case: a command that exits at once, which is what a refusing browser does.
+	// The case: a command that exits at once and non-zero, which is what a refusing browser does.
 	quick := exec.Command("false")
 	if err := quick.Start(); err != nil {
 		t.Skipf("no false binary here: %v", err)
 	}
-	if alive(quick, appModeSettle) {
+	if launched(quick, appModeSettle) {
 		t.Error("a process that exited immediately was reported as a live browser — Nib " +
 			"then serves a window nobody can see and never reaches the tab fallback")
+	}
+
+	// /pending 502: exiting at once with status 0 is a Chromium-family browser handing `--app=` to
+	// the copy already running — the window opens. Read as a failure, it fell through to the tab
+	// opener and the user got the app window and a second tab of the same page.
+	handoff := exec.Command("true")
+	if err := handoff.Start(); err != nil {
+		t.Skipf("no true binary here: %v", err)
+	}
+	if !launched(handoff, appModeSettle) {
+		t.Error("a launch that exited 0 at once (a hand-off to the running browser) was read as a " +
+			"failure — Nib then also opens the page as a tab, a second window")
 	}
 }

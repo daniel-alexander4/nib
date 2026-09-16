@@ -240,7 +240,9 @@ func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
 // --- status ------------------------------------------------------------------
 
 type statusResponse struct {
-	State             string   `json:"state"` // ready | setup | migrate | key-missing
+	State             string   `json:"state"`               // ready | setup | migrate | key-missing | key-locked | vault-unreadable
+	Problem           string   `json:"problem,omitempty"`   // why the vault could not be read (vault-unreadable)
+	VaultPath         string   `json:"vaultPath,omitempty"` // the file that could not be read (vault-unreadable)
 	CSRF              string   `json:"csrf,omitempty"`
 	Candidates        []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
 	DefaultKeyPath    string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
@@ -310,6 +312,14 @@ func (s *Server) vaultStatus() statusResponse {
 	if vault.NeedsMigration(s.configDir) {
 		return statusResponse{State: "migrate", Candidates: sshkey.Candidates(), DefaultKeyPath: sshkey.DefaultNewKeyPath()}
 	}
+	_, openErr := vault.OpenSSH(s.configDir)
+	// A vault that is present and cannot be read is its own state (/pending 502). It read as
+	// "key-missing", whose screen asks the user to find a key — which was never the problem, and
+	// which no key they find can fix. Nothing is offered that touches the file: it may be the only
+	// copy of the signing identity, and a corrupt file is still a file someone can recover.
+	if errors.Is(openErr, vault.ErrUnreadable) {
+		return statusResponse{State: "vault-unreadable", Problem: openErr.Error(), VaultPath: vault.Path(s.configDir)}
+	}
 	keyPath := ""
 	if slots, err := vault.Slots(s.configDir); err == nil && len(slots) > 0 {
 		keyPath = slots[0].KeyPath
@@ -318,7 +328,7 @@ func (s *Server) vaultStatus() statusResponse {
 	// UI offers a passphrase prompt), distinct from a genuinely missing key. The
 	// re-attempt is cheap: parsing an encrypted key fails fast, before any decrypt.
 	state := "key-missing"
-	if _, err := vault.OpenSSH(s.configDir); errors.Is(err, vault.ErrKeyLocked) {
+	if errors.Is(openErr, vault.ErrKeyLocked) {
 		state = "key-locked"
 	}
 	return statusResponse{State: state, KeyPath: keyPath}

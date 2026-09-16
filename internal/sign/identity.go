@@ -246,7 +246,16 @@ func mentionsTimestamp(err error) bool {
 // does not surface the signature type, so we read it from the PDF structure:
 // an AcroForm signature field whose /V has a /Reference with /TransformMethod
 // /DocMDP. (Top-level signature fields only — the conventional placement.)
-func hasCertificationSignature(pdf []byte) (bool, error) {
+//
+// A panic in the walk is returned as an error (/pending 502): the same lazy dereferences that needed
+// a recover in signatureBlobPresent panic here on corrupt input, and an unreadable document is one
+// SignApproval must refuse rather than one that takes the process.
+func hasCertificationSignature(pdf []byte) (certified bool, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			certified, err = false, fmt.Errorf("read pdf: %v", rec)
+		}
+	}()
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
 		return false, fmt.Errorf("read pdf: %w", err)
@@ -394,6 +403,12 @@ func VerifyDigest(digest, sig, certPEM []byte) error {
 	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
 	if !ok {
 		return errors.New("certificate key is not ECDSA")
+	}
+	// The same length rule as VerifyDigestSPKI. ECDSA verification truncates whatever it is given,
+	// so without this a caller handing over the wrong buffer gets a clean "does not verify" rather
+	// than being told it passed something that is not a SHA-256 digest (/pending 502).
+	if len(digest) != sha256.Size {
+		return fmt.Errorf("digest is %d bytes, want %d", len(digest), sha256.Size)
 	}
 	if !ecdsa.VerifyASN1(pub, digest, sig) {
 		return errors.New("signature does not verify")
