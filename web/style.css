@@ -1634,14 +1634,22 @@ body.presenting .presentbar { display: flex; }
   #menubar #themeToggle { display: none; }
   #menubar .foldedonly { display: block; }
 }
-/* 719px, measured rather than chosen, and the number is set by the EMPTY state.
+/* 849px, measured rather than chosen, and the number is set by the EMPTY state.
    The v1.120.0 re-cut narrowed the strip to 392px (File · Mark Up · Document · Secure ·
    Ceremony), which by itself would allow a lower threshold than the 694 it replaced. But with
    no document open `#sigBadge` reads "no document" instead of "Unsigned" (index.html:98) —
    23px wider — and the menubar wraps at 700 where it fits at 720. That state is the first
    screen a user ever sees, and the suite only measured the populated one until a test was
-   added for it. A label change moves this number, in either list. */
-@media (max-width: 719px) {
+   added for it. A label change moves this number, in either list.
+
+   **719 → 849 for the SEVENTH tab (ADR-035, `/pending 532`).** "Accessibility" is the longest
+   label in the strip and it pushed the nav past what a 719 threshold protects: measured in
+   Chromium against the real binary, the menubar is one row at 900 and **wraps to 64px at 800**,
+   with nothing open — so the tabs must already be a dropdown by 800. The threshold sits inside
+   that measured band rather than at its edge; the band, not a single number, is what was
+   measured, and saying 849 without saying 800–900 would be a precision nothing took.
+   `responsive.test.mjs` sweeps 1366/1024/900/800/700/600/500/414/360 and is what caught it. */
+@media (max-width: 849px) {
   #menubar .modetabs { display: none; }
   #menubar .modemenu { display: block; }
 }
