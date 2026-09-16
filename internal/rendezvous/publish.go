@@ -33,7 +33,7 @@ import (
 // ladder shows the user different things for "not yet" and "we cannot reach the DHT".
 var ErrNoRecord = errors.New("no record published under this key")
 
-// publishBudget is one traversal's own budget, and it is NOT the caller's lifetime.
+// PublishBudget is one traversal's own budget, and it is NOT the caller's lifetime.
 //
 // D16's table gave the DHT candidate fetch "every 2 s"; that was measured against the
 // library and amended at this slice, because a traversal cannot return early and a 2 s

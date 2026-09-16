@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -27,6 +28,34 @@ type mockGateway struct {
 	leases       chan uint32   // records the lease of each MAP request seen (0 = a delete)
 	dropReplies  bool          // record the request, answer nothing: the request REACHED the router and the reply was lost
 	nonces       chan [12]byte // every PCP request's nonce, so a delete can be checked against the mapping's
+
+	// replyDelay answers every request this late, from its own goroutine — a gateway slower than
+	// exchange's half-window, which therefore answers the retransmission too (/pending 501).
+	replyDelay time.Duration
+	// staleRefusalFirst precedes every PCP answer with a NOT_AUTHORIZED reply echoing a DIFFERENT
+	// nonce: a datagram that answers some other request, carrying a refusal.
+	staleRefusalFirst bool
+	stalesSent        atomic.Int64
+	// enforceNonce is RFC 6887 §11.3: a MAP for an internal port that already has a mapping "but
+	// with a different Mapping Nonce" is answered NOT_AUTHORIZED. Read only by the serve goroutine.
+	enforceNonce bool
+	nonceByPort  map[uint16][12]byte
+}
+
+// newMockGatewayWith builds a gateway and lets the caller set its behaviour BEFORE the serve
+// goroutine starts, so no flag is written after a reader exists.
+func newMockGatewayWith(t *testing.T, configure func(*mockGateway)) *mockGateway {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &mockGateway{pc: pc, extPort: 51234, extIP: netip.MustParseAddr("203.0.113.7"),
+		leases: make(chan uint32, 16), nonces: make(chan [12]byte, 16), nonceByPort: map[uint16][12]byte{}}
+	configure(g)
+	t.Cleanup(func() { pc.Close() })
+	go g.serve()
+	return g
 }
 
 func newMockGateway(t *testing.T) *mockGateway { return newMockGatewayRefusing(t, 0, 0) }
@@ -98,9 +127,25 @@ func (g *mockGateway) serve() {
 		case req[0] == natpmpVersion:
 			resp = g.replyNATPMPMap(req)
 		}
-		if resp != nil && !g.dropReplies {
-			g.pc.WriteTo(resp, from)
+		if resp == nil || g.dropReplies {
+			continue
 		}
+		if g.staleRefusalFirst && req[0] == pcpVersion {
+			stale := append([]byte(nil), resp...)
+			stale[24] ^= 0xff // a nonce this request did not carry
+			stale[3] = 2      // NOT_AUTHORIZED
+			g.pc.WriteTo(stale, from)
+			g.stalesSent.Add(1)
+		}
+		if g.replyDelay > 0 {
+			late := append([]byte(nil), resp...)
+			go func() {
+				time.Sleep(g.replyDelay)
+				g.pc.WriteTo(late, from)
+			}()
+			continue
+		}
+		g.pc.WriteTo(resp, from)
 	}
 }
 
@@ -139,6 +184,15 @@ func (g *mockGateway) replyPCP(req []byte) []byte {
 	resp[0] = pcpVersion
 	resp[1] = pcpResponseBit | pcpOpcodeMap
 	resp[3] = g.pcpResult
+	if g.enforceNonce && binary.BigEndian.Uint32(req[4:8]) > 0 {
+		port := binary.BigEndian.Uint16(req[24+16 : 24+18])
+		nonce := [12]byte(req[24:36])
+		if held, ok := g.nonceByPort[port]; ok && held != nonce {
+			resp[3] = 2 // NOT_AUTHORIZED, RFC 6887 §11.3
+		} else {
+			g.nonceByPort[port] = nonce
+		}
+	}
 	binary.BigEndian.PutUint32(resp[4:8], binary.BigEndian.Uint32(req[4:8])) // echo lifetime
 	binary.BigEndian.PutUint32(resp[8:12], 1000)                             // epoch
 	body, rbody := resp[24:], req[24:]

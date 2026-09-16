@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -119,11 +120,11 @@ func discoverIGD(ctx context.Context) ([]string, error) {
 	seen := map[string]bool{}
 	buf := make([]byte, 2048)
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, from, err := conn.ReadFrom(buf)
 		if err != nil {
 			break // deadline or error — return whatever answered
 		}
-		if loc := ssdpLocation(buf[:n]); loc != "" && !seen[loc] {
+		if loc := ssdpLocationFrom(from, buf[:n]); loc != "" && !seen[loc] {
 			seen[loc] = true
 			locations = append(locations, loc)
 			// **Stop waiting the FULL budget once something has answered.** This loop used to
@@ -148,6 +149,43 @@ func discoverIGD(ctx context.Context) ([]string, error) {
 		return nil, ErrNoGateway
 	}
 	return locations, nil
+}
+
+// ssdpLocationFrom is the LOCATION of an SSDP response, taken only when it names the host that
+// sent the response; otherwise "".
+//
+// **The source address was read and thrown away** (/pending 501). `isPrivateHost` bounds a
+// LOCATION to the private LAN, and that is a policy about WHICH hosts, not about WHOSE answer: a
+// responder on the link could name any other private host — a printer's admin page, a NAS, the
+// router itself on a management address — and Nib would GET that host's description and POST
+// SOAP at it. Requiring LOCATION to name the sender narrows that to the responder itself, which
+// an on-link attacker already is. A real IGD advertises a LOCATION on its own interface address;
+// one answering from a different address than it advertises is refused, and that cost is
+// unmeasured against real routers.
+//
+// Pure, beside ssdpLocation, so the rule is testable without multicast.
+func ssdpLocationFrom(from net.Addr, resp []byte) string {
+	loc := ssdpLocation(resp)
+	if loc == "" {
+		return ""
+	}
+	ua, ok := from.(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
+	src, ok := netip.AddrFromSlice(ua.IP)
+	if !ok {
+		return ""
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		return ""
+	}
+	host, err := netip.ParseAddr(u.Hostname())
+	if err != nil || host.Unmap() != src.Unmap() {
+		return ""
+	}
+	return loc
 }
 
 // ssdpLocation pulls the LOCATION header out of an SSDP response. Pure, so the header parsing
@@ -237,19 +275,25 @@ func findService(d *igdDevice, serviceType string) *igdService {
 	return nil
 }
 
-// soapAddPortMapping issues AddPortMapping and returns the external IP the IGD reports (via a
-// follow-up GetExternalIPAddress). External port equals internal port for IGD (it does not
-// choose one the way PCP/NAT-PMP do); a router that refuses the requested external port is a
-// miss, not a negotiation.
 // soapAddPortMapping POSTs AddPortMapping and reports whether the request was actually WRITTEN
-// to the connection, which is a different fact from whether it succeeded.
+// to the connection, which is a different fact from whether it succeeded. External port equals
+// internal port for IGD (it does not choose one the way PCP/NAT-PMP do); a router that refuses
+// the requested external port is a miss, not a negotiation.
 //
 // The distinction is the whole of /pending 257 on this path: a POST that was written and whose
 // response was then lost may well have installed a mapping, and a delete handle must be kept for
 // it — while a call that never left the host (an already-dead context, a dial failure) must NOT
 // be recorded, because a UPnP delete is keyed on (external port, protocol) with no ownership
 // check and would remove whatever else happens to hold that port.
-func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, internalIP netip.Addr, internalPort, externalPort uint16, leaseSec uint32) (wrote bool, err error) {
+//
+// **`written` is an atomic, because the trace callback is not on this goroutine** (/pending 501).
+// `WroteRequest` fires from net/http's per-connection write loop, and `RoundTrip` can return
+// before that loop finishes — a response that arrives while the body is still going out, or a
+// context cancelled mid-write — so a plain bool was written there and read here with nothing
+// ordering the two. The residue is declared rather than closed: a write that completes AFTER
+// soapCall has returned reads as not written, so that one request keeps no delete handle and its
+// mapping is bounded by the lease rather than by the delete.
+func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, internalIP netip.Addr, internalPort, externalPort uint16, leaseSec uint32) (bool, error) {
 	body := fmt.Sprintf(`<u:AddPortMapping xmlns:u="%s">`+
 		`<NewRemoteHost></NewRemoteHost>`+
 		`<NewExternalPort>%d</NewExternalPort>`+
@@ -260,15 +304,16 @@ func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, se
 		`<NewPortMappingDescription>`+upnpMappingDescription+`</NewPortMappingDescription>`+
 		`<NewLeaseDuration>%d</NewLeaseDuration>`+
 		`</u:AddPortMapping>`, serviceType, externalPort, soapProto(proto), internalPort, internalIP.String(), leaseSec)
+	var written atomic.Bool
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			if info.Err == nil {
-				wrote = true
+				written.Store(true)
 			}
 		},
 	})
-	_, err = soapCall(ctx, client, controlURL, serviceType, "AddPortMapping", body)
-	return wrote, err
+	_, err := soapCall(ctx, client, controlURL, serviceType, "AddPortMapping", body)
+	return written.Load(), err
 }
 
 // soapGetExternalIP asks the IGD for its public IPv4.
@@ -305,9 +350,6 @@ func soapProto(p Protocol) string {
 	return "UDP"
 }
 
-// upnpMappingDescription is what Nib writes into every IGD mapping it creates, and what a
-// delete requires to find there before it will remove one. One constant, two call sites — the
-// string was a literal at the write site and nothing read it back (ADR-009).
 // ssdpGrace is how long discovery keeps listening AFTER the first IGD answers.
 //
 // Generous against the physics and cheap against the budget: SSDP replies from one link arrive
@@ -315,6 +357,9 @@ func soapProto(p Protocol) string {
 // returning ~87% of `upnpHTTPBudget` to the SOAP calls that follow.
 const ssdpGrace = 250 * time.Millisecond
 
+// upnpMappingDescription is what Nib writes into every IGD mapping it creates, and what a
+// delete requires to find there before it will remove one. One constant, two call sites — the
+// string was a literal at the write site and nothing read it back (ADR-009).
 const upnpMappingDescription = "Nib"
 
 // soapCall POSTs one SOAP action and returns the response body, or an error carrying the IGD's

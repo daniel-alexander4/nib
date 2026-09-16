@@ -288,13 +288,21 @@ func (m *Mux) knownCID(p []byte) (known, any bool) {
 		m.cidMu.RUnlock()
 		return false, have
 	}
+	now := m.now()
 	exp, ok := m.cids[string(p[1:1+n])]
-	fresh := ok && m.now().Before(exp)
+	fresh := ok && now.Before(exp)
 	m.cidMu.RUnlock()
-	if fresh {
-		// Refresh on use: a connection that is still carrying traffic keeps its id.
+	// Refresh on use: a connection that is still carrying traffic keeps its id.
+	//
+	// **Only once the entry is past half its TTL, the rule `learn` already follows** (/pending
+	// 501). This took the write lock on EVERY inbound short-header datagram carrying a known id —
+	// the steady state of a live QUIC session — so each one contended with every reader of
+	// `cids`, to move an expiry five minutes out by a few milliseconds. Refreshing at half the TTL
+	// keeps an active id comfortably alive and touches the write lock once per id per two and a
+	// half minutes.
+	if fresh && !now.Add(peerTTL/2).Before(exp) {
 		m.cidMu.Lock()
-		m.cids[string(p[1:1+n])] = m.now().Add(peerTTL)
+		m.cids[string(p[1:1+n])] = now.Add(peerTTL)
 		m.cidMu.Unlock()
 	}
 	return fresh, true

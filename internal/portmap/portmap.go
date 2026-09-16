@@ -186,12 +186,16 @@ func DecodeNATPMPMap(resp []byte, p Protocol, internalPort uint16) (Mapping, err
 	if resp[1] != op+128 {
 		return Mapping{}, fmt.Errorf("%w: got %d, want %d", ErrOpcode, resp[1], op+128)
 	}
-	if code := binary.BigEndian.Uint16(resp[2:4]); code != 0 {
-		return Mapping{}, fmt.Errorf("%w: NAT-PMP result code %d", ErrResultCode, code)
-	}
+	// The internal port BEFORE the result code: a refusal is only this request's refusal if it
+	// names this request's mapping, and RFC 6886 §3.3 has an error response "contain ... the
+	// requested mapping". Checked the other way round, a stale refusal for another port read as
+	// the router refusing this one (/pending 501).
 	got := binary.BigEndian.Uint16(resp[8:10])
 	if got != internalPort {
 		return Mapping{}, fmt.Errorf("%w: response maps internal port %d, we asked for %d", ErrOpcode, got, internalPort)
+	}
+	if code := binary.BigEndian.Uint16(resp[2:4]); code != 0 {
+		return Mapping{}, fmt.Errorf("%w: NAT-PMP result code %d", ErrResultCode, code)
 	}
 	return Mapping{
 		Protocol:     p,
@@ -279,14 +283,17 @@ func DecodePCPMap(resp []byte, p Protocol, nonce [12]byte, internalPort uint16) 
 	if resp[1] != (pcpResponseBit | pcpOpcodeMap) {
 		return Mapping{}, netip.Addr{}, fmt.Errorf("%w: opcode byte %#x is not a MAP response", ErrOpcode, resp[1])
 	}
-	if code := resp[3]; code != 0 {
-		return Mapping{}, netip.Addr{}, fmt.Errorf("%w: PCP result code %d", ErrResultCode, code)
-	}
-	lifetime := binary.BigEndian.Uint32(resp[4:8])
-
 	body := resp[24:]
 	// The nonce echo is the response's binding to this request. Constant-time because it is a
 	// value an off-path attacker would have to guess to spoof a mapping reply.
+	//
+	// **Matched BEFORE the result code** (/pending 501). RFC 6887 §8.3: "The response is further
+	// matched by comparing fields in the response Opcode-specific data to fields in the request
+	// Opcode-specific data ... If that fails, the response is ignored" — and only after the match
+	// does anything read the result. Checked the other way round, any datagram carrying a
+	// non-zero code was a refusal whatever nonce it echoed, so a stale or spoofed one was carried
+	// out as "the router refused", which is the one outcome that advises a manual port-forward.
+	// §7.2 has an error response copy the request's opcode data, so a genuine refusal still matches.
 	if subtle.ConstantTimeCompare(body[0:12], nonce[:]) != 1 {
 		return Mapping{}, netip.Addr{}, ErrNonceMismatch
 	}
@@ -297,6 +304,10 @@ func DecodePCPMap(resp []byte, p Protocol, nonce [12]byte, internalPort uint16) 
 	if gotInternal != internalPort {
 		return Mapping{}, netip.Addr{}, fmt.Errorf("%w: response maps internal port %d, we asked for %d", ErrOpcode, gotInternal, internalPort)
 	}
+	if code := resp[3]; code != 0 {
+		return Mapping{}, netip.Addr{}, fmt.Errorf("%w: PCP result code %d", ErrResultCode, code)
+	}
+	lifetime := binary.BigEndian.Uint32(resp[4:8])
 	externalPort := binary.BigEndian.Uint16(body[18:20])
 	var ext16 [16]byte
 	copy(ext16[:], body[20:36])
