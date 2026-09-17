@@ -180,7 +180,13 @@ type pageLeaf struct {
 //
 // One walk rather than `ctx.PageDict(i)` per page, which is what pdfcpu's own `addPages` does:
 // `PageDict` walks from the root every call, so a per-page loop is O(pages²) and is already a
-// measured cost in this package (`/pending 476` profiled it at 6 s of a 27 s digest).
+// measured cost in this package (`/pending 488` profiled it at 6 s of a 27 s digest; this comment
+// credited `/pending 476`, which is the form-authoring item and has nothing to do with it).
+//
+// **`ContentDigest` is the second caller** (`digestPageDicts`, attachments.go), which is why the
+// obligation two paragraphs down — *"The two walks must agree"* — now reaches three walks. It is
+// not authoritative there: a count disagreement with `ctx.PageCount` falls back to `PageDict`,
+// because that digest is a signed commitment and an optimisation may not re-decide what a page is.
 func collectLeaves(xt *model.XRefTable, root types.Dict) ([]pageLeaf, types.IndirectRef, error) {
 	pagesRef, ok := root["Pages"].(types.IndirectRef)
 	if !ok {

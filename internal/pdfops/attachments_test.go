@@ -791,8 +791,8 @@ func TestTheStreamBodyItselfEntersTheDigest(t *testing.T) {
 	// STIMULUS: the dicts really are identical, or the difference below could come from
 	// anywhere and this test says nothing about the body.
 	da, db := sha256.New(), sha256.New()
-	hashObject(nil, a.Dict, da, 0)
-	hashObject(nil, b.Dict, db, 0)
+	hashObject(nil, a.Dict, da, 0, nil)
+	hashObject(nil, b.Dict, db, 0, nil)
 	if !bytes.Equal(da.Sum(nil), db.Sum(nil)) {
 		t.Fatal("setup: the two dicts hash differently, so this measures the dict and not the body")
 	}
@@ -801,8 +801,8 @@ func TestTheStreamBodyItselfEntersTheDigest(t *testing.T) {
 	}
 
 	ha, hb := sha256.New(), sha256.New()
-	hashStreamBody(&a, ha)
-	hashStreamBody(&b, hb)
+	hashStreamBody(&a, ha, nil, 0)
+	hashStreamBody(&b, hb, nil, 0)
 	if bytes.Equal(ha.Sum(nil), hb.Sum(nil)) {
 		t.Error("two streams with identical dicts and different bodies hash the same — the " +
 			"page image can be substituted for one of the same size and the digest will not move")

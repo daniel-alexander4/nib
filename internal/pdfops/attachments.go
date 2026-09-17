@@ -286,10 +286,47 @@ const CeremonyRecordName = "nib-ceremony.json"
 // with a marker distinguishing the two — otherwise a document whose filter this build cannot
 // decode would hash identically to one where the decode produced nothing.
 func ContentDigest(pdf []byte) (string, error) {
+	d, _, err := contentDigest(pdf)
+	return d, err
+}
+
+// digestStats is what one ContentDigest call DID, as counters rather than as elapsed time.
+//
+// **It exists because the two costs this function was rewritten to remove are both quadratic in
+// pages, and a clock cannot assert that they are gone.** A timing test on a machine with other
+// work on it fails for reasons that have nothing to do with the digest, and it passes a
+// reintroduced O(pages²) loop whenever the box happens to be quiet. These counters do not move
+// with the load:
+//
+//   - `decodes` counts flate (and friends) decodes. A document whose pages share one embedded font
+//     must not decode it once per page — that was 74.6% of the profile.
+//   - `fastPath` says the one-pass page-tree walk was used rather than `PageDict` per page. False
+//     is CORRECT behaviour on a tree the two walks read differently (see digestPageDicts); it is a
+//     finding only when a document that should take it does not.
+//
+// Nothing outside this package reads them, and nothing branches on them.
+type digestStats struct {
+	decodes  int
+	fastPath bool
+}
+
+func contentDigest(pdf []byte) (string, *digestStats, error) {
+	st := &digestStats{}
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
-		return "", err
+		return "", st, err
 	}
+	d, err := digestReadContext(ctx, st)
+	return d, st, err
+}
+
+func digestReadContext(ctx *model.Context, st *digestStats) (string, error) {
+	return digestWithMemo(ctx, newStreamMemo(st), st)
+}
+
+// digestWithMemo takes the memo as an argument so a test can hand it one that is already at its
+// budget — the "stop storing" arm no real corpus document reaches.
+func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string, error) {
 	h := sha256.New()
 	// Every field is length-prefixed through these two helpers — see hashChunk. The first
 	// draft wrote the resource kind and name unprefixed, which is injective by luck rather
@@ -297,10 +334,22 @@ func ContentDigest(pdf []byte) (string, error) {
 	hashChunk(h, []byte("nib-content-digest"))
 	hashUint(h, ContentDigestVersion)
 	hashUint(h, uint64(ctx.PageCount))
+	pages := digestPageDicts(ctx)
+	st.fastPath = pages != nil
 	for i := 1; i <= ctx.PageCount; i++ {
-		d, _, _, err := ctx.PageDict(i, false)
-		if err != nil || d == nil {
-			return "", fmt.Errorf("page %d is unreadable: %w", i, err)
+		// `pages` is nil whenever the one-pass walk was not usable, and a nil SLICE must not be
+		// indexed — the first cut wrote `pages[i-1]` unguarded, which panics on exactly the
+		// malformed documents the fallback exists for, turning a safety valve into a crash.
+		var d types.Dict
+		if i-1 < len(pages) {
+			d = pages[i-1]
+		}
+		if d == nil {
+			var err error
+			d, _, _, err = ctx.PageDict(i, false)
+			if err != nil || d == nil {
+				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
+			}
 		}
 		c, err := ctx.PageContent(d, i)
 		if err != nil && err != model.ErrNoContent {
@@ -312,9 +361,9 @@ func ContentDigest(pdf []byte) (string, error) {
 		// It is per-page, and it is exactly what a general reviewer reads past.
 		for _, key := range []string{"MediaBox", "CropBox", "Rotate"} {
 			hashChunk(h, []byte(key))
-			hashObject(ctx.XRefTable, d[key], h, 0)
+			hashObject(ctx.XRefTable, d[key], h, 0, sc)
 		}
-		hashPageResources(ctx.XRefTable, d, h)
+		hashPageResources(ctx.XRefTable, d, h, sc)
 		// ANNOTATIONS, because the exclusion's premise is false in the window this digest
 		// is checked in. The argument was "everything else is covered by the signatures" —
 		// but CheckDocument exists for the pre-FIRST-signature hop, where there are none,
@@ -323,7 +372,7 @@ func ContentDigest(pdf []byte) (string, error) {
 		// widget /AP streams. Neither touches a content stream. For a contract, the form
 		// values ARE the agreement.
 		hashChunk(h, []byte("Annots"))
-		hashObject(ctx.XRefTable, d["Annots"], h, 0)
+		hashObject(ctx.XRefTable, d["Annots"], h, 0, sc)
 	}
 	// EMBEDDED FILES, v3 — and the exclusion above it was refuted the same way the
 	// annotations exclusion was, one paragraph up: by asking what the argument actually
@@ -345,6 +394,49 @@ func ContentDigest(pdf []byte) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// digestPageDicts returns the page dicts in document order, from ONE walk of the page tree.
+//
+// # Why not `ctx.PageDict(i)` per page, which is what this loop used to do
+//
+// `PageDict` walks from the page-tree root on every call, so a per-page loop is O(pages²). That is
+// already this package's measured cost — `collectLeaves`' own doc comment cites it — and it is the
+// second of the three terms `/pending 488` profiled. **There is a ONE-PASS walk in this package
+// already** (`collectLeaves`, `pageselect.go`), written for exactly this reason, and ADR-009 says a
+// rule reaching more than one call site is written once and every site calls it. A third page-tree
+// walk here would be the thing that ADR forbids, and `collectLeaves`' own comment already carries
+// the obligation: *"The two walks must agree."* This makes it three, through one door.
+//
+// # It is not authoritative, and the fallback is what keeps the digest a commitment
+//
+// `ContentDigest`'s output is `ceremony.Record.DocHash` (ADR-013): a value a convener signs and
+// every later party recomputes, where a moved byte reads as tampering across a point release. So
+// this is an OPTIMISATION and never a re-decision about what a page is. Two walks can disagree on a
+// malformed tree — pdfcpu counts a `/Type /Page` node that nonetheless carries `/Kids` as a page and
+// descends past it, `collectLeaves` descends into it; a childless `/Type /Pages` node goes the other
+// way. (The typeless node, the third case, cannot arrive: pdfcpu's read refuses one outright, which
+// `TestPDFCPURefusesATypelessPageNode` guards.)
+//
+// **A nil entry means "ask pdfcpu for this page"**, and a count disagreement nils the whole slice —
+// so a document where the walks differ is hashed exactly as it was before this function existed,
+// at the old cost. The fast path is taken only where the two agree on how many pages there are.
+func digestPageDicts(ctx *model.Context) []types.Dict {
+	root, err := ctx.XRefTable.Catalog()
+	if err != nil {
+		return nil
+	}
+	leaves, _, err := collectLeaves(ctx.XRefTable, root)
+	if err != nil || len(leaves) != ctx.PageCount {
+		return nil
+	}
+	out := make([]types.Dict, 0, len(leaves))
+	for _, l := range leaves {
+		// A nil dict would silently become "ask pdfcpu", which is the right answer anyway; it
+		// cannot happen, because collectLeaves errors on a node it cannot read.
+		out = append(out, l.dic)
+	}
+	return out
 }
 
 // hashEmbeddedFiles folds the catalog name tree into the digest, minus the ceremony record.
@@ -466,17 +558,22 @@ func hashUint(h hash.Hash, v uint64) {
 // looks: `ReadMirror` compares a stored digest through `Record.Verify`, and `Verify` never reads
 // `DigestVersion` at all — so a bumped build reading an in-flight ceremony reports "the copy on this
 // machine is damaged or incomplete", which is the false accusation that constant exists to prevent.
-func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int) {
-	hashObjectSeen(xt, o, h, depth, map[int]int{})
+func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int, sc *streamMemo) {
+	hashObjectSeen(xt, o, h, depth, map[int]int{}, sc, 0)
 }
 
-func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int, seen map[int]int) {
+// hashObjectSeen is `hashObject`'s recursion, carrying the visited set and the memo.
+//
+// `num` is the object number `o` was dereferenced from, or 0 for an object reached inline. It is
+// carried for the stream memo and for nothing else — it is NEVER hashed, which is the rule this
+// whole function exists to keep (see `hashObject`'s doc above).
+func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int, seen map[int]int, sc *streamMemo, num int) {
 	if depth > 16 {
 		hashChunk(h, []byte("#depth"))
 		return
 	}
 	if ir, ok := o.(types.IndirectRef); ok {
-		num := ir.ObjectNumber.Value()
+		num = ir.ObjectNumber.Value()
 		if idx, met := seen[num]; met {
 			// Met already in this walk: record THAT it recurred and where it first appeared, so
 			// "the same object again" stays distinguishable from "a different object here" without
@@ -506,17 +603,17 @@ func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int,
 		hashUint(h, uint64(len(keys)))
 		for _, k := range keys {
 			hashChunk(h, []byte(k))
-			hashObjectSeen(xt, v[k], h, depth+1, seen)
+			hashObjectSeen(xt, v[k], h, depth+1, seen, sc, 0)
 		}
 	case types.StreamDict:
 		hashChunk(h, []byte("#stream"))
-		hashObjectSeen(xt, v.Dict, h, depth+1, seen)
-		hashStreamBody(&v, h)
+		hashObjectSeen(xt, v.Dict, h, depth+1, seen, sc, 0)
+		hashStreamBody(&v, h, sc, num)
 	case types.Array:
 		hashChunk(h, []byte("#array"))
 		hashUint(h, uint64(len(v)))
 		for _, e := range v {
-			hashObjectSeen(xt, e, h, depth+1, seen)
+			hashObjectSeen(xt, e, h, depth+1, seen, sc, 0)
 		}
 	default:
 		// Names, strings, numbers, booleans. PDFString is canonical for these — the
@@ -525,19 +622,104 @@ func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int,
 	}
 }
 
+// streamMemo remembers the DECODED bytes of a stream object across one ContentDigest call.
+//
+// # What it changes, and what it must not
+//
+// `hashObject` starts a fresh `seen` map per top-level call, and `ContentDigest` makes one such
+// call per geometry key, per `/Annots` and **per resource name per page**. A font shared by a
+// thousand pages is therefore reached a thousand times, and each arrival flate-decodes the
+// embedded program again. Measured on a 1,000-page tagged document (`TestZZ`-style fixture,
+// 8,000 Markdown clauses): `hashPageResources` was 74.6% of `ContentDigest` and 94% of THAT was
+// `filter.flate.Decode`, under `hashStreamBody`.
+//
+// **This memo changes how OFTEN a stream is decoded and nothing else.** The bytes written into
+// the hash, the marker in front of them, the order they arrive in, and every `#again` index are
+// identical, because the decode is a pure function of `sd.Raw` and `sd.FilterPipeline` and
+// neither moves within one `model.Context`. The `seen` map is untouched: it stays per-call, which
+// ADR-013's territory requires — the doc comment on `hashObject` records that per-DOCUMENT `seen`
+// scope was measured to CHANGE the digest of ordinary documents, and it is not what this is.
+// `TestContentDigestIsByteIdenticalAcrossTheExternalCorpus` is the acceptance.
+//
+// # Why the second sighting and not the first
+//
+// The memo stores an object only when it is asked for a SECOND time. A one-page-one-image scan
+// reaches each image exactly once, so caching on first sight would hold every decoded image in
+// the document at once — hundreds of megabytes for a document whose whole point is that it is
+// large — and buy nothing, because nothing asks again. Deferring to the second sighting costs one
+// extra decode for each object that IS shared (two rather than one, against the thousand it
+// replaces) and spends memory only where there is reuse.
+//
+// # And it is bounded, because a memo that cannot be capped is a second byte cap
+//
+// ADR-005 bounds open documents at 512 MiB of `doc.data`; a digest that could allocate without a
+// ceiling would be a refusal a user cannot act on, arriving from a different door. Past
+// streamMemoBudget the memo simply stops storing — every later lookup re-decodes, which is what
+// the code did before this existed, so exceeding the budget costs speed and never correctness.
+type streamMemo struct {
+	met   map[int]bool          // object numbers reached once
+	body  map[int]decodedStream // object numbers reached twice or more, with their decode
+	spent int64
+	st    *digestStats
+}
+
+type decodedStream struct {
+	marker byte
+	body   []byte
+}
+
+// streamMemoBudget is how many decoded bytes one ContentDigest call may hold.
+//
+// 64 MiB, which is an eighth of ADR-005's per-document ceiling and comfortably more than the
+// embedded font programs of any document seen here (a full CJK face is ~20 MB, and a document
+// carrying three of them still fits). It is a budget on what is RETAINED, not on what is decoded.
+const streamMemoBudget = 64 << 20
+
+func newStreamMemo(st *digestStats) *streamMemo {
+	return &streamMemo{met: map[int]bool{}, body: map[int]decodedStream{}, st: st}
+}
+
 // hashStreamBody writes a stream's bytes, decoded where the filter decodes.
 //
 // The marker distinguishes the two: without it a document whose filter this build cannot
 // decode hashes identically to one where the decode produced nothing.
-func hashStreamBody(sd *types.StreamDict, h hash.Hash) {
-	body := sd.Raw
-	marker := byte(0)
-	if derr := sd.Decode(); derr == nil {
-		body = sd.Content
-		marker = 1
+func hashStreamBody(sd *types.StreamDict, h hash.Hash, sc *streamMemo, num int) {
+	d := decodeStream(sd, sc, num)
+	hashChunk(h, []byte{d.marker})
+	hashChunk(h, d.body)
+}
+
+// decodeStream is hashStreamBody's decode, through the memo when there is one.
+//
+// num == 0 means the stream was not reached through an indirect reference and so has no stable
+// key; it is decoded unmemoised. Object numbers are 1-based, so 0 cannot collide with a real one.
+func decodeStream(sd *types.StreamDict, sc *streamMemo, num int) decodedStream {
+	if sc != nil && num != 0 {
+		if d, ok := sc.body[num]; ok {
+			return d
+		}
 	}
-	hashChunk(h, []byte{marker})
-	hashChunk(h, body)
+	if sc != nil && sc.st != nil {
+		sc.st.decodes++
+	}
+	d := decodedStream{marker: 0, body: sd.Raw}
+	if derr := sd.Decode(); derr == nil {
+		d = decodedStream{marker: 1, body: sd.Content}
+	}
+	if sc == nil || num == 0 {
+		return d
+	}
+	if !sc.met[num] {
+		// First sighting: record that it happened and keep nothing. Most objects are reached
+		// exactly once and storing them is pure waste — see the type's doc comment.
+		sc.met[num] = true
+		return d
+	}
+	if n := int64(len(d.body)); sc.spent+n <= streamMemoBudget {
+		sc.spent += n
+		sc.body[num] = d
+	}
+	return d
 }
 
 // resourceKinds are the page-visible resource categories folded into ContentDigest.
@@ -572,7 +754,7 @@ var resourceKinds = []string{"Font", "XObject"}
 // Order comes from the resource NAMES, not from object numbers — object numbers change on
 // every pdfcpu rewrite and names do not, which is the same reason this hashes the stream
 // rather than the file.
-func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash) {
+func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash, sc *streamMemo) {
 	res, _ := xt.DereferenceDict(page["Resources"])
 	if res == nil {
 		hashChunk(h, []byte("#nores"))
@@ -593,7 +775,7 @@ func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash) {
 		hashUint(h, uint64(len(names)))
 		for _, name := range names {
 			hashChunk(h, []byte(name))
-			hashObject(xt, sub[name], h, 0)
+			hashObject(xt, sub[name], h, 0, sc)
 		}
 	}
 }

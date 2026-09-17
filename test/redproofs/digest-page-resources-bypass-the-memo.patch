@@ -1,0 +1,11 @@
+--- a/internal/pdfops/attachments.go
++++ b/internal/pdfops/attachments.go
+@@ -713,7 +713,7 @@
+ 		sc.met[num] = true
+ 		return d
+ 	}
+-	if n := int64(len(d.body)); sc.spent+n <= streamMemoBudget {
++	if n := int64(len(d.body)); false && sc.spent+n <= streamMemoBudget {
+ 		sc.spent += n
+ 		sc.body[num] = d
+ 	}
