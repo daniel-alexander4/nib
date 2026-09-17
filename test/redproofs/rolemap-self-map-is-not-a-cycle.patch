@@ -1,0 +1,11 @@
+--- a/internal/uacheck/structure.go
++++ b/internal/uacheck/structure.go
+@@ -157,7 +157,7 @@
+ 			mapped = d.name(roleMap[at])
+ 		}
+ 		if mapped == "" || mapped == at {
+-			res = roleResolution{standard: at, circular: mapped != "" && mapped == at}
++			res = roleResolution{standard: at}
+ 			break
+ 		}
+ 		at = mapped

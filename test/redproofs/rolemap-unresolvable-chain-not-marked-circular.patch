@@ -1,0 +1,12 @@
+--- a/internal/uacheck/structure.go
++++ b/internal/uacheck/structure.go
+@@ -167,9 +167,6 @@
+ 	// no type at the end of it and the second types cleanly, so the two states are not interchangeable —
+ 	// but both are the circular mapping ua1 7.1 t6 forbids, and that rule asks this bit rather than
+ 	// re-walking the map for itself.
+-	if res.unresolved != "" {
+-		res.circular = true
+-	}
+ 	for _, p := range path {
+ 		d.roles[p] = res
+ 	}

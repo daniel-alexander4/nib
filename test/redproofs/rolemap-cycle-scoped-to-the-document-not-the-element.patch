@@ -1,0 +1,30 @@
+--- a/internal/uacheck/rules_structure.go
++++ b/internal/uacheck/rules_structure.go
+@@ -1,6 +1,10 @@
+ package uacheck
+ 
+-import "fmt"
++import (
++	"fmt"
++
++	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
++)
+ 
+ // The first rule, implemented to prove the shape — `PLAN-accessibility.md` P07.S01.
+ //
+@@ -131,6 +135,15 @@
+ 	// `CannotCheck` there would point law 4's third verdict at something nib did establish. The reverse
+ 	// is not true, which is why the guard is still here: an element past the bound may be the one on the
+ 	// loop, so "no cycle among the elements nib read" is not "no cycle".
++	if root := d.dict(d.Catalog["StructTreeRoot"]); root != nil {
++		if rm := d.dict(root["RoleMap"]); rm != nil {
++			for k := range rm {
++				if d.roleMapCircular(types.Dict{"S": types.Name(k)}) {
++					return Result{Verdict: Fail, Why: "the role map contains a circular mapping", Where: "/StructTreeRoot /RoleMap"}
++				}
++			}
++		}
++	}
+ 	for _, n := range nodes {
+ 		if !d.roleMapCircular(n.dict) {
+ 			continue

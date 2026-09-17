@@ -794,6 +794,18 @@ Acceptance:
 - `7.1 t5`, `t6` and `t7` agree with veraPDF on their corpus files, each with a `corpusReach` row measured.
 - A pass fixture for each of the three, because `7.1 t5-t7`'s corpus coverage is not all-pass.
 
+**Two thirds of this slice is already spent.** `/pending 507` landed the resolver and `/pending 548`
+landed **`7.1 t6`** — registered, `corpusReach` 294, pass and fail fixtures in both the unit set and the
+oracle corpus, six red proofs. What is left here is `7.1 t5` and `t7`, and two things 548 measured that
+neither of them may be built without:
+- **The corpus's file names are the specification's test numbering, not veraPDF's rule numbering.**
+  `7.1-t05-fail-d.pdf` is a 7.1-**6** failure and veraPDF PASSES 7.1-5 on it. Read the clause off a
+  veraPDF run, never off a file name; a rule registered under the wrong number is compared against the
+  wrong oracle on all 297 files and the corpus guard agrees with it.
+- **These clauses are element-scoped.** veraPDF's object is `PDStructElem` for `7.1-6` and `7.1-7` and
+  `SENonStandard` for `7.1-5`, so the verdict is per element and a fact about the dictionary alone is not
+  a failure.
+
 #### P03.S02 — the containment matrix, one door
 Scope: a declarative table of (standard type → permitted parents, permitted kids) plus one generator that
 registers a rule per clause from it. Lands `7.2 t3-t10`, `t17-t20`, `t26`, `t27`, `t36-t38` — seventeen

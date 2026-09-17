@@ -1,0 +1,11 @@
+--- a/internal/uacheck/rules_structure.go
++++ b/internal/uacheck/rules_structure.go
+@@ -152,7 +152,7 @@
+ 		// No element, no subject — veraPDF reports 0 passed and 0 failed checks over such a document, and
+ 		// the missing structure is 7.1 t11's to report, not this rule's.
+ 		return Result{
+-			Verdict: NotApplicable,
++			Verdict: Pass,
+ 			Why:     "the document has no structure elements, so no element's type is resolved through the role map at all",
+ 		}
+ 	}

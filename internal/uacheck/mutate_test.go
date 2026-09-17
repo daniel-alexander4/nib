@@ -616,6 +616,67 @@ func withoutDCTitle(t *testing.T, pdf []byte) []byte {
 	})
 }
 
+// withRoleMapCycle installs a `/Loopy → /Ringy → /Loopy` role map on the structure tree root, and when
+// `used` is true retypes exactly one structure element to `/Loopy` — `/pending 548`.
+//
+// **The two halves are a pair and neither is redundant.** veraPDF's 7.1-6 object is `PDStructElem`, so the
+// used case is the one it fails and the unused case is one it passes with the same dictionary in the file.
+// A document-scoped reading of the clause fails the unused case, and nothing else in the corpus tells the
+// two readings apart.
+func withRoleMapCycle(t *testing.T, pdf []byte, used bool) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		root, rerr := ctx.DereferenceDict(cat["StructTreeRoot"])
+		if rerr != nil || root == nil {
+			return fmt.Errorf("the fixture has no structure tree, so a role map has nowhere to live")
+		}
+		if _, has := root["RoleMap"]; has {
+			return fmt.Errorf("the fixture already carries a /RoleMap, so this mutation would be editing one rather than installing it")
+		}
+		root["RoleMap"] = types.Dict{"Loopy": types.Name("Ringy"), "Ringy": types.Name("Loopy")}
+		if !used {
+			return nil
+		}
+		// Retype the FIRST element below the root's direct children. The root's own child is the
+		// `Document` element and retyping it would take every descendant's context with it; one leaf
+		// carries the defect and leaves the rest of the tree for the other clauses to keep checking.
+		var retyped types.Dict
+		var walk func(o types.Object, depth int)
+		walk = func(o types.Object, depth int) {
+			if retyped != nil || depth > 32 {
+				return
+			}
+			if arr, err := ctx.DereferenceArray(o); err == nil && arr != nil {
+				for _, k := range arr {
+					walk(k, depth+1)
+				}
+				return
+			}
+			d, err := ctx.DereferenceDict(o)
+			if err != nil || d == nil {
+				return
+			}
+			if _, isElem := d["S"]; !isElem {
+				return
+			}
+			if depth > 0 {
+				retyped = d
+				d["S"] = types.Name("Loopy")
+				return
+			}
+			walk(d["K"], depth+1)
+		}
+		walk(root["K"], 0)
+		if retyped == nil {
+			return fmt.Errorf("no structure element below the root's own child was found to retype")
+		}
+		return nil
+	})
+}
+
 // withPacketBody installs a metadata packet whose rdf:Description holds body, with the dc and xmp
 // namespaces bound — the shapes law 5's guard measured 7.2 t33 against.
 func withPacketBody(t *testing.T, pdf []byte, body string) []byte {

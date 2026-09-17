@@ -42,9 +42,12 @@ var corpusAllow = map[string]string{}
 
 // corpusReach is, per implemented clause, the number of corpus files on which veraPDF evaluated the clause and
 // nib settled it — measured 2026-09-15 over the 297-file set. Every implemented clause has a row.
+//
+// `7.1 t6` joins at 294 with `/pending 548`, and no other row moved: the walk gained a third result and
+// changed neither of the two the other rules read. Scored pairs 5,557 → 5,852.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
-	"7.1 t3": 292, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
+	"7.1 t3": 292, "7.1 t6": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 27,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,
