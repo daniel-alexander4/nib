@@ -1,13 +1,13 @@
 diff --git a/internal/pdfops/pageselect.go b/internal/pdfops/pageselect.go
-index 2056ead..89f85e4 100644
+index c1faeb8..9b9aab3 100644
 --- a/internal/pdfops/pageselect.go
 +++ b/internal/pdfops/pageselect.go
-@@ -414,7 +414,7 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
+@@ -420,7 +420,7 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
  		// as the whole composed document's contents page, describing pages that have since moved —
  		// which is the original decision's own "sends the reader to the wrong place", now true of the
  		// composing doors and no longer of this one.
 -		outlines = carryOutline(xt, root, keptPages)
 +		outlines = nil
- 	}
- 
- 	// **Optional content is read OUTSIDE the `carry` gate, and that placement is the decision**
+ 		// **`/OpenAction` rides the outline's gate, not optional content's** (`/pending 555`,
+ 		// `openactioncarry.go`). It is in this window for the outline's first reason — a named
+ 		// destination resolves through the `/Dests` tree `pruneNames` is about to prune, so it has
