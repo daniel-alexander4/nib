@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -651,10 +652,34 @@ func TestTheHopSweepStopsArmingForAProceedingThatHasVerifiablyEnded(t *testing.T
 	// CONTROL — the sweep really does arm for this ceremony as things stand. Six `continue`s sit
 	// above the new check, and every one of them produces exactly the "did not arm" this test
 	// would otherwise be reading as a pass.
+	//
+	// **It prints the session's NOTICE when it fails, and that is `/pending 475`'s first step.**
+	// This control has failed three times in full-suite runs under a concurrent second suite and
+	// never once solo, and every failure said only *"did not arm"* — which is what all six
+	// `continue`s say and what a genuine arm failure says too, so three data points bought nothing.
+	// The P01 phase-close review refuted the obvious hypothesis (a shared `HOME`: this test starts
+	// through `startServerWith`, which sets one at `helpers_test.go:229`) and named the likelier
+	// cause — `armCeremonyHop` failing under load and returning through `noteFailure`
+	// (`ceremonyarm.go:271`), which records a `ceremony-arm-failed` notice and returns silently.
+	// `status().Notice` is the only place that reason exists, so a control that does not print it
+	// is a control that cannot be diagnosed however often it fires.
+	//
+	// **Nil is itself an answer and is printed as one.** No notice means the sweep never reached
+	// `armCeremonyHop` at all — one of the six `continue`s in the loop, or one of the four bare
+	// `return`s above it (the ceremony switch, `ListStored`, `identity`, `Fingerprint`, at
+	// `ceremonyarm.go:161-181`), none of which records anything. That is a different fault from an
+	// arm that was attempted and failed, so the two must not render the same.
 	srv.rearmCeremonies(v)
-	if !srv.sess.status().Armed {
-		t.Fatal("control: the sweep did not arm for a live ceremony this machine accepted, so " +
-			"the assertions below cannot tell the ended-check from any other refusal in the sweep")
+	if st := srv.sess.status(); !st.Armed {
+		notice := "none — the sweep never reached armCeremonyHop at all (one of the six " +
+			"`continue`s, or one of the four bare returns above the loop), so this is not an " +
+			"arm that was attempted and failed"
+		if st.Notice != nil {
+			notice = fmt.Sprintf("%s: %s — %s", st.Notice.What, st.Notice.Summary, st.Notice.Detail)
+		}
+		t.Fatalf("control: the sweep did not arm for a live ceremony this machine accepted, so "+
+			"the assertions below cannot tell the ended-check from any other refusal in the "+
+			"sweep.\n\tsession notice: %s", notice)
 	}
 	if code, body := postForCode(t, c, csrf, ts.URL+"/api/session/disarm", struct{}{}); code != 200 {
 		t.Fatalf("setup: could not disarm between the control and the test: %d %s", code, body)
