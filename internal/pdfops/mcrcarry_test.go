@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"nib/internal/testpdf"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -915,5 +917,51 @@ func TestTheCarryRepointsAnOBJRAndLeavesItNoStm(t *testing.T) {
 	})
 	if seen == 0 {
 		t.Error("no /OBJR survived the carry, so this test graded nothing about the arm it names")
+	}
+}
+
+// TestTheUAClaimDropDoesNotPERTURBThePagesTheCarryMATCHES — /pending 535(b).
+//
+// The carry matches each Form XObject to its source page by **byte equality on decoded page
+// content** (`tagcarry.go`'s placement loop), and `NUp` hands it two documents that are not the
+// same one: `src` is the caller's original, while `composed` has been through `withoutUAClaim` →
+// `dropUAIdentificationBytes`, which does a full `ReadValidateAndOptimize` + `WriteContext` rewrite
+// whenever a claim was present.
+//
+// That rewrite touches the catalog and metadata rather than page content — **and nothing asserted
+// it**. A named search found no test driving `LabelUA` and then `NUp`, so the one property the
+// whole match rests on was unpinned: if the rewrite ever re-encoded a content stream, every match
+// would miss at once, `len(places) != len(sources)` would fire, and every labelled document would
+// silently lose its tags through an n-up. The failure is total rather than partial, which is
+// exactly the kind a fixture without a UA claim cannot see.
+func TestTheUAClaimDropDoesNotPERTURBThePagesTheCarryMATCHES(t *testing.T) {
+	src := labelReady(t, "# Notes\n\nA paragraph of prose.\n\nAnd a second one.\n")
+	labelled, err := LabelUA(src, true)
+	if err != nil {
+		t.Fatalf("LabelUA refused a conversion that earns it: %v", err)
+	}
+
+	// Stimulus asserted before the response: the document must REALLY carry a claim, or
+	// `withoutUAClaim` short-circuits and the rewrite this test exists to cross never happens.
+	if ok, cerr := testpdf.ClaimsUA(labelled); cerr != nil || !ok {
+		t.Fatalf("setup: the fixture carries no PDF/UA claim (%v), so withoutUAClaim does nothing "+
+			"and the asymmetry under test is not exercised", cerr)
+	}
+	if got := fate(labelled); got != "carried" {
+		t.Fatalf("setup: the labelled document reports %q before any n-up", got)
+	}
+
+	out, err := NUp(labelled, 2, false)
+	if err != nil {
+		t.Fatalf("NUp: %v", err)
+	}
+	if got := fate(out); got != "carried" {
+		t.Errorf("an n-up of a PDF/UA-labelled document reports %q. The carry matches a form to its "+
+			"source page by decoded content bytes, and it is handed the PRE-drop original against a "+
+			"POST-drop composition — so a claim drop that perturbed page content would miss every "+
+			"match at once and lose the tree of every labelled document", got)
+	}
+	if d := completeness(t, out); len(d) > 0 {
+		t.Errorf("the carry of a labelled document is not complete: %v", d)
 	}
 }
