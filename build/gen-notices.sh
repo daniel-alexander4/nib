@@ -455,6 +455,23 @@ licensed under the SIL Open Font License, Version 1.1 (the full license text is
 reproduced in the Noto Sans section above). Upstream:
 <https://github.com/liberationfonts/liberation-fonts>.
 
+**The stamp faces are renamed before use, and the vendored files are not touched.**
+The `.ttf` files shipped here are upstream's, byte for byte. On the way into pdfcpu's
+font registry, Nib rewrites the *name* records of the three stamp families —
+`LiberationSans` becomes `NibSans`, `Liberation Serif` becomes `Nib Serif`, and so on —
+and nothing else: the glyph outlines, the advance widths, the character map and the
+hinting are upstream's bytes, which Nib's own tests assert table by table and metric by
+metric. This is done so that pdfcpu, which matches a stamp's font to a font the document
+already carries **by name alone**, cannot mistake an office suite's own
+`BAAAAA+LiberationSans` for Nib's copy and rebuild the user's font from it.
+
+pdfcpu embeds a *subset* of the face in each PDF it stamps — it prunes the `glyf` and
+`loca` tables to the glyphs actually used — so what reaches a document is in any case a
+modified version of the font. Renaming it is what OFL 1.1 §3 asks of a modified version
+carrying a Reserved Font Name. The copyright notice (name id 0), the trademark line
+(id 7) and the license and its URL (ids 13 and 14) are carried through **unchanged**,
+which is what §2 asks; only the name-bearing records are rewritten.
+
 ---
 
 ## NanumGothic

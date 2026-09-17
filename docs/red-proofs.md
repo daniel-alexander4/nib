@@ -5667,6 +5667,29 @@ uses an explicit `[page /Fit]` array now, the one shape that names a page dictio
 
 `recorded` 435 → 437.
 
+## /pending 494 — an edit on an office-suite document is stamped in a Base-14 face (2026-09-16)
+
+**Four mutations, no survivors.** Each is the single condition the fix rests on, weakened alone.
+
+| proof | check | expects |
+|---|---|---|
+| `stamp-faces-keep-upstreams-name` — the rename is a no-op, so pdfcpu's matcher sees the document's own `BAAAAA+LiberationSans` again and `unreusableFace` drops the stamp to Base-14 | `go test ./internal/pdfops/ -run TestAStampOnAnOfficeDocumentEmbedsItsFace -count=1` | `still fails PDF/UA 7.21.4.1` |
+| `stamp-face-installs-under-upstreams-name` — the map asks for `NibSans` and the bytes handed to pdfcpu are still upstream's, so the `.gob` lands under the other name | `go test ./internal/pdfops/ -run TestEveryStampFaceInstallsUnderTheNameNibAsksFor -count=1` | `installed under some other name` |
+| `the-rename-reaches-past-the-name-table` — `renamedFace` also touches `hmtx`, which is every advance width the client's preview and the fit verdict were measured against | `go test ./internal/pdfops/ -run TestTheRenamedStampFaceIsTheSameFace -count=1` | `the rename is not confined to the name` |
+| `the-rename-rewrites-the-trademark-line` — name id 7 is treated as a name, so *"Liberation is a trademark of Red Hat, Inc."* becomes a sentence about a trademark that does not exist | `go test ./internal/pdfops/ -run TestTheRenameKeepsTheCopyrightTrademarkAndLicenceRecords -count=1` | `the trademark line, was rewritten` |
+
+**Row 4 exists because the obvious test for it would have been unfalsifiable.** The first draft asked
+`renameableNameIDs` which records are names and then checked that everything else was untouched —
+which agrees with that map however it is edited, so moving 7 INTO it would have kept the test green
+while the trademark line was rewritten. The protected set is written out in the test instead.
+
+**The stimulus floor is what makes row 1 mean anything.** The fixture is converted through nib's own
+office door at test time, and the test refuses to grade anything until `unreusableFace` confirms the
+document really carries a font that, under upstream's name, nib would have had to refuse. Without it
+the whole test passes on a document with nothing to collide with.
+
+`recorded` 437 → 441.
+
 ## /pending 525 — the catalog keys a real producer carries and the allowlist dropped (2026-09-16)
 
 **The scan came first and the dispositions follow it.** Every catalog in veraPDF's PDF_UA-1 corpus,

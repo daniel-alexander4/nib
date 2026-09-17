@@ -1,0 +1,17 @@
+--- a/internal/pdfops/ocrfonts.go
++++ b/internal/pdfops/ocrfonts.go
+@@ -387,12 +387,12 @@
+ 	if err != nil {
+ 		return mdpdf.Font{}
+ 	}
+-	renamed, err := renamedFace(bb)
++	_, err = renamedFace(bb)
+ 	if err != nil {
+ 		log.Printf("stamped text: %s could not be renamed to %s (%v)", upstream, nibFaceName(upstream), err)
+ 		return mdpdf.Font{}
+ 	}
+-	return mdpdf.Font{Name: nibFaceName(upstream), Data: renamed}
++	return mdpdf.Font{Name: nibFaceName(upstream), Data: bb}
+ }
+
+ // stampFacesInstalled installs the three stamp families under nib's names and reports whether

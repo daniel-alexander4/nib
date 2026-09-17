@@ -1,0 +1,11 @@
+--- a/internal/pdfops/fontrename.go
++++ b/internal/pdfops/fontrename.go
+@@ -62,7 +62,7 @@
+ // byte for byte.
+ var renameableNameIDs = map[uint16]bool{
+ 	1: true, 3: true, 4: true, 6: true,
+-	16: true, 17: true, 18: true, 20: true, 21: true, 22: true, 25: true,
++	7: true, 16: true, 17: true, 18: true, 20: true, 21: true, 22: true, 25: true,
+ }
+
+ var errNotATrueTypeFile = errors.New("pdfops: not a TrueType file this can rename")
