@@ -128,6 +128,12 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
 		// structure editor's own door retypes a correctly nested heading one level too deep.
 		oracleDoc{"Markdown, second heading retyped H3 (skips a level)", headingSkipped(t)},
+		// 7.1 t6 in both directions (`/pending 548`), and the pair is what settles whose subject the clause
+		// has. No product door writes a /RoleMap at all, so both are mutations: the SAME circular dictionary
+		// in both files, entered by an element in the first and by nothing in the second. veraPDF fails the
+		// first and passes the second, which is the element-scoped reading measured rather than argued.
+		oracleDoc{"Markdown + title + lang, one element on a role-map loop", withRoleMapCycle(t, mdl, true)},
+		oracleDoc{"Markdown + title + lang, a role-map loop no element enters", withRoleMapCycle(t, mdl, false)},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -268,6 +274,14 @@ var knownCannotCheck = map[string]string{
 	// measurement could not state (rules_semantic.go's header). nib names the header cell with no Scope —
 	// the correction either way — rather than guess a cell-by-cell verdict.
 	"LibreOffice table and figure − /Scope / 7.5 t1": "an unscoped header over data cells that name no headers",
+	// `/pending 548`: the three tree rules over the document whose role map loops. They KEEP answering
+	// `CannotCheck` and that is right — the cycle is reported by 7.1 t6, which is the clause about the
+	// cycle, and the other three still cannot type the element their own subject might be. A rule that
+	// started answering here would be typing an element off a chain that reaches no type, which is the
+	// false pass `/pending 507` closed. Three rows, not one, because each names a different subject.
+	"Markdown + title + lang, one element on a role-map loop / 7.3 t1":   "an element on a role-map loop may be the Figure",
+	"Markdown + title + lang, one element on a role-map loop / 7.4.2 t1": "an element on a role-map loop may be a numbered heading, and one moves the whole sequence",
+	"Markdown + title + lang, one element on a role-map loop / 7.5 t1":   "an element on a role-map loop may be the Table, a row or a cell",
 }
 
 // notYetReachable records a veraPDF state a clause cannot reach on any corpus document yet, with the
@@ -297,7 +311,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 25
+	const wantGenerated = 27
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

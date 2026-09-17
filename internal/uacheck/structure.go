@@ -101,15 +101,22 @@ func (d *Document) parentTree() (map[int]types.Object, string) {
 //
 // A role map is a finite dictionary, so following it terminates: every step either stops or reaches a
 // name not yet on the path. **Only a CYCLE is unresolvable**, and that is the second result — a
-// verdict no rule may turn into a pass. A name mapped to ITSELF is a fixed point, not a cycle: it
-// resolves to itself, which is what the ten-hop loop did and what leaves the corpus unmoved.
+// verdict no rule may turn into a pass. A name mapped to ITSELF still RESOLVES — a conforming reader
+// recognises the type before it consults the map — so it is the second result's exception and leaves the
+// corpus unmoved, which is what the ten-hop loop did too.
+//
+// **It is not, however, a non-cycle, and this comment said it was until `/pending 548`.** Measured:
+// `7.1 General/7.1-t06-fail-a.pdf` carries `/RoleMap << /LI /LI >>` and veraPDF FAILS ua1 7.1-6 on its two
+// `LI` elements, passing the other twelve. Resolving and being circular are different questions; `circular`
+// is the third result and it answers the second one.
 //
 // **The cycle is not hypothetical**: veraPDF's own corpus carries one, in `7.1 General/7.1-t05-fail-d.pdf`
-// (`/Standard → /Text body → /Standard`), which is the file written to fail ua1 7.1 t5 — *"RoleMap shall
-// not contain a circular mapping"*. nib does not implement 7.1 t5, and it answered `NotApplicable` and
-// `Pass` over that file's elements; it now answers `CannotCheck` for the three rules that ask an element's
-// type. That is the whole corpus's only cycle: 0 false pass and 0 false fail either way, and `corpusReach`
-// unmoved, because those three pairs were never settled.
+// (`/Standard → /Text body → /Standard`). nib answered `NotApplicable` and `Pass` over that file's
+// elements; it now answers `CannotCheck` for the three rules that ask an element's type, and since
+// `/pending 548` it FAILS the clause the cycle actually breaks — **ua1 7.1 t6**, not 7.1 t5; the corpus
+// file's name is the specification's test numbering and not veraPDF's, and `rules_structure.go` has the
+// measurement. The claim "that is the whole corpus's only cycle" was wrong in the same breath:
+// `7.1-t06-fail-a.pdf`'s self-map is a second one, and it is the one this comment's own reasoning missed.
 //
 // Measured cost with the per-document memo below, on a 5,000-entry role map forming one chain with
 // 5,000 elements each starting at a different point in it — the worst shape there is: 1.9 ms for all
@@ -150,15 +157,39 @@ func (d *Document) standardType(elem types.Dict) (standard string, unresolved st
 			mapped = d.name(roleMap[at])
 		}
 		if mapped == "" || mapped == at {
-			res = roleResolution{standard: at}
+			res = roleResolution{standard: at, circular: mapped != "" && mapped == at}
 			break
 		}
 		at = mapped
+	}
+	// **`circular` is set in ONE place, from whichever way the walk revisited a name** (`/pending 548`):
+	// it came back to a name already on the path, or the map sent a name straight to itself. The first has
+	// no type at the end of it and the second types cleanly, so the two states are not interchangeable —
+	// but both are the circular mapping ua1 7.1 t6 forbids, and that rule asks this bit rather than
+	// re-walking the map for itself.
+	if res.unresolved != "" {
+		res.circular = true
 	}
 	for _, p := range path {
 		d.roles[p] = res
 	}
 	return res.standard, res.unresolved
+}
+
+// roleMapCircular reports whether following the role map from elem's `/S` revisits a name — the fact ua1
+// 7.1 t6 is about — taken from `standardType`'s own walk rather than from a second one (`/pending 548`).
+//
+// **It is deliberately not derivable from the other two results.** An unresolvable chain is circular AND a
+// self-map is circular, but a self-map resolves to a type, so `unresolved != ""` misses it and
+// `standard == ""` misses it too. `/RoleMap << /LI /LI >>` is the case, and it is in the corpus.
+func (d *Document) roleMapCircular(elem types.Dict) bool {
+	name := d.name(elem["S"])
+	if name == "" {
+		return false
+	}
+	// standardType memoises the whole path it walked, so this is that walk's answer and never another one.
+	d.standardType(elem)
+	return d.roles[name].circular
 }
 
 // standardTypes resolves every node's standard type in one call, indexed like nodes, with the first

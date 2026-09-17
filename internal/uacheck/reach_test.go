@@ -89,13 +89,15 @@ func deepStructure(depth int) []byte {
 
 func TestStructurePastTheTreeBoundIsCannotCheckNeverAPass(t *testing.T) {
 	shallow := deepStructure(5)
-	for clause, want := range map[string]Verdict{"7.4.2 t1": Fail, "7.3 t1": Fail, "7.5 t1": Pass} {
+	// `7.1 t6` joins the list with `/pending 548`: an element past the bound may be the one standing on a
+	// circular role mapping, so "no cycle among the elements nib read" is not "no cycle".
+	for clause, want := range map[string]Verdict{"7.4.2 t1": Fail, "7.3 t1": Fail, "7.5 t1": Pass, "7.1 t6": Pass} {
 		if got := verdictOf(t, shallow, clause); got.Verdict != want {
 			t.Fatalf("control: five Divs down, %s reports %v (%s), want %v — the fixture does not carry its subject", clause, got.Verdict, got.Why, want)
 		}
 	}
 	deep := deepStructure(70)
-	for _, clause := range []string{"7.4.2 t1", "7.3 t1", "7.5 t1"} {
+	for _, clause := range []string{"7.4.2 t1", "7.3 t1", "7.5 t1", "7.1 t6"} {
 		got := verdictOf(t, deep, clause)
 		if got.Verdict != CannotCheck {
 			t.Errorf("seventy Divs down, %s reports %v (%s) over elements nib never read, want CannotCheck", clause, got.Verdict, got.Why)

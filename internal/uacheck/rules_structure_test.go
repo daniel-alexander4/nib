@@ -139,6 +139,131 @@ func emptyRootFixture() []byte {
 // The same assembly `internal/pdfops/corpus_test.go` uses, written here rather than exported from
 // there because a test helper exported across packages to save twenty lines is a dependency between
 // two test suites — and this package's fixtures are about the checker, not about pdfops.
+// The circular-role-map rule — `/pending 548`.
+//
+// `shortread_test.go` already builds the documents: `roleMapDoc(resolvedRoleMap)` types its three elements
+// through a role map that terminates, and `roleMapDoc(cyclicRoleMap)` sends `/Alpha` around
+// `/Delta → /Echo → /Alpha`. Those fixtures asserted what the THREE TREE RULES do over a cycle; these
+// assert the rule that is about the cycle itself.
+
+// unusedCycleRoleMap resolves every type an element actually uses and leaves a loop no element enters.
+//
+// It is the shape a document-scoped reading of *"a circular mapping shall not exist"* fails, and the shape
+// a producer leaves behind when a private type stops being emitted but its mapping stays.
+const unusedCycleRoleMap = resolvedRoleMap + " /Xray /Yankee /Yankee /Xray"
+
+func TestACircularRoleMapFailsTheClauseThatIsAboutIt(t *testing.T) {
+	// Control: the same document with the map resolved must PASS, or a Fail below would be a rule that
+	// fails whatever it is shown.
+	if got := verdictOf(t, roleMapDoc(resolvedRoleMap), "7.1 t6"); got.Verdict != Pass {
+		t.Fatalf("control: with the role map resolved, 7.1 t6 reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, roleMapDoc(cyclicRoleMap), "7.1 t6")
+	if got.Verdict != Fail {
+		t.Fatalf("with /Alpha sent around /Delta → /Echo → /Alpha, 7.1 t6 reports %v (%s), want Fail — nib holds "+
+			"the cycle and this is the clause it breaks", got.Verdict, got.Why)
+	}
+	// The reason must name the loop, and the location the element standing on it. A Fail that says only
+	// "7.1 t6 fails" reproduces the problem P01 spent a slice discovering veraPDF had already solved.
+	if !strings.Contains(got.Why, "loop") || !strings.Contains(got.Why, "circular") {
+		t.Errorf("the reason %q does not say the role map is circular", got.Why)
+	}
+	if !strings.Contains(got.Where, "/Alpha") {
+		t.Errorf("the location %q does not name the element whose type is on the loop", got.Where)
+	}
+}
+
+// TestACircularRoleMapNoElementUsesIsNotAFailure — veraPDF's object for 7.1-6 is `PDStructElem`, so the
+// subject is the element and not the dictionary. Measured on `7.1-t05-fail-d.pdf`: 2 passed checks and 2
+// failed over four elements, the two passes being the ones whose `/S` is off the loop.
+//
+// A document-scoped implementation passes every other assertion in this file and fails only here.
+func TestACircularRoleMapNoElementUsesIsNotAFailure(t *testing.T) {
+	got := verdictOf(t, roleMapDoc(unusedCycleRoleMap), "7.1 t6")
+	if got.Verdict != Pass {
+		t.Errorf("with /Xray ↔ /Yankee looping and no element naming either, 7.1 t6 reports %v (%s), want Pass — "+
+			"veraPDF checks the element, not the dictionary", got.Verdict, got.Why)
+	}
+}
+
+// deepStructureCycledAtTheTop is `reach_test.go`'s deep tree with a role map loop and the root's own first
+// element standing on it, so the cycle is among the elements nib READ and the unread tail is below it.
+func deepStructureCycledAtTheTop(depth int) []byte {
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R 100 0 R] /RoleMap << /Alpha /Delta /Delta /Alpha >> >>",
+		8: "<< /Type /StructElem /S /Alpha /P 7 0 R >>",
+	}
+	parent := 7
+	for i := 0; i < depth; i++ {
+		n := 100 + i
+		kid := fmt.Sprintf("%d 0 R", n+1)
+		if i == depth-1 {
+			kid = "[20 0 R]"
+		}
+		objs[n] = fmt.Sprintf("<< /Type /StructElem /S /Div /P %d 0 R /K %s >>", parent, kid)
+		parent = n
+	}
+	objs[20] = fmt.Sprintf("<< /Type /StructElem /S /P /P %d 0 R >>", parent)
+	return buildPDF(objs)
+}
+
+// TestACycleAmongTheElementsNibReadIsSettledEvenWhenTheTailIsNot — the ORDER inside the rule, which is a
+// decision and not an accident.
+//
+// `reach_test.go` holds the other half: with no cycle among the elements nib read, an unread tail is
+// `CannotCheck`, because the element past the bound may be the one on the loop. The converse does not
+// follow. A cycle nib has already seen is established, and an unread tail cannot un-establish it —
+// answering `CannotCheck` there would aim law 4's third verdict at something nib did settle.
+func TestACycleAmongTheElementsNibReadIsSettledEvenWhenTheTailIsNot(t *testing.T) {
+	if got := verdictOf(t, deepStructureCycledAtTheTop(5), "7.1 t6"); got.Verdict != Fail {
+		t.Fatalf("control: five Divs down, 7.1 t6 reports %v (%s) over a tree whose top element is on a loop, want Fail", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, deepStructureCycledAtTheTop(70), "7.1 t6")
+	if got.Verdict != Fail {
+		t.Errorf("seventy Divs down, 7.1 t6 reports %v (%s) — the tail is unread, but the cycle at the top is "+
+			"one nib established, and it stays established", got.Verdict, got.Why)
+	}
+}
+
+// selfMapRoleMap types `/Alpha` as `H1` through a chain whose last name maps to ITSELF.
+//
+// It is `7.1 General/7.1-t06-fail-a.pdf`'s shape (`/RoleMap << /LI /LI >>`) with this file's names: the
+// element resolves to a standard type AND the map is circular, which is the pair of facts a rule reading
+// only `standardType`'s verdict cannot hold at once.
+const selfMapRoleMap = "/Alpha /H1 /H1 /H1 /Bravo /Figure /Charlie /Table"
+
+// TestASelfMappedTypeIsCircularAndStillTypes — measured on that corpus file: veraPDF fails ua1 7.1-6 on the
+// two `LI` elements and passes the other twelve, so a self-map is a circular mapping. The typing is
+// untouched, because a conforming reader recognises `LI` before it consults the map — and the second half of
+// this test is what stops the first half being bought by breaking three shipped rules.
+func TestASelfMappedTypeIsCircularAndStillTypes(t *testing.T) {
+	pdf := roleMapDoc(selfMapRoleMap)
+	got := verdictOf(t, pdf, "7.1 t6")
+	if got.Verdict != Fail {
+		t.Errorf("with /H1 mapped to itself, 7.1 t6 reports %v (%s), want Fail — a self-map is a circular mapping", got.Verdict, got.Why)
+	} else if !strings.Contains(got.Why, "to itself") {
+		t.Errorf("the reason %q does not say the role map sends the type to itself", got.Why)
+	}
+	// And the element still TYPES: 7.4.2 t1 places it as the document's H1 rather than answering
+	// CannotCheck over an element it could not resolve.
+	if h := verdictOf(t, pdf, "7.4.2 t1"); h.Verdict != Pass {
+		t.Errorf("with /H1 mapped to itself, 7.4.2 t1 reports %v (%s), want Pass — the self-map resolves, and "+
+			"deriving the cycle from the typing would have broken this", h.Verdict, h.Why)
+	}
+}
+
+// TestADocumentWithNoStructureElementsHasNoSubjectFor7_1t6 — veraPDF reports 0 passed and 0 failed checks
+// over such a document, which is `NotApplicable` and never `Pass`: the missing structure is 7.1 t11's.
+func TestADocumentWithNoStructureElementsHasNoSubjectFor7_1t6(t *testing.T) {
+	got := verdictOf(t, nestedForms(1), "7.1 t6")
+	if got.Verdict != NotApplicable {
+		t.Errorf("over a document with no structure tree at all, 7.1 t6 reports %v (%s), want NotApplicable", got.Verdict, got.Why)
+	}
+}
+
 func buildPDF(objs map[int]string) []byte {
 	var b bytes.Buffer
 	b.WriteString("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")

@@ -5464,11 +5464,17 @@ its end now; only a cycle is unresolvable, and that is what earns the third verd
 claim: this one was falsified by running it.**
 
 **And the cycle is in veraPDF's own corpus.** `7.1 General/7.1-t05-fail-d.pdf` maps
-`/Standard → /Text body → /Standard` — the file written to fail ua1 7.1 t5, *"RoleMap shall not contain
-a circular mapping"*, which nib does not implement. It is the corpus's only cycle; nib answered
-`NotApplicable` and `Pass` over its elements and now answers `CannotCheck` for the three rules that ask
-an element's type. 0 false pass and 0 false fail either way, and `corpusReach` unmoved, because those
-three pairs were never settled: 5,560 scored pairs became 5,557.
+`/Standard → /Text body → /Standard`; nib answered `NotApplicable` and `Pass` over its elements and now
+answers `CannotCheck` for the three rules that ask an element's type. 0 false pass and 0 false fail either
+way, and `corpusReach` unmoved, because those three pairs were never settled: 5,560 scored pairs became
+5,557.
+
+> **Two claims in that paragraph were wrong and `/pending 548` measured both.** The clause is **ua1 7.1
+> t6** (*"a circular mapping shall not exist"*, veraPDF's object `PDStructElem`) and not 7.1 t5, which is
+> *"all non-standard structure types shall be mapped…"* and which veraPDF PASSES on that very file — the
+> corpus's file naming is the specification's test numbering, not veraPDF's rule numbering. And it is not
+> the corpus's only cycle: `7.1-t06-fail-a.pdf` carries `/RoleMap << /LI /LI >>`, a self-map this section
+> called "a fixed point, not a cycle", and veraPDF fails 7.1-6 on its two `LI` elements.
 
 **Nine more mutations, each red for its own assertion.** Removing the `standardTypes` guard from
 `checkHeadingNesting`, `checkFigureAlt`, `checkTableHeaders` and `checkWidgetsInFormElements`
@@ -5489,6 +5495,50 @@ runs zero times whatever the page tree's depth — and that overturn is pinned b
 `TestPdfcpuGivesThePageItsInheritedResources` rather than asserted in a comment.
 
 `recorded` 425 → 427.
+
+## /pending 548 — the cycle nib held and the clause it never reported (2026-09-16)
+
+507 gave `standardType` a cycle guard and left the verdict unwritten: nib **held** the fact that a
+`/RoleMap` loops and reported it only as `CannotCheck`, *"nib cannot type this element"*, over a document
+that is non-conformant. `7.1 t6` is that verdict, and it takes the checker from 19 of 106 to **20**.
+
+| proof | check | expects |
+|---|---|---|
+| `rolemap-cycle-reported-as-cannotcheck-not-fail` — the rule holds the cycle and answers `CannotCheck`, the pre-548 state | `go test ./internal/uacheck/ -run TestACircularRoleMapFailsTheClauseThatIsAboutIt -count=1` | `nib holds the cycle and this is the clause it breaks` |
+| `rolemap-unresolvable-chain-not-marked-circular` — only the self-map arm sets `circular`, so the common case reports none | `go test ./internal/uacheck/ -run TestACircularRoleMapFailsTheClauseThatIsAboutIt -count=1` | `nib holds the cycle and this is the clause it breaks` |
+| `rolemap-self-map-is-not-a-cycle` — `/RoleMap << /LI /LI >>` read as a fixed point, as this file said it was | `go test ./internal/uacheck/ -run TestASelfMappedTypeIsCircularAndStillTypes -count=1` | `a self-map is a circular mapping` |
+| `rolemap-cycle-scoped-to-the-document-not-the-element` — fail the file if any mapping loops, which is what the clause's words say | `go test ./internal/uacheck/ -run TestACircularRoleMapNoElementUsesIsNotAFailure -count=1` | `veraPDF checks the element, not the dictionary` |
+| `rolemap-cycle-lost-to-an-unread-tail` — the depth-bound guard asked before the cycle search | `go test ./internal/uacheck/ -run TestACycleAmongTheElementsNibReadIsSettledEvenWhenTheTailIsNot -count=1` | `the cycle at the top is one nib established` |
+| `rolemap-no-subject-reported-as-a-pass` — a document with no structure elements answers `Pass` | `go test ./internal/uacheck/ -run TestADocumentWithNoStructureElementsHasNoSubjectFor7_1t6 -count=1` | `want NotApplicable` |
+
+**The item named the wrong clause, and only running veraPDF could say so.** It asked for `7.1 t5` because
+the corpus file is `7.1-t05-fail-d.pdf`. veraPDF **passes** 7.1-5 on that file (2 checks, 0 failed) and
+fails **7.1-6**; 7.1-5 is *"all non-standard structure types shall be mapped to the nearest functionally
+equivalent standard type"*, a different clause with its own three corpus failures. A rule registered under
+7.1 t5 would have been compared against the wrong verdict on all 297 files, and nothing in the suite would
+have said so — the corpus guard compares per clause, so it would have agreed with the wrong oracle.
+
+**The subject is the ELEMENT, and the measurement is the only thing that settles it.** veraPDF's object for
+7.1-6 is `PDStructElem` and `7.1-t05-fail-d.pdf` scores **2 passed and 2 failed over four elements** — the
+two whose `/S` is on the loop fail, the two off it pass. So a cycle no element enters is a **Pass**. Both
+readings are defensible from the clause's words and they disagree on every file carrying a dead private
+mapping; `TestACircularRoleMapNoElementUsesIsNotAFailure` and an oracle document carrying that exact
+dictionary are what hold the measured one.
+
+**And the standing corpus run found a second cycle the item did not know about.** `7.1-t06-fail-a.pdf`'s
+`/RoleMap << /LI /LI >>` arrived as a **FALSE PASS** on the first run of the new rule. A self-map RESOLVES
+— a conforming reader recognises `LI` before it consults the map — and it is circular all the same, so
+`roleResolution` carries `circular` as a third result beside `standard` and `unresolved` rather than
+deriving it from either: derived from `unresolved` it misses the self-map, derived from `standard` it
+breaks the three shipped rules over a document nothing is wrong with. `TestASelfMappedTypeIsCircularAndStillTypes`
+asserts both halves, and the second half is what stops the first being bought.
+
+Corpus: 0 false pass, 0 false fail; `corpusReach` gains `7.1 t6` at **294** and no other row moved; scored
+pairs 5,557 → **5,852**. Oracle: 640 of 640 pairs agree over 32 documents, and the three tree rules keep
+answering `CannotCheck` over the looped document — recorded in `knownCannotCheck`, because each can still
+not type the element its own subject might be.
+
+`recorded` 464 → 470.
 
 ## The vault's one mutate door (`/pending 510`)
 

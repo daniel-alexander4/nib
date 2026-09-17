@@ -46,10 +46,18 @@ type Document struct {
 }
 
 // roleResolution is what one `/S` name resolves to through the role map: a standard structure type, or
-// why nib could not follow the map to one. Exactly one of the two is set.
+// why nib could not follow the map to one. Exactly one of those two is set.
+//
+// **`circular` is a THIRD fact and it is independent of both** (`/pending 548`). Whether the walk revisits
+// a name is not the same question as whether it can be typed, and veraPDF is what separates them: on
+// `7.1 General/7.1-t06-fail-a.pdf` the role map is `<< /LI /LI >>` and veraPDF FAILS ua1 7.1-6 on the two
+// `LI` elements — a self-map is a circular mapping — while the elements still type as `LI`, because a
+// conforming reader recognises `LI` before it ever consults the map. Deriving one fact from the other
+// either loses that failure or breaks three shipped rules over a document nothing is wrong with.
 type roleResolution struct {
 	standard   string
 	unresolved string
+	circular   bool
 }
 
 // open parses pdf for the rules to read.

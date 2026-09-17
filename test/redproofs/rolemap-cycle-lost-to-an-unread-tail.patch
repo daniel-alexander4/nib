@@ -1,0 +1,22 @@
+--- a/internal/uacheck/rules_structure.go
++++ b/internal/uacheck/rules_structure.go
+@@ -131,6 +131,9 @@
+ 	// `CannotCheck` there would point law 4's third verdict at something nib did establish. The reverse
+ 	// is not true, which is why the guard is still here: an element past the bound may be the one on the
+ 	// loop, so "no cycle among the elements nib read" is not "no cycle".
++	if unread != "" {
++		return Result{Verdict: CannotCheck, Why: unread}
++	}
+ 	for _, n := range nodes {
+ 		if !d.roleMapCircular(n.dict) {
+ 			continue
+@@ -145,9 +148,6 @@
+ 		}
+ 		return Result{Verdict: Fail, Why: why, Where: nodeWhere(n, d.name(n.dict["S"]))}
+ 	}
+-	if unread != "" {
+-		return Result{Verdict: CannotCheck, Why: unread}
+-	}
+ 	if len(nodes) == 0 {
+ 		// No element, no subject — veraPDF reports 0 passed and 0 failed checks over such a document, and
+ 		// the missing structure is 7.1 t11's to report, not this rule's.
