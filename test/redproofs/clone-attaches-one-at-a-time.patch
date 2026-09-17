@@ -1,0 +1,13 @@
+--- a/internal/pdfops/structcarry.go
++++ b/internal/pdfops/structcarry.go
+@@ -1173,7 +1173,9 @@
+ 		g.srcs = append(g.srcs, srcNr)
+ 	}
+ 	for _, key := range order {
+-		c.insertBlock(xt, groups[key].pd, groups[key].srcs)
++		for _, s := range groups[key].srcs {
++			c.insertBlock(xt, groups[key].pd, []int{s})
++		}
+ 	}
+ 	return nil
+ }

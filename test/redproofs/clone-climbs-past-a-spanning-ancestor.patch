@@ -1,0 +1,13 @@
+--- a/internal/pdfops/structcarry.go
++++ b/internal/pdfops/structcarry.go
+@@ -943,9 +943,7 @@
+ 		if !kidsName(xt, pd, cur) {
+ 			return best
+ 		}
+-		if s := c.span(pr, inheritedPage(xt, pr), 0); !s.ok || s.pg != anchor.pg {
+-			return best
+-		}
++		_ = anchor
+ 		best, cur = pr, pr
+ 	}
+ 	return best

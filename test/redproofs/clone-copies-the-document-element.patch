@@ -1,0 +1,12 @@
+--- a/internal/pdfops/structcarry.go
++++ b/internal/pdfops/structcarry.go
+@@ -937,9 +937,6 @@
+ 		if pd == nil || pd["S"] == nil || nameVal(pd, "Type") == "StructTreeRoot" {
+ 			return best
+ 		}
+-		if standardRole(c.tree, nameVal(pd, "S")) == "Document" {
+-			return best
+-		}
+ 		if !kidsName(xt, pd, cur) {
+ 			return best
+ 		}

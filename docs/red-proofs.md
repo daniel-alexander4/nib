@@ -5497,6 +5497,41 @@ fires), and the call counter neutered (the call-site floor fires).
 
 `recorded` 424 → 425.
 
+## `/pending 529` — a duplicated page carries its own grouping elements (2026-09-16)
+
+A `/ParentTree` row is indexed by MCID, so it names **leaves**. The clone path copied exactly what
+the row named, which left the `/L` and the `/Table` above them uncopied and hung every copy under
+the ORIGINAL's parent. Measured on nib's own Markdown conversion and on veraPDF's
+`7.5 Tables/7.5-t01-pass-a.pdf`: each original `/LI` came out with two `/Lbl` and two `/LBody`
+(reading `"••first item of the list…"`), a five-column table's header row came out with **ten**
+cells (reading `"Index Index Failure Condition Failure Condition …"`), and the duplicated page had
+no list and no table at all. Both outputs were `carried`, with **zero** completeness defects and
+**zero** orphan pages — and veraPDF passes them, because nothing compares a row's width to its
+table's or asks whether an `/LI` has more than one `/Lbl`.
+
+| the defect, restored | prove it | what goes red |
+|---|---|---|
+| `clone-copies-only-the-row-leaf` — `copyOfLeaf` copies the leaf the row names and climbs no further, as the path did until this item | `go test ./internal/pdfops/ -run TestADuplicatedPageCARRIESItsOwnGroupingElements -count=1` | `holds 2 /Lbl and 2 /LBody` |
+| `clone-climbs-one-level-only` — `cloneRoot` returns after its first step, so the `/LI` is copied and the `/L` is not | `go test ./internal/pdfops/ -run TestADuplicatedPageCARRIESItsOwnGroupingElements -count=1` | `has 0 /L and 3 /LI of its own` |
+| `clone-attaches-one-at-a-time` — each copy goes into its parent's `/K` on its own rather than as a block, landing immediately after its own original | `go test ./internal/pdfops/ -run TestADuplicatedPagesStructureReadsPageThenPage -count=1` | `goes BACK a page mid-walk` |
+| `clone-copies-the-document-element` — the climb no longer stops at a `/Document` | `go test ./internal/pdfops/ -run TestADuplicatedTableIsATableAndTheOriginalKeepsItsWIDTH -count=1` | `holds 2 /Document elements` |
+| `clone-climbs-past-a-spanning-ancestor` — the climb stops checking that the candidate's subtree lies on the duplicated page | `go test ./internal/pdfops/ -run TestATableSPANNINGThePageCarriesItsRowsRatherThanRefusing -count=1` | `came out dropped` |
+
+**Rows two and three are why row one is not one assertion.** Under `clone-climbs-one-level-only`
+the duplicate has all three of its `/LI` and the `/Lbl` clause is **green** — the copy is missing
+structure while the original acquires none — and under `clone-attaches-one-at-a-time` both grouping
+clauses are green while only the ordering one fires. Three defects, three assertions, and no two of
+them fire together. The probe that would have hidden a dead conjunct is the one that mutates the
+climb as a whole; each of these weakens exactly one condition.
+
+**Row five records the alternative the entry itself proposed.** `/pending 529` offered *"clone the
+highest element whose subtree lies wholly within the duplicated page, and refuse the carry where no
+such element exists (a table spanning the page)"*. The refusal is unnecessary — the climb is
+monotone and floored at the leaf, so it always has somewhere to stop — and this row is what the
+refusal costs when it arrives by the back door: fate `dropped`, the whole tree lost, on a document
+whose only fault is a table crossing a page break.
+
+`recorded` 437 → 442.
 ## The CLI's `/pending 491` and `/pending 508` (v1.133.10)
 
 Three rows from two items, all tier 1, and the middle one is the reason to read this section: it

@@ -1,0 +1,10 @@
+--- a/internal/pdfops/structcarry.go
++++ b/internal/pdfops/structcarry.go
+@@ -947,6 +947,7 @@
+ 			return best
+ 		}
+ 		best, cur = pr, pr
++		return best
+ 	}
+ 	return best
+ }

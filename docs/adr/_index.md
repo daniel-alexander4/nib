@@ -380,3 +380,18 @@ home today.
   a subprocess under a memory cap (no `RLIMIT_AS` on Windows) and a hand-rolled lex gate (the
   differential, written by hand) were all priced and refused. v0.2.0 bounds the allocation and
   **cannot be adopted**: `pdfsign` calls `Reader.Resolve`, which v0.2.0 removed.
+
+- **[ADR-042 — a repeat copies the highest ancestor wholly on its page, and never the `/Document`](042-a-repeat-copies-the-highest-ancestor-wholly-on-its-page.md)**
+  A `/ParentTree` row names a LEAF, so a carry driven from it copied leaves and attached each beside
+  its original — under the ORIGINAL page's parent. A duplicated page therefore had no `/L` and no
+  `/Table` of its own, and page one's `/LI` held **two** `/Lbl` and **two** `/LBody`; on veraPDF's
+  own five-column table fixture the header row came out with **ten** cells and the duplicate had no
+  table at all. **Every gate scored that as correct** — every element anchored, every MCID resolved,
+  `structureCarriedCompletely` empty, `carried` true, veraPDF green — so it is a defect the gates
+  cannot express, not one they missed. The climb is monotone and floored at the leaf, so the
+  alternative of REFUSING where no wholly-within ancestor exists was refuted by measurement: a
+  spanning table has one at every leaf, and refusing costs it its whole tree. Copies splice in as a
+  BLOCK, which is what makes the order page-then-page and what fixes three repeats coming out
+  reversed. The climb is 1.5–3.0 µs per row leaf and flat, because `span` bails at the first page
+  disagreement. Declared gap: the carried tree is ordered against the SOURCE, not the output's page
+  sequence.
