@@ -958,9 +958,13 @@ func insertAfter(xt *model.XRefTable, d types.Dict, after, ref types.IndirectRef
 // # `/ViewerPreferences` is PRESERVED key by key, never invented
 //
 // It is carried for `/DisplayDocTitle`, which 7.1 t10 requires. Carried whole it also brings
-// `/PrintPageRange` — which is PAGE-INDEXED, the exact property `/Outlines` and `/PageLabels` are
-// refused for. Measured: a two-page extract declaring `/PrintPageRange [3 7]`, alongside
-// `/NumCopies 3` and a duplex setting from a document it is no longer part of.
+// `/PrintPageRange` — which names page INDICES, the exact property `/PageLabels` is refused for.
+// Measured: a two-page extract declaring `/PrintPageRange [3 7]`, alongside `/NumCopies 3` and a
+// duplex setting from a document it is no longer part of.
+//
+// (`/Outlines` used to be named here too. It is page-indexed in a different and weaker sense — its
+// destinations name page OBJECTS, which the in-place rewrite keeps valid — so `/pending 524` carries
+// it and only `/PageLabels`, which is keyed by index, still stands as the comparison.)
 //
 // **And the value is the SOURCE's.** Writing `true` unconditionally overrode an author who had said
 // `false` — measured, a source with `/DisplayDocTitle false` and a source with the key absent both

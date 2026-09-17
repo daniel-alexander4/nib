@@ -932,6 +932,10 @@ re-render, so every piece keeps its original quality.
 bookmarks; **Edit outline…** opens an editor to author them: add a bookmark for any
 page, rename, delete, and indent to nest (chapters → sections). Bookmarks stay in
 page order and jump to the top of their page; saving replaces the document's outline.
+**Bookmarks survive a page operation.** Reorder, delete, extract or duplicate pages and
+the outline comes with the pages it still points at — a bookmark whose page is gone is
+dropped, and a heading is kept as long as something under it survives. Nothing is
+silently re-aimed: a bookmark that appears still goes where it always went.
 
 **Split by bookmarks** (File → Export) turns one bookmarked PDF into a folder of
 separate files — one per top-level bookmark, named from the bookmark with an
