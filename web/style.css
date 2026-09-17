@@ -1656,7 +1656,22 @@ body.presenting .presentbar { display: flex; }
    with nothing open — so the tabs must already be a dropdown by 800. The threshold sits inside
    that measured band rather than at its edge; the band, not a single number, is what was
    measured, and saying 849 without saying 800–900 would be a precision nothing took.
-   `responsive.test.mjs` sweeps 1366/1024/900/800/700/600/500/414/360 and is what caught it. */
+   `responsive.test.mjs` sweeps 1366/1024/900/800/700/600/500/414/360 and is what caught it.
+
+   **The residual the band left is ANSWERED, and the answer is not a narrower band (2026-09-16).**
+   `/pending 532` stayed open because "the true wrap point is somewhere in 800-900 and nothing has
+   narrowed it further". Bisecting further turns out not to be the question. What matters is whether
+   a wrapped strip is ever DISPLAYED, and it is not: measured in Chromium against the real binary,
+   empty state — at the widest width the strip is shown it is **7 tabs on one row, menubar 44px**,
+   and by 800 the strip is `display: none` with the `[data-modejump]` dropdown in its place and the
+   menubar at 40px. So wherever in that band the strip would wrap, it has already been swapped out
+   before it gets there. The exact wrap point is unobservable to a user by construction.
+
+   (Two traps met while measuring this, recorded so the next person does not pay for them: setting
+   `documentElement.style.width` does NOT move the viewport — the strip stayed 594px at every width
+   and the first run was meaningless — and `matchMedia('(max-width: 849px)')` disagrees with
+   `window.innerWidth` by a pixel at the boundary, so a reading taken at innerWidth 849 shows the
+   strip still up.) */
 @media (max-width: 849px) {
   #menubar .modetabs { display: none; }
   #menubar .modemenu { display: block; }
