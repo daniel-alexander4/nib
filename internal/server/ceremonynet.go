@@ -409,15 +409,35 @@ func hasLANCandidate(cands []candidate) bool {
 
 // hopScoped drops any candidate that does not belong to the hop this race is for.
 //
-// **Criterion 19, as a property rather than a discipline.** The clause is "a convener holding
-// candidates for a later party never dials them during this hop", and until now it held only
-// because of which slice the caller happened to pass: `CandidateGate.Candidates()` returns
-// bare endpoints, so the hop is dropped at the gate's boundary, and `raceCandidates` takes one
-// `peerFP` for the whole race. A stray candidate from another hop would fail the PIN — but it
-// would have been DIALLED first, which is exactly what the criterion forbids.
+// Criterion 19's clause is "a convener holding candidates for a later party never dials them during
+// this hop". A stray candidate from another hop would fail the PIN — but it would have been DIALLED
+// first, which is exactly what the criterion forbids.
 //
 // LAN and typed candidates belong to no hop and carry zero; they are matched against the hop
 // the race is for only when they came from a hop in the first place.
+//
+// # It CANNOT refuse a production candidate, and this doc used to claim otherwise (`/pending 517`)
+//
+// The paragraph here said this made criterion 19 "a property rather than a discipline". It does
+// not, and the tree says so in two places a reader can check:
+//
+//   - **The stamp and the compare are the same field of the same object.** The only producer of a
+//     `sourceDHT` candidate is `feedCandidates`, which writes `Hop: c.hop` (`ceremonynet.go:381`);
+//     the only call site is `feedCeremonyRace`'s merge loop, which asks `hopScoped(c, cer.hop)`
+//     (`ceremonynet.go:619`) — and it handed that same `cer` to `feedCandidates` eight lines
+//     earlier. `ceremonyID.hop` is written once, at construction (`ceremonyid.go:1135`), and never
+//     again. So the comparison is `cer.hop == cer.hop`.
+//   - **The hop is already bound where it is authoritative, twice.** `CandidateGate.Accept` opens
+//     the record with `OpenCandidate(g.key, g.salt, g.hop, sealed)` — the hop is AEAD context, so a
+//     record for another hop does not decrypt — and then re-checks it in `rec.Verify(g.inv, g.hop,
+//     …)`, which is `ErrCandidateContext`. Nothing a stranger asserts reaches this filter with a
+//     foreign hop on it.
+//
+// **Kept as defence in depth and labelled as such**, which is the shape `rearmCeremonies` uses for
+// its convener skip: a branch that can never be the refusal that fires, said so in its own comment
+// rather than left to read as a guarantee. It costs one comparison and it is the thing that would
+// catch a future producer stamping a hop it did not take from `cer`. What it is not is the
+// enforcement of criterion 19 — that is the gate, above.
 func hopScoped(c candidate, hop int) bool {
 	return c.Source != sourceDHT || c.Hop == hop
 }

@@ -5667,6 +5667,78 @@ uses an explicit `[page /Fit]` array now, the one shape that names a page dictio
 
 `recorded` 435 → 437.
 
+## `/pending 517` — a hop the dialer signs, a quote that could never be quoted, an arm that opens first
+
+Four clauses of one backlog item, each marked in the entry as read, unread, or a reviewer's claim.
+Two produced code, one produced a correction to a doc that claimed more than the code delivers, and
+one was declined on a measurement already in the tree.
+
+**The entry said the quote's attestation block was UNREACHABLE and that is correct — but the reason
+is a disagreement, not an accident.** `handleCeremonyHopQuote` returns on `mine`, and `mine` IS
+`me == Order[Done]`, so the loop below it (`out.Contributes = i == pr.Done`) could only ever write
+the `false` the field already held. That loop was a second implementation of the question
+`ceremonyID.carries` answers inside the dial, with a DIFFERENT predicate — and where the two
+differed, the product did not work.
+
+**Where they differed, measured through the routes rather than argued.** `canonicalRoster` prepends
+a signing convener at position 0 only when the client did not name them, and says so: *"a caller who
+wants another position includes themselves in the roster and this branch does not run."*
+`SigningOrder` does no promotion. So a ceremony convened as `[Bob, me, Carla]` has the convener
+second — and under D22's hub they are at one end of every hop, so at hop 1 they are a pure carrier.
+The quote answered `{"mine":false,"contributes":false}` (render no block) and `carries` answered
+"contribute" (a block is required), so `POST /api/ceremony/hop` came back **400 "this hop needs your
+signature block and none was sent"**. Every hop of such a ceremony failed, at the convener's own
+machine, before a packet left.
+
+So the fix is at `carries` — `i != pr.Done`, which is `Progress`'s own documented reading of the ONE
+walk (*"Order[Done] is whose turn it is"*, and *"a caller that wants per-party states derives them
+from these two fields and never re-walks"*) — and the quote's re-derivation, its three response
+fields and the client branch that consumed them went with it. `mine && next.Signs` is the whole
+answer: a machine dialling a hop always carries, because the party it is dialling is the one whose
+turn it is.
+
+| proof | check | expects |
+|---|---|---|
+| `a-hop-dialer-signs-out-of-turn` — `carries` back to `i < pr.Done`: carry only once my signature is already on the document, so a signer whose turn has not come contributes at somebody else's hop | `go test ./internal/server/ -run 'TestAPartyWhoseTurnHasNotComeCarries' -count=1` | `reports that it contributes at this hop` |
+| `the-hop-quote-says-the-dialer-signs` — `mine &&` dropped from the quote's one line, putting a true `contributes` back on a dialled hop, which is what the deleted attestation branch acted on | `go test ./internal/server/ -run 'TestADialledHopQuotesNoBlockForThisMachine' -count=1` | `says this machine SIGNS at a hop it is dialling` |
+| `a-refused-hop-arm-opens-its-sockets-first` — the `slotTaken` guard removed, so `armCeremonyHop` binds a UDP socket, starts a DHT server and opens a QUIC listener before asking for the slot | `go test ./internal/server/ -run 'TestARefusedHopArmOpensNoSocket' -count=1` | `the endpoint is opened before the slot is asked for` |
+
+**The arm's door already existed, and that is the whole of clause (ii).** `/pending 381` built
+`session.slotTaken` and `armForDelivery` has asked it before opening a socket ever since;
+`armCeremonyHop` — the other half of the same rule — never called it. ADR-009's shape in the small.
+The refused-arm test counts sockets by making the bind IMPOSSIBLE rather than by censusing file
+descriptors: with `127.0.0.1:not-a-port`, asking the slot first answers `errSessionArmed` and
+opening the endpoint first answers `errCeremonyEndpoint`, and the test asserts BOTH — the second
+with the slot free, which is what proves the address is genuinely unbindable.
+
+**Clause (iii) was a reviewer's unread claim and it is TRUE.** `hopScoped` cannot refuse a
+production candidate: the only producer of a `sourceDHT` candidate stamps `Hop: c.hop`
+(`ceremonynet.go:381`) from the same `*ceremonyID` whose `cer.hop` the only call site compares
+against (`:619`), and `ceremonyID.hop` is written once at construction. The comparison is
+`cer.hop == cer.hop`. The hop is already bound where it is authoritative, twice — `OpenCandidate`
+takes it as AEAD context, so a foreign-hop record does not decrypt, and `rec.Verify` re-checks it as
+`ErrCandidateContext`. The predicate stays as defence in depth, on the precedent `rearmCeremonies`
+sets for its convener skip, and its doc stopped claiming to make criterion 19 "a property rather
+than a discipline". No behaviour changed, so no row: a comment that was wrong is not a check that
+was missing.
+
+**Clause (iv) was declined, and the measurement was already in the tree.** A roster pin does outlive
+a failed `AddCeremonyInvitation` — but `accept_test.go`'s own header records that the branch *"cannot
+be reached from a filesystem failure … both doors go through the one `Vault.save()`, and the pin runs
+first, so an unwritable vault always fails at the pin. Measured — the 500 names the pin, never the
+invitation."* And the only compensation available, `PruneCeremonyPeers`, goes through that same
+`save()`: since /pending 510 `mutateLocked` rolls memory back when the write fails, so a prune added
+here restores the pin it was added to remove. **The remedy is inert exactly where the defect is
+reachable**, which is a reason not to write it rather than a reason to write it untested.
+
+**One existing row was re-recorded rather than retired.** `the-carry-decision-reads-the-roster-alone`
+patches `carries`, and its context lines included the very comment this change rewrote, so
+`TestEveryRedProofStillApplies` reported it STALE. The defect it names — the roster alone, with no
+notion of progress — is unaffected by the turn fix, so the patch was regenerated against the new
+text and the row keeps its meaning.
+
+`recorded` 437 → 440.
+
 ## /pending 488 — the content anchor stops being quadratic in pages (2026-09-16)
 
 **Three rows, and one of them exists because a check was written that could not fail.** The item is

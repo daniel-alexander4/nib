@@ -62,8 +62,36 @@ var (
 // `cands` is the optional typed peer address that makes this arm DIAL as well as accept. It stays
 // a parameter because resolving it needs the response writer (`peerAddresses` writes its own
 // error), so it is the one thing the route must still do for itself.
+//
+// # The slot is asked for BEFORE anything is opened (`/pending 517`)
+//
+// This used to bind a UDP socket, start a DHT server and open a handshaked QUIC listener, and only
+// then find out that the interactive slot was taken — closing all three again. The sweep reaches
+// this line on every unlock, import and accept, and `rearmCeremonies` treats `errSessionArmed` as
+// the ordinary case ("the user has the slot; this is not a fault"), so the ordinary case was the
+// one paying for a listener nobody would own. Nothing left the machine while it was open —
+// `rendezvous.Open` does no bootstrap, which is ADR-011's lazy door — so what this removes is local
+// churn and a listener with no owner, not an off-link leak.
+//
+// **`slotTaken` is not new, and that is the finding.** `/pending 381` built exactly this door and
+// `armForDelivery` has asked it before opening a socket ever since (`delivery.go`); this arm, the
+// other half of the same rule, never called it. ADR-009's shape in the small — one door, and a
+// second site that did not reach it.
+//
+// It is a refusal and never a reservation: `armed(...)` below is still the atomic take, still the
+// only thing that grants, and a caller that loses there still tears down exactly as before. What it
+// costs is that a slot freed between this answer and the take is no longer won by a caller already
+// mid-open — an arm the next unlock, import or accept re-tries, and one that was equally losable
+// the other way round, since two openers racing have always had one of them tear down.
 func (s *Server) armCeremonyHop(ctx context.Context, cer *ceremonyID, cert, key, peerFP []byte,
 	cands []candidate, bind, label, mode string, byPolicy bool) error {
+	if s.sess.slotTaken(armInteractive) {
+		// Nothing has been opened, so there is nothing to close — but the ceremony identity came
+		// from the caller and owns a gate and an invitation secret, and every other refusal in this
+		// function releases it. `close()` is nil-safe and idempotent.
+		cer.close()
+		return errSessionArmed
+	}
 	if serr := cer.setupSharedEndpoint(bind, s.configDir); serr != nil {
 		cer.close()
 		return fmt.Errorf("%w: %v", errCeremonyEndpoint, serr)
