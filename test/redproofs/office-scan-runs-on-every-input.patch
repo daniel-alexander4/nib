@@ -1,0 +1,19 @@
+diff --git a/internal/cli/commands.go b/internal/cli/commands.go
+index 45941d2..fa2f444 100644
+--- a/internal/cli/commands.go
++++ b/internal/cli/commands.go
+@@ -221,11 +221,9 @@ func cmdOffice(args []string) int {
+ 	// character(s) cannot be printed"*. A warning that fires on every office document is one
+ 	// nobody reads on the Markdown document where it is true. The office path has no such loss to
+ 	// report either way: LibreOffice renders with its own fonts, not the pool this asks about.
+-	if pdfops.SupportedMarkdownExt(ext) {
+-		if bad := pdfops.UnprintableMarkdown(data); len(bad) > 0 {
+-			errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
+-				len(bad), mdpdf.FormatRunes(bad))
+-		}
++	if bad := pdfops.UnprintableMarkdown(data); len(bad) > 0 {
++		errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
++			len(bad), mdpdf.FormatRunes(bad))
+ 	}
+ 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
+ 	if err == nil {

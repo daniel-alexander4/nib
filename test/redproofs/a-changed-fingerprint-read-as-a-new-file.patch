@@ -1,0 +1,27 @@
+diff --git a/internal/cli/watch.go b/internal/cli/watch.go
+index 53be6a1..74adbc3 100644
+--- a/internal/cli/watch.go
++++ b/internal/cli/watch.go
+@@ -177,13 +177,19 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool,
+ 		}
+ 		path := filepath.Join(dir, e.Name())
+ 		present[path] = true
+-		if processed[path] {
+-			continue
+-		}
+ 		info, err := e.Info()
+ 		if err != nil {
+ 			continue
+ 		}
++		if processed[path] {
++			cur := fileState{info.Size(), info.ModTime()}
++			prev, known := seen[path]
++			if !known || prev == cur {
++				seen[path] = cur
++				continue
++			}
++			delete(processed, path)
++		}
+ 		// REGULAR FILES ONLY, and a symlink is the reason.
+ 		//
+ 		// `DirEntry.Info()` is an Lstat, so a symlink named `x.pdf` passed the extension

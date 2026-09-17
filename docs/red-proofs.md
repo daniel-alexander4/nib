@@ -5442,3 +5442,33 @@ direct `save()` call with the assignment still covered, the assignment matcher n
 fires), and the call counter neutered (the call-site floor fires).
 
 `recorded` 424 → 425.
+
+## The CLI's `/pending 491` and `/pending 508` (v1.133.10)
+
+Three rows from two items, all tier 1, and the middle one is the reason to read this section: it
+records a **refusal** rather than a fix.
+
+| the defect, restored | prove it | what goes red |
+|---|---|---|
+| `office-scan-runs-on-every-input` — `cmdOffice`'s guard on `SupportedMarkdownExt` removed, so the Markdown unprintable-rune scan reads an ODT's ZIP bytes as text | `go test ./internal/cli -run TestTheUnprintableWarningIsAskedOfMarkdownOnly` | `warned about the container's own bytes` |
+| `a-changed-fingerprint-read-as-a-new-file` — `scanOnce` drops a path from `processed` as soon as its size or mtime differs | `go test ./internal/cli -run TestAFileReplacedInPlaceIsNotTreatedAsNew` | `after its bytes changed` |
+| `booklet-instruction-corrupts-a-piped-pdf` — `cmdBooklet`'s `Fprintln(os.Stderr, …)` back to `fmt.Println`, so the sentence lands on stdout after the PDF | `go test ./internal/cli -run TestBookletSendsItsInstructionToTheReaderAndTheDocumentToStdout` | `stdout carries the folding instruction` |
+
+**The first row reproduces the reported symptom, which is how it was found to be worth a guard.**
+With the patch applied the real ODT — produced by LibreOffice at test time, not committed — reports
+*"158 character(s) cannot be printed"* against the field report's 163, in the same leading runes:
+`� (U+FFFD), ծ (U+056E), ц (U+0446)`.
+
+**The second is a refusal recorded as a row.** `/pending 504` made the watch forget a name that
+leaves the directory; a file copied over the old one never leaves it, so the only thing that would
+also catch it is treating a changed fingerprint as new — and that is indistinguishable from the user
+editing a document sitting in the watched folder, which is the rewrite the startup rule exists to
+prevent. Without this row the only evidence that it was decided rather than missed is prose. Note
+which way the patch goes red: the second arm fails as `setup:`, because treating a change as new
+also makes the gone-and-back file act TWICE.
+
+**The third needs both arms and says so.** Nothing in a PDF can say which way a printer will flip,
+so the sentence is the only thing between the user and a booklet with every back face inverted; a
+"fix" that deleted it would satisfy the stdout arm on its own.
+
+`recorded` 427 → 430.

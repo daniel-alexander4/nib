@@ -1,0 +1,13 @@
+diff --git a/internal/cli/commands.go b/internal/cli/commands.go
+index 45941d2..8851e06 100644
+--- a/internal/cli/commands.go
++++ b/internal/cli/commands.go
+@@ -534,7 +534,7 @@ func cmdBooklet(args []string) int {
+ 	}
+ 	code := runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) { return pdfops.Booklet(b, border) })
+ 	if code == 0 {
+-		fmt.Fprintln(os.Stderr, "Print double-sided, flipping on the SHORT edge, then fold and staple through the fold.")
++		fmt.Println("Print double-sided, flipping on the SHORT edge, then fold and staple through the fold.")
+ 	}
+ 	return code
+ }

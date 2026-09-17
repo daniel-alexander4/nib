@@ -135,3 +135,65 @@ func TestTheWatchRefusesToReadThroughASymlink(t *testing.T) {
 			"hangs the command until Ctrl-C")
 	}
 }
+
+// TestAFileReplacedInPlaceIsNotTreatedAsNew — `/pending 508`'s watch clause, which is a DECISION
+// and not an omission.
+//
+// `/pending 504` made the scan forget a name that leaves the directory, and a file copied over the
+// old one never leaves it — so the only thing that would also catch that is treating a changed
+// fingerprint as a new file. It is refused: a changed fingerprint cannot be told apart from the
+// user editing a document that happens to be sitting in the watched folder, which is the
+// unrequested rewrite the startup rule in `watchLoop` exists to prevent and which `--do sanitize`
+// makes irreversible. The errors are not symmetric — a missed file costs one command the user can
+// run by hand, a rewrite costs them the document — so this pins the refusal, and a later change to
+// it has to be deliberate.
+func TestAFileReplacedInPlaceIsNotTreatedAsNew(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scan.pdf")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	acted := 0
+	count := func(string) (string, error) { acted++; return "counted", nil }
+	seen := map[string]fileState{}
+	processed := map[string]bool{}
+	failed := map[string]fileState{}
+
+	// The file is there before the watch is: the startup rule in watchLoop marks it processed, and
+	// nothing may act on it while it stays.
+	write("%PDF-1.7 original\n")
+	processed[path] = true
+	scanOnce(dir, seen, processed, failed, count)
+	scanOnce(dir, seen, processed, failed, count)
+	if acted != 0 {
+		t.Fatalf("setup: a pre-existing file was acted on %d time(s) — the startup rule, not this test, has broken", acted)
+	}
+
+	// Replaced in place, which is the DECLINED half: same name, never absent, different bytes.
+	write("%PDF-1.7 edited by the user, in place\n")
+	scanOnce(dir, seen, processed, failed, count)
+	scanOnce(dir, seen, processed, failed, count)
+	if acted != 0 {
+		t.Errorf("a pre-existing file was acted on %d time(s) after its bytes changed — that is the "+
+			"user editing a document in the watched folder, and --do sanitize would have stripped it", acted)
+	}
+
+	// STIMULUS: the same file, once it is GONE, is acted on when it comes back — so the refusal
+	// above is about the change, not about a scanner that stopped working.
+	// (`TestWatchActsOnANewFileThatReusesAGoneFilesName` owns that path, one arm per map.)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	scanOnce(dir, seen, processed, failed, count)
+	write("%PDF-1.7 the re-scan\n")
+	scanOnce(dir, seen, processed, failed, count)
+	scanOnce(dir, seen, processed, failed, count)
+	if acted != 1 {
+		t.Fatalf("setup: a file dropped in under a name the watch had already seen was acted on %d "+
+			"time(s), want 1 — the scanner is not acting at all, so the refusal above proves nothing", acted)
+	}
+}

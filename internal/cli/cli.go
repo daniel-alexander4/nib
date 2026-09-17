@@ -172,7 +172,7 @@ These subcommands run headlessly, without a browser:
   nib version                     print the version
 
 Commands that produce a PDF require -o/--out FILE. For optimize, merge, sanitize,
-sign, rotate, pages, encrypt, decrypt, nup, normalize, pagenum, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
+sign, rotate, pages, encrypt, decrypt, booklet, nup, normalize, pagenum, pagelabels, fill (JSON/XFDF), and export-xfdf, "-" reads a PDF from stdin or (as
 -o -) writes it to stdout, so they compose in a pipeline. Exit status is non-zero
 on failure (verify: 2 when a signature is invalid or absent).
 

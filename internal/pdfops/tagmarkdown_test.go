@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -310,6 +311,46 @@ func TestATaggedMarkdownDocumentPassesUA1(t *testing.T) {
 		t.Errorf("a tagged Markdown document fails %v; only `5 t1` is expected", sortedClauses(got))
 	}
 	t.Logf("a tagged Markdown document fails only: 5 t1 (refused by decision)")
+}
+
+// TestADocumentWithNothingInItClaimsNothing — `/pending 508`, which reported that an empty Markdown
+// file "still converts untagged" because `tagMarkdown` refuses a document with zero elements.
+//
+// **That refusal is correct, and this pins it rather than removing it.** A document that draws no
+// text has nothing to describe, and `/MarkInfo /Marked true` over a tree with no elements is
+// `orphaned()` by construction — ADR-031 law 1, the claim that stops a reader reaching for the
+// fallbacks it would otherwise use. The honest product is the untagged render, and the two doors
+// that could make a claim over nothing — `claimTagging` and ADR-033's `LabelUA` — must both refuse.
+//
+// This is NOT the text-less PAGE case (`tagblankpage_test.go`), which is a page with no runs inside
+// a document that has content, and which IS tagged. Here the whole document is empty.
+func TestADocumentWithNothingInItClaimsNothing(t *testing.T) {
+	for _, src := range []string{"", "\n", "   \n\n", "<!-- a comment and nothing else -->\n"} {
+		pdf, err := ConvertDocToPDF([]byte(src), ".md")
+		if err != nil {
+			t.Fatalf("%q: an empty document is still a document, and the conversion failed: %v", src, err)
+		}
+		// STIMULUS: the input really does reach the case, or every assertion below is about an
+		// ordinary document.
+		_, st, serr := mdpdf.ConvertStructured([]byte(src), authoringFaces(), markdownFallbackFonts())
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		runs := 0
+		for _, page := range st.Pages {
+			runs += len(page)
+		}
+		if runs != 0 {
+			t.Fatalf("setup: %q laid out %d run(s), so it is not the empty case", src, runs)
+		}
+		if s := inspectTags(pdf); s.orphaned() {
+			t.Errorf("%q converted to a document that claims tagging over nothing: %+v", src, s)
+		}
+		if _, lerr := LabelUA(pdf, true); !errors.Is(lerr, ErrUAUntagged) {
+			t.Errorf("%q: LabelUA answered %v — a PDF/UA identification over a document with no "+
+				"structure is a claim nothing in it supports", src, lerr)
+		}
+	}
 }
 
 // sortedKinds renders a kind map for a message.

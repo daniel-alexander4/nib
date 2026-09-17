@@ -214,9 +214,18 @@ func cmdOffice(args []string) int {
 	// A warning, not a refusal: a document with one unprintable rune is still worth
 	// converting, and the person running the command is the one who can judge that. On
 	// stderr, so `nib office in.md -o -` piped to a file still emits a clean PDF.
-	if bad := pdfops.UnprintableMarkdown(data); len(bad) > 0 {
-		errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
-			len(bad), mdpdf.FormatRunes(bad))
+	//
+	// **Markdown only, and the extension is what says so** (`/pending 491`). The scan decodes its
+	// argument as text; a DOCX, XLSX, ODT or PPTX is a ZIP, so every office conversion warned
+	// about the compressed bytes — a one-line German ODT that converted perfectly reported *"163
+	// character(s) cannot be printed"*. A warning that fires on every office document is one
+	// nobody reads on the Markdown document where it is true. The office path has no such loss to
+	// report either way: LibreOffice renders with its own fonts, not the pool this asks about.
+	if pdfops.SupportedMarkdownExt(ext) {
+		if bad := pdfops.UnprintableMarkdown(data); len(bad) > 0 {
+			errf("warning: %d character(s) cannot be printed and will render as blanks: %s",
+				len(bad), mdpdf.FormatRunes(bad))
+		}
 	}
 	pdf, err := pdfops.ConvertDocToPDF(data, ext)
 	if err == nil {
@@ -504,6 +513,12 @@ func cmdDecrypt(args []string) int {
 // wrong after the file is right is to print double-sided flipping on the LONG edge, which inverts
 // every back face — and nothing in the PDF can say which way a given printer will flip. The
 // sentence is the only place that can.
+//
+// **On stderr, because stdout is where the document goes** (`/pending 508`). `nib booklet in.pdf
+// -o - > out.pdf` appended the sentence to the PDF's own bytes, so the one command whose output
+// carries a printing instruction was the one that corrupted the file it described. This is `nib
+// ua`'s rule, not a second one: the sentences meant for a person go to stderr, so a script reading
+// stdout sees only what it asked for.
 func cmdBooklet(args []string) int {
 	fs := flag.NewFlagSet("nib booklet", flag.ContinueOnError)
 	var out string
@@ -519,7 +534,7 @@ func cmdBooklet(args []string) int {
 	}
 	code := runTransform(fs, out, inPlace, func(b []byte) ([]byte, error) { return pdfops.Booklet(b, border) })
 	if code == 0 {
-		fmt.Println("Print double-sided, flipping on the SHORT edge, then fold and staple through the fold.")
+		fmt.Fprintln(os.Stderr, "Print double-sided, flipping on the SHORT edge, then fold and staple through the fold.")
 	}
 	return code
 }

@@ -32,6 +32,22 @@ import (
 // per part from a document that is still open; a door that only offered this would leave a user's
 // saved original recoverable only as far as the page cache.
 //
+// **That split-export half is measured, not argued** (`/pending 508`; ext4 on NVMe, `nib split
+// --every 1` over a 280-page document, parts averaging 1.3 KB, three rounds): 17–21µs per file
+// through `os.WriteFile`, 41–53µs through this, and **7.5–8.9 ms** through `WriteDurable`. That is
+// 2.1–2.5 s of writing on top of the 3.3 s the page extraction itself takes — the fsync costs about
+// 70% as much as the work — and more again on anything slower than an SSD.
+//
+// **And the two split exports currently disagree**, which is the reason to write the figure down
+// rather than the figure alone. The GUI's (`internal/server/export.go`) takes this door and says
+// why — *"every part comes from the document still open in this process"*. The CLI's
+// (`writeSplitFiles` → `writeNamed`) takes `WriteDurable`, because every CLI write is routed
+// through the door built for `-w`, whose contract is about replacing the user's only copy — which
+// a split part is not: nothing is replaced and the input is untouched. So the same output is worth
+// 34µs a file at one door and 7.9 ms at the other. Not resolved here: `internal/cli`'s
+// `atomicdurable_test.go` refuses any call to this function in that package and offers no
+// exemption, so moving the CLI side is a guard change and a decision, not a tidy-up.
+//
 // So: re-derivable output takes this. Anything that is the only copy takes `WriteDurable`, and
 // says so at the call site.
 //
