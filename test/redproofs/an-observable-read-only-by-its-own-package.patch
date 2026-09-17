@@ -1,0 +1,13 @@
+diff --git a/observables_test.go b/observables_test.go
+index 3e94091..e682e3d 100644
+--- a/observables_test.go
++++ b/observables_test.go
+@@ -275,7 +275,7 @@ var published = map[string][]string{
+ 	// and `:535-537`). It is named because the two entries before it are BOTH inside the defining
+ 	// package, which is the hole `internalShapes` now enforces against; see the note on
+ 	// `ceremony.Party.Capacity` below for what that entry's prose had to be corrected to say.
+-	"ceremony.Party":    {"internal/ceremony/record.go", "internal/ceremony/invitation.go", "internal/server/convene.go"},
++	"ceremony.Party":    {"internal/ceremony/record.go", "internal/ceremony/invitation.go"},
+ 	"ceremony.Endpoint": {"internal/server/ceremonynet.go", "internal/ceremony/candidate.go"},
+ 	"instance.Record":   {"internal/instance/instance.go", "internal/server/handoff.go"},
+ 	"ots.VerifyResult":  {"internal/server/timestamp.go"},

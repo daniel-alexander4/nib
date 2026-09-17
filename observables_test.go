@@ -46,6 +46,14 @@ import (
 // `historyEvicted`'s, where the identifier appears nowhere at all, and that is the one that
 // actually shipped. Saying so beats letting the next reader assume more.
 //
+// **Two further failures it now also closes** (/pending 558). A reader list made up entirely of
+// files in the shape's OWN package: an in-package CONSUMER — a `Verify`, an accessor, a preimage
+// builder — supplies exactly the selectors this match wants, so the shape reports full coverage
+// while nothing outside it reads a thing. And a named reader that mentions NO field of the shape
+// it is named for, which is worse than no entry at all and which launders the first check.
+// `internalShapes` carries the measurement, the three places this file confessed the first hole
+// without ever asserting it, and the neighbouring hole neither arm closes.
+//
 // It is a pure source scan: no build, no boot, nothing to tear down.
 
 // observablePackages are the packages whose exported data shapes leave their own package.
@@ -139,7 +147,13 @@ var published = map[string][]string{
 	// its fields with comments stripped. A first draft of this table was written from
 	// memory and named four wrong files — the scan reporting a false orphan is worse than
 	// no scan, so the table is evidence like everything else here.
-	"udpmux.Stats":           {"internal/cli/rendezvous.go", "internal/udpmux/mux.go"},
+	// **`internal/udpmux/mux.go` REMOVED from this list (/pending 558), and it is the entry that
+	// item was filed against.** It satisfied 0 of `Stats`'s 10 fields: `Stats()` builds the struct
+	// with keyed literals (`mux.go:187-198`), which carry no selectors, and the file's one
+	// `.Panicked` is in a comment `codeOnly` strips. Every field was and is carried by
+	// `internal/cli/rendezvous.go` alone — so the defining file was never load-bearing here, and
+	// the item's "the definition satisfies the scan trivially" does not describe this shape.
+	"udpmux.Stats":           {"internal/cli/rendezvous.go"},
 	"rendezvous.Stats":       {"internal/cli/rendezvous.go", "internal/rendezvous/dht.go"},
 	"rendezvous.SelfAddress": {"internal/rendezvous/selfaddr.go", "internal/cli/rendezvous.go"},
 	"discovery.Stats":        {"internal/cli/discover.go"},
@@ -243,18 +257,37 @@ var published = map[string][]string{
 	//
 	// Delivery to other parties is S05's, which is why this is inert today — the strongest
 	// argument for the S04a/S04b cut being where it is.
-	"ceremony.Termination":     {"internal/ceremony/mirror.go"},
+	//
+	// **S05 SHIPPED, and `internal/server/delivery.go` is added here for it (/pending 558).**
+	// The paragraph above was written while the object never left the convener's disk; it does
+	// now — `delivery.go:160-161` writes an arriving termination and `asTermination`
+	// (`delivery.go:1694-1701`) gates an arrival on `t.Ceremony`, `t.State` and `t.Sig`. Named
+	// search over `internal/server/delivery.go`: `.Ceremony` ×4, `.State` ×7, `.Sig` ×1, and
+	// `.Version`/`.RosterHash`/`.ConvenerCert` ×0. So three fields gained the far-end reader they
+	// were designed for and two did not; the `unreadKnown` entries below are corrected to match
+	// rather than left asserting a schedule that has since happened.
+	"ceremony.Termination":     {"internal/ceremony/mirror.go", "internal/server/delivery.go"},
 	"vault.CeremonySecret":     {"internal/server/convene.go", "internal/vault/vault.go"},
 	"ceremony.CandidateRecord": {"internal/ceremony/candidate.go", "internal/server/ceremonynet.go"},
 	"ceremony.Invitation":      {"internal/ceremony/invitation.go", "internal/server/ceremonyid.go"},
-	"ceremony.Party":           {"internal/ceremony/record.go", "internal/ceremony/invitation.go"},
-	"ceremony.Endpoint":        {"internal/server/ceremonynet.go", "internal/ceremony/candidate.go"},
-	"instance.Record":          {"internal/instance/instance.go", "internal/server/handoff.go"},
-	"ots.VerifyResult":         {"internal/server/timestamp.go"},
-	"sign.Status":              {"web/app.js", "internal/server/server.go"},
-	"pdfops.AttachmentInfo":    {"internal/cli/commands.go", "internal/server/attachments.go", "web/app.js"},
-	"pdfops.OutlineItem":       {"internal/cli/commands.go", "web/app.js"},
-	"pdfops.ScanReport":        {"internal/server/scan.go", "web/app.js"},
+	// `internal/server/convene.go` added /pending 558: the re-issue loop walks `rec.Roster` —
+	// `[]ceremony.Party` — and reads three of the four fields off it (`convene.go:503,506,509`
+	// and `:535-537`). It is named because the two entries before it are BOTH inside the defining
+	// package, which is the hole `internalShapes` now enforces against; see the note on
+	// `ceremony.Party.Capacity` below for what that entry's prose had to be corrected to say.
+	"ceremony.Party":    {"internal/ceremony/record.go", "internal/ceremony/invitation.go", "internal/server/convene.go"},
+	"ceremony.Endpoint": {"internal/server/ceremonynet.go", "internal/ceremony/candidate.go"},
+	"instance.Record":   {"internal/instance/instance.go", "internal/server/handoff.go"},
+	"ots.VerifyResult":  {"internal/server/timestamp.go"},
+	"sign.Status":       {"web/app.js", "internal/server/server.go"},
+	// `internal/server/attachments.go` removed /pending 558: it EMBEDS the shape in a response
+	// (`attachments.go:11`, `Attachments []pdfops.AttachmentInfo`) and reads no field of it. A
+	// carrier is not a reader, and naming one makes the shape read as better covered than it is.
+	"pdfops.AttachmentInfo": {"internal/cli/commands.go", "web/app.js"},
+	"pdfops.OutlineItem":    {"internal/cli/commands.go", "web/app.js"},
+	// `internal/server/scan.go` removed /pending 558, same carrier case: `scan.go:33` embeds it as
+	// `Residual pdfops.ScanReport` and reads none of its fields.
+	"pdfops.ScanReport": {"web/app.js"},
 	// The autotagger's proposal (PLAN-accessibility.md P08.S06b). Its reader is the propose route, which
 	// copies every field onto the wire; the wire shapes' reader is the Tags card, checked by
 	// `published.test.mjs`. Only the RETURNED type is discovered — `TagElement` and `TagPageNote` are
@@ -269,18 +302,134 @@ var published = map[string][]string{
 	// **The park is deleted rather than kept as a comment**, because its own stated deletion
 	// condition is met: `applyFitReport` in web/app.js consumes the report, and the JS arm of
 	// this scan matches a reader on the bare JSON tag.
-	"pdfops.Fit":           {"internal/server/overlay.go", "web/app.js"},
-	"vault.KeyInfo":        {"internal/server/keys.go", "web/app.js"},
-	"vault.PinnedPeer":     {"internal/server/peers.go", "internal/vault/vault.go"},
-	"vault.Settings":       {"internal/server/settings.go", "internal/vault/vault.go"},
-	"vault.Image":          {"internal/server/images.go", "internal/vault/vault.go"},
-	"vault.ExternalSigner": {"internal/server/keys.go", "internal/vault/vault.go"},
+	"pdfops.Fit":       {"internal/server/overlay.go", "web/app.js"},
+	"vault.KeyInfo":    {"internal/server/keys.go", "web/app.js"},
+	"vault.PinnedPeer": {"internal/server/peers.go", "internal/vault/vault.go"},
+	"vault.Settings":   {"internal/server/settings.go", "internal/vault/vault.go"},
+	"vault.Image":      {"internal/server/images.go", "internal/vault/vault.go"},
+	// **`internal/server/keys.go` was STALE and it was laundering the outside-the-package arm
+	// (/pending 558).** That file does not contain the string `ExternalSigner` at all — the three
+	// routes live in `internal/server/extsigner.go` (`server.go:484-486`) and the entry was never
+	// re-pointed. So this shape's only LIVE reader was `internal/vault/vault.go`, its own package's,
+	// and the arm below would have passed it on the strength of a file that reads nothing. The two
+	// real readers, both verified at the line: `extsigner.go:33` decodes `es.CertPEM`, and
+	// `finalize.go:106` passes `es.P12` to `sign.SignExternal`.
+	//
+	// **`ChainPEM` is read by neither**, and is therefore a field this shape stores and no caller
+	// outside `internal/vault` consumes — the `historyEvicted` shape, found by this repair. It is
+	// left visible in the residue rather than parked, for the reason `internalShapes` gives.
+	"vault.ExternalSigner": {"internal/server/extsigner.go", "internal/server/finalize.go", "internal/vault/vault.go"},
 	"vault.Slot":           {"internal/vault/vault.go", "internal/server/keys.go"},
 }
 
 // excluded shapes, each with its reason. An UNEXPLAINED entry here is how a genuinely
 // unread observable gets parked and forgotten, which is the failure this file exists for.
 var excluded = map[string]string{}
+
+// internalShapes names each shape whose declared readers are ALL inside its own declaring
+// package, with the reason that is the honest answer for it (/pending 558).
+//
+// # The hole this closes
+//
+// A field's reader set includes its own defining file and every other file of its package, and an
+// in-package CONSUMER — a `Verify`, an accessor, a preimage builder — supplies exactly the
+// selectors this match wants. So a `published` entry naming only in-package files reports "every
+// field has a reader" over a shape nothing outside the package reads. This file had confessed that
+// three separate times in prose and enforced it none of the three: `pdfops.SignatureWidget`
+// *"declared with its DEFINING file as the only reader … deliberately weak"*, `ceremony.Anchor`
+// *"its reader today is in-package and that is stated rather than dressed up"*, and
+// `ceremony.Party` *"both inside the DEFINING package — so any new field satisfies it the moment
+// the producer mentions it once"*. Three confessions and no assertion is how a documented hole
+// stays open. The arm in the test is the assertion.
+//
+// **A bare DEFINITION does not do it, and the difference is measured and worth stating** — the
+// /pending 558 entry blamed one, and it is the wrong culprit. The match needs a selector
+// (`.Field`); a struct declaration contains none. `internal/udpmux/mux.go` is named as a reader of
+// `udpmux.Stats` and satisfies **0 of its 10 fields**: `Stats()` builds the struct with keyed
+// literals (`mux.go:187-198`), which carry no dots, and the one `.Panicked` in that file sits in a
+// comment `codeOnly` strips. Every field is carried by `internal/cli/rendezvous.go`. What makes an
+// in-package reader satisfy this scan is CONSUMPTION, not declaration — which is why the shapes
+// below are the ones with a `Verify`, a `check()` or a preimage builder next door.
+//
+// # Why it is SHAPE-level rather than per-field, which is MEASURED and not a preference
+//
+// The obvious form is to drop in-package files from the per-FIELD match. Measured on this tree:
+// that reports **47 of the 511 fields checked**, of which **38 are satisfied only by their own
+// defining file**. The measurement is also what refuses it — **37 of the 47 are fields with real
+// out-of-package consumers that `published` simply never named**: `ceremony.Party.Fingerprint` is
+// read by seventeen files in `internal/server`, `ceremony.Record.Roster` by fourteen. Flipping the
+// field rule forces the table to name those large files, and this scan's declared coincidental-
+// match limit — it proves a NAME is mentioned in a named file — means a large file satisfies
+// almost any field name. The strict-LOOKING rule buys a table that is looser in practice than the
+// one it replaces, plus 37 false orphans, against this table's own law that *"the scan reporting a
+// false orphan is worse than no scan"*.
+//
+// A shape-level rule cannot be satisfied that way. Naming a reader outside the package is a claim
+// about a FILE; it is not a coincidence about a word.
+//
+// # What it deliberately does NOT close, said plainly
+//
+// **It would not have caught the defect that produced this item.** /pending 512 found
+// `p2p.SharedEndpoint.Stats()` with zero production callers, and the entry that followed blamed
+// the defining file. Named search says otherwise: every field of `udpmux.Stats` is mentioned in
+// `internal/cli/rendezvous.go`, which is OUT of package, so `internal/udpmux/mux.go` was redundant
+// in that reader list rather than load-bearing — and no package-scoped rule would have said a
+// word. What let it through is the limit stated at the top of this file: `nib rendezvous` mentions
+// every name, of a mux it built itself. Closing that needs a reader tied to the INSTANCE, which no
+// name scan can do. This arm closes the neighbouring hole and is not that one.
+//
+// **The 47-field residue is real and is deliberately NOT dispositioned here.** Narrowing it to the
+// genuinely-unread ones needs a per-field pass that no automatic filter can stand in for, and both
+// obvious filters were tried and are unsound: a Go IMPORT filter over-rejects, because imports are
+// per FILE and `internal/server/extsigner.go:33` reads `vault.ExternalSigner.CertPEM` without
+// naming the package in that file; a bare-name match against `web/app.js` over-accepts, because
+// `name`, `state` and `reason` appear in a twenty-thousand-line client for a hundred reasons. So
+// the NUMBER is recorded and the verdicts are left to a pass that reads the call sites.
+//
+// They are not parked to make the number smaller, and that is a rule rather than a preference: a
+// park is consulted BEFORE the reader loop, so parking a field would make it invisible instead of
+// pending — the `historyEvicted` failure performed on the guard that exists to catch it.
+//
+// An entry here is deleted the day its shape gains an out-of-package reader in `published`, and
+// the arm refuses a stale one — the same two-sided discipline `unreadKnown` carries. The trigger
+// is an edit to `published`, which is the right one: this is a claim about the TABLE, and the
+// table is the only thing the scan reads.
+var internalShapes = map[string]string{
+	// **`Anchor` crosses the package boundary as an OPAQUE TOKEN, which is the case the rule is
+	// wrong about rather than a missing reader.** `internal/server/delivery.go:1215,1736,2060`
+	// derive one from an invitation and hand it straight to `VerifyAgainst`. Named search for a
+	// field read — `anchor.RosterHash` / `anchor.Convener` over every non-test Go file outside
+	// `internal/ceremony` — returns nothing; the only two reads are
+	// `internal/ceremony/termination.go:391` and `:415`. A caller that DID read either would be
+	// re-implementing the comparison this type exists to centralise, so the honest state is not
+	// "somebody forgot a reader" but "reading it out there is the defect".
+	"ceremony.Anchor": "crosses the boundary as an opaque token: delivery.go derives one and " +
+		"passes it to VerifyAgainst, and the only field reads are termination.go:391,415. A " +
+		"caller that read either field would re-implement the comparison the type centralises.",
+
+	// **`Channel` is an INWARD parameter, not an outward fact.** `Initiate`, `Carry`, `Receive`,
+	// `SendDocument` and `ReceiveDocument` each take one (`internal/p2p/session.go:237,312,375,
+	// 846,892`) and `TLSChannel`/`quicChannel` build one; its fields are security properties the
+	// transport establishes and `check()` consumes, both inside `internal/p2p`. The single
+	// out-of-package touch is a nil guard at `internal/server/delivery.go:108`, and naming
+	// delivery.go a reader to satisfy this arm would let one `!= nil` stand for four fields.
+	//
+	// The discoverer admits it because it is returned AND has only exported fields. The category
+	// it cannot see is "built by this package, consumed by this package, passed THROUGH by
+	// another" — the same blind spot the `p2p.Roster` note above records for parameter-only types,
+	// arriving from the other direction.
+	"p2p.Channel": "an inward parameter carrier: the session core takes one and the transport " +
+		"builds one, both inside internal/p2p. The only out-of-package touch is delivery.go:108's " +
+		"nil guard, and a != nil must not stand in for four consumed fields.",
+
+	// Already declared deliberate at its `published` entry above — *"declared with its DEFINING
+	// file as the only reader, which is the honest answer and is deliberately weak (P07.S06)"* —
+	// and all three fields are parked in `unreadKnown`. This entry is what turns that prose into
+	// a check, which is the whole point of the map: the sentence was true and unenforced.
+	"pdfops.SignatureWidget": "the positive control D25's placement clause asks for; its only " +
+		"reader is the P07.S06 guard and tests do not count here, so all three fields are " +
+		"parked below rather than claimed.",
+}
 
 // unreadKnown are fields this scan found published and NOT read, kept VISIBLE rather than
 // excluded. An exclusion says "not this scan's business"; these are exactly its business —
@@ -386,9 +535,26 @@ var unreadKnown = map[string]string{
 	//
 	// Delete these three when S05 delivers a termination and a receiving party verifies one — that
 	// is the moment the fields acquire the consumer they were designed for.
-	"ceremony.Termination.Version":      "no far-end reader until S05 delivers the object; Verify is in the defining package",
-	"ceremony.Termination.ConvenerCert": "no far-end reader until S05 delivers the object; Verify is in the defining package",
-	"ceremony.Termination.Sig":          "no far-end reader until S05 delivers the object; Verify is in the defining package",
+	//
+	// **That condition HAS been met, and two of the three entries stay (/pending 558).** S05
+	// shipped: `internal/server/delivery.go:160-161` writes an arriving termination and
+	// `asTermination` (`:1694-1701`) gates the arrival on `t.Ceremony`, `t.State` and `t.Sig`. So
+	// **`Sig`'s entry is DELETED** — it has the far-end reader it was designed for, at
+	// `delivery.go:1699`, which is what the stated deletion condition asked for.
+	//
+	// `Version` and `ConvenerCert` do not, and their old reason is now false rather than merely
+	// stale: it blamed the schedule, and the schedule has happened. The true reason is narrower —
+	// a receiving party verifies through `ReadTermination`, whose checking lives in
+	// `internal/ceremony`, so neither field is read by any caller outside the defining package.
+	// Named search: `.ConvenerCert` over every non-test Go file outside `internal/ceremony`
+	// returns **zero**, and `.Version` on a `Termination` likewise (`internal/server/auth.go:280`
+	// is `st.Version` on another type). Reasons rewritten rather than left describing a slice that
+	// has landed — a park whose stated condition is met is a park nobody can act on.
+	//
+	// Delete these two if a surface ever shows a reader WHICH convener signed an end state, or
+	// reports the object's own format number — neither of which Nib offers today.
+	"ceremony.Termination.Version":      "the object is delivered since S05, but nothing outside internal/ceremony reads its format number; verification is ReadTermination's, in the defining package",
+	"ceremony.Termination.ConvenerCert": "the object is delivered since S05, but the certificate is consumed only by Verify in the defining package; named search finds no .ConvenerCert outside internal/ceremony",
 
 	// **Parked HONESTLY rather than passing silently (2026-08-24, P07.S02).** This scan's
 	// declared readers for `ceremony.Party` are `record.go` and `invitation.go` — both inside
@@ -408,6 +574,13 @@ var unreadKnown = map[string]string{
 	// the renderer is `internal/p2p`, which is not a declared reader of `ceremony.Party`, so no
 	// reader named here consumes the field. The entry is accurate about that and the old sentence
 	// was not.
+	// **Corrected again /pending 558, and this time the correction is textual.** `ceremony.Party`
+	// now names `internal/server/convene.go`, which contains one `.Capacity` — at `convene.go:123`,
+	// writing a `convenePartyRequest`'s capacity INTO a new `ceremony.Party`. That is the producer
+	// side, not a consumer, and the scan cannot tell the two apart: it proves a name is mentioned
+	// in a named file. Nothing changes here because a park is checked BEFORE the reader loop, so
+	// the field never reaches the match — but the sentence above would otherwise be false about
+	// its own table, and this file's law is that its prose is evidence.
 	"ceremony.Party.Capacity": "published and committed at P07.S02; the block renderer that " +
 		"displays it is P07.S07 (C19). Delete this line then.",
 
@@ -657,6 +830,102 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 				"scan has quietly stopped covering a shape it claims to cover.", name)
 		}
 	}
+	// **A shape's declared readers must include one OUTSIDE its declaring package (/pending 558).**
+	// A field's reader set includes its own defining file and a struct definition mentions every
+	// field it declares, so an all-in-package reader list reports full coverage over a shape
+	// nothing outside the package reads — the hole this file confessed three times in prose and
+	// never asserted. `internalShapes` carries what this closes, what it measurably does not, and
+	// why the rule is shape-level rather than per-field.
+	for _, name := range sortedKeys(shapes) {
+		readers, ok := published[name]
+		if !ok && strings.HasPrefix(name, "server.") {
+			// `jsonShapeReaders` is web/app.js plus internal/cli, none of it in internal/server,
+			// so these pass — but they are CHECKED rather than skipped, because the day that list
+			// gains an internal/server file this arm is the only thing that would say so.
+			readers, ok = jsonShapeReaders, true
+		}
+		if !ok {
+			continue // already reported as untabled by the main loop above
+		}
+		pkgDir := filepath.Dir(shapes[name].file)
+		outside := ""
+		for _, r := range readers {
+			if filepath.Dir(r) != pkgDir {
+				outside = r
+				break
+			}
+		}
+		why, exempt := internalShapes[name]
+		switch {
+		case exempt && why == "":
+			t.Errorf("%s is in internalShapes with no reason. An unexplained exemption is how a "+
+				"shape that genuinely leaves its package stops being checked for it.", name)
+		case exempt && outside != "":
+			t.Errorf("%s is exempted as internal, but %s reads it from outside %s — delete the "+
+				"entry. A stale exemption stops describing anything and silently re-exempts the "+
+				"shape the day that reader is removed.", name, outside, pkgDir)
+		case !exempt && outside == "":
+			t.Errorf("%s (%s) declares readers %v and every one of them is inside %s. An "+
+				"in-package consumer — a Verify, an accessor, a preimage builder — supplies the "+
+				"selectors this match wants, so the shape reports a reader for all %d of its "+
+				"fields while nothing outside its package reads any. Name a real out-of-package "+
+				"reader, or record it in internalShapes with the reason it has none.",
+				name, shapes[name].file, readers, pkgDir, len(shapes[name].fields))
+		}
+	}
+	// **A NAMED READER MUST READ SOMETHING (/pending 558).** A reader that satisfies no field of
+	// the shape it is named for is not a weak reader, it is a wrong one, and it does harm twice:
+	// the shape reads as better covered than it is, and an out-of-package dead entry LAUNDERS the
+	// arm above, which asks what the list says rather than what the files do.
+	//
+	// Measured on this tree: four, each a different kind of wrong, and all four are repaired in the
+	// table above. `udpmux.Stats` named its own `internal/udpmux/mux.go` and satisfied 0 of 10 —
+	// the entry /pending 558 was filed against. `vault.ExternalSigner` named
+	// `internal/server/keys.go`, which does not contain the string `ExternalSigner` at all, so its
+	// only live reader was in-package and the arm above would have passed it. The other two named
+	// the file that EMBEDS the shape in a response rather than one that reads a field.
+	//
+	// Parked fields count here: the question is whether this file mentions the shape at all, not
+	// whether the mention discharges anything. A reader named for a shape whose every field is
+	// parked is still doing work — it is what the park will be checked against when it is deleted.
+	for _, name := range sortedKeys(shapes) {
+		sh := shapes[name]
+		readers, ok := published[name]
+		if !ok {
+			// `jsonShapeReaders` is ONE shared list across ~54 shapes, so "reads no field of this
+			// particular shape" is its normal case and not a defect. The per-field loop is what
+			// covers those.
+			continue
+		}
+		for _, r := range readers {
+			src := readerSrc(t, r)
+			live := false
+			for _, f := range sh.fields {
+				if strings.Contains(src, "."+f) ||
+					(sh.tag[f] != "" && strings.Contains(src, "."+sh.tag[f])) ||
+					(sh.tag[f] != "" && (strings.HasSuffix(r, ".js") || strings.HasSuffix(r, ".sh")) && mentionsWord(src, sh.tag[f])) {
+					live = true
+					break
+				}
+			}
+			if !live {
+				t.Errorf("%s names %s as a reader and it mentions none of its %d field(s). A "+
+					"reader that reads nothing is worse than no entry at all: the shape reads as "+
+					"covered, and an out-of-package one launders the outside-the-package check. "+
+					"Name the file that actually reads it, or drop the entry.",
+					name, r, len(sh.fields))
+			}
+		}
+	}
+
+	// The mirror of the arms above: an exemption for a shape the scan no longer discovers is a
+	// hole waiting for the next shape of that name, exactly as for `excluded` and `unreadKnown`.
+	for k := range internalShapes {
+		if _, ok := shapes[k]; !ok {
+			t.Errorf("internalShapes names %q but it is no longer a published observable", k)
+		}
+	}
+
 	t.Logf("scanned %d published observables across %d packages", len(shapes), len(observablePackages))
 }
 

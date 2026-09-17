@@ -5803,6 +5803,51 @@ assertion was then proved by deleting `/OFF` alone, which is the plausible defec
 
 `recorded` 437 → 439.
 
+---
+
+## /pending 558 — an observable read only by its own package (v1.135.10+)
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `an-observable-read-only-by-its-own-package` — `ceremony.Party`'s readers put back to `record.go` + `invitation.go`, both inside `internal/ceremony`, which is the state this file's prose has described since P07.S02 and never asserted | `TestEveryPublishedObservableHasANamedReader`, tier 1 | "ceremony.Party (internal/ceremony/record.go) declares readers [internal/ceremony/record.go internal/ceremony/invitation.go] and **every one of them is inside** internal/ceremony … the shape reports a reader for all 4 of its fields while nothing outside its package reads any" |
+| `a-named-reader-that-reads-nothing` — `vault.ExternalSigner`'s reader list put back to `internal/server/keys.go`, a file that does not contain the string `ExternalSigner` | `TestEveryPublishedObservableHasANamedReader`, tier 1 | "vault.ExternalSigner names internal/server/keys.go as a reader and it **mentions none of its 3 field(s)** … an out-of-package one launders the outside-the-package check" |
+
+**The item's stated cause did not survive being measured, and both halves are worth recording.**
+/pending 558 said the scan is satisfied by a field's own defining file because the struct
+*definition* mentions every field by name. It is not: the per-field match needs a SELECTOR
+(`.Field`) and a struct declaration contains none. Measured — `internal/udpmux/mux.go` was named a
+reader of `udpmux.Stats` and satisfied **0 of its 10 fields**, because `Stats()` builds the struct
+with keyed literals (`mux.go:187-198`) and the file's one `.Panicked` sits in a comment `codeOnly`
+strips. What makes an in-package reader satisfy this scan is CONSUMPTION — a `Verify`, an accessor,
+a preimage builder — which is why the first row's defect stays invisible to every other arm: `record.go`'s preimage
+builder and `invitation.go` read `ceremony.Party`'s fields for real, so the per-field arm is green,
+the dead-reader arm is green, and only the outside-the-package arm fires.
+
+**And it would not have caught /pending 512 either.** Every field of `udpmux.Stats` is mentioned in
+`internal/cli/rendezvous.go`, which is out of package, so the defining file was redundant there
+rather than load-bearing and no package-scoped rule would have said a word. `nib rendezvous`
+mentions every name — of a mux it built itself. Closing that needs a reader tied to the INSTANCE,
+which no name scan can do, and it is named as an open hole rather than papered over.
+
+**The second row is why the two arms are not redundant.** With the stale entry back, the shape's
+only live reader is its own package's `internal/vault/vault.go`, and the outside-the-package arm
+stays silent because `internal/server/keys.go` is outside `internal/vault` *by path*. A dead
+out-of-package reader launders the stricter check — and that is the state the tree was actually in:
+the routes had moved to `extsigner.go` (`internal/server/server.go:484-486`) and the table was never
+re-pointed. Repairing it surfaced `vault.ExternalSigner.ChainPEM`, which is stored and read by no
+caller outside `internal/vault`.
+
+**Why the rule is shape-level and not per-field**, since the item asked for the per-field form:
+excluding in-package readers from the field match reports **47 of the 511 fields checked**, 38 of
+them satisfied only by their own defining file — but **37 of the 47 are fields with real
+out-of-package consumers `published` simply never named** (`ceremony.Party.Fingerprint` is read by
+seventeen files in `internal/server`). Flipping the field rule forces the table to name those large
+files, and this scan's declared coincidental-match limit means a large file satisfies almost any
+field name: a stricter-looking rule buying a table looser in practice than the one it replaced, plus
+37 false orphans, against this table's own law that a false orphan is worse than no scan.
+
+`recorded` 458 → 460.
+
 ## /pending 549 — the vault's persist door, Migrate's return, and the slot snapshot (2026-09-16)
 
 Three pieces of residue `/pending 510`'s mutate-door work turned up and deliberately did not sweep
