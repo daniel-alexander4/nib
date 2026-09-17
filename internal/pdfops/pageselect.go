@@ -74,6 +74,99 @@ var catalogAllowlist = map[string]bool{
 	"Names":    true, // reduced below to /Dests alone, itself pruned
 }
 
+// What a REAL producer carries that this list drops, measured rather than imagined — `/pending 525`,
+// every catalog in veraPDF's PDF_UA-1 corpus, 295 of 297 readable. `/MarkInfo`, `/ViewerPreferences`,
+// `/StructTreeRoot` and `/Metadata` (295/295/294/294) are re-added by a successful carry and are not
+// a loss. Of the rest: `/Outlines` 276 and `/PageMode` 33 are carried above (`/pending 524`),
+// `/OpenAction` 220 is page-indexed and is `/pending 555`, `/PageLayout` 40 and `/OCProperties` 6 are
+// carried below, and `/Extensions` and `/NeedsRendering` are one file each.
+//
+// **The caveat bounds the claim: 283 of the 295 are `veraPDF Test Builder 1.0`**, and the corpus
+// holds exactly one LibreOffice file and one Word file. So the scan says a tagged document DOES
+// carry these keys in practice; it does not say the distribution resembles a real producer mix. That
+// half stays gated on `PLAN-ua-coverage.md` P08's corpus.
+//
+// # `/OutputIntents` — 26 files, and it is DROPPED, deliberately
+//
+// It is the ICC profile a PDF/A claim rests on, so dropping it silently de-conforms such a document
+// — except that a subset has already de-conformed it, by construction and with no way back. The
+// identification lives in `/Metadata`, which is not on this list; and where the structure carry
+// re-adds a `/Metadata`, it BUILDS a fresh title-only packet (`structcarry.go:989-1006`), so no
+// subset nib performs emits a `pdfaid` by either route. What would be carried is therefore the
+// apparatus of a claim the output does not make — and in the measured population that is not a
+// figure of speech: **26 of 26 entries are `/S /GTS_PDFA1`**, the subtype whose entire meaning is
+// "this is the output intent PDF/A requires" (`pdfa.go:253`). Writing it onto a document whose
+// `pdfaid` this operation just removed is ADR-032's rule one key over — an identification carried
+// without the verification behind it.
+//
+// Two lesser reasons point the same way. pdfcpu validates seven keys of an output-intent dictionary
+// and rejects nothing else (`validate/xReftable.go:566-612`), and a named search —
+// `grep -n "OutputIntent" internal/pdfops/scan.go` — returns nothing, so neither `Scan` nor
+// `StripActive` has ever looked inside one; carrying the array whole would widen a surface nib's own
+// scanner does not inspect, which is `outlinecarry.go`'s argument for dropping `/A`. And it costs
+// nothing a user can act on: the door that wants an output intent makes its own
+// (`injectPDFAMarkers`, `pdfa.go:261`), from a vendored sRGB profile, on the way to a claim it also
+// writes.
+//
+// **What would reverse this**, stated so the next reader does not have to re-derive it: a subset
+// that emits an identification it verified. Then the intent is the apparatus of a claim the output
+// DOES make and it comes back with the claim. The affirmative case that was weighed and lost is
+// colour fidelity — an output intent is a base-spec key since PDF 1.4 and not a PDF/A invention
+// (`validate/xReftable.go:1135,1190`), so a colour-managed reader could still use it. It lost
+// because that benefit is unmeasured on this population while the mixed signal is measured at 26 of
+// 26, and under default-deny an unmeasured benefit does not move a key onto the list. The same
+// reasoning covers PDF/X's `/GTS_PDFX`, which this corpus contains none of.
+
+// carriedPageLayout is the `/PageLayout` a selection may re-state, or "" for none.
+//
+// **It is the easy half and the reason is that it makes no per-page claim.** Every value names an
+// arrangement — measured, all 40 corpus files say `/OneColumn` — and none of them is about a
+// particular page, which is exactly what separates it from `/PageLabels`: "display this
+// continuously" survives dropping pages and "this page is page iv" does not.
+//
+// It is read as a NAME and re-written as one, rather than passed through as the source's object.
+// `nameVal` resolves a direct name only, so a `/PageLayout` written as an indirect reference is
+// dropped — and that is the point. Passing the source object through would let one reference of the
+// source's ride out on a key nobody would think to check, and pdfcpu writes by reachability: the
+// `/StructTreeRoot` hazard this file's header describes, on the key that looks least capable of it.
+func carriedPageLayout(root types.Dict) string {
+	return nameVal(root, "PageLayout")
+}
+
+// carriedPageMode is the `/PageMode` a selection may re-state, or "" for none. It takes what
+// actually survived rather than the request, because the rule is one sentence: **a value survives
+// when the thing it names does.**
+//
+// `/UseOutlines` is `/pending 524`'s and unchanged — the panel is carried only alongside a real
+// outline, or the document opens with the bookmarks pane shut exactly as it did when the tree was
+// being dropped. `/UseOC` is new because `/OCProperties` now survives (`optionalcarry.go`), and it
+// is the same rule rather than a second one; the earlier note refused it for a reason — "the
+// `/OCProperties` the allowlist drops" — that this change makes false.
+//
+// The other four are refused and stay refused. `/UseAttachments` names embedded files the subset
+// drops, and it is not hypothetical: it is 8 of the corpus's 33 `/PageMode` files, so with
+// `/UseOutlines`'s 25 the two together are all 33 and nothing measurable was left after 524.
+// `/FullScreen` is a presentation mode nobody asked a page selection to turn on, and it is also
+// half of a PAIR — `/ViewerPreferences /NonFullScreenPageMode` says what the reader does on exit,
+// and `/ViewerPreferences` is off the allowlist (a carrying subset rebuilds it as `/DisplayDocTitle`
+// alone), so carrying `/FullScreen` states one half of a setting whose other half this operation
+// destroyed. `/UseNone` is the default a reader applies anyway, and `/UseThumbs` names a panel no
+// key of this document controls; neither appears in the corpus at all, and naming a value to change
+// nothing is the listing this allowlist exists to avoid.
+func carriedPageMode(root types.Dict, outlines, optional types.Object) string {
+	switch nameVal(root, "PageMode") {
+	case "UseOutlines":
+		if outlines != nil {
+			return "UseOutlines"
+		}
+	case "UseOC":
+		if optional != nil {
+			return "UseOC"
+		}
+	}
+	return ""
+}
+
 // pageLeaf is one leaf of the source page tree together with the attributes it inherits, resolved
 // during the single walk that finds it.
 type pageLeaf struct {
@@ -294,11 +387,6 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	// with no rollback and no second pass.
 	carried := false
 	var treeRoot, markInfo, outlines types.Object
-	// showOutlines records that the source asked readers to OPEN with the bookmarks panel showing.
-	// Carrying the outline without it is a half-fix the user still reports as "my bookmarks are
-	// gone": the tree is in the file, and the document opens with the panel shut exactly as it did
-	// when the tree was being dropped.
-	showOutlines := false
 	title := ""
 	var showTitle *bool
 	if carry {
@@ -327,14 +415,31 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 		// which is the original decision's own "sends the reader to the wrong place", now true of the
 		// composing doors and no longer of this one.
 		outlines = carryOutline(xt, root, keptPages)
-		// **`/UseOutlines` ONLY, and only alongside a surviving outline.** `/PageMode` is not
-		// page-indexed, so nothing about it needs remapping — but carrying the key wholesale would
-		// re-admit values this operation has deliberately made false: `/UseAttachments` points at
-		// embedded files the subset drops, `/UseOC` at the `/OCProperties` the allowlist drops, and
-		// `/FullScreen` is a presentation mode nobody asked a page selection to turn on. Naming the
-		// one value that pairs with what survived is the allowlist's own shape — earned, not listed.
-		showOutlines = outlines != nil && nameVal(root, "PageMode") == "UseOutlines"
 	}
+
+	// **Optional content is read OUTSIDE the `carry` gate, and that placement is the decision**
+	// (`/pending 525`, `optionalcarry.go`). Dropping `/OCProperties` does not lose a layer, it
+	// REVEALS one — measured on two renderers — so the doors that must not carry a description of
+	// destroyed content (`collectWithoutStructure`: redaction, and every subset feeding a
+	// composition) are precisely the doors where the reveal is worst. It is read here, before the
+	// allowlist, for the reason the tree and the outline are: its own subtree has to be walkable
+	// while the catalog still names it.
+	//
+	// The walk needs the pages this selection DROPPED, which is every leaf that was not placed.
+	// `keptPages` holds the object number of each original placed AND of each clone made, so a page
+	// the selection named twice contributes both numbers to it and neither to this set.
+	dropped := make(map[int]bool, len(leaves))
+	for _, l := range leaves {
+		if nr := l.ref.ObjectNumber.Value(); !keptPages[nr] {
+			dropped[nr] = true
+		}
+	}
+	optional := carryOptionalContent(xt, root, dropped)
+	// Both of these are pure viewer preferences with no reference and no per-page claim, so neither
+	// needs the `carry` gate either; `carriedPageMode` is given what actually survived rather than
+	// asked to re-derive it.
+	layout := carriedPageLayout(root)
+	mode := carriedPageMode(root, outlines, optional)
 
 	for k := range root {
 		if !catalogAllowlist[k] {
@@ -349,13 +454,21 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	}
 	unlinkDestinations(xt, keptDicts, keptPages)
 	// Re-added ON TOP of the allowlist, never into it — the shape the structure keys already use.
-	// `/Outlines` appears only when a real outline survived the prune, so a key this code has never
-	// heard of is still dropped and an outline that lost every entry leaves no empty root behind.
+	// Each of the four appears only when the thing it names survived: an outline that lost every
+	// entry leaves no empty root behind, `/OCProperties` is nil where its subtree reached a dropped
+	// page, and a `/PageLayout` or `/PageMode` that was not a plain name was never read. So a key
+	// this code has never heard of is still dropped, and none of these is ever an empty assertion.
 	if outlines != nil {
 		root["Outlines"] = outlines
 	}
-	if showOutlines {
-		root["PageMode"] = types.Name("UseOutlines")
+	if optional != nil {
+		root["OCProperties"] = optional
+	}
+	if layout != "" {
+		root["PageLayout"] = types.Name(layout)
+	}
+	if mode != "" {
+		root["PageMode"] = types.Name(mode)
 	}
 	// The trailer's /ID[0] is a PERMANENT document identifier: pdfcpu preserves it and mints only
 	// /ID[1] (`write.go`'s ensureFileID), where the fresh-context path had no ID at all and minted

@@ -5647,3 +5647,59 @@ is left holding a string that reaches nothing. It passed however the production 
 uses an explicit `[page /Fit]` array now, the one shape that names a page dictionary.
 
 `recorded` 435 → 437.
+
+## /pending 525 — the catalog keys a real producer carries and the allowlist dropped (2026-09-16)
+
+**The scan came first and the dispositions follow it.** Every catalog in veraPDF's PDF_UA-1 corpus,
+295 of 297 readable, counted for keys `catalogAllowlist` drops; the four not page-indexed were
+decided here. `/PageLayout` (40 files, all `/OneColumn`) and `/OCProperties` (6) are carried,
+`/OutputIntents` (26) is dropped and the code now says why, and `/PageMode` needed nothing: its 33
+files are 25 `/UseOutlines`, already carried by /pending 524, and 8 `/UseAttachments`, which names
+embedded files a subset drops.
+
+**The caveat bounds the claim: 283 of the 295 are `veraPDF Test Builder 1.0`**, and the corpus holds
+exactly one LibreOffice file and one Word file. The scan says a tagged document does carry these keys
+in practice; it does not say the distribution resembles a real producer mix. That half stays gated on
+`PLAN-ua-coverage.md` P08's corpus.
+
+| proof | check | expects |
+|---|---|---|
+| `subset-reveals-a-hidden-optional-content-layer` — `carryOptionalContent` returns nil, so `/OCProperties` is dropped as it was from the first `Collect` until this item | `go test ./internal/pdfops/ -run TestAHiddenLayerIsStillHiddenAfterASelection -count=1` | `the output has no /OCProperties` |
+| `optional-content-carry-skips-the-dropped-page-walk` — the carry ships the subtree without asking whether it reaches a page the selection dropped | `go test ./internal/pdfops/ -run TestOptionalContentReachingADroppedPageIsRefused -count=1` | `the output holds 3 page objects, want the 2 it kept` |
+
+**`/OCProperties` is the one key on the drop list whose loss REVEALS content rather than losing it,
+and that inverts the usual argument.** Every other drop is justified by "a key carried onto a subset
+can be a positive false statement about content that is gone". This one is the mirror: the layer's
+content travels with the page whatever happens, and the catalog key is the only thing saying it is
+switched off. Measured on a three-page fixture whose page 1 carries a 300×200pt box inside a group
+listed in `/OFF`, subset to pages 1 and 3, page 1 rasterised at 40 dpi — 39 dark pixels → **18,855**
+under Ghostscript 10.02.1, 6 → **18,598** under poppler's `pdftoppm`. Two independent renderers, the
+same answer. nib's own `StripActive` deletes this key for exactly that effect and calls it "the
+intended hidden-content reveal" — intended on a door the user reached by asking to strip active
+content, not on "keep pages 1 and 3", and `RedactPages` builds its runs of untouched pages through
+`collectWithoutStructure`, so the reveal was landing inside a redaction. So the carry is NOT gated on
+the structure carry the way the outline's is: the doors that must not carry a description of
+destroyed content are precisely the doors where revealing hidden content is worst.
+
+**The second row is the hazard the carry had to close, and removing the walk proves it is real
+rather than hypothetical.** `/OCProperties` holds indirect references, pdfcpu writes by reachability,
+and with the refusal mutated out the two-page output holds three page dictionaries — the dropped
+page, its `/Contents` and all, still in the file. Measured over the corpus, the six files carrying
+the key hold `{OCGs, D{Name, Order, ON, AS, RBGroups}}` and their groups `{Type, Name, Usage}`, not
+one page reference anywhere, so the refusal is written against a crafted document and refuses the
+subtree entire.
+
+**A third mutation found the assertion that would have passed on an alias.** Replacing the carried
+`/OFF` entry with a freshly minted OCG carrying the identical `/Type` and `/Name` leaves a document
+that looks correct key by key and hides nothing, because the page's `/Resources /Properties` still
+names the original object. The test compares OBJECT NUMBERS between the page's group and the
+catalog's `/OFF` set for that reason, and goes red on the alias.
+
+**One mutation failed for the wrong reason and taught something.** Deleting `/D` from the carried
+subtree was meant to prove the `/OFF` assertion independently of mere presence; it hit pdfcpu's
+validator instead — `optContentPropertiesDict required entry=D missing` — because every subset door
+reads through `api.ReadValidateAndOptimize`. That closes a worry the carry would otherwise have owed
+an answer: a source `/OCProperties` too incomplete to be safe cannot reach the carry at all. The
+assertion was then proved by deleting `/OFF` alone, which is the plausible defect anyway.
+
+`recorded` 437 → 439.

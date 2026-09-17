@@ -328,14 +328,20 @@ func contentFingerprints(t *testing.T, pdf []byte) []string {
 // holding /Dests and started holding /EmbeddedFiles compares equal at the top level, and that is
 // exactly the leak this exists to catch.
 //
-// **`/Outlines` and `/PageMode` are DECLARED divergences, and declaring them is what keeps the
-// oracle sharp** (`/pending 524`, `outlinecarry.go`). The old implementation dropped both; this one
-// carries the outline pruned onto the pages kept, and `/PageMode` for the single value that pairs
-// with it. Each exception is subtracted from the new side by NAME rather than the comparison
-// loosened, so every other key is still graded against the old behaviour and the key nobody thought
-// of still fails here. Both directions are asserted: that the new side really does carry each — or
-// the subtraction would quietly hide a carry regressing to a drop — and that removing them leaves
-// the two shapes identical.
+// **Four keys are DECLARED divergences, and declaring them is what keeps the oracle sharp**
+// (`/pending 524` for `/Outlines` and `/PageMode`, `/pending 525` for `/PageLayout` and
+// `/OCProperties`). The old implementation dropped all four; this one carries the outline pruned
+// onto the pages kept, `/PageMode` for the values whose target survived, the page layout as a bare
+// name, and the optional-content properties that keep a hidden layer hidden. Each exception is
+// subtracted from the new side by NAME rather than the comparison loosened, so every other key is
+// still graded against the old behaviour and the key nobody thought of still fails here. Both
+// directions are asserted: that the new side really does carry each — or the subtraction would
+// quietly hide a carry regressing to a drop — and that removing them leaves the two shapes
+// identical.
+//
+// **`/OutputIntents` is on the fixture and is NOT declared**, which is the whole converse: it is a
+// key this change considered and decided to drop, so it must go on being graded against the old
+// implementation like any other, and a change that starts carrying it fails here.
 func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 	src := richFixture(t)
 
@@ -372,7 +378,8 @@ func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 	// carrying an outline, labels, a name tree or a title — and the test greens on nothing.
 	srcShape := shape(src)
 	for _, want := range []string{"Outlines", "PageLabels", "Names", "Info:Title=",
-		"Metadata", "ViewerPreferences", "OpenAction", "PageMode"} {
+		"Metadata", "ViewerPreferences", "OpenAction", "PageMode", "PageLayout",
+		"OutputIntents", "OCProperties"} {
 		if !strings.Contains(srcShape, want) {
 			t.Fatalf("setup: the fixture does not carry %s (%s) — this test would compare two "+
 				"empty catalogs and pass having graded nothing", want, srcShape)
@@ -396,7 +403,7 @@ func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 			t.Fatalf("%s (old): %v", c.name, err)
 		}
 		got, want := shape(mine), shape(old)
-		for _, declared := range []string{"Outlines", "PageMode"} {
+		for _, declared := range []string{"Outlines", "PageMode", "PageLayout", "OCProperties"} {
 			if !strings.Contains(got, declared) {
 				t.Errorf("%s: /%s was not carried (%s) — and without it the subtraction below "+
 					"would compare two catalogs that agree because both lost it", c.name, declared, got)
@@ -573,6 +580,33 @@ func richFixture(t *testing.T) []byte {
 		// The rest of what a real catalog carries and a subset must decide about.
 		root["ViewerPreferences"] = types.Dict{"DisplayDocTitle": types.Boolean(true)}
 		root["PageMode"] = types.Name("UseOutlines")
+		root["PageLayout"] = types.Name("OneColumn")
+		// `/OutputIntents` is here to be DROPPED: the comparison below grades it against the old
+		// implementation like every other undeclared key, so a change that starts carrying it fails
+		// there rather than nowhere.
+		oiRef, ierr := ctx.XRefTable.IndRefForNewObject(types.Dict{
+			"Type":                      types.Name("OutputIntent"),
+			"S":                         types.Name("GTS_PDFA1"),
+			"OutputConditionIdentifier": types.StringLiteral("sRGB"),
+		})
+		if ierr != nil {
+			return ierr
+		}
+		root["OutputIntents"] = types.Array{*oiRef}
+		ocgRef, ierr := ctx.XRefTable.IndRefForNewObject(types.Dict{
+			"Type": types.Name("OCG"),
+			"Name": types.StringLiteral("Attorney notes"),
+		})
+		if ierr != nil {
+			return ierr
+		}
+		root["OCProperties"] = types.Dict{
+			"OCGs": types.Array{*ocgRef},
+			"D": types.Dict{
+				"Name": types.StringLiteral("Default"),
+				"OFF":  types.Array{*ocgRef},
+			},
+		}
 		first, perr := ctx.PageDictIndRef(1)
 		if perr != nil {
 			return perr

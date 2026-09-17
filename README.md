@@ -937,6 +937,11 @@ the outline comes with the pages it still points at — a bookmark whose page is
 dropped, and a heading is kept as long as something under it survives. Nothing is
 silently re-aimed: a bookmark that appears still goes where it always went.
 
+**And a hidden layer stays hidden.** If a document has optional-content layers switched
+off — a draft watermark, a markup layer, an alternate language — reordering, deleting,
+extracting or redacting pages leaves them switched off. (**Strip active content** still
+reveals them, on purpose: that's what it's for.)
+
 **Split by bookmarks** (File → Export) turns one bookmarked PDF into a folder of
 separate files — one per top-level bookmark, named from the bookmark with an
 optional prefix. Point it at a scored orchestration and get one PDF per
