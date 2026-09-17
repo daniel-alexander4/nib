@@ -158,6 +158,13 @@
       <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
       </button>
+            </div><div class="tbgroup" data-label="Print" data-fold="0">
+      <!-- A data-forward twin of the File pane's Print…, so there is one handler and one id.
+           setDocControls disables [data-forward="printBtn"] alongside printBtn itself, so this
+           greys out with nothing open without being listed anywhere new. -->
+      <button class="tbicon" data-forward="printBtn" title="Print (opens your browser's print dialog)" aria-label="Print" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+      </button>
             </div><div class="tbgroup" data-label="Save" data-fold="0">
 <button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
       <button id="quitBtn" title="Quit Nib — ends this process, and says what it will end first">Quit</button>
