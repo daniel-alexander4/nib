@@ -211,12 +211,13 @@ itself — it produces a *candidate* you should **verify with
 
 ### Open an image
 
-Open a **PNG or JPEG** the way you open a PDF — by path, by dragging it onto the
-window, or by double-clicking it when Nib is your handler. It becomes a one-page
+Open a **PNG, JPEG, TIFF or WebP** the way you open a PDF — by path, by dragging it
+onto the window, or by double-clicking it when Nib is your handler. It becomes a one-page
 document you can mark up, annotate, redact and export like any other.
 
 The page is the image's **physical size**: pixels divided by the density the file
-declares (`pHYs` for PNG, JFIF for JPEG), or **96 dpi** where it declares none — so
+declares (`pHYs` for PNG, JFIF for JPEG; TIFF and WebP are always taken at the
+default), or **96 dpi** where it declares none — so
 a 1920×1080 screenshot opens at about 1440×810 points, close to the size it had on
 screen. A photo carrying an EXIF orientation opens **upright**; the four mirrored
 orientations are not corrected, and open as an unrotated image.

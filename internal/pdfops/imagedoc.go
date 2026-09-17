@@ -8,6 +8,10 @@ import (
 	"image"
 	_ "image/jpeg" // registers the JPEG decoder for image.DecodeConfig
 	_ "image/png"  // and PNG
+	// TIFF and WebP are registered by pdfcpu's own imports, which nib already depends on:
+	// `hhrutter/tiff` calls image.RegisterFormat for both byte orders (reader.go:882-883) and
+	// `x/image/webp` registers "RIFF????WEBPVP8" (decode.go:281). Named here because a reader
+	// looking for where they come from would otherwise find nothing in this file.
 )
 
 // Opening an image as a document — `/pending 400`.
@@ -67,6 +71,8 @@ type imageFormat string
 const (
 	formatPNG  imageFormat = "png"
 	formatJPEG imageFormat = "jpeg"
+	formatTIFF imageFormat = "tiff"
+	formatWebP imageFormat = "webp"
 )
 
 // sniffImage reports the format from the leading bytes.
@@ -80,6 +86,20 @@ func sniffImage(data []byte) (imageFormat, bool) {
 		return formatPNG, true
 	case bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}):
 		return formatJPEG, true
+
+	// **TIFF's magic is also the EXIF header's, so it is matched at offset 0 and nowhere else.**
+	// `II*\0` and `MM\0*` are exactly what a JPEG's APP1 payload carries six bytes in (see
+	// `jpegOrientation`), and a sniff that searched rather than anchored would call every
+	// orientation-bearing photo a TIFF. `bytes.HasPrefix` anchors by construction; this comment
+	// exists so the next person does not "improve" it into a search.
+	case bytes.HasPrefix(data, []byte{0x49, 0x49, 0x2A, 0x00}),
+		bytes.HasPrefix(data, []byte{0x4D, 0x4D, 0x00, 0x2A}):
+		return formatTIFF, true
+
+	// RIFF....WEBP — the four size bytes between the two tags are the payload length and are not
+	// part of the identity, which is why this is two checks rather than one prefix.
+	case len(data) >= 12 && bytes.HasPrefix(data, []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
+		return formatWebP, true
 	}
 	return "", false
 }
@@ -259,6 +279,11 @@ func ImageToDocument(data []byte, name string) ([]byte, error) {
 		dpi = pngDPI(data)
 	case formatJPEG:
 		dpi = jpegDPI(data)
+	case formatTIFF, formatWebP:
+		// **Declared, not overlooked.** TIFF carries XResolution/ResolutionUnit and WebP carries no
+		// density at all; neither is read, so both take the 96 dpi default. Reading TIFF's tags is
+		// a second IFD walk for a format nib opens rarely, and the cost of the default is a page
+		// sized as a screenshot would be — recoverable by the user, unlike a wrong aspect.
 	}
 	if dpi <= 0 {
 		dpi = defaultDPI
