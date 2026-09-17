@@ -358,4 +358,30 @@ func TestAnUnsignedDocumentNeverEntersTheThirdPartyParser(t *testing.T) {
 			"read that no recover can contain — measured: a sweep of an unsigned fixture through " +
 			"the library was killed by the OOM killer")
 	}
+
+	// **ADR-041's door, asserted the same way and for the same reason.** The readability gate is
+	// the second half of the rule the paragraph above states, and it is invisible in behaviour for
+	// the identical reason: on every document nib can read, the answer is unchanged and only who
+	// computes it differs. The case that CAN see it is driven where it belongs — through the
+	// receive path, in a forked process, by `p2p`'s
+	// TestADamagedDocumentFromARemotePartyIsRefusedRatherThanFatal — because the failure takes the
+	// process and would take this binary with it.
+	readable := strings.Index(body, "pdfcpuCanRead(data)")
+	if readable < 0 {
+		t.Fatal("Verify no longer asks whether nib's own parser can read the document before " +
+			"handing it to digitorus/pdfsign. Without that, a damaged object stream takes the " +
+			"process: measured 12 of 7,438 single-bit flips of a signed fixture, by " +
+			"`fatal error: out of memory` and by a lexer that spins — neither a panic, so no " +
+			"recover anywhere reaches either")
+	}
+	if readable > parse {
+		t.Error("Verify hands the document to digitorus/pdfsign BEFORE asking whether nib's own " +
+			"parser can read it. The check is only a guard while it runs first")
+	}
+	// And it must run AFTER the byte scan, or every unsigned document pays for a parse it does
+	// not need — the cost measured at 0.15-0.31x the whole Verify call.
+	if readable < gate {
+		t.Error("the readability gate runs before the signature-blob scan, so every unsigned " +
+			"document now pays for a full pdfcpu parse it has no reason to need")
+	}
 }

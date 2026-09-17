@@ -9,9 +9,15 @@ import (
 // trailingContentAfterLastSignature (reached from Verify) and hasCertificationSignature (reached
 // from SignApproval) walk digitorus/pdf's Key/Index with no recover, while signatureBlobPresent
 // needed one for the same walk (/pending 453). Measured before the fix: 1,047 of 2,482 single-bit
-// flips of a signed fixture panicked out of each. Verify itself is not driven here: 4 of the same
-// 2,482 flips (a damaged /Filter key on the object stream) take digitorus/pdf's object-stream lexer
-// to an unbounded allocation that no recover contains, and that residue is not fixed by this test.
+// flips of a signed fixture panicked out of each.
+//
+// **Verify itself is still not driven here, and the count this comment used to give was a sample.**
+// It said "4 of the same 2,482", which is what the `off += 3` stride below can see; sweeping EVERY
+// offset found **12 of 7,438** (/pending 509). All twelve are a damaged `/Filter` key on the object
+// stream, and all twelve are in `verify.Verify` rather than in either walk driven here — the three
+// steps were re-run individually on a crashing fixture and all three returned normally. The residue
+// is closed by ADR-041's readability gate, and its own test forks a process, because this one could
+// not: a `fatal error: out of memory` takes the test binary.
 func TestTheSignatureWalksDoNotPanicOnCorruptInput(t *testing.T) {
 	base := signedFixture(t)
 	var flips, trailErrs, certErrs int
