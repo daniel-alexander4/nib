@@ -299,3 +299,88 @@ func TestTheNoticesPreambleNamesNoLicenseClass(t *testing.T) {
 		}
 	}
 }
+
+// TestTheExhibitBRefusalFires — /pending 518.
+//
+// `build/gen-notices.sh` refuses to regenerate when an MPL-2.0 dependency carries the Exhibit B
+// "Incompatible With Secondary Licenses" notice in a Go source file, because the note it writes
+// at the end of THIRD-PARTY-NOTICES.md rests AGPLv3 compatibility on MPL 2.0 §3.3 and §3.3 is
+// unavailable to a file marked that way. **Nothing had ever run that branch.** Reaching it meant
+// depending on such a module, so the only evidence it worked was that it had been written down —
+// on a refusal guarding a document Nib distributes with the binary.
+//
+// Three cases, and the third is the one that carries the reasoning rather than the code:
+//
+//  1. a clean module — the generator must NOT refuse, or the refusal is a permanent stop;
+//  2. a module whose Go source carries the notice — it must refuse, name the module and say why;
+//  3. a module whose LICENSE carries the notice and whose Go source does not — it must NOT
+//     refuse. The MPL text QUOTES Exhibit B in full, so every MPL LICENSE file matches the
+//     phrase; a search that read them would refuse all four modules Nib ships today. That is
+//     what `--include='*.go'` is for, and dropping it is a green-looking one-word edit.
+//
+// It drives the real script through its `--exhibit-b-probe` door rather than re-implementing the
+// grep, so a change to the refusal this test cannot see is a change the generator does not have
+// either (ADR-009).
+func TestTheExhibitBRefusalFires(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping the gen-notices Exhibit B refusal probe")
+	}
+	const notice = "This Source Code Form is \"Incompatible With Secondary Licenses\", as defined by " +
+		"the Mozilla Public License, v. 2.0."
+
+	probe := func(t *testing.T, files map[string]string) (string, error) {
+		t.Helper()
+		dir := t.TempDir()
+		for name, body := range files {
+			if werr := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); werr != nil {
+				t.Fatal(werr)
+			}
+		}
+		cmd := exec.Command("bash", "build/gen-notices.sh", "--exhibit-b-probe", "example.com/mod", dir)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	t.Run("a clean module is not refused", func(t *testing.T) {
+		out, err := probe(t, map[string]string{
+			"lib.go":  "package lib\n\n// ordinary source with no Exhibit B marking\n",
+			"LICENSE": "Mozilla Public License Version 2.0\n",
+		})
+		if err != nil {
+			t.Fatalf("the generator refused a module carrying no Exhibit B notice: %v\n%s\n"+
+				"A refusal that fires on a clean module is a permanent stop on `make notices`.", err, out)
+		}
+	})
+
+	t.Run("Exhibit B in a Go source file is refused", func(t *testing.T) {
+		out, err := probe(t, map[string]string{
+			"lib.go": "// " + notice + "\n\npackage lib\n",
+		})
+		if err == nil {
+			t.Fatalf("the generator ACCEPTED a module whose Go source carries the Exhibit B notice.\n"+
+				"The end-of-file note would then claim MPL 2.0 §3.3 compatibility for a file that has "+
+				"opted out of §3.3, in a document shipped with the binary.\n%s", out)
+		}
+		for _, want := range []string{"example.com/mod", "Exhibit B", "§3.3"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the refusal does not mention %q, so it does not say which module or which "+
+					"paragraph is at stake:\n%s", want, out)
+			}
+		}
+	})
+
+	// The case that holds `--include='*.go'` in place. Every MPL LICENSE file quotes Exhibit B.
+	t.Run("Exhibit B in the LICENSE text alone is not refused", func(t *testing.T) {
+		out, err := probe(t, map[string]string{
+			"LICENSE": "Mozilla Public License Version 2.0\n\nExhibit B - \"Incompatible With Secondary Licenses\" Notice\n\n" +
+				"  " + notice + "\n",
+			"lib.go": "package lib\n",
+		})
+		if err != nil {
+			t.Fatalf("the generator refused a module that only QUOTES Exhibit B in its licence text: %v\n%s\n"+
+				"The MPL text reproduces Exhibit B in full, so every MPL-2.0 LICENSE file matches the "+
+				"phrase — this search must stay scoped to Go source or it refuses all four modules "+
+				"Nib links today.", err, out)
+		}
+	})
+}

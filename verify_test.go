@@ -298,7 +298,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 448
+		const recorded = 450
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
@@ -862,6 +862,66 @@ func TestPairreproDoesNotStateACeilingItDoesNotEnforce(t *testing.T) {
 			"alone, CONTRIBUTING.md row 4b advertises `--lan -n 4` and `-n 9`, and ADR-011 " +
 			"records `--lan -n 9` green — so the first ceiling a reader meets is the one that " +
 			"is wrong, and it is the reason they were sent to this file (/pending 424).")
+	}
+}
+
+// TestEveryHarnessThatMakesATempDirTearsItDown — /pending 518.
+//
+// A harness that calls `mktemp` and sets no EXIT trap leaks its scratch space on EVERY run,
+// green and red alike, and nothing in the tree notices because nothing in the tree looks at
+// /tmp. **Measured**: `build/mcastrepro.sh` compiled two Go test binaries into a `mktemp -d`
+// it never removed — `discovery.test` at 6 MB and `server.test` at 45 MB — and two such
+// directories were already on the development machine when this was written. Every other
+// harness had a trap; that one had been written without and read as complete for as long as
+// it had existed, because the symptom is somebody else's disk.
+//
+// It asserts the TRAP, not the `rm`, because the `rm` is unreachable on the path that matters:
+// these harnesses set `-e` and call a `fail` that exits, so a cleanup written as the last line
+// of the script runs on exactly the runs that did not need it.
+//
+// # What it cannot see, stated so the green is not read as more than it is
+//
+//   - **A SECOND `mktemp` taken before the trap is set, or past an `exec`.** `pairrepro.sh`
+//     does both: its `--lan` branch builds `nib` into `PREBUILT="$(mktemp -d)/nib"` at line 248
+//     and then `exec`s into the namespace, so the trap installed at line 536 is never reached
+//     and never runs. **Measured: a 102 MB binary left in /tmp** by a `--lan` run. That is a
+//     real leak this guard passes over, and it is named here rather than left to be rediscovered.
+//   - Whether the handler actually removes the thing. A trap that prints and returns satisfies
+//     this; the tier's own comment is what says which of `$WORK` and the log it keeps on a red.
+func TestEveryHarnessThatMakesATempDirTearsItDown(t *testing.T) {
+	scripts, err := filepath.Glob("build/*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A floor, or a glob that matched nothing reports every harness healthy.
+	if len(scripts) < 8 {
+		t.Fatalf("found %d script(s) under build/; the set is a dozen or so, so this scan is "+
+			"reading the wrong directory and a clean result would mean nothing", len(scripts))
+	}
+	var checked int
+	for _, s := range scripts {
+		b, rerr := os.ReadFile(s)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		src := string(b)
+		if !strings.Contains(src, "mktemp") {
+			continue
+		}
+		checked++
+		if !regexp.MustCompile(`(?m)^\s*trap\s+\S.*\bEXIT\b`).MatchString(src) {
+			t.Errorf("%s calls mktemp and sets no EXIT trap, so its scratch space survives every "+
+				"run — the green ones too. mcastrepro.sh leaked 50 MB a run this way and nothing "+
+				"in the tree could tell you. Add `trap <handler> EXIT`; keep whatever the run "+
+				"needs for diagnosis and say in the handler which half that is.", s)
+		}
+	}
+	// The other floor: eight harnesses use mktemp today. Zero would mean the scan matched no
+	// script and every one of them passed by being looked at by nothing.
+	if checked < 6 {
+		t.Fatalf("only %d build script(s) were found to call mktemp; at least 8 do "+
+			"(mcastrepro, uirepro, pairrepro, ceremonyrepro, winrepro, dhtlive, gen-notices, "+
+			"redproof) — the scan is not reading the scripts", checked)
 	}
 }
 

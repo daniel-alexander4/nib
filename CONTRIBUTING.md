@@ -225,8 +225,13 @@ never seen to fail can only ever report pass.
 fired, and what it said. Until that file existed the claim above was backed by
 nothing a reader could check, and `verify_test.go` guarded only that the *sentence
 was present*: the same failure one level out, in the file that teaches the rule. The
-ledger names its own gap too — there is no fixture mode, so re-proving a row is a
-manual edit-run-revert.
+ledger names its own gap too — **not every row is replayable**. The ones that are
+re-prove on demand through `./build/redproof.sh` (described above); the rest have been
+proven red once, as prose, and nothing re-checks them. This paragraph said "there is
+no fixture mode, so re-proving a row is a manual edit-run-revert" for as long after
+`redproof.sh` shipped as it took someone to read the two paragraphs together — the
+file contradicting itself about its own tooling, which is the failure the section is
+named for (found by /pending 518).
 
 Two guards enforce the parts of this that rot quietly — `verify_test.go` (the tier
 table's rows survive, each tier still states its ceiling **in its own harness file**,

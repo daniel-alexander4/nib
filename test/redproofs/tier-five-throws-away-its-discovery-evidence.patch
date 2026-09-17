@@ -1,0 +1,10 @@
+--- a/internal/discovery/mcast_test.go
++++ b/internal/discovery/mcast_test.go
+@@ -238,7 +238,6 @@
+ 	// discovery from a pass about anything else — caught by that harness's own
+ 	// "the pass above is not about discovery" guard. Evidence a check consumed
+ 	// privately is evidence nobody else can audit.
+-	t.Logf("browser: %s", strings.TrimSpace(got))
+ 	t.Logf("announcer: %s", strings.TrimSpace(firstLine(string(aOut))))
+ }
+ 

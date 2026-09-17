@@ -123,9 +123,32 @@ func TestEveryRedProofStillApplies(t *testing.T) {
 // message is generated content").
 //
 // It reads the two row shapes whose test names are recoverable from PROVE: `node --test <file>`
-// (titles parsed from the file) and `go test … -run <names>`. A harness row (`build/*.sh`) has no
-// title to compare against; its token is checked for being unique to the failing branch by review,
-// which is the residue named in /pending 505's close.
+// (titles parsed from the file) and `go test … -run <names>`.
+//
+// # The harness rows, which this used to skip (/pending 518)
+//
+// The paragraph here used to say a harness row "has no title to compare against; its token is
+// checked for being unique to the failing branch by review", and left it at that — 46 of the
+// rows, every tier-3, -4, -5 and -6 one. A harness has something better than a title: it has its
+// OWN output, and most of that output is printed on a run that never reached the recorded check.
+// A row whose EXPECT is any of it re-proves on ANY red in the tier.
+//
+// `ambientHarnessOutput` collects the three sources of it, all three measured against the set:
+//
+//   - the harness's own progress banners — `echo "building the discovery tests…"`, and the
+//     PASS line it prints when everything worked;
+//   - every test title in a suite the harness drives with `node --test <dir>`, because node
+//     prints the title of every test it runs whichever way that test went. This is the same
+//     hazard the `node --test <file>` branch below already refuses, and `./build/uirepro.sh`
+//     and `./build/jsdomtest.sh` hid it behind one level of shell;
+//   - `=== RUN` / `--- PASS:` / `--- FAIL:` / `--- SKIP:` for every Go test the harness names,
+//     because a harness that runs `go test -v` and cats the log prints those for every test on
+//     its own run line, red or green.
+//
+// **What it cannot see, so it is not read as more than it is.** The banners are matched as
+// LITERALS, so a token that spans a `$variable` in the harness's own string is missed; and a
+// harness that prints something this does not model still prints it. It is a floor under the
+// review the old paragraph relied on, not a replacement for reading the row.
 func TestNoRedProofTokenIsItsTestsName(t *testing.T) {
 	rows, err := filepath.Glob("test/redproofs/*.sh")
 	if err != nil {
@@ -141,7 +164,9 @@ func TestNoRedProofTokenIsItsTestsName(t *testing.T) {
 	}
 	title := regexp.MustCompile(`\btest\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|` + "`((?:[^`\\\\]|\\\\.)*)`" + `)`)
 	interp := regexp.MustCompile(`\$\{[^}]*\}`)
-	var nodeRows, goRows int
+	harnessRe := regexp.MustCompile(`(?:^|\s)\.?/?(build/[A-Za-z0-9_.-]+\.sh)`)
+	ambientCache := map[string][]string{}
+	var nodeRows, goRows, harnessRows int
 	for _, r := range rows {
 		b, rerr := os.ReadFile(r)
 		if rerr != nil {
@@ -183,11 +208,107 @@ func TestNoRedProofTokenIsItsTestsName(t *testing.T) {
 						"failure in that test. Use a phrase only the assertion's failure message prints.", name, expect, tn)
 				}
 			}
+			continue
+		}
+		if m := harnessRe.FindStringSubmatch(prove); m != nil {
+			harnessRows++
+			harness := m[1]
+			ambient, ok := ambientCache[harness]
+			if !ok {
+				var aerr error
+				if ambient, aerr = ambientHarnessOutput(harness); aerr != nil {
+					t.Errorf("red proof %s runs %s, which cannot be read: %v", name, harness, aerr)
+					continue
+				}
+				// A per-harness floor, because this is a guard over guards and the way one of
+				// those goes quiet is by reading nothing. Every harness in the set yields
+				// dozens; single digits means the banner or the suite parse stopped matching
+				// and every row against that harness would pass by being compared to nothing.
+				if len(ambient) < 8 {
+					t.Fatalf("%s yielded %d ambient output string(s); every harness in this set prints "+
+						"far more than that, so the parse is reading nothing and the rows driven by it "+
+						"are checked against an empty list", harness, len(ambient))
+				}
+				ambientCache[harness] = ambient
+			}
+			for _, a := range ambient {
+				if !strings.Contains(a, expect) {
+					continue
+				}
+				t.Errorf("red proof %s: EXPECT %q is inside %q, which %s prints on a run that never "+
+					"reached the recorded check — so the row re-proves on ANY red in that tier, including "+
+					"a build break. Use a phrase only the failing branch prints.", name, expect, a, harness)
+				break
+			}
 		}
 	}
-	// Floors: the set holds 45 node rows and 323 go rows. Far fewer means the PROVE parse stopped
-	// matching and every row passed by being read by nothing.
-	if nodeRows < 40 || goRows < 300 {
-		t.Fatalf("parsed %d `node --test` and %d `go test` red-proof rows; the set holds ~45 and ~323 — the row parse is not reading PROVE", nodeRows, goRows)
+	// Floors: the set holds 45 node rows, 323 go rows and 48 harness rows — 46 when the harness
+	// branch was written, plus the two tier-5 ones added beside it. Far fewer means the PROVE
+	// parse stopped matching and every row passed by being read by nothing.
+	if nodeRows < 40 || goRows < 300 || harnessRows < 40 {
+		t.Fatalf("parsed %d `node --test`, %d `go test` and %d harness red-proof rows; the set holds "+
+			"~45, ~323 and ~48 — the row parse is not reading PROVE", nodeRows, goRows, harnessRows)
 	}
+}
+
+// ambientHarnessOutput is the population a harness prints WITHOUT any recorded check having
+// fired — see TestNoRedProofTokenIsItsTestsName for why a red-proof EXPECT may not be in it.
+func ambientHarnessOutput(path string) ([]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	src := string(b)
+	var out []string
+
+	// 1. The harness's own banners. Statement-initial `echo`/`printf` only: an `|| fail "…"` or a
+	//    `no "…" "…"` is a failure branch and is exactly what an EXPECT is supposed to be. Lines
+	//    redirected to stderr, and literals that open a `FAIL:` report, are failure output too.
+	echoLit := regexp.MustCompile(`^\s*(?:echo|printf)\s+(?:'([^']*)'|"((?:[^"\\]|\\.)*)")`)
+	for _, line := range strings.Split(src, "\n") {
+		if strings.Contains(line, ">&2") {
+			continue
+		}
+		m := echoLit.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		lit := m[1] + m[2]
+		if strings.Contains(lit, "FAIL:") {
+			continue
+		}
+		out = append(out, lit)
+	}
+
+	// 2. Every title in a suite the harness drives with `node --test <dir>`. node prints the title
+	//    of every test it runs, passing or failing, so a title is ambient by construction.
+	title := regexp.MustCompile(`\btest\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"|` + "`((?:[^`\\\\]|\\\\.)*)`" + `)`)
+	for _, m := range regexp.MustCompile(`node --test[^\n]*?\s(test/[A-Za-z0-9_-]+)/`).FindAllStringSubmatch(src, -1) {
+		files, gerr := filepath.Glob(m[1] + "/*.test.mjs")
+		if gerr != nil {
+			return nil, gerr
+		}
+		for _, f := range files {
+			tb, rerr := os.ReadFile(f)
+			if rerr != nil {
+				return nil, rerr
+			}
+			for _, tm := range title.FindAllStringSubmatch(string(tb), -1) {
+				out = append(out, tm[1]+tm[2]+tm[3])
+			}
+		}
+	}
+
+	// 3. `go test -v`'s own lines for every Go test the harness names. A harness that runs a test
+	//    binary and cats its log prints `=== RUN` and a verdict line for each of them whichever way
+	//    the run went — which is what makes a bare test name the worst possible EXPECT here.
+	seen := map[string]bool{}
+	for _, tn := range regexp.MustCompile(`\bTest[A-Z]\w+`).FindAllString(src, -1) {
+		if seen[tn] {
+			continue
+		}
+		seen[tn] = true
+		out = append(out, "=== RUN   "+tn, "--- PASS: "+tn+" (", "--- FAIL: "+tn+" (", "--- SKIP: "+tn+" (")
+	}
+	return out, nil
 }
