@@ -1077,3 +1077,63 @@ func TestEveryReplayableLedgerRowNamesAFileThatExists(t *testing.T) {
 	}
 	_ = dead
 }
+
+// TestPackageShipsTheLicenceAndNotices — MPL-2.0 §3.2 for a `.deb`-only recipient.
+//
+// `build/nfpm.yaml` installs `LICENSE` to `/usr/share/doc/nib/copyright` and
+// `THIRD-PARTY-NOTICES.md` beside it, and for someone who received nib as a package and never sees
+// this repository, those two files are the whole of the attribution. **Nothing asserted them**:
+// `embed_test.go:42` asserts both are embedded in the BINARY and `notices_test.go` that the notices
+// are current — neither says the package ships them, which is a different property with a different
+// failure mode.
+//
+// **The src→dst PAIR is asserted, not the destination string.** A destination that survives while its
+// source is renamed away is a stanza nfpm cannot build, and a destination alone would also be
+// satisfied by the path appearing in a comment. Comment lines are stripped first for the reason
+// `TestPackageDeclaresABrowser` records two functions up: deleting that test's stanza left the
+// explanatory paragraph behind and the check went on passing.
+func TestPackageShipsTheLicenceAndNotices(t *testing.T) {
+	spec, err := os.ReadFile(filepath.Join("build", "nfpm.yaml"))
+	if err != nil {
+		t.Fatalf("the package spec is missing: %v", err)
+	}
+	var live []string
+	for _, line := range strings.Split(string(spec), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			live = append(live, strings.TrimSpace(line))
+		}
+	}
+
+	// Walk the stanzas: a `- src:` opens one and the following `dst:` closes the pair.
+	pairs := map[string]string{}
+	src := ""
+	for _, line := range live {
+		switch {
+		case strings.HasPrefix(line, "- src:"):
+			src = strings.TrimSpace(strings.TrimPrefix(line, "- src:"))
+		case strings.HasPrefix(line, "dst:") && src != "":
+			pairs[src] = strings.TrimSpace(strings.TrimPrefix(line, "dst:"))
+			src = ""
+		}
+	}
+	if len(pairs) < 3 {
+		t.Fatalf("parsed %d src/dst pair(s) from build/nfpm.yaml; the file declares several, so the "+
+			"parse is broken and finding a missing one would mean nothing", len(pairs))
+	}
+
+	for _, want := range []struct{ src, dst, why string }{
+		{"LICENSE", "/usr/share/doc/nib/copyright",
+			"the AGPLv3 text itself — a recipient who installed the .deb and never saw this repository has no other copy"},
+		{"THIRD-PARTY-NOTICES.md", "/usr/share/doc/nib/THIRD-PARTY-NOTICES.md",
+			"third-party attribution; MPL-2.0 §3.2 requires it to travel with the binary"},
+	} {
+		got, ok := pairs[want.src]
+		if !ok {
+			t.Errorf("build/nfpm.yaml no longer installs %s — %s", want.src, want.why)
+			continue
+		}
+		if got != want.dst {
+			t.Errorf("build/nfpm.yaml installs %s to %q, want %q — %s", want.src, got, want.dst, want.why)
+		}
+	}
+}
