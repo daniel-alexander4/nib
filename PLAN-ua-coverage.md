@@ -745,6 +745,101 @@ its corpus files. Refs: law 1.
 **Exit criteria.** Every rule in the family passes `veracorpus_test.go`; rules without corpus files agree with
 veraPDF on fixtures of their own.
 
+**(phase-open, 2026-09-16, v1.129.144)** The family is **43 rules, not ~40**, and nib implements **three** of
+them (`7.1 t11`, `7.4.2 t1`, `7.5 t1`), so P03 lands **40**. Counted from veraPDF 1.30.2's own profile —
+`org/verapdf/pdfa/validation/PDFUA-1.xml` inside `~/verapdf/bin/cli-1.30.2.jar`, 106 rules total, which
+confirms the figure this plan has carried since P01.
+
+- **Two thirds of the family is ONE shape.** veraPDF writes most of it as two predicates over resolved role
+  names — `parentStandardType == 'X'` and a regex over `kidsStandardTypes`. Tables, lists and TOC differ only
+  in which names fill them. That is a containment **matrix** with one door, not twenty-five hand-written
+  rules (ADR-009), and S02 builds it.
+- **THE PHASE'S TRAP, and it is specific to this corpus.** For **twenty** of the family's clauses the corpus
+  holds **only fail fixtures** — `7.2 t4-t14`, `t18-t20`, `t36-t38`, `t41-t43`, plus `7.1 t11`, `7.4.4 t3`,
+  `7.5 t2`. A rule that returns `Fail` unconditionally scores **perfectly** on every one of them, and
+  `veracorpus_test.go` cannot tell it from a correct rule: it scores false-pass and false-fail, and an
+  always-Fail rule produces neither. **Every clause in that list owes a pass fixture of its own**, and the
+  slice that lands it says so. This is checklist item #19 at phase scale — the judgment is graded and the
+  stimulus never arrives.
+- **Eleven of the 106 have no corpus file at all**; five are ours — `7.1 t12`, `7.2 t16`, `t28`, `t39`,
+  `t40`, `7.18.4 t2`. Those are the exit criterion's second half, and they need a fixture *and* a veraPDF run
+  to say what it answers, never a reading of the rule text.
+- **`7.18.7 t1` has five corpus files and no rule in the profile**, so those files are never exercised by any
+  ua1 validation. Not ours to fix; recorded so nobody counts them as coverage.
+- **`7.2 t42` and `t43` are the same sentence with opposite polarity** on `wrongColumnSpan`. They are one
+  implementation and must land together or the pair is incoherent.
+- **Three places encode the rule count and must move with every batch**: the floor at `uacheck_test.go:132`,
+  the `corpusReach` table at `veracorpus_test.go:45-51` (a row per clause, the number **measured** over the
+  297-file set — `veracorpus_test.go:187` fails a clause with no row), and prose at `uacheck.go:112`,
+  `door.go:22`, `rules_catalog.go:334`.
+
+#### P03.S01 — role resolution is the spec's algorithm, and the checker owns the standard set
+Scope: `standardType` (`uacheck/structure.go:91`) implements the wrong algorithm, not merely a tight bound.
+It counts to ten hops and breaks only on a self-map, then **returns the intermediate name** — a silent false
+Pass under law 4, which three registered rules already consume (`rules_headings.go:40`,
+`rules_semantic.go:63`, `:114`). ISO 32000-1 §14.7.3 Note 2: circular chains *"are explicitly permitted …
+A conforming reader using the role map should follow the chain of associations until it either finds a
+structure type it recognizes or returns to one it has already encountered."* So: a visited set, and a
+recognition test against §14.8.4's set, which the checker must hold itself — `pdfops.standardStructTypes`
+(`structedit.go:65-74`) exists but `uacheck/structure.go:12-22` gives the standing reason the checker does
+not borrow the writer's model, and that reason holds. Lands `7.1 t5`, `t6`, `t7`. Refs: law 1, law 4.
+
+**Note the shape of the defect, because it is the argument for this slice going first.** `pdfops` has a
+second resolver (`structview.go:277-286`) and it is wrong in the **same** way. The independence between the
+two models is deliberate and protects against one implementation's bugs; it cannot protect against a shared
+misreading of the spec, which is what this is. Absorbs `/pending 507`'s first clause.
+Acceptance:
+- A role map with a two-name cycle resolves to a recognised type or is refused — never to the intermediate.
+- A chain longer than ten hops that terminates at a standard type resolves; today it does not.
+- `7.1 t5`, `t6` and `t7` agree with veraPDF on their corpus files, each with a `corpusReach` row measured.
+- A pass fixture for each of the three, because `7.1 t5-t7`'s corpus coverage is not all-pass.
+
+#### P03.S02 — the containment matrix, one door
+Scope: a declarative table of (standard type → permitted parents, permitted kids) plus one generator that
+registers a rule per clause from it. Lands `7.2 t3-t10`, `t17-t20`, `t26`, `t27`, `t36-t38` — seventeen
+rules over tables, lists and TOC. Each keeps its own `Clause`, `Summary` and `corpusReach` row; the matrix is
+the shared rule, not a shared verdict. Refs: law 1, ADR-009.
+Acceptance:
+- The matrix is the only place a containment relation is written; a guard asserts every registered
+  containment clause routes through it, not that seventeen messages agree.
+- **A pass fixture for every one of the fourteen clauses whose corpus is fail-only**, and a red proof that an
+  always-Fail implementation is caught by it.
+- Every clause's `corpusReach` row measured over the 297-file set.
+
+#### P03.S03 — cardinality and placement
+Scope: `7.2 t11-t14`, `t16`, `t28`, `t39`, `t40` — at most one `THead`/`TFoot`/`Caption`, a `TBody` required
+when either is present, and `Caption` restricted to first or last kid. Counts and positions, which the
+matrix deliberately does not express. Refs: law 1.
+Acceptance:
+- `t16`, `t28`, `t39` and `t40` have **no corpus file**: each gets a fixture and a recorded veraPDF verdict.
+- An element with no kids is `NotApplicable`, never a silent Pass.
+
+#### P03.S04 — table geometry: spans, and the grid nib does not reproduce
+Scope: `7.2 t15` (cells shall not intersect), `t41`, `t42`, `t43` (rows and columns agree once spans are
+counted). The hardest four, and the one place the checker already **declares** a gap —
+`rules_semantic.go:182` returns `CannotCheck` for a grid it does not build. Either the grid arrives here and
+that `CannotCheck` retires, or it stays and this slice says which rules it costs. Refs: law 1, law 4.
+Acceptance:
+- `t42` and `t43` land together — identical wording, opposite polarity.
+- Where the grid cannot be built the verdict is `CannotCheck` naming why, never `Pass`; the existing
+  `reach_test.go` shape covers it.
+
+#### P03.S05 — strongly or weakly structured, but not both
+Scope: `7.4.4 t1` (at most one child `H` per node), `t2` and `t3` (a document uses `H` or `Hn`, never both).
+Interacts with the implemented `7.4.2 t1`, whose `corpusReach` is 134 — the widest in the family — so a
+change to heading handling is measurable immediately. Refs: law 1.
+Acceptance:
+- A document using both `H` and `Hn` fails t2 and t3; one using neither is `NotApplicable`.
+- `7.4.2 t1`'s `corpusReach` of 134 does not move, or the change is explained in the same edit.
+
+#### P03.S06 — notes, the Form element, and the parent entry
+Scope: the residue — `7.9 t1` and `t2` (`Note` has an `ID`, and IDs are unique), `7.18.4 t2` (a `Form`
+omitting `Role` has exactly one object-reference child), `7.1 t12` (every element carries `/P`), `7.5 t2`
+(the sibling of the implemented `t1`). Refs: law 1.
+Acceptance:
+- `7.1 t12` and `7.18.4 t2` have no corpus file; both get a fixture and a recorded veraPDF verdict.
+- `7.9 t2`'s uniqueness is checked across the whole tree, not per subtree.
+
 ### P04 — Checker: language (~10 rules)
 **Goal.** Outline entries, ActualText/Alt/E, annotation Contents, form TU and marked-content spans.
 **Exit criteria.** As P03.
