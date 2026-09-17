@@ -307,6 +307,12 @@ var published = map[string][]string{
 	"vault.PinnedPeer": {"internal/server/peers.go", "internal/vault/vault.go"},
 	"vault.Settings":   {"internal/server/settings.go", "internal/vault/vault.go"},
 	"vault.Image":      {"internal/server/images.go", "internal/vault/vault.go"},
+	// **`ImageMeta` is the listing's shape and `Image` is the fetch's** (/pending 567). Splitting
+	// them is what let the accessors deep-copy: `handleImagesList` renders id, name and MIME, so it
+	// reads this one, and `handleImageGet` and `overlay.go` still read `Image` for its `Data`. Both
+	// live in `images.go`, which is one file reading two shapes rather than an entry pointing at a
+	// file for a reason that has lapsed — the `keys.go` failure recorded just below.
+	"vault.ImageMeta": {"internal/server/images.go", "internal/vault/vault.go"},
 	// **`internal/server/keys.go` was STALE and it was laundering the outside-the-package arm
 	// (/pending 558).** That file does not contain the string `ExternalSigner` at all — the three
 	// routes live in `internal/server/extsigner.go` (`server.go:484-486`) and the entry was never

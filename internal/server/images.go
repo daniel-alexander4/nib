@@ -21,12 +21,16 @@ type imageMeta struct {
 
 func (s *Server) handleImagesList(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
-	out := make([]imageMeta, 0, len(v.Images())+len(v.BuiltinImages()))
-	for _, img := range v.Images() {
-		out = append(out, imageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME})
-	}
-	for _, img := range v.BuiltinImages() {
-		out = append(out, imageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME, Builtin: true})
+	// **`ImageMetas` and not `Images()` + `BuiltinImages()`** (/pending 567). This handler renders
+	// id, name and MIME; it has never looked at a pixel. It used to call `v.Images()` TWICE — once
+	// to size this slice and once to range over it — so a library of twenty 50 KB signatures moved
+	// two megabytes through here per listing to produce sixty short strings, and the accessors that
+	// did it were handing out slices ALIASED to the vault's live contents. One door now answers the
+	// question this route actually asks.
+	metas := v.ImageMetas()
+	out := make([]imageMeta, 0, len(metas))
+	for _, m := range metas {
+		out = append(out, imageMeta{ID: m.ID, Name: m.Name, MIME: m.MIME, Builtin: m.Builtin})
 	}
 	writeJSON(w, out)
 }
