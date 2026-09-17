@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/tagocr.go b/internal/pdfops/tagocr.go
+index f3da1b2..c4ed79a 100644
+--- a/internal/pdfops/tagocr.go
++++ b/internal/pdfops/tagocr.go
+@@ -216,7 +216,7 @@ func artifactUncoveredDrawings(ctx *model.Context, pageNr int) error {
+ 	}
+ 	edit := contentstream.NewEdit(src)
+ 	for _, sp := range drawings {
+-		edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
++		edit.InsertBefore(sp.start, []byte("/P <</MCID 0>> BDC\n"))
+ 		edit.InsertBefore(sp.end, []byte("\nEMC"))
+ 	}
+ 	edited, eerr := edit.Apply()

@@ -5497,6 +5497,48 @@ fires), and the call counter neutered (the call-site floor fires).
 
 `recorded` 424 → 425.
 
+## /pending 514 — a picture no element covers, under a claim of tagging (v1.133.11)
+
+`/pending 495` made a new claim of tagging refuse undescribed **text** and wrote down why it stopped
+there: *"an unmarked path or image is also 7.1 t3 but is what the OCR door's scan image and a commit's
+uncovered image are today — refusing on them would switch those doors off rather than fix them."*
+This is that residue, and what settled it was measurement rather than taste.
+
+**Three measurements, all re-runnable.** veraPDF 1.30.2 and its PDF/UA-1 corpus (297 files,
+`~/nib/verapdfs/PDF_UA-1`), read with `--flavour ua1 --passed`:
+
+- **7.1 t3 is `isTaggedContent == true || parentsTags.contains('Artifact') == true`**, so either route
+  conforms and the clause does not choose. Across the corpus, 39 images sit inside an `/Artifact`
+  sequence and 16 inside a marked one; exactly **one** image in 297 files is inside neither, and it is
+  `7.1-t03-fail-a.pdf`, whose own bookmark reads *"Image is not marked as Artifact or real content"*.
+- **7.3 t1 is `(Alt != null && Alt != '') || ActualText != null`.** So the entry's own proposed remedy
+  — *"propose a `/Figure` element the structure editor can give alt text"* — does not fix the failure,
+  it renames it: `7.3-t01-fail-a.pdf` is a Figure with neither key and veraPDF fails it, and an EMPTY
+  `/Alt` fails too (`7.3-t01-fail-b.pdf`). **A remedy is a claim, and running this one falsified it.**
+- **Refusing the claim fixes nothing.** The BARE scan fails 7.1 t3 exactly as the tagged one does, so
+  the document the doors fall back to is the same failure with less text in it.
+
+On the OCR door's own fixture, 7.1 t3 goes `failed 4/1` → `passed 5/0`, and `internal/uacheck` agrees
+with veraPDF in both states — it had been reading this correctly all along, at
+`page 1 (object 7), operator #7 /Im0 Do (image)`.
+
+| proof | check | expects |
+|---|---|---|
+| `ocr-scan-image-never-artifacted` — every `Do` is read as a form, so no door sees the page image an OCR'd scan draws, as from P06.S06 to /pending 514 | `go test ./internal/pdfops/ -run TestAnOCRdScanDeclaresItsPageImageAnArtifact -count=1` | `an OCR'd scan fails 7.1 t3` |
+| `claim-door-counts-only-text` — `claimTagging` asks `unmarkedTextRuns` and nothing else, as `/pending 495` shipped it | `go test ./internal/pdfops/ -run TestAFormOnAnImageOnlyPageMakesNoClaim -count=1` | `whose only content is a picture` |
+| `a-committed-picture-is-never-bracketed` — the commit writer is handed no image names, so its artifact loop skips every picture | `go test ./internal/pdfops/ -run TestACommitDeclaresAPictureNoElementCoversAnArtifact -count=1` | `refusing to return it` |
+| `the-scan-image-is-tagged-instead-of-artifacted` — the OCR door brackets the picture with an MCID instead of `/Artifact` | `go test ./internal/pdfops/ -run TestAnOCRdScanDeclaresItsPageImageAnArtifact -count=1` | `not bracketed as an artifact` |
+
+**The fourth row is the one worth reading.** Its mutation passes 7.1 t3 — both shapes do, by the rule
+text above — so no conformance verdict can tell the two apart, and only the byte assertion sees that
+the page's whole image has been filed under a `P` element that already describes a word. A test that
+asserted the verdict alone would have been green for it.
+
+Two further branches were proven red without earning rows, by deleting each in turn: the `sh` case and
+the inline-image case of `uncoveredDrawingSpans` (`a shading: 0 span(s) … want 1` and
+`an inline image: 0 span(s) … want 1`).
+
+`recorded` 442 → 446.
 ## `/pending 529` — a duplicated page carries its own grouping elements (2026-09-16)
 
 A `/ParentTree` row is indexed by MCID, so it names **leaves**. The clone path copied exactly what

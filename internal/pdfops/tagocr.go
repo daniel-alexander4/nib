@@ -174,6 +174,58 @@ func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word, 
 	return setPageContent(ctx, d, edited)
 }
 
+// artifactUncoveredDrawings declares one page's uncovered non-text drawings an artifact.
+//
+// # Why the scan itself becomes an artifact — `/pending 514`
+//
+// The page under an OCR'd text layer IS a picture, drawn by nothing `tagOCRPage` brackets, so until
+// now every scan nib tagged claimed `/Marked true` over an image no element covered and failed ua1
+// 7.1 t3 for it. Measured on this door's own fixture: veraPDF fails `7.1 t3` at `/Im0 Do` both before
+// the layer and after it, and so does `nib ua`.
+//
+// **`/Artifact` is a real assertion and it is the one nib can make.** It says the image carries
+// nothing the text layer does not — which for a scan of a page of text is what a searchable image IS,
+// since the text was read out of these very pixels. It is NOT true of a scan that also holds a
+// photograph, and nib cannot tell which it has. The alternatives were measured and are worse rather
+// than merely different: a `/Figure` with no `/Alt` trades 7.1 t3 for 7.3 t1 (veraPDF's own
+// `7.3-t01-fail-a.pdf`), and refusing the claim returns the artifacted stamp, which fails 7.1 t3
+// anyway and is the state where the text layer itself says "skip me". See `uncoveredDrawingSpans`.
+//
+// **Every page, not only the pages with words.** A page tesseract read nothing on is still a picture,
+// and leaving it would make `claimTagging` refuse the whole document — costing the pages that DID
+// recognise their description, to say nothing about a page nobody can describe either way.
+func artifactUncoveredDrawings(ctx *model.Context, pageNr int) error {
+	d, _, attrs, derr := ctx.PageDict(pageNr, false)
+	if derr != nil || d == nil {
+		return fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, derr)
+	}
+	src, cerr := ctx.PageContent(d, pageNr)
+	if cerr == model.ErrNoContent {
+		return nil
+	}
+	if cerr != nil {
+		return cerr
+	}
+	var res types.Dict
+	if attrs != nil {
+		res = attrs.Resources
+	}
+	drawings, _ := uncoveredDrawingSpans(src, imageXObjectNames(ctx, res))
+	if len(drawings) == 0 {
+		return nil
+	}
+	edit := contentstream.NewEdit(src)
+	for _, sp := range drawings {
+		edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
+		edit.InsertBefore(sp.end, []byte("\nEMC"))
+	}
+	edited, eerr := edit.Apply()
+	if eerr != nil {
+		return eerr
+	}
+	return setPageContent(ctx, d, edited)
+}
+
 // TagOCRLayer stamps an OCR text layer and DESCRIBES it, instead of declaring it an artifact.
 //
 // It is `StampTextLayer` plus the tree: same words, same invisible render mode, same appearance on
@@ -213,6 +265,15 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 				continue
 			}
 			if err := tagOCRPage(ctx, st, p, byPage[p], pre[p]); err != nil {
+				return err
+			}
+		}
+		// After the words are described, whatever else the page draws is declared an artifact — the
+		// scan's own image above all. A second pass over the page's bytes rather than a second edit
+		// inside `tagOCRPage`, because a page with no recognised words never enters that function and
+		// is exactly as much a picture as one that did.
+		for p := 1; p <= ctx.PageCount; p++ {
+			if err := artifactUncoveredDrawings(ctx, p); err != nil {
 				return err
 			}
 		}

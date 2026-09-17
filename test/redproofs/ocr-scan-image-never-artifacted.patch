@@ -1,0 +1,18 @@
+diff --git a/internal/pdfops/claimtagging.go b/internal/pdfops/claimtagging.go
+index 8d50be7..eac164c 100644
+--- a/internal/pdfops/claimtagging.go
++++ b/internal/pdfops/claimtagging.go
+@@ -255,12 +255,7 @@ func uncoveredDrawingSpans(src []byte, images map[string]bool) ([]opSpan, []draw
+ 				covered = covered[:n-1]
+ 			}
+ 		case op == "Do":
+-			switch name := operandName(src, toks, i); {
+-			case images[name]:
+-				if !anyCovered() {
+-					out = append(out, opSpan{start, tk.End})
+-				}
+-			case name != "":
++			if name := operandName(src, toks, i); name != "" {
+ 				forms = append(forms, drawnForm{name: name, covered: anyCovered()})
+ 			}
+ 		case op == "sh":

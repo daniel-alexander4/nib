@@ -38,10 +38,13 @@ import (
 //
 // Every text run on a committed page that no element covers — a whitespace run the grouping dropped,
 // or an element the reviewer chose to ignore — is bracketed `/Artifact`, and so is every painted path
-// (`/pending 495`). Left unmarked it is content that is neither tagged nor an artifact, which is ua1 7.1
-// t3 by name. **An image or a form XObject no element covers is NOT bracketed**: nothing proposes a
-// `/Figure`, and an artifact would tell a reader the picture is decoration — that is still 7.1 t3 under
-// the claim, and it is the residue `/pending 495` names rather than a guess made here.
+// (`/pending 495`), every picture, shading and inline image (`/pending 514`). Left unmarked it is
+// content that is neither tagged nor an artifact, which is ua1 7.1 t3 by name.
+//
+// **A FORM XObject no element covers is still not bracketed**, and that is the one left: its content
+// is another stream, which may be drawn more than once, so a bracket here would describe the `Do`.
+// `claimTagging` counts what such a form draws instead, so a page carrying one is refused rather than
+// claimed over — the same answer `errCommitInForm` gives for text.
 
 var (
 	errCommitTagged = errors.New("pdfops: this document already has a structure tree; a proposal is not written over it")
@@ -76,6 +79,9 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			edit   *contentstream.Edit
 			runs   map[int]textRun
 			marked map[int]bool
+			// images is the page's `/XObject` names that resolve to an image, which is what tells
+			// `uncoveredDrawingSpans` an uncovered `Do` is a picture and not a form.
+			images map[string]bool
 		}
 		pages := map[int]*committedPage{}
 		var order []int
@@ -134,9 +140,16 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			if cerr != nil {
 				return cerr
 			}
+			// Inherited resources, through `PageDict`: a page that inherits its `/XObject` from an
+			// ancestor draws the same pictures, and reading only `d["Resources"]` would see none of them.
+			var res types.Dict
+			if _, _, attrs, aerr := ctx.PageDict(pg, false); aerr == nil && attrs != nil {
+				res = attrs.Resources
+			}
 			pages[pg].dict = d
 			pages[pg].src = src
 			pages[pg].edit = contentstream.NewEdit(src)
+			pages[pg].images = imageXObjectNames(ctx, res)
 		}
 
 		// mark brackets runs as one element of structType under parent.
@@ -231,8 +244,11 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			}
 			// A painted path is covered by no element either — the proposer offers none for a rule, a
 			// border or a box — and until `/pending 495` it stayed neither tagged nor an artifact, so a
-			// committed page with one underline failed 7.1 t3 under the claim this writer makes.
-			for _, sp := range uncoveredPathSpans(cp.src) {
+			// committed page with one underline failed 7.1 t3 under the claim this writer makes. Since
+			// `/pending 514` the same is true of a picture, a shading and an inline image: 495 left
+			// those out and 514 measured that leaving them out fixes nothing (`uncoveredDrawingSpans`).
+			drawings, _ := uncoveredDrawingSpans(cp.src, cp.images)
+			for _, sp := range drawings {
 				cp.edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
 				cp.edit.InsertBefore(sp.end, []byte("\nEMC"))
 			}
@@ -257,84 +273,6 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 		return nil, orphanedClaimError("commitProposal", out)
 	}
 	return claimed, nil
-}
-
-// pathConstruction, pathPainting — ISO 32000-1 tables 59 and 60. A path object runs from its first
-// construction operator to the painting operator that ends it; `n` ends one without painting, so there is
-// nothing drawn to mark.
-var (
-	pathConstruction = map[string]bool{"m": true, "l": true, "c": true, "v": true, "y": true, "h": true, "re": true, "W": true, "W*": true}
-	pathPainting     = map[string]bool{"S": true, "s": true, "f": true, "F": true, "f*": true, "B": true, "B*": true, "b": true, "b*": true}
-)
-
-// uncoveredPathSpans returns the byte span of every painted path object in one content stream that no
-// marked-content sequence already covers as an artifact or with an MCID — what a commit declares an
-// artifact. The span starts at the first operand of the path's first operator, so the bracket encloses
-// the whole path object and never splits one (a marked-content operator inside a path object is illegal).
-//
-// **Paths only.** An image or a form XObject no element covers is the residue `/pending 495` names: an
-// artifact would tell a reader a picture is decoration, and nothing proposes a `/Figure` for it.
-func uncoveredPathSpans(src []byte) []opSpan {
-	var (
-		out          []opSpan
-		covered      []bool // one per open marked-content sequence
-		operandStart = -1
-		pathStart    = -1
-		startCovered bool
-	)
-	anyCovered := func() bool {
-		for _, c := range covered {
-			if c {
-				return true
-			}
-		}
-		return false
-	}
-	toks := contentstream.Tokenize(src)
-	for i, tk := range toks {
-		if tk.Kind == contentstream.Whitespace {
-			continue
-		}
-		if tk.Kind != contentstream.Operator {
-			if operandStart < 0 {
-				operandStart = tk.Start
-			}
-			continue
-		}
-		op := string(tk.Bytes(src))
-		start := tk.Start
-		if operandStart >= 0 {
-			start = operandStart
-		}
-		switch {
-		case op == "BMC" || op == "BDC":
-			c := false
-			for j := i - 1; j >= 0 && toks[j].Start >= start; j-- {
-				switch string(toks[j].Bytes(src)) {
-				case "/Artifact", "/MCID":
-					c = true
-				}
-			}
-			covered = append(covered, c)
-		case op == "EMC":
-			if n := len(covered); n > 0 {
-				covered = covered[:n-1]
-			}
-		case pathConstruction[op]:
-			if pathStart < 0 {
-				pathStart, startCovered = start, anyCovered()
-			}
-		case pathPainting[op]:
-			if pathStart >= 0 && !startCovered && !anyCovered() {
-				out = append(out, opSpan{pathStart, tk.End})
-			}
-			pathStart = -1
-		case op == "n":
-			pathStart = -1
-		}
-		operandStart = -1
-	}
-	return out
 }
 
 // elementRuns is an element's runs, line by line, in the order they were drawn on each line.
