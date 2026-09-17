@@ -14983,28 +14983,23 @@ function ceremonyCallNext(c, who) {
         say.textContent = 'It is your own turn to sign — there is nobody to call yet.';
         return;
       }
-      // 2. No block, because a DIALLED hop never signs here (/pending 517).
-      //
-      //    This used to rasterise one when `q.contributes` came back true, and the branch could not
-      //    be entered: the quote answers `mine` above and returns, and every other turn belongs to
-      //    the party being called. The server side of the same dead pair — a second progress walk
-      //    and an attestation mint the route could never reach — went with it, and the quote no
-      //    longer returns lines, a rect or a time to render from.
-      //
-      //    **So `contributes` is read as a TRIPWIRE rather than as a branch**, which is the one
-      //    honest use left for it. The two doors that answer "do I sign at this hop?" — this quote
-      //    and `carries` inside the dial — disagreed for a whole class of ceremony until /pending
-      //    517, and the client could not see it: it rendered nothing and the dial answered 400
-      //    "this hop needs your signature block and none was sent". A `true` here now means they
-      //    have come apart again, and refusing says so instead of dialling into the same 400.
+      // 2. The block, rasterised HERE because nothing in the server can draw one: `renderAttestation`
+      //    is the only producer in the tree. Skipped entirely on the carry path, where this machine
+      //    contributes nothing — which is why the server makes the appearance required exactly when
+      //    it signs rather than on every request.
+      let appearance = '';
       if (q.contributes) {
-        say.textContent = 'Nib cannot work out whose turn it is in this ceremony, so nothing was '
-          + 'called. It says this machine signs at a hop it would be dialling, and those cannot '
-          + 'both be true.';
-        btn.disabled = false;
-        return;
+        // **`renderAttestation` returns a BLOB, not a data URL**, and the first cut of this line
+        // assumed otherwise — `png.split(',')` on a Blob throws. Every other caller appends it to a
+        // FormData, where a Blob is exactly right; this route takes JSON, so it is base64'd here.
+        // Read rather than assumed, which is the only way to find it: the failure is at runtime, in
+        // a flow that needs a server at the other end.
+        //
+        // **`blobToBase64` already existed** (one screen up, added for the vault import) and a
+        // second copy of it here was written and then deleted — the duplicate is exactly what
+        // ADR-009 refuses, and `node --check` caught it as a redeclaration before anything shipped.
+        appearance = await blobToBase64(await renderAttestation(q.lines, q.rect));
       }
-      const appearance = '';
       // 3. The dial. The spoken check appears mid-request on both machines, so the verify poller
       //    runs BESIDE the call — the server is blocked waiting for an answer and cannot deliver
       //    the words in the response it has not sent.
@@ -15015,7 +15010,7 @@ function ceremonyCallNext(c, who) {
         const res = await apiFetch('/api/ceremony/hop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ceremony: c.id, appearance }),
+          body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
         });
         const body = await res.json();
         if (!res.ok) { say.textContent = body.error || `The call failed (${res.status}).`; btn.disabled = false; return; }
