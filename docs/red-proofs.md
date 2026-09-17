@@ -5803,6 +5803,39 @@ assertion was then proved by deleting `/OFF` alone, which is the plausible defec
 
 `recorded` 437 → 439.
 
+## /pending 550 — a guard that policed one NAME rather than the property (2026-09-16)
+
+One row, tier 1, and it is recorded against a hole that was measured rather than argued.
+
+| the defect, restored | prove it | what goes red |
+|---|---|---|
+| `the-cli-writes-through-a-non-durable-door-not-named-write` — `writeSplitFiles` reaches `atomicfile.WriteFrom`, a door whose own comment says it is *"ATOMIC, and deliberately not durable, the same choice `Write` makes and for the same reason"* | `go test ./internal/cli/ -run TestTheInPlaceRewriteIsDurableNotMerelyAtomic` | `reaches a NON-DURABLE atomicfile door` |
+
+**The row exists because the guard could not see this patch.** `atomicdurable_test.go` tested
+`strings.Contains(src, "atomicfile.Write(")`, and `atomicfile.WriteFrom(` does not contain that
+string. With this exact patch applied, the pre-change guard printed `12 file(s) scanned, 1 durable
+writer(s), 0 non-durable` and **passed** — so the claim "a second non-durable door was invisible" is
+a run, not a reading. The guard now discovers `internal/atomicfile`'s exported doors from that
+package's own source and classifies each, so a door added tomorrow is refused until somebody says
+which kind it is.
+
+**Three further mutations, each probed separately, because the arms mean different things.**
+Restoring the original `atomicfile.Write(` call goes red (the property that was already covered).
+Adding a *new* exported door to `internal/atomicfile` and calling it from `internal/cli` goes red
+naming it — the arrival case, which is the one a name list cannot have. And breaking the discovery
+itself (the regex no longer sees `func ReplaceDurable(`) fails as `setup:`, naming the door it
+classifies and cannot find; without that arm an unreadable door package would have made every call
+site unclassifiable and the result would have looked clean.
+
+**What this row is NOT.** It is not evidence that the CLI's split should move to a non-durable door.
+That was /pending 508's proposal and /pending 550 refused it: `writeNamed` is also the door that
+resolves a symlink at the destination and carries an existing file's mode, and 508 costed only the
+fsync. Re-measured for the refusal (this host, ext4/NVMe, the write loop timed inside the real `nib
+split --every 1` over 280 pages, three rounds): 16.8–20.5 ms a part durable against 73–106 µs
+non-durable — 4.7–5.7 s of a 28–66 s command — and 224–276 ms of 3.3–6.6 s at the 28-part shape
+people actually run. The split's own run-to-run spread on a loaded machine was ±38 s.
+
+`recorded` 458 → 459.
 ---
 
 ## /pending 558 — an observable read only by its own package (v1.135.10+)
@@ -5915,3 +5948,10 @@ applies reports as STALE, which is the failure `redproof.sh` exists to make loud
 regenerated against this tree and replayed.
 
 `recorded` 458 → 461.
+
+**Merge note (2026-09-16).** The two sections above landed on separate branches off the same base
+and both are appends — nothing competing. Their bookkeeping lines are each true of their own branch
+and neither is true of this tree: `/pending 558`'s work took the set to 463 and `/pending 550`'s
+added one more, so the constant in `verify_test.go` is **464**, which is the union and not either
+side. Taking a side here breaks the guard rather than the code — the floor is bounded on BOTH sides,
+so 459 and 463 would each have failed the "the set outgrew this constant" arm.

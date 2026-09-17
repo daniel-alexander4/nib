@@ -152,6 +152,22 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
 		}
 		// Re-derivable: every part comes from the document still open in this process, so an
 		// export can simply be run again. Atomic, not durable — see atomicfile.Write.
+		//
+		// **The CLI's split writes the same parts through a DURABLE door, and that is settled
+		// rather than an oversight (/pending 550).** `internal/cli`'s `writeSplitFiles` goes
+		// through `writeNamed` → `atomicfile.ReplaceDurable`, which fsyncs, resolves a symlink at
+		// the destination, and carries an existing file's mode. /pending 508 measured only the
+		// fsync — 16.8–20.5 ms a part against 73–106 µs here, ~5 s on a 280-part split — and
+		// proposed moving the CLI to this door to match. Refused: the link resolution is the half
+		// that was not costed, and `internal/cli` acquired it by fixing a real silent data loss
+		// (/pending 515). Two doors, two reasons, both written down; the symmetry would have cost
+		// more than it bought.
+		//
+		// **What is NOT settled, and is a real disagreement: the mode.** A part written here is
+		// 0600 and the same part from the CLI is 0644, so where a split's output lands depends on
+		// which surface produced it. Nobody chose that, it is not durability, and it needs a
+		// product call rather than a comment — filed as its own item off /pending 550 rather than
+		// changed here, because either direction alters what users' existing files look like.
 		if err := atomicfile.Write(full, p.Data, 0o600); err != nil {
 			httpError(w, http.StatusInternalServerError, "could not write "+p.Name)
 			return

@@ -435,6 +435,43 @@ func splitSel(s string) []string {
 // writeSplitFiles writes each split part as <dir>/<name>.pdf, atomically and
 // confined to dir (the name is title/range-derived, so the join is re-checked, as
 // the GUI's folder split does). Returns a CLI exit code.
+//
+// # It stays on writeNamed, and the GUI's split deliberately does not (/pending 550)
+//
+// A split part is NOT the user's only copy — the input is read and never written, so a lost part
+// is re-derived by running the command again — and the GUI's door (`writeSplitParts` in
+// `internal/server/export.go`) takes the non-durable `atomicfile.Write` for exactly that reason.
+// /pending 508 costed the difference and proposed moving this side to match. It is refused, and
+// the reason is that 508 costed ONE of the three ways the doors differ.
+//
+// `writeNamed` does not only fsync. It is also the door that RESOLVES A SYMLINK before writing —
+// *"an in-place rewrite of a symlink silently destroyed the link, left the real file untouched,
+// and dropped the output in the link's directory instead"* (/pending 515) — and the one that
+// carries an existing file's permission bits instead of forcing its own. `--out-dir` is a folder
+// the user chose and may perfectly well hold links; `atomicfile.Write` finishes with a rename, and
+// a rename over a link replaces the link. So moving this call to buy the fsync back would import
+// the silent link-destruction this package spent /pending 515 removing, to save time the user
+// cannot distinguish from machine noise.
+//
+// **That half was RUN, not reasoned**, because a rename's behaviour over a link is exactly the kind
+// of claim this repo has got wrong from reading. Two binaries, one per door, against an `--out-dir`
+// holding `foo1-2.pdf` as a link to a real file elsewhere. Through `writeNamed`: the link is still a
+// link afterwards and the real file received the 94,539-byte part. Through `atomicfile.Write`: the
+// link is gone, replaced by a regular file holding the part, and the real file it pointed at still
+// holds its original bytes — with exit 0 and nothing printed. That is /pending 515's sentence
+// reproduced, in a folder the user typed.
+//
+// **Measured here, not inherited** (this host, ext4/NVMe, `nib split --every 1` over a 280-page
+// document, the write loop timed inside the real command, three rounds): the writes cost
+// 4.7–5.7 s of a 28–66 s split — 9–20% — at 16.8–20.5 ms per part. The same 280 parts through
+// `atomicfile.Write` cost 20–30 ms in total, 73–106 µs each. So the fsync is ~99.5% of the write
+// time and ~a fifth of the command. On the shape people actually run — `--bookmarks`, or
+// `--every 10`, 28 parts — it is 224–276 ms of 3.3–6.6 s, 4–8%. And the run-to-run spread of the
+// split itself on a loaded machine was ±38 s, which is the honest denominator for a 5 s saving.
+//
+// The remaining disagreement with the GUI is recorded at that site and is deliberate at neither:
+// it writes new parts 0600 where this writes 0644, which is a user-visible difference nobody
+// chose and is not this function's to settle.
 func writeSplitFiles(dir string, parts []pdfops.SplitPart) int {
 	dir = filepath.Clean(dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
