@@ -46,7 +46,7 @@ after(async () => {
 test('setup: a document with a committed tree, and the structure tree panel open', async () => {
   foundHeld = await heldDocs();
   await h.openDocument(DOC, 2);
-  await h.mode('edit');
+  await h.mode('accessibility'); // ADR-035
   await h.group('Tag Structure');
   await page.click('#tagsBtn');
   await page.waitForFunction(() => document.querySelectorAll('#tagsList .tags-row').length > 0, null, { timeout: 20000 });

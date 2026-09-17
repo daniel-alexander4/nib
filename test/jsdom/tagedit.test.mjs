@@ -86,7 +86,7 @@ test('selecting an element shows what can be changed about it, and says when not
   $('pathInput').value = OPEN.path;
   $('openGo').click();
   await settle();
-  doc.querySelector('.modetab[data-tab="edit"]').click();
+  doc.querySelector('.modetab[data-tab="accessibility"]').click(); // ADR-035
   await settle();
   doc.querySelector('.tab[data-panel="tagtree"]').click();
   await settle();

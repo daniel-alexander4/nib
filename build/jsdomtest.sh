@@ -98,9 +98,16 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # driven rather than scanned, because a scan cannot see an await between a capture and a write.
 # 74 since /pending 506 (clientdoors.test.mjs): the wrong-passphrase report, keyboard reach, tab-close
 # focus, and the disarm-all and keyboard doors.
-# 75 since ADR-039 (downloaddialog.test.mjs): the release download's dialog — progress from the
+# 75 since ADR-036 (modevisibility.test.mjs): the main-menu switch hides both mode lists, never
+# lands on a hidden mode, and leaves Settings alone.
+# 76 since ADR-039 (downloaddialog.test.mjs): the release download's dialog — progress from the
 # window stream, the destination named, a terminal state, and Cancel telling the server.
-Nib_expect_files=75
+#
+# **Both arrived on branches off one base, and each bumped this to 75.** Taking either side at
+# the merge leaves the pin one below the file count, which this script exits 1 on — the count is
+# the thing it guards, so a merge that resolves it by picking a side breaks the guard rather
+# than the code. Set by hand to the number of files actually present.
+Nib_expect_files=76
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

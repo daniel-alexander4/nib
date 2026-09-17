@@ -44,7 +44,7 @@ after(async () => {
 test('the review proposes, outlines on focus, and commits from the keyboard', async () => {
   foundHeld = await heldDocs();
   await h.openDocument(DOC, 2);
-  await h.mode('edit');
+  await h.mode('accessibility'); // ADR-035
   await h.group('Tag Structure');
   await page.click('#tagsBtn');
   await page.waitForFunction(() => document.querySelectorAll('#tagsList .tags-row').length > 0, null, { timeout: 20000 });
@@ -87,8 +87,8 @@ test('the review proposes, outlines on focus, and commits from the keyboard', as
   assert.equal(await page.$$eval('.tag-outline', (els) => els.length), 0, 'the outline outlived the review');
 
   // The report now says the structure was inferred.
-  await h.mode('secure');
-  await h.group('Protect & Inspect');
+  await h.mode('accessibility'); // ADR-035: the report left Secure's Protect & Inspect for its own card
+  await h.group('Check Accessibility');
   await page.click('#uaBtn');
   await page.waitForSelector('#uaBody .ua-provenance', { timeout: 20000 });
   const provenance = await page.$eval('#uaBody .ua-provenance', (el) => el.textContent);

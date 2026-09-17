@@ -402,7 +402,10 @@ test('closing the last document returns the app to the launch state', async () =
   (all && !all.hidden ? all : doc.getElementById('closeBtn')).click();
   await settle();
   await openDocument();
-  assert.equal(strip.hidden, true, 'setup: the strip is showing, so more than one document is open');
+  // One document open, and since ADR-037 that means the strip is showing with exactly one tab.
+  // The setup's claim is "exactly one document is open", which the tab count now states directly.
+  assert.equal(strip.querySelectorAll('.tab').length, 1,
+    'setup: the strip does not hold exactly one tab, so this is not the one-document case');
   assert.equal(doc.getElementById('viewerWrap').className, 'has-doc', 'setup: nothing is open to close');
 
   doc.getElementById('closeBtn').click();

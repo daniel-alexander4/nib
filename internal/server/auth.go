@@ -258,11 +258,14 @@ type statusResponse struct {
 	// client hides a surface when a feature is off, and an absent object would be read as "the
 	// server did not say", which is a third state nothing implements. Nil before the seed runs,
 	// which the client treats as all-off, matching `advancedOn`.
-	Advanced              *advancedStatus `json:"advanced"`
-	RecentHighlightColors []string        `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
-	Version               string          `json:"version"`                         // running build, shown in the About dialog
-	Ghostscript           bool            `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
-	LibreOffice           bool            `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
+	Advanced *advancedStatus `json:"advanced"`
+	// HiddenModes are the main-menu tabs switched off (ADR-036). Omitted when empty, which is the
+	// default: absent means every mode shows, the same reading the vault stores by.
+	HiddenModes           []string `json:"hiddenModes,omitempty"`
+	RecentHighlightColors []string `json:"recentHighlightColors,omitempty"` // last-used highlight colors, newest first
+	Version               string   `json:"version"`                         // running build, shown in the About dialog
+	Ghostscript           bool     `json:"ghostscript"`                     // gs installed → offer the general (vector-preserving) PDF/A converter
+	LibreOffice           bool     `json:"libreoffice"`                     // LibreOffice installed → offer office-document → PDF conversion
 }
 
 // currentStatus describes how (and whether) the vault can be unlocked, stamped
@@ -291,6 +294,7 @@ func (s *Server) currentStatus() statusResponse {
 				Timestamp:  set.Advanced.Timestamp,
 			}
 		}
+		st.HiddenModes = set.HiddenModes
 		st.RecentHighlightColors = set.RecentHighlightColors
 		if set.DisableAutoUpdate {
 			st.AutoUpdate = false
