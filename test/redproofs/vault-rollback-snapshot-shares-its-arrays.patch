@@ -1,7 +1,7 @@
 diff --git a/internal/vault/vault.go b/internal/vault/vault.go
 --- a/internal/vault/vault.go
 +++ b/internal/vault/vault.go
-@@ -1511,13 +1511,7 @@
+@@ -1569,13 +1569,7 @@
  // the lock FROM its caller rather than acquiring it: a mutator that had to read, release, then
  // call a locking door would be the lost update /pending 519 removed.
  func (v *Vault) mutateLocked(apply func()) error {
@@ -13,10 +13,10 @@ diff --git a/internal/vault/vault.go b/internal/vault/vault.go
 -	// second copy of Identity.KeyPEM and ExternalSigner.P12, and it exists on every AddRecent.
 -	defer zero(before)
 +	before := v.contents
- 	slots := append([]Slot(nil), v.ssh...)
- 
- 	apply()
-@@ -1536,11 +1530,7 @@
+ 	beforeSlots, err := json.Marshal(v.ssh)
+ 	if err != nil {
+ 		return err
+@@ -1600,10 +1594,6 @@
  	// alternative is leaving memory silently ahead of disk, which is the state this door exists to
  	// prevent. encoding/json allocates for every string and base64 field, so nothing in `restored`
  	// aliases `before` and the deferred scrub cannot reach it.
@@ -24,8 +24,15 @@ diff --git a/internal/vault/vault.go b/internal/vault/vault.go
 -	if uerr != nil {
 -		return fmt.Errorf("%w (and the vault in memory could not be rolled back: %v)", serr, uerr)
 -	}
+ 	// Both halves are decoded before EITHER is assigned, so a rollback that cannot complete
+ 	// leaves memory as the mutation left it rather than half-restored — a vault whose contents
+ 	// are the old ones and whose key slots are the new ones is a state neither disk nor memory
+@@ -1612,7 +1602,7 @@
+ 	if uerr := json.Unmarshal(beforeSlots, &restoredSlots); uerr != nil {
+ 		return fmt.Errorf("%w (and the vault's key slots could not be rolled back: %v)", serr, uerr)
+ 	}
 -	v.contents = restored
 +	v.contents = before
- 	v.ssh = slots
+ 	v.ssh = restoredSlots
  	return serr
  }

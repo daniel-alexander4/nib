@@ -518,7 +518,7 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 	// behind, and from then on every launch reported "key-missing" and enrol answered 409, with no
 	// way out but deleting a file the user has never heard of. WriteDurable fails before its
 	// rename or at it, so on an error the file at Path is still this call's placeholder.
-	if err := v.Save(); err != nil {
+	if err := v.persist(); err != nil {
 		_ = os.Remove(Path(dir))
 		return nil, err
 	}
@@ -597,7 +597,7 @@ func OpenSSHAt(dir, keyPath string, passphrase []byte) (*Vault, error) {
 		// did owe is the scrub its two siblings above perform — `zero(key)` on every discard —
 		// and it was the one discard in this loop that dropped the unwrapped content key on the
 		// heap instead.
-		if serr := v.Save(); serr != nil {
+		if serr := v.persist(); serr != nil {
 			zero(key)
 			return nil, serr
 		}
@@ -687,7 +687,28 @@ func Migrate(dir, password, pubLine, keyPath string) (*Vault, error) {
 	if err != nil {
 		return nil, err
 	}
-	return v, v.Save()
+	// **`return v, v.Save()` is the shape /pending 502 removed from Create**, three functions
+	// up, and it was still here (/pending 549). It hands back a LIVE Vault beside the error: an
+	// SSH-sealed vault holding a content key that was sealed to slots the file does not carry,
+	// while the file is still the old password vault. A caller that reads the value before the
+	// error — or writes `v, _ :=` — holds a Nib that believes it is migrated, and the next launch
+	// reports the vault still needs migrating.
+	//
+	// Measured against the callers rather than assumed: `grep -rn 'vault\.Migrate' --include='*.go'`
+	// finds ONE production caller, internal/server/auth.go's handleMigrate, and it checks the
+	// error and discards the Vault (it re-opens from disk through ensureUnlocked). So no caller
+	// ignores it today; this closes the shape before the second caller exists.
+	//
+	// Nothing is stranded on disk by the failure, unlike Create's placeholder: writeFileAtomic
+	// fails at its temp write or its rename, so the file at Path is still the user's password
+	// vault and migrating again with the same password is the way out. What the discard DOES owe
+	// is the scrub OpenSSHAt's loop owes on its own discard path — this Vault holds a freshly
+	// generated content key that no longer seals anything.
+	if serr := v.persist(); serr != nil {
+		zero(v.key)
+		return nil, serr
+	}
+	return v, nil
 }
 
 // unwrapSlot recovers the content key for a slot. It tries the slot's recorded
@@ -1389,9 +1410,29 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
-// Save encrypts the current contents with the content key and writes the vault
-// atomically, keeping the existing key slots.
-func (v *Vault) Save() error {
+// persist encrypts the current contents with the content key and writes the vault
+// atomically, keeping the existing key slots. It is save() with the lock taken, for the
+// three construction paths — Create, OpenSSHAt and Migrate — that hold a Vault nothing
+// else can reach yet and so cannot route through mutateLocked.
+//
+// # Unexported, and that is the point (/pending 549)
+//
+// This was `Save`, and it had no caller outside this package — the search that says so is
+// `grep -rn '\.Save()' --include='*.go'` over the repo, which found Create, OpenSSHAt and
+// Migrate here and one in-package test. An exported persist-only door is worth nothing to a
+// caller outside the package (every accessor returns a copy, so nothing out there can change
+// what save() would write) and costs two things:
+//
+//   - It re-encrypts under a fresh nonce and durably rewrites the file holding the ONLY copy
+//     of the signing identity, for a caller who has changed nothing.
+//   - It is a way to persist that does not go through mutateLocked, and
+//     TestEveryVaultMutationGoesThroughOneDoor cannot see a caller of it: that scan reads
+//     `internal/vault` and nothing else. Its one exemption for this method is sound only
+//     because the method mutates nothing, which is a property of this body and of no caller's.
+//
+// So the compiler holds the line the scan cannot, and
+// TestNoExportedDoorPersistsTheVaultWithoutMutating keeps a new exported one from appearing.
+func (v *Vault) persist() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.save()
@@ -1499,9 +1540,26 @@ func (v *Vault) save() error {
 // durable write dominates. It is taken BEFORE apply runs, so a payload this build cannot marshal
 // fails with nothing yet changed.
 //
-// v.ssh is snapshotted one level deep, and that is enough — stated rather than assumed: RemoveKey
-// shifts the slice IN PLACE, so the copy must own its array, and nothing anywhere mutates a Slot's
-// Wrapped bytes in place.
+// # v.ssh is marshalled for the SAME reason, and it used to be a promise instead (/pending 549)
+//
+// It was `append([]Slot(nil), v.ssh...)` — one level deep — under a comment saying that was enough
+// because "nothing anywhere mutates a Slot's Wrapped bytes in place". The enumeration behind that
+// promise holds: every write to a `Slot.Wrapped` in this repo is a whole-slot composite literal
+// with a freshly wrapped key (newSealed, sealBuiltins in builtin.go, and AddKey), and RemoveKey's
+// in-place shift only moves whole structs, which is what the one-level copy was there for.
+//
+// It is a promise all the same, and the paragraph above already says what a promise buys: a
+// hand-written copy silently stops covering the field nobody has added yet. `Slot` gains a second
+// `[]byte`, or one rewrap writes through `&v.ssh[i]` the way AddCeremonySecret already writes
+// through `&v.contents.CeremonySecrets[i]`, and the rollback goes vacuous on the half of the vault
+// that decides WHO CAN OPEN IT — with the four-site rollback test still green, because Keys() does
+// not expose Wrapped and cannot see it.
+//
+// Measured before taking it, because the door runs on every AddRecent — so on opening any PDF
+// (11th-gen i5-1155G7, 400-byte wrapped keys, `-benchtime 3s`): the marshal costs 1.2µs at one
+// slot, 3.9µs at three and 9.1µs at eight, against 318ns/758ns/1.8µs for the copy it replaces and
+// 10.4ms for the save() it precedes. Three orders of magnitude under the write it is protecting.
+// The unmarshal — 30µs to 115µs over the same range — runs only on the failure path.
 //
 // # apply runs UNDER the lock, so it must not touch this vault and must not do I/O
 //
@@ -1518,7 +1576,13 @@ func (v *Vault) mutateLocked(apply func()) error {
 	// Scrubbed like save() scrubs its own plaintext, and for the same reason: this buffer is a
 	// second copy of Identity.KeyPEM and ExternalSigner.P12, and it exists on every AddRecent.
 	defer zero(before)
-	slots := append([]Slot(nil), v.ssh...)
+	beforeSlots, err := json.Marshal(v.ssh)
+	if err != nil {
+		return err
+	}
+	// Wrapped keys are ciphertext rather than secrets, but this package zeroes on every other
+	// discard path and an exception nobody wrote down is how that discipline erodes.
+	defer zero(beforeSlots)
 
 	apply()
 
@@ -1540,8 +1604,16 @@ func (v *Vault) mutateLocked(apply func()) error {
 	if uerr != nil {
 		return fmt.Errorf("%w (and the vault in memory could not be rolled back: %v)", serr, uerr)
 	}
+	// Both halves are decoded before EITHER is assigned, so a rollback that cannot complete
+	// leaves memory as the mutation left it rather than half-restored — a vault whose contents
+	// are the old ones and whose key slots are the new ones is a state neither disk nor memory
+	// has ever held.
+	var restoredSlots []Slot
+	if uerr := json.Unmarshal(beforeSlots, &restoredSlots); uerr != nil {
+		return fmt.Errorf("%w (and the vault's key slots could not be rolled back: %v)", serr, uerr)
+	}
 	v.contents = restored
-	v.ssh = slots
+	v.ssh = restoredSlots
 	return serr
 }
 

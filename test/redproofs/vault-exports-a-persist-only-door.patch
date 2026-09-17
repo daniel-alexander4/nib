@@ -1,0 +1,16 @@
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -1432,6 +1432,12 @@
+ //
+ // So the compiler holds the line the scan cannot, and
+ // TestNoExportedDoorPersistsTheVaultWithoutMutating keeps a new exported one from appearing.
++func (v *Vault) Save() error {
++	v.mu.Lock()
++	defer v.mu.Unlock()
++	return v.save()
++}
++
+ func (v *Vault) persist() error {
+ 	v.mu.Lock()
+ 	defer v.mu.Unlock()

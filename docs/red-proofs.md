@@ -5802,3 +5802,71 @@ an answer: a source `/OCProperties` too incomplete to be safe cannot reach the c
 assertion was then proved by deleting `/OFF` alone, which is the plausible defect anyway.
 
 `recorded` 437 → 439.
+
+## /pending 549 — the vault's persist door, Migrate's return, and the slot snapshot (2026-09-16)
+
+Three pieces of residue `/pending 510`'s mutate-door work turned up and deliberately did not sweep
+in. Each was dispositioned on its own; two produced a change and one clause was **overturned**.
+
+| the defect, restored | prove it | what goes red |
+|---|---|---|
+| `vault-exports-a-persist-only-door` — `persist` is exported again, as `Save` | `go test ./internal/vault/ -run TestNoExportedDoorPersistsTheVaultWithoutMutating -count=1` | `an exported *Vault method writes the vault file directly` |
+| `migrate-hands-back-a-vault-beside-its-error` — `Migrate` ends `return v, v.persist()` again | `go test ./internal/vault/ -run TestAFailedMigrateHandsBackNoVault -count=1` | `Migrate returned a live Vault beside its error` |
+| `vault-rollback-snapshot-shares-its-wrapped-keys` — the slot snapshot goes back to `append([]Slot(nil), v.ssh...)` | `go test ./internal/vault/ -run TestAFailedSaveRestoresASlotsWrappedBytes -count=1` | `the door's snapshot shares the Wrapped array with the mutation` |
+
+**`Save` had no caller outside the package and could not usefully have had one.** The search is
+`grep -rn '\.Save()' --include='*.go'` over the repo: three sites, all in `vault.go` (Create,
+OpenSSHAt, Migrate), plus one in-package test. A caller outside `internal/vault` cannot change what
+`save()` would write — every accessor returns a copy — so an exported persist-only door can only
+re-encrypt the only copy of the signing identity under a fresh nonce for a caller who changed
+nothing. The sharper cost is that `TestEveryVaultMutationGoesThroughOneDoor` **exempts** this one
+method from its "nothing outside the door calls `save()`" rule, and that exemption is sound only
+because the method mutates nothing — a property of its body, not of any caller's — while the scan
+itself reads `internal/vault` and cannot follow a caller in `internal/server` at all. Unexporting it
+puts the compiler where the scan cannot reach; the new guard keeps a second one from appearing.
+
+**The `Migrate` clause's stated half was overturned by the search and the shape was fixed anyway.**
+The entry asked whether a caller ignores the error. `grep -rn 'vault\.Migrate' --include='*.go'`
+finds exactly one production caller, `internal/server/auth.go`'s `handleMigrate`, and it checks the
+error and discards the Vault (it re-opens from disk through `ensureUnlocked`). So there is no live
+defect, and the row above says so rather than overstating it. What was fixed is the shape:
+`return v, v.Save()` is what `/pending 502` removed from `Create` three functions up, and the
+non-nil Vault it hands back beside an error is sealed to slots the file does not carry while the
+file is still the password vault. The discard also owes the scrub `OpenSSHAt`'s own discard path
+owes — a freshly generated content key that no longer seals anything — and now performs it.
+
+**A second mutation caught the plausible WRONG remedy and made the test say so.** Copying Create's
+failure path — return nil *and* `os.Remove(Path(dir))` — is right for Create, whose file is its own
+zero-byte placeholder, and destroys the user's password vault here: the only copy of their signing
+identity, with the password they still hold now useless. That mutation went red on a bare
+`t.Fatal(err)` reading `no such file or directory`, which is a red for the right reason wearing the
+wrong words, so the read became a named assertion. Re-probed: it now names the harm.
+
+**The slot snapshot's "adequate today" claim was TRUE, and that is why it was replaced.** The
+enumeration behind it holds: every write to a `Slot.Wrapped` in the repo is a whole-slot composite
+literal with a freshly wrapped key (`newSealed`, `sealBuiltins`, `AddKey`), and `RemoveKey`'s
+in-place shift moves whole structs, which is what the one-level copy was for. It is a promise all
+the same, and the door's own comment already says what a promise buys: *"a hand-written deep copy
+silently stops covering one the day it is added"*. So `v.ssh` is marshalled like `v.contents`.
+
+**Measured before taking it, because the door runs on every `AddRecent` — so on opening any PDF**
+(11th-gen i5-1155G7, 400-byte wrapped keys, `-benchtime 3s`): the marshal costs **1.2µs** at one
+slot, **3.9µs** at three and **9.1µs** at eight, against 318ns/758ns/1.8µs for the copy it replaces
+and the door's already-recorded **10.4ms** for the `save()` it precedes. Three orders of magnitude
+under the write it protects. The unmarshal — 30µs to 115µs over the same range — runs only on the
+failure path.
+
+**Why that row needed a test written against a defect the package does not contain.**
+`TestAFailedSaveRestoresTheKeySlots` stays green under the reverted snapshot, and it cannot do
+otherwise: both mutators of `v.ssh` move whole structs, and `Keys()` deliberately omits `Wrapped`,
+so nothing reachable through this package's public surface can see the difference. The new test
+therefore drives `mutateLocked` with an in-place rewrap directly — which is legitimate because the
+door's contract is over an arbitrary `apply`, and is the same shape `AddCeremonySecret` already uses
+on the contents side.
+
+**`vault-rollback-snapshot-shares-its-arrays` was re-recorded**, not merely left: its patch's
+context lines sit in `mutateLocked` and the slot change moved them. A row whose patch no longer
+applies reports as STALE, which is the failure `redproof.sh` exists to make loud — so the patch was
+regenerated against this tree and replayed.
+
+`recorded` 458 → 461.

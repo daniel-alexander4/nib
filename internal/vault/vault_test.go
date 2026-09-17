@@ -790,7 +790,7 @@ func TestSaveWritesTheVersionItDeclares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Save(); err != nil {
+	if err := v.persist(); err != nil {
 		t.Fatal(err)
 	}
 	env, err := readEnvelope(dir)
@@ -872,5 +872,69 @@ func TestAFailedCreateLeavesNoVaultBehind(t *testing.T) {
 	if Exists(dir) {
 		t.Fatal("a failed Create left a file behind that Exists() calls a vault — the app " +
 			"will now refuse to set one up and refuse to open the one it thinks it has")
+	}
+}
+
+// TestAFailedMigrateHandsBackNoVault — `/pending 549`.
+//
+// Migrate ended `return v, v.Save()`: the shape `/pending 502` removed from Create three
+// functions up, still in place here. A caller that reads the value before the error, or writes
+// `v, _ :=`, holds a live SSH-sealed Vault whose content key is sealed to slots the file does not
+// carry — while the file on disk is still the old password vault. The running Nib then behaves as
+// though the migration happened and the next launch reports the vault still needs migrating.
+//
+// The named search behind the disposition: `grep -rn "vault\.Migrate" --include="*.go"` finds one
+// production caller, internal/server/auth.go's handleMigrate, and it DOES check the error. So
+// this closes the shape before the second caller exists rather than fixing a live defect — which
+// is also why the assertion is on the returned value and not on any caller's behaviour.
+//
+// The other half is what the file must look like afterwards: the failure must leave the password
+// vault openable, because migrating again with the same password is the only way out.
+func TestAFailedMigrateHandsBackNoVault(t *testing.T) {
+	dir := t.TempDir()
+	writeV1Vault(t, dir, "oldpw", Contents{Profile: map[string]string{"email": "dan@x.com"}})
+	beforeBytes, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pub, keyPath := newKey(t)
+	done := withFailingWrite(t)
+	v, err := Migrate(dir, "oldpw", pub, keyPath)
+	writes := done()
+
+	if writes != 1 {
+		t.Fatalf("setup: the failing write ran %d time(s), want 1 — an assertion over a save "+
+			"that never ran asserts nothing", writes)
+	}
+	if err == nil {
+		t.Fatal("Migrate reported success although the write that seals the new vault failed")
+	}
+	if v != nil {
+		t.Errorf("Migrate returned a live Vault beside its error. That Vault is sealed to key " +
+			"slots the file does not carry while the file is still the password vault, so a " +
+			"caller that reads the value — or writes `v, _ :=` — runs a Nib that believes it " +
+			"migrated and a next launch that says it did not (/pending 549)")
+	}
+	// **Not `t.Fatal(err)` on the read.** The plausible wrong remedy here is Create's: return
+	// nil AND `os.Remove(Path(dir))`, which is right for Create (the file it removes is its own
+	// zero-byte placeholder) and destroys the user's password vault here — their only copy of
+	// the signing identity, with the password they still have now useless. Probed: that
+	// mutation makes this go red, and it must go red saying so rather than "no such file".
+	afterBytes, rerr := os.ReadFile(Path(dir))
+	if rerr != nil {
+		t.Fatalf("the vault file is unreadable after a failed migration (%v). Migrate decrypts "+
+			"an EXISTING password vault; a failed write must leave that file exactly where it "+
+			"was, because migrating again with the same password is the user's only way out — "+
+			"and this file is the only copy of their signing identity", rerr)
+	}
+	if !bytes.Equal(beforeBytes, afterBytes) {
+		t.Error("the failed migration changed the vault file. Nothing but the atomic rename " +
+			"writes it, so the password vault must still be byte-identical — migrating again " +
+			"with the same password is the user's only way out of this")
+	}
+	if !NeedsMigration(dir) {
+		t.Error("after a failed migration the vault no longer reports needing one, so the user " +
+			"is offered no way back to the password they still have")
 	}
 }

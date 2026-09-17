@@ -1,0 +1,32 @@
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -1576,13 +1576,7 @@
+ 	// Scrubbed like save() scrubs its own plaintext, and for the same reason: this buffer is a
+ 	// second copy of Identity.KeyPEM and ExternalSigner.P12, and it exists on every AddRecent.
+ 	defer zero(before)
+-	beforeSlots, err := json.Marshal(v.ssh)
+-	if err != nil {
+-		return err
+-	}
+-	// Wrapped keys are ciphertext rather than secrets, but this package zeroes on every other
+-	// discard path and an exception nobody wrote down is how that discipline erodes.
+-	defer zero(beforeSlots)
++	slots := append([]Slot(nil), v.ssh...)
+ 
+ 	apply()
+ 
+@@ -1608,12 +1602,8 @@
+ 	// leaves memory as the mutation left it rather than half-restored — a vault whose contents
+ 	// are the old ones and whose key slots are the new ones is a state neither disk nor memory
+ 	// has ever held.
+-	var restoredSlots []Slot
+-	if uerr := json.Unmarshal(beforeSlots, &restoredSlots); uerr != nil {
+-		return fmt.Errorf("%w (and the vault's key slots could not be rolled back: %v)", serr, uerr)
+-	}
+ 	v.contents = restored
+-	v.ssh = restoredSlots
++	v.ssh = slots
+ 	return serr
+ }
+ 
