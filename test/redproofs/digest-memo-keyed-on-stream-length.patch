@@ -1,0 +1,10 @@
+--- a/internal/pdfops/attachments.go
++++ b/internal/pdfops/attachments.go
+@@ -693,6 +693,7 @@
+ // key; it is decoded unmemoised. Object numbers are 1-based, so 0 cannot collide with a real one.
+ func decodeStream(sd *types.StreamDict, sc *streamMemo, num int) decodedStream {
+ 	if sc != nil && num != 0 {
++		num = len(sd.Raw)
+ 		if d, ok := sc.body[num]; ok {
+ 			return d
+ 		}

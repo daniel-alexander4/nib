@@ -5667,6 +5667,63 @@ uses an explicit `[page /Fit]` array now, the one shape that names a page dictio
 
 `recorded` 435 → 437.
 
+## /pending 488 — the content anchor stops being quadratic in pages (2026-09-16)
+
+**Three rows, and one of them exists because a check was written that could not fail.** The item is
+a pure performance change to `pdfops.ContentDigest`, whose output is `ceremony.Record.DocHash` — so
+by ADR-013 the acceptance is not "it got faster" but **the digest's OUTPUT is byte-identical for
+every document, and it got faster**. Both halves need a falsifiable check and they need different
+kinds of check.
+
+| proof | check | expects |
+|---|---|---|
+| `digest-seen-set-shared-across-pages` — one `seen` map for the whole document instead of one per top-level `hashObject` call, which moves every `#again` index | `go test ./internal/pdfops/ -run TestContentDigestIsByteIdenticalAcrossTheExternalCorpus -count=1` | `ADR-013: the digest's OUTPUT is a commitment` |
+| `digest-memo-keyed-on-stream-length` — the stream memo keyed on `len(sd.Raw)` rather than the object number, so two distinct streams of equal encoded length alias | `go test ./internal/pdfops/ -run TestTheFastPageWalkAndTheStreamMemoAgreeWithTheOldAlgorithm -count=1` | `the one-pass walk plus memo gives` |
+| `digest-page-resources-bypass-the-memo` — `decodeStream`'s store is disabled, restoring the once-per-sighting re-decode | `go test ./internal/pdfops/ -run TestASharedFontIsDecodedTwiceAndNotOncePerPage -count=1` | `the total is scaling with the page count` |
+
+**The third row found a vacuous assertion, and it found it the only way such a thing is ever
+found — by being applied.** The speed check first asserted that decodes PER PAGE do not grow with
+the document. With the memo removed it went GREEN, because without a memo each page decodes its own
+resources exactly once per resource name: a constant per page, 2.0 at 15 pages and 2.0 at 60. The
+defect is a multiplier on a constant and a ratio of per-page rates is blind to it. The predicate is
+the TOTAL now — 8 decodes at 15 pages and 8 at 60 with the memo, 30 and 120 without.
+
+**Then the row's first PATCH was wrong in the mirror-image way, and `redproof.sh`'s third outcome
+is what caught it.** The patch passed a nil memo from `hashPageResources`, which disables the decode
+COUNTER along with the memo, because the counter hangs off the memo. The check duly went red — on
+its setup guard, *"the small document decoded no streams at all"*, not on its assertion — and the
+harness refused it as *red, but not for its own reason*. A two-outcome harness would have recorded
+the row as proven. The defect now sits inside `decodeStream`, where the counter still runs and only
+the storing stops.
+
+**The byte-identity rows are graded against goldens taken on the UNMODIFIED build**, which is the
+only thing that can catch a coverage change reasoning missed: 297 veraPDF PDF/UA-1 files plus 15
+generated documents, each pinned by its digest, and a second check that the one-pass walk agrees
+with the old per-page walk document for document. Both were built and recorded before a line of the
+optimisation was written.
+
+**Two generated rows cannot be pinned and say so rather than being dropped.** `AddNotes` and
+`StampWatermark` go through pdfcpu's annotation creation, which stamps `/M` from `time.Now()`
+(`model/annotation.go:396`), and `ContentDigest` covers `/Annots` by design — so the same generator
+gives a different digest a second later. Detecting that by building each document twice was tried
+first and is itself flaky: it catches the instability only when the two builds straddle a second, so
+a regeneration pinned one of them and the next run failed on it. They are declared by name with the
+mechanism, and the declaration is checked in both directions.
+
+**Term 1 of the item was REFUSED, by measurement rather than by caution.** It proposed dropping
+pdfcpu's `Optimize` from the read. On the corpus that is invisible — 295 of 295 files digest
+identically with and without it — but `optimizeResourceDicts` (pdfcpu `optimize.go:1602`) assigns
+`d["Resources"] = inhPAttrs.Resources`, the resources the page's content stream actually requires,
+and `ContentDigest` hashes the resource NAMES. A hand-built page carrying one font it never draws
+with hashes differently with and without the step, and the optimized value is byte-identical to the
+same fixture written without that font. That is a coverage change, so the step stays.
+`TestSkippingPdfcpusOptimizeWOULDMoveTheDigest` asserts the REASON, so the decision can be retaken
+deliberately if pdfcpu ever stops consolidating. **A corpus that cannot reach the defect is not
+evidence that the defect is absent** — the shape that separates the two is a page with an unused
+resource, and conformance fixtures do not have one.
+
+`recorded` 437 → 440.
+
 ## /pending 494 — an edit on an office-suite document is stamped in a Base-14 face (2026-09-16)
 
 **Four mutations, no survivors.** Each is the single condition the fix rests on, weakened alone.

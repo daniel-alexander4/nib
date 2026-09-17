@@ -1,0 +1,17 @@
+diff --git a/internal/pdfops/attachments.go b/internal/pdfops/attachments.go
+index 737b586..7b4474d 100644
+--- a/internal/pdfops/attachments.go
++++ b/internal/pdfops/attachments.go
+@@ -559,9 +559,11 @@ func hashUint(h hash.Hash, v uint64) {
+ // `DigestVersion` at all — so a bumped build reading an in-flight ceremony reports "the copy on this
+ // machine is damaged or incomplete", which is the false accusation that constant exists to prevent.
+ func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int, sc *streamMemo) {
+-	hashObjectSeen(xt, o, h, depth, map[int]int{}, sc, 0)
++	hashObjectSeen(xt, o, h, depth, sharedSeenDEFECT, sc, 0)
+ }
+ 
++var sharedSeenDEFECT = map[int]int{}
++
+ // hashObjectSeen is `hashObject`'s recursion, carrying the visited set and the memo.
+ //
+ // `num` is the object number `o` was dereferenced from, or 0 for an object reached inline. It is
