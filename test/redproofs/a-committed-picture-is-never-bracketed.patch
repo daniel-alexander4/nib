@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/tagcommit.go b/internal/pdfops/tagcommit.go
+index f9be434..584bb15 100644
+--- a/internal/pdfops/tagcommit.go
++++ b/internal/pdfops/tagcommit.go
+@@ -244,7 +244,7 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
+ 			// committed page with one underline failed 7.1 t3 under the claim this writer makes. Since
+ 			// `/pending 514` the same is true of a picture, a shading and an inline image: 495 left
+ 			// those out and 514 measured that leaving them out fixes nothing (`uncoveredDrawingSpans`).
+-			drawings, _ := uncoveredDrawingSpans(cp.src, cp.images)
++			drawings, _ := uncoveredDrawingSpans(cp.src, nil)
+ 			for _, sp := range drawings {
+ 				cp.edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
+ 				cp.edit.InsertBefore(sp.end, []byte("\nEMC"))
