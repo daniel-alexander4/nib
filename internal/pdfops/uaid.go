@@ -238,6 +238,42 @@ func withoutUAClaim(pdf []byte) ([]byte, error) {
 	return out, err
 }
 
+// withoutUAClaimOrOrphanedForm is `withoutUAClaim` for a COMPOSITION — an n-up or a page split,
+// where the source catalog is carried onto pages it never described (/pending 573).
+//
+// **One parse, because the composition's tail is already paying for one.**
+// `dropUAIdentificationBytes` reads the document unconditionally and writes only when there was a
+// claim to drop; the form prune wants the same read and the same write. Giving it a pass of its own
+// would put a second full parse-and-write on every n-up — against `api.NUp`'s own measured 147 ms on
+// a 22-page document — to correct a catalog the first pass already has open. That is ADR-032's rule
+// applied one key over: the correction goes *inside the rewrite the change already performs*.
+//
+// **Only the composing doors call it.** A merge keeps the FIRST document's catalog and that
+// document's pages, so its widgets come through with them and its form is consistent; it is a
+// composition that destroys pages while keeping the catalog that produces the orphan.
+func withoutUAClaimOrOrphanedForm(pdf []byte) ([]byte, error) {
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	had, err := dropUAIdentification(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pruned, err := pruneOrphanedAcroForm(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !had && !pruned {
+		return pdf, nil // the common case: nothing to correct, and no write
+	}
+	var out bytes.Buffer
+	if err := api.WriteContext(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // rewriteOrDropClaim is the tail for a best-effort correction of bytes pdfcpu has just written — a stamp's
 // optional-content configuration, an embedded face's CIDSet (`/pending 503`).
 //

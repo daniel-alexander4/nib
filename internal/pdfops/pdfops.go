@@ -828,8 +828,11 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// 3800 elements that were previously dropped. Four of the six real-world PDFs to hand are tagged
 	// (3800, 2247, 1157 and 128 elements) and the carry preserves every element of all four.
 	// The composition keeps the source catalog, PDF/UA identification included, over sheets it never
-	// described — dropped first, so every return below is past it (`/pending 492`).
-	raw, err := withoutUAClaim(out.Bytes())
+	// described — dropped first, so every return below is past it (`/pending 492`). **And with it an
+	// `/AcroForm` whose widgets went with the page dictionaries the composition removed** — measured
+	// at 2 fields and 0 widgets through `NUp(2)`, a form a reader offers and nobody can fill
+	// (`/pending 573`). Both corrections share this one parse; see the door's own note.
+	raw, err := withoutUAClaimOrOrphanedForm(out.Bytes())
 	if err != nil {
 		return nil, err
 	}
