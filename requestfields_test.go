@@ -162,7 +162,16 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 				"case. **An in-package Go test is not a client for this guard's purposes** — every " +
 				"field has one by construction, and accepting them would have excused `invitation`, " +
 				"the defect this test was written after. session.go:2135 calls it `the manual tier " +
-				"for the arm`, and no control and no harness script offers one."},
+				"for the arm`, and no control and no harness script offers one.\n" +
+				"**/pending 551 read it out, and the row is narrower than it looks.** The field is " +
+				"honoured in exactly one branch — a QUIC arm carrying a ceremony — and the web " +
+				"client never selects a transport, by the deliberate decision the `arm transport` " +
+				"row above records. So wiring a control for this address alone would be inert: it " +
+				"needs a transport choice the table says the client should not have. What 551 DID " +
+				"fix is the half that needed nobody's decision — every arm that cannot honour the " +
+				"field now REFUSES it (TestAnArmRefusesAnAddressItCannotUse) instead of answering " +
+				"200 to a caller whose typed address was dropped on the floor. Whether the field is " +
+				"then wired or removed is parked for Dan."},
 	}
 
 	serverPairs, npairs := serverReads(t)
