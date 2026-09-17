@@ -196,6 +196,13 @@ func scanHexString(src []byte, i int) int {
 // So the rule is the one ISO 32000-1 gives: find `EI` **delimited by whitespace**, and treat that as
 // the end. It is a heuristic in the specification itself, not a shortcut taken here.
 //
+// # Two exact answers come first, and neither is believed until the bytes agree
+//
+// Where the payload states its own end — an ASCII filter's `>` or `~>` — and where the dictionary states
+// its length — PDF 2.0's `/L` — the scan need not guess at all. Both are tried before the rule below, and
+// both are CORROBORATED: each says where the image ends, and is taken only if a real `EI` stands there
+// (`imageEndsAt`). Anything else and the whitespace rule decides, exactly as it did before either existed.
+//
 // # Why the whitespace on BOTH sides matters
 //
 // Image bytes are arbitrary, so the two bytes `E` and `I` appear in them regularly — roughly once
@@ -235,6 +242,9 @@ func scanInlineImage(src []byte, i int) int {
 	if end, ok := asciiEncodedImageEnd(src, i+2, idAt, j); ok {
 		return end
 	}
+	if end, ok := declaredLengthImageEnd(src, i+2, idAt, j); ok {
+		return end
+	}
 	for j+1 < len(src) {
 		if src[j] == 'E' && src[j+1] == 'I' && j > 0 && isWhite(src[j-1]) &&
 			(j+2 >= len(src) || !isRegular(src[j+2])) {
@@ -261,30 +271,12 @@ func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
 		return 0, false
 	}
 	dict := src[dictFrom:idAt]
-	var first string
-	toks := Tokenize(dict)
-	for k := 0; k < len(toks) && first == ""; k++ {
-		key := string(toks[k].Bytes(dict))
-		if toks[k].Kind != Operand || (key != "/F" && key != "/Filter") {
-			continue
-		}
-		for m := k + 1; m < len(toks); m++ {
-			switch toks[m].Kind {
-			case Whitespace, ArrayOpen:
-				continue
-			case Operand:
-				if v := toks[m].Bytes(dict); len(v) > 0 && v[0] == '/' {
-					first = string(v)
-				}
-			}
-			break
-		}
-		if first == "" {
-			return 0, false // a filter key whose value is not a name: not a shape this can read
-		}
+	filter, ok := inlineDictValue(dict, "/F", "/Filter")
+	if !ok {
+		return 0, false // no filter key, or a value shape this cannot read
 	}
 	var eod []byte
-	switch first {
+	switch string(filter.Bytes(dict)) {
 	case "/AHx", "/ASCIIHexDecode":
 		eod = []byte(">")
 	case "/A85", "/ASCII85Decode":
@@ -296,7 +288,72 @@ func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
 	if at < 0 {
 		return 0, false
 	}
-	m := data + at + len(eod)
+	return imageEndsAt(src, data+at+len(eod))
+}
+
+// declaredLengthImageEnd ends an inline image where its own dictionary says the data stops: `/L`, or
+// `/Length` written out — the PDF 2.0 key that exists precisely so a reader need not guess. `/pending 516`.
+//
+// **The declared length is a CANDIDATE, and the bytes remain the authority.** It is taken only when a real
+// `EI` stands where it says the data ends, and otherwise this returns false and the caller's whitespace
+// rule decides exactly as it did before the key existed. The asymmetry is the whole design. A `/L` believed
+// on sight can end the token in the MIDDLE of the binary, and every byte after it would then be read as
+// operators — the precise corruption this scanner exists to prevent — while a `/L` that is merely
+// disbelieved costs nothing but the scan that was going to happen anyway. A new key may not introduce a
+// failure the old rule did not have; it may only remove one, which here is a payload containing
+// `\n EI ` and ending the image early.
+//
+// **What could NOT be established, declared rather than guessed.** ISO 32000-2 adds `/L` to the inline
+// image dictionary and nothing in this tree states which bytes it counts: pdfcpu v0.13.0 does not
+// implement the key at all — `model/parseContent.go`'s `lookupEI` scans for `EI` exactly as the rule below
+// does — and no copy of the specification is in the repo. The reading taken is the one that makes the key
+// useful: the length of the image DATA, counted from the first payload byte, which is the byte after the
+// single whitespace following `ID`. If that reading is wrong the corroboration simply fails and nothing
+// changes, and that is what made it safe to take a reading at all.
+//
+// dictFrom and idAt bound the image dictionary; data is the first payload byte.
+func declaredLengthImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
+	if idAt < dictFrom {
+		return 0, false
+	}
+	dict := src[dictFrom:idAt]
+	v, ok := inlineDictValue(dict, "/L", "/Length")
+	if !ok {
+		return 0, false
+	}
+	n, ok := declaredLength(v.Bytes(dict))
+	if !ok || n > len(src)-data {
+		return 0, false
+	}
+	return imageEndsAt(src, data+n)
+}
+
+// declaredLength reads a `/L` value: a plain non-negative integer and nothing else. `+8` and `8.0` are
+// legal PDF numbers and are not byte counts this acts on — declining costs only the fallback — and the
+// length bound keeps the accumulation inside an int on every platform.
+func declaredLength(b []byte) (int, bool) {
+	if len(b) == 0 || len(b) > 9 {
+		return 0, false
+	}
+	n := 0
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
+}
+
+// imageEndsAt reports the end of an inline image whose data is believed to stop at `after`: whitespace may
+// stand between the data and `EI`, and `EI` must be a keyword rather than the first two bytes of a longer
+// one.
+//
+// **This is the corroboration both exact rules rest on** (ADR-009: one door, called by each). Neither an
+// end-of-data marker nor a declared length is believed on its own — each proposes an end, and an end with
+// no `EI` at it is not an end.
+func imageEndsAt(src []byte, after int) (int, bool) {
+	m := after
 	for m < len(src) && isWhite(src[m]) {
 		m++
 	}
@@ -304,6 +361,78 @@ func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
 		return m + 2, true
 	}
 	return 0, false
+}
+
+// inlineDictValue returns the value token of an inline image dictionary's `abbrev` or `full` key — the one
+// door both exact end-of-image rules ask their question through (ADR-009), because two walks of the same
+// dictionary are two answers to "what does this dictionary say".
+//
+// It walks the dictionary as the key/value pairs it is rather than scanning for the name, so a value that
+// happens to SPELL the key is not mistaken for one: `/CS /L` names a colourspace resource, not a length.
+// An array value yields its first element, which is what the filter rule wants — the outermost filter of
+// `/Filter [/A85 /Fl]` — and a shape no length is written in.
+//
+// **A name is matched as it is SPELLED.** `#` escapes are legal in a name and are not decoded here, for the
+// reason the package gives everywhere else: a span is never decoded. `/#4C` is `/L` to a conforming reader
+// and is not one to this, which declines and falls back — the safe direction, and the residual is declared
+// rather than hidden.
+//
+// The dictionary is tokenized rather than scanned by hand because this package already knows the grammar
+// it is written in, and an image dictionary is a handful of tokens.
+func inlineDictValue(dict []byte, abbrev, full string) (Token, bool) {
+	toks := Tokenize(dict)
+	for k := nextMeaningful(toks, 0); k < len(toks); {
+		b := toks[k].Bytes(dict)
+		if toks[k].Kind != Operand || len(b) == 0 || b[0] != '/' {
+			return Token{}, false // not a key where a key must be: not a dictionary this can read
+		}
+		v := nextMeaningful(toks, k+1)
+		if v >= len(toks) {
+			return Token{}, false // a key with no value
+		}
+		if key := string(b); key == abbrev || key == full {
+			if toks[v].Kind == ArrayOpen {
+				if v = nextMeaningful(toks, v+1); v >= len(toks) {
+					return Token{}, false
+				}
+			}
+			return toks[v], true
+		}
+		// Step over the value so the next key is read as a key, brackets and all.
+		if toks[v].Kind == ArrayOpen || toks[v].Kind == DictOpen {
+			k = nextMeaningful(toks, closeOf(toks, v))
+			continue
+		}
+		k = nextMeaningful(toks, v+1)
+	}
+	return Token{}, false
+}
+
+// nextMeaningful is the index of the first token at or after i that is not whitespace.
+func nextMeaningful(toks []Token, i int) int {
+	for i < len(toks) && toks[i].Kind == Whitespace {
+		i++
+	}
+	return i
+}
+
+// closeOf is the index just past the bracketed value opening at i, or len(toks) if it never closes — an
+// unclosed array in an image dictionary is malformed input, and swallowing the rest of the dictionary is
+// the reading that cannot mistake its contents for keys.
+func closeOf(toks []Token, i int) int {
+	depth := 0
+	for ; i < len(toks); i++ {
+		switch toks[i].Kind {
+		case ArrayOpen, DictOpen:
+			depth++
+		case ArrayClose, DictClose:
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return i
 }
 
 // startsAKeyword reports whether position j begins a bare keyword rather than continuing something

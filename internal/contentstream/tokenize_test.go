@@ -232,6 +232,155 @@ func TestTextAfterAnASCIIEncodedInlineImageSurvives(t *testing.T) {
 	}
 }
 
+// onlyInlineImage returns the stream's single inline-image token, failing if there is not exactly one:
+// "the image ended in the wrong place" and "the image was never recognised" are different defects and a
+// test that cannot tell them apart reports the wrong one.
+func onlyInlineImage(t *testing.T, name string, src []byte) Token {
+	t.Helper()
+	var img *Token
+	toks := Tokenize(src)
+	for i := range toks {
+		if toks[i].Kind != InlineImage {
+			continue
+		}
+		if img != nil {
+			t.Fatalf("%s: two inline-image tokens for one image", name)
+		}
+		img = &toks[i]
+	}
+	if img == nil {
+		t.Fatalf("%s: no inline-image token at all — the payload was tokenized as operators", name)
+	}
+	return *img
+}
+
+// noOperatorInside asserts that nothing inside the image's bytes was read as an operator, which is the
+// damage an image that ended in the wrong place actually does: a splice can then land inside the binary.
+func noOperatorInside(t *testing.T, name string, src []byte, img Token) {
+	t.Helper()
+	for _, tk := range Tokenize(src) {
+		if tk.Kind == Operator && tk.Start > img.Start && tk.Start < img.End {
+			t.Errorf("%s: operator token %s lies INSIDE the inline image", name, tk.Describe(src))
+		}
+	}
+}
+
+// drawsTextAfter asserts the `Tj` following the image survived as an operator — the user-visible half of
+// an image token that ran too far.
+func drawsTextAfter(t *testing.T, name string, src []byte) {
+	t.Helper()
+	for _, tk := range Tokenize(src) {
+		if tk.Kind == Operator && string(tk.Bytes(src)) == "Tj" {
+			return
+		}
+	}
+	t.Errorf("%s: no Tj operator after the image — the text drawn after it vanished into the image token", name)
+}
+
+// TestADeclaredLengthCarriesAnInlineImagePastAFalseEI — `/pending 516`.
+//
+// `scanInlineImage` declares its own residual: a binary payload containing `\n EI ` ends the image early
+// and no rule over the bytes alone can prevent it. PDF 2.0 gives the image a way to say how long it is —
+// `/L`, or `/Length` written out — so for an image carrying one there IS a rule, and this drives it on the
+// shape the entry names: a BINARY filter, so the ASCII end-of-data rule declines; a false `EI` inside the
+// samples; and the real `EI` with NO whitespace before it, which is legal and which the whitespace rule
+// cannot even find.
+//
+// The control at the end asserts the heuristic gets this stream wrong WITHOUT the key, so the fixture
+// cannot quietly stop exercising the defect it was built for.
+func TestADeclaredLengthCarriesAnInlineImagePastAFalseEI(t *testing.T) {
+	// 11 bytes: a false whitespace-delimited `EI` at index 4, a NUL (which is PDF whitespace), and a
+	// last byte that is NOT whitespace so the real `EI` has none in front of it.
+	payload := []byte("\x78\x9c\x01 EI \xff\x00\xfe\x04")
+
+	for _, c := range []struct{ name, key string }{
+		{"abbreviated", "/L"},
+		{"written out", "/Length"},
+	} {
+		image := []byte(fmt.Sprintf("BI /W 2 /H 2 /BPC 8 /CS /G /F /Fl %s %d ID ", c.key, len(payload)))
+		image = append(image, payload...)
+		image = append(image, "EI"...)
+		src := append([]byte("q "), image...)
+		src = append(src, " Q BT /F1 12 Tf (after) Tj ET"...)
+
+		roundTrips(t, c.name, src)
+		img := onlyInlineImage(t, c.name, src)
+		if got := img.Bytes(src); !bytes.Equal(got, image) {
+			t.Errorf("%s: the image token is %q, want exactly %q — the declared length was not honoured",
+				c.name, got, image)
+		}
+		noOperatorInside(t, c.name, src, img)
+		drawsTextAfter(t, c.name, src)
+	}
+
+	bare := append([]byte("q BI /W 2 /H 2 /BPC 8 /CS /G /F /Fl ID "), payload...)
+	bare = append(bare, "EI Q BT /F1 12 Tf (after) Tj ET"...)
+	if img := onlyInlineImage(t, "control", bare); bytes.Contains(img.Bytes(bare), payload) {
+		t.Error("control: the whitespace rule read this payload correctly WITHOUT a declared length, so " +
+			"the fixture above no longer tests one — give the payload a false `EI` the rule stops at")
+	}
+}
+
+// TestAWrongDeclaredLengthIsNotBelieved — the other half of `/L`, and the reason it is safe to honour at
+// all: the declared length is a candidate, and the BYTES decide.
+//
+// A length believed on sight can end the token in the middle of the binary, and everything after it is
+// then read as operators — the corruption the scanner exists to prevent. So a length is taken only when a
+// real `EI` stands where it says the data ends; every row here says something different and wrong, and
+// every one of them must come out exactly as the whitespace rule had it.
+func TestAWrongDeclaredLengthIsNotBelieved(t *testing.T) {
+	payload := []byte("\x78\x9c\xff\xfe\x04\x11\x22\x33") // 8 bytes, no `EI` anywhere inside
+
+	for _, c := range []struct{ name, value string }{
+		{"short of the data", "3"},
+		{"past the real end", "20"},
+		{"past the end of the stream", "999999"},
+		{"written as a real number", "8.0"},
+		{"signed", "+8"},
+		{"negative", "-8"},
+		{"empty", ""},
+	} {
+		image := []byte(fmt.Sprintf("BI /W 2 /H 2 /BPC 8 /CS /G /F /Fl /L %s ID ", c.value))
+		image = append(image, payload...)
+		image = append(image, "\nEI"...)
+		src := append([]byte("q "), image...)
+		src = append(src, " Q BT /F1 12 Tf (after) Tj ET"...)
+
+		roundTrips(t, c.name, src)
+		img := onlyInlineImage(t, c.name, src)
+		if got := img.Bytes(src); !bytes.Equal(got, image) {
+			t.Errorf("%s: a /L of %q moved the image's end — the token is %q, want exactly %q",
+				c.name, c.value, got, image)
+		}
+		noOperatorInside(t, c.name, src, img)
+		drawsTextAfter(t, c.name, src)
+	}
+}
+
+// TestADeclaredLengthIsReadFromAKeyAndNotFromAValueSpellingOne — the dictionary is walked as the key/value
+// pairs it is, so a `/L` that is somebody else's VALUE is not read as a length.
+//
+// The input is not legal PDF — `/Decode` holds numbers, not names — and that is where the rule earns its
+// place, the same way `TestAKeywordIsNotAName` does: a tokenizer's job includes not making malformed input
+// worse. Scanning for the name instead of walking pairs finds the `/L` inside the array, believes the `8`
+// after it, and ends the image at a false `EI` eight bytes in.
+func TestADeclaredLengthIsReadFromAKeyAndNotFromAValueSpellingOne(t *testing.T) {
+	payload := []byte("\x01\x02\x03\x04\x05\x06\x07\x08EI \xfe\xff\x01")
+	image := append([]byte("BI /W 2 /D [0 1 /L 8] /F /Fl ID "), payload...)
+	image = append(image, "\nEI"...)
+	src := append([]byte("q "), image...)
+	src = append(src, " Q BT /F1 12 Tf (after) Tj ET"...)
+
+	roundTrips(t, "a value spelling the key", src)
+	img := onlyInlineImage(t, "a value spelling the key", src)
+	if got := img.Bytes(src); !bytes.Equal(got, image) {
+		t.Errorf("the image token is %q, want exactly %q — a `/L` inside another key's array value was "+
+			"read as the image's length", got, image)
+	}
+	noOperatorInside(t, "a value spelling the key", src, img)
+	drawsTextAfter(t, "a value spelling the key", src)
+}
+
 // TestApplyWithNoEditsReturnsTheOriginalBytes.
 //
 // An operation that decides it has nothing to change must cost the document nothing — not a
