@@ -33,6 +33,12 @@ let nextOpen = {
 // Set to a pending promise to hold `/api/peers` open; null for every test that does not care.
 let peersGate = null;
 
+// The same for `/api/ceremony/draft`, and it holds the OTHER window. `peersGate` opens the gap
+// before the picker is built; this one opens the gap AFTER it — picker rebuilt and empty, draft
+// still in flight — which is the only window in which a checkbox can be live input at all, and so
+// the only one in which /pending 552's per-row rule is about anything.
+let draftGate = null;
+
 const { document: doc, settle, calls } = await boot({
   routes: {
     // **`peersGate` holds the request open**, which is the only way this tier can reach /pending
@@ -49,7 +55,13 @@ const { document: doc, settle, calls } = await boot({
       ],
       };
     },
-    '/api/ceremony/draft': (opts) => (opts.method === 'POST' ? { draft: '' } : { draft: storedDraft }),
+    // Only the GET is gated: a POST is the draft SAVING, and holding that open would stall the
+    // change listener rather than the restore this gate exists to hold.
+    '/api/ceremony/draft': async (opts) => {
+      if (opts.method === 'POST') return { draft: '' };
+      if (draftGate) await draftGate;
+      return { draft: storedDraft };
+    },
     // A convene that succeeds, so the CONSUME path can be driven end to end rather than read.
     '/api/ceremony/convene': () => ({ ceremony: 'c'.repeat(64), invitations: [] }),
     '/api/ceremonies': () => ({ ceremonies: [] }),
@@ -424,7 +436,171 @@ test("a stored draft is put back into the form — P03's first exit criterion, c
     + 'so a roster restored without it has lost what each party is signing AS');
 });
 
-// ── Two defects the phase-close review found in code four slices had already reviewed ─────────
+// ── /pending 552 — the roster is not behind the text fields' pristine test ────────────────────
+//
+// **The defect, in one sentence:** pressing "Convene a ceremony…" rebuilds the picker with every
+// box unchecked, and the restore that would put the roster back returned early because the recital
+// and the deadline — which no rebuild touches — were still in their fields. So the two text fields
+// survived, the roster was dropped, and nothing said so. /pending 513 found it while wording the
+// sheet and wrote the sentence around it rather than fixing it.
+//
+// The recital in the DRAFT is deliberately different from the one in the field, which is what makes
+// the first assertion an assertion: it can only pass if the text guard actually fired.
+test('a fresh open with the recital still in its field brings the roster back too', async () => {
+  storedDraft = '';
+  peersGate = null;
+  draftGate = null;
+  // Close, which is the dismissal that keeps what was typed — `clearCeremonyForm` runs on a
+  // successful convene and nowhere else, so this is the state a real convener comes back to.
+  doc.getElementById('cerSheetClose').click();
+  await settle();
+  doc.getElementById('cerIntent').value = 'the recital the convener is looking at';
+  doc.getElementById('cerExpires').value = '2026-10-01T12:00';
+  doc.getElementById('cerISign').checked = true;
+  for (const r of doc.querySelectorAll('#cerPeerPick .cerpeerrow')) {
+    r.querySelector('.cerpeerbox').checked = false;
+    r.querySelector('.cerpeercap').value = '';
+  }
+  assert.equal(doc.querySelectorAll('#cerPeerPick .cerpeerrow').length, 2,
+    'the picker is empty going in, so "the roster came back" would be true of a build that drops '
+    + 'it — the stimulus floor');
+
+  storedDraft = JSON.stringify({
+    intent: 'a STALER recital, which must not land',
+    expires: '2027-01-01T09:00',
+    iSign: false,
+    roster: [{ fingerprint: 'b'.repeat(64), capacity: 'as landlord', picked: true }],
+  });
+  const peersBefore = countCalls('/api/peers');
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  storedDraft = '';
+
+  assert.ok(countCalls('/api/peers') > peersBefore,
+    'the open did not rebuild the picker, so this is a resume and not the fresh entry the defect '
+    + 'lives in — the stimulus floor for everything below');
+  assert.equal(doc.getElementById('cerIntent').value, 'the recital the convener is looking at',
+    'the saved draft was written over the recital on screen. The text fields keep their own '
+    + 'pristine test and /pending 552 does not touch it — a recital put back over a live one '
+    + 'destroys prose that cannot be reconstructed from the form');
+  assert.equal(doc.getElementById('cerExpires').value, '2026-10-01T12:00',
+    'the deadline was overwritten from the draft. It is all-or-nothing WITH the recital, so a '
+    + 'guard that fired for one and not the other has split a pair that is only correct together');
+  assert.equal(doc.getElementById('cerISign').checked, true,
+    '"I sign this too" was taken from the draft. It ships CHECKED, so it cannot have a pristine '
+    + 'test of its own and rides with the text — moving it in with the roster would silently drop '
+    + 'the convener from a ceremony they had decided to sign');
+
+  const picked = [...doc.querySelectorAll('#cerPeerPick .cerpeerrow')]
+    .filter((r) => r.querySelector('.cerpeerbox').checked);
+  assert.equal(picked.length, 1,
+    `${picked.length} parties came back picked, not 1. The picker was rebuilt empty a tick before `
+    + 'the restore ran, so there was nothing in it to protect — and refusing the roster because '
+    + 'the recital was non-empty drops it silently, which is the one outcome the convener cannot '
+    + 'see. They watch the recital and the deadline survive and reasonably assume the rest did');
+  assert.equal(picked[0].querySelector('.cerpeerbox').dataset.fingerprint, 'b'.repeat(64),
+    'the wrong party came back picked');
+  assert.equal(picked[0].querySelector('.cerpeercap').value, 'as landlord',
+    'the roster came back without its capacities, which is what each party is signing AS (D20)');
+});
+
+// The window the generation cannot cover and the text fields never could: the picker is rebuilt and
+// empty, the draft is still in flight, and the user reaches into it. THAT is live input in this
+// picker — the only kind there is, because a rebuild leaves every box unticked and every capacity
+// blank — and the per-row test is what keeps it. Everything else still restores, so the rule
+// degrades to "the row you touched is yours" rather than to "the roster goes".
+//
+// **Two openings, because "untouched" is a conjunction and a probe of the whole thing cannot tell
+// which half is carrying it.** A row is touched by a TICK or by a CAPACITY, and each opening below
+// supplies exactly one of them: drop either conjunct and exactly one of these goes red.
+test('a row touched while the draft is still in flight is kept, and the rest still restores', async () => {
+  peersGate = null;
+  const rowsNow = () => [...doc.querySelectorAll('#cerPeerPick .cerpeerrow')];
+  const byFp = (fp) => rowsNow().find((r) => r.querySelector('.cerpeerbox').dataset.fingerprint === fp);
+  const A = 'a'.repeat(64);
+  const B = 'b'.repeat(64);
+
+  // ── Opening one: the user TICKS a box the draft says is not picked ──────────────────────────
+  // `picked: false` on purpose: if this row were restored, its box would be turned back OFF, which
+  // is the assertion — a restore that agreed with the user could not be told from one that skipped.
+  storedDraft = JSON.stringify({
+    intent: '', expires: '', iSign: false,
+    roster: [
+      { fingerprint: A, capacity: 'from the draft', picked: false },
+      { fingerprint: B, capacity: 'as landlord', picked: true },
+    ],
+  });
+  doc.getElementById('cerConveneCancel').click();
+  await settle();
+  doc.getElementById('cerIntent').value = '';
+  doc.getElementById('cerExpires').value = '';
+
+  let release;
+  draftGate = new Promise((r) => { release = r; });
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  assert.equal(rowsNow().length, 2,
+    'the picker never rebuilt, so there is no window here and this test is about nothing');
+  assert.equal(byFp(B).querySelector('.cerpeercap').value, '',
+    'the draft was already restored while /api/ceremony/draft was still held open, so this is not '
+    + 'the window it claims to be — the stimulus floor');
+
+  byFp(A).querySelector('.cerpeerbox').checked = true;   // the user, in the window
+  release();
+  await settle();
+
+  assert.equal(byFp(A).querySelector('.cerpeerbox').checked, true,
+    'the draft unticked a box the user had just ticked. A rule about never overwriting live input '
+    + 'has to be tested against the control it protects, and in this picker a tick since the '
+    + 'rebuild is exactly that');
+  assert.equal(byFp(A).querySelector('.cerpeercap').value, '',
+    'the draft wrote its capacity into a row the user had touched, so half the row is theirs and '
+    + 'half is the draft\'s — a row restored in pieces is the partial restore this file refuses');
+  assert.equal(byFp(B).querySelector('.cerpeerbox').checked, true,
+    'the untouched row was not restored. One touched row must not cost the convener the rest of '
+    + 'the roster — that is the all-or-nothing the text fields have, and it is wrong here because '
+    + 'the rows are separate controls with separately visible state');
+  assert.equal(byFp(B).querySelector('.cerpeercap').value, 'as landlord',
+    'the untouched row came back without its capacity');
+
+  // ── Opening two: the user TYPES A CAPACITY and ticks nothing ────────────────────────────────
+  // `picked: true` this time, so a row that was restored would come back TICKED — which is what
+  // separates this from the opening above.
+  storedDraft = JSON.stringify({
+    intent: '', expires: '', iSign: false,
+    roster: [
+      { fingerprint: A, capacity: 'from the draft', picked: true },
+      { fingerprint: B, capacity: 'as landlord', picked: true },
+    ],
+  });
+  doc.getElementById('cerConveneCancel').click();
+  await settle();
+  doc.getElementById('cerIntent').value = '';
+  doc.getElementById('cerExpires').value = '';
+  draftGate = new Promise((r) => { release = r; });
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  assert.equal(byFp(A).querySelector('.cerpeerbox').checked, false,
+    'the second opening did not rebuild the picker, so the row below is not the fresh one this '
+    + 'window is about — the stimulus floor');
+
+  byFp(A).querySelector('.cerpeercap').value = 'as attorney-in-fact';   // the user, in the window
+  release();
+  await settle();
+  draftGate = null;
+  storedDraft = '';
+
+  assert.equal(byFp(A).querySelector('.cerpeercap').value, 'as attorney-in-fact',
+    'the draft overwrote a capacity typed into the live picker. It is typed text on its way to '
+    + 'being part of the agreement (D20), and nothing had blurred it, so no draft holds it — the '
+    + 'DOM is the only copy');
+  assert.equal(byFp(A).querySelector('.cerpeerbox').checked, false,
+    'a capacity typed into a row did not make the row the user\'s: the draft ticked it anyway, so '
+    + '"touched" reads the checkbox alone and a convener who was typing a capacity when the draft '
+    + 'landed has been put into a roster they had not yet chosen');
+  assert.equal(byFp(B).querySelector('.cerpeerbox').checked, true,
+    'the untouched row was not restored in the second opening either');
+});
 
 test('emptying the form returns it to how it OPENS, not to all-false', async () => {
   await openSheet();
@@ -812,6 +988,19 @@ test('a setup whose document has closed says so, and names the file', async () =
     + 'fresh setup');
   assert.equal(line().classList.contains('cerdocnone'), true,
     'a setup pointing at a closed document is wearing the ordinary bound styling');
+  // **The sentence is a claim about `restoreCeremonyDraft`, so it is asserted where the claim
+  // lives.** /pending 513 wrote "choose who is signing again" because the roster really was
+  // dropped by the fresh open it sends the user towards; /pending 552 ended that, and a sentence
+  // still saying it would send a convener off to re-pick a roster that is already back. It is the
+  // only place this behaviour is described to the user, and prose that describes behaviour goes
+  // stale silently.
+  assert.doesNotMatch(line().textContent, /choose who is signing again/i,
+    'the sheet still tells the convener to choose the roster again on the far side of the fresh '
+    + 'open. Since /pending 552 the roster is restored with the recital and the deadline — the '
+    + 'sentence is describing a defect that has been fixed');
+  assert.match(line().textContent, /the recital, the deadline and who is signing/,
+    'the sentence no longer says what survives the fresh open it sends the user towards. That is '
+    + 'the question a convener looking at a dead-ended setup is actually asking');
 
   // And the pin itself is untouched, which is the half /pending 506 got wrong. Read through the
   // only surface that exposes it: the convene POST, whose X-Nib-Doc must still be lease.pdf's id.

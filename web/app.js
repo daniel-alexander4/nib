@@ -9351,13 +9351,18 @@ function setSignLocked(locked) {
 // each of those is a tool that looks armed and does nothing.
 //
 // **An arm may call it unconditionally because its own exit is already a no-op at that point**:
-// every handler takes its own `if (already armed) { exitX(); return; }` toggle first, so by the
-// time the door runs the tool being armed is off and `exitX` returns at its own guard. (Spelled
-// without a `view.…Mode` in the prose on purpose — `keyboardplacement.test.mjs` enumerates that
-// pattern out of the source WITHOUT stripping comments, so a mode named in a comment reads to it
-// as a twelfth tool with no keyboard path.) The mode is then
-// written AFTER the door, never before — that ordering is the whole correctness argument, and it
-// is restated at `setTool` and `setMarkerMode`, the two that re-enter.
+// every handler takes its own `if (view.xMode) { view.xMode = false; reflectX(); }` toggle first,
+// so by the time the door runs the tool being armed is off and `exitX` returns at its own guard.
+// The mode is then written AFTER the door, never before — that ordering is the whole correctness
+// argument, and it is restated at `setTool` and `setMarkerMode`, the two that re-enter.
+//
+// **`view.xMode` above is spelled out on purpose, and it is a test fixture as well as prose**
+// (/pending 553). `keyboardplacement.test.mjs` enumerates `view.<tool>Mode` out of this file to
+// build the population it checks, and it strips comments FIRST — this line is the negative
+// fixture that proves it does. `xMode` is not a tool and is in no exemption list, so a strip that
+// stopped working turns that guard red here, naming this placeholder as a twelfth pointer-only
+// tool. It cost /pending 513 one false red before the strip existed; do not remove it without
+// reading that test's own note.
 //
 // **The lock used to call `setMarkerMode(null)` and trust it to do this, and it does nothing of the
 // kind.** Every `exit*()` in setMarkerMode sits inside `if (m)`: it steps OUT of the other tools
@@ -15368,8 +15373,8 @@ function renderCeremonySetupDoc() {
         ' — has been closed, and this setup stays fixed to it: convening now is refused. Open that'
         + ' file again with "See the document", then press "Convene a ceremony…" to start a fresh'
         + ' setup on it. Reopening alone is not enough — a reopened file is a NEW document to Nib,'
-        + ' and this setup is still pointing at the old one. The recital and the deadline stay as'
-        + ' you typed them; choose who is signing again.'));
+        + ' and this setup is still pointing at the old one. Nothing you have filled in is lost:'
+        + ' the recital, the deadline and who is signing all come back.'));
       return;
     }
     el.textContent = 'No document is open yet. Choose "See the document" and open the one this '
@@ -15542,14 +15547,43 @@ async function restoreCeremonyDraft(gen) {
   // filling in right now, the saved copy is the stale one, and putting it back reads as the form
   // spontaneously reverting.
   //
-  // **All or nothing, on the two text fields.** Restoring the roster while leaving the recital
+  // **All or nothing, on the two text fields.** Restoring the deadline while leaving the recital
   // alone is the partial restore this file keeps refusing: it comes back looking complete and is
   // not. `#cerISign` is not part of the test because it ships CHECKED, so a checkbox cannot
-  // distinguish "the user cleared it" from its own default.
-  if ((intent && intent.value !== '') || (expires && expires.value !== '')) return;
-  if (intent && typeof d.intent === 'string') intent.value = d.intent;
-  if (expires && typeof d.expires === 'string') expires.value = d.expires;
-  if (iSign && typeof d.iSign === 'boolean') iSign.checked = d.iSign;
+  // distinguish "the user cleared it" from its own default — it rides with the text.
+  //
+  // **The ROSTER is not behind this test, and that is /pending 552.** It used to be, and the
+  // effect was the defect this whole file is written against. `openCeremonySetup` is the only
+  // caller of this function and of `loadPeerPicker`, in that order, with one generation — so by
+  // the time the writes below run, the picker has just been REBUILT with every box unchecked and
+  // every capacity blank. A user who dismissed the sheet and pressed "Convene a ceremony…" again
+  // still has their recital in `#cerIntent`, which is enough to trip a test of the text fields;
+  // the roster it also refused was not live input at all, it was the emptiness this open had
+  // created a tick earlier. So the recital and the deadline came back, the roster did not, and
+  // NOTHING said so — the worst of the three outcomes, because it looks like it worked.
+  //
+  // **A rule about overwriting is not engaged where there is nothing to overwrite**, and the test
+  // that says so has to be of the control it protects rather than of two unrelated ones. Each row
+  // gets its own, below: untouched since the rebuild, and the draft fills it. The one input a user
+  // can actually have in this picker — a box ticked, or a capacity typed, in the window between
+  // the two fetches — is kept, which is the same rule the text fields get, applied at the
+  // granularity the roster's input has.
+  //
+  // **Why restoring is right and a sentence saying "choose who is signing again" is not:** a
+  // roster put back is fully legible on screen and one click from correct, while a recital put
+  // back over a live one destroys prose that cannot be reconstructed from the form. That
+  // asymmetry is the reason the two are keyed differently, and it is the reason this direction is
+  // safe in the window the generation cannot cover.
+  const textPristine = !((intent && intent.value !== '') || (expires && expires.value !== ''));
+  if (textPristine) {
+    if (intent && typeof d.intent === 'string') intent.value = d.intent;
+    if (expires && typeof d.expires === 'string') expires.value = d.expires;
+    if (iSign && typeof d.iSign === 'boolean') iSign.checked = d.iSign;
+  }
+  // Untouched means what the rebuild leaves behind: unticked, and no capacity. Everything else in
+  // this row is the user, so the draft stands off it.
+  const untouched = (row) => !row.querySelector('.cerpeerbox')?.checked
+    && (row.querySelector('.cerpeercap')?.value || '') === '';
   for (const entry of (Array.isArray(d.roster) ? d.roster : [])) {
     if (!entry || !entry.fingerprint) continue;
     // Matched on the dataset, which is where the picker puts it. A party who has since been
@@ -15557,7 +15591,7 @@ async function restoreCeremonyDraft(gen) {
     // peer this machine no longer trusts.
     const row = Array.from(document.querySelectorAll('#cerPeerPick .cerpeerrow'))
       .find((r) => r.querySelector('.cerpeerbox')?.dataset.fingerprint === entry.fingerprint);
-    if (!row) continue;
+    if (!row || !untouched(row)) continue;
     const box = row.querySelector('.cerpeerbox');
     const cap = row.querySelector('.cerpeercap');
     if (box) box.checked = !!entry.picked;
