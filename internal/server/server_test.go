@@ -307,6 +307,11 @@ func TestSecurityHeaders(t *testing.T) {
 	for _, want := range []string{
 		"default-src 'self'", "object-src 'none'", "frame-ancestors 'none'",
 		"base-uri 'none'", "style-src 'self'",
+		// Print's hidden iframe is a blob: URL. Without this directive `frame-src` falls back to
+		// `default-src 'self'`, the frame is blocked, and — because Chrome still fires `onload` on
+		// the blocked replacement — printing fails with no error at all. That is how it went
+		// unnoticed from v1.108.11 to v1.132.8.
+		"frame-src 'self' blob:",
 	} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("the CSP is missing %q; got %q", want, csp)

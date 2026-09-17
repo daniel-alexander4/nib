@@ -539,6 +539,24 @@ func securityHeaders(next http.Handler) http.Handler {
 		"font-src 'self'; " +
 		"connect-src 'self' blob:; " +
 		"worker-src 'self' blob:; " +
+		// **Print feeds a hidden iframe a blob: URL, and without this it is blocked.**
+		//
+		// `frame-src` falls back to `child-src` and then to `default-src`, which is `'self'` and does
+		// not admit `blob:` — so every other blob consumer here was allowed explicitly and frames
+		// were not. Print landed 2026-06-19 (v1.19.0) and this policy 2026-08-17 (v1.108.11), so it
+		// worked for two months and then stopped.
+		//
+		// **It failed SILENTLY, which is why it took a month to be reported.** Chrome fires `onload`
+		// on the blocked replacement frame, so `els.printBtn.onclick` went on to call `print()` on an
+		// empty frame and surfaced nothing; the handler's only failure path is the bake, which
+		// succeeds. Measured in Chromium against the real binary: *"Framing 'blob:…' violates the
+		// following Content Security Policy directive: \"default-src 'self'\". The request has been
+		// blocked. Note that 'frame-src' was not explicitly set, so 'default-src' is used as a
+		// fallback."*
+		//
+		// `'self' blob:` and nothing wider: the frame is one this app just created from its own
+		// bytes, and `frame-ancestors 'none'` still forbids anyone framing nib.
+		"frame-src 'self' blob:; " +
 		"object-src 'none'; " +
 		"base-uri 'none'; " +
 		"form-action 'self'; " +

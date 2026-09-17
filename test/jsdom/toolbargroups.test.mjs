@@ -95,7 +95,12 @@ test('a foldable group is never left empty, and never holds a dropdown', () => {
   // like a clean run — the lesson `docattach_test.go` states for its own exempt map. Measured
   // 2026-09-08: Reload and Save. The guard's own prose used to cite "Recent / Save as / Export",
   // which have not been the bar's rank-0 groups for some time.
-  assert.deepEqual(exemptCount.sort(), ['Reload', 'Save'],
+  //
+  // **Print joined the set on 2026-09-16**, when a print icon was placed beside Reload (Dan's
+  // request). It is a legitimate member: the group holds one `data-forward` twin and no `.menu`,
+  // so the dropdown check this exemption skips has nothing to skip. Recorded here because the
+  // assertion below is what makes such an addition deliberate rather than silent.
+  assert.deepEqual(exemptCount.sort(), ['Print', 'Reload', 'Save'],
     `the fixed bar's rank-0 groups are now ${JSON.stringify(exemptCount)} — the exemption skips the dropdown check for these, so a change to the set is a change to what this guard does not look at`);
 });
 
@@ -270,4 +275,26 @@ test('a step is ticked only where something can observe it', () => {
     'a step declares `done: () => true`, which is a tick that nothing observes. Use null — the list says "Nib cannot tell" and means it');
   assert.ok(dones.includes('null'),
     'no step is declared untracked. Some of these Nib genuinely cannot see, and claiming otherwise is what this guard exists to stop');
+});
+
+// The print icon beside Reload — /pending: Dan, 2026-09-16.
+//
+// It is a `data-forward` twin rather than a second handler, so there is one id and one
+// implementation. `setDocControls` disables `[data-forward="printBtn"]` alongside `printBtn`
+// itself, which is why it needs no entry in DOC_REQUIRED.
+test('the toolbar carries a print icon next to reload, forwarding to the File pane\'s Print', () => {
+  const icon = doc.querySelector('[data-forward="printBtn"]');
+  assert.ok(icon, 'no toolbar control forwards to printBtn — the print icon is gone');
+  assert.ok(icon.classList.contains('tbicon'), 'the print control is not an icon button');
+  assert.ok(icon.getAttribute('aria-label'), 'an icon-only button with no aria-label is unreadable to a screen reader');
+
+  const labels = [...doc.querySelectorAll('#toolbar .tbgroup')].map((g) => g.dataset.label);
+  const r = labels.indexOf('Reload');
+  const p = labels.indexOf('Print');
+  assert.ok(r >= 0, 'the Reload group is gone');
+  assert.equal(p, r + 1, `the Print group is at ${p} and Reload at ${r}; it was asked to sit next to reload (groups: ${labels.join(', ')})`);
+
+  // The twin must resolve: a data-forward naming an id that does not exist is a button that
+  // throws on click, which is worse than one that is missing.
+  assert.ok(doc.getElementById(icon.dataset.forward), `data-forward="${icon.dataset.forward}" names no element`);
 });
