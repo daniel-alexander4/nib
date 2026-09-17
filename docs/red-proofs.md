@@ -4129,7 +4129,7 @@ viewport — and `responsive.test.mjs` owns the standing 33% ceiling.
 | Defect reintroduced | Check that fired | What it said |
 | --- | --- | --- |
 | `undo-drains-one-stack-then-the-server` — `undoAny` back to overlay-then-server | `lifecycle.test.mjs`, tier 3 | "the second Ctrl+Z did not reach the DRAWING" |
-| `the-undo-button-cannot-see-drawings` — the button counts only nib's stack | `lifecycle.test.mjs`, tier 3 | "the Undo button is disabled with a drawing on screen" |
+| `the-undo-button-cannot-see-drawings` — the button counts only nib's stack | **RETIRED** — the control left the toolbar; see the note below | (no replayable proof, and none is possible) |
 
 **Two rows because there were two failures, and the second is why the first looked like something
 else.** The routing decided whether the keystroke reached the change; the button decided whether
@@ -4159,13 +4159,24 @@ the universal document sink marks every arrival dirty and `installOpened` correc
 That is what the one-door `setDirty` exists for, and it is why the row's EXPECT token is about the
 open rather than about the edit.
 
-**One row was RETIRED in this change**, and it is recorded here rather than quietly dropped:
+**One row was RETIRED in this change**, and the row itself now says so — it said it only here until
+2026-09-16, which was enough for a reader of this paragraph and not for a reader of the table, and
+`/pending 538` was filed against the table (see the note at the end of this section). It is recorded
+rather than quietly dropped:
 `the-undo-button-cannot-see-drawings` asserted that the Undo button reflected pdf.js's editor
 stack. The button left the toolbar, so the row asserted a control the product no longer has — a row
 that cannot fail is worse than no row. What it protected is now unprotected by anything, because
 there is no surface reporting undoability at all; that cost is named in ADR-024.
 
 `recorded` 322 → 321 (retirement) → 323.
+
+**A postscript, because this row cost a second item.** `/pending 538` was filed in 2026-09-16's
+red-proof work as *"one ledger row records a defect no patch was ever captured for"*, proposing a
+tier-3 patch that disables the Undo button's awareness of drawings. **There is no such patch to
+write**: the button does not exist — a named search for `undoBtn` finds nothing in `web/index.html`
+and only a comment in `web/app.js` recording that `if (els.undoBtn)` was "permanently false". The
+answer was three lines below the row, in the paragraph above. The row is now marked RETIRED in its
+own cell so the table carries what the prose did, and the guard needs no exemption for it.
 
 
 ## The version pill keeps naming the version you are running (v1.125.1)
