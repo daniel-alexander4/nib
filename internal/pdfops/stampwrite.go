@@ -42,6 +42,19 @@ import (
 // wrote, so a second bake keeps embedding — and in Base-14 faces otherwise, said in the log. A
 // failure on the embedded path that the check did not foresee is retried in Base-14 faces, because a
 // stamp that costs the user the save is the trade P01 refused.
+//
+// # …and the name is why, so the stamp faces no longer share one — `/pending 494`
+//
+// That refusal is correct and it left PDF/UA 7.21.4.1 failing on every edit to an office-suite
+// document, which is most documents and nib's own Markdown conversion included: measured on veraPDF,
+// a LibreOffice page fails `5 t1 / 7.1 t9 / 7.1 t10` and a stamp over it added `7.21.4.1 t1`.
+//
+// The name is the WHOLE of pdfcpu's match, so the collision is removed rather than handled: the
+// stamp faces install under names no other producer writes (`renamedFace`, `stampFaceBytes` — the
+// same glyphs, widths and character map, different name records). The document below is what that
+// buys — `unreusableFace` keeps its job as the backstop for a document that carries a font named
+// like nib's and is not one, and `dropCIDSetsOf` and `repairToUnicodeOf`, which walk the xref BY
+// NAME, can now only reach a font nib itself wrote.
 func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx *model.Context, embedded bool) error) ([]byte, error) {
 	run := func(emb bool) ([]byte, error) {
 		conf := model.NewDefaultConfiguration()

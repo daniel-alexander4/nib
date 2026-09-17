@@ -413,3 +413,20 @@ home today.
   `/S /GTS_PDFA1`**, so carrying it is ADR-032's rule one key over; `/PageMode` gains `/UseOC` and
   nothing else, its corpus being 25 `/UseOutlines` + 8 `/UseAttachments`. Caveat carried forward:
   283 of the 295 scanned files are `veraPDF Test Builder 1.0`.
+
+- **[ADR-044 — a face nib draws with is named nib's own](044-a-face-nib-draws-with-is-named-nibs.md)**
+  — /pending 494. pdfcpu matches a watermark's font to one already in the document **by name and
+  nothing else** (`fo.FontName == wm.FontName && fo.Prefix != ""`) and then rebuilds it from nib's
+  TTF with the DOCUMENT's glyph ids. Nib stamps with Liberation; LibreOffice writes Liberation. So
+  the name is the whole of the match, and the whole of the fix: nib installs its faces as `Nib…`
+  rather than `Liberation…`. Measured through nib's own office door — before, `StampFields` added
+  **7.21.4.1 t1**; after, it adds nothing, and the document's own font program is byte-identical
+  across the stamp (13,468 → 13,468). The rename is confined to the `name` table and to IDs 1/3/4/6
+  and 16–25: every other table byte-identical across all twelve faces, `head` differing only in
+  `checkSumAdjustment`. **The vendored bytes are not modified** — the rename is applied to a runtime
+  copy. **And the licence points this way, not against it**: pdfcpu already embeds a MODIFIED
+  Liberation (`font.Subset` prunes `glyf`/`loca`), so nib was shipping a modified Liberation still
+  called `LiberationSans`, which is what OFL §3's Reserved Font Name asks you not to do. IDs 0, 7
+  and 13/14 carry through unchanged, held by a red proof. Declared gap: `AuthoredTextFaces` (Roboto
+  ×4 + LiberationMono) is not renamed, because it would move every Markdown conversion's `/BaseFont`
+  and touch ADR-033's label claim.

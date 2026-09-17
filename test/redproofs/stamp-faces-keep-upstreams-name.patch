@@ -1,0 +1,11 @@
+--- a/internal/pdfops/fontrename.go
++++ b/internal/pdfops/fontrename.go
+@@ -50,7 +50,7 @@
+ // the typographic/WWS/variations names (16, 17, 18, 20, 21, 22, 25). Record 0 is the copyright
+ // notice, 7 the trademark line — *"Liberation is a trademark of Red Hat, Inc."* — and 13/14 the
+ // licence and its URL. Rewriting any of those four would be a licence violation dressed as a fix.
+-const nibFaceToken = "Nib"
++const nibFaceToken = "Liberation"
+
+ // upstreamFaceToken is the token replaced by `nibFaceToken` in the name records `renamedFace`
+ // rewrites. It is the Reserved Font Name itself, so one replacement covers `LiberationSans`,

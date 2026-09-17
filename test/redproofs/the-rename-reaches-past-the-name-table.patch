@@ -1,0 +1,10 @@
+--- a/internal/pdfops/fontrename.go
++++ b/internal/pdfops/fontrename.go
+@@ -95,6 +95,7 @@
+ 		return nil, err
+ 	}
+ 	tables["name"] = renamed
++	tables["hmtx"] = append([]byte{0, 0}, tables["hmtx"][2:]...)
+ 	return sfntBytes(ttf[:12], tables, order)
+ }
+

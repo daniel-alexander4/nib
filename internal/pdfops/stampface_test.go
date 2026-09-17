@@ -19,6 +19,12 @@ import (
 
 // Stamped text embeds its face — `PLAN-ua-coverage.md` P01.S03, PDF/UA 7.21.4.1.
 
+// nibSans is the name nib's own sans stamp face is installed and written under — upstream's
+// Liberation Sans under nib's name, so that a document from another producer cannot collide with it
+// (`/pending 494`). Read from the map rather than written out, so a rename that moved one and not
+// the other is a compile-time or a red test rather than a silently different face.
+var nibSans = stampFaceFor["Helvetica"]
+
 func fontsNotEmbedded(t *testing.T, pdf []byte) []string {
 	t.Helper()
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
@@ -230,7 +236,7 @@ func TestStampWidthMatchesEmittedBBoxInCoreFaces(t *testing.T) {
 	}
 }
 
-// ownFontDocument returns a document that already carries a stamp nib drew in LiberationSans, with
+// ownFontDocument returns a document that already carries a stamp nib drew in its own face, with
 // mutate applied to that font's dictionary — the stand-in for a document from another producer.
 func ownFontDocument(t *testing.T, mutate func(ctx *model.Context, font types.Dict)) []byte {
 	t.Helper()
@@ -257,13 +263,13 @@ func ownFontDocument(t *testing.T, mutate func(ctx *model.Context, font types.Di
 		if st := d.NameEntry("Subtype"); st == nil || *st != "Type0" {
 			continue // the descendant CID font carries the same BaseFont
 		}
-		if bf := d.NameEntry("BaseFont"); bf != nil && strings.HasSuffix(*bf, "+LiberationSans") {
+		if bf := d.NameEntry("BaseFont"); bf != nil && strings.HasSuffix(*bf, "+"+nibSans) {
 			mutate(ctx, d)
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("setup: the first stamp carries no LiberationSans to mutate")
+		t.Fatalf("setup: the first stamp carries no %s to mutate", nibSans)
 	}
 	var buf bytes.Buffer
 	if err := api.WriteContext(ctx, &buf); err != nil {
@@ -289,7 +295,7 @@ func stampMore(t *testing.T, pdf []byte) []byte {
 	t.Helper()
 	out, _, err := StampFields(pdf, []Field{{Page: 1, Rect: [4]float64{50, 300, 300, 320}, Text: "more", Font: "Helvetica", Size: 12}})
 	if err != nil {
-		t.Fatalf("stamping a document that carries a LiberationSans failed — the bake answers 500: %v", err)
+		t.Fatalf("stamping a document that carries a %s failed — the bake answers 500: %v", nibSans, err)
 	}
 	return out
 }
@@ -298,8 +304,8 @@ func stampMore(t *testing.T, pdf []byte) []byte {
 // second bake of a document degrades to Base-14.
 func TestASecondStampKeepsEmbeddingTheFaceNibWrote(t *testing.T) {
 	base := ownFontDocument(t, nil)
-	if !carriesFace(t, base, "LiberationSans") {
-		t.Fatal("setup: the document does not carry nib's LiberationSans, so there is nothing to reuse")
+	if !carriesFace(t, base, nibSans) {
+		t.Fatalf("setup: the document does not carry nib's %s, so there is nothing to reuse", nibSans)
 	}
 	logged := captureLog(t)
 	out := stampMore(t, base)
@@ -345,26 +351,26 @@ func TestAStampLeavesAFontItCannotVouchForAlone(t *testing.T) {
 				entry.Object = *sd
 			},
 			harm: func(t *testing.T, fixture, raw []byte, rawErr error) bool {
-				_, before, _ := faceStreams(t, fixture, "LiberationSans")
-				_, after, _ := faceStreams(t, raw, "LiberationSans")
+				_, before, _ := faceStreams(t, fixture, nibSans)
+				_, after, _ := faceStreams(t, raw, nibSans)
 				return rawErr == nil && !bytes.Equal(before, after)
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := ownFontDocument(t, tc.mutate)
-			raw, rawErr := rawStamp(t, fixture, "LiberationSans")
+			raw, rawErr := rawStamp(t, fixture, nibSans)
 			if !tc.harm(t, fixture, raw, rawErr) {
 				t.Fatalf("setup: pdfcpu stamps this document without harm (err %v), so nib's check is not what is tested", rawErr)
 			}
-			programBefore, mapBefore, _ := faceStreams(t, fixture, "LiberationSans")
+			programBefore, mapBefore, _ := faceStreams(t, fixture, nibSans)
 			logged := captureLog(t)
 			out := stampMore(t, fixture)
-			programAfter, mapAfter, ok := faceStreams(t, out, "LiberationSans")
+			programAfter, mapAfter, ok := faceStreams(t, out, nibSans)
 			if !ok || !bytes.Equal(programBefore, programAfter) || !bytes.Equal(mapBefore, mapAfter) {
-				t.Errorf("the document's own LiberationSans changed under a stamp (present %v)", ok)
+				t.Errorf("the document's own %s changed under a stamp (present %v)", nibSans, ok)
 			}
-			if msg := logged.String(); !strings.Contains(msg, "already carries its own LiberationSans") {
+			if msg := logged.String(); !strings.Contains(msg, "already carries its own "+nibSans) {
 				t.Errorf("the stamp fell back without saying why (log: %q)", msg)
 			}
 		})
@@ -382,7 +388,7 @@ func TestAStampLeavesAFontItCannotVouchForAlone(t *testing.T) {
 func TestAnUnforeseenEmbeddedFailureRetriesInCoreFaces(t *testing.T) {
 	logged := captureLog(t)
 	var attempts []bool
-	out, err := stampTextWatermarks(threePagePDF(t), true, []string{"LiberationSans"}, func(ctx *model.Context, embedded bool) error {
+	out, err := stampTextWatermarks(threePagePDF(t), true, []string{nibSans}, func(ctx *model.Context, embedded bool) error {
 		attempts = append(attempts, embedded)
 		if embedded {
 			return errors.New("pdfcpu: corrupt fontDict") // the shape the review reproduced
@@ -420,7 +426,7 @@ func TestTextNoFaceCanBakeIsNotRetriedAsAFaceFailure(t *testing.T) {
 	}
 	logged := captureLog(t)
 	var attempts int
-	_, err := stampTextWatermarks(threePagePDF(t), true, []string{"LiberationSans"}, func(ctx *model.Context, embedded bool) error {
+	_, err := stampTextWatermarks(threePagePDF(t), true, []string{nibSans}, func(ctx *model.Context, embedded bool) error {
 		attempts++
 		_, serr := stampText("100%% done")
 		return serr
@@ -455,7 +461,7 @@ func TestASecondStampKeepsEmbeddingAFaceOfManyGlyphs(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stimulus first: the first stamp really used over 100 glyphs, so the block boundary is crossed.
-	_, cmap, ok := faceStreams(t, one, "LiberationSans")
+	_, cmap, ok := faceStreams(t, one, nibSans)
 	if !ok || strings.Count(string(cmap), "\n<") <= 100 {
 		t.Fatalf("setup: the stamped face maps %d glyph(s), not over 100", strings.Count(string(cmap), "\n<"))
 	}

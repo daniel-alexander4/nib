@@ -337,8 +337,7 @@ func AuthoredTextFaces() (body, bold string, embedded bool) {
 	return faces.Body.Name, faces.Bold.Name, true
 }
 
-// stampFaceFor maps each core text face `StampFields` honours (`coreFonts`) to the embedded face it
-// is DRAWN in — `PLAN-ua-coverage.md` P01.S03, PDF/UA 7.21.4.1.
+// stampFamilies are the upstream faces stamped text is drawn in, one family per core text family.
 //
 // **Liberation, not the authoring faces, and the reason is what a stamped field is.** Its core face is
 // chosen to match the document run an edit replaces (`classifyFont` in the client), and the fit
@@ -346,7 +345,17 @@ func AuthoredTextFaces() (body, bold string, embedded bool) {
 // metric-compatible with Helvetica, Times and Courier — measured within 0.21% at 12pt, and identical
 // for Courier — so drawing in them keeps every measurement and the client's preview. Roboto has no
 // serif, and its widths are not Helvetica's.
-var stampFaceFor = map[string]string{
+//
+// **They are installed under nib's own names, not upstream's** — `renamedFace`, `/pending 494`. The
+// face is the same face; only the name records differ, and that is what stops pdfcpu mistaking an
+// office suite's `BAAAAA+LiberationSans` for nib's copy of it.
+var stampFamilies = []string{"LiberationSans", "LiberationSerif", "LiberationMono"}
+
+// stampFaceUpstream maps each core text face `StampFields` honours (`coreFonts`) to the UPSTREAM
+// face whose glyphs it is drawn with, and `stampFaceFor` maps it to the name that face is installed
+// and referenced under. They are two maps over one literal rather than two literals, because the
+// only thing that may differ between them is the rename.
+var stampFaceUpstream = map[string]string{
 	"Helvetica": "LiberationSans", "Helvetica-Bold": "LiberationSans-Bold",
 	"Helvetica-Oblique": "LiberationSans-Italic", "Helvetica-BoldOblique": "LiberationSans-BoldItalic",
 	"Times-Roman": "LiberationSerif", "Times-Bold": "LiberationSerif-Bold",
@@ -355,29 +364,50 @@ var stampFaceFor = map[string]string{
 	"Courier-Oblique": "LiberationMono-Italic", "Courier-BoldOblique": "LiberationMono-BoldItalic",
 }
 
-// stampFacesInstalled installs the three Liberation families and reports whether stamped text can be
-// drawn in them.
+// stampFaceFor is the face a stamped field is DRAWN in — `PLAN-ua-coverage.md` P01.S03, PDF/UA
+// 7.21.4.1. The values are what `stampFacesInstalled` installs, so they are the RENAMED names:
+// `NibSans`, not `LiberationSans`.
+var stampFaceFor = func() map[string]string {
+	out := make(map[string]string, len(stampFaceUpstream))
+	for core, upstream := range stampFaceUpstream {
+		out[core] = nibFaceName(upstream)
+	}
+	return out
+}()
+
+// stampFaceBytes returns the face nib installs for one upstream face: upstream's glyphs, widths and
+// character map, under nib's own name. An unreadable or unrenameable face comes back as a zero
+// `mdpdf.Font`, which `Faces.valid()` reports as incomplete and the caller degrades on.
+func stampFaceBytes(upstream string) mdpdf.Font {
+	file := upstream
+	if !strings.Contains(upstream, "-") {
+		file += "-Regular" // the PostScript name of a regular face carries no style; its file does
+	}
+	bb, err := ocrFontFS.ReadFile("fonts/" + file + ".ttf")
+	if err != nil {
+		return mdpdf.Font{}
+	}
+	renamed, err := renamedFace(bb)
+	if err != nil {
+		log.Printf("stamped text: %s could not be renamed to %s (%v)", upstream, nibFaceName(upstream), err)
+		return mdpdf.Font{}
+	}
+	return mdpdf.Font{Name: nibFaceName(upstream), Data: renamed}
+}
+
+// stampFacesInstalled installs the three stamp families under nib's names and reports whether
+// stamped text can be drawn in them.
 //
 // **All or nothing, and never silent** — the two rules `AuthoredTextFaces` keeps. A field drawn in an
 // embedded face beside one in a core face still fails 7.21.4.1 and is harder to reason about than
 // either, and a document set in core fonts looks entirely correct while failing it, so the degrade is
 // logged. Installing an installed face is a stat and a map lookup.
 func stampFacesInstalled() bool {
-	read := func(name string) mdpdf.Font {
-		file := name
-		if !strings.Contains(name, "-") {
-			file += "-Regular" // the PostScript name of a regular face carries no style; its file does
-		}
-		bb, err := ocrFontFS.ReadFile("fonts/" + file + ".ttf")
-		if err != nil {
-			return mdpdf.Font{}
-		}
-		return mdpdf.Font{Name: name, Data: bb}
-	}
-	for _, fam := range []string{"LiberationSans", "LiberationSerif", "LiberationMono"} {
+	for _, fam := range stampFamilies {
 		faces := &mdpdf.Faces{
-			Body: read(fam), Bold: read(fam + "-Bold"), Italic: read(fam + "-Italic"),
-			BoldItalic: read(fam + "-BoldItalic"), Code: read("LiberationMono"),
+			Body: stampFaceBytes(fam), Bold: stampFaceBytes(fam + "-Bold"),
+			Italic: stampFaceBytes(fam + "-Italic"), BoldItalic: stampFaceBytes(fam + "-BoldItalic"),
+			Code: stampFaceBytes("LiberationMono"),
 		}
 		if err := mdpdf.InstallFaces(faces); err != nil {
 			log.Printf("stamped text: the embedded faces are unavailable, so stamped text is set in "+
