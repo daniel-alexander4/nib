@@ -1317,10 +1317,12 @@ nib optimize in.pdf -o - | nib sanitize - -o out.pdf   # compose in a pipeline
 ```
 
 For `optimize`, `merge`, `sanitize`, `sign`, `rotate`, `pages`, `encrypt`,
-`decrypt`, `nup`, `normalize`, `pagenum`, `pagelabels`, `fill` (JSON or XFDF),
-and `export-xfdf`, a filename of `-` reads a PDF from stdin, and `-o -` writes
-the result to stdout (refused when stdout is a terminal), so the commands chain
-together.
+`decrypt`, `booklet`, `nup`, `normalize`, `pagenum`, `pagelabels`, `fill` (JSON
+or XFDF), and `export-xfdf`, a filename of `-` reads a PDF from stdin, and `-o -`
+writes the result to stdout (refused when stdout is a terminal), so the commands
+chain together. Anything a command has to say to a person — `booklet`'s folding
+instruction, `ua`'s verdict — goes to stderr, so stdout carries only the
+document.
 
 `booklet`, `decrypt`, `encrypt`, `normalize`, `nup`, `optimize`, `pagelabels`,
 `pagenum`, `pages`, `rotate`, and `sanitize` take `-w`/`--in-place` to rewrite each file

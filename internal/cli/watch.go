@@ -132,7 +132,8 @@ func watchLoop(dir string, interval int, opName string, act watchAction) int {
 // per run, so an in-place rewrite's own mtime change doesn't retrigger it. A
 // failed action is retried — but only after the file's size or mtime changes,
 // so a settled-but-broken file doesn't re-error on every scan. State is carried
-// in seen/processed/failed across calls.
+// in seen/processed/failed across calls, and a path the scan no longer sees is
+// forgotten from all three.
 func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, failed map[string]fileState, act watchAction) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -148,6 +149,14 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 	//
 	// Deferred, so every return path prunes; the ReadDir failure above returns before this exists, so a
 	// transient listing error never forgets the whole directory.
+	//
+	// **Absence, and deliberately not a changed fingerprint** (`/pending 508`). Treating changed bytes
+	// as a new file is the only thing that would also catch a file COPIED over the old one in place,
+	// and it cannot be told apart from the user editing a document that happens to be sitting in the
+	// watched folder — the unrequested rewrite the startup rule above exists to prevent, which `--do
+	// sanitize` makes irreversible. The two errors are not symmetric: a file the watch misses costs one
+	// command the user can run by hand and can see was not run; a rewrite it should not have done is
+	// silent and costs them the document.
 	defer func() {
 		for _, m := range []map[string]fileState{seen, failed} {
 			for p := range m {
