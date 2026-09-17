@@ -754,3 +754,85 @@ test('the sheet says which document the ceremony will be built from', async () =
   await settle();
 });
 
+// ── /pending 513 — the sheet over a document that has CLOSED ──────────────────────────────────
+//
+// Two states shared one sentence, and it was written for the other one. `renderCeremonySetupDoc`
+// looks the binding up in `views`; a setup that was never bound and a setup whose document has
+// been closed both miss, and both got "No document is open yet … it is bound as soon as you come
+// back". On the second that is false in the one way that costs the user the setup: the binding is
+// monotone by design (ADR-001) — `bindCeremonySetupDoc` fills an empty binding and can never
+// re-point a full one — so the document they go and open is NOT bound on the way back, and the
+// Convene they then press is refused 409 by name.
+//
+// **The fix is the sentence, and only the sentence.** /pending 506 released the pin instead and was
+// reverted at v1.129.127: an unbound convene sends no `X-Nib-Doc`, `docFor` answers an absent header
+// with the ACTIVE document, and the ceremony lands on a file the setup was never started on.
+// `test/ui/setupsheet.test.mjs` encodes that at tier 3 by requiring the POST to reach the server and
+// answer 409 — so a client-side refusal here would be red there, which is how 506 was found.
+//
+// Reachable because `#tabstrip` is a SIBLING of the sheet: the × that closes the bound document is
+// on screen, and clickable, while the sheet is telling the user what the ceremony will be built
+// from. That is also why the line is re-rendered from `syncTabs` rather than only on the return leg.
+test('a setup whose document has closed says so, and names the file', async () => {
+  // A FRESH setup, so the binding is taken here rather than inherited: pressing "Convene a
+  // ceremony…" unparked resets the pin and re-binds to the active view, which the test above left
+  // as deed.pdf. Two documents are open, which matters — closing the LAST one is a close-all down
+  // `requestClose` and would never reach the tab ×.
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  const line = () => doc.getElementById('cerSheetDoc');
+  assert.match(line().textContent, /deed\.pdf/,
+    'setup: the fresh setup did not bind to the active document, so closing it below tests nothing');
+
+  const tabs = [...doc.querySelectorAll('#tabstrip .tab')];
+  assert.equal(tabs.length, 2,
+    `setup: the strip holds ${tabs.length} tabs, so there is no second document and the close below `
+    + 'would be a close-all');
+  const boundTab = tabs.find((t) => t.querySelector('.tabname').textContent === 'deed.pdf');
+  assert.ok(boundTab, 'setup: no tab for deed.pdf, so the close below would take the wrong document');
+  boundTab.querySelector('.tabclose').click();
+  await settle();
+
+  assert.doesNotMatch(line().textContent, /bound as soon as you come back/,
+    'the sheet is still promising that the binding happens on the way back. It never does — this '
+    + 'setup already holds an id, bindCeremonySetupDoc refuses to re-point one, and the Convene '
+    + 'the user is being sent towards answers 409 about a document');
+  assert.match(line().textContent, /closed/,
+    'nothing on the sheet says the document went away, so the convener goes on filling in a form '
+    + 'for a file that is not there and learns at submit');
+  assert.match(line().textContent, /deed\.pdf/,
+    'the sheet says a document closed and not WHICH — and the id it is bound to is unreadable, so '
+    + 'the user cannot tell which file to reopen');
+  assert.equal(line().querySelector('b').textContent, 'deed.pdf',
+    'the closed file\'s name is not in its own element, so a name off disk cannot be told apart '
+    + 'from the sentence around it');
+  assert.match(line().textContent, /Convene a ceremony/,
+    'the sheet names the dead end and not the way out of it. Reopening the file is not enough — a '
+    + 'reopened file is a new document id — so the sentence has to name the control that starts a '
+    + 'fresh setup');
+  assert.equal(line().classList.contains('cerdocnone'), true,
+    'a setup pointing at a closed document is wearing the ordinary bound styling');
+
+  // And the pin itself is untouched, which is the half /pending 506 got wrong. Read through the
+  // only surface that exposes it: the convene POST, whose X-Nib-Doc must still be lease.pdf's id.
+  doc.getElementById('cerExpires').value = '2027-10-01T12:00';
+  doc.getElementById('cerIntent').value = 'We agree to the lease of 14 Elm Row';
+  doc.querySelector('#cerPeerPick .cerpeerbox').checked = true;
+  const before = calls.length;
+  doc.getElementById('ceremonyConveneForm').dispatchEvent(
+    new doc.defaultView.Event('submit', { cancelable: true, bubbles: true }));
+  await settle();
+  const posted = calls.slice(before).find((c) => c.url.includes('/api/ceremony/convene'));
+  assert.ok(posted,
+    'the client refused the convene itself. That is exactly what was reverted at v1.129.127: the '
+    + 'server\'s 409 names the document, and a client-side refusal replaces a true refusal with a '
+    + 'guess');
+  assert.equal(posted.headers['X-Nib-Doc'], 'test-epoch:2',
+    `the convene was pinned to ${JSON.stringify(posted.headers['X-Nib-Doc'])}, not to the closed `
+    + 'document it was bound to. A released pin sends no header at all, and docFor answers an '
+    + 'absent header with whatever is ACTIVE — the ceremony would land on lease.pdf');
+
+  doc.getElementById('cerConveneCancel').click();
+  await settle();
+});
+

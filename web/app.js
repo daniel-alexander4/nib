@@ -1668,11 +1668,44 @@ function startVerifyPoll() {
 // pollRecv drives the receive state machine off /api/session/status: a pending
 // request promotes the wait view to consent; the session disarming ends the flow
 // (reloading the open document if our accept was applied).
-async function pollRecv(token) {
+//
+// **`fails` is the number of consecutive failed polls behind this call, and it is a PARAMETER
+// rather than module state (/pending 513).** A poll chain is identified by its token; carrying the
+// count on the call means a stale chain's count dies with the chain, and a fresh arm starts at
+// zero without anything having to remember to reset it. The success path below reschedules with no
+// second argument, so one poll that answers clears the run — which is the whole difference between
+// "the server blinked" and "the server is gone".
+async function pollRecv(token, fails = 0) {
   if (token !== recvPoll) return;
   let st;
   try { st = await (await apiFetch('/api/session/status')).json(); }
-  catch { return; } // 401 is handled by apiFetch; anything else stops this poll
+  catch (e) {
+    // **This arm used to be `catch { return; }` and that ended the receive flow for good.** Nothing
+    // else reschedules this poller: it is the only thing that promotes the wait screen to consent,
+    // reports the arm's progress, notices the server disarming and opens the arrival. One failed
+    // request — a blip, a 500, a body that was not JSON — left the armed pill lit and the wait
+    // screen up over a session this client had silently stopped watching, including through the
+    // arrival it exists to report.
+    //
+    // **A 401 is not one of the failures.** `apiFetch` throws `locked` only after putting the app
+    // on the unlock screen, so the arm is over by decision rather than by accident and retrying is
+    // two more 401s and two more `refreshStatus` calls.
+    if (e && e.message === 'locked') return;
+    // **Flat, at the poll's own interval, and bounded at three.** Backoff exists to spare a service
+    // many clients share; this one is nib's own server on loopback in the same session, so there is
+    // nothing to spare and the only thing a bound buys is how long the screen goes on claiming a
+    // session nobody is watching. The bound is load-bearing in the other direction too — a poll
+    // that retried forever would hold a 1.5 s timer for the life of the tab.
+    if (fails + 1 < 3) { setTimeout(() => pollRecv(token, fails + 1), 1500); return; }
+    // **Out loud, and it does not claim to know the arm's state.** `endRecv` puts the indicator
+    // down, which is an assertion this client cannot make — the server may well still be armed —
+    // so the sentence says the watching stopped rather than that the session did, and names the
+    // one act that re-reads the truth. Leaving the wait screen up instead would be the silence
+    // this whole arm exists to end.
+    endRecv();
+    toast('Nib stopped answering, so this window is no longer watching for a co-signature — open "Receive a live co-signature…" again to see where it stands');
+    return;
+  }
   if (token !== recvPoll) return;
   reflectArmed(!!st.armed); // the server can disarm on its own (a timeout), and then so does this
   reflectNotice(st.notice);
@@ -2671,6 +2704,19 @@ function resetViews(keep) {
 // "chrome-identical to what it was before tabs" — and the cost of that was a document with no name
 // anywhere except the toolbar title, and a strip that arrived only once a second one was opened.
 function syncTabs() {
+  // **The setup sheet's "which document" line is derived from `views`, so it is stale the moment
+  // this list changes (/pending 513).** The sheet stands in place of the viewer and the strip is a
+  // SIBLING of it — the note below says so — so the × that closes the bound document is on screen,
+  // and clickable, while the sheet is telling the user what the ceremony will be built from.
+  // Without this the line goes on naming a file nothing holds until the next
+  // `bindCeremonySetupDoc`, which is the return leg of an excursion the user has no reason to take.
+  //
+  // Here rather than in `closeView`, because this is the one door every mutation of `views` already
+  // passes through (ADR-009) — a hook on the close path alone would be right for the close and
+  // silent for everything else that empties the set. ABOVE both early returns for the same reason:
+  // it reads `views`, not the strip, and the case where nothing is left open is the one that takes
+  // the `!anyDoc` return.
+  renderCeremonySetupDoc();
   const strip = els.tabstrip;
   if (!strip) return; // the jsdom harness boots the real index.html, so this is defensive only
   // Which tab had focus, so a rebuild does not throw a keyboard user back to the body.
@@ -6992,8 +7038,12 @@ function renderBgPreview() {
 // a soft band below it ramps alpha so antialiased edges stay smooth; original RGB
 // (and any existing alpha) is preserved so colored ink survives.
 //
-// TRIPWIRE: this heuristic has no automated guard (no JS test harness in this repo;
-// the risky part is the modal/upload wiring, which is integration, not pure math).
+// TRIPWIRE: this heuristic has no automated guard, and the reason is no longer the one this
+// comment used to give. It said "no JS test harness in this repo", which stopped being true when
+// tier 2 landed; what is still true is that tier 2 models NO CANVAS at all (boot.mjs's declared
+// ceiling), and this function is `getImageData` from first line to last. Tier 3 has a real one and
+// does not drive the modal either: `grep -rn 'bgModal\|knockoutBackground\|bgRemove\|bgThresh'
+// test/ build/` returns nothing, so the absence below is a search and not an impression.
 // It's verified by the live preview at use time. After changing this function,
 // renderBgPreview, or the bgModal upload path, re-check by hand: upload a dark-ink-
 // on-white-paper image and confirm the preview shows a transparent background with
@@ -7136,7 +7186,7 @@ function downloadBlob(blob, name) {
 // operation's ENTRY and its result carried — never called at the point the file is
 // handed to openSaveAs.
 //
-// The reason is easy to miss and it is why all 19 export scopes capture into
+// The reason is easy to miss and it is why EVERY export scope captures into
 // `exportName` first: in `openSaveAs(await res.blob(), exportBase() + '-filled.pdf')`
 // the arguments evaluate left to right, so the blob resolves BEFORE exportBase runs.
 // The name was therefore taken from whatever document was current once the export
@@ -8294,8 +8344,9 @@ els.profileSave.onclick = async () => {
 let redStart = null, redDiv = null, redHit = null;
 
 els.redactBtn.onclick = () => {
-  view.redactMode = !view.redactMode;
-  if (view.redactMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); exitCheckbox(); } // one box tool at a time
+  const on = !view.redactMode;
+  if (on) disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
+  view.redactMode = on;
   reflectRedact();
   els.viewerWrap.style.cursor = view.redactMode ? 'crosshair' : '';
 };
@@ -8917,15 +8968,9 @@ function exitSplitBox() {
 els.splitBoxBtn.onclick = () => {
   if (view.splitBoxMode) { exitSplitBox(); return; }
   if (!view.pdfDocument) return;
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.splitBoxMode = true;
   view.sbPage = view.viewer.currentPageNumber; // regions apply to the page you start on
-  setMarkerMode(null);
-  exitBorder();
-  exitShape();
-  exitCrop();
-  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
   reflectSplitBox();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -9018,15 +9063,9 @@ function exitCrop() {
 els.cropBtn.onclick = () => {
   if (view.cropMode) { exitCrop(); return; }
   if (!view.pdfDocument) return;
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.cropMode = true;
   view.cropPage = view.viewer.currentPageNumber; // the box is measured in this page's space
-  setMarkerMode(null);
-  exitBorder();
-  exitShape();
-  exitSplitBox();
-  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
   reflectCrop();
   els.viewerWrap.style.cursor = 'crosshair';
   toast('Draw the area to keep, then confirm');
@@ -9093,9 +9132,9 @@ let edStart = null, edDiv = null, edHit = null;
 
 els.editTextBtn.onclick = () => {
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  view.editMode = !view.editMode;
-  if (view.editMode && view.redactMode) { view.redactMode = false; reflectRedact(); } // one box tool at a time
-  if (view.editMode) { setMarkerMode(null); exitSplitBox(); exitBorder(); exitCrop(); exitNote(); exitDropdown(); exitRadio(); exitShape(); exitCheckbox(); }
+  const on = !view.editMode;
+  if (on) disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
+  view.editMode = on;
   reflectEdit();
   els.viewerWrap.style.cursor = view.editMode ? 'crosshair' : '';
 };
@@ -9301,6 +9340,25 @@ function setSignLocked(locked) {
 // disarmEditingTools puts down every tool that draws on the page — the ONE door for "nothing is
 // armed" (ADR-009, /pending 506).
 //
+// **Every ARM calls it too, since /pending 513, and that is what the door was missing.** The lock
+// was one caller of a rule that eleven other sites each wrote out by hand — "arming this one puts
+// down the others" — and the eleven disagreed. Measured before the change, thirteen gaps: Border
+// left Shape armed; Dropdown, Radio and the new-document teardown all left Checkbox armed; Note
+// left Dropdown, Radio and Checkbox armed; Redact left Edit text armed; Redact, Edit text, Crop
+// and Split-by-box each left the pdf.js Text/Highlight/Draw mode live under them; and `setTool`,
+// arming that mode, left Crop, Split-by-box and the flag tools alone. Two armed box tools share
+// one `pointerdown` on `#viewerWrap` and a live pdf.js editor layer eats the pointer outright, so
+// each of those is a tool that looks armed and does nothing.
+//
+// **An arm may call it unconditionally because its own exit is already a no-op at that point**:
+// every handler takes its own `if (already armed) { exitX(); return; }` toggle first, so by the
+// time the door runs the tool being armed is off and `exitX` returns at its own guard. (Spelled
+// without a `view.…Mode` in the prose on purpose — `keyboardplacement.test.mjs` enumerates that
+// pattern out of the source WITHOUT stripping comments, so a mode named in a comment reads to it
+// as a twelfth tool with no keyboard path.) The mode is then
+// written AFTER the door, never before — that ordering is the whole correctness argument, and it
+// is restated at `setTool` and `setMarkerMode`, the two that re-enter.
+//
 // **The lock used to call `setMarkerMode(null)` and trust it to do this, and it does nothing of the
 // kind.** Every `exit*()` in setMarkerMode sits inside `if (m)`: it steps OUT of the other tools
 // only when a flag tool is being armed, so `setMarkerMode(null)` disarms the flags and nothing else.
@@ -9343,7 +9401,6 @@ function reflectSignControls() {
 }
 
 function setMarkerMode(m) {
-  view.markerMode = m;
   if (m) { // one placement tool at a time
     // **Arming a placement tool is a request for the PAGE, so it steps out of the setup sheet.**
     // `SIDEBAR_FOR.collaborate` is `['flags', 'commands', 'ceremony']`, so the Flags panel and the
@@ -9366,14 +9423,17 @@ function setMarkerMode(m) {
     // markers are the only tools a raised sheet can be looking at. Checked rather than assumed:
     // `SIDEBAR_FOR.collaborate` names `flags`, and no other mode's panel list does.
     parkCeremonySheet(false);
-    if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-    if (view.editMode) { view.editMode = false; reflectEdit(); }
-    exitSplitBox();
-    exitBorder();
-    exitShape();
-    exitCrop();
-    exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
+    // **The one door, and it is called BEFORE `view.markerMode` is written (ADR-009, /pending
+    // 513).** The list that stood here was one of eleven copies of "put down everything else", and
+    // it was the only one that also left the pdf.js Text/Highlight/Draw mode armed — a flag placed
+    // under a live editor layer that swallows the pointer.
+    //
+    // The door calls `setMarkerMode(null)`, so this function re-enters itself; the re-entry takes
+    // the `if (m)` branch not at all, which is what bounds it at depth two. Writing the mode below
+    // rather than above is what keeps that re-entry from clearing the very mode being armed.
+    disarmEditingTools();
   }
+  view.markerMode = m;
   all('.markers button').forEach((b) => setArmed(b, b.dataset.marker === m));
   els.viewerWrap.style.cursor = m ? 'crosshair' : '';
 }
@@ -10430,11 +10490,20 @@ $('recentCancel').onclick = () => { $('recentModal').hidden = true; };
 // the pdf.js editor mode. Each is baked into the PDF by saveDocument(). Modes
 // come from the buttons' data-mode (FREETEXT, HIGHLIGHT, INK).
 function setTool(mode) {
-  view.activeTool = view.activeTool === mode ? null : mode;
+  const on = view.activeTool !== mode; // the toggle, decided before anything acts on it
+  // **One tool at a time, through the one door (ADR-009, /pending 513).** The hand-written list
+  // that stood here named six of the eleven — no Crop, no Split-by-box, no flag tool, and neither
+  // box mode — so arming Draw over an armed Crop left both live.
+  //
+  // **Before the assignment, and that ordering is what makes it terminate.** The door's last step
+  // is `if (view.activeTool) setTool(view.activeTool)`, so it re-enters here; at this point
+  // `view.activeTool` is still the OUTGOING mode, and the re-entry computes `on === false` for it
+  // and calls no door. Depth two, always.
+  if (on) disarmEditingTools();
+  view.activeTool = on ? mode : null;
   view.viewer.annotationEditorMode = {
     mode: view.activeTool ? pdfjsLib.AnnotationEditorType[view.activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
-  if (view.activeTool) { exitBorder(); exitNote(); exitDropdown(); exitRadio(); exitShape(); exitCheckbox(); } // Nib-side tools, not pdf.js modes — one at a time
   // Mirror the active mode onto every control bound to it (Edit menu + toolbar).
   // Scope out the compare tabs: they share the data-mode attribute (text/side/diff)
   // but are wired to setCompareMode, not the annotation tools.
@@ -10538,14 +10607,8 @@ const clampWeight = (v) => Math.min(10, Math.max(1, Number(v) || 2)); // points
 els.borderBtn.onclick = () => {
   if (view.borderMode) { exitBorder(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.borderMode = true;
-  setTool(null); // clear any pdf.js editor tool
-  setMarkerMode(null);
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
-  exitSplitBox();
-  exitCrop();
-  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
   reflectBorder();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -10629,16 +10692,8 @@ function exitDropdown() {
 els.dropdownBtn.onclick = () => {
   if (view.dropdownMode) { exitDropdown(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.dropdownMode = true;
-  setTool(null);
-  setMarkerMode(null);
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
-  exitSplitBox();
-  exitCrop();
-  exitNote(); exitRadio(); // clear the sibling one-at-a-time tools (not dropdown — we're entering it)
-  exitBorder();
-  exitShape();
   reflectDropdown();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -10727,16 +10782,7 @@ function exitRadio() {
 els.radioBtn.onclick = () => {
   if (view.radioMode) { exitRadio(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
-  view.radioMode = true;
-  setTool(null);
-  setMarkerMode(null);
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
-  exitSplitBox();
-  exitCrop();
-  exitNote(); exitDropdown();
-  exitBorder();
-  exitShape();
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.radioMode = true;
   reflectRadio();
   els.viewerWrap.style.cursor = 'crosshair';
@@ -10847,15 +10893,8 @@ function exitShape() {
 els.shapeBtn.onclick = () => {
   if (view.shapeMode) { exitShape(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.shapeMode = true;
-  setTool(null);
-  setMarkerMode(null);
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
-  exitSplitBox();
-  exitCrop();
-  exitNote(); exitDropdown(); exitRadio(); exitCheckbox();
-  exitBorder();
   reflectShape();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -11018,17 +11057,13 @@ function exitNote() {
   els.viewerWrap.style.cursor = '';
 }
 els.noteBtn.onclick = () => {
-  if (view.noteMode) { exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); return; }
+  // The three siblings this branch also used to exit are provably already down: the door below is
+  // what armed Note, and nothing can be armed beside it. They were a list maintained against a
+  // rule, which is the shape /pending 513 took out.
+  if (view.noteMode) { exitNote(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.noteMode = true;
-  setTool(null);
-  setMarkerMode(null);
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
-  exitSplitBox();
-  exitCrop();
-  exitBorder();
-  exitShape();
   reflectNote();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -11046,7 +11081,8 @@ els.viewerWrap.addEventListener('pointerdown', async (e) => {
   const base = (await owner.pdfDocument.getPage(hit.n)).getViewport({ scale: 1 }); // PDF points
   const fw = Math.min(0.3, 150 / r.width), fh = Math.min(0.2, 72 / r.height); // default card size
   makeNote([fx, fy, Math.min(fx + fw, 1), Math.min(fy + fh, 1)], { page: hit.n, pageW: base.width, pageH: base.height }, owner);
-  exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); // place one; re-click the tool for another
+  exitNote(); // place one; re-click the tool for another. The three siblings this used to exit as
+  // well cannot be armed beside Note since /pending 513 put the arms through one door.
 });
 
 // ── The checkbox tool ────────────────────────────────────────────────────────
@@ -11067,12 +11103,8 @@ function exitCheckbox() {
 els.checkboxBtn.onclick = () => {
   if (view.checkboxMode) { exitCheckbox(); return; }
   if (!view.pdfDocument) { toast('Open a PDF first'); return; }
+  disarmEditingTools(); // one tool at a time, through the one door (ADR-009, /pending 513)
   view.checkboxMode = true;
-  setTool(null);
-  setMarkerMode(null);
-  if (view.redactMode) { view.redactMode = false; reflectRedact(); }
-  if (view.editMode) { view.editMode = false; reflectEdit(); }
-  exitSplitBox(); exitCrop(); exitBorder(); exitShape(); exitNote(); exitDropdown(); exitRadio();
   reflectCheckbox();
   els.viewerWrap.style.cursor = 'crosshair';
 };
@@ -11562,11 +11594,19 @@ function clearOverlays(owner = view) {
   // The draw-mode exits repaint SHARED toolbar buttons and the shared cursor, so they are
   // the active view's business only. A background view is freshly built and has none armed.
   if (owner !== view) return;
+  // **A DELIBERATE EXEMPTION from /pending 513's door, named here as ADR-009 requires.** This is a
+  // teardown, not an arm: `disarmEditingTools` ends in `setTool(view.activeTool)`, which writes
+  // `view.viewer.annotationEditorMode` — and `resetSharedDocState`, this function's only caller,
+  // argues at length why that write must not happen here (pdf.js resets its own editor mode inside
+  // `setDocument`, and on the close path the manager is already gone). The list is still a list;
+  // what it may not be is a list that disagrees with the door, and `exitCheckbox` was missing from
+  // it — a checkbox tool left armed across an open-over-open, which is the exact class the door
+  // exists to end.
   exitSplitBox(); // a pending region selection doesn't carry to a new document
   exitBorder();   // nor a pending border-draw mode
   exitShape();    // nor a pending shape-draw mode
   exitCrop();     // nor a pending crop-draw mode
-  exitNote(); exitDropdown(); exitRadio();     // nor a pending note-placement mode
+  exitNote(); exitDropdown(); exitRadio(); exitCheckbox(); // nor a pending placement mode
 }
 
 // resetSharedDocState is the ONE teardown both the open path and the close path
@@ -15193,6 +15233,17 @@ function setCeremonyPark(on) {
 // a 409 instead — the refusal `apiFetch`'s own pinning comment says a captured id earns.
 let ceremonySetupDoc = null;
 
+// ceremonySetupDocName is what that document was CALLED when the binding was made, and it exists
+// because the id alone cannot be turned back into a name once the document is closed (/pending 513).
+// `renderCeremonySetupDoc` reads `views` to describe the binding, and a closed document has no view
+// — so without this the sheet can say a binding exists and not which file it is for, which is the
+// half of the sentence the user needs to act on.
+//
+// **Not a second binding.** It is written in the same statement as the id, inside the same
+// once-only branch, so there is one act and one monotone fact; nothing reads it to decide what to
+// convene, and `conveneFromPanel` still posts `ceremonySetupDoc` and nothing else (ADR-001).
+let ceremonySetupDocName = '';
+
 // ceremonySetupGen numbers the sheet's opens, so a slow one cannot write to a sheet it no longer
 // owns.
 //
@@ -15261,6 +15312,12 @@ function parkCeremonySheet(moveFocus = true) {
 function bindCeremonySetupDoc() {
   if (ceremonySetupDoc === null) {
     ceremonySetupDoc = (view.docMeta && view.docMeta.id) || null;
+    // Captured in the same breath as the id, from the same view, and only when an id was actually
+    // taken — see ceremonySetupDocName. `originalName` first for the reason the tab strip gives:
+    // `docMeta.name` is "." for every upload, combine, office conversion and arrival.
+    ceremonySetupDocName = ceremonySetupDoc
+      ? (view.originalName || (view.docMeta && view.docMeta.name) || (view.docMeta && view.docMeta.path) || '')
+      : '';
   }
   // **Outside the early return, deliberately.** The binding is monotone and happens once; the
   // STATEMENT of it has to be rewritten on every entry, including the resume's, or a sheet that
@@ -15287,9 +15344,36 @@ function renderCeremonySetupDoc() {
     ? views.find((v) => v.docMeta && v.docMeta.id === ceremonySetupDoc)
     : null;
   if (!bound) {
+    el.classList.add('cerdocnone');
+    // **Two states, and they were one sentence (/pending 513).** "Nothing is bound yet" and "the
+    // document this setup was bound to has been closed" both land here, because both fail the
+    // lookup — and the sentence written for the first is FALSE of the second in the one way that
+    // matters. It promises the binding happens on the way back, and on a setup that already holds
+    // an id it never will: `bindCeremonySetupDoc` fills an empty binding and cannot re-point a full
+    // one, which is ADR-001 and is the design. So the user was told to go and open a document, did,
+    // came back to the same sentence, pressed Convene, and got a 409 about a document.
+    //
+    // **The fix is this sentence and nothing below it.** /pending 506 released the pin instead and
+    // was reverted at v1.129.127: an unbound convene sends no `X-Nib-Doc`, `docFor` answers an
+    // absent header with the ACTIVE document, and the ceremony lands on a file the setup was never
+    // started on — silently, which is worse than a refusal the user can read.
+    if (ceremonySetupDoc !== null) {
+      el.textContent = '';
+      el.appendChild(document.createTextNode('The document this setup was for — '));
+      // A name off disk, so a text node and never markup, for the reason the bound case gives.
+      const gone = document.createElement('b');
+      gone.textContent = ceremonySetupDocName || 'the one it was started on';
+      el.appendChild(gone);
+      el.appendChild(document.createTextNode(
+        ' — has been closed, and this setup stays fixed to it: convening now is refused. Open that'
+        + ' file again with "See the document", then press "Convene a ceremony…" to start a fresh'
+        + ' setup on it. Reopening alone is not enough — a reopened file is a NEW document to Nib,'
+        + ' and this setup is still pointing at the old one. The recital and the deadline stay as'
+        + ' you typed them; choose who is signing again.'));
+      return;
+    }
     el.textContent = 'No document is open yet. Choose "See the document" and open the one this '
       + 'ceremony is for — it is bound as soon as you come back, and cannot be changed after that.';
-    el.classList.add('cerdocnone');
     return;
   }
   el.classList.remove('cerdocnone');

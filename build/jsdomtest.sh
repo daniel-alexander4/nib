@@ -106,11 +106,15 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # tier — which is how a filter that silently discarded every convertible document survived two
 # rounds of work on that exact handler.
 #
+# 78 since /pending 513 (recvpoll.test.mjs): the receive poll survives a blip and gives up out loud.
+# Its own file because it drives real `setTimeout` against a live arm, and armprogress.test.mjs's
+# measured lesson is that a file which leaves one armed hangs the whole suite behind its timer.
+#
 # **Both arrived on branches off one base, and each bumped this to 75.** Taking either side at
 # the merge leaves the pin one below the file count, which this script exits 1 on — the count is
 # the thing it guards, so a merge that resolves it by picking a side breaks the guard rather
 # than the code. Set by hand to the number of files actually present.
-Nib_expect_files=77
+Nib_expect_files=78
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2
