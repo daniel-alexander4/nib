@@ -1,12 +1,11 @@
-diff --git a/internal/cli/cli.go b/internal/cli/cli.go
 --- a/internal/cli/cli.go
 +++ b/internal/cli/cli.go
-@@ -302,7 +302,7 @@
- 	// The stat above and the `EvalSymlinks` below stay HERE rather than moving into the door:
- 	// following a link is right for a path the user named on the command line and wrong for
- 	// `atomicfile`'s other callers, which write inside `~/nib` and the config dir.
--	return atomicfile.WriteDurable(path, data, perm)
-+	return atomicfile.Write(path, data, perm)
+@@ -293,7 +293,7 @@
+ 	// filesystems and spinning disks.
+ 	//
+ 	// 0644 is the mode for a file that does not exist yet; an existing one keeps its own.
+-	return atomicfile.ReplaceDurable(path, data, 0o644)
++	return atomicfile.Write(path, data, 0o644)
  }
  
  // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,

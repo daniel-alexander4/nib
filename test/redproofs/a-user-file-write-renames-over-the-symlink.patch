@@ -1,0 +1,12 @@
+--- a/internal/atomicfile/atomicfile.go
++++ b/internal/atomicfile/atomicfile.go
+@@ -219,9 +219,6 @@
+ // here names a path the user chose in a file dialog — over an existing file, only after the route's
+ // own `os.Stat` refusal has been answered with an explicit `overwrite=1`.
+ func ReplaceDurable(path string, data []byte, perm os.FileMode) error {
+-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+-		path = resolved
+-	}
+ 	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+ 		perm = fi.Mode().Perm()
+ 	}

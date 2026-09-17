@@ -171,6 +171,12 @@ type Server struct {
 
 	setupMu sync.Mutex // serializes first-run vault setup so AutoSetup runs once
 
+	// sweepMu serializes the ceremony-directory sweep; see runCeremonySweep, which is the only
+	// place it is taken. Separate from `mu` for setupMu's reason — the sweep reads
+	// `~/nib/ceremonies`, moves directories and binds a socket, and the request lock is never
+	// held across file I/O.
+	sweepMu sync.Mutex
+
 	// windows counts the windows currently holding a stream open; see window.go.
 	windows liveWindows
 	// idleExit is D2's answer for THIS process: did it launch a browser, and is it therefore

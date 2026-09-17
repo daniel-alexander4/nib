@@ -278,18 +278,61 @@ func (s *Server) rearmCeremoniesPreferring(v *vault.Vault, prefer string) {
 	}
 }
 
-// rearmCeremoniesAsync is the detached form the two triggers use.
+// rearmCeremoniesAsync is the accept trigger's detached form: the process gate, then the sweep door.
 //
 // **Detached, and that is what keeps the accept honest.** `handleCeremonyAccept` answers with a
 // roster the user is about to read; opening a socket, publishing a rendezvous and reading
 // `~/nib/ceremonies` on that path would put the network between the user and their answer, and a
 // failure there is not a failure to accept.
+//
+// The detaching itself now belongs to `runCeremonySweep`, which the unlock trigger takes too — this
+// function is the gate and the `prefer` argument, and nothing else.
 func (s *Server) rearmCeremoniesAsync(v *vault.Vault, prefer string) {
 	if !s.deliveryRearm.Load() {
 		return // not a real Nib process: see EnableDeliveryRearm
 	}
+	s.runCeremonySweep("ceremony re-arm", func() { s.rearmCeremoniesPreferring(v, prefer) })
+}
+
+// runCeremonySweep is the ONE door every sweep of `~/nib/ceremonies` goes through (ADR-009):
+// detached, panic-safe, and serialized against every other sweep. `what` names the sweep in a
+// recovered panic.
+//
+// # Two sweeps really can overlap, and it is not the scheduler being unkind
+//
+// `adoptVault` launches one whenever the vault goes from nil to open. `handleVaultImport` sets
+// `s.vault` back to nil and calls `ensureUnlocked` again — so an import landing while the unlock's
+// sweep is still walking the directory starts a second one over the same files, with a DIFFERENT
+// identity. `handleCeremonyAccept` is a third trigger, and `rearmCeremoniesPreferring`'s own comment
+// already records the symptom in the small: *"two accepts in quick succession each start a sweep, so
+// both displace and whichever runs last wins"*.
+//
+// # What the overlap costs is exactly what `adoptVault` refuses INSIDE one sweep
+//
+// That function sequences the close-out ahead of the re-arms because they *"read the same listing and
+// reach opposite conclusions about the same ceremony — one arms a rendezvous for it, the other moves
+// its directory out from under that arm"*. Ordering two calls inside one goroutine says nothing about
+// a second goroutine running the same pair, so the race that comment closes came straight back in
+// through the second sweep.
+//
+// # Serialized, not coalesced
+//
+// "Skip if one is already running" is the cheaper shape and it is wrong here: an imported vault is a
+// different identity, with a different fingerprint, a different answer to "am I the convener" and a
+// different set of ceremonies to arm for, so its sweep is not a duplicate of the one in flight and
+// dropping it leaves that identity unarmed until the next unlock. A queue of two is also the whole
+// depth available in practice — the triggers are an unlock, an import and an accept, all of them
+// human-paced.
+//
+// **And the lock is not on any path a user waits on.** Every caller is already detached, so what
+// queues behind it is another sweep. The body itself is bounded local work: a directory listing, a
+// mirror read per ceremony, vault writes for a close-out, and a socket bind — every arm hands its
+// accept loop to its own goroutine rather than waiting on the network inside this hold.
+func (s *Server) runCeremonySweep(what string, body func()) {
 	go func() {
-		defer safe.Recover("ceremony re-arm")
-		s.rearmCeremoniesPreferring(v, prefer)
+		defer safe.Recover(what)
+		s.sweepMu.Lock()
+		defer s.sweepMu.Unlock()
+		body()
 	}()
 }
