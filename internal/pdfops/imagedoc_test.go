@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -11,6 +12,8 @@ import (
 	"image/png"
 	"math"
 	"testing"
+
+	"golang.org/x/image/tiff"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -341,4 +344,195 @@ func TestAnOpenedImageIsTitledFromItsFilename(t *testing.T) {
 	if !bytes.HasPrefix(bare, []byte("%PDF-")) {
 		t.Error("an unnamed image did not produce a document")
 	}
+}
+
+// tinyWebP is a 2×2 lossless WebP, 38 bytes.
+//
+// Embedded rather than generated because **Go has no WebP encoder** — `x/image/webp` decodes only.
+// Produced once with, and reproducible by:
+//
+//	python3 -c "from PIL import Image; Image.new('RGB',(2,2),(200,60,60)).save('t.webp','WEBP',lossless=True)"
+//
+// A file copied from elsewhere on the machine would have been a fixture nobody could regenerate.
+const tinyWebP = "UklGRh4AAABXRUJQVlA4TBEAAAAvAUAAAAdQniKXp/+BiOh/AAA="
+
+func webpFixture(t *testing.T) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(tinyWebP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func tiffFixture(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{R: 30, G: uint8(x * 8), B: 200, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := tiff.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestEveryFormatTheSniffCLAIMSActuallyRoundTrips — /pending 539(a).
+//
+// /pending 400 said to add TIFF and WebP "once a test proves pdfcpu takes them", and the proof it
+// had was a reading: pdfcpu imports `hhrutter/tiff` and `x/image/webp`, both of which call
+// `image.RegisterFormat` in `init()`. **Reading an import list is not a round-trip** — a format can
+// decode through `image.DecodeConfig` and still be refused by `api.ImportImages`, which is a
+// different code path with its own opinions — so every format the sniff claims is driven end to end
+// here, and the table is the sniff's own list rather than a copy of it.
+func TestEveryFormatTheSniffCLAIMSActuallyRoundTrips(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"png", solidPNG(t, 96, 48, 0)},
+		{"jpeg", jpegWithOrientation(t, 96, 48, 0)},
+		{"tiff", tiffFixture(t, 96, 48)},
+		{"webp", webpFixture(t)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Stimulus: the sniff must recognise it, or the round-trip below grades the refusal path.
+			if !LooksLikeImage(c.data) {
+				t.Fatalf("the sniff does not recognise this %s, so nothing downstream was exercised", c.name)
+			}
+			out, err := ImageToDocument(c.data, "fixture."+c.name)
+			if err != nil {
+				t.Fatalf("%s: the sniff claims this format and the conversion refused it: %v", c.name, err)
+			}
+			w, h, _ := pageBox(t, out)
+			if w <= 0 || h <= 0 {
+				t.Errorf("%s produced a %.1f×%.1f page", c.name, w, h)
+			}
+		})
+	}
+	// The sniff's claims and this table are the same set, or one of them has grown alone.
+	if got := len(cases); got != 4 {
+		t.Fatalf("this table drives %d formats; sniffImage claims 4", got)
+	}
+}
+
+// TestATiffMagicInsideAJpegIsNotATiff — the trap /pending 539 named.
+//
+// `II*\0` is both TIFF's little-endian header and the start of an EXIF block, which every
+// orientation-bearing photo carries six bytes into its APP1 segment. A sniff that searched for the
+// magic rather than anchoring at offset 0 would call such a photo a TIFF and hand it to the wrong
+// decoder.
+func TestATiffMagicInsideAJpegIsNotATiff(t *testing.T) {
+	src := jpegWithOrientation(t, 40, 80, 6)
+	if i := bytes.Index(src, []byte{0x49, 0x49, 0x2A, 0x00}); i <= 0 {
+		t.Fatalf("setup: the fixture carries no TIFF magic after offset 0 (found at %d), so the "+
+			"confusion this test is about cannot arise", i)
+	}
+	f, ok := sniffImage(src)
+	if !ok || f != formatJPEG {
+		t.Errorf("a JPEG carrying an EXIF block sniffed as %q — the TIFF magic inside it was matched "+
+			"somewhere other than offset 0", f)
+	}
+}
+
+// TestRedactingAnOpenedImageDESTROYSThePixelsUnderTheMark — /pending 400's stated trap, 539(b).
+//
+// 400 wrote this down so nobody would ship it: *"A redaction mark over an opened image covers pixels
+// that are still in the file until the page is flattened… an image is the case where a user most
+// expects 'I blacked it out' to mean the pixels are gone."* It then shipped without running the test
+// it had specified, which is the gap this closes.
+//
+// **The assertion is on the BYTES of the embedded image, not on the mark being drawn.** A test that
+// confirmed a black rectangle exists would pass on a document that still carries every original
+// pixel underneath it — which is precisely the failure being guarded against.
+func TestRedactingAnOpenedImageDESTROYSThePixelsUnderTheMark(t *testing.T) {
+	// An image whose top half is a distinctive colour. After redacting that half, no pixel of it
+	// may survive anywhere in the output.
+	const secret = 0xC7
+	img := image.NewRGBA(image.Rect(0, 0, 60, 40))
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 60; x++ {
+			if y < 20 {
+				img.Set(x, y, color.RGBA{R: secret, G: 0x11, B: 0x22, A: 255}) // the part to be redacted
+			} else {
+				img.Set(x, y, color.RGBA{R: 0x11, G: 0x99, B: 0x11, A: 255})
+			}
+		}
+	}
+	var enc bytes.Buffer
+	if err := png.Encode(&enc, img); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ImageToDocument(enc.Bytes(), "secret.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stimulus, asserted before the response: the secret colour really is in the opened document's
+	// embedded image. Without this the test passes on a build that never embedded anything.
+	if !embeddedImageHasRed(t, doc, secret) {
+		t.Fatal("setup: the opened image does not carry the secret colour, so its absence below " +
+			"would prove nothing")
+	}
+
+	// Redaction rasterises: the caller hands back the page as pixels, with the secret half painted
+	// over, and RedactPages rebuilds the page from that raster.
+	flat := image.NewRGBA(image.Rect(0, 0, 60, 40))
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 60; x++ {
+			if y < 20 {
+				flat.Set(x, y, color.RGBA{A: 255}) // the mark: opaque black
+			} else {
+				flat.Set(x, y, color.RGBA{R: 0x11, G: 0x99, B: 0x11, A: 255})
+			}
+		}
+	}
+	var rast bytes.Buffer
+	if err := png.Encode(&rast, flat); err != nil {
+		t.Fatal(err)
+	}
+	w, h, _ := pageBox(t, doc)
+	out, err := RedactPages(doc, map[int]RasterPage{1: {Image: rast.Bytes(), W: w, H: h}})
+	if err != nil {
+		t.Fatalf("RedactPages: %v", err)
+	}
+
+	if embeddedImageHasRed(t, out, secret) {
+		t.Error("a redacted image-origin document still carries the pixels under the mark. The mark " +
+			"is drawn and the original is underneath it, which is exactly what a user reads " +
+			"'I blacked it out' as not meaning")
+	}
+}
+
+// embeddedImageHasRed decodes every image XObject in pdf and reports whether any pixel carries r as
+// its red channel. It reads the IMAGES, not the content stream, because the question is whether the
+// pixels survive anywhere in the file.
+func embeddedImageHasRed(t *testing.T, pdf []byte, r uint8) bool {
+	t.Helper()
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for nr := range ctx.XRefTable.Table {
+		sd, _, serr := ctx.DereferenceStreamDict(*types.NewIndirectRef(nr, 0))
+		if serr != nil || sd == nil {
+			continue
+		}
+		if st := sd.Dict.NameEntry("Subtype"); st == nil || *st != "Image" {
+			continue
+		}
+		if sd.Decode() != nil {
+			continue
+		}
+		// Whatever the filter, the decoded bytes are the samples; a scan for the byte value is
+		// enough to answer "did this colour survive", and does not depend on the colour space.
+		if bytes.IndexByte(sd.Content, r) >= 0 {
+			return true
+		}
+	}
+	return false
 }

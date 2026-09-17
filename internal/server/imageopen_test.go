@@ -282,3 +282,51 @@ func TestTheHandOffSpeaksForAConvertibleDocumentRatherThanFallingThrough(t *test
 		t.Errorf("the hand-off says %q and names no route the user can take", got)
 	}
 }
+
+// TestOpenRecentRecordsTheIMAGEsPathNotTheDocumentsEmptyOne — /pending 539(c).
+//
+// The two paths are deliberately different and it would be natural to "fix" that: the DOCUMENT is
+// pathless, so `canSave` is false and Save routes to Save As rather than writing PDF bytes over the
+// user's PNG; **Recent** must still hold the real file, or the image never appears in Open Recent
+// and reopening it is impossible. `AddRecent` takes the source path for that reason, and a change
+// routing it through `doc.path` — which is empty here by design — would lose the entry silently.
+func TestOpenRecentRecordsTheIMAGEsPathNotTheDocumentsEmptyOne(t *testing.T) {
+	ts, srv := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "receipt.png")
+	if err := os.WriteFile(imgPath, testPNG(t, 64, 32), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: imgPath}); code != http.StatusOK {
+		t.Fatalf("open: %d %s", code, body)
+	}
+
+	// The document is pathless — the other half of the same rule, asserted here so the two cannot
+	// drift into agreeing.
+	srv.mu.Lock()
+	var doc *document
+	for _, d := range srv.docs {
+		if d.name == "receipt.png" {
+			doc = d
+		}
+	}
+	srv.mu.Unlock()
+	if doc == nil {
+		t.Fatal("the opened image installed no document")
+	}
+	if doc.path != "" {
+		t.Errorf("the opened image kept path %q; it must be pathless or Save overwrites the PNG", doc.path)
+	}
+
+	found := false
+	for _, r := range srv.vault.Recent() {
+		if r == imgPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Open Recent does not hold %q after opening it. The document is pathless by design, "+
+			"and Recent is what makes the image reachable again — recorded: %v", imgPath, srv.vault.Recent())
+	}
+}
