@@ -526,12 +526,15 @@ cleanup() { # exit-status
   fi
   if [ "$st" != "0" ]; then
     echo "the run failed — work dir PRESERVED at $WORK" >&2
+    [ -n "${PREBUILT_DIR:-}" ] && echo "  prebuilt binary PRESERVED at $PREBUILT_DIR" >&2
     for i in $(seq 1 "$N"); do
       [ -f "${HOMES[$((i-1))]}/nib.log" ] && echo "  instance $i log: ${HOMES[$((i-1))]}/nib.log" >&2
     done
     return
   fi
   rm -rf "$WORK"
+  # /pending 561: the `--lan` arm's prebuilt directory, which no shell outside this one can reach.
+  [ -n "${PREBUILT_DIR:-}" ] && rm -rf "$PREBUILT_DIR"
 }
 trap 'cleanup $?' EXIT
 # **`exit 130` is load-bearing.** A trap handler that RETURNS resumes the successor
@@ -673,6 +676,17 @@ if [ -n "${NIB_PAIR_BIN:-}" ]; then
   # Built outside the namespace: inside it there is no network, and the black-hole
   # default route would make any fetch hang rather than fail fast.
   cp "$NIB_PAIR_BIN" "$WORK/nib"
+  # **And its directory is THIS run's to remove** (`/pending 561`). The `--lan` arm takes a
+  # `mktemp -d` for the prebuilt binary and then `exec`s into the namespace — twice, since the
+  # inner shell `exec`s this script again — so the shell that made it is gone before the EXIT
+  # trap below is ever installed and nothing has ever removed it. Measured on this machine
+  # before the fix: **5 leaked directories, 510 MB**, one per `--lan` run, at ~102 MB each.
+  #
+  # The re-exec'd run is the first process in the chain that both knows the path and has a
+  # trap, so it is the one that can own it. `cleanup` removes it on success and PRESERVES it
+  # with `$WORK` on failure, which is the same rule and the same reason: a failed run's
+  # evidence is worth more than the disk.
+  PREBUILT_DIR="$(dirname "$NIB_PAIR_BIN")"
 else
   echo "building nib…"
   go build -o "$WORK/nib" ./cmd/nib || fail "could not build nib"
