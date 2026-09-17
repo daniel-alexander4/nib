@@ -5262,9 +5262,9 @@ closed.** The three rows below are the ones where the *green* was the finding ra
 
 | proof | check | expects |
 |---|---|---|
-| `a-carry-that-deletes-the-rolemap` — `delete(tree.root, "RoleMap")` beside the `/IDTree` drop | `go test ./internal/pdfops/ -run TestACarriedTreeKeepsItsRoleMap -count=1` | `the carried RoleMap is map[], want the source's map[Para:P]` |
-| `the-gate-never-refuses` — `subsetCarrying`'s `if !carried \|\| carryIsComplete(out)` replaced by `if true`, so an incomplete carry ships instead of falling back | `go test ./internal/pdfops/ -run TestTheOutputGateFallsBackToTheHonestLoss -count=1` | `the duplicate shipped a tagging claim … over a form XObject drawn twice` |
-| `no-orphan-page-condition` — `&& len(orphanPageObjects(ctx, live)) == 0` removed from `carryIsComplete` | `go test ./internal/pdfops/ -run TestTheOrphanPageConditionDECIDESTheGate -count=1` | `the output claims tagging (tree=true marked=true) over a document that still holds a page the subset removed` |
+| `subset-carry-drops-the-rolemap` — `delete(tree.root, "RoleMap")` beside the `/IDTree` drop | `go test ./internal/pdfops/ -run TestACarriedTreeKeepsItsRoleMap -count=1` | `the carried RoleMap is map[], want the source's map[Para:P]` |
+| `subset-carry-gate-never-refuses` — `subsetCarrying`'s `if !carried \|\| carryIsComplete(out)` replaced by `if true`, so an incomplete carry ships instead of falling back | `go test ./internal/pdfops/ -run TestTheOutputGateFallsBackToTheHonestLoss -count=1` | `the duplicate shipped a tagging claim … over a form XObject drawn twice` |
+| `subset-carry-no-orphan-page-condition` — `&& len(orphanPageObjects(ctx, live)) == 0` removed from `carryIsComplete` | `go test ./internal/pdfops/ -run TestTheOrphanPageConditionDECIDESTheGate -count=1` | `the output claims tagging (tree=true marked=true) over a document that still holds a page the subset removed` |
 
 **All three were GREEN across the whole suite before their readers existed** — the RoleMap deletion,
 the disabled gate and the missing orphan condition each left `go test ./internal/pdfops/` passing with
@@ -5282,7 +5282,7 @@ SECOND page makes segment 1 the untouched run, and the probe then goes red on it
 
 | proof | check | expects |
 |---|---|---|
-| `redaction-routed-through-the-carrying-door` — `RedactPages`' `collectWithoutStructure` replaced by `Collect` | `go test ./internal/pdfops/ -run TestRedactionEmitsNoStructureTree -count=1` | `the redacted document carries a structure tree. Its elements describe what the rasterised pages said` |
+| `redaction-routes-through-the-carrying-collect` — `RedactPages`' `collectWithoutStructure` replaced by `Collect` | `go test ./internal/pdfops/ -run TestRedactionEmitsNoStructureTree -count=1` | `the redacted document carries a structure tree. Its elements describe what the rasterised pages said` |
 
 **Two survivors, both real, both closed.** Sharing `eachParentTreeClaim`'s visited set across pages
 survived every existing reader, because all three of the agreement test's documents derive from a

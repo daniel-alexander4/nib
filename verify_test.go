@@ -1001,3 +1001,79 @@ func TestTheHarnessPopulationCountsMatchTheFilesOnDisk(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryReplayableLedgerRowNamesAFileThatExists — the ledger's token is what a human types.
+//
+// `./build/redproof.sh <name>` resolves `<name>` against `test/redproofs/<name>.sh`, and the name a
+// human reads is the leading backtick token of a row in `docs/red-proofs.md`. **Nothing made the two
+// agree**, and four rows drifted: the ledger said `no-orphan-page-condition` where the file was
+// `subset-carry-no-orphan-page-condition`, and three more like it. Every one answered
+// `FAIL: no red proof named …`.
+//
+// **Why no existing check caught it.** `TestVerifyContractIsTrue` counts files, `:423` buckets them
+// per tier, and `redproofstale_test.go` re-applies the patches — every one of them globs the
+// filesystem and none reads a row's token. `redproof.sh --all` globs too, so the standing sweep is
+// unaffected and the failure reaches only a human re-recording ONE row, which is exactly when the
+// ledger is being trusted most.
+//
+// **The discriminator is the check column, not the token's shape.** A ledger row's leading backtick
+// is often a code identifier or a CLI flag — `check`, `watch`, `observation`, `-h`, `--out-dir`,
+// `same-site` — and those rows describe a defect without being replayable. A row is replayable when
+// its CHECK column carries a runnable command, and only those rows owe a file. Measured when this
+// was written: 74 replayable rows of which 4 were dead, and zero false positives.
+func TestEveryReplayableLedgerRowNamesAFileThatExists(t *testing.T) {
+	// A row whose leading token is not a proof name AND whose check column happens to look
+	// runnable. Each needs a reason, because an unexplained exemption is how a guard stops
+	// describing the set.
+	notReplayable := map[string]string{
+		"the-undo-button-cannot-see-drawings": "recorded in prose beside its replayable sibling " +
+			"`undo-drains-one-stack-then-the-server`, which shares its test file; no patch was ever " +
+			"captured for this half. /pending 538.",
+	}
+
+	body, err := os.ReadFile(filepath.Join("docs", "red-proofs.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := regexp.MustCompile("^\\| `([a-z0-9][a-z0-9-]*)`")
+	runnable := regexp.MustCompile(`go test|node --test|\.test\.mjs|build/`)
+
+	replayable, dead := 0, 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "| "), "|")
+		if len(cells) < 2 {
+			continue
+		}
+		m := row.FindStringSubmatch(line)
+		if m == nil || !runnable.MatchString(cells[1]) {
+			continue
+		}
+		name := m[1]
+		if why, ok := notReplayable[name]; ok {
+			if _, err := os.Stat(filepath.Join("test", "redproofs", name+".sh")); err == nil {
+				t.Errorf("%q is listed as not replayable (%s) and test/redproofs/%s.sh now exists — "+
+					"remove the exemption", name, why, name)
+			}
+			continue
+		}
+		replayable++
+		if _, err := os.Stat(filepath.Join("test", "redproofs", name+".sh")); err != nil {
+			dead++
+			t.Errorf("docs/red-proofs.md names the replayable proof %q, and test/redproofs/%s.sh does "+
+				"not exist. `./build/redproof.sh %s` answers \"no red proof named\" — the row is "+
+				"unreplayable by the one name a reader is given.", name, name, name)
+		}
+	}
+	// The scan must have reached the rows, or finding no dead token says nothing. The floor is
+	// deliberately well below the measured 74: it guards against the scan breaking, not against
+	// the ledger growing.
+	if replayable < 50 {
+		t.Fatalf("the scan found %d replayable row(s) in docs/red-proofs.md; it found 74 when this "+
+			"guard was written, so the row parse is broken and a clean result would mean nothing",
+			replayable)
+	}
+	_ = dead
+}
