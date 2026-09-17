@@ -1025,11 +1025,17 @@ func TestEveryReplayableLedgerRowNamesAFileThatExists(t *testing.T) {
 	// A row whose leading token is not a proof name AND whose check column happens to look
 	// runnable. Each needs a reason, because an unexplained exemption is how a guard stops
 	// describing the set.
-	notReplayable := map[string]string{
-		"the-undo-button-cannot-see-drawings": "recorded in prose beside its replayable sibling " +
-			"`undo-drains-one-stack-then-the-server`, which shares its test file; no patch was ever " +
-			"captured for this half. /pending 538.",
-	}
+	// **Empty, and that is the finding rather than an oversight.** It held one entry, for
+	// `the-undo-button-cannot-see-drawings`, on the stated ground that "no patch was ever captured"
+	// — which was a misdiagnosis. That row was RETIRED: the Undo button left the toolbar, so it
+	// described a control the product no longer has, and no patch could ever be written for it
+	// (/pending 538, closed as overturned). Marking the row retired in its own cell rather than only
+	// in the prose below it makes the exemption unnecessary — the check column is no longer a
+	// runnable command, so the scan does not reach it.
+	//
+	// Kept as a map rather than deleted: the next genuinely-not-replayable row wants a reason
+	// beside it, and an exemption mechanism added under pressure is one added without one.
+	notReplayable := map[string]string{}
 
 	body, err := os.ReadFile(filepath.Join("docs", "red-proofs.md"))
 	if err != nil {
