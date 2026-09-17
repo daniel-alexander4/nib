@@ -5667,6 +5667,47 @@ uses an explicit `[page /Fit]` array now, the one shape that names a page dictio
 
 `recorded` 435 → 437.
 
+## `/pending 476` — the form-authoring client flow, driven for the first time
+
+`test/ui/formauthor.test.mjs` is the first test at any tier that CLICKS through *Detect fields* →
+*Save as fillable form…* → *name the fields* → `POST /api/form/author` and then reads the PDF that
+comes back. Before it, `grep -rln "form/author\|pendingAuthor\|fillable" test/` returned three files
+and every one of them was a source scan.
+
+**The gap was structural, not an oversight.** `internal/pdfops`'s form tests are thorough and each
+one supplies its own `FormField{Name, Label}` — so they assert `/TU` from a string the client is no
+longer the source of. Delete the line that sends `label` and `go test ./...` stays green from end to
+end while every fillable form nib authors loses the name a screen reader speaks.
+
+Three mutations, one condition at a time, against a tier green at 157/157 before the file and
+159/159 after it. Each failed exactly one test — the new one — and the message named which half of
+the split had gone:
+
+| proof | check | expects |
+|---|---|---|
+| `an-authored-field-announces-nothing` — `if (typed) spec.label = typed;` deleted, so the client sends no label at all | `test/ui/formauthor.test.mjs` at tier 3, via `./build/uirepro.sh` | `a screen reader meeting this form announces [null,null] … A null means no /TU was written at all: the client stopped sending `label`` |
+
+Two more were run and are recorded here as prose, because each announces itself and only the one
+above is silent:
+
+- **The announced name derived from the identifier** — `spec.label = name` in place of
+  `spec.label = typed`, which is the exact confusion `fieldNameGo`'s own comment forbids. 158/159:
+  *"a screen reader meeting this form announces ["Full name","Full name_2"] … A "Full name_2" means
+  the announced name was derived from the de-duplicated identifier instead of from the typed text:
+  two blanks a human calls by one name, read out as two different ones."*
+- **The de-dupe removed** — `for (let n = 2; seen.has(name); n++) name = base + '_' + n;` deleted,
+  so both fields keep the typed name. 158/159, and it fails one assertion earlier than the other
+  two: *"POST /api/form/author answered 400 — {"error":"could not author form: pdfcpu: duplicate
+  form field: Full name"}"*. Without that status check the defect would have arrived as the Save As
+  dialog never opening, thirty seconds later, saying nothing about why.
+
+**The second and third are why one case covers three properties.** The de-dupe and the label split
+are the same three lines of `fieldNameGo` and they fail in opposite directions: derive the label
+from the name and `/TU` goes wrong while `/T` stays right; drop the de-dupe and the document does
+not exist at all. A test asserting only one of them would pass over the other.
+
+`recorded` 446 → 447.
+
 ## `/pending 517` — a hop the dialer signs, a quote that could never be quoted, an arm that opens first
 
 Four clauses of one backlog item, each marked in the entry as read, unread, or a reviewer's claim.
