@@ -302,11 +302,21 @@ var published = map[string][]string{
 	// **The park is deleted rather than kept as a comment**, because its own stated deletion
 	// condition is met: `applyFitReport` in web/app.js consumes the report, and the JS arm of
 	// this scan matches a reader on the bare JSON tag.
-	"pdfops.Fit":       {"internal/server/overlay.go", "web/app.js"},
-	"vault.KeyInfo":    {"internal/server/keys.go", "web/app.js"},
-	"vault.PinnedPeer": {"internal/server/peers.go", "internal/vault/vault.go"},
-	"vault.Settings":   {"internal/server/settings.go", "internal/vault/vault.go"},
-	"vault.Image":      {"internal/server/images.go", "internal/vault/vault.go"},
+	"pdfops.Fit": {"internal/server/overlay.go", "web/app.js"},
+	// **`DocumentFacts` is what the COMMIT DOORS compare across an operation** (/pending 574).
+	// `internal/server/undo.go` is `noteTaggingFate`, its only production consumer, and it reads
+	// all four fields — `Readable` to refuse a side it could not parse, `Tagged` for ADR-031's
+	// notice, and the two counts for the loss banner.
+	//
+	// **The declaring file is deliberately NOT listed.** `tagfate.go` builds the struct with
+	// `Readable:` / `Tagged:` and never selects `.Readable` off one, so the scan is right that it
+	// reads none of these fields — and an entry naming a file that reads nothing is what
+	// `/pending 558` calls laundering the outside-the-package arm.
+	"pdfops.DocumentFacts": {"internal/server/undo.go"},
+	"vault.KeyInfo":        {"internal/server/keys.go", "web/app.js"},
+	"vault.PinnedPeer":     {"internal/server/peers.go", "internal/vault/vault.go"},
+	"vault.Settings":       {"internal/server/settings.go", "internal/vault/vault.go"},
+	"vault.Image":          {"internal/server/images.go", "internal/vault/vault.go"},
 	// **`ImageMeta` is the listing's shape and `Image` is the fetch's** (/pending 567). Splitting
 	// them is what let the accessors deep-copy: `handleImagesList` renders id, name and MIME, so it
 	// reads this one, and `handleImageGet` and `overlay.go` still read `Image` for its `Data`. Both

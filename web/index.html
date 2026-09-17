@@ -888,6 +888,16 @@
         <span id="tagNoticeText"></span>
         <button id="tagNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
       </div>
+      <!-- The page operations' notice channel (/pending 574). A SECOND banner and not a second
+           sentence in the one above, because the two say different things and are dismissed
+           separately: the tagging notice is about a property of the file that cannot be put back,
+           and this is a count of content an operation destroyed. Same role/polite reasoning as its
+           neighbour, and the same refusal of a toast — `toast` clears itself after 2500 ms, and a
+           user who has just reordered forty pages needs this on screen when they save. -->
+      <div id="lostNotice" role="status" aria-live="polite" hidden>
+        <span id="lostNoticeText"></span>
+        <button id="lostNoticeDismiss" type="button" aria-label="Dismiss">Dismiss</button>
+      </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
         <button id="signDone" hidden>Finish &amp; sign</button>

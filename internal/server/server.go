@@ -150,6 +150,13 @@ type document struct {
 	// arrived with — law 2's `dropped-with-notice`, ADR-031. Sticky for the document's life; see
 	// noteTaggingFate for why it is not per-operation.
 	taggingDropped bool
+	// lostAnnots and lostFields are how many annotations and `/AcroForm` fields operations on this
+	// document have destroyed (/pending 574). Sticky and ACCUMULATING, where taggingDropped is a
+	// latch: losing three comments and then two form fields cost the user five things, and a
+	// per-operation figure would report the last one. Written only by noteTaggingFate, which is the
+	// only place a document's before and after are both in hand.
+	lostAnnots int
+	lostFields int
 
 	// disk is what the file at `path` looked like when this document last agreed with
 	// it — nil for a path-less document, which has no file to disagree with. Written
@@ -634,6 +641,11 @@ type docResponse struct {
 	// Omitted while false, so a document that never carried tagging — which is nearly all of them —
 	// serializes exactly as it did before.
 	TaggingDropped bool `json:"taggingDropped,omitempty"`
+	// LostAnnots and LostFields are what operations on this document have destroyed and could not
+	// carry — comments, links and form fields (/pending 574). `omitempty`, so the overwhelmingly
+	// common case of a document that lost nothing puts nothing on the wire.
+	LostAnnots int `json:"lostAnnots,omitempty"`
+	LostFields int `json:"lostFields,omitempty"`
 
 	// DiskChanged says the file this document was opened from now holds something else,
 	// so what the user is looking at is no longer what is on disk (/pending 333).
@@ -1664,6 +1676,8 @@ func (s *Server) docResponse(doc *document) docResponse {
 		CanRedo:        len(doc.redo) > 0,
 		HistoryEvicted: doc.historyEvicted,
 		TaggingDropped: doc.taggingDropped,
+		LostAnnots:     doc.lostAnnots,
+		LostFields:     doc.lostFields,
 		InCeremony:     doc.ceremony != "",
 	}
 	// The bytes are read AFTER the lock is released, deliberately: FlagsJSON parses

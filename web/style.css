@@ -2132,4 +2132,27 @@ body.presenting .presentbar { display: flex; }
   border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
 }
 #tagNotice #tagNoticeDismiss:hover { border-color: var(--text); color: var(--text); }
+
+/* The page operations' loss notice (/pending 574). It shares #tagNotice's box entirely — same
+   surface, same yellow border, same reasoning about --yellow over --peach — and differs in two
+   things only: it sits ABOVE its neighbour so the two can be on screen together without one
+   covering the other, and its glyph is a document rather than the accessibility mark, because what
+   it reports is lost content and not a lost property of the file. */
+#lostNotice {
+  position: absolute; bottom: 120px; right: 14px; z-index: 11;
+  display: flex; align-items: center; gap: 12px;
+  max-width: 46ch;
+  padding: 7px 10px 7px 14px; border-radius: 8px;
+  background: var(--surface0); color: var(--text);
+  border: 1px solid var(--yellow);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 25%);
+  font-size: 13px;
+}
+#lostNotice::before { content: "📄 "; }
+#lostNotice #lostNoticeDismiss {
+  flex: none;
+  background: none; border: 1px solid var(--surface1); color: var(--subtext1);
+  border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer;
+}
+#lostNotice #lostNoticeDismiss:hover { border-color: var(--text); color: var(--text); }
 #fitNotice #fitNoticeDismiss:hover { background: var(--surface2); }
