@@ -1,0 +1,20 @@
+--- a/internal/server/auth.go
++++ b/internal/server/auth.go
+@@ -130,7 +130,7 @@
+ 			// nils `s.vault` and calls `ensureUnlocked` again, so an import landing while this sweep
+ 			// is still walking `~/nib/ceremonies` arrives back here with `fresh` true. That door
+ 			// serializes them; its own header has the rest.
+-			s.runCeremonySweep("delivery re-arm", func() {
++			go func() {
+ 				// **Close-out runs BEFORE the re-arm, on the same goroutine.** They read the
+ 				// same listing and reach opposite conclusions about the same ceremony — one
+ 				// arms a rendezvous for it, the other moves its directory out from under that
+@@ -155,7 +155,7 @@
+ 				// exists to keep a live one alive.
+ 				s.SeedAdvanced(v)
+ 				s.rearmCeremonies(v)
+-			})
++			}()
+ 		}
+ 	}
+ }

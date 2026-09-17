@@ -202,7 +202,42 @@ func CreateDurable(path string, data []byte, perm os.FileMode) error {
 //
 // Only the permission bits are carried, never ownership, and the stat happens just before the write:
 // a mode changed in that gap is lost, which is the same bound diskChanged states about itself.
+//
+// # It follows a symlink to its target, and that is the door for the whole tree (/pending 515)
+//
+// Every door here finishes with a rename, and a rename over a symlink REPLACES THE LINK: the user's
+// link becomes a regular file holding the new bytes, the real document it pointed at keeps the old
+// ones, and nothing says so. `internal/cli`'s `writeNamed` learned this the hard way — *"an in-place
+// rewrite of a symlink silently destroyed the link, left the real file untouched, and dropped the
+// output in the link's directory instead"* — and it now calls this function rather than carrying a
+// second copy of the resolution (ADR-009). The GUI's two save doors had no copy at all, so saving a
+// document opened through a link did exactly that.
+//
+// **Resolved HERE, immediately before the write, and deliberately not at the point the file was
+// opened.** A path resolved when a document is opened and used when it is saved writes to whatever
+// the link pointed at then — so a link re-pointed in between sends the save to the wrong file, which
+// is a worse failure than the one being fixed. It also makes the resolution invisible to the user:
+// `doc.path` is what Nib shows her and what Open Recent records, and a link she re-points on purpose
+// is not something Nib may quietly replace with today's target. The window here is the width of the
+// write, the same bound this function's permission stat already states about itself.
+//
+// **Only the user-owned door does this.** `WriteDurable`'s own callers write nib's files — the
+// vault, the ceremony mirror, the sidecars — where a link is not part of the contract and following
+// one would let anything that can drop a link into `~/nib` redirect a write.
+//
+// A link that cannot be resolved is left alone: `EvalSymlinks` fails on a dangling link and on a
+// loop, and neither has a target to write to. Renaming over the link is then the only thing that can
+// succeed, and it is what happened before this existed.
+//
+// **The declared exposure**: a link planted at the destination by someone else sends this write to
+// wherever it points, within what the user could already write. That is the same trade
+// `internal/cli` has made since /pending 504 for a path named on the command line, and every caller
+// here names a path the user chose in a file dialog — over an existing file, only after the route's
+// own `os.Stat` refusal has been answered with an explicit `overwrite=1`.
 func ReplaceDurable(path string, data []byte, perm os.FileMode) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
 		perm = fi.Mode().Perm()
 	}

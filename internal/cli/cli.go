@@ -23,7 +23,6 @@ import (
 	"nib/internal/addrscope"
 	"nib/internal/atomicfile"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -264,45 +263,37 @@ func writeAtomic(path string, data []byte) error {
 // **Why not `os.WriteFile`, which four output paths used.** It truncates the target and then
 // writes, so `nib optimize a.pdf -o a.pdf` — or `--out-dir` pointed at the input's own folder —
 // destroyed the only copy the instant the output began, and a failure part-way left neither.
-// Through `WriteDurable` the original stays whole until the new bytes are on disk.
-//
-// **The one named exemption: a target that exists and is not a regular file** — `-o /dev/null`, a
-// named pipe. Renaming over a device is not what anyone asked for, and there is no copy to protect,
-// so those are written straight through.
+// Through `atomicfile.ReplaceDurable` the original stays whole until the new bytes are on disk, it
+// keeps the mode it had, and a symlink is followed to its target rather than replaced by the rename.
 func writeNamed(path string, data []byte) error {
-	perm := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		if !info.Mode().IsRegular() {
-			return os.WriteFile(path, data, 0o644)
-		}
-		perm = info.Mode().Perm()
+	// **The one named exemption, and it is why this wrapper still exists.** A target that exists
+	// and is not a regular file — `-o /dev/null`, a named pipe — is written straight through:
+	// renaming over a device is not what anyone asked for, and there is no copy to protect.
+	// `os.Stat` follows a link, so a link TO a device takes this branch and a link to a regular
+	// file falls through to the door below, which is the same classification as before.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() {
+		return os.WriteFile(path, data, 0o644)
 	}
-	// Follow a symlink to its target before writing. os.Stat already follows one to
-	// read the mode, but CreateTemp+Rename replaces the LINK — so an in-place
-	// rewrite of a symlink silently destroyed the link, left the real file
-	// untouched, and dropped the output in the link's directory instead. The same
-	// rename breaks a hard link. README promises the rewrite "preserves the file's
-	// permissions"; converting a link into a regular file is not that.
-	if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
-		path = resolved
-	}
-	// **`WriteDurable`, through the one door** (/pending 316). This was a hand-rolled
-	// temp-file-plus-rename sitting outside `internal/atomicfile` — the second implementation
-	// `atomicroute_test.go`'s doc says must not exist — and it had **no fsync**.
+	// **`atomicfile.ReplaceDurable`, and this used to be a second copy of that door** (/pending 515).
 	//
-	// Durable, not merely atomic, and the contract decides it rather than taste: `-w` renames
-	// over the user's ONLY copy, so the original inode is gone the instant the rename lands. That
-	// is verbatim `WriteDurable`'s "callers that hold the only copy". The alternative would let a
-	// crash inside the writeback window leave a truncated PDF where the original was, after this
-	// command has already printed "rewritten". Measured cost on this host (ext4/NVMe): about
-	// 14 ms per file, roughly flat from 100 KB to 10 MB — an order below the transform each of
-	// these files has already paid. Unmeasured, and named as such: network filesystems and
-	// spinning disks.
+	// It carried its own mode-preserving stat and its own `filepath.EvalSymlinks`, under a comment
+	// arguing both *"stay HERE rather than moving into the door: following a link is right for a
+	// path the user named on the command line and wrong for `atomicfile`'s other callers"*. That was
+	// true of `WriteDurable`, which is what this called, and it stopped being the whole truth when
+	// /pending 499 split off `ReplaceDurable` — *"WriteDurable for a file the USER owns"* — which is
+	// exactly the class this argument describes. The GUI's save doors reach the same rule through the
+	// same function, so a link followed here and replaced there cannot happen (ADR-009).
 	//
-	// The stat above and the `EvalSymlinks` below stay HERE rather than moving into the door:
-	// following a link is right for a path the user named on the command line and wrong for
-	// `atomicfile`'s other callers, which write inside `~/nib` and the config dir.
-	return atomicfile.WriteDurable(path, data, perm)
+	// Durable, not merely atomic, and the contract decides it rather than taste: `-w` renames over
+	// the user's ONLY copy, so the original inode is gone the instant the rename lands. The
+	// alternative would let a crash inside the writeback window leave a truncated PDF where the
+	// original was, after this command has already printed "rewritten". Measured cost on this host
+	// (ext4/NVMe): about 14 ms per file, roughly flat from 100 KB to 10 MB — an order below the
+	// transform each of these files has already paid. Unmeasured, and named as such: network
+	// filesystems and spinning disks.
+	//
+	// 0644 is the mode for a file that does not exist yet; an existing one keeps its own.
+	return atomicfile.ReplaceDurable(path, data, 0o644)
 }
 
 // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,

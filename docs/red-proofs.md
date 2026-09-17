@@ -5380,6 +5380,51 @@ during the slice's own review. The octal-escape run length at `textrun.go`'s str
 widened to `n <= 3`, which mis-decodes `(\1013)`) is pre-existing code this diff does not touch; it is
 filed rather than fixed here.
 
+## `/pending 515` — two vault-import sweeps, and a save that replaced the user's symlink
+
+Two clauses of one backlog item, dispositioned separately. Four targeted mutations, no survivors;
+the third row is the near-miss fix rather than the original defect, recorded because it passes the
+assertion the first row goes red on.
+
+**The overlap was established before it was fixed.** `adoptVault` launches the sweep only when the
+vault goes from nil to open, so the entry's *"can run twice at once"* needed a second path to that
+transition: `handleVaultImport` (`auth.go`) sets `s.vault, s.csrf = nil, ""` and calls
+`ensureUnlocked()`, which reaches `adoptVault` with `fresh` true again. `rearmCeremoniesAsync` is a
+third trigger, and `rearmCeremoniesPreferring`'s own comment already recorded the symptom in the
+small — *"two accepts in quick succession each start a sweep, so both displace and whichever runs
+last wins"*.
+
+**`-race` is evidence here and not the assertion.** The two sweeps contend on the filesystem — a
+`rename` against a `ListStored` — which the detector does not instrument at all, and it reports only
+the interleaving it happens to get. The assertion is a count of how many sweep bodies were inside the
+door at once, which is true or false independently of scheduling.
+
+| proof | check | expects |
+|---|---|---|
+| `a-user-file-write-renames-over-the-symlink` — `ReplaceDurable` hands straight to `WriteDurable`, whose rename replaces a symlink rather than writing through it, as it did until this item | `go test ./internal/atomicfile/ ./internal/server/ -run 'Symlink\|FollowsAChain' -count=1` | `replaced the user's symlink with a regular file` |
+| `two-ceremony-sweeps-run-at-once` — the sweep body runs on a bare `go func` with nothing serialising it | `go test ./internal/server/ -run 'TestTwoCeremonySweepsNeverOverlap\|TestEveryCeremonySweepGoesThroughTheOneDoor' -count=1` | `were running at once` |
+| `the-sweep-door-coalesces-instead-of-queueing` — `TryLock`, skip when one is running: the near-miss that passes the overlap assertion | `go test ./internal/server/ -run TestTwoCeremonySweepsNeverOverlap -count=1` | `sweeps ran to completion` |
+| `a-sweep-trigger-launches-its-own-goroutine` — `adoptVault` back on its own `go func`, around the door | `go test ./internal/server/ -run TestEveryCeremonySweepGoesThroughTheOneDoor -count=1` | `no longer routes its sweep through runCeremonySweep` |
+
+**Where the symlink resolution goes was the contested half, and the entry's own first step was
+amended.** *"Resolve a symlinked `doc.path` once at open and write to the target"* resolves at open
+and writes at save, so a link re-pointed in between sends the save to the file the link used to name
+— a worse failure than the one being fixed, and silent. It also changes what the user is shown:
+`doc.path` is reported to the client (`TestOpenAndFetchPDF` asserts `dr.Path == path`), recorded by
+Open Recent, and used as Save As's folder, so resolving at open takes her chosen name away from every
+place Nib prints one. The resolution belongs at the write, which is where `internal/cli`'s
+`writeNamed` has had it since /pending 504 — so the fix is that function calling
+`atomicfile.ReplaceDurable` instead of carrying a second copy of it, and `ReplaceDurable`, *"WriteDurable
+for a file the USER owns"*, doing the resolving for both.
+
+**`WriteDurable` deliberately does not.** Its callers write nib's own files — the vault, the ceremony
+mirror, the sidecars — where a link is not part of the contract. The repo had already drawn that line
+from the other side: `watch` following a symlink out of the watched directory was closed at the
+SCANNER (`O_NOFOLLOW`, `TestWatchNeverFollowsASymlinkOutOfTheWatchedDirectory`) and not by taking
+`EvalSymlinks` out of the writer.
+
+`recorded` 431 → 435.
+
 ## /pending 507 — the PDF/UA checker's remaining silent short reads (2026-09-16)
 
 **Eleven targeted mutations, no survivors.** Four short reads were filed; measurement overturned two

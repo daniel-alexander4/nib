@@ -1,0 +1,13 @@
+--- a/internal/server/ceremonyarm.go
++++ b/internal/server/ceremonyarm.go
+@@ -331,7 +331,9 @@
+ func (s *Server) runCeremonySweep(what string, body func()) {
+ 	go func() {
+ 		defer safe.Recover(what)
+-		s.sweepMu.Lock()
++		if !s.sweepMu.TryLock() {
++			return
++		}
+ 		defer s.sweepMu.Unlock()
+ 		body()
+ 	}()

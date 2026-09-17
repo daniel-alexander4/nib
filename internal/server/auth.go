@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"nib/internal/pdfops"
-	"nib/internal/safe"
 	"nib/internal/sshkey"
 	"nib/internal/vault"
 
@@ -125,8 +124,13 @@ func (s *Server) adoptVault(v *vault.Vault) {
 		// a network listener is not something constructing a `Server` should do; it is something
 		// running Nib does, and `cmd/nib` says so.
 		if s.deliveryRearm.Load() {
-			go func() {
-				defer safe.Recover("delivery re-arm")
+			// **Through `runCeremonySweep`, which is what keeps the sequencing below true**
+			// (`/pending 515`). Ordering these four calls inside one goroutine says nothing about a
+			// SECOND goroutine running them at the same time, and there is one: `handleVaultImport`
+			// nils `s.vault` and calls `ensureUnlocked` again, so an import landing while this sweep
+			// is still walking `~/nib/ceremonies` arrives back here with `fresh` true. That door
+			// serializes them; its own header has the rest.
+			s.runCeremonySweep("delivery re-arm", func() {
 				// **Close-out runs BEFORE the re-arm, on the same goroutine.** They read the
 				// same listing and reach opposite conclusions about the same ceremony — one
 				// arms a rendezvous for it, the other moves its directory out from under that
@@ -151,7 +155,7 @@ func (s *Server) adoptVault(v *vault.Vault) {
 				// exists to keep a live one alive.
 				s.SeedAdvanced(v)
 				s.rearmCeremonies(v)
-			}()
+			})
 		}
 	}
 }
