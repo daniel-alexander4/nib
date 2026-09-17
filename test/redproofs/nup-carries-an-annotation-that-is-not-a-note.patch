@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/annotcarry.go b/internal/pdfops/annotcarry.go
+index ff2d925..97dde14 100644
+--- a/internal/pdfops/annotcarry.go
++++ b/internal/pdfops/annotcarry.go
+@@ -198,7 +198,7 @@ func captureNoteAnnots(pdf []byte) (map[int]*noteSource, int, bool) {
+ 				src.left++
+ 				continue
+ 			}
+-			if sub := ad.NameEntry("Subtype"); sub == nil || *sub != "Text" {
++			if sub := ad.NameEntry("Subtype"); sub == nil {
+ 				src.left++
+ 				continue
+ 			}

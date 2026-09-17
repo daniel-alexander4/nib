@@ -430,3 +430,17 @@ home today.
   and 13/14 carry through unchanged, held by a red proof. Declared gap: `AuthoredTextFaces` (Roboto
   ×4 + LiberationMono) is not renamed, because it would move every Markdown conversion's `/BaseFont`
   and touch ADR-033's label claim.
+
+- **[ADR-045 — a composition carries the comments of the pages it composes](045-a-composition-carries-the-comments-of-the-pages-it-composes.md)**
+  — /pending 562. `api.NUp` never looks at `/Annots`, and pdfcpu writes by reachability, so every
+  annotation left the file with the page dictionaries the composition removed: **3 sticky notes in,
+  0 out**. On a tagged document it cost the whole tag tree as well — the note's `/Annot` element's
+  `/ParentTree` key became `unowned-key` and `completeOrHonest` abandoned the carry. The n-up now
+  puts each note back on the sheet its page landed on, with the rect through `R × FormMatrix × CM`
+  read out of the document rather than re-derived, and an `OBJR` repointed at the copy so the
+  orphan is not written. `/Text` alone: an annotation with an appearance stream would be drawn
+  upright inside a rect the placement turns 90°, and a `/Widget` would put signature rubble back
+  past four gates that key on an edited document having none. Cost measured at +10 ms on a 40-page
+  document with 40 notes, and inside the noise with none. Declared gap: everything that is not a
+  `/Text` is still dropped, still without a sentence — the page-op route has no notice channel.
+

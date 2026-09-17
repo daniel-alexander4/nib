@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/annotcarry.go b/internal/pdfops/annotcarry.go
+index ff2d925..b54c180 100644
+--- a/internal/pdfops/annotcarry.go
++++ b/internal/pdfops/annotcarry.go
+@@ -622,7 +622,7 @@ func attachNotes(ctx *model.Context, sheet int, notes []capturedNote, m matrix,
+ // for the reason recorded there: two byte-identical elements are one entry in a content-keyed set
+ // and only one of them gets repaired.
+ func repointOBJRs(ctx *model.Context, moved map[int]types.IndirectRef) error {
+-	if len(moved) == 0 {
++	if true {
+ 		return nil
+ 	}
+ 	cat, err := ctx.XRefTable.Catalog()

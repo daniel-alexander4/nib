@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/annotcarry.go b/internal/pdfops/annotcarry.go
+index ff2d925..ee42766 100644
+--- a/internal/pdfops/annotcarry.go
++++ b/internal/pdfops/annotcarry.go
+@@ -443,7 +443,7 @@ func carryNoteAnnots(src, composed []byte) ([]byte, noteCarry) {
+ 		// letting it fail the identity check would lose another page's notes over a page whose
+ 		// annotations this door was never going to touch.
+ 		for i, pl := range places {
+-			srcPage := i + 1
++			srcPage := len(places) - i
+ 			s, has := sources[srcPage]
+ 			if !has || len(s.notes) == 0 {
+ 				continue

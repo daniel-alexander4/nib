@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/annotcarry.go b/internal/pdfops/annotcarry.go
+index ff2d925..17a5f61 100644
+--- a/internal/pdfops/annotcarry.go
++++ b/internal/pdfops/annotcarry.go
+@@ -506,7 +506,7 @@ func placementMatrix(ctx *model.Context, pl sheetPlacement, pageContent []byte)
+ 			return identityMatrix, fmt.Errorf("%w: /%s on sheet %d carries a prefix that is not one cm",
+ 				errNoteCarry, pl.name, pl.sheet)
+ 		}
+-		rot = m
++		_ = m
+ 	}
+ 	form := identityMatrix
+ 	if fm, ok := matrixFrom(ctx, sd.Dict["Matrix"]); ok {

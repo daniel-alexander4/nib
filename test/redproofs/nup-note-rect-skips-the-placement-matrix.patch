@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/annotcarry.go b/internal/pdfops/annotcarry.go
+index ff2d925..bb49593 100644
+--- a/internal/pdfops/annotcarry.go
++++ b/internal/pdfops/annotcarry.go
+@@ -585,7 +585,7 @@ func attachNotes(ctx *model.Context, sheet int, notes []capturedNote, m matrix,
+ 		if !ok {
+ 			return fmt.Errorf("%w: a note on sheet %d has no readable /Rect", errNoteCarry, sheet)
+ 		}
+-		a, b, c, e := m.rect(llx, lly, urx, ury)
++		a, b, c, e := llx, lly, urx, ury
+ 		// A fresh dictionary per placement, because a repeated source page draws the same note
+ 		// twice and one dictionary cannot hold two rects. Nothing repeats a page today — `api.NUp`
+ 		// places each selected page once — but sharing the map would make that a silent misplacement
