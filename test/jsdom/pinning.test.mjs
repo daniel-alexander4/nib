@@ -608,8 +608,14 @@ test('the signing exports are covered by name', () => {
 
 // P05.S04 — the other half of P04's export-name rule, and the half that shipped broken.
 //
-// D7's rule is "capture the export name at operation entry". Nineteen scopes obey it by
-// declaring `const exportName = exportBase();` at the top of the handler that uses it.
+// D7's rule is "capture the export name at operation entry". Every export scope but two obeys it
+// by declaring `const exportName = exportBase();` at the top of the handler that uses it.
+//
+// **The count that used to sit here has been taken out, and so has app.js's (/pending 513).** Both
+// read "nineteen" against a file that had grown to twenty-one — a literal in prose that nothing
+// executes is drift the moment the next export lands, and resetting it to 21 only buys until the
+// next one. The floor below is the assertion; the population is whatever app.js holds.
+//
 // TWO could not, because their flow is split across two handlers: the one that produces
 // the artifact (`reduceGo`, `tvFile`) and the one that saves it (`reduceSave`, `tvSave`).
 // The rewrite gave the second handler no local entry to capture at, and it read the first
@@ -647,7 +653,7 @@ test('no handler reads an export name it did not capture', () => {
   assert.deepEqual(unscoped, [],
     `an export name is read outside the handler that captured it — this throws ReferenceError at click time and node --check cannot see it:\n  ${unscoped.join('\n  ')}`);
 
-  // Stimulus: the scan must actually be reading a population. Nineteen-odd scopes declare
+  // Stimulus: the scan must actually be reading a population. A score of scopes declare
   // it; if that count collapses, the green above is over nothing.
   const declared = (APP.match(/const exportName = exportBase\(\);/g) || []).length;
   assert.ok(declared >= 15,

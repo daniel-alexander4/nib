@@ -288,3 +288,81 @@ test('a machine WITH LibreOffice is told nothing — the explanation is not a st
       + 'LibreOffice installed and nothing to fix');
   }
 });
+
+// ── /pending 513 — every ARM goes through the disarm door too ────────────────────────────────────
+//
+// /pending 506 gave the lock one door for "nothing is armed". It left eleven other sites each
+// writing the same rule out by hand — "arming this one puts down the others" — and the eleven
+// disagreed with each other in thirteen places, which is ADR-009's failure exactly: Border left
+// Shape armed; Dropdown, Radio and the new-document teardown left Checkbox armed; Note left
+// Dropdown, Radio and Checkbox armed; Redact left Edit text armed; four sites left the pdf.js
+// Text/Highlight/Draw mode live underneath a box tool; and `setTool`, arming that mode, left Crop,
+// Split-by-box and the flag tools alone. Two box tools share one `pointerdown` on `#viewerWrap`,
+// and a live pdf.js editor layer takes the pointer outright — so each gap is a tool the user has
+// lit and cannot draw with.
+//
+// **The population is DISCOVERED and not listed**, because ADR-009's own words are that eight
+// copies checked for agreement say nothing about a ninth site added without one. A roster typed
+// into this file would be that ninth site's blind spot. The scan looks for the act itself: turning
+// a drawing mode on.
+test('every arm puts the other tools down through the one door, and none keeps its own list', () => {
+  const lines = APP.split('\n');
+  // Approximate a handler as the region back to the nearest module-level binding — pinning.test.mjs
+  // uses the same coarse rule and for the same reason: it over-reports rather than under-reports,
+  // and a false positive here is a loud question about a real handler.
+  const starts = lines.reduce((acc, l, i) => {
+    if (/^(els\.[\w.]+ = |function |const \w+ = (async )?\(|let )/.test(l)) acc.push(i);
+    return acc;
+  }, [0]);
+  const arms = [];
+  lines.forEach((l, i) => {
+    if (l.trim().startsWith('//')) return;
+    const m = /view\.([A-Za-z]+Mode) = (true|on)\b/.exec(l);
+    if (!m) return;
+    const prev = Math.max(...starts.filter((s) => s <= i));
+    arms.push({ mode: m[1], at: i + 1, body: lines.slice(prev, i + 1).join('\n') });
+  });
+  // The stimulus floor: ten tools arm this way today, and a scan reading none of them would pass
+  // every assertion below.
+  assert.ok(arms.length >= 9,
+    `only ${arms.length} arming sites found — the scan is not reading what it thinks`);
+
+  const unrouted = arms.filter((a) => !a.body.includes('disarmEditingTools()'))
+    .map((a) => `${a.at}: view.${a.mode}`);
+  assert.deepEqual(unrouted, [],
+    'an arm turns its mode on without going through disarmEditingTools, so it puts down whatever '
+    + `its own list happens to remember — and every such list has been wrong:\n  ${unrouted.join('\n  ')}`);
+
+  // **That assertion also carries the ORDERING, and it is worth saying why rather than writing a
+  // second check that cannot fail.** Each region above ends AT the line that turns the mode on, so
+  // a door call found inside it is a door call that runs before the mode is written — which is the
+  // property that matters: the door ends in `exitX()` for every tool, so an arm that set its flag
+  // first would have the door switch it straight back off, and the tool would light up and disarm
+  // in the same click. A separate "is the door earlier than the assignment" check over this slice
+  // is true by construction, so it is stated here instead of asserted.
+
+  // The two that cannot join the population above, because neither writes a `<x>Mode = true`: the
+  // pdf.js editor modes and the flag tools. Both RE-ENTER the door — it ends by calling each of
+  // them — so both are asserted by name rather than trusted to the scan.
+  const tool = bodyOf('function setTool(mode) {');
+  assert.ok(tool, 'setup: setTool is gone');
+  assert.match(tool, /if \(on\) disarmEditingTools\(\);/,
+    'setTool arms a pdf.js editor mode over whatever Nib-side tools its own list forgets — it '
+    + 'forgot Crop, Split-by-box and every flag tool');
+  assert.doesNotMatch(tool, /\bexit[A-Z]\w*\(\)/,
+    'setTool still names individual exits, so the door and this list can disagree again');
+
+  const marker = bodyOf('function setMarkerMode(m) {');
+  assert.ok(marker, 'setup: setMarkerMode is gone');
+  assert.match(marker, /disarmEditingTools\(\);/,
+    'arming a flag tool keeps its own list of what to put down — the copy that left the pdf.js '
+    + 'editor layer live over the page the flag is being placed on');
+  assert.doesNotMatch(marker, /\bexit[A-Z]\w*\(\)/,
+    'setMarkerMode still names individual exits, so the door and this list can disagree again');
+  // The ordering argument again, and here it is load-bearing in a second way: the door calls
+  // `setMarkerMode(null)`, so this function re-enters itself. Writing the mode after the door is
+  // what stops that re-entry clearing the mode being armed.
+  assert.ok(marker.indexOf('disarmEditingTools();') < marker.indexOf('view.markerMode = m;'),
+    'setMarkerMode writes the mode before calling the door, and the door calls setMarkerMode(null) '
+    + '— so arming a flag tool clears it in the same call');
+});
