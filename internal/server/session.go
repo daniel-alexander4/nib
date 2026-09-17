@@ -2355,6 +2355,37 @@ func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **A typed peer address this arm cannot use is REFUSED, never ignored** (/pending 551).
+	//
+	// `req.Address` is read in exactly one place — the QUIC-ceremony branch below, where it makes
+	// the receive role DIAL as well as accept. Every other arm reaching this handler dropped it on
+	// the floor and answered 200: a caller who typed an address to reach a peer got an arm that
+	// never dialled, and the only thing distinguishing that from a working one is a dial that
+	// silently did not happen. That is the silent downgrade `checkTransport` spends sixteen lines
+	// refusing, on the same route, four fields along.
+	//
+	// **Which half failed is in the message**, because the two are fixed differently: a manual arm
+	// wants an invitation, and a TCP ceremony arm wants `"transport":"quic"`. A single "cannot name
+	// an address here" would leave the caller to guess which.
+	//
+	// Placed after the ceremony resolves and BEFORE `displacePolicyArm`, so a refusal costs no
+	// socket and displaces no arm this machine is already holding — the ordering this handler's own
+	// invitation refusal already uses, for the reason it states there.
+	if req.Address != "" {
+		switch {
+		case cer == nil:
+			httpError(w, http.StatusBadRequest,
+				"a peer address can only be named when arming for a ceremony — this arm has no "+
+					"invitation, so there is nobody to dial")
+			return
+		case req.Transport != transportQUIC:
+			httpError(w, http.StatusBadRequest,
+				"a peer address can only be named on a QUIC arm — a ceremony armed over TCP "+
+					"listens and never dials, so the address would not be used")
+			return
+		}
+	}
+
 	// **An explicit request displaces this machine's own accept-time arm, and only that**
 	// (phase-close finding, found by tier 6).
 	//
