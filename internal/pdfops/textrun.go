@@ -69,6 +69,23 @@ type textRun struct {
 	// form XObject's, not the page's: bracketing the page stream there would describe the `Do`.
 	span   opSpan
 	inForm bool
+	// stm is the OBJECT NUMBER of the content stream the run's marked-content sequence was OPENED in,
+	// or 0 for the page's own. `inForm` says only *that* the glyphs were drawn inside a form; this
+	// says which stream owns the SEQUENCE, which is the difference between "an MCID somewhere on this
+	// page" and the one a `/Stm` names.
+	//
+	// **Opened-in, not drawn-in**, because `/Stm` is *"the content stream containing the marked-content
+	// sequence"* (Table 324) and a `BDC` on the page can bracket a `Do` — see `currentStm`.
+	//
+	// **Two forms drawn on one sheet both carry an MCID 0**, and that is the ordinary shape of an
+	// n-up, not a pathology — so without this the two are indistinguishable and a reader keying on
+	// `(page, mcid)` hands both texts to both elements. Measured before this field existed: 31 of 61
+	// elements came back with two pages' text concatenated (P02.S08).
+	//
+	// It is 0 rather than -1 for a stream that is not an indirect object, because `/Stm` "shall be an
+	// indirect reference" (ISO 32000-1 Table 324) and so can never name one: unnameable and
+	// page's-own are the same answer to the only question asked of this field.
+	stm int
 	// artifact is whether the run was drawn inside an `/Artifact` sequence — content the document
 	// itself says is not content, a watermark or a running header. Grouping skips it, so an artifact
 	// is never proposed as a paragraph (P08.S06a's watermark finding).
@@ -312,6 +329,10 @@ type runWalker struct {
 	// sequence's index into seqs, or -1 for one that carries no MCID.
 	seqs    []markedSeq
 	seqOpen []int
+	// stm is the object number of the stream currently being walked, 0 for the page's own. `drawForm`
+	// saves and restores it around its recursion exactly as it does `visiting`, so it is always the
+	// stream the token under the cursor came from rather than the one the walk started in.
+	stm int
 }
 
 // markedSeq is one marked-content sequence that carries an MCID: the one reading of `BDC` the tree
@@ -324,6 +345,9 @@ type markedSeq struct {
 	// inForm says that stream was a form XObject's; drawsForm says a form XObject is drawn inside the
 	// sequence, so its content is not all in the stream the opener is in.
 	inForm, drawsForm bool
+	// stm is the object number of the stream the opener was read from, or 0 for the page's own — the
+	// same field `textRun.stm` carries, for the same reason.
+	stm int
 }
 
 // mcArtifact marks an `/Artifact` sequence on the stack: content inside it belongs to no element,
@@ -341,6 +365,35 @@ func (w *runWalker) currentMCID() int {
 		}
 	}
 	return -1
+}
+
+// currentStm is the object number of the stream the innermost in-force sequence was OPENED in, or 0
+// for the page's own.
+//
+// **Where the sequence was opened is not where the glyphs are, and `/Stm` names the former.** ISO
+// 32000-1 Table 324 calls it *"the content stream containing the marked-content sequence"*, and
+// `w.mcStack` deliberately spans the form boundary — a `BDC` around a `Do` tags what the form draws
+// (see `runWalker.mcStack`). So a sequence opened on the page whose glyphs land inside a form belongs
+// to the PAGE's stream, and stamping a run with the stream it was drawn in would file that text under
+// a stream no `/Stm` will ever name. Caught in review before it shipped; `markedSeq.stm` was already
+// recording the right number and nothing was reading it.
+func (w *runWalker) currentStm() int {
+	for i := len(w.mcStack) - 1; i >= 0; i-- {
+		switch v := w.mcStack[i]; {
+		case v == mcArtifact:
+			return 0
+		case v >= 0:
+			// `seqOpen` is pushed and popped in lockstep with `mcStack`, so the same index is the
+			// same sequence; the bound is belt-and-braces against an unbalanced stream desyncing them.
+			if i < len(w.seqOpen) {
+				if j := w.seqOpen[i]; j >= 0 && j < len(w.seqs) {
+					return w.seqs[j].stm
+				}
+			}
+			return 0
+		}
+	}
+	return 0
 }
 
 // markedContentID reads `/MCID` from a `BDC` property list, written inline or named in the resources'
@@ -621,7 +674,8 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 			w.mcStack = append(w.mcStack, entry)
 			if entry >= 0 && opener >= 0 {
-				w.seqs = append(w.seqs, markedSeq{mcid: entry, opener: opSpan{opener, tok.End}, inForm: depth > 0})
+				w.seqs = append(w.seqs, markedSeq{mcid: entry, opener: opSpan{opener, tok.End},
+					inForm: depth > 0, stm: w.stm})
 				w.seqOpen = append(w.seqOpen, len(w.seqs)-1)
 			} else {
 				w.seqOpen = append(w.seqOpen, -1)
@@ -655,7 +709,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opSpan, inForm bool) {
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
-		mcid: w.currentMCID(), span: span, inForm: inForm, artifact: w.inArtifact()}
+		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}
@@ -793,6 +847,17 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 		visiting[key] = true
 		defer delete(visiting, key)
 	}
+	// The stream identity is saved and restored around the recursion for the same reason `visiting`
+	// is: what comes back out is the caller's stream, not the callee's. `key` is -1 for a form held
+	// as a direct stream, and that becomes 0 — see `textRun.stm` for why unnameable and
+	// page's-own are the same answer here.
+	outer := w.stm
+	if key >= 0 {
+		w.stm = key
+	} else {
+		w.stm = 0
+	}
+	defer func() { w.stm = outer }()
 	gs.ctm = m.mul(gs.ctm)
 	w.walk(body, formRes, gs, depth+1, visiting)
 	return true

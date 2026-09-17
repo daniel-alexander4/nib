@@ -64,6 +64,19 @@ type structKid struct {
 	pgLive bool
 	// obj is the referenced object for kidOBJR.
 	obj int
+	// stm is the object number an MCR's `/Stm` names — the content stream the marked-content sequence
+	// actually lives in — or 0 when the kid does not name one.
+	//
+	// **Zero is not "unknown", it is "the page's own stream", and the spec says so both ways.** For an
+	// MCR, ISO 32000-1 Table 324: *"If this entry is absent, the marked-content sequence shall be
+	// contained in the content stream of the page identified by Pg."* For a bare integer, §14.7.4.2
+	// admits the form at all only *"in the common case where the marked-content sequence is contained
+	// in the content stream of the page that is specified in the Pg entry"*. So `kidMCID` is 0 by
+	// definition and not by omission.
+	//
+	// Read only from an indirect reference, because Table 324 says `/Stm` *"shall be an indirect
+	// reference"* — a direct stream there is a document nib does not guess at.
+	stm int
 	raw types.Object
 }
 
@@ -332,7 +345,11 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 		if n := d.IntEntry("MCID"); n != nil {
 			mcid = *n
 		}
-		return &structKid{kind: kidMCR, mcid: mcid, pgObj: pg, pgLive: livePages[pg], raw: raw}, nil
+		stm := 0
+		if ind, ok := d["Stm"].(types.IndirectRef); ok {
+			stm = ind.ObjectNumber.Value()
+		}
+		return &structKid{kind: kidMCR, mcid: mcid, pgObj: pg, pgLive: livePages[pg], stm: stm, raw: raw}, nil
 	case "OBJR":
 		obj := 0
 		if ind, ok := d["Obj"].(types.IndirectRef); ok {

@@ -680,11 +680,63 @@ Scope: `SplitPage`, `SplitRegions`. Tiles are clones of the page dict carrying t
 Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root
 `/K` and RoleMaps; ~~`InsertPDF` inherits it with S04~~ **— it does not: S04b routes `splice` through the non-carrying door and defers `InsertPDF` here in full** (struck 2026-09-16). Refs: D5, ADR-031.
 
-#### P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries
-Scope: replace element-level `/Stm` (`tagcarry.go:240`) with MCR dictionaries carrying `/Pg` and `/Stm`, after
+#### P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries *(done 2026-09-16, v1.129.144)*
+Scope: replace element-level `/Stm` (`tagcarry.go:316`) with MCR dictionaries carrying `/Pg` and `/Stm`, after
 reading ISO 32000-1 tables 323–324 and one screen-reader run. Refs: D5.
+
+**(pin, 2026-09-16, pre-slice deepdive — the slice gains the READER half, and the line number was wrong)**
+`~/.claude/projects/-home-dan-repos-nib/memory/deepdives/2026-09-16-the-n-up-carry-and-marked-content-references.md`
+(the project memory directory, as with the seam inventory named under *Standing caveats* — not a repo path). Three things the sketch could not
+see:
+- **Table 323 defines no `/Stm`**, so today's key is not merely redundant — a conforming reader ignores it
+  and resolves the MCID against `/Pg`'s own stream, which is exactly the failure the comment at
+  `tagcarry.go:255-258` claims it prevents. **Table 325 defines none either**, so the `OBJR` arm of
+  `tagcarry.go:301` is the same defect.
+- **The acceptance as written cannot fail.** Measured on a 61-element fixture: `nib ua` and veraPDF report
+  the *identical* clause set for the source and its `NUp(2)` (`5 t1`, `7.2 t33`, `7.2 t34`, all from the
+  fixture's missing `/Lang`). Both are blind to this by construction — `uacheck` discards every
+  marked-content kid at `structure.go:201-202`, and `7.2 t34` resolves content→element through
+  `/StructParents`, the direction that has always worked. So a writer-only slice ships with no instrument
+  that moves.
+- **What DOES move, measured: 31 of 61 elements read the wrong text after the carry.** `structview.go:142`
+  keys text by `(page, mcid)` and `textrun.go:624` flattens a form's MCIDs under the page key, so after an
+  n-up an MCID in one form is indistinguishable from the same MCID in the other and both texts are
+  concatenated onto both elements — element 27 reads `"TitleParagraph number 30…"` where its source read
+  `"Title"`. Teaching the reader to honour `/Stm` is therefore **in scope**: it is what makes the writer
+  half observable, and without it `nib tag tree` stays wrong on nib's own output. Additive — the
+  `(page, mcid)` index is untouched and only a kid carrying `/Stm` consults the narrow one, so no document
+  without `/Stm` changes. **Reader first, then writer**: the reader half alone is inert.
+
 Acceptance:
 - The spec reading is quoted; veraPDF and uacheck still pass the carried `NUp`.
+- **(pin)** No `StructElem` or `OBJR` in a carried output carries `/Stm`, and every marked-content kid whose
+  content lives in a form is an MCR naming that form.
+- **(pin)** A carried `NUp`'s elements read back the text their source elements read — the content-level
+  assertion no n-up test makes today.
+- **(pin)** One screen-reader run over the carried output, recorded with what was heard.
+
+**(close-out, 2026-09-16, v1.129.144 — ADR-038.)** All four clauses met, and the first one could not have
+failed: `nib ua` and veraPDF report the **identical** ua1 clause set for the source, the broken carry and the
+repaired carry, so the original acceptance was a non-regression check over an instrument blind to the change.
+What graded the slice is the pin's clauses.
+- **Text.** 8-page, 241-element population: `nup --n 2` had **118 of 241** elements reading two source pages'
+  words concatenated, `--n 4` had **180 of 241**. Both are **0** after. The 61-element population went 31 → 0.
+- **Geometry**, unasked-for and user-visible: element 27's `rect` went from `[104.0, 44.8, 360.9, 453.6]` —
+  a box unioned across two source pages — to the source's own box under the n-up's scale. That rectangle is
+  what the Tags panel highlights.
+- **Cost, measured and not projected.** `−0.33%` to `+0.05%` across the range. Arithmetic had said `+2.8%`;
+  at `n=4` the output is **smaller**, because 241 elements each shed a `/Stm` key and near-identical MCR
+  dicts compress to almost nothing in an object stream.
+- **The screen-reader run is a FINDING, not a confirmation.** Evince over AT-SPI — what Orca speaks — returns
+  byte-identical text for the broken and repaired carries, in reverse paragraph order: poppler extracts
+  geometrically and never opens the structure tree, so the whole Linux stack cannot observe this in either
+  direction. The consumer that does honour the rule is **pdf.js**, nib's own viewer and Firefox's, which
+  reads `/Stm` on an MCR and has no branch that would read it off an element.
+- **The slice's own review found three criticals in it**, all in code written the same day: a `/K` spelled as
+  a single dictionary — ISO 32000-1's own Example 2 — dropped the entire tag tree; a run was stamped with the
+  stream its glyphs were drawn in rather than the one its sequence was opened in; and an element inheriting
+  `/Pg` kept bare integer kids. A fourth, a vacuous test that executed zero assertions, was proven by running
+  it. Residue: `/pending 536`, `/pending 537`.
 
 ### P03 — Checker: structure-tree containment and roles (~40 rules)
 **Goal.** Tables, lists, TOC, headings, notes, Form/Link elements and role maps, each agreeing with veraPDF on

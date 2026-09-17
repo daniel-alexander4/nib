@@ -1,0 +1,24 @@
+--- a/internal/pdfops/tagcarry.go
++++ b/internal/pdfops/tagcarry.go
+@@ -349,9 +349,7 @@
+ 			// **The stale-key removal is unconditional, because the key is illegal on these two
+ 			// types whatever this element's `/Pg` turns out to be.** Scoping it to the repointed
+ 			// branch left a `/Stm` in place on exactly the elements the branch could not reach.
+-			if *t != "MCR" {
+-				delete(d, "Stm")
+-			}
++			_ = t
+ 			if pg, ok := d["Pg"]; ok {
+ 				ind, isInd := pg.(types.IndirectRef)
+ 				switch {
+@@ -366,9 +364,7 @@
+ 					// A dict is a map and `DereferenceDict` hands back the stored one, so writing
+ 					// this key writes it into the document.
+ 					d["Pg"] = pl.page
+-					if *t == "MCR" {
+-						d["Stm"] = pl.xobj // the one dictionary Table 324 gives the key to
+-					}
++					d["Stm"] = pl.xobj
+ 					inherited = &pl
+ 					repointed++
+ 				}

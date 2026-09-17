@@ -1,0 +1,12 @@
+--- a/internal/pdfops/structview.go
++++ b/internal/pdfops/structview.go
+@@ -189,8 +189,8 @@
+ 					// so the change cannot take text away from a document it was not written for.
+ 					if t, ok := textByStm[[3]int{pg, k.stm, k.mcid}]; ok {
+ 						text = t
+-						box, found = rectByStm[[3]int{pg, k.stm, k.mcid}]
+ 					}
++					box, found = rectByStm[[3]int{pg, k.stm, k.mcid}]
+ 				}
+ 				b.WriteString(text)
+ 				if v.page == 0 {

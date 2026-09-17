@@ -92,6 +92,21 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 	return out, true
 }
 
+// placement is one source page's content after the n-up: the sheet it is drawn on, the Form XObject
+// holding it, and the page it came from.
+//
+// name is the RESOURCE NAME this placement was found under (`/Fm1`, `/Fm2`), and it is what the
+// un-fusing repoints. The object number is not enough: when the optimizer has fused two forms, two
+// names on one sheet reference the SAME object, so repointing "every entry naming this object" moves
+// both and the first placement loses the object it had just anchored. Measured — the n-up of a
+// two-identical-page document came out `dropped`.
+type placement struct {
+	page  types.IndirectRef // the sheet the XObject is drawn on
+	xobj  types.IndirectRef // the Form XObject itself
+	srcNr int               // the original page it came from
+	name  string
+}
+
 // carryTagsThroughNUp re-anchors a structure tree that `api.NUp` left pointing at pages it removed.
 //
 // It returns the repaired document and true only when **every** element that pointed at an original
@@ -122,17 +137,6 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	// reader gets the right words under a possibly-wrong ancestor — but it is a real ambiguity and
 	// `matched` below refuses to bind one source page to two XObjects, which keeps it from
 	// silently dropping an element set.
-	type placement struct {
-		page  types.IndirectRef // the sheet the XObject is drawn on
-		xobj  types.IndirectRef // the Form XObject itself
-		srcNr int               // the original page it came from
-		// name is the RESOURCE NAME this placement was found under (`/Fm1`, `/Fm2`), and it is what
-		// the un-fusing below repoints. The object number is not enough: when the optimizer has
-		// fused two forms, two names on one sheet reference the SAME object, so repointing "every
-		// entry naming this object" moves both and the first placement loses the object it had just
-		// anchored. Measured — the n-up of a two-identical-page document came out `dropped`.
-		name string
-	}
 	var places []placement
 	claimed := map[int]bool{}
 	for p := 1; p <= ctx.PageCount; p++ {
@@ -251,11 +255,43 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		byNr[pl.srcNr] = placement{page: pl.page, xobj: *ref, srcNr: pl.srcNr, name: pl.name}
 	}
 
-	// ── Repoint every element from its original page to the sheet it now appears on.
+	// ── Repoint every element from its original page to the sheet it now appears on, and say WHERE
+	//    its marked content went.
 	//
-	// `/Stm` names the content stream the element's MCIDs live in, which is the form XObject rather
-	// than the page — PDF 32000-1 §14.7.4.4. Without it a reader resolving an MCID looks in the
-	// page's own stream, where the content no longer is.
+	// # `/Stm` is a marked-content reference's key, and it is not a structure element's
+	//
+	// This block wrote `d["Stm"] = pl.xobj` onto the element itself until P02.S08, on the reasoning
+	// that *"`/Stm` names the content stream the element's MCIDs live in … PDF 32000-1 §14.7.4.4.
+	// Without it a reader resolving an MCID looks in the page's own stream, where the content no
+	// longer is."* **The diagnosis was right and the remedy did nothing.** ISO 32000-1 Table 323
+	// enumerates a structure element dictionary's keys — `Type, S, P, ID, Pg, K, A, C, R, T, Lang,
+	// Alt, E, ActualText` — and `/Stm` is not among them, so a conforming reader ignores it and looks
+	// in the page's own stream **anyway**. §14.7.4.4 is the parent-tree clause; it licenses nothing
+	// here. Table 325 has no `/Stm` either, so the `OBJR` arm was the same mistake.
+	//
+	// `/Stm` is Table 324, on a **marked-content reference**: *"(Optional; shall be an indirect
+	// reference) The content stream containing the marked-content sequence. This entry should be
+	// present only if the marked-content sequence resides in a content stream other than the content
+	// stream for the page."* And the bare integer form of a kid is admitted (§14.7.4.2) only *"in the
+	// common case where the marked-content sequence is contained in the content stream of the page
+	// that is specified in the Pg entry"* — which is exactly what an n-up stops being true.
+	//
+	// So an element whose content moved into a form gets its integer kids rewritten as MCRs naming
+	// that form. **Collected here and applied after the walk**, never during it: an MCR created in
+	// flight carries the sheet's `/Pg`, the walk would reach it through `d["K"]`, and the sheet's
+	// object number is not in `byNr` — the kid would count as `stranded` and abandon its own carry.
+	//
+	// Measured before this: 31 of 61 elements read two source pages' text concatenated, because a
+	// reader keying on `(page, mcid)` cannot tell two forms' MCID 0 apart. veraPDF and `nib ua` score
+	// both shapes identically — neither looks at a kid's encoding — so this is not a clause fix.
+	// Those figures are measurements, not assertions: nothing in the suite re-derives them. They are
+	// recorded with their populations and limits in ADR-038 and in P02.S08's seam inventory; what the
+	// suite pins is the property, in `TestACarriedNUpReadsItsOwnText`.
+	type mcrTarget struct {
+		elem types.Dict
+		pl   *placement // nil when no placement is in force anywhere up this element's ancestry
+	}
+	var toMCR []mcrTarget
 	root, rerr := ctx.DereferenceDict(cat["StructTreeRoot"])
 	if rerr != nil || root == nil {
 		return nil, false
@@ -269,17 +305,28 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	// for exactly this at P05.S02 (`/pending 503`); this is the same correction, one file over.
 	seen := map[int]bool{}
 	repointed, stranded := 0, 0
-	var walk func(o types.Object)
-	walk = func(o types.Object) {
+	// `inherited` is the placement in force for the subtree being walked, or nil at the root.
+	//
+	// **`/Pg` is INHERITED, and reading it as per-element is how an element keeps bare integer kids
+	// after its content has moved.** Table 323 makes `/Pg` optional and §14.7.4.2 resolves a bare
+	// integer against *"the Pg entry of the structure element dictionary"* — which, when the element
+	// has none, is an ancestor's; this repo's own reader implements that inheritance
+	// (`structtree.go` `readKid`'s `inheritPg`). Collecting only elements that carry `/Pg` themselves
+	// therefore skipped exactly the elements a producer chose not to repeat it on, and left their
+	// integers claiming content in a sheet stream that holds only the `Do`. Caught in review.
+	var walk func(o types.Object, inherited *placement)
+	walk = func(o types.Object, inherited *placement) {
 		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
 			for _, x := range arr {
-				walk(x)
+				walk(x, inherited)
 			}
 			return
 		}
 		// An element written INLINE has no object number and so cannot be in the visited set at
-		// all. That is safe for the same reason it is in `readStructTree`: an inline dictionary is
-		// reachable from exactly one place by construction, so it cannot be revisited.
+		// all. An inline dictionary is reachable from one place by construction; note the set is
+		// keyed on the ELEMENT, and an indirect `/K` array is not entered into it, so two elements
+		// sharing one array object walk it twice. That is why the rewrite below is collected per
+		// element and applied once per element, and why it is idempotent.
 		if ir, isInd := o.(types.IndirectRef); isInd {
 			nr := ir.ObjectNumber.Value()
 			if seen[nr] {
@@ -299,6 +346,12 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 		// dismantled is repointed at the sheet that page's content now lives on, or the whole carry
 		// is abandoned below.
 		if t := d.NameEntry("Type"); t != nil && (*t == "StructElem" || *t == "MCR" || *t == "OBJR") {
+			// **The stale-key removal is unconditional, because the key is illegal on these two
+			// types whatever this element's `/Pg` turns out to be.** Scoping it to the repointed
+			// branch left a `/Stm` in place on exactly the elements the branch could not reach.
+			if *t != "MCR" {
+				delete(d, "Stm")
+			}
 			if pg, ok := d["Pg"]; ok {
 				ind, isInd := pg.(types.IndirectRef)
 				switch {
@@ -311,20 +364,31 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 						break
 					}
 					// A dict is a map and `DereferenceDict` hands back the stored one, so writing
-					// these two keys writes them into the document.
+					// this key writes it into the document.
 					d["Pg"] = pl.page
-					d["Stm"] = pl.xobj
+					if *t == "MCR" {
+						d["Stm"] = pl.xobj // the one dictionary Table 324 gives the key to
+					}
+					inherited = &pl
 					repointed++
 				}
 			}
+			if *t == "StructElem" {
+				toMCR = append(toMCR, mcrTarget{elem: d, pl: inherited})
+			}
 		}
 		if k, ok := d["K"]; ok {
-			walk(k)
+			walk(k, inherited)
 		}
 	}
-	walk(root["K"])
+	walk(root["K"], nil)
 	if repointed == 0 || stranded > 0 {
 		return nil, false // all or nothing: a partly-anchored tree is worse than an honest loss
+	}
+	for _, t := range toMCR {
+		if !rewriteKidsAsMCR(ctx, t.elem, t.pl) {
+			return nil, false
+		}
 	}
 
 	var out bytes.Buffer
@@ -363,4 +427,110 @@ func repointSheetResource(ctx *model.Context, page types.IndirectRef, name strin
 	}
 	xod[name] = newRef
 	return true
+}
+
+// rewriteKidsAsMCR turns an element's bare-integer `/K` kids into marked-content references naming
+// the form XObject its content moved into.
+//
+// **A bare integer is a claim about WHERE, not just which.** ISO 32000-1 §14.7.4.2 admits the integer
+// form only *"in the common case where the marked-content sequence is contained in the content stream
+// of the page that is specified in the Pg entry of the structure element dictionary"*. After an n-up
+// that is false for every element: the sequence is in a form XObject and the page's own stream holds
+// only the `Do` that draws it. Table 324's `/Stm` is the key that says so, and an MCR is the only
+// dictionary allowed to carry it.
+//
+// The MCRs are written DIRECT rather than as indirect objects. Three reasons, in order: the spec's own
+// Example 2 writes one direct (`/K << /Type /MCR /Pg 2 0 R /MCID 0 >>`); it costs no xref slot per kid;
+// and pdfcpu's `/K` array validation skips an indirect entry it has already marked valid
+// (`validate/structTree.go:141-152`) while a direct dict is always walked, so the shape that gets
+// validated is the shape that was written.
+//
+// It reports false rather than rewriting partly — the same rule the rest of this file keeps. A `/K`
+// this function does not fully understand leaves the element's kids alone, and the caller drops the
+// whole carry rather than shipping a tree that is half one encoding and half the other.
+func rewriteKidsAsMCR(ctx *model.Context, elem types.Dict, pl *placement) bool {
+	k, ok := elem["K"]
+	if !ok {
+		return true // an element with no kids anchors through its own /Pg and owes nothing here
+	}
+	o, err := ctx.Dereference(k)
+	if err != nil {
+		return false
+	}
+
+	// **The dereferenced SHAPE decides, and calling `DereferenceArray` first was the bug.** It
+	// type-asserts to `types.Array` and returns an error for anything else
+	// (`model/dereference.go:354-366`), so `/K << /Type /MCR /Pg 2 0 R /MCID 0 >>` — the spec's own
+	// Example 2, and what LibreOffice and Word emit for a single-kid element — came back as an error
+	// and abandoned the entire carry. No fixture in this repo has that shape, so the suite was green.
+	// Caught in review, before it shipped.
+	switch v := o.(type) {
+	case types.Integer:
+		if pl == nil {
+			return false // an integer kid with no placement: see the array arm
+		}
+		elem["K"] = mcrFor(*pl, v)
+		return true
+
+	case types.Array:
+		// `DereferenceArray` hands back the STORED slice rather than a copy, so writing through the
+		// index writes into the document for an indirect array; `elem["K"] = v` covers the direct
+		// one, where the map already holds a header over the same backing array.
+		for i, e := range v {
+			n, isInt := e.(types.Integer)
+			if !isInt {
+				continue
+			}
+			if pl == nil {
+				// **Refusing beats shipping a mixed encoding.** This element owns marked content by
+				// integer — a claim that the content is in its page's own stream — and nothing up
+				// its ancestry says which form that content moved into. Leaving the integer would
+				// pass every gate this repo has: `structureCarriedCompletely` reads `/Pg` liveness,
+				// `/ParentTree` ownership and form draw counts, and none of them looks at a kid's
+				// encoding. So the carry is abandoned and `honest` drops the claim instead.
+				return false
+			}
+			v[i] = mcrFor(*pl, n)
+		}
+		elem["K"] = v
+		return true
+
+	case types.Dict:
+		// A single element, MCR or OBJR kid. Each is already correct or already repointed by the
+		// walk, and there is no integer to rewrite — including on a second visit to an element
+		// reached through a `/K` array two elements share, which is what makes this idempotent.
+		return true
+
+	case nil:
+		// `Dereference` yields nil with no error for a reference into a free or missing xref slot
+		// (`model/dereference.go:99-102`). A dangling `/K` carries no integer to rewrite; whether it
+		// is a defect is `checkStructConsistency`'s question, asked of the bytes this writes.
+		return true
+
+	default:
+		return false
+	}
+}
+
+// mcrFor is the marked-content reference that says where one MCID's sequence went.
+//
+// **A bare integer is a claim about WHERE, not just which.** ISO 32000-1 §14.7.4.2 admits the integer
+// form only *"in the common case where the marked-content sequence is contained in the content stream
+// of the page that is specified in the Pg entry of the structure element dictionary"*. After an n-up
+// that is false for every element: the sequence is in a form XObject and the page's own stream holds
+// only the `Do` that draws it. Table 324's `/Stm` is the key that says so, and an MCR is the only
+// dictionary allowed to carry it.
+//
+// The MCR is DIRECT rather than an indirect object. Three reasons, in order: the spec's own Example 2
+// writes one direct (`/K << /Type /MCR /Pg 2 0 R /MCID 0 >>`); it costs no xref slot per kid; and
+// pdfcpu's `/K` array validation skips an indirect entry it has already marked valid
+// (`validate/structTree.go:139-152`) while a direct dict is always walked, so the shape that gets
+// validated is the shape that was written.
+func mcrFor(pl placement, mcid types.Integer) types.Dict {
+	return types.Dict{
+		"Type": types.Name("MCR"),
+		"Pg":   pl.page,
+		"Stm":  pl.xobj,
+		"MCID": mcid,
+	}
 }

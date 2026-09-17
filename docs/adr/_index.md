@@ -291,3 +291,22 @@ home today.
   keeps only the first `/ParentTree` and `CutPage` leaves `/StructParents` on tiles: P02.S05/S06/S07 own that.
   Extends ADR-031 (five census verdicts flip; a subset joins `Append` as a `partial` producer) and ADR-009
   (one primitive, two wrappers, one declared exemption with a test that the two claimant walks agree).
+
+- **035, 036, 037 are RESERVED and are not gaps.** They are taken on the unmerged `ui-menu` branch
+  (`035-accessibility-is-a-mode`, `036-the-menu-is-the-users-to-cut`, `037-the-strip-appears-at-one-document`).
+  `main` skipped to 038 rather than collide, because an ADR is immutable in its decision content and
+  renumbering one at merge time is a rewrite of a record. Verified against `git ls-tree ui-menu docs/adr/`
+  on 2026-09-16, not against a note.
+
+- **[ADR-038 — `/Stm` is a marked-content reference's key, and content that moved into a form is reached
+  through one](038-stm-is-a-marked-content-references-key.md)**
+  — `PLAN-ua-coverage.md` P02.S08, D5. ISO 32000-1 puts `/Stm` in Table 324 and in neither Table 323 nor 325,
+  so the key `carryTagsThroughNUp` wrote on the *element* was inert: a conforming reader ignored it and fell
+  back to the page's own stream, which is the failure it was written to prevent. An operation that moves page
+  content into a Form XObject rewrites its bare-integer kids as MCRs naming that form, and a reader keys text
+  by the **stream** rather than by the page, because an MCID is unique only within a content stream and two
+  forms on one sheet both carry an MCID 0. **It needed deciding because the old shape passed everything**:
+  veraPDF, `nib ua` and the repo's own completeness gate score the broken and repaired carries identically,
+  while nib's own reader had 31 of 61 elements reading two pages' text concatenated. Extends ADR-034 and
+  ADR-031; turns `structartifact`'s `errCommitInForm` from a
+  refusal only a hand-built fixture reached into one that fires on nib's own output.
