@@ -107,6 +107,29 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 			if k.kind != kidMCID && k.kind != kidMCR {
 				continue
 			}
+			// **A `/Stm` that resolves to nothing is a dangling anchor, and it reads as a good one.**
+			//
+			// `readStructTree` takes the object number straight off the indirect reference without
+			// dereferencing it, because Table 324 says `/Stm` *shall* be one and a reader that
+			// guessed would be inventing. So a reference into a free or missing xref slot arrives at
+			// every consumer as a perfectly ordinary `stm > 0` naming no stream, and
+			// `readStructureView` then falls back to the page-wide index and credits this element
+			// with whatever else on the page shares its MCID — silently, and in the user's Tags
+			// panel. Nothing else looks: neither this function nor `structureCarriedCompletely`
+			// read `/Stm` at all before P02.S08's review (/pending 536).
+			if k.stm != 0 {
+				sd, _, serr := ctx.DereferenceStreamDict(*types.NewIndirectRef(k.stm, 0))
+				if serr != nil || sd == nil {
+					add(fmt.Sprintf("stm-unresolvable obj=%d mcid=%d stm=%d", e.objNr, k.mcid, k.stm),
+						"an element of type /%s says its /MCID %d lives in the stream at object %d, "+
+							"and that object is not a stream — the content it describes cannot be found",
+						e.kind, k.mcid, k.stm)
+					// The page checks below resolve an MCID through the PAGE's /StructParents, which
+					// is already the wrong row for content in another stream; over a stream that does
+					// not exist they would say nothing at all.
+					continue
+				}
+			}
 			pg := k.pgObj
 			if pg == 0 {
 				add(fmt.Sprintf("mcid-no-page obj=%d mcid=%d", e.objNr, k.mcid), "an element of type /%s owns /MCID %d and names no page", e.kind, k.mcid)

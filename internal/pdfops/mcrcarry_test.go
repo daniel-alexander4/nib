@@ -787,3 +787,133 @@ func TestAKidNamingAnUnreachedStreamFallsBackToThePage(t *testing.T) {
 		t.Errorf("the element's rect %v is degenerate", e.rect)
 	}
 }
+
+// TestADanglingStmIsReported — /pending 536(a).
+//
+// A `/Stm` into a free or missing xref slot arrives at every consumer as an ordinary `stm > 0`
+// naming no stream, because `readStructTree` takes the object number off the reference without
+// dereferencing it — Table 324 says `/Stm` shall be indirect, and a reader that guessed would be
+// inventing. `readStructureView` then falls back to the page index and credits the element with
+// whatever else on the page shares its MCID, silently, in the user's Tags panel.
+func TestADanglingStmIsReported(t *testing.T) {
+	page := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (ON THE PAGE) Tj ET\nEMC\n"
+	// Object 11 is never written, so `/Stm 11 0 R` refers to a slot that holds nothing.
+	pdf := assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 " +
+			"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(page), page),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 >>",
+		8: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K " +
+			"<< /Type /MCR /Pg 3 0 R /Stm 11 0 R /MCID 0 >> >>",
+		9: "<< /Nums [0 [8 0 R]] >>",
+	})
+
+	// Stimulus: the kid really does name a stream, and that object really is not one.
+	tree, terr := readTree(t, pdf)
+	if terr != nil {
+		t.Fatalf("readTree: %v", terr)
+	}
+	named := 0
+	for _, e := range tree.elems {
+		for _, k := range e.kids {
+			if k.kind == kidMCR && k.stm != 0 {
+				named++
+			}
+		}
+	}
+	if named != 1 {
+		t.Fatalf("setup: %d kid(s) name a stream, want 1 — the defect has no subject", named)
+	}
+
+	if d := completeness(t, pdf); !defectsKeyed(d, "stm-unresolvable") {
+		t.Errorf("a /Stm naming an object that is not a stream was not reported. The element's "+
+			"content cannot be found, and the reader falls back to the page index and credits it "+
+			"with whatever else shares its MCID. Reported: %v", d)
+	}
+}
+
+// objrFixture is two tagged pages where the second page's element anchors through an OBJR onto a
+// link annotation — the shape /pending 536(b) records that no n-up fixture had.
+func objrFixture() []byte {
+	one := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (FIRST) Tj ET\nEMC\n"
+	two := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (SECOND) Tj ET\nEMC\n"
+	return assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R 13 0 R] /Count 2 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> " +
+			"/Contents 4 0 R /StructParents 0 >>",
+		4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(one), one),
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R 10 0 R 15 0 R] /ParentTree 9 0 R /ParentTreeNextKey 2 >>",
+		8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] >>",
+		9:  "<< /Nums [0 [8 0 R] 1 [10 0 R]] >>",
+		10: "<< /Type /StructElem /S /P /P 7 0 R /Pg 13 0 R /K [0] >>",
+		13: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> " +
+			"/Contents 14 0 R /StructParents 1 /Annots [16 0 R] >>",
+		14: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(two), two),
+		15: "<< /Type /StructElem /S /Link /P 7 0 R /Pg 13 0 R /K << /Type /OBJR /Pg 13 0 R /Obj 16 0 R >> >>",
+		16: "<< /Type /Annot /Subtype /Link /Rect [72 690 200 710] /StructParent 2 /Border [0 0 0] >>",
+	})
+}
+
+// TestTheCarryRepointsAnOBJRAndLeavesItNoStm — /pending 536(b).
+//
+// The carry deletes `/Stm` from anything that is not an MCR, because Table 325 gives an object
+// reference only `/Type`, `/Pg` and `/Obj`. **That arm had no fixture**: every document driving
+// `NUp` in this package was StructElem and MCR only, so the judgment was graded and the stimulus
+// never arrived — checklist item #19 exactly.
+func TestTheCarryRepointsAnOBJRAndLeavesItNoStm(t *testing.T) {
+	src := objrFixture()
+
+	// Stimulus asserted first: the source really does hold an OBJR.
+	stree, terr := readTree(t, src)
+	if terr != nil {
+		t.Fatalf("readTree: %v", terr)
+	}
+	objrs := 0
+	for _, e := range stree.elems {
+		for _, k := range e.kids {
+			if k.kind == kidOBJR {
+				objrs++
+			}
+		}
+	}
+	if objrs == 0 {
+		t.Fatal("setup: the fixture holds no OBJR, so the arm under test is still unreached")
+	}
+
+	out, err := NUp(src, 2, false)
+	if err != nil {
+		t.Fatalf("NUp: %v", err)
+	}
+	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
+	if rerr != nil {
+		t.Fatalf("read: %v", rerr)
+	}
+	cat, cerr := ctx.XRefTable.Catalog()
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	root, derr := ctx.DereferenceDict(cat["StructTreeRoot"])
+	if derr != nil || root == nil {
+		t.Skip("the carry was abandoned for this document, so there is no tree to inspect — that is " +
+			"a legitimate outcome and TestEveryDeclaredFateIsTheMEASUREDFate owns the fate")
+	}
+	seen := 0
+	eachStructDict(t, ctx, root["K"], map[int]bool{}, func(ty string, d types.Dict) {
+		if ty != "OBJR" {
+			return
+		}
+		seen++
+		if _, has := d["Stm"]; has {
+			t.Error("an /OBJR carries /Stm after the carry; Table 325 is /Type, /Pg and /Obj, and " +
+				"nothing else — a key outside its own table reads as an anchor and anchors nothing")
+		}
+	})
+	if seen == 0 {
+		t.Error("no /OBJR survived the carry, so this test graded nothing about the arm it names")
+	}
+}
