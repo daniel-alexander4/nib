@@ -1128,7 +1128,12 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 	// **The user's ORIGINAL, overwritten in place** — the strongest only-copy case in the tree.
 	// ReplaceDurable rather than WriteDurable: the file is the user's, so it keeps the mode it had
 	// (/pending 499 — a 0644 original used to come back 0600 after every save).
-	if err := atomicfile.ReplaceDurable(doc.path, data, 0o600); err != nil {
+	//
+	// **The mode is reached for only when `doc.path` no longer exists**, which is the narrow case
+	// of a file deleted or moved between opening it and saving it. It is `UserFileMode` rather than
+	// a literal so that re-creating the user's own document cannot land it stricter than Save As
+	// would have (/pending 572) — the same rule at all three doors, named at each.
+	if err := atomicfile.ReplaceDurable(doc.path, data, atomicfile.UserFileMode); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}

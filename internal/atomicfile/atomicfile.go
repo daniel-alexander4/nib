@@ -257,6 +257,45 @@ func ReplaceDurable(path string, data []byte, perm os.FileMode) error {
 	return WriteDurable(path, data, perm)
 }
 
+// UserFileMode is the permission bits a NEW file the user named is created with, at every door
+// (/pending 572).
+//
+// # It exists because three doors were answering this alone, and two of them disagreed
+//
+// `ReplaceDurable`'s `perm` applies only when the path does not exist yet, so it is invisible on
+// every ordinary save and decides everything about a Save As. The three call sites each named a
+// literal: `internal/cli`'s `writeNamed` had always given a new file **0644**, and the GUI's Save
+// and Save As both passed **0600** — the same operation, two surfaces, two answers, chosen by
+// nobody. That is byte-for-byte `/pending 570`'s split-part finding at a third door.
+//
+// # 0644, and the argument is already written one package over
+//
+// `pdfops.SplitPartMode` settled the identical question for a split part and its reasoning is the
+// whole of this one: *"0600 is nib's habit for what nib owns — the vault, the ceremony mirror, the
+// sidecars — and it is the wrong habit for a file the user asked to be written into a folder they
+// named."* Behind that sits `/pending 499`, which is why `ReplaceDurable` exists at all: forcing
+// 0600 onto a user's document meant *"a document shared with a group or served by a local web
+// server stopped being readable the moment Nib saved it, with no message."* A Save As is that
+// document, not a copy of it — if anything it is the clearer case, because a split part is
+// re-derivable and this is the user taking their document OUT of nib.
+//
+// # The declared exposure, because 0600 is not a silly answer
+//
+// Saving a private document to a new path makes it as readable as the destination folder allows.
+// That is a real widening and it is the price. Three things bound it, the same three
+// `SplitPartMode` states: the folder's own permissions still gate access; the CLI has always
+// written 0644, so this is the status quo at one of the three doors rather than a new exposure;
+// and the destination is a path the user typed into a file dialog.
+//
+// **Carrying the SOURCE document's mode was considered and refused**, and it is refused here for
+// the reason it was there: a document uploaded through the browser has no path on disk and so no
+// mode to carry, which would make the doors agree for some documents and not others — the defect
+// rebuilt out of a better motive.
+//
+// **This is not `WriteDurable`'s default and must not become one.** That door writes nib's own
+// files, where 0600 is right and where forcing it is the point.
+const UserFileMode os.FileMode = 0o644
+
 // WriteDurable writes data to path via a temp file, fsync, rename and a parent-directory
 // fsync.
 //
