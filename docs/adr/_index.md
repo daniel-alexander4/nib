@@ -395,3 +395,21 @@ home today.
   reversed. The climb is 1.5–3.0 µs per row leaf and flat, because `span` bails at the first page
   disagreement. Declared gap: the carried tree is ordered against the SOURCE, not the output's page
   sequence.
+
+- **[ADR-043 — a page selection may not reveal what the source hid](043-a-page-selection-may-not-reveal-what-the-source-hid.md)**
+  — /pending 525. Every disposition on `catalogAllowlist` until now rested on "a key carried onto a
+  subset can be a positive false statement about content that is gone". `/OCProperties` inverts it:
+  the layer's content and the page's `/Properties` travel with the page dictionary, and the catalog
+  key is the only thing saying the group is OFF, so **dropping it REVEALS**. Measured on a group
+  listed in `/OFF`, page 1 at 40 dpi: **39 → 18,855** dark pixels under Ghostscript 10.02.1 and
+  **6 → 18,598** under poppler — and `RedactPages` builds its untouched runs through
+  `collectWithoutStructure`, so the reveal was landing inside a redaction. So the carry is NOT gated
+  on the structure carry, the guard is a **reachability refusal** rather than a key list (the one
+  harm is re-anchoring a dropped page — `/StructTreeRoot`'s hazard one key over, and mutating the
+  walk out puts three page dictionaries in a two-page output), and **nothing prunes the groups**,
+  because a walk that misses one `/OC` drops the group that was hiding something. `/PageLayout` is
+  carried as a resolved NAME (an indirect one is dropped); `/OutputIntents` is dropped and the code
+  now says why — the subset removed the claim already, and **26 of 26 corpus entries are
+  `/S /GTS_PDFA1`**, so carrying it is ADR-032's rule one key over; `/PageMode` gains `/UseOC` and
+  nothing else, its corpus being 25 `/UseOutlines` + 8 `/UseAttachments`. Caveat carried forward:
+  283 of the 295 scanned files are `veraPDF Test Builder 1.0`.

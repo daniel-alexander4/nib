@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/optionalcarry.go b/internal/pdfops/optionalcarry.go
+index 00c9e45..25217fb 100644
+--- a/internal/pdfops/optionalcarry.go
++++ b/internal/pdfops/optionalcarry.go
+@@ -85,7 +85,7 @@ func carryOptionalContent(xt *model.XRefTable, root types.Dict, dropped map[int]
+ 	if derefDict(xt, o) == nil {
+ 		return nil
+ 	}
+-	if reachesObject(xt, o, dropped, map[int]bool{}, 0) {
++	if false && reachesObject(xt, o, dropped, map[int]bool{}, 0) {
+ 		return nil
+ 	}
+ 	return o

@@ -1,13 +1,13 @@
 diff --git a/internal/pdfops/pageselect.go b/internal/pdfops/pageselect.go
-index 526836a..a8a646c 100644
+index 2056ead..89f85e4 100644
 --- a/internal/pdfops/pageselect.go
 +++ b/internal/pdfops/pageselect.go
-@@ -326,7 +326,7 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
+@@ -414,7 +414,7 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
  		// as the whole composed document's contents page, describing pages that have since moved —
  		// which is the original decision's own "sends the reader to the wrong place", now true of the
  		// composing doors and no longer of this one.
 -		outlines = carryOutline(xt, root, keptPages)
 +		outlines = nil
- 		// **`/UseOutlines` ONLY, and only alongside a surviving outline.** `/PageMode` is not
- 		// page-indexed, so nothing about it needs remapping — but carrying the key wholesale would
- 		// re-admit values this operation has deliberately made false: `/UseAttachments` points at
+ 	}
+ 
+ 	// **Optional content is read OUTSIDE the `carry` gate, and that placement is the decision**

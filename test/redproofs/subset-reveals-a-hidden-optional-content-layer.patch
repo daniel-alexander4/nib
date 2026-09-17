@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/optionalcarry.go b/internal/pdfops/optionalcarry.go
+index 00c9e45..74bae41 100644
+--- a/internal/pdfops/optionalcarry.go
++++ b/internal/pdfops/optionalcarry.go
+@@ -72,6 +72,7 @@ import (
+ // carryOptionalContent returns the `/OCProperties` object a selection may keep, or nil where the
+ // document has none or its subtree reaches a page the selection dropped.
+ func carryOptionalContent(xt *model.XRefTable, root types.Dict, dropped map[int]bool) types.Object {
++	return nil
+ 	o, ok := root["OCProperties"]
+ 	if !ok {
+ 		return nil
