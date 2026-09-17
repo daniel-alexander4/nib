@@ -80,7 +80,12 @@ const maxFormDrawDepth = 8
 //     `DuplicatePage` is `Collect(pdf, ["1-p", "p-"])` and `Collect` preserves a repeat, so from
 //     P02.S04b — where a subset carries the tree — this is what duplicating a page produces.
 func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDefect {
-	out := append([]structDefect{}, checkStructConsistency(ctx, tree)...)
+	// **ONE page walk for all three sweeps** (/pending 530). Each used to open its own
+	// `for p := 1..PageCount { ctx.PageDict(p, false) }`, and `PageDict` walks the page tree from
+	// the root every time with no cache — so the gate paid four root walks per page, of a tree whose
+	// walk is itself O(p). See `pageRecord` for what the fold deliberately does not change.
+	pages := scanPages(ctx)
+	out := append([]structDefect{}, checkStructConsistencyOn(ctx, tree, pages)...)
 	add := func(key, f string, a ...any) { out = append(out, structDefect{key: key, what: fmt.Sprintf(f, a...)}) }
 
 	for _, e := range tree.elems {
@@ -103,7 +108,7 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 	}
 
 	arrays, singles := parentTreeEntries(ctx, tree)
-	owners := parentTreeOwners(ctx)
+	owners := parentTreeOwnersOn(ctx, pages)
 	for key, slots := range arrays {
 		if len(owners[key]) == 0 {
 			add(fmt.Sprintf("unowned-key key=%d", key),
@@ -130,7 +135,7 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 		}
 	}
 
-	for nr, d := range formDrawCounts(ctx) {
+	for nr, d := range formDrawCountsOn(ctx, pages) {
 		if d.count > 1 && d.mcid {
 			add(fmt.Sprintf("shared-form obj=%d", nr),
 				"form XObject %d carries marked content and is drawn %d times, so its MCIDs have "+
@@ -165,6 +170,10 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 // and `checkStructConsistency` reported nothing either — so nothing in this repo could see the
 // shape `DuplicatePage` produces once a subset carries its tree (condition 5).
 func parentTreeOwners(ctx *model.Context) map[int][]string {
+	return parentTreeOwnersOn(ctx, scanPages(ctx))
+}
+
+func parentTreeOwnersOn(ctx *model.Context, pages []pageRecord) map[int][]string {
 	out := map[int][]string{}
 	// ONE visited set across every page: a form XObject in two pages' resources is one object
 	// claiming one key, and a fresh set per page would report it as two owners of that key —
@@ -181,11 +190,8 @@ func parentTreeOwners(ctx *model.Context) map[int][]string {
 		}
 		out[int(v)] = append(out[int(v)], what)
 	}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
-		if err != nil || d == nil {
-			continue
-		}
+	for _, rec := range pages {
+		p, d := rec.nr, rec.dict
 		claim(d["StructParents"], fmt.Sprintf("page %d", p))
 		annots, _ := ctx.DereferenceArray(d["Annots"])
 		for i, a := range annots {
@@ -193,11 +199,10 @@ func parentTreeOwners(ctx *model.Context) map[int][]string {
 				claim(ad["StructParent"], fmt.Sprintf("annotation %d on page %d", i+1, p))
 			}
 		}
-		res, rerr := ctx.DereferenceDict(d["Resources"])
-		if rerr != nil || res == nil {
+		if rec.res == nil {
 			continue
 		}
-		eachFormXObject(ctx, res, seenForms, 0, func(nr int, sd *types.StreamDict) {
+		eachFormXObject(ctx, rec.res, seenForms, 0, func(nr int, sd *types.StreamDict) {
 			claim(sd.Dict["StructParents"], fmt.Sprintf("form XObject %d", nr))
 			claim(sd.Dict["StructParent"], fmt.Sprintf("form XObject %d", nr))
 		})
@@ -265,21 +270,23 @@ type formDraw struct {
 // from one page is drawn twice, and that is the whole condition: the `chain` stops a form that draws
 // itself from recursing forever without collapsing the repeat that matters.
 func formDrawCounts(ctx *model.Context) map[int]formDraw {
+	return formDrawCountsOn(ctx, scanPages(ctx))
+}
+
+func formDrawCountsOn(ctx *model.Context, pages []pageRecord) map[int]formDraw {
 	counts := map[int]formDraw{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
-		if err != nil || d == nil {
+	for _, rec := range pages {
+		if rec.res == nil {
 			continue
 		}
-		res, rerr := ctx.DereferenceDict(d["Resources"])
-		if rerr != nil || res == nil {
-			continue
-		}
-		src, cerr := ctx.PageContent(d, p)
+		src, cerr := ctx.PageContent(rec.dict, rec.nr)
 		if cerr != nil || len(src) == 0 {
 			continue
 		}
-		countFormDraws(ctx, src, res, counts, map[int]bool{}, 0)
+		// A FRESH chain per page, deliberately: it stops a form that draws itself from recursing
+		// forever, and sharing it across pages would collapse the repeat this function exists to
+		// count.
+		countFormDraws(ctx, src, rec.res, counts, map[int]bool{}, 0)
 	}
 	return counts
 }

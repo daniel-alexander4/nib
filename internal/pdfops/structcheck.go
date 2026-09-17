@@ -58,7 +58,15 @@ func (d structDefect) String() string { return d.what }
 //  4. **An element reached through a page's array is the element that claims that MCID.** The two
 //     directions are stored separately — `/K` holds MCIDs, the ParentTree holds elements — so
 //     nothing but a check makes them agree.
+// checkStructConsistency resolves the pages itself. Callers that are already sweeping them —
+// `structureCarriedCompletely` — use `checkStructConsistencyOn` and hand over the one scan
+// (/pending 530); this wrapper is what `structedit.go`'s two call sites keep, having no scan of their
+// own to share.
 func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect {
+	return checkStructConsistencyOn(ctx, tree, scanPages(ctx))
+}
+
+func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []pageRecord) []structDefect {
 	var out []structDefect
 	add := func(key, f string, a ...any) { out = append(out, structDefect{key: key, what: fmt.Sprintf(f, a...)}) }
 
@@ -66,13 +74,9 @@ func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect
 
 	// Page object number -> its /StructParents key, and the reverse.
 	pageKey := map[int]int{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
-		if err != nil || d == nil {
-			continue
-		}
-		ir, e := ctx.PageDictIndRef(p)
-		if e != nil || ir == nil {
+	for _, rec := range pages {
+		p, d, ir := rec.nr, rec.dict, rec.ref
+		if ir == nil {
 			continue
 		}
 		spRaw, has := d["StructParents"]
