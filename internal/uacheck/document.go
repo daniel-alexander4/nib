@@ -34,11 +34,22 @@ type Document struct {
 	nodes     []structNode
 	nodesErr  string
 	nodesDone bool
+	// roles memoises standardType's walk of the /RoleMap, keyed by every name on the path it followed —
+	// the chain is followed to its end now (`/pending 507`), so a document with a long chain and many
+	// elements would otherwise re-walk it once per element.
+	roles map[string]roleResolution
 	// content is every page's classified drawing operators, built on first use by contentEvents.
 	content []contentEvent
 	// contentErr is why content could not be read, or not all of it, when it could not.
 	contentErr  string
 	contentDone bool
+}
+
+// roleResolution is what one `/S` name resolves to through the role map: a standard structure type, or
+// why nib could not follow the map to one. Exactly one of the two is set.
+type roleResolution struct {
+	standard   string
+	unresolved string
 }
 
 // open parses pdf for the rules to read.

@@ -1,0 +1,12 @@
+--- a/internal/uacheck/structure.go
++++ b/internal/uacheck/structure.go
+@@ -139,8 +139,7 @@
+ 			break
+ 		}
+ 		if onPath[at] {
+-			res = roleResolution{unresolved: fmt.Sprintf("the role map sends /%s back to /%s, a loop with no standard "+
+-				"structure type at the end of it, so nib cannot say what type this element has", path[len(path)-1], at)}
++			res = roleResolution{standard: at}
+ 			break
+ 		}
+ 		onPath[at] = true

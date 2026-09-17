@@ -5371,6 +5371,52 @@ during the slice's own review. The octal-escape run length at `textrun.go`'s str
 widened to `n <= 3`, which mis-decodes `(\1013)`) is pre-existing code this diff does not touch; it is
 filed rather than fixed here.
 
+## /pending 507 — the PDF/UA checker's remaining silent short reads (2026-09-16)
+
+**Eleven targeted mutations, no survivors.** Four short reads were filed; measurement overturned two
+of them and re-aimed a third, so the rows below cover the one that was live, and the other three are
+recorded here as what they turned out to be.
+
+| proof | check | expects |
+|---|---|---|
+| `rolemap-chain-truncated-at-ten-hops` — `standardType` stops after ten hops and returns the intermediate name, as it did from P07.S03 to /pending 507 | `go test ./internal/uacheck/ -run TestARoleMapChainIsFollowedToItsEndAndVeraPDFSaysSo -count=1` | `role map chain ending /H3 reports not applicable` |
+| `rolemap-cycle-read-as-a-standard-type` — the cycle detection is dropped and the name the walk stopped on becomes the answer | `go test ./internal/uacheck/ -run 'TestACyclicRoleMapIsCannotCheckNeverAPass\|TestAWidgetWhoseElementCannotBeTypedIsCannotCheck' -count=1` | `over an element nib cannot type, want CannotCheck` |
+
+**The fix the finding asked for was the wrong one, and veraPDF is what said so.** The entry proposed
+routing the ten-hop bound into `CannotCheck`. Measured against veraPDF 1.30.2 on a one-heading
+document whose `/S` chains through thirty private types: veraPDF resolves every hop and FAILS 7.4.2
+t1 when the chain ends `/H3`, PASSES it when it ends `/H1`. nib answered `NotApplicable` for both — a
+false pass and a lost pass — and `CannotCheck` would have kept the second. The chain is followed to
+its end now; only a cycle is unresolvable, and that is what earns the third verdict. **A remedy is a
+claim: this one was falsified by running it.**
+
+**And the cycle is in veraPDF's own corpus.** `7.1 General/7.1-t05-fail-d.pdf` maps
+`/Standard → /Text body → /Standard` — the file written to fail ua1 7.1 t5, *"RoleMap shall not contain
+a circular mapping"*, which nib does not implement. It is the corpus's only cycle; nib answered
+`NotApplicable` and `Pass` over its elements and now answers `CannotCheck` for the three rules that ask
+an element's type. 0 false pass and 0 false fail either way, and `corpusReach` unmoved, because those
+three pairs were never settled: 5,560 scored pairs became 5,557.
+
+**Nine more mutations, each red for its own assertion.** Removing the `standardTypes` guard from
+`checkHeadingNesting`, `checkFigureAlt`, `checkTableHeaders` and `checkWidgetsInFormElements`
+separately (the door can be right and a rule still forget to ask it); dropping the `/Annots` error in
+`checkWidgetsInFormElements` and in `walkAppearances`; un-noticing an `/AP` that is not a dictionary
+and an `/AP` entry that is not a stream; and making `resourcesOf` return nil, which is what pins the
+overturn of the fourth finding.
+
+**Two findings were overturned by measurement, not by argument.** The dropped `/Annots` error and the
+non-stream `/AP` entry cannot be reached through a file: pdfcpu v0.13.0's validator refuses every such
+document inside `open`, on every shape tried — `/Annots` as a name, an integer, a dictionary or an
+indirect reference to either, and an `/AP` entry as a direct or indirect dictionary on a Widget, a
+Square, a Link and an unknown subtype. The guards are there anyway, because the silent `_` rested on a
+DEPENDENCY's behaviour and said so nowhere; they are proven red against an in-memory document, which
+is the only place the state can exist. `resourcesOf`'s 64-level bound is unreachable for a different
+reason — pdfcpu puts a page's inherited `/Resources` on the page dictionary, so the `/Parent` climb
+runs zero times whatever the page tree's depth — and that overturn is pinned by
+`TestPdfcpuGivesThePageItsInheritedResources` rather than asserted in a comment.
+
+`recorded` 425 → 427.
+
 ## The vault's one mutate door (`/pending 510`)
 
 Every vault mutator now routes through `mutateLocked`, which snapshots what `save()` persists,

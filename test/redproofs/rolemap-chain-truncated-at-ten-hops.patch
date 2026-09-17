@@ -1,0 +1,13 @@
+--- a/internal/uacheck/structure.go
++++ b/internal/uacheck/structure.go
+@@ -143,6 +143,10 @@
+ 				"structure type at the end of it, so nib cannot say what type this element has", path[len(path)-1], at)}
+ 			break
+ 		}
++		if len(path) >= 10 {
++			res = roleResolution{standard: at}
++			break
++		}
+ 		onPath[at] = true
+ 		path = append(path, at)
+ 		mapped := ""
