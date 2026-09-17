@@ -360,3 +360,23 @@ home today.
   never fires in a `noBrowser` run. The GUI's Ghostscript-absent branch existed nowhere: `#pdfaGsGo`
   is revealed only when gs is present, so `pdfa.go`'s refusal was unreachable. The remedy URL is a
   client-side constant, never on the wire — ADR-039's reasoning applied to navigation.
+- **[ADR-041 — nothing enters the signature parser that nib's own parser cannot read](041-nothing-enters-the-signature-parser-that-nib-cannot-read.md)**
+  — /pending 509's residue from 453 and 502. `digitorus/pdf` v0.1.2 lexes object-stream content past
+  its end: `readLiteralString` appends without bound (**`fatal error: out of memory`**) and
+  `readHexString` **spins** (a hang, allocating nothing). **Neither is a panic**, so the library's own
+  recover, `internal/safe.Recover` and every per-request recover are all irrelevant — and the bytes
+  arrive from another party (`l3.go:287`, `cosign.go:19,48`). **Measured, not argued:** over all 7,438
+  single-bit flips of a signed fixture (the earlier "4 of 2,480" was a 1-in-3 offset sample), **12**
+  were fatal, all 12 inside the word `Filter` of the `/ObjStm` dict — damaging the *key* means the
+  stream is never inflated and raw deflate bytes reach the lexer. So `sign.Verify` asks `pdfcpu`
+  whether nib can read the document at all, **after** the `/ByteRange` scan and **before**
+  `verify.Verify` — one door for 27 call sites, which is what a receive-path-only gate could not be.
+  The differential was measured in both directions: pdfcpu answered on **7,438 of 7,438**, refused
+  **12 of 12** fatal ones, and the cell that would matter — pdfcpu refusing what digitorus calls
+  `valid` — is **empty**; six encryption shapes were swept separately and pdfcpu is at least as
+  permissive in every one. Cost 0.15–0.31x the `Verify` it precedes over 3.7 KB–94 KB, and **zero**
+  for an unsigned document. Relaxed validation is **pinned rather than inherited**, because
+  `NewDefaultConfiguration` returns the user's `config.yml`. A fork behind `replace` (a standing tax),
+  a subprocess under a memory cap (no `RLIMIT_AS` on Windows) and a hand-rolled lex gate (the
+  differential, written by hand) were all priced and refused. v0.2.0 bounds the allocation and
+  **cannot be adopted**: `pdfsign` calls `Reader.Resolve`, which v0.2.0 removed.

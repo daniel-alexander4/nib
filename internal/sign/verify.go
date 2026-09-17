@@ -17,6 +17,8 @@ import (
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/verify"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // State is the integrity verdict for a document.
@@ -88,15 +90,33 @@ func Verify(data []byte) Status {
 	// surface for every unsigned document — which is what an upload usually is — and leaves it only
 	// for documents that genuinely claim a signature.
 	//
-	// **It is a reduction, not a fix**, and the residue is filed (/pending 502). A malformed document
-	// that DOES carry `/ByteRange` still reaches the parser and can still take the process. Measured:
-	// 4 of 2,482 single-bit flips of a signed fixture, every one a damaged `/Filter` key on the object
-	// stream. The runaway needs a buffer with `allowEOF` set, and in the verify path only the object-
-	// stream lexer sets it (`read.go:890`), so it is object-stream content that is lexed past its end.
-	// v0.2.0 of the library bounds `readLiteralString` but cannot be adopted: pdfsign calls
-	// `Reader.Resolve`, which v0.2.0 removed — and its `readHexString` still spins at EOF.
+	// **It was a reduction and not a fix**, and the residue was filed (/pending 502, then 509). A
+	// malformed document that DOES carry `/ByteRange` still reached the parser and could still take
+	// the process. Measured: 12 of 7,438 single-bit flips of a signed fixture, every one a damaged
+	// `/Filter` key on the object stream. The runaway needs a buffer with `allowEOF` set, and in the
+	// verify path only the object-stream lexer sets it (`read.go:890`), so it is object-stream
+	// content that is lexed past its end. v0.2.0 of the library bounds `readLiteralString` but
+	// cannot be adopted: pdfsign calls `Reader.Resolve`, which v0.2.0 removed — and its
+	// `readHexString` still spins at EOF.
+	//
+	// **The second gate below closes that residue** (ADR-041). Read the two together: the byte scan
+	// keeps unsigned documents out of the parser, and `pdfcpuCanRead` keeps unreadable ones out.
 	if !scanForSignatureBlob(data) {
 		return Status{State: Unsigned}
+	}
+	// **Nothing reaches `digitorus/pdfsign` that `pdfcpu` cannot read** (ADR-041).
+	//
+	// This is the ONE door, and it is here because `verify.Verify` has exactly one call site in
+	// this repo — so a rule enforced at the library's entrance is enforced for all 27 callers of
+	// `Verify`, which is what a receive-path-only gate could not do.
+	//
+	// The verdict is `Invalid` rather than `Unsigned` for the reason `scanForSignatureBlob`'s own
+	// comment gives: a document carrying `/ByteRange` that no parser can read is "something is
+	// wrong with a signed document", and calling it *never signed* is the unsafe direction.
+	// `p2p.ContributionProgress` already renders exactly that — "this document carries a signature
+	// that cannot be read".
+	if err := pdfcpuCanRead(data); err != nil {
+		return Status{State: Invalid}
 	}
 	resp, err := verify.Verify(bytes.NewReader(data), int64(len(data)))
 	if err != nil || resp == nil || len(resp.Signers) == 0 {
@@ -250,6 +270,73 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 		}
 	}
 	return false
+}
+
+// pdfcpuCanRead reports whether the parser nib uses for everything else can build a context from
+// pdf — i.e. whether this is a document nib can read at all. It is the guard on the one door into
+// `digitorus/pdfsign` (ADR-041).
+//
+// # Why another parser rather than a hand-rolled check
+//
+// The crash it prevents is `fatal error: out of memory`, which **no `recover` catches** — not the
+// library's own, not `internal/safe.Recover` — because Go gives no per-goroutine allocation cap.
+// So the only containment is to not hand the library the bytes. The three ways to decide which
+// bytes were a patched fork of the library, a subprocess under a memory cap, and a nib-side lexer
+// that re-implements enough of the object-stream reader to spot the shape. The first is a standing
+// fork to re-apply on every bump; the second changes nib's process model on three platforms; the
+// third is a second implementation that only helps while it agrees with the first. pdfcpu is
+// already in this binary, already reads every document nib opens, and is a genuine independent
+// implementation rather than a re-derivation of the one it guards.
+//
+// # Measured, because a guard that disagrees with what it guards is the whole risk
+//
+// Over all 7,438 single-bit flips of a signed fixture (every offset, both `0x01` and `0x80`):
+// pdfcpu returned a verdict on **7,438 of 7,438** — it neither crashed nor hung on the corpus that
+// kills the library it guards; digitorus died on **12**, and pdfcpu refused **all 12**. The cell
+// that would matter — pdfcpu refusing a document digitorus reports **valid** — was **empty (0)**.
+// The only behaviour change on that corpus was 10 flips moving `unsigned` → `invalid`, which is the
+// direction `scanForSignatureBlob` already argues for.
+//
+// Both of the library's unbounded paths are covered, and the second was not in the original
+// finding: a same-length payload of `(aaa…` in an object stream whose `/Filter` name is damaged
+// reaches `readLiteralString` and OOMs, and `<444…` reaches `readHexString`, which **spins** — a
+// hang, not a crash, killed by a watchdog at 90 s. pdfcpu refuses both with
+// `decodeObjectStreamObjects: problem decoding object stream 7`.
+//
+// # Cost
+//
+// Measured 0.15–0.31× the cost of the `Verify` call it precedes, over 3.7 KB (1 page) to 94 KB
+// (400 pages) — that is the measured range, and it is not extrapolated past it. It is **zero** for
+// an unsigned document, because `scanForSignatureBlob` answers first and returns.
+//
+// # What it does not cover, stated rather than implied
+//
+//   - **A document pdfcpu refuses and digitorus would have verified is badged `Invalid`.** Zero
+//     such cases in the corpus above, and encryption — the obvious candidate, since the two
+//     libraries support different schemes — was measured separately across six shapes (AES-256,
+//     AES-128 and RC4-128/40, owner-only and with a user password): pdfcpu is at least as
+//     permissive as digitorus in **every** one, and the only shape digitorus reads (RC4-40,
+//     owner-only) pdfcpu reads too. Residue: a real-world signed document from another tool that
+//     pdfcpu alone refuses. That is a false "modified" badge, not a crash.
+//   - **A bump of either library can move the line.** The guard below is what fails if it does.
+//
+// The `recover` is defence in depth: pdfcpu did not panic once in 7,438 flips, but a panic here
+// would become the crash this exists to prevent.
+func pdfcpuCanRead(pdf []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("read pdf: %v", r)
+		}
+	}()
+	// **Relaxed is pinned rather than inherited.** `model.NewDefaultConfiguration()` returns the
+	// user's `config.yml` when one exists, so a machine configured for strict validation would
+	// silently give this gate a stricter rule than the one measured — and a gate that is stricter
+	// than measured refuses documents nib can actually read. The loosest read pdfcpu offers is the
+	// only one that belongs here: the question is "can this be parsed at all", never "is it valid".
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	_, err = api.ReadContext(bytes.NewReader(pdf), conf)
+	return err
 }
 
 // scanForSignatureBlob answers the narrow question without a parser.
