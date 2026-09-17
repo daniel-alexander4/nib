@@ -163,6 +163,17 @@ func discoverIGD(ctx context.Context) ([]string, error) {
 // one answering from a different address than it advertises is refused, and that cost is
 // unmeasured against real routers.
 //
+// **The unmeasured cost is NARROWER than it reads, and that much is settled from the tree**
+// (/pending 512). Two classes that would otherwise dominate it are already out of scope. A
+// LOCATION naming a HOSTNAME was refused before this rule existed — `isPrivateHost` parses it as
+// an IP and returns false for anything else, and `controlURLFor` screens the LOCATION host — so
+// this rule adds nothing there. And the IPv6 case, where a device legitimately answers from a
+// link-local address while advertising a ULA or GUA, cannot arise: `discoverIGD` is `udp4` on
+// both the socket and the group. What is left to measure is exactly one shape — an IGD that
+// answers from one PRIVATE IPv4 address and advertises another, which is the multi-homed or
+// bridged CPE. That is the gate, and it needs a real router; nothing in this tree can stand in
+// for one, since there is no UPnP dependency to read a behaviour off and no recorded capture.
+//
 // Pure, beside ssdpLocation, so the rule is testable without multicast.
 func ssdpLocationFrom(from net.Addr, resp []byte) string {
 	loc := ssdpLocation(resp)
@@ -290,9 +301,38 @@ func findService(d *igdDevice, serviceType string) *igdService {
 // `WroteRequest` fires from net/http's per-connection write loop, and `RoundTrip` can return
 // before that loop finishes — a response that arrives while the body is still going out, or a
 // context cancelled mid-write — so a plain bool was written there and read here with nothing
-// ordering the two. The residue is declared rather than closed: a write that completes AFTER
-// soapCall has returned reads as not written, so that one request keeps no delete handle and its
-// mapping is bounded by the lease rather than by the delete.
+// ordering the two.
+//
+// **The residue declared beside it is OVERTURNED, and the race runs the other way**
+// (/pending 512). It read: "a write that completes AFTER soapCall has returned reads as not
+// written, so that one request keeps no delete handle and its mapping is bounded by the lease
+// rather than by the delete." Three facts from go1.25's net/http, read rather than reasoned:
+//
+//  1. `trace.WroteRequest` is a DEFERRED call inside `Request.write` (request.go:584-588), so it
+//     fires once the request is in the connection's `bufio.Writer` — BEFORE `pc.bw.Flush()`
+//     (transport.go:2615-2617) puts a byte on the wire.
+//  2. That buffer is 4096 (`Transport.writeBufferSize`, transport.go:314-319; `igdHTTPClient`
+//     sets no `Transport`), and this request serialises to **837 bytes**, 588 of them body.
+//     Every field in it is bounded — fixed service type, ports of at most five digits, an IP of
+//     at most 45 characters — so it cannot approach 4096 and bufio never flushes mid-write. The
+//     COMPLETE request therefore reaches the socket only at that final flush, after the store.
+//  3. Every error return from `persistConn.roundTrip` closes the conn first: `writeErrCh` and
+//     `respHeaderTimer` call `pc.close`, and `ctxDoneChan` calls `cancelRequest` and LOOPS,
+//     returning on the `pcClosed` arm after `closeLocked` has run `pc.conn.Close()`
+//     (transport.go:2837-2884).
+//
+// So a complete AddPortMapping cannot reach the router while this reads false, and the lost
+// delete handle is not reachable. **What is reachable is the mirror image**: the store fires and
+// the flush then fails on a cancelled conn — net/http has a name for that case,
+// `nothingWrittenError` — so `written` is true for a request that never left this host. That is
+// the direction `SetOnRequestSent` names as the one to avoid, and it is bounded rather than open:
+// `unmapViaUPnP` will not delete an entry the IGD does not report as this host's, so a spurious
+// handle costs one `GetSpecificPortMappingEntry` at teardown and removes nothing.
+//
+// The overturn matters because "bounded by the lease" was never the small cost it sounds like:
+// the lease this asks for is `DefaultLeaseSec` = 120 s, and `ObserveLease` records that an IGDv1
+// which ignores `NewLeaseDuration` installs a PERMANENT mapping and answers 200 — so an orphaned
+// mapping's real bound is "until the router is rebooted", not two minutes.
 func soapAddPortMapping(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, internalIP netip.Addr, internalPort, externalPort uint16, leaseSec uint32) (bool, error) {
 	body := fmt.Sprintf(`<u:AddPortMapping xmlns:u="%s">`+
 		`<NewRemoteHost></NewRemoteHost>`+

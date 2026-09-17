@@ -234,6 +234,15 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 		fmt.Fprintf(out, "  DROPPED                                %d quic / %d dht  "+
 			"(a view stopped reading; this is not a quiet network)\n", mx.DroppedQUIC, mx.DroppedDHT)
 	}
+	// Printed only when non-zero, for the reason `punchReport` gives: a "0" on every run
+	// teaches a reader to skip the line the real number will one day appear on. Unlike the
+	// DROPPED line above, this one is never a network condition — it is a datagram that
+	// reached a path `udpmux.route` does not handle, and the shape of that datagram is the
+	// bug report.
+	if mx.Panicked > 0 {
+		fmt.Fprintf(out, "  BUG                                    %d datagram(s) dropped because "+
+			"routing one panicked — this is a defect in Nib, not in your network\n", mx.Panicked)
+	}
 
 	// The node cache this command used is a scratch directory, so `Loaded` is always 0 and
 	// `CacheRejected` always false — printing them as if they were findings reads as a
