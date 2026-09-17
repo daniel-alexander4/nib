@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+index 88c78ff..2fd03dd 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -15516,7 +15516,6 @@ async function saveCeremonyDraft() {
+   // **Not silent to the USER, though** — `loadPeerPicker`'s failure branch says the form is not
+   // being saved and offers the retry that ends it. A refusal nobody is told about would trade this
+   // finding's silent loss on disk for a silent loss of what they are typing now.
+-  if (ceremonyPickerUnread) return;
+   try {
+     await apiFetch('/api/ceremony/draft', {
+       method: 'POST',

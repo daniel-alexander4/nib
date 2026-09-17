@@ -5955,3 +5955,40 @@ and neither is true of this tree: `/pending 558`'s work took the set to 463 and 
 added one more, so the constant in `verify_test.go` is **464**, which is the union and not either
 side. Taking a side here breaks the guard rather than the code — the floor is bounded on BOTH sides,
 so 459 and 463 would each have failed the "the set outgrew this constant" arm.
+
+## /pending 566 — a failed `/api/peers` and the keystroke after it
+
+Two defects that only matter together, and the first is what hid the second. `loadPeerPicker`'s
+failure left `peers = []`, which fell into the branch for a genuinely empty peer list — so the sheet
+said *"You have not paired with anyone yet"*, a false statement about the user's own data. The first
+`change` on the form then called `saveCeremonyDraft`, which reads the roster out of `#cerPeerPick`,
+found zero rows and POSTed `roster: []`. `handleCeremonyDraft` **replaces** the stored blob, so a
+roster the convener picked in an earlier session was gone from the vault, for every later open.
+
+| Row | Reader | Token |
+|---|---|---|
+| `a-failed-peer-fetch-renders-the-empty-case` | `pickerunread.test.mjs`, tier 2 | "rendered the empty-peer-list sentence" |
+| `the-draft-save-reads-a-picker-it-could-not-fill` | `pickerunread.test.mjs`, tier 2 | "posted a draft carrying \`roster: []\`" |
+
+**The second row asserts the POST BODY, and nothing else could.** "The roster was lost" is invisible
+in the form — the picker looks the same either way — and only surfaces on a later open, in another
+session. The bytes going out are the one moment it exists, so the driver records them at the route
+rather than reading `boot`'s call log, which carries the URL, the method and the headers and not the
+body.
+
+**The finding's own proposed remedy was falsified by running it.** It said to refuse the roster and
+let the draft's other fields save. There is no such write: the POST replaces the blob and
+`restoreCeremonyDraft` reads a missing `roster` exactly as it reads an empty one, so omitting the
+field destroys the roster identically. The refusal had to be total — which turned out to be the
+cheaper shape anyway, because `saveCeremonyDraft` already treats a save that does not happen as a
+tolerated silent failure.
+
+**Four more mutations were probed and are deliberately not recorded as rows.** They went red for
+their own reasons and are cheap to re-derive from the code, but each is a *second* assertion inside
+a test another row already anchors, and the ledger's value is one defect per row: `read = true` on
+the not-ok leg (the 500 door, which no `catch` covers); `again.type = 'submit'`, which makes the
+retry convene the ceremony; latching `ceremonyPickerUnread` instead of writing it per fetch; and
+wiring *Check again* to `loadPeerPicker` rather than `openCeremonySetup`, which rebuilds the picker
+without the restore behind it and re-creates `/pending 552` with the refusal now lifted.
+
+`recorded` 464 → 466.

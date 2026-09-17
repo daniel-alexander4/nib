@@ -1568,6 +1568,9 @@ body.presenting .presentbar { display: flex; }
 .cerpeername { flex: 0 0 auto; color: var(--text); }
 .cerpeercap { flex: 1 1 auto; min-width: 0; font-size: 11px; }
 .cerformbtns { display: flex; gap: 6px; margin-top: 6px; }
+/* The picker's retry, shown only where `/api/peers` could not be read. Inside .cerpeerpick,
+   which scrolls, so it takes its own top margin rather than relying on a row's padding. */
+.cerpeerretry { font-size: 11px; margin-top: 6px; }
 .cererror { color: var(--red); font-size: 11px; margin: 4px 0 0; }
 .cerwarn { color: var(--peach); font-size: 11px; margin: 4px 0 0; }
 .cerok { color: var(--green); font-size: 12px; margin: 4px 0; }

@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index 88c78ff..93d9638 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -15712,7 +15712,7 @@ async function loadPeerPicker(gen) {
+   // statement, and neither is left to a caller to make.
+   ceremonyPickerUnread = !read;
+   const rows = document.createDocumentFragment();
+-  if (!read) {
++  if (false) {
+     // **The failure gets its own sentence, and the sentence says what the app is DOING about it.**
+     // Naming the fetch alone would leave the user to wonder whether their setup survived it, and
+     // the honest answer is the reason this branch exists at all: the draft is not being written
