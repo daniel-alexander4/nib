@@ -2,21 +2,18 @@ package server
 
 import "testing"
 
-// TestARaceNeverDialsAnotherHopsCandidate — the PREDICATE of criterion 19, and only that.
+// TestARaceNeverDialsAnotherHopsCandidate — criterion 19, as a property.
 //
 // The clause is "the race and the glare tie-break are scoped to the current hop: a convener
-// holding candidates for a later party never dials them during this hop". A stray candidate would
-// have failed the PIN — and been DIALLED first, which is exactly what the criterion forbids. The
-// convener is the party this bites: under D22's hub it holds a hop with every party, so it is the
-// one machine that genuinely has a later party's addresses in hand while running this hop.
+// holding candidates for a later party never dials them during this hop". Until the hop
+// travelled on the candidate, that held only because of which slice the caller passed:
+// `CandidateGate.Candidates()` returns bare endpoints, so the hop is dropped at the gate's own
+// boundary, and `raceCandidates` takes one `peerFP` for the whole race.
 //
-// **This test drives `hopScoped` with a hand-built candidate, and no production candidate can be
-// the one it refuses (`/pending 517`).** The only producer of a `sourceDHT` candidate stamps
-// `Hop: c.hop` from the same `*ceremonyID` whose `cer.hop` the only call site compares against, and
-// the gate has already bound the hop as AEAD context before either runs — see `hopScoped`'s own
-// doc, which used to claim this file made the criterion "a property rather than a discipline" and
-// now says where the enforcement actually is. What is asserted below is that the predicate is the
-// right predicate, which is worth keeping and is not the same statement.
+// **A stray candidate would have failed the PIN — and been DIALLED first**, which is exactly
+// what the criterion forbids. The convener is the party this bites: under D22's hub it holds a
+// hop with every party, so it is the one machine that genuinely has a later party's addresses
+// in hand while running this hop.
 func TestARaceNeverDialsAnotherHopsCandidate(t *testing.T) {
 	const thisHop = 0
 
