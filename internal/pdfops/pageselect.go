@@ -392,7 +392,7 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	// key — so a refused carry writes exactly the document this primitive wrote before P02.S04b,
 	// with no rollback and no second pass.
 	carried := false
-	var treeRoot, markInfo, outlines types.Object
+	var treeRoot, markInfo, outlines, openAct, labels types.Object
 	title := ""
 	var showTitle *bool
 	if carry {
@@ -421,6 +421,25 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 		// which is the original decision's own "sends the reader to the wrong place", now true of the
 		// composing doors and no longer of this one.
 		outlines = carryOutline(xt, root, keptPages)
+		// **`/OpenAction` rides the outline's gate, not optional content's** (`/pending 555`,
+		// `openactioncarry.go`). It is in this window for the outline's first reason — a named
+		// destination resolves through the `/Dests` tree `pruneNames` is about to prune, so it has
+		// to be read while that tree is whole — and behind the `carry` gate for its second: a
+		// composed document keeps only the FIRST part's catalog, so a carried open action would
+		// make part one's chosen opening page the whole composition's, naming a page object the
+		// merge has since renumbered. Redaction is the weaker half of the gate here and it is
+		// declared rather than argued away: a destination names a page and a view, never content,
+		// so nothing of what the raster destroyed travels in it — it is gated for consistency with
+		// the door that decides the identical question, not because a leak was found.
+		openAct = carriedOpenAction(xt, root, keptPages)
+		// **`/PageLabels` takes `keep`, not `keptPages`, and that is the whole difference between
+		// this key and the two above it** (`/pending 554`, `pagelabelcarry.go`). Its number tree is
+		// keyed by page INDEX, so a kept-page SET cannot express the answer: the carry needs the
+		// output ORDER, which `keep` is — the source page number at each output position, repeats
+		// included. It is in this window because the allowlist is about to drop the key, and behind
+		// the `carry` gate because a composition keeps only the first part's catalog, which would
+		// make part one's labelling run on over pages it never described.
+		labels = carriedPageLabels(xt, root, keep)
 	}
 
 	// **Optional content is read OUTSIDE the `carry` gate, and that placement is the decision**
@@ -466,6 +485,15 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	// this code has never heard of is still dropped, and none of these is ever an empty assertion.
 	if outlines != nil {
 		root["Outlines"] = outlines
+	}
+	if labels != nil {
+		root["PageLabels"] = labels
+	}
+	if openAct != nil {
+		// Always a plain destination by the time it reaches here — `carriedOpenAction` rewrites a
+		// `/S /GoTo` action into its `/D` and drops every other action outright, so this assignment
+		// can never put an auto-run hook back into a catalog the allowlist had cleared.
+		root["OpenAction"] = openAct
 	}
 	if optional != nil {
 		root["OCProperties"] = optional

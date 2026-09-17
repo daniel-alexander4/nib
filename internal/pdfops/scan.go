@@ -104,8 +104,16 @@ func Scan(pdf []byte) (ScanReport, error) {
 	}
 
 	// Document-level auto-run hooks.
-	if _, ok := root.Find("OpenAction"); ok {
-		add("openAction", "high", "Runs an action automatically when the document opens", 0)
+	//
+	// **The KEY is not the finding; the action dictionary is** (/pending 555). `/OpenAction` is one
+	// key with two meanings (ISO 32000-1 §12.3.2) — an action dictionary, which runs, and a
+	// destination, which only says which page to open at. Reporting the presence of the key called
+	// the second one *"runs an action automatically"* at high severity, about a document that runs
+	// nothing. The split is made in one place for both readers of this key; see `openActionForm`.
+	if raw, ok := root.Find("OpenAction"); ok {
+		if _, act := openActionForm(xt, raw); act != nil {
+			add("openAction", "high", "Runs an action automatically when the document opens", 0)
+		}
 	}
 	if _, ok := root.Find("AA"); ok {
 		add("additionalActions", "medium", "Document-level additional actions (run on print, save, or close)", 0)
@@ -282,6 +290,14 @@ func StripActive(pdf []byte) ([]byte, error) {
 		if err != nil {
 			return err
 		}
+		// **Deleted whole, including the destination form `Scan` no longer reports** — a named
+		// exemption from the one-door rule rather than an oversight (/pending 555, ADR-009). The two
+		// doors answer different questions: `Scan` says what is HERE, and mislabelling a view as an
+		// auto-run hook is a false statement about somebody's document, while this door removes what
+		// could run, and over-removing an opening view costs a reader one scroll. Reducing a
+		// `/S /GoTo` to its destination the way `carriedOpenAction` does would be the symmetric
+		// answer; it is deliberately not taken here, because it turns a delete into a rewrite at the
+		// one door whose whole value is that it only ever takes things away.
 		_ = xt.DeleteDictEntry(root, "OpenAction")
 		_ = xt.DeleteDictEntry(root, "AA")
 		_ = xt.DeleteDictEntry(root, "OCProperties")

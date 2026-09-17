@@ -444,3 +444,16 @@ home today.
   document with 40 notes, and inside the noise with none. Declared gap: everything that is not a
   `/Text` is still dropped, still without a sentence — the page-op route has no notice channel.
 
+- **[ADR-046 — a page-indexed key is restated, and a two-form key is split by form](046-a-page-indexed-key-is-restated-and-a-two-form-key-is-split.md)**
+  — /pending 554 and /pending 555, the two keys ADR-043 named and could not take. `/PageLabels` is
+  keyed by page INDEX, so it is REBUILT against the output's positions from `keep` rather than
+  pruned, and the label follows the PAGE — a reorder does not renumber the document, which is
+  `outlinecarry.go`'s own ruling. A page the source never labelled gets an explicit empty entry, or
+  it inherits the range above it in the output and says something this document never said. No range
+  ceiling: the worst case (200 pages reversed, 200 ranges) is **+6,582 bytes** and no measurable
+  time, and a document with none is worse than one with 200 right. `/OpenAction` is ONE key meaning
+  two things, so it is split by form — a destination is carried through the outline's own predicate,
+  a `/S /GoTo` is reduced to its `/D`, every other action is dropped, and the discriminator is `/S`
+  (required) and not `/Type` (optional). `Scan` read the same key the same wrong way, calling a
+  destination an auto-run hook at high severity; one door now decides for both, and `StripActive`
+  keeps deleting it whole as a named exemption.

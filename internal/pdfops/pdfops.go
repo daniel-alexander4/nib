@@ -360,10 +360,18 @@ func readBool(xt *model.XRefTable, obj types.Object) bool {
 //
 // # And what is deliberately NOT carried
 //
-// `/PageLabels` is page-INDEXED: a label range names a page INDEX, so carrying it needs the
-// old→new index MAP, which is a different instrument from the kept-page SET the rest of this
-// operation uses — and a permutation shatters a contiguous range into up to one entry per
-// page. It is `/pending 524`'s residue and deliberately not done here.
+// **`/PageLabels` USED to be on this list and no longer is** (`/pending 554`, ADR-046,
+// `pagelabelcarry.go`). The reason it was here was the right one and is quoted in that file: a
+// label range names a page INDEX, so carrying it needs the old→new index MAP rather than the
+// kept-page SET the rest of this operation uses, and a permutation shatters a contiguous range
+// into up to one entry per page. The map is `keep` — the source page at each output position —
+// which `selectPages` has all along; the shattering is real and is accepted, measured at +6,582
+// bytes for a 200-page full reversal, because a document with 200 correct labels beats one with
+// none. The label follows the PAGE, so a reorder does not renumber the document.
+//
+// **`/OpenAction` was never on this list and is carried too** (`/pending 555`, same ADR): one key
+// with two meanings, split by form — a destination through the outline's own predicate, a
+// `/S /GoTo` reduced to its `/D`, every other action dropped.
 //
 // **`/Outlines` USED to be on this list and no longer is** (`/pending 524`, `outlinecarry.go`).
 // The reason it was here was true of the implementation it described: `api.Collect` built a

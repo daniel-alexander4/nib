@@ -328,11 +328,14 @@ func contentFingerprints(t *testing.T, pdf []byte) []string {
 // holding /Dests and started holding /EmbeddedFiles compares equal at the top level, and that is
 // exactly the leak this exists to catch.
 //
-// **Four keys are DECLARED divergences, and declaring them is what keeps the oracle sharp**
+// **Six keys are DECLARED divergences, and declaring them is what keeps the oracle sharp**
 // (`/pending 524` for `/Outlines` and `/PageMode`, `/pending 525` for `/PageLayout` and
-// `/OCProperties`). The old implementation dropped all four; this one carries the outline pruned
-// onto the pages kept, `/PageMode` for the values whose target survived, the page layout as a bare
-// name, and the optional-content properties that keep a hidden layer hidden. Each exception is
+// `/OCProperties`, `/pending 555` for `/OpenAction`, `/pending 554` for `/PageLabels`). The old
+// implementation dropped all six; this one carries the outline pruned onto the pages kept,
+// `/PageMode` for the values whose target survived, the page layout as a bare name, the
+// optional-content properties that keep a hidden layer hidden, the open action where its destination
+// still reaches a kept page, and the page labels re-expressed over the output's own positions. Each
+// exception is
 // subtracted from the new side by NAME rather than the comparison loosened, so every other key is
 // still graded against the old behaviour and the key nobody thought of still fails here. Both
 // directions are asserted: that the new side really does carry each — or the subtraction would
@@ -403,7 +406,8 @@ func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 			t.Fatalf("%s (old): %v", c.name, err)
 		}
 		got, want := shape(mine), shape(old)
-		for _, declared := range []string{"Outlines", "PageMode", "PageLayout", "OCProperties"} {
+		for _, declared := range []string{"Outlines", "PageMode", "PageLayout", "OCProperties",
+			"OpenAction", "PageLabels"} {
 			if !strings.Contains(got, declared) {
 				t.Errorf("%s: /%s was not carried (%s) — and without it the subtraction below "+
 					"would compare two catalogs that agree because both lost it", c.name, declared, got)
