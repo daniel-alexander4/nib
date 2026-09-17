@@ -45,6 +45,12 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 
 	// Keyed `<file>:<enclosing function>`, the same keys the title guard uses.
 	where := map[string]row{
+		"internal/pdfops/imagedoc.go:ImageToDocument": {none, "an image has no text, so there is no " +
+			"natural language to determine. The door builds a page whose whole content is one image " +
+			"XObject — no font, no show operator, nothing a /Lang would qualify. Declaring a language " +
+			"here would be inventing one, which is what `none` exists to say. **If OCR is ever folded " +
+			"into this route** the classification changes with it, because the recognised text WOULD " +
+			"have a language and `pdfops.SetLang` is where it would be declared (/pending 400, 539)."},
 		"internal/server/office.go:handleOffice": {told, "the Document language field (/pending 471, " +
 			"Dan's option B) sends `lang`, pre-filled with the machine's locale from navigator.language " +
 			"and changeable or clearable by the user; a value is declared through pdfops.SetLang. " +

@@ -11507,10 +11507,16 @@ async function doRedo() {
   await setDocumentFromServer(await res.json(), owner);
 }
 
-// Drag-and-drop a PDF onto the window to open it (upload origin -> Save As).
+// Drag-and-drop a PDF or an image onto the window to open it (upload origin -> Save As).
+//
+// **The server is the authority on what opens, and this list only decides what is worth
+// sending.** It sniffs magic bytes, so a file the browser typed wrongly still opens and a text
+// file named `.png` is still refused; what this filter must not do is drop a file the server
+// would have accepted, which is what it did for every image until /pending 400.
+const OPENABLE_DROP_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
 window.addEventListener('drop', (e) => {
-  const file = [...(e.dataTransfer?.files || [])].find((f) => f.type === 'application/pdf');
+  const file = [...(e.dataTransfer?.files || [])].find((f) => OPENABLE_DROP_TYPES.includes(f.type));
   if (file) uploadFile(file);
 });
 

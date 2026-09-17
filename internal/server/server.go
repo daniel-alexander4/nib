@@ -689,25 +689,34 @@ type pathRefusal struct {
 // **The size check reads the STAT, never the bytes.** A 4 GiB file must be refused
 // without being read into memory first, so the order here is load-bearing rather than
 // stylistic — reversing it turns the cap from a guard into an OOM.
-func readInstallablePDF(path string) ([]byte, *pathRefusal) {
+func readInstallablePDF(path string) (data []byte, converted bool, ref *pathRefusal) {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
-		return nil, &pathRefusal{refuseUnopenable, http.StatusNotFound, "file not found"}
+		return nil, false, &pathRefusal{refuseUnopenable, http.StatusNotFound, "file not found"}
 	}
 	if info.Size() > maxPDFBytes {
-		return nil, &pathRefusal{refuseTooLarge, http.StatusRequestEntityTooLarge, "PDF exceeds size limit"}
+		return nil, false, &pathRefusal{refuseTooLarge, http.StatusRequestEntityTooLarge, "PDF exceeds size limit"}
 	}
-	data, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, &pathRefusal{refuseUnreadable, http.StatusInternalServerError, "could not read file"}
+		return nil, false, &pathRefusal{refuseUnreadable, http.StatusInternalServerError, "could not read file"}
 	}
 	// A path-opened document reports canSave, so a non-PDF installed here would be
 	// overwritten with PDF bytes by the next Save — the one open surface where getting
 	// this wrong destroys the file.
-	if !pdfops.LooksLikePDF(data) {
-		return nil, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, "that file isn't a PDF"}
+	//
+	// **An image is converted and the path is DROPPED**, which is that same hazard met rather
+	// than avoided: the bytes on disk are a PNG and the document in memory is a PDF, so a Save
+	// that wrote back would destroy the original. `converted` is what the caller uses to
+	// install it pathless, exactly as an office conversion already is.
+	out, converted, ok, cerr := asOpenableDocument(raw, filepath.Base(path))
+	if !ok {
+		return nil, false, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, "that file isn't a PDF"}
 	}
-	return data, nil
+	if cerr != nil {
+		return nil, false, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, cerr.Error()}
+	}
+	return out, converted, nil
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -719,7 +728,7 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Clean(req.Path)
-	data, ref := readInstallablePDF(path)
+	data, converted, ref := readInstallablePDF(path)
 	if ref != nil {
 		httpError(w, ref.status, ref.msg)
 		return
@@ -746,7 +755,15 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	// named tabs and nothing said why. `dup` is read BEFORE the install, or docForPath
 	// finds the document this call just added and every open reports true.
 	dup := s.docForPath(path) != nil
-	installed, err := s.addDocCapped(newPathDoc(path, data))
+	doc := newPathDoc(path, data)
+	if converted {
+		// Pathless, so canSave is false and Save routes to Save As. The NAME still comes from
+		// the file the user picked, or the tab reads "Untitled" for a document they just opened
+		// by name.
+		doc = &document{path: "", name: filepath.Base(path), data: data, sig: sign.Verify(data)}
+		dup = false
+	}
+	installed, err := s.addDocCapped(doc)
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
@@ -779,9 +796,14 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	// No path here, so nothing can be overwritten — but an unreadable "document"
 	// still leaves the viewer stuck on "Loading…" with no explanation.
-	if !pdfops.LooksLikePDF(data) {
+	if out, _, ok, cerr := asOpenableDocument(data, header.Filename); !ok {
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
+	} else if cerr != nil {
+		httpError(w, http.StatusUnsupportedMediaType, cerr.Error())
+		return
+	} else {
+		data = out // an image arrives converted; there is no path here to drop
 	}
 	// The uploaded filename is recorded ON the document, so /api/docs and a reload report
 	// it too. It used to be patched onto this one response and stored nowhere.
