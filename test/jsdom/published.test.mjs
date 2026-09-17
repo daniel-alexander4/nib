@@ -131,6 +131,11 @@ const PUBLISHED = [
   // what feeds the close prompt and Quit's wording — a field nobody read here would mean a user
   // told nothing about a ceremony their close would end.
   { type: 'armedEvent', readers: ['web/app.js'] },
+  // The release download's progress and outcome (ADR-039), the window stream's second event type.
+  // Read by `applyDownloadEvent`, which renders `status`/`percent`/`total` as the progress line and
+  // `path` as the destination the user is shown — the thing the old browser-owned download could
+  // never name.
+  { type: 'downloadEvent', readers: ['web/app.js'] },
   { type: 'receivedInfo', readers: ['web/app.js'] },
   // The sticky session-failure surface (P08.S08, C03). It sat in NEITHER table from v1.117.243
   // until v1.117.262 — so tier 2 was red for five commits and this scan was the thing saying so.
