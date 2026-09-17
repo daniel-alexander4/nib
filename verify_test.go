@@ -746,20 +746,42 @@ func TestEveryPlatformCompiles(t *testing.T) {
 	}
 }
 
-// TestNoBuildTaggedSiblingIsAStub. Two build-tagged shims exist in this tree, and mcast.go's
+// TestNoBuildTaggedSiblingIsAStub. Build-tagged shims exist in this tree, and mcast.go's
 // own note names the hazard they carry: "a no-op sibling is the shape that already shipped
 // one silent defect here (ReplaceOthers returning 0 off Linux)". That note argued against
 // having them at all, and the result was worse — no Windows binary. So: have them, and
 // assert that a deliberate gap is DECLARED rather than merely present.
+//
+// **The table is checked for COMPLETENESS, not only for agreement** — `/pending 516`, ADR-009: copies
+// checked against each other say nothing about a site added without one. This guard was written when two
+// pairs existed and its own first line said "two"; four more landed afterwards — `convertproc_*`, whose
+// Windows half ends a converter's process tree and has never run on Windows, among them — and every one
+// of them sat outside the only check that reads them. So the platform-tagged files are ENUMERATED from
+// the tree, and a file with no row here fails.
 func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 	// setReuseAddr must do the real thing on both platforms; oNoFollow is genuinely
 	// unavailable on Windows and its file must say so in as many words.
-	for path, must := range map[string]string{
+	must := map[string]string{
 		"internal/discovery/reuseaddr_unix.go":    "SetsockoptInt",
 		"internal/discovery/reuseaddr_windows.go": "SetsockoptInt",
 		"internal/cli/nofollow_unix.go":           "O_NONBLOCK",
 		"internal/cli/nofollow_windows.go":        "real gap",
-	} {
+		// A converter's cancellation kills the whole tree on both: the process group on Unix, and on
+		// Windows an argv built where a Linux machine can test it (`convertproc.go`).
+		"internal/pdfops/convertproc_unix.go":    "Setpgid",
+		"internal/pdfops/convertproc_windows.go": "taskkillCommand",
+		// The association verbs answer on every platform; off Windows the answer is a real message
+		// naming where the association comes from instead, never a silent success.
+		"internal/cli/register_windows.go": "registry.CreateKey",
+		"internal/cli/register_other.go":   "only needed on Windows",
+		// A gateway nib cannot find is ErrNoGateway — the real error, never 0.0.0.0.
+		"internal/portmap/gateway_linux.go": "/proc/net/route",
+		"internal/portmap/gateway_other.go": "ErrNoGateway",
+		// Windows has no single filesystem root; off Windows "/" is one and no jump list is needed.
+		"internal/server/roots_windows.go": "GetLogicalDrives",
+		"internal/server/roots_other.go":   "already contains every mounted",
+	}
+	for path, want := range must {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Errorf("%s is gone — if the shim was collapsed, check that every GOOS still "+
@@ -767,13 +789,39 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 				path, err)
 			continue
 		}
-		if !bytes.Contains(b, []byte(must)) {
+		if !bytes.Contains(b, []byte(want)) {
 			t.Errorf("%s no longer contains %q — a build-tagged sibling that quietly stopped "+
-				"doing its job is invisible to every tier that builds for the host", path, must)
+				"doing its job is invisible to every tier that builds for the host", path, want)
 		}
 		if !bytes.Contains(b, []byte("//go:build")) {
 			t.Errorf("%s has no build tag, so both siblings compile into every build", path)
 		}
+	}
+
+	// Every platform-tagged source file in the tree has a row above. Tags that select on something
+	// other than a platform (`embedkeys`, `ignore`) are a different thing and are not swept in.
+	platform := regexp.MustCompile(`(?m)^//go:build .*\b(windows|linux|darwin)\b`)
+	err := filepath.Walk(".", func(path string, info os.FileInfo, werr error) error {
+		if werr == nil && info.IsDir() && (info.Name() == ".claude" || info.Name() == ".git") {
+			return filepath.SkipDir // a second session's worktree is a copy of this tree, not source
+		}
+		if werr != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil || !platform.Match(b) {
+			return nil
+		}
+		if _, ok := must[filepath.ToSlash(path)]; !ok {
+			t.Errorf("%s is built for one platform and has no row in this guard — the only check that "+
+				"reads these files cannot read one it does not name, and a sibling nobody reads is one "+
+				"that can quietly become a no-op on the platform no tier builds for. Add a row naming "+
+				"the API call it must keep making, or the words in which it declares its gap.", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the tree for platform-tagged files: %v", err)
 	}
 }
 
