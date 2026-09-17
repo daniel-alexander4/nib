@@ -155,6 +155,37 @@ func collectLeaves(xt *model.XRefTable, root types.Dict) ([]pageLeaf, types.Indi
 	return leaves, pagesRef, nil
 }
 
+// selectionCeiling bounds how far a selection may AMPLIFY the document it selects from: a keep-list
+// longer than this is refused before a single page is cloned.
+//
+// **The bound is a factor and not an absolute, because amplification is the defect and size is not.**
+// A selection reaches this primitive as raw user text on two doors that validate nothing beyond
+// splitting on commas — `/api/pages` and `/api/extract` through `splitPages`, and `nib pages
+// --keep/--remove` through `splitSel` — so a repeated range costs a few bytes of input per page of
+// output. **Measured** (10 pages, 30 annotations, full `Collect`): 10.4 KiB of peak heap and 0.09 ms
+// per output page, flat from 1,000 to 200,000 pages — 1,000 pages 12 MiB/77 ms, 10,000 96 MiB/775 ms,
+// 100,000 1,039 MiB/8.3 s, 200,000 2,313 MiB/21.3 s. Against ~5 bytes of input per output page that
+// is ~2 KiB of peak heap per byte typed, and the `pages` field is bounded only by the 200 MiB
+// multipart cap — so half a megabyte of selection text is enough to take the process, and with it
+// every open document's unsaved work.
+//
+// An absolute ceiling would have to sit above the largest legitimate document, which is exactly where
+// it stops bounding the cheap-input case. A factor closes that and costs nothing real: every
+// selection nib itself generates is a permutation or smaller — `Booklet` is `bookletOrder(n)`, which
+// emits exactly n; `DuplicatePage` is `["1-p", "p-"]`, n+1; a reorder is a permutation; every split
+// and extract is a subset — so 10× leaves an order of magnitude of headroom over the widest of them.
+// The floor keeps a small document usable: 100 copies of a one-page form is a print run, not an attack.
+func selectionCeiling(pages int) int {
+	const (
+		factor = 10
+		floor  = 100
+	)
+	if n := pages * factor; n > floor {
+		return n
+	}
+	return floor
+}
+
 // selectPages rewrites ctx's page tree to hold exactly the pages named by keep — 1-based, in the
 // order given, repeats allowed — and reduces the catalog to what a subset is allowed to carry.
 //
@@ -183,6 +214,10 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	}
 	if len(leaves) == 1 && leaves[0].ref.ObjectNumber.Value() == pagesRef.ObjectNumber.Value() {
 		return false, fmt.Errorf("pdfops: this document's page tree has no pages under its root")
+	}
+	if max := selectionCeiling(len(leaves)); len(keep) > max {
+		return false, fmt.Errorf("pdfops: that selection asks for %d pages from a %d-page document; a selection may repeat pages up to %d of them",
+			len(keep), len(leaves), max)
 	}
 
 	// The signature goes BEFORE anything is cloned. `clonePage` deep-copies a page's annotations
