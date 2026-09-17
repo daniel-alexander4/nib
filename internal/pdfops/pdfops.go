@@ -360,13 +360,19 @@ func readBool(xt *model.XRefTable, obj types.Object) bool {
 //
 // # And what is deliberately NOT carried
 //
-// `/Outlines` and `/PageLabels` are page-INDEXED. An outline destination names a page
-// object, and after a Collect those objects are new and in a different order; a page label
-// range names a page index. Copying either across a reorder produces a document whose
-// contents page sends the reader to the wrong place — which is worse than not having one,
-// because it is wrong rather than absent. Restoring them properly means remapping every
-// destination through the same order the operation applied, which is per-operation work and
-// a different change. `Outline`/`SetOutline` exist for a caller that wants to do it.
+// `/PageLabels` is page-INDEXED: a label range names a page INDEX, so carrying it needs the
+// old→new index MAP, which is a different instrument from the kept-page SET the rest of this
+// operation uses — and a permutation shatters a contiguous range into up to one entry per
+// page. It is `/pending 524`'s residue and deliberately not done here.
+//
+// **`/Outlines` USED to be on this list and no longer is** (`/pending 524`, `outlinecarry.go`).
+// The reason it was here was true of the implementation it described: `api.Collect` built a
+// fresh context, so every page object number was new and a copied destination "sends the
+// reader to the wrong place — worse than not having one, because it is wrong rather than
+// absent". Since P02.S04a the selection rewrites the page tree in place, so a kept page keeps
+// its object number and a destination naming it is still correct after an arbitrary reorder.
+// The outline is pruned onto the pages kept rather than remapped — there is nothing to remap.
+// `Outline`/`SetOutline` are still the doors for authoring one.
 //
 // So: /Lang, /Metadata (XMP) and the embedded-files name tree, all of which mean the same
 // thing whatever order the pages are in.

@@ -685,9 +685,9 @@ func TestACarriedSubsetPRESERVESDisplayDocTitleAndNothingElse(t *testing.T) {
 			if vp != nil {
 				if _, has := vp[k]; has {
 					t.Errorf("%s: /%s was carried into a two-page extract of a four-page document. "+
-						"/PrintPageRange names PAGES, which is why /Outlines and /PageLabels are "+
-						"dropped explicitly; a dictionary carried whole is a denylist of the keys "+
-						"somebody thought of", c.name, k)
+						"/PrintPageRange names page INDICES, which is why /PageLabels is dropped "+
+						"explicitly; a dictionary carried whole is a denylist of the keys somebody "+
+						"thought of", c.name, k)
 				}
 			}
 		}

@@ -330,23 +330,43 @@ func TestPageOperationsKeepWhatIsNotPageIndexed(t *testing.T) {
 		})
 	}
 
-	// The half deliberately NOT carried, asserted so the decision stays visible. An outline
-	// destination names a page OBJECT; after a Collect those objects are new and reordered,
-	// so carrying it would send the reader to the wrong page — wrong is worse than absent.
+	// **The outline USED to be the half deliberately not carried, and this assertion was its
+	// record.** It said an outline destination names a page OBJECT and that after a Collect those
+	// objects were new and reordered, so carrying one would send the reader to the wrong page. That
+	// stopped being true when P02.S04a moved the selection into the source context: the page tree is
+	// rewritten IN PLACE, a kept page keeps its object number, and a destination naming it is still
+	// correct after any permutation. `/pending 524` carries it (`outlinecarry.go`), and this test
+	// now grades the carry rather than the drop — the invitation its own message left open.
 	withOutline, err := SetOutline(doc, []OutlineItem{{Title: "Start", Page: 1}, {Title: "Middle", Page: 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if o, _, _ := docFacts(t, withOutline); !o {
-		t.Fatal("setup: no outline to lose")
+		t.Fatal("setup: no outline to carry")
 	}
 	reordered, err := Collect(withOutline, []string{"3", "1", "2", "4", "5"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o, _, _ := docFacts(t, reordered); o {
-		t.Error("an outline survived a reorder — its destinations name page objects that no " +
-			"longer mean what they did. If this is intentional, remap them and update this test")
+	if o, _, _ := docFacts(t, reordered); !o {
+		t.Error("the outline did not survive a reorder — the user authors these in nib and reads " +
+			"them in \"Jump to Section\", and a page operation used to empty the panel silently")
+	}
+	// Surviving is not enough: the pages are the point. `3,1,2,4,5` puts source page 1 at position 2
+	// and source page 3 at position 1, so a carry that copied the destinations without re-resolving
+	// them reads 1 and 3 here and an index remap reads something else again.
+	items, err := Outline(reordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []OutlineItem{{Title: "Start", Page: 2}, {Title: "Middle", Page: 1}}
+	if len(items) != len(want) {
+		t.Fatalf("outline = %v, want %v", items, want)
+	}
+	for i := range want {
+		if items[i] != want[i] {
+			t.Errorf("bookmark %d = %+v, want %+v", i, items[i], want[i])
+		}
 	}
 }
 

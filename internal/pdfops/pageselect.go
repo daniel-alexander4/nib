@@ -293,7 +293,12 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 	// key — so a refused carry writes exactly the document this primitive wrote before P02.S04b,
 	// with no rollback and no second pass.
 	carried := false
-	var treeRoot, markInfo types.Object
+	var treeRoot, markInfo, outlines types.Object
+	// showOutlines records that the source asked readers to OPEN with the bookmarks panel showing.
+	// Carrying the outline without it is a half-fix the user still reports as "my bookmarks are
+	// gone": the tree is in the file, and the document opens with the panel shut exactly as it did
+	// when the tree was being dropped.
+	showOutlines := false
 	title := ""
 	var showTitle *bool
 	if carry {
@@ -304,6 +309,31 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 		if carried, cerr = carryStructure(ctx, root, pages); cerr != nil {
 			return false, cerr
 		}
+		// **The outline is pruned in this same pre-allowlist window, and it has to be**: nib's own
+		// bookmarks name their destination through the `/Dests` name tree, which `pruneNames` is
+		// about to prune by the same rule — so this reads the tree while it is still whole and
+		// shares `destNamesAKeptPage` with it rather than racing it (`outlinecarry.go`).
+		//
+		// **It is NOT gated on `carried`**, only on the request. The structure tree and the outline
+		// are different documents' worth of truth: most PDFs are untagged, and gating bookmarks on a
+		// tag carry would lose them on exactly the documents that only ever had bookmarks.
+		//
+		// **It IS gated on `carry`, and that is the same decision the tree's is.** The two reasons
+		// `collectWithoutStructure` exists both hold here. Redaction: an outline title names the
+		// content the raster destroyed, which is the tree's leak one level cruder — a heading is a
+		// heading whether it comes from a structure element or a bookmark. Composition: `api.MergeRaw`
+		// keeps only the FIRST document's catalog, so a carried outline of part one would be served
+		// as the whole composed document's contents page, describing pages that have since moved —
+		// which is the original decision's own "sends the reader to the wrong place", now true of the
+		// composing doors and no longer of this one.
+		outlines = carryOutline(xt, root, keptPages)
+		// **`/UseOutlines` ONLY, and only alongside a surviving outline.** `/PageMode` is not
+		// page-indexed, so nothing about it needs remapping — but carrying the key wholesale would
+		// re-admit values this operation has deliberately made false: `/UseAttachments` points at
+		// embedded files the subset drops, `/UseOC` at the `/OCProperties` the allowlist drops, and
+		// `/FullScreen` is a presentation mode nobody asked a page selection to turn on. Naming the
+		// one value that pairs with what survived is the allowlist's own shape — earned, not listed.
+		showOutlines = outlines != nil && nameVal(root, "PageMode") == "UseOutlines"
 	}
 
 	for k := range root {
@@ -318,6 +348,15 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 		return false, err
 	}
 	unlinkDestinations(xt, keptDicts, keptPages)
+	// Re-added ON TOP of the allowlist, never into it — the shape the structure keys already use.
+	// `/Outlines` appears only when a real outline survived the prune, so a key this code has never
+	// heard of is still dropped and an outline that lost every entry leaves no empty root behind.
+	if outlines != nil {
+		root["Outlines"] = outlines
+	}
+	if showOutlines {
+		root["PageMode"] = types.Name("UseOutlines")
+	}
 	// The trailer's /ID[0] is a PERMANENT document identifier: pdfcpu preserves it and mints only
 	// /ID[1] (`write.go`'s ensureFileID), where the fresh-context path had no ID at all and minted
 	// both. Carrying it would tie every extract and split to the document it came from.
@@ -703,7 +742,31 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 	}
 	sort.Strings(doomed)
 	for _, k := range doomed {
-		if _, _, err := node.Remove(xt, k); err != nil {
+		// **`nil`, not `xt`, and it is the difference between pruning the tree and corrupting it.**
+		// Every object-freeing site in pdfcpu's removal path is guarded by `if xRefTable != nil`
+		// (`model/nameTree.go:381-535`) and nothing else there uses the table, so passing nil unlinks
+		// the entry and frees nothing — while passing the table calls `DeleteObjectGraph` on the
+		// destination's VALUE, and a destination array's graph reaches the PAGE it names and, through
+		// the page, everything the page shares. Those numbers go on the free list, `BindNameTrees`
+		// hands them straight back out to the kid dictionaries it mints while binding, and the
+		// surviving entries end up pointing at the name-tree nodes that replaced them.
+		//
+		// **Measured on a document with no outline in it at all** — six named destinations, of which
+		// the two on dropped pages shared a leaf: before, the output had no `/Dests` tree whatsoever,
+		// so all six went, including the four whose pages survived; after, the four survive and
+		// resolve. It is a silent loss of every named destination in the document, which is what a
+		// link annotation written by Word or LaTeX uses.
+		//
+		// **Sharing a leaf is what makes it show, and is why it hid for so long.** The freeing only
+		// bites once a leaf EMPTIES, because that is what calls `removeKid` — which frees the leaf's
+		// dictionary and then the intermediate above it when a single kid remains, and those are the
+		// numbers the binder hands back out. Two doomed names in two different leaves free nothing,
+		// and the same document comes through clean.
+		//
+		// Freeing was never needed here: this file turns on pdfcpu writing by REACHABILITY, which is
+		// why `unlinkDestinations` unlinks rather than deletes and why the allowlist drops catalog
+		// keys rather than their objects. An unreferenced destination array is not written.
+		if _, _, err := node.Remove(nil, k); err != nil {
 			return err
 		}
 	}

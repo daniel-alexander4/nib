@@ -327,6 +327,15 @@ func contentFingerprints(t *testing.T, pdf []byte) []string {
 // It compares the /Names subtree too, and not just the catalog's top level: a /Names that stopped
 // holding /Dests and started holding /EmbeddedFiles compares equal at the top level, and that is
 // exactly the leak this exists to catch.
+//
+// **`/Outlines` and `/PageMode` are DECLARED divergences, and declaring them is what keeps the
+// oracle sharp** (`/pending 524`, `outlinecarry.go`). The old implementation dropped both; this one
+// carries the outline pruned onto the pages kept, and `/PageMode` for the single value that pairs
+// with it. Each exception is subtracted from the new side by NAME rather than the comparison
+// loosened, so every other key is still graded against the old behaviour and the key nobody thought
+// of still fails here. Both directions are asserted: that the new side really does carry each — or
+// the subtraction would quietly hide a carry regressing to a drop — and that removing them leaves
+// the two shapes identical.
 func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 	src := richFixture(t)
 
@@ -386,7 +395,15 @@ func TestASubsetLeavesExactlyTheCatalogItLeftBefore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s (old): %v", c.name, err)
 		}
-		if got, want := shape(mine), shape(old); got != want {
+		got, want := shape(mine), shape(old)
+		for _, declared := range []string{"Outlines", "PageMode"} {
+			if !strings.Contains(got, declared) {
+				t.Errorf("%s: /%s was not carried (%s) — and without it the subtraction below "+
+					"would compare two catalogs that agree because both lost it", c.name, declared, got)
+			}
+			got = strings.Replace(got, declared+" ", "", 1)
+		}
+		if got != want {
 			t.Errorf("%s:\n new: %s\n old: %s", c.name, got, want)
 		}
 	}
