@@ -5370,3 +5370,29 @@ from the predicate is the model that would have written the test. Closed by
 during the slice's own review. The octal-escape run length at `textrun.go`'s string decoder (`n < 3`
 widened to `n <= 3`, which mis-decodes `(\1013)`) is pre-existing code this diff does not touch; it is
 filed rather than fixed here.
+
+## The vault's one mutate door (`/pending 510`)
+
+Every vault mutator now routes through `mutateLocked`, which snapshots what `save()` persists,
+applies the change, writes, and puts memory back when the write fails. The proof that matters is
+not that the rollback runs — it is that the snapshot is **deep**.
+
+| the defect, restored | prove it | what goes red |
+|---|---|---|
+| `vault-rollback-snapshot-shares-its-arrays` — the snapshot is a struct copy of `v.contents`, so restoring it lays the old length back over elements the mutation already moved | `go test ./internal/vault/ -run TestAFailedSaveRestoresWhatTheMutationOverwroteInPlace -count=1` | `compacts the SHARED backing array` |
+
+**Measured, and it is why the row exists.** Under that patch the fifteen-mutator census
+`TestAFailedSaveLeavesNothingBehindAtEveryRoutedMutator` stays **green in all fifteen cases** — a
+replaced slice header or a plain string restores correctly either way — while all **four** subtests
+of the aliasing test go red. A rollback test written over the easy sites reports a rollback that
+undoes nothing, in the same words as one that works. The four hard sites are `DeleteImage`
+(`Images[:0]` filters over the shared array), `AddCeremonySecret` (upserts through
+`&v.contents.CeremonySecrets[i]` having already zeroed the secret it replaces — a vacuous rollback
+destroys the convener's only copy), `AddCeremonyInvitation` and `addPinned`.
+
+The routing itself is guarded separately by `TestEveryVaultMutationGoesThroughOneDoor`, which was
+probed by weakening each of its conjuncts on its own: an assignment moved in front of the door, a
+direct `save()` call with the assignment still covered, the assignment matcher neutered (the floor
+fires), and the call counter neutered (the call-site floor fires).
+
+`recorded` 424 → 425.
