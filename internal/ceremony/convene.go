@@ -406,9 +406,19 @@ func canonicalRoster(req ConveneRequest, convFP string) ([]Party, error) {
 		// ErrConvenerNotInRoster — "signed by someone not in its roster" — which is an
 		// accusation, about themselves, on a fresh install doing nothing wrong.
 		//
-		// At position 0: the convener is the hub who dials every hop, and today's code has a
-		// signing convener sign first regardless of roster position. A caller who wants another
-		// position includes themselves in the roster and this branch does not run.
+		// At position 0: the convener is the hub who dials every hop, so the party this door
+		// inserts signs first.
+		//
+		// **That is a property of THIS INSERTION, not of being the convener** (`/pending 563`).
+		// `p2p.SigningOrder` filters the roster on `Signs` and preserves its order — it does no
+		// promotion — so a signing convener who appears at roster position 2 signs third. The
+		// line here used to say "today's code has a signing convener sign first regardless of
+		// roster position", which is false, and `/pending 517` records what it cost: a second
+		// carry predicate was written on that belief, and a convener who named themselves
+		// mid-roster was refused at every hop with a 400.
+		//
+		// A caller who wants another position includes themselves in the roster and this branch
+		// does not run — which is exactly the shape the false sentence made look impossible.
 		roster = append([]Party{{Fingerprint: convFP, Signs: req.ConvenerSigns}}, roster...)
 	}
 	if len(roster) < 2 {
