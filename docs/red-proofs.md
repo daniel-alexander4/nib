@@ -6006,6 +6006,55 @@ added one more, so the constant in `verify_test.go` is **464**, which is the uni
 side. Taking a side here breaks the guard rather than the code — the floor is bounded on BOTH sides,
 so 459 and 463 would each have failed the "the set outgrew this constant" arm.
 
+## An n-up carries the comments of the pages it composes (ADR-045, /pending 562, 2026-09-16)
+
+**Eight rows**, one per condition, each probed on its own and each restored before the next. The
+production defect they replay is the one the item opened on: `api.NUp` never looks at `/Annots`,
+and pdfcpu writes by reachability, so **3 sticky notes went in and 0 came out**.
+
+- **`nup-drops-every-sticky-note`** — `NUp` does not call `carryNoteAnnots`. Red as *"three notes
+  went into the n-up and 0 came out"*, and `TestANotedTaggedDocumentKeepsItsTagTreeThroughAnNUp`
+  goes red beside it: *"a tagged document with two sticky notes n-ups to {true false false …};
+  without the notes the same document carries, so the note is what costs the tree"*.
+- **`nup-note-rect-skips-the-placement-matrix`** — the source rect is written onto the sheet
+  unchanged. Red as *"'note 1' is 20.00×20.00 points on the sheet … a transformed 20-point icon box
+  is 14.13×14.13"*. **A tile check could not have caught it** — an untransformed note 1 is still in
+  the top tile and still on the right sheet, which is why the scale is asserted separately.
+- **`nup-note-ignores-its-pages-crop-offset`** — the form's `/Matrix` term is dropped. Red as *"the
+  note is at (274.375, 340.000) and its tile's crop offset puts it at (125.625, 340.000)"* — 148.75
+  points, clean out of a 297.5-point-wide image.
+- **`nup-note-ignores-its-pages-own-rotation`** — the rotation prefix is read and discarded. Red as
+  *"the note is at [246.50 637.50 256.50 647.50] and its page's own /Rotate 90 puts it at [550.50
+  549.00 560.50 559.00]"*, off a 595-point-high sheet entirely.
+- **`nup-notes-objr-keeps-the-orphaned-annotation`** — the OBJR is left naming the source
+  annotation. Red as *"an /Annot element's OBJR names object 16, which is on no page"*. **Nothing
+  else in the repo can see this**: `parentTreeOwners` walks the annotations of pages, so the second
+  claimant of the `/ParentTree` key is invisible and `structureCarriedCompletely` scores the broken
+  and the repaired carry identically.
+- **`nup-carries-an-annotation-that-is-not-a-note`** — every subtype is accepted. **This one
+  SURVIVED its first probe**, and the survivor was a real coverage hole rather than a weak
+  mutation: the widget fixture stayed green because a filled form's widgets carry indirect
+  appearance streams and `copyAnnot` refuses those whatever the subtype rule says — the two reasons
+  are indistinguishable there. Closed by `linkFixture`, a `/Link` whose every key is direct and is
+  therefore fully copyable, so the subtype test is the only thing between it and the sheet. Red as
+  *"an annotation of subtype /Link reached the sheet; this door carries /Text alone"*.
+- **`nup-note-placements-are-taken-out-of-order`** — the placement list is matched to the source
+  pages in reverse. What fires is not a geometry check but `placementMatrix`'s identity check, which
+  requires the form's decoded content to END with the page content the capture took: the carry is
+  abandoned whole and the test reads *"0 came out"*. That is the "attempted and abandoned, never
+  half-done" half of the decision, proven rather than asserted.
+
+- **`nup-residue-count-does-not-see-what-was-left`** — an annotation the door does not carry is
+  skipped without being counted. The ADR's declared gap is that anything which is not a `/Text` is
+  still dropped and still without a sentence, and the answer is to COUNT it; a count nothing reads
+  is the same silence one level in, so `TestTheNoteCarryCountsWhatItLeftBehind` is what makes the
+  claim true today. Red as *"a filled form's two widgets reported carried=0 left=0, want 0 and 2"*.
+  **The first spelling of this mutation was rejected by the compiler** — zeroing the accumulator
+  left the loop variable unused — which is not a red proof, so the probe was moved to the site that
+  produces the figure rather than the one that sums it.
+
+`recorded` 464 → 472.
+
 ## /pending 569 and /pending 570 — a split part that replaces its own document, and the mode nobody chose (2026-09-16)
 
 Two disagreements between the same two doors, batched because they are the same mistake twice: a

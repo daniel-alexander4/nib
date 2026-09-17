@@ -186,6 +186,22 @@ var digestUnstable = map[string]string{
 	"notes-on-every-page": "AddNotes goes through pdfcpu's annotation creation, which stamps /M " +
 		"from time.Now() (model/annotation.go:396)",
 	"watermark": "StampWatermark creates an annotation, stamped the same way",
+	// **This row became unstable by being FIXED, and the move is the acceptance.** Until
+	// `/pending 562` it was pinned to a hash byte-identical to `nup2`'s, because `api.NUp` dropped
+	// every annotation with the page dictionaries it removed and there was nothing left of the
+	// notes to hash — an equality this file recorded for a day without anything reading it as the
+	// data loss it was. The n-up now carries the notes onto their sheets, so the carried `/M` is
+	// inside the digest and the row inherits `notes-on-every-page`'s instability from its input.
+	//
+	// **What the row stops pinning, stated rather than left to be discovered.** It was added for
+	// the shared-object graph `hashObjectSeen`'s `#again` marker — an annotation reaching a page
+	// dict reaching the `Pages` node reaching every page — and an unstable row no longer pins that
+	// graph's digest across builds. It still EXERCISES it, and only now really does: before the
+	// carry the composition had no annotation left to reach a page dict with. Every row, unstable
+	// ones included, still asserts that the same bytes digest the same way, which is where a memo
+	// leaking between calls shows up.
+	"notes-then-nup": "the notes it now carries were stamped /M by AddNotes, so it inherits " +
+		"notes-on-every-page's instability (/pending 562)",
 }
 
 func sha256Hex(b []byte) string {

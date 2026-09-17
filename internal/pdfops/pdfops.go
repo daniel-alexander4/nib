@@ -825,6 +825,13 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// **Carry the sticky notes before anything asks about the tags, and that order is load-bearing.**
+	// `api.NUp` drops every annotation with the page dictionaries it removes — measured, 3 in and 0
+	// out — and on a TAGGED document that also costs the tree: a note's `/Annot` element holds a
+	// `/ParentTree` key claimed by the annotation's `/StructParent`, so with the annotation gone the
+	// key is `unowned-key` and `completeOrHonest` abandons the whole carry. Putting the notes back
+	// first is what lets the completeness gate below see an owned key. ADR-045, `annotcarry.go`.
+	raw, _ = carryNoteAnnots(pdf, raw)
 	if !inspectTags(raw).orphaned() {
 		return raw, nil
 	}

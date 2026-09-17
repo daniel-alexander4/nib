@@ -1,0 +1,14 @@
+diff --git a/internal/pdfops/annotcarry.go b/internal/pdfops/annotcarry.go
+index ff2d925..fd4865c 100644
+--- a/internal/pdfops/annotcarry.go
++++ b/internal/pdfops/annotcarry.go
+@@ -509,9 +509,6 @@ func placementMatrix(ctx *model.Context, pl sheetPlacement, pageContent []byte)
+ 		rot = m
+ 	}
+ 	form := identityMatrix
+-	if fm, ok := matrixFrom(ctx, sd.Dict["Matrix"]); ok {
+-		form = fm
+-	}
+ 	return rot.mul(form).mul(pl.cm), nil
+ }
+ 
