@@ -231,8 +231,12 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	// The only copy: the signature on it cannot be re-derived identically, so a save that
 	// reports success must mean the bytes are on disk (atomicfile.WriteDurable's own rule).
-	// ReplaceDurable: an overwrite keeps the replaced file's mode (/pending 499); a new file is 0600.
-	if err := atomicfile.ReplaceDurable(target, data, 0o600); err != nil {
+	// ReplaceDurable: an overwrite keeps the replaced file's mode (/pending 499); a NEW file gets
+	// `atomicfile.UserFileMode`, which is where that decision now lives for all three doors that
+	// make it (/pending 572). It was 0600 here — nib's habit for nib's own files — while the CLI's
+	// `writeNamed` had always created a user-named file 0644, so a document saved from the GUI and
+	// the same document written by `nib -o` landed with different permissions.
+	if err := atomicfile.ReplaceDurable(target, data, atomicfile.UserFileMode); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write file")
 		return
 	}

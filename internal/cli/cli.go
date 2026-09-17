@@ -266,7 +266,7 @@ func writeAtomic(path string, data []byte) error {
 // Through `atomicfile.ReplaceDurable` the original stays whole until the new bytes are on disk, it
 // keeps the mode it had, and a symlink is followed to its target rather than replaced by the rename.
 func writeNamed(path string, data []byte) error {
-	return writeNamedMode(path, data, 0o644)
+	return writeNamedMode(path, data, atomicfile.UserFileMode)
 }
 
 // writeNamedMode is writeNamed for a caller whose new-file mode is a decision somebody made rather
@@ -276,7 +276,9 @@ func writeNamed(path string, data []byte) error {
 // parts 0600 and 0644 for the same operation because each inherited whatever its helper passed, and
 // the fix is not that they now agree by coincidence in a second place — it is that both say
 // `pdfops.SplitPartMode` out loud at the site. Every other caller keeps the 0644 this door has
-// always given a new file, through the wrapper above.
+// always given a new file, through the wrapper above — which now says `atomicfile.UserFileMode`
+// rather than a literal, because the GUI's two save doors were passing 0600 for the same class of
+// file and nobody had noticed the three doors disagreed (/pending 572).
 //
 // perm applies only to a path that does not exist yet; an existing regular file keeps its own bits,
 // which is `ReplaceDurable`'s contract and not this wrapper's to restate.

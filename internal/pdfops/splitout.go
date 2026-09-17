@@ -60,6 +60,12 @@ import "os"
 //
 // Note that every door here applies this with an explicit `Chmod`, so the process umask does not
 // narrow it. That is `atomicfile`'s behaviour for every write and is not decided here.
+// **It agrees with `atomicfile.UserFileMode` and is deliberately not defined as it** (/pending 572).
+// That constant is the same answer for the same reason, at the three doors that WRITE a file the
+// user named; this one is about a split PART, which is re-derivable output of one operation, and
+// the exposure paragraph above is that operation's to state. Two named decisions that happen to
+// agree are honest; one constant standing for both would make a later divergence — a split part
+// going 0600 while Save As stays 0644, or the reverse — impossible to express without a rewrite.
 const SplitPartMode os.FileMode = 0o644
 
 // OutputOverwritingSource returns the first path in outs that names the same FILE as src, and
