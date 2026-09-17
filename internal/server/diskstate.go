@@ -218,7 +218,9 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// Up to maxPDFBytes of file I/O, deliberately outside s.mu — a syscall under the global
 	// server mutex serializes every route behind it, and on a network mount a hung read
 	// becomes a hung process.
-	data, ref := readInstallablePDF(path)
+	// A reload re-reads the same path, so an image is converted again — the bytes on disk are
+	// still the image and the document in memory is still a PDF built from them.
+	data, _, ref := readInstallablePDF(path)
 	if ref != nil {
 		httpError(w, ref.status, ref.msg)
 		return

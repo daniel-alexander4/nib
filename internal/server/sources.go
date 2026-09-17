@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"net/url"
-	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"path"
 )
@@ -62,9 +61,17 @@ func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadGateway, "could not fetch PDF")
 		return
 	}
-	if !pdfops.LooksLikePDF(data) {
+	// An image fetched by URL opens like any other — this route is one of the four
+	// `asOpenableDocument` exists for, and leaving it out would be the ADR-009 defect of a rule
+	// that reaches three sites and not the fourth. There is no path here to drop.
+	if out, _, ok, cerr := asOpenableDocument(data, path.Base(req.URL)); !ok {
 		httpError(w, http.StatusUnsupportedMediaType, "URL did not return a PDF")
 		return
+	} else if cerr != nil {
+		httpError(w, http.StatusUnsupportedMediaType, cerr.Error())
+		return
+	} else {
+		data = out
 	}
 	// The name comes from the URL's own path, so an opened-by-URL document is not "Untitled"
 	// after a reload. Three of the five path-less producers were given a name and this was

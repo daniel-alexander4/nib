@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"nib/internal/instance"
+	"nib/internal/sign"
 )
 
 // handoffRequest is what a second launch sends: a path, and nothing else (D20's third
@@ -116,7 +117,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 // the open document with canSave true, and Save clobbers it), no size cap, no document
 // cap.
 func (s *Server) openHandedOff(path string) error {
-	data, ref := readInstallablePDF(path)
+	data, converted, ref := readInstallablePDF(path)
 	if ref != nil {
 		// Its own wording, kept deliberately. This door is the OS handing Nib a file the
 		// user double-clicked, not a path anyone typed, so "file not found" would read as
@@ -133,7 +134,15 @@ func (s *Server) openHandedOff(path string) error {
 			return errHandoff("that file could not be opened")
 		}
 	}
-	if _, err := s.addDocCapped(newPathDoc(path, data)); err != nil {
+	// **An image hand-off installs PATHLESS**, for the reason `readInstallablePDF` states: the
+	// bytes on disk are a PNG and the document is a PDF built from them, so a Save that wrote
+	// back through the path would destroy the file the OS just handed over. The name is kept,
+	// or a double-clicked photo opens as "Untitled".
+	doc := newPathDoc(path, data)
+	if converted {
+		doc = &document{path: "", name: filepath.Base(path), data: data, sig: sign.Verify(data)}
+	}
+	if _, err := s.addDocCapped(doc); err != nil {
 		return err
 	}
 	return nil
