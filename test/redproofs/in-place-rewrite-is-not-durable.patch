@@ -1,11 +1,11 @@
 --- a/internal/cli/cli.go
 +++ b/internal/cli/cli.go
-@@ -293,7 +293,7 @@
+@@ -308,7 +308,7 @@
  	// filesystems and spinning disks.
  	//
- 	// 0644 is the mode for a file that does not exist yet; an existing one keeps its own.
--	return atomicfile.ReplaceDurable(path, data, 0o644)
-+	return atomicfile.Write(path, data, 0o644)
+ 	// perm is the mode for a file that does not exist yet; an existing one keeps its own.
+-	return atomicfile.ReplaceDurable(path, data, perm)
++	return atomicfile.Write(path, data, perm)
  }
  
- // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,
+ // sourceFile is the path an input argument reads from, or "" when it is not a file at all.

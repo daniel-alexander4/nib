@@ -48,6 +48,15 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 // open document. Filenames come from the bookmark titles (sanitized + deduped in
 // pdfops) with an optional prefix; each is confined to the chosen folder.
 func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
+	// Resolved for its PATH, not for its bytes — the split still cuts the posted document, which
+	// carries edits this server has not been told about. What only the registry knows is the file
+	// that document came from, and that is the one file no part may be written over (/pending 569).
+	// Before the body, per the ordering `bodyfirst_test.go` states for the routes that commit:
+	// a request addressed to a document that is gone should not cost a maxPDFBytes parse.
+	src, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -70,7 +79,7 @@ func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "this PDF has no bookmarks to split by")
 		return
 	}
-	writeSplitParts(w, dir, parts)
+	writeSplitParts(w, src.path, dir, parts)
 }
 
 // handleSplitPages splits the posted document by page SEQUENCE — either every N
@@ -78,6 +87,11 @@ func (s *Server) handleSplitBookmarks(w http.ResponseWriter, r *http.Request) {
 // Like the bookmark split it never touches the open document. (The imposed-page
 // splitters op:split/splitrects cut one sheet's geometry instead.)
 func (s *Server) handleSplitPages(w http.ResponseWriter, r *http.Request) {
+	// For its path, and before the body — see handleSplitBookmarks.
+	src, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
 	if !ok {
 		return
@@ -106,7 +120,7 @@ func (s *Server) handleSplitPages(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not split: "+err.Error())
 		return
 	}
-	writeSplitParts(w, dir, parts)
+	writeSplitParts(w, src.path, dir, parts)
 }
 
 // destDir parses and validates the destination folder for any folder-writing
@@ -138,18 +152,50 @@ func containedJoin(dir, name string) (string, bool) {
 // writeSplitParts writes each part as <dir>/<name>.pdf — atomic, and contained to
 // dir (the name is user/title-derived, so the join is re-checked) — then replies
 // with a JSON manifest. Shared by the bookmark and page-range split handlers.
-func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart) {
+//
+// src is the file the document being split lives at on disk, or "" for a document that was
+// uploaded through the browser and has none.
+//
+// # Two passes, and src, because this door CAN destroy the user's document (/pending 569)
+//
+// The CLI's writer was measured replacing its own input, and this one was reported to have the
+// same shape by reading. The shape is the same and the mechanism is not: nothing here opens a
+// file, so there is no descriptor to clobber and no input argument to compare against. What made
+// it the same defect is `document.path` — the file the open document was loaded from is in the
+// folder the user is about to fill, under a name a prefix can reproduce. Driven rather than
+// reasoned: a `--ranges 1-2 --prefix foo` split of an open `foo1-2.pdf` into its own folder
+// replaced the 1,239-byte file with the 1,076-byte part, status 200.
+//
+// Every output path is built and checked before the first is written, so a refusal leaves the
+// folder as it found it rather than half filled.
+func writeSplitParts(w http.ResponseWriter, src, dir string, parts []pdfops.SplitPart) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not create folder")
 		return
 	}
-	names := make([]string, 0, len(parts))
-	for _, p := range parts {
+	outs := make([]string, len(parts))
+	for i, p := range parts {
 		full, ok := containedJoin(dir, p.Name+".pdf") // the name is user/title-derived
 		if !ok {
 			httpError(w, http.StatusBadRequest, "unsafe file name")
 			return
 		}
+		outs[i] = full
+	}
+	// 400, not 409: 409 is this server's answer for "that document is no longer open" and the
+	// document here is very much open — it is the thing being protected. The client already warns
+	// *"Files with the same name will be replaced"* before a split, and the one file a user cannot
+	// mean by that is the document on their screen, so the message names it rather than repeating
+	// the general warning. Its own voice, per ADR-009; the door decided WHICH part.
+	if clash, ok := pdfops.OutputOverwritingSource(src, outs); ok {
+		httpError(w, http.StatusBadRequest, "“"+filepath.Base(clash)+"” is the document you are "+
+			"splitting — that part would replace the whole document with one piece of it. "+
+			"Choose a different prefix or folder.")
+		return
+	}
+	names := make([]string, 0, len(parts))
+	for i, p := range parts {
+		full := outs[i]
 		// Re-derivable: every part comes from the document still open in this process, so an
 		// export can simply be run again. Atomic, not durable — see atomicfile.Write.
 		//
@@ -163,12 +209,12 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
 		// (/pending 515). Two doors, two reasons, both written down; the symmetry would have cost
 		// more than it bought.
 		//
-		// **What is NOT settled, and is a real disagreement: the mode.** A part written here is
-		// 0600 and the same part from the CLI is 0644, so where a split's output lands depends on
-		// which surface produced it. Nobody chose that, it is not durability, and it needs a
-		// product call rather than a comment — filed as its own item off /pending 550 rather than
-		// changed here, because either direction alters what users' existing files look like.
-		if err := atomicfile.Write(full, p.Data, 0o600); err != nil {
+		// **The mode WAS the other disagreement, and it is settled** (/pending 570). This door
+		// wrote new parts 0600 and the CLI's wrote them 0644, so where a split's output landed
+		// depended on which surface produced it — a hard-coded literal at each door, chosen by
+		// nobody. `pdfops.SplitPartMode` is the one answer and its own comment carries the
+		// reasoning and the exposure; both doors name it here rather than agreeing by coincidence.
+		if err := atomicfile.Write(full, p.Data, pdfops.SplitPartMode); err != nil {
 			httpError(w, http.StatusInternalServerError, "could not write "+p.Name)
 			return
 		}

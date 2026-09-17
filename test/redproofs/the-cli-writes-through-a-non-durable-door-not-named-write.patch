@@ -8,12 +8,12 @@
  	"context"
  	"crypto/sha256"
  	"encoding/json"
-@@ -484,7 +485,7 @@
- 			errf("unsafe file name %q", p.Name)
- 			return 1
- 		}
--		if err := writeNamed(full, p.Data); err != nil {
-+		if _, err := atomicfile.WriteFrom(full, nil, 0o644, 0, nil); err != nil {
+@@ -509,7 +510,7 @@
+ 		return 1
+ 	}
+ 	for i, p := range parts {
+-		if err := writeNamedMode(outs[i], p.Data, pdfops.SplitPartMode); err != nil {
++		if _, err := atomicfile.WriteFrom(outs[i], nil, pdfops.SplitPartMode, int64(len(p.Data)), nil); err != nil {
  			errf("%v", err)
  			return 1
  		}

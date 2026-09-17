@@ -951,6 +951,12 @@ divides the page sequence instead — **every N pages**, or **custom ranges** li
 `1-3, 4-8, 9-10` where each range becomes its own file — into a folder, the open
 document untouched.
 
+Either split will replace files already in the destination folder — it says so
+before it starts — with one exception it refuses outright: a part whose name is
+**the document you're splitting**. That would swap the whole document for one
+piece of itself, so Nib stops before writing anything and asks for a different
+prefix or folder. `nib split` and `nib fill --out-dir` refuse the same way.
+
 **Flatten** to a guaranteed-flat PDF, or
 export pages as PNGs (single or ZIP) and form data as JSON / CSV. Save back over the
 original, or as a flattened or editable copy. **Print** the current document —

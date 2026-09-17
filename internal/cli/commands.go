@@ -417,7 +417,7 @@ func cmdSplit(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	return writeSplitFiles(outDir, parts)
+	return writeSplitFiles(sourceFile(fs.Arg(0)), outDir, parts)
 }
 
 // splitSel turns a comma-separated page selection ("1-3,5") into pdfcpu tokens;
@@ -469,26 +469,51 @@ func splitSel(s string) []string {
 // `--every 10`, 28 parts — it is 224–276 ms of 3.3–6.6 s, 4–8%. And the run-to-run spread of the
 // split itself on a loaded machine was ±38 s, which is the honest denominator for a 5 s saving.
 //
-// The remaining disagreement with the GUI is recorded at that site and is deliberate at neither:
-// it writes new parts 0600 where this writes 0644, which is a user-visible difference nobody
-// chose and is not this function's to settle.
-func writeSplitFiles(dir string, parts []pdfops.SplitPart) int {
+// # The last disagreement with the GUI is gone, and both decisions moved into a door
+//
+// This used to record that the two split doors wrote new parts 0644 here and 0600 there — *"a
+// user-visible difference nobody chose and is not this function's to settle"*. It is settled
+// (/pending 570): `pdfops.SplitPartMode` is the one answer and each door names it, which is what
+// stops a third door inheriting whichever helper it happens to reach for.
+//
+// # Two passes, because "before the first write" is the whole refusal (/pending 569)
+//
+// src names the document the parts were derived from, and no part may be written over it — measured
+// through the real command, a `--ranges 1-2 --prefix foo` split of `foo1-2.pdf` into its own folder
+// replaced the 105,102-byte input with the 94,254-byte part, exit 0, nothing printed. Every output
+// path is therefore built and checked BEFORE the first one is written: a check inside the loop
+// refuses the colliding part with the earlier ones already on disk, and a half-filled folder under
+// a non-zero exit is a state the user has to reverse-engineer. The containment refusal moved into
+// the same pass for the same reason.
+func writeSplitFiles(src, dir string, parts []pdfops.SplitPart) int {
 	dir = filepath.Clean(dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		errf("%v", err)
 		return 1
 	}
-	for _, p := range parts {
+	outs := make([]string, len(parts))
+	for i, p := range parts {
 		full := filepath.Join(dir, p.Name+".pdf")
 		if filepath.Dir(full) != dir { // containment: name is user/title-derived
 			errf("unsafe file name %q", p.Name)
 			return 1
 		}
-		if err := writeNamed(full, p.Data); err != nil {
+		outs[i] = full
+	}
+	// The door decides WHICH output is the source; this surface says it in its own voice
+	// (ADR-009). A CLI user chose `--prefix` and `--out-dir` and can change either, so the
+	// refusal names both rather than telling them what nib would have done instead.
+	if clash, ok := pdfops.OutputOverwritingSource(src, outs); ok {
+		errf("%s is the document being read: writing it would replace the whole document with "+
+			"one part of it. Choose a different --prefix or --out-dir.", clash)
+		return 1
+	}
+	for i, p := range parts {
+		if err := writeNamedMode(outs[i], p.Data, pdfops.SplitPartMode); err != nil {
 			errf("%v", err)
 			return 1
 		}
-		fmt.Println(full)
+		fmt.Println(outs[i])
 	}
 	fmt.Printf("%d file(s) written to %s\n", len(parts), dir)
 	return 0
@@ -695,6 +720,23 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 		st.Total = st.Start + grand - 1 // "of N" = the set's last number, not each file's
 	}
 
+	// SELF-OVERWRITE EXEMPT: an output here may be its own input, and that is not a loss.
+	//
+	// This writer has the shape /pending 569 is about — a name derived from the input, joined onto
+	// a directory the user named, containment-checked and nothing more — and driving it confirms
+	// the collision is reachable: `nib pagenum --continuous a.pdf --out-dir <a's own folder>`
+	// replaced `a.pdf`, md5 `fe51b69e…` → `57910e86…`, exit 0.
+	//
+	// It is exempt because the OUTPUT IS A SUPERSET OF THE INPUT. A split part is a subset, so
+	// writing it over the input destroys pages that exist nowhere else; a stamped page is the same
+	// page with a number on it, so this collision is "stamp these and put them back" — which this
+	// command also spells `-w`, durably, through the same door. Refusing it would break a workflow
+	// that loses nothing, to prevent a loss that cannot happen here.
+	//
+	// Nor can one input's output land on another's: the names are deduped by `UniqueName` within
+	// the run, so two inputs sharing a base name produce `a.pdf` and `a-2.pdf`, never one file
+	// twice. Named here rather than left silent because ADR-009 asks for the exemption at the site,
+	// and because the next reader will otherwise re-find this and re-fix it.
 	if !inPlace {
 		dir := filepath.Clean(outDir)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -866,7 +908,12 @@ func cmdFill(args []string) int {
 			errf("%v", err)
 			return 1
 		}
-		return writeSplitFiles(outDir, parts)
+		// The same door, reached by a different verb — and the same loss: a `--name-col` value
+		// spelling the form's own base name replaces the blank form with one filled copy of it.
+		// Found while fixing the split (/pending 569), not filed separately, because the whole
+		// reason the rule is in `writeSplitFiles` rather than in `cmdSplit` is that this caller
+		// exists.
+		return writeSplitFiles(sourceFile(fs.Arg(0)), outDir, parts)
 	}
 
 	// Single fill from a JSON or XFDF record (pipeable via - / -o -).

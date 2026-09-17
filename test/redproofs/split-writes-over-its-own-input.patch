@@ -1,0 +1,18 @@
+--- a/internal/cli/commands.go
++++ b/internal/cli/commands.go
+@@ -500,14 +500,7 @@
+ 		}
+ 		outs[i] = full
+ 	}
+-	// The door decides WHICH output is the source; this surface says it in its own voice
+-	// (ADR-009). A CLI user chose `--prefix` and `--out-dir` and can change either, so the
+-	// refusal names both rather than telling them what nib would have done instead.
+-	if clash, ok := pdfops.OutputOverwritingSource(src, outs); ok {
+-		errf("%s is the document being read: writing it would replace the whole document with "+
+-			"one part of it. Choose a different --prefix or --out-dir.", clash)
+-		return 1
+-	}
++	_ = src
+ 	for i, p := range parts {
+ 		if err := writeNamedMode(outs[i], p.Data, pdfops.SplitPartMode); err != nil {
+ 			errf("%v", err)
