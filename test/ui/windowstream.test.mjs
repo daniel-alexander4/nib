@@ -18,7 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { launch, WORK, BASE } from './harness.mjs';
+import { launch, WORK, BASE, shutdown } from './harness.mjs';
 
 const LOG = join(WORK, 'nib.log');
 const readLog = () => readFileSync(LOG, 'utf8');
@@ -50,7 +50,9 @@ test('a real window declares itself, and stops when it closes', async () => {
   const connectedBefore = countOf(before, 'window connected');
   const goneBefore = countOf(before, 'window gone');
 
-  const { browser, page, consoleErrors } = await launch();
+  const h = await launch();
+
+  const { browser, page, consoleErrors } = h;
 
   // The page is up; its stream should have reached the server.
   await waitForLog('window connected', connectedBefore + 1);
@@ -63,7 +65,7 @@ test('a real window declares itself, and stops when it closes', async () => {
     'a window that is still open must not have been reported gone',
   );
 
-  await browser.close();
+  await shutdown(h);
 
   // The whole slice, at tier 3: the window went away and nib noticed, without anyone
   // telling it and without watching the browser process.
@@ -124,7 +126,9 @@ test('a real reload drops the window stream and opens a new one', async () => {
   const goneBefore = countOf(readLog(), 'window gone');
   const connectedBefore = countOf(readLog(), 'window connected');
 
-  const { browser, page, consoleErrors } = await launch();
+  const h = await launch();
+
+  const { browser, page, consoleErrors } = h;
   await waitForLog('window connected', connectedBefore + 1);
 
   // STIMULUS: the reload has not happened yet, so the gone-count below is about the reload and
@@ -145,6 +149,6 @@ test('a real reload drops the window stream and opens a new one', async () => {
   const res = await page.request.get(`${BASE}/api/status`);
   assert.equal(res.status(), 200, 'nib stopped serving across a reload');
 
-  await browser.close();
+  await shutdown(h);
   assert.deepEqual(consoleErrors, [], 'the page logged errors');
 });

@@ -14,11 +14,11 @@
 // the same SC 2.4.3 harm the change exists to remove, just relocated to the close.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 test('closing a dialog opened from a menu leaves focus somewhere real', async () => {
   // Open About the way a user does. Settings is a MODE with sidebar cards since v1.126.0 — the

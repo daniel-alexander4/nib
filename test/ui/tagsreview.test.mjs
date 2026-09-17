@@ -7,7 +7,7 @@
 // This file drives all three against the real binary.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const DOC = writeFixture('tagsreview.pdf', { pages: 2, label: 'section' });
@@ -38,7 +38,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 test('the review proposes, outlines on focus, and commits from the keyboard', async () => {

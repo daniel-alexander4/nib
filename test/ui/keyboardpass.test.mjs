@@ -20,12 +20,12 @@
 // user has.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const DOC = writeFixture('keyboardpass.pdf', { pages: 2, label: 'keyboard pass' });
 

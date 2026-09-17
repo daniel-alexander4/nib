@@ -56,7 +56,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { makeScanPDF, writeRawFixture } from './fixtures.mjs';
 
 const N = 8;
@@ -72,7 +72,7 @@ const REGIMES = [
 
 const h = await launch();
 const { page } = h;
-after(async () => { await h.browser.close(); });
+after(async () => { await shutdown(h); });
 
 const bytesA = [...fs.readFileSync(A)];
 const regimeBytes = REGIMES.map(([name, deg], i) =>

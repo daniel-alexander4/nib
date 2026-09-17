@@ -16,7 +16,7 @@
 // the co-sign itself needs two nibs and is tier 4's (pairrepro).
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const h = await launch();
@@ -29,7 +29,7 @@ const { browser, page } = h;
 after(async () => {
   try { await page.click('#sinCancel'); } catch {}
   try { await h.closeDocument(); } catch {}
-  await browser.close();
+  await shutdown(h);
 });
 
 test('the co-sign dialog keeps the address field behind the Advanced disclosure', async () => {

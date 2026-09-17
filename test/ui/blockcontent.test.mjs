@@ -47,7 +47,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launch, WORK } from './harness.mjs';
+import { launch, WORK, shutdown } from './harness.mjs';
 import { makePDF, writeRawFixture } from './fixtures.mjs';
 
 const PEER_FP = 'cd'.repeat(32);
@@ -69,7 +69,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 // A peer has to be pinned before the modal will offer one — `openCosign` disables the button

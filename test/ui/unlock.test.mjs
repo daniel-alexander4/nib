@@ -28,7 +28,7 @@
 // reader take a green here as end-to-end unlock coverage.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const KEY_PATH = '/home/u/.ssh/id_ed25519';
 
@@ -95,7 +95,7 @@ test('a passphrase-protected key shows the unlock prompt, and the prompt takes a
     const unexpected = h.consoleErrors.filter((e) => !e.includes('400'));
     assert.deepEqual(unexpected, [], 'the unlock flow logged console errors beyond the deliberate 400');
   } finally {
-    await browser.close();
+    await shutdown(h);
   }
 });
 
@@ -147,6 +147,6 @@ test('a missing key offers recovery, and retrying is a status re-check rather th
     assert.ok(statusHits >= 2, `the retry did not re-read /api/status (${statusHits} read(s))`);
     assert.deepEqual(h.consoleErrors, [], 'the recovery flow logged console errors');
   } finally {
-    await browser.close();
+    await shutdown(h);
   }
 });

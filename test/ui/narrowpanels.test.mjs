@@ -17,7 +17,7 @@
 // is the vacuous green this repo keeps finding arriving through the wrong tier.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const ME = 'aa'.repeat(32);
 const NARROW = { width: 375, height: 768 };   // an iPhone-class window, well under the 899 threshold
@@ -46,7 +46,7 @@ const h = await launch({
   },
 });
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 // Below 575px the `.modetab` strip is display:none and Playwright clicks a hidden element
 // silently — measured in responsive.test.mjs, where it made every reading under 500px meaningless.

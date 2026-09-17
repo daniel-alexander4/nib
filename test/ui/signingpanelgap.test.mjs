@@ -26,16 +26,16 @@
 // bottom of the column with a dead gap above them."*
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const REF = { width: 1280, height: 900 };
 
-// `browser.close()`, and the first cut of this file wrote `ctx.close()` — which `launch` does not
-// return. The teardown threw, the browser stayed open, and `node --test` never drained its event
-// loop: the whole tier-3 run hung for half an hour rather than failing. Every other file here
-// spells it `h.browser.close()`.
+// The teardown goes through `shutdown`, and the first cut of this file wrote `ctx.close()` —
+// which `launch` does not return. The teardown threw, the browser stayed open, and `node --test`
+// never drained its event loop: the whole tier-3 run hung for half an hour rather than failing.
+// Every other file here spells it the same way, and since `/pending 474` a guard says so.
 let ctx;
-after(async () => { if (ctx) await ctx.browser.close(); });
+after(async () => { if (ctx) await shutdown(ctx); });
 
 test('the signing cards follow the signing button instead of sinking to the bottom', async () => {
   ctx = await launch({});

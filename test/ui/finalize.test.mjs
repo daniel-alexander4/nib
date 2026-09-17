@@ -13,12 +13,12 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launch, WORK } from './harness.mjs';
+import { launch, WORK, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const DOC = writeFixture('finalize.pdf', { pages: 2, label: 'finalize page' });
 const OUT_DIR = path.join(WORK, 'finalized');

@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const onPath = (name) => (process.env.PATH || '').split(path.delimiter).map((d) => path.join(d, name)).find((p) => {
   try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
@@ -129,7 +129,7 @@ after(async () => {
     h.answerDialogs(true);
     for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) await h.closeDocument();
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
   fs.rmSync(DIR, { recursive: true, force: true });
 });
 

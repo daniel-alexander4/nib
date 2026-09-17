@@ -8,11 +8,11 @@
 // round-trip through /api/settings and /api/status.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const cards = () => page.evaluate(() => {
   const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };

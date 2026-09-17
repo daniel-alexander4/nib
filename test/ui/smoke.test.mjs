@@ -6,10 +6,12 @@
 // 2's "tier 3 covers that" delegations trustworthy rather than hopeful.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, BASE } from './harness.mjs';
+import { launch, BASE, shutdown } from './harness.mjs';
 
-const { browser, page, consoleErrors } = await launch();
-after(() => browser.close());
+const h = await launch();
+
+const { browser, page, consoleErrors } = h;
+after(() => shutdown(h));
 
 // The row that justifies the whole tier. Every one of these is false or absent in
 // jsdom, and each is something nib's UI actually depends on: layout drives the

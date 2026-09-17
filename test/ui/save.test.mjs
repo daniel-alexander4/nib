@@ -14,12 +14,12 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const FORM = writeFixture('save-form.pdf', { pages: 1, label: 'save page', form: true });
 const FIELD = '.viewerContainer:not([hidden]) .annotationLayer input[type="text"]';

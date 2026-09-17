@@ -20,7 +20,7 @@
 // left behind on a shared ~/nib.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, LOCKED_BASE } from './harness.mjs';
+import { launch, LOCKED_BASE, shutdown } from './harness.mjs';
 
 const ID = '1'.repeat(32);
 const CEREMONIES = {
@@ -38,7 +38,7 @@ const CEREMONIES = {
   primary: true,
 };
 
-const { browser, page } = await launch({
+const h = await launch({
   base: LOCKED_BASE,
   waitFor: '#authOverlay',
   routes: {
@@ -47,7 +47,9 @@ const { browser, page } = await launch({
     }),
   },
 });
-after(() => browser.close());
+
+const { browser, page } = h;
+after(() => shutdown(h));
 
 test('it is driving a LOCKED nib, not the shared unlocked one', async () => {
   const st = await page.evaluate(async () => (await fetch('/api/status')).json());

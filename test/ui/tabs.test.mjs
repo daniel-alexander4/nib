@@ -23,7 +23,7 @@
 // skip.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const A = writeFixture('tab-a.pdf', { pages: 3, label: 'doc A page' });
@@ -37,7 +37,7 @@ const page = h.page;
 // whenever an earlier assertion throws, and `node --test` then never exits: the run
 // hangs instead of failing, which reads as an infrastructure problem rather than as
 // the assertion failure it is. Observed here on the first run of this file.
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 // switched waits for the visible view to be the document with `pages` pages. The page
 // count is the discriminator because the two fixtures differ in length — a switch that
