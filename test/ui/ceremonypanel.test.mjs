@@ -132,16 +132,24 @@ test('the convene form opens from the panel and offers a pinned peer to choose',
   // The picker is displayed, not merely present.
   //
   // **Waited for, and this was a latent race that an unrelated change exposed (P06.S09).**
-  // `showCeremonyForm` calls `loadPeerPicker()` WITHOUT awaiting it, so at the instant the click
-  // returns the div has been cleared and not yet filled — zero height, and `isVisible()` false.
-  // The assertion happened to pass because the stubbed `/api/peers` usually resolved inside the
-  // click's own microtask turn; adding six lines elsewhere in `web/app.js` was enough to lose that
-  // race, 2 runs red against 3 green at the parent commit. Measured, not guessed: an instrumented
-  // run printed `{"html":"","w":167,"h":0}` — cleared, empty, and still waiting.
+  // The picker is filled by `loadPeerPicker()`, whose ONLY caller is `openCeremonySetup()`
+  // (`web/app.js`) — not `showCeremonyForm()`, which reveals the form and touches the picker not at
+  // all. `#ceremonyConveneBtn`'s listener is `async` and `await`s `openCeremonySetup()`, but
+  // `page.click()` returns when the event has been DISPATCHED and never awaits a listener's
+  // promise — so at the instant the click returns the div is still the empty one the page loaded
+  // with: zero height, and `isVisible()` false. The assertion happened to pass because the stubbed
+  // `/api/peers` usually resolved inside the click's own microtask turn; adding six lines elsewhere
+  // in `web/app.js` was enough to lose that race, 2 runs red against 3 green at the parent commit.
+  // Measured, not guessed: an instrumented run printed `{"html":"","w":167,"h":0}` — empty, and
+  // still waiting.
   //
-  // The product is not at fault and is deliberately unchanged: an un-awaited load is the right
-  // shape for a panel that must not block its own dialog opening. What was wrong is a test that
-  // read a value before the thing producing it had run.
+  // The product is not at fault and is deliberately unchanged. What was wrong is a test that read a
+  // value before the thing producing it had run, and awaiting inside the handler cannot fix that
+  // from the browser's side of the click.
+  //
+  // **The wait is on the two SUCCESS shapes only, deliberately.** `loadPeerPicker`'s unreadable
+  // branch renders `.cerwarn` + `.cerpeerretry` instead, and admitting those here would let a
+  // picker that failed to load satisfy both the wait and the assertion below it.
   const pick = page.locator('#cerPeerPick');
   await pick.locator('.cerpeerrow, .libhint').first().waitFor({ state: 'visible', timeout: 10000 });
   assert.equal(await pick.isVisible(), true, 'the peer picker is not displayed');
