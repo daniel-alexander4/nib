@@ -1,0 +1,13 @@
+diff --git a/web/app.js b/web/app.js
+index 968f414..849e5d3 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -7523,7 +7523,7 @@ async function runOCR() {
+         words.push({
+           page: p, text: t,
+           rect: [b.x0 / ocrScale, h - b.y1 / ocrScale, b.x1 / ocrScale, h - b.y0 / ocrScale],
+-          block: ord(word.block), para: ord(word.paragraph), line: ord(word.line),
++          /* block/para/line removed by the red proof */
+         });
+       }
+     }

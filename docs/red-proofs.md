@@ -5076,13 +5076,22 @@ RESPONSE's address, on the same route, travelling the other way.
 |---|---|---|
 | `a-handler-grows-a-field-no-client-fills` — the founding defect, verbatim: `handleCoSign` takes its roster from `r.FormValue("invitation")` | `TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends`, tier 1 | "read by a handler and sent by no client" |
 | `the-client-stops-sending-a-field-it-owes` — `form.append('address', address)` deleted from the initiate path | the same check, tier 1 | "/api/session/initiate address" |
+| `a-json-body-field-no-client-sends` — the `block`/`para`/`line` the client puts on each OCR word deleted from `words.push({…})` | the same check, tier 1 | "/api/ocr block" |
 
 **The second row exists because the guard has two sides and only one of them fails loudly.** A
 server scan that came back empty reports zero members, which is byte-identical to a clean run; a
 client scan that came back empty reports every field as unsent, which nobody could miss. So the
 client half gets a proof of its own, and it patches `web/app.js` rather than any Go file.
 
-`recorded` 403 → 405.
+**The third row exists because both of the others patch a FORM field** (/pending 477, v1.133.x).
+Until the guard was extended it matched `FormValue`, `PostFormValue` and `Get` on a `Query()`
+receiver and nothing else, so 28 routes and 79 JSON-body fields sat outside it while these two rows
+stayed red — a carrier can go entirely unwatched under a set of proofs that all exercise a
+different one. Its patch deletes the three fields PLAN-accessibility P06.S06 had just wired up, and
+they are two type hops and one package from the handler (`[]pdfops.Word`), so the row also proves
+the type resolution and not only the decode site.
+
+`recorded` 403 → 405, then 423 → 424.
 
 ## Naming a ceremony — and the recital it must not replace (v1.128.107)
 
