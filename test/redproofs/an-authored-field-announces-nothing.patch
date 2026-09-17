@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+index ca78884..247e3b8 100644
+--- a/web/app.js
++++ b/web/app.js
+@@ -7912,7 +7912,6 @@ els.fieldNameGo.onclick = async () => {
+     for (let n = 2; seen.has(name); n++) name = base + '_' + n;
+     seen.add(name);
+     const spec = { page: f.page, rect: f.rect, kind: f.kind, name };
+-    if (typed) spec.label = typed;
+     if (f.kind === 'dropdown' || f.kind === 'radio') spec.options = f.options;
+     // A radio group inherits its layout from the drawn box's aspect: a wide box
+     // lays the buttons out horizontally, a tall box stacks them vertically.

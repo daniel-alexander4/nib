@@ -16,13 +16,18 @@
 //
 // ── What this tier can see, and what it cannot ───────────────────────────────
 // `view` and `pendingAuthor` are module-scope in a plain script, so this tier cannot drive the
-// naming modal end to end — and NOTHING else does either: no test in `test/` drives the
-// form-authoring client flow. The search is `grep -rln "form/author\|pendingAuthor\|fillable"
+// naming modal end to end. The search is `grep -rln "form/author\|pendingAuthor\|fillable"
 // test/`, which returned ZERO before this file and returns only this file after it — so re-run it
 // excluding this one, or the claim reads as refuted by its own guard. This is a source scan in the
 // shape `keyboardplacement.test.mjs` uses, and it is honest about being one:
 // it proves the derivation is still WRITTEN the way the server requires, not that a click
-// produces it. `/pending 476` carries the missing driver.
+// produces it.
+//
+// **The driver now exists, one tier up: `test/ui/formauthor.test.mjs`** (`/pending 476`). It
+// detects two blanks, types one name into both rows, and reads `/T` and `/TU` back off the
+// authored PDF rendered in a real browser. This file is kept rather than retired because it is
+// the cheap half: it names the defect in the source, at tier 2 speed, where tier 3 needs a
+// built binary and a browser and will not run in a fresh clone without both.
 //
 // One boot per file — see boot.mjs. This file needs none.
 import test from 'node:test';

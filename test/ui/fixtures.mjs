@@ -307,3 +307,61 @@ export function makeScanPDF(pages = [0, 1, 2, 3], deg = {}, { w = 170, h = 220, 
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(out, 'latin1');
 }
+
+// makeRuledPDF builds a one-page form whose only ink is N hairline underlines — the
+// blanks a person writes on, and the one input `Detect fields` turns into a `text`
+// overlay (`makeField('text', …)`, app.js). The fillable-form flow starts there and
+// nowhere else: the only hand-placement tool in the UI places a CHECKBOX, so a text
+// field reaches `collectAuthorFields` through detection or not at all.
+//
+// **Deliberately carries no text**, which is the opposite of every other fixture here.
+// `detectRegions` works on rendered PIXELS and cannot tell a glyph's crossbar from a
+// rule except by how thick and how long it is, so page text is a source of extra
+// detections — and a drive that expects two fields and gets three names the third one
+// `field_3` and asserts nothing about it. It also fixes what the naming dialog offers:
+// with no text layer `suggestFieldName` returns '' for every field, so the rows arrive
+// as `field_1`/`field_2` rather than as whatever the page happened to say near them.
+//
+// The geometry is chosen against `detect.js`'s own thresholds, not by eye:
+//   * 250pt long on a 612pt page = 41% of the width, inside the underline band
+//     (`aw >= w*0.022` and `<= w*0.92`), and under the 60% above which a rule is
+//     re-read as a section divider;
+//   * 0.4pt thick — about one device pixel at the detection scale — so `isThinLine`
+//     keeps it (`maxThick` is 6 there);
+//   * 50pt apart, well over the ~64px checkbox cap, so the pair is never read as a
+//     box's top and bottom edges and turned into one `check` field.
+export function makeRuledPDF({ rules = 2 } = {}) {
+  const lines = [];
+  for (let i = 0; i < rules; i++) {
+    const y = 700 - i * 50;
+    lines.push(`150 ${y} m 400 ${y} l S`);
+  }
+  const content = `0.4 w 0 G\n${lines.join('\n')}`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << >> >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+  ];
+
+  let out = '%PDF-1.7\n';
+  const offsets = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+// writeRuledFixture is writeFixture for makeRuledPDF — same throwaway work dir.
+export function writeRuledFixture(name, opts) {
+  const dir = path.join(WORK, 'fixtures');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, makeRuledPDF(opts));
+  return file;
+}

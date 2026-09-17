@@ -392,7 +392,7 @@ keeping `erases` is continuity with a decision taken, not a fresh judgment.
 
 Tasks:
 - T01 — `pageselect.go`: one walk of the source page tree accumulating inherited `{Resources, MediaBox, CropBox,
-  Rotate}`, producing the ordered leaf list. Not `ctx.PageDict` per page (`/pending 476`: that is O(pages²)).
+  Rotate}`, producing the ordered leaf list. Not `ctx.PageDict` per page (`/pending 488`: that is O(pages²) — the item that measured and fixed it; this line credited `/pending 476` by mistake).
 - T02 — selection through `api.PagesForPageCollection`; reject `≤0` and out-of-range before use; report in nib's
   voice, never pdfcpu's `pdfcpu: no page selected`.
 - T03 — materialize all four inherited attributes onto each kept page, TOTALLY (an explicit `/Rotate 0` where a
