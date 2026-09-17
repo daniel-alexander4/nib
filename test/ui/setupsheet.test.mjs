@@ -11,7 +11,7 @@
 // usable at 1024×768, with the sidebar still rendering the rail beside them.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 // **One stubbed route, and it is what makes the convene test possible at all.** This tier's nib
@@ -28,7 +28,7 @@ const h = await launch({
   },
 });
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const DOC = writeFixture('setupsheet.pdf', { pages: 6, label: 'setup page' });
 

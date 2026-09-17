@@ -28,7 +28,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launch, WORK } from './harness.mjs';
+import { launch, WORK, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const DOC = writeFixture('stamp-place.pdf', { pages: 1, label: 'stamp page' });
@@ -44,7 +44,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 // canvasPainted waits for pdf.js to have actually painted the page.

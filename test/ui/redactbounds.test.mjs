@@ -18,7 +18,7 @@
 // — so a cross-page drag cannot even be expressed, let alone measured.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const DOC = writeFixture('redact-bounds.pdf', { pages: 3, label: 'redaction page' });
@@ -34,7 +34,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 test('a redaction drag that crosses onto the next page is bounded by the page it started on', async () => {

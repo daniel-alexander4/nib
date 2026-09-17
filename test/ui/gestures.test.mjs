@@ -28,7 +28,7 @@
 // pass. Read it as a consistency check with a named ceiling.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const A = writeFixture('gest-a.pdf', { pages: 2, label: 'doc A page' });
@@ -58,7 +58,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 const tabSel = (n) => `#tabstrip .tab:nth-child(${n})`;

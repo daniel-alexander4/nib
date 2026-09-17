@@ -22,7 +22,7 @@
 // and tier 2's pdf.js is a stub that parses nothing.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { makeCJKPDF, writeRawFixture } from './fixtures.mjs';
 
 const TEXT = '日本語';
@@ -37,7 +37,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 test('a document using a predefined CJK CMap yields its text', async () => {

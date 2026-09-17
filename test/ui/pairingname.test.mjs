@@ -18,11 +18,11 @@
 // toggle — and an assertion is what turns "natively" from a claim into a fact.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const GROUPED = /(?:\b[0-9a-f]{4}\b[ \t]+){8,}/i;
 

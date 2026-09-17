@@ -21,12 +21,12 @@
 // "touching", not "11".
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const h = await launch();
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 const DOC = writeFixture('viewmodes.pdf', { pages: 3, label: 'view mode page' });
 const DOC2 = writeFixture('viewmodes-2.pdf', { pages: 2, label: 'second document' });

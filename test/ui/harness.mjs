@@ -331,6 +331,51 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       return page.$$eval('.viewerContainer:not([hidden]) .ovl-edit', (els) => els.map((e) => e.value));
     },
 
+    // closeAll closes what the SERVER holds, not what is on screen — `/pending 474`.
+    //
+    // **The distinction is the whole point, and it is what a per-file cleanup written against
+    // the DOM gets wrong.** `uirepro.sh` serves every file in this tier from one nib process, so
+    // a document one file leaves open is still in that process's registry when the next file's
+    // page loads — and the app activates it as soon as the new file closes its own. Measured at
+    // P08.S06c: `tagsreview.test.mjs` found 0 page divs at its start, opened and closed its own
+    // 2-page document, and was then showing a 3-page document it never opened. A "leaves the
+    // server as it found it" check that counts page divs therefore blames whichever file closes
+    // NEXT, which is how one leak reads as three unrelated failures.
+    //
+    // **`POST /api/close` is a close-ALL** (`handleClose` calls `setDoc(nil)`, which clears the
+    // whole registry), so one call does it — but it is addressed like any other document route
+    // and answers 409 for a document the server no longer holds. So this goes through plain
+    // `fetch` with the CSRF token and NO `X-Nib-Doc` header, rather than through `apiFetch`,
+    // which attaches the CURRENT view's id: a page whose view outlived its document would make
+    // the cleanup itself 409, which is exactly the state that needs cleaning.
+    //
+    // **The token is fetched, not borrowed from the page**, and that cost a tier-3 run to learn:
+    // `app.js`'s `csrf` is a top-level `let`, which is NOT reachable from a `page.evaluate` —
+    // six files failed with `ReferenceError: csrf is not defined`, and only those six because a
+    // file with nothing open never reached the POST. `/api/status` hands it out, which is where
+    // `applyStatus` gets it from too, so this asks the server rather than the page.
+    //
+    // It asks `/api/docs` rather than trusting the close, because the registry is what the next
+    // file inherits, and it loops because a close racing an in-flight open would otherwise leave
+    // one behind. Returning the count makes it observable: a caller can assert the tier starts
+    // from nothing.
+    async closeAll() {
+      return page.evaluate(async () => {
+        const count = async () => {
+          const r = await fetch('/api/docs');
+          if (!r.ok) return 0; // locked, or a server that never held one: nothing to close
+          return ((await r.json()).docs || []).length;
+        };
+        if ((await count()) === 0) return 0;
+        const st = await fetch('/api/status');
+        const token = st.ok ? (await st.json()).csrf : '';
+        for (let i = 0; i < 5 && (await count()) > 0; i++) {
+          await fetch('/api/close', { method: 'POST', headers: { 'X-CSRF-Token': token } });
+        }
+        return count();
+      });
+    },
+
     // closeDocument clicks Close — from File mode, for the reason above.
     async closeDocument() {
       await this.mode('file');
@@ -353,4 +398,22 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       }));
     },
   };
+}
+
+// shutdown is how a tier-3 file ENDS, and every one of them calls it — `/pending 474`.
+//
+// Closing the browser is not enough and never was: the browser is this file's, the document
+// registry is the shared nib process's, and the next file inherits whatever is left in it. So the
+// door closes the server's documents first and the browser second, and it does the second even
+// when the first throws — a cleanup that fails should be loud, not a leaked browser as well.
+//
+// It is a door rather than a line in each `after` because `TestEveryTierThreeFileEndsThroughTheOneDoor`
+// asserts the ROUTING (ADR-009): 35 files each writing `h.browser.close()` by hand agree with each
+// other and say nothing about the 36th, which is exactly how this tier came to leak.
+export async function shutdown(h) {
+  try {
+    await h.closeAll();
+  } finally {
+    await h.browser.close();
+  }
 }

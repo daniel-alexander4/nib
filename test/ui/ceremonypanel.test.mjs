@@ -16,7 +16,7 @@
 // path this slice does not own.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const ME = 'aa'.repeat(32);
 const THEM = 'bb'.repeat(32);
@@ -40,7 +40,7 @@ const listing = {
   ended: [],
 };
 
-const { browser, page, consoleErrors } = await launch({
+const h = await launch({
   routes: {
     '**/api/ceremonies': (route) => route.fulfill({
       status: 200,
@@ -49,7 +49,9 @@ const { browser, page, consoleErrors } = await launch({
     }),
   },
 });
-after(async () => { await browser.close(); });
+
+const { browser, page, consoleErrors } = h;
+after(async () => { await shutdown(h); });
 
 test('the ceremony panel is reachable from Collaborate and renders the roster', async () => {
   await page.click('.modetab[data-tab="collaborate"]');

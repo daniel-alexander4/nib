@@ -27,7 +27,7 @@
 // threshold taken at the harness's default 900 is wrong on every 768-tall laptop.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 
 const REF = { width: 1280, height: 768 };
 const SIZES = [2, 4, 8, 16, 24, 32];   // 32 is MaxRoster (internal/ceremony/invitation.go)
@@ -101,7 +101,7 @@ const h = await launch({
   },
 });
 const { page } = h;
-after(() => h.browser.close());
+after(() => shutdown(h));
 
 // read() measures the PANEL, not one card. A coordinator with three 8-party ceremonies has exactly
 // the problem D6 describes while every card is individually "below threshold", so a per-card metric

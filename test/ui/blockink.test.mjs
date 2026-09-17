@@ -59,7 +59,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launch, WORK } from './harness.mjs';
+import { launch, WORK, shutdown } from './harness.mjs';
 import { makePDF, writeRawFixture } from './fixtures.mjs';
 
 // A pinned counterparty is the only precondition /api/cosign/sign has. The fingerprint is
@@ -91,7 +91,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 // measure does the whole drive inside the page: pin, quote, build the appearance, co-sign
@@ -286,7 +286,19 @@ async function measure() {
       inBlock, inTotal, prose, proseUnder,
       greenCentroid: greenN ? { n: greenN, x: gx / greenN, y: gy / greenN } : { n: 0 },
       srcMagenta: countColour(sd, magenta), srcGreen: countColour(sd, green),
-      docB: btoa(String.fromCharCode(...new Uint8Array(docB))),
+      // **Chunked, because a spread pushes one ARGUMENT PER BYTE** (`/pending 474`).
+      // `String.fromCharCode(...bytes)` over a whole co-signed PDF overflowed the stack —
+      // `RangeError: Maximum call stack size exceeded` — and took the file's whole run with it
+      // (exit 7, no assertion, no name). That was the third of tier 3's three standing reds and
+      // the only one that was never the shared-server leak: it is deterministic in document size,
+      // so it fires the moment the fixture grows past the engine's argument limit and says
+      // nothing about the product.
+      docB: (() => {
+        const u = new Uint8Array(docB);
+        let out = '';
+        for (let i = 0; i < u.length; i += 0x8000) out += String.fromCharCode(...u.subarray(i, i + 0x8000));
+        return btoa(out);
+      })(),
     };
   }, [srcBytes, PEER_FP, MAGENTA, GREEN]);
 }

@@ -15,7 +15,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { launch } from './harness.mjs';
+import { launch, shutdown } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const DOC = writeFixture('tagedit.pdf', { pages: 2, label: 'section' });
@@ -40,7 +40,7 @@ after(async () => {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
-  await h.browser.close();
+  await shutdown(h);
 });
 
 test('setup: a document with a committed tree, and the structure tree panel open', async () => {
@@ -175,20 +175,39 @@ test('the correction region used no pointer at all', () => {
 // paragraph per page. Outside the correction region, so a pointer is allowed here.
 test('the reading order view numbers each element on its own page, over its text, and goes when switched off', async () => {
   await page.click('#tagOrderToggle');
-  await page.waitForFunction(() => document.querySelectorAll('.tag-order').length === 2, null, { timeout: 20000 });
-  const badges = await page.evaluate(() => [...document.querySelectorAll('.tag-order')].map((b) => ({
-    n: b.textContent, page: b.closest('.page')?.dataset.pageNumber,
-  })));
+  // **The wait and the read are ONE evaluate, and that is `/pending 475`'s first step.**
+  // `drawReadingOrder` removes every `.tag-order` badge and repaints, and it is bound to pdf.js's
+  // `pagerendered` — so a repaint landing between a `waitForFunction(length === 2)` and a separate
+  // `page.evaluate` empties the set mid-test. That is a race between the test's two reads and the
+  // renderer, not a defect in the feature, and it accounts for three of this test's recorded
+  // one-off failures: a `TypeError` on `getBoundingClientRect` of `undefined`, a setup assertion
+  // about a laid-out span, and one badge read where two were waited for. `waitForFunction` returns
+  // the value its predicate returned, so returning the badges from inside the predicate makes the
+  // read atomic with the wait and lets a repaint simply cost another poll.
+  const badges = await (await page.waitForFunction(() => {
+    const b = [...document.querySelectorAll('.tag-order')];
+    if (b.length !== 2) return null;
+    return b.map((x) => ({ n: x.textContent, page: x.closest('.page')?.dataset.pageNumber }));
+  }, null, { timeout: 20000 })).jsonValue();
   assert.deepEqual(badges, [{ n: '1', page: '1' }, { n: '2', page: '2' }], `the badges read ${JSON.stringify(badges)} — want 1 on page 1 and 2 on page 2`);
-  const near = await page.evaluate(() => {
-    const b = [...document.querySelectorAll('.tag-order')].find((x) => x.textContent === '1').getBoundingClientRect();
-    const span = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')]
-      .find((s) => s.textContent.includes('section 1') && s.getBoundingClientRect().width > 0);
-    if (!span) return null;
-    const t = span.getBoundingClientRect();
-    const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
-    return { badge: [cx, cy], text: [t.left, t.top, t.right, t.bottom], near: cx >= t.left - 24 && cx <= t.right && cy >= t.top - 24 && cy <= t.bottom + 8 };
-  });
+  // Same shape for the geometry: the badge and the text span are read together, and a repaint or a
+  // text layer still being rebuilt under load costs a poll rather than the test. The timeout is
+  // caught so the SETUP failure keeps its own message — "no laid-out span" and "the badge is in the
+  // wrong place" are different findings and a bare timeout would say neither.
+  let near = null;
+  try {
+    near = await (await page.waitForFunction(() => {
+      const badge = [...document.querySelectorAll('.tag-order')].find((x) => x.textContent === '1');
+      if (!badge) return null;
+      const b = badge.getBoundingClientRect();
+      const span = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')]
+        .find((s) => s.textContent.includes('section 1') && s.getBoundingClientRect().width > 0);
+      if (!span) return null;
+      const t = span.getBoundingClientRect();
+      const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
+      return { badge: [cx, cy], text: [t.left, t.top, t.right, t.bottom], near: cx >= t.left - 24 && cx <= t.right && cy >= t.top - 24 && cy <= t.bottom + 8 };
+    }, null, { timeout: 20000 })).jsonValue();
+  } catch { /* the assertion below reports it, with the sentence that says which half failed */ }
   assert.ok(near, 'setup: page one has no laid-out span reading "section 1"');
   assert.ok(near.near, `badge 1 is not at its element's text: ${JSON.stringify(near)}`);
   await page.click('#tagOrderToggle');
