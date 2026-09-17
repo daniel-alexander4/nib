@@ -342,3 +342,21 @@ home today.
   folder and never a URL, reveal takes no path at all, and both sit behind `requireUnlocked` + CSRF
   rather than the check route's public loopback gate. Supersedes v1.95.0's `confirm()` +
   `location.assign` download.
+- **[ADR-040 — a converter nib cannot find is one door, and the claim is about the SEARCH](040-a-converter-nib-cannot-find.md)**
+  — Dan's ask for a popup naming the missing library. Four sites classified "it is not there" for
+  themselves, producing six strings and three wordings per tool, and all six said *"is not
+  installed"* — which nib could not know: `exec.LookPath` answers "is this name on PATH", and the
+  stock install is OFF PATH on two of the three platforms nib ships to (a macOS `.app` bundle,
+  `%ProgramFiles%` on Windows). `internal/browser`'s `findChromium` had already solved this the
+  other way. So `pdfops.MissingToolFor` classifies once and every surface words it itself —
+  ADR-009 as `handoff.go` states it, *"unifies the CHECKS; it explicitly does not require every
+  site to print the same sentence"* — discovery gains per-OS candidates (globs, because Windows
+  Ghostscript lives in a version-numbered directory) checked for **executability** rather than
+  `browser.fileExists`'s stat-only shape, and a found path is cached while an **empty answer is
+  re-probed**, which is what makes *Check again* honest. **Measured, not argued:** a miss costs
+  ~107 µs / ~159 µs on a 19-entry PATH against `/api/status`, which is on no timer and fetched
+  about once per page load (the ~1 s poller is `/api/session/status`); and *"restart Nib"* was
+  refuted as an instruction, because a relaunch **hands off to the running instance** and idle-exit
+  never fires in a `noBrowser` run. The GUI's Ghostscript-absent branch existed nowhere: `#pdfaGsGo`
+  is revealed only when gs is present, so `pdfa.go`'s refusal was unreachable. The remedy URL is a
+  client-side constant, never on the wire — ADR-039's reasoning applied to navigation.

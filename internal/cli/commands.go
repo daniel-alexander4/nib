@@ -77,8 +77,11 @@ func cmdPDFA(args []string) int {
 	if useGS {
 		result, err := pdfops.ConvertPDFAGhostscript(pdf)
 		if err != nil {
-			if errors.Is(err, pdfops.ErrGhostscriptMissing) {
-				errf("Ghostscript not found — install it, or omit --gs for the pure-Go converter")
+			// The one door classifies; the sentence is the CLI's own, because only the CLI
+			// knows there is a `--gs` flag to omit (ADR-009 unifies the check, not the text).
+			if tool, ok := pdfops.MissingToolFor(err); ok {
+				errf("%s — install it from %s, or omit --gs for the pure-Go converter",
+					tool.NotFound(), tool.Vendor())
 			} else {
 				errf("%v", err)
 			}
@@ -225,8 +228,9 @@ func cmdOffice(args []string) int {
 		}
 	}
 	if err != nil {
-		if errors.Is(err, pdfops.ErrLibreOfficeMissing) {
-			errf("LibreOffice not found — install it to convert office documents")
+		if tool, ok := pdfops.MissingToolFor(err); ok {
+			errf("%s — install it from %s to convert office documents (Markdown needs no converter)",
+				tool.NotFound(), tool.Vendor())
 		} else {
 			errf("%v", err)
 		}

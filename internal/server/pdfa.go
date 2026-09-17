@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
@@ -31,8 +30,11 @@ func (s *Server) handlePDFA(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("engine") == "gs" {
 		result, err := pdfops.ConvertPDFAGhostscript(pdfBytes)
 		if err != nil {
-			if errors.Is(err, pdfops.ErrGhostscriptMissing) {
-				httpError(w, http.StatusBadRequest, "Ghostscript is not installed")
+			// Through the one door (ADR-009); the wording is this surface's. Note this branch
+			// was unreachable from the GUI until now: `#pdfaGsGo` is revealed only when gs is
+			// present, so a user without it never sent `engine=gs` and never saw this.
+			if tool, ok := pdfops.MissingToolFor(err); ok {
+				httpError(w, http.StatusBadRequest, "Nib "+tool.NotFound()+".")
 			} else {
 				httpError(w, http.StatusBadRequest, err.Error())
 			}

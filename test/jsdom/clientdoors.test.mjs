@@ -204,3 +204,87 @@ test('Save as fillable form bakes the document the user sees, minus only the fie
       `${header.split('(')[0]} ignores the exclusion, so an authored field is burned in underneath its own widget`);
   }
 });
+
+// ── The missing converter says so (ADR-040) ─────────────────────────────────────────────────
+//
+// boot.mjs answers /api/status with `libreoffice: false`, so this file is already booted into
+// the state under test. Before ADR-040 the ONLY consequence of that flag was `officeInput.accept`
+// narrowing to Markdown — a user with a .docx met the missing converter as their file not
+// appearing in the file dialog, and nothing named the reason.
+test('with no LibreOffice, the File card says so and offers a way back', async () => {
+  // Stimulus: the status this assertion depends on was actually asked for and applied.
+  assert.ok(h.calls.some((c) => c.url.endsWith('/api/status')),
+    'setup: /api/status was never fetched, so loAvailable is its declared default rather than the server\'s answer');
+  assert.equal(doc.getElementById('officeInput').accept, '.md,.markdown',
+    'setup: the picker was not narrowed, so this boot is not in the LibreOffice-absent state');
+
+  const shown = (sel) => { const el = doc.querySelector(sel); return !!el && !el.hidden; };
+  assert.ok(shown('#officeMissing'),
+    'nothing tells the user why their .docx cannot be converted — the absence is communicated only '
+    + 'by the file picker quietly narrowing, which is what ADR-040 exists to end');
+  assert.ok(shown('#officeRecheck'),
+    'there is no way to re-ask after installing LibreOffice, so the only remedy is restarting Nib '
+    + '— which hands off to the running instance and is not a thing a user can easily do');
+
+  // It is a standing condition, not an event: it must not evaporate the way a toast does.
+  await settle();
+  assert.ok(shown('#officeMissing'), 'the explanation disappeared on its own');
+
+  // The link is authored in index.html, never composed from a response body (ADR-039's
+  // reasoning applied to navigation), so it is here to be read rather than built.
+  const link = doc.querySelector('#officeMissing a');
+  assert.ok(link && /^https:\/\//.test(link.getAttribute('href') || ''),
+    'the explanation carries no https link, so it names a remedy the user cannot reach');
+  assert.equal(link.getAttribute('rel'), 'noopener', 'the outbound link has no rel="noopener"');
+
+  // The button is always offered, because Markdown needs no converter. app.js claimed for
+  // years that it was "hidden otherwise" and nothing ever implemented that.
+  assert.ok(shown('#officeOpenBtn'),
+    'the convert button was hidden — Markdown converts in pure Go, so hiding it removes a '
+    + 'feature that works in order to report one that does not');
+});
+
+test('with no Ghostscript, a refused PDF/A says a tool would have converted it', () => {
+  // Census rather than a driven click, and deliberately: reaching the real branch needs an open
+  // document and the modal, and this file's document state belongs to the tab-closing test above.
+  // The branch is what matters — before it, `#pdfaGsGo` was revealed ONLY when gs was present
+  // (`if (!gs && gsAvailable)`), so a user WITHOUT it was told the document was refused and never
+  // that a tool exists which would have converted it. The refusal at internal/server/pdfa.go was
+  // literally unreachable from the GUI.
+  const run = bodyOf('async function runPdfa(engine) {');
+  assert.ok(run, 'setup: runPdfa is gone');
+  assert.match(run, /\} else if \(!gs\) \{/,
+    'runPdfa has no branch for "the pure-Go path refused AND Ghostscript is absent" — that user is '
+    + 'told only that their document was refused, with no mention of the tool that would convert it');
+  // Plain "could not", not "couldn't": this reads app.js as SOURCE TEXT, where an apostrophe inside
+  // a single-quoted string is escaped (`couldn\'t`) and a naive /couldn't/ can never match. Caught by
+  // this assertion failing on its first run — the string was right and the probe was wrong.
+  assert.match(run, /could not find it/,
+    'the Ghostscript-absent branch does not say Nib could not FIND it — ADR-040 turns on that wording, '
+    + 'because exec.LookPath cannot distinguish "absent" from "installed off PATH"');
+
+  // And the line that carries it must announce itself: it changes while the dialog is open, which
+  // is SC 4.1.3. It had neither role nor aria-live, so a screen-reader user heard nothing at all.
+  const status = doc.getElementById('pdfaStatus');
+  assert.ok(status, 'setup: #pdfaStatus is gone');
+  assert.equal(status.getAttribute('role'), 'status',
+    '#pdfaStatus carries no role, so the refusal reason is written into a silent node');
+  assert.equal(status.getAttribute('aria-live'), 'polite',
+    '#pdfaStatus is not a live region, so a textContent update inside an already-open dialog is '
+    + 'announced to nobody');
+});
+
+test('a machine WITH LibreOffice is told nothing — the explanation is not a standing ornament', () => {
+  // The same door, driven the other way. Without this, an element that was never hidden would
+  // pass the test above for the wrong reason.
+  const apply = bodyOf('function applyStatus(st) {');
+  assert.ok(apply, 'setup: applyStatus is gone');
+  for (const [re, what] of [
+    [/els\.officeMissing\.hidden = loAvailable/, 'the explanation'],
+    [/els\.officeRecheck\.hidden = loAvailable/, 'the Check again button'],
+  ]) {
+    assert.match(apply, re,
+      `${what} is not tied to loAvailable in applyStatus, so it is shown to users who have `
+      + 'LibreOffice installed and nothing to fix');
+  }
+});

@@ -449,6 +449,14 @@ input[type="search"] { width: 100%; }
 .quickstamps button, .markers button { padding: 4px 8px; font-size: 13px; }
 .markers button.active { background: var(--surface1); box-shadow: inset 0 -2px 0 var(--blue); }
 .libhint { color: var(--subtext0); font-size: 11px; margin: 4px 0 8px; }
+/* A link inside a hint carries its affordance as an UNDERLINE, not as a colour, and it is --text
+   rather than --blue on purpose: the note above .tbtab > button.active records --blue measured at
+   4.33:1 in dark and 2.79:1 in light against --surface1 — under AA in both — and this is smaller
+   text on a lighter ground again. Same rule that keeps the active tab's label --text: colour as the
+   indicator, text as the message. The focus ring is spelled out because the stylesheet has no
+   global a:focus-visible (the only other anchor rule is #outline a). */
+.libhint a { color: var(--text); text-decoration: underline; }
+.libhint a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
 /* The setup sheet's "which document" line (/pending 413). Larger than .libhint because it is the
    sheet's subject rather than a note about a field, and it carries the one sentence saying that
    convening fixes the document. `.cerdocnone` is the state where nothing is bound yet: coloured as

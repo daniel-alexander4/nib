@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -26,9 +25,13 @@ import (
 // the residual risk is the same class as opening a malicious PDF in any viewer.
 // Like the pure-Go path the result is a *candidate*; verify with veraPDF.
 
-// ErrGhostscriptMissing is returned when no Ghostscript binary is on PATH, so the
-// caller can degrade gracefully (CLI hint, hidden GUI button) rather than fail
-// obscurely.
+// ErrGhostscriptMissing is returned when no Ghostscript binary can be found, so the caller
+// can degrade gracefully rather than fail obscurely. Classified through `MissingToolFor` and
+// then worded by each surface: the CLI names `--gs`, which only the CLI knows about.
+//
+// The "hidden GUI button" this comment used to promise is real but inverted — `#pdfaGsGo` is
+// revealed when Ghostscript IS present, so with gs absent the modal said nothing at all and
+// the 400 below was unreachable from the GUI. That branch now exists.
 var ErrGhostscriptMissing = errors.New("Ghostscript (gs) is not installed")
 
 const gsConvertTimeout = 2 * time.Minute
@@ -37,27 +40,20 @@ const gsConvertTimeout = 2 * time.Minute
 // returns anyway — see `runConvert`.
 const convertWaitDelay = 2 * time.Second
 
-var gsPath struct {
-	sync.Once
-	p string
-}
+var gsCache toolCache
 
-// ghostscriptPath returns the Ghostscript executable path (cached), or "" if none
-// is installed. The binary is "gs" on Unix, "gswin64c"/"gswin32c" on Windows.
+// ghostscriptPath returns the Ghostscript executable path, or "" if none is found.
+//
+// PATH first — "gs" on Unix, "gswin64c"/"gswin32c" on Windows — then the stock install
+// locations. Windows is why the candidates are globs rather than literals: gs installs into a
+// VERSION-numbered directory (`gs\gs10.03.1\bin`), which no fixed string can name. See
+// `toolpath.go`.
 func ghostscriptPath() string {
-	gsPath.Do(func() {
-		for _, name := range []string{"gs", "gswin64c", "gswin32c"} {
-			if p, err := exec.LookPath(name); err == nil {
-				gsPath.p = p
-				return
-			}
-		}
-	})
-	return gsPath.p
+	return gsCache.find([]string{"gs", "gswin64c", "gswin32c"}, ghostscriptCandidates())
 }
 
-// GhostscriptAvailable reports whether Ghostscript is installed, so a caller can
-// offer the general converter (and the UI can show/hide it).
+// GhostscriptAvailable reports whether Ghostscript can be found, so a caller can offer the
+// general converter (and say so when it cannot).
 func GhostscriptAvailable() bool { return ghostscriptPath() != "" }
 
 // ConvertPDFAGhostscript converts pdf to a PDF/A-2b candidate via an installed

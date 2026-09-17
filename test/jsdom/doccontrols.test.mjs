@@ -81,6 +81,11 @@ const EXEMPT = new Set([
   //
   // These CREATE or receive a document, so requiring one would be circular:
   'openMenuItem', 'openRecentBtn', 'officeOpenBtn', 'combineBtn', 'sessionRecvDocBtn', 'sessionRecvBtn',
+  // Re-runs the converter probe. It acts on no document at all — it is a question about this
+  // MACHINE ("can you find LibreOffice yet?"), asked after the user has installed it, and it is
+  // only visible while the answer is no. Requiring a document would mean the one control that
+  // repairs "I can't open my .docx" is disabled exactly when nothing can be opened.
+  'officeRecheck',
   // Gated by their own state, not by the registry: saveBtn follows canSave, the find
   // buttons follow the search results, and closeAllBtn is hidden below two documents.
   'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',

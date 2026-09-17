@@ -62,6 +62,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   menubar: $('menubar'), toolbar: $('toolbar'), openMenuItem: $('openMenuItem'),
   officeOpenBtn: $('officeOpenBtn'), officeInput: $('officeInput'), docLang: $('docLang'),
+  officeMissing: $('officeMissing'), officeRecheck: $('officeRecheck'),
   combineBtn: $('combineBtn'), combineModal: $('combineModal'), combineList: $('combineList'),
   combineAddBtn: $('combineAddBtn'), combineInput: $('combineInput'),
   combineCancel: $('combineCancel'), combineGo: $('combineGo'),
@@ -422,6 +423,12 @@ function applyStatus(st) {
   els.officeInput.accept = loAvailable
     ? '.md,.markdown,.doc,.docx,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp'
     : '.md,.markdown';
+  // ...and SAY so, which the narrowed picker never did: a user with a .docx met the missing
+  // converter as their file not appearing in the dialog, with nothing naming the reason. Both
+  // elements are authored hidden in index.html, so a machine that has LibreOffice never sees
+  // them even for the moment before /api/status answers.
+  if (els.officeMissing) els.officeMissing.hidden = loAvailable;
+  if (els.officeRecheck) els.officeRecheck.hidden = loAvailable;
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
     csrf = st.csrf;
@@ -3798,9 +3805,18 @@ async function uploadFile(file) {
 }
 
 // Office → PDF: pick a Word/Excel/PowerPoint/OpenDocument file, convert it on the
-// server via LibreOffice, and open the resulting PDF as the active document. Only
-// offered when LibreOffice is installed (the button is hidden otherwise).
+// server via LibreOffice, and open the resulting PDF as the active document.
+//
+// **The button is always offered**, because Markdown converts in pure Go and needs no
+// converter at all. This comment used to say it was "hidden otherwise" and nothing ever
+// implemented that — `applyStatus` narrows the picker and now also reveals `#officeMissing`,
+// which is what tells a user why their .docx is not selectable.
 els.officeOpenBtn.onclick = () => els.officeInput.click();
+// Re-ask the server whether it can find LibreOffice now. This is honest because the server
+// re-probes an empty answer rather than caching it for the process (see pdfops/toolpath.go):
+// before that, installing LibreOffice while Nib ran changed nothing until the process ended —
+// and "restart Nib" is not simple, since a relaunch hands off to the running instance.
+if (els.officeRecheck) els.officeRecheck.onclick = () => refreshStatus();
 els.officeInput.onchange = async () => {
   const file = els.officeInput.files[0];
   els.officeInput.value = '';
@@ -4534,6 +4550,11 @@ async function runPdfa(engine) {
       if (!gs && gsAvailable) {
         els.pdfaGsGo.hidden = false; // the heavier converter can handle what pure-Go refused
         msg += ' — Ghostscript can convert it (re-embeds fonts, converts colour).';
+      } else if (!gs) {
+        // The mirror branch, which did not exist: with Ghostscript absent the button is never
+        // revealed, so the user was told only that the document was refused and never that a
+        // tool exists which would have converted it. The modal's own prose carries the link.
+        msg += ' — Ghostscript would convert it (re-embedding fonts and converting colour), but Nib could not find it.';
       }
       els.pdfaStatus.textContent = msg;
       return;

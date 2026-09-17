@@ -223,8 +223,13 @@ Nib already ships for OCR, embedded only when the document actually needs one. F
 office layout is something pure Go can't do, so Nib shells out to
 **[LibreOffice](https://www.libreoffice.org/)** in headless mode; like
 Ghostscript it's strictly optional and **detected at runtime** (never bundled, so
-Nib stays a single cgo-free binary). When LibreOffice isn't installed the file
-picker narrows to Markdown, and the CLI verb reports it's missing:
+Nib stays a single cgo-free binary). Nib looks for it on your `PATH` **and** in the
+place each platform installs it by default — a macOS `.app` bundle and
+`%ProgramFiles%` on Windows are not on `PATH`, and until v1.133.0 Nib reported
+those machines as not having it at all. When Nib can't find it, the *Open a
+Document* card says so, with a link and a **Check again** button (so installing it
+takes effect without restarting Nib), the file picker narrows to Markdown, and the
+CLI verb says the same thing:
 
 ```
 nib office report.docx -o report.pdf
