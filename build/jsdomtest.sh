@@ -119,7 +119,7 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # Its own file because the whole finding needs the peer route to FAIL, and setupsheet.test.mjs's
 # every other test needs it to answer — one boot per file means those cannot share a process
 # without the failure mode becoming an ordering hazard in someone else's assertions.
-Nib_expect_files=79
+Nib_expect_files=80
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

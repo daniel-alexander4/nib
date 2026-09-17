@@ -11294,6 +11294,7 @@ function reflectUndoControls(enabled) {
     toast('Earlier undo history for this document was released to stay within the memory budget');
   }
   reflectTagNotice(m);
+  reflectLostNotice(m);
 }
 
 // ── The accessibility-structure notice (ADR-031, law 2's `dropped-with-notice`) ──
@@ -11345,6 +11346,57 @@ function reflectTagNotice(m) {
       + 'matters, re-make this document from its source rather than saving this copy over it.';
   }
   box.hidden = false;
+}
+
+// ── The page operations' notice channel (/pending 574) ──────────────────────
+//
+// **A count, not a flag, and that is the whole point of the item.** `/pending 524` settled on
+// *"prefer the remap — the warning is the acceptable floor, not the fix"* and the floor was never
+// built; `/pending 573`'s form widgets cannot be carried at all, so for them the floor is all there
+// is. The honest sentence is quantitative — *"3 comments and 2 form fields were not carried"* — and
+// it comes from the server, which is the only place that sees a document's before and after.
+//
+// **Sticky and accumulating, like its neighbour and for the same reason.** Six edits after the one
+// that dropped a comment, the comment is still gone. Dismissable per document, so a user who has
+// read it is not nagged for the session.
+function lostNoticeKey() {
+  return (view.docMeta && view.docMeta.id) || '\u0000no-id';
+}
+
+function reflectLostNotice(m) {
+  const box = document.getElementById('lostNotice');
+  if (!box) return;
+  const annots = (m && m.lostAnnots) || 0;
+  const fields = (m && m.lostFields) || 0;
+  // The same normalise-once discipline `tagNoticeKey` records two defects for: comparing
+  // `view.lostNoticeDismissed === view.docMeta.id` raw makes a document with no id yet compare
+  // undefined-to-undefined and count as already dismissed.
+  if ((!annots && !fields) || view.lostNoticeDismissed === lostNoticeKey()) {
+    box.hidden = true;
+    return;
+  }
+  const parts = [];
+  // "comments" rather than "annotations", because the small-practice user this product is for has
+  // never typed the word. Links and stamps are counted here too and are not comments — accepted, and
+  // it is the honest direction to be wrong in: the count is right and the noun is the common case.
+  if (annots) parts.push(`${annots} comment${annots === 1 ? '' : 's'}`);
+  if (fields) parts.push(`${fields} form field${fields === 1 ? '' : 's'}`);
+  const text = document.getElementById('lostNoticeText');
+  if (text) {
+    text.textContent = `${parts.join(' and ')} could not be carried through an edit you made, and `
+      + 'are not in this document any more. Nib cannot put them back. If they mattered, undo back '
+      + 'past that edit, or go back to the version you started from.';
+  }
+  box.hidden = false;
+}
+
+els.lostNoticeDismiss = $('lostNoticeDismiss');
+if (els.lostNoticeDismiss) {
+  els.lostNoticeDismiss.onclick = () => {
+    view.lostNoticeDismissed = lostNoticeKey();
+    const box = document.getElementById('lostNotice');
+    if (box) box.hidden = true;
+  };
 }
 
 els.tagNoticeDismiss = $('tagNoticeDismiss');

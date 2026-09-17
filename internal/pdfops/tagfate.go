@@ -102,6 +102,18 @@ type tagState struct {
 	// A page with no content stream at all is NOT undescribed — an inserted blank page has nothing
 	// to tag, and counting it would make `InsertBlank` a violation for adding an empty page.
 	undescribed int
+	// annots and formFields are counted for the COMMIT DOORS, not for any tagging question
+	// (/pending 574). They ride this walk because it is already reading every page dictionary and
+	// the catalog, and because the door that wants them is the one already paying for this parse
+	// twice per commit — `noteCommitFate`. Counting them separately would have meant two more
+	// full parses on every edit, measured at 88 ms each on a 1.4 MB document.
+	//
+	// `annots` is every annotation on every live page, of any subtype: the door reports what an
+	// operation DESTROYED, and a sticky note and a link are both the user's to lose. `formFields`
+	// is the catalog's `/AcroForm /Fields` length, which is the claim rather than the widgets —
+	// deliberately, because /pending 573's whole finding was that the two can disagree.
+	annots     int
+	formFields int
 	// source is the tier `setTagSource` recorded on the tree, or "" when none is recorded (or the value
 	// is not one this code writes). `claimTagging` reads it so a door adding to a tree never raises it.
 	source tagSource
@@ -187,6 +199,9 @@ func inspectTags(pdf []byte) tagState {
 		if b, cerr := ctx.PageContent(d, p); cerr == nil && len(b) > 0 {
 			hasContent[n] = true
 		}
+		if a, aerr := ctx.DereferenceArray(d["Annots"]); aerr == nil {
+			s.annots += len(a)
+		}
 	}
 	cat, cerr := ctx.XRefTable.Catalog()
 	if cerr != nil {
@@ -198,6 +213,13 @@ func inspectTags(pdf []byte) tagState {
 			if readBool(ctx.XRefTable, d["Marked"]) {
 				s.marked = true
 			}
+		}
+	}
+	// Counted BEFORE the untagged early return below, or every untagged document — which is most of
+	// them — would report zero fields and an operation that destroyed a form would say nothing.
+	if form, ferr := ctx.DereferenceDict(cat["AcroForm"]); ferr == nil && form != nil {
+		if fields, aerr := ctx.DereferenceArray(form["Fields"]); aerr == nil {
+			s.formFields = len(fields)
 		}
 	}
 	if _, ok := cat["StructTreeRoot"]; !ok {
@@ -243,6 +265,40 @@ func inspectTags(pdf []byte) tagState {
 // The server's tagging notice asks this before and after a mutation; it is the only exported
 // member of this file.
 func ClaimsTagging(pdf []byte) bool { return inspectTags(pdf).claims() }
+
+// DocumentFacts is what a commit door needs in order to say what an operation cost the user
+// (/pending 574).
+//
+// **One door and one parse, because the alternative is 33 sites that have to remember.**
+// `noteTaggingFate`'s own comment made that ruling for the tagging claim — *"Asking each operation
+// to report its own fate would be ADR-009's rule inverted: 33 sites that have to remember, against
+// two that cannot"* — and it holds harder here: the counts are wanted for EVERY operation, and the
+// two commit doors are the only places that see a document's before and after together.
+//
+// **Free, in the sense that matters.** The commit door already calls `ClaimsTagging` on the input
+// and on the result, and each of those is this same parse; `Inspect` returns what that walk saw
+// instead of one boolean from it. A separate counting pass would have been two more parses per
+// edit, measured at 88 ms each on a 1.4 MB document.
+//
+// `Readable` is false for bytes this package cannot parse, and then no other field means anything —
+// a caller must not read "0 annotations" off a document it could not open.
+type DocumentFacts struct {
+	Readable    bool
+	Tagged      bool
+	Annotations int
+	FormFields  int
+}
+
+// Inspect reports the facts a commit door compares across an operation. See DocumentFacts.
+func Inspect(pdf []byte) DocumentFacts {
+	s := inspectTags(pdf)
+	return DocumentFacts{
+		Readable:    s.readable,
+		Tagged:      s.claims(),
+		Annotations: s.annots,
+		FormFields:  s.formFields,
+	}
+}
 
 // honest is the one door. It returns the document unchanged unless the document claims tagging over
 // a tree that describes nothing in it, in which case it removes the claim.

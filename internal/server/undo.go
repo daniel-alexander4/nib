@@ -644,11 +644,47 @@ func ceremonyFreeze(docBytes []byte) error {
 // that cleared on the next commit would be gone before they saved. It is set once and stays; a
 // fresh document is a fresh `document` value, so opening one clears it by construction rather than
 // by anyone remembering to.
+// # And what ELSE the operation cost, on the same two parses (/pending 574)
+//
+// The page-operation route had no notice channel at all — `grep -rn "notice\|warning"
+// internal/server/pages.go` returned nothing — so an operation that destroyed something recoverable
+// answered with the new document and said nothing. `/pending 524` settled on *"prefer the remap —
+// the warning is the acceptable floor, not the fix"* and the floor was never built; `/pending 573`'s
+// widgets CANNOT be carried, so for them the floor is all there is.
+//
+// **It is this door and not a per-operation report, for the reason stated above about tagging**, and
+// the ruling holds harder here: the counts are wanted for every operation, and these two doors are
+// the only places that see a document's before and after together.
+//
+// **And it is FREE, which is what made the design obvious.** This function already called
+// `ClaimsTagging` on both sides, and each of those was a full parse; `pdfops.Inspect` returns what
+// that same walk saw. A separate counting pass would have doubled the door's cost — measured at
+// 88 ms per parse on a 1.4 MB document.
+//
+// **Only losses are recorded, and they ACCUMULATE.** An operation that adds annotations is not news;
+// one that removes three and a later one that removes two cost the user five, and a per-operation
+// figure would report the last one. Counting up rather than latching a boolean is the difference
+// between *"something was dropped"* and the honest sentence this needs to be: *"3 comments and 2
+// form fields were not carried."*
+//
+// **An unreadable side is NOT a loss.** `Readable` false means this package could not parse those
+// bytes, and reading "0 annotations" off them would turn every unparseable input into a report that
+// the user lost everything.
 func noteTaggingFate(doc *document, input, result []byte) {
-	if doc == nil || doc.taggingDropped {
+	if doc == nil {
 		return
 	}
-	if pdfops.ClaimsTagging(input) && !pdfops.ClaimsTagging(result) {
+	before, after := pdfops.Inspect(input), pdfops.Inspect(result)
+	if !before.Readable || !after.Readable {
+		return
+	}
+	if before.Tagged && !after.Tagged {
 		doc.taggingDropped = true
+	}
+	if n := before.Annotations - after.Annotations; n > 0 {
+		doc.lostAnnots += n
+	}
+	if n := before.FormFields - after.FormFields; n > 0 {
+		doc.lostFields += n
 	}
 }

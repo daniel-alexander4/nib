@@ -100,6 +100,13 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"the page'. Its own doc says the rendered half needs pdf.js and belongs at tier 3, so " +
 			"production has nothing to ask it.",
 
+		"ClaimsTagging": "test-support — the named predicate ten tests across three packages ask " +
+			"(`internal/pdfops`, `internal/p2p`, `internal/server`). Its production caller was " +
+			"`noteTaggingFate`, and /pending 574 moved that door to `Inspect`, which returns the " +
+			"tagging answer plus the annotation and form-field counts from the SAME parse — the " +
+			"door needs all three and a second parse costs 88 ms on a 1.4 MB document. Kept rather " +
+			"than deleted because `ClaimsTagging(x)` is what the question is called; ten sites " +
+			"spelling `Inspect(x).Tagged` would be noisier for no gain.",
 		"Form": "test-support — internal/testpdf exists for tests and Form has 111 callers across " +
 			"44 test files. A package whose whole purpose is fixtures cannot have production callers.",
 		"WithUAIdentification": "test-support — /pending 492's labelled fixture, shared by the pdfops, " +
