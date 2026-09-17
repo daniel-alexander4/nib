@@ -1,18 +1,11 @@
 --- a/internal/server/export.go
 +++ b/internal/server/export.go
-@@ -214,7 +214,14 @@
+@@ -214,7 +214,7 @@
  		// depended on which surface produced it — a hard-coded literal at each door, chosen by
  		// nobody. `pdfops.SplitPartMode` is the one answer and its own comment carries the
  		// reasoning and the exposure; both doors name it here rather than agreeing by coincidence.
 -		if err := atomicfile.Write(full, p.Data, pdfops.SplitPartMode); err != nil {
-+		_ = atomicfile.Write
-+		tmp, terr := os.CreateTemp(dir, ".x-*")
-+		if terr == nil {
-+			tmp.Write(p.Data)
-+			tmp.Close()
-+			os.Rename(tmp.Name(), full)
-+		}
-+		if err := error(nil); err != nil {
++		if err := atomicfile.Write(full, p.Data, 0o600); err != nil {
  			httpError(w, http.StatusInternalServerError, "could not write "+p.Name)
  			return
  		}

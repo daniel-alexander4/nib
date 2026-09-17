@@ -218,6 +218,13 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// SELF-OVERWRITE EXEMPT: the collision is the user's own, typed and then confirmed.
+	//
+	// /pending 569 is about a name nib DERIVED landing on the document it came from, silently. Here
+	// the user types the name, and the 412 immediately above refuses any name already in the folder
+	// until the request comes back with `overwrite=1` — including the open document's own path,
+	// which the comment above says this route deliberately reaches. So the one thing that check
+	// would add is a second refusal of a collision the user has just been shown and has answered.
 	if err := os.MkdirAll(dir, 0o755); err != nil { // containment guarantees Dir(target) == dir
 		httpError(w, http.StatusInternalServerError, "could not create folder")
 		return

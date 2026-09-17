@@ -6006,6 +6006,56 @@ added one more, so the constant in `verify_test.go` is **464**, which is the uni
 side. Taking a side here breaks the guard rather than the code — the floor is bounded on BOTH sides,
 so 459 and 463 would each have failed the "the set outgrew this constant" arm.
 
+## /pending 569 and /pending 570 — a split part that replaces its own document, and the mode nobody chose (2026-09-16)
+
+Two disagreements between the same two doors, batched because they are the same mistake twice: a
+decision that had to be made at every writer, made at each one separately and by nobody.
+
+**569 was measured before it was fixed, and then measured again at the door it was only *read* at.**
+`nib split collide/foo1-2.pdf --out-dir collide --ranges 1-2 --prefix foo` replaced the
+**105,102-byte input with the 94,254-byte part** — exit 0, md5 `235c2019…` → `fe51b69e…`, and the
+only line printed was the part's own path, which is the input's path. (`/pending 550` measured the
+same shape at 339,657 → 94,539.) The entry said the GUI's `writeSplitParts` "has the same shape,
+established by reading"; the shape is the same and **the mechanism is not** — that handler opens no
+file, so there is no descriptor to clobber. Driving it is what settled it: with the document open
+from `foo1-2.pdf` and the split aimed at its own folder, **1,239 bytes became 1,076 at status 200**.
+The route reaches the loss through `document.path`, a fact neither split handler had ever asked the
+registry for.
+
+**Two callers nobody had listed.** `nib fill IN --data rows.csv --out-dir DIR` shares
+`writeSplitFiles` (`FillFormCSV` returns `[]pdfops.SplitPart`), so a name-column value spelling the
+form's own filename replaced the blank form with one filled copy of it — the reusable template, for
+one row of output. And `nib pagenum --continuous a.pdf --out-dir <a's own folder>` has the identical
+shape and **was driven too**, md5 `fe51b69e…` → `57910e86…` at exit 0; it is **exempt and says so at
+the site**, because its output is a SUPERSET of its input and the collision therefore loses nothing.
+A split part is a subset, which is the whole difference.
+
+**570 needed a decision, not a discovery.** A new part was 0600 from the GUI and 0644 from the CLI.
+0644 wins: a part is a user's document going into a folder they named, and the repo already made
+this call one door over — `atomicfile.ReplaceDurable` exists *because* forcing 0600 was wrong for a
+user document (/pending 499). The declared exposure is that splitting a 0600 original yields 0644
+parts; carrying the source's mode would have closed it and was refused, because the GUI has no
+source mode for a document with no path and the doors would have split again along a line the user
+cannot see.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| The door call removed from `writeSplitFiles` — containment checked, identity not | `TestASplitNeverWritesOverTheDocumentItIsSplitting` | "the split overwrote the document it was splitting: 1239 bytes in, 1076 bytes after … with exit 0" |
+| `OutputOverwritingSource` compares path STRINGS instead of `os.SameFile` | `TestASplitSeesThroughASymlinkToItsOwnInput` | "a link in the output folder pointing at the input sent the part through it: 1239 bytes became 1076, exit 0" — **and the other four tests stay green**, which is why it is its own row |
+| The split handlers hand `writeSplitParts` an empty source, as they did before | `TestTheGUISplitNeverWritesOverTheDocumentItIsSplitting` | "the GUI split replaced the open document's own file: 1239 bytes became 1076, status 200" |
+| The GUI door back to its `0o600` literal | `TestASplitPartIsReadableByTheAccountTheUserGaveItTo` | "a part written by the GUI is 0600, want 0644 — the CLI writes the same part 0644, so where a split's output lands depends on which surface produced it" |
+| `runContinuousPagenum`'s named exemption deleted — a folder-filling writer with neither door nor reason | `TestEveryFolderFillingWriterAsksWhetherItIsAboutToWriteItsOwnSource` | "runContinuousPagenum … creates a destination folder and fills it with derived names, and neither calls pdfops.OutputOverwritingSource nor carries a \"SELF-OVERWRITE EXEMPT:\" comment" |
+
+**Three rows were re-recorded rather than left stale**, because this change edits the exact lines
+their patches' context sits on: `in-place-rewrite-is-not-durable` and
+`the-cli-writes-through-a-non-durable-door-not-named-write` (`writeNamed` became a wrapper over
+`writeNamedMode`, and the split's write call moved into a second pass) and
+`server-hand-rolls-an-atomic-write` (the GUI's write call changed its mode argument). Each was
+regenerated against this tree by diffing two copies of the ONE file — never a bare `git diff`, which
+in a working tree this size would have captured the whole change and re-proved for the wrong reason.
+
+`recorded` 464 → 469.
+
 ## /pending 566 — a failed `/api/peers` and the keystroke after it
 
 Two defects that only matter together, and the first is what hid the second. `loadPeerPicker`'s

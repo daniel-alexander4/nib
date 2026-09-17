@@ -1,0 +1,22 @@
+--- a/internal/server/export.go
++++ b/internal/server/export.go
+@@ -79,7 +79,8 @@
+ 		httpError(w, http.StatusBadRequest, "this PDF has no bookmarks to split by")
+ 		return
+ 	}
+-	writeSplitParts(w, src.path, dir, parts)
++	_ = src
++	writeSplitParts(w, "", dir, parts)
+ }
+ 
+ // handleSplitPages splits the posted document by page SEQUENCE — either every N
+@@ -120,7 +121,8 @@
+ 		httpError(w, http.StatusBadRequest, "could not split: "+err.Error())
+ 		return
+ 	}
+-	writeSplitParts(w, src.path, dir, parts)
++	_ = src
++	writeSplitParts(w, "", dir, parts)
+ }
+ 
+ // destDir parses and validates the destination folder for any folder-writing

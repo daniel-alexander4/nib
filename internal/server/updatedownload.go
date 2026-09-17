@@ -247,6 +247,12 @@ func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusPreconditionFailed, "a file of that name is already there")
 		return
 	}
+	// SELF-OVERWRITE EXEMPT: this route replaces NOTHING, and there is no source to protect.
+	//
+	// /pending 569's rule stops a derived name landing on the document it was derived from. The
+	// bytes here come off the network rather than out of a document, so there is no such file — and
+	// the 412 above refuses every existing name, not merely the one that would be a source, which
+	// is strictly stronger than the check the rule asks for.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not create folder")
 		return

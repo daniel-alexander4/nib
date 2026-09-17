@@ -122,8 +122,13 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// the open document like `handleUACheck`; commit rewrites it through commitMutation like `handleOCR`.
 	// 29: `handleTagsEdit` (PLAN-accessibility.md P09.S04) edits the tree of the document it names.
 	// 30: `handleTagsTree` (P09.S06a) reads that tree for the Tags panel, read-only like `handleTagsPropose`.
-	if resolveSites != 30 {
-		t.Errorf("expected 30 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 32, not 30: the two split handlers (/pending 569). They are the odd members of this census —
+	// they resolve for the document's PATH and never touch its bytes, which still come from the
+	// posted body. Nothing else here needs a path, and that is exactly why the split could write
+	// over the user's own file for as long as it did: the one fact that would have stopped it was
+	// the one fact these routes had never asked for.
+	if resolveSites != 32 {
+		t.Errorf("expected 32 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

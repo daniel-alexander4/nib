@@ -266,6 +266,21 @@ func writeAtomic(path string, data []byte) error {
 // Through `atomicfile.ReplaceDurable` the original stays whole until the new bytes are on disk, it
 // keeps the mode it had, and a symlink is followed to its target rather than replaced by the rename.
 func writeNamed(path string, data []byte) error {
+	return writeNamedMode(path, data, 0o644)
+}
+
+// writeNamedMode is writeNamed for a caller whose new-file mode is a decision somebody made rather
+// than this door's default.
+//
+// **It exists so a split part can NAME its mode** (/pending 570). The two split doors wrote new
+// parts 0600 and 0644 for the same operation because each inherited whatever its helper passed, and
+// the fix is not that they now agree by coincidence in a second place — it is that both say
+// `pdfops.SplitPartMode` out loud at the site. Every other caller keeps the 0644 this door has
+// always given a new file, through the wrapper above.
+//
+// perm applies only to a path that does not exist yet; an existing regular file keeps its own bits,
+// which is `ReplaceDurable`'s contract and not this wrapper's to restate.
+func writeNamedMode(path string, data []byte, perm os.FileMode) error {
 	// **The one named exemption, and it is why this wrapper still exists.** A target that exists
 	// and is not a regular file — `-o /dev/null`, a named pipe — is written straight through:
 	// renaming over a device is not what anyone asked for, and there is no copy to protect.
@@ -292,8 +307,20 @@ func writeNamed(path string, data []byte) error {
 	// transform each of these files has already paid. Unmeasured, and named as such: network
 	// filesystems and spinning disks.
 	//
-	// 0644 is the mode for a file that does not exist yet; an existing one keeps its own.
-	return atomicfile.ReplaceDurable(path, data, 0o644)
+	// perm is the mode for a file that does not exist yet; an existing one keeps its own.
+	return atomicfile.ReplaceDurable(path, data, perm)
+}
+
+// sourceFile is the path an input argument reads from, or "" when it is not a file at all.
+//
+// `readInput` treats "-" as stdin, and a bare `os.Stat("-")` would happily match a file literally
+// named `-` in the working directory — so the caller that asks "is this output the document I am
+// reading?" needs the distinction made here rather than guessed at the door.
+func sourceFile(arg string) string {
+	if arg == "-" {
+		return ""
+	}
+	return arg
 }
 
 // usageFunc returns a FlagSet usage that prints a one-line synopsis and help,

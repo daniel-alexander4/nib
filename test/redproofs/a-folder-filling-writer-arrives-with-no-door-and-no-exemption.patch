@@ -1,0 +1,11 @@
+--- a/internal/cli/commands.go
++++ b/internal/cli/commands.go
+@@ -720,7 +720,7 @@
+ 		st.Total = st.Start + grand - 1 // "of N" = the set's last number, not each file's
+ 	}
+ 
+-	// SELF-OVERWRITE EXEMPT: an output here may be its own input, and that is not a loss.
++	// The output folder is created here.
+ 	//
+ 	// This writer has the shape /pending 569 is about — a name derived from the input, joined onto
+ 	// a directory the user named, containment-checked and nothing more — and driving it confirms
