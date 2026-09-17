@@ -5526,3 +5526,47 @@ so the sentence is the only thing between the user and a booklet with every back
 "fix" that deleted it would satisfy the stdout arm on its own.
 
 `recorded` 427 → 430.
+
+## /pending 524 — a page operation empties "Jump to Section" (2026-09-16)
+
+**Thirteen targeted mutations, two survivors, both real coverage holes and both fixed.** The
+survivors are the interesting half and are recorded below the table, because each was a test that
+passed for the wrong reason rather than a defect the suite missed.
+
+| proof | check | expects |
+|---|---|---|
+| `a-page-operation-empties-the-bookmark-panel` — the outline is dropped by the selection, as it was from the first `Collect` until /pending 524 | `go test ./internal/pdfops/ -run TestAReorderedDocumentKeepsItsBookmarksPointingAtTheirOwnPages -count=1` | `outline has 0 items, want 3` |
+| `a-dropped-named-destination-takes-the-survivors` — `pruneNames` hands pdfcpu the xref table again, so `Node.Remove` frees each removed destination's object graph | `go test ./internal/pdfops/ -run TestDroppingOneNamedDestinationKeepsTheRest -count=1` | `removing the two that died took the ` |
+
+**The drop was a correct decision that outlived its reason, which is why it needed measuring rather
+than arguing.** `api.Collect` built a fresh context in which every page object number changed, so a
+copied destination really did send the reader to the wrong place. P02.S04a moved the selection into
+the source context and the page tree is now rewritten IN PLACE, so a kept page keeps its object
+number — there is nothing to remap and the prune is the whole fix.
+
+**The second row is a separate pre-existing defect the first one ran into, and it is visible with no
+outline anywhere.** A destination array's object graph reaches the PAGE it names; freeing it puts
+live numbers on the free list, and `BindNameTrees` hands them back out to the nodes it mints while
+binding. Measured: six named destinations, of which the two on dropped pages shared a leaf — all six
+lost, including the four whose pages survived. Link annotations written by Word and LaTeX use named
+destinations, so this was every internal link in such a document.
+
+**Survivor 1 — "dropped" and "kept but unreadable" look identical through the product's reader.**
+The drop test graded only `Outline()`, and pdfcpu skips an item whose destination does not resolve,
+so a mutation that kept every node and merely failed to give the doomed one a destination read
+exactly like a correct prune. It is not one: the node is still in the file, still in the `/Next`
+chain, still counted, and still shown as a dead bookmark by every other reader. The test now counts
+the item DICTIONARIES as well.
+
+**Survivor 2 — the fixture's shape was the test, and the shape was wrong.** The named-destination
+test put its two doomed names in different leaves. pdfcpu splits a leaf at `maxEntries = 3`, and the
+object-number reuse only happens when a leaf EMPTIES, so nothing was freed and the corruption did not
+reproduce — the test passed against its own defect. Reshaped so the two doomed names share a leaf.
+
+**One test was unfalsifiable before it was ever mutated, and reading found it.** The reachability
+assertion — that a surviving bookmark must not re-anchor a dropped page — was written with a NAMED
+destination, which cannot re-anchor anything, because `pruneNames` removes the name and the bookmark
+is left holding a string that reaches nothing. It passed however the production code was broken. It
+uses an explicit `[page /Fit]` array now, the one shape that names a page dictionary.
+
+`recorded` 435 → 437.
