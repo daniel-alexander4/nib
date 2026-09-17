@@ -298,7 +298,11 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 464
+		// 466 since /pending 566: the failed-peer-fetch pair. Set for THIS tree — several
+		// branches move this constant, and the merge note at the end of docs/red-proofs.md
+		// records what taking a side costs, so a merge resolves it by counting the union
+		// rather than by picking either number.
+		const recorded = 466
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+

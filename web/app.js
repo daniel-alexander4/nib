@@ -15271,6 +15271,23 @@ let ceremonySetupDocName = '';
 // — is refused by the restore's own pristine test rather than by a race flag.
 let ceremonySetupGen = 0;
 
+// ceremonyPickerUnread is true when the picker holds no answer from `/api/peers` — the fetch threw,
+// or it came back not-ok, or its body would not parse. It is NOT "the user has no peers": that is
+// an answer, and it is the case the picker below already renders.
+//
+// **The two were one branch, and the conflation destroyed the saved roster.** A failed `/api/peers`
+// left `peers = []`, which fell into the empty-list branch — so the sheet said *"You have not paired
+// with anyone yet"*, a false statement about the user's own data, and then the first `change` event
+// called `saveCeremonyDraft`, which reads the roster out of `#cerPeerPick`, found zero rows and
+// posted `roster: []` over the roster in the vault. One failed fetch plus one keystroke, and a
+// roster typed in an earlier session was gone from disk for every later open.
+//
+// **Per FETCH and not per open**, so a later successful load clears it and a later failed one
+// re-arms it, whoever calls. `loadPeerPicker` is the only writer and writes it on both outcomes
+// AFTER its generation check — a stale open must not stamp its verdict on the sheet that replaced
+// it, and a call that returns having written nothing has said nothing about this sheet either.
+let ceremonyPickerUnread = false;
+
 // parkCeremonySheet steps out of setup to the document, keeping everything typed.
 //
 // **It writes the HIDE direction only, and that state is already reachable today**: leaving the
@@ -15447,6 +15464,11 @@ function resumeCeremonySheet() {
 // `change` fires on blur and on a picker choice, which is exactly "the user finished with this
 // control" — and the abandonment case D4 is about is closing Nib, not crashing mid-word.
 function ceremonyDraftValues() {
+  // **This reads the picker and does not judge it.** Whether the picker is worth reading is
+  // `ceremonyPickerUnread`, and the guard is at `saveCeremonyDraft` — the one door that WRITES —
+  // rather than here, so the rule sits with the act it constrains (ADR-009). This function has
+  // exactly one caller; if a second ever appears, it inherits nothing and must ask the flag too.
+  //
   // **`dataset.fingerprint` and not `value`** — the picker's own comment says *"the fingerprint
   // travels here and is never rendered as text"*, so it is on the dataset. Reading `.value` finds
   // the empty string on every row, which selects nobody and restores nobody, and does it silently:
@@ -15476,6 +15498,25 @@ function ceremonyDraftValues() {
 // the thing it is trying to protect. The failure that matters — the draft not being there on the way
 // back in — is visible where it happens, because the form comes up empty.
 async function saveCeremonyDraft() {
+  // **Refused WHOLE while the picker holds no answer, and the "save the other fields" version of
+  // this guard is the one that does not work.** `handleCeremonyDraft`'s own doc says the POST
+  // *replaces* the stored draft (`internal/server/draft.go`), and the blob is opaque to the server
+  // by design — so a save that omitted `roster` would not be a partial write, it would be a whole
+  // write with the field missing, and `restoreCeremonyDraft`'s `Array.isArray(d.roster) ? … : []`
+  // reads that exactly as `roster: []` does. The roster would be destroyed by the fix.
+  //
+  // **So the refusal is total, which puts this case inside the failure envelope the function
+  // already accepts**: the note above says a save that fails is silent because the user asked for
+  // nothing, and the failure that matters shows up on the way back in. This adds one more way for
+  // the write not to happen — it does not add a way for the write to be wrong. The alternative,
+  // echoing back the roster the restore had just read off the vault, posts a blob the user cannot
+  // see any part of on screen, and this file is written against exactly that: a draft that comes
+  // back looking complete and is not.
+  //
+  // **Not silent to the USER, though** — `loadPeerPicker`'s failure branch says the form is not
+  // being saved and offers the retry that ends it. A refusal nobody is told about would trade this
+  // finding's silent loss on disk for a silent loss of what they are typing now.
+  if (ceremonyPickerUnread) return;
   try {
     await apiFetch('/api/ceremony/draft', {
       method: 'POST',
@@ -15646,17 +15687,64 @@ async function loadPeerPicker(gen) {
   const e = cerEls();
   if (!e.pick) return;
   let peers = [];
+  // **`read` is the answer arriving, not the answer being non-empty**, and the two used to be one
+  // thing — see `ceremonyPickerUnread`. Set after the assignment rather than beside the `res.ok`
+  // test, because `res.json()` can itself throw on a truncated or non-JSON body: a picker built
+  // from half an answer is the same lie as one built from no answer.
+  //
+  // **The not-ok leg is a door too.** The finding named only the `catch`, but `apiFetch` returns a
+  // 500 rather than throwing it (see its own note on why a 409 is not thrown), so a `/api/peers`
+  // that answers with an error reached the empty branch by a second route entirely. One flag, set
+  // once, covers both — a rule written at one door per ADR-009.
+  let read = false;
   try {
     const res = await apiFetch('/api/peers', { unpinned: true });
-    if (res.ok) peers = (await res.json()).peers || [];
-  } catch (err) { /* rendered as the empty case below */ }
+    if (res.ok) { peers = (await res.json()).peers || []; read = true; }
+  } catch (err) { /* rendered as its own case below, which is NOT the empty one */ }
   // **Nothing above this line touched the DOM, and the clear is below it.** It used to be the first
   // statement, so a load that was slow, that failed, or that belonged to an open the user had
   // already left emptied the picker anyway — destroying every checkbox and every capacity typed
   // and not yet blurred, for a fetch whose answer never arrived. The function now either replaces
   // the picker's contents or leaves them exactly as it found them.
   if (gen !== undefined && gen !== ceremonySetupGen) return;
+  // Written on BOTH outcomes and only by the call that survived the generation check — see the
+  // flag's own note. A failure that leaves it true and a success that leaves it false are the same
+  // statement, and neither is left to a caller to make.
+  ceremonyPickerUnread = !read;
   const rows = document.createDocumentFragment();
+  if (!read) {
+    // **The failure gets its own sentence, and the sentence says what the app is DOING about it.**
+    // Naming the fetch alone would leave the user to wonder whether their setup survived it, and
+    // the honest answer is the reason this branch exists at all: the draft is not being written
+    // while the roster cannot be read, so what is on disk is exactly what they left there.
+    const p = document.createElement('p');
+    p.className = 'cerwarn';
+    p.textContent = 'Your paired peers could not be loaded, so nobody can be chosen here.'
+      + ' Nothing typed in this form is being saved until they load, and the setup you saved'
+      + ' earlier is untouched.';
+    // **A retry and not a disabled form.** Disabling would destroy nothing but would say nothing
+    // either, and the inputs still hold what `restoreCeremonyDraft` put back — the user can read
+    // their own recital there, which is half of what makes the sentence above believable. The
+    // control is `openCeremonySetup`, the same door the Convene button uses, because a picker
+    // refilled WITHOUT the restore behind it is /pending 552 again: fresh rows, every box
+    // unticked, the flag now false, and the next `change` posts the empty roster this branch
+    // exists to stop. ADR-040's *Check again* is the same shape for the same reason — an answer
+    // the app could not get is re-probed, not cached as a fact.
+    const again = document.createElement('button');
+    // **`type="button"`, and this is not a style preference.** This picker is inside
+    // `<form id="ceremonyConveneForm">`, whose submit handler CONVENES — posts the roster, renders
+    // the invitations and consumes the draft, irreversibly. index.html says so where the sheet's
+    // own two buttons are kept outside the form for exactly this reason; a default-submit button
+    // built into the picker cannot be kept outside it, so the attribute is the whole guard.
+    again.type = 'button';
+    again.className = 'cerpeerretry';
+    again.textContent = 'Check again';
+    again.addEventListener('click', () => { openCeremonySetup(); });
+    e.pick.textContent = '';
+    e.pick.appendChild(p);
+    e.pick.appendChild(again);
+    return;
+  }
   if (!peers.length) {
     const p = document.createElement('p');
     p.className = 'libhint';
