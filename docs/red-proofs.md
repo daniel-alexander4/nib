@@ -5173,6 +5173,25 @@ reaches no door, and a row of any other class that does.
 
 `recorded` 411 → 413.
 
+## `/pending 511` — a doc comment on a const it does not name (v1.133.7)
+
+| proof | check | expects |
+|---|---|---|
+| `a-const-wears-a-functions-doc` — `Vault.save`'s one-liner put back above `envelopeVersion`'s with no blank line between them, so both bind to the const and `save()` has no doc at all | `go test . -run TestEveryTypeConstAndVarDocNamesItsOwnDeclaration`, tier 1 | "sit on a type, const or var they do not name" |
+
+**The defect is recorded on a `const` because that is exactly what the guard beside it could not
+see.** `TestEveryDocCommentNamesItsOwnFunction` has walked `*ast.FuncDecl` and nothing else since
+v1.117.x, so a doc block glued to the one below it goes silent at BOTH ends when the next
+declaration is a `const`, `var` or `type`: the declaration is never inspected, and the function
+whose doc was swallowed now has `fd.Doc == nil`, which that walk skips as merely undocumented.
+Verified on this patch: the older guard stays **green** with the defect applied and the new one
+goes red.
+
+Nineteen real instances were sitting in the tree when the guard was written — across 18 files and
+10 packages, including `ContentDigest`'s 58-line essay parked on `ContentDigestVersion` and the
+whole design note for `ceremony.Convene` parked on `ConveneRequest`.
+
+`recorded` 423 → 424.
 ## `/pending 471` — the language guard learns `told` (v1.129.109)
 
 | proof | check | expects |

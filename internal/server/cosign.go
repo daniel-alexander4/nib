@@ -49,14 +49,14 @@ type cosignQuote struct {
 	When string `json:"when"`
 }
 
-// cosignAttestation builds the attestation both calls sign over, from the same
-// inputs, so the rendered block and the signed /Reason always agree. It refuses
-// any peer the user hasn't pinned out-of-band (the honest-trust requirement) and
-// caps the intent length. Writes the HTTP error itself and returns ok=false.
 // maxWhenSkew bounds how far a client-supplied attestation time may sit from the
 // server's own clock. See the use in cosignAttestation.
 const maxWhenSkew = 24 * time.Hour
 
+// cosignAttestation builds the attestation both calls sign over, from the same
+// inputs, so the rendered block and the signed /Reason always agree. It refuses
+// any peer the user hasn't pinned out-of-band (the honest-trust requirement) and
+// caps the intent length. Writes the HTTP error itself and returns ok=false.
 func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosignParams, roster p2p.Roster) (p2p.Attestation, bool) {
 	fp, err := parseFingerprint(p.Fingerprint)
 	if err != nil {

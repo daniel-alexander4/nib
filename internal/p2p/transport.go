@@ -98,14 +98,6 @@ func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool)
 	return cfg, nil
 }
 
-// timeNow is the clock the pinned-peer check reads, indirected for one reason only:
-// **the property that matters about D19's cause 5 is that the typed error survives the TLS
-// boundary**, and that cannot be asserted by calling verifyPinnedPeer directly.
-//
-// crypto/tls could plausibly wrap, replace or discard an error returned from
-// VerifyPeerCertificate — it sends an alert and the peer sees something quite different —
-// so a unit test of the error type would be the vacuous version of this check: green while
-// no caller could ever recover the cause. Measured: it survives, and now a test says so.
 // It is an atomic.Value and not a plain var because handshakes run concurrently: a test
 // swapping the clock races every in-flight VerifyPeerCertificate, and `go test -race`
 // says so. A seam added for testability that introduces a data race into the thing it
@@ -114,6 +106,14 @@ var clock atomic.Value // func() time.Time
 
 func init() { clock.Store(time.Now) }
 
+// timeNow is the clock the pinned-peer check reads, indirected for one reason only:
+// **the property that matters about D19's cause 5 is that the typed error survives the TLS
+// boundary**, and that cannot be asserted by calling verifyPinnedPeer directly.
+//
+// crypto/tls could plausibly wrap, replace or discard an error returned from
+// VerifyPeerCertificate — it sends an alert and the peer sees something quite different —
+// so a unit test of the error type would be the vacuous version of this check: green while
+// no caller could ever recover the cause. Measured: it survives, and now a test says so.
 func timeNow() time.Time { return clock.Load().(func() time.Time)() }
 
 // setClock swaps the clock and returns a restore func. Tests only.

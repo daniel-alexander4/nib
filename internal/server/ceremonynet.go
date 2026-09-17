@@ -44,22 +44,8 @@ func serverTransport(t ceremony.Transport) string {
 	return transportTCP
 }
 
-// candidateLife is how long a published record claims to be valid.
-//
-// **Derived, not chosen.** The record has to outlive the PEER's whole race, and the peer's
-// race is bounded by `connectDeadline`. On top of that sit the two rendezvous budgets that
-// bracket it: our publish traversal can take up to `PublishBudget` before the record is
-// anywhere, and the peer's final fetch can take another `PublishBudget` before it is read. A
-// clock disagreement between the two machines is real on this path — D19's fifth cause exists
-// because of it — so a further allowance is added rather than assumed away.
-//
-// *Not to be copied from the one prior example:* `nib rendezvous --self-test` used
-// `now + 5 minutes`, which is exactly `connectDeadline` with ZERO margin, so a record built
-// that way expires while the peer is still reading it. Fine there — its publish and fetch are
-// the next two statements — and wrong for a ceremony.
-//
-// The sum stays well inside `ceremony.MaxCandidateLife`, which is the reader-side ceiling and
-// the only thing that caps a publisher's generosity.
+// candidateSkewAllowance is the clock-disagreement term in candidateLife's sum. D19's fifth
+// cause is that disagreement, so it is added rather than assumed away.
 const candidateSkewAllowance = 90 * time.Second
 
 // rendezvousInterval steps the DHT fetch cadence down over the life of an arm.
@@ -107,6 +93,22 @@ func rendezvousInterval(elapsed time.Duration) time.Duration {
 // every five seconds during a race.
 func republishEvery() time.Duration { return candidateLife() / 2 }
 
+// candidateLife is how long a published record claims to be valid.
+//
+// **Derived, not chosen.** The record has to outlive the PEER's whole race, and the peer's
+// race is bounded by `connectDeadline`. On top of that sit the two rendezvous budgets that
+// bracket it: our publish traversal can take up to `PublishBudget` before the record is
+// anywhere, and the peer's final fetch can take another `PublishBudget` before it is read. A
+// clock disagreement between the two machines is real on this path — D19's fifth cause exists
+// because of it — so a further allowance is added rather than assumed away.
+//
+// *Not to be copied from the one prior example:* `nib rendezvous --self-test` used
+// `now + 5 minutes`, which is exactly `connectDeadline` with ZERO margin, so a record built
+// that way expires while the peer is still reading it. Fine there — its publish and fetch are
+// the next two statements — and wrong for a ceremony.
+//
+// The sum stays well inside `ceremony.MaxCandidateLife`, which is the reader-side ceiling and
+// the only thing that caps a publisher's generosity.
 func candidateLife() time.Duration {
 	return connectDeadline + 2*rendezvousPublishBudget + candidateSkewAllowance
 }

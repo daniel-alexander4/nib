@@ -48,12 +48,6 @@ func (f Font) covers(r rune) bool {
 	return false
 }
 
-// installFallbacks registers each face with pdfcpu so the page spec can name it.
-//
-// Idempotent by necessity rather than by taste: pdfcpu keeps user fonts in a shared
-// on-disk directory, so two conversions running at once install the same face, and the
-// loser of that race must not fail the render. Mirrors internal/pdfops.InstallOCRFonts,
-// which learned the same thing.
 // ErrFaceMisdeclared marks the two install failures that are a PROGRAMMING error in the caller
 // rather than a condition on the machine: a face with no name or no bytes, and a face whose Name is
 // not the PostScript name inside its own TTF.
@@ -78,6 +72,12 @@ func InstallFaces(f *Faces) error {
 	return installFallbacks(f.all())
 }
 
+// installFallbacks registers each face with pdfcpu so the page spec can name it.
+//
+// Idempotent by necessity rather than by taste: pdfcpu keeps user fonts in a shared
+// on-disk directory, so two conversions running at once install the same face, and the
+// loser of that race must not fail the render. Mirrors internal/pdfops.InstallOCRFonts,
+// which learned the same thing.
 func installFallbacks(fonts []Font) error {
 	if len(fonts) == 0 {
 		return nil

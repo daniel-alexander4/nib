@@ -1096,9 +1096,6 @@ func (se *session) status() sessionStatus {
 	return st
 }
 
-// sessionConfirmer is the consent bridge: p2p.Receive calls it after a peer sends a
-// signed document; it surfaces the document for review, parks the request for the
-// UI to accept/decline, and blocks until the user responds (or the timeout declines).
 // reached records that a connection put something in front of the local user. It is what
 // decides whether that connection SPENT the arm — see serveOneSession.
 type reached struct{ v atomic.Bool }
@@ -1112,6 +1109,9 @@ func (r *reached) mark() {
 	}
 }
 
+// sessionConfirmer is the consent bridge: p2p.Receive calls it after a peer sends a
+// signed document; it surfaces the document for review, parks the request for the
+// UI to accept/decline, and blocks until the user responds (or the timeout declines).
 type sessionConfirmer struct {
 	s   *Server
 	saw *reached
