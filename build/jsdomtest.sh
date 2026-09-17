@@ -102,12 +102,15 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # lands on a hidden mode, and leaves Settings alone.
 # 76 since ADR-039 (downloaddialog.test.mjs): the release download's dialog — progress from the
 # window stream, the destination named, a terminal state, and Cancel telling the server.
+# 77 since /pending 540 (windowdrop.test.mjs): the window drop listener, which had no test at any
+# tier — which is how a filter that silently discarded every convertible document survived two
+# rounds of work on that exact handler.
 #
 # **Both arrived on branches off one base, and each bumped this to 75.** Taking either side at
 # the merge leaves the pin one below the file count, which this script exits 1 on — the count is
 # the thing it guards, so a merge that resolves it by picking a side breaks the guard rather
 # than the code. Set by hand to the number of files actually present.
-Nib_expect_files=76
+Nib_expect_files=77
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

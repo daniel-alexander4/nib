@@ -684,6 +684,10 @@ const (
 	refuseTooLarge
 	refuseUnreadable
 	refuseNotPDF
+	// refuseConvertible is a document nib opens by ANOTHER route (`/api/office`), named by its
+	// extension. It is separate from refuseNotPDF because the two want different sentences and
+	// only one of them is a dead end. /pending 541.
+	refuseConvertible
 )
 
 // pathRefusal is readInstallablePDF's typed refusal. `status` and `msg` are the HTTP
@@ -727,14 +731,21 @@ func readInstallablePDF(path string) (data []byte, converted bool, ref *pathRefu
 	// than avoided: the bytes on disk are a PNG and the document in memory is a PDF, so a Save
 	// that wrote back would destroy the original. `converted` is what the caller uses to
 	// install it pathless, exactly as an office conversion already is.
-	out, converted, ok, cerr := asOpenableDocument(raw, filepath.Base(path))
-	if !ok {
+	out, kind, cerr := asOpenableDocument(raw, filepath.Base(path))
+	switch kind {
+	case openRefused:
 		return nil, false, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, "that file isn't a PDF"}
+	case openConvertible:
+		// **A different refusal, because it is a different problem.** "that file isn't a PDF" is
+		// true of a .docx and useless: nib converts that type, through another door, and the same
+		// sentence appeared whether or not LibreOffice was installed. /pending 541.
+		return nil, false, &pathRefusal{refuseConvertible, http.StatusUnsupportedMediaType,
+			convertibleRefusal(filepath.Base(path))}
 	}
 	if cerr != nil {
 		return nil, false, &pathRefusal{refuseNotPDF, http.StatusUnsupportedMediaType, cerr.Error()}
 	}
-	return out, converted, nil
+	return out, kind == openConverted, nil
 }
 
 // handleOpen loads a PDF from a server-side path. Opening by path is what makes
@@ -814,15 +825,25 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	// No path here, so nothing can be overwritten — but an unreadable "document"
 	// still leaves the viewer stuck on "Loading…" with no explanation.
-	if out, _, ok, cerr := asOpenableDocument(data, header.Filename); !ok {
+	// **This route decides through the same door as the path route, and used to decide for
+	// itself.** `readInstallablePDF` is "THE door onto 'this file may become a document'"
+	// (ADR-009) and `handleUpload` had copied its check — so the door had a declared population
+	// of three and a fourth site that had drifted from it. It cannot CALL that function (it
+	// stats a path and there is none here), but the decision is `asOpenableDocument`'s and is
+	// now shared. /pending 541.
+	out, kind, cerr := asOpenableDocument(data, header.Filename)
+	switch {
+	case kind == openRefused:
 		httpError(w, http.StatusUnsupportedMediaType, "that file isn't a PDF")
 		return
-	} else if cerr != nil {
+	case kind == openConvertible:
+		httpError(w, http.StatusUnsupportedMediaType, convertibleRefusal(header.Filename))
+		return
+	case cerr != nil:
 		httpError(w, http.StatusUnsupportedMediaType, cerr.Error())
 		return
-	} else {
-		data = out // an image arrives converted; there is no path here to drop
 	}
+	data = out // an image arrives converted; there is no path here to drop
 	// The uploaded filename is recorded ON the document, so /api/docs and a reload report
 	// it too. It used to be patched onto this one response and stored nowhere.
 	installed, err := s.addDocCapped(&document{

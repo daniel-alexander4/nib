@@ -130,6 +130,13 @@ func (s *Server) openHandedOff(path string) error {
 			return errHandoff("that file could not be read")
 		case refuseNotPDF:
 			return errHandoff("that file isn't a PDF")
+		case refuseConvertible:
+			// **Handled explicitly, because the `default` below would have swallowed it.** A new
+			// refusalKind does not fail to compile here — Go has no exhaustive switch — so it
+			// would have degraded to "that file could not be opened" for a document nib actually
+			// converts, and the drift would have passed every test. /pending 541 named this arm as
+			// the trap in its own fix.
+			return errHandoff(convertibleRefusal(filepath.Base(path)))
 		default:
 			return errHandoff("that file could not be opened")
 		}
