@@ -389,7 +389,9 @@ const maxRecent = 10
 // Vault is an opened (decrypted) store. It holds the content key in memory so it
 // can re-encrypt on save. A single process serves it to concurrent HTTP
 // handlers, so mu guards every access to the mutable in-memory state (contents
-// and ssh); accessors return copies so callers never share a live slice or map.
+// and ssh); accessors return copies so callers never share a live slice or map — DEEP copies, down
+// to every `[]byte` a returned struct carries. `Images`, `BuiltinImages` and `Image` were the three
+// that did not, and the sentence above was what said they should (/pending 567).
 type Vault struct {
 	mu       sync.Mutex
 	path     string
@@ -954,19 +956,50 @@ func Validate(raw []byte) error {
 
 // --- contents accessors -------------------------------------------------------
 
-// Images returns a copy of the stored library images (including their data).
-func (v *Vault) Images() []Image {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return append([]Image(nil), v.contents.Images...)
+// **`Images()` and `BuiltinImages()` are GONE, and that is /pending 567's other half.** They
+// returned `[]Image` with every `Data` aliased to the vault's live contents, against this struct's
+// own doc — and their only caller was `handleImagesList`, which renders id, name and MIME and had
+// never looked at a pixel. Once that route reads `ImageMetas` instead, both accessors had no
+// production caller at all, and `zerocaller_test.go` said so. Deleting them is strictly better than
+// deep-copying an accessor nobody calls: it removes the aliasing surface rather than paying to make
+// it safe. `Image(id)` is the one with real callers and it copies.
+
+// ImageMeta is one library image WITHOUT its pixel data — what a listing needs and all it needs.
+//
+// **A type of its own rather than an `Image` with an empty `Data`**, because the two would be
+// indistinguishable from an image whose data failed to load, and because `Builtin` has no business
+// on `Image`: that struct is persisted into the vault's JSON, and whether a signature is
+// binary-shipped is a fact about where it came from this session rather than about the record.
+type ImageMeta struct {
+	ID      string
+	Name    string
+	MIME    string
+	Builtin bool // binary-shipped and read-only, not from the stored library
 }
 
-// BuiltinImages returns the binary-shipped signatures decrypted this session
-// (empty unless a built-in key was available). They're read-only.
-func (v *Vault) BuiltinImages() []Image {
+// ImageMetas returns every stored and built-in image WITHOUT its pixel data, for a caller that
+// only wants to list them.
+//
+// **It exists so that the copy above costs nothing on the path that does not want the data**
+// (/pending 567). `handleImagesList` renders id, name and MIME and nothing else — and it called
+// `Images()` TWICE, once to size its slice and once to range over it, so a library of twenty 50 KB
+// signatures copied two megabytes of pixels per listing to render sixty short strings. Deep-copying
+// there as well would have doubled that, which is the hot-path objection the item raised; not
+// reading the data at all answers it instead of trading against it.
+//
+// `Builtin` is set on the binary-shipped ones, which is the only thing the caller distinguishes
+// them by.
+func (v *Vault) ImageMetas() []ImageMeta {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return append([]Image(nil), v.builtinImages...)
+	out := make([]ImageMeta, 0, len(v.contents.Images)+len(v.builtinImages))
+	for _, img := range v.contents.Images {
+		out = append(out, ImageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME})
+	}
+	for _, img := range v.builtinImages {
+		out = append(out, ImageMeta{ID: img.ID, Name: img.Name, MIME: img.MIME, Builtin: true})
+	}
+	return out
 }
 
 // Image returns the image with the given id, from the stored library or the
@@ -976,11 +1009,17 @@ func (v *Vault) Image(id string) (Image, bool) {
 	defer v.mu.Unlock()
 	for _, img := range v.contents.Images {
 		if img.ID == id {
+			// **Deep-copied.** Returning the struct by value copies the slice HEADER and shares the
+			// array, so the caller would hold a window onto the vault's own bytes — the defect
+			// /pending 567 found, and the reason the four sibling accessors all copy their `[]byte`
+			// explicitly.
+			img.Data = append([]byte(nil), img.Data...)
 			return img, true
 		}
 	}
 	for _, img := range v.builtinImages {
 		if img.ID == id {
+			img.Data = append([]byte(nil), img.Data...)
 			return img, true
 		}
 	}
@@ -991,7 +1030,13 @@ func (v *Vault) Image(id string) (Image, bool) {
 func (v *Vault) AddImage(name, mime string, data []byte) (Image, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	img := Image{ID: newID(), Name: name, MIME: mime, Data: data}
+	// **The caller's slice is COPIED IN, not retained** (/pending 567). `addPinned` already does this
+	// for a fingerprint — `append([]byte(nil), fingerprint...)` — and it is the write-side half of
+	// the same rule the accessors keep on the read side: a vault that holds a slice its caller still
+	// has is one an upload handler can mutate under it. Latent today, for the same reason the read
+	// side was, and the point of closing a latent aliasing bug is that the next caller need not find
+	// it.
+	img := Image{ID: newID(), Name: name, MIME: mime, Data: append([]byte(nil), data...)}
 	// The zero Image on failure, not the one that was rolled back: it used to return `img,
 	// v.save()`, so a caller that looked at the value before the error held an id the vault does
 	// not have — memory ahead of disk at the API boundary rather than inside it.

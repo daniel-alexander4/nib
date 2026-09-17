@@ -73,17 +73,22 @@ func TestAFailedSaveRestoresWhatTheMutationOverwroteInPlace(t *testing.T) {
 			t.Fatal("DeleteImage reported success although its save failed")
 		}
 
-		got := v.Images()
+		got := v.ImageMetas()
 		if len(got) != 3 {
 			t.Fatalf("after a failed delete the library holds %d image(s), want the original 3 — "+
 				"memory is ahead of disk, and the next launch will still have all three", len(got))
 		}
+		// **The ORDER comes from the metadata listing and the DATA from a by-id fetch**, because
+		// `ImageMetas` carries no bytes (/pending 567). It still catches the pairing the compaction
+		// breaks: an entry left holding another image's data fails the second half, since the fetch
+		// is keyed on the id the first half just checked.
 		for i, want := range ids {
-			if got[i].ID != want || string(got[i].Data) != string([]byte{"abc"[i]}) {
+			img, ok := v.Image(want)
+			if got[i].ID != want || !ok || string(img.Data) != string([]byte{"abc"[i]}) {
 				t.Errorf("image %d is %q/%q after the rollback, want %q/%q. `Images[:0]` compacts "+
 					"the SHARED backing array, so restoring a slice header puts the old length "+
 					"back over elements the filter has already moved",
-					i, got[i].ID, got[i].Data, want, string([]byte{"abc"[i]}))
+					i, got[i].ID, img.Data, want, string([]byte{"abc"[i]}))
 			}
 		}
 	})
@@ -250,7 +255,7 @@ func TestAFailedSaveLeavesNothingBehindAtEveryRoutedMutator(t *testing.T) {
 		{
 			name:   "AddImage",
 			change: func(v *Vault) error { _, err := v.AddImage("n", "image/png", []byte("d")); return err },
-			read:   func(v *Vault) string { return strconv.Itoa(len(v.Images())) },
+			read:   func(v *Vault) string { return strconv.Itoa(len(v.ImageMetas())) },
 		},
 		{
 			name:   "SetExternalSigner",

@@ -187,14 +187,23 @@ func TestBuiltinSignaturesInjected(t *testing.T) {
 	if got, ok := v.Image("builtin-sig-1"); !ok || string(got.Data) != "PNGBYTES" {
 		t.Fatalf("builtin signature not resolvable via Image(): ok=%v", ok)
 	}
-	if len(v.BuiltinImages()) != 1 {
-		t.Fatalf("BuiltinImages() = %d, want 1", len(v.BuiltinImages()))
+	builtins := 0
+	for _, m := range v.ImageMetas() {
+		if m.Builtin {
+			builtins++
+		}
+	}
+	if builtins != 1 {
+		t.Fatalf("ImageMetas() reports %d builtin image(s), want 1", builtins)
 	}
 	if err := v.DeleteImage("builtin-sig-1"); !errors.Is(err, ErrReadOnlyImage) {
 		t.Errorf("DeleteImage(builtin) = %v, want ErrReadOnlyImage", err)
 	}
-	for _, img := range v.Images() { // Images() is the persisted set only
-		if img.ID == "builtin-sig-1" {
+	// `ImageMetas` reports both sets and marks which is which, so "did not leak into the persisted
+	// contents" is now asked as "is still reported as a builtin" rather than by reading a
+	// persisted-only accessor that no longer exists.
+	for _, m := range v.ImageMetas() {
+		if m.ID == "builtin-sig-1" && !m.Builtin {
 			t.Error("builtin signature leaked into persisted contents")
 		}
 	}
