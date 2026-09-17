@@ -881,13 +881,25 @@ func TestPairreproDoesNotStateACeilingItDoesNotEnforce(t *testing.T) {
 //
 // # What it cannot see, stated so the green is not read as more than it is
 //
-//   - **A SECOND `mktemp` taken before the trap is set, or past an `exec`.** `pairrepro.sh`
-//     does both: its `--lan` branch builds `nib` into `PREBUILT="$(mktemp -d)/nib"` at line 248
-//     and then `exec`s into the namespace, so the trap installed at line 536 is never reached
-//     and never runs. **Measured: a 102 MB binary left in /tmp** by a `--lan` run. That is a
-//     real leak this guard passes over, and it is named here rather than left to be rediscovered.
 //   - Whether the handler actually removes the thing. A trap that prints and returns satisfies
 //     this; the tier's own comment is what says which of `$WORK` and the log it keeps on a red.
+//   - Whether the removal RUNS. The second arm below proves a removal is WRITTEN for a
+//     trap-unreachable `mktemp`; only a run proves it fires, and `/pending 561`'s close records
+//     the before/after measurement that did.
+//
+// # The second arm — a `mktemp` the trap cannot reach (/pending 561)
+//
+// The blind spot this guard declared for its first six weeks was a `mktemp` taken BEFORE the trap
+// is installed and then `exec`ed past, which no trap in that shell can ever run. `pairrepro.sh`
+// did exactly that: its `--lan` branch built `nib` into `PREBUILT="$(mktemp -d)/nib"` and then
+// `exec`ed into the namespace — twice, since the inner shell `exec`s this script again — so the
+// trap further down was never reached. **Measured on the development machine: 5 leaked
+// directories, 510 MB, one per `--lan` run at ~102 MB each.**
+//
+// So where a script has `mktemp` → `exec` → `trap … EXIT` in that order, the variable the
+// `mktemp` was assigned to must appear on some `rm -rf` line. That is the "named at the site"
+// convention this repo uses everywhere else: it does not prove the removal runs, and it does
+// prove somebody wrote one and said which path it covers.
 func TestEveryHarnessThatMakesATempDirTearsItDown(t *testing.T) {
 	scripts, err := filepath.Glob("build/*.sh")
 	if err != nil {
@@ -915,6 +927,50 @@ func TestEveryHarnessThatMakesATempDirTearsItDown(t *testing.T) {
 				"in the tree could tell you. Add `trap <handler> EXIT`; keep whatever the run "+
 				"needs for diagnosis and say in the handler which half that is.", s)
 		}
+	}
+	// Second arm: a mktemp the trap cannot reach. See the doc above for why the test is
+	// "a removal is written" rather than "a removal runs".
+	var (
+		assign  = regexp.MustCompile(`(?m)^\s*(\w+)=.*\$\(\s*mktemp\b`)
+		trapRe  = regexp.MustCompile(`(?m)^\s*trap\s+\S.*\bEXIT\b`)
+		execRe  = regexp.MustCompile(`(?m)^\s*exec\s`)
+		unreach int
+	)
+	for _, sc := range scripts {
+		b, rerr := os.ReadFile(sc)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		src := string(b)
+		trap := trapRe.FindStringIndex(src)
+		if trap == nil {
+			continue // the first arm already reported it
+		}
+		for _, m := range assign.FindAllStringSubmatchIndex(src, -1) {
+			if m[0] > trap[0] {
+				continue // taken after the trap is installed: reachable
+			}
+			ex := execRe.FindStringIndex(src[m[1]:trap[0]])
+			if ex == nil {
+				continue // no exec between them, so the trap still runs in this shell
+			}
+			unreach++
+			name := src[m[2]:m[3]]
+			if !regexp.MustCompile(`rm\s+-rf[^\n]*` + regexp.QuoteMeta(name)).MatchString(src) {
+				t.Errorf("%s takes a mktemp into $%s and then execs before its EXIT trap is "+
+					"installed, so no trap in that shell can ever remove it — and no `rm -rf` "+
+					"in the file names $%s either. pairrepro.sh leaked 510 MB across five runs "+
+					"this way (/pending 561). Hand the path to the process that does have a "+
+					"trap, and name it in that handler.", sc, name, name)
+			}
+		}
+	}
+	// A floor for the second arm too: it is a narrow shape, and zero matches would mean the
+	// three regexps stopped agreeing with the scripts rather than that the shape is gone.
+	if unreach < 1 {
+		t.Errorf("no build script was found to take a mktemp and exec before its EXIT trap; " +
+			"pairrepro.sh's --lan branch does exactly that, so this arm is matching nothing " +
+			"and its green says nothing")
 	}
 	// The other floor: eight harnesses use mktemp today. Zero would mean the scan matched no
 	// script and every one of them passed by being looked at by nothing.
