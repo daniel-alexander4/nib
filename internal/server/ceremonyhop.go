@@ -60,12 +60,17 @@ type ceremonyHopRequest struct {
 	// Ceremony is the id. It is the ONLY thing the client chooses, and that is the point: the
 	// party, the invitation and the document are all resolved here.
 	Ceremony string `json:"ceremony"`
-	// Appearance is the rendered signature block, base64 PNG, from the quote below. Absent on the
-	// carry path, where this machine contributes nothing and there is no block to draw.
+	// Appearance is the rendered signature block, base64 PNG. Absent on the carry path, where this
+	// machine contributes nothing and there is no block to draw — which, on THIS route, is every
+	// hop (`/pending 517`). It stays in the shape because `runHopDial` refuses an empty appearance
+	// on the contributing path, and that refusal is the valve that would catch a regression.
+	//
+	// **`When` used to sit beside it and is gone.** It echoed the quote's pinned timestamp so that
+	// the block a user consented to was the block signed — the contract `/api/cosign/quote` ->
+	// `/api/session/initiate` has. This route's quote never pinned one after the dead attestation
+	// branch went, so the field was read here and sent by nobody, which is what
+	// `TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends` exists to catch.
 	Appearance string `json:"appearance,omitempty"`
-	// When echoes the quote's timestamp, so the block the user reviewed is the block signed. Same
-	// contract `/api/cosign/quote` -> `/api/session/initiate` already has, bounded by maxWhenSkew.
-	When string `json:"when,omitempty"`
 	// Address is an optional dial hint, as on every other ceremony route. Empty is the LAN ladder.
 	Address string `json:"address,omitempty"`
 }
@@ -79,14 +84,18 @@ type ceremonyHopQuote struct {
 	// Mine is whether the next contributor is this machine. A convener who signs is first in the
 	// signing order, so their own turn has nobody to dial and the rail must not offer a call.
 	Mine bool `json:"mine"`
-	// Contributes is whether THIS machine signs at this hop. False on the carry path, and it is
-	// what tells the client whether it needs to render an appearance at all.
+	// Contributes is whether THIS machine signs at this hop. False on the carry path, which on this
+	// route is every hop that gets dialled — so the client reads it as a TRIPWIRE rather than as a
+	// branch: a true answer beside `mine:false` means the two doors that answer "do I sign at this
+	// hop?" have come apart again, and it refuses instead of dialling into a refusal.
+	//
+	// **It carries no block, and since `/pending 517` that is provable rather than incidental.**
+	// This route used to also return `lines`/`rect`/`when` for a machine that contributes at a hop
+	// it is DIALLING — and no such machine exists. `handleCeremonyHop` refuses `mine` with *"there
+	// is nobody to call"*, so every dial has `mine == false`, and `carries` now answers "carry" for
+	// every party who is not `Order[Done]`. A convener's own signature is a different action on a
+	// different route, and this one stopped describing a block it could never quote.
 	Contributes bool `json:"contributes"`
-	// Lines and Rect size the block, in the SHAPE the two existing quote routes already return —
-	// `cosignQuote`'s own fields, so the client's `renderAttestation` needs no new branch.
-	Lines []string   `json:"lines,omitempty"`
-	Rect  [4]float64 `json:"rect,omitempty"`
-	When  string     `json:"when,omitempty"`
 }
 
 // hopTarget resolves everything a hop needs from a ceremony id, or writes its own refusal.
@@ -214,7 +223,12 @@ func rosterLabel(p ceremony.Party) string {
 // rather than trusting what this returned.
 func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("ceremony")
-	rec, pdf, next, mine, ok := s.hopTarget(w, r, id)
+	// **The record and the document are resolved and then DISCARDED here, deliberately.**
+	// `hopTarget` is the shared resolution both routes run — the pin, the entitlement, the
+	// deadline, the turn — and the GET wants only its refusals and its answer to "whose turn".
+	// Taking the two it does not read would be a `_` per field; naming them is how the next
+	// reader learns the GET quotes nothing off the document's bytes.
+	_, _, next, mine, ok := s.hopTarget(w, r, id)
 	if !ok {
 		return
 	}
@@ -226,57 +240,29 @@ func (s *Server) handleCeremonyHopQuote(w http.ResponseWriter, r *http.Request) 
 	// next signer me?" and "do I sign at this hop?") and they are BOTH true for a signing convener
 	// at hop 1. Publishing a false one because the code returned early is the shape `Stored.Ended`'s
 	// own doc forbids: no surface may render an absence as an answer.
+	//
+	// **`mine` settles it, and everything that used to follow was unreachable (`/pending 517`).**
+	//
+	// What stood here re-derived `Contributes` from a second `ContributionProgress` walk —
+	// `out.Contributes = i == pr.Done` over this machine's own place in the order — and then minted
+	// an attestation and returned its lines. **The mint could never run.** `mine` is false past this
+	// point by construction, `mine` is `me == Order[Done]`, so the first `i` matching this machine
+	// is never `pr.Done`; the loop could only ever write the `false` the field already held, and the
+	// `if !out.Contributes` below it returned every time. Probed before it was deleted, through the
+	// route, on the one ceremony shape that came closest — a convener sitting SECOND in the signing
+	// order, which is where `carries` genuinely disagreed: the quote still answered
+	// `{"mine":false,"contributes":false}`.
+	//
+	// That disagreement is fixed at `carries` rather than papered over here: a machine dialling a
+	// hop carries, always, because the party it is dialling is the one whose turn it is. So the
+	// whole answer is the one line below, and `Contributes` is true only when it is this machine's
+	// own turn — the case with nobody to call.
+	//
+	// **The convener's own turn has nobody to dial**, and saying so is the honest answer rather
+	// than an error: a signing convener is FIRST in the signing order unless they placed themselves
+	// otherwise, so this is the ordinary state of a ceremony that has just been convened. The rail
+	// renders it as "sign this yourself", which is a different action and not this route's.
 	out.Contributes = mine && next.Signs
-	if mine {
-		// **The convener's own turn has nobody to dial**, and saying so is the honest answer rather
-		// than an error: a signing convener is FIRST in the signing order, so this is the ordinary
-		// state of a ceremony that has just been convened. The rail renders it as "sign this
-		// yourself", which is a different action and not this route's.
-		writeJSON(w, out)
-		return
-	}
-	v := vaultFrom(r)
-	cert, _, err := identity(v)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "could not read this machine's identity")
-		return
-	}
-	myFP, ferr := sign.Fingerprint(cert)
-	if ferr != nil {
-		httpError(w, http.StatusInternalServerError, "could not read this machine's fingerprint")
-		return
-	}
-	roster := l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent)
-	pr, perr := p2p.ContributionProgress(pdf, roster)
-	if perr != nil {
-		httpError(w, http.StatusConflict, perr.Error())
-		return
-	}
-	// **Does THIS machine sign at this hop?** The same question `carries` answers inside the dial,
-	// asked here only to tell the client whether to render a block at all. The dial asks again and
-	// its answer is the one that governs — this is a rendering hint, never an authorisation.
-	me := hex.EncodeToString(myFP)
-	for i, e := range pr.Order {
-		if strings.EqualFold(e.Fingerprint, me) {
-			out.Contributes = i == pr.Done
-			break
-		}
-	}
-	if !out.Contributes {
-		writeJSON(w, out)
-		return
-	}
-	// **The time is PINNED here and echoed on the POST**, which is the contract
-	// `/api/cosign/quote` already has: without it the block a user consented to and the block
-	// signed differ by however long they spent reading it.
-	when := time.Now().UTC()
-	att, aok := s.cosignAttestation(w, v,
-		cosignParams{Fingerprint: next.Fingerprint, Intent: rec.Intent,
-			When: when.Format(time.RFC3339)}, roster)
-	if !aok {
-		return
-	}
-	out.Lines, out.Rect, out.When = att.AppearanceLines(), p2p.NominalBlockRect(), att.When.UTC().Format(time.RFC3339)
 	writeJSON(w, out)
 }
 
@@ -362,10 +348,13 @@ func (s *Server) handleCeremonyHop(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cer.close()
 
-	when := req.When
-	if when == "" {
-		when = time.Now().UTC().Format(time.RFC3339)
-	}
+	// **This machine's own clock, because there is no consented block to date (`/pending 517`).**
+	// The request used to be able to echo a time the quote had pinned, on `/api/cosign/quote`'s
+	// contract — the block a user reviewed is the block signed. This route's quote pins nothing:
+	// a dialled hop carries, `runHopDial` never reaches `buildCoSigned`, and the attestation built
+	// here is a parameter that path does not read. Taking a caller-supplied time for it would be a
+	// wire field with no producer and no consequence.
+	when := time.Now().UTC().Format(time.RFC3339)
 	att, aok := s.cosignAttestation(w, v,
 		cosignParams{Fingerprint: next.Fingerprint, Intent: rec.Intent, When: when},
 		cer.l3Roster())

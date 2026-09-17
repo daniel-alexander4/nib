@@ -942,15 +942,30 @@ func (c *ceremonyID) punchBudget(s *Server) *punchBudget {
 // its only multi-hop walk uses `"signs":false`. A harness configured past the defect it exists to
 // find is ADR-010's lesson, and this is its third recorded instance.
 //
-// # The turn rule keeps its ONE door, and this is deliberately not a second one
+// # The turn rule keeps its ONE door, and this READS that door rather than re-deriving it
 //
-// Three outcomes are possible and this function answers only two of them. A signer whose turn it is
-// NOT and who has not signed yet still returns false — contribute — and is refused by
-// `AdmitContribution` with `ErrNotYourTurn`, exactly as before. Deciding that here would be a
-// second implementation of the turn rule, which is the ADR-009 shape, and `AdmitContribution`'s
-// refusal is already the better one: it names both parties. What this adds is strictly the case
-// that rule cannot express — *I already signed, so there is nothing for me to contribute* — because
-// "not your turn" is true both of a party who is early and of one who is done.
+// **It answered two of three outcomes until `/pending 517`, and the third was a live defect.** A
+// signer whose turn it is NOT and who has not signed yet used to return false — contribute — on
+// the argument that `AdmitContribution` refuses them `ErrNotYourTurn` and that deciding it here
+// would be a second implementation of the turn rule. Both halves were wrong.
+//
+// **Wrong about the system.** `canonicalRoster` prepends a signing convener at position 0 only when
+// the client did not name them, and says so in as many words: *"a caller who wants another position
+// includes themselves in the roster and this branch does not run"*. `SigningOrder` is the roster
+// filtered on `Signs` with no promotion, so a convener who names themselves second IS second. Under
+// D22's hub that convener is at one end of every hop, so at hop 1 they are a pure CARRIER — and the
+// old predicate called that "contribute". Measured through the product's own doors on a ceremony
+// convened as `[Bob, me, Carla]`: the quote answered `{"mine":false,"contributes":false}` and the
+// dial answered **400 "this hop needs your signature block and none was sent"**. Every hop of such
+// a ceremony failed, at the convener's own machine, before a packet left.
+//
+// **Wrong about ADR-009.** `Progress`'s own doc says `Order[Done]` IS whose turn it is and that "a
+// caller that wants per-party states derives them from these two fields and never re-walks". So
+// `i != pr.Done` is that sanctioned reading of the ONE walk, not a second rule — the same
+// expression `NextContributor` returns and `hopTarget` already indexes with.
+//
+// What it still does not do is speak: `AdmitContribution`'s refusal names both parties and remains
+// the one that reaches a user.
 //
 // # The error is a refusal, never a default
 //
@@ -984,14 +999,17 @@ func (c *ceremonyID) carries(meFP string, pdf []byte) (bool, error) {
 	if !signs {
 		return true, nil
 	}
-	// A signing party: carry only once this document already holds their signature.
+	// A signing party: contribute at their OWN place in the order and carry at every other, which
+	// is `Order[Done]` read as the field's own doc defines it. `i < pr.Done` — carry only once the
+	// document already holds their signature — was the old rule, and it made a convener who signs
+	// later than position 0 contribute at somebody else's hop. See the header.
 	pr, err := p2p.ContributionProgress(pdf, c.l3Roster())
 	if err != nil {
 		return false, err
 	}
 	for i, e := range pr.Order {
 		if strings.EqualFold(e.Fingerprint, meFP) {
-			return i < pr.Done, nil
+			return i != pr.Done, nil
 		}
 	}
 	// In the roster as a signer and absent from the signing order is not a state `Progress` can

@@ -1,0 +1,11 @@
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -1009,7 +1009,7 @@
+ 	}
+ 	for i, e := range pr.Order {
+ 		if strings.EqualFold(e.Fingerprint, meFP) {
+-			return i != pr.Done, nil
++			return i < pr.Done, nil
+ 		}
+ 	}
+ 	// In the roster as a signer and absent from the signing order is not a state `Progress` can
