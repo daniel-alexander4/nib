@@ -58,14 +58,17 @@ func (d structDefect) String() string { return d.what }
 //  4. **An element reached through a page's array is the element that claims that MCID.** The two
 //     directions are stored separately — `/K` holds MCIDs, the ParentTree holds elements — so
 //     nothing but a check makes them agree.
-// checkStructConsistency resolves the pages itself. Callers that are already sweeping them —
-// `structureCarriedCompletely` — use `checkStructConsistencyOn` and hand over the one scan
-// (/pending 530); this wrapper is what `structedit.go`'s two call sites keep, having no scan of their
-// own to share.
+//
+// **It resolves the pages itself, and `checkStructConsistencyOn` is the same check for a caller that
+// has already resolved them** (/pending 530). `structureCarriedCompletely` runs this and two more
+// sweeps over the same pages, so it scans once and hands the record to all three; `structedit.go`'s
+// two call sites have no scan of their own and keep this door.
 func checkStructConsistency(ctx *model.Context, tree *structTree) []structDefect {
 	return checkStructConsistencyOn(ctx, tree, scanPages(ctx))
 }
 
+// checkStructConsistencyOn is `checkStructConsistency` over a page scan the caller already has. Its
+// invariants and its bounds are that function's; this one only declines to repeat the walk.
 func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []pageRecord) []structDefect {
 	var out []structDefect
 	add := func(key, f string, a ...any) { out = append(out, structDefect{key: key, what: fmt.Sprintf(f, a...)}) }
