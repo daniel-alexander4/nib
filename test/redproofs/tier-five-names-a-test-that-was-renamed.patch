@@ -1,0 +1,20 @@
+--- a/internal/discovery/mcast_test.go
++++ b/internal/discovery/mcast_test.go
+@@ -148,7 +148,7 @@
+ 	}
+ }
+ 
+-// TestTwoSocketsCanShareThePort is the SO_REUSEADDR assertion, and it is the one that
++// TestTwoSocketsCanShareTheirPort is the SO_REUSEADDR assertion, and it is the one that
+ // would catch the darwin gap.
+ //
+ // net.ListenPacket does not set SO_REUSEADDR — the stdlib only does when the bind
+@@ -157,7 +157,7 @@
+ // SO_REUSEPORT as well; rather than ship a //go:build file per platform with a no-op
+ // sibling (the shape that already produced one silent defect here), the gap is named
+ // and this test is what fails loudly there.
+-func TestTwoSocketsCanShareThePort(t *testing.T) {
++func TestTwoSocketsCanShareTheirPort(t *testing.T) {
+ 	var n1, n2 [nonceLen]byte
+ 	n1[0], n2[0] = 1, 2
+ 	a, err := Open(n1)

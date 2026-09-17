@@ -15,6 +15,37 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# ── The Exhibit B refusal, and the door it now has (/pending 518) ─────────────
+#
+# The note at the end of this file rests its AGPLv3 compatibility on MPL 2.0 §3.3, and §3.3 is
+# available only while no covered SOURCE file carries the Exhibit B "Incompatible With Secondary
+# Licenses" notice. A dependency that adds one makes that paragraph false, so the generate stops
+# rather than emitting a licence claim nobody checked.
+#
+# It sat inline in the module walk, where the only way to reach it was to actually depend on such
+# a module — **a refusal on a distribution-facing legal document that nothing had ever run**. It is
+# a function now, with a probe entry point beside it, so `notices_test.go` can drive the real
+# branch on fixture directories instead of reimplementing the predicate and grading its own copy.
+# ADR-009: one door, and the guard asserts the door rather than a second implementation of it.
+#
+# `--include='*.go'` is load-bearing and is what the probe's third case exists to hold: the MPL
+# text QUOTES Exhibit B, so every LICENSE file of every MPL module matches. Searching them would
+# refuse all four of the modules Nib already ships.
+refuse_if_exhibit_b() { # module dir
+  grep -rlq --include='*.go' 'Incompatible With Secondary Licenses' "$2" || return 0
+  echo "gen-notices: $1 carries the MPL-2.0 Exhibit B notice in a source file; the" >&2
+  echo "             note's §3.3 paragraph would be false — rewrite it before regenerating" >&2
+  exit 1
+}
+
+# The probe: runs the refusal above and NOTHING else, so a test can see both of its answers.
+# Deliberately not a flag that changes how a generate behaves — it replaces the generate.
+if [ "${1:-}" = "--exhibit-b-probe" ]; then
+  refuse_if_exhibit_b "${2:-probe}" "${3:?--exhibit-b-probe needs a directory}"
+  echo "gen-notices: ${2:-probe} carries no Exhibit B notice in any Go source file"
+  exit 0
+fi
+
 OUT="${1:-THIRD-PARTY-NOTICES.md}"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
@@ -77,14 +108,10 @@ while IFS= read -r mod; do
       found=1
       if grep -q 'Mozilla Public License' "$dir/$name"; then
         mpl_mods+=("${mod} ${ver}")
-        # The §3.3 sentence in the note below rests on no covered SOURCE file carrying Exhibit B
-        # (the licence text itself quotes Exhibit B, so the LICENSE file is not what is searched).
-        # Checked here rather than asserted, so a dependency that adds it stops the regenerate.
-        if grep -rlq --include='*.go' 'Incompatible With Secondary Licenses' "$dir"; then
-          echo "gen-notices: ${mod} carries the MPL-2.0 Exhibit B notice in a source file; the" >&2
-          echo "             note's §3.3 paragraph would be false — rewrite it before regenerating" >&2
-          exit 1
-        fi
+        # The §3.3 sentence in the note below rests on no covered SOURCE file carrying Exhibit B.
+        # Checked here rather than asserted, so a dependency that adds it stops the regenerate —
+        # through the one door at the top of this file, which `notices_test.go` drives directly.
+        refuse_if_exhibit_b "${mod}" "$dir"
       fi
       break
     fi

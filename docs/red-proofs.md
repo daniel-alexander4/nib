@@ -208,6 +208,25 @@ by check.
 | The self-filter keyed on the SOURCE ADDRESS instead of the per-process nonce (v1.110.1) | `TestTwoProcessesDiscoverEachOther` | the browser discarded the *peer's* announcement as its own and timed out after 8 s. Both processes are on one host, so their datagrams arrive from the same local address — which is exactly why the nonce exists, and this is the probe that shows it rather than asserting it |
 | `SO_REUSEADDR` not set on the discovery socket | the same test | the second process could not bind port 8446 at all. `net.ListenPacket` does not set it (the stdlib only does when the *bind address* is multicast, and this binds the wildcard), so without it two Nibs on one machine can never discover each other |
 
+**Both rows above are prose, and both are about a TEST failing.** Tier 5 also makes assertions no
+test can make — that the pass it saw was about discovery, and that every test it names actually
+ran — and until /pending 518 none of those had been replayed: this tier had no row in
+`test/redproofs/` at all, so its own greps had never been made to fail through the harness. The
+two below are replayable, and both leave `go test ./...` GREEN, which is the whole point of the
+tier.
+
+| Defect reintroduced | Check that fired | What it said |
+|---|---|---|
+| `TestTwoProcessesDiscoverEachOther` stops echoing the browsing process's output — it still asserts `DISCOVERED` is in it and just consumes the evidence privately, which is what it did before v1.110.1 (`tier-five-throws-away-its-discovery-evidence`) | the harness's own evidence grep | "no process reported discovering another; the pass above is not about discovery". The test PASSES; nothing below tier 5 can tell that the pass it is reporting is no longer about the thing the tier exists for |
+| `TestTwoSocketsCanShareThePort` renamed to `…CanShareTheirPort`, which is an ordinary edit (`tier-five-names-a-test-that-was-renamed`) | the per-test PASS loop built from `DISC_TESTS` (/pending 505) | "TestTwoSocketsCanShareThePort did not PASS inside the namespace — renamed, skipped, or not run; this tier names it and must see it pass". The test still exists and still passes under its new name, so `go test ./...` is green; inside the namespace the `-test.run` pattern matches nothing and the run exits 0. This is the defect the single list was written against, and the row is what shows the list works |
+
+**Neither token contains a test name, deliberately.** The harness runs the test binaries with
+`-test.v` and cats the log, so `=== RUN   TestX` and `--- PASS: TestX` are printed for every test
+it names whichever way the run went — an `EXPECT` built from one would re-prove on any red at all,
+including a build break. `TestNoRedProofTokenIsItsTestsName` refuses that construction for harness
+rows now (/pending 518); before that it read only the `node --test <file>` and `go test -run` row
+shapes and skipped all 46 harness rows, of which this is the tier that had none.
+
 ## Tier 1 — `internal/discovery` (P03.S02, interface selection)
 
 | Defect reintroduced | Check that fired | What it said |

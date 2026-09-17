@@ -42,6 +42,36 @@ cd "$(dirname "$0")/.."
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
+# ── Teardown, which this tier ran without (/pending 518) ─────────────────────
+# `BINDIR` holds two COMPILED test binaries and `$OUT` the whole namespace log, and
+# neither was ever removed — on the green path as much as the red one. **Measured: 50 MB
+# per run** (`discovery.test` 6 MB, `server.test` 45 MB), and two such directories were
+# already sitting in /tmp when this was found. Every other harness that calls `mktemp`
+# sets a trap — uirepro, pairrepro, ceremonyrepro, winrepro, dhtlive, gen-notices,
+# redproof — and this was the one that did not; `verify_test.go` now asserts that, so a
+# harness added without one fails rather than being noticed by somebody's `du`.
+#
+# The LOG is kept when the run failed, because on a red run it is the whole diagnosis —
+# the same split `pairrepro.sh`'s `cleanup` makes, and for the same reason. The binaries
+# go either way: they are rebuildable from the tree and they are the 50 MB.
+#
+# Written as `if` blocks, not `&&` chains: this script sets `-e`, and a trailing `[ -n
+# "$X" ] && …` that goes false makes the handler exit early, skipping the cleanup below it.
+BINDIR=""
+OUT=""
+teardown() {
+  local st=$?
+  if [ -n "$BINDIR" ]; then rm -rf "$BINDIR"; fi
+  if [ -n "$OUT" ]; then
+    if [ "$st" = 0 ]; then
+      rm -f "$OUT"
+    else
+      printf 'the run failed — the namespace log is kept at %s\n' "$OUT" >&2
+    fi
+  fi
+}
+trap teardown EXIT
+
 # Skip cleanly and separately, because a missing unshare and a missing ip are
 # different fixes — the same rule tiers 2 and 3 follow for their own dependencies.
 for dep in go unshare ip; do
