@@ -142,11 +142,14 @@ func carryStructure(ctx *model.Context, root types.Dict, kept []keptPage) (bool,
 	// it. Cleaning first makes the clone path unable to reach a removed element at all.
 	clearRemovedFromRows(ctx, tree, p.gone())
 
+	// `placed` is ONE set across every repeat, because the repeats have to be ordered against each
+	// other and not only against the original. See `subtreeClone.insertBlock`.
+	placed := map[int]bool{}
 	for _, k := range kept {
 		if !k.clone {
 			continue
 		}
-		if err := carryOntoClone(ctx, tree, k); err != nil {
+		if err := carryOntoClone(ctx, tree, k, placed); err != nil {
 			return false, err
 		}
 	}
@@ -615,7 +618,26 @@ func renumberParentTree(ctx *model.Context, tree *structTree) error {
 // `setParentTreeSlot`/`setParentTreeSingle` call that. So every key here is allocated and then
 // immediately written through one of those two doors; allocating a batch first would hand out the
 // same key every time.
-func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage) error {
+//
+// # A row names LEAVES, and copying only what it names is not enough
+//
+// `/ParentTree` rows are indexed by MCID, so they name the elements that own marked content — a
+// `/Lbl`, a `/TD`, an `/H2` — and never the `/L` or `/Table` above them. Copying exactly what the row
+// names therefore left the grouping elements uncopied and hung every copy under the ORIGINAL's
+// parent. Measured on nib's own Markdown conversion and on veraPDF's `7.5-t01-pass-a.pdf`:
+//
+//   - the list case — page 1's three `/LI` each came out with TWO `/Lbl` and TWO `/LBody`, the first
+//     reading `"••first item of the list…"`, and page 2 had no `/L` and no `/LI` at all;
+//   - the table case, which is worse — the table's header `/TR` came out with TEN cells in a
+//     five-column table, reading `"Index Index Failure Condition Failure Condition …"`, and page 2
+//     had no `/Table` and no `/TR`, so a reader on the duplicate hears no table.
+//
+// Neither is a sequencing complaint. An `/LI` with two `/Lbl` is not list structure and a `/TR` with
+// twice its table's columns destroys every header-to-cell association a reader computes — on an
+// output where `structureCarriedCompletely` is empty, `carryIsComplete` is true and veraPDF passes,
+// because none of them compares a row's width to its table's. So the copy starts at `cloneRoot`'s
+// answer rather than at the row's leaf.
+func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage, placed map[int]bool) error {
 	xt := ctx.XRefTable
 	type claim struct {
 		key   int
@@ -640,7 +662,8 @@ func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage) error {
 		return nil // an untagged page repeated in a tagged document claims no row
 	}
 
-	c := &subtreeClone{ctx: ctx, page: k.ref, annotOf: k.annotOf, made: map[int]types.IndirectRef{}}
+	c := &subtreeClone{ctx: ctx, tree: tree, page: k.ref, annotOf: k.annotOf,
+		made: map[int]types.IndirectRef{}, spans: map[elemCtx]pgSpan{}, placed: placed}
 	for _, cl := range claims {
 		arr, single, found := rowFor(ctx, tree, cl.key)
 		if !found {
@@ -648,7 +671,7 @@ func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage) error {
 		}
 		if single != nil {
 			newKey := allocParentTreeKey(ctx, tree)
-			ref, err := c.of(*single)
+			ref, err := c.copyOfLeaf(*single)
 			if err != nil {
 				return err
 			}
@@ -668,7 +691,7 @@ func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage) error {
 			if !isRef {
 				continue // an empty slot stays empty in the copy
 			}
-			ref, err := c.of(ir)
+			ref, err := c.copyOfLeaf(ir)
 			if err != nil {
 				return err
 			}
@@ -724,11 +747,244 @@ func rowFor(ctx *model.Context, tree *structTree, key int) (arr types.Array, sin
 // and says why (`pageselect.go:266-268`).
 type subtreeClone struct {
 	ctx     *model.Context
+	tree    *structTree               // for the role map: `cloneRoot` stops at a `/Document` however it is spelled
 	page    types.IndirectRef         // the duplicated page every copy is anchored to
 	annotOf map[int]types.IndirectRef // source annotation -> the clone's own copy
 	made    map[int]types.IndirectRef // source element -> its copy, so one element is copied once
 	parents map[int]types.Object      // copy objNr -> the `/P` its original had
 	order   []int                     // the source elements copied, in the order they were copied
+	// spans memoizes `span`, keyed on the object AND the page it inherited for `prune.decided`'s
+	// reason: an element with no `/Pg` of its own owns MCIDs on whichever page reached it.
+	spans map[elemCtx]pgSpan
+	// placed is every copy this CARRY has put into a parent's `/K`, shared across repeats. See
+	// `insertBlock`.
+	placed map[int]bool
+}
+
+// pgSpan is what one element's subtree covers: the single page every piece of content under it
+// resolves to, with `ok` false where that is no page, more than one, or something the copy could not
+// carry faithfully.
+type pgSpan struct {
+	pg int
+	ok bool
+}
+
+// span answers whether an element's whole subtree lies on ONE page, and which — the predicate
+// `cloneRoot` climbs on.
+//
+// **It refuses on anything the copy would not reproduce, not only on a second page.** An inline child
+// element, an OBJR naming an annotation the clone has no copy of, a `/K` entry that does not resolve:
+// `kidsOf` drops each of them, so an ancestor containing one would be copied into an element missing
+// a kid — an empty `/TR`, a `/Form` with no OBJR. The leaf path has always lived with that where the
+// row named such an element directly; the climb must not manufacture it one level up.
+//
+// An element with no content under it at all answers `ok=false`, which stops a climb rather than
+// carrying a page number it never established.
+func (c *subtreeClone) span(src types.IndirectRef, inheritPg, depth int) pgSpan {
+	if depth > maxStructDepth {
+		return pgSpan{}
+	}
+	key := elemCtx{src.ObjectNumber.Value(), inheritPg}
+	if v, done := c.spans[key]; done {
+		return v
+	}
+	// **Seeded pessimistic BEFORE the descent**, so an element reached from inside its own subtree
+	// terminates the walk instead of leaning on the depth bound. A second NON-cyclic visit reads the
+	// true answer, because the memo is overwritten when the first call returns.
+	c.spans[key] = pgSpan{}
+	xt := c.ctx.XRefTable
+	d := derefDict(xt, src)
+	if d == nil {
+		return pgSpan{}
+	}
+	eff := inheritPg
+	if ir, isRef := d["Pg"].(types.IndirectRef); isRef {
+		eff = ir.ObjectNumber.Value()
+	}
+	out := pgSpan{}
+	note := func(pg int) bool {
+		if pg == 0 {
+			return false // nothing established which page this content is on
+		}
+		if !out.ok {
+			out = pgSpan{pg: pg, ok: true}
+			return true
+		}
+		return out.pg == pg
+	}
+	entries := derefArray(xt, d["K"])
+	if entries == nil && d["K"] != nil {
+		entries = types.Array{d["K"]}
+	}
+	for _, raw := range entries {
+		if _, isInt := raw.(types.Integer); isInt {
+			if !note(eff) {
+				return pgSpan{}
+			}
+			continue
+		}
+		kd := derefDict(xt, raw)
+		if kd == nil {
+			return pgSpan{}
+		}
+		switch nameVal(kd, "Type") {
+		case "MCR":
+			if !note(kidPage(xt, kd, eff)) {
+				return pgSpan{}
+			}
+		case "OBJR":
+			ir, isRef := kd["Obj"].(types.IndirectRef)
+			if !isRef {
+				return pgSpan{}
+			}
+			if _, known := c.annotOf[ir.ObjectNumber.Value()]; !known {
+				return pgSpan{}
+			}
+			if !note(kidPage(xt, kd, eff)) {
+				return pgSpan{}
+			}
+		default:
+			ir, isRef := raw.(types.IndirectRef)
+			if !isRef {
+				return pgSpan{} // an inline child element, which `kidsOf` drops
+			}
+			sub := c.span(ir, eff, depth+1)
+			if !sub.ok || !note(sub.pg) {
+				return pgSpan{}
+			}
+		}
+	}
+	c.spans[key] = out
+	return out
+}
+
+// inheritedPage is the page an element inherits from ABOVE it — the nearest `/Pg` on its `/P` chain,
+// 0 where nothing above it names one. `span` needs it because an element's own kids may rely on it.
+func inheritedPage(xt *model.XRefTable, src types.IndirectRef) int {
+	cur := src
+	for i := 0; i < maxStructDepth; i++ {
+		d := derefDict(xt, cur)
+		if d == nil {
+			return 0
+		}
+		pr, isRef := d["P"].(types.IndirectRef)
+		if !isRef {
+			return 0
+		}
+		pd := derefDict(xt, pr)
+		if pd == nil {
+			return 0
+		}
+		if ir, has := pd["Pg"].(types.IndirectRef); has {
+			return ir.ObjectNumber.Value()
+		}
+		cur = pr
+	}
+	return 0
+}
+
+// cloneRoot is the element a repeat copies in order to reproduce one `/ParentTree` leaf: the HIGHEST
+// ancestor whose whole subtree lies on the duplicated page, or the leaf itself where no ancestor
+// does.
+//
+// # Why climbing, and not the refusal `/pending 529` proposed
+//
+// That entry's alternative was *"clone the highest element whose subtree lies wholly within the
+// duplicated page, and refuse the carry where no such element exists (a table spanning the page)"*.
+// The refusal is unnecessary, because the climb is MONOTONE and already has a floor: the leaf itself
+// is a legal clone root, so the loop below can always stop somewhere and never has nothing to return.
+// A table that spans the page break stops the climb at the `/TR` rows that ARE wholly on it — the
+// copies then land in the original `/Table`, which is a table with the duplicated rows repeated and
+// still a valid one, rather than a document that stops carrying structure at all. The refusal buys a
+// class of document nothing and costs it everything.
+//
+// # It stops at `/Document`, and only there
+//
+// A `/Document` is *"a complete document"* (ISO 32000-1 table 333), and a file holding two of them is
+// a statement about the FILE that duplicating a page does not license: the user repeated a page
+// inside one document. Stopping below it puts both pages' content under the one `/Document` in page
+// order, which is what a producer would have written. The rule is self-limiting — a `/Document` over
+// a multi-page source spans pages and stops the climb anyway, so it can only ever fire where the
+// source is one page, which is exactly the case it is right for. Every other grouping element is a
+// division of content, and content repeated on a second page really is a second division of it.
+//
+// # The `/P` chain is checked against `/K` at every step
+//
+// `span` walks DOWN and the climb walks UP, and a tree may disagree with itself in those two
+// directions (`kidsOf`'s header records the copy path creating exactly that state before P02.S04b
+// gave it the parent). So each step requires the candidate's own `/K` to name the child it was
+// reached from; without that, `of` could copy an ancestor that does not contain the leaf and the row
+// slot would have nothing to name.
+func (c *subtreeClone) cloneRoot(leaf types.IndirectRef) types.IndirectRef {
+	xt := c.ctx.XRefTable
+	anchor := c.span(leaf, inheritedPage(xt, leaf), 0)
+	if !anchor.ok {
+		return leaf
+	}
+	best, cur := leaf, leaf
+	for i := 0; i < maxStructDepth; i++ {
+		d := derefDict(xt, cur)
+		if d == nil {
+			return best
+		}
+		pr, isRef := d["P"].(types.IndirectRef)
+		if !isRef {
+			return best
+		}
+		pd := derefDict(xt, pr)
+		// The `/StructTreeRoot` is not an element and has no `/S`; either test alone reaches it, and
+		// both are cheap.
+		if pd == nil || pd["S"] == nil || nameVal(pd, "Type") == "StructTreeRoot" {
+			return best
+		}
+		if standardRole(c.tree, nameVal(pd, "S")) == "Document" {
+			return best
+		}
+		if !kidsName(xt, pd, cur) {
+			return best
+		}
+		if s := c.span(pr, inheritedPage(xt, pr), 0); !s.ok || s.pg != anchor.pg {
+			return best
+		}
+		best, cur = pr, pr
+	}
+	return best
+}
+
+// kidsName reports whether d's `/K` directly names child — the downward half of a `/P` link.
+func kidsName(xt *model.XRefTable, d types.Dict, child types.IndirectRef) bool {
+	entries := derefArray(xt, d["K"])
+	if entries == nil && d["K"] != nil {
+		entries = types.Array{d["K"]}
+	}
+	for _, raw := range entries {
+		if ir, isRef := raw.(types.IndirectRef); isRef &&
+			ir.ObjectNumber.Value() == child.ObjectNumber.Value() {
+			return true
+		}
+	}
+	return false
+}
+
+// copyOfLeaf copies whatever `cloneRoot` says this leaf's copy has to come with, and returns the
+// leaf's own copy out of it.
+func (c *subtreeClone) copyOfLeaf(leaf types.IndirectRef) (*types.IndirectRef, error) {
+	root := c.cloneRoot(leaf)
+	if root.ObjectNumber.Value() == leaf.ObjectNumber.Value() {
+		return c.of(leaf)
+	}
+	if _, err := c.of(root); err != nil {
+		return nil, err
+	}
+	if ref, made := c.made[leaf.ObjectNumber.Value()]; made {
+		return &ref, nil
+	}
+	// The climb checked at every step that the parent's `/K` names the child, so the ancestor's copy
+	// holds the leaf unless a `/K` entry stopped resolving between the two walks. The slot is left
+	// EMPTY rather than copied a second time: a second copy's parent was also copied, so `attach`
+	// would skip it and the row would name an element no reader can reach — the one state this file
+	// refuses everywhere else.
+	return nil, nil
 }
 
 // of copies one element and everything under it, returning the reference to the copy, or nil where
@@ -861,67 +1117,127 @@ func (c *subtreeClone) kidsOf(o types.Object, parent types.IndirectRef) (types.A
 
 // attach puts the copies into the tree, so a reader walking from the root reaches them.
 //
-// **Each copy goes immediately after its original in the original's parent**, which needs no element
-// of nib's own — authoring one would be a claim about structure this slice is not entitled to make.
-// A copy whose original's parent is ITSELF a copy is skipped: it is already reachable through that
-// parent's own `/K`, and attaching it again would put it in the tree twice.
+// **The copies go in as one BLOCK per parent**, and that — with `cloneRoot`'s climb — is what makes
+// the reading order page-then-page. Going in one at a time immediately after its own original gave
+// `H1(p1) H1(p2) P(p1) P(p2) …`, so a reader heard every element of the original followed at once by
+// its copy. Grouping them and placing the block after the LAST original the carry is copying gives
+// `H1(p1) P(p1) … H1(p2) P(p2) …`, which is the whole page and then the whole copy.
 //
-// **The reading order this produces is item-by-item, not page-then-page**, and that is a declared
-// limit rather than an oversight. A real document's `/ParentTree` rows name leaves — a `/Table
-// Contents`, a `/Link`, an `/H2` — whose common ancestors span other pages and so cannot be copied,
-// so a reader hears the original's paragraph and then the duplicate's rather than the whole page and
-// then its copy. Every element is anchored, every MCID resolves and nothing describes content that is
-// not there; what is lost is sequence, on an operation whose two pages are identical. Recorded as
-// `/pending 529`.
+// It still needs no element of nib's own — authoring one would be a claim about structure this carry
+// is not entitled to make. A copy whose original's parent is ITSELF a copy is skipped: it is already
+// reachable through that parent's own `/K`, and attaching it again would put it in the tree twice.
+//
+// **A `/P` that is not an indirect reference routes to the root**, where the old code inserted into
+// whatever dictionary it dereferenced to. `/P` is *required* and *shall be an indirect reference*
+// (ISO 32000-1 table 323), so a direct dictionary there is a copy of a parent rather than the parent:
+// mutating it attaches the copy to nothing.
+//
+// # What this does NOT order, declared rather than implied
+//
+// The block lands beside the original, which is the output's page order only where the repeat is
+// ADJACENT to what it repeats — every `DuplicatePage`, and `Collect`'s ordinary `["1","1"]`.
+// Measured on a two-page input, `Collect(["1","2","1","2"])` puts the top-level elements over output
+// pages **1, 3, 2, 4**: each original followed by its own copy, rather than the four pages in order.
+//
+// That is the same gap a pure reorder already has and this carry has never closed, because the tree
+// is ordered against the SOURCE and nothing here re-orders it — `prune.kids` appends in source order
+// and `tree.root["K"]` is never re-sorted. Measured on a three-page input, `Collect(["3","1","2"])`
+// leaves the top-level elements over output pages **2, 3, 1**. Closing it means ordering the whole
+// tree against the output's page sequence, which is a different job from copying a page.
 func (c *subtreeClone) attach(ctx *model.Context, tree *structTree) error {
 	xt := ctx.XRefTable
+	type group struct {
+		pd   types.Dict
+		srcs []int
+	}
+	groups := map[int]*group{}
+	var order []int
 	for _, srcNr := range c.order {
 		ref := c.made[srcNr]
 		parent := c.parents[ref.ObjectNumber.Value()]
+		key, pd := 0, tree.root
 		if pr, isRef := parent.(types.IndirectRef); isRef {
 			if _, alsoCopied := c.made[pr.ObjectNumber.Value()]; alsoCopied {
 				continue
 			}
+			if d := derefDict(xt, pr); d != nil {
+				key, pd = pr.ObjectNumber.Value(), d
+			}
 		}
-		src := types.NewIndirectRef(srcNr, 0)
-		pd := derefDict(xt, parent)
-		if pd == nil {
-			pd = tree.root
+		g, seen := groups[key]
+		if !seen {
+			g = &group{pd: pd}
+			groups[key] = g
+			order = append(order, key)
 		}
-		insertAfter(xt, pd, *src, ref)
+		g.srcs = append(g.srcs, srcNr)
+	}
+	for _, key := range order {
+		c.insertBlock(xt, groups[key].pd, groups[key].srcs)
 	}
 	return nil
 }
 
-// insertAfter puts ref into d's `/K` immediately after `after`, appending when it is not there.
+// insertBlock splices one parent's copies into its `/K` as a contiguous run, immediately after the
+// last entry this carry has a stake in — an original being copied now, or a copy an EARLIER repeat of
+// the same page already placed here. With no stake in the array at all it appends, which is what
+// happens when the tree's `/P` and `/K` disagree and is what the one-at-a-time insert did.
 //
-// **With several copies of one page the copies land in reverse creation order**, because each goes
-// immediately after the ORIGINAL rather than after the previous copy. Measured on
-// `Collect(["1","1","1"])`: `/K=[(32) (66) (64) (65) (67)]`. Every element is anchored and every
-// MCID resolves; what is lost is sequence, which is `/pending 529`'s subject one degree further.
-func insertAfter(xt *model.XRefTable, d types.Dict, after, ref types.IndirectRef) {
-	arr := derefArray(xt, d["K"])
+// **The earlier-copy half is what keeps several repeats in order.** Each copy going immediately after
+// its own ORIGINAL put them in reverse creation order — measured on `Collect(["1","1","1"])`:
+// `/K=[(32) (66) (64) (65) (67)]`, the third repeat in front of the second. `placed` is one set
+// across every repeat of one carry, so a later block lands behind an earlier one.
+//
+// **The block is ordered by where the originals sit in THIS `/K`**, not by the order the copies were
+// made: the parent's own order is the reading order its producer wrote, while `c.order` follows the
+// `/ParentTree` row, which is ordered by MCID — the order marks were painted in, which a producer is
+// free to make differ.
+func (c *subtreeClone) insertBlock(xt *model.XRefTable, pd types.Dict, srcs []int) {
+	arr := derefArray(xt, pd["K"])
 	if arr == nil {
-		if d["K"] == nil {
-			d["K"] = types.Array{ref}
-			return
-		}
-		arr = types.Array{d["K"]}
-	}
-	out := make(types.Array, 0, len(arr)+1)
-	placed := false
-	for _, x := range arr {
-		out = append(out, x)
-		if ir, isRef := x.(types.IndirectRef); isRef && !placed &&
-			ir.ObjectNumber.Value() == after.ObjectNumber.Value() {
-			out = append(out, ref)
-			placed = true
+		if pd["K"] == nil {
+			arr = types.Array{}
+		} else {
+			arr = types.Array{pd["K"]}
 		}
 	}
-	if !placed {
+	stake := map[int]bool{}
+	for _, s := range srcs {
+		stake[s] = true
+	}
+	at := len(arr) - 1
+	idx := map[int]int{}
+	for i, x := range arr {
+		ir, isRef := x.(types.IndirectRef)
+		if !isRef {
+			continue
+		}
+		n := ir.ObjectNumber.Value()
+		if _, dup := idx[n]; !dup {
+			idx[n] = i
+		}
+		if stake[n] || c.placed[n] {
+			at = i
+		}
+	}
+	block := append([]int(nil), srcs...)
+	sort.SliceStable(block, func(i, j int) bool {
+		a, aok := idx[block[i]]
+		b, bok := idx[block[j]]
+		if aok != bok {
+			return aok // one the array does not hold keeps its creation order, behind the rest
+		}
+		return a < b
+	})
+	out := make(types.Array, 0, len(arr)+len(block))
+	out = append(out, arr[:at+1]...)
+	for _, s := range block {
+		ref := c.made[s]
 		out = append(out, ref)
+		c.placed[ref.ObjectNumber.Value()] = true
 	}
-	d["K"] = out
+	out = append(out, arr[at+1:]...)
+	pd["K"] = out
 }
 
 // carryTitleFloor gives a carried subset the document title PDF/UA needs, REBUILT rather than

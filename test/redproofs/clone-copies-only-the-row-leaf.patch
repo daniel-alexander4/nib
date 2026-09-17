@@ -1,0 +1,11 @@
+--- a/internal/pdfops/structcarry.go
++++ b/internal/pdfops/structcarry.go
+@@ -969,7 +969,7 @@
+ // copyOfLeaf copies whatever `cloneRoot` says this leaf's copy has to come with, and returns the
+ // leaf's own copy out of it.
+ func (c *subtreeClone) copyOfLeaf(leaf types.IndirectRef) (*types.IndirectRef, error) {
+-	root := c.cloneRoot(leaf)
++	root := leaf
+ 	if root.ObjectNumber.Value() == leaf.ObjectNumber.Value() {
+ 		return c.of(leaf)
+ 	}
