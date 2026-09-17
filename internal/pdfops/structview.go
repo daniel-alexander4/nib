@@ -87,22 +87,57 @@ func readStructureView(pdf []byte) (structureView, error) {
 		return structureView{}, err
 	}
 	// ADR-009 exemption (grouping_test.go): this reads runs to match MCIDs to text and groups nothing.
-	textAt := map[[2]int]string{}
-	rectAt := map[[2]int][4]float64{}
+	//
+	// # Two indexes, because an MCID is only unique WITHIN a content stream
+	//
+	// `textAt` is keyed by page, and that is right for the ordinary document, where a page's marked
+	// content is in the page's own stream and a kid is a bare integer. It is wrong the moment one page
+	// draws two form XObjects that each carry an MCID 0 — the ordinary shape of an n-up — because both
+	// texts land under the same key and both elements read both. Measured at P02.S08 before
+	// `textByStm` existed: **31 of 61 elements came back with two source pages' text concatenated**,
+	// element 27 reading "TitleParagraph number 30…" where its source read "Title".
+	//
+	// `textByStm` is keyed by the stream the run was actually read from, and **only a kid that names a
+	// stream through an MCR's `/Stm` consults it** (see the kid loop below). That is what makes this additive:
+	// a document with no `/Stm` anywhere reads through `textAt` exactly as it did before, so the fix
+	// cannot move a document it was not written for.
+	textAt := map[[3]int]string{}
+	rectAt := map[[3]int][4]float64{}
+	textByStm := map[[3]int]string{}
+	rectByStm := map[[3]int][4]float64{}
+	// union folds one run's box into whatever the key already holds. The middle element of every key
+	// is the stream: 0 for the page-wide index, the form's object number for the narrow one.
+	union := func(m map[[3]int][4]float64, k [3]int, b [4]float64) [4]float64 {
+		if seen, ok := m[k]; ok {
+			return unionBox(seen, b)
+		}
+		return b
+	}
 	for pg := 1; pg <= ctx.PageCount; pg++ {
 		pr, perr := readPageRuns(ctx, pg)
 		if perr != nil {
 			return structureView{}, perr
 		}
 		for _, r := range pr.runs {
-			if r.mcid >= 0 {
-				key := [2]int{pg, r.mcid}
-				textAt[key] += r.text
-				box := [4]float64{r.x, r.y - 0.25*r.size, r.x + r.width, r.y + 0.85*r.size}
-				if seen, ok := rectAt[key]; ok {
-					box = unionBox(seen, box)
-				}
-				rectAt[key] = box
+			if r.mcid < 0 {
+				continue
+			}
+			// **The run's OWN box, computed once and never reassigned.** Folding the page-level
+			// union back into `box` and then seeding the per-stream map from it put the merged
+			// rectangle into the very index that exists to keep the two apart — the text came out
+			// right and the geometry did not, which is the half a text assertion cannot see. Caught
+			// by the rect clause of `TestACarriedNUpReadsItsOwnText`.
+			run := [4]float64{r.x, r.y - 0.25*r.size, r.x + r.width, r.y + 0.85*r.size}
+			key := [3]int{pg, 0, r.mcid}
+			textAt[key] += r.text
+			rectAt[key] = union(rectAt, key, run)
+			if r.stm > 0 {
+				// Keyed by PAGE as well as stream: one form object drawn on two pages would
+				// otherwise union geometry across them, and an element whose `/Pg` resolves to no
+				// page (`pg == 0`) would match a real run's key and escape with a box.
+				sk := [3]int{pg, r.stm, r.mcid}
+				textByStm[sk] += r.text
+				rectByStm[sk] = union(rectByStm, sk, run)
 			}
 		}
 	}
@@ -139,13 +174,30 @@ func readStructureView(pdf []byte) (structureView, error) {
 			switch k.kind {
 			case kidMCID, kidMCR:
 				v.marked = true
-				key := [2]int{pageNr[k.pgObj], k.mcid}
-				b.WriteString(textAt[key])
-				if v.page == 0 {
-					v.page = pageNr[k.pgObj]
+				pg := pageNr[k.pgObj]
+				// A kid that names its stream is read in that stream and **no other**, with no
+				// fallback to the page index. A miss is then empty text, which is the honest answer
+				// for a document whose `/Stm` names a stream holding no such MCID — and falling back
+				// would quietly restore the very cross-stream merge this exists to stop.
+				text := textAt[[3]int{pg, 0, k.mcid}]
+				box, found := rectAt[[3]int{pg, 0, k.mcid}]
+				if k.stm > 0 {
+					// **Narrow FIRST, page index as the fallback.** A kid naming a stream the page
+					// walk reached is read there and nowhere else. A kid naming one it did not reach
+					// — an annotation appearance stream, a form drawn nowhere, one past the nesting
+					// ceiling, a dangling `/Stm` — falls back to what this reader has always done,
+					// so the change cannot take text away from a document it was not written for.
+					if t, ok := textByStm[[3]int{pg, k.stm, k.mcid}]; ok {
+						text = t
+						box, found = rectByStm[[3]int{pg, k.stm, k.mcid}]
+					}
 				}
-				if box, ok := rectAt[key]; ok {
-					boxes = append(boxes, pagedBox{key[0], box})
+				b.WriteString(text)
+				if v.page == 0 {
+					v.page = pg
+				}
+				if found {
+					boxes = append(boxes, pagedBox{pg, box})
 				}
 			case kidElement:
 				if k.elem == nil {

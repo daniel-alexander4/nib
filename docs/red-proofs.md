@@ -5297,3 +5297,46 @@ own reader (`TestACarryThatAnchorsNothingIsRefused`, red under the same mutation
 is about a different property. A survivor is a hole only where nothing else covers the line.
 
 `recorded` 415 → 419.
+
+## P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries (v1.129.144)
+
+**Eleven targeted mutations and five blind ones. Two of the targeted probes and one of the blind ones
+were survivors, and all three were real.**
+
+**Every row's name below is its file's basename.** `./build/redproof.sh <name>` resolves `<name>`
+against `test/redproofs/<name>.sh`, and four rows recorded the day before this one drifted from their
+files and answer *"no red proof named"* — `--all` globs and so the sweep never noticed
+(`/pending 533`). These were checked by replaying each one by name.
+
+| proof | check | expects |
+|---|---|---|
+| `mcr-stm-written-back-onto-the-structelem` — the carry writes `d["Stm"] = pl.xobj` onto the ELEMENT, as it did from P01.S06 to P02.S08 | `go test ./internal/pdfops/ -run TestOnlyAnMCRCarriesAStmKey -count=1` | `a key Table 323 does not define` |
+| `mcr-carry-a-dict-k-drops-the-whole-tree` — `rewriteKidsAsMCR` reaches `DereferenceArray`, which returns a wrong-type error for `/K << /Type /MCR … >>` and abandons the entire carry | `go test ./internal/pdfops/ -run TestEveryKShapeSurvivesTheCarry -count=1` | `the whole structure tree was dropped because the carry could not read that spelling of /K` |
+| `mcr-run-stamped-where-drawn-not-where-opened` — `currentStm` returns the walker's current stream instead of the one the in-force sequence was opened in | `go test ./internal/pdfops/ -run TestASequenceOpenedOnThePageKeepsThePagesStream -count=1` | `it was stamped with the stream it was drawn in` |
+| `mcr-narrow-rect-taken-unconditionally` — the per-stream rect is read without the guard the per-stream text keeps | `go test ./internal/pdfops/ -run TestAKidNamingAnUnreachedStreamFallsBackToThePage -count=1` | `The TEXT fell back to the page index and the BOX did not` |
+
+**Survivor 1 — and the first hypothesis was the right one.** Disabling the bare-`Integer` arm of
+`rewriteKidsAsMCR` left everything green. Not a weak probe: **the branch was inert**, because every
+fixture in the package spells `/K` as `[0]`, the array form. Re-aimed at the array arm it goes red at
+once. The finding is the gap, not the mutation — `TestEveryKShapeSurvivesTheCarry` now drives all four
+spellings, and the single-dictionary one is the shape that was a live regression.
+
+**Survivor 2 — a fixture whose ORDER was the stimulus.** Deleting `drawForm`'s save/restore of the
+walker's stream left `TestARunKnowsWhichStreamItWasReadFrom` green, because its page opened every
+sequence *before* it drew the form, so a leaked stream number was never observable. The fixture now
+draws the form first and the mutation is red. A test whose fixture cannot reach the defect is green in
+the same words as one that guards it.
+
+**Survivor 3 — found by the BLIND pass, which is why that pass exists.** A subagent shown the
+production code and none of the tests proposed taking the narrow rectangle unconditionally while
+leaving the narrow text guarded, and ranked it least likely to be caught. It was: the text fell back
+as designed, the box silently became the zero rect, and `hasRect` went false with every assertion in
+the slice still green. The targeted pass could not have found it — the model that picks a mutation
+from the predicate is the model that would have written the test. Closed by
+`TestAKidNamingAnUnreachedStreamFallsBackToThePage`, which asserts **both halves of one lookup**.
+
+**One blind proposal was already covered and one names a latent defect outside this slice.** The
+"stamped where drawn" mutation was predicted to be uncovered and is not — a fixture for it was built
+during the slice's own review. The octal-escape run length at `textrun.go`'s string decoder (`n < 3`
+widened to `n <= 3`, which mis-decodes `(\1013)`) is pre-existing code this diff does not touch; it is
+filed rather than fixed here.

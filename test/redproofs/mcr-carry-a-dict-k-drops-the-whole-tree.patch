@@ -1,0 +1,12 @@
+--- a/internal/pdfops/tagcarry.go
++++ b/internal/pdfops/tagcarry.go
+@@ -453,6 +453,9 @@
+ 	if !ok {
+ 		return true // an element with no kids anchors through its own /Pg and owes nothing here
+ 	}
++	if _, aerr := ctx.DereferenceArray(k); aerr != nil {
++		return false
++	}
+ 	o, err := ctx.Dereference(k)
+ 	if err != nil {
+ 		return false
