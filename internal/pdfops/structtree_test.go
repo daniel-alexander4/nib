@@ -285,7 +285,10 @@ func TestARealRoleMappedTreeIsRepresented(t *testing.T) {
 	if err := os.WriteFile(in, []byte(html), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(libreOfficePath(), "-env:UserInstallation=file://"+filepath.Join(dir, "prof"),
+	// Through `fileURL`, not `"file://"+path`, for the reason that helper states: the bare
+	// concatenation is right only for an absolute POSIX path, and these two harnesses were the
+	// last places still doing it after production stopped (/pending 542).
+	cmd := exec.Command(libreOfficePath(), "-env:UserInstallation="+fileURL(filepath.ToSlash(filepath.Join(dir, "prof"))),
 		"--headless", "--convert-to", "pdf", in, "--outdir", dir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("SKIP (not a pass): LibreOffice could not convert the fixture: %v\n%s", err, out)
