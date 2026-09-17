@@ -158,10 +158,11 @@ func TestAddingAMarkedElementKeepsEveryInvariant(t *testing.T) {
 // **Blind spot**: the fixture has one page, so the page-tree half of that defect (`tree.page`'s cache)
 // is not exercised here — pdfcpu's `PageDict` is constant-time on a one-page document.
 func TestMarkingARunCostsTheSameHoweverManyRunsCameBefore(t *testing.T) {
-	cost := func(elements int) time.Duration {
-		best := time.Duration(0)
-		for try := 0; try < 3; try++ {
-			var took time.Duration
+	// once measures one run of `elements` markings. The min of several is the caller's job, because
+	// the two sizes are measured INTERLEAVED — see below.
+	once := func(elements int) time.Duration {
+		var took time.Duration
+		{
 			if _, err := writeMutatedTree(t, taggedFixture(), func(ctx *model.Context, tree *structTree) error {
 				start := time.Now()
 				for i := 0; i < elements; i++ {
@@ -180,17 +181,54 @@ func TestMarkingARunCostsTheSameHoweverManyRunsCameBefore(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if best == 0 || took < best {
-				best = took
-			}
 		}
-		return best
+		return took
 	}
-	small, large := cost(1000), cost(4000)
-	if small <= 0 {
-		t.Fatal("marking 4000 runs took no measurable time, so the ratio below compares nothing")
+
+	// **The MINIMUM RATIO over several interleaved rounds, not the ratio of the minimums.**
+	//
+	// This is a clock, and a clock on a shared machine measures the weather as well as the code. The
+	// ratio is robust to the machine being uniformly slow — that is what a ratio is for — and not to
+	// being slow for only ONE of its two terms. Measuring `cost(1000)` to completion and then
+	// `cost(4000)` put minutes between them, so a load spike covering the second and not the first
+	// inflated the ratio with nothing about the code having changed: **8.5× against a ceiling of 8**
+	// during a full suite sharing the machine with another repo's `cargo test --workspace`, against
+	// 4.3×, 3.2× and 1.8× on three solo runs immediately afterwards.
+	//
+	// Interleaving alone was measured and is NOT enough — 1 run in 8 still breached, at 10.6×, with
+	// all 8 cores saturated. Taking each round's own ratio and keeping the smallest is, because a
+	// regression breaches in EVERY round and survives the minimum while a load spike breaches in one
+	// and does not. Measured, with the quadratic introduced as work proportional to the MCIDs already
+	// on the page — per document, so it is quadratic identically in every round:
+	//
+	//   linear, quiet:            3.7
+	//   linear, 8 cores saturated: 2.5  2.6  3.2  3.6  4.0  4.0  4.4  4.7   — 8 of 8 green
+	//   dominant quadratic:       9.1  10.3  10.4                           — 3 of 3 RED
+	//
+	// **Declared limit: a MILD quadratic is caught by neither shape.** The same mutation doing cheap
+	// integer adds rather than allocating measured 4.7, 7.9 and 5.5 and passed, because its quadratic
+	// term does not dominate the insertion's own linear cost. This test catches a regression that has
+	// become the dominant cost, which is the one that matters and is not the only one that exists.
+	// The original shape had the same blind spot; the fix neither widens nor narrows it.
+	//
+	// **Two probes were rejected before these numbers, both for being inert**, which is the reason the
+	// mutation above is described so precisely: disabling `allocParentTreeKey`'s cache moved nothing
+	// (it is not on this path), and iterating `tree.elems` moved nothing (the model's slice does not
+	// grow as the document does). A third, a package-level counter, was rejected for the opposite
+	// reason — it leaked state across rounds, so later rounds started slow and the ratio flattened,
+	// which would have condemned this shape for an artefact of the probe.
+	best := 0.0
+	var small, large time.Duration
+	for round := 0; round < 3; round++ {
+		s, l := once(1000), once(4000)
+		if s <= 0 {
+			t.Fatal("marking 1000 runs took no measurable time, so the ratio below compares nothing")
+		}
+		if r := float64(l) / float64(s); best == 0 || r < best {
+			best, small, large = r, s, l
+		}
 	}
-	ratio := float64(large) / float64(small)
+	ratio := best
 	t.Logf("4× the runs cost %.1f× the time (%v → %v)", ratio, small, large)
 	if ratio > 8 {
 		t.Errorf("4× the runs cost %.1f× the time (%v → %v) — the writers have gone superlinear in the "+
