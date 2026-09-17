@@ -1,0 +1,16 @@
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -704,11 +704,7 @@
+ 	// vault and migrating again with the same password is the way out. What the discard DOES owe
+ 	// is the scrub OpenSSHAt's loop owes on its own discard path — this Vault holds a freshly
+ 	// generated content key that no longer seals anything.
+-	if serr := v.persist(); serr != nil {
+-		zero(v.key)
+-		return nil, serr
+-	}
+-	return v, nil
++	return v, v.persist()
+ }
+ 
+ // unwrapSlot recovers the content key for a slot. It tries the slot's recorded

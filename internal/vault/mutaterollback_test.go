@@ -408,3 +408,65 @@ func TestAFailedSaveLeavesNothingBehindAtEveryRoutedMutator(t *testing.T) {
 		})
 	}
 }
+
+// TestAFailedSaveRestoresASlotsWrappedBytes — `/pending 549`, the door's snapshot over the half
+// of the vault that decides who can open it.
+//
+// # Why it drives the door directly instead of a mutator
+//
+// The door's contract is over an ARBITRARY apply: "applies apply … and puts memory back exactly
+// as it was when the write fails". Every mutator of `v.ssh` today appends or shifts whole slots
+// — AddKey appends a fresh one and RemoveKey shifts the slice — so none of them can tell a
+// one-level copy from a deep one, and TestAFailedSaveRestoresTheKeySlots above is green under
+// either. Worse, it CANNOT tell: `Keys()` deliberately omits `Wrapped`, so a rollback that hands
+// back the mutation's wrapped key is invisible to every assertion in this package that goes
+// through the public surface.
+//
+// That is the whole reason this is written as a defect this package does not yet contain. A
+// rewrap written through an element of `v.ssh` is the exact shape `AddCeremonySecret` already
+// uses on the contents side, and the day someone writes one, a vault whose in-memory slot no
+// longer matches the file's is a vault that believes it is sealed to a key the file was never
+// sealed to — the enrolment half of the memory-ahead-of-disk defect, and the one with no way back.
+func TestAFailedSaveRestoresASlotsWrappedBytes(t *testing.T) {
+	v := newVault(t)
+
+	v.mu.Lock()
+	if len(v.ssh) == 0 {
+		v.mu.Unlock()
+		t.Fatal("setup: the vault holds no key slots, so there is nothing to snapshot")
+	}
+	original := append([]byte(nil), v.ssh[0].Wrapped...)
+	v.mu.Unlock()
+	if len(original) < 4 {
+		t.Fatalf("setup: slot 0 carries %d wrapped byte(s) — the assertion below would compare "+
+			"nothing", len(original))
+	}
+
+	done := withFailingWrite(t)
+	v.mu.Lock()
+	// An in-place rewrap: the bytes change, the slot header does not. A snapshot that copies
+	// only the Slot structs shares this array and hands the mutation's own bytes back as the
+	// "restored" ones.
+	err := v.mutateLocked(func() {
+		for i := range v.ssh[0].Wrapped {
+			v.ssh[0].Wrapped[i] ^= 0xff
+		}
+	})
+	after := append([]byte(nil), v.ssh[0].Wrapped...)
+	v.mu.Unlock()
+
+	if writes := done(); writes != 1 {
+		t.Fatalf("setup: the failing write ran %d time(s), want 1 — a rollback assertion over a "+
+			"save that never ran asserts nothing", writes)
+	}
+	if err == nil {
+		t.Fatal("the door reported success although its save failed")
+	}
+	if !bytes.Equal(after, original) {
+		t.Errorf("after a failed save the slot's wrapped key is %x…, want the stored %x… — the "+
+			"door's snapshot shares the Wrapped array with the mutation, so the rollback handed "+
+			"back the bytes it was supposed to undo. This Nib now believes the vault is sealed "+
+			"to a key the file was never sealed to, and Keys() cannot show it: that accessor "+
+			"omits Wrapped.", after[:4], original[:4])
+	}
+}
