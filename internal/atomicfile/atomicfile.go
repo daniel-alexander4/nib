@@ -38,15 +38,28 @@ import (
 // 2.1–2.5 s of writing on top of the 3.3 s the page extraction itself takes — the fsync costs about
 // 70% as much as the work — and more again on anything slower than an SSD.
 //
-// **And the two split exports currently disagree**, which is the reason to write the figure down
+// **And the two split exports disagree on purpose**, which is the reason to write the figure down
 // rather than the figure alone. The GUI's (`internal/server/export.go`) takes this door and says
 // why — *"every part comes from the document still open in this process"*. The CLI's
-// (`writeSplitFiles` → `writeNamed`) takes `WriteDurable`, because every CLI write is routed
-// through the door built for `-w`, whose contract is about replacing the user's only copy — which
-// a split part is not: nothing is replaced and the input is untouched. So the same output is worth
-// 34µs a file at one door and 7.9 ms at the other. Not resolved here: `internal/cli`'s
-// `atomicdurable_test.go` refuses any call to this function in that package and offers no
-// exemption, so moving the CLI side is a guard change and a decision, not a tidy-up.
+// (`writeSplitFiles` → `writeNamed`) takes `ReplaceDurable`, because every CLI write is routed
+// through the door built for `-w`. **The premise is conceded and the conclusion is not**
+// (/pending 550): a split part is indeed not the user's only copy, nothing is replaced and the
+// input is untouched — but `writeNamed` is not reached for its fsync alone. It also resolves a
+// symlink at the destination and carries an existing file's mode, and `--out-dir` is a folder the
+// user chose. Every door here finishes with a rename and a rename over a link REPLACES the link,
+// so moving the CLI's split to this function would reintroduce, in a directory the user named,
+// exactly the silent loss /pending 515 removed from that package. The fsync is bought back at that
+// price or not at all, and it is not worth it.
+//
+// Re-measured on that disposition, since the figure is the whole argument (same host, the write
+// loop timed inside the real `nib split --every 1`, three rounds, 280 parts): 16.8–20.5 ms a part
+// durable against 73–106 µs here — 4.7–5.7 s of a 28–66 s command, 9–20% — and on the shape people
+// run, 28 parts, 224–276 ms of 3.3–6.6 s. The split's own run-to-run spread on a loaded machine
+// was ±38 s.
+//
+// So `internal/cli`'s `atomicdurable_test.go` keeps its refusal and gains no exemption door. It
+// did gain something else: it tested for the literal `atomicfile.Write(` and so could not see
+// `WriteFrom`, which is this door's own choice under another name.
 //
 // So: re-derivable output takes this. Anything that is the only copy takes `WriteDurable`, and
 // says so at the call site.

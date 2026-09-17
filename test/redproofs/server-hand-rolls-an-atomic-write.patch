@@ -1,11 +1,9 @@
-diff --git a/internal/server/export.go b/internal/server/export.go
-index 7094a2b..e71d8d4 100644
 --- a/internal/server/export.go
 +++ b/internal/server/export.go
-@@ -151,7 +151,14 @@ func writeSplitParts(w http.ResponseWriter, dir string, parts []pdfops.SplitPart
- 		}
- 		// Re-derivable: every part comes from the document still open in this process, so an
- 		// export can simply be run again. Atomic, not durable — see atomicfile.Write.
+@@ -168,7 +168,14 @@
+ 		// which surface produced it. Nobody chose that, it is not durability, and it needs a
+ 		// product call rather than a comment — filed as its own item off /pending 550 rather than
+ 		// changed here, because either direction alters what users' existing files look like.
 -		if err := atomicfile.Write(full, p.Data, 0o600); err != nil {
 +		_ = atomicfile.Write
 +		tmp, terr := os.CreateTemp(dir, ".x-*")
