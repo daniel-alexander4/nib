@@ -11507,17 +11507,31 @@ async function doRedo() {
   await setDocumentFromServer(await res.json(), owner);
 }
 
-// Drag-and-drop a PDF or an image onto the window to open it (upload origin -> Save As).
+// Drag-and-drop a file onto the window to open it (upload origin -> Save As).
 //
-// **The server is the authority on what opens, and this list only decides what is worth
-// sending.** It sniffs magic bytes, so a file the browser typed wrongly still opens and a text
-// file named `.png` is still refused; what this filter must not do is drop a file the server
-// would have accepted, which is what it did for every image until /pending 400.
-const OPENABLE_DROP_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+// **No type whitelist: the server decides, and this sends it the file.** /pending 400 left a list
+// of three MIME types here and stated the rule it was already breaking — *"what this filter must
+// not do is drop a file the server would have accepted"*. It did. A `.docx`, `.odt` or `.md` is a
+// file nib converts, and it was discarded with no toast, no notice, nothing at all; so was a PDF
+// the browser typed as `''`, which happens. Dragging a file onto the window is the most natural
+// gesture the primary user has, and it was the one door that stayed mute whether or not a
+// converter was installed (/pending 540).
+//
+// The server already answers precisely — it sniffs magic bytes, converts an image, names the
+// convert-to-PDF route for a document, and refuses the rest — and `uploadFile` surfaces that
+// answer through `errText`. Filtering here could only ever discard a file before the answer.
 ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
 window.addEventListener('drop', (e) => {
-  const file = [...(e.dataTransfer?.files || [])].find((f) => OPENABLE_DROP_TYPES.includes(f.type));
-  if (file) uploadFile(file);
+  const files = [...(e.dataTransfer?.files || [])];
+  // A drag that carried no file at all — selected text, a link — is not a failed open and gets
+  // no message. There is nothing the user asked for to report on.
+  if (!files.length) return;
+  // **A multi-file drop opens the first and SAYS the others were not opened.** Silently taking
+  // one of five is the same defect this item is about, one level up.
+  if (files.length > 1) {
+    toast(`Opening ${files[0].name} — drop one file at a time to open the others`);
+  }
+  uploadFile(files[0]);
 });
 
 // Detect fillable regions (underlines, boxes, checkboxes) and place an editable

@@ -3,6 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"nib/internal/pdfops"
 )
@@ -27,17 +29,39 @@ import (
 // The source path is still worth recording in Open Recent, and reopening converts again. That
 // recording is `/pending 490`'s.
 
-// asOpenableDocument returns bytes nib can install.
+// openability is what the bytes — and, for the last case, the name — turned out to be.
 //
-// converted says the source was an image and the result is a freshly built PDF, which the caller
-// must install WITHOUT a path. ok is false when the bytes are neither a PDF nor an image, which is
-// the caller's existing refusal and keeps its existing sentence.
-func asOpenableDocument(data []byte, name string) (out []byte, converted, ok bool, err error) {
+// **An enum rather than the `(converted, ok bool)` pair it replaces.** /pending 541 added a fourth
+// outcome, and a pair of booleans can express four states while saying which is which nowhere: a
+// caller reading `ok == false` cannot tell "this is not a document" from "this is a document nib
+// converts by another route", and the second wants a different sentence. The enum makes each
+// caller name the case it is handling.
+type openability int
+
+const (
+	openAsIs        openability = iota // already a PDF; install the bytes unchanged
+	openConverted                      // an image, converted here; install it WITHOUT a path
+	openConvertible                    // not a PDF or an image, but a name `/api/office` converts
+	openRefused                        // nothing nib opens
+)
+
+// asOpenableDocument decides what these bytes can become.
+//
+// **The convertible case is decided by the NAME, and that is the honest signal.** A `.docx` is a
+// ZIP and a `.md` is text, so their bytes say nothing a sniff can use; what says a document is
+// convertible is its extension, which is what `/api/office` itself routes on
+// (`pdfops.SupportedDocExt`). So this case makes no claim that the conversion would SUCCEED —
+// LibreOffice may be absent, which is ADR-040's subject and a different sentence — only that the
+// user picked a type nib has a route for and this route is the wrong one.
+func asOpenableDocument(data []byte, name string) (out []byte, kind openability, err error) {
 	if pdfops.LooksLikePDF(data) {
-		return data, false, true, nil
+		return data, openAsIs, nil
 	}
 	if !pdfops.LooksLikeImage(data) {
-		return nil, false, false, nil
+		if pdfops.SupportedDocExt(strings.ToLower(filepath.Ext(name))) {
+			return nil, openConvertible, nil
+		}
+		return nil, openRefused, nil
 	}
 	pdf, cerr := pdfops.ImageToDocument(data, name)
 	if cerr != nil {
@@ -46,9 +70,21 @@ func asOpenableDocument(data []byte, name string) (out []byte, converted, ok boo
 		// PNG. Errors.Is on ErrNotAnImage cannot fire here — the sniff already passed — so this is
 		// a decode or size refusal and it carries its own sentence.
 		if errors.Is(cerr, pdfops.ErrNotAnImage) {
-			return nil, false, false, nil
+			return nil, openRefused, nil
 		}
-		return nil, true, true, fmt.Errorf("%w", cerr)
+		return nil, openConverted, fmt.Errorf("%w", cerr)
 	}
-	return pdf, true, true, nil
+	return pdf, openConverted, nil
+}
+
+// convertibleRefusal is the one sentence every door prints for a document nib converts elsewhere.
+//
+// It names the route by the label the UI actually carries (`web/index.html`'s officeOpenBtn), so a
+// user can act on it rather than being told only what went wrong.
+func convertibleRefusal(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		return "Nib converts that kind of document — use Open & convert to PDF…"
+	}
+	return "Nib converts " + ext + " through Open & convert to PDF… — this route opens PDFs and images"
 }
