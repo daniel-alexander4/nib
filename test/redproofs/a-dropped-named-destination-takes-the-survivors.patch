@@ -1,0 +1,13 @@
+diff --git a/internal/pdfops/pageselect.go b/internal/pdfops/pageselect.go
+index 526836a..a8d1b27 100644
+--- a/internal/pdfops/pageselect.go
++++ b/internal/pdfops/pageselect.go
+@@ -766,7 +766,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
+ 		// Freeing was never needed here: this file turns on pdfcpu writing by REACHABILITY, which is
+ 		// why `unlinkDestinations` unlinks rather than deletes and why the allowlist drops catalog
+ 		// keys rather than their objects. An unreferenced destination array is not written.
+-		if _, _, err := node.Remove(nil, k); err != nil {
++		if _, _, err := node.Remove(xt, k); err != nil {
+ 			return err
+ 		}
+ 	}
