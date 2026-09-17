@@ -1,0 +1,13 @@
+diff --git a/observables_test.go b/observables_test.go
+index 3e94091..822dfa5 100644
+--- a/observables_test.go
++++ b/observables_test.go
+@@ -318,7 +318,7 @@ var published = map[string][]string{
+ 	// **`ChainPEM` is read by neither**, and is therefore a field this shape stores and no caller
+ 	// outside `internal/vault` consumes — the `historyEvicted` shape, found by this repair. It is
+ 	// left visible in the residue rather than parked, for the reason `internalShapes` gives.
+-	"vault.ExternalSigner": {"internal/server/extsigner.go", "internal/server/finalize.go", "internal/vault/vault.go"},
++	"vault.ExternalSigner": {"internal/server/keys.go", "internal/vault/vault.go"},
+ 	"vault.Slot":           {"internal/vault/vault.go", "internal/server/keys.go"},
+ }
+ 
