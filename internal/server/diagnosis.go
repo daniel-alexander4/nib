@@ -7,6 +7,7 @@ import (
 
 	"nib/internal/p2p"
 	"nib/internal/rendezvous"
+	"nib/internal/udpmux"
 )
 
 // D19 diagnosis (P05.S11): a FAILED ceremony connect is classified on the mapping/filtering axis
@@ -63,8 +64,15 @@ func (c *ceremonyID) diagnose() diagnosis {
 	// or false on its own.
 	c.mu.Lock()
 	punch := c.punch
+	end := c.end
 	c.mu.Unlock()
-	report := punchReport(punch)
+	// The nil check is HERE and not inside muxReport, so that muxReport stays a pure function of
+	// the counters: `end` is nil on every TCP ceremony, which is not a fact about the router.
+	var mx udpmux.Stats
+	if end != nil {
+		mx = end.Stats()
+	}
+	report := punchReport(punch) + muxReport(mx)
 
 	if c.rz == nil || c.gate == nil {
 		// manual/LAN or TCP ceremony — out of D19's scope, but a dropped packet is still a
@@ -120,6 +128,32 @@ func punchReport(b *punchBudget) string {
 		"per-hop ceiling of %d — the last candidates' retries were trimmed, which narrows the "+
 		"chance of a punch landing without being the reason this connect failed.",
 		spent, dropped, punchBudgetPerSide)
+}
+
+// muxReport is the shared socket's own detail line: datagrams Nib lost to a bug in its own
+// router (/pending 512).
+//
+// **`SharedEndpoint.Stats()` had no production reader at all until this.** `udpmux`'s counters
+// are printed by `nib rendezvous`, and that command builds its OWN mux — so the socket a
+// ceremony actually runs on was observed by nothing but tests, which is precisely the shape
+// `observables_test.go` exists to find. The read loop now survives a panic while routing one
+// datagram instead of dying silently, and `Panicked` is the only trace that datagram leaves.
+//
+// **Only `Panicked`, and only when non-zero.** The routing counters describe a working socket
+// and belong in the CLI's table; this one says Nib was at fault, which is the single udpmux
+// fact that can explain a failed connect. Empty when it is zero, for the reason `punchReport`
+// gives about a line that always reads "0".
+//
+// It takes the STATS and not the endpoint, for the reason `classifyD19` takes `d19Inputs`: a
+// sentence a user will read is worth driving in a unit test, and a `*p2p.SharedEndpoint` cannot
+// be made to have panicked from outside `internal/udpmux`.
+func muxReport(mx udpmux.Stats) string {
+	if mx.Panicked == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" Nib dropped %d datagram(s) on the shared socket because routing one of "+
+		"them panicked. That is a defect in Nib rather than anything about this network, and it "+
+		"may be why this connect failed — please report it.", mx.Panicked)
 }
 
 // d19Inputs are the four (plus advice) signals a diagnosis is classified from. Extracting them makes

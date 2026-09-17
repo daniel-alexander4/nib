@@ -59,6 +59,7 @@ package udpmux
 
 import (
 	"errors"
+	"log"
 	"net"
 	"net/netip"
 	"os"
@@ -117,6 +118,7 @@ type Mux struct {
 	toDHT      atomic.Uint64
 	learned    atomic.Uint64
 	expired    atomic.Uint64
+	panicked   atomic.Uint64
 }
 
 // Stats reports what the router did. Every field is monotonic for the life of
@@ -145,6 +147,12 @@ type Stats struct {
 	// DroppedQUIC, DroppedDHT — datagrams discarded because that side's queue
 	// was full. Non-zero means a consumer is not keeping up, not a routing bug.
 	DroppedQUIC, DroppedDHT uint64
+	// Panicked — datagrams dropped because routing or delivering ONE of them panicked.
+	// Unlike every other counter here, **non-zero is a bug in this package**, never a
+	// network condition and never a slow consumer: it means a datagram reached a path
+	// `route` does not handle. The read loop survives it (see `handle`), so this is the
+	// only trace such a datagram leaves.
+	Panicked uint64
 }
 
 // New takes ownership of pc and starts routing. The caller must not read from pc
@@ -186,6 +194,7 @@ func (m *Mux) Stats() Stats {
 		Peers:            n,
 		DroppedQUIC:      m.quic.dropped.Load(),
 		DroppedDHT:       m.dht.dropped.Load(),
+		Panicked:         m.panicked.Load(),
 	}
 }
 
@@ -281,6 +290,24 @@ func (m *Mux) RegisterConnectionID(cid []byte) {
 // knownCID reports whether a short-header packet carries an ID we issued, and whether
 // any ID is registered at all. The second return is what keeps the address rule alive
 // until the generator is wired.
+//
+// **The clock is read OUTSIDE the lock, and that is what makes `handle`'s recover sound**
+// (/pending 512). A read loop that carries on after a recovered panic is only safe if nothing
+// on the per-datagram path can panic while holding a lock: none of these mutexes is released by
+// a `defer`, so a panic under one leaks it and the next writer blocks forever — a deader mux
+// than the one the recover was added to prevent. `m.now` is the only injectable call `route`
+// makes, and it used to sit between this RLock and its RUnlock. It now sits after, so the
+// locked region is a length read and a map index on a slice the line above bounds-checked, and
+// the other locked region on this path (`isQUICPeer`) already released before calling `now()`.
+//
+// **After the lookup rather than before it, and that choice is measured rather than tidy.**
+// Hoisting the clock ABOVE the RLock gets the same property, and it reads the clock on the
+// EARLY-RETURN path too — the path every datagram takes until the first connection id is
+// registered, which is every DHT datagram on a socket with no live session yet. One run, three
+// variants, `benchtime 3000000x -count=7`, medians on an i5-1155G7: clock above the lock
+// **144.0 ns**, clock below the RUnlock (this shape) **29.6 ns**, clock inside the lock (the
+// shape before this change) **30.8 ns**. So moving it down costs nothing measurable and hoisting
+// it up costs 4.7x. The absolute figures are on a loaded box; the comparison is same-run.
 func (m *Mux) knownCID(p []byte) (known, any bool) {
 	m.cidMu.RLock()
 	n, have := m.cidLen, len(m.cids) > 0
@@ -288,10 +315,10 @@ func (m *Mux) knownCID(p []byte) (known, any bool) {
 		m.cidMu.RUnlock()
 		return false, have
 	}
-	now := m.now()
 	exp, ok := m.cids[string(p[1:1+n])]
-	fresh := ok && now.Before(exp)
 	m.cidMu.RUnlock()
+	now := m.now()
+	fresh := ok && now.Before(exp)
 	// Refresh on use: a connection that is still carrying traffic keeps its id.
 	//
 	// **Only once the entry is past half its TTL, the rule `learn` already follows** (/pending
@@ -378,13 +405,25 @@ func (m *Mux) readLoop() {
 	// route/peerKey/deliver. Every other detached goroutine on this path carries the recover;
 	// a panic here (a malformed datagram reaching an unhandled path) would otherwise take the
 	// desktop process down with unsaved documents. First statement, so it runs last.
+	//
+	// **It is the SECOND recover that matters; this one is the backstop** (/pending 512). A
+	// recover at the top of a goroutine ENDS the goroutine — the loop stopped, both views went
+	// on blocking against a socket nobody was reading, and nothing anywhere said so. A silently
+	// dead mux is a worse outcome than the crash it prevents, and calling `shut` here is not the
+	// alternative it looks like: anacrolix/dht's `serveUntilClosed` panics on a read error while
+	// the socket is open, so shutting turns the recover back into the crash. So the per-datagram
+	// work carries its own recover (`handle`) and one bad datagram costs that datagram, exactly
+	// as a full queue does.
+	//
+	// What is left for THIS recover is a panic raised by `m.pc.ReadFrom` itself, which no
+	// datagram can cause: every production site hands the Mux a `*net.UDPConn`
+	// (`p2p/endpoint.go`, `p2p/quic.go` twice, `cli/rendezvous.go`).
 	defer safe.Recover("udpmux read loop")
 	buf := make([]byte, maxDatagram)
 	for {
 		n, addr, err := m.pc.ReadFrom(buf)
 		if n > 0 {
-			s := m.route(buf[:n], addr)
-			s.deliver(datagram{b: append([]byte(nil), buf[:n]...), addr: addr})
+			m.handle(buf, n, addr)
 		}
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
@@ -394,6 +433,43 @@ func (m *Mux) readLoop() {
 			m.dht.shut(err)
 			return
 		}
+	}
+}
+
+// handle routes and delivers ONE datagram.
+//
+// It is a function of its own so that `recoverDatagram` has something to return FROM that is
+// not the read loop — that is the whole mechanism: a panic unwinds to here, is counted, and the
+// loop reads the next datagram.
+//
+// It takes `buf` and `n` rather than `buf[:n]`, so that the slice expression an impossible `n`
+// would panic on is inside the recover's reach as well.
+//
+// **The defer costs nothing measurable on this path, and that is measured, not assumed** —
+// CLAUDE.md's hot-path rule asks before logic is added to one, and a per-datagram `defer` in
+// the sole reader of the shared socket is exactly that. Against the same function with the
+// `defer` removed: 109.0 ns vs 107.7 ns (median of 5, quiet box), and 152.6 ns vs 152.1 ns
+// across five ALTERNATING process pairs on a box at load 10.9 — where the no-recover variant
+// was the slower of the two in three pairs of the five. So the cost is under the noise floor,
+// ~1 ns on a ~110 ns path, against a datagram that has already crossed the kernel.
+func (m *Mux) handle(buf []byte, n int, addr net.Addr) {
+	defer m.recoverDatagram()
+	p := buf[:n]
+	s := m.route(p, addr)
+	s.deliver(datagram{b: append([]byte(nil), p...), addr: addr})
+}
+
+// recoverDatagram counts and logs a panic that reached it, and returning normally is what
+// resumes the read loop.
+//
+// **Counted as well as logged.** Nib is a desktop app whose log nobody reads by default, so a
+// `log.Printf` alone is the shape the tree already calls out — set, never read.
+// `Stats().Panicked` is what `nib rendezvous` prints and what a failed ceremony's diagnosis
+// reports, which is the difference between "this is not a quiet network" and silence.
+func (m *Mux) recoverDatagram() {
+	if r := recover(); r != nil {
+		n := m.panicked.Add(1)
+		log.Printf("udpmux: recovered from a panic routing one datagram (%d dropped this way): %v", n, r)
 	}
 }
 
