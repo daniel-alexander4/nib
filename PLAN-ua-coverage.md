@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119); P02 opened — slices firmed, three blocked on Dan. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119). P02 in flight: S01–S04b and S08 done; **S05/S06/S07 unblocked 2026-09-21** (via /discuss, amended by /grill), S09 added; build order S05 → S07 → S06 → S09. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -669,16 +669,70 @@ Acceptance:
 - **(added at the grill)** `structureCarriedCompletely` is EMPTY for every carried output, and a dropped page's
   marker string is absent from the output's decoded streams — the fate table cannot see either.
 
-#### P02.S05 — crop carries the tree *(blocked — Dan: may a structure tree describe content a crop has clipped from view but not removed?)*
+#### P02.S05 — crop carries the tree *(unblocked 2026-09-21 — via /discuss: carry)*
 Scope: `Crop` wraps pages in place instead of rebuilding them. Measured compliant even at a 5% window; the
 question is what a reader should hear. Refs: D5.
 
-#### P02.S06 — split pages *(blocked — Dan: clone each tile's subtree, so every tile reads the whole page, or drop the claim; either way an ADR)*
+**(decision, 2026-09-21, via /discuss, amended by /grill)** The tree is carried. **A structure tree describes the
+FILE, not the view**: a crop clips, it does not remove — the text still extracts, copies and searches — so the
+tags keep describing it, and dropping them would lose every visible element to avoid a mismatch on the hidden
+ones. The ADR written with this slice states that principle and its boundary (S06 is the case it refuses).
+~~Crop UI says hide-not-remove~~ — **already true**, `web/index.html:1626` says cropping *hides* and points at
+Flatten or Redact; nothing to build. **Follow-up, not this slice:** turning elements wholly outside the window into
+artifacts. Cheaper than the round believed — the per-element extent already exists (`structview.go:62,183`) and so
+does the artifact edit (`structartifact.go:41`); the unbuilt part is applying one to the other.
+
+#### P02.S06 — split pages *(unblocked 2026-09-21 — via /discuss: no tile subtree; after S07)*
 Scope: `SplitPage`, `SplitRegions`. Tiles are clones of the page dict carrying the whole content. Refs: D5.
 
-#### P02.S07 — merges graft the second tree *(blocked — Dan: superseding ADR-031's recorded `partial` decision for Append/Combine, which every ceremony document takes)*
+**(decision, 2026-09-21, via /discuss, amended by /grill)** **The tiles carry no subtree.** A per-tile clone makes
+the DOCUMENT read each split page N times — a 2-up spread reads both halves on each half — which is a false
+account of structure, not a view mismatch; that is where S05's "describes the file" principle stops, and the ADR
+says so. **But the rest of the document keeps its tree.** Both operations reach the merge through `splice`
+(`replacePage`, `pdfops.go:934,983,1061`), so today one split page destroys every page's tags; once S07 lets
+`splice` carry, the tiles land undescribed under the document's existing claim and the verdict moves
+**`dropped` → `partial`** — ADR-031's own reasoning (the cure must not be worse than the loss). Hence S06 builds
+after S07. **Follow-up, not this slice:** a positional partition (each tile keeps the elements inside it and
+artifacts the rest) — rects and the artifact edit exist, as in S05's follow-up; the unbuilt part is rewriting
+each tile's content.
+
+#### P02.S07 — merges graft the second tree *(unblocked 2026-09-21 — via /discuss: graft, extend-only)*
 Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root
 `/K` and RoleMaps; ~~`InsertPDF` inherits it with S04~~ **— it does not: S04b routes `splice` through the non-carrying door and defers `InsertPDF` here in full** (struck 2026-09-16). Refs: D5, ADR-031.
+
+**(decision, 2026-09-21, via /discuss, amended by /grill)**
+- **Graft for `Append`, `Combine` and `splice`** (so `InsertPDF`, and S06's operations, leave the non-carrying
+  door). Tagged + tagged comes out `carried`.
+- **A graft only EXTENDS a claim the first document already makes (added at the grill).** Where the first input
+  carries no live tree, the second's tree is not carried and its `/StructParents` are stripped — the result is
+  untagged, exactly as today. Without this, S09's tagged readme would graft into every untagged co-signed
+  contract and make it claim tagging over pages nobody tagged: ADR-031's worst case, a screen reader abandoning
+  its fallbacks. It also keeps ADR-031's recorded rule that argument order decides the fate.
+- **Mixed inputs stay `partial`.** This AMENDS ADR-031's note (a new ADR citing it); it does not supersede the
+  verdict, which stays true for tagged + untagged.
+- **An incomplete graft falls back to stripping the second document's `/StructParents`**, so no page keeps a
+  reverse link into the other document's rows (grill pin (a), 2026-09-16, above) — through ONE door, as `honest`.
+- **Per-slice deepdive owed** on the `MergeXRefTables` graft before the grill; it was not dived here.
+
+Acceptance: untagged-first + tagged-second, and tagged-first + untagged-second, each asserted in both argument
+orders — the former claims nothing; a tagged + tagged merge is `carried` with veraPDF adding nothing over its
+inputs; no merged page's `/StructParents` resolves into the other document's rows.
+
+#### P02.S09 — nib's own pages are tagged *(added 2026-09-21, via /discuss, amended by /grill; after S07)*
+Scope: the trust-explainer readme (`p2p/readme.go:306`, through `PrepareDocument` — so **every co-signed
+document**, `server/cosign.go:455`, not only ceremonies), the ceremony page and the signature pages
+(`sigpages.go:229,238`) are rendered with a structure tree, as **real content** — never artifacts, which would hide
+the trust explanation from assistive technology on purpose. Tagged inside `PrepareDocument` /
+`PrepareCeremonyDocument`, before any signature. Prefer `mdpdf`'s tagged output (ADR-033) over a second tagger if
+the readme's placement — `readmeFloor`, the block-stack offset — survives it; measure, don't assume. Refs: D5.
+
+**Declared gap:** signature widgets added at signing stay untagged (7.18.1). **Not impossible — unattempted:**
+tagging one rewrites `/StructTreeRoot` and `/ParentTree` inside the signing revision, and whether earlier
+signatures' validators report that as a disallowed change is unmeasured (filed to `/pending`).
+
+Acceptance: a tagged document through `PrepareCeremonyDocument` comes out `carried` — S07's fallback strip
+firing here is RED, not a silent `partial`; an untagged one comes out claiming nothing (S07's extend-only rule);
+veraPDF adds no failure on the appended pages.
 
 #### P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries *(done 2026-09-16, v1.129.144)*
 Scope: replace element-level `/Stm` (`tagcarry.go:316`) with MCR dictionaries carrying `/Pg` and `/Stm`, after
