@@ -116,6 +116,12 @@ func (d *Document) hasAttrType(v types.Object, kind int) bool {
 // when `/A` has none, in the class map entries `/C` names, first class first. A value of another type is
 // passed over, not returned: `/ColSpan 2.0` is no ColSpan, and the default applies.
 func (d *Document) tableAttributeOfType(elem types.Dict, key string, kind int) types.Object {
+	return d.attributeOfType(elem, "Table", key, kind)
+}
+
+// attributeOfType is `tableAttributeOfType` for any attribute owner — `/O /Table`, `/O /PrintField` (a Form's
+// Role, 7.18.4 t2) — the one door for veraPDF's typed attribute reader.
+func (d *Document) attributeOfType(elem types.Dict, owner, key string, kind int) types.Object {
 	find := func(attr types.Object) types.Object {
 		if attr == nil {
 			return nil
@@ -130,7 +136,7 @@ func (d *Document) tableAttributeOfType(elem types.Dict, key string, kind int) t
 		}
 		for _, x := range objs {
 			ad := d.dict(x)
-			if ad == nil || d.name(ad["O"]) != "Table" {
+			if ad == nil || d.name(ad["O"]) != owner {
 				continue
 			}
 			if v := ad[key]; v != nil && d.hasAttrType(v, kind) {

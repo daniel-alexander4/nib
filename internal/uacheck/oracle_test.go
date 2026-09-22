@@ -164,6 +164,11 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// Strongly or weakly structured (P03.S05), both halves, each tree measured on veraPDF before pinned.
 		oracleDoc{"headings: H beside H, and an H1 among them", treeDoc("", "Document(H,H1,H)")},
 		oracleDoc{"headings: unnumbered H only, one per section", treeDoc("", "Document(Sect(H,P),Sect(H,P))")},
+		// Notes and the Form element (P03.S06), both halves, each measured on veraPDF before pinned.
+		oracleDoc{"notes: two, each with its own ID", treeDoc("", "Document(Note!id=n1,Note!id=n2)")},
+		oracleDoc{"notes: two with the same empty ID", treeDoc("", "Document(Note!id=,Note!id=)")},
+		oracleDoc{"form: one object reference to its widget", formChildDoc(true, "[<< /Type /OBJR /Obj 9 0 R >>]", "")},
+		oracleDoc{"form: an MCID beside the widget's reference", formChildDoc(true, "[<< /Type /OBJR /Obj 9 0 R >> 0]", "")},
 		oracleDoc{"table geometry: a regular spanned table", treeDoc("", "Document(Table(TR(TH!r2!scope=Row,TH!c2!scope=Column),TR(TD,TD)))")},
 	)
 	if pdfops.LibreOfficeAvailable() {
@@ -341,7 +346,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 36
+	const wantGenerated = 40
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

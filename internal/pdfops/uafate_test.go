@@ -90,7 +90,7 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 	}
 	if len(kept) > 0 {
 		t.Errorf("%d operation(s) change a labelled document and keep its PDF/UA identification: %s.\n"+
-			"nib cannot verify an edit kept conformance (55 of 106 rules), so any change drops the claim — "+
+			"nib cannot verify an edit kept conformance (58 of 106 rules), so any change drops the claim — "+
 			"route the operation through writeMutated or rewriteWithConf, or drop it after its own write "+
 			"(withoutUAClaim).", len(kept), strings.Join(kept, ", "))
 	}
