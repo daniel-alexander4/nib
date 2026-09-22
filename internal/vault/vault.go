@@ -1717,6 +1717,12 @@ func decrypt(key, nonce, ciphertext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// `Open` PANICS on a nonce of the wrong length rather than returning an error, and the nonce is
+	// read from the vault file — so a damaged or hand-edited vault took the process down instead of
+	// failing to unlock.
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("vault: nonce is %d bytes, want %d", len(nonce), gcm.NonceSize())
+	}
 	return gcm.Open(nil, nonce, ciphertext, nil) // errors on wrong key / tampering
 }
 

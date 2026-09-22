@@ -221,12 +221,40 @@ callers are the two form doors and `/pending 479`'s gate test)*
 2. T02 — both form doors' census rows drop 7.1 t8; a test reads the catalog `/Metadata` back from both doors and
    that the kept packet carries no PDF/UA identification (ADR-032).
 
-### P02 — Page-set operations carry the structure
+### P02 — Page-set operations carry the structure *(done 2026-09-22, v1.138.16)*
 **Goal.** `Collect`, `Crop`, `DuplicatePage`, `Booklet`, `SplitPage`, `SplitRegions`, `InsertPDF` and
 `CarryAttachments` keep the structure of the pages they keep. Refs: D5.
 
 **Exit criteria.** Each census row adds nothing, or its remaining loss is declared with the reason a carry is
 impossible; the tag-fate table's verdicts move from `dropped` to what is measured.
+
+**(phase close, 2026-09-22, v1.138.16)** Acceptance ledger, clause by clause (the goal's operations included, since
+the criteria are stated over them):
+- [x] **each census row adds nothing** — `Collect`, `RemovePages`, `DuplicatePage`, `Booklet`, `Crop`, `NUp`,
+  `CarryAttachments` carry no `knownUA1Deltas` row; `TestNoOperationAddsAUA1ClauseItsInputDidNotFail` green.
+- [x] **or its remaining loss is declared with the reason a carry is impossible** — `SplitPage`/`SplitRegions`
+  (`7.1 t3`, `7.4.2 t1`: a tile carries no subtree, ADR-049), `RemovePages` (`7.4.2 t1`: the drive removes the
+  heading's page), `InsertPDF`/`Append`/`Combine` (`7.1 t3`, `7.21.4.1 t1`: the second document is untagged
+  Base-14, ADR-031's `partial`) — `ua1oracle_test.go:122-144`, each with its reason.
+- [x] **the tag-fate verdicts move from `dropped` to what is measured** — `tagtable_test.go:177-240`: every subset
+  op and `Crop` `carried`, merges `partial`, split tiles `dropped` by decision (ADR-049);
+  `TestEveryDeclaredFateIsTheMEASUREDFate` grades each declared verdict against the measured one.
+- [x] goal — the pages each operation KEEPS keep their structure: subsets (S04b), Crop (S05, ADR-047), split's
+  other pages (S06/S07b, B4), InsertPDF with the original as host (S07b, ADR-048), nib's own pages (S09, ADR-050).
+- [x] goal — `CarryAttachments` never touches structure: `carried` on a tagged input (`tagtable_test.go:210`).
+
+Full-repo review: `code-reviews/v1.138.15-p02-phase-close-2026-09-22.md` — nine findings P02 introduced, eight fixed
+and one filed (/pending 604, UA-2 only); a re-review of the fix diff found two more, both fixed (an exponential
+class-map comparison, and an unplaceable graft turned into a hard error). Pre-existing: four trivial ones fixed
+(a `doc.sig` read race, a vault nonce panic, an uncapped split grid, a stale comment), 33 filed as /pending 578-611,
+among them Dan's decided `ContentDigest` bump (578). Graduation pass: 123 rows, 114 mechanical keep-live, 9 judged,
+0 hot-path; `splice`'s gate stimulus gap DISCHARGED.
+
+Required-run gates, measured at v1.138.16: tiers 0–2 green (tier 1 re-run green after its first run caught three
+guards this pass had moved — the `splice` routing guard, three red-proof patches, and a slice-gate predicate that
+missed the phrase "Tiers 0-3, 4 and 6"); `-race` over `internal/server` and `internal/pdfops` clean of races; tier 3
+**0 failures**; **tier 4** green over both transports; **tier 6** 28/28; **tier 4d** (`-n 4`) a 4-party relay
+completed over both transports. All fire: S09 and this close touched `internal/p2p` and `internal/server`.
 
 **(census pin, 2026-09-15, P01.S01 — CORRECTED at phase-open, 2026-09-16)** ~~veraPDF does not accept a tree
 re-anchored into Form XObjects~~. **Measured by the phase-open deep-dive

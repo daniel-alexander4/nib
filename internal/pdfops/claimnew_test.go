@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"nib/mdpdf"
 	"os"
 	"path/filepath"
@@ -348,5 +349,35 @@ func TestTagAuthoredPagesRefusesADocumentThatAlreadyHasATree(t *testing.T) {
 	_, err := TagAuthoredPages(taggedFixture(), [][]mdpdf.Role{{{Kind: mdpdf.RoleBody}}})
 	if !errors.Is(err, errAuthoredAlreadyTagged) {
 		t.Errorf("tagging an already-tagged document returned err %v, want errAuthoredAlreadyTagged", err)
+	}
+}
+
+// TestTagAuthoredPagesRefusesARoleCountThatIsNotThePageCount — one role list per page, exactly. The
+// door used to tag the pages the two counts shared and ignore the rest, so a second page nobody gave
+// roles for shipped undescribed under a tree claiming the document, and a surplus list — a line the
+// caller composed that the document does not hold — vanished without a word.
+func TestTagAuthoredPagesRefusesARoleCountThatIsNotThePageCount(t *testing.T) {
+	page := func(n int) string {
+		return fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents %d 0 R >>", n)
+	}
+	text := streamObj("q BT /F1 12 Tf 72 700 Td (Authored line) Tj ET Q\n")
+	font := "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+	one := assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>", 2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: page(4), 4: text, 9: font,
+	})
+	two := assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>", 2: "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+		3: page(4), 4: text, 5: page(6), 6: text, 9: font,
+	})
+	body := []mdpdf.Role{{Kind: mdpdf.RoleBody}}
+	if _, err := TagAuthoredPages(one, [][]mdpdf.Role{body}); err != nil {
+		t.Fatalf("setup: one page with one role list was refused (%v), so a refusal below proves nothing", err)
+	}
+	if _, err := TagAuthoredPages(one, [][]mdpdf.Role{body, body}); err == nil {
+		t.Error("two role lists for a one-page document were accepted; the surplus list tagged nothing")
+	}
+	if _, err := TagAuthoredPages(two, [][]mdpdf.Role{body}); err == nil {
+		t.Error("one role list for a two-page document was accepted; page 2 ships undescribed under the tree")
 	}
 }

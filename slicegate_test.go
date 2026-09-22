@@ -2,6 +2,7 @@ package nib
 
 import (
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -136,13 +137,19 @@ var sliceGateServerPrefixes = []string{
 // format, and a check that demands an exact phrase makes people write the phrase.
 func recordsSliceGate(msg string) bool {
 	l := strings.ToLower(msg)
-	for _, k := range []string{"slice gate", "tier 4", "tiers 4", "tier 6", "tiers 6"} {
-		if strings.Contains(l, k) {
-			return true
-		}
+	if strings.Contains(l, "slice gate") {
+		return true
 	}
-	return false
+	// A tier LIST names the gate too: "Tiers 0-3, 4 and 6 green" records both runs, and a substring
+	// match on "tier 4" read it as recording neither — which is how 18e4113's message, stating the
+	// runs, failed this check.
+	return tierListNamesGate.MatchString(l)
 }
+
+// tierListNamesGate matches "tier" or "tiers" followed by a list of tier numbers (digits, ranges,
+// commas, "and", "+") in which a 4 or a 6 appears as its own number — "tier 4d" included, "tier 14"
+// and "tiers 0-3" not.
+var tierListNamesGate = regexp.MustCompile(`\btiers? (?:[0-9]+[a-z]?(?:[-–][0-9]+)?(?:,? ?(?:and|\+|,)? ?))*?\b[46][a-z]?\b`)
 
 // The predicates, exercised directly — the scan above is bounded from a baseline, so without
 // this the rule's logic would ship untested until the next commit that happens to trip it.
@@ -193,6 +200,10 @@ func TestTheSliceGatePredicatesAreNotVacuous(t *testing.T) {
 		{"lower case", "ran tier 4 at three parties", true},
 		{"silence", "fix(server): a thing\n\nTiers 0-3 green.", false},
 		{"tiers 0-3 is not the gate", "Tiers: 1 green, 2 green 277/277, 3 green 111/111.", false},
+		{"a tier list naming 4 and 6", "Red-proof: 7 killed. Tiers 0-3, 4 and 6 green.", true},
+		{"a tier list naming 4d", "tiers 0-3 + 4d green", true},
+		{"tier 14 is not tier 4", "tier 14 green", false},
+		{"a range ending at 3", "tiers 1-3 green", false},
 	} {
 		if got := recordsSliceGate(tc.msg); got != tc.want {
 			t.Errorf("recordsSliceGate(%q) = %v, want %v (%s)", tc.msg, got, tc.want, tc.name)

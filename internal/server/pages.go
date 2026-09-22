@@ -41,7 +41,7 @@ func carryAttachments(src, dst []byte, err error) ([]byte, error) {
 func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 	// **Refuse a request addressed to a document this server no longer holds BEFORE reading the
 	// body.** Without this the handler parses up to maxPDFBytes and runs the whole PDF operation
-	// before the resolve at the commit discovers the document is gone — real work, on a 128 MiB
+	// before the resolve at the commit discovers the document is gone — real work, on a 200 MiB
 	// document, for a request that was never going to land (/pending 261).
 	//
 	// It is ADVISORY and the resolve at the commit stays authoritative: the document can be

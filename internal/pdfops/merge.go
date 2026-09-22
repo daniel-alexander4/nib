@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -178,24 +179,8 @@ func readHostTree(ctx *model.Context) *hostTree {
 	if _, nested := pt["Kids"]; nested {
 		return nil
 	}
-	return &hostTree{rootRef: ref, root: root, pt: pt, nextKey: nextParentTreeKey(xt, root, pt),
+	return &hostTree{rootRef: ref, root: root, pt: pt, nextKey: parentTreeKeyFloor(ctx, root),
 		lang: readLang(xt, cat["Lang"])}
-}
-
-// nextParentTreeKey is the first key a new claim may take: past both the declared
-// `/ParentTreeNextKey` and every key actually present, because a producer's declaration can lag.
-func nextParentTreeKey(xt *model.XRefTable, root, pt types.Dict) int {
-	next := 0
-	if n, ok := pdfNumber(xt, root["ParentTreeNextKey"]); ok && int(n) > next {
-		next = int(n)
-	}
-	nums := derefArray(xt, pt["Nums"])
-	for i := 0; i+1 < len(nums); i += 2 {
-		if k, ok := pdfNumber(xt, nums[i]); ok && int(k)+1 > next {
-			next = int(k) + 1
-		}
-	}
-	return next
 }
 
 // prepareGraft readies a source document's tree for grafting onto host, in the source's own context,
@@ -221,12 +206,12 @@ func prepareGraft(src *model.Context, host *hostTree, hostXT *model.XRefTable) *
 	// A name the two documents map to different targets cannot be merged without rewriting one side's
 	// elements, and a merge is not the place to decide which reading of a custom role is right.
 	for _, k := range []string{"RoleMap", "ClassMap"} {
-		if conflicts(derefDict(xt, root[k]), derefDict(hostXT, host.root[k])) {
+		if conflicts(xt, derefDict(xt, root[k]), hostXT, derefDict(hostXT, host.root[k])) {
 			return nil
 		}
 	}
 	offset := host.nextKey
-	srcNext := nextParentTreeKey(xt, root, pt)
+	srcNext := parentTreeKeyFloor(src, root)
 	eachParentTreeClaim(src, func(key int, set func(int)) { set(key + offset) })
 	nums := derefArray(xt, pt["Nums"])
 	shifted := make(types.Array, len(nums))
@@ -246,14 +231,80 @@ func prepareGraft(src *model.Context, host *hostTree, hostXT *model.XRefTable) *
 
 // conflicts reports whether a source name map gives any name a different value than the host's does.
 // Each map is read in its own context: until the merge joins them, the two documents' objects live in
-// two cross-reference tables.
-func conflicts(src, host types.Dict) bool {
+// two cross-reference tables — so a value is compared by what it RESOLVES to there, never by its
+// spelling. `12 0 R` in one table and `12 0 R` in the other are two unrelated objects, and comparing
+// the references let a ClassMap entry naming a different attribute dict through as a match.
+func conflicts(srcXT *model.XRefTable, src types.Dict, hostXT *model.XRefTable, host types.Dict) bool {
 	for name, v := range src {
-		if hv, ok := host[name]; ok && hv.String() != v.String() {
+		if hv, ok := host[name]; ok && !sameResolved(srcXT, v, hostXT, hv, 0) {
 			return true
 		}
 	}
 	return false
+}
+
+// sameResolved reports whether a (in table xa) and b (in table xb) are the same value once every
+// reference in each is resolved in its own table. Anything it cannot resolve, or nests past the depth
+// bound, counts as different: the cost of a false "different" is a graft refused, the honest loss, and
+// the cost of a false "same" is the host's own entry replaced.
+//
+// **A pair of references is compared once.** Both documents may be untrusted, and an attribute graph
+// whose every level holds two references to the next is 2^depth paths over a handful of objects, so a
+// walk that re-compared a pair per path hung on a crafted file. A pair already under comparison counts
+// as the same — any difference beneath it is found on the path that got there first.
+func sameResolved(xa *model.XRefTable, a types.Object, xb *model.XRefTable, b types.Object, depth int) bool {
+	return sameResolvedIn(xa, a, xb, b, depth, map[[2]int]bool{})
+}
+
+func sameResolvedIn(xa *model.XRefTable, a types.Object, xb *model.XRefTable, b types.Object, depth int, seen map[[2]int]bool) bool {
+	if depth > maxStructDepth {
+		return false
+	}
+	ra, aRef := a.(types.IndirectRef)
+	rb, bRef := b.(types.IndirectRef)
+	if aRef && bRef {
+		pair := [2]int{ra.ObjectNumber.Value(), rb.ObjectNumber.Value()}
+		if seen[pair] {
+			return true
+		}
+		seen[pair] = true
+	}
+	var err error
+	if a, err = xa.Dereference(a); err != nil {
+		return false
+	}
+	if b, err = xb.Dereference(b); err != nil {
+		return false
+	}
+	switch av := a.(type) {
+	case types.Dict:
+		bv, ok := b.(types.Dict)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for k, v := range av {
+			w, has := bv[k]
+			if !has || !sameResolvedIn(xa, v, xb, w, depth+1, seen) {
+				return false
+			}
+		}
+		return true
+	case types.Array:
+		bv, ok := b.(types.Array)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i := range av {
+			if !sameResolvedIn(xa, av[i], xb, bv[i], depth+1, seen) {
+				return false
+			}
+		}
+		return true
+	case nil:
+		return b == nil
+	default:
+		return b != nil && a.PDFString() == b.PDFString()
+	}
 }
 
 // stripClaims deletes every structure key a document's pages, annotations and forms claim — for a
@@ -303,8 +354,13 @@ func attachGraft(ctx *model.Context, host *hostTree, gs *graftSource) error {
 			dst = types.Dict{}
 			host.root[k] = dst
 		}
+		// A name the host already defines keeps the host's value: `prepareGraft` refused any that
+		// differ, so an entry here is the same mapping, and the host's own object is the one its
+		// elements already name.
 		for name, v := range src {
-			dst[name] = v
+			if _, has := dst[name]; !has {
+				dst[name] = v
+			}
 		}
 	}
 
@@ -342,13 +398,22 @@ func rootKids(xt *model.XRefTable, root types.Dict) types.Array {
 // It works at the level where the document's order lives: the first level, descending from the root,
 // that holds more than one element. An element spanning the insertion point starts before it, so it stays ahead
 // of the inserted content and whole.
-func placeInserted(ctx *model.Context, host *hostTree, insertAfter, hostPages int) {
+//
+// A host page it cannot locate is errUnplaced rather than a page skipped: a skipped page's elements
+// would read as starting nowhere, and the insert would be placed after content that precedes it.
+// `splice` answers it the way it answers a refused graft — by retrying without the insert's tree.
+func placeInserted(ctx *model.Context, host *hostTree, insertAfter, hostPages int) error {
 	xt := ctx.XRefTable
 	pageNr := map[int]int{}
 	for p := 1; p <= hostPages; p++ {
-		if ir, err := ctx.PageDictIndRef(p); err == nil && ir != nil {
-			pageNr[ir.ObjectNumber.Value()] = p
+		ir, err := ctx.PageDictIndRef(p)
+		if err != nil {
+			return fmt.Errorf("%w: page %d: %v", errUnplaced, p, err)
 		}
+		if ir == nil {
+			return fmt.Errorf("%w: page %d has no page object", errUnplaced, p)
+		}
+		pageNr[ir.ObjectNumber.Value()] = p
 	}
 	all := rootKids(xt, host.root)
 	own := all[:len(all)-len(host.grafted)] // the host's kids are the ones there before the graft appended
@@ -379,12 +444,16 @@ func placeInserted(ctx *model.Context, host *hostTree, insertAfter, hostPages in
 	}
 	if docLevel == nil {
 		host.root["K"] = ordered
-		return
+		return nil
 	}
 	docLevel["K"] = ordered
 	// The graft appended at the root; the level it was moved into is under the root's sole element.
 	host.root["K"] = all[:len(all)-len(host.grafted)]
+	return nil
 }
+
+// errUnplaced is placeInserted unable to locate a host page, so unable to say where the insert is read.
+var errUnplaced = errors.New("pdfops: the inserted document's structure cannot be placed")
 
 // allElements reports whether every kid is a structure element — not an MCID, a marked-content
 // reference or an annotation reference, which are content and end the descent.

@@ -251,3 +251,20 @@ func TestSplitPageRejectsBadInput(t *testing.T) {
 		t.Error("out-of-range page should error")
 	}
 }
+
+// TestSplitPageRefusesAnUnboundedGrid — every tile is a page and the grid arrives from the request, so
+// an uncapped `cols×rows` was an allocation the caller chose. The ceiling is hand-drawn regions' own,
+// which the GUI's 8×8 maximum meets exactly. Each side is driven alone, including a pair whose product
+// overflows into range: the product check is only sound once both sides are known to be small.
+func TestSplitPageRefusesAnUnboundedGrid(t *testing.T) {
+	src := subsetFixture()
+	if _, err := SplitPage(src, 1, 8, 8, false); err != nil {
+		t.Fatalf("setup: the GUI's largest grid was refused (%v), so a refusal below proves nothing", err)
+	}
+	// (2^62+1)×4 WRAPS to 4, a grid the product check alone accepts — and then asks for 2^62 columns.
+	for _, g := range [][2]int{{9, 8}, {65, 1}, {1, 65}, {1<<62 + 1, 4}, {4, 1<<62 + 1}} {
+		if _, err := SplitPage(src, 1, g[0], g[1], false); err == nil {
+			t.Errorf("a %d×%d grid was accepted; the ceiling is %d sub-pages", g[0], g[1], maxRegions)
+		}
+	}
+}

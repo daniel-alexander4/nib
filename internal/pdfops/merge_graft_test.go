@@ -2,9 +2,11 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -335,5 +337,146 @@ func TestAHostWhoseRootHoldsOneDIRECTElementKeepsIt(t *testing.T) {
 	}
 	if _, _, _, elems := carryOf(t, out); elems != hostElems+otherElems {
 		t.Errorf("%d elements after the graft, want %d + %d — the host's direct root element was lost", elems, hostElems, otherElems)
+	}
+}
+
+// TestAGraftStartsPastAKeyTheHostClaimsWithoutARow — a claim spends its key whether or not the
+// `/ParentTree` has a row for it, and nothing requires one (a note with a `/StructParent` and no element
+// is a claim nobody answers, not a defect). The graft's offset read only the rows and the declared next
+// key, so the grafted page took the key the host's note already held and the graft was refused.
+func TestAGraftStartsPastAKeyTheHostClaimsWithoutARow(t *testing.T) {
+	objs := subsetFixtureObjects()
+	objs[9] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 10 0 R /StructParents 3 /Annots [24 0 R] >>"
+	objs[24] = "<< /Type /Annot /Subtype /Text /Rect [72 72 92 92] /P 9 0 R /StructParent 6 /Contents (note) >>"
+	host := assembleFixture(objs) // rows 0-5, /ParentTreeNextKey 6, and a note claiming 6
+	_, defects, _, hostElems := carryOf(t, host)
+	if len(defects) != 0 {
+		t.Fatalf("setup: the host is incomplete (%v), so a refused graft could be its fault", defects)
+	}
+	src := taggedFixture()
+	_, _, _, srcElems := carryOf(t, src)
+
+	out, err := Append(host, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, defects, _, elems := carryOf(t, out)
+	if len(defects) != 0 {
+		t.Errorf("the merge shipped an incomplete tree: %v", defects)
+	}
+	if elems != hostElems+srcElems {
+		t.Errorf("%d elements, want %d + %d — the second document's graft was refused", elems, hostElems, srcElems)
+	}
+	if got := pageClaims(t, out)[4]; got < 7 {
+		t.Errorf("the grafted page claims key %d; the host's note holds 6, so the first free key is 7", got)
+	}
+}
+
+// TestAClassMapEntryIsComparedByWhatItNames — the two documents' `/ClassMap`s are read before the merge,
+// in two cross-reference tables, so `50 0 R` in each is two unrelated objects. Compared by spelling, a
+// class naming DIFFERENT attributes passed as a match and the graft then overwrote the host's entry with
+// the source's, restyling every host element of that class.
+func TestAClassMapEntryIsComparedByWhatItNames(t *testing.T) {
+	hostObjs := subsetFixtureObjects()
+	hostObjs[30] = "<< /Type /StructTreeRoot /K [31 0 R] /ParentTree 39 0 R /RoleMap 38 0 R /ClassMap << /C1 50 0 R >> /ParentTreeNextKey 6 >>"
+	hostObjs[50] = "<< /O /Layout /Placement /Block >>"
+	host := assembleFixture(hostObjs)
+	source := func(classObj int, placement string) []byte {
+		content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (Tagged heading) Tj ET\nEMC\n"
+		return assembleFixture(map[int]string{
+			1:        "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+			2:        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3:        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
+			4:        streamObj(content),
+			5:        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+			7:        fmt.Sprintf("<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 /ClassMap << /C1 %d 0 R >> >>", classObj),
+			8:        "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] /C /C1 >>",
+			9:        "<< /Nums [0 [8 0 R]] >>",
+			classObj: "<< /O /Layout /Placement /" + placement + " >>",
+		})
+	}
+	hostPlacement := func(t *testing.T, pdf []byte) string {
+		t.Helper()
+		xt, root := structRoot(t, pdf)
+		attrs := derefDict(xt, derefDict(xt, root["ClassMap"])["C1"])
+		if attrs == nil {
+			t.Fatal("the merged tree has no /C1 class")
+		}
+		return nameVal(attrs, "Placement")
+	}
+
+	// The SAME spelling naming a different dictionary: a conflict, so the source is not grafted.
+	out, err := Append(host, source(50, "Inline"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hostPlacement(t, out); got != "Block" {
+		t.Errorf("the host's /C1 places %q after the merge, want its own Block", got)
+	}
+	if got := pageClaims(t, out)[4]; got >= 0 {
+		t.Errorf("the conflicting document's page keeps claim %d; its class disagrees with the host's, so it must not be grafted", got)
+	}
+
+	// A DIFFERENT spelling naming an equal dictionary: the same class, so the graft goes ahead.
+	out, err = Append(host, source(60, "Block"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hostPlacement(t, out); got != "Block" {
+		t.Errorf("the host's /C1 places %q, want Block", got)
+	}
+	if got := pageClaims(t, out)[4]; got < 0 {
+		t.Error("a document whose /C1 names the same attributes as the host's was refused the graft")
+	}
+}
+
+// TestAClassMapComparisonVisitsEachPairOnce — both documents in a merge may be untrusted, and an
+// attribute graph whose every level holds two references to the next is 2^depth paths over a few dozen
+// objects. Compared path by path, forty levels is a trillion comparisons and the merge hangs; compared
+// pair by pair it is forty.
+func TestAClassMapComparisonVisitsEachPairOnce(t *testing.T) {
+	const levels = 40
+	chain := func(objs map[int]string, first int) {
+		for i := 0; i < levels; i++ {
+			objs[first+i] = fmt.Sprintf("<< /L %d 0 R /R %d 0 R >>", first+i+1, first+i+1)
+		}
+		objs[first+levels] = "<< /O /Layout /Placement /Block >>"
+	}
+	hostObjs := subsetFixtureObjects()
+	hostObjs[30] = "<< /Type /StructTreeRoot /K [31 0 R] /ParentTree 39 0 R /RoleMap 38 0 R /ClassMap << /C1 50 0 R >> /ParentTreeNextKey 6 >>"
+	chain(hostObjs, 50)
+	host := assembleFixture(hostObjs)
+	srcObjs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
+		4: streamObj("/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (Tagged heading) Tj ET\nEMC\n"),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R /ParentTreeNextKey 1 /ClassMap << /C1 100 0 R >> >>",
+		8: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] /C /C1 >>",
+		9: "<< /Nums [0 [8 0 R]] >>",
+	}
+	chain(srcObjs, 100)
+	src := assembleFixture(srcObjs)
+
+	done := make(chan error, 1)
+	var out []byte
+	go func() {
+		var err error
+		out, err = Append(host, src)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("merging two documents whose classes share a doubled attribute graph did not finish in 20 s")
+	}
+	// The stimulus is real only if the comparison ran to the bottom and found the graphs equal: a graft
+	// refused on the first level would also be fast.
+	if got := pageClaims(t, out)[4]; got < 0 {
+		t.Error("the second document was refused the graft; its /C1 is the same graph as the host's")
 	}
 }

@@ -9040,8 +9040,9 @@ els.applyBoxSplitBtn.onclick = async () => {
 // Draw ONE keep-rectangle on the current page; on confirm, every page (or just
 // this one) is trimmed to it server-side via op:'crop' → pdfops.Crop. Like the
 // split regions, the mark lives OUTSIDE view.overlayFields so the bake never burns it
-// in. Reuses the same display-space → PDF-points conversion (rectPoints) as Split
-// by box; the server flattens any /Rotate before cropping.
+// in. The box goes to the server as fractions of the page as displayed; pdfops.Crop
+// maps them through the page's /Rotate onto the page's own boxes, moving the
+// MediaBox/CropBox and leaving /Rotate as it was.
 let cropStart = null, cropDiv = null, cropHit = null; // transient: aborted on switch
 
 function reflectCrop() {
