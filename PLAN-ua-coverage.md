@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119). P02 in flight: S01–S04b and S08 done; **S05/S06/S07 unblocked 2026-09-21** (via /discuss, amended by /grill), S09 added; build order S05 → S07 → S06 → S09. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119). P02 in flight: S01–S05 and S08 done; **S06/S07 unblocked 2026-09-21** (via /discuss, amended by /grill), S09 added; remaining build order S07 → S06 → S09. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -669,7 +669,7 @@ Acceptance:
 - **(added at the grill)** `structureCarriedCompletely` is EMPTY for every carried output, and a dropped page's
   marker string is absent from the output's decoded streams — the fate table cannot see either.
 
-#### P02.S05 — crop carries the tree *(unblocked 2026-09-21 — via /discuss: carry)*
+#### P02.S05 — crop carries the tree *(done 2026-09-21, v1.138.11)*
 Scope: `Crop` wraps pages in place instead of rebuilding them. Measured compliant even at a 5% window; the
 question is what a reader should hear. Refs: D5.
 
@@ -681,6 +681,29 @@ ones. The ADR written with this slice states that principle and its boundary (S0
 Flatten or Redact; nothing to build. **Follow-up, not this slice:** turning elements wholly outside the window into
 artifacts. Cheaper than the round believed — the per-element extent already exists (`structview.go:62,183`) and so
 does the artifact edit (`structartifact.go:41`); the unbuilt part is applying one to the other.
+
+**(grill, 2026-09-21 — the scope line was the wrong shape: crop moves the BOX, it does not wrap the content)**
+The sketch said *"wraps pages in place instead of rebuilding them"*. Moving the page's `/MediaBox` in its
+own coordinates does strictly less and carries strictly more: the content stream, `/Rotate`, MCIDs,
+`/StructParents` and every annotation `/Rect` stay in a space the crop never moves, so there is nothing to
+remap and no carry to gate. A content wrap would have translated the page to the origin and so had to
+translate every annotation too — and the rebuild it replaces DELETED them (`CutPage` drops `/Annots`), which
+the grill found was a second, unreported loss on every cropped page. ADR-047.
+- T01 — `Crop` rewrites target pages' `/MediaBox` in place through `rewriteWithConf` (`cropWindow` maps the
+  display-space fractions per `/Rotate`, over CropBox ∩ MediaBox); an inherited CropBox is overridden.
+- T02 — `tagFates` `Crop` → `carried`; `knownUA1Deltas` loses its `Crop` row; the generated digest golden's
+  `cropped` row moves (input changed; every other row identical).
+- T03 — readers: `TestACropCarriesTheStructureOfEveryPage`, `TestCropMapsTheDisplayWindowAtEveryRotation`,
+  `TestCropReadsTheBoxAndRotationAPageINHERITS`.
+- T04 — the server's lost-tagging notice tests move their stimulus from `Crop` to redaction, whose drop is a
+  decision rather than a slice.
+- T05 — ADR-047; README's accessibility and Crop passages.
+- T06 — *(added at the build)* `test/ui/crop.test.mjs`, the real mouse-drawn box through the real binary; tier 3's
+  file pin 38 → 39.
+
+Acceptance: a tagged multi-page document cropped comes out `carried` with no completeness defect, every
+element and every annotation kept; each of the four rotations maps the display window the user drew; the
+veraPDF differential adds nothing for `Crop`.
 
 #### P02.S06 — split pages *(unblocked 2026-09-21 — via /discuss: no tile subtree; after S07)*
 Scope: `SplitPage`, `SplitRegions`. Tiles are clones of the page dict carrying the whole content. Refs: D5.

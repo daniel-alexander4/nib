@@ -457,3 +457,8 @@ home today.
   (required) and not `/Type` (optional). `Scan` read the same key the same wrong way, calling a
   destination an auto-run hook at high severity; one door now decides for both, and `StripActive`
   keeps deleting it whole as a named exemption.
+- **[ADR-047 — a structure tree describes the file, not the view](047-a-structure-tree-describes-the-file-not-the-view.md)**
+  — P02.S05. A crop hides without removing, so the tags keep describing what it clipped, and Crop now
+  moves each page's `/MediaBox` in the page's own space instead of rebuilding the page — carrying the
+  tree without a carry, and no longer deleting the cropped pages' annotations. The principle stops
+  where a page would be READ more than once: a split tile carries no subtree (P02.S06).

@@ -282,8 +282,8 @@ func collectPick(order []string) func(int) ([]int, error) {
 // and the gate reads the OUTPUT, which for a one-page part is one page. They are pure subsets with
 // nothing composed after them, so D5 says they carry, and at 14% they do.
 //
-// P02.S05 (crop), S06 (split) and S07 (the merge graft) are all blocked on Dan in the plan, and this
-// is their question; a carry reaching these doors would answer it by accident.
+// P02.S06 (split) and S07 (the merge graft) own this question; a carry reaching these doors would
+// answer it by accident. (Crop left this door at P02.S05: it no longer rebuilds pages at all.)
 //
 // # It exists BEFORE the carry it refuses, and that is the point
 //
@@ -1068,79 +1068,114 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 // box maps to the same RELATIVE region on every page regardless of its size: on a
 // uniform document this is identical to the old absolute behaviour, and on a
 // mixed-size document each page is cropped proportionally instead of to a fixed
-// physical window that could fall off a smaller page. Each target page is
-// normalized (any /Rotate flattened, CropBox resolved) so the box maps straight
-// onto the page pdf.js showed, then reduced to a page the exact size of the
-// resolved window; pages outside the selection are kept untouched.
+// physical window that could fall off a smaller page. The fractions are read in the
+// page's DISPLAY space — its CropBox, turned by its /Rotate — because that is the
+// page pdf.js showed the user; pages outside the selection are kept untouched.
 //
 // Content outside the rectangle is clipped away — hidden, not destroyed (the
 // objects remain in the file behind the new, smaller MediaBox); Flatten or Redact
 // remove it permanently.
 //
-// It is a single O(N) pass: SplitRaw reads and splits the document once, each page
-// is cropped in isolation, and the pages are merged once — there is no per-page
-// re-Collect of the whole document (which would make it O(N²)).
+// # It moves the page's BOXES and nothing else (`PLAN-ua-coverage.md` P02.S05)
+//
+// The window becomes the page's `/MediaBox` (and its `/CropBox`, where it has one) in the page's own
+// coordinates, and the printing boxes go. So the content stream,
+// the `/Rotate`, the `/StructParents`, every MCID and every annotation's `/Rect` stay exactly what
+// they were — they are all expressed in a space the crop does not move. So the structure tree is
+// carried without a carry: nothing it points at changed. **A structure tree describes the FILE, not
+// the view**, and a crop hides without removing (Dan, 2026-09-21, via /discuss) — so the tags keep
+// describing the clipped content too, which still extracts, copies and searches.
+//
+// The previous shape split the document, rebuilt each target page through `CutPage` into display
+// orientation at the origin, wrapped its content and merged the pages back — which dropped the
+// structure tree, every annotation on a cropped page (`CutPage` deletes `/Annots`), and the
+// catalog's outline and names with the merge. None of that was what a crop is for.
 func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
 	if frac[2] <= 0 || frac[3] <= 0 {
 		return nil, fmt.Errorf("crop region too small")
 	}
-	n, err := PageCount(pdf)
-	if err != nil {
-		return nil, err
-	}
-	targets, err := api.PagesForPageSelection(n, pages, true, false)
-	if err != nil {
-		return nil, err
-	}
-
-	spans, err := api.SplitRaw(bytes.NewReader(pdf), 1, model.NewDefaultConfiguration())
-	if err != nil {
-		return nil, err
-	}
-	segs := make([][]byte, 0, len(spans))
-	for _, ps := range spans {
-		page, err := io.ReadAll(ps.Reader)
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.CROP
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		targets, err := api.PagesForPageSelection(ctx.PageCount, pages, true, false)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if targets[ps.From] {
-			norm, err := normalizePage(page)
-			if err != nil {
-				return nil, err
+		for nr := 1; nr <= ctx.PageCount; nr++ {
+			if !targets[nr] {
+				continue
 			}
-			// Resolve the fraction box against THIS page's own display box, so
-			// differently-sized pages each keep the same relative window.
-			rect, w, h, err := resolveFracRect(norm, frac)
+			d, _, attrs, err := ctx.PageDict(nr, false)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			// pageW=w, pageH=h means cropToRect centres with zero padding, so the
-			// output page is exactly the crop window — no standardization to a
-			// larger uniform size as SplitRegions does for ragged regions.
-			if page, err = cropToRect(norm, rect, w, h); err != nil {
-				return nil, err
+			box, err := cropWindow(attrs, frac)
+			if err != nil {
+				return err
+			}
+			d.Update("MediaBox", box.Array())
+			// The window is the page now. Any CropBox the page has — its own OR one it inherits — is set
+			// to the window, never deleted: deleting a key the page never had leaves an ancestor's larger
+			// box in force for every reader that does not intersect it with the MediaBox. The printing
+			// boxes go: each must lie inside the MediaBox, and a window rarely contains them.
+			if attrs.CropBox != nil {
+				d.Update("CropBox", box.Array())
+			}
+			for _, k := range []string{"BleedBox", "TrimBox", "ArtBox"} {
+				d.Delete(k)
 			}
 		}
-		segs = append(segs, page)
+		return nil
+	})
+}
+
+// cropWindow maps a display-space fraction box onto the page's own user space: the page's display
+// box is its CropBox (else its MediaBox) intersected with its MediaBox, turned clockwise by its
+// effective `/Rotate`. The result is the rectangle, in unrotated page coordinates, that the page
+// displays as that fraction of what pdf.js showed.
+//
+// Display coordinates run right (u) and DOWN (v) from the displayed page's top-left corner. For each
+// rotation the displayed top-left corner is a different corner of the unrotated box, and u and v run
+// along different axes of it:
+//
+//	/Rotate   0: top-left     (x0,   y0+H), u → +x, v → −y
+//	/Rotate  90: bottom-left  (x0,   y0),   u → +y, v → +x
+//	/Rotate 180: bottom-right (x0+W, y0),   u → −x, v → +y
+//	/Rotate 270: top-right    (x0+W, y0+H), u → −y, v → −x
+func cropWindow(attrs *model.InheritedPageAttrs, frac [4]float64) (*types.Rectangle, error) {
+	if attrs == nil || attrs.MediaBox == nil {
+		return nil, fmt.Errorf("pdfops: that page has no MediaBox")
 	}
-	if len(segs) == 1 {
-		return carryLang(pdf, segs[0]) // MergeRaw needs ≥2 inputs; a one-page doc is already done
+	b := attrs.MediaBox
+	if cb := attrs.CropBox; cb != nil {
+		llx, lly := math.Max(b.LL.X, cb.LL.X), math.Max(b.LL.Y, cb.LL.Y)
+		urx, ury := math.Min(b.UR.X, cb.UR.X), math.Min(b.UR.Y, cb.UR.Y)
+		if urx > llx && ury > lly {
+			b = types.NewRectangle(llx, lly, urx, ury)
+		}
 	}
-	readers := make([]io.ReadSeeker, len(segs))
-	for i, b := range segs {
-		readers[i] = bytes.NewReader(b)
+	x0, y0, W, H := b.LL.X, b.LL.Y, b.Width(), b.Height()
+	fx, fy, fw, fh := frac[0], frac[1], frac[2], frac[3]
+	var r *types.Rectangle
+	switch rot := ((attrs.Rotate % 360) + 360) % 360; rot {
+	case 0:
+		r = types.NewRectangle(x0+fx*W, y0+H-(fy+fh)*H, x0+(fx+fw)*W, y0+H-fy*H)
+	case 90:
+		r = types.NewRectangle(x0+fy*W, y0+fx*H, x0+(fy+fh)*W, y0+(fx+fw)*H)
+	case 180:
+		r = types.NewRectangle(x0+W-(fx+fw)*W, y0+fy*H, x0+W-fx*W, y0+(fy+fh)*H)
+	case 270:
+		r = types.NewRectangle(x0+W-(fy+fh)*W, y0+H-(fx+fw)*H, x0+W-fy*W, y0+H-fx*H)
+	default:
+		return nil, fmt.Errorf("pdfops: a /Rotate of %d is not a multiple of 90", attrs.Rotate)
 	}
-	var out bytes.Buffer
-	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
+	if r.Width() <= 1 || r.Height() <= 1 {
+		return nil, fmt.Errorf("region too small")
 	}
-	// The cropped pages are rebuilt from scratch, so the result's catalog is the first SEGMENT's
-	// and the document's own `/Lang` never reaches it. /pending 472 — cropping does not change what
-	// language a document is written in. The one-page early return above needs it for the same
-	// reason, and the census fixture is ONE page, so only that path was measured: this branch is
-	// fixed on the argument, not on a reading, and `TestACropKeepsTheDocumentsLanguage` drives it
-	// on three pages so it is measured too.
-	return carryLang(pdf, out.Bytes())
+	if r.Width() > maxRegionPt || r.Height() > maxRegionPt {
+		return nil, fmt.Errorf("region too large")
+	}
+	return r, nil
 }
 
 // normalizePage flattens a single-page PDF's /Rotate into its content and
@@ -1163,29 +1198,6 @@ func normalizePage(pdf []byte) ([]byte, error) {
 	}
 	// Non-carrying: `CutPage` has just rebuilt these pages and the tree went with them.
 	return collectWithoutStructure(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
-}
-
-// resolveFracRect converts a top-left-origin fraction box [fx, fy, fw, fh] (0..1)
-// into the absolute source rectangle cropToRect expects: PDF points, bottom-left
-// origin, relative to normPage's display-box origin (cropToRect adds the box's
-// lower-left itself). normPage must already be rotation-flattened, so its MediaBox
-// dimensions match the rotation-aware viewport the client measured the fractions
-// against — making this identical to the old absolute path on a uniform document.
-// It also returns the resolved window's width and height.
-func resolveFracRect(normPage []byte, frac [4]float64) (rect [4]float64, w, h float64, err error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(normPage), model.NewDefaultConfiguration())
-	if err != nil {
-		return rect, 0, 0, err
-	}
-	_, _, attrs, err := ctx.PageDict(1, false)
-	if err != nil {
-		return rect, 0, 0, err
-	}
-	bw, bh := attrs.MediaBox.Width(), attrs.MediaBox.Height()
-	fx, fy, fw, fh := frac[0], frac[1], frac[2], frac[3]
-	// Flip the top-left-origin fractions to bottom-left points within the box.
-	rect = [4]float64{fx * bw, (1 - (fy + fh)) * bh, (fx + fw) * bw, (1 - fy) * bh}
-	return rect, rect[2] - rect[0], rect[3] - rect[1], nil
 }
 
 // cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,

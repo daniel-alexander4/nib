@@ -190,12 +190,14 @@ var tagFates = map[string]tagFate{
 	// it carries now because `Collect` carries and `NUp` has carried since P01.S06.
 	"Booklet": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Booklet(b, false) }},
 
+	// `Crop` moves each page's boxes and nothing else (P02.S05), so the tree is carried without
+	// a carry: the content, the MCIDs and the annotations it points at are all where they were.
+	"Crop": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Crop(b, [4]float64{0.05, 0.05, 0.05, 0.05}, nil) }},
+
 	// ── DROPPED. The claim goes with the content it described, which is law 1 satisfied honestly.
-	// These rebuild pages geometrically or compose two documents, and each is a slice of its own that
-	// is BLOCKED on Dan: crop is P02.S05, the two splits P02.S06, the merge graft P02.S07. Their
-	// subsets deliberately route through `collectWithoutStructure` rather than inherit the carry —
-	// see that door's header for what a merge does to a carried tree.
-	"Crop":         {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return Crop(b, [4]float64{0.05, 0.05, 0.05, 0.05}, nil) }},
+	// These rebuild pages geometrically or compose two documents: the two splits are P02.S06 and the
+	// merge graft P02.S07. Their subsets deliberately route through `collectWithoutStructure` rather
+	// than inherit the carry — see that door's header for what a merge does to a carried tree.
 	"SplitPage":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
 	"SplitRegions": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
 	"InsertPDF":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
