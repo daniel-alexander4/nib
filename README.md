@@ -615,7 +615,8 @@ tags go on describing it — use **Redact** when the hidden part must go.
 
 **Combining documents keeps them** where they can be kept. The tags of the first document — or of the
 document you are inserting into — carry through, and a tagged document added to it brings its own
-tags along, read where its pages are. An untagged document added to a tagged one leaves its own pages
+tags along, read where its pages are — or, if its tags cannot be joined to yours cleanly, arrives without
+them while yours stay exactly as they were. An untagged document added to a tagged one leaves its own pages
 without tags, and Nib does not start claiming a document is tagged just because a tagged page was
 added to an untagged one. **Splitting one page into tiles** keeps the rest of the document's tags; the
 tiles themselves have none, because each tile holds the whole page's content and tagging each one

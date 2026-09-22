@@ -517,8 +517,19 @@ func allocParentTreeKey(ctx *model.Context, tree *structTree) int {
 	if tree.keyFloorKnown {
 		return tree.keyFloor
 	}
-	_, _, floor := parentTreeKey(ctx, tree, -1)
-	if nk, ok := pdfNumber(ctx.XRefTable, tree.root["ParentTreeNextKey"]); ok && int(nk) > floor {
+	tree.keyFloor, tree.keyFloorKnown = parentTreeKeyFloor(ctx, tree.root), true
+	return tree.keyFloor
+}
+
+// parentTreeKeyFloor is the lowest `/ParentTree` key nothing in ctx has spent: past every row the
+// root's `/ParentTree` holds, past its declared `/ParentTreeNextKey` (a producer's declaration can lag),
+// and past every key a page, annotation or form XObject CLAIMS — a claim spends its key whether or not
+// a row exists for it. It is the one floor `allocParentTreeKey` and a merge's graft offset both read
+// (ADR-009): the merge kept its own copy, which read only the first two, so a host whose page claimed a
+// key above its rows handed the grafted document that key and the collision cost it the graft.
+func parentTreeKeyFloor(ctx *model.Context, root types.Dict) int {
+	_, _, floor := parentTreeKey(ctx, &structTree{root: root}, -1)
+	if nk, ok := pdfNumber(ctx.XRefTable, root["ParentTreeNextKey"]); ok && int(nk) > floor {
 		floor = int(nk)
 	}
 	for key := range parentTreeOwners(ctx) {
@@ -526,7 +537,6 @@ func allocParentTreeKey(ctx *model.Context, tree *structTree) int {
 			floor = key + 1
 		}
 	}
-	tree.keyFloor, tree.keyFloorKnown = floor, true
 	return floor
 }
 

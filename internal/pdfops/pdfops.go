@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg" // register decoders for image.DecodeConfig
@@ -864,6 +865,12 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	if cols < 1 || rows < 1 || cols*rows < 2 {
 		return nil, fmt.Errorf("split needs at least 2 sub-pages (got %d×%d)", cols, rows)
 	}
+	// The same ceiling as hand-drawn regions, for the same reason: every tile is a page, and the grid
+	// arrives from the request unbounded — 10000×10000 is a hundred million pages. Each side is checked
+	// before the product so the product cannot overflow.
+	if cols > maxRegions || rows > maxRegions || cols*rows > maxRegions {
+		return nil, fmt.Errorf("too many sub-pages (%d×%d, max %d)", cols, rows, maxRegions)
+	}
 	n, err := PageCount(pdf)
 	if err != nil {
 		return nil, err
@@ -932,12 +939,42 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 // grafted elements are placed at the insertion point in the reading order rather than at the root's end.
 // The tree is never cut in two, so an element spanning the insertion point is kept whole.
 //
-// A result whose tree the output gate refuses falls back to the old non-carrying shape: the honest loss.
+// A result whose tree the output gate refuses is retried with the inserted document's claims stripped
+// and the ORIGINAL's tree still carried — `mergeDocs`'s own fallback, and the loss is only the insert's
+// tags, which were what failed. Only when that is refused too does it fall back to the old non-carrying
+// shape. Going straight there wiped the host's whole tree over a defect in the document inserted into it.
 func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
-	carried := false
-	out, _, err := mergeOnce([][]byte{pdf, mid}, true, func(ctx *model.Context, host *hostTree) error {
+	out, grafted, carried, err := spliceOnce(pdf, leftEnd, rightStart, n, mid, true)
+	// A graft that cannot be placed failed on the insert's tree, exactly as a refused one does.
+	unplaced := errors.Is(err, errUnplaced)
+	if err != nil && !unplaced {
+		return nil, err
+	}
+	// Gated only when a tree was carried: `carryIsComplete` answers false for an untagged document, and
+	// the selection already says which this is without a second parse.
+	if !unplaced && (!carried || carryIsComplete(out)) {
+		return out, nil
+	}
+	if grafted || unplaced {
+		if out, _, carried, err = spliceOnce(pdf, leftEnd, rightStart, n, mid, false); err != nil {
+			return nil, err
+		}
+		if !carried || carryIsComplete(out) {
+			return out, nil
+		}
+	}
+	return spliceWithoutStructure(pdf, leftEnd, rightStart, n, mid)
+}
+
+// spliceOnce is one attempt at splice's merge: mid grafted onto pdf's tree and placed at the insertion
+// point (graft), or mid's claims stripped and pdf's tree carried alone. carried says whether the page
+// selection carried a tree, so the caller knows whether there is anything to gate.
+func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft bool) (out []byte, grafted, carried bool, err error) {
+	out, grafted, err = mergeOnce([][]byte{pdf, mid}, graft, func(ctx *model.Context, host *hostTree) error {
 		if host != nil && len(host.grafted) > 0 {
-			placeInserted(ctx, host, leftEnd, n)
+			if err := placeInserted(ctx, host, leftEnd, n); err != nil {
+				return err
+			}
 		}
 		keep := make([]int, 0, ctx.PageCount)
 		for p := 1; p <= leftEnd; p++ {
@@ -953,15 +990,7 @@ func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) 
 		carried = c
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	// Gated only when a tree was carried: `carryIsComplete` answers false for an untagged document, and
-	// the selection already says which this is without a second parse.
-	if carried && !carryIsComplete(out) {
-		return spliceWithoutStructure(pdf, leftEnd, rightStart, n, mid)
-	}
-	return out, nil
+	return out, grafted, carried, err
 }
 
 // spliceWithoutStructure is splice's fallback, and its shape before P02.S07b: both sides of the original
@@ -1117,9 +1146,21 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 // structure tree, every annotation on a cropped page (`CutPage` deletes `/Annots`), and the
 // catalog's outline and names with the merge. None of that was what a crop is for.
 func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
-	if frac[2] <= 0 || frac[3] <= 0 {
+	// Written as what must hold, never as what must not: every comparison with NaN is false, so a
+	// refusal spelled `frac[2] <= 0` lets a NaN through.
+	if !(frac[2] > 0 && frac[3] > 0) {
 		return nil, fmt.Errorf("crop region too small")
 	}
+	// **The window must lie on the page.** Since the crop moves the page's boxes, a window larger than
+	// what the page displays would REPLACE a smaller CropBox with a larger one — un-hiding content an
+	// earlier crop clipped, which is a crop doing the opposite of cropping. The client clamps the drawn
+	// box to the page, so anything past float noise here is a request nib's own UI never sends.
+	const noise = 1e-9
+	if !(frac[0] >= -noise && frac[1] >= -noise && frac[0]+frac[2] <= 1+noise && frac[1]+frac[3] <= 1+noise) {
+		return nil, fmt.Errorf("crop region extends past the page")
+	}
+	frac[0], frac[1] = math.Max(frac[0], 0), math.Max(frac[1], 0)
+	frac[2], frac[3] = math.Min(frac[2], 1-frac[0]), math.Min(frac[3], 1-frac[1])
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.CROP
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {

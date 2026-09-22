@@ -237,7 +237,13 @@ func RenderReadme() ([]byte, error) {
 	// be in whatever language that document says. A `/Span` carrying `/Lang` lives in the page
 	// content, which is what `Append` carries across; a structure element's `/Lang` would not
 	// survive, for the same reason a title here does not.
-	if withLang, n, lerr := pdfops.DeclareAuthoredProseLang(pdf); lerr == nil && n > 0 {
+	// A failed declaration is returned, not passed over: tagging comes next, and a tagged page can
+	// never be declared afterwards (`TagAuthoredPages`), so the page would ship with no language.
+	withLang, n, lerr := pdfops.DeclareAuthoredProseLang(pdf)
+	if lerr != nil {
+		return nil, lerr
+	}
+	if n > 0 {
 		pdf = withLang
 	}
 

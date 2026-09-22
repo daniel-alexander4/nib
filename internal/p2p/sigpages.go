@@ -193,7 +193,13 @@ func renderPage(text []any, roles []mdpdf.Role) ([]byte, error) {
 	// The same content-language declaration the readme carries, for the same reason: these pages
 	// are nib's own English words and `Append` will put them inside a document whose catalog may
 	// say otherwise (P06.S04).
-	if withLang, n, lerr := pdfops.DeclareAuthoredProseLang(pdf); lerr == nil && n > 0 {
+	// A failed declaration is returned, not passed over: tagging comes next, and a tagged page can
+	// never be declared afterwards (`TagAuthoredPages`), so the page would ship with no language.
+	withLang, n, lerr := pdfops.DeclareAuthoredProseLang(pdf)
+	if lerr != nil {
+		return nil, lerr
+	}
+	if n > 0 {
 		pdf = withLang
 	}
 

@@ -233,8 +233,14 @@ func (s *Server) handleAttestations(w http.ResponseWriter, r *http.Request) {
 	// which re-verifies every signature over the whole file: size × signers. This is one read of
 	// the file, independent of signature count, and the route is opened by a user clicking the
 	// signature-details button — not a per-frame path. Measured at ~0.5 ms on a 3 KB document.
-	proc := ceremony.ProceedingOf(s.docBytes(doc), time.Now())
-	atts := p2p.Attestations(doc.sig, proc)
+	// The bytes and their signature status are read under ONE hold of s.mu: `doc.sig` is written under
+	// it at every commit, so reading it bare raced the writer, and reading the two under separate holds
+	// could pair one version's bytes with another's signatures.
+	s.mu.Lock()
+	data, sig := doc.data, doc.sig
+	s.mu.Unlock()
+	proc := ceremony.ProceedingOf(data, time.Now())
+	atts := p2p.Attestations(sig, proc)
 	views := make([]attestationView, 0, len(atts))
 	for _, a := range atts {
 		view := attestationView{SignerAttestation: a}

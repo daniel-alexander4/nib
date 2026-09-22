@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -282,5 +283,32 @@ func TestACropKeepsEveryAnnotationSubtype(t *testing.T) {
 	}
 	if after := pageAnnotRects(t, out); strings.Join(after[0], " ") != strings.Join(before[0], " ") {
 		t.Errorf("page 1's annotations were %v and are %v after a crop", before[0], after[0])
+	}
+}
+
+// TestACropWindowMustLieOnThePage — a crop REPLACES the page's boxes with the window, so a window
+// reaching past what the page displays would widen a CropBox an earlier crop narrowed and bring back the
+// content it hid. Each edge is driven separately: a check on one side says nothing about the other three.
+func TestACropWindowMustLieOnThePage(t *testing.T) {
+	src := subsetFixture()
+	if _, err := Crop(src, [4]float64{0.1, 0.1, 0.8, 0.8}, []string{"1"}); err != nil {
+		t.Fatalf("setup: a window inside the page was refused (%v), so a refusal below proves nothing", err)
+	}
+	// Float noise at the edge is what a clamped drag produces, and it is accepted.
+	if _, err := Crop(src, [4]float64{0.2, 0.2, 0.8 + 1e-12, 0.8 + 1e-12}, []string{"1"}); err != nil {
+		t.Errorf("a window ending at the page edge within float noise was refused: %v", err)
+	}
+	for name, frac := range map[string][4]float64{
+		"left":   {-0.1, 0, 0.5, 0.5},
+		"top":    {0, -0.1, 0.5, 0.5},
+		"right":  {0.6, 0, 0.5, 0.5},
+		"bottom": {0, 0.6, 0.5, 0.5},
+		// NaN compares false with everything, so a refusal spelled as "x < 0" lets it straight through.
+		"NaN x":     {math.NaN(), 0, 0.5, 0.5},
+		"NaN width": {0, 0, math.NaN(), 0.5},
+	} {
+		if _, err := Crop(src, frac, []string{"1"}); err == nil {
+			t.Errorf("a window past the page's %s edge (%v) was accepted", name, frac)
+		}
 	}
 }

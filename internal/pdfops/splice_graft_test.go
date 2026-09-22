@@ -254,22 +254,49 @@ func readLangOf(t *testing.T, pdf []byte) string {
 	return readLang(ctx.XRefTable, cat["Lang"])
 }
 
-// TestAnIncompleteInsertFallsBackToTheHonestLoss — `splice`'s output gate. An inserted document whose
-// `/ParentTree` holds a row nothing claims grafts without complaint and fails completeness; the result
-// must not ship that.
+// TestAnIncompleteInsertFallsBackToTheHonestLoss — `splice`'s output gate. An inserted document two of
+// whose pages claim the same `/ParentTree` key (completeness condition 5) grafts without complaint and
+// fails the gate; the result must not ship that tree, and the loss must be the INSERT's tags only. The
+// fallback once went straight to the non-carrying shape, so a defect in the inserted document wiped the
+// original's whole tree.
 func TestAnIncompleteInsertFallsBackToTheHonestLoss(t *testing.T) {
 	objs := subsetFixtureObjects()
-	objs[9] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 10 0 R >>"
+	objs[5] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 6 0 R /StructParents 0 >>"
 	mid := assembleFixture(objs)
-	if _, defects, _, _ := carryOf(t, mid); len(defects) == 0 {
-		t.Fatal("setup: the inserted document is complete, so the gate would have nothing to refuse")
+	host := taggedFixture()
+	_, _, _, hostElems := carryOf(t, host)
+	if hostElems == 0 {
+		t.Fatal("setup: the host has no elements, so losing its tree would be invisible")
 	}
-	out, err := InsertPDF(taggedFixture(), mid, 1, false)
+	// The stimulus, asserted: the grafting attempt really is refused by the gate. Without this the test
+	// passes on an insert that grafts cleanly and never reaches the fallback — which it once did.
+	grafted, _, carried, err := spliceOnce(host, 1, 2, 1, mid, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, defects, _, _ := carryOf(t, out); len(defects) != 0 {
+	if !carried || carryIsComplete(grafted) {
+		t.Fatal("setup: the grafting attempt passes the gate, so the fallback is never exercised")
+	}
+
+	out, err := InsertPDF(host, mid, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, defects, _, elems := carryOf(t, out)
+	if len(defects) != 0 {
 		t.Errorf("the insert shipped an incomplete tree: %v", defects)
+	}
+	if elems != hostElems {
+		t.Errorf("%d elements after the fallback, want the host's own %d kept", elems, hostElems)
+	}
+	claims := pageClaims(t, out)
+	if claims[0] < 0 {
+		t.Error("the host's own page lost its claim; the fallback strips the INSERT, not the host")
+	}
+	for p := 1; p < len(claims); p++ {
+		if claims[p] >= 0 {
+			t.Errorf("inserted page %d keeps /StructParents %d; its tree was refused, so its claims must go", p+1, claims[p])
+		}
 	}
 }
 

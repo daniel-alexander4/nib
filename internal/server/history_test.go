@@ -379,6 +379,9 @@ func TestDocumentReadRoutesRaceMutation(t *testing.T) {
 		{"attachments", http.MethodGet, "/api/attachments"},
 		{"form-data", http.MethodGet, "/api/form-data"},
 		{"optimize", http.MethodPost, "/api/optimize"},
+		// /api/attestations read `doc.sig` with no lock held — found by the P02 phase-close review,
+		// v1.138.15 — so it read the field every commit writes (`undo.go`'s `doc.sig = sig`).
+		{"attestations", http.MethodGet, "/api/attestations"},
 	}
 
 	ts, srv := startServerWith(t)

@@ -853,11 +853,22 @@ func TestTheNonCarryingDoorIsWhereEveryCOMPOSITIONRoutes(t *testing.T) {
 	// original with the inserted document in one context, grafting onto the original, and sets the page
 	// order there with the carrying selection — so no carried subset is ever fed to a merge. Its route is
 	// that, and its fallback is the non-carrying shape, which is graded as a composition below.
-	if c := calls["splice"]; c == nil || !c["mergeOnce"] || !c["selectPages"] || !c["carryIsComplete"] ||
+	// Read through `spliceOnce`, which holds one attempt since the phase-close fix (a refused graft is
+	// retried with the insert stripped): the route is the union of the two, and neither may cut or glue.
+	c := map[string]bool{}
+	for _, fn := range []string{"splice", "spliceOnce"} {
+		if calls[fn] == nil {
+			t.Fatalf("%s is gone, so the route this guard reads does not exist", fn)
+		}
+		for k, v := range calls[fn] {
+			c[k] = c[k] || v
+		}
+	}
+	if !calls["splice"]["spliceOnce"] || !c["mergeOnce"] || !c["selectPages"] || !c["carryIsComplete"] ||
 		!c["spliceWithoutStructure"] || c["Collect"] || c["Append"] {
 		t.Errorf("splice's route changed: it must merge once (mergeOnce), select in that context "+
 			"(selectPages), gate the output (carryIsComplete) and fall back to spliceWithoutStructure — "+
-			"never cut the original with Collect or glue segments with Append. Calls: %v", calls["splice"])
+			"never cut the original with Collect or glue segments with Append. Calls: %v", c)
 	}
 	for _, fn := range []string{"spliceWithoutStructure", "normalizePage", "SplitRegions", "SplitPage"} {
 		if calls[fn] == nil {

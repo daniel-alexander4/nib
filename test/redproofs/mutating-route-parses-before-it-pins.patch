@@ -1,14 +1,13 @@
 diff --git a/internal/server/pages.go b/internal/server/pages.go
-index 8b0488e..dc344f8 100644
 --- a/internal/server/pages.go
 +++ b/internal/server/pages.go
-@@ -39,17 +39,6 @@ func carryAttachments(src, dst []byte, err error) ([]byte, error) {
- }
- 
+@@ -39,17 +39,7 @@
+ // The client posts its saved bytes (edits already baked) since these ops
+ // restructure the PDF in ways pdf.js cannot do client-side.
  func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 -	// **Refuse a request addressed to a document this server no longer holds BEFORE reading the
 -	// body.** Without this the handler parses up to maxPDFBytes and runs the whole PDF operation
--	// before the resolve at the commit discovers the document is gone — real work, on a 128 MiB
+-	// before the resolve at the commit discovers the document is gone — real work, on a 200 MiB
 -	// document, for a request that was never going to land (/pending 261).
 -	//
 -	// It is ADVISORY and the resolve at the commit stays authoritative: the document can be
@@ -17,6 +16,7 @@ index 8b0488e..dc344f8 100644
 -	if _, ok := s.resolveDoc(w, r); !ok {
 -		return
 -	}
++
  	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
  	if !ok {
  		return

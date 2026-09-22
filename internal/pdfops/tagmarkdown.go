@@ -144,8 +144,15 @@ var errAuthoredAlreadyTagged = errors.New("pdfops: TagAuthoredPages tags pages n
 
 // tagFromRoles brackets every page's text runs by the roles given and claims the tree at the exact tier:
 // the one tail `tagMarkdown` and `TagAuthoredPages` share (ADR-009).
+//
+// One role list per page, exactly: a list with no page is a line the caller composed that the document
+// does not hold, and a page with no list would be left undescribed under a tree that claims the
+// document — so a count mismatch is refused rather than tagging the pages the two happen to share.
 func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error) {
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
+		if len(pages) != ctx.PageCount {
+			return fmt.Errorf("pdfops: %s was given roles for %d pages of a %d-page document", door, len(pages), ctx.PageCount)
+		}
 		live := map[int]bool{}
 		for p := 1; p <= ctx.PageCount; p++ {
 			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
@@ -156,7 +163,7 @@ func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error)
 		if terr != nil {
 			return terr
 		}
-		for p := 1; p <= ctx.PageCount && p <= len(pages); p++ {
+		for p := 1; p <= ctx.PageCount; p++ {
 			if err := tagOnePage(ctx, tree, p, pages[p-1]); err != nil {
 				return err
 			}
