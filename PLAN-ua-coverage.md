@@ -1098,13 +1098,25 @@ fails. Deep-dive did not fire.
 - T02 — `TestHeadingStructureAgreesWithVeraPDF` (eight measured trees, three clauses each); two oracle documents.
 - T03 — `corpusReach` t1 294, t2 7, t3 134; **7.4.2 t1 stays at 134** (the acceptance, measured); counts 52 → 55.
 
-#### P03.S06 — notes, the Form element, and the parent entry
+#### P03.S06 — notes, the Form element, and the parent entry *(done 2026-09-22, v1.144.0)*
 Scope: the residue — `7.9 t1` and `t2` (`Note` has an `ID`, and IDs are unique), `7.18.4 t2` (a `Form`
 omitting `Role` has exactly one object-reference child), `7.1 t12` (every element carries `/P`), `7.5 t2`
 (the sibling of the implemented `t1`). Refs: law 1.
 Acceptance:
 - `7.1 t12` and `7.18.4 t2` have no corpus file; both get a fixture and a recorded veraPDF verdict.
 - `7.9 t2`'s uniqueness is checked across the whole tree, not per subtree.
+- **(pin, 2026-09-22, S06 grill — measured) `7.1 t12` is NOT implemented, and that is the finding.** veraPDF 1.30.2
+  PASSES 7.1-12 on an element with no /P, with /P null, /P 5, a dangling /P and a /P naming a page — the installed
+  validator gives an element the parent it was reached from. So the clause's failed half cannot be reached by any
+  document for an element reached through the tree, and a rule nib registered could only ever pass: the trap this
+  phase's opening note names. The acceptance "gets a fixture and a recorded veraPDF verdict" is met — five fixtures,
+  five recorded passes — and the rule stays unregistered, declared. Revisit on a veraPDF upgrade.
+- **(grill, 2026-09-22)** 7.9 and 7.18.4 t2 ported from veraPDF's source (`GFSENote`, `GFSEForm`, veraPDF-parser
+  `TaggedPDFHelper.getChildren`) and measured on twelve fixtures: an empty Note ID is no ID and still collides;
+  the ID set is the document's; a Form's children are every /K entry, MCIDs included; a Role attribute excuses it.
+  (pdfcpu's reader rewrites an annotation carrying field keys to /Widget, so the "not a widget" fixture is a Text note.)
+  T01 `rules_notesform.go` (+ `attributeOfType`, the owner-general attribute door); T02 the measured tests and four
+  oracle documents; T03 `corpusReach` 7.9 t1/t2 9, 7.18.4 t2 18; counts 55 → 58.
 - **(pin, 2026-09-22, P03.S04)** `7.5 t2` landed in S04, not here: it is the other half of the same veraPDF
   computation as 7.5 t1 (`hasConnectedHeader` with `unknownHeaders` set), so it shares the layout rather than
   re-deriving it. S06 keeps `7.9 t1`/`t2`, `7.18.4 t2` and `7.1 t12`.
