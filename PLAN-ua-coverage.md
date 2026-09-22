@@ -719,7 +719,7 @@ after S07. **Follow-up, not this slice:** a positional partition (each tile keep
 artifacts the rest) — rects and the artifact edit exist, as in S05's follow-up; the unbuilt part is rewriting
 each tile's content.
 
-#### P02.S07 — merges graft the second tree *(in progress — S07a done 2026-09-21, v1.138.12; S07b next)*
+#### P02.S07 — merges graft the second tree *(done 2026-09-21, v1.138.13 — S07a v1.138.12, S07b v1.138.13)*
 Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root
 `/K` and RoleMaps; ~~`InsertPDF` inherits it with S04~~ **— it does not: S04b routes `splice` through the non-carrying door and defers `InsertPDF` here in full** (struck 2026-09-16). Refs: D5, ADR-031.
 
@@ -774,6 +774,21 @@ S07a tasks:
 - T05 — *(added at the build)* the bogus-key detector's stimulus rebuilt by hand, since the merge no longer
   makes one; a root `/K` holding one DIRECT element is read (the slice's code review); `/pending 559`
   amended — the union it asks for now has a place to stand at the graft's hook.
+
+S07b tasks *(done 2026-09-21, v1.138.13)*:
+- T01 — `splice` merges the WHOLE original with the inserted document in one `mergeOnce` (a `finish` hook), then
+  sets the page order there with the carrying `selectPages`; the original is the host at every insertion point.
+  Its old shape is `spliceWithoutStructure`, the fallback when the output gate refuses.
+- T02 — `placeInserted`: the grafted elements move from the root's end to before the first host element that
+  starts after the insertion page, at the first level holding more than one element (descending through any
+  single-element wrapper, stopping at content). `firstPage` locates an element by its lowest MCID/MCR/OBJR page.
+- T03 — census: `InsertPDF` `dropped` → `partial`; the veraPDF deltas for `InsertPDF`, `SplitPage` and
+  `SplitRegions` shrink to what each genuinely does (7.1 t3 for untagged inserted pages or tiles, plus
+  7.4.2 t1 where the drive removes the page carrying the only /H1); the routing guard reclassifies `splice`.
+- T04 — readers: placement in reading order (with a link-first, an unlocated-element and a `/Part`-wrapped
+  variant), before page 1 (the host stays the original), before the last page, a split keeping the rest of the
+  document's tree, never inside an element's content, and `firstPage`'s two rules pinned directly.
+- T05 — README's accessibility passage: combining and splitting keep tags; only redaction still loses them.
 
 #### P02.S09 — nib's own pages are tagged *(added 2026-09-21, via /discuss, amended by /grill; after S07)*
 Scope: the trust-explainer readme (`p2p/readme.go:306`, through `PrepareDocument` — so **every co-signed

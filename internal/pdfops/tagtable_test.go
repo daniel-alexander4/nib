@@ -200,7 +200,9 @@ var tagFates = map[string]tagFate{
 	// than inherit the carry — see that door's header for what a merge does to a carried tree.
 	"SplitPage":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitPage(b, 1, 2, 1, false) }},
 	"SplitRegions": {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return SplitRegions(b, 1, [][4]float64{{0, 0, 100, 100}}) }},
-	"InsertPDF":    {verdict: "dropped", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
+	// `InsertPDF` left this group at P02.S07b: the ORIGINAL is the host of one merge now, so its tree is
+	// kept and the inserted untagged page is undescribed under its claim — `Append`'s `partial`, below.
+	"InsertPDF": {verdict: "partial", drive: func(b []byte) ([]byte, error) { return InsertPDF(b, untaggedFixture(), 1, true) }},
 	// **Its destination is a subset of the census document, not the untagged fixture** (P02.S04b).
 	// The old drive measured what an untagged destination looks like — the destination's own loss,
 	// not the operation's — and the server's delete and reorder routes do exactly this: a subset,

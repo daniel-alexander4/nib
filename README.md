@@ -613,12 +613,18 @@ goes with those pages.
 pages: a crop only moves the edge of the page, so everything it hides is still in the file and the
 tags go on describing it — use **Redact** when the hidden part must go.
 
-**The operations that rebuild or combine pages still lose them**, and they remove the *claim* along
-with the structure rather than leaving the file looking accessible: splitting one page into tiles,
-and inserting another PDF into this one — and redaction, which destroys page content by design, so
-no structure describing it could still be true. A screen reader told a document
-is tagged stops reaching for the fallbacks it would otherwise use, so a false claim is worse than a
-visible loss.
+**Combining documents keeps them** where they can be kept. The tags of the first document — or of the
+document you are inserting into — carry through, and a tagged document added to it brings its own
+tags along, read where its pages are. An untagged document added to a tagged one leaves its own pages
+without tags, and Nib does not start claiming a document is tagged just because a tagged page was
+added to an untagged one. **Splitting one page into tiles** keeps the rest of the document's tags; the
+tiles themselves have none, because each tile holds the whole page's content and tagging each one
+would make a screen reader read that page once per tile.
+
+**Redaction still loses them**, and removes the *claim* along with the structure rather than leaving
+the file looking accessible: it destroys page content by design, so no structure describing it could
+still be true. A screen reader told a document is tagged stops reaching for the fallbacks it would
+otherwise use, so a false claim is worse than a visible loss.
 
 Two honest limits on what a carried structure can promise. A description written about a section that
 spanned pages you removed still describes that whole section, because there is no way to trim such a

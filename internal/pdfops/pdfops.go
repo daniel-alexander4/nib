@@ -260,9 +260,10 @@ func collectPick(order []string) func(int) ([]int, error) {
 // **Redaction** (`PLAN-ua-coverage.md` P02.S03) — the tree describes content the raster destroyed.
 // That is the sections below.
 //
-// **A subset whose result is then COMPOSED** — `splice` (behind `InsertPDF`, and behind
-// `replacePage` and so `SplitPage`/`SplitRegions`), `normalizePage`, `SplitRegions`' own page
-// selection and `SplitPage`'s tile selection. Measured, and it is not a deferral of D5:
+// **A subset whose result is then COMPOSED** — `spliceWithoutStructure` (`splice`'s fallback; `splice`
+// itself stopped cutting the original at P02.S07b and merges it whole, ADR-048), `normalizePage`,
+// `SplitRegions`' own page selection and `SplitPage`'s tile selection. Measured, and it is not a
+// deferral of D5:
 //
 //   - `api.MergeRaw` keeps only the FIRST document's catalog and `/ParentTree`, so a tagged document
 //     merged in after a carrying subset keeps its own `/StructParents` values pointing into the first
@@ -496,8 +497,8 @@ func InsertBlank(pdf []byte, page int, before bool) ([]byte, error) {
 
 // InsertPDF inserts the pages of other immediately before or after page (1-based) of pdf.
 // Before page 1 prepends; after the last page is Append with this document's language
-// carried (splice omits an empty right side). There is no native pdfcpu positional merge,
-// so it composes via splice (Collect + merge), the same split-and-glue replacePage uses.
+// carried. There is no native pdfcpu positional merge, so it goes through splice, which merges pdf
+// with other in one context and sets the page order there — the same door replacePage uses.
 func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
 	n, err := PageCount(pdf)
 	if err != nil {
@@ -917,11 +918,55 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 
 // splice returns pdf with pages 1..leftEnd kept, then mid, then pages
 // rightStart..n. A side whose range is empty (leftEnd < 1, or rightStart > n) is
-// omitted, since api.Collect errors on an empty range. With rightStart =
-// leftEnd+2 it drops the single page between the sides (replace it with mid);
-// with rightStart = leftEnd+1 it keeps every original page (a pure insert of mid
-// at that boundary).
+// omitted. With rightStart = leftEnd+2 it drops the single page between the sides
+// (replace it with mid); with rightStart = leftEnd+1 it keeps every original page
+// (a pure insert of mid at that boundary).
+//
+// # The ORIGINAL is the host, at every insertion point (`PLAN-ua-coverage.md` P02.S07b, ADR-048)
+//
+// It used to cut pdf into a left and a right segment and glue `left + mid + right` with `Append`, so the
+// catalog — and with it the structure tree, the language and every other document-level fact — belonged
+// to whichever segment came FIRST: inserting before page 1 made the INSERTED document the host. Now pdf
+// is the host of ONE merge with mid, in one context, and the page order is set afterwards by the
+// carrying page selection; mid's tree is grafted when pdf has one and stripped when it has not, and the
+// grafted elements are placed at the insertion point in the reading order rather than at the root's end.
+// The tree is never cut in two, so an element spanning the insertion point is kept whole.
+//
+// A result whose tree the output gate refuses falls back to the old non-carrying shape: the honest loss.
 func splice(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
+	carried := false
+	out, _, err := mergeOnce([][]byte{pdf, mid}, true, func(ctx *model.Context, host *hostTree) error {
+		if host != nil && len(host.grafted) > 0 {
+			placeInserted(ctx, host, leftEnd, n)
+		}
+		keep := make([]int, 0, ctx.PageCount)
+		for p := 1; p <= leftEnd; p++ {
+			keep = append(keep, p)
+		}
+		for p := n + 1; p <= ctx.PageCount; p++ {
+			keep = append(keep, p)
+		}
+		for p := rightStart; p <= n; p++ {
+			keep = append(keep, p)
+		}
+		c, err := selectPages(ctx, keep, true)
+		carried = c
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Gated only when a tree was carried: `carryIsComplete` answers false for an untagged document, and
+	// the selection already says which this is without a second parse.
+	if carried && !carryIsComplete(out) {
+		return spliceWithoutStructure(pdf, leftEnd, rightStart, n, mid)
+	}
+	return out, nil
+}
+
+// spliceWithoutStructure is splice's fallback, and its shape before P02.S07b: both sides of the original
+// cut through the non-carrying door and glued with `Append`, so no tree survives to be wrong.
+func spliceWithoutStructure(pdf []byte, leftEnd, rightStart, n int, mid []byte) ([]byte, error) {
 	// **`collectWithoutStructure`, because what follows is a MERGE.** `Append` below takes the first
 	// segment's catalog whole, so a carried tree would describe the left side while the inserted
 	// document's pages kept `/StructParents` values resolving into it — measured as a page asserting

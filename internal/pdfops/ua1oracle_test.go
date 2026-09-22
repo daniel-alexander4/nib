@@ -123,12 +123,14 @@ var knownUA1Deltas = map[string]struct {
 		"only /H1 — so the remaining document genuinely starts at /H2 and genuinely mis-nests. " +
 		"The tree is carried; the heading it needed went with the page the caller asked to delete"},
 
-	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`: the splits are
-	// P02.S06 and the merge graft P02.S07. **`Crop` had a `pageSetLoss` row until P02.S05** and adds
-	// nothing now — it moves each page's `/MediaBox` in place instead of rebuilding the page.
-	"SplitPage":    {pageSetLoss, "rebuilt page by page — P02.S06"},
-	"SplitRegions": {pageSetLoss, "rebuilt page by page — P02.S06"},
-	"InsertPDF":    {append(append([]string{}, pageSetLoss...), "7.21.4.1 t1"), "spliced through the NON-carrying door, with an untagged Base-14 document inserted — P02.S07"},
+	// ── **The splits and `InsertPDF` lost `pageSetLoss` at P02.S07b**: `splice` makes the ORIGINAL the
+	// host of one merge and keeps its tree. What is left is what each operation genuinely does. (`Crop`
+	// had a `pageSetLoss` row until P02.S05 and adds nothing now.)
+	"SplitPage": {[]string{"7.1 t3", "7.4.2 t1"}, "the tiles carry no subtree (P02.S06: a clone would read " +
+		"the page N times), so their content is untagged; and the drive splits page 1, whose element carried " +
+		"the document's only /H1 — RemovePages' reason, one operation over"},
+	"SplitRegions": {[]string{"7.1 t3", "7.4.2 t1"}, "as SplitPage"},
+	"InsertPDF":    {[]string{"7.1 t3", "7.21.4.1 t1"}, "the inserted document is untagged and Base-14: Append's row, now that the original is the host"},
 	// **`NUp` had a `7.20 t2` row until P02.S02 and no longer does.** The clause was veraPDF's
 	// `isUniqueSemanticParent` — *"Form XObject contains MCIDs and is referenced more than once"* —
 	// and the cause was nib's own carry anchoring a form that pdfcpu's optimize pass had fused
