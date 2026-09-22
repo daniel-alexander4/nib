@@ -57,24 +57,31 @@ type hostTree struct {
 	pt      types.Dict
 	nextKey int
 	lang    string
+	// grafted is every top-level element a graft appended, in order — what `splice` moves to the
+	// insertion point, since a graft appends at the root's end.
+	grafted types.Array
 }
 
 // mergeDocs concatenates pdfs in order, grafting each later document's structure tree onto the first
 // one's where it can. An incomplete graft — judged on the bytes written, as every carry is — falls back
 // to the strip-only merge, which is the honest loss.
 func mergeDocs(pdfs [][]byte) ([]byte, error) {
-	out, grafted, err := mergeOnce(pdfs, true)
+	out, grafted, err := mergeOnce(pdfs, true, nil)
 	if err != nil {
 		return nil, err
 	}
 	if !grafted || carryIsComplete(out) {
 		return out, nil
 	}
-	out, _, err = mergeOnce(pdfs, false)
+	out, _, err = mergeOnce(pdfs, false, nil)
 	return out, err
 }
 
-func mergeOnce(pdfs [][]byte, graft bool) (out []byte, grafted bool, err error) {
+// mergeOnce merges pdfs into the first, grafting where it may (graft) and then, when finish is not
+// nil, handing the merged context to finish before the write — `splice`'s page selection, which has to
+// happen in the same context the graft wrote into. host is nil when the first document had no tree a
+// graft could extend.
+func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *hostTree) error) (out []byte, grafted bool, err error) {
 	defer fault.Catch(&err)
 	if len(pdfs) < 2 {
 		return nil, false, fmt.Errorf("pdfops: a merge needs at least two documents")
@@ -123,6 +130,11 @@ func mergeOnce(pdfs [][]byte, graft bool) (out []byte, grafted bool, err error) 
 				return nil, false, err
 			}
 			grafted = true
+		}
+	}
+	if finish != nil {
+		if err := finish(dest, host); err != nil {
+			return nil, false, err
 		}
 	}
 	// ADR-032: the first document's catalog carries its PDF/UA identification onto content it never
@@ -258,6 +270,7 @@ func attachGraft(ctx *model.Context, host *hostTree, gs *graftSource) error {
 	xt := ctx.XRefTable
 	kids, hostKids := rootKids(xt, gs.root), rootKids(xt, host.root)
 	merged := append(append(types.Array{}, hostKids...), kids...)
+	host.grafted = append(host.grafted, kids...)
 	for _, k := range kids {
 		elem := derefDict(xt, k)
 		if elem == nil {
@@ -319,4 +332,118 @@ func rootKids(xt *model.XRefTable, root types.Dict) types.Array {
 		return arr
 	}
 	return types.Array{k}
+}
+
+// placeInserted moves the elements a graft appended at the root's end to the insertion point: before
+// the first host element whose content starts on a page after insertAfter. Pages are numbered as the
+// merged context holds them before the page order is set — the host's 1..hostPages, then the inserted
+// document's — and an element nothing locates is passed over rather than guessed at.
+//
+// It works at the level where the document's order lives: the first level, descending from the root,
+// that holds more than one element. An element spanning the insertion point starts before it, so it stays ahead
+// of the inserted content and whole.
+func placeInserted(ctx *model.Context, host *hostTree, insertAfter, hostPages int) {
+	xt := ctx.XRefTable
+	pageNr := map[int]int{}
+	for p := 1; p <= hostPages; p++ {
+		if ir, err := ctx.PageDictIndRef(p); err == nil && ir != nil {
+			pageNr[ir.ObjectNumber.Value()] = p
+		}
+	}
+	all := rootKids(xt, host.root)
+	own := all[:len(all)-len(host.grafted)] // the host's kids are the ones there before the graft appended
+	// Descend while the level holds ONE element whose kids are elements: the order lives where siblings
+	// first appear, whatever the wrapper is called — `/Document`, `/Part`, `/Sect`.
+	parentRef, docLevel := host.rootRef, types.Dict(nil)
+	for depth := 0; len(own) == 1 && depth < 16; depth++ {
+		ref, isRef := own[0].(types.IndirectRef)
+		d := derefDict(xt, own[0])
+		kids := rootKids(xt, d)
+		if !isRef || d == nil || len(kids) == 0 || !allElements(xt, kids) {
+			break
+		}
+		parentRef, docLevel, own = ref, d, kids
+	}
+	at := len(own)
+	for i, k := range own {
+		if f := firstPage(xt, k, 0, pageNr, 0, map[int]bool{}); f != noPage && f > insertAfter {
+			at = i
+			break
+		}
+	}
+	ordered := append(append(append(types.Array{}, own[:at]...), host.grafted...), own[at:]...)
+	for _, g := range host.grafted {
+		if e := derefDict(xt, g); e != nil {
+			e["P"] = parentRef
+		}
+	}
+	if docLevel == nil {
+		host.root["K"] = ordered
+		return
+	}
+	docLevel["K"] = ordered
+	// The graft appended at the root; the level it was moved into is under the root's sole element.
+	host.root["K"] = all[:len(all)-len(host.grafted)]
+}
+
+// allElements reports whether every kid is a structure element — not an MCID, a marked-content
+// reference or an annotation reference, which are content and end the descent.
+func allElements(xt *model.XRefTable, kids types.Array) bool {
+	for _, k := range kids {
+		d := derefDict(xt, k)
+		if d == nil {
+			return false
+		}
+		if t, _ := d["Type"].(types.Name); t == "MCR" || t == "OBJR" {
+			return false
+		}
+	}
+	return true
+}
+
+// noPage is firstPage's answer for an element nothing locates: it is passed over when choosing where
+// the inserted content goes, never read as "after the insertion point".
+const noPage = 1 << 30
+
+// firstPage is the lowest host page number any marked content under o sits on, or noPage. inheritPg is
+// the object number of the nearest `/Pg` above o.
+func firstPage(xt *model.XRefTable, o types.Object, inheritPg int, pageNr map[int]int, depth int, seen map[int]bool) int {
+	const none = noPage
+	if depth > 64 {
+		return none
+	}
+	if ref, ok := o.(types.IndirectRef); ok {
+		if seen[ref.ObjectNumber.Value()] {
+			return none
+		}
+		seen[ref.ObjectNumber.Value()] = true
+	}
+	if _, mcid := o.(types.Integer); mcid { // an MCID, on the inherited page
+		if p, ok := pageNr[inheritPg]; ok {
+			return p
+		}
+		return none
+	}
+	d := derefDict(xt, o)
+	if d == nil {
+		best := none
+		for _, k := range derefArray(xt, o) {
+			if p := firstPage(xt, k, inheritPg, pageNr, depth+1, seen); p < best {
+				best = p
+			}
+		}
+		return best
+	}
+	if pg, ok := d["Pg"].(types.IndirectRef); ok {
+		inheritPg = pg.ObjectNumber.Value()
+	}
+	// A marked-content reference and an annotation reference are both located by their `/Pg`: a link
+	// is read where it sits.
+	if t, _ := d["Type"].(types.Name); t == "MCR" || t == "OBJR" {
+		if p, ok := pageNr[inheritPg]; ok {
+			return p
+		}
+		return none
+	}
+	return firstPage(xt, d["K"], inheritPg, pageNr, depth+1, seen)
 }

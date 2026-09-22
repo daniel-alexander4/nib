@@ -820,7 +820,7 @@ func TestTheNonCarryingDoorIsWhereEveryCOMPOSITIONRoutes(t *testing.T) {
 	//     there rather than shipped. Measured: `carried` on the census document, `dropped` on a
 	//     fixture whose annotations `api.NUp` drops.
 	composition := map[string]bool{
-		"splice": true, "normalizePage": true, "SplitRegions": true, "SplitPage": true,
+		"spliceWithoutStructure": true, "normalizePage": true, "SplitRegions": true, "SplitPage": true,
 	}
 	subsetOnly := map[string]bool{
 		"SplitByBookmarks": true, "SplitBySpans": true, "DuplicatePage": true,
@@ -849,7 +849,17 @@ func TestTheNonCarryingDoorIsWhereEveryCOMPOSITIONRoutes(t *testing.T) {
 			"or behind another gate — and a caller with no disposition is a carry nobody decided",
 			undispositioned)
 	}
-	for _, fn := range []string{"splice", "normalizePage", "SplitRegions", "SplitPage"} {
+	// **`splice` is not a composition of subsets any more** (P02.S07b, ADR-048): it merges the WHOLE
+	// original with the inserted document in one context, grafting onto the original, and sets the page
+	// order there with the carrying selection — so no carried subset is ever fed to a merge. Its route is
+	// that, and its fallback is the non-carrying shape, which is graded as a composition below.
+	if c := calls["splice"]; c == nil || !c["mergeOnce"] || !c["selectPages"] || !c["carryIsComplete"] ||
+		!c["spliceWithoutStructure"] || c["Collect"] || c["Append"] {
+		t.Errorf("splice's route changed: it must merge once (mergeOnce), select in that context "+
+			"(selectPages), gate the output (carryIsComplete) and fall back to spliceWithoutStructure — "+
+			"never cut the original with Collect or glue segments with Append. Calls: %v", calls["splice"])
+	}
+	for _, fn := range []string{"spliceWithoutStructure", "normalizePage", "SplitRegions", "SplitPage"} {
 		if calls[fn] == nil {
 			t.Errorf("%s is not declared in pdfops.go, so its route is unchecked", fn)
 			continue
@@ -858,8 +868,7 @@ func TestTheNonCarryingDoorIsWhereEveryCOMPOSITIONRoutes(t *testing.T) {
 			t.Errorf("%s calls Collect, which carries the source structure tree since P02.S04b. "+
 				"api.MergeRaw keeps only the FIRST document's catalog and /ParentTree, and CutPage "+
 				"leaves /StructParents on tiles whose tree it destroyed — so a carry reaching here "+
-				"makes a page assert another page's words. P02.S05/S06/S07 own that question and are "+
-				"blocked", fn)
+				"makes a page assert another page's words. P02.S06 owns the tiles' question", fn)
 		}
 		if !calls[fn]["collectWithoutStructure"] {
 			t.Errorf("%s routes through neither door; a subset it performs is ungraded", fn)
