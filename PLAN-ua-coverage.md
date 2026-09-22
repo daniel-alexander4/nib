@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119). P02 in flight: S01–S05 and S08 done; **S06/S07 unblocked 2026-09-21** (via /discuss, amended by /grill), S09 added; remaining build order S07 → S06 → S09. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119). P02 in flight: S01–S08 done; S09 (added 2026-09-21 via /discuss, amended by /grill) remains. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -705,7 +705,7 @@ Acceptance: a tagged multi-page document cropped comes out `carried` with no com
 element and every annotation kept; each of the four rotations maps the display window the user drew; the
 veraPDF differential adds nothing for `Crop`.
 
-#### P02.S06 — split pages *(unblocked 2026-09-21 — via /discuss: no tile subtree; after S07)*
+#### P02.S06 — split pages *(done 2026-09-21, v1.138.14 — code in S07b, decision ADR-049)*
 Scope: `SplitPage`, `SplitRegions`. Tiles are clones of the page dict carrying the whole content. Refs: D5.
 
 **(decision, 2026-09-21, via /discuss, amended by /grill)** **The tiles carry no subtree.** A per-tile clone makes
@@ -718,6 +718,11 @@ says so. **But the rest of the document keeps its tree.** Both operations reach 
 after S07. **Follow-up, not this slice:** a positional partition (each tile keeps the elements inside it and
 artifacts the rest) — rects and the artifact edit exist, as in S05's follow-up; the unbuilt part is rewriting
 each tile's content.
+
+**(close, 2026-09-21)** Nothing was left to build: S07b routed `SplitPage`/`SplitRegions` through the
+host-preserving `splice`, so the census rows moved (`knownUA1Deltas`: `pageSetLoss` → `7.1 t3`, `7.4.2 t1`) and
+`TestSplittingAPageKeepsTheRestOfTheDocumentsTree` reads both halves of this decision — the tiles carry no
+claim, every other page keeps its own. What S06 owed was the decision record: ADR-049.
 
 #### P02.S07 — merges graft the second tree *(done 2026-09-21, v1.138.13 — S07a v1.138.12, S07b v1.138.13)*
 Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root

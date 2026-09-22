@@ -468,3 +468,8 @@ home today.
   nib now owns the merge loop (the graft cannot sit behind `MergeRaw`, which frees the second catalog) and
   grafts a tagged later document onto a tagged host, keys offset; onto an untagged host its claims are
   stripped. Amends ADR-031's merge note; `partial` stands for tagged + untagged.
+- **[ADR-049 — a split tile carries no subtree, and the rest of the document keeps its tree](049-a-split-tile-carries-no-subtree.md)**
+  — P02.S06, the boundary of ADR-047. A tile holds its page's WHOLE content stream, so a subtree cloned onto
+  each tile makes the document read that page N times — a false account of structure, not a view mismatch.
+  The tiles carry nothing; since P02.S07b the original is `splice`'s host, so every other page keeps its
+  tags and the fate is `partial`. The positional partition that would tag each tile honestly is unbuilt.
