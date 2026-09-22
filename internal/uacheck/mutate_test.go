@@ -624,6 +624,17 @@ func withoutDCTitle(t *testing.T, pdf []byte) []byte {
 // A document-scoped reading of the clause fails the unused case, and nothing else in the corpus tells the
 // two readings apart.
 func withRoleMapCycle(t *testing.T, pdf []byte, used bool) []byte {
+	leaf := ""
+	if used {
+		leaf = "Loopy"
+	}
+	return withRoleMapOnLeaf(t, pdf, types.Dict{"Loopy": types.Name("Ringy"), "Ringy": types.Name("Loopy")}, leaf)
+}
+
+// withRoleMapOnLeaf installs roleMap on the structure root and, when leafType is not empty, retypes the
+// first element below the root's own child to it — the one shape every role-map oracle document shares
+// (7.1 t5, t6, t7). No product door writes a /RoleMap, so each is a mutation named for what it declares.
+func withRoleMapOnLeaf(t *testing.T, pdf []byte, roleMap types.Dict, leafType string) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
 		cat, cerr := ctx.XRefTable.Catalog()
 		if cerr != nil {
@@ -636,8 +647,8 @@ func withRoleMapCycle(t *testing.T, pdf []byte, used bool) []byte {
 		if _, has := root["RoleMap"]; has {
 			return fmt.Errorf("the fixture already carries a /RoleMap, so this mutation would be editing one rather than installing it")
 		}
-		root["RoleMap"] = types.Dict{"Loopy": types.Name("Ringy"), "Ringy": types.Name("Loopy")}
-		if !used {
+		root["RoleMap"] = roleMap
+		if leafType == "" {
 			return nil
 		}
 		// Retype the FIRST element below the root's direct children. The root's own child is the
@@ -664,7 +675,7 @@ func withRoleMapCycle(t *testing.T, pdf []byte, used bool) []byte {
 			}
 			if depth > 0 {
 				retyped = d
-				d["S"] = types.Name("Loopy")
+				d["S"] = types.Name(leafType)
 				return
 			}
 			walk(d["K"], depth+1)

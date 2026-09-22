@@ -273,16 +273,35 @@ func tableScope(ctx *model.Context, attrs types.Object) string {
 	return ""
 }
 
-// standardRole resolves a structure type through the document's role map.
+// standardRole resolves a structure type through the document's role map, the way ISO 32000-1 §14.7.3
+// Note 2 says a reader does: follow the chain until it reaches a type the reader RECOGNISES or returns to
+// one already seen (P03.S01).
+//
+// It stopped after ten hops, and at nothing it recognised, so `/Alpha → /P → /Zed` read as `/Zed` and a
+// chain of eleven names read as the eleventh — the same misreading `uacheck.standardType` had, and measured
+// against veraPDF there. The independence between this and the checker's walk guards against one side's
+// bugs and could not guard against a shared misreading of the spec, which is what this was.
+//
+// The START is followed, not recognised — a standard type the map sends elsewhere reads as where it is
+// sent, as veraPDF reads it. A loop answers the name as written: there is no type at the end of it, and the
+// Tags panel shows what the document says rather than a guess.
 func standardRole(tree *structTree, kind string) string {
-	for i := 0; i < 10; i++ {
-		next, ok := tree.roleMap[kind]
-		if !ok || next == kind {
+	seen := map[string]bool{kind: true}
+	at := kind
+	for {
+		next, ok := tree.roleMap[at]
+		if !ok || next == at {
+			return at
+		}
+		if seen[next] {
 			return kind
 		}
-		kind = next
+		if standardStructTypes[next] {
+			return next
+		}
+		seen[next] = true
+		at = next
 	}
-	return kind
 }
 
 // unionBox is the smallest box holding both.

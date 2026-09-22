@@ -948,7 +948,7 @@ confirms the figure this plan has carried since P01.
   297-file set — `veracorpus_test.go:187` fails a clause with no row), and prose at `uacheck.go:112`,
   `door.go:22`, `rules_catalog.go:334`.
 
-#### P03.S01 — role resolution is the spec's algorithm, and the checker owns the standard set
+#### P03.S01 — role resolution is the spec's algorithm, and the checker owns the standard set *(done 2026-09-22, v1.139.0)*
 Scope: `standardType` (`uacheck/structure.go:91`) implements the wrong algorithm, not merely a tight bound.
 It counts to ten hops and breaks only on a self-map, then **returns the intermediate name** — a silent false
 Pass under law 4, which three registered rules already consume (`rules_headings.go:40`,
@@ -980,6 +980,22 @@ neither of them may be built without:
 - **These clauses are element-scoped.** veraPDF's object is `PDStructElem` for `7.1-6` and `7.1-7` and
   `SENonStandard` for `7.1-5`, so the verdict is per element and a fact about the dictionary alone is not
   a failure.
+
+**(grill, 2026-09-22)** Measured on veraPDF 1.30.2 before a line was written — the whole corpus (297 files)
+plus eight `roleMapDoc` fixtures of nib's own — and it re-cut three premises:
+- **The typing walk and the cycle walk are two questions.** `/Alpha → /H1` with `/H1 → /H1` FAILS 7.1-6 on
+  `/Alpha` and types it `/H1`. `/pending 548` derived circularity from the typing walk; once the typing walk
+  stops at a recognised type it cannot, so each gets its own walk.
+- **Recognition stops a chain only after a mapping step.** `/TR → /TD` types as `/TD` (and fails 7.1-7);
+  `/Alpha → /P → /Zed` types as `/P`; `/TR → /Zed → /TR` is a cycle (the revisit is asked first).
+- **7.1 t5's subject is every untyped element and its failure is narrower**: only a non-standard `/S` that
+  dead-ends at another non-standard name. A cycle passes it; `/Document → /Book` passes it (7.1-t07-fail-a).
+Deep-dive did not fire: two rules through the registry pattern `/pending 548` used; no wire format or schema.
+- T01 — the checker's own §14.8.4 set (`standardtypes.go`, 49 types), pinned against the table.
+- T02 — `standardType` stops at the first standard type reached by mapping; `roleMapCircular` walks the raw map.
+- T03 — register `7.1 t5` and `7.1 t7`, element-scoped; oracle documents for both failed halves; `corpusReach`
+  rows (t5 **5**, t7 **294**); the count claims 20 → 22 at every site that states them.
+- T04 — `pdfops.standardRole` gets the same algorithm (the plan's note: it shared the misreading).
 
 #### P03.S02 — the containment matrix, one door
 Scope: a declarative table of (standard type → permitted parents, permitted kids) plus one generator that

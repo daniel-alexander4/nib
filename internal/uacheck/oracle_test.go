@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
 	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 )
@@ -134,6 +136,13 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// first and passes the second, which is the element-scoped reading measured rather than argued.
 		oracleDoc{"Markdown + title + lang, one element on a role-map loop", withRoleMapCycle(t, mdl, true)},
 		oracleDoc{"Markdown + title + lang, a role-map loop no element enters", withRoleMapCycle(t, mdl, false)},
+		// 7.1 t5 and t7's FAILED halves (P03.S01). Measured on veraPDF 1.30.2 before being pinned: a
+		// non-standard type whose chain dead-ends at another non-standard name fails t5 and nothing about
+		// the loop document does; a standard type the map sends to another STANDARD type still fails t7.
+		oracleDoc{"Markdown + title + lang, one element typed through a dead-end role map",
+			withRoleMapOnLeaf(t, mdl, types.Dict{"Unmapped": types.Name("Nowhere")}, "Unmapped")},
+		oracleDoc{"Markdown + title + lang, one element's standard type remapped",
+			withRoleMapOnLeaf(t, mdl, types.Dict{"Code": types.Name("Span")}, "Code")},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -311,7 +320,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 27
+	const wantGenerated = 29
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

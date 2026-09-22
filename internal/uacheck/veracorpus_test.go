@@ -45,9 +45,14 @@ var corpusAllow = map[string]string{}
 //
 // `7.1 t6` joins at 294 with `/pending 548`, and no other row moved: the walk gained a third result and
 // changed neither of the two the other rules read. Scored pairs 5,557 → 5,852.
+//
+// `7.1 t5` joins at **5** and `7.1 t7` at 294 with P03.S01, and no other row moved — though the typing walk
+// changed underneath every rule (it now stops at the first standard type it reaches by mapping). t5's
+// subject is an element nib cannot type as standard, and five corpus files hold one. Scored pairs are 6,442
+// with both registered.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
-	"7.1 t3": 292, "7.1 t6": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
+	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 27,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,

@@ -1,11 +1,12 @@
+diff --git a/internal/uacheck/structure.go b/internal/uacheck/structure.go
 --- a/internal/uacheck/structure.go
 +++ b/internal/uacheck/structure.go
-@@ -157,7 +157,7 @@
- 			mapped = d.name(roleMap[at])
- 		}
- 		if mapped == "" || mapped == at {
--			res = roleResolution{standard: at, circular: mapped != "" && mapped == at}
-+			res = roleResolution{standard: at}
+@@ -235,7 +235,7 @@
+ 		seen[at] = true
+ 		path = append(path, at)
+ 		next := d.name(roleMap[at])
+-		if next == "" {
++		if next == "" || next == at {
  			break
  		}
- 		at = mapped
+ 		at = next
