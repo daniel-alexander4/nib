@@ -1024,13 +1024,29 @@ Deep-dive did not fire: new rules through the registry; no wire format.
 - **Review (2026-09-22):** two confirmed false passes — the matrix read the tree walk's parents and kids, and
   veraPDF reads each element's own `/P` and `/K` — fixed, with object-by-object fixtures (`relationDoc`).
 
-#### P03.S03 — cardinality and placement
+#### P03.S03 — cardinality and placement *(done 2026-09-22, v1.141.0)*
 Scope: `7.2 t11-t14`, `t16`, `t28`, `t39`, `t40` — at most one `THead`/`TFoot`/`Caption`, a `TBody` required
 when either is present, and `Caption` restricted to first or last kid. Counts and positions, which the
 matrix deliberately does not express. Refs: law 1.
 Acceptance:
 - `t16`, `t28`, `t39` and `t40` have **no corpus file**: each gets a fixture and a recorded veraPDF verdict.
-- An element with no kids is `NotApplicable`, never a silent Pass.
+- ~~An element with no kids is `NotApplicable`, never a silent Pass.~~ **(pin, S03 grill, 2026-09-22 — measured)**
+  veraPDF 1.30.2 counts a check on an empty `Table` and PASSES it for all six Table clauses, so an element with no
+  kids is **Pass**; `NotApplicable` would disagree with the oracle on every such document. `NotApplicable` is kept
+  for a document with no element of the clause's subject type, which is veraPDF's 0-check answer. "Silent" does not
+  apply: the verdict is the oracle's, measured, not a default.
+
+**(grill, 2026-09-22)** veraPDF was run on eighteen `treeDoc` trees before a rule was written, every clause both
+ways — t16, t28, t39 and t40 have no corpus file, so these ARE their oracle. The one open edge, settled: an UNTYPED
+kid is dropped from the sequence, never an empty slot — a Caption after an untyped first kid is first, and a second
+leading Caption is in the middle (fails t16 as well as t39). Deep-dive did not fire.
+- T01 — `rules_kidsequence.go`: eight rows over the typed-kid sequence, `checkKidSequence` the one door, reading
+  S02's `elementKids`/`typedAs`.
+- T02 — both-ways and edge tests; the one-door guard; the source-population guard taught `[]kidSequence`.
+- T03 — the oracle's "every count and position broken" document (8 of 8 fail on veraPDF); eight `corpusReach` rows;
+  count claims 39 → 47.
+- **Review (2026-09-22):** a crafted `/Type /MCR` carrying `/S` counted as a kid; veraPDF reads it as content
+  (measured). The `/Type` test S02 had removed as dead is restored and pinned.
 
 #### P03.S04 — table geometry: spans, and the grid nib does not reproduce
 Scope: `7.2 t15` (cells shall not intersect), `t41`, `t42`, `t43` (rows and columns agree once spans are

@@ -126,11 +126,11 @@ func TestNotApplicableIsNeitherAPassNorAGap(t *testing.T) {
 func TestEveryRegisteredRuleIsWellFormed(t *testing.T) {
 	clauses := Clauses()
 	// Raised as rules land: S01 registered 1, S02 brought it to 9, S03 to 12, S04 to 15, P09.S05 to 17,
-	// /pending 489 to 18, /pending 487 to 19, /pending 548 to 20, P03.S01 to 22 and P03.S02 to 39 — the floor stayed at 15 through four
+	// /pending 489 to 18, /pending 487 to 19, /pending 548 to 20, P03.S01 to 22, P03.S02 to 39 and P03.S03 to 47 — the floor stayed at 15 through four
 	// of those until /pending 496 caught it. A registry that shrinks below what has shipped is a clause
 	// silently dropped, and it reads exactly like one that passes.
-	if len(clauses) < 39 {
-		t.Fatalf("the registry holds %d rule(s); 39 have shipped. A rule dropped from the "+
+	if len(clauses) < 47 {
+		t.Fatalf("the registry holds %d rule(s); 47 have shipped. A rule dropped from the "+
 			"registry is a clause nobody checks and looks identical to one that passes", len(clauses))
 	}
 	for _, c := range clauses {
@@ -235,12 +235,13 @@ func TestEveryRuleWrittenInTheSourceIsActuallyRegistered(t *testing.T) {
 		}
 		scanned++
 		ast.Inspect(f, func(n ast.Node) bool {
-			// The containment matrix (P03.S02) registers seventeen clauses from ONE loop over a table, so
+			// The containment matrix (P03.S02) and the kid-sequence table (P03.S03) register their clauses from
+			// ONE loop over a table each, so
 			// its clauses are written in the table's `clause:` fields rather than in `register` calls — a
 			// second place a clause can be written, read here so the population stays the source's.
 			if lit, isLit := n.(*ast.CompositeLit); isLit {
 				if arr, isArr := lit.Type.(*ast.ArrayType); isArr {
-					if id, ok := arr.Elt.(*ast.Ident); ok && id.Name == "containment" {
+					if id, ok := arr.Elt.(*ast.Ident); ok && (id.Name == "containment" || id.Name == "kidSequence") {
 						for _, row := range lit.Elts {
 							rowLit, ok := row.(*ast.CompositeLit)
 							if !ok {
