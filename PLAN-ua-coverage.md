@@ -1053,7 +1053,7 @@ leading Caption is in the middle (fails t16 as well as t39). Deep-dive did not f
   passed). The corpus holds none of these shapes. Fixed in `elementKids`/`significantParent`, pinned by
   `TestNonStructDivAndPartAreLookedThrough`.
 
-#### P03.S04 — table geometry: spans, and the grid nib does not reproduce
+#### P03.S04 — table geometry: spans, and the grid nib does not reproduce *(done 2026-09-22, v1.142.0)*
 Scope: `7.2 t15` (cells shall not intersect), `t41`, `t42`, `t43` (rows and columns agree once spans are
 counted). The hardest four, and the one place the checker already **declares** a gap —
 `rules_semantic.go:182` returns `CannotCheck` for a grid it does not build. Either the grid arrives here and
@@ -1062,6 +1062,24 @@ Acceptance:
 - `t42` and `t43` land together — identical wording, opposite polarity.
 - Where the grid cannot be built the verdict is `CannotCheck` naming why, never `Pass`; the existing
   `reach_test.go` shape covers it.
+
+**(grill, 2026-09-22)** The grid ARRIVES, and the `CannotCheck` retires. The rule measurement had not found is in
+veraPDF's own source (`GFSETable.checkTable`, veraPDF-validation): lay the table out left to right into the next free
+slot, stop at the FIRST irregularity (overflow → t42, a RowSpan past the height → t41, an occupied slot → t15, a short
+or empty row → t43), and only for a regular table ask headers — every TH scoped, or else the FIRST data cell without
+valid Headers is flagged (t1 when it named none, **t2** when it named unknown ones). Ported step for step
+(`rules_table.go`), with one measured divergence from that source: the integration branch disables the geometric header
+search for UA-1, and the installed 1.30.2 runs it (`7.5-t01-fail-c.pdf` agrees only with it on). Where veraPDF's Java
+throws — measured: a RowSpan of 0 makes 1.30.2 raise ArrayIndexOutOfBoundsException — nib answers `CannotCheck` naming
+why. Reading that source also found S02/S03's pass-through defect, fixed separately (v1.141.1).
+- T01 — `rules_table.go`: the layout (memoised per Table), veraPDF's typed attribute reader (`/A` then ClassMap).
+- T02 — t15, t41, t42, t43 registered; 7.5 t1 re-implemented over the layout (the heuristic in `rules_semantic.go`
+  retired, its eleven `CannotCheck` expectations now veraPDF's verdicts), **7.5 t2 landed here** (see S06's pin).
+- T03 — `treeDoc` cell attributes; both-ways and step-for-step tests, every row measured; two oracle documents.
+- T04 — `corpusReach`: five rows at 36, and 7.5 t1 **27 → 36**; five `knownCannotCheck` rows retired; counts 47 → 52.
+- **Review (2026-09-22):** a crafted span OOM-killed the process — veraPDF truncates its counts to 32 bits, and the
+  port now does too, with a 4M-slot cap answering CannotCheck; an empty-string Header and an empty-name Scope read the
+  way veraPDF reads them. All measured on 1.30.2.
 
 #### P03.S05 — strongly or weakly structured, but not both
 Scope: `7.4.4 t1` (at most one child `H` per node), `t2` and `t3` (a document uses `H` or `Hn`, never both).
@@ -1078,6 +1096,9 @@ omitting `Role` has exactly one object-reference child), `7.1 t12` (every elemen
 Acceptance:
 - `7.1 t12` and `7.18.4 t2` have no corpus file; both get a fixture and a recorded veraPDF verdict.
 - `7.9 t2`'s uniqueness is checked across the whole tree, not per subtree.
+- **(pin, 2026-09-22, P03.S04)** `7.5 t2` landed in S04, not here: it is the other half of the same veraPDF
+  computation as 7.5 t1 (`hasConnectedHeader` with `unknownHeaders` set), so it shares the layout rather than
+  re-deriving it. S06 keeps `7.9 t1`/`t2`, `7.18.4 t2` and `7.1 t12`.
 
 ### P04 — Checker: language (~10 rules)
 **Goal.** Outline entries, ActualText/Alt/E, annotation Contents, form TU and marked-content spans.

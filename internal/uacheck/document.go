@@ -38,6 +38,8 @@ type Document struct {
 	// the chain is followed to its end now (`/pending 507`), so a document with a long chain and many
 	// elements would otherwise re-walk it once per element.
 	roles map[string]roleResolution
+	// tables memoises each table's layout (`rules_table.go`), keyed by the Table's object number.
+	tables map[int]*tableLayout
 	// circular memoises roleMapCircular's walk, keyed by the element's own /S (P03.S01).
 	circular map[string]bool
 	// content is every page's classified drawing operators, built on first use by contentEvents.

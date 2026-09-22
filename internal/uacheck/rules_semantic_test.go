@@ -146,22 +146,24 @@ func tableCases() []semanticCase {
 		tc("no header cells", [][]string{{"TD", "TD"}, {"TD", "TD"}}, Pass),
 		tc("a Scope on a data cell only", [][]string{{"TD:Column", "TD"}, {"TD", "TD"}}, Pass),
 		tc("Headers attributes", [][]string{{"TD:Headers", "TD:Headers"}}, Pass),
-		// An unscoped TH over a data cell that names no headers — veraPDF's verdict turns on its algorithm.
-		tc("header cells with no scope", [][]string{{"TH", "TH"}, {"TD", "TD"}}, CannotCheck),
-		tc("one scoped, one not", [][]string{{"TH:Column", "TH"}, {"TD", "TD"}}, CannotCheck),
-		tc("one not, one scoped", [][]string{{"TH", "TH:Column"}, {"TD", "TD"}}, CannotCheck),
-		tc("a Scope under a Layout attribute object", [][]string{{"TH:LayoutScope", "TH:LayoutScope"}, {"TD", "TD"}}, CannotCheck),
-		tc("Headers beside an unheaded cell", [][]string{{"TH", "TH"}, {"TD:Headers", "TD"}}, CannotCheck),
-		tc("a header grid with no scopes", [][]string{{"TH", "TH", "TH"}, {"TH", "TD", "TD"}, {"TH", "TD", "TD"}}, CannotCheck),
-		tc("a lone unscoped header mid-table", [][]string{{"TD", "TD", "TD"}, {"TD", "TH", "TD"}, {"TD", "TD", "TD"}}, CannotCheck),
-		{"a role-mapped data cell under unscoped headers", "7.5 t1", tableDoc([][]string{{"TH", "TH"}, {"Cell", "Cell"}}, false, "/Cell /TD"), CannotCheck},
+		// An unscoped TH over a data cell that names no headers. These were CannotCheck until P03.S04 ported
+		// veraPDF's algorithm (`rules_table.go`); every verdict below is veraPDF's, re-measured by
+		// TestTheFigureAndTableCasesAgreeWithVeraPDF. A Scope naming no direction still COUNTS as a Scope there.
+		tc("header cells with no scope", [][]string{{"TH", "TH"}, {"TD", "TD"}}, Fail),
+		tc("one scoped, one not", [][]string{{"TH:Column", "TH"}, {"TD", "TD"}}, Fail),
+		tc("one not, one scoped", [][]string{{"TH", "TH:Column"}, {"TD", "TD"}}, Fail),
+		tc("a Scope under a Layout attribute object", [][]string{{"TH:LayoutScope", "TH:LayoutScope"}, {"TD", "TD"}}, Fail),
+		tc("Headers beside an unheaded cell", [][]string{{"TH", "TH"}, {"TD:Headers", "TD"}}, Pass),
+		tc("a header grid with no scopes", [][]string{{"TH", "TH", "TH"}, {"TH", "TD", "TD"}, {"TH", "TD", "TD"}}, Fail),
+		tc("a lone unscoped header mid-table", [][]string{{"TD", "TD", "TD"}, {"TD", "TH", "TD"}, {"TD", "TD", "TD"}}, Fail),
+		{"a role-mapped data cell under unscoped headers", "7.5 t1", tableDoc([][]string{{"TH", "TH"}, {"Cell", "Cell"}}, false, "/Cell /TD"), Fail},
 		// Unscoped headers, but every data cell names its headers — nothing is left to infer.
 		tc("unscoped headers, every cell naming its headers", [][]string{{"TH", "TH"}, {"TD:Headers", "TD:Headers"}}, Pass),
-		tc("a Scope that names no direction", [][]string{{"TH:BadScope", "TH:BadScope"}, {"TD", "TD"}}, CannotCheck),
-		tc("a column span", [][]string{{"TH:Column", "TH:Column"}, {"TD:ColSpan"}}, CannotCheck),
+		tc("a Scope that names no direction", [][]string{{"TH:BadScope", "TH:BadScope"}, {"TD", "TD"}}, Pass),
+		tc("a column span", [][]string{{"TH:Column", "TH:Column"}, {"TD:ColSpan"}}, Pass),
 		tc("a column span on a cell naming its headers", [][]string{{"TH:Column", "TH:Column"}, {"TD:SpanHeaders"}}, Pass),
 		{"no data cells", "7.5 t1", semanticDoc(map[int]string{10: "<< /Type /StructElem /S /P /P 7 0 R >>"}, []int{10}, ""), NotApplicable},
-		{"a TD outside any table", "7.5 t1", semanticDoc(map[int]string{10: "<< /Type /StructElem /S /TD /P 7 0 R >>"}, []int{10}, ""), CannotCheck},
+		{"a TD outside any table", "7.5 t1", semanticDoc(map[int]string{10: "<< /Type /StructElem /S /TD /P 7 0 R >>"}, []int{10}, ""), Pass},
 	}
 }
 
@@ -188,7 +190,7 @@ func TestATableIsCheckedOnlyWhereVeraPDFsAnswerIsKnown(t *testing.T) {
 		if got.Verdict == CannotCheck && (got.Why == "" || got.Where == "") {
 			t.Errorf("%s: an unsettled table must say why and where: %q at %q", c.name, got.Why, got.Where)
 		}
-		if strings.Contains(c.name, "no scope") && got.Verdict == CannotCheck && !strings.Contains(got.Where, "header at row 1, cell 1") {
+		if strings.Contains(c.name, "no scope") && got.Verdict == Fail && !strings.Contains(got.Why, "header at row 1, cell 1") {
 			t.Errorf("%s: the report must name the header cell with no Scope, and says %q", c.name, got.Where)
 		}
 	}

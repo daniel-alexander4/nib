@@ -42,6 +42,34 @@ func treeDoc(roleMap, spec string) []byte {
 			objs[8] = fmt.Sprintf("<< /Nums [0 [%s] 1000 %s] >>", "NUMS0", parentRef)
 			return "<< /Type /OBJR /Obj 9 0 R >>", rest
 		}
+		// "TD!r2!c3!scope=Row!id=h1!headers=h1+h2" — a cell's Table attributes and its /ID, after the type.
+		attrs, extra := "", ""
+		if parts := strings.Split(name, "!"); len(parts) > 1 {
+			name = parts[0]
+			for _, a := range parts[1:] {
+				switch {
+				case strings.HasPrefix(a, "r"):
+					attrs += " /RowSpan " + a[1:]
+				case strings.HasPrefix(a, "c"):
+					attrs += " /ColSpan " + a[1:]
+				case strings.HasPrefix(a, "scope="):
+					attrs += " /Scope /" + a[len("scope="):]
+				case strings.HasPrefix(a, "headers="):
+					var hs []string
+					for _, h := range strings.Split(a[len("headers="):], "+") {
+						hs = append(hs, "("+h+")")
+					}
+					attrs += " /Headers [" + strings.Join(hs, " ") + "]"
+				case strings.HasPrefix(a, "id="):
+					extra += " /ID (" + a[len("id="):] + ")"
+				default:
+					panic("treeDoc: unknown cell attribute " + a)
+				}
+			}
+			if attrs != "" {
+				extra += " /A << /O /Table" + attrs + " >>"
+			}
+		}
 		n := next
 		next++
 		ref := fmt.Sprintf("%d 0 R", n)
@@ -66,7 +94,7 @@ func treeDoc(roleMap, spec string) []byte {
 			nums = append(nums, ref)
 			kids = []string{fmt.Sprint(m)}
 		}
-		objs[n] = fmt.Sprintf("<< /Type /StructElem /S /%s /P %s /Pg 3 0 R /K [%s] >>", name, parentRef, strings.Join(kids, " "))
+		objs[n] = fmt.Sprintf("<< /Type /StructElem /S /%s /P %s /Pg 3 0 R /K [%s]%s >>", name, parentRef, strings.Join(kids, " "), extra)
 		return ref, rest
 	}
 	top, rest := parse(spec, "7 0 R")
