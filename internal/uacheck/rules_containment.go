@@ -104,39 +104,79 @@ func (d *Document) typedAs(elem types.Dict) string {
 	return std
 }
 
-// elementKids is every structure element an element's OWN `/K` lists, in order — not the tree walk's kids.
+// passThrough are the standard types veraPDF looks THROUGH when it asks an element's kids or its parent:
+// `NonStruct`, `Div` and `Part` (veraPDF-parser `PDStructElem.isPassThroughTag`). A `Table` whose rows sit in a
+// `Div` is a table of those rows, and a `TR` inside that `Div` has the `Table` as its parent.
+//
+// **Measured on veraPDF 1.30.2, and shipped wrong in P03.S02 and S03** — found while reading veraPDF's own
+// table code for P03.S04: `Table(Div(TR(TD)))` passes 7.2-3 and 7.2-4 in veraPDF and failed both in nib, and a
+// second `THead` hidden in a `Div` FAILS 7.2-11 in veraPDF and passed in nib. The corpus holds none of these
+// shapes, so it scored 0 disagreements over code that was wrong on all of them.
+var passThrough = map[string]bool{"NonStruct": true, "Div": true, "Part": true}
+
+// elementKids is every structure element an element's OWN `/K` lists, in order — not the tree walk's kids —
+// with a pass-through kid replaced by ITS kids, recursively (veraPDF's structurally significant children).
 //
 // **The walk visits an element once, and containment cannot read it** (P03.S02's review, confirmed on
 // veraPDF 1.30.2): an element listed in two parents' `/K` sits in the walk under whichever it reached first,
 // so the second parent's kids silently lost it — a `/P` shared by a `Div` and a `Table` passed 7.2 t3 in nib
 // and failed 7.2-3 in veraPDF. Content (an MCID, a marked-content or object reference) is not a kid.
 func (d *Document) elementKids(elem types.Dict) []types.Dict {
-	k := elem["K"]
-	entries := []types.Object{k}
-	if arr, err := d.Ctx.DereferenceArray(k); err == nil && arr != nil {
-		entries = arr
-	}
 	var out []types.Dict
-	for _, en := range entries {
-		// An MCID is an integer and a well-formed marked-content or object reference carries no /S — but a
-		// crafted one can, and veraPDF still reads it as CONTENT: measured, a `<< /Type /MCR /S /Caption >>`
-		// between two TRs leaves 7.2-16 passing. So `/Type` is asked as well, exactly as `structNodes` asks it.
-		// (P03.S02 dropped this test as dead because no fixture carried the shape; P03.S03's review found it.)
-		kid := d.dict(en)
-		if kid == nil || d.name(kid["S"]) == "" {
-			continue
+	var collect func(elem types.Dict, depth int)
+	collect = func(elem types.Dict, depth int) {
+		if depth > maxWalkDepth {
+			return
 		}
-		if ty := d.name(kid["Type"]); ty == "MCR" || ty == "OBJR" {
-			continue
+		k := elem["K"]
+		entries := []types.Object{k}
+		if arr, err := d.Ctx.DereferenceArray(k); err == nil && arr != nil {
+			entries = arr
 		}
-		out = append(out, kid)
+		for _, en := range entries {
+			// An MCID is an integer and a well-formed marked-content or object reference carries no /S — but a
+			// crafted one can, and veraPDF still reads it as CONTENT: measured, a `<< /Type /MCR /S /Caption >>`
+			// between two TRs leaves 7.2-16 passing. So `/Type` is asked as well, exactly as `structNodes` asks
+			// it. (P03.S02 dropped this test as dead because no fixture carried the shape; P03.S03's review found it.)
+			kid := d.dict(en)
+			if kid == nil || d.name(kid["S"]) == "" {
+				continue
+			}
+			if ty := d.name(kid["Type"]); ty == "MCR" || ty == "OBJR" {
+				continue
+			}
+			if passThrough[d.typedAs(kid)] {
+				collect(kid, depth+1)
+				continue
+			}
+			out = append(out, kid)
+		}
 	}
+	collect(elem, 0)
 	return out
+}
+
+// significantParent is the element's parent as veraPDF reads it: its own `/P`, climbed past every pass-through
+// ancestor. It answers the parent's dictionary and whether the climb reached the structure tree root; nil and
+// false when a `/P` is missing on the way.
+func (d *Document) significantParent(elem types.Dict) (types.Dict, bool) {
+	p := d.dict(elem["P"])
+	for depth := 0; p != nil && depth <= maxWalkDepth; depth++ {
+		if d.name(p["Type"]) == "StructTreeRoot" {
+			return nil, true
+		}
+		if !passThrough[d.typedAs(p)] {
+			return p, false
+		}
+		p = d.dict(p["P"])
+	}
+	return nil, false
 }
 
 // checkContainment evaluates one clause of the matrix — the only function that does.
 //
-// **The parent is the element's own `/P`, never where the walk found it.** Measured on veraPDF 1.30.2: a
+// **The parent is the element's own `/P`, never where the walk found it** — climbed past `NonStruct`, `Div` and
+// `Part`, which veraPDF looks through (`passThrough`). Measured on veraPDF 1.30.2: a
 // `TD` listed in a `TR`'s `/K` whose `/P` names the `Document` FAILS 7.2-9, a `TD` with no `/P` fails it,
 // and a `TD` listed under the `Document` whose `/P` names a `TR` PASSES. The subjects are still the walk's
 // elements — each counted once — and only the relation is read from the objects themselves.
@@ -151,10 +191,10 @@ func checkContainment(d *Document, c containment) Result {
 		where := nodeWhere(n, d.name(n.dict["S"]))
 		if c.parents != nil {
 			parent, in := "", "with no /P naming its parent"
-			switch p := d.dict(n.dict["P"]); {
-			case p == nil:
-			case d.name(p["Type"]) == "StructTreeRoot":
+			switch p, atRoot := d.significantParent(n.dict); {
+			case atRoot:
 				in = "directly under the structure tree root"
+			case p == nil:
 			default:
 				parent = d.typedAs(p)
 				in = fmt.Sprintf("in a /%s element, whose type does not resolve to a standard one", d.name(p["S"]))

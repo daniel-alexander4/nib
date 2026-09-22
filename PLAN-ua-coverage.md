@@ -1047,6 +1047,11 @@ leading Caption is in the middle (fails t16 as well as t39). Deep-dive did not f
   count claims 39 → 47.
 - **Review (2026-09-22):** a crafted `/Type /MCR` carrying `/S` counted as a kid; veraPDF reads it as content
   (measured). The `/Type` test S02 had removed as dead is restored and pinned.
+- **(pin, 2026-09-22, v1.141.1 — found reading veraPDF's own table code for S04)** S02 and S03 shipped without
+  veraPDF's pass-through tags: kids and parents are read THROUGH `NonStruct`, `Div` and `Part`. Measured on 1.30.2:
+  `Table(Div(TR(TD)))` passes 7.2-3/7.2-4 (nib failed both), and a second `THead` in a `Div` FAILS 7.2-11 (nib
+  passed). The corpus holds none of these shapes. Fixed in `elementKids`/`significantParent`, pinned by
+  `TestNonStructDivAndPartAreLookedThrough`.
 
 #### P03.S04 — table geometry: spans, and the grid nib does not reproduce
 Scope: `7.2 t15` (cells shall not intersect), `t41`, `t42`, `t43` (rows and columns agree once spans are

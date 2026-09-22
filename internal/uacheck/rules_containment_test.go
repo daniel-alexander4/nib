@@ -184,3 +184,27 @@ func TestContainmentReadsTheElementsOwnRelationsNotTheWalks(t *testing.T) {
 		}
 	}
 }
+
+// TestNonStructDivAndPartAreLookedThrough — veraPDF reads an element's kids and its parent THROUGH `NonStruct`,
+// `Div` and `Part` (veraPDF-parser `isPassThroughTag`). Measured on veraPDF 1.30.2 for every row; P03.S02 and
+// S03 shipped without it and false-failed the first six, and false-PASSED the last.
+func TestNonStructDivAndPartAreLookedThrough(t *testing.T) {
+	for _, tc := range []struct {
+		spec, clause string
+		want         Verdict
+	}{
+		{"Document(Table(Div(TR(TD))))", "7.2 t3", Pass},
+		{"Document(Table(Div(TR(TD))))", "7.2 t4", Pass},
+		{"Document(L(NonStruct(LI(LBody))))", "7.2 t17", Pass},
+		{"Document(Table(TR(Part(TD))))", "7.2 t9", Pass},
+		{"Document(L(Div(Caption),LI(LBody)))", "7.2 t40", Pass},
+		{"Document(TOC(Div(TOCI)))", "7.2 t26", Pass},
+		{"Document(Table(THead(TR(TH)),Div(THead(TR(TH))),TBody(TR(TD))))", "7.2 t11", Fail},
+		// A Div holding a Span inside a Table: the Span is the Table's kid, and a Span is not allowed.
+		{"Document(Table(TR(TD),Div(Span)))", "7.2 t3", Fail},
+	} {
+		if got := verdictOf(t, treeDoc("", tc.spec), tc.clause); got.Verdict != tc.want {
+			t.Errorf("%s over %s = %v (%s), want %v", tc.clause, tc.spec, got.Verdict, got.Why, tc.want)
+		}
+	}
+}
