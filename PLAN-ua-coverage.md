@@ -719,7 +719,7 @@ after S07. **Follow-up, not this slice:** a positional partition (each tile keep
 artifacts the rest) — rects and the artifact edit exist, as in S05's follow-up; the unbuilt part is rewriting
 each tile's content.
 
-#### P02.S07 — merges graft the second tree *(unblocked 2026-09-21 — via /discuss: graft, extend-only)*
+#### P02.S07 — merges graft the second tree *(in progress — S07a done 2026-09-21, v1.138.12; S07b next)*
 Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second document's keys and merging root
 `/K` and RoleMaps; ~~`InsertPDF` inherits it with S04~~ **— it does not: S04b routes `splice` through the non-carrying door and defers `InsertPDF` here in full** (struck 2026-09-16). Refs: D5, ADR-031.
 
@@ -740,6 +740,40 @@ Scope: a context-level graft (`pdfcpu.MergeXRefTables`) offsetting the second do
 Acceptance: untagged-first + tagged-second, and tagged-first + untagged-second, each asserted in both argument
 orders — the former claims nothing; a tagged + tagged merge is `carried` with veraPDF adding nothing over its
 inputs; no merged page's `/StructParents` resolves into the other document's rows.
+
+**(pre-slice deepdive + grill, 2026-09-21 — two premises of the decision above were false against the code, and the
+slice splits)**
+- **The defect is LIVE in `Append` and `Combine`, not only in `splice`.** Probed: `Append(tagged, tagged)` writes
+  both pages with `/StructParents 0`, so page 2 resolves to document 1's element — fate `partial`, one completeness
+  defect, `carryIsComplete` false. The census cannot see it: it drives the merges with an UNTAGGED second document
+  only (`tagtable_test.go`). So "exactly as today" in the extend-only bullet was wrong; S07a is a bug fix too.
+- **"The first document" is the wrong host for `splice`.** Inserting before page 1 makes the INSERTED document the
+  first input, so a per-`Append` extend-only rule would strip the original's whole tree when an untagged cover page
+  is inserted at page 1 and keep it at page 2. The rule is: **a merge only extends a claim the HOST makes**, and the
+  host is the first document for `Append`/`Combine` (the user chose that order) and the ORIGINAL document for
+  `splice` at every insertion point. That is the decision's own principle stated precisely, not a new decision.
+- **The graft cannot sit behind `api.MergeRaw`.** `MergeXRefTables` renumbers the second document's objects in
+  place and frees its catalog, so its tree is unreachable in the written bytes; the hook is between the merge and
+  the optimize, and nib owns the ~15-line loop (`MergeRaw`'s config, the PDF 2.0 refusal, and a page-count check
+  for the error `merge.go:1098` swallows). The source's claims are offset IN THE SOURCE CONTEXT before the merge
+  (`eachParentTreeClaim` + its `/Nums`), and its root is attached afterwards through the catalog map the merge
+  patched in place.
+- **Splits:** S07a — `Append`/`Combine` through one merge door; S07b — `splice` with the original as host, which
+  also has to place the inserted elements in reading order rather than at the root's end.
+
+S07a tasks:
+- T01 — `mergeDocs` in `internal/pdfops/merge.go`: nib's own merge loop; host = first input; graft a source whose
+  tree is flat, readable and whose RoleMap/ClassMap do not conflict with the host's; otherwise strip its claims.
+  Root kids appended with `/P` repointed; a differing source `/Lang` stamped on each grafted top-level element;
+  `/ParentTreeNextKey` advanced; source `/IDTree` dropped; tier lowered (or unrecorded if either is). UA claim
+  dropped in-context (ADR-032). Output gated on `carryIsComplete`; an incomplete graft re-merges strip-only.
+- T02 — `Append` and `Combine` call it; `withoutUAClaim`'s second write goes.
+- T03 — census: tagged+tagged drives for `Append` and `Combine` (`carried`), untagged+tagged (claims nothing);
+  readers for offset keys, RoleMap merge, conflict fallback, `/Lang` stamp, strip of stale claims.
+- T04 — ADR-048 amending ADR-031's merge note.
+- T05 — *(added at the build)* the bogus-key detector's stimulus rebuilt by hand, since the merge no longer
+  makes one; a root `/K` holding one DIRECT element is read (the slice's code review); `/pending 559`
+  amended — the union it asks for now has a place to stand at the graft's hook.
 
 #### P02.S09 — nib's own pages are tagged *(added 2026-09-21, via /discuss, amended by /grill; after S07)*
 Scope: the trust-explainer readme (`p2p/readme.go:306`, through `PrepareDocument` — so **every co-signed
