@@ -21,6 +21,7 @@ func TestEveryKidSequenceClauseAgreesWithVeraPDFBothWays(t *testing.T) {
 		{"7.2 t39", "Document(Table(Caption,TR(TD),Caption))"},
 		{"7.2 t28", "Document(TOC(TOCI,Caption))"},
 		{"7.2 t40", "Document(L(LI(LBody),Caption))"},
+		{"7.4.4 t1", "Document(H,H)"},
 	}
 	if len(cases) != len(kidSequenceRules) {
 		t.Fatalf("%d cases for %d clauses", len(cases), len(kidSequenceRules))

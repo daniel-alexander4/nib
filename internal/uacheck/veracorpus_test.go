@@ -57,6 +57,8 @@ var corpusAllow = map[string]string{}
 // P03.S04 ports veraPDF's table layout (`rules_table.go`): 7.2 t15 and t41-t43 and 7.5 t2 join at 36, and
 // **7.5 t1 moves 27 → 36** — the nine files it answered `CannotCheck` on before, a grid it did not build, it
 // now settles, and agrees with veraPDF on every one. Pairs 13,817 → 15,302.
+// P03.S05's three heading rows join and 7.4.2 t1 stays at 134 — the plan's acceptance, measured. 7.4.4 t3's 134 is
+// the same population (every file with a numbered heading); pairs 15,302 → 16,187.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
@@ -66,6 +68,7 @@ var corpusReach = map[string]int{
 	"7.2 t11": 36, "7.2 t12": 36, "7.2 t13": 36, "7.2 t14": 36, "7.2 t16": 36, "7.2 t39": 36,
 	"7.2 t28": 6, "7.2 t40": 43,
 	"7.2 t15": 36, "7.2 t41": 36, "7.2 t42": 36, "7.2 t43": 36, "7.5 t2": 36,
+	"7.4.4 t1": 294, "7.4.4 t2": 7, "7.4.4 t3": 134,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,
