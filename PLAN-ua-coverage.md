@@ -997,7 +997,7 @@ Deep-dive did not fire: two rules through the registry pattern `/pending 548` us
   rows (t5 **5**, t7 **294**); the count claims 20 → 22 at every site that states them.
 - T04 — `pdfops.standardRole` gets the same algorithm (the plan's note: it shared the misreading).
 
-#### P03.S02 — the containment matrix, one door
+#### P03.S02 — the containment matrix, one door *(done 2026-09-22, v1.140.0)*
 Scope: a declarative table of (standard type → permitted parents, permitted kids) plus one generator that
 registers a rule per clause from it. Lands `7.2 t3-t10`, `t17-t20`, `t26`, `t27`, `t36-t38` — seventeen
 rules over tables, lists and TOC. Each keeps its own `Clause`, `Summary` and `corpusReach` row; the matrix is
@@ -1008,6 +1008,21 @@ Acceptance:
 - **A pass fixture for every one of the fourteen clauses whose corpus is fail-only**, and a red proof that an
   always-Fail implementation is caught by it.
 - Every clause's `corpusReach` row measured over the 297-file set.
+
+**(grill, 2026-09-22)** veraPDF 1.30.2 was run on thirty `treeDoc` trees before the matrix was written, every
+clause in both directions, and it settled every edge the relation's two predicates leave open: an UNTYPED kid
+(a loop, a private dead end, a private self-map) is ignored, never refused; an untyped PARENT, and the structure
+tree root, satisfy nothing; role-mapped names resolve first; MCIDs and object references are content, not kids;
+an element with no element kids passes every "may contain only" clause. Two oracle documents carry all
+seventeen clauses at once — every relation kept (17 pass) and every relation broken (17 fail).
+Deep-dive did not fire: new rules through the registry; no wire format.
+- T01 — `rules_containment.go`: the matrix (17 rows), `checkContainment` (the one door), `typedAs`.
+- T02 — `treeDoc`, the nested-spec fixture builder; a measured pass and fail document per clause, plus the edges.
+- T03 — the door guard (`TestContainmentIsWrittenOnlyInTheMatrix`) and the source-population guard taught the
+  matrix's `clause:` fields.
+- T04 — the two oracle documents; seventeen `corpusReach` rows measured; count claims 22 → 39.
+- **Review (2026-09-22):** two confirmed false passes — the matrix read the tree walk's parents and kids, and
+  veraPDF reads each element's own `/P` and `/K` — fixed, with object-by-object fixtures (`relationDoc`).
 
 #### P03.S03 — cardinality and placement
 Scope: `7.2 t11-t14`, `t16`, `t28`, `t39`, `t40` — at most one `THead`/`TFoot`/`Caption`, a `TBody` required

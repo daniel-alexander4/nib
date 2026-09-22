@@ -143,6 +143,15 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			withRoleMapOnLeaf(t, mdl, types.Dict{"Unmapped": types.Name("Nowhere")}, "Unmapped")},
 		oracleDoc{"Markdown + title + lang, one element's standard type remapped",
 			withRoleMapOnLeaf(t, mdl, types.Dict{"Code": types.Name("Span")}, "Code")},
+		// The containment matrix in both directions (P03.S02). No product door writes a table, list or table of
+		// contents shaped wrongly, so these are built trees: every relation the matrix holds kept in the first
+		// and broken in the second. veraPDF was run on both before they were pinned — 17 of 17 each way.
+		oracleDoc{"containment: every relation kept", treeDoc("", "Document("+
+			"Table(Caption,THead(TR(TH)),TBody(TR(TD)),TFoot(TR(TD))),"+
+			"L(Caption,LI(Lbl,LBody),L(LI(LBody))),TOC(Caption,TOCI,TOC(TOCI)))")},
+		oracleDoc{"containment: every relation broken", treeDoc("", "Document("+
+			"TR(TD,P),THead(TR(TH)),TBody(TR(TD)),TFoot(TR(TD)),Table(TH,TD,Span),L(P,LBody),P(LI(P)),"+
+			"TOCI,TOC(TOCI,P),Table(THead(TD),TBody(TD),TFoot(TD)))")},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -291,6 +300,10 @@ var knownCannotCheck = map[string]string{
 	"Markdown + title + lang, one element on a role-map loop / 7.3 t1":   "an element on a role-map loop may be the Figure",
 	"Markdown + title + lang, one element on a role-map loop / 7.4.2 t1": "an element on a role-map loop may be a numbered heading, and one moves the whole sequence",
 	"Markdown + title + lang, one element on a role-map loop / 7.5 t1":   "an element on a role-map loop may be the Table, a row or a cell",
+	// P03.S02's two built trees reach 7.5 t1's declared grid gap (`rules_semantic.go`), which P03.S04 owns:
+	// the first has a TH with no /Scope over TDs that name no headers, and the second a TD outside any row.
+	"containment: every relation kept / 7.5 t1":   "an unscoped header over data cells that name no headers — P03.S04's grid",
+	"containment: every relation broken / 7.5 t1": "a TD outside any Table's rows has no grid to find its headers in — P03.S04's grid",
 }
 
 // notYetReachable records a veraPDF state a clause cannot reach on any corpus document yet, with the
@@ -320,7 +333,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 29
+	const wantGenerated = 31
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
