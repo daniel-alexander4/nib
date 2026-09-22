@@ -87,7 +87,9 @@ type tagState struct {
 	// undescribed counts pages that have a content stream and that **no struct element points at**.
 	//
 	// **It asked about `/StructParents` until v1.129.18, and that was the wrong question.**
-	// `api.MergeRaw` merges two tagged documents by keeping the FIRST document's `/StructTreeRoot`
+	// (The merge shape below is history since P02.S07a — `mergeDocs` grafts a tagged second document
+	// with its keys offset, ADR-048 — and the predicate is still the right one for every other road
+	// to a page whose key lies.) `api.MergeRaw` merged two tagged documents by keeping the FIRST document's `/StructTreeRoot`
 	// and `/ParentTree` whole while the second document's pages keep their own `/StructParents`
 	// values — so an 8-page merge carries a 4-entry `/ParentTree` and eight pages indexing keys
 	// 0–3. Pages 5–8 therefore HAVE a `/StructParents`, which the old predicate accepted, and it

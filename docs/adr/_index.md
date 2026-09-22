@@ -462,3 +462,9 @@ home today.
   moves each page's `/MediaBox` in the page's own space instead of rebuilding the page — carrying the
   tree without a carry, and no longer deleting the cropped pages' annotations. The principle stops
   where a page would be READ more than once: a split tile carries no subtree (P02.S06).
+- **[ADR-048 — a merge grafts onto the host, and only extends a claim the host already makes](048-a-merge-grafts-onto-the-host-and-only-extends-its-claim.md)**
+  — P02.S07a. `Append(tagged, tagged)` gave both pages `/StructParents 0`, so the second document's page
+  resolved to the first's element — invisible to a census that only merged untagged second documents.
+  nib now owns the merge loop (the graft cannot sit behind `MergeRaw`, which frees the second catalog) and
+  grafts a tagged later document onto a tagged host, keys offset; onto an untagged host its claims are
+  stripped. Amends ADR-031's merge note; `partial` stands for tagged + untagged.

@@ -551,30 +551,19 @@ func CreateFromJSON(spec []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// Append concatenates other after pdf (merge).
+// Append concatenates other after pdf (merge). pdf is the host: a tagged other's structure tree is
+// grafted onto pdf's when pdf has one, and its claims are stripped when pdf has none (`mergeDocs`,
+// ADR-048). Merging a tagged document with an untagged one is still `partial` — the appended pages are
+// undescribed under the host's claim, ADR-031's recorded decision — and it is still the path
+// `p2p/readme.go` and `p2p/sigpages.go` take for every ceremony document.
 func Append(pdf, other []byte) ([]byte, error) {
-	var out bytes.Buffer
-	rs := []io.ReadSeeker{bytes.NewReader(pdf), bytes.NewReader(other)}
-	if err := api.MergeRaw(rs, &out, false, nil); err != nil {
-		return nil, err
-	}
-	// The first document's catalog carries its PDF/UA identification onto content it never described,
-	// so the merge drops it (`/pending 492`) — after the write, because `MergeRaw` has its own read.
-	// **`MergeRaw` takes the FIRST document's catalog whole**, so merging a tagged document with an
-	// untagged one carries that catalog's `/StructTreeRoot` onto the result — and the argument order
-	// decides it: tagged-first keeps the claim, tagged-second drops it. Measured, the result is
-	// `partial`, not orphaned: all 45 elements stay anchored to live pages and the appended page is
-	// the only undescribed one. It is NOT routed through `honest`, and that is a recorded decision
-	// rather than an oversight — stripping would destroy a whole live tree to fix one page, and this
-	// is the path `p2p/readme.go` and `p2p/sigpages.go` take for every ceremony document. See the
-	// tag-fate table's `partial` verdict and `PLAN-accessibility.md` D9.
-	return withoutUAClaim(out.Bytes())
+	return mergeDocs([][]byte{pdf, other})
 }
 
 // Combine merges the given PDFs into one, in the order given — each source keeps
 // its own pages and page sizes, so the result is their concatenation (which the
-// caller can then reorder page by page). A single input is returned unchanged
-// (api.MergeRaw needs at least two readers); zero inputs is an error.
+// caller can then reorder page by page). The first document is the host, as for
+// Append. A single input is returned unchanged; zero inputs is an error.
 func Combine(pdfs [][]byte) ([]byte, error) {
 	if len(pdfs) == 0 {
 		return nil, fmt.Errorf("no documents to combine")
@@ -582,15 +571,7 @@ func Combine(pdfs [][]byte) ([]byte, error) {
 	if len(pdfs) == 1 {
 		return pdfs[0], nil
 	}
-	readers := make([]io.ReadSeeker, len(pdfs))
-	for i, b := range pdfs {
-		readers[i] = bytes.NewReader(b)
-	}
-	var out bytes.Buffer
-	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return withoutUAClaim(out.Bytes()) // as Append: the first catalog's claim does not cover the rest
+	return mergeDocs(pdfs)
 }
 
 // RedactPages rebuilds a PDF so that each page given in raster (1-based page

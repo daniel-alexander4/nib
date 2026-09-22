@@ -6,6 +6,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 	"nib/internal/testpdf"
 )
 
@@ -221,9 +222,26 @@ func TestHonestLeavesACarriedTreeALONE(t *testing.T) {
 // The predicate asked "does this page have `/StructParents`" and so scored the page as described.
 // It now asks whether any struct element points AT the page, which is the property that matters and
 // which catches the appended-untagged and appended-tagged shapes with one question.
+//
+// **The merge no longer makes this shape** (P02.S07a, ADR-048: a tagged second document is grafted,
+// with its keys offset), so the stimulus is built by hand — the exact shape `MergeRaw` used to write:
+// an untagged page appended, then given the key the first page owns. The DETECTOR is what this test
+// guards, and a detector that lost its stimulus when the defect was fixed would go on passing over
+// nothing the day the defect came back by another road.
 func TestAPageWithABOGUSStructParentsCountsAsUndescribed(t *testing.T) {
 	src := taggedFixture()
-	both, err := Append(src, src)
+	appended, err := Append(src, untaggedFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	both, err := writeMutated(appended, func(ctx *model.Context) error {
+		d, _, _, err := ctx.PageDict(2, false)
+		if err != nil {
+			return err
+		}
+		d["StructParents"] = types.Integer(0) // page 1's key: resolves to structure about page 1
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,14 +257,14 @@ func TestAPageWithABOGUSStructParentsCountsAsUndescribed(t *testing.T) {
 			"passing for a different reason", s.pagesSP, s.pages)
 	}
 	if s.undescribed == 0 {
-		t.Errorf("a merge of two tagged documents reports every page as described: %d pages, all "+
+		t.Errorf("a page whose /StructParents indexes another page's row reports as described: %d pages, all "+
 			"with /StructParents, %d element(s), %d anchored. The second document's pages index a "+
 			"/ParentTree that does not describe them and no element points at them — they are "+
 			"unreachable from the tree under a /Marked true claim, which is law 1's violation "+
 			"wearing a valid-looking key.", s.pages, s.elements, s.anchored)
 	}
 	if got := fate(both); got != "partial" {
-		t.Errorf("a merge of two tagged documents measures %q, want %q", got, "partial")
+		t.Errorf("a document with a page indexing another page's row measures %q, want %q", got, "partial")
 	}
 }
 
