@@ -258,7 +258,8 @@ var tagFates = map[string]tagFate{
 	// read, and the claim of the document it was given is never touched. What it does to an UNTAGGED
 	// input is the point of it, and is measured where that belongs: `TestACommittedProposalReadsBackAsItsOwnTruth`
 	// and the ua1 differential in `TestACommitAddsNoUA1ClauseTheUntaggedDocumentLacked`.
-	"CommitTags": {verdict: "untouched", why: "refuses a document that already has a tree, so a tagged input's claim cannot be affected; an untagged input gains a tree, measured by the commit writer's own tests"},
+	"TagAuthoredPages": {verdict: "untouched", why: "refuses a document that already has a tree (errAuthoredAlreadyTagged), so a tagged input's claim cannot be affected; nib's own untagged pages gain a tree, measured by internal/p2p's authoredtags_test.go"},
+	"CommitTags":       {verdict: "untouched", why: "refuses a document that already has a tree, so a tagged input's claim cannot be affected; an untagged input gains a tree, measured by the commit writer's own tests"},
 	// The structure editor (P09.S04): a correction to an existing tree keeps the tree and the claim over
 	// it. Driven with the edit that touches the least — an alternate description on the first element the
 	// fixture's tree lets an edit name.

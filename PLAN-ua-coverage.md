@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119). P02 in flight: S01–S08 done; S09 (added 2026-09-21 via /discuss, amended by /grill) remains. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119). P02: every slice done (S01–S09); the phase close is next. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -795,7 +795,7 @@ S07b tasks *(done 2026-09-21, v1.138.13)*:
   document's tree, never inside an element's content, and `firstPage`'s two rules pinned directly.
 - T05 — README's accessibility passage: combining and splitting keep tags; only redaction still loses them.
 
-#### P02.S09 — nib's own pages are tagged *(added 2026-09-21, via /discuss, amended by /grill; after S07)*
+#### P02.S09 — nib's own pages are tagged *(done 2026-09-22, v1.138.15)*
 Scope: the trust-explainer readme (`p2p/readme.go:306`, through `PrepareDocument` — so **every co-signed
 document**, `server/cosign.go:455`, not only ceremonies), the ceremony page and the signature pages
 (`sigpages.go:229,238`) are rendered with a structure tree, as **real content** — never artifacts, which would hide
@@ -810,6 +810,22 @@ signatures' validators report that as a disallowed change is unmeasured (filed t
 Acceptance: a tagged document through `PrepareCeremonyDocument` comes out `carried` — S07's fallback strip
 firing here is RED, not a silent `partial`; an untagged one comes out claiming nothing (S07's extend-only rule);
 veraPDF adds no failure on the appended pages.
+
+**(pre-slice deepdive + grill, 2026-09-22)** The render stays pdfcpu's create-from-JSON — through `mdpdf` it would
+relayout and `readmeFloor`/`ErrReadmeOverflow` would stop describing it. `tagOnePage` already tags a page from one
+role per text run, and nib knows every line's role when it draws it, so the tags are EXACT: the autotagger would
+record `Inferred` and the graft's `lowerTier` would downgrade an `Exact` host. Two traps named by the dive and
+pinned by readers: tag AFTER the language declaration (`declareContentLang` skips marked pages), and record the
+tier (a fragment with none deletes the host's). Measured before: a tagged host left `PrepareCeremonyDocument`
+with 35 unmarked text runs at 2 signers, 36 at 8. ADR-050.
+- T01 — `pdfops.TagAuthoredPages`, sharing `tagMarkdown`'s tail (`tagFromRoles`); `unmarkedTextRuns` exported
+  as `UnmarkedTextRuns` (it had a production caller already, so no exemption).
+- T02 — `RenderReadme`, `renderCeremonyPage`, `renderSignaturePage` build roles beside their lines and tag
+  after the declaration; `TestTheDeclarationClaimsNoTagging` inverted into `TestTheReadmeIsTaggedAndStillDeclaresItsLanguage`.
+- T03 — readers: wholly tagged through co-sign and ceremony at 2 and 8 signers (tier Exact kept), an untagged
+  host not made to claim, veraPDF adds nothing, each page's elements, the orphan refusal.
+- T04 — ADR-050; README; the langdoor rationale, tagwrite's door list and the readme's "unpayable" comment
+  corrected (nothing re-renders these pages — searched).
 
 #### P02.S08 — MCIDs inside a Form XObject are reached through MCR dictionaries *(done 2026-09-16, v1.129.144)*
 Scope: replace element-level `/Stm` (`tagcarry.go:316`) with MCR dictionaries carrying `/Pg` and `/Stm`, after

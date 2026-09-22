@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"errors"
+	"nib/mdpdf"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +39,7 @@ func untaggedBody(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, rerr := unmarkedTextRuns(pdf); rerr != nil || n == 0 {
+	if n, rerr := UnmarkedTextRuns(pdf); rerr != nil || n == 0 {
 		t.Fatalf("setup: the host has %d unmarked text run(s) (err %v), so a claim over it would not be over undescribed text", n, rerr)
 	}
 	if inspectTags(pdf).claims() {
@@ -99,7 +100,7 @@ func TestADoorAddingToAnHonestClaimIsNotRefusedForTextItDidNotLeaveUntagged(t *t
 	if !s.claimsHonestly() {
 		t.Fatalf("setup: the host does not already claim honestly (%+v)", s)
 	}
-	if n, _ := unmarkedTextRuns(host); n == 0 {
+	if n, _ := UnmarkedTextRuns(host); n == 0 {
 		t.Fatal("setup: the host has no unmarked text, so the exemption is not exercised")
 	}
 	_, tagged, err := AuthorTaggedForm(host, []FormField{{Page: 2, Rect: [4]float64{100, 100, 300, 120}, Kind: "text", Name: "f", Label: "Name"}})
@@ -322,5 +323,30 @@ func TestACommitRefusesTextInsideAFormEvenWhenNotProposed(t *testing.T) {
 	}
 	if _, cerr := commitProposal(bare, kept); !errors.Is(cerr, errCommitInForm) {
 		t.Errorf("unproposed text inside a form XObject: err = %v, want errCommitInForm", cerr)
+	}
+}
+
+// TestTagAuthoredPagesRefusesATreeThatDescribesNothing — the door's product IS the tagged page, so a
+// tagging that anchors nothing (a page that draws no text, given no roles) is an error, never an
+// untagged page handed back as if it were tagged.
+func TestTagAuthoredPagesRefusesATreeThatDescribesNothing(t *testing.T) {
+	drawing := assembleFixture(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+		4: streamObj("0 0 m 100 100 l S\n"),
+	})
+	if _, err := TagAuthoredPages(drawing, [][]mdpdf.Role{{}}); err == nil {
+		t.Error("tagging a page with no text returned a document; it describes nothing and must be refused")
+	}
+}
+
+// TestTagAuthoredPagesRefusesADocumentThatAlreadyHasATree — the door brackets every text run it is given
+// without asking whether a run is already marked, so on a tagged document it would describe the same
+// words twice. Its census row declares `untouched` on the strength of this refusal.
+func TestTagAuthoredPagesRefusesADocumentThatAlreadyHasATree(t *testing.T) {
+	_, err := TagAuthoredPages(taggedFixture(), [][]mdpdf.Role{{{Kind: mdpdf.RoleBody}}})
+	if !errors.Is(err, errAuthoredAlreadyTagged) {
+		t.Errorf("tagging an already-tagged document returned err %v, want errAuthoredAlreadyTagged", err)
 	}
 }

@@ -83,8 +83,9 @@ func TestEveryAuthoringDoorSaysWhereItsLanguageComesFrom(t *testing.T) {
 			"so a /Lang written here reaches nobody — the same measurement that made its title " +
 			"inert at v1.129.32. The REAL defect on this path is that nib's English prose is " +
 			"stapled into a document whose /Lang may say something else, which no catalog key can " +
-			"fix: it needs a language on the CONTENT, and P05 wraps this exact text in structure " +
-			"elements anyway."},
+			"fix: it needs a language on the CONTENT. Since PLAN-ua-coverage.md P02.S09 this text is " +
+			"ALSO wrapped in structure elements (pdfops.TagAuthoredPages, after the declaration), " +
+			"and the content /Span stays the language carrier."},
 		"internal/p2p/sigpages.go:renderPage": {fragment, "the same, for every signature page."},
 		"internal/pdfops/pdfops.go:RedactPages": {fragment, "a one-page raster intermediate, " +
 			"re-merged three lines later."},

@@ -473,3 +473,9 @@ home today.
   each tile makes the document read that page N times — a false account of structure, not a view mismatch.
   The tiles carry nothing; since P02.S07b the original is `splice`'s host, so every other page keeps its
   tags and the fate is `partial`. The positional partition that would tag each tile honestly is unbuilt.
+- **[ADR-050 — nib's own pages are tagged as real content, exactly, before any signature](050-nibs-own-pages-are-tagged-as-real-content.md)**
+  — P02.S09. The co-sign readme, the ceremony page and the signature pages were untagged, so a tagged
+  document left preparation claiming tagging over 35 undescribed text runs. nib knows every line's role
+  when it draws it, so the pages are tagged at the `Exact` tier through `TagAuthoredPages` (the
+  autotagger's `Inferred` would downgrade the host through the graft), after the language declaration.
+  Declared gap: signature widgets (`/pending 576`).

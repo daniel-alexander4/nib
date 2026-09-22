@@ -85,7 +85,7 @@ func claimTagging(given, pdf []byte, tier tagSource) (out []byte, ok bool, err e
 	// it. So the doors mark their uncovered drawings instead (`uncoveredDrawingSpans`), and the rule
 	// now reaches every drawing operator, not only the ones that draw glyphs.
 	if !before.claimsHonestly() {
-		if n, rerr := unmarkedTextRuns(pdf); rerr != nil || n > 0 {
+		if n, rerr := UnmarkedTextRuns(pdf); rerr != nil || n > 0 {
 			return pdf, false, nil
 		}
 		if n, rerr := uncoveredDrawings(pdf); rerr != nil || n > 0 {
@@ -130,12 +130,12 @@ func claimTagging(given, pdf []byte, tier tagSource) (out []byte, ok bool, err e
 	return out, true, nil
 }
 
-// unmarkedTextRuns counts the text runs, on every page and in the forms they draw, that are neither
+// UnmarkedTextRuns counts the text runs, on every page and in the forms they draw, that are neither
 // under an MCID nor inside an `/Artifact` — content a claim of tagging would leave undescribed (ua1 7.1
 // t3). It reads through `readPageRuns`, the reader the tree writers bracket by, so what counts as
 // marked here is what they mark. A page that cannot be read is an error: a claim over content nobody
 // could read is not one this door can verify.
-func unmarkedTextRuns(pdf []byte) (int, error) {
+func UnmarkedTextRuns(pdf []byte) (int, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {
 		return 0, err
@@ -333,13 +333,13 @@ func imageXObjectNames(ctx *model.Context, res types.Dict) map[string]bool {
 }
 
 // uncoveredDrawings counts the non-text drawings, on every page and in the forms they draw, that no
-// marked-content sequence covers — 7.1 t3's other half, where `unmarkedTextRuns` is the glyph half.
+// marked-content sequence covers — 7.1 t3's other half, where `UnmarkedTextRuns` is the glyph half.
 //
 // **It recurses into form XObjects and the writers do not**, deliberately. A door can bracket only
 // the stream it owns, so an image drawn through a form is content this guard sees and no door can
 // mark: counting it is what makes the claim refused rather than made and wrong.
 //
-// A page that cannot be read is an error, for the reason `unmarkedTextRuns` gives.
+// A page that cannot be read is an error, for the reason `UnmarkedTextRuns` gives.
 func uncoveredDrawings(pdf []byte) (int, error) {
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
 	if err != nil {

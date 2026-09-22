@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"nib/mdpdf"
 	"strings"
 	"testing"
 
@@ -67,7 +68,7 @@ func TestNibsOwnPagesEmbedTheirFonts(t *testing.T) {
 	page, err := renderPage([]any{map[string]any{
 		"value": "Signature page", "pos": []any{62.0, 700.0},
 		"font": map[string]any{"name": "$body"},
-	}})
+	}}, []mdpdf.Role{{Kind: mdpdf.RoleHeading, Level: 1}})
 	if err != nil {
 		t.Fatalf("renderPage: %v", err)
 	}

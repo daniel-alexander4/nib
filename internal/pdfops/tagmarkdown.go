@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"errors"
 	"fmt"
 
 	"nib/internal/contentstream"
@@ -114,6 +115,36 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 	// not routed*.
 	pdf = embeddedFontsAreHonest(pdf)
 	nestHeadingLevels(st.Pages)
+	return tagFromRoles(pdf, st.Pages, "tagMarkdown")
+}
+
+// TagAuthoredPages tags pages nib drew itself from text it composed — the co-sign readme, the ceremony
+// page and the signature pages (`PLAN-ua-coverage.md` P02.S09) — with one role per text run, in draw
+// order, per page. The roles are EXACT: the caller built every line and knows what it is, so the tree
+// records `Exact` and a graft onto an `Exact` host keeps that tier (ADR-048).
+//
+// It fails rather than falling back, for `tagMarkdown`'s reason: its whole product is the tagged page.
+// A role count that disagrees with the page's text runs is refused by `tagOnePage`, so a layout change
+// that adds or drops a run cannot tag the wrong line silently.
+//
+// Call it AFTER the page's content-language declaration: `declareContentLang` skips a page that is
+// already marked, so tagging first would drop the `/Lang` with no error.
+func TagAuthoredPages(pdf []byte, pages [][]mdpdf.Role) ([]byte, error) {
+	// **Only for a page nib has just drawn, which has no structure.** `tagOnePage` brackets every text
+	// run it is given and does not ask whether a run is already marked, so on a document that has a tree
+	// it would nest a second MCID inside the first and describe the same words twice.
+	if inspectTags(pdf).tree {
+		return nil, errAuthoredAlreadyTagged
+	}
+	return tagFromRoles(pdf, pages, "TagAuthoredPages")
+}
+
+// errAuthoredAlreadyTagged is TagAuthoredPages refusing a document that already has a structure tree.
+var errAuthoredAlreadyTagged = errors.New("pdfops: TagAuthoredPages tags pages nib has just drawn, and this document already has a structure tree")
+
+// tagFromRoles brackets every page's text runs by the roles given and claims the tree at the exact tier:
+// the one tail `tagMarkdown` and `TagAuthoredPages` share (ADR-009).
+func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error) {
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		live := map[int]bool{}
 		for p := 1; p <= ctx.PageCount; p++ {
@@ -125,8 +156,8 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 		if terr != nil {
 			return terr
 		}
-		for p := 1; p <= ctx.PageCount && p <= len(st.Pages); p++ {
-			if err := tagOnePage(ctx, tree, p, st.Pages[p-1]); err != nil {
+		for p := 1; p <= ctx.PageCount && p <= len(pages); p++ {
+			if err := tagOnePage(ctx, tree, p, pages[p-1]); err != nil {
 				return err
 			}
 		}
@@ -136,7 +167,7 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 		return nil, err
 	}
 	// Both halves and the tier, through the one door (ADR-009). D4's tier here is exact: the
-	// structure came from `mdpdf`'s own AST.
+	// structure came from something that KNOWS it — `mdpdf`'s own AST, or the lines nib composed.
 	claimed, ok, err := claimTagging(nil, out, sourceExact)
 	if err != nil {
 		return nil, err
@@ -145,7 +176,7 @@ func tagMarkdown(md []byte, base *mdpdf.Faces, fallbacks []mdpdf.Font) ([]byte, 
 	// an untagged `mdpdf` render is what `ConvertWithFaces` is for, and a caller that asked for the
 	// tagged one should not silently get the other.
 	if !ok {
-		return nil, orphanedClaimError("tagMarkdown", out)
+		return nil, orphanedClaimError(door, out)
 	}
 	return claimed, nil
 }
