@@ -155,6 +155,13 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// Cardinality and placement (P03.S03): every one of its eight clauses broken in one tree — the "every
 		// relation kept" document above is its passing half. Measured on veraPDF before it was pinned.
 		oracleDoc{"containment: every count and position broken", treeDoc("", cardinalityBroken)},
+		// Table geometry and headers (P03.S04) — veraPDF's grid ported from its own source. Every error the layout
+		// can stop at, one table each (the first error ends a table's layout, so they cannot share one), and a
+		// regular table with row and column spans for the passing half. Measured on veraPDF before pinned.
+		oracleDoc{"table geometry: every error, one table each", treeDoc("", "Document("+
+			"Table(TR(TD,TD!r2),TR(TD!c2)),Table(TR(TD,TD!r3),TR(TD,TD)),Table(TR(TD,TD),TR(TD,TD,TD)),"+
+			"Table(TR(TD,TD),TR(TD)),Table(TR(TH!id=a,TH!id=b),TR(TD!headers=zz,TD)))")},
+		oracleDoc{"table geometry: a regular spanned table", treeDoc("", "Document(Table(TR(TH!r2!scope=Row,TH!c2!scope=Column),TR(TD,TD)))")},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -291,23 +298,12 @@ type veraReport struct {
 // A row appearing is a gap in nib a person must look at; a row that stops appearing means the gap closed
 // and the row is a claim about code that no longer behaves that way.
 var knownCannotCheck = map[string]string{
-	// P09.S05: veraPDF fails this table, and which of its data cells it fails follows an algorithm the
-	// measurement could not state (rules_semantic.go's header). nib names the header cell with no Scope —
-	// the correction either way — rather than guess a cell-by-cell verdict.
-	"LibreOffice table and figure − /Scope / 7.5 t1": "an unscoped header over data cells that name no headers",
-	// `/pending 548`: the three tree rules over the document whose role map loops. They KEEP answering
-	// `CannotCheck` and that is right — the cycle is reported by 7.1 t6, which is the clause about the
-	// cycle, and the other three still cannot type the element their own subject might be. A rule that
-	// started answering here would be typing an element off a chain that reaches no type, which is the
-	// false pass `/pending 507` closed. Three rows, not one, because each names a different subject.
+	// `/pending 548`: the tree rules over the document whose role map loops. They KEEP answering `CannotCheck`
+	// and that is right — the cycle is reported by 7.1 t6, which is the clause about the cycle, and they still
+	// cannot type the element their own subject might be. (7.5 t1 was a third row until P03.S04 ported
+	// veraPDF's table algorithm, which never takes an untyped element for a cell; the oracle agrees with it.)
 	"Markdown + title + lang, one element on a role-map loop / 7.3 t1":   "an element on a role-map loop may be the Figure",
 	"Markdown + title + lang, one element on a role-map loop / 7.4.2 t1": "an element on a role-map loop may be a numbered heading, and one moves the whole sequence",
-	"Markdown + title + lang, one element on a role-map loop / 7.5 t1":   "an element on a role-map loop may be the Table, a row or a cell",
-	// P03.S02's two built trees reach 7.5 t1's declared grid gap (`rules_semantic.go`), which P03.S04 owns:
-	// the first has a TH with no /Scope over TDs that name no headers, and the second a TD outside any row.
-	"containment: every relation kept / 7.5 t1":             "an unscoped header over data cells that name no headers — P03.S04's grid",
-	"containment: every relation broken / 7.5 t1":           "a TD outside any Table's rows has no grid to find its headers in — P03.S04's grid",
-	"containment: every count and position broken / 7.5 t1": "an unscoped header over data cells that name no headers — P03.S04's grid",
 }
 
 // cardinalityBroken breaks every P03.S03 clause at once: two THeads and two TFoots with no TBody, a Caption
@@ -342,7 +338,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 32
+	const wantGenerated = 34
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

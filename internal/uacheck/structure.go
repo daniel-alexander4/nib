@@ -383,32 +383,3 @@ func (d *Document) structNodes() ([]structNode, string) {
 	d.nodes = out
 	return d.nodes, d.nodesErr
 }
-
-// tableAttribute returns key from elem's Table attribute object. `/A` may be one attribute object or
-// an array of them with revision numbers between; only an object owned by `/O /Table` answers.
-func (d *Document) tableAttribute(elem types.Dict, key string) types.Object {
-	if elem["A"] == nil {
-		return nil
-	}
-	o, err := d.Ctx.Dereference(elem["A"])
-	if err != nil || o == nil {
-		return nil
-	}
-	objs := []types.Object{o}
-	if arr, ok := o.(types.Array); ok {
-		objs = arr
-	}
-	for _, x := range objs {
-		ad := d.dict(x)
-		if ad == nil {
-			continue
-		}
-		if d.name(ad["O"]) != "Table" {
-			continue
-		}
-		if v, ok := ad[key]; ok {
-			return v
-		}
-	}
-	return nil
-}

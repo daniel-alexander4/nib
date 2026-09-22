@@ -143,8 +143,9 @@ test('setup: the producer\'s broken document is open, and nib\'s report names bo
   const figure = await result('7.3 t1');
   const table = await result('7.5 t1');
   assert.equal(figure?.verdict, 'fail', `nib's report does not fail 7.3 t1 for a figure with no alt text: ${JSON.stringify(figure)}`);
-  assert.equal(table?.verdict, 'cannot check', `nib's report does not flag the unscoped header cells: ${JSON.stringify(table)}`);
-  assert.match(table.where || '', /header at row 1, cell 1/, `the report does not name the header cell to fix: ${JSON.stringify(table)}`);
+  // `fail` since P03.S04 ported veraPDF's table layout — it was `cannot check` while nib did not build the grid.
+  assert.equal(table?.verdict, 'fail', `nib's report does not fail the unscoped header cells: ${JSON.stringify(table)}`);
+  assert.match(table.why || '', /header at row 1, cell 1/, `the report does not name the header cell to fix: ${JSON.stringify(table)}`);
 });
 
 // tabTo presses Tab (or Shift+Tab) until focus matches — reaching a control is part of the claim.
