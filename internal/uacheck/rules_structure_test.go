@@ -3,6 +3,7 @@ package uacheck
 import (
 	"bytes"
 	"fmt"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 	"strings"
 	"testing"
 
@@ -293,4 +294,99 @@ func buildPDF(objs map[int]string) []byte {
 	}
 	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", maxN+1, xref)
 	return b.Bytes()
+}
+
+// TestNonStandardTypesAndRemapsAgreeWithWhatVeraPDFMeasured — P03.S01's ua1 7.1 t5 and t7, each row a
+// `roleMapDoc` fixture veraPDF 1.30.2 was run on before the rule was written (the slice's ledger has the
+// run). Pass and fail halves both, because a rule that answered Fail unconditionally would score
+// perfectly on the corpus's fail files alone.
+func TestNonStandardTypesAndRemapsAgreeWithWhatVeraPDFMeasured(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		roleMap string
+		t5, t7  Verdict
+	}{
+		// Alpha, Bravo and Charlie map cleanly: nothing is untyped, so t5 has no subject.
+		{"every private type mapped", resolvedRoleMap, NotApplicable, Pass},
+		{"a private type dead-ending at another private one", "/Alpha /Zed /Bravo /Figure /Charlie /Table", Fail, Pass},
+		{"a chain through a standard type stops there", "/Alpha /P /P /Zed /Bravo /Figure /Charlie /Table", NotApplicable, Pass},
+		{"a standard type remapped onto another standard type", "/Alpha /H1 /Bravo /Figure /Charlie /Table /TR /TD", NotApplicable, Fail},
+		// TR is on a loop, so it is untyped — t5's subject — and it passes t5: the loop is 7.1 t6's.
+		{"a loop entered from a standard type", "/Alpha /H1 /Bravo /Figure /Charlie /Table /TR /Zed /Zed /TR", Pass, Fail},
+		{"a standard type remapped that no element uses", "/Alpha /H1 /Bravo /Figure /Charlie /Table /Span /Zed", NotApplicable, Pass},
+		// A private type mapped to itself is untyped and on a loop: t5's subject, passing (7.1 t6 fails it).
+		{"a private type mapped to itself", "/Alpha /Alpha /Bravo /Figure /Charlie /Table", Pass, Pass},
+		// A STANDARD type sent to a dead end is untyped too, and passes t5 — the corpus's /Document → /Book.
+		{"a standard type sent to a dead end", "/Alpha /H1 /Bravo /Figure /Charlie /Table /TR /Zed", Pass, Fail},
+	} {
+		pdf := roleMapDoc(tc.roleMap)
+		if got := verdictOf(t, pdf, "7.1 t5"); got.Verdict != tc.t5 {
+			t.Errorf("%s: 7.1 t5 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t5)
+		}
+		if got := verdictOf(t, pdf, "7.1 t7"); got.Verdict != tc.t7 {
+			t.Errorf("%s: 7.1 t7 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t7)
+		}
+	}
+	// A self-map is not a remap (7.1-t06-fail-a passes 7.1-7). The fixture's /TR element is the type mapped
+	// to itself — `selfMapRoleMap` maps /H1, which no element's /S names, so it could not tell.
+	if got := verdictOf(t, roleMapDoc("/Alpha /Figure /Bravo /Figure /Charlie /Table /TR /TR"), "7.1 t7"); got.Verdict != Pass {
+		t.Errorf("/TR mapped to itself: 7.1 t7 = %v (%s), want Pass — a self-map is 7.1 t6's, not a remap", got.Verdict, got.Why)
+	}
+	// No structure elements: no subject for either clause.
+	for _, c := range []string{"7.1 t5", "7.1 t7"} {
+		if got := verdictOf(t, nestedForms(1), c); got.Verdict != NotApplicable {
+			t.Errorf("no structure elements: %s = %v (%s), want NotApplicable", c, got.Verdict, got.Why)
+		}
+	}
+}
+
+// TestTheTypingWalkAndTheCycleWalkAreDifferentQuestions — measured on veraPDF 1.30.2: `/Alpha → /H1` with
+// `/H1 → /H1` FAILS 7.1-6 on `/Alpha` and types it `/H1` (7.4.2 t1 passes). A walk that stops at a
+// recognised type answers the second; only a walk of the raw map answers the first.
+func TestTheTypingWalkAndTheCycleWalkAreDifferentQuestions(t *testing.T) {
+	pdf := roleMapDoc(selfMapRoleMap)
+	if got := verdictOf(t, pdf, "7.4.2 t1"); got.Verdict != Pass {
+		t.Errorf("7.4.2 t1 = %v (%s), want Pass: /Alpha types as /H1", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, pdf, "7.1 t6"); got.Verdict != Fail {
+		t.Errorf("7.1 t6 = %v (%s), want Fail: /Alpha's mapping reaches a self-map", got.Verdict, got.Why)
+	}
+	// And a chain passing THROUGH a standard type types there, not at its end.
+	if got := verdictOf(t, roleMapDoc("/Alpha /H1 /H1 /Zed /Bravo /Figure /Charlie /Table"), "7.4.2 t1"); got.Verdict != Pass {
+		t.Errorf("/Alpha → /H1 → /Zed: 7.4.2 t1 = %v (%s), want Pass — the element is the document's H1", got.Verdict, got.Why)
+	}
+}
+
+// TestAnElementsTypeDoesNotDependOnWhichElementWasTypedFirst — found by P03.S01's review, and proved by
+// running it: with `/TR → /Zed → /TR`, the walk from /TR is a loop and the walk from /Zed stops at /TR, and
+// the per-document memo gave whichever element came SECOND the first one's answer. Both orders, on fresh
+// documents, must type each name the same way.
+func TestAnElementsTypeDoesNotDependOnWhichElementWasTypedFirst(t *testing.T) {
+	roleMap := "/Alpha /H1 /Bravo /Figure /Charlie /Table /TR /Zed /Zed /TR"
+	elem := func(s string) types.Dict { return types.Dict{"S": types.Name(s)} }
+	type answer struct{ std, unresolved string }
+	resolve := func(order ...string) map[string]answer {
+		d, err := open(roleMapDoc(roleMap))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]answer{}
+		for _, s := range order {
+			std, un := d.standardType(elem(s))
+			out[s] = answer{std, un}
+		}
+		return out
+	}
+	trFirst, zedFirst := resolve("TR", "Zed"), resolve("Zed", "TR")
+	if trFirst["TR"].unresolved == "" {
+		t.Errorf("/TR → /Zed → /TR types /TR as %q; it is on a loop and must be unresolved", trFirst["TR"].std)
+	}
+	if zedFirst["Zed"].std != "TR" {
+		t.Errorf("/Zed → /TR types /Zed as %q (%s); the walk from /Zed reaches /TR by mapping and stops there", zedFirst["Zed"].std, zedFirst["Zed"].unresolved)
+	}
+	for _, s := range []string{"TR", "Zed"} {
+		if trFirst[s] != zedFirst[s] {
+			t.Errorf("/%s types as %+v when /TR is typed first and %+v when /Zed is — the answer depends on order", s, trFirst[s], zedFirst[s])
+		}
+	}
 }

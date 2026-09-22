@@ -1,21 +1,10 @@
+diff --git a/internal/uacheck/rules_structure.go b/internal/uacheck/rules_structure.go
 --- a/internal/uacheck/rules_structure.go
 +++ b/internal/uacheck/rules_structure.go
-@@ -1,6 +1,10 @@
- package uacheck
- 
--import "fmt"
-+import (
-+	"fmt"
-+
-+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-+)
- 
- // The first rule, implemented to prove the shape — `PLAN-accessibility.md` P07.S01.
- //
-@@ -131,6 +135,15 @@
- 	// `CannotCheck` there would point law 4's third verdict at something nib did establish. The reverse
- 	// is not true, which is why the guard is still here: an element past the bound may be the one on the
- 	// loop, so "no cycle among the elements nib read" is not "no cycle".
+@@ -227,6 +227,15 @@
+ // through a document carrying that exact mapping.
+ func checkRoleMapCycle(d *Document) Result {
+ 	nodes, unread := d.structNodes()
 +	if root := d.dict(d.Catalog["StructTreeRoot"]); root != nil {
 +		if rm := d.dict(root["RoleMap"]); rm != nil {
 +			for k := range rm {
@@ -25,6 +14,6 @@
 +			}
 +		}
 +	}
- 	for _, n := range nodes {
- 		if !d.roleMapCircular(n.dict) {
- 			continue
+ 	// **The search runs BEFORE the reach guard, and the order is the decision.** A cycle nib has already
+ 	// seen is settled, and an unread tail below the depth bound cannot take it back; answering
+ 	// `CannotCheck` there would point law 4's third verdict at something nib did establish. The reverse

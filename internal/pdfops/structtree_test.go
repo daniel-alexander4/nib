@@ -456,3 +456,39 @@ func TestACyclicTreeIsRefusedRatherThanFollowedForever(t *testing.T) {
 	}
 	t.Logf("a cyclic tree resolved to err=%v", err)
 }
+
+// TestStandardRoleStopsAtTheFirstTypeItRecognises — P03.S01. The Tags panel's resolver followed the role
+// map for ten hops and stopped at nothing it recognised, the misreading `uacheck.standardType` had. Each
+// row is a shape veraPDF 1.30.2 was measured on in that slice.
+func TestStandardRoleStopsAtTheFirstTypeItRecognises(t *testing.T) {
+	long := map[string]string{}
+	for i := 0; i < 11; i++ {
+		long[fmt.Sprintf("T%d", i)] = fmt.Sprintf("T%d", i+1)
+	}
+	long["T11"] = "H2"
+	for _, tc := range []struct {
+		name    string
+		roleMap map[string]string
+		kind    string
+		want    string
+	}{
+		{"a chain through a standard type stops there", map[string]string{"Alpha": "P", "P": "Zed"}, "Alpha", "P"},
+		{"a standard type the map sends elsewhere reads as where it is sent", map[string]string{"TR": "TD"}, "TR", "TD"},
+		{"a chain longer than ten hops still resolves", long, "T0", "H2"},
+		{"a loop answers the name as written", map[string]string{"Loopy": "Ringy", "Ringy": "Loopy"}, "Loopy", "Loopy"},
+		{"a self-map types as itself", map[string]string{"LI": "LI"}, "LI", "LI"},
+		// From /TR the loop comes back to /TR; from /Zed it reaches /TR by mapping and stops. (Asking the
+		// revisit before or after recognition gives the same answers here — for this resolver a loop answers
+		// the name as written, and that name IS /TR — so no row can pin the order; uacheck's walk, whose loop
+		// answer differs, pins it.)
+		{"a loop entered from a standard start answers the name as written", map[string]string{"TR": "Zed", "Zed": "TR"}, "TR", "TR"},
+		{"the same loop entered from its other name stops at the standard type", map[string]string{"TR": "Zed", "Zed": "TR"}, "Zed", "TR"},
+		// A loop entered from OUTSIDE it: the name as written is the entry, not the name revisited.
+		{"a loop entered from outside it answers the entry", map[string]string{"Alpha": "Loopy", "Loopy": "Ringy", "Ringy": "Loopy"}, "Alpha", "Alpha"},
+		{"an unmapped name is itself", nil, "Custom", "Custom"},
+	} {
+		if got := standardRole(&structTree{roleMap: tc.roleMap}, tc.kind); got != tc.want {
+			t.Errorf("%s: standardRole(%q) = %q, want %q", tc.name, tc.kind, got, tc.want)
+		}
+	}
+}

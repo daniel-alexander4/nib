@@ -107,8 +107,8 @@ func (d *Document) parentTree() (map[int]types.Object, string) {
 //
 // **It is not, however, a non-cycle, and this comment said it was until `/pending 548`.** Measured:
 // `7.1 General/7.1-t06-fail-a.pdf` carries `/RoleMap << /LI /LI >>` and veraPDF FAILS ua1 7.1-6 on its two
-// `LI` elements, passing the other twelve. Resolving and being circular are different questions; `circular`
-// is the third result and it answers the second one.
+// `LI` elements, passing the other twelve. Resolving and being circular are different questions, and since
+// P03.S01 they are different walks: `roleMapCircular` has the reason.
 //
 // **The cycle is not hypothetical**: veraPDF's own corpus carries one, in `7.1 General/7.1-t05-fail-d.pdf`
 // (`/Standard → /Text body → /Standard`). nib answered `NotApplicable` and `Pass` over that file's
@@ -140,8 +140,11 @@ func (d *Document) standardType(elem types.Dict) (standard string, unresolved st
 	onPath := map[string]bool{}
 	var res roleResolution
 	for at := name; ; {
-		if r, done := d.roles[at]; done {
-			// Reached a name resolved earlier: everything on this path resolves the same way.
+		// Reached a name resolved earlier: this path resolves the same way — UNLESS that answer stops at a
+		// type already on this path. Then the walk from here would revisit it, which is a cycle, and the
+		// remembered answer is the other name's, not this one's (`/TR → /Zed → /TR`: /Zed alone types as
+		// /TR, /TR is on a loop). Found by P03.S01's review: the answer depended on which element came first.
+		if r, done := d.roles[at]; done && !(r.standard != "" && onPath[r.standard]) {
 			res = r
 			break
 		}
@@ -157,39 +160,91 @@ func (d *Document) standardType(elem types.Dict) (standard string, unresolved st
 			mapped = d.name(roleMap[at])
 		}
 		if mapped == "" || mapped == at {
-			res = roleResolution{standard: at, circular: mapped != "" && mapped == at}
+			res = roleResolution{standard: at}
+			break
+		}
+		// **A standard type reached BY MAPPING ends the walk** (P03.S01) — ISO 32000-1 §14.7.3 Note 2, a
+		// reader "should follow the chain of associations until it either finds a structure type it
+		// recognizes or returns to one it has already encountered". It stopped only at an unmapped name,
+		// so `/Alpha → /P → /Zed` typed as `/Zed`; measured on veraPDF 1.30.2, that element is a `/P`.
+		// The revisit is asked FIRST, which is veraPDF's order: `/TR → /Zed → /TR` is a cycle (7.1-6 fails
+		// on it) even though `/TR` is standard. The START is not stopped at — a standard type the map
+		// sends elsewhere types as where it is sent (`/TR → /TD` is a `/TD`), which 7.1 t7 forbids.
+		if standardStructureTypes[mapped] && !onPath[mapped] {
+			res = roleResolution{standard: mapped}
 			break
 		}
 		at = mapped
 	}
-	// **`circular` is set in ONE place, from whichever way the walk revisited a name** (`/pending 548`):
-	// it came back to a name already on the path, or the map sent a name straight to itself. The first has
-	// no type at the end of it and the second types cleanly, so the two states are not interchangeable —
-	// but both are the circular mapping ua1 7.1 t6 forbids, and that rule asks this bit rather than
-	// re-walking the map for itself.
-	if res.unresolved != "" {
-		res.circular = true
+	// Every name on the path shares the start's answer, with ONE exception: a loop the walk closed by
+	// returning to a STANDARD start. Each later name on it reaches that start by mapping and stops there —
+	// so only the start is on a loop, and remembering the loop for the rest would type them wrongly for
+	// whichever element came second.
+	memo := path
+	if res.unresolved != "" && len(path) > 0 && standardStructureTypes[path[0]] {
+		memo = path[:1]
 	}
-	for _, p := range path {
+	for _, p := range memo {
 		d.roles[p] = res
 	}
 	return res.standard, res.unresolved
 }
 
 // roleMapCircular reports whether following the role map from elem's `/S` revisits a name — the fact ua1
-// 7.1 t6 is about — taken from `standardType`'s own walk rather than from a second one (`/pending 548`).
+// 7.1 t6 is about.
 //
-// **It is deliberately not derivable from the other two results.** An unresolvable chain is circular AND a
-// self-map is circular, but a self-map resolves to a type, so `unresolved != ""` misses it and
-// `standard == ""` misses it too. `/RoleMap << /LI /LI >>` is the case, and it is in the corpus.
+// **It is its own walk, and until P03.S01 it was `standardType`'s** (`/pending 548` had derived it from the
+// typing walk "rather than from a second one"). The typing walk now STOPS at the first standard type it
+// reaches by mapping, and the circularity question does not: measured on veraPDF 1.30.2, `/Alpha → /H1`
+// with `/H1 → /H1` FAILS 7.1-6 on `/Alpha` while typing `/Alpha` as `/H1` (7.4.2 t1 passes over it). A
+// reader asking "what is this?" stops at what it recognises; a validator asking "does a cycle exist on this
+// element's mapping?" follows the map itself. One walk cannot answer both, so each has one.
+//
+// **A self-map is circular** — `/LI → /LI` (7.1-t06-fail-a) fails 7.1-6 on its two `LI` elements — though
+// it types cleanly, which is why this is not derivable from `standardType`'s results.
 func (d *Document) roleMapCircular(elem types.Dict) bool {
 	name := d.name(elem["S"])
 	if name == "" {
 		return false
 	}
-	// standardType memoises the whole path it walked, so this is that walk's answer and never another one.
-	d.standardType(elem)
-	return d.roles[name].circular
+	if c, done := d.circular[name]; done {
+		return c
+	}
+	var roleMap types.Dict
+	if root := d.dict(d.Catalog["StructTreeRoot"]); root != nil {
+		roleMap = d.dict(root["RoleMap"])
+	}
+	if d.circular == nil {
+		d.circular = map[string]bool{}
+	}
+	// Every name on one walk's path shares its answer — each reaches the same loop or the same dead end —
+	// so the whole path is memoised, as `standardType`'s is, and a 5,000-name chain costs one walk, not
+	// 5,000 of them.
+	var path []string
+	seen := map[string]bool{}
+	circular := false
+	for at := name; roleMap != nil; {
+		if c, done := d.circular[at]; done {
+			circular = c
+			break
+		}
+		if seen[at] {
+			circular = true
+			break
+		}
+		seen[at] = true
+		path = append(path, at)
+		next := d.name(roleMap[at])
+		if next == "" {
+			break
+		}
+		at = next
+	}
+	d.circular[name] = circular
+	for _, p := range path {
+		d.circular[p] = circular
+	}
+	return circular
 }
 
 // standardTypes resolves every node's standard type in one call, indexed like nodes, with the first

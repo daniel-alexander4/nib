@@ -1,6 +1,10 @@
 package uacheck
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+)
 
 // The first rule, implemented to prove the shape — `PLAN-accessibility.md` P07.S01.
 //
@@ -20,6 +24,103 @@ func init() {
 		Summary: "a circular mapping shall not exist",
 		Check:   checkRoleMapCycle,
 	})
+	register(Rule{
+		Clause:  "7.1 t5",
+		Summary: "every non-standard structure type shall be mapped, directly or through other names, to a standard type",
+		Check:   checkNonStandardTypeIsMapped,
+	})
+	register(Rule{
+		Clause:  "7.1 t7",
+		Summary: "the standard structure types shall not be remapped",
+		Check:   checkStandardTypeNotRemapped,
+	})
+}
+
+// checkNonStandardTypeIsMapped evaluates ua1 7.1 t5 (P03.S01).
+//
+// **Its subject is an element nib cannot type as a standard type, and its failure is narrower than
+// that.** veraPDF's object is `SENonStandard` — every element whose role map does not lead to a standard
+// type — and it fails only the one whose OWN `/S` is non-standard and whose chain dead-ends at another
+// non-standard name. Measured on veraPDF 1.30.2 over the corpus and six fixtures of nib's own:
+//
+//   - `/Standard → /p` fails (7.1-t05-fail-a); `/Alpha → /Zed` fails; `/Standard → ∅` fails (fail-c).
+//   - A CYCLE is a subject that passes — `/Standard → /Text body → /Standard` (7.1-t05-fail-d, whose name is
+//     the specification's numbering: veraPDF fails it on 7.1-6, not here) and `/TR → /Zed → /TR`.
+//   - A STANDARD `/S` sent to a dead end is a subject that passes — `/Document → /Book`, 7.1-t07-fail-a,
+//     which is 7.1 t7's failure.
+//
+// So the verdict is per element, and a fact about the role map alone is not a failure: a map entry no
+// element uses is never asked.
+func checkNonStandardTypeIsMapped(d *Document) Result {
+	nodes, unread := d.structNodes()
+	subjects := 0
+	for _, n := range nodes {
+		own := d.name(n.dict["S"])
+		std, unresolved := d.standardType(n.dict)
+		if own == "" || (unresolved == "" && standardStructureTypes[std]) {
+			continue
+		}
+		subjects++
+		// A loop is 7.1 t6's failure, and an element the typing walk found on one is always circular in the raw
+		// walk too — the raw walk takes the same steps and never stops early — so one test covers both.
+		if standardStructureTypes[own] || d.roleMapCircular(n.dict) {
+			continue
+		}
+		why := fmt.Sprintf("/%s is not a standard structure type, and the role map does not lead it to one", own)
+		if std != own {
+			why = fmt.Sprintf("/%s is not a standard structure type, and the role map leads it only as far as /%s, "+
+				"which is not one either", own, std)
+		}
+		return Result{Verdict: Fail, Why: why, Where: nodeWhere(n, own)}
+	}
+	if unread != "" {
+		return Result{Verdict: CannotCheck, Why: unread}
+	}
+	if subjects == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "every structure element types as a standard structure type, so none has a mapping to ask about",
+		}
+	}
+	return Result{Verdict: Pass}
+}
+
+// checkStandardTypeNotRemapped evaluates ua1 7.1 t7 (P03.S01).
+//
+// veraPDF asks it of EVERY structure element (`PDStructElem`) and fails the one whose `/S` is a standard
+// type the role map sends somewhere else — `/Document → /Book` (7.1-t07-fail-a), and `/TR → /TD` in a
+// fixture of nib's own, so a remap onto another standard type is still a remap. A self-map is not one:
+// `/LI → /LI` passes here (7.1-t06-fail-a) and fails 7.1 t6 instead. A remap of a standard type no
+// element uses passes, measured — the clause is about elements, not about the role map's contents.
+func checkStandardTypeNotRemapped(d *Document) Result {
+	nodes, unread := d.structNodes()
+	var roleMap types.Dict
+	if root := d.dict(d.Catalog["StructTreeRoot"]); root != nil {
+		roleMap = d.dict(root["RoleMap"])
+	}
+	for _, n := range nodes {
+		own := d.name(n.dict["S"])
+		if !standardStructureTypes[own] || roleMap == nil {
+			continue
+		}
+		if to := d.name(roleMap[own]); to != "" && to != own {
+			return Result{
+				Verdict: Fail,
+				Why:     fmt.Sprintf("the role map sends the standard type /%s to /%s", own, to),
+				Where:   nodeWhere(n, own),
+			}
+		}
+	}
+	if unread != "" {
+		return Result{Verdict: CannotCheck, Why: unread}
+	}
+	if len(nodes) == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the document has no structure elements, so no element's standard type could be remapped",
+		}
+	}
+	return Result{Verdict: Pass}
 }
 
 // checkStructTreeRoot evaluates ua1 7.1 t11.
