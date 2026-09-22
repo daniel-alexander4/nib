@@ -257,7 +257,9 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # outline lands on the element's text, which the tier-2 stub viewer cannot provide.
 # 38 since /pending 476 (formauthor.test.mjs): the fillable-form authoring flow, which needs a
 # detected field on a rendered page before the naming dialog exists at all.
-expect_files=38
+# 39 since P02.S05 (crop.test.mjs): a crop is now a MediaBox move, and only a rendered page can show
+# that the client's display-space fractions and the new server shape agree about what was drawn.
+expect_files=39
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

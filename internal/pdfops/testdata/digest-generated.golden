@@ -2,7 +2,7 @@
 # <name>\t<input sha256, `-` where the generator is not byte-stable>\t<ContentDigest output>
 # Regenerate with NIB_UPDATE_DIGEST_GOLDENS=1; a regeneration is a ContentDigestVersion decision, not a test fix.
 attachment	-	18a70faf121ffc9e5a0e62731c08136a10275e777a5413d40bd2902825b61df2
-cropped	-	8cbc33bde8b9507360bcf518bcdf3d99e7bba80f123bb8065fcc2038aac39a82
+cropped	-	6a0a418a5497f5499a69804b87e38ec39bce110cddecabb5e9cade485303f1b5
 filled-form	-	4db8ce60f7b167b6b2e0f3081f78a29402a33ac26408a0c14dded1bed8ce56d8
 form	-	acbd3d244be137289701e4f18ec555274ebe3bf0dab92d76587f76a1f962e719
 notes-on-every-page	-	#unstable

@@ -609,10 +609,14 @@ deleting pages, reordering, duplicating a page, splitting into separate files an
 the structure of the pages you keep is carried onto them, and the structure of the pages you removed
 goes with those pages.
 
+**Cropping keeps them too**, and so it does the links, comments and form fields on the cropped
+pages: a crop only moves the edge of the page, so everything it hides is still in the file and the
+tags go on describing it — use **Redact** when the hidden part must go.
+
 **The operations that rebuild or combine pages still lose them**, and they remove the *claim* along
-with the structure rather than leaving the file looking accessible: cropping, splitting one page into
-tiles, and inserting another PDF into this one — and redaction, which destroys page content by
-design, so no structure describing it could still be true. A screen reader told a document
+with the structure rather than leaving the file looking accessible: splitting one page into tiles,
+and inserting another PDF into this one — and redaction, which destroys page content by design, so
+no structure describing it could still be true. A screen reader told a document
 is tagged stops reaching for the fallbacks it would otherwise use, so a false claim is worse than a
 visible loss.
 
@@ -917,7 +921,8 @@ current one) is cut down to it. The box is taken as a proportion of the page, so
 document with mixed page sizes keeps the same relative region on each. It's a
 re-crop, not a re-render, so quality is
 untouched; the trimmed-off content is hidden behind the smaller page, not
-destroyed — use **Flatten** or **Redact** to remove it for good. Got a scanned 2-up
+destroyed — links, comments and form fields stay too — so use **Flatten** or **Redact** to remove
+it for good. Got a scanned 2-up
 or 4-up sheet? **Split page…**
 (on the **Edit** tab) cuts the current page into a grid of separate pages — pick the
 columns and rows, preview where the cuts land, and

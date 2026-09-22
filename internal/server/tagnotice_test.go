@@ -64,6 +64,17 @@ func taggedDoc() []byte {
 	return b.Bytes()
 }
 
+// redactedPage is `src` with its one page replaced by a raster — the operation whose tagging loss is
+// a recorded decision rather than a slice not yet built, so it stays a stimulus for this notice.
+func redactedPage(t *testing.T, src []byte) []byte {
+	t.Helper()
+	out, err := pdfops.RedactPages(src, map[int]pdfops.RasterPage{1: {Image: tinyPNG(t), W: 612, H: 792}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func TestDroppingATaggingClaimIsRecordedOnTheDocument(t *testing.T) {
 	ts, srv := startServerWith(t)
 	c, csrf := authedClient(t, ts)
@@ -81,19 +92,15 @@ func TestDroppingATaggingClaimIsRecordedOnTheDocument(t *testing.T) {
 	srv.registerLocked(doc)
 	srv.mu.Unlock()
 
-	// **`Crop`, not `Rotate` and no longer `Collect`, and each change was forced by a measurement.**
+	// **Redaction, and not `Rotate`, `Collect` or `Crop`, and each change was forced by a measurement.**
 	// Measured by PARSING (a byte count cannot see a compressed object stream): `Rotate` and
 	// `Optimize` carry the structure tree through intact, so the first version of this test — which
 	// used `Rotate` on the belief that every operation destroyed tagging — was asserting nothing.
-	// `Collect` replaced it and then stopped dropping too: `PLAN-ua-coverage.md` P02.S04b prunes the
-	// source tree onto the pages a subset keeps, and this fixture is ONE page, so `Collect(["1"])` is
-	// the identity selection and the claim survives it whole. `Crop` still rebuilds each page and
-	// still drops the claim with the structure — until P02.S05, which is blocked on the question of
-	// what a crop should say. The setup guard below is what will say so when that lands.
-	out, err := pdfops.Crop(src, [4]float64{0.05, 0.05, 0.05, 0.05}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// `Collect` replaced it and stopped dropping at `PLAN-ua-coverage.md` P02.S04b; `Crop` replaced
+	// that and stopped at P02.S05. The setup guard below is what said so both times. **A redacted
+	// page's drop is a DECISION rather than a pending slice** (`tagFates`' RedactPages row: the tree
+	// describes what the raster destroyed), so this stimulus is the one that stays.
+	out := redactedPage(t, src)
 	if pdfops.ClaimsTagging(out) {
 		t.Fatal("setup: the operation still claims tagging, so there is no loss for the notice to " +
 			"record and this test is about the wrong thing. Every page-set operation that still " +
@@ -151,11 +158,8 @@ func TestTheNoticeIsStickyAcrossLaterEdits(t *testing.T) {
 	srv.registerLocked(doc)
 	srv.mu.Unlock()
 
-	// `Crop`, for the reason the first test records: a one-page `Collect` now carries the tree.
-	dropped, err := pdfops.Crop(src, [4]float64{0.05, 0.05, 0.05, 0.05}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Redaction, for the reason the first test records: a subset and a crop both carry the tree now.
+	dropped := redactedPage(t, src)
 	if err := srv.commitMutation(doc, src, dropped, false); err != nil {
 		t.Fatal(err)
 	}

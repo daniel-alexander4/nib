@@ -123,12 +123,12 @@ var knownUA1Deltas = map[string]struct {
 		"only /H1 — so the remaining document genuinely starts at /H2 and genuinely mis-nests. " +
 		"The tree is carried; the heading it needed went with the page the caller asked to delete"},
 
-	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`, each because
-	// its own slice is blocked on Dan: crop P02.S05, the splits P02.S06, the merge graft P02.S07.
-	"Crop":         {pageSetLoss, "rebuilt page by page — P02.S05, blocked"},
-	"SplitPage":    {pageSetLoss, "rebuilt page by page — P02.S06, blocked"},
-	"SplitRegions": {pageSetLoss, "rebuilt page by page — P02.S06, blocked"},
-	"InsertPDF":    {append(append([]string{}, pageSetLoss...), "7.21.4.1 t1"), "spliced through the NON-carrying door, with an untagged Base-14 document inserted — P02.S07, blocked"},
+	// ── The tree goes, and with it the metadata. `tagFates` declares these `dropped`: the splits are
+	// P02.S06 and the merge graft P02.S07. **`Crop` had a `pageSetLoss` row until P02.S05** and adds
+	// nothing now — it moves each page's `/MediaBox` in place instead of rebuilding the page.
+	"SplitPage":    {pageSetLoss, "rebuilt page by page — P02.S06"},
+	"SplitRegions": {pageSetLoss, "rebuilt page by page — P02.S06"},
+	"InsertPDF":    {append(append([]string{}, pageSetLoss...), "7.21.4.1 t1"), "spliced through the NON-carrying door, with an untagged Base-14 document inserted — P02.S07"},
 	// **`NUp` had a `7.20 t2` row until P02.S02 and no longer does.** The clause was veraPDF's
 	// `isUniqueSemanticParent` — *"Form XObject contains MCIDs and is referenced more than once"* —
 	// and the cause was nib's own carry anchoring a form that pdfcpu's optimize pass had fused
