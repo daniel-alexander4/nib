@@ -26,7 +26,7 @@ import (
 //
 // # The remedy, and why it is not a check
 //
-// nib cannot tell whether an edit preserved conformance — its checker covers 22 of 106 rules — so it does
+// nib cannot tell whether an edit preserved conformance — its checker covers 39 of 106 rules — so it does
 // not ask. Any change drops the identification, including the changes that happened to keep a document
 // conformant (`Rotate`, `Optimize`). That is a visible loss in place of a false claim, the trade ADR-031
 // already makes for tagging.
