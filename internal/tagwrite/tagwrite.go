@@ -3,7 +3,8 @@
 //
 // **It is not the door for every structure write, and this comment said it was until `/pending 503`.** The
 // operations that author structure as part of producing a document — `TagOCRLayer`, `AuthorTaggedForm`,
-// the Markdown conversion's `tagMarkdown`, the n-up carry (`carryTagsThroughNUp`) — write a tree inside
+// the Markdown conversion's `tagMarkdown`, nib's own co-sign and ceremony pages (`TagAuthoredPages`,
+// P02.S09), the n-up carry (`carryTagsThroughNUp`) — write a tree inside
 // `pdfops` and never pass here, so this package's signed refusal does not reach them. What guards those is
 // each one's own caller, not this door.
 //

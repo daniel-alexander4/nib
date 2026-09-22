@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"nib/internal/pdfops"
+	"nib/mdpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -99,7 +100,7 @@ func TestSignaturePagesDeclareTheirLanguageToo(t *testing.T) {
 	page, err := renderPage([]any{map[string]any{
 		"value": "Signature page", "pos": []any{62.0, 700.0},
 		"font": map[string]any{"name": "$body"},
-	}})
+	}}, []mdpdf.Role{{Kind: mdpdf.RoleHeading, Level: 1}})
 	if err != nil {
 		t.Fatalf("renderPage: %v", err)
 	}
@@ -109,20 +110,27 @@ func TestSignaturePagesDeclareTheirLanguageToo(t *testing.T) {
 	}
 }
 
-// TestTheDeclarationClaimsNoTagging — ADR-031's law 1 is not engaged by marked content, and this is
-// the assertion that keeps it that way.
-//
-// `/Span <</Lang (en)>> BDC … EMC` is marked content, not a structure tree. A future change that
-// reached for a structure element here would start claiming tagging over a fragment with no tree —
-// which is `orphaned()`, the state P01.S06 built a door to prevent.
-func TestTheDeclarationClaimsNoTagging(t *testing.T) {
+// TestTheReadmeIsTaggedAndStillDeclaresItsLanguage — `PLAN-ua-coverage.md` P02.S09 inverted what this
+// test used to assert (*"the declaration claims no tagging"*): the readme now claims tagging, over a
+// tree nib built from the lines it composed. What must still hold is the other half of that old test's
+// worry — the claim is over a tree that describes the page, never an orphaned one — and the content
+// language survives the tagging, which it would not if the tagging ran first (`declareContentLang`
+// skips a page that is already marked).
+func TestTheReadmeIsTaggedAndStillDeclaresItsLanguage(t *testing.T) {
 	readme, err := RenderReadme()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pdfops.ClaimsTagging(readme) {
-		t.Error("the readme now claims tagging — declaring a content language must not assert a " +
-			"structure the fragment has not got")
+	f := pdfops.Inspect(readme)
+	if !f.Tagged {
+		t.Fatal("the readme does not claim tagging, so a tagged document it is appended to loses coverage")
+	}
+	if u, err := pdfops.UnmarkedTextRuns(readme); err != nil || u != 0 {
+		t.Errorf("%d of the readme's text runs are outside any structure element (err %v)", u, err)
+	}
+	c := pageContent(t, readme, 1)
+	if !bytes.Contains(c, []byte("/Span")) || !bytes.Contains(c, []byte("(en)")) {
+		t.Errorf("the readme lost its content-language declaration to the tagging:\n%.300s", c)
 	}
 }
 

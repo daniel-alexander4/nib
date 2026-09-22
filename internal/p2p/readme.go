@@ -249,7 +249,28 @@ func RenderReadme() ([]byte, error) {
 	// here is discarded on every path that exists, and `readmeTitle` stays what it has always been
 	// — the heading drawn on the page. The co-signed document's title is the user's document's,
 	// which nib does not invent (P03.S01: authoring-only).
-	return pdf, nil
+	//
+	// **Tagged as real content, after the language declaration** (`PLAN-ua-coverage.md` P02.S09): the
+	// trust explainer is the page a screen-reader user most needs, and an artifact would hide it on
+	// purpose. `Append` grafts this tree onto a tagged document and strips it from an untagged one
+	// (ADR-048), so a document nobody tagged is not made to claim tagging by nib's own page.
+	return pdfops.TagAuthoredPages(pdf, [][]mdpdf.Role{readmeRoles(lines)})
+}
+
+// readmeRoles is one role per text run the readme draws, in draw order: the title (drawn first, by
+// pdfcpu's header block) as a level-1 heading, then each paragraph's wrapped lines as one body block.
+// A blank line draws nothing and separates paragraphs, so it takes no role and starts the next block.
+func readmeRoles(lines []string) []mdpdf.Role {
+	roles := []mdpdf.Role{{Kind: mdpdf.RoleHeading, Level: 1, Block: 0}}
+	block := 1
+	for _, ln := range lines {
+		if ln == "" {
+			block++
+			continue
+		}
+		roles = append(roles, mdpdf.Role{Kind: mdpdf.RoleBody, Block: block})
+	}
+	return roles
 }
 
 // wrapText greedily wraps s into lines no wider than maxW points at the given
@@ -269,6 +290,13 @@ func RenderReadme() ([]byte, error) {
 // axis of RosterHash. Today no production code authors a record, so the change is
 // free; from P07.S02 it is unpayable. Same argument that moved this slice ahead of
 // S02 for the prose, applied to the metrics.
+//
+// **(corrected 2026-09-21, P02.S09, which changed this render by tagging it.)** "Unpayable" was
+// reasoned, not searched. Nothing re-renders these pages to compare them: `RenderReadme`,
+// `renderCeremonyPage` and `renderSignaturePage` are called only while PREPARING a document, and every
+// `DocumentHash` recomputation reads bytes already in hand (`server/ceremonyid.go`, `ceremony/mirror.go`,
+// `ceremony/embed.go`). So a render change moves only the hashes of ceremonies prepared after it; a
+// stored record still matches the document it was written for.
 //
 // One token longer than the column is still emitted alone rather than split: that
 // is a deliberate limit, and readmeOverflow does not catch it because it is a

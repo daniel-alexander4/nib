@@ -621,6 +621,10 @@ added to an untagged one. **Splitting one page into tiles** keeps the rest of th
 tiles themselves have none, because each tile holds the whole page's content and tagging each one
 would make a screen reader read that page once per tile.
 
+**Co-signing and signing ceremonies keep them too**: the pages Nib adds — the note explaining what the
+signatures prove, the ceremony page and the signature pages — are tagged as well, so a screen reader can
+read them. (The signature boxes themselves are not yet tagged.)
+
 **Redaction still loses them**, and removes the *claim* along with the structure rather than leaving
 the file looking accessible: it destroys page content by design, so no structure describing it could
 still be true. A screen reader told a document is tagged stops reaching for the fallbacks it would

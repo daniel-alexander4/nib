@@ -195,7 +195,7 @@ func TestIgnoringEveryElementOnAPageStillCommitsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a review that ignored every element on a page could not commit: %v", err)
 	}
-	if n, rerr := unmarkedTextRuns(out); rerr != nil || n != 0 {
+	if n, rerr := UnmarkedTextRuns(out); rerr != nil || n != 0 {
 		t.Errorf("%d text run(s) left neither tagged nor an artifact (err %v)", n, rerr)
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"nib/internal/pairing"
 	"nib/internal/pdfops"
+	"nib/mdpdf"
 )
 
 // Signature-page allocation (D25), and the whole of it is forced by one fact: the page
@@ -98,35 +99,44 @@ func renderCeremonyPage(id CeremonyID, convenerFP []byte, obliged int) ([]byte, 
 	if n, err := pairing.Name(convenerFP); err == nil {
 		name = n
 	}
-	lines := []string{
-		"This document is part of a Nib signing ceremony.",
-		"",
-		"Ceremony: " + ceremonyID,
-		fmt.Sprintf("Parties obliged to sign: %d", obliged),
-		"Convened by: " + hex.EncodeToString(convenerFP),
+	// Each line carries the block it belongs to, so the tags read the page as it is meant: every fact
+	// its own paragraph, the convener's name with the fingerprint it reads, and the last sentence —
+	// wrapped by hand across two lines — as one.
+	type line struct {
+		text  string
+		block int
+	}
+	lines := []line{
+		{"This document is part of a Nib signing ceremony.", 0},
+		{"", -1},
+		{"Ceremony: " + ceremonyID, 1},
+		{fmt.Sprintf("Parties obliged to sign: %d", obliged), 2},
+		{"Convened by: " + hex.EncodeToString(convenerFP), 3},
 	}
 	if name != "" {
-		lines = append(lines, "  which reads as: "+name)
+		lines = append(lines, line{"  which reads as: " + name, 3})
 	}
 	lines = append(lines,
-		"",
-		"Each signature below carries a token committing to this ceremony's roster.",
-		"A signature block is present for every party who has signed so far; if there",
-		"are fewer blocks than the number above, this ceremony is not finished.",
+		line{"", -1},
+		line{"Each signature below carries a token committing to this ceremony's roster.", 4},
+		line{"A signature block is present for every party who has signed so far; if there", 5},
+		line{"are fewer blocks than the number above, this ceremony is not finished.", 5},
 	)
 	text := make([]any, 0, len(lines))
+	roles := make([]mdpdf.Role, 0, len(lines))
 	y := readmeBodyTop
 	for _, ln := range lines {
-		if ln != "" {
+		if ln.text != "" {
 			text = append(text, map[string]any{
-				"value": ln,
+				"value": ln.text,
 				"pos":   []any{readmeLeft, y},
 				"font":  map[string]any{"name": "$body"},
 			})
+			roles = append(roles, mdpdf.Role{Kind: mdpdf.RoleBody, Block: ln.block})
 		}
 		y -= readmeLeading
 	}
-	return renderPage(text)
+	return renderPage(text, roles)
 }
 
 // renderSignaturePage draws one signature page: a heading and nothing else.
@@ -150,12 +160,12 @@ func renderSignaturePage(id CeremonyID, page, of int) ([]byte, error) {
 		"value": heading,
 		"pos":   []any{readmeLeft, readmeBodyTop},
 		"font":  map[string]any{"name": "$body"},
-	}})
+	}}, []mdpdf.Role{{Kind: mdpdf.RoleHeading, Level: 1, Block: 0}})
 }
 
 // renderPage is the one CreateFromJSON spec these pages share, so the paper size, origin and
 // font table are stated once rather than per page.
-func renderPage(text []any) ([]byte, error) {
+func renderPage(text []any, roles []mdpdf.Role) ([]byte, error) {
 	// The same faces the readme uses, resolved the same way and for the same reason: these pages
 	// are nib's own prose and PDF/UA 7.21.4.1 wants their fonts embedded. A failed install degrades
 	// both to Base-14 together — a ceremony whose readme and signature pages disagree about their
@@ -189,7 +199,8 @@ func renderPage(text []any) ([]byte, error) {
 
 	// No title — a FRAGMENT, for the reason RenderReadme states in full: PrepareCeremonyDocument
 	// appends every one of these through `pdfops.Append`, which keeps the first document's catalog.
-	return pdf, nil
+	// Tagged as real content after the language declaration, for RenderReadme's reason (P02.S09).
+	return pdfops.TagAuthoredPages(pdf, [][]mdpdf.Role{roles})
 }
 
 // PrepareCeremonyDocument readies pdf for a ceremony of `signers` signing parties: the

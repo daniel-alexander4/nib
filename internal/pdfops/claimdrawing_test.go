@@ -37,7 +37,7 @@ import (
 // TestAnOCRdScanDeclaresItsPageImageAnArtifact — the finding as reproduced, then closed.
 //
 // Before this item `TagOCRLayer` returned `tagged=true` for a scan whose image no element covered:
-// veraPDF failed `7.1 t3` at `/Im0 Do` and so did `nib ua`, while `unmarkedTextRuns` — the only thing
+// veraPDF failed `7.1 t3` at `/Im0 Do` and so did `nib ua`, while `UnmarkedTextRuns` — the only thing
 // the claim door could see — answered 0.
 func TestAnOCRdScanDeclaresItsPageImageAnArtifact(t *testing.T) {
 	scan := scannedPage(t)
@@ -49,7 +49,7 @@ func TestAnOCRdScanDeclaresItsPageImageAnArtifact(t *testing.T) {
 		t.Fatalf("setup: the scan's page does not draw an image outside all marked content, so nothing "+
 			"below is about a picture:\n%.400s", bs)
 	}
-	if n, err := unmarkedTextRuns(scan); err != nil || n != 0 {
+	if n, err := UnmarkedTextRuns(scan); err != nil || n != 0 {
 		t.Fatalf("setup: the scan has %d unmarked text run(s) (err %v); the point of this item is that "+
 			"the TEXT guard sees nothing here", n, err)
 	}
@@ -108,7 +108,7 @@ func TestAnOCRdScanDeclaresItsPageImageAnArtifact(t *testing.T) {
 // the honest answer here is the one 495 already gives for undescribed text — make no claim.
 func TestAFormOnAnImageOnlyPageMakesNoClaim(t *testing.T) {
 	host := scannedPage(t)
-	if n, err := unmarkedTextRuns(host); err != nil || n != 0 {
+	if n, err := UnmarkedTextRuns(host); err != nil || n != 0 {
 		t.Fatalf("setup: the image-only host has %d unmarked text run(s) (err %v), so the TEXT guard "+
 			"would refuse this and the drawing guard is not what is measured", n, err)
 	}
