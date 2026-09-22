@@ -22,7 +22,7 @@ import "fmt"
 // kidSequence is one clause over an element's typed kids.
 type kidSequence struct {
 	clause  string
-	subject string
+	subject string // the standard type the clause is about, or "" for every structure element
 	summary string
 	// broken says why kids breaks the clause, or "" when it holds.
 	broken func(kids []string) string
@@ -38,6 +38,10 @@ var kidSequenceRules = []kidSequence{
 	{clause: "7.2 t39", subject: "Table", summary: "a Table element shall contain at most one Caption", broken: atMostOne("Caption")},
 	{clause: "7.2 t28", subject: "TOC", summary: "a TOC element's Caption shall be its first kid", broken: captionFirstOnly},
 	{clause: "7.2 t40", subject: "L", summary: "an L element's Caption shall be its first kid", broken: captionFirstOnly},
+	// P03.S05. veraPDF's object is every PDStructElem, so the subject is every element ("") — measured: two H
+	// kids fail, one of them behind a Div fails too (the kid list looks through pass-through tags), and an H in
+	// each of two Sects passes.
+	{clause: "7.4.4 t1", subject: "", summary: "each structure element shall contain at most one H kid", broken: atMostOne("H")},
 }
 
 func init() {
@@ -99,7 +103,7 @@ func checkKidSequence(d *Document, r kidSequence) Result {
 	nodes, unread := d.structNodes()
 	subjects := 0
 	for _, n := range nodes {
-		if d.typedAs(n.dict) != r.subject {
+		if r.subject != "" && d.typedAs(n.dict) != r.subject {
 			continue
 		}
 		subjects++
@@ -110,14 +114,23 @@ func checkKidSequence(d *Document, r kidSequence) Result {
 			}
 		}
 		if why := r.broken(kids); why != "" {
+			// An every-element row names the element as written, whose article `article` cannot know ("an /Link"),
+			// so it takes "the"; a typed row keeps its type's article.
+			lead := fmt.Sprintf("%s /%s", article(r.subject), r.subject)
+			if r.subject == "" {
+				lead = "the /" + d.name(n.dict["S"])
+			}
 			return Result{Verdict: Fail, Where: nodeWhere(n, d.name(n.dict["S"])),
-				Why: fmt.Sprintf("%s /%s element breaks it: %s", article(r.subject), r.subject, why)}
+				Why: fmt.Sprintf("%s element breaks it: %s", lead, why)}
 		}
 	}
 	if unread != "" {
 		return Result{Verdict: CannotCheck, Why: unread}
 	}
 	if subjects == 0 {
+		if r.subject == "" {
+			return Result{Verdict: NotApplicable, Why: "the document has no structure elements"}
+		}
 		return Result{Verdict: NotApplicable, Why: fmt.Sprintf("the document has no /%s element", r.subject)}
 	}
 	return Result{Verdict: Pass}

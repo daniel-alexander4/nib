@@ -1081,13 +1081,22 @@ why. Reading that source also found S02/S03's pass-through defect, fixed separat
   port now does too, with a 4M-slot cap answering CannotCheck; an empty-string Header and an empty-name Scope read the
   way veraPDF reads them. All measured on 1.30.2.
 
-#### P03.S05 — strongly or weakly structured, but not both
+#### P03.S05 — strongly or weakly structured, but not both *(done 2026-09-22, v1.143.0)*
 Scope: `7.4.4 t1` (at most one child `H` per node), `t2` and `t3` (a document uses `H` or `Hn`, never both).
 Interacts with the implemented `7.4.2 t1`, whose `corpusReach` is 134 — the widest in the family — so a
 change to heading handling is measurable immediately. Refs: law 1.
 Acceptance:
 - A document using both `H` and `Hn` fails t2 and t3; one using neither is `NotApplicable`.
 - `7.4.2 t1`'s `corpusReach` of 134 does not move, or the change is explained in the same edit.
+
+**(grill, 2026-09-22)** veraPDF writes t2/t3 as profile VARIABLES (`usesH` set by any SEH, `usesHn` by any SEHn),
+which read as traversal-order dependent. Measured on fourteen trees, every order and nesting: they are not — a
+document with both kinds fails every H on t2 and every Hn on t3; one kind alone passes its clause and leaves the
+other without a subject. t1 is every element's (PDStructElem) typed kids, pass-through tags looked through: `Div(H),H`
+fails. Deep-dive did not fire.
+- T01 — `7.4.4 t1` as a kid-sequence row over every element (`subject: ""`); t2/t3 in `rules_headings.go`.
+- T02 — `TestHeadingStructureAgreesWithVeraPDF` (eight measured trees, three clauses each); two oracle documents.
+- T03 — `corpusReach` t1 294, t2 7, t3 134; **7.4.2 t1 stays at 134** (the acceptance, measured); counts 52 → 55.
 
 #### P03.S06 — notes, the Form element, and the parent entry
 Scope: the residue — `7.9 t1` and `t2` (`Note` has an `ID`, and IDs are unique), `7.18.4 t2` (a `Form`

@@ -26,6 +26,52 @@ func init() {
 		Summary: "numbered headings shall start at H1 and shall not skip a level when descending",
 		Check:   checkHeadingNesting,
 	})
+	register(Rule{
+		Clause:  "7.4.4 t2",
+		Summary: "a document shall be strongly or weakly structured, not both — no H where there are Hn",
+		Check:   func(d *Document) Result { return checkHeadingStyles(d, true) },
+	})
+	register(Rule{
+		Clause:  "7.4.4 t3",
+		Summary: "a document shall be strongly or weakly structured, not both — no Hn where there is H",
+		Check:   func(d *Document) Result { return checkHeadingStyles(d, false) },
+	})
+}
+
+// checkHeadingStyles evaluates ua1 7.4.4 t2 (subjects: every H, onH) and t3 (subjects: every Hn) —
+// `PLAN-ua-coverage.md` P03.S05.
+//
+// veraPDF writes them as profile VARIABLES (`usesH` set by any SEH, `usesHn` by any SEHn), which read as though
+// the answer depended on traversal order. Measured on veraPDF 1.30.2, it does not: in fourteen trees with the two
+// kinds in every order and nesting, a document holding both fails EVERY H on t2 and EVERY Hn on t3, and one
+// holding a single kind passes that kind's clause and has no subject for the other. So the rule is the plain
+// document-level one, over typed elements.
+func checkHeadingStyles(d *Document, onH bool) Result {
+	nodes, unread := d.structNodes()
+	var hs, hns []structNode
+	for _, n := range nodes {
+		switch ty := d.typedAs(n.dict); {
+		case ty == "H":
+			hs = append(hs, n)
+		case isNumberedHeading(ty):
+			hns = append(hns, n)
+		}
+	}
+	subjects, others, own, other := hs, hns, "H", "numbered headings (H1-H6)"
+	if !onH {
+		subjects, others, own, other = hns, hs, "numbered heading", "unnumbered H headings"
+	}
+	if len(subjects) > 0 && len(others) > 0 {
+		return Result{Verdict: Fail, Where: nodeWhere(subjects[0], d.name(subjects[0].dict["S"])),
+			Why: fmt.Sprintf("the document uses this %s alongside %s, so it is both strongly and weakly structured", own, other)}
+	}
+	if unread != "" {
+		return Result{Verdict: CannotCheck, Why: unread}
+	}
+	if len(subjects) == 0 {
+		return Result{Verdict: NotApplicable, Why: fmt.Sprintf("the document has no %s", map[bool]string{true: "H element", false: "numbered heading"}[onH])}
+	}
+	return Result{Verdict: Pass}
 }
 
 // checkHeadingNesting evaluates ua1 7.4.2 t1.
@@ -83,5 +129,9 @@ func numberedHeading(standard string) (int, bool) {
 	}
 	return n, true
 }
+
+// isNumberedHeading is numberedHeading's yes-or-no — the one door for "is this an Hn" (ADR-009), which 7.4.4
+// t2/t3 read as well as 7.4.2 t1.
+func isNumberedHeading(standard string) bool { _, ok := numberedHeading(standard); return ok }
 
 func headingName(level int) string { return "H" + strconv.Itoa(level) }

@@ -97,8 +97,8 @@ func TestEveryRegisteredClauseHasASummaryTheReportCanShow(t *testing.T) {
 func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T) {
 	for _, f := range []struct{ path, must string }{
 		{"../../README.md", "not a PDF/UA certificate"},
-		{"../../README.md", "52 of the 106"},
-		{"../../docs/accessibility-parity.md", "52 of the 106"},
+		{"../../README.md", "55 of the 106"},
+		{"../../docs/accessibility-parity.md", "55 of the 106"},
 		{"../../web/index.html", "can still fail one it does not"},
 		{"door.go", "nothing labels"},
 	} {

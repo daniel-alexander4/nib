@@ -161,6 +161,9 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"table geometry: every error, one table each", treeDoc("", "Document("+
 			"Table(TR(TD,TD!r2),TR(TD!c2)),Table(TR(TD,TD!r3),TR(TD,TD)),Table(TR(TD,TD),TR(TD,TD,TD)),"+
 			"Table(TR(TD,TD),TR(TD)),Table(TR(TH!id=a,TH!id=b),TR(TD!headers=zz,TD)))")},
+		// Strongly or weakly structured (P03.S05), both halves, each tree measured on veraPDF before pinned.
+		oracleDoc{"headings: H beside H, and an H1 among them", treeDoc("", "Document(H,H1,H)")},
+		oracleDoc{"headings: unnumbered H only, one per section", treeDoc("", "Document(Sect(H,P),Sect(H,P))")},
 		oracleDoc{"table geometry: a regular spanned table", treeDoc("", "Document(Table(TR(TH!r2!scope=Row,TH!c2!scope=Column),TR(TD,TD)))")},
 	)
 	if pdfops.LibreOfficeAvailable() {
@@ -338,7 +341,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 34
+	const wantGenerated = 36
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
