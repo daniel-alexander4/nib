@@ -331,7 +331,7 @@ func (d *Document) elementForMCID(spKey, mcid int) (types.Dict, string) {
 //
 // **This checker's report never labels a document**, and that is decided rather than pending a slice.
 // Writing `pdfuaid:part` claims conformance to all of PDF/UA, and P07.S07 measured that nib's checker cannot
-// support that claim: it implements 39 of the 106 rules veraPDF evaluates (15 when that was measured), and a
+// support that claim: it implements 47 of the 106 rules veraPDF evaluates (15 when that was measured), and a
 // document can pass all of them while failing one it does not check (ADR-031 law 1). **The one label nib
 // writes is `pdfops.LabelUA`'s** (ADR-033): on its own Markdown conversion, in a language someone chose,
 // resting on veraPDF's measurement of that conversion rather than on this report — so such a document passes

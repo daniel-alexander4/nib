@@ -118,10 +118,15 @@ func (d *Document) elementKids(elem types.Dict) []types.Dict {
 	}
 	var out []types.Dict
 	for _, en := range entries {
-		// An MCID is an integer and a marked-content or object reference carries no /S, so the one test
-		// leaves every kind of content out.
+		// An MCID is an integer and a well-formed marked-content or object reference carries no /S — but a
+		// crafted one can, and veraPDF still reads it as CONTENT: measured, a `<< /Type /MCR /S /Caption >>`
+		// between two TRs leaves 7.2-16 passing. So `/Type` is asked as well, exactly as `structNodes` asks it.
+		// (P03.S02 dropped this test as dead because no fixture carried the shape; P03.S03's review found it.)
 		kid := d.dict(en)
 		if kid == nil || d.name(kid["S"]) == "" {
+			continue
+		}
+		if ty := d.name(kid["Type"]); ty == "MCR" || ty == "OBJR" {
 			continue
 		}
 		out = append(out, kid)

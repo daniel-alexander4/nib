@@ -152,6 +152,9 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"containment: every relation broken", treeDoc("", "Document("+
 			"TR(TD,P),THead(TR(TH)),TBody(TR(TD)),TFoot(TR(TD)),Table(TH,TD,Span),L(P,LBody),P(LI(P)),"+
 			"TOCI,TOC(TOCI,P),Table(THead(TD),TBody(TD),TFoot(TD)))")},
+		// Cardinality and placement (P03.S03): every one of its eight clauses broken in one tree — the "every
+		// relation kept" document above is its passing half. Measured on veraPDF before it was pinned.
+		oracleDoc{"containment: every count and position broken", treeDoc("", cardinalityBroken)},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -302,9 +305,15 @@ var knownCannotCheck = map[string]string{
 	"Markdown + title + lang, one element on a role-map loop / 7.5 t1":   "an element on a role-map loop may be the Table, a row or a cell",
 	// P03.S02's two built trees reach 7.5 t1's declared grid gap (`rules_semantic.go`), which P03.S04 owns:
 	// the first has a TH with no /Scope over TDs that name no headers, and the second a TD outside any row.
-	"containment: every relation kept / 7.5 t1":   "an unscoped header over data cells that name no headers — P03.S04's grid",
-	"containment: every relation broken / 7.5 t1": "a TD outside any Table's rows has no grid to find its headers in — P03.S04's grid",
+	"containment: every relation kept / 7.5 t1":             "an unscoped header over data cells that name no headers — P03.S04's grid",
+	"containment: every relation broken / 7.5 t1":           "a TD outside any Table's rows has no grid to find its headers in — P03.S04's grid",
+	"containment: every count and position broken / 7.5 t1": "an unscoped header over data cells that name no headers — P03.S04's grid",
 }
+
+// cardinalityBroken breaks every P03.S03 clause at once: two THeads and two TFoots with no TBody, a Caption
+// in the middle and a second one, and a TOC and an L each with its Caption last.
+const cardinalityBroken = "Document(Table(THead(TR(TH)),THead(TR(TH)),TFoot(TR(TD)),TFoot(TR(TD)),Caption,TR(TD),Caption,TR(TD))," +
+	"TOC(TOCI,Caption),L(LI(LBody),Caption))"
 
 // notYetReachable records a veraPDF state a clause cannot reach on any corpus document yet, with the
 // coordinate that will make it reachable. Checked in both directions, and against the plan's marker.
@@ -333,7 +342,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 31
+	const wantGenerated = 32
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

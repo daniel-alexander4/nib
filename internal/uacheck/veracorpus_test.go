@@ -53,12 +53,15 @@ var corpusAllow = map[string]string{}
 //
 // The seventeen `7.2` containment rows join with P03.S02, measured over the same set; no other row moved.
 // Scored pairs 6,442 → 11,457. Each clause's reach is the number of corpus files holding its subject type.
+// The eight cardinality and placement rows join with P03.S03, and no row moved: pairs 11,457 → 13,817.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,
 	"7.2 t36": 21, "7.2 t37": 19, "7.2 t38": 17,
+	"7.2 t11": 36, "7.2 t12": 36, "7.2 t13": 36, "7.2 t14": 36, "7.2 t16": 36, "7.2 t39": 36,
+	"7.2 t28": 6, "7.2 t40": 43,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 27,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,
