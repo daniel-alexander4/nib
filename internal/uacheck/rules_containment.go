@@ -121,56 +121,154 @@ var passThrough = map[string]bool{"NonStruct": true, "Div": true, "Part": true}
 // veraPDF 1.30.2): an element listed in two parents' `/K` sits in the walk under whichever it reached first,
 // so the second parent's kids silently lost it — a `/P` shared by a `Div` and a `Table` passed 7.2 t3 in nib
 // and failed 7.2-3 in veraPDF. Content (an MCID, a marked-content or object reference) is not a kid.
-func (d *Document) elementKids(elem types.Dict) []types.Dict {
-	var out []types.Dict
-	var collect func(elem types.Dict, depth int)
-	collect = func(elem types.Dict, depth int) {
-		if depth > maxWalkDepth {
-			return
+//
+// **The second result is why the kids could not be listed, and a caller answers CannotCheck on it** (P03's
+// phase-close review). A pass-through element listed twice is expanded twice — veraPDF counts its kids twice,
+// so the duplicates are kept — and a chain of them doubles at every level: twenty shared `Div`s took 1.6 s and
+// a `Div` listing itself twice never finished, inside a rule with no deadline. So the expansion is memoised
+// per dictionary, a pass-through element that contains itself is refused, and the whole document shares one
+// budget (`maxKidExpansion`) — spent on every entry read and every kid a list gains, so an exponential
+// list runs it out rather than the process.
+func (d *Document) elementKids(elem types.Dict) ([]types.Dict, string) {
+	kids, why, _, _ := d.kidsOf(elem, map[uintptr]bool{}, 0)
+	return kids, why
+}
+
+// maxKidExpansion is how many `/K` entries every elementKids walk in one document may read, and kids its lists
+// may hold, between them. A real tree spends about one per element (measured at P03's phase close: 12,710 for a
+// 12,711-node tree, the largest of sixty local files over 2 MB); the budget is spent only by sharing.
+const maxKidExpansion = 1 << 22
+
+// kidsResult is one memoised elementKids answer, with the height of the pass-through chain below the element:
+// a memo hit met deeper than `maxWalkDepth - height` is the depth refusal a fresh walk would have given.
+type kidsResult struct {
+	kids   []types.Dict
+	why    string
+	height int
+}
+
+// kidsOf answers elementKids, the height of the pass-through chain below elem, and whether the answer may be
+// memoised. **The answer must not depend on which element was asked first** (the fix pass's re-review): a depth
+// refusal belongs to the walk that met the element, not to the element — memoising it made a Div whose own chain
+// was 31 deep answer "deeper than 64" after a walk from 40 levels above had met it — and a memoised success must
+// not let a deeper walk skip the bound either. So a depth refusal is never memoised, and a memo hit carries its
+// height and is refused when the walk meets it too deep for that height. A cycle is on the element wherever the
+// walk starts, and a spent budget stays spent, so both are memoised. Every entry read is charged to the budget,
+// so an answer that cannot be memoised is still paid for each time it is recomputed.
+func (d *Document) kidsOf(elem types.Dict, onPath map[uintptr]bool, depth int) ([]types.Dict, string, int, bool) {
+	tooDeep := fmt.Sprintf("pass-through elements (NonStruct, Div, Part) nest deeper than %d levels; nib stops "+
+		"reading there, so the elements below were never read", maxWalkDepth)
+	id := dictID(elem)
+	if r, ok := d.kids[id]; ok {
+		if r.why == "" && depth+r.height > maxWalkDepth {
+			return nil, tooDeep, 0, false
 		}
-		k := elem["K"]
-		entries := []types.Object{k}
-		if arr, err := d.Ctx.DereferenceArray(k); err == nil && arr != nil {
-			entries = arr
-		}
-		for _, en := range entries {
-			// An MCID is an integer and a well-formed marked-content or object reference carries no /S — but a
-			// crafted one can, and veraPDF still reads it as CONTENT: measured, a `<< /Type /MCR /S /Caption >>`
-			// between two TRs leaves 7.2-16 passing. So `/Type` is asked as well, exactly as `structNodes` asks
-			// it. (P03.S02 dropped this test as dead because no fixture carried the shape; P03.S03's review found it.)
-			kid := d.dict(en)
-			if kid == nil || d.name(kid["S"]) == "" {
-				continue
-			}
-			if ty := d.name(kid["Type"]); ty == "MCR" || ty == "OBJR" {
-				continue
-			}
-			if passThrough[d.typedAs(kid)] {
-				collect(kid, depth+1)
-				continue
-			}
-			out = append(out, kid)
-		}
+		return r.kids, r.why, r.height, true
 	}
-	collect(elem, 0)
-	return out
+	if onPath[id] {
+		return nil, fmt.Sprintf("a /%s element lists itself among its own kids, so its kids cannot be listed", d.name(elem["S"])), 0, true
+	}
+	if depth > maxWalkDepth {
+		return nil, tooDeep, 0, false
+	}
+	onPath[id] = true
+	defer delete(onPath, id)
+	if d.kids == nil {
+		d.kids = map[uintptr]kidsResult{}
+		d.kidBudget = maxKidExpansion
+	}
+	var out []types.Dict
+	why, cacheable, height := "", true, 0
+	spend := func(n int) bool {
+		if d.kidBudget -= n; d.kidBudget >= 0 {
+			return true
+		}
+		why = fmt.Sprintf("the structure tree's pass-through elements (NonStruct, Div, Part) expand past %d kids "+
+			"between them; nib stops reading there, so the elements beyond were never read", maxKidExpansion)
+		return false
+	}
+	k := elem["K"]
+	entries := []types.Object{k}
+	if arr, err := d.Ctx.DereferenceArray(k); err == nil && arr != nil {
+		entries = arr
+	}
+	for _, en := range entries {
+		if !spend(1) {
+			break
+		}
+		// An MCID is an integer and a well-formed marked-content or object reference carries no /S — but a
+		// crafted one can, and veraPDF still reads it as CONTENT: measured, a `<< /Type /MCR /S /Caption >>`
+		// between two TRs leaves 7.2-16 passing. So `/Type` is asked as well, through the same predicate
+		// `structNodes` asks. (P03.S02 dropped this test as dead because no fixture carried the shape; P03.S03's
+		// review found it.)
+		kid := d.elementKid(en)
+		if kid == nil {
+			continue
+		}
+		if !passThrough[d.typedAs(kid)] {
+			out = append(out, kid)
+			continue
+		}
+		inner, innerWhy, innerHeight, innerCacheable := d.kidsOf(kid, onPath, depth+1)
+		if innerWhy != "" {
+			why, cacheable = innerWhy, innerCacheable
+			break
+		}
+		if innerHeight+1 > height {
+			height = innerHeight + 1
+		}
+		if !spend(len(inner)) {
+			break
+		}
+		out = append(out, inner...)
+	}
+	if why != "" {
+		out = nil
+	}
+	if cacheable {
+		d.kids[id] = kidsResult{kids: out, why: why, height: height}
+	}
+	return out, why, height, cacheable
+}
+
+// elementKid is the structure element a `/K` entry names, or nil when the entry is content — an MCID, a
+// marked-content or object reference — or no element at all. It is the one answer to "is this kid an
+// element", read by the tree walk (`structNodes`) and by every relation (`elementKids`), which had drifted
+// apart once already (the `/Type` test above).
+func (d *Document) elementKid(en types.Object) types.Dict {
+	kid := d.dict(en)
+	if kid == nil || d.name(kid["S"]) == "" {
+		return nil
+	}
+	if ty := d.name(kid["Type"]); ty == "MCR" || ty == "OBJR" {
+		return nil
+	}
+	return kid
 }
 
 // significantParent is the element's parent as veraPDF reads it: its own `/P`, climbed past every pass-through
-// ancestor. It answers the parent's dictionary and whether the climb reached the structure tree root; nil and
-// false when a `/P` is missing on the way.
-func (d *Document) significantParent(elem types.Dict) (types.Dict, bool) {
-	p := d.dict(elem["P"])
-	for depth := 0; p != nil && depth <= maxWalkDepth; depth++ {
+// ancestor. It answers the parent's dictionary and whether the climb reached the structure tree root — nil and
+// false when a `/P` is missing on the way — and, third, why the climb could not finish: a `/P` loop or a chain
+// past the depth bound. That is not a missing `/P`, and a caller answers CannotCheck on it, never Fail with a
+// reason that is not true (P03's phase-close review: a `/P` loop between two `Div`s read as "no /P").
+func (d *Document) significantParent(elem types.Dict) (types.Dict, bool, string) {
+	seen := map[uintptr]bool{}
+	for p := d.dict(elem["P"]); p != nil; p = d.dict(p["P"]) {
 		if d.name(p["Type"]) == "StructTreeRoot" {
-			return nil, true
+			return nil, true, ""
 		}
 		if !passThrough[d.typedAs(p)] {
-			return p, false
+			return p, false, ""
 		}
-		p = d.dict(p["P"])
+		if id := dictID(p); seen[id] {
+			return nil, false, "the /P entries of its pass-through ancestors (NonStruct, Div, Part) form a loop, so its parent cannot be read"
+		} else if len(seen) >= maxWalkDepth {
+			return nil, false, fmt.Sprintf("its /P chain climbs through more than %d pass-through ancestors; nib stops reading there", maxWalkDepth)
+		} else {
+			seen[id] = true
+		}
 	}
-	return nil, false
+	return nil, false, ""
 }
 
 // checkContainment evaluates one clause of the matrix — the only function that does.
@@ -183,6 +281,7 @@ func (d *Document) significantParent(elem types.Dict) (types.Dict, bool) {
 func checkContainment(d *Document, c containment) Result {
 	nodes, unread := d.structNodes()
 	subjects := 0
+	cannot := ""
 	for _, n := range nodes {
 		if d.typedAs(n.dict) != c.subject {
 			continue
@@ -191,7 +290,14 @@ func checkContainment(d *Document, c containment) Result {
 		where := nodeWhere(n, d.name(n.dict["S"]))
 		if c.parents != nil {
 			parent, in := "", "with no /P naming its parent"
-			switch p, atRoot := d.significantParent(n.dict); {
+			p, atRoot, why := d.significantParent(n.dict)
+			if why != "" {
+				if cannot == "" {
+					cannot = fmt.Sprintf("%s: %s", where, why)
+				}
+				continue
+			}
+			switch {
 			case atRoot:
 				in = "directly under the structure tree root"
 			case p == nil:
@@ -208,7 +314,14 @@ func checkContainment(d *Document, c containment) Result {
 			}
 			continue
 		}
-		for _, kid := range d.elementKids(n.dict) {
+		kids, why := d.elementKids(n.dict)
+		if why != "" {
+			if cannot == "" {
+				cannot = fmt.Sprintf("%s: %s", where, why)
+			}
+			continue
+		}
+		for _, kid := range kids {
 			kt := d.typedAs(kid)
 			if kt == "" || contains(c.kids, kt) {
 				continue
@@ -219,6 +332,9 @@ func checkContainment(d *Document, c containment) Result {
 	}
 	if unread != "" {
 		return Result{Verdict: CannotCheck, Why: unread}
+	}
+	if cannot != "" {
+		return Result{Verdict: CannotCheck, Why: cannot}
 	}
 	if subjects == 0 {
 		return Result{Verdict: NotApplicable, Why: fmt.Sprintf("the document has no /%s element", c.subject)}

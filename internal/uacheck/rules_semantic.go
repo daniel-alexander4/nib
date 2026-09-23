@@ -2,8 +2,6 @@ package uacheck
 
 import (
 	"fmt"
-
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // The clauses the structure editor exists to satisfy — `PLAN-accessibility.md` P09.S05.
@@ -58,10 +56,8 @@ func checkFigureAlt(d *Document) Result {
 		if v, ok := n.dict["ActualText"]; ok && v != nil {
 			continue
 		}
-		if v, ok := n.dict["Alt"]; ok && v != nil {
-			if s, err := d.Ctx.DereferenceStringOrHexLiteral(v, model.V10, nil); err == nil && s != "" {
-				continue
-			}
+		if s, ok := d.text(n.dict["Alt"]); ok && s != "" {
+			continue
 		}
 		return Result{
 			Verdict: Fail,

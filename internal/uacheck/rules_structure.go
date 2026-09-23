@@ -56,10 +56,10 @@ func checkNonStandardTypeIsMapped(d *Document) Result {
 	subjects := 0
 	for _, n := range nodes {
 		own := d.name(n.dict["S"])
-		std, unresolved := d.standardType(n.dict)
-		if own == "" || (unresolved == "" && standardStructureTypes[std]) {
+		if own == "" || d.typedAs(n.dict) != "" {
 			continue
 		}
+		std, _ := d.standardType(n.dict)
 		subjects++
 		// A loop is 7.1 t6's failure, and an element the typing walk found on one is always circular in the raw
 		// walk too — the raw walk takes the same steps and never stops early — so one test covers both.
@@ -156,6 +156,11 @@ func checkStructTreeRoot(d *Document) Result {
 	// `/K` may legally be a single element rather than an array. **Asked before the array read**
 	// (`/pending 496`): an array read of a dictionary is an error, so this branch sat below a `CannotCheck`
 	// that every single-element root reached first.
+	//
+	// **A named exemption from `elementKid` (ADR-009), measured at P03's phase close:** that door also refuses a
+	// `/Type /MCR` or `/OBJR` carrying `/S`, and here the shape cannot arise — pdfcpu's validator refuses a root
+	// `/K` whose `/Type` is not StructElem before any rule runs ("validateStructTreeRootDictEntryK: invalid
+	// dictType OBJR"), and veraPDF 1.30.2 does not fail 7.1-11 on that file either.
 	if single := d.dict(root["K"]); single != nil {
 		if d.name(single["S"]) != "" {
 			return Result{Verdict: Pass}

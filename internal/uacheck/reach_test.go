@@ -109,6 +109,42 @@ func TestStructurePastTheTreeBoundIsCannotCheckNeverAPass(t *testing.T) {
 	}
 }
 
+// notTreeRules are the clauses that never read the structure tree's elements, each with what it reads instead.
+// Every OTHER registered clause is driven past the tree's bound below, so a rule added later is covered by
+// construction — the four-clause list above had gone a whole phase without any of P03's thirty-eight tree
+// rules on it (P03's phase-close review removed the `unread` guard from the containment and kid-sequence
+// doors and the package stayed green).
+var notTreeRules = map[string]string{
+	"5 t1": "the XMP packet", "5 t2": "the XMP packet", "7.1 t8": "the XMP packet", "7.1 t9": "the XMP packet",
+	"7.2 t33": "the XMP packet", "7.1 t10": "the catalog's /ViewerPreferences", "7.1 t11": "the catalog's /StructTreeRoot and /MarkInfo",
+	"7.10 t1": "optional content", "7.10 t2": "optional content",
+	"6.2 t1": "page content", "7.1 t3": "page content", "7.2 t34": "page content and the parent tree",
+	"7.18.4 t1": "widgets and the parent tree", "7.21.4.1 t1": "fonts", "7.21.4.2 t2": "fonts", "7.21.7 t1": "fonts",
+}
+
+func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
+	deep := deepStructure(70)
+	tree := 0
+	for _, clause := range Clauses() {
+		if _, exempt := notTreeRules[clause]; exempt {
+			continue
+		}
+		tree++
+		if got := verdictOf(t, deep, clause); got.Verdict != CannotCheck {
+			t.Errorf("seventy Divs down, %s reports %v (%s) over elements nib never read, want CannotCheck", clause, got.Verdict, got.Why)
+		}
+	}
+	// The stimulus before the response: an exemption list that swallowed the registry would pass vacuously.
+	if tree < 40 {
+		t.Fatalf("only %d clauses were driven past the bound; the exemption list has swallowed the tree rules", tree)
+	}
+	for clause := range notTreeRules {
+		if !contains(Clauses(), clause) {
+			t.Errorf("notTreeRules exempts %s, which is not registered", clause)
+		}
+	}
+}
+
 // deepParentTree is a document with no catalog /Lang whose one text run (MCID 0) belongs to a P declaring
 // /Lang, and whose one widget belongs to a Form element — both reached through a parent tree whose /Nums
 // sit depth /Kids levels down.

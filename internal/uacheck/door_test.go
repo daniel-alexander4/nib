@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -95,10 +96,13 @@ func TestEveryRegisteredClauseHasASummaryTheReportCanShow(t *testing.T) {
 // held by `counterexample_test.go`. The code cannot close the class without implementing the whole
 // profile, so what is asserted here is that nothing a person reads calls a passing report "PDF/UA".
 func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T) {
+	// The count is the registry's, never a literal: a literal here and a literal in the README agree with each
+	// other and say nothing about the rule a 59th registration adds (P03's phase-close review).
+	count := fmt.Sprintf("%d of the 106", len(Clauses()))
 	for _, f := range []struct{ path, must string }{
 		{"../../README.md", "not a PDF/UA certificate"},
-		{"../../README.md", "58 of the 106"},
-		{"../../docs/accessibility-parity.md", "58 of the 106"},
+		{"../../README.md", count},
+		{"../../docs/accessibility-parity.md", count},
 		{"../../web/index.html", "can still fail one it does not"},
 		{"door.go", "nothing labels"},
 	} {

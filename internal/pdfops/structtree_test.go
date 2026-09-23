@@ -490,5 +490,75 @@ func TestStandardRoleStopsAtTheFirstTypeItRecognises(t *testing.T) {
 		if got := standardRole(&structTree{roleMap: tc.roleMap}, tc.kind); got != tc.want {
 			t.Errorf("%s: standardRole(%q) = %q, want %q", tc.name, tc.kind, got, tc.want)
 		}
+		// The memo (P03's phase close) settles every name a walk passes: each name must answer on a tree that
+		// has already walked the others exactly what it answers on a fresh one, whichever order they ran in.
+		var names []string
+		for k, v := range tc.roleMap {
+			names = append(names, k, v)
+		}
+		sort.Strings(names)
+		for _, order := range [][]string{names, reversed(names)} {
+			shared := &structTree{roleMap: tc.roleMap}
+			for _, n := range order {
+				if got, fresh := standardRole(shared, n), standardRole(&structTree{roleMap: tc.roleMap}, n); got != fresh {
+					t.Errorf("%s: after the names before it, standardRole(%q) = %q; on a fresh tree %q", tc.name, n, got, fresh)
+				}
+			}
+		}
+	}
+}
+
+func reversed(s []string) []string {
+	out := make([]string, len(s))
+	for i, v := range s {
+		out[len(s)-1-i] = v
+	}
+	return out
+}
+
+// TestStandardRoleIsLinearInTheChain — P03's phase-close review measured 60 s on the Tags panel's route for a
+// tree whose 20,000 elements each start a different link of one 20,000-name chain. Every link must now
+// answer the chain's end, in time proportional to the chain.
+func TestStandardRoleIsLinearInTheChain(t *testing.T) {
+	const n = 20000
+	rm := map[string]string{}
+	for i := 0; i < n; i++ {
+		rm[fmt.Sprintf("T%d", i)] = fmt.Sprintf("T%d", i+1)
+	}
+	rm[fmt.Sprintf("T%d", n)] = "H2"
+	tree := &structTree{roleMap: rm}
+	start := time.Now()
+	for i := n; i >= 0; i-- { // end first, then start first: the memo must hold from either side
+		if got := standardRole(tree, fmt.Sprintf("T%d", i)); got != "H2" {
+			t.Fatalf("T%d = %q, want H2", i, got)
+		}
+	}
+	for i := 0; i <= n; i++ {
+		standardRole(tree, fmt.Sprintf("T%d", i))
+	}
+	if el := time.Since(start); el > 2*time.Second {
+		t.Fatalf("%d chain links took %v; the walk is not memoised", n, el)
+	}
+}
+
+// TestAnIndirectRoleMapNameIsFollowed — P03's phase close: the checker dereferences a role map value stored as an
+// indirect name (`uacheck.Document.name`), and this reader kept only direct names, so `/Alpha → 12 0 R (/P)`
+// typed as P in the checker and as Alpha in the Tags panel. The direct row is the control.
+func TestAnIndirectRoleMapNameIsFollowed(t *testing.T) {
+	for _, tc := range []struct{ name, alpha string }{{"direct", "/P"}, {"indirect", "12 0 R"}} {
+		tree, err := readTree(t, assembleFixture(map[int]string{
+			1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+			2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+			7:  "<< /Type /StructTreeRoot /K 8 0 R /RoleMap << /Alpha " + tc.alpha + " >> >>",
+			8:  "<< /Type /StructElem /S /Alpha /P 7 0 R >>",
+			12: "/P",
+		}))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := standardRole(tree, "Alpha"); got != "P" {
+			t.Errorf("%s: /Alpha → %s types as %q, want P", tc.name, tc.alpha, got)
+		}
 	}
 }

@@ -38,8 +38,9 @@ type Document struct {
 	// the chain is followed to its end now (`/pending 507`), so a document with a long chain and many
 	// elements would otherwise re-walk it once per element.
 	roles map[string]roleResolution
-	// tables memoises each table's layout (`rules_table.go`), keyed by the Table's object number.
-	tables map[int]*tableLayout
+	// tables memoises each table's layout (`rules_table.go`), keyed by the Table's dictionary (`dictID`), so an
+	// inline table is laid out once, like one written as its own object.
+	tables map[uintptr]*tableLayout
 	// circular memoises roleMapCircular's walk, keyed by the element's own /S (P03.S01).
 	circular map[string]bool
 	// content is every page's classified drawing operators, built on first use by contentEvents.
@@ -47,6 +48,19 @@ type Document struct {
 	// contentErr is why content could not be read, or not all of it, when it could not.
 	contentErr  string
 	contentDone bool
+	// formWalks counts the form XObjects the content walk has entered, and contentOver records that it spent
+	// its budget (`overBudget`).
+	formWalks   int
+	contentOver bool
+	// kids memoises elementKids, keyed by the element's dictionary (`dictID`), and kidBudget is how many more
+	// kids the document may expand before nib stops (`maxKidExpansion`).
+	kids      map[uintptr]kidsResult
+	kidBudget int
+	// xmp memoises readXMP.
+	xmp     xmpFacts
+	xmpDone bool
+	// tableSlots is every grid slot the document's tables have asked for so far (`maxDocumentTableSlots`).
+	tableSlots int64
 }
 
 // roleResolution is what one `/S` name resolves to through the role map: a standard structure type, or

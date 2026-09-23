@@ -236,6 +236,37 @@ func (w walker) walk(src []byte, res types.Dict, inherited []frame, chain map[in
 // never read, and until then twelve forms of untagged text read as a page that draws nothing.
 const maxFormDepth = 8
 
+// maxFormWalks and maxContentEvents bound the whole content walk, because the depth bound alone does not: a
+// form that draws another form N times is walked N times at every level, so eight levels of fan-out ten is
+// 10^8 walks from a file of a few kilobytes (P03's phase-close review measured 10^6 events at six levels:
+// 2.2 s and 2.6 GB). **Past either one the walk stops and `contentErr` says so**, so every rule reading the
+// events answers CannotCheck — never a Pass over the part it did not read (law 4). A real document is nowhere
+// near either: its forms are walked once per `Do`, and its events are its own drawing operators.
+const (
+	maxFormWalks     = 1 << 16
+	maxContentEvents = 1 << 20
+)
+
+// overBudget reports whether the content walk has spent its budget, recording why the first time.
+func (d *Document) overBudget() bool {
+	var why string
+	switch {
+	case d.formWalks > maxFormWalks:
+		why = fmt.Sprintf("the page content enters form XObjects more than %d times (a form drawn inside forms fans "+
+			"out); nib stops reading there, so what lies beyond was never read", maxFormWalks)
+	case len(d.content) > maxContentEvents:
+		why = fmt.Sprintf("the page content, with every form XObject it draws, holds more than %d drawing operators; "+
+			"nib stops reading there, so what lies beyond was never read", maxContentEvents)
+	default:
+		return false
+	}
+	if !d.contentOver {
+		d.contentOver = true
+		d.contentErr = why
+	}
+	return true
+}
+
 // walkWithState is walk with the text state in force at the point of invocation — a form XObject
 // inherits the invoking stream's graphics state (ISO 32000-1 §8.10.1).
 func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, chain map[int]bool, depth int, ts textState) {
@@ -258,6 +289,9 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			continue
 		}
 		opIndex++
+		if w.d.overBudget() {
+			return
+		}
 		op := string(tk.Bytes(src))
 		switch op {
 		case "BMC":
@@ -343,6 +377,9 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 			w.d.contentErr = fmt.Sprintf("form XObjects nest deeper than %d levels (%s); nib stops walking there, "+
 				"so what the deeper forms draw was never read", maxFormDepth, where)
 		}
+		return
+	}
+	if w.d.formWalks++; w.d.overBudget() {
 		return
 	}
 	if derr := sd.Decode(); derr != nil {

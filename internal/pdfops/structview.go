@@ -175,10 +175,6 @@ func readStructureView(pdf []byte) (structureView, error) {
 			case kidMCID, kidMCR:
 				v.marked = true
 				pg := pageNr[k.pgObj]
-				// A kid that names its stream is read in that stream and **no other**, with no
-				// fallback to the page index. A miss is then empty text, which is the honest answer
-				// for a document whose `/Stm` names a stream holding no such MCID — and falling back
-				// would quietly restore the very cross-stream merge this exists to stop.
 				text := textAt[[3]int{pg, 0, k.mcid}]
 				box, found := rectAt[[3]int{pg, 0, k.mcid}]
 				if k.stm > 0 {
@@ -285,23 +281,71 @@ func tableScope(ctx *model.Context, attrs types.Object) string {
 // The START is followed, not recognised — a standard type the map sends elsewhere reads as where it is
 // sent, as veraPDF reads it. A loop answers the name as written: there is no type at the end of it, and the
 // Tags panel shows what the document says rather than a guess.
+//
+// **Memoised per tree, for every name on the path it walks** (P03's phase-close review). Removing the ten-hop
+// bound made the cost elements × chain length, and every element of a crafted tree can start a different
+// link of one long chain: 20,000 took 60 s, measured, on the Tags panel's route. Every name a walk passes
+// through answers what the walk answered — a name on a chain reaches the same end, and a name on or leading
+// into a loop answers itself — so one walk settles them all, as `uacheck.standardType` does (the one exception, a loop closing on a
+// standard start, is handled where it is found). The role map is
+// written only when the tree is read, so the memo never goes stale.
 func standardRole(tree *structTree, kind string) string {
+	if a, ok := tree.roles[kind]; ok {
+		return a.of(kind)
+	}
+	path := []string{kind}
 	seen := map[string]bool{kind: true}
 	at := kind
+	var res roleAnswer
 	for {
 		next, ok := tree.roleMap[at]
 		if !ok || next == at {
-			return at
+			res = roleAnswer{to: at}
+			break
 		}
 		if seen[next] {
-			return kind
+			res = roleAnswer{loop: true}
+			// A loop back onto a STANDARD start: every other name on it reaches that start by mapping and
+			// stops there, and the start's own answer — itself — is the same string.
+			if next == kind && standardStructTypes[kind] {
+				res = roleAnswer{to: kind}
+			}
+			break
 		}
 		if standardStructTypes[next] {
-			return next
+			res = roleAnswer{to: next}
+			break
+		}
+		// A name already walked is not standard (the walk stops before one), so its answer is this one's.
+		if a, ok := tree.roles[next]; ok {
+			res = a
+			break
 		}
 		seen[next] = true
+		path = append(path, next)
 		at = next
 	}
+	if tree.roles == nil {
+		tree.roles = map[string]roleAnswer{}
+	}
+	for _, p := range path {
+		tree.roles[p] = res
+	}
+	return res.of(kind)
+}
+
+// roleAnswer is one memoised standardRole walk: the type it reached, or that it found a loop — in which case
+// every name on it answers itself.
+type roleAnswer struct {
+	to   string
+	loop bool
+}
+
+func (a roleAnswer) of(kind string) string {
+	if a.loop {
+		return kind
+	}
+	return a.to
 }
 
 // unionBox is the smallest box holding both.

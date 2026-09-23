@@ -102,13 +102,21 @@ func captionFirstOnly(kids []string) string {
 func checkKidSequence(d *Document, r kidSequence) Result {
 	nodes, unread := d.structNodes()
 	subjects := 0
+	cannot := ""
 	for _, n := range nodes {
 		if r.subject != "" && d.typedAs(n.dict) != r.subject {
 			continue
 		}
 		subjects++
+		elems, why := d.elementKids(n.dict)
+		if why != "" {
+			if cannot == "" {
+				cannot = fmt.Sprintf("%s: %s", nodeWhere(n, d.name(n.dict["S"])), why)
+			}
+			continue
+		}
 		var kids []string
-		for _, kid := range d.elementKids(n.dict) {
+		for _, kid := range elems {
 			if kt := d.typedAs(kid); kt != "" {
 				kids = append(kids, kt)
 			}
@@ -126,6 +134,9 @@ func checkKidSequence(d *Document, r kidSequence) Result {
 	}
 	if unread != "" {
 		return Result{Verdict: CannotCheck, Why: unread}
+	}
+	if cannot != "" {
+		return Result{Verdict: CannotCheck, Why: cannot}
 	}
 	if subjects == 0 {
 		if r.subject == "" {
