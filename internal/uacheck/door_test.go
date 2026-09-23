@@ -105,6 +105,13 @@ func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T
 		{"../../docs/accessibility-parity.md", count},
 		{"../../web/index.html", "can still fail one it does not"},
 		{"door.go", "nothing labels"},
+		// **P04.S03 gives these two a reader, and the reason is that they had none and went stale
+		// twice.** The seam inventory's P04.S02 row A9 recorded them as prose copies of the count with
+		// no standing reader, found stale at 60 and corrected by hand; this slice moved the count again
+		// and found them stale at 63. A number maintained by whoever remembers is a number that is
+		// wrong, so it is read from the registry here like every other copy.
+		{"rules_catalog.go", count},
+		{"../pdfops/labelua.go", count},
 	} {
 		b, err := os.ReadFile(f.path)
 		if err != nil {

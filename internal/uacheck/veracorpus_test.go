@@ -67,6 +67,11 @@ var corpusAllow = map[string]string{}
 // check per element and passes it where the key is absent; pairs 17,662 → 18,547. The same slice closed `d.text`'s
 // dangling-reference hole (a reference to a free object read as an empty string that is present), which no corpus
 // row moved: measured before and after, every reach figure here is unchanged.
+// P04.S03: 7.2 t24 joins at 71 and 7.2 t25 at 19; pairs 18,547 → 19,137. **The two figures differ from t21-t23's
+// 294 because the population is different in kind**: veraPDF runs t24 once per annotation and t25 once per form
+// field, so a file with neither is not evaluated at all — where t21-t23 run once per structure element and reach
+// almost every file. 71 and 19 are what "every file holding an annotation" and "every file holding a form field"
+// come to on this corpus, and a figure near 294 here would mean the population had been widened by mistake.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
@@ -80,6 +85,7 @@ var corpusReach = map[string]int{
 	"7.9 t1": 9, "7.9 t2": 9, "7.18.4 t2": 18,
 	"7.2 t2": 276, "7.2 t29": 291,
 	"7.2 t21": 294, "7.2 t22": 294, "7.2 t23": 294,
+	"7.2 t24": 71, "7.2 t25": 19,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,

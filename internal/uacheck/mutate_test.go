@@ -467,6 +467,81 @@ func widgetMutation(t *testing.T, pdf []byte, kind string) []byte {
 				delete(ad, "StructParent")
 				return nil
 			}
+			if kind == "contents-lang-on-ancestor" {
+				// P04.S03's DECISIVE fixture, and the one that measures the slice's finding rather than
+				// asserting it. The annotation carries `/Contents`; the element its `/StructParent` names
+				// declares no `/Lang`; that element's `/P` ancestor DOES. veraPDF's `GFPDAnnot.getLang`
+				// reads only the named element's own `/Lang` — there is no `/P` climb, unlike 7.2 t21-t23
+				// — so this must FAIL. If veraPDF passes it, the no-climb reading is wrong and the oracle
+				// says so here rather than in production.
+				ad["Contents"] = types.StringLiteral("a note whose language only an ancestor declares")
+				cat, _ := ctx.XRefTable.Catalog()
+				root, _ := ctx.DereferenceDict(cat["StructTreeRoot"])
+				pt, _ := ctx.DereferenceDict(root["ParentTree"])
+				nums, _ := ctx.DereferenceArray(pt["Nums"])
+				for i := 0; i+1 < len(nums); i += 2 {
+					if k, ok := nums[i].(types.Integer); !ok || k.Value() != sp.Value() {
+						continue
+					}
+					elem, eerr := ctx.DereferenceDict(nums[i+1])
+					if eerr != nil || elem == nil {
+						return fmt.Errorf("the parent tree entry does not resolve")
+					}
+					delete(elem, "Lang")
+					parent, perr := ctx.DereferenceDict(elem["P"])
+					if perr != nil || parent == nil {
+						return fmt.Errorf("the named element has no /P ancestor to carry the language")
+					}
+					parent["Lang"] = types.StringLiteral("en-US")
+					return nil
+				}
+				return fmt.Errorf("the widget's key %d is not in a flat /Nums", sp.Value())
+			}
+			if kind == "contents-lang-on-element" {
+				// The near control for the ancestor case: the named element declares its OWN /Lang, which
+				// is the one source t24 accepts besides the catalog.
+				ad["Contents"] = types.StringLiteral("a note whose language its own element declares")
+				cat, _ := ctx.XRefTable.Catalog()
+				root, _ := ctx.DereferenceDict(cat["StructTreeRoot"])
+				pt, _ := ctx.DereferenceDict(root["ParentTree"])
+				nums, _ := ctx.DereferenceArray(pt["Nums"])
+				for i := 0; i+1 < len(nums); i += 2 {
+					if k, ok := nums[i].(types.Integer); !ok || k.Value() != sp.Value() {
+						continue
+					}
+					elem, eerr := ctx.DereferenceDict(nums[i+1])
+					if eerr != nil || elem == nil {
+						return fmt.Errorf("the parent tree entry does not resolve")
+					}
+					elem["Lang"] = types.StringLiteral("en-US")
+					return nil
+				}
+				return fmt.Errorf("the widget's key %d is not in a flat /Nums", sp.Value())
+			}
+			if kind == "contents-no-lang" {
+				// P04.S03's fail fixture for ua1 7.2 t24. The annotation gains a `/Contents`, which is
+				// what makes it a subject at all, and the element its `/StructParent` names loses any
+				// `/Lang` — so the only remaining source of a language is the catalog, which this
+				// fixture does not carry. veraPDF is what says whether that is a failure; nib is
+				// compared against its answer.
+				ad["Contents"] = types.StringLiteral("a note whose language nothing determines")
+				cat, _ := ctx.XRefTable.Catalog()
+				root, _ := ctx.DereferenceDict(cat["StructTreeRoot"])
+				pt, _ := ctx.DereferenceDict(root["ParentTree"])
+				nums, _ := ctx.DereferenceArray(pt["Nums"])
+				for i := 0; i+1 < len(nums); i += 2 {
+					if k, ok := nums[i].(types.Integer); !ok || k.Value() != sp.Value() {
+						continue
+					}
+					elem, eerr := ctx.DereferenceDict(nums[i+1])
+					if eerr != nil || elem == nil {
+						return fmt.Errorf("the parent tree entry does not resolve")
+					}
+					delete(elem, "Lang")
+					return nil
+				}
+				return fmt.Errorf("the widget's key %d is not in a flat /Nums", sp.Value())
+			}
 			cat, _ := ctx.XRefTable.Catalog()
 			root, _ := ctx.DereferenceDict(cat["StructTreeRoot"])
 			pt, _ := ctx.DereferenceDict(root["ParentTree"])
