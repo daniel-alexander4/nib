@@ -3,6 +3,7 @@ package uacheck
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -442,6 +443,76 @@ func alternateTextWithNoLanguage(t *testing.T, pdf []byte, keys ...string) []byt
 		return nil
 	})
 }
+
+// addMediaClip attaches a Screen annotation to page 1 whose `/A` is a Rendition action carrying one media
+// clip, with `ct` and `alt` written verbatim — the only route to 7.18.6.2's halves, since **nib plays no media
+// and writes no clip**: the phase's four other annotation subtypes at least have a product door for one half,
+// and this one has none at all.
+func addMediaClip(t *testing.T, pdf []byte, ct, alt string) []byte {
+	t.Helper()
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		page, _, _, err := ctx.PageDict(1, false)
+		if err != nil {
+			return err
+		}
+		file, ferr := ctx.IndRefForNewObject(types.Dict{
+			"Type": types.Name("Filespec"),
+			"F":    types.StringLiteral("clip.mp3"),
+			"UF":   types.StringLiteral("clip.mp3"),
+		})
+		if ferr != nil {
+			return ferr
+		}
+		clip := types.Dict{"Type": types.Name("MediaClip"), "S": types.Name("MCD"), "D": *file}
+		if ct != "" {
+			clip["CT"] = types.StringLiteral(ct)
+		}
+		if alt != nil2 {
+			clip["Alt"] = altArray(alt)
+		}
+		action, aerr := ctx.IndRefForNewObject(types.Dict{
+			"Type": types.Name("Action"),
+			"S":    types.Name("Rendition"),
+			"R":    types.Dict{"Type": types.Name("Rendition"), "S": types.Name("MR"), "C": clip},
+		})
+		if aerr != nil {
+			return aerr
+		}
+		annot, rerr := ctx.IndRefForNewObject(types.Dict{
+			"Type":     types.Name("Annot"),
+			"Subtype":  types.Name("Screen"),
+			"Rect":     types.NewNumberArray(10, 10, 30, 30),
+			"F":        types.Integer(4),
+			"Contents": types.StringLiteral("a media clip"),
+			"A":        *action,
+		})
+		if rerr != nil {
+			return rerr
+		}
+		annots, derr := ctx.DereferenceArray(page["Annots"])
+		if derr != nil {
+			return fmt.Errorf("the fixture's /Annots does not resolve to an array: %v", derr)
+		}
+		page["Annots"] = append(annots, *annot)
+		// A page carrying an annotation must declare its tab order (7.18.3 t1), or this mutation would break a
+		// clause it has nothing to do with.
+		page["Tabs"] = types.Name("S")
+		return nil
+	})
+}
+
+// altArray turns "en|a clip" into the language/description pairs `/Alt` holds, splitting on "|" so a caller can
+// write a malformed shape (an odd count) as easily as a well-formed one.
+func altArray(spec string) types.Array {
+	out := types.Array{}
+	for _, part := range strings.Split(spec, "|") {
+		out = append(out, types.StringLiteral(part))
+	}
+	return out
+}
+
+// nil2 is the sentinel meaning "write no /Alt at all", distinct from an empty array.
+const nil2 = "\x00none"
 
 // withoutTabs drops `/Tabs` from every page — 7.18.3 t1's failing half, which no product door reaches
 // because `setStructureTabOrder` writes `/Tabs /S` on every page that carries an annotation (`form.go:184`)

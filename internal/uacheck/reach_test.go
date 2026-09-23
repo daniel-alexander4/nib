@@ -144,6 +144,9 @@ var notTreeRules = map[string]string{
 	// P05.S03. 7.18.1 t3's subject is a widget; `7.18.3 t1`'s is a PAGE and it reads no structure at all —
 	// only the page's `/Tabs` and whether the page carries an annotation.
 	"7.18.1 t3": "widget annotations, their field's /TU and the parent tree", "7.18.3 t1": "a page's /Tabs",
+	// P05.S04. Their subject is a media clip dictionary reached through an ACTION; neither reads the structure
+	// tree at all, so a deep-Div document has no subject for them.
+	"7.18.6.2 t1": "media clip dictionaries", "7.18.6.2 t2": "a media clip's /Alt array",
 	"7.2 t30": "marked-content sequences", "7.2 t31": "marked-content sequences",
 	"7.2 t32": "marked-content sequences",
 }

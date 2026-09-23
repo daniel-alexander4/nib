@@ -1846,7 +1846,7 @@ to open for a **missing `/DA`**, not because of `/T`'s type. The new test assert
 pdfcpu bump which starts accepting them is caught here, and its first draft was itself wrong for a third reason —
 an inline widget dictionary left `/Kids [30 0 R]` dangling, so pdfcpu never validated the field at all.
 
-#### P05.S04 — media clips, a population reached through actions
+#### P05.S04 — media clips, a population reached through actions *(done 2026-09-23, v1.152.0)*
 Scope: `7.18.6.2 t1` (`/CT` present) and `t2` (`hasCorrectAlt`): the media-clip population — screen annotations,
 rendition actions and whatever else veraPDF's model reaches — and the `/Alt` array's shape. Refs: `PDMediaClip.java`,
 S01's door for the annotation half of the path.
@@ -1859,6 +1859,60 @@ Acceptance:
 - Both clauses hold a measured pass and fail fixture and a `corpusReach` row.
 - `len(Clauses())` is **80**, run rather than counted, and the README, the parity doc and the complement figure move
   with it through their existing readers.
+
+**(grill, 2026-09-23)** Read from `GFPDRenditionAction`, `PDAction`, `GFPDAnnot`, `GFPDOutline`, `GFPDDocument`,
+`GFPDPage`, `GFPDAdditionalActions` and `PDAbstractAdditionalActions`, then measured on **33 documents** —
+eleven `/Alt` and `/CT` shapes, the corpus's own five files, and one per holder path. The population is the whole
+slice; both predicates are three lines each.
+
+- **A clip sits at `<action>/R/C` for a `/S /Rendition` action**, and an identical `/R`→`/C` under a `/GoTo` or a
+  `/Movie` action is graded by neither reader (measured, both).
+- **`hasCorrectAlt` is a SHAPE**: an array of EVEN length, every entry a string, every ODD-indexed entry
+  non-empty. An empty LANGUAGE passes — it is Table 274's default entry — and an **empty array passes too**,
+  which is the row that shows the predicate tests shape and not "there is a description".
+- **Seven holders reach an action**, plus the action's own `/Next` chain: an annotation's `/A` and `/AA`, an
+  outline item's `/A`, the catalog's `/OpenAction` and `/AA`, a page's `/AA`, and a form field's `/AA`.
+- **The `/AA` trigger names are a FIXED LIST PER HOLDER**, not every entry of the dictionary:
+  ten for an annotation, two for a page, five for the catalog, four for a field. Walking every entry grades a
+  clip veraPDF ignores.
+
+Tasks:
+- T01 — `mediaClips()`: the seven holders, the per-holder trigger lists, the `/Next` chain, and a reason recorded
+  wherever a bound truncates.
+- T02 — `7.18.6.2 t1` and `t2` over that population.
+- T03 — fixtures: the eleven shapes, the eight holder paths, the two non-Rendition controls, the outline's
+  sibling and child edges, and the truncation refusal.
+- T04 — the count claim: 78 → 80, and the complement 28 → 26.
+- T05 — `corpusReach`: 5 and 5, the phase's last rows.
+
+**(acceptance ledger, 2026-09-23, v1.152.0)** Every clause split on `and`; nothing `not exercised`.
+
+| # | clause | how it was discharged |
+|---|---|---|
+| 1 | the population is stated from veraPDF's source | seven holders plus `/Next`, each cited to the class and line that links it |
+| 2 | and measured on a fixture for each path | eight rows, each with a clip missing `/CT` so a dropped path shows up as a Pass |
+| 3 | including a clip reached from a document-level or additional action | the catalog's `/OpenAction` and `/AA`, a page's `/AA`, a field's `/AA /K`, and an outline item's `/A` |
+| 4 | `hasCorrectAlt` matches veraPDF on odd length, a non-string entry, an empty even entry, an empty odd entry, an absent `/Alt` and a non-array `/Alt` | all six measured; three of them are pdfcpu refusals, asserted by the refusal they actually print |
+| 5 | both clauses hold a measured pass and fail fixture | the corpus's five files cover both halves of both — **the only clause family in this phase with real corpus evidence on all four halves** |
+| 6 | and a `corpusReach` row | 5 and 5 |
+
+**Gates.** `suiterun` green (fingerprint in the close notes); corpus **0 false pass, 0 false fail** over 23,562
+pairs; `len(Clauses())` = **80**, which completes the phase's rule set. `/redproof`: **14 mutations, 13 red and
+one declared survivor** — reading `/CT` as presence-of-any-type, which pdfcpu's refusal of a non-string `/CT`
+makes unreachable, recorded at the line with a row asserting that refusal. Tiers 4 and 6 did NOT fire.
+
+**The review found FOUR live divergences, all in the population, and one of them is this session's lesson
+repeating itself.** Two false PASSES — a form field's `/AA` under its own triggers `{K, F, V, C}`, and an
+action's `/Next` chain in both its dictionary and array forms — one false FAIL (a `/A` read on the catalog, which
+has no such key in veraPDF's model), and one **silent truncation**: the outline walk stopped at 65 items in a
+chain without recording a reason, so a document with 70 bookmarks — an ordinary table of contents — would have
+had its last item's clip unread and both clauses would have answered Pass over it.
+
+**The form-field path is the cautionary one.** I had dropped it earlier in the slice on a measurement showing
+veraPDF evaluated nothing — and that fixture used `/U`, a trigger in the ANNOTATION list and absent from the
+field's. The null result was a fact about my trigger name, not about veraPDF's traversal. Re-measured with `/K`:
+veraPDF fails, nib passed. **The same error as P05.S03's `/T` sweep, one slice later**, which is why
+`mediaclips.go` now writes out all four lists at the site and says why.
 
 ### P06 — Checker: file-level rules (~11 rules)
 **Goal.** Identification prefix and properties, header, Suspects, embedded-file keys, XFA, encryption P,

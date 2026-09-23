@@ -466,3 +466,109 @@ func checkPagesWithAnnotationsDeclareTabOrder(d *Document) Result {
 	}
 	return Result{Verdict: Pass, Why: fmt.Sprintf("all %d page(s) carrying annotations declare /Tabs /S", len(carries))}
 }
+
+// Media clips — P05.S04, the phase's last two rules. The population is `mediaClips()`'s (`mediaclips.go`),
+// which is the one subject in this phase the annotation door does not give.
+
+func init() {
+	register(Rule{
+		Clause:  "7.18.6.2 t1",
+		Summary: "a media clip data dictionary shall carry the CT key naming its content type",
+		Check:   checkMediaClipsNameTheirContentType,
+	})
+	register(Rule{
+		Clause:  "7.18.6.2 t2",
+		Summary: "a media clip data dictionary shall carry a well-formed Alt array of alternate descriptions",
+		Check:   checkMediaClipsCarryAlternateText,
+	})
+}
+
+// checkMediaClipsNameTheirContentType evaluates ua1 7.18.6.2 t1 — `CT != null`.
+//
+// The profile's test is presence alone, and `PDMediaClip.getContentType` is `getStringKey(ASAtom.CT)`, so a
+// `/CT` that is not a string reads as absent. **No exemption**: a media clip is not an annotation and carries
+// neither `/F` nor a rectangle.
+//
+// **The string requirement is a DECLARED red-proof survivor**: reading `/CT` as presence-of-any-type leaves the
+// package green, because pdfcpu refuses a non-string `/CT` before any rule runs ("decodeString:
+// dict=mediaClipDataDict entry=CT invalid type types.Name", measured). The refusal itself has a row, so a
+// pdfcpu bump that starts accepting such a file turns that row red rather than letting the divergence in
+// silently.
+func checkMediaClipsNameTheirContentType(d *Document) Result {
+	clips, missed := d.mediaClips()
+	for _, c := range clips {
+		if _, ok := d.text(c.dict["CT"]); !ok {
+			return Result{
+				Verdict: Fail,
+				Why:     "the media clip names no /CT, so nothing says what kind of content it plays",
+				Where:   c.where,
+			}
+		}
+	}
+	if missed != "" {
+		return Result{Verdict: CannotCheck, Why: missed}
+	}
+	if len(clips) == 0 {
+		return Result{Verdict: NotApplicable, Why: "the document has no media clip dictionaries"}
+	}
+	return Result{Verdict: Pass, Why: fmt.Sprintf("all %d media clip(s) name a content type", len(clips))}
+}
+
+// checkMediaClipsCarryAlternateText evaluates ua1 7.18.6.2 t2 — `hasCorrectAlt == true`.
+//
+// **It is a SHAPE and not a presence** (`PDMediaClip.hasCorrectAlt`): `/Alt` must be an ARRAY, of EVEN length,
+// every entry a string, and **every ODD-indexed entry non-empty**. The even entries are language identifiers and
+// may be empty — `""` there is the default entry ISO 32000-1 Table 274 describes — while an empty description is
+// no description. A presence check would pass every malformed shape.
+func checkMediaClipsCarryAlternateText(d *Document) Result {
+	for _, c := range mustClips(d) {
+		alt, err := d.Ctx.DereferenceArray(c.dict["Alt"])
+		switch {
+		case err != nil || alt == nil:
+			return Result{
+				Verdict: Fail,
+				Why:     "the media clip's /Alt is absent or is not an array, so it offers no alternate description",
+				Where:   c.where,
+			}
+		case len(alt)%2 != 0:
+			return Result{
+				Verdict: Fail,
+				Why: fmt.Sprintf("the media clip's /Alt holds %d entries, an odd number — it is a sequence of "+
+					"language and description pairs", len(alt)),
+				Where: c.where,
+			}
+		}
+		for i, entry := range alt {
+			s, ok := d.text(entry)
+			if !ok {
+				return Result{
+					Verdict: Fail,
+					Why:     fmt.Sprintf("the media clip's /Alt entry %d is not a string", i),
+					Where:   c.where,
+				}
+			}
+			if i%2 == 1 && s == "" {
+				return Result{
+					Verdict: Fail,
+					Why: fmt.Sprintf("the media clip's /Alt entry %d is an empty description; the language "+
+						"before it may be empty, the description may not", i),
+					Where: c.where,
+				}
+			}
+		}
+	}
+	clips, missed := d.mediaClips()
+	if missed != "" {
+		return Result{Verdict: CannotCheck, Why: missed}
+	}
+	if len(clips) == 0 {
+		return Result{Verdict: NotApplicable, Why: "the document has no media clip dictionaries"}
+	}
+	return Result{Verdict: Pass, Why: fmt.Sprintf("all %d media clip(s) carry a well-formed /Alt", len(clips))}
+}
+
+// mustClips is the clip population without its reason, for the loop that reports the reason afterwards.
+func mustClips(d *Document) []mediaClip {
+	clips, _ := d.mediaClips()
+	return clips
+}
