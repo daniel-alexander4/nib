@@ -1225,7 +1225,7 @@ Deep-dive did not fire: two rules through the registry; no wire format or schema
   (it drops such an `/Outlines`), kept as veraPDF's subject definition. Live: `nib ua` on the fixtures and on nib's
   own `--lang en-US` README conversion (veraPDF PASS).
 
-#### P04.S02 — a structure element's alternate text has a language
+#### P04.S02 — a structure element's alternate text has a language *(done 2026-09-23, v1.146.0)*
 Scope: `7.2 t21`, `t22`, `t23` — ActualText, Alt and E on a structure element, determined by its own `/Lang`, an
 ancestor's, or the catalog's. One table over the three keys, one door. Refs: law 1, ADR-009.
 Acceptance:
@@ -1233,6 +1233,69 @@ Acceptance:
 - `parentLang`'s reach (which ancestors count; a pass-through element; a `/P` loop) is measured, and an unfinished
   climb is CannotCheck, never Pass (P03's phase-close lesson).
 - Each clause holds a measured pass and fail fixture and a `corpusReach` row.
+
+**(grill, 2026-09-22)** Read from veraPDF's source — `GFPDStructElem.getparentLang`/`getAlt`/`getActualText`/`getE`
+in veraPDF-validation, and `PDStructElem.getLang`/`getParent`, `COSDictionary.getStringKey` and `COSName.getString`
+in **veraPDF-parser** (the classes are in the parser repo, not the library one) — then measured on 1.30.2 over
+**80 fixtures** before a rule was written. The predicate is
+`<key> == null || containsLang || parentLang != null || gContainsCatalogLang`, and five of its six premises moved:
+
+- **The subject is EVERY structure element, not every element carrying the key.** veraPDF runs one check per
+  `PDStructElem` and passes it when the key is absent, so a tagged document with no `/Alt` anywhere reports
+  `7.2 t22` **passed with checks**, not "no subject". nib therefore answers `Pass` whenever the tree holds an
+  element, and `NotApplicable` only when it holds none. Measured both ways.
+- **The three keys are not read alike.** `Alt` and `E` go through `getStringKey`, which returns **null for a name**;
+  `ActualText` goes through `getKey(…).getString()`, which has no such exclusion, so **a name-typed `/ActualText`
+  IS a subject and fails** (measured: `/ActualText /a` → failed, `/Alt /a` → passed). It does not reach nib: pdfcpu's
+  validator refuses a name-, number-, boolean-, array- or dictionary-typed value on all three keys, so **in a
+  document nib can read, each key is a string literal, a hex string, an indirect string, or `null`** (33 types
+  measured). `d.text` is exactly that population, and the name asymmetry is unreachable — declared, not coded.
+- **An empty string is a subject.** `/Alt ()` fails with no language, and `/ActualText ()` too — `getString()`
+  returns `""`, not null. (Contrast 7.3 t1, which wants a NON-empty `/Alt`.)
+- **An empty `/Lang` satisfies.** `()` on the element, on an ancestor, or on the catalog all pass — the same
+  "present and a string" door `catalogDeclaresLang` already is, now asked of any dictionary.
+- **The climb is blind, and it does not stop at the tree.** `getParent()` wraps whatever `/P` names and reads its
+  `/Lang`, so a `/Lang` **on the StructTreeRoot** satisfies the rule (measured, at one and two levels), as does a
+  `/P` naming a **non-ancestor element** or a **plain non-element dictionary** that carries one. Nothing is skipped
+  either: a `Div` ancestor's `/Lang` counts, which is the OPPOSITE of `significantParent`, whose whole job is to
+  climb past pass-throughs. So this is a second, different climb — not a reuse of the containment door.
+- **A cycle is a Fail, not a CannotCheck.** veraPDF seeds the loop guard with the element's own key and returns null
+  on a revisit: `/P` naming itself fails, and a true two-element cycle with no `/Lang` anywhere fails. That is a
+  complete answer — every ancestor was seen and none carried a language — so nib fails it too, where
+  `significantParent` reports "parent unreadable". Measured on both shapes.
+- **The chain is unbounded in the input and readable.** The tree itself cannot be deep (pdfcpu refuses a structure
+  tree past 100 levels — measured, a 120-deep tree is unreadable), but a **sideways** `/P` chain hanging off one
+  shallow element is not the tree: **5,000 links is readable and veraPDF passes it.** So the climb gets a document-wide
+  step budget, and a climb that spends it is `CannotCheck`; a refusal is never memoised (P03's kid-depth lesson —
+  an answer must not depend on which element asked first), while a found language and a definitively-exhausted
+  chain are, which makes the pass linear in distinct dictionaries.
+  **(pin — built as a PER-CLIMB depth bound, not a document-wide step budget.)** With the memo the total work is
+  already linear in distinct dictionaries, so a second document-wide budget bought nothing a bound does not, and a
+  budget large enough for a real tree (one corpus file holds 12,711 elements) is one no test can reach — the
+  untestable-branch defect P03's review filed twice. The bound is `maxWalkDepth + 1`: the `+ 1` is the
+  StructTreeRoot, which the tree walk never counts because it starts below it, and without it the climb refused an
+  element the walk had admitted (measured — a 65-deep tree whose only `/Lang` is on the root answered CannotCheck
+  where veraPDF passes).
+- An element reachable **only through the parent tree** is not a subject (measured: `/Alt` on one, `t22` passed) —
+  the population is `structNodes`, which is already that set.
+
+Deep-dive did not fire: three rules through the registry, no wire format, no schema, and the one seam it touches
+(`structNodes`) is this plan's own P03 code.
+- T01 — `parentLang` door: the blind `/P` climb, veraPDF's loop seeding, the bound above, the memo that never
+  caches a refusal and carries its distance so a deeper climb cannot skip the bound.
+- T02 — the three clauses as ONE relation over a three-row table, plus the guard that no clause is written outside it.
+- T03 — measured tests both ways per clause (own/ancestor/root/catalog/empty/cycle/no-`/P`/budget), and the
+  `NotApplicable`-only-when-no-elements half.
+- T04 — oracle documents, `corpusReach` rows, count claims 60 → 63 (README, `docs/accessibility-parity.md`, and
+  two prose copies in `rules_catalog.go` and `pdfops/labelua.go` that no guard reads — found stale at 60).
+- **Review (2026-09-22):** one CRITICAL outside the slice's own code — `d.text` read a reference to a FREE object
+  as an empty string that is present, which made nib FAIL 7.2 t22 on a dangling `/Alt` (veraPDF: no subject) and
+  PASS it on a dangling `/Lang` (veraPDF: fail); fixed at the door, no corpus row moved. The bound gained its
+  `+ 1` (above), the catalog now settles the clause before the walk, the bound's VALUE is tested on the boundary
+  rather than 60-against-70, and the one-door guard asserts the three checks are ONE function rather than three
+  that agree. **`/pending 635` filed and named at both sites**: `declaresLangFor` (7.2 t34) is a second climb for
+  an overlapping question and it FAILS a document veraPDF passes when the only `/Lang` is on the StructTreeRoot.
+  Live: `nib office` + `nib tag edit` produced both halves through real product doors and veraPDF agreed on both.
 
 #### P04.S03 — an annotation's Contents and a field's TU have a language
 Scope: `7.2 t24` (annotations, excluding what veraPDF excludes) and `7.2 t25` (form fields), with `containsLang` read

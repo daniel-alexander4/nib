@@ -111,6 +111,9 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},
 		oracleDoc{"Markdown + padded CIDSet", withCIDSet(t, md, cidPadded)},
 		oracleDoc{"committed proposal + element /Lang", langOnEveryElement(t, w.pdf, "en")},
+		// The failed half of 7.2 t21, t22 and t23: alternate text on the one structure element of a document that
+		// declares no language anywhere (P04.S02). The passing half comes from every other corpus document.
+		oracleDoc{"committed proposal + unlanguaged alternate text", alternateTextWithNoLanguage(t, w.pdf, "Alt", "ActualText", "E")},
 		oracleDoc{"stamped + /AS restored", withASOnDefault(t, st)},
 		oracleDoc{"stamped − /Name", withoutNameOnDefault(t, st)},
 		oracleDoc{"titled + DisplayDocTitle false", withDisplayDocTitle(t, mdt, false)},
@@ -350,7 +353,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 43
+	const wantGenerated = 44
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

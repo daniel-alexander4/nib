@@ -57,6 +57,9 @@ type Document struct {
 	// kids the document may expand before nib stops (`maxKidExpansion`).
 	kids      map[uintptr]kidsResult
 	kidBudget int
+	// langs memoises parentLang's climb, keyed by the dictionary whose `/P` chain was followed (`dictID`), each
+	// answer carrying how far above that dictionary it sits so a deeper climb is refused where a fresh one would be.
+	langs map[uintptr]langClimb
 	// mcLangCount is how many string `/Lang` values BDC property lists carried in the content walk, and mcLangBad
 	// the first that failed the grammar (7.2 t29).
 	mcLangCount int
@@ -173,8 +176,19 @@ func (d *Document) name(obj types.Object) string {
 }
 
 // text resolves a string — literal or hex, direct or indirect — and reports whether obj was one.
+//
+// **A reference to an object that is not there is NOT one** (P04.S02's review, measured). pdfcpu's
+// `DereferenceStringOrHexLiteral` answers `("", nil)` for a reference to a free object, which is
+// indistinguishable here from an empty string that is really present — and veraPDF reads such a value as
+// absent (`COSObject.getString` over a null base). Measured on 1.30.2 with a readable file whose `/Alt` is
+// `99 0 R` and whose object 99 does not exist: veraPDF has no subject for 7.2 t22 and nib FAILED it, and with
+// the same reference on `/Lang` veraPDF failed the clause and nib PASSED it — a false fail and a false pass
+// from one missing check, in a file pdfcpu's validator does not refuse.
 func (d *Document) text(obj types.Object) (string, bool) {
 	if obj == nil {
+		return "", false
+	}
+	if r, err := d.Ctx.Dereference(obj); err != nil || r == nil {
 		return "", false
 	}
 	s, err := d.Ctx.XRefTable.DereferenceStringOrHexLiteral(obj, model.V10, nil)
