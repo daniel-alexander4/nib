@@ -146,7 +146,10 @@ func (d *Document) mediaClips() ([]mediaClip, string) {
 	for _, a := range annots {
 		actionsOf(a.dict, true, annotTriggers, a.where)
 	}
-	if missed != "" {
+	if missed != "" && d.clipsErr == "" {
+		// First-wins, as every other writer of this field is. It was assigned unconditionally here, so a
+		// truncation recorded by the outline or action walk was silently replaced by the annotation
+		// door's reason — one reason for a refusal, and it may as well be the first (P05 phase close).
 		d.clipsErr = missed
 	}
 

@@ -292,8 +292,8 @@ func checkNoTrapNetAnnotations(d *Document) Result {
 // **And it reads the RAW `/S`, not the standard type** (`GFPDAnnot.getstructParentType` takes
 // `getNameKeyStringValue(ASAtom.S)`), so a private type nothing maps is still "in the tree", and a role-map
 // loop — which makes every clause that resolves a type answer CannotCheck — leaves this one a definite Fail.
-// It is the only clause in this family that reads an element's type RAW; three of its siblings read no
-// element type at all.
+// It is the only clause in this family that reads an element's type RAW; its siblings either resolve the
+// type through the standard-type door or read no element type at all.
 func checkPrinterMarksAreNotInTheTree(d *Document) Result {
 	marks, missed := d.annotsOfSubtype("PrinterMark")
 	for _, a := range marks {

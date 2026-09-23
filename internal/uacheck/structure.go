@@ -65,21 +65,41 @@ func (d *Document) parentTree() (map[int]types.Object, string) {
 			}
 			return
 		}
-		if nums, err := d.Ctx.DereferenceArray(node["Nums"]); err == nil {
-			for i := 0; i+1 < len(nums); i += 2 {
-				if k, ok := d.intValue(nums[i]); ok {
-					d.pt[k] = nums[i+1]
-				}
+		// **A node nib cannot read is a REFUSAL, not an absence**, and the difference decides a verdict
+		// rather than a message: with `ptErr` empty, `elementForStructParent` takes its DEFINITE branch
+		// and reports "the /StructParent names no element in the parent tree" — a Fail over a tree nib
+		// never finished reading. `elementForMCID` separates the two for its own array read, and this
+		// walk did not (P05 phase close). An ABSENT key is not a refusal: a `/Nums` node has no `/Kids`
+		// and a `/Kids` node has no `/Nums`, so only a present-and-unreadable value is recorded.
+		nums, numsErr := d.Ctx.DereferenceArray(node["Nums"])
+		if numsErr != nil {
+			d.noteParentTreeUnread("/Nums")
+		}
+		for i := 0; i+1 < len(nums); i += 2 {
+			if k, ok := d.intValue(nums[i]); ok {
+				d.pt[k] = nums[i+1]
 			}
 		}
-		if kids, err := d.Ctx.DereferenceArray(node["Kids"]); err == nil {
-			for _, k := range kids {
-				walk(k, depth+1)
-			}
+		kids, kidsErr := d.Ctx.DereferenceArray(node["Kids"])
+		if kidsErr != nil {
+			d.noteParentTreeUnread("/Kids")
+		}
+		for _, k := range kids {
+			walk(k, depth+1)
 		}
 	}
 	walk(root["ParentTree"], 0)
 	return d.pt, d.ptErr
+}
+
+// noteParentTreeUnread records, first-wins, that part of the parent tree was present and unreadable.
+// First-wins because the reason explains a refusal and the FIRST thing nib could not read is the one
+// closest to what the caller was looking for; every other bound in this package writes its reason the
+// same way.
+func (d *Document) noteParentTreeUnread(key string) {
+	if d.ptErr == "" {
+		d.ptErr = "nib could not read a " + key + " entry of the parent tree, so the keys below it were never read"
+	}
 }
 
 // standardType resolves an element's `/S` through the tree's `/RoleMap` to a standard structure

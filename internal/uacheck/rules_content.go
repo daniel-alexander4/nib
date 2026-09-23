@@ -158,8 +158,10 @@ func checkWidgetsInFormElements(d *Document) Result {
 		}
 		ty, untyped := d.standardType(elem)
 		if untyped != "" {
-			// The element may well be a Form; nib could not follow the role map to find out.
-			return Result{Verdict: CannotCheck, Why: untyped, Where: a.where}
+			// The element may well be a Form; nib could not follow the role map to find out. `where`, not
+			// `a.where`: this was the one branch of the clause that printed the door's "annotation"
+			// spelling, so the locator changed word depending on why the clause answered (P05 phase close).
+			return Result{Verdict: CannotCheck, Why: untyped, Where: where}
 		}
 		if ty != "Form" {
 			return Result{

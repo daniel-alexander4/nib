@@ -1549,7 +1549,7 @@ on P05, 493 on P07), so the closure falsifies none of them — the sweep ran and
 same as not running. `/pending 612` stays open and is the graduation pass's one live diagnostic; `/pending 635`
 closed; `/pending 637` filed.
 
-### P05 — Checker: annotations (~9 rules)
+### P05 — Checker: annotations (~9 rules) *(done 2026-09-23, v1.153.0)*
 **Goal.** Annotation containment, alternate descriptions, tab order, links, media clips, TrapNet, PrinterMark.
 **Exit criteria.** As P03.
 
@@ -1913,6 +1913,75 @@ veraPDF evaluated nothing — and that fixture used `/U`, a trigger in the ANNOT
 field's. The null result was a fact about my trigger name, not about veraPDF's traversal. Re-measured with `/K`:
 veraPDF fails, nib passed. **The same error as P05.S03's `/T` sweep, one slice later**, which is why
 `mediaclips.go` now writes out all four lists at the site and says why.
+
+**Phase close (2026-09-23, v1.153.0).** Acceptance ledger over the exit criteria — *"As P03"* — and
+every phase-open amendment, each clause split on `and`; nothing `not exercised`.
+
+| # | clause | how it was discharged |
+|---|---|---|
+| 1 | *"Every rule in the family passes `veracorpus_test.go`"* | **met**, run rather than asserted: 297 files, **23,562 (file, clause) pairs, 2 unreadable, 0 false pass, 0 false fail**. All ten of the phase's clauses carry an exact `corpusReach` row, and `veracorpus_test.go:187` fails a clause that has none |
+| 2 | *"rules without corpus files agree with veraPDF on fixtures of their own"* | **met**: `7.18.2 t1` has corpus reach **ZERO** — the corpus's one TrapNet file is on `corpusUnreadable`, pdfcpu refusing it — and `7.18.8 t1` has reach 1. Both are carried by their own measured fixtures, and the in-repo oracle runs veraPDF live: **5,600 of 5,600 (document, clause) pairs agree strictly over 70 documents** |
+| 3 | *"The family is **ten unbuilt** rules, not the sketch's ~9"* | **met**: `7.18.4 t1`/`t2` shipped in P03.S06, and the ten built here are 7.18.1 t1/t2/t3, 7.18.2 t1, 7.18.3 t1, 7.18.5 t1/t2, 7.18.6.2 t1/t2, 7.18.8 t1 |
+| 4 | *"the phase lands the checker at **80** of 106"* | **met**, run not counted: `len(Clauses())` = 80, complement 26, and `TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo` derives both from it and requires them in the README, the parity doc and three prose sites — six files go red on an 81st registration |
+| 5 | *"S01's door absorbs the first two enumerations"* | **met**: `rules_content.go` and `rules_language.go` route through `annots()`, and `TestEveryAnnotationReaderRoutesThroughOneDoor` asserts `"Annots"` appears at exactly one non-test site |
+| 6 | *"and the appearance walk either joins them or is declared a different question **at its site**"* | **met**: `content.go`'s walk routes through the door too, and the door's own header states which entries veraPDF keeps and which nib's reader can never see |
+| 7 | *"Every clause owes a measured pass **and** fail fixture of its own"* — P03's trap, binding harder here | **met by enumeration, and that is the honest wording**: all ten hold both halves, S04's four halves resting on real corpus evidence. **There is no standing reader that would catch an eleventh clause landing without them** — the gate is `corpusReach`, which asks for a row and not for a pass fixture. Filed as the phase's own declared gap rather than claimed as covered |
+
+**Gates, enumerated explicitly because they are a separate list from the criteria.**
+
+- **Tiers 0–3** — `suiterun` **OK** on fingerprint `f6570b8c4a68` and again after the phase-close
+  fixes: `go build ./...` and `go test ./...` exit 0, jsdom **454/454**, tier-3 `uirepro` **160/160,
+  0 skipped**. Tier 3 is fully green; the three `/pending 474` baseline reds are gone.
+- **Tier 4 (`pairrepro.sh`) and tier 6 (`ceremonyrepro.sh`): DID NOT FIRE, and here is the evidence
+  rather than the assertion.** `git diff --name-only aee7e76..HEAD` over the phase's whole life is
+  `internal/uacheck/*`, `internal/pdfops/labelua.go` (a comment carrying the rule count), `README.md`,
+  `docs/accessibility-parity.md`, `VERSION` and this plan. No `internal/server` session, ceremony,
+  delivery or discovery path; no `internal/p2p`; no `internal/rendezvous`. The trigger is recorded
+  not-fired because a gate nobody records is one nobody can tell was evaluated.
+- **`inventorycheck --phase=P05`** — ok, 4 shipped slices each with a section, **279 readers all
+  resolve, 0 declared gaps**, re-run after the fixes landed.
+
+**The full-repo review is the phase close's own, and it found the thing a phase close is for.** Eight
+parallel reviewers over every package, three SME packs (`go` core+service+wire, `crypto` core,
+`verification`); hand-off at
+`~/.claude/projects/-home-dan-repos-nib/memory/code-reviews/v1.152.0-2026-09-23.md`.
+
+Inside the phase it found **one predicate with two implementations that disagreed**: the
+`/StructParent` → element hop. `annots.go` kept a `found` check and answered DEFINITE for a row that
+is present and is not a dictionary; `rules_language.go` had no `found` check, so on a tree that is
+BOTH truncated and holds such a row, 7.2 t24/t25/t29 answered `CannotCheck` over the very row
+7.18.1 t1 called a definite `Fail`. **`annots.go` already carried a comment calling that exact
+collapse found-and-fixed** — fixed in the door P05.S01 wrote and not in the door P04.S03 wrote beside
+it, which is ADR-009's shape and is invisible to any guard that compares answers rather than counting
+sites. The door now takes a holder, the guard counts `"StructParent"` sites as well as `"Annots"`
+ones, and both are red-proved.
+
+Two silent truncations went with it, both the same class as the 65-bookmark outline truncation S04's
+own review found: the AcroForm walk discarded `DereferenceArray`'s error (so `7.2 t25` said *"the
+document has no form fields"*, and since S04 the **media-clip population is built on that same walk**,
+so a dropped field path would have left 7.18.6.2 answering Pass over a clip nobody looked at), and
+`parentTree` skipped a present-but-unreadable `/Nums` or `/Kids` without setting `ptErr` (so
+`elementForStructParent` took its definite branch and reported *"names no element"* over a tree nib
+never read). Both are **measured unreachable through a file** — pdfcpu v0.13.0 refuses a non-array in
+either position before any rule runs — so both readers are built in memory through `openMutated`, on
+the footing that helper already declares, and both are red-proved.
+
+**Everything else the review found is outside this phase and is filed, not fixed** — `/pending
+639-653`, fifteen items including three criticals, one of which (`/pending 615`) was already open.
+The two new ones are `nib watch --do <transform>` writing back through a symlink-following door while
+its two siblings deliberately do not, and `Encrypt` denying **every** permission bit including
+extraction for accessibility, measured at `/P = -3901`. Neither is reachable from this phase's code.
+
+**Pending sweep against the closure:** the `Phase` section holds exactly two items, `/pending 457`
+(`PLAN-text-reflow.md`'s P05 — a different plan) and `/pending 493` (this plan's **P07**). **No item
+was gated on the coordinate that just closed**, so nothing was falsified by it and nothing needed
+re-filing. Recorded because a sweep that finds nothing and a sweep that never ran look identical.
+
+**Graduation pass** — `<project-memory>/instruments/ua-coverage.md`, run after the fix pass. **44 data
+rows across S01–S04, every one class 1 with a named standing reader, so all 44 disposition
+`keep-live`; the actionable subset is ZERO** (no row tagged `diagnostic, no standing reader`, no hot
+row). That is what a checker's inventory looks like — every observable here IS a shipped assertion —
+and it is recorded with both counts, plus what the pass could not see.
 
 ### P06 — Checker: file-level rules (~11 rules)
 **Goal.** Identification prefix and properties, header, Suspects, embedded-file keys, XFA, encryption P,
