@@ -1,0 +1,22 @@
+--- a/internal/sign/verify.go
++++ b/internal/sign/verify.go
+@@ -12,6 +12,7 @@
+ 
+ import (
+ 	"bytes"
++	"encoding/hex"
+ 	"fmt"
+ 
+ 	dpdf "github.com/digitorus/pdf"
+@@ -441,7 +442,10 @@
+ 	// documents nib produced, and a statement about nothing at all for a document that arrived
+ 	// from a peer, which is the only kind this question is asked about. An empty answer means
+ 	// nib could not establish who signed; every consumer treats that as unrecognised.
+-	si.Fingerprint = byBag[bagKeyOfSigner(s)]
++	if len(s.Certificates) > 0 && s.Certificates[0].Certificate != nil {
++		si.Fingerprint = hex.EncodeToString(fingerprintOf(s.Certificates[0].Certificate))
++	}
++	_ = byBag
+ 	switch {
+ 	case s.TimeStamp != nil && !s.TimeStamp.Time.IsZero():
+ 		si.TimeBacking = TSA

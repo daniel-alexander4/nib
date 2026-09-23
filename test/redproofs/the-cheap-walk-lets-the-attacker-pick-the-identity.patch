@@ -1,0 +1,24 @@
+--- a/internal/sign/signercert.go
++++ b/internal/sign/signercert.go
+@@ -80,12 +80,17 @@
+ 	// pages, 201 µs at one page — roughly 0.6× to 1.0× that call, because it is the same sweep.
+ 	// Whole-`Verify` totals over the same fixtures: 781 µs, 10.4 ms, 44.8 ms. Measured range 1 to
+ 	// 400 pages, 3 KB to 79 KB, and not extrapolated past it.
+-	for _, x := range r.Xref() {
+-		v := r.Resolve(x.Ptr(), x.Ptr())
+-		if v.Key("Filter").Name() != "Adobe.PPKLite" {
++	acro := r.Trailer().Key("Root").Key("AcroForm")
++	if acro.IsNull() {
++		return nil
++	}
++	fields := acro.Key("Fields")
++	for i := 0; i < fields.Len(); i++ {
++		f := fields.Index(i)
++		if f.Key("FT").Name() != "Sig" {
+ 			continue
+ 		}
+-		blob := []byte(v.Key("Contents").RawString())
++		blob := []byte(f.Key("V").Key("Contents").RawString())
+ 		if len(blob) == 0 {
+ 			continue
+ 		}

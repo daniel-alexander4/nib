@@ -479,3 +479,14 @@ home today.
   when it draws it, so the pages are tagged at the `Exact` tier through `TagAuthoredPages` (the
   autotagger's `Inferred` would downgrade the host through the graft), after the language declaration.
   Declared gap: signature widgets (`/pending 576`).
+- **[ADR-051 — the signer is the certificate the SignerInfo names, never the one that leads the bag](051-the-signer-is-the-certificate-the-signerinfo-names.md)**
+  — /pending 613. A PKCS#7 certificate bag is a SET, sits in the `/Contents` hole in the `/ByteRange` and
+  is therefore unsigned, and `p7.Verify` resolves the signer by issuer and serial rather than by position —
+  while `verify.Signer` reports the bag and discards the name. Reading element 0 let a signature made with
+  an attacker's key, carrying a victim's certificate first, verify `Valid` under the VICTIM's fingerprint,
+  which `Completeness` counted towards the roster. nib re-parses each blob and takes `GetOnlySigner`; where
+  it cannot establish who signed there is NO fingerprint, and an empty one discharges no obligation. Joined
+  by the bag, order included — and by the LIBRARY's own enumeration, because a cheaper `/Fields` walk
+  let the attacker write both sides of the key (a decoy field supplying the bag for a real signature
+  listed nowhere) and reinstated the bug inside its own fix. 18.7 ms at 400 pages beside the 20.0 ms
+  call it follows, paid deliberately.

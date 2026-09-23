@@ -190,7 +190,7 @@ func TestSignerInfoTimeBacking(t *testing.T) {
 		{"tsa beats self-asserted", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}, SignatureTime: &ts}, TSA, true},
 	}
 	for _, tc := range tests {
-		got := signerInfo(&tc.in)
+		got := signerInfo(&tc.in, nil)
 		if got.TimeBacking != tc.want {
 			t.Errorf("%s: timeBacking = %q, want %q", tc.name, got.TimeBacking, tc.want)
 		}

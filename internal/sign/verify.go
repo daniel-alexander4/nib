@@ -12,7 +12,6 @@ package sign
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 
 	dpdf "github.com/digitorus/pdf"
@@ -50,12 +49,21 @@ const (
 
 // SignerInfo is the per-signer detail surfaced to the UI.
 type SignerInfo struct {
-	Name        string      `json:"name,omitempty"`        // certificate subject common name, when present
-	Valid       bool        `json:"valid"`                 // this signer's byte-range hash checks out
-	When        string      `json:"when,omitempty"`        // signing time (display string), when present
-	TimeBacking TimeBacking `json:"timeBacking"`           // none / self-asserted / tsa
-	Reason      string      `json:"reason,omitempty"`      // signature /Reason; for co-signing, carries the attestation
-	Fingerprint string      `json:"fingerprint,omitempty"` // hex SHA-256 SPKI of the signer's cert (the identity that signed)
+	// Name is the signature dictionary's /Name — what the signer TYPED, not the certificate's
+	// subject. It is display text and nothing more: it is chosen by whoever made the signature,
+	// so it is no evidence of identity. Fingerprint is the identity. (This field's comment read
+	// "certificate subject common name" until ADR-051; the library has always taken it from the
+	// PDF, and a reader who trusted the comment would have been trusting attacker-typed text.)
+	Name        string      `json:"name,omitempty"`
+	Valid       bool        `json:"valid"`            // this signer's byte-range hash checks out
+	When        string      `json:"when,omitempty"`   // signing time (display string), when present
+	TimeBacking TimeBacking `json:"timeBacking"`      // none / self-asserted / tsa
+	Reason      string      `json:"reason,omitempty"` // signature /Reason; for co-signing, carries the attestation
+	// Fingerprint is the hex SHA-256 SPKI of the certificate that SIGNED — the one this
+	// signature's SignerInfo names by issuer and serial, never whichever certificate happens to
+	// lead the bag (ADR-051). Empty means nib could not establish who signed; a consumer must
+	// treat that as unrecognised and never as a match.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // Status is the verification result surfaced to the UI.
@@ -144,9 +152,14 @@ func Verify(data []byte) Status {
 	}
 
 	// A document is untampered only if every signer's byte-range hash checks out.
+	//
+	// **Who signed is a separate question from whether the bytes are intact, and the library
+	// answers only the second** (ADR-051). `signerFingerprintsByBag` re-reads each signature's
+	// PKCS#7 to find the certificate its SignerInfo actually names; one walk serves every signer.
+	byBag := signerFingerprintsByBag(data)
 	st := Status{State: Valid}
 	for i := range resp.Signers {
-		si := signerInfo(&resp.Signers[i])
+		si := signerInfo(&resp.Signers[i], byBag)
 		if !si.Valid {
 			st.State = Invalid
 		}
@@ -419,15 +432,16 @@ func trailingContentAfterLastSignature(pdf []byte) (trailing, sawSignature bool,
 // under our default (secure) verify options that field reports "current_time"
 // whenever no timestamp token is present, because the library refuses to trust
 // signer-supplied time. Token presence is the honest signal.
-func signerInfo(s *verify.Signer) SignerInfo {
+func signerInfo(s *verify.Signer, byBag map[string]string) SignerInfo {
 	const layout = "2006-01-02 15:04 MST"
 	si := SignerInfo{Name: s.Name, Valid: s.ValidSignature, Reason: s.Reason}
-	// The signer's own cert is the leaf of the bundled chain; its SPKI fingerprint
-	// is the identity that signed (see fingerprintOf). Nib identities are
-	// self-signed single certs, so element 0 is the signer.
-	if len(s.Certificates) > 0 && s.Certificates[0].Certificate != nil {
-		si.Fingerprint = hex.EncodeToString(fingerprintOf(s.Certificates[0].Certificate))
-	}
+	// **The fingerprint comes from the certificate the SignerInfo NAMES, never from the bag's
+	// order** (ADR-051, /pending 613). This read `s.Certificates[0]` under a comment reasoning
+	// that "Nib identities are self-signed single certs, so element 0 is the signer" — true of
+	// documents nib produced, and a statement about nothing at all for a document that arrived
+	// from a peer, which is the only kind this question is asked about. An empty answer means
+	// nib could not establish who signed; every consumer treats that as unrecognised.
+	si.Fingerprint = byBag[bagKeyOfSigner(s)]
 	switch {
 	case s.TimeStamp != nil && !s.TimeStamp.Time.IsZero():
 		si.TimeBacking = TSA

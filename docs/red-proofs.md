@@ -6141,3 +6141,41 @@ wiring *Check again* to `loadPeerPicker` rather than `openCeremonySetup`, which 
 without the restore behind it and re-creates `/pending 552` with the refusal now lifted.
 
 `recorded` 464 → 466.
+
+## ADR-051 — the signer is the certificate the SignerInfo names (/pending 613, v1.146.1)
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `a-forged-bag-renames-the-signer` | `TestAForgedBagDoesNotRenameTheSigner`, tier 1 | "forged bag renamed the signer: fingerprint = the victim's" |
+| `the-cheap-walk-lets-the-attacker-pick-the-identity` | `TestASignatureAbsentFromFieldsIsStillAttributed`, tier 1 | "a walk the attacker can empty is a walk the attacker chooses the identity from" |
+
+**The defect is one line and the fixture is the whole cost.** Reading the identity out of the
+certificate bag's first element is wrong only for a document nib did not produce — `digitorus/pkcs7`
+appends the signing certificate before its parents and never re-orders, so every signature nib makes
+puts the signer at element 0 and no honest fixture can fail. The row's document therefore has to be
+*built* hostile: sign with a certificate that a second identity legitimately issued (so the bag holds
+two and pdfsign reserves room for both), then splice the bag into the other order inside `/Contents`.
+The splice is byte-level and length-preserving, because `/Contents` is the hole in the `/ByteRange` —
+which is the point of the row: every signature still verifies, and only the reported identity moves.
+
+**Three mutations were probed separately and all three had to go red.** The first row records
+element-0. The second mutation — `p7.GetOnlySigner()` replaced by `p7.Certificates[0]` inside the
+new walk — is the same defect one level down, and a test that caught only the outer one would have
+passed a fix that had merely moved the assumption; it is covered by the same row's test.
+
+**The second row is the one the fix's own review found, and it is the more instructive.** The first
+implementation keyed the map from an `AcroForm/Fields` walk rather than the library's xref sweep,
+because `/Fields` is 176 µs against 18.7 ms on a 400-page document. Two walks over different object
+sets mean the attacker writes BOTH sides of the join key — a decoy `/Fields` entry supplies the bag
+for a real signature listed nowhere — so the optimisation reinstated /pending 613 inside its own
+fix. The safety argument that licensed it ("a gap is fail-closed, because the map is read by key and
+issues no all-clear") is false in one step: a gap means a *different* object supplies the key, not
+that none does.
+
+**A fourth mutation is deliberately not a row.** Deleting the blanking in `recordSigner` goes red
+against `TestOneBagWithTwoSignersNamesNeither`, but that test drives the door directly rather than a
+document, so the row would replay a unit test with no defect a PDF could express — pdfsign will not
+produce two blobs sharing a bag, because `AddSignerChain` refuses a chain whose parent did not issue
+the leaf.
+
+`recorded` 485 → 487.
