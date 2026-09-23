@@ -245,12 +245,18 @@ const maxFormDepth = 8
 const (
 	maxFormWalks     = 1 << 16
 	maxContentEvents = 1 << 20
+	// maxContentOperators counts every operator, drawing or not: a stream of marked-content operators draws nothing
+	// and trips neither budget above, and 4,368 walks of one ran 10.5 s and 13.6 GB (the P04.S01 review, measured).
+	maxContentOperators = 1 << 24
 )
 
 // overBudget reports whether the content walk has spent its budget, recording why the first time.
 func (d *Document) overBudget() bool {
 	var why string
 	switch {
+	case d.contentOps > maxContentOperators:
+		why = fmt.Sprintf("the page content, with every form XObject it draws, runs more than %d operators; nib stops "+
+			"reading there, so what lies beyond was never read", maxContentOperators)
 	case d.formWalks > maxFormWalks:
 		why = fmt.Sprintf("the page content enters form XObjects more than %d times (a form drawn inside forms fans "+
 			"out); nib stops reading there, so what lies beyond was never read", maxFormWalks)
@@ -289,6 +295,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			continue
 		}
 		opIndex++
+		w.d.contentOps++
 		if w.d.overBudget() {
 			return
 		}
@@ -297,6 +304,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 		case "BMC":
 			stack = append(stack, frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1})
 		case "BDC":
+			w.recordLang(src, operands, res, opIndex, op)
 			f := frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1, lang: w.langOfBDC(src, operands, res)}
 			if m, ok := w.mcidOf(src, operands, res); ok {
 				f.mcid, f.spKey = m, w.spKey
@@ -401,6 +409,22 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	inner.walkWithState(sd.Content, formRes, stack, next, depth+1, ts)
 }
 
+// recordLang counts a BDC property list's string `/Lang` for 7.2 t29 (`checkLanguageIdentifiers`) and keeps the
+// first that fails the grammar — only that one: keeping every value held 1.6 GB for a 63 KB file of repeated forms
+// (the slice review, measured), and the rule needs one failure and a count. A DP's is not
+// kept: measured, veraPDF 1.30.2 passes 7.2-29 on `/Span << /Lang (en_US) >> DP` although its source lists DP as
+// marked content — the oracle's answer, not its source's, is the one nib agrees with.
+func (w walker) recordLang(src []byte, operands []contentstream.Token, res types.Dict, opIndex int, op string) {
+	v, ok := w.d.propertyListLang(src, operands, res)
+	if !ok {
+		return
+	}
+	w.d.mcLangCount++
+	if w.d.mcLangBad == nil && !languageTag.MatchString(v) {
+		w.d.mcLangBad = &mcLang{value: v, where: fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op)}
+	}
+}
+
 // event builds one event, deriving its coverage from the open sequences.
 func (w walker) event(stack []frame, text bool, where string) contentEvent {
 	ev := contentEvent{where: where, text: text, mcid: -1, spKey: -1, appearance: w.appearance}
@@ -425,40 +449,8 @@ func (w walker) event(stack []frame, text bool, where string) contentEvent {
 // langOfBDC reports whether a `BDC` declares a `/Lang`, in an inline property dictionary or in a named
 // property list in the stream's resources, through the checker's one `/Lang` reader.
 func (w walker) langOfBDC(src []byte, operands []contentstream.Token, res types.Dict) bool {
-	// Inline: /Span << … /Lang (en-US) … >> BDC — the value is a literal or a hex string operand.
-	for i, tk := range operands {
-		if tk.Kind != contentstream.Operand || string(tk.Bytes(src)) != "/Lang" || i+1 >= len(operands) {
-			continue
-		}
-		v := operands[i+1].Bytes(src)
-		switch {
-		case len(v) >= 2 && v[0] == '(' && v[len(v)-1] == ')':
-			return w.d.declaresLang(types.StringLiteral(v[1 : len(v)-1]))
-		case len(v) >= 2 && v[0] == '<' && v[len(v)-1] == '>':
-			return w.d.declaresLang(types.HexLiteral(v[1 : len(v)-1]))
-		}
-	}
-	// Named: /Span /P0 BDC, resolved through /Resources /Properties.
-	names := 0
-	for _, tk := range operands {
-		if tk.Kind != contentstream.Operand {
-			continue
-		}
-		b := tk.Bytes(src)
-		if len(b) == 0 || b[0] != '/' {
-			continue
-		}
-		names++
-		if names < 2 {
-			continue
-		}
-		if props := w.d.dict(w.d.dict(res["Properties"])[string(b[1:])]); props != nil {
-			if w.d.declaresLang(props["Lang"]) {
-				return true
-			}
-		}
-	}
-	return false
+	_, ok := w.d.propertyListLang(src, operands, res)
+	return ok
 }
 
 // firstName returns the first name operand, or "".

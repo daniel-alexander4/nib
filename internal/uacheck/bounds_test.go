@@ -263,3 +263,30 @@ func TestTheDocumentsTablesShareOneSlotBudget(t *testing.T) {
 		t.Fatalf("the fifth table at the per-table cap is laid out (%q); want it refused by the document's slot budget", last.unlayable)
 	}
 }
+
+// TestAStreamOfMarkedContentAloneRunsOutTheOperatorBudget — found by P04.S01's review: marked-content operators draw
+// nothing, so a fan-out of them tripped neither the event nor the walk budget (4,368 walks: 10.5 s, 13.6 GB). Here
+// 16 × 16 × 16 forms each hold 5,000 empty marked-content sequences — 4,096 walks, far under the walk budget, no
+// event at all — and only the operator budget can stop it.
+func TestAStreamOfMarkedContentAloneRunsOutTheOperatorBudget(t *testing.T) {
+	stream := func(body, extra string) string {
+		return fmt.Sprintf("<< %s /Length %d >>\nstream\n%s\nendstream", extra, len(body), body)
+	}
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /X0 100 0 R >> >> /Contents 4 0 R >>",
+		4: stream("/X0 Do", ""),
+		7: "<< /Type /StructTreeRoot >>",
+	}
+	for i := 0; i < 3; i++ {
+		res := fmt.Sprintf("/Resources << /XObject << /X%d %d 0 R >> >>", i+1, 101+i)
+		objs[100+i] = stream(strings.Repeat(fmt.Sprintf("/X%d Do ", i+1), 16), "/Type /XObject /Subtype /Form /BBox [0 0 10 10] "+res)
+	}
+	objs[103] = stream(strings.Repeat("/Span << >> BDC EMC ", 5000), "/Type /XObject /Subtype /Form /BBox [0 0 10 10]")
+	var got Result
+	withinSeconds(t, 60, "4,096 walks of marked content", func() { got = verdictOf(t, buildPDF(objs), "7.1 t3") })
+	if got.Verdict != CannotCheck || !strings.Contains(got.Why, "operators") {
+		t.Fatalf("a fan-out of marked content alone reports %v (%s), want CannotCheck naming the operator budget", got.Verdict, got.Why)
+	}
+}

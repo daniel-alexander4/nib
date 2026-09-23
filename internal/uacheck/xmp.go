@@ -166,5 +166,6 @@ func parseXMP(d *Document) xmpFacts {
 // route failing; that section records no such measurement, and the corpus says the opposite. P06.S05's
 // measurement stands: a `/Lang` on a form FIELD dictionary does not clear 7.2 t25.
 func catalogDeclaresLang(d *Document) bool {
-	return d.declaresLang(d.Catalog["Lang"])
+	_, ok := d.catalogLang()
+	return ok
 }

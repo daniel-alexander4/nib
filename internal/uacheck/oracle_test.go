@@ -170,6 +170,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"form: one object reference to its widget", formChildDoc(true, "[<< /Type /OBJR /Obj 9 0 R >>]", "")},
 		oracleDoc{"form: an MCID beside the widget's reference", formChildDoc(true, "[<< /Type /OBJR /Obj 9 0 R >> 0]", "")},
 		oracleDoc{"table geometry: a regular spanned table", treeDoc("", "Document(Table(TR(TH!r2!scope=Row,TH!c2!scope=Column),TR(TD,TD)))")},
+		// Language (P04.S01), both halves of 7.2 t2 and t29, each measured on veraPDF before pinned.
+		oracleDoc{"language: an outline, an empty catalog /Lang", langClauseDoc("/Lang ()", "", langText, "", true)},
+		oracleDoc{"language: an outline, no catalog /Lang, a bad /Lang on a Span", langClauseDoc("", "", langSpanText("<< /Lang (en_US) >>"), "", true)},
+		oracleDoc{"language: an outline, en-US, de on a Span", langClauseDoc("/Lang (en-US)", "", langSpanText("<< /Lang (de) >>"), "", true)},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -346,7 +350,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 40
+	const wantGenerated = 43
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

@@ -166,15 +166,17 @@ func TestTheCheckerReadsLangAndMarkedThroughItsOwnDoors(t *testing.T) {
 				t.Errorf("%s:%d reads /Lang or /Marked with a bare cast — use declaresLang / boolValue: %s", f, i+1, strings.TrimSpace(line))
 			}
 		}
-		langCalls += strings.Count(src, "declaresLang(")
+		langCalls += strings.Count(src, "declaresLang(") + strings.Count(src, "catalogLang(") + strings.Count(src, "propertyListLang(")
 		boolCalls += strings.Count(src, "boolValue(")
 	}
 	if scanned < 10 {
 		t.Fatalf("the scan read %d file(s) — not the package", scanned)
 	}
-	// catalogDeclaresLang, declaresLangFor and langOfBDC (three times) call the door; its definition is one more.
-	if langCalls < 6 {
-		t.Errorf("declaresLang is called %d time(s) — a reader has stopped going through it", langCalls)
+	// The /Lang doors (P04.S01): declaresLang (its definition, declaresLangFor), catalogLang (its definition,
+	// catalogDeclaresLang, 7.2 t29) and propertyListLang (its definition, langOfBDC, recordLang, the unwalked-stream
+	// scan) — each reads through `d.text`, the typed-value door itself.
+	if langCalls < 9 {
+		t.Errorf("the /Lang doors are called %d time(s) — a reader has stopped going through them", langCalls)
 	}
 	if boolCalls < 2 {
 		t.Errorf("boolValue is called %d time(s) — checkMarkInfo has stopped going through it", boolCalls)

@@ -117,7 +117,7 @@ func TestStructurePastTheTreeBoundIsCannotCheckNeverAPass(t *testing.T) {
 var notTreeRules = map[string]string{
 	"5 t1": "the XMP packet", "5 t2": "the XMP packet", "7.1 t8": "the XMP packet", "7.1 t9": "the XMP packet",
 	"7.2 t33": "the XMP packet", "7.1 t10": "the catalog's /ViewerPreferences", "7.1 t11": "the catalog's /StructTreeRoot and /MarkInfo",
-	"7.10 t1": "optional content", "7.10 t2": "optional content",
+	"7.2 t2": "the catalog's /Outlines and /Lang", "7.10 t1": "optional content", "7.10 t2": "optional content",
 	"6.2 t1": "page content", "7.1 t3": "page content", "7.2 t34": "page content and the parent tree",
 	"7.18.4 t1": "widgets and the parent tree", "7.21.4.1 t1": "fonts", "7.21.4.2 t2": "fonts", "7.21.7 t1": "fonts",
 }
