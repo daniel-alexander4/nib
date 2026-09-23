@@ -12,6 +12,9 @@ import (
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfops"
+	"nib/internal/testpdf"
 )
 
 // P04.S01 — every row below was run through veraPDF 1.30.2 before the rule it grades was written (the slice's
@@ -243,11 +246,12 @@ func altKid(cat, parent, kid string) []byte {
 	}, cat, "", langText, "", false)
 }
 
+// altLoopTail closes an `altSideways` chain back onto its own head.
+const altLoopTail = "/P 100 0 R"
+
 // altSideways is one shallow element whose /P names a chain of n dictionaries that are in no /K at all — the
 // shape that makes the climb unbounded in a document the tree walk's own bound never sees. `tail` is what the
 // far end does: extra entries (a /Lang), or "" to end the chain, or a /P back to its head with `altLoopTail`.
-const altLoopTail = "/P 100 0 R"
-
 func altSideways(n int, tail string) []byte {
 	extra := map[int]string{
 		8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [11 0 R] >>",
@@ -705,5 +709,209 @@ func TestTheAlternateTextLanguageClausesAreOneRelation(t *testing.T) {
 					k.clause, got.Verdict, got.Why, door.Verdict, door.Why)
 			}
 		}
+	}
+}
+
+// associatedClauseLiteral matches the two clause ids wherever the package writes one.
+var associatedClauseLiteral = regexp.MustCompile(`"7\.2 t(24|25)"`)
+
+// TestTheAssociatedTextLanguageClausesAreOneRelation — ADR-009 over P04.S03's pair.
+//
+// The same shape as the alternate-text guard above and for the same reason: two clauses that differ
+// only in the object they run over and the key they name are ONE relation, so each id is written once,
+// in `associatedTextKeys`, and both registered checks are the same function.
+//
+// **`kindOf` is the one deliberate exception and it is asserted rather than exempted.** The population
+// is derived from the clause id inside that method, so `"7.2 t24"` appears there too; a table row whose
+// clause and population disagreed would otherwise be unrepresentable only by convention.
+func TestTheAssociatedTextLanguageClausesAreOneRelation(t *testing.T) {
+	files, _ := filepath.Glob("*.go")
+	sites := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := len(associatedClauseLiteral.FindAllString(string(b), -1)); n > 0 {
+			sites += n
+			if f != "rules_language.go" {
+				t.Errorf("%s names one of 7.2 t24/t25 itself; the two clauses are rows of associatedTextKeys", f)
+			}
+		}
+	}
+	if want := len(associatedTextKeys); sites != want {
+		t.Errorf("the two associated-text clauses are written %d times in the package; want %d — once each in "+
+			"associatedTextKeys", sites, want)
+	}
+	body := func(c string) string {
+		r, ok := registry[c]
+		if !ok {
+			t.Fatalf("%s is in associatedTextKeys and not in the registry", c)
+		}
+		return runtime.FuncForPC(reflect.ValueOf(r.Check).Pointer()).Name()
+	}
+	first := body(associatedTextKeys[0].clause)
+	if first == "" {
+		t.Fatal("the registered check has no resolvable function name, so this guard compares nothing")
+	}
+	for _, k := range associatedTextKeys[1:] {
+		if got := body(k.clause); got != first {
+			t.Errorf("%s is checked by %s and %s by %s — the two clauses are not one evaluator",
+				k.clause, got, associatedTextKeys[0].clause, first)
+		}
+	}
+	// The stimulus floor: a table that had emptied would satisfy every loop above.
+	if len(associatedTextKeys) != 2 {
+		t.Fatalf("associatedTextKeys holds %d row(s); this guard is written for the two", len(associatedTextKeys))
+	}
+	// **And each row's population is the one veraPDF runs that clause over, asserted row by row.**
+	// The first cut derived the kind from the clause id with a two-way branch, so a third row would
+	// have silently become a form-field rule — and the only assertion was that the two rows DIFFER,
+	// which a hard-coded `if clause == t24` satisfies unconditionally. A table naming the population
+	// is only safe if something checks the naming.
+	wantKind := map[string]subjectKind{"7.2 t24": kindAnnotation, "7.2 t25": kindFormField}
+	for _, k := range associatedTextKeys {
+		want, known := wantKind[k.clause]
+		if !known {
+			t.Errorf("%s is in associatedTextKeys and this guard does not know which population veraPDF "+
+				"runs it over — state it here, or the row's kind is whatever the literal happened to say", k.clause)
+			continue
+		}
+		if k.kind != want {
+			t.Errorf("%s runs over population %d, want %d", k.clause, k.kind, want)
+		}
+	}
+}
+
+// describedForm is the oracle corpus's "described form": a committed proposal carrying a tagged text
+// field, so its widget annotation has a `/StructParent` naming a real structure element.
+func describedForm(t *testing.T) []byte {
+	t.Helper()
+	plain, err := testpdf.Text("host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	df, _, derr := pdfops.AuthorTaggedForm(committedProposal(t, plain),
+		[]pdfops.FormField{{Page: 1, Rect: [4]float64{100, 700, 300, 720}, Kind: "text", Name: "n", Label: "Name"}})
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	return df
+}
+
+// TestAnAnnotationDoesNotInheritALanguageFromAnAncestor — P04.S03's finding, asserted directly.
+//
+// 7.2 t21–t23 (a structure element's alternate text) grant an ancestor's `/Lang` through `/P`;
+// **7.2 t24 and t25 do not.** veraPDF's `GFPDAnnot.getLang` and `GFPDFormField.getLang` take the
+// holder's `/StructParent`, look it up in the parent tree, and read that ONE element's own `/Lang`
+// (`GFPDAnnot.java:245-259`, `GFPDFormField.java:93-105`) — there is no climb. An implementation that
+// reused `parentLang` would pass this document, and it would pass documents veraPDF fails.
+//
+// **Why this is a unit assertion and not an oracle document.** The fixture is built and available
+// (`widgetMutation(..., "contents-lang-on-ancestor")`), but putting a structure `/Lang` on an ancestor
+// also moves 7.2 t34, where nib and veraPDF are known to disagree already — `/pending 635`, filed
+// before this slice and amended with this second reproduction. Adding it to the oracle corpus would
+// make this slice red over another rule's open defect. What is measured here is t24's own answer; t24
+// and t25 agree with veraPDF over 19,137 corpus pairs and over the oracle's own fail fixture.
+func TestAnAnnotationDoesNotInheritALanguageFromAnAncestor(t *testing.T) {
+	base := describedForm(t)
+	// Control: the same document without the mutation, so a fixture that failed for some other reason
+	// cannot pass for this one.
+	if got := verdictOf(t, base, "7.2 t24"); got.Verdict == Fail {
+		t.Fatalf("control: the unmutated fixture already fails 7.2 t24 (%s), so the mutation proves nothing", got.Why)
+	}
+	onAncestor := widgetMutation(t, base, "contents-lang-on-ancestor")
+	got := verdictOf(t, onAncestor, "7.2 t24")
+	if got.Verdict != Fail {
+		t.Errorf("an annotation whose /Contents has a language only on an ANCESTOR of its /StructParent "+
+			"element reports %v (%s), want fail — t24 reads the named element's own /Lang and does not climb",
+			got.Verdict, got.Why)
+	}
+	// And the near case still passes, or the rule would be failing everything.
+	onElement := widgetMutation(t, base, "contents-lang-on-element")
+	if got := verdictOf(t, onElement, "7.2 t24"); got.Verdict != Pass {
+		t.Errorf("an annotation whose /StructParent element declares its own /Lang reports %v (%s), want pass",
+			got.Verdict, got.Why)
+	}
+}
+
+// unreadTreePlusUnparentedAnnot is a one-page document whose parent tree nests past nib's bound AND
+// whose page carries a second annotation with `/Contents` and no `/StructParent` at all.
+//
+// The two halves are the point: one subject nib genuinely cannot resolve, and one it can answer
+// completely. `withContents` puts `/Contents` on the widget too, so the unreadable subject is a
+// subject rather than a skipped one.
+func unreadTreePlusUnparentedAnnot(depth int, withContents bool) []byte {
+	content := "/P << /MCID 0 >> BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC"
+	widget := "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /StructParent 1 >>"
+	if withContents {
+		widget = "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /StructParent 1 /Contents (widget note) >>"
+	}
+	objs := map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Annots [30 0 R 31 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R 9 0 R] /ParentTree 200 0 R >>",
+		8:  "<< /Type /StructElem /S /P /P 7 0 R /Lang (en) /Pg 3 0 R /K 0 >>",
+		9:  "<< /Type /StructElem /S /Form /P 7 0 R /K << /Type /OBJR /Obj 30 0 R >> >>",
+		30: widget,
+		// The definite one: it carries /Contents and names no element at all.
+		31: "<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] /Contents (a note with no structure parent) >>",
+	}
+	for i := 0; i < depth; i++ {
+		objs[200+i] = fmt.Sprintf("<< /Kids [%d 0 R] /Limits [0 1] >>", 201+i)
+	}
+	objs[200+depth] = "<< /Nums [0 [8 0 R] 1 9 0 R] /Limits [0 1] >>"
+	return buildPDF(objs)
+}
+
+// TestAnUnreadableSubjectDoesNotSwallowADefiniteFailure — the P04.S03 review's first finding.
+//
+// `scanAnnotsAndFields` reports two different things and they were once one string: that a PARTICULAR
+// subject's `/StructParent` slot sat below the parent tree's depth bound, and that a POPULATION may be
+// missing members nib never enumerated. Collapsing them meant a deep parent tree anywhere in the file
+// downgraded every definite failure in it to CannotCheck — and the string was not partitioned by
+// population either, so a truncated form-field walk could silence an annotation's failure.
+//
+// Nothing here is a false accusation; the loss runs the other way, which is why no corpus row moved
+// and why the oracle stayed green. A clause that answers "cannot check" for a document it can read
+// perfectly well is a failure report the user never gets.
+func TestAnUnreadableSubjectDoesNotSwallowADefiniteFailure(t *testing.T) {
+	// Control: with the tree readable, both subjects are answerable and the unparented one fails.
+	shallow := unreadTreePlusUnparentedAnnot(3, true)
+	if got := verdictOf(t, shallow, "7.2 t24"); got.Verdict != Fail {
+		t.Fatalf("control: a readable tree reports %v (%s) for 7.2 t24, want fail — the fixture's "+
+			"unparented annotation is what this test is about", got.Verdict, got.Why)
+	}
+	// Past the bound one subject is genuinely unreadable — and the other is still definitely failing.
+	deep := unreadTreePlusUnparentedAnnot(70, true)
+	got := verdictOf(t, deep, "7.2 t24")
+	if got.Verdict != Fail {
+		t.Errorf("with one unreadable subject beside one that names no /StructParent at all, 7.2 t24 "+
+			"reports %v (%s), want fail — a failure found is a failure whatever else was unread",
+			got.Verdict, got.Why)
+	}
+}
+
+// TestAPopulationNibReadInFullIsNeverCannotCheck — the P04.S03 review's second finding.
+//
+// The final `CannotCheck` arm fired on a document-wide "something was unread" string, so it answered
+// for rules whose own population had been read completely: a document with NO annotations but a
+// form-field tree past its depth bound reported 7.2 t24 as CannotCheck, contradicting the reach
+// guard's own comment that such a document has no subject and NotApplicable is the honest answer.
+// And a subject whose key is simply absent needs no parent tree to settle — `Contents == null` is the
+// first disjunct of veraPDF's test.
+func TestAPopulationNibReadInFullIsNeverCannotCheck(t *testing.T) {
+	// No subject carries the key, so every check veraPDF runs passes — even though the parent tree
+	// stopped at its bound.
+	noKey := unreadTreePlusUnparentedAnnot(70, false)
+	if got := verdictOf(t, noKey, "7.2 t25"); got.Verdict != NotApplicable {
+		t.Errorf("a document with no form field reports %v (%s) for 7.2 t25, want not applicable — the "+
+			"annotations' unread slots are not t25's population", got.Verdict, got.Why)
 	}
 }

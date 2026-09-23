@@ -25,6 +25,12 @@ func init() {
 			return checkAlternateTextLanguage(d, key, what)
 		}})
 	}
+	for _, k := range associatedTextKeys {
+		row := k
+		register(Rule{Clause: row.clause, Summary: row.summary, Check: func(d *Document) Result {
+			return checkAssociatedTextLanguage(d, row)
+		}})
+	}
 }
 
 // alternateTextKey is one row of the table below: the clause, the key it names, and the words the report uses.
@@ -103,6 +109,117 @@ func checkAlternateTextLanguage(d *Document, key, what string) Result {
 		return Result{Verdict: CannotCheck, Why: cannot}
 	case len(nodes) == 0:
 		return Result{Verdict: NotApplicable, Why: "the document has no structure elements"}
+	}
+	return Result{Verdict: Pass}
+}
+
+// associatedTextKey is one row of the table below: the clause, which population it runs over, the key it
+// names, and the words the report uses.
+type associatedTextKey struct {
+	clause, key, summary, what, none string
+	// kind is the population veraPDF runs the clause over, STATED rather than derived. It was derived
+	// from the clause id at first, by a two-way branch whose `else` silently made any third row a
+	// form-field rule — a wrong default no test could catch, under a comment claiming the table
+	// "cannot carry a row whose clause and population disagree".
+	kind subjectKind
+}
+
+// associatedTextKeys is ua1 7.2 t24 and t25 — **one relation with two rows**, because veraPDF's two
+// predicates differ only in the object they run over and the key they name:
+//
+//	<key> == null || containsLang == true || gContainsCatalogLang == true
+//
+// **`parentLang` is absent from that predicate and its absence is the whole slice.** 7.2 t21–t23 (a
+// structure element's alternates) grant an ancestor's `/Lang` through `/P`; these two do not. An
+// annotation's language comes from the ONE element its `/StructParent` names, or from the catalog, or
+// nowhere — so reusing `checkAlternateTextLanguage`'s climb would pass documents veraPDF fails.
+//
+// `TestTheAssociatedTextLanguageClausesAreOneRelation` holds that no clause is written outside the
+// table, and `checkAssociatedTextLanguage` is the only function that evaluates one (ADR-009).
+var associatedTextKeys = []associatedTextKey{
+	{clause: "7.2 t24", key: "Contents", kind: kindAnnotation,
+		summary: "natural language in the Contents entry for annotations shall be determined",
+		what:    "a text description (/Contents)", none: "the document has no annotations"},
+	{clause: "7.2 t25", key: "TU", kind: kindFormField,
+		summary: "natural language in the TU key for form fields shall be determined",
+		what:    "an alternate field name (/TU)", none: "the document has no form fields"},
+}
+
+// checkAssociatedTextLanguage evaluates one row of `associatedTextKeys`.
+//
+// **The subject is every annotation (or every field), not every one carrying the key** — P04.S02's
+// lesson, and it holds here for the same reason: veraPDF runs one check per object and passes it
+// where the key is absent, so a document full of annotations with no `/Contents` reports the clause
+// PASSED with checks. The clause is NotApplicable only where the population is empty.
+//
+// **An empty string is a language.** veraPDF's `containsLang` is `getLang() != null` and `getLang`
+// requires only `COS_STRING`, so `/Lang ()` on the named element satisfies the predicate — the same
+// present-not-valid reading `declaresLang` already documents for 7.2 t33/t34. Whether that value is a
+// well-formed identifier is 7.2 t29's separate question.
+//
+// **A subject whose element nib never read is CannotCheck, never Fail.** An unresolved `/StructParent`
+// and a parent-tree slot below the depth bound are the same observation from here (/pending 496), so a
+// definite failure is only reported for a subject whose element nib DID read and which carries no
+// `/Lang`. A document holding both answers Fail: a failure found is a failure whatever else was unread.
+func checkAssociatedTextLanguage(d *Document, row associatedTextKey) Result {
+	sc := d.scanAnnotsAndFields()
+	kind := row.kind
+	// **Only this rule's OWN population can be incomplete for it.** A truncated form-field walk says
+	// nothing about annotations, and answering CannotCheck for t24 because t25's population was short
+	// is a refusal over a question nib answered in full.
+	short := sc.incompleteFor(kind)
+	population := 0
+	for _, s := range sc.subjects {
+		if s.kind == kind {
+			population++
+		}
+	}
+	// **The catalog settles the clause without reading a subject** — its `/Lang` satisfies the
+	// predicate for every check veraPDF runs, so answering CannotCheck over an unread parent tree
+	// would be a refusal over a question the catalog has already answered.
+	if catalogDeclaresLang(d) {
+		if population == 0 {
+			return Result{Verdict: NotApplicable, Why: row.none}
+		}
+		return Result{Verdict: Pass}
+	}
+	cannot := ""
+	for _, s := range sc.subjects {
+		if s.kind != kind {
+			continue
+		}
+		if _, ok := d.text(s.holder[row.key]); !ok {
+			continue
+		}
+		if s.elem != nil {
+			if _, ok := d.text(s.elem["Lang"]); ok {
+				continue
+			}
+			return Result{Verdict: Fail, Where: s.where,
+				Why: fmt.Sprintf("it carries %s, the structure element it names through /StructParent declares no "+
+					"/Lang, and the catalog declares none, so the language of that text cannot be determined", row.what)}
+		}
+		// **THIS subject's slot was unread — not "something somewhere was unread".** A holder naming no
+		// `/StructParent` falls through to the definite failure below, which is what veraPDF reports.
+		if s.unresolved != "" {
+			if cannot == "" {
+				cannot = fmt.Sprintf("%s: %s", s.where, s.unresolved)
+			}
+			continue
+		}
+		return Result{Verdict: Fail, Where: s.where,
+			Why: fmt.Sprintf("it carries %s and names no structure element through /StructParent, and the catalog "+
+				"declares no /Lang, so the language of that text cannot be determined", row.what)}
+	}
+	switch {
+	case cannot != "":
+		return Result{Verdict: CannotCheck, Why: cannot}
+	// Reached only when every ENUMERATED subject was settled, so the question left is whether the
+	// POPULATION is short: a member nib never enumerated could be the one that fails.
+	case short != "":
+		return Result{Verdict: CannotCheck, Why: short}
+	case population == 0:
+		return Result{Verdict: NotApplicable, Why: row.none}
 	}
 	return Result{Verdict: Pass}
 }
@@ -311,42 +428,147 @@ func checkLanguageIdentifiers(d *Document) Result {
 	return Result{Verdict: Pass}
 }
 
+// subjectKind says which population a `langSubject` belongs to: veraPDF runs 7.2 t24 over `PDAnnot`
+// and t25 over `PDFormField`, and one traversal reaches both.
+type subjectKind int
+
+const (
+	kindAnnotation subjectKind = iota
+	kindFormField
+)
+
+// langSubject is one annotation or one form field, as three facts that three different rules read.
+//
+// **`holder` and `elem` are different dictionaries and the distinction is the slice.** 7.2 t24 and t25
+// read a key on the ANNOTATION or the FIELD (`/Contents`, `/TU`) and then ask whether a language is
+// determined for it; 7.2 t29 reads the `/Lang` on the structure ELEMENT that `/StructParent` names.
+// A traversal that yielded only the element could not evaluate t24 or t25, and one that yielded only
+// the holder could not evaluate t29.
+type langSubject struct {
+	kind   subjectKind
+	holder types.Dict
+	where  string
+	// elem is the structure element the holder names through `/StructParent` and the parent tree, or
+	// nil when there is none to name.
+	elem types.Dict
+	// unresolved is why `elem` is nil DESPITE the holder naming a key — the parent tree stopped at its
+	// depth bound before reaching that slot — and it is empty when the holder names no element at all.
+	//
+	// **The two are not the same fact, and treating them as one loses failures.** A holder with no
+	// `/StructParent` is definitively unlanguaged: veraPDF's `getLang` returns null, `containsLang` is
+	// false, and the clause FAILS. A holder whose slot nib never read is a question nib cannot answer.
+	// This field was absent at first and one document-wide string carried both, so a deep parent tree
+	// anywhere in the file downgraded every definite failure in it to CannotCheck — including failures
+	// in the OTHER population, since the string was not partitioned by kind either.
+	unresolved string
+}
+
+// subjectScan is one traversal's result: the subjects, and — separately per population — why that
+// population may be missing members nib never enumerated.
+//
+// **Incompleteness of a POPULATION and unreadability of one SUBJECT are different facts**, and they
+// belong to different verdicts. A truncated form-field walk says nothing about annotations, and a
+// parent-tree slot nib did not read says nothing about whether some other subject is missing.
+type subjectScan struct {
+	subjects []langSubject
+	// missed is 7.2 t29's reader, first-wins, with the semantics it had before this struct existed.
+	missed string
+	// annots and fields are why that population may be short of members.
+	annots, fields string
+}
+
+// incompleteFor is why the population a rule runs over may be missing members, or empty.
+func (sc subjectScan) incompleteFor(k subjectKind) string {
+	if k == kindAnnotation {
+		return sc.annots
+	}
+	return sc.fields
+}
+
 // structParentSite is a structure element reached from an annotation's or a field's `/StructParent`.
 type structParentSite struct {
 	elem  types.Dict
 	where string
 }
 
-// structParentsOfAnnotsAndFields is the element every annotation on every page, and every form field in the
-// AcroForm tree, names through its `/StructParent` and the parent tree — veraPDF's `GFPDAnnot.getLang` and
-// `GFPDFormField.getLang` read the `/Lang` there. The second result is why part could not be read.
+// structParentsOfAnnotsAndFields is 7.2 t29's reader: the elements that resolve, and nothing else.
+//
+// It is a filter over `annotAndFieldSubjects` rather than its own walk, because the two questions
+// share one traversal and ADR-009 gives a rule one door. t29 wants the `/Lang` values that EXIST, so
+// a subject naming no element is not its business; t24 and t25 want every subject, because a subject
+// with no element is precisely the one whose language cannot be determined.
 func (d *Document) structParentsOfAnnotsAndFields() ([]structParentSite, string) {
-	pt, ptWhy := d.parentTree()
+	subjects, missed := d.annotAndFieldSubjects()
 	var out []structParentSite
-	missed := ""
-	add := func(holder types.Dict, where string) {
-		sp, ok := d.intValue(holder["StructParent"])
-		if !ok {
-			return
+	for _, s := range subjects {
+		if s.elem != nil {
+			out = append(out, structParentSite{elem: s.elem, where: s.where + " → its /StructParent element"})
 		}
-		if elem := d.dict(pt[sp]); elem != nil {
-			out = append(out, structParentSite{elem: elem, where: where + " → its /StructParent element"})
-		} else if ptWhy != "" && missed == "" {
-			missed = ptWhy
+	}
+	return out, missed
+}
+
+// annotAndFieldSubjects is every annotation on every page and every form field in the AcroForm tree,
+// each paired with the structure element it names through `/StructParent` and the parent tree.
+//
+// **The populations are veraPDF's, read from its source.** `GFPDPage.parseAnnotations` builds a
+// `PDAnnot` for every entry of a page's `/Annots` and filters NOTHING — `GFPDAnnot.createAnnot`
+// switches on the subtype only to pick a subclass, and every subclass IS a `PDAnnot`, so no subtype
+// is excluded. `GFPDAcroForm.getFormFields` takes the AcroForm's `/Fields`, and `GFPDFormField`
+// exposes its `/Kids` as linked objects, so the profile's object graph reaches nested fields.
+//
+// **The `/StructParent` hop is an ASSOCIATION, not an ancestor climb**, and that is what separates
+// these rules from 7.2 t21–t23. `GFPDAnnot.getLang` and `GFPDFormField.getLang` take the holder's
+// `/StructParent`, look it up in the parent tree, and read that ONE element's own `/Lang`, requiring
+// a string. There is no `/P` walk: `parentLang` is a structure element's rule and must not be reused
+// here, or an annotation would inherit a language veraPDF never gives it.
+//
+// The second result is why part could not be read.
+func (d *Document) annotAndFieldSubjects() ([]langSubject, string) {
+	sc := d.scanAnnotsAndFields()
+	return sc.subjects, sc.missed
+}
+
+// scanAnnotsAndFields performs the traversal. See `annotAndFieldSubjects` for what it reads and why.
+func (d *Document) scanAnnotsAndFields() subjectScan {
+	pt, ptWhy := d.parentTree()
+	sc := subjectScan{}
+	add := func(kind subjectKind, holder types.Dict, where string) {
+		s := langSubject{kind: kind, holder: holder, where: where}
+		if sp, ok := d.intValue(holder["StructParent"]); ok {
+			if elem := d.dict(pt[sp]); elem != nil {
+				s.elem = elem
+			} else if ptWhy != "" {
+				// The slot is absent from a tree nib did not finish reading, so for THIS subject "it
+				// names no element" and "nib never read the slot" are indistinguishable (/pending 496).
+				// It is recorded on the subject; a holder with no `/StructParent` at all is a different
+				// and definite answer, and must not be swept up by it.
+				s.unresolved = ptWhy
+				if sc.missed == "" {
+					sc.missed = ptWhy
+				}
+			}
 		}
+		sc.subjects = append(sc.subjects, s)
+	}
+	// A page nib cannot read truncates BOTH populations: the annotations it holds are never seen, and
+	// the walk returns before the AcroForm is reached at all.
+	truncateAll := func(why string) subjectScan {
+		sc.missed, sc.annots, sc.fields = why, why, why
+		return sc
 	}
 	for p := 1; p <= d.Ctx.PageCount; p++ {
 		page, _, _, err := d.Ctx.PageDict(p, false)
 		if err != nil || page == nil {
-			return out, fmt.Sprintf("page %d does not resolve", p)
+			return truncateAll(fmt.Sprintf("page %d does not resolve", p))
 		}
 		annots, aerr := d.Ctx.DereferenceArray(page["Annots"])
 		if aerr != nil {
-			return out, fmt.Sprintf("page %d's /Annots could not be read: %v", p, aerr)
+			return truncateAll(fmt.Sprintf("page %d's /Annots could not be read: %v", p, aerr))
 		}
 		for i, a := range annots {
 			if ad := d.dict(a); ad != nil {
-				add(ad, fmt.Sprintf("page %d, annotation %d", p, i))
+				add(kindAnnotation, ad, fmt.Sprintf("page %d, annotation %d", p, i))
 			}
 		}
 	}
@@ -363,20 +585,23 @@ func (d *Document) structParentsOfAnnotsAndFields() ([]structParentSite, string)
 				continue
 			}
 			if depth > maxWalkDepth {
-				if missed == "" {
-					missed = fmt.Sprintf("the form field tree nests deeper than %d levels; nib stops reading there", maxWalkDepth)
+				why := fmt.Sprintf("the form field tree nests deeper than %d levels; nib stops reading there", maxWalkDepth)
+				if sc.missed == "" {
+					sc.missed = why
 				}
+				// The FIELD population is short of members; the annotations were all enumerated above.
+				sc.fields = why
 				return
 			}
 			seen[dictID(fd)] = true
-			add(fd, "form field")
+			add(kindFormField, fd, "form field")
 			fields(fd["Kids"], depth+1)
 		}
 	}
 	if acro := d.dict(d.Catalog["AcroForm"]); acro != nil {
 		fields(acro["Fields"], 0)
 	}
-	return out, missed
+	return sc
 }
 
 // mcLang is a string `/Lang` on a BDC property list the content walk reached — kept only for the first that fails.

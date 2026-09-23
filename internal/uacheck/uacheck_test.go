@@ -205,8 +205,10 @@ func TestARuleThatPanicsBecomesCannotCheckRatherThanVanishing(t *testing.T) {
 }
 
 // registeredFromATable is every table row type whose `clause:` fields are registered in a loop rather than
-// written into a `register` call (P03.S02, P03.S03, P04.S02).
-var registeredFromATable = map[string]bool{"containment": true, "kidSequence": true, "alternateTextKey": true}
+// written into a `register` call (P03.S02, P03.S03, P04.S02, P04.S03).
+var registeredFromATable = map[string]bool{
+	"containment": true, "kidSequence": true, "alternateTextKey": true, "associatedTextKey": true,
+}
 
 // TestEveryRuleWrittenInTheSourceIsActuallyRegistered — the `tagFates` enumeration shape, which
 // S01's acceptance asks for by name.
@@ -240,8 +242,9 @@ func TestEveryRuleWrittenInTheSourceIsActuallyRegistered(t *testing.T) {
 		}
 		scanned++
 		ast.Inspect(f, func(n ast.Node) bool {
-			// The containment matrix (P03.S02), the kid-sequence table (P03.S03) and the alternate-text
-			// language table (P04.S02) each register their clauses from ONE loop over a table, so those
+			// The containment matrix (P03.S02), the kid-sequence table (P03.S03), the alternate-text
+			// language table (P04.S02) and the associated-text one (P04.S03) each register their
+			// clauses from ONE loop over a table, so those
 			// clauses are written in the table's `clause:` fields rather than in `register` calls — a
 			// second place a clause can be written, read here so the population stays the source's.
 			if lit, isLit := n.(*ast.CompositeLit); isLit {

@@ -126,6 +126,9 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"packet: dc:creator Seq only", withPacketBody(t, mdt,
 			`<dc:creator><rdf:Seq><rdf:li>Someone</rdf:li></rdf:Seq></dc:creator>`)},
 		oracleDoc{"described form − /StructParent", widgetMutation(t, df, "drop-structparent")},
+		// P04.S03: an annotation carrying /Contents whose named element declares no /Lang, in a document
+		// whose catalog declares none either — the one shape that reaches 7.2 t24's failing half.
+		oracleDoc{"described form + unlanguaged annotation /Contents", widgetMutation(t, df, "contents-no-lang")},
 		// 5 t1 and 5 t2 in both directions (`/pending 489`). No product door writes the identification
 		// (`/pending 486`), so these are mutations, named for the value they declare.
 		oracleDoc{"Markdown + title + pdfuaid:part 1", withUAPart(t, mdt, "1")},
@@ -353,7 +356,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 44
+	const wantGenerated = 45
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

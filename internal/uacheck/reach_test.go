@@ -120,6 +120,13 @@ var notTreeRules = map[string]string{
 	"7.2 t2": "the catalog's /Outlines and /Lang", "7.10 t1": "optional content", "7.10 t2": "optional content",
 	"6.2 t1": "page content", "7.1 t3": "page content", "7.2 t34": "page content and the parent tree",
 	"7.18.4 t1": "widgets and the parent tree", "7.21.4.1 t1": "fonts", "7.21.4.2 t2": "fonts", "7.21.7 t1": "fonts",
+	// P04.S03. Their subjects are annotations and form fields, not structure elements: veraPDF runs t24
+	// once per annotation and t25 once per form field, and each reaches a structure element only through
+	// the holder's `/StructParent` and the parent tree — the same shape as `7.18.4 t1` above. A document
+	// seventy Divs deep with no annotation and no field has no subject, so NotApplicable is the honest
+	// answer and CannotCheck would be a refusal over a question nothing asked. They ARE CannotCheck when
+	// the PARENT tree is the thing nib could not finish, which is a different bound and its own test.
+	"7.2 t24": "annotations and the parent tree", "7.2 t25": "form fields and the parent tree",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
@@ -151,15 +158,18 @@ func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
 func deepParentTree(depth int) []byte {
 	content := "/P << /MCID 0 >> BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC"
 	objs := map[int]string{
-		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
-		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Annots [30 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-		4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
-		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		7:  "<< /Type /StructTreeRoot /K [8 0 R 9 0 R] /ParentTree 200 0 R >>",
-		8:  "<< /Type /StructElem /S /P /P 7 0 R /Lang (en) /Pg 3 0 R /K 0 >>",
-		9:  "<< /Type /StructElem /S /Form /P 7 0 R /K << /Type /OBJR /Obj 30 0 R >> >>",
-		30: "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /StructParent 1 >>",
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Annots [30 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R 9 0 R] /ParentTree 200 0 R >>",
+		8: "<< /Type /StructElem /S /P /P 7 0 R /Lang (en) /Pg 3 0 R /K 0 >>",
+		// P04.S03: the Form element declares its own `/Lang` and the widget carries `/Contents`, so
+		// 7.2 t24 is a SUBJECT here and passes while the tree resolves — which is what makes its
+		// CannotCheck past the bound a change of answer rather than the same answer twice.
+		9:  "<< /Type /StructElem /S /Form /P 7 0 R /Lang (en) /K << /Type /OBJR /Obj 30 0 R >> >>",
+		30: "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /StructParent 1 /Contents (a note) >>",
 	}
 	for i := 0; i < depth; i++ {
 		objs[200+i] = fmt.Sprintf("<< /Kids [%d 0 R] /Limits [0 1] >>", 201+i)
@@ -170,13 +180,13 @@ func deepParentTree(depth int) []byte {
 
 func TestAParentTreePastItsBoundIsCannotCheckNeverAFalseAnswer(t *testing.T) {
 	shallow := deepParentTree(3)
-	for _, clause := range []string{"7.2 t34", "7.18.4 t1"} {
+	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24"} {
 		if got := verdictOf(t, shallow, clause); got.Verdict != Pass {
 			t.Fatalf("control: a parent tree three levels deep reports %v for %s (%s), want Pass — the fixture does not resolve", got.Verdict, clause, got.Why)
 		}
 	}
 	deep := deepParentTree(70)
-	for _, clause := range []string{"7.2 t34", "7.18.4 t1"} {
+	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24"} {
 		got := verdictOf(t, deep, clause)
 		if got.Verdict != CannotCheck {
 			t.Errorf("a parent tree seventy levels deep reports %v for %s (%s) over keys nib never read, want CannotCheck", got.Verdict, clause, got.Why)

@@ -1297,12 +1297,59 @@ Deep-dive did not fire: three rules through the registry, no wire format, no sch
   an overlapping question and it FAILS a document veraPDF passes when the only `/Lang` is on the StructTreeRoot.
   Live: `nib office` + `nib tag edit` produced both halves through real product doors and veraPDF agreed on both.
 
-#### P04.S03 — an annotation's Contents and a field's TU have a language
+#### P04.S03 — an annotation's Contents and a field's TU have a language *(done 2026-09-23, v1.147.0)*
 Scope: `7.2 t24` (annotations, excluding what veraPDF excludes) and `7.2 t25` (form fields), with `containsLang` read
 from veraPDF's source and measured — no inheritance from ancestors unless veraPDF grants it. Refs: law 1.
 Acceptance:
 - `containsLang` for an annotation and for a field is stated from veraPDF's source and measured on 1.30.2.
 - Each clause holds a measured pass and fail fixture and a `corpusReach` row.
+
+**(grill, 2026-09-23)** The predicates, read off veraPDF 1.30.2's own profile: t24 is
+`Contents == null || containsLang == true || gContainsCatalogLang == true` and t25 is the same with `TU`. **The
+slice's finding is what `containsLang` turned out to be**, and it is not the shape the sketch implies: it is not a
+key on the annotation or the field at all, and it is not an ancestor climb. `GFPDAnnot.getLang`
+(`GFPDAnnot.java:245-259`) and `GFPDFormField.getLang` (`GFPDFormField.java:93-105`) take the holder's
+`/StructParent`, resolve it through the StructTreeRoot's `/ParentTree`, and read that ONE element's own `/Lang`,
+requiring a string. **There is no `/P` walk** — so the question the phase-open note left open ("no inheritance
+from ancestors unless veraPDF grants it") is answered: veraPDF grants a ParentTree ASSOCIATION, which is a
+different mechanism from P04.S02's `parentLang`, and reusing that climb would pass documents veraPDF fails.
+
+**Populations, from veraPDF's source rather than from the description.** `GFPDPage.parseAnnotations` builds a
+`PDAnnot` for every entry of a page's `/Annots` and filters nothing — `createAnnot` switches on the subtype only
+to choose a subclass, and every subclass IS a `PDAnnot` — so the scope line's "excluding what veraPDF excludes"
+resolves to **nothing is excluded**. `GFPDAcroForm.getFormFields` takes the AcroForm's `/Fields` and
+`GFPDFormField` exposes `/Kids` as linked objects, so nested fields are subjects too.
+
+**(grill) The traversal already existed and was widened rather than duplicated.**
+`structParentsOfAnnotsAndFields` (P04.S01, for 7.2 t29) already walked every page annotation and every AcroForm
+field through `/Kids` and resolved `/StructParent` — but yielded only the resolved ELEMENT, discarding the holder
+that carries `/Contents` and `/TU`, and dropping the subjects whose `/StructParent` resolves to nothing, which
+are exactly t24's and t25's failures. It is now `annotAndFieldSubjects`, one traversal with two readers
+(ADR-009); t29's reader is a filter over it and its corpus reach is unchanged.
+
+Tasks:
+- T01 — widen the traversal to `annotAndFieldSubjects` (holder, where, resolved element, population kind); keep
+  `structParentsOfAnnotsAndFields` as t29's filter over it, byte-identical in behaviour.
+- T02 — `associatedTextKeys` + `checkAssociatedTextLanguage`: one relation, two rows, no climb.
+- T03 — measured fixtures: the oracle gains an annotation carrying `/Contents` whose named element declares no
+  `/Lang` (t24's failing half, which no corpus document reached); `corpusReach` gains 7.2 t24 at 71 and t25 at 19.
+- T04 — the no-climb property asserted directly, with its near control, and red-proved against a climbing
+  implementation.
+- T06 — the slice's own diff review, worked to zero: it found the verdict logic collapsing two different
+  facts into one document-wide string — a subject whose parent-tree slot nib never read, and a population
+  that may be short of members — so a deep parent tree anywhere downgraded every definite failure in the
+  file to CannotCheck, across BOTH populations. Split into `langSubject.unresolved` and
+  `subjectScan.annots`/`.fields`; two new gap-down tests, each red-proved. The review also found `kindOf`
+  deriving the population from the clause id with an `else` that would have made any third row a form-field
+  rule, under a comment claiming that was impossible — the kind is now a stated field with a row-by-row guard.
+- T05 — the count claim: 63 → 65 in the README and the parity doc, and the two prose copies the P04.S02
+  inventory recorded as having NO reader (`rules_catalog.go`, `pdfops/labelua.go`) gain one.
+
+**(grill) What the slice found in code it did not write.** The ancestor fixture reports **7.2 t34: veraPDF
+passed, nib failed** — a live false FAIL in a shipped clause, and a SECOND reproduction of `/pending 635` that is
+not its StructTreeRoot special case. It is filed there with the fixture name rather than fixed here: fixing t34
+is that item's work, and putting the document in the oracle corpus would make every later slice red until it is
+done. 7.2 t24 itself AGREES with veraPDF on that document, which is what measures the no-climb finding.
 
 #### P04.S04 — marked content: Span alternates and artifact nesting
 Scope: `7.2 t30`, `t31`, `t32` (a Span property list's ActualText/Alt/E, determined by its own `/Lang`, an inherited
