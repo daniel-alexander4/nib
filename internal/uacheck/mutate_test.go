@@ -384,6 +384,65 @@ func langOnEveryElement(t *testing.T, pdf []byte, lang string) []byte {
 	})
 }
 
+// alternateTextWithNoLanguage puts `keys` on the first structure element reachable from the root that has no
+// `/Lang` of its own, on a document that declares no language anywhere — the failed half of 7.2 t21, t22 and t23
+// (P04.S02).
+//
+// **It reaches the failing half only, and that is the whole of its job** (the slice's review): the committed
+// proposal carries exactly ONE structure element, so there is no second element on this document to exercise the
+// clauses' passing checks. Every other corpus document does that, which is what `notYetReachable`'s both-ways
+// requirement is measuring.
+func alternateTextWithNoLanguage(t *testing.T, pdf []byte, keys ...string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		if _, has := cat["Lang"]; has {
+			return fmt.Errorf("the fixture declares a catalog /Lang, so the clause could not fail on it")
+		}
+		root, rerr := ctx.DereferenceDict(cat["StructTreeRoot"])
+		if rerr != nil || root == nil {
+			return fmt.Errorf("the fixture has no structure tree")
+		}
+		// Descends through both `/K` arrays and element kids, so a base document whose top-level element
+		// already declares a `/Lang` still yields one below it rather than erroring.
+		var first func(o types.Object, depth int) types.Dict
+		first = func(o types.Object, depth int) types.Dict {
+			if depth > 32 {
+				return nil
+			}
+			if arr, err := ctx.DereferenceArray(o); err == nil && arr != nil {
+				for _, k := range arr {
+					if d := first(k, depth+1); d != nil {
+						return d
+					}
+				}
+				return nil
+			}
+			d, err := ctx.DereferenceDict(o)
+			if err != nil || d == nil {
+				return nil
+			}
+			if _, isElem := d["S"]; !isElem {
+				return nil
+			}
+			if _, has := d["Lang"]; !has {
+				return d
+			}
+			return first(d["K"], depth+1)
+		}
+		el := first(root["K"], 0)
+		if el == nil {
+			return fmt.Errorf("no structure element without a /Lang was found to carry the alternate text")
+		}
+		for _, k := range keys {
+			el[k] = types.StringLiteral("text with no determinable language")
+		}
+		return nil
+	})
+}
+
 // widgetMutation breaks one link of a described form's widget ↔ Form-element linkage.
 func widgetMutation(t *testing.T, pdf []byte, kind string) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {

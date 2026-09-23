@@ -273,6 +273,14 @@ func (d *Document) standardTypes(nodes []structNode) ([]string, string) {
 //
 // **The second result is why the climb stopped short of the root**, when it did (`/pending 496`): an
 // ancestor past the bound was never read, which is not the same as no ancestor declaring a language.
+//
+// **This is NOT `parentLang` (`rules_language.go`), and the two disagree — `/pending 635`.** They answer
+// overlapping questions with different climbs, and P04.S02's review measured three documents where the answers
+// differ, all in 7.2 t34's favour being wrong: a `/Lang` on the StructTreeRoot (veraPDF passes t34, this returns
+// false at the root test and nib FAILS), a `/P` cycle with no `/Lang` (veraPDF fails t34, this spins to the bound
+// and answers CannotCheck), and the bound itself (this charges depth 0 to the element, so it reads 63 ancestors
+// where `parentLang` reads 65). Named here rather than merged, because changing t34's verdicts is a shipped
+// rule's behaviour and wants its own measurement against the corpus.
 func (d *Document) declaresLangFor(elem types.Dict) (bool, string) {
 	for depth := 0; elem != nil; depth++ {
 		if d.name(elem["Type"]) == "StructTreeRoot" {

@@ -63,6 +63,10 @@ var corpusAllow = map[string]string{}
 // cannot fail it for an element reached through the tree (`rules_notesform.go`), so it is not registered.
 // P04.S01: 7.2 t2 joins at 276 (every file veraPDF evaluates it on, outlines or none) and 7.2 t29 at 291; pairs
 // 17,072 → 17,662; no other row moved.
+// P04.S02: 7.2 t21, t22 and t23 join at 294 each — every file holding a structure element, since veraPDF runs one
+// check per element and passes it where the key is absent; pairs 17,662 → 18,547. The same slice closed `d.text`'s
+// dangling-reference hole (a reference to a free object read as an empty string that is present), which no corpus
+// row moved: measured before and after, every reach figure here is unchanged.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
@@ -75,6 +79,7 @@ var corpusReach = map[string]int{
 	"7.4.4 t1": 294, "7.4.4 t2": 7, "7.4.4 t3": 134,
 	"7.9 t1": 9, "7.9 t2": 9, "7.18.4 t2": 18,
 	"7.2 t2": 276, "7.2 t29": 291,
+	"7.2 t21": 294, "7.2 t22": 294, "7.2 t23": 294,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,

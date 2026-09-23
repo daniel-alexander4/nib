@@ -19,6 +19,192 @@ import (
 func init() {
 	register(Rule{Clause: "7.2 t2", Summary: "natural language in the outline entries shall be determined", Check: checkOutlineLanguage})
 	register(Rule{Clause: "7.2 t29", Summary: "a /Lang value shall be a language identifier (ISO 32000-1 14.9.2)", Check: checkLanguageIdentifiers})
+	for _, k := range alternateTextKeys {
+		key, what := k.key, k.what
+		register(Rule{Clause: k.clause, Summary: k.summary, Check: func(d *Document) Result {
+			return checkAlternateTextLanguage(d, key, what)
+		}})
+	}
+}
+
+// alternateTextKey is one row of the table below: the clause, the key it names, and the words the report uses.
+type alternateTextKey struct{ clause, key, summary, what string }
+
+// alternateTextKeys is ua1 7.2 t21, t22 and t23 — **one relation with three rows**, because veraPDF's three
+// predicates differ only in which key they name:
+//
+//	<key> == null || containsLang == true || parentLang != null || gContainsCatalogLang == true
+//
+// `TestTheAlternateTextLanguageClausesAreOneRelation` holds that no clause is written outside the table, and
+// `checkAlternateTextLanguage` is the only function that evaluates one (ADR-009).
+var alternateTextKeys = []alternateTextKey{
+	{clause: "7.2 t21", key: "ActualText", summary: "natural language for text in the ActualText attribute shall be determined",
+		what: "replacement text (/ActualText)"},
+	{clause: "7.2 t22", key: "Alt", summary: "natural language for text in the Alt attribute shall be determined",
+		what: "an alternate description (/Alt)"},
+	{clause: "7.2 t23", key: "E", summary: "natural language for text in the E attribute shall be determined",
+		what: "the expansion of an abbreviation (/E)"},
+}
+
+// checkAlternateTextLanguage evaluates one row of `alternateTextKeys`, measured on veraPDF 1.30.2 over the
+// slice's eighty fixtures (P04.S02's grill note in `PLAN-ua-coverage.md` has the table).
+//
+// **The subject is every structure element, not every element carrying the key.** veraPDF runs one check per
+// `PDStructElem` and passes it where the key is absent, so a tagged document with no `/Alt` anywhere reports the
+// clause PASSED with checks, never "no subject" — measured. The clause is NotApplicable only where the tree holds
+// no element at all.
+//
+// **In a document nib can read, the key is a string.** veraPDF reads `/Alt` and `/E` through `getStringKey`,
+// which returns null for a NAME, and `/ActualText` through `getKey(…).getString()`, which does not — so a
+// name-typed `/ActualText` is a subject there and fails. It cannot arrive here: pdfcpu's validator refuses a
+// name-, number-, boolean-, array- or dictionary-typed value on all three keys (33 combinations measured), which
+// leaves the string literal, the hex string, the indirect string and `null` — exactly `d.text`. An EMPTY string
+// is a subject (`/Alt ()` fails with no language), unlike 7.3 t1, which wants a non-empty one.
+func checkAlternateTextLanguage(d *Document, key, what string) Result {
+	nodes, unread := d.structNodes()
+	// **The catalog settles the clause without reading an element.** Its `/Lang` satisfies the predicate for
+	// every check veraPDF runs, so a document that has one passes even where nib could not finish the tree —
+	// answering CannotCheck there would be a refusal over a question the catalog already answered.
+	if catalogDeclaresLang(d) {
+		// No `unread` clause here, and that is deliberate: `structNodes` refuses only an element it met BELOW the
+		// root, so it cannot report an unread tree without having returned the elements above the refusal —
+		// "no elements" and "part of the tree was unread" cannot both hold. A conjunct no input can falsify is
+		// the dead clause P03's review went looking for, and the slice's blind mutation pass found this one.
+		if len(nodes) == 0 {
+			return Result{Verdict: NotApplicable, Why: "the document has no structure elements"}
+		}
+		return Result{Verdict: Pass}
+	}
+	cannot := ""
+	for _, n := range nodes {
+		if _, ok := d.text(n.dict[key]); !ok {
+			continue
+		}
+		if _, own := d.text(n.dict["Lang"]); own {
+			continue
+		}
+		found, why := d.parentLang(n.dict)
+		switch {
+		case found:
+		case why != "":
+			if cannot == "" {
+				cannot = fmt.Sprintf("%s: %s", nodeWhere(n, d.name(n.dict["S"])), why)
+			}
+		default:
+			return Result{Verdict: Fail, Where: nodeWhere(n, d.name(n.dict["S"])),
+				Why: fmt.Sprintf("the element carries %s and no /Lang, no ancestor it names through /P carries one, "+
+					"and the catalog declares none, so the language of that text cannot be determined", what)}
+		}
+	}
+	switch {
+	case unread != "":
+		return Result{Verdict: CannotCheck, Why: unread}
+	case cannot != "":
+		return Result{Verdict: CannotCheck, Why: cannot}
+	case len(nodes) == 0:
+		return Result{Verdict: NotApplicable, Why: "the document has no structure elements"}
+	}
+	return Result{Verdict: Pass}
+}
+
+// maxLangClimb is how many `/P` links one climb may follow; see parentLang for why it is one more than the tree
+// walk's own bound.
+const maxLangClimb = maxWalkDepth + 1
+
+// langClimbTooFar is the refusal past that bound, built once rather than per call.
+var langClimbTooFar = fmt.Sprintf("its /P chain climbs through more than %d ancestors; nib stops climbing there, "+
+	"so an ancestor language past that point was never read", maxLangClimb)
+
+// langClimb is one memoised climb: whether the dictionary's own `/P` chain determines a language, and how many
+// links above the dictionary the answer sits — `dist` is P03's `kidsResult.height` in the other direction, and it
+// is what makes a memo hit answerable for a climb that met the dictionary deeper.
+//
+// **The language itself is not kept**, because no rule asks which language an ancestor declared — only whether
+// one did. P04.S04's `inheritedLang` may want the value; it can add the field when it has a reader.
+type langClimb struct {
+	found bool
+	dist  int
+}
+
+// parentLang is veraPDF's `GFPDStructElem.getparentLang` — whether any `/Lang` string sits on the element's `/P`
+// chain, not counting its own. The second result is why the climb did not finish, and it is `CannotCheck`, never
+// a Pass.
+//
+// **The climb is blind and it does not stop at the structure tree.** veraPDF's `getParent()` wraps whatever `/P`
+// names and reads its `/Lang`, so — measured on 1.30.2 — a `/Lang` on the **StructTreeRoot** satisfies the rule, as
+// does one on a `/P` naming a **non-ancestor element** or a **plain non-element dictionary**. Nothing is skipped
+// either: a `Div` ancestor's `/Lang` counts, which is the opposite of `significantParent`, whose job is to climb
+// PAST the pass-through types. The two climbs answer different questions and are deliberately not one door.
+//
+// **`declaresLangFor` (`structure.go`) asks an overlapping question and answers differently** — the StructTreeRoot's
+// `/Lang`, a `/P` cycle and the bound's arithmetic all diverge, measured. That is `/pending 635`, named at both
+// sites rather than silently left as two doors for one rule (ADR-009).
+//
+// **A cycle is a complete answer, not a refusal.** veraPDF seeds its loop guard with the element's own key and
+// returns null on a revisit, so `/P` naming itself and a true two-element cycle with no `/Lang` both FAIL there
+// (measured) — every ancestor was seen and none carried a language. `significantParent` reports "parent
+// unreadable" for the same shape because for containment the parent is the answer; here it is only the road.
+//
+// **The chain is unbounded in the input, so the climb is bounded.** The tree itself cannot be deep — pdfcpu
+// refuses a structure tree past 100 levels, and `structNodes` stops at `maxWalkDepth` before that — but a
+// SIDEWAYS chain hanging off one shallow element is not the tree: 5,000 links is readable and veraPDF passes it.
+//
+// **The bound is `maxWalkDepth + 1`, and the `+ 1` is the StructTreeRoot.** The deepest element the tree walk
+// admits sits at walk depth `maxWalkDepth`, which is `maxWalkDepth` element ancestors AND the root above them —
+// a chain the walk never counts, because it starts below it. At a bare `maxWalkDepth` the climb refused that
+// element: measured, a 65-deep tree whose only `/Lang` is on the StructTreeRoot answered CannotCheck where
+// veraPDF passes, while 63 and 64 deep passed. With the `+ 1` the claim this bound is chosen for is true — an
+// element deep enough to exhaust the climb is already past the walk's own bound, where every rule answers
+// CannotCheck for the whole tree.
+//
+// **A refusal is never memoised, and a memo hit carries its distance** — P03's kid-depth lesson, that an answer
+// must not depend on which element asked first. A dictionary's climb is memoised with how far above it the
+// answer sits, so a later climb that meets it deeper is refused exactly where a fresh walk would have been.
+// A climb that ended in a cycle is not memoised either: how many links a cycle costs depends on where it was
+// entered, and a pathological shape is not worth a wrong memo.
+func (d *Document) parentLang(elem types.Dict) (bool, string) {
+	if d.langs == nil {
+		d.langs = map[uintptr]langClimb{}
+	}
+	// veraPDF seeds its loop guard with the element's OWN key, so a /P that names the element itself ends the
+	// climb with no answer rather than reading the element's own /Lang as an ancestor's.
+	onPath := map[uintptr]bool{dictID(elem): true}
+	var path []uintptr
+	answer, tail, looped := langClimb{}, 0, false
+	for p := d.dict(elem["P"]); p != nil; p = d.dict(p["P"]) {
+		id := dictID(p)
+		if onPath[id] {
+			looped = true
+			break
+		}
+		if len(path) >= maxLangClimb {
+			return false, langClimbTooFar
+		}
+		if memo, ok := d.langs[id]; ok {
+			// Only a dictionary with no `/Lang` of its own is ever memoised — the one that HOLDS the language is
+			// left out below — so the memo is this asker's answer too, if its own climb reaches that far.
+			if len(path)+1+memo.dist > maxLangClimb {
+				return false, langClimbTooFar
+			}
+			answer, tail = memo, 1+memo.dist
+			break
+		}
+		onPath[id] = true
+		if _, ok := d.text(p["Lang"]); ok {
+			answer, tail = langClimb{found: true}, 1
+			break
+		}
+		path = append(path, id)
+	}
+	if looped {
+		// A cycle is reached only with `answer` still zero: every assignment to it breaks the loop.
+		return false, ""
+	}
+	// Every dictionary the climb passed ends at the same answer, each one link nearer to it than the one below.
+	for i, id := range path {
+		d.langs[id] = langClimb{found: answer.found, dist: len(path) - 1 - i + tail}
+	}
+	return answer.found, ""
 }
 
 // catalogLang is the catalog's `/Lang` and whether it is a string — the one place the catalog's language is read.
