@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119). P02: every slice done (S01–S09); the phase close is next. P03's six slices are firmed and unstarted. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119), **P02 closed** (v1.138.16), **P03 closed** (v1.144.1, the checker at 58 of 106). P04 (language) is next and unopened. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -913,7 +913,7 @@ What graded the slice is the pin's clauses.
   `/Pg` kept bare integer kids. A fourth, a vacuous test that executed zero assertions, was proven by running
   it. Residue: `/pending 536`, `/pending 537`.
 
-### P03 — Checker: structure-tree containment and roles (~40 rules)
+### P03 — Checker: structure-tree containment and roles (~40 rules) *(done 2026-09-22, v1.144.1)*
 **Goal.** Tables, lists, TOC, headings, notes, Form/Link elements and role maps, each agreeing with veraPDF on
 its corpus files. Refs: law 1.
 
@@ -929,7 +929,8 @@ confirms the figure this plan has carried since P01.
   names — `parentStandardType == 'X'` and a regex over `kidsStandardTypes`. Tables, lists and TOC differ only
   in which names fill them. That is a containment **matrix** with one door, not twenty-five hand-written
   rules (ADR-009), and S02 builds it.
-- **THE PHASE'S TRAP, and it is specific to this corpus.** For **twenty** of the family's clauses the corpus
+- **THE PHASE'S TRAP, and it is specific to this corpus.** For **twenty** *(pin, P03 phase close: the list names
+  **twenty-three**, and all twenty-three were checked to hold a pass fixture containing their subject)* of the family's clauses the corpus
   holds **only fail fixtures** — `7.2 t4-t14`, `t18-t20`, `t36-t38`, `t41-t43`, plus `7.1 t11`, `7.4.4 t3`,
   `7.5 t2`. A rule that returns `Fail` unconditionally scores **perfectly** on every one of them, and
   `veracorpus_test.go` cannot tell it from a correct rule: it scores false-pass and false-fail, and an
@@ -947,6 +948,31 @@ confirms the figure this plan has carried since P01.
   the `corpusReach` table at `veracorpus_test.go:45-51` (a row per clause, the number **measured** over the
   297-file set — `veracorpus_test.go:187` fails a clause with no row), and prose at `uacheck.go:112`,
   `door.go:22`, `rules_catalog.go:334`.
+
+**Phase close (2026-09-22, v1.144.1).** Acceptance ledger over the exit criteria and every phase-open amendment:
+- *"Every rule in the family passes `veracorpus_test.go`"* — **met**: 297 files, 17,072 scored pairs, 0 false pass,
+  0 false fail; 42 of the family's 43 clauses registered, each with an exact `corpusReach` row. The 43rd, `7.1 t12`,
+  is **declared, not registered** (S06's pin: veraPDF 1.30.2 cannot fail it for an element reached through the tree).
+- *"rules without corpus files agree with veraPDF on fixtures of their own"* — **met**: `7.2 t16/t28/t39/t40` (S03,
+  eighteen measured trees), `7.18.4 t2` (S06, six documents), `7.1 t12` (five fixtures, five recorded passes); the
+  in-repo oracle runs veraPDF live (`TestTheOracleValidatesTheChecker`, 2,610 of 2,610 pairs).
+- *"The family is 43 rules … P03 lands 40"* — **met as 39 registered + 1 declared** (19 → 58 in the registry).
+- *"Every clause in that list owes a pass fixture"* — **met**: all 23 listed (the note said twenty) hold a unit pass
+  fixture containing their subject, checked by the phase review; the always-Fail probes are red-proven (S02, S03).
+- *"Those [no-corpus clauses] need a fixture and a veraPDF run"* — **met** (as the second criterion).
+- *"`7.2 t42` and `t43` … must land together"* — **met** (S04).
+- *"Three places encode the rule count and must move with every batch"* — **met**: 58 at every site; the README and
+  parity figures are now asserted from `len(Clauses())`, not a literal.
+- Law 1 / law 4 under hostile input — **not met at the review, met at close**: the phase review found the containment
+  walk exponential on shared pass-through elements (P03.S02's code) and the content walk unbounded on form fan-out;
+  both now answer CannotCheck naming why, with the table grid and a `/P` loop bounded the same way. Corpus verdicts
+  are byte-identical before and after.
+Required-run gates: tiers 4 and 6 **did not fire** — P03 and its fix pass touch `internal/uacheck`, `internal/pdfops`
+(the role resolver), tests and docs, none of `internal/server`'s session/ceremony/delivery/discovery paths,
+`internal/p2p` or `internal/rendezvous`. Tiers 0–3 ran over the committed tree (the phase's `/tidy`). Review:
+`code-reviews/v1.144.0-p03-phase-close-2026-09-22.md`; out-of-scope residue `/pending 613-634`, three of them critical
+(613 signer fingerprint, 614 pdfcpu colour-space crash, 615 displaced-arm leak). Graduation: 36 rows, 34 keep-live
+mechanically, 2 declarations kept, 0 hot-path; seven bound rows added.
 
 #### P03.S01 — role resolution is the spec's algorithm, and the checker owns the standard set *(done 2026-09-22, v1.139.0)*
 Scope: `standardType` (`uacheck/structure.go:91`) implements the wrong algorithm, not merely a tight bound.
@@ -1005,7 +1031,8 @@ the shared rule, not a shared verdict. Refs: law 1, ADR-009.
 Acceptance:
 - The matrix is the only place a containment relation is written; a guard asserts every registered
   containment clause routes through it, not that seventeen messages agree.
-- **A pass fixture for every one of the fourteen clauses whose corpus is fail-only**, and a red proof that an
+- **A pass fixture for every one of the fourteen *(pin, P03 phase close: thirteen by the phase note's own list — t4-t10,
+  t18-t20, t36-t38)* clauses whose corpus is fail-only**, and a red proof that an
   always-Fail implementation is caught by it.
 - Every clause's `corpusReach` row measured over the 297-file set.
 
@@ -1111,6 +1138,11 @@ Acceptance:
   document for an element reached through the tree, and a rule nib registered could only ever pass: the trap this
   phase's opening note names. The acceptance "gets a fixture and a recorded veraPDF verdict" is met — five fixtures,
   five recorded passes — and the rule stays unregistered, declared. Revisit on a veraPDF upgrade.
+  **(pin, 2026-09-22, P03 phase close — the explanation above is withdrawn, the verdicts stand)** "gives an element
+  the parent it was reached from" was an inference, and S02's measurement contradicts it as a general reading:
+  veraPDF's containment clauses read the element's own `/P` (a TD whose `/P` names the Document fails 7.2-9). Why
+  7.1-12 passes all five shapes is unmeasured; the five recorded passes are the finding, and no rule may borrow the
+  mechanism.
 - **(grill, 2026-09-22)** 7.9 and 7.18.4 t2 ported from veraPDF's source (`GFSENote`, `GFSEForm`, veraPDF-parser
   `TaggedPDFHelper.getChildren`) and measured on twelve fixtures: an empty Note ID is no ID and still collides;
   the ID set is the document's; a Form's children are every /K entry, MCIDs included; a Role attribute excuses it.

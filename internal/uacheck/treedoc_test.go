@@ -3,6 +3,7 @@ package uacheck
 import (
 	"fmt"
 	"strings"
+	"testing"
 )
 
 // treeDoc builds a one-page tagged document from a nested spec like "Document(Table(TR(TD),Span))" —
@@ -48,10 +49,8 @@ func treeDoc(roleMap, spec string) []byte {
 			name = parts[0]
 			for _, a := range parts[1:] {
 				switch {
-				case strings.HasPrefix(a, "r"):
-					attrs += " /RowSpan " + a[1:]
-				case strings.HasPrefix(a, "c"):
-					attrs += " /ColSpan " + a[1:]
+				case (a[0] == 'r' || a[0] == 'c') && isSpan(a[1:]):
+					attrs += map[byte]string{'r': " /RowSpan ", 'c': " /ColSpan "}[a[0]] + a[1:]
 				case strings.HasPrefix(a, "scope="):
 					attrs += " /Scope /" + a[len("scope="):]
 				case strings.HasPrefix(a, "headers="):
@@ -70,6 +69,11 @@ func treeDoc(roleMap, spec string) []byte {
 				extra += " /A << /O /Table" + attrs + " >>"
 			}
 		}
+		// A malformed spec builds a different document from the one veraPDF was measured on and may still
+		// produce the pinned verdict, so each shape is refused (P03's phase-close review found all four accepted).
+		if name == "" || strings.HasPrefix(name, "#") {
+			panic(fmt.Sprintf("treeDoc: %q names no element (an empty name, or attributes on a %q marker)", spec, name))
+		}
 		n := next
 		next++
 		ref := fmt.Sprintf("%d 0 R", n)
@@ -84,7 +88,10 @@ func treeDoc(roleMap, spec string) []byte {
 					rest = rest[1:]
 					continue
 				}
-				rest = strings.TrimPrefix(rest, ")")
+				if !strings.HasPrefix(rest, ")") {
+					panic(fmt.Sprintf("treeDoc: %q leaves /%s's kid list unclosed", spec, name))
+				}
+				rest = rest[1:]
 				break
 			}
 		} else {
@@ -118,4 +125,45 @@ func treeDoc(roleMap, spec string) []byte {
 		objs[8] = strings.Replace(objs[8], "NUMS0", strings.Join(nums, " "), 1)
 	}
 	return buildPDF(objs)
+}
+
+// isSpan reports whether s is a span value treeDoc writes as written: an optionally negative integer.
+func isSpan(s string) bool {
+	s = strings.TrimPrefix(s, "-")
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// TestTreeDocRefusesASpecItWouldMisbuild — each shape here built a document without complaint before P03's
+// phase close, and each is a document other than the one its row claims veraPDF was measured on. The last
+// two rows are the controls: a spec the tests rely on still builds.
+func TestTreeDocRefusesASpecItWouldMisbuild(t *testing.T) {
+	for _, tc := range []struct {
+		spec   string
+		refuse bool
+	}{
+		{"Document(Table(TR(TD)", true},
+		{"Document()", true},
+		{"Document(TD,)", true},
+		{"Document(TD!rowspan=2)", true},
+		{"Document(#mcid!r2)", true},
+		{"Document(Table(TR(TD!c-4294967295),TR(TD!headers=,TH!scope=)))", false},
+		{"Document(P(#mcid,#objr))", false},
+	} {
+		refused := func() (r bool) {
+			defer func() { r = recover() != nil }()
+			treeDoc("", tc.spec)
+			return false
+		}()
+		if refused != tc.refuse {
+			t.Errorf("treeDoc(%q) refused = %v, want %v", tc.spec, refused, tc.refuse)
+		}
+	}
 }

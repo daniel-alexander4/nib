@@ -79,8 +79,13 @@ func TestTheLayoutSurvivesWhatVeraPDFSurvives(t *testing.T) {
 		{"one empty-string Headers entry is not an unknown header", "Document(Table(TR(TH,TH),TR(TD!headers=,TD)))", "7.5 t2", Pass},
 		{"an empty-name Scope still scopes the header", "Document(Table(TR(TH!scope=,TH!scope=),TR(TD,TD)))", "7.5 t1", Pass},
 	} {
-		if got := verdictOf(t, treeDoc("", tc.spec), tc.clause); got.Verdict != tc.want {
+		got := verdictOf(t, treeDoc("", tc.spec), tc.clause)
+		if got.Verdict != tc.want {
 			t.Errorf("%s: %s = %v (%s), want %v", tc.name, tc.clause, got.Verdict, got.Why, tc.want)
+		}
+		// A recovered panic reads as CannotCheck too, so the refusal must be the layout's own.
+		if tc.want == CannotCheck && !strings.Contains(got.Why, "more than nib lays out") {
+			t.Errorf("%s: the reason %q is not the layout's slot cap; a recovered panic reads as CannotCheck too", tc.name, got.Why)
 		}
 	}
 }

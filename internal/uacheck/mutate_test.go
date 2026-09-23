@@ -651,9 +651,12 @@ func withRoleMapOnLeaf(t *testing.T, pdf []byte, roleMap types.Dict, leafType st
 		if leafType == "" {
 			return nil
 		}
-		// Retype the FIRST element below the root's direct children. The root's own child is the
-		// `Document` element and retyping it would take every descendant's context with it; one leaf
-		// carries the defect and leaves the rest of the tree for the other clauses to keep checking.
+		// Retype the first element the walk meets at depth 1 or below. **Which element that is depends on the
+		// root's `/K`**: a single `Document` reference puts the root's child at depth 0 and retypes its first kid,
+		// but an ARRAY `/K` puts the root's own children at depth 1, so the first of them is retyped — on the
+		// Markdown oracle fixture (root `/K [25 0 R 26 0 R 27 0 R]`, no Document element) that is the heading,
+		// which is why 7.4.2 t1 sits in `knownCannotCheck`. (P03's phase close corrected this comment, which
+		// said the root's own child was always skipped; veraPDF agrees with every verdict either way.)
 		var retyped types.Dict
 		var walk func(o types.Object, depth int)
 		walk = func(o types.Object, depth int) {

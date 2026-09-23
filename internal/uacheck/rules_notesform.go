@@ -11,9 +11,11 @@ import (
 // corpus file, so the fixtures in `rules_notesform_test.go` are its oracle.
 //
 // **`7.1 t12` (every element carries /P) is deliberately NOT registered.** Measured on veraPDF 1.30.2: an element
-// with no /P, with /P null, /P 5, a dangling /P and a /P naming a page all PASS 7.1-12 — the installed validator
-// gives an element the parent it was reached from. A clause the oracle cannot fail is one nib cannot show agreement
-// on for its failed half, and a rule that always passed would inflate the count while checking nothing (the trap the
+// with no /P, with /P null, /P 5, a dangling /P and a /P naming a page all PASS 7.1-12. WHY is not measured, and
+// "veraPDF gives an element the parent it was reached from" — the reading this comment first gave — cannot be
+// the whole of it: the containment clauses DO read the element's own /P (a TD whose /P names the Document fails
+// 7.2-9, `significantParent`). Only the five verdicts are evidence; no rule may borrow the explanation. A clause
+// the oracle cannot fail is one nib cannot show agreement on for its failed half, and a rule that always passed would inflate the count while checking nothing (the trap the
 // plan names for P03). Declared in the plan, with the fixtures.
 
 func init() {
@@ -112,6 +114,11 @@ func checkFormChild(d *Document) Result {
 }
 
 // oneWidgetChild is veraPDF's `hasOneInteractiveChild`.
+//
+// **A named exemption from `elementKid`, the door every other relation reads (ADR-009).** This clause counts
+// CHILDREN, not element kids: content (MCIDs, marked-content and object references) counts here and is exactly
+// what `elementKid` excludes, and no pass-through element is looked through. Routing it through the door
+// would change what it counts.
 func (d *Document) oneWidgetChild(form types.Dict) bool {
 	k := form["K"]
 	if k == nil {

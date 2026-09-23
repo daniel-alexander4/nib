@@ -9,7 +9,7 @@ import (
 )
 
 // P03.S02 — every row below is a `treeDoc` veraPDF 1.30.2 was run on before the matrix was written, and
-// its verdicts are veraPDF's. Every clause is driven in BOTH directions: for fourteen of the seventeen the
+// its verdicts are veraPDF's. Every clause is driven in BOTH directions: for thirteen of the seventeen the
 // corpus holds only fail files, and a clause that answered Fail unconditionally would score perfectly there.
 
 // containmentCases is each clause's measured pass and fail document.
@@ -42,8 +42,18 @@ const (
 )
 
 func TestEveryContainmentClauseAgreesWithVeraPDFBothWays(t *testing.T) {
-	if len(containmentCases) != len(containmentMatrix) {
-		t.Fatalf("%d cases for %d clauses — every clause in the matrix owes a measured pass and fail document", len(containmentCases), len(containmentMatrix))
+	// The SETS, not the counts: a duplicated case would hide a missing one from a count.
+	cased := map[string]bool{}
+	for _, tc := range containmentCases {
+		cased[tc.clause] = true
+	}
+	for _, c := range containmentMatrix {
+		if !cased[c.clause] {
+			t.Errorf("%s has no measured pass and fail document — every clause in the matrix owes both", c.clause)
+		}
+	}
+	if len(cased) != len(containmentCases) || len(cased) != len(containmentMatrix) {
+		t.Fatalf("%d cases over %d distinct clauses for a matrix of %d — a case is duplicated or names a clause the matrix lacks", len(containmentCases), len(cased), len(containmentMatrix))
 	}
 	for _, tc := range containmentCases {
 		if got := verdictOf(t, treeDoc("", tc.pass), tc.clause); got.Verdict != Pass {

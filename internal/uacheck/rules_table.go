@@ -84,6 +84,11 @@ func jint(a int, b int64) int { return int(int32(int64(a) + b)) }
 // past this is not one any real producer writes, and nib answers CannotCheck rather than risk the process.
 const maxTableSlots = 1 << 22
 
+// maxDocumentTableSlots bounds every table's grid in one document together. The per-table cap alone let forty
+// 370-byte tables each ask for the full four million slots — 4.2 s and 5.1 GB, measured by P03's phase-close
+// review — so a file of a few thousand would run for minutes.
+const maxDocumentTableSlots = 1 << 24
+
 // The value types veraPDF's attribute reader matches (`AttributeHelper.getAttributeValue`'s COSObjType).
 // Each is asked through the Document's own typed readers, the one door for a typed value.
 const (
@@ -176,30 +181,35 @@ func (d *Document) attributeOfType(elem types.Dict, owner, key string, kind int)
 	return nil
 }
 
-// layoutTable lays out one table, memoised by its object number (inline tables are laid out each time).
-func (d *Document) layoutTable(table types.Dict, obj int) *tableLayout {
-	if obj != 0 {
-		if l, ok := d.tables[obj]; ok {
-			return l
-		}
+// layoutTable lays out one table, memoised by its dictionary, so an inline table is laid out once like one
+// written as its own object — six rules read every layout.
+func (d *Document) layoutTable(table types.Dict) *tableLayout {
+	id := dictID(table)
+	if l, ok := d.tables[id]; ok {
+		return l
 	}
 	l := d.computeLayout(table)
-	if obj != 0 {
-		if d.tables == nil {
-			d.tables = map[int]*tableLayout{}
-		}
-		d.tables[obj] = l
+	if d.tables == nil {
+		d.tables = map[uintptr]*tableLayout{}
 	}
+	d.tables[id] = l
 	return l
 }
 
 func (d *Document) computeLayout(table types.Dict) *tableLayout {
 	l := &tableLayout{wrongRow: -1, wrongColSpan: -1, wrongRowSpanCol: -1, intersecting: map[uintptr]bool{}}
-	// 1. rows (getTR)
+	// 1. rows (getTR). A kid list nib could not read makes the table unlayable, never a table of fewer rows.
 	var rows [][]*tableCell
+	kidsOf := func(elem types.Dict) []types.Dict {
+		kids, why := d.elementKids(elem)
+		if why != "" && l.unlayable == "" {
+			l.unlayable = why
+		}
+		return kids
+	}
 	cellsOf := func(tr types.Dict) []*tableCell {
 		var out []*tableCell
-		for _, k := range d.elementKids(tr) {
+		for _, k := range kidsOf(tr) {
 			std := d.typedAs(k)
 			if std != "TH" && std != "TD" {
 				continue
@@ -209,17 +219,20 @@ func (d *Document) computeLayout(table types.Dict) *tableLayout {
 		}
 		return out
 	}
-	for _, k := range d.elementKids(table) {
+	for _, k := range kidsOf(table) {
 		switch d.typedAs(k) {
 		case "TR":
 			rows = append(rows, cellsOf(k))
 		case "THead", "TBody", "TFoot":
-			for _, tr := range d.elementKids(k) {
+			for _, tr := range kidsOf(k) {
 				if d.typedAs(tr) == "TR" {
 					rows = append(rows, cellsOf(tr))
 				}
 			}
 		}
+	}
+	if l.unlayable != "" {
+		return l
 	}
 	// 2. height and width (getNumberOfRows, getNumberOfColumns)
 	height := 0
@@ -248,8 +261,13 @@ func (d *Document) computeLayout(table types.Dict) *tableLayout {
 		l.unlayable = fmt.Sprintf("a RowSpan or ColSpan below 1 gives the table a grid of %d × %d, which veraPDF's own layout cannot build", height, width)
 		return l
 	}
-	if int64(height)*int64(width) > maxTableSlots {
+	slots := int64(height) * int64(width)
+	if slots > maxTableSlots {
 		l.unlayable = fmt.Sprintf("the table's spans make a grid of %d × %d slots, more than nib lays out", height, width)
+		return l
+	}
+	if d.tableSlots += slots; d.tableSlots > maxDocumentTableSlots {
+		l.unlayable = fmt.Sprintf("the document's tables together make grids of more than %d slots, more than nib lays out", maxDocumentTableSlots)
 		return l
 	}
 	grid := make([][]*tableCell, height)
@@ -401,7 +419,7 @@ func (d *Document) tablesIn() ([]*tableLayout, []structNode, string) {
 	var tables []structNode
 	for _, n := range nodes {
 		if d.typedAs(n.dict) == "Table" {
-			layouts = append(layouts, d.layoutTable(n.dict, n.obj))
+			layouts = append(layouts, d.layoutTable(n.dict))
 			tables = append(tables, n)
 		}
 	}

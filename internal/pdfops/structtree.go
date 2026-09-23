@@ -104,8 +104,10 @@ type structElem struct {
 type structTree struct {
 	root types.Dict
 	// roleMap maps a document's custom structure names to standard ones. Carried because an element
-	// typed `Preformatted Text` means nothing without it.
+	// typed `Preformatted Text` means nothing without it. Written only here, when the tree is read.
 	roleMap map[string]string
+	// roles memoises standardRole over roleMap.
+	roles map[string]roleAnswer
 	// elems is every element reachable from the root, in discovery order.
 	elems []*structElem
 	// byObj indexes the elements that have an object number.
@@ -241,8 +243,11 @@ func readStructTree(ctx *model.Context, livePages map[int]bool) (*structTree, er
 	t := &structTree{root: root, roleMap: map[string]string{}, byObj: map[int]*structElem{}}
 
 	if rm, rerr := ctx.DereferenceDict(root["RoleMap"]); rerr == nil && rm != nil {
+		// A value may be an indirect name, which the checker's resolver dereferences (`uacheck.Document.name`);
+		// reading only direct names typed `/Alpha → 12 0 R (/P)` as P in the checker and as Alpha in the Tags
+		// panel (P03's phase-close review).
 		for k, v := range rm {
-			if n, isName := v.(types.Name); isName {
+			if n, err := ctx.DereferenceName(v, model.V10, nil); err == nil && n.Value() != "" {
 				t.roleMap[k] = n.Value()
 			}
 		}

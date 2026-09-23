@@ -180,18 +180,18 @@ func TestAFigureNeedsAltTextOrReplacementText(t *testing.T) {
 	}
 }
 
-// TestATableIsCheckedOnlyWhereVeraPDFsAnswerIsKnown — 7.5 t1, each shape.
-func TestATableIsCheckedOnlyWhereVeraPDFsAnswerIsKnown(t *testing.T) {
+// TestATableIsCheckedTheWayVeraPDFLaysItOut — 7.5 t1, each shape. Named "CheckedOnlyWhereVeraPDFsAnswerIsKnown" until P03's phase close: since
+// P03.S04 ported veraPDF's layout no shape here is CannotCheck, and the branch that asserted a CannotCheck says
+// why and where never ran. Unlayable tables are `TestTheLayoutIsVeraPDFsStepForStep`'s, and a tree nib did not
+// finish reading is `TestEveryTreeRuleIsCannotCheckPastTheTreeBound`'s.
+func TestATableIsCheckedTheWayVeraPDFLaysItOut(t *testing.T) {
 	for _, c := range tableCases() {
 		got := verdictOf(t, c.pdf, c.clause)
 		if got.Verdict != c.want {
 			t.Errorf("%s: %v (%s at %s), want %v", c.name, got.Verdict, got.Why, got.Where, c.want)
 		}
-		if got.Verdict == CannotCheck && (got.Why == "" || got.Where == "") {
-			t.Errorf("%s: an unsettled table must say why and where: %q at %q", c.name, got.Why, got.Where)
-		}
 		if strings.Contains(c.name, "no scope") && got.Verdict == Fail && !strings.Contains(got.Why, "header at row 1, cell 1") {
-			t.Errorf("%s: the report must name the header cell with no Scope, and says %q", c.name, got.Where)
+			t.Errorf("%s: the report must name the header cell with no Scope, and says %q", c.name, got.Why)
 		}
 	}
 }

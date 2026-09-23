@@ -70,6 +70,14 @@ const (
 
 // readXMP gathers what the metadata rules need, in one pass over the packet.
 func readXMP(d *Document) xmpFacts {
+	if !d.xmpDone {
+		d.xmp, d.xmpDone = parseXMP(d), true
+	}
+	return d.xmp
+}
+
+// parseXMP is readXMP's one parse; five rules read the packet, and it is decoded once.
+func parseXMP(d *Document) xmpFacts {
 	raw, has := d.Catalog["Metadata"]
 	if !has {
 		return xmpFacts{}

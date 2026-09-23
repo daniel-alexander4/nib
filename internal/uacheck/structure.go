@@ -310,11 +310,12 @@ type structNode struct {
 	dict types.Dict
 	// obj is the element's object number, or 0 for one written inline in its parent's `/K`.
 	obj int
-	// parent is the index of the node holding this one, or -1 for one directly under the root.
-	parent int
-	// kids are the indices of its element kids, in `/K` order.
-	kids []int
 }
+
+// **A node carries no parent and no kids, on purpose.** The walk reaches a shared element once, under whichever
+// parent it met first, so the walk's position is not the element's relation: every relation is read from the
+// element's own `/P` and `/K` (`significantParent`, `elementKids`). The two fields that held the walk's position
+// had no reader after P03.S02 and were removed at the phase close so no later rule reaches for them.
 
 // structNodes walks every structure element reachable from the root, a parent before its kids.
 //
@@ -337,8 +338,8 @@ func (d *Document) structNodes() ([]structNode, string) {
 	}
 	var out []structNode
 	seen := map[int]bool{}
-	var walk func(k types.Object, parent, depth int)
-	walk = func(k types.Object, parent, depth int) {
+	var walk func(k types.Object, depth int)
+	walk = func(k types.Object, depth int) {
 		if k == nil {
 			return
 		}
@@ -354,11 +355,8 @@ func (d *Document) structNodes() ([]structNode, string) {
 					continue
 				}
 			}
-			el := d.dict(en)
-			if el == nil || d.name(el["S"]) == "" {
-				continue
-			}
-			if ty := d.name(el["Type"]); ty == "MCR" || ty == "OBJR" {
+			el := d.elementKid(en)
+			if el == nil {
 				continue
 			}
 			if depth > maxWalkDepth {
@@ -371,15 +369,11 @@ func (d *Document) structNodes() ([]structNode, string) {
 			if obj != 0 {
 				seen[obj] = true
 			}
-			i := len(out)
-			out = append(out, structNode{dict: el, obj: obj, parent: parent})
-			if parent >= 0 {
-				out[parent].kids = append(out[parent].kids, i)
-			}
-			walk(el["K"], i, depth+1)
+			out = append(out, structNode{dict: el, obj: obj})
+			walk(el["K"], depth+1)
 		}
 	}
-	walk(root["K"], -1, 0)
+	walk(root["K"], 0)
 	d.nodes = out
 	return d.nodes, d.nodesErr
 }

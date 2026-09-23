@@ -23,8 +23,21 @@ func TestEveryKidSequenceClauseAgreesWithVeraPDFBothWays(t *testing.T) {
 		{"7.2 t40", "Document(L(LI(LBody),Caption))"},
 		{"7.4.4 t1", "Document(H,H)"},
 	}
-	if len(cases) != len(kidSequenceRules) {
-		t.Fatalf("%d cases for %d clauses", len(cases), len(kidSequenceRules))
+	// The SETS, not the counts, and the row count pinned, as the matrix's is.
+	if len(kidSequenceRules) != 9 {
+		t.Fatalf("%d kid-sequence rows, want 9 (P03.S03's eight and S05's 7.4.4 t1) — a row added or lost moves this", len(kidSequenceRules))
+	}
+	cased := map[string]bool{}
+	for _, tc := range cases {
+		cased[tc.clause] = true
+	}
+	for _, r := range kidSequenceRules {
+		if !cased[r.clause] {
+			t.Errorf("%s has no measured failing document", r.clause)
+		}
+	}
+	if len(cased) != len(cases) || len(cased) != len(kidSequenceRules) {
+		t.Fatalf("%d cases over %d distinct clauses for %d rows — a case is duplicated or names no row", len(cases), len(cased), len(kidSequenceRules))
 	}
 	for _, tc := range cases {
 		if got := verdictOf(t, treeDoc("", good), tc.clause); got.Verdict != Pass {
