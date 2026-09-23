@@ -538,8 +538,16 @@ type Proceeding struct {
 func Completeness(ats []SignerAttestation, p Proceeding) (signed, obliged int) {
 	obliged = len(p.Signing)
 	for _, want := range p.Signing {
+		// **An empty fingerprint discharges no obligation, on either side of the comparison**
+		// (ADR-051). `EqualFold("", "")` is true, so a roster entry with no fingerprint would be
+		// satisfied by a signer nib could not identify — two absences agreeing. That became
+		// reachable when the signer's identity stopped being assumed from the bag's first
+		// certificate: an unidentifiable signer now reports "" rather than a wrong name.
+		if want == "" {
+			continue
+		}
 		for _, a := range ats {
-			if a.Valid && strings.EqualFold(a.Fingerprint, want) {
+			if a.Valid && a.Fingerprint != "" && strings.EqualFold(a.Fingerprint, want) {
 				signed++
 				break
 			}

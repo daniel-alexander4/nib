@@ -179,3 +179,51 @@ func TestARosterHashWithoutAVersionCarriesNoToken(t *testing.T) {
 			"record format, and the client renders the second as the first.", got)
 	}
 }
+
+// TestAnUnidentifiedSignerDischargesNoObligation — ADR-051's consumer half.
+//
+// `EqualFold("", "")` is true. Before ADR-051 every signer carried a fingerprint — the bag's first
+// certificate, whether or not it had signed anything — so the empty-against-empty comparison was
+// unreachable and nothing guarded it. Taking the identity from the certificate the SignerInfo names
+// made "nib could not establish who signed" expressible, and it arrives as the empty string.
+//
+// A roster entry with no fingerprint is then satisfied by a signature nib could not attribute: two
+// absences agreeing, reported to the user as an obligation discharged. Both sides are asserted,
+// because a guard on only one of them passes this test for the wrong reason.
+func TestAnUnidentifiedSignerDischargesNoObligation(t *testing.T) {
+	const real = "ffeeddccbbaa00998877665544332211ffeeddccbbaa00998877665544332211"
+	for _, tc := range []struct {
+		name     string
+		ats      []SignerAttestation
+		proc     Proceeding
+		wantSign int
+	}{
+		{
+			"an unattributable signature against a roster entry with no fingerprint",
+			[]SignerAttestation{{Fingerprint: "", Valid: true}},
+			Proceeding{Signing: []string{""}},
+			0,
+		},
+		{
+			"an unattributable signature against a real roster entry",
+			[]SignerAttestation{{Fingerprint: "", Valid: true}},
+			Proceeding{Signing: []string{real}},
+			0,
+		},
+		{
+			"a real signature still discharges its own obligation",
+			[]SignerAttestation{{Fingerprint: real, Valid: true}},
+			Proceeding{Signing: []string{real}},
+			1,
+		},
+	} {
+		signed, obliged := Completeness(tc.ats, tc.proc)
+		if obliged != 1 {
+			t.Fatalf("%s: setup reports %d obliged, want 1", tc.name, obliged)
+		}
+		if signed != tc.wantSign {
+			t.Errorf("%s: %d of %d signed, want %d — an identity nib never established must not "+
+				"tick a party off the roster", tc.name, signed, obliged, tc.wantSign)
+		}
+	}
+}

@@ -1833,7 +1833,13 @@ function renderConsentSigners(signers) {
     row.appendChild(who);
     const fp = document.createElement('span');
     fp.className = 'cidcap';
-    fp.textContent = ' ' + groupFingerprint((s.fingerprint || '').slice(0, 8)) + '…';
+    // **An absent fingerprint is a fact, not a shorter fingerprint** (ADR-051). Since the signer's
+    // identity stopped being assumed from the certificate bag's first element, a signature Nib
+    // cannot attribute reports no fingerprint at all — and `'' .slice(0,8) + '…'` rendered that as
+    // a bare ellipsis, which reads as a truncated identity rather than as a missing one.
+    fp.textContent = s.fingerprint
+      ? ' ' + groupFingerprint(s.fingerprint.slice(0, 8)) + '…'
+      : ' — Nib could not establish which certificate signed';
     row.appendChild(fp);
     if (!s.valid) {
       const bad = document.createElement('span');
