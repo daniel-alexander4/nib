@@ -8,7 +8,7 @@ beside option C. Measured, annotations are the smallest part of what nib's own e
 breaks annotation rules, while eight page-set operations drop the whole structure tree and three stamping
 operations draw in fonts they do not embed. The writing track is built against what was measured.
 
-**Status: P01 closed** (v1.129.119), **P02 closed** (v1.138.16), **P03 closed** (v1.144.1, the checker at 58 of 106). P04 (language) is next and unopened. There is no P00 — nib needs no bootstrap.
+**Status: P01 closed** (v1.129.119), **P02 closed** (v1.138.16), **P03 closed** (v1.144.1, the checker at 58 of 106). P04 (language) is opened: four slices, twelve rules. There is no P00 — nib needs no bootstrap.
 
 ---
 
@@ -1156,6 +1156,103 @@ Acceptance:
 ### P04 — Checker: language (~10 rules)
 **Goal.** Outline entries, ActualText/Alt/E, annotation Contents, form TU and marked-content spans.
 **Exit criteria.** As P03.
+
+**(phase-open, 2026-09-22, v1.144.1)** The family is **ten** rules, read off veraPDF 1.30.2's own profile
+(`PDFUA-1.xml` in the CLI jar): `7.2 t2` (PDOutline), `t21`–`t23` (PDStructElem ActualText/Alt/E), `t24` (PDAnnot
+Contents), `t25` (PDFormField TU), `t29` (CosLang: every `/Lang` value matches `^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$`),
+`t30`–`t32` (SEMarkedContent Span ActualText/Alt/E). **Pin — `7.1 t1` and `7.1 t2` join this phase**: artifact inside
+tagged content and tagged content inside an artifact are SEMarkedContent rules over the same marked-content stack
+`t30`–`t32` read, and no phase of this plan owned them (P03's family was 43 rules without them; P06's file-level
+list does not name them). Twelve rules, so P04 lands the checker at **70 of 106**.
+
+- **Every one of the language rules rests on one global, `gContainsCatalogLang`**, and nib already answers the
+  neighbouring question for 7.2 t33/t34 (`declaresLang`, "present counts, even empty"). Whether veraPDF's global
+  means *present*, *non-empty* or *a valid identifier* is the first thing measured — it decides every rule's pass
+  half — and it gets ONE door (ADR-009), not twelve inline reads.
+- **The veraPDF predicates differ in which inheritance they allow**, and the difference is the trap: a structure
+  element's alternates may take `parentLang` (an ancestor's `/Lang`); an annotation's Contents and a field's TU may
+  NOT — only `containsLang` or the catalog; a Span's property list takes `inheritedLang`. What `containsLang` means
+  for an annotation and a field is read from veraPDF's source before a rule is written (GFPDAnnot, GFPDFormField),
+  then measured on 1.30.2 — the method P03 used.
+- **Corpus files by NAME** (the specification's numbering, which P03.S01 found is not veraPDF's — read the clause off
+  a veraPDF run): t29 has 26 files (10 pass, 16 fail), each other clause two or three pass and one fail. Every clause
+  owes a measured pass fixture of its own regardless (P03's phase trap).
+- **7.2 t29's object is every `/Lang` in the file** — catalog, structure element, marked-content property list, and
+  whatever else veraPDF's CosLang population reaches; its population is measured, not assumed from the description.
+
+#### P04.S01 — the catalog language, and every language identifier *(done 2026-09-22, v1.145.0)*
+Scope: `gContainsCatalogLang` as one door, measured on veraPDF 1.30.2 (absent, empty, invalid, indirect); `7.2 t2`
+(an outline requires it); `7.2 t29` over veraPDF's CosLang population, with the population measured. Refs: law 1,
+ADR-009.
+Acceptance:
+- One predicate answers "the catalog determines a language", and every P04 rule reads it; a guard asserts the routing.
+- `7.2 t29`'s population matches veraPDF's on measured fixtures for each `/Lang` holder, and its `corpusReach` row is
+  measured over the 297-file set.
+- `7.2 t2` and `t29` each hold a measured pass and fail fixture.
+
+**(grill, 2026-09-22)** Read from veraPDF's source (veraPDF-validation integration: `GFPDDocument`, `GFPDStructElem`,
+`GFPDAnnot`, `GFPDFormField`, `GFOpMarkedContent`, the profile's `<variables>`), then measured on 1.30.2 over
+twenty-three fixtures before a rule was written:
+- **`gContainsCatalogLang` is "the catalog's `/Lang` is a string"** — empty `()` counts, an indirect string counts, a
+  name does not. That is exactly `catalogDeclaresLang`, which 7.2 t33/t34 already read: it becomes the one door.
+- **7.2 t2**: an outline item exists (veraPDF's `PDOutline` objects) and the catalog door is false → fail; no item →
+  no subject. Measured: absent fails, `()` passes, `/en` fails, indirect passes.
+- **7.2 t29's population** is every STRING `/Lang` on: the catalog; every structure element; the element an
+  annotation's or a field's `/StructParent` names (through the parent tree); every BDC or DP property list, inline or
+  named in `/Properties`. A non-string `/Lang` is not a subject. The test is the regex over the decoded value: `()`
+  fails, `en_US`, `en-`, a 9-letter subtag, `1en`, `en US` fail; `x-klingon` and a UTF-16 `en-US` pass. A property
+  list defined in `/Properties` but never used is not a subject.
+- **veraPDF reads marked content inside a USED tiling pattern and a Type 3 glyph procedure** (measured fail on both;
+  an unused pattern passes). nib's content walk enters neither. So a failing `/Lang` found only in such a stream is
+  **CannotCheck** (nib cannot tell used from unused without walking it), and a valid one changes nothing.
+  **(pin — S04 gains this)**: walking used patterns and Type 3 procedures belongs to the slice that owns the
+  marked-content stack, because it changes every content rule's events.
+- A name-typed `/Lang` on the catalog or a structure element makes nib unable to read the file at all (pdfcpu's
+  validator) — the class `/pending 612` names; recorded there, not fixed here.
+Deep-dive did not fire: two rules through the registry; no wire format or schema.
+- T01 — `catalogLang` door (value and presence); `catalogDeclaresLang` calls it; a guard that the catalog's `/Lang` is
+  read nowhere else.
+- T02 — `7.2 t2` over the outline's first item.
+- T03 — `7.2 t29`: the population above, the content walk recording BDC/DP property-list `/Lang` values, the
+  unwalked-stream scan answering CannotCheck.
+- T04 — measured tests both ways; oracle documents; `corpusReach` rows; count claims 58 → 60.
+- **Review (2026-09-22):** two false passes, both measured on veraPDF — a Type 3 font written directly in `/Resources`
+  and a form drawn only from inside a pattern were read by nobody. The unwalked scan now walks the resource graph
+  instead of the object table, and since pdfcpu's validator DROPS a direct Type 3 font (raw parse keeps it), a missing
+  font entry asks the raw file once and answers CannotCheck (a genuine `null` — two corpus files — does not). The
+  walk's `/Lang` record keeps a count and the first failure only (it had held 1.6 GB), and non-drawing operators got
+  the content walk's third budget (`maxContentOperators`). The outline's `/First` test is unreachable through pdfcpu
+  (it drops such an `/Outlines`), kept as veraPDF's subject definition. Live: `nib ua` on the fixtures and on nib's
+  own `--lang en-US` README conversion (veraPDF PASS).
+
+#### P04.S02 — a structure element's alternate text has a language
+Scope: `7.2 t21`, `t22`, `t23` — ActualText, Alt and E on a structure element, determined by its own `/Lang`, an
+ancestor's, or the catalog's. One table over the three keys, one door. Refs: law 1, ADR-009.
+Acceptance:
+- The three clauses are one relation with three rows; a guard asserts no clause is written outside it.
+- `parentLang`'s reach (which ancestors count; a pass-through element; a `/P` loop) is measured, and an unfinished
+  climb is CannotCheck, never Pass (P03's phase-close lesson).
+- Each clause holds a measured pass and fail fixture and a `corpusReach` row.
+
+#### P04.S03 — an annotation's Contents and a field's TU have a language
+Scope: `7.2 t24` (annotations, excluding what veraPDF excludes) and `7.2 t25` (form fields), with `containsLang` read
+from veraPDF's source and measured — no inheritance from ancestors unless veraPDF grants it. Refs: law 1.
+Acceptance:
+- `containsLang` for an annotation and for a field is stated from veraPDF's source and measured on 1.30.2.
+- Each clause holds a measured pass and fail fixture and a `corpusReach` row.
+
+#### P04.S04 — marked content: Span alternates and artifact nesting
+Scope: `7.2 t30`, `t31`, `t32` (a Span property list's ActualText/Alt/E, determined by its own `/Lang`, an inherited
+one, or the catalog) and `7.1 t1`, `t2` (an Artifact sequence inside tagged content; tagged content inside an
+Artifact), over the content walk's marked-content stack. **(pin, P04.S01 grill)** veraPDF reads marked content inside
+a used tiling pattern and a Type 3 glyph procedure, and nib's content walk enters neither — this slice decides whether
+the walk enters them (and what that does to 7.1 t3's and the font rules' events), and retires S01's CannotCheck for
+7.2 t29 if it does. Refs: law 1, law 4.
+Acceptance:
+- `inheritedLang` and `isTaggedContent` are stated from veraPDF's source and measured, including inside form XObjects
+  and annotation appearance streams.
+- A content walk that stopped (P03's budgets, an unreadable stream) is CannotCheck for all five, never Pass.
+- Each clause holds a measured pass and fail fixture and a `corpusReach` row.
 
 ### P05 — Checker: annotations (~9 rules)
 **Goal.** Annotation containment, alternate descriptions, tab order, links, media clips, TrapNet, PrinterMark.

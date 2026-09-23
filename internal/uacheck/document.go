@@ -51,11 +51,20 @@ type Document struct {
 	// formWalks counts the form XObjects the content walk has entered, and contentOver records that it spent
 	// its budget (`overBudget`).
 	formWalks   int
+	contentOps  int
 	contentOver bool
 	// kids memoises elementKids, keyed by the element's dictionary (`dictID`), and kidBudget is how many more
 	// kids the document may expand before nib stops (`maxKidExpansion`).
 	kids      map[uintptr]kidsResult
 	kidBudget int
+	// mcLangCount is how many string `/Lang` values BDC property lists carried in the content walk, and mcLangBad
+	// the first that failed the grammar (7.2 t29).
+	mcLangCount int
+	mcLangBad   *mcLang
+	// raw is the file as given, kept for the one question the validated context cannot answer: whether pdfcpu's
+	// validator dropped something (`hasInlineType3Font`). directType3 memoises that answer.
+	raw         []byte
+	directType3 *bool
 	// xmp memoises readXMP.
 	xmp     xmpFacts
 	xmpDone bool
@@ -95,7 +104,7 @@ func open(pdf []byte) (*Document, error) {
 	if cerr != nil {
 		return nil, fmt.Errorf("uacheck: the document has no catalog: %w", cerr)
 	}
-	return &Document{Ctx: ctx, Catalog: cat}, nil
+	return &Document{Ctx: ctx, Catalog: cat, raw: pdf}, nil
 }
 
 // declaresLang reports whether obj is a declared `/Lang`: a string, direct or indirect, literal or hex —
@@ -114,11 +123,8 @@ func open(pdf []byte) (*Document, error) {
 // This is the checker's OWN door, not `pdfops`' — structure.go says why the checker keeps its readings
 // independent of the writer's.
 func (d *Document) declaresLang(obj types.Object) bool {
-	if obj == nil {
-		return false
-	}
-	_, err := d.Ctx.XRefTable.DereferenceStringOrHexLiteral(obj, model.V10, nil)
-	return err == nil
+	_, ok := d.text(obj)
+	return ok
 }
 
 // boolValue resolves a boolean that may be stored indirectly — `/Marked 42 0 R` with `42 0 obj true`

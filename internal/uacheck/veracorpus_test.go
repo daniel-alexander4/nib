@@ -61,6 +61,8 @@ var corpusAllow = map[string]string{}
 // the same population (every file with a numbered heading); pairs 15,302 → 16,187.
 // P03.S06: 7.9 t1/t2 and 7.18.4 t2 join (9, 9, 18); pairs 16,187 → 17,072. 7.1 t12 is NOT a row — veraPDF 1.30.2
 // cannot fail it for an element reached through the tree (`rules_notesform.go`), so it is not registered.
+// P04.S01: 7.2 t2 joins at 276 (every file veraPDF evaluates it on, outlines or none) and 7.2 t29 at 291; pairs
+// 17,072 → 17,662; no other row moved.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
@@ -72,6 +74,7 @@ var corpusReach = map[string]int{
 	"7.2 t15": 36, "7.2 t41": 36, "7.2 t42": 36, "7.2 t43": 36, "7.5 t2": 36,
 	"7.4.4 t1": 294, "7.4.4 t2": 7, "7.4.4 t3": 134,
 	"7.9 t1": 9, "7.9 t2": 9, "7.18.4 t2": 18,
+	"7.2 t2": 276, "7.2 t29": 291,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,
