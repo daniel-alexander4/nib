@@ -99,10 +99,17 @@ func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T
 	// The count is the registry's, never a literal: a literal here and a literal in the README agree with each
 	// other and say nothing about the rule a 59th registration adds (P03's phase-close review).
 	count := fmt.Sprintf("%d of the 106", len(Clauses()))
+	// **The COMPLEMENT needs a reader too, and its absence is why the parity doc contradicted itself.** That
+	// document said "the 89 PDF/UA-1 rules Nib does not check" nineteen lines below "70 of the 106" — 89 is
+	// the complement from the seventeen-rule era, and it drifted silently through every slice from P09.S05 to
+	// P04.S04 because the guard pinned only the positive figure. A count stated in complement form is the same
+	// fact written backwards, and this file's own comment claimed every copy had a reader while it did not.
+	gap := fmt.Sprintf("%d PDF/UA-1 rules Nib does not check", 106-len(Clauses()))
 	for _, f := range []struct{ path, must string }{
 		{"../../README.md", "not a PDF/UA certificate"},
 		{"../../README.md", count},
 		{"../../docs/accessibility-parity.md", count},
+		{"../../docs/accessibility-parity.md", gap},
 		{"../../web/index.html", "can still fail one it does not"},
 		{"door.go", "nothing labels"},
 		// **P04.S03 gives these two a reader, and the reason is that they had none and went stale

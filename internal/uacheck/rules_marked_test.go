@@ -635,3 +635,97 @@ func TestAStoppedContentWalkIsCannotCheckForAllFive(t *testing.T) {
 		}
 	}
 }
+
+// TestTheCatalogLanguageIsAskedBeforeTheWalk — the P04 close's cross-slice finding.
+//
+// `gContainsCatalogLang` is a disjunct of t30/t31/t32's predicate, so a catalog `/Lang` satisfies every check
+// veraPDF runs and nothing the walk failed to read can change that. Asked AFTER the walk — which is how S04
+// shipped it, while S02 and S03 asked it first and said why — these three refused on a document every sibling
+// clause passed. The corpus felt it: two files moved from refused to settled, 293 → 295.
+//
+// 7.1 t1 and t2 carry no such disjunct, so they stay CannotCheck on the same document. That contrast is the
+// test: a fix that simply stopped refusing would take them with it.
+func TestTheCatalogLanguageIsAskedBeforeTheWalk(t *testing.T) {
+	// Nine levels of form XObjects, one past `maxFormDepth`, so the walk stops with `contentErr` set.
+	deep := map[int]string{}
+	for i := 0; i <= 9; i++ {
+		body := fmt.Sprintf("/Fm%d Do", i+1)
+		res := fmt.Sprintf("/Resources << /XObject << /Fm%d %d 0 R >> >> ", i+1, 11+i)
+		if i == 9 {
+			body, res = "0 0 5 5 re f", ""
+		}
+		deep[10+i] = fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] %s/Length %d >>\nstream\n%s\nendstream",
+			res, len(body), body)
+	}
+	content := "/P <</MCID 0>> BDC\n" + markedText + "\n/Fm0 Do\nEMC"
+	pageRes := "<< /Font << /F1 5 0 R >> /XObject << /Fm0 10 0 R >> >>"
+
+	withLang := markedDoc{content: content, pageRes: pageRes, extra: deep, catalogLang: lang("en-US")}.build()
+	for _, clause := range []string{"7.2 t30", "7.2 t31", "7.2 t32"} {
+		if got := verdictOf(t, withLang, clause); got.Verdict != Pass {
+			t.Errorf("with a catalog /Lang and a walk that stopped, %s = %v (%s), want Pass — the catalog "+
+				"satisfies the predicate for every subject, read or not", clause, got.Verdict, got.Why)
+		}
+	}
+	// The contrast: the artifact clauses have no catalog disjunct and must still refuse.
+	for _, clause := range []string{"7.1 t1", "7.1 t2"} {
+		if got := verdictOf(t, withLang, clause); got.Verdict != CannotCheck {
+			t.Errorf("with a walk that stopped, %s = %v (%s), want CannotCheck — no catalog disjunct applies "+
+				"to it", clause, got.Verdict, got.Why)
+		}
+	}
+	// STIMULUS: without the catalog /Lang the same document refuses, or the rows above pass because the walk
+	// never actually stopped.
+	noLang := markedDoc{content: content, pageRes: pageRes, extra: deep}.build()
+	if got := verdictOf(t, noLang, "7.2 t31"); got.Verdict != CannotCheck {
+		t.Fatalf("stimulus: with no catalog /Lang, 7.2 t31 = %v (%s), want CannotCheck — the fixture's walk "+
+			"did not stop, so this test asserts nothing", got.Verdict, got.Why)
+	}
+}
+
+// TestWhatTheLANGUAGEPopulationGradesAndWhatItMerelyACCEPTS — two asymmetries that read like defects and are
+// veraPDF's own, each measured on 1.30.2 at the P04 close.
+//
+//   - **A `/Lang` on the StructTreeRoot is ACCEPTED by the climb and never GRADED by 7.2 t29.** A review read
+//     that as one of the two clauses being wrong. It is not: measured, an invalid `(en_US)` on the root is not
+//     a t29 subject at all (zero checks), while the same value on an ordinary element fails. The profile says
+//     t29's subject is the catalog, a structure element, or a property list — and the root is none of those.
+//   - **An appearance stream's BDC `/Lang` IS graded by 7.2 t29** although that sequence is no
+//     `SEMarkedContent`. Measured: veraPDF fails t29 on it. nib already did both; what was missing was the
+//     measurement, which is what this test is.
+func TestWhatTheLanguagePopulationGradesAndWhatItMerelyAccepts(t *testing.T) {
+	root := "<< /Type /StructTreeRoot /Lang (en_US) /K 7 0 R /ParentTree 8 0 R /ParentTreeNextKey 1 >>"
+	onRoot := markedDoc{content: "/P <</MCID 0>> BDC\n" + markedSpanAlt + "\nEMC",
+		extra: map[int]string{6: root}}.build()
+	if got := verdictOf(t, onRoot, "7.2 t29"); got.Verdict != NotApplicable {
+		t.Errorf("an invalid /Lang on the StructTreeRoot reports 7.2 t29 = %v (%s), want NotApplicable — it is "+
+			"not one of t29's subjects, measured", got.Verdict, got.Why)
+	}
+	// ...and the climb still ACCEPTS it, which is the asymmetry.
+	if got := verdictOf(t, onRoot, "7.2 t31"); got.Verdict != Pass {
+		t.Errorf("the same root /Lang reports 7.2 t31 = %v (%s), want Pass — `parentLang` reads the root",
+			got.Verdict, got.Why)
+	}
+	// The near control: the same value on an ordinary element IS graded.
+	onElem := markedDoc{content: "/P <</MCID 0>> BDC\n" + markedText + "\nEMC", pLang: lang("en_US")}.build()
+	if got := verdictOf(t, onElem, "7.2 t29"); got.Verdict != Fail {
+		t.Fatalf("control: an invalid /Lang on an element reports 7.2 t29 = %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	// An appearance stream's property list is graded, though it is no marked-content subject.
+	apBody := "/Span << /Lang (en_US) >> BDC\n" + markedText + "\nEMC"
+	ap := fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Resources << /Font << /F1 5 0 R "+
+		">> >> /Length %d >>\nstream\n%s\nendstream", len(apBody), apBody)
+	inAP := markedDoc{content: "/P <</MCID 0>> BDC\n" + markedText + "\nEMC", extra: map[int]string{
+		10: ap,
+		11: "<< /Type /Annot /Subtype /Square /Rect [10 10 110 110] /F 4 /AP << /N 10 0 R >> >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> " +
+			"/Contents 4 0 R /StructParents 0 /Annots [11 0 R] >>",
+	}}.build()
+	if got := verdictOf(t, inAP, "7.2 t29"); got.Verdict != Fail {
+		t.Errorf("an invalid /Lang on a BDC inside an appearance stream reports 7.2 t29 = %v (%s), want Fail — "+
+			"veraPDF grades it there even though it makes no marked-content subject", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, inAP, "7.2 t31"); got.Verdict == Fail {
+		t.Errorf("the same appearance sequence reports 7.2 t31 = Fail (%s), and it is no SEMarkedContent", got.Why)
+	}
+}

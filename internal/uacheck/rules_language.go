@@ -177,8 +177,16 @@ func checkAssociatedTextLanguage(d *Document, row associatedTextKey) Result {
 	// predicate for every check veraPDF runs, so answering CannotCheck over an unread parent tree
 	// would be a refusal over a question the catalog has already answered.
 	if catalogDeclaresLang(d) {
-		if population == 0 {
+		// **`short` is consulted here for the same reason it precedes `population == 0` below**: an empty
+		// population that nib never finished enumerating is not "the document has no annotations", it is a
+		// claim nib did not establish. Found at the P04 close — this branch ordered the two the other way,
+		// so a page whose `/Annots` does not dereference reported NotApplicable with a catalog `/Lang` and
+		// CannotCheck without one, over the same unread document.
+		if population == 0 && short == "" {
 			return Result{Verdict: NotApplicable, Why: row.none}
+		}
+		if population == 0 {
+			return Result{Verdict: CannotCheck, Why: short}
 		}
 		return Result{Verdict: Pass}
 	}
@@ -365,9 +373,10 @@ var languageTag = regexp.MustCompile(`^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$`)
 // property list is none either — veraPDF 1.30.2 passes a bad `/Lang` there (measured, `recordLang`).
 //
 // **Marked content inside a tiling pattern or a Type 3 glyph procedure is read by veraPDF when it is used, and
-// nib's content walk enters neither** (measured, P04.S01's grill). So a failing `/Lang` found only in such a
-// stream is CannotCheck — nib cannot tell a used pattern from an unused one without walking it — and a valid one
-// changes nothing. P04.S04 owns walking them.
+// **Since P04.S04 the walk DOES enter them**, so such a value is a definite Fail rather than a refusal: a
+// tiling pattern is read once `scn` selects it and a Type 3 font's every `CharProc` once any glyph is shown in
+// it, in a lang-only mode that emits no content event and no marked-content subject. `unwalkedBadLang`, which
+// read what was DEFINED rather than what is drawn and so could only ever answer CannotCheck, retired with it.
 func checkLanguageIdentifiers(d *Document) Result {
 	subjects := 0
 	check := func(value, where string) *Result {
@@ -612,8 +621,10 @@ func sortedKeys(d types.Dict) []string {
 
 // hasInlineType3Font reports whether the file, parsed WITHOUT validation, holds a Type 3 font dictionary written
 // inline — nested in another object rather than an object of its own — which is the shape pdfcpu's validator
-// drops (see `unwalkedBadLang`). Asked only when a font entry is missing, and memoised; a file that will not parse
-// raw answers true, because nib then cannot rule the dropped font out.
+// drops. Asked only when a font entry is missing, and memoised; a file that will not parse raw answers true,
+// because nib then cannot rule the dropped font out. Its one caller is `content.go`'s `enterType3`, which reads
+// every `CharProc` of a Type 3 font a glyph is shown in — so a font the validator dropped is marked content nib
+// could not read, never marked content that is not there.
 func (d *Document) hasInlineType3Font() bool {
 	if d.directType3 != nil {
 		return *d.directType3
@@ -623,6 +634,11 @@ func (d *Document) hasInlineType3Font() bool {
 	return found
 }
 
+// scanInlineType3 walks the raw parse for a Type 3 font dictionary written inside another object.
+//
+// **A bound reached is `true`, not `false`.** Its one reader turns a `true` into `contentErr`, so returning
+// `false` because nib stopped looking would turn "nib did not look" into "there is none" — the collapse
+// `hasInlineType3Font` refuses one function up, where a file that will not parse raw answers true.
 func (d *Document) scanInlineType3() bool {
 	ctx, err := api.ReadContext(bytes.NewReader(d.raw), model.NewDefaultConfiguration())
 	if err != nil {
