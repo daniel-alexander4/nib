@@ -3,6 +3,7 @@ package uacheck
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -1727,6 +1728,73 @@ func withSheetFormFused(t *testing.T, pdf []byte) []byte {
 			t.Fatalf("setup: sheet 1's form %v carries no /StructParents, so drawing it twice fails nothing", one[first(one)])
 		}
 		two[first(two)] = one[first(one)]
+		return nil
+	})
+}
+
+// withCIDFontType2 is a Type 0 font over a CIDFontType2 whose program is nib's own embedded LiberationMono, with or
+// without a `/CIDToGIDMap` (P07.S01) — the shape pdfcpu's validator keeps, unlike the corpus's `7.21.3.2-t01-fail-a`.
+func withCIDFontType2(t *testing.T, withMap bool) []byte {
+	t.Helper()
+	prog, err := os.ReadFile("../pdfops/fonts/LiberationMono-BoldItalic.ttf")
+	if err != nil {
+		t.Fatalf("setup: the TrueType program nib ships is missing: %v", err)
+	}
+	return withCIDFontType2Program(t, prog, withMap)
+}
+
+// withCIDFontType2Program is withCIDFontType2 over an arbitrary program — bytes neither nib nor veraPDF may parse.
+func withCIDFontType2Program(t *testing.T, prog []byte, withMap bool) []byte {
+	t.Helper()
+	pdf := buildPDF(type0Doc("/Identity-H", "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>", nil))
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		sd, err := ctx.NewStreamDictForBuf(prog)
+		if err != nil {
+			return err
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		cid, err := ctx.DereferenceDict(types.IndirectRef{ObjectNumber: 11})
+		if err != nil || cid == nil {
+			t.Fatalf("setup: the CIDFont does not resolve: %v", err)
+		}
+		cid["Subtype"] = types.Name("CIDFontType2")
+		if withMap {
+			cid["CIDToGIDMap"] = types.Name("Identity")
+		}
+		desc, err := ctx.DereferenceDict(types.IndirectRef{ObjectNumber: 12})
+		if err != nil || desc == nil {
+			t.Fatalf("setup: the font descriptor does not resolve: %v", err)
+		}
+		desc["FontFile2"] = *ref
+		return nil
+	})
+}
+
+// asFontFile3 moves a CIDFont's `/FontFile2` program to `/FontFile3` with the given `/Subtype` (P07.S01's review).
+func asFontFile3(t *testing.T, pdf []byte, subtype string) []byte {
+	t.Helper()
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		desc, err := ctx.DereferenceDict(types.IndirectRef{ObjectNumber: 12})
+		if err != nil || desc == nil {
+			t.Fatalf("setup: the font descriptor does not resolve: %v", err)
+		}
+		ref, has := desc["FontFile2"]
+		if !has {
+			t.Fatal("setup: the descriptor has no /FontFile2 to move")
+		}
+		sd, _, err := ctx.DereferenceStreamDict(ref)
+		if err != nil || sd == nil {
+			t.Fatalf("setup: /FontFile2 is not a stream: %v", err)
+		}
+		sd.Dict["Subtype"] = types.Name(subtype)
+		delete(desc, "FontFile2")
+		desc["FontFile3"] = ref
 		return nil
 	})
 }

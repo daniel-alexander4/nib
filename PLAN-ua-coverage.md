@@ -2503,6 +2503,125 @@ session, ceremony, delivery, discovery, p2p or rendezvous path in the diff).
 **Exit criteria.** As P03, and a font program nib cannot parse returns `CannotCheck` naming its type, never
 `Pass`. Refs: law 1. Residual doubt: `/pending 493`.
 
+**(phase-open, 2026-09-23, v1.158.1)** The family is **fourteen** font rules — counted against veraPDF 1.30.2's
+`PDFUA-1.xml` and `Clauses()` (91 registered, 15 unbuilt; the fifteenth is `7.1 t12`, still declared and not
+registered, per P03's close). Landing all fourteen takes the checker to **105**.
+
+**`/pending 493` answered at this open, measured: hand-written readers, no library.** `golang.org/x/image`'s
+`font/sfnt` is already a direct dependency and refuses **7 of the corpus's 10** distinct TrueType programs (five
+on unaligned table offsets, one with no `cmap`, one on `post`); it exposes neither the cmap subtable count nor
+(3,0)'s presence, and reads no bare CFF and no Type 1. pdfcpu parses `cmap`/`hmtx` unexported from a file path, with
+no `glyf`, CFF or Type 1. What nib HAS is `pdfops/textrun.go`'s per-font code splitting and ToUnicode parsing
+(`loadRunFont`, `splitCodes`, `parseToUnicode`) — uacheck does not import pdfops, so reuse is a shared door
+(ADR-009), not a copy.
+
+**Two couplings found at the open.**
+- **The per-glyph population does not exist in uacheck**: `contentEvent` carries the font and the render mode but
+  no string operands. Five clauses stand on it (7.21.4.1 t2, 7.21.5 t1, 7.21.7 t1/t2, 7.21.8 t1), and so does
+  `/pending 657`'s CRITICAL — the SHIPPED 7.21.7 t1 is per-FONT where veraPDF's object is `Glyph` (the corpus's
+  `7.21.7-t01-fail-a` fails **8** checks). So the door is built once, in S02, and 657 closes there.
+- **veraPDF answers differently from nib when a program will not parse**: `GFGlyph` leaves presence and width null
+  (so 7.21.4.1 t2 and 7.21.5 t1 PASS), while `GFPDTrueTypeFont`/`GFPDType1Font` return FALSE (so 7.21.6 t2 and
+  7.21.4.2 t1 FAIL). The exit criterion's `CannotCheck`-never-`Pass` is stricter than both; the oracle will show it
+  as a refusal, which is permitted, and each slice records which way veraPDF goes.
+
+The corpus holds **46** files for the family; seven clause halves have NO corpus file (7.21.4.1 t2 both, 7.21.6
+t1/t4 both, 7.21.8 t1's pass) and **no Type 1 `FontFile` program exists in it at all**.
+
+`/plan-review` did NOT fire: read-only clauses over the document, no format, migration or egress change.
+
+#### P07.S01 — composite fonts' CMaps, at the dictionary *(done 2026-09-23, v1.159.0)*
+Scope: `7.21.3.1 t1` (CIDSystemInfo against the CMap), `7.21.3.2 t1` (a CIDFontType2 with an embedded program has a
+`CIDToGIDMap`), `7.21.3.3 t1`/`t3` (a CMap, and a CMap it references, is one of ISO 32000-1 Table 118's predefined
+names or embedded), `7.21.3.3 t2` (an embedded CMap's `/WMode` agrees with its program's).
+Acceptance:
+- Each predicate transcribed from the profile, and where veraPDF gets the CMap's Registry/Ordering/Supplement
+  (stream or predefined table) READ from its source or measured, not assumed.
+- The corpus's 12 files agree; the predefined-name table carries its provenance (Table 118).
+- `len(Clauses())` 96.
+
+**(grill, 2026-09-23)** Every predicate was read from veraPDF's source, and veraPDF-parser 1.30.2 was fetched to read
+the half the validation model does not hold.
+- **A CMap's collection**: a named one's comes from `CharacterCollections`, a table holding THREE columns (PDF 1.4,
+  ISO 32000-1, ISO 32000-2). PDF/UA-1 reads the ISO 32000-1 column, **measured**: `GB-EUC-H` is Adobe-GB1-0 there
+  and -5 in the next, and a CIDFont at supplement 2 fails. A stream CMap's comes from its own `/CIDSystemInfo`. A name
+  outside the table has an EMPTY collection, which fails.
+- **`containsFontFile` is not the key's presence** but "a program exists AND veraPDF parsed it"
+  (`GFPDFont.java:171-173`), so veraPDF PASSES 7.21.3.2 for an embedded CIDFontType2 it cannot parse. nib fails only a
+  program its own TrueType reader opens, and refuses the rest.
+- **A referenced CMap is a CMap**: `GFPDReferencedCMap` extends `GFPDCmap`, so `/UseCMap` chains, 7.21.3.3 t1 applies
+  down the chain (embedded escape included), and t3 applies only there (no embedded escape).
+- **The corpus's own fail files were FALSE PASSES on the first run.** pdfcpu's validator DROPS a Type 0 font whose
+  CIDFontType2 lacks a CIDToGIDMap, so on `7.21.3.2-t01-fail-a`/`-c` the text names a font nib's reader has nothing
+  under. The population now refuses an unresolved font, as the shipped font rules already do; recovering it is
+  /pending 656's one raw door.
+- **veraPDF cannot be asked about one shape**: a `/UseCMap` naming an unknown CMap throws a NullPointerException in
+  veraPDF 1.30.2 and reports nothing, so it is pinned to the predicate.
+- **pdfcpu refuses a CMap stream whose `/CIDSystemInfo` is PDF 1.4's array form**, so that branch is declared
+  unreachable through a file.
+- **Adding the oracle documents found three shipped-rule divergences on an untagged page**: 7.21.4.2 t2 (a
+  non-embedded CID font is a subject that passes — fixed), and 7.1 t11 on an empty root and 7.2 t30-t32 with no
+  marked content (/pending 674 — 7.1 t11's strictness is ADR-031's and is parked for Dan).
+
+- T01 — the five rules over one population door (`type0Fonts`), the predefined table transcribed from source.
+- T02 — measured fixtures and oracle documents for every half; `corpusReach` and population rows.
+- T03 — the count moves to 96 in every prose copy.
+
+**(review + red-proof, 2026-09-23)** Two review rounds found **four** live disagreements, all in what nib reads
+rather than what it tests: a CIDFontType2 program is `/FontFile2` OR any `/FontFile3` (two false passes, one per
+subtype the review tried), parsed by its declared SUBTYPE (the parent's own measurement refuted the first fix: TrueType
+bytes under `/CIDFontType0C` are PASSED by veraPDF, which reads them as CFF and has no parsed program); a `/WMode`
+inside a `{ }` procedure never runs; and an unclosed procedure makes veraPDF's parser throw and keep WMode 0. A
+`/UseCMap` cycle kills the whole process inside pdfcpu's validator — reproduced, filed CRITICAL as /pending 675. 16
+targeted mutations, 16 red.
+
+**Acceptance ledger.** Each predicate transcribed from the profile — MET. Where veraPDF gets the CMap's collection
+READ from source (veraPDF-parser `PDCMap.getCIDSystemInfo`) and the ISO 32000-1 column MEASURED — MET. The corpus's 12
+files agree — MET for 10 scored both ways; `7.21.3.2-t01-fail-a`/`-c` are refused, not scored, because pdfcpu drops
+the font the clause fails (declared, /pending 656). The predefined table carries its provenance — MET (every row cites
+its source triple). `len(Clauses())` 96 — MET. Oracle 8,832 of 8,832 over 92 documents; corpus 0 false pass / 0 false
+fail. Tiers 4 and 6 did NOT fire.
+
+#### P07.S02 — the glyph population, and 7.21.7 per glyph
+Scope: a per-glyph door over every text-showing operator — codes split by the font's codespace, each with its
+font, render mode and ToUnicode value — shared with `pdfops/textrun.go` (ADR-009); `7.21.7 t1` rebuilt on it
+(closing `/pending 657`) and `7.21.7 t2` (ToUnicode values never U+0000, U+FEFF or U+FFFE).
+Acceptance:
+- `7.21.7-t01-fail-a` fails the same glyphs veraPDF counts; `/pending 657`'s `<0000>` document goes red on 7.21.7 t1.
+- A composite font whose codespace nib cannot split, and a non-Identity ordering with no ToUnicode, are `CannotCheck`
+  naming why — never a Pass over glyphs nib did not read.
+- The walk's existing budgets bound the new population (a string operand is attacker-sized).
+- `len(Clauses())` 97.
+
+#### P07.S03 — the TrueType program, at the font
+Scope: `7.21.6 t1`-`t4` — a TrueType reader grown from `truetype.go` (table directory tolerant of unaligned offsets,
+the cmap subtable list), and the symbolic flag against `/Encoding`.
+Acceptance:
+- t2 and t3 agree on the corpus (4F/4P and 1F/1P); t1 and t4 have no corpus file, so each half is a fixture veraPDF
+  was run on, and the zero corpus reach is recorded with its reason.
+- A program the reader refuses is `CannotCheck` naming "TrueType".
+- `len(Clauses())` 101.
+
+#### P07.S04 — TrueType per glyph: widths, presence, `.notdef`
+Scope: `7.21.5 t1`, `7.21.4.1 t2`, `7.21.8 t1` for simple TrueType and CIDFontType2 (`CIDToGIDMap` stream included) —
+`hmtx`, `loca`/`glyf` presence, `post` names, against `pdfops`' dictionary widths through one door.
+Acceptance:
+- 7.21.5 t1 agrees on its corpus pair; every other half is a veraPDF-measured fixture.
+- `len(Clauses())` 104 (the three clauses register here, answering `CannotCheck` for CFF and Type 1 until S05/S06).
+
+#### P07.S05 — the CFF program
+Scope: a CFF reader (INDEX, Top DICT, charset, charstring count, widths, CID FDSelect) — `7.21.4.2 t1` (the CharSet
+against the program) and the CFF halves of S04's three clauses.
+Acceptance:
+- 7.21.4.2 t1 agrees on its corpus (2F/1P) and 7.21.8 t1 on its one fail file.
+- `len(Clauses())` 105.
+
+#### P07.S06 — the Type 1 program
+Scope: eexec and charstring decryption, `/CharStrings` names, `hsbw` widths — the Type 1 halves of 7.21.4.1 t2, 7.21.5
+t1, 7.21.8 t1 and 7.21.4.2 t1. **Zero corpus reach**, so every half is a hand-built fixture measured on veraPDF, and
+a real-producer Type 1 file is sought first (P08's LibreOffice and Ghostscript output); if none exists the slice may
+close as `CannotCheck` naming "Type 1", which the exit criterion already permits — decided at its grill.
+
 ### P08 — A real-producer corpus
 **Goal.** LibreOffice, Word export, Acrobat and Ghostscript files scored rule by rule, nib against veraPDF.
 Refs: D7.
