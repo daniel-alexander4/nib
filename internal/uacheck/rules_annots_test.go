@@ -304,12 +304,19 @@ func TestAHiddenOrOffPageWidgetIsNoLongerAFailure(t *testing.T) {
 	}
 }
 
-// TestEveryAnnotationReaderRoutesThroughOneDoor is ADR-009's guard for the annotation population.
+// TestEveryAnnotationReaderRoutesThroughOneDoor is ADR-009's guard for the annotation population
+// AND for the `/StructParent` hop, both of which `annots.go` owns.
 //
 // It asserts the ROUTING and not the agreement: three readers agreeing today says nothing about a
 // fourth added next slice, and this package had exactly that — `checkWidgetsInFormElements`,
 // `scanAnnotsAndFields` and `walkAppearances` each dereferenced a page's `/Annots` for itself, and
 // the first of them was missing the exemption the other two never needed.
+//
+// **`/StructParent` was added at P05's phase close, and it is the case that proves the point.** The
+// two resolvers of that key agreed on every document anyone had built and disagreed on one nobody
+// had: a parent tree that is BOTH truncated and holds a present-but-unusable row. A guard over
+// agreement would have been green throughout; this one counts sites. `"StructParents"` — the PAGE's
+// key, a different question — is a different literal and is not matched.
 func TestEveryAnnotationReaderRoutesThroughOneDoor(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -334,19 +341,22 @@ func TestEveryAnnotationReaderRoutesThroughOneDoor(t *testing.T) {
 		// idiom in this package. The literal is the one thing every spelling must contain.
 		ast.Inspect(file, func(n ast.Node) bool {
 			lit, ok := n.(*ast.BasicLit)
-			if ok && lit.Kind == token.STRING && lit.Value == `"Annots"` {
+			if ok && lit.Kind == token.STRING && (lit.Value == `"Annots"` || lit.Value == `"StructParent"`) {
 				sites[f]++
 			}
 			return true
 		})
 	}
-	if got := sites["annots.go"]; got != 1 {
-		t.Errorf("annots.go reads /Annots %d times, want exactly 1 — the door itself", got)
+	// One for `annots()`'s /Annots, one for `elementForStructParent`'s /StructParent.
+	if got := sites["annots.go"]; got != 2 {
+		t.Errorf("annots.go names /Annots and /StructParent %d times between them, want exactly 2 — the two "+
+			"doors themselves, one read each", got)
 	}
 	for f, n := range sites {
 		if f != "annots.go" {
-			t.Errorf("%s dereferences a page's /Annots %d time(s) of its own; the population is `annots()`'s "+
-				"(ADR-009). Route it through the door, or name the exemption at the site and here", f, n)
+			t.Errorf("%s reads a page's /Annots or a holder's /StructParent %d time(s) of its own; those "+
+				"populations are `annots()`'s and `elementForStructParent`'s (ADR-009). Route it through the "+
+				"door, or name the exemption at the site and here", f, n)
 		}
 	}
 }
@@ -972,5 +982,138 @@ func TestAMediaClipIsReachedThroughEveryPathVeraPDFWalks(t *testing.T) {
 	}
 	if !strings.Contains(got.Why, "more than") {
 		t.Errorf("the reason %q does not say the outline chain ran past the bound", got.Why)
+	}
+}
+
+// TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation — P05's phase-close regression.
+//
+// **The hop had TWO implementations and they disagreed.** `elementForStructParent` (the door above,
+// reached by `annotElement`) keeps a `found` check, so a row that is PRESENT and is not a dictionary
+// is a definite answer even when the tree is short elsewhere. `scanAnnotsAndFields` resolved the same
+// key with `d.dict(pt[sp]) != nil` and nothing else, so on a document holding BOTH shapes it recorded
+// the truncation on the subject and `7.2 t24/t25/t29` answered `CannotCheck` — over the very row
+// `7.18.1 t1` and `7.18.4 t1` called a definite `Fail`. `annots.go` already carried a comment calling
+// that collapse found-and-fixed; it was fixed in the door P05.S01 wrote and not in the door P04.S03
+// wrote beside it, which is exactly what ADR-009 exists to refuse.
+//
+// The fixture is `TestAPresentButUnusableRowIsDefiniteEvenWhenTheTreeIsShort`'s, with a form field
+// added on the same key and the catalog's `/Lang` removed — with it, `checkAssociatedTextLanguage`
+// answers from the catalog and never reaches the subject at all.
+func TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation(t *testing.T) {
+	// Row 1 is present and is an ARRAY (not an element), and a sibling branch nests past the bound so
+	// the walk reports a reason. Both halves at once are what separate the two answers.
+	shortTreeWithAPresentRow := func() map[int]string {
+		m := map[int]string{}
+		for i := 0; i <= maxWalkDepth+2; i++ {
+			m[300+i] = fmt.Sprintf("<< /Kids [%d 0 R] /Limits [9 9] >>", 301+i)
+		}
+		m[300+maxWalkDepth+3] = "<< /Nums [9 11 0 R] /Limits [9 9] >>"
+		m[11] = "<< /Type /StructElem /S /Annot /P 7 0 R >>"
+		m[9] = "<< /Kids [290 0 R 300 0 R] >>"
+		m[290] = "<< /Nums [1 [10 0 R]] /Limits [1 1] >>"
+		// A catalog with NO /Lang, so the clause must read the subject, plus the AcroForm.
+		m[1] = "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R " +
+			"/AcroForm << /Fields [31 0 R] >> >>"
+		m[31] = "<< /FT /Tx /T (f) /TU (a field) /DA (/Helv 0 Tf 0 g) /StructParent 1 >>"
+		return m
+	}
+	fx := annotFixture{annot: note(), elem: annotTag, extra: shortTreeWithAPresentRow()}
+	if got := verdictOf(t, fx.build(), "7.2 t25"); got.Verdict != Fail {
+		t.Errorf("a field naming a present row that is not an element reports %v (%s), want Fail — the "+
+			"annotation door calls that row definite, and one key may not have two answers", got.Verdict, got.Why)
+	}
+	// The annotation half of the SAME document, so the test compares the two doors rather than
+	// asserting one of them in isolation.
+	if got := verdictOf(t, fx.build(), "7.18.1 t1"); got.Verdict != Fail {
+		t.Errorf("the annotation half of the same document reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	// **The stimulus, before the response.** With the deep branch gone the tree is fully read, so the
+	// row is definite by both readings and Fail proves nothing about the collapse; with row 1 made a
+	// real element carrying a /Lang, the field passes. Together they show the document above exercises
+	// the disagreement rather than failing for an unrelated reason.
+	shallow := shortTreeWithAPresentRow()
+	for i := 0; i <= maxWalkDepth+3; i++ {
+		delete(shallow, 300+i)
+	}
+	shallow[9] = "<< /Kids [290 0 R] >>"
+	if got := verdictOf(t, (annotFixture{annot: note(), elem: annotTag, extra: shallow}).build(), "7.2 t25"); got.Verdict != Fail {
+		t.Errorf("control: with the tree fully read, the same present array row reports %v (%s), want Fail",
+			got.Verdict, got.Why)
+	}
+	resolvable := shortTreeWithAPresentRow()
+	resolvable[290] = "<< /Nums [1 12 0 R] /Limits [1 1] >>"
+	resolvable[12] = "<< /Type /StructElem /S /Form /P 7 0 R /Lang (en-GB) >>"
+	if got := verdictOf(t, (annotFixture{annot: note(), elem: annotTag, extra: resolvable}).build(), "7.2 t25"); got.Verdict != Pass {
+		t.Errorf("control: a row that IS an element declaring /Lang reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+}
+
+// TestAnUnreadablePopulationIsARefusalAndNotAnEmptyOne — P05's phase-close regression, two walks.
+//
+// **A walk that returns quietly makes "nib could not finish reading" indistinguishable from "there is
+// nothing there",** and the two produce opposite verdicts: an empty population is `NotApplicable`, an
+// unread one must be `CannotCheck`. Both walks below returned quietly.
+//
+//   - The AcroForm walk discarded `DereferenceArray`'s error for `/Fields` and every `/Kids`, so
+//     `7.2 t25` answered "the document has no form fields". Since P05.S04 `mediaclips` builds the clip
+//     population from the same walk, so a dropped field path would also have left `7.18.6.2 t1/t2`
+//     answering Pass over a clip nobody looked at — the silent truncation S04 fixed for the OUTLINE
+//     walk, twelve lines from this one.
+//   - `parentTree` skipped a present-but-unreadable `/Nums` or `/Kids` without setting `ptErr`, so the
+//     keys below were simply missing with no reason — and `elementForStructParent` then takes its
+//     DEFINITE branch and reports "the /StructParent names no element", a Fail over a tree nib never
+//     finished reading. `elementForMCID` separates the two for its own array read; this walk did not.
+//
+// **Neither shape can be reached through a file**, measured against pdfcpu v0.13.0: a `/Fields` or a
+// `/Nums` that is present and is not an array is refused by its validator first
+// (`dereferenceArray: wrong type types.Dict`), before any rule runs. That is a fact about the
+// DEPENDENCY, not about nib — the same footing `openMutated` already states — so the state is made in
+// memory, where nothing stands between the reader and the branch. If a pdfcpu bump ever admits such a
+// file, these are the readers that decide the verdict.
+func TestAnUnreadablePopulationIsARefusalAndNotAnEmptyOne(t *testing.T) {
+	notAnArray := types.Dict{"Type": types.Name("Font")}
+	t25 := associatedTextKeys[1]
+
+	// The AcroForm half. The field population is unreadable; the annotation population is untouched,
+	// so t24 must still answer in full — a truncated field walk says nothing about annotations.
+	d := openMutated(t, (annotFixture{annot: note(), elem: annotTag}).build(), func(d *Document, _ types.Dict) {
+		d.Catalog["AcroForm"] = types.Dict{"Fields": notAnArray}
+	})
+	if got := checkAssociatedTextLanguage(d, t25); got.Verdict != CannotCheck {
+		t.Errorf("a /Fields nib cannot read reports %v (%s), want CannotCheck — an unreadable population "+
+			"is not an empty one", got.Verdict, got.Why)
+	} else if !strings.Contains(got.Why, "short of members") {
+		t.Errorf("the reason %q does not say the field population is short", got.Why)
+	}
+	// The stimulus: with a REAL empty /Fields the same clause is NotApplicable, so the row above is the
+	// refusal firing and not the clause failing for an unrelated reason.
+	empty := openMutated(t, (annotFixture{annot: note(), elem: annotTag}).build(), func(d *Document, _ types.Dict) {
+		d.Catalog["AcroForm"] = types.Dict{"Fields": types.Array{}}
+	})
+	if got := checkAssociatedTextLanguage(empty, t25); got.Verdict != NotApplicable {
+		t.Errorf("control: an empty /Fields reports %v (%s), want NotApplicable", got.Verdict, got.Why)
+	}
+
+	// The parent-tree half. `/Nums` is present and unreadable, so every row below it is unread.
+	tree := openMutated(t, (annotFixture{annot: note(), elem: annotTag}).build(), func(d *Document, _ types.Dict) {
+		root := d.dict(d.Catalog["StructTreeRoot"])
+		if root == nil {
+			t.Fatal("the fixture has no StructTreeRoot")
+		}
+		root["ParentTree"] = types.Dict{"Nums": notAnArray}
+	})
+	if got := checkAnnotationsAreNestedInAnnotTags(tree); got.Verdict != CannotCheck {
+		t.Errorf("an annotation whose parent tree nib could not read reports %v (%s), want CannotCheck — "+
+			"a tree that was never read may not yield a definite \"names no element\"", got.Verdict, got.Why)
+	} else if !strings.Contains(got.Why, "never read") {
+		t.Errorf("the reason %q does not say the keys below were never read", got.Why)
+	}
+	// The stimulus: a tree that IS readable and genuinely has no row 1 stays a definite Fail.
+	noRow := openMutated(t, (annotFixture{annot: note(), elem: annotTag}).build(), func(d *Document, _ types.Dict) {
+		root := d.dict(d.Catalog["StructTreeRoot"])
+		root["ParentTree"] = types.Dict{"Nums": types.Array{types.Integer(0), types.Array{}}}
+	})
+	if got := checkAnnotationsAreNestedInAnnotTags(noRow); got.Verdict != Fail {
+		t.Errorf("control: a readable tree with no row 1 reports %v (%s), want Fail", got.Verdict, got.Why)
 	}
 }

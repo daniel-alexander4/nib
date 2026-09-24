@@ -160,9 +160,12 @@ func (r Report) Failures() []Result {
 
 // registry is every rule nib implements, keyed by clause.
 //
-// **Enumerated here and floored by its own guard**, the shape `tagFates` uses: a rule that is never
-// registered is a clause nobody checks, and it looks identical to a clause that passes. The guard
-// asserts a minimum count so the map cannot quietly empty.
+// **Enumerated here and floored from OUTSIDE**, the shape `tagFates` uses: a rule that is never
+// registered is a clause nobody checks, and it looks identical to a clause that passes. What floors it
+// is `TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo`, which derives "N of the 106" and
+// its complement from `len(Clauses())` and requires both to appear in the README, the parity doc and
+// three prose sites — so an emptied map turns six files red. This comment used to claim a minimum-count
+// assertion in the guard; there is none, and there never was (P05 phase close).
 var registry = map[string]Rule{}
 
 // register adds a rule, refusing a duplicate clause.

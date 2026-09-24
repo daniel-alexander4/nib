@@ -531,23 +531,19 @@ func (d *Document) annotAndFieldSubjects() ([]langSubject, string) {
 
 // scanAnnotsAndFields performs the traversal. See `annotAndFieldSubjects` for what it reads and why.
 func (d *Document) scanAnnotsAndFields() subjectScan {
-	pt, ptWhy := d.parentTree()
 	sc := subjectScan{}
 	add := func(kind subjectKind, holder types.Dict, where string) {
 		s := langSubject{kind: kind, holder: holder, where: where}
-		if sp, ok := d.intValue(holder["StructParent"]); ok {
-			if elem := d.dict(pt[sp]); elem != nil {
-				s.elem = elem
-			} else if ptWhy != "" {
-				// The slot is absent from a tree nib did not finish reading, so for THIS subject "it
-				// names no element" and "nib never read the slot" are indistinguishable (/pending 496).
-				// It is recorded on the subject; a holder with no `/StructParent` at all is a different
-				// and definite answer, and must not be swept up by it.
-				s.unresolved = ptWhy
-				if sc.missed == "" {
-					sc.missed = ptWhy
-				}
-			}
+		// **The hop is `elementForStructParent`'s, not this function's.** It had its own copy of the
+		// resolution and the copy was missing the `found` check, so a present-but-unusable row in a
+		// truncated tree was a refusal here and a definite Fail in `7.18.1 t1` — one key, two answers
+		// (P05 phase close). The door records the refusal on the subject, exactly as this did; a holder
+		// with no `/StructParent` at all is a different and definite answer and is not swept up by it
+		// (/pending 496).
+		elem, _, _, unread := d.elementForStructParent(holder)
+		s.elem, s.unresolved = elem, unread
+		if unread != "" && sc.missed == "" {
+			sc.missed = unread
 		}
 		sc.subjects = append(sc.subjects, s)
 	}
@@ -571,7 +567,25 @@ func (d *Document) scanAnnotsAndFields() subjectScan {
 	var fields func(o types.Object, depth int)
 	fields = func(o types.Object, depth int) {
 		arr, err := d.Ctx.DereferenceArray(o)
-		if err != nil || arr == nil {
+		// **A `/Fields` or `/Kids` nib cannot read TRUNCATES the population, and says so.** It used to
+		// return quietly, which made a population nib could not finish reading indistinguishable from one
+		// that is genuinely empty: `7.2 t25` answered `NotApplicable "the document has no form fields"`,
+		// and since P05.S04 `mediaclips` builds the clip population from this same walk, so a dropped
+		// field path also left `7.18.6.2 t1/t2` answering Pass over a clip nobody looked at. That is the
+		// silent truncation S04 fixed for the outline walk, twelve lines from this one (P05 phase close).
+		//
+		// A `nil` with no error is the ABSENT key and is not a refusal — a field with no `/Kids` is the
+		// ordinary case, and calling it unreadable would refuse every flat form.
+		if err != nil {
+			why := "nib could not read a form field array (/Fields or /Kids), so the form field " +
+				"population is short of members"
+			if sc.missed == "" {
+				sc.missed = why
+			}
+			sc.fields = why
+			return
+		}
+		if arr == nil {
 			return
 		}
 		for _, f := range arr {

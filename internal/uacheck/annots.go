@@ -31,8 +31,14 @@ import (
 //
 // # The exemption is shared and is NOT "the annotation is invisible"
 //
-// Six of P05's ten rules carry `isOutsideCropBox == true || (F & 2) == 2`. Both halves are read from
-// the parser's source and measured, because the profile's wording hides two traps:
+// Most of the clauses over this door carry `isOutsideCropBox == true || (F & 2) == 2` — and the list
+// is `annotExempt`'s CALL SITES, not a number written here. It said "six of P05's ten" and was seven
+// by the end of the phase, because a count in prose beside a set that grows is the one nobody updates
+// (P05 phase close; `docs/red-proofs.md` states the same rule about itself). `7.18.3 t1` is the one
+// clause over this door that carries no exemption at all, and it says so at its own site.
+//
+// Both halves are read from the parser's source and measured, because the profile's wording hides two
+// traps:
 //
 //   - `isOutsideCropBox` is DISJOINTNESS against the inherited `/CropBox` clipped to the `/MediaBox`,
 //     falling back to the `/MediaBox` entirely when there is no `/CropBox`, compared with `>=`/`<=`
@@ -169,7 +175,7 @@ func (d *Document) annotOutsideCropBox(a annotSubject) (outside, known bool) {
 	return a.crop.LL.Y >= r[3] || a.crop.LL.X >= r[2] || a.crop.UR.Y <= r[1] || a.crop.UR.X <= r[0], true
 }
 
-// annotExempt is the clause six of P05's rules share: `isOutsideCropBox == true || (F & 2) == 2`.
+// annotExempt is the clause the annotation rules share: `isOutsideCropBox == true || (F & 2) == 2`.
 //
 // It is ONE door (ADR-009) and it reaches the rules P05 writes AND `7.18.4 t1`, which shipped in
 // P03.S06 without it. Measured at this slice's grill on veraPDF 1.30.2: a hidden widget with no
@@ -184,16 +190,27 @@ func (d *Document) annotExempt(a annotSubject) bool {
 	return known && outside
 }
 
-// annotElement is the structure element an annotation's `/StructParent` names, through the parent
-// tree — an ASSOCIATION and never an ancestor climb, the same hop `annotAndFieldSubjects` documents.
+// elementForStructParent is the structure element a HOLDER's `/StructParent` names, through the
+// parent tree — an ASSOCIATION and never an ancestor climb, the same hop `annotAndFieldSubjects`
+// documents. An annotation and a form field are different objects over one key, so the holder is the
+// parameter and this is the ONE door for the hop (ADR-009, guarded by
+// `TestEveryAnnotationReaderRoutesThroughOneDoor`).
 //
-// It answers three different things and a rule must tell them apart: `has` false means the
-// annotation declares no `/StructParent` at all (definite), a nil `elem` with `has` true means the
-// key resolves to nothing in the parent tree (definite), and a non-empty `unread` means nib could
-// not finish reading the tree, so for THIS annotation "names no element" and "never read" are
-// indistinguishable (`/pending 496`).
-func (d *Document) annotElement(a annotSubject) (elem types.Dict, sp int, has bool, unread string) {
-	sp, has = d.intValue(a.dict["StructParent"])
+// It answers three different things and a rule must tell them apart: `has` false means the holder
+// declares no `/StructParent` at all (definite), a nil `elem` with `has` true means the key resolves
+// to nothing in the parent tree (definite), and a non-empty `unread` means nib could not finish
+// reading the tree, so for THIS holder "names no element" and "never read" are indistinguishable
+// (`/pending 496`).
+//
+// **It takes a holder rather than an `annotSubject` because it had TWO implementations that
+// disagreed**, found at P05's phase close. `scanAnnotsAndFields` resolved the same key with no
+// `found` check — `d.dict(pt[sp]) != nil` and nothing else — so on a document whose parent tree is
+// BOTH truncated and holds a present-but-unusable row, 7.2 t24/t25/t29 answered `CannotCheck` where
+// 7.18.1 t1 and 7.18.4 t1 answered a definite `Fail` on that same row. The comment below already
+// described that collapse as found-and-fixed; it had been fixed in this door and not in the one
+// beside it, which is the shape ADR-009 exists to refuse.
+func (d *Document) elementForStructParent(holder types.Dict) (elem types.Dict, sp int, has bool, unread string) {
+	sp, has = d.intValue(holder["StructParent"])
 	if !has {
 		return nil, 0, false, ""
 	}
@@ -207,4 +224,9 @@ func (d *Document) annotElement(a annotSubject) (elem types.Dict, sp int, has bo
 		return nil, sp, true, why
 	}
 	return d.dict(entry), sp, true, ""
+}
+
+// annotElement is `elementForStructParent` for an annotation the door enumerated.
+func (d *Document) annotElement(a annotSubject) (elem types.Dict, sp int, has bool, unread string) {
+	return d.elementForStructParent(a.dict)
 }
