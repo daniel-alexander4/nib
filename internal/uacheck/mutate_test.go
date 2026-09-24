@@ -443,7 +443,30 @@ func alternateTextWithNoLanguage(t *testing.T, pdf []byte, keys ...string) []byt
 	})
 }
 
-// widgetMutation breaks one link of a described form's widget ↔ Form-element linkage.
+// withoutTabs drops `/Tabs` from every page — 7.18.3 t1's failing half, which no product door reaches
+// because `setStructureTabOrder` writes `/Tabs /S` on every page that carries an annotation (`form.go:184`)
+// and `AddNotes` calls it whether or not the document is tagged.
+func withoutTabs(t *testing.T, pdf []byte) []byte {
+	t.Helper()
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		dropped := 0
+		for p := 1; p <= ctx.PageCount; p++ {
+			page, _, _, err := ctx.PageDict(p, false)
+			if err != nil {
+				return err
+			}
+			if _, had := page["Tabs"]; had {
+				delete(page, "Tabs")
+				dropped++
+			}
+		}
+		if dropped == 0 {
+			return fmt.Errorf("the fixture declares no /Tabs to drop, so this mutation changes nothing")
+		}
+		return nil
+	})
+}
+
 // addAnnotation puts one annotation of `subtype` on page 1, for the clauses P05.S02 checks over
 // subtypes **nib writes nothing of**: Link, TrapNet and PrinterMark. `nib office`'s Markdown conversion
 // emits no `/Annots` at all (measured), `AddNotes` writes only `/Text` and form authoring only `/Widget`,

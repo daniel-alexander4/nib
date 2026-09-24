@@ -141,6 +141,9 @@ var notTreeRules = map[string]string{
 	// the tree AT ALL — one refuses a subtype and the other reads the annotation's own `/Contents`.
 	"7.18.5 t1": "link annotations and the parent tree", "7.18.5 t2": "a link annotation's own /Contents",
 	"7.18.2 t1": "annotation subtypes", "7.18.8 t1": "printer's marks and the parent tree",
+	// P05.S03. 7.18.1 t3's subject is a widget; `7.18.3 t1`'s is a PAGE and it reads no structure at all —
+	// only the page's `/Tabs` and whether the page carries an annotation.
+	"7.18.1 t3": "widget annotations, their field's /TU and the parent tree", "7.18.3 t1": "a page's /Tabs",
 	"7.2 t30": "marked-content sequences", "7.2 t31": "marked-content sequences",
 	"7.2 t32": "marked-content sequences",
 }
@@ -237,13 +240,17 @@ func TestAParentTreePastItsBoundIsCannotCheckNeverAFalseAnswer(t *testing.T) {
 	// directions here — definite while the tree resolves, a refusal once it does not. Without this, mutating
 	// its `unread` branch to `continue` left the whole package green (measured) and the clause reported
 	// "none of the document's printer's marks is in the structure tree" about a tree nib never finished.
-	if got := verdictOf(t, shallow, "7.18.8 t1"); got.Verdict != Fail {
-		t.Errorf("control: a parent tree three levels deep reports %v for 7.18.8 t1 (%s), want Fail — the "+
-			"fixture's mark is in a P element", got.Verdict, got.Why)
-	}
-	if got := verdictOf(t, deep, "7.18.8 t1"); got.Verdict != CannotCheck {
-		t.Errorf("a parent tree seventy levels deep reports %v for 7.18.8 t1 (%s), want CannotCheck — a tree "+
-			"nib never read is not a document with nothing in it", got.Verdict, got.Why)
+	// `7.18.1 t3` is the same shape as 7.18.8 t1 here: the fixture's widget carries neither a field `/TU` nor
+	// an element `/Alt`, so it is a definite FAIL while the tree resolves and must become a refusal once the
+	// walk stops — a Pass there would be "this widget is described" over keys nib never read.
+	for _, clause := range []string{"7.18.8 t1", "7.18.1 t3"} {
+		if got := verdictOf(t, shallow, clause); got.Verdict != Fail {
+			t.Errorf("control: a parent tree three levels deep reports %v for %s (%s), want Fail", got.Verdict, clause, got.Why)
+		}
+		if got := verdictOf(t, deep, clause); got.Verdict != CannotCheck {
+			t.Errorf("a parent tree seventy levels deep reports %v for %s (%s), want CannotCheck — a tree nib "+
+				"never read is not a document with nothing in it", got.Verdict, clause, got.Why)
+		}
 	}
 }
 

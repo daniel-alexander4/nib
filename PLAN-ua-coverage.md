@@ -1780,7 +1780,7 @@ veraPDF FAILS a printer's mark in such an element and nib passed it. Measured: p
 by a `nameOf` door that answers presence separately from value — which the package's own ADR-009 guard then
 required be moved into `document.go`, where every typed reader lives.
 
-#### P05.S03 — the interactive surface: a widget's alternative description, and the page's tab order
+#### P05.S03 — the interactive surface: a widget's alternative description, and the page's tab order *(done 2026-09-23, v1.151.0)*
 Scope: `7.18.1 t3` (the field's `/TU`, else every one of its widgets has an enclosing `/Alt`) and `7.18.3 t1` (a page
 carrying annotations declares `/Tabs` `S`). Refs: S01's door, 7.2 t25's field population.
 Acceptance:
@@ -1789,6 +1789,62 @@ Acceptance:
 - `7.18.3 t1`'s subject population is measured against veraPDF's `containsAnnotations` on pages whose only annotation
   is hidden, outside the crop box, a Popup, or an unresolvable reference.
 - Both clauses hold a measured pass and fail fixture and a `corpusReach` row.
+
+**(grill, 2026-09-23)** Read from `GFPDWidgetAnnot.getTU`, `PDFormField.isField`, `GFPDPage.getcontainsAnnotations`
+and `PDPage.getTabs`, then measured on **thirteen fixtures** before a rule was written, and on **seven more** during
+the review. What reading alone would have got wrong:
+
+- **A widget's `/TU` is the FIELD's, and the widget is the field only when it carries `/T`** — `isField` is
+  `knownKey(ASAtom.T)`, the key's presence whatever it holds (`PDFormField.java:186-188`). The lookup is **one
+  level through `/Parent`, never a climb**: measured, a `/TU` on the GRANDPARENT field is not found, and a kid
+  widget's **own** `/TU` is **ignored**. Reading the annotation's `/TU` unconditionally passes two documents
+  veraPDF fails.
+- **`7.18.3 t1` carries NO exemption**, the only clause over this door that does not: a hidden annotation and one
+  wholly off the crop box both still oblige the page to declare its tab order (measured, both). Its subject is the
+  PAGE, so a page with no annotations is a **passing check** rather than no subject, and the clause answers
+  NotApplicable for no document that has a page.
+- **`/Tabs` is inherited by neither side.** `PDPage.getTabs` is a plain `getKey` with no page-tree walk, which
+  matches ISO 32000-1 Table 30; nib reads the page's own dictionary. An INDIRECT `/Tabs` naming `/S` passes on
+  both (measured) — the value is dereferenced, the key is not inherited.
+
+Tasks:
+- T01 — `fieldTU`: the field is the widget when `/T` is PRESENT, else its `/Parent`, one level.
+- T02 — `7.18.1 t3` over the widget population with the shared exemption and the enclosing element's `/Alt`.
+- T03 — `7.18.3 t1` over the door's per-page view, reading the page's own `/Tabs`.
+- T04 — fixtures: the thirteen-row table, the seven `/T` shapes, and the tab-order population rows.
+- T05 — the count claim: 76 → 78, and the complement 30 → 28.
+- T06 — `corpusReach`: 19 and 295.
+
+**(acceptance ledger, 2026-09-23, v1.151.0)** Every clause split on `and`; nothing `not exercised`.
+
+| # | clause | how it was discharged |
+|---|---|---|
+| 1 | the widget → field `/TU` read is one level, never a climb | the grandparent row fails, measured; probed red by making it climb |
+| 2 | measured against veraPDF on a fixture whose `/TU` sits on a grandparent field | `W5`, and its control `W4` one level up passes |
+| 3 | `7.18.3 t1`'s subject population is measured against `containsAnnotations` | hidden, off-crop-box, Popup, empty `/Annots`, no `/Annots`, and a dangling entry — six shapes, all measured |
+| 4 | on a page whose only annotation is hidden / outside the crop box / a Popup / unresolvable | all four measured; the unresolvable one is a **declared divergence**, not parity (below) |
+| 5 | both clauses hold a measured pass and fail fixture | thirteen rows plus two oracle documents each, **both passing halves from PRODUCT doors** (`AuthorForm` writes `/TU`, `setStructureTabOrder` writes `/Tabs /S`) and one failing half too (an unlabelled field writes no `/TU`) |
+| 6 | and a `corpusReach` row | `7.18.1 t3` at **19**, `7.18.3 t1` at **295** — the highest row in the table, because its subject is a page |
+
+**Gates.** `suiterun` green (fingerprint in the close notes); corpus **0 false pass, 0 false fail** over 22,972
+pairs; `len(Clauses())` = **78**. `/redproof`: **6 mutations, one condition each, all red.** Tiers 4 and 6 did NOT
+fire. **Live-verified through the real binary on real third-party documents in BOTH directions**:
+`7.18.4-t01-pass-a.pdf` passes both clauses in nib and veraPDF alike, and `7.18.1-t03-fail-a.pdf` fails
+`7.18.1 t3` in both.
+
+**The review found a live FALSE PASS, and it was in the identity test rather than in either rule.** nib decided
+"is this widget the field" by reading `/T` as a STRING where veraPDF asks only whether the KEY is present. A `/T`
+naming a **free object** is a document pdfcpu accepts, veraPDF **fails** and nib **passed** — because a dangling
+reference is not a string, so nib read the parent field's `/TU` instead of the widget's own absent one. Fixed to a
+presence test.
+
+**Two further things the slice got wrong and the measurement caught, both worth recording.** First, my own
+six-shape sweep of `/T` had **missed the dangling case** — it covered name, number, empty, indirect-resolving and
+null, which is why the reviewer's reading found what my measuring did not. Second, I then reported name- and
+number-typed `/T` as *"unreachable, pdfcpu refuses them"* — and that was **wrong**: those two fixtures had failed
+to open for a **missing `/DA`**, not because of `/T`'s type. The new test asserts the refusal explicitly so that a
+pdfcpu bump which starts accepting them is caught here, and its first draft was itself wrong for a third reason —
+an inline widget dictionary left `/Kids [30 0 R]` dangling, so pdfcpu never validated the field at all.
 
 #### P05.S04 — media clips, a population reached through actions
 Scope: `7.18.6.2 t1` (`/CT` present) and `t2` (`hasCorrectAlt`): the media-clip population — screen annotations,
