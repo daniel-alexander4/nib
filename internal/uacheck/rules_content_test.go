@@ -87,12 +87,19 @@ func TestContentFailureNamesTheOperatorItFound(t *testing.T) {
 	}
 }
 
-// TestAnArtifactIsCoveredAndAnMCIDIsCoveredAndNothingElseIs — the two states 7.1 t3 accepts.
+// TestAnArtifactIsCoveredAndAnMCIDIsNotUntilItReachesTheRoot — the two states 7.1 t3 accepts.
 //
 // P06.S06 found nib's OCR layer wrapped in `/Artifact` — covered by this clause, and precisely why it
 // was a disclaimer rather than a description. And an optional-content sequence (`/OC … BDC`) is NOT
 // coverage: it controls visibility and says nothing about whether content is real or decoration.
-func TestAnArtifactIsCoveredAndAnMCIDIsCoveredAndNothingElseIs(t *testing.T) {
+//
+// **An MCID alone is NOT the second state, and this test used to say it was** (P04.S04). veraPDF's
+// `isTaggedContent` resolves the sequence's `/MCID` through the parent tree and climbs `/P` asking whether
+// the chain reaches the structure tree root; these documents have no structure tree at all, so it does not.
+// Measured on 1.30.2: `/P <</MCID 0>> BDC` around text on a page with no `/StructTreeRoot` **FAILS** 7.1 t3,
+// where nib reported Pass — a false pass in the sense `Verdict.conformant` means. The artifact row beside it
+// is what keeps this from being a rule that fails whatever it is shown: an `/Artifact` needs no tree.
+func TestAnArtifactIsCoveredAndAnMCIDIsNotUntilItReachesTheRoot(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		content string
@@ -100,7 +107,7 @@ func TestAnArtifactIsCoveredAndAnMCIDIsCoveredAndNothingElseIs(t *testing.T) {
 	}{
 		{"bare text", "BT /F1 12 Tf 72 700 Td (x) Tj ET", Fail},
 		{"text in an /Artifact", "/Artifact BMC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC", Pass},
-		{"text in an MCID sequence", "/P <</MCID 0>> BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC", Pass},
+		{"text in an MCID sequence with no structure tree to resolve it", "/P <</MCID 0>> BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC", Fail},
 		{"text in an /OC sequence only", "/OC /oc1 BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC", Fail},
 		{"a path painted outside any sequence", "0 0 m 100 100 l S", Fail},
 		{"path construction with no painting", "0 0 m 100 100 l n", NotApplicable},

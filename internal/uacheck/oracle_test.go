@@ -180,6 +180,27 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"language: an outline, an empty catalog /Lang", langClauseDoc("/Lang ()", "", langText, "", true)},
 		oracleDoc{"language: an outline, no catalog /Lang, a bad /Lang on a Span", langClauseDoc("", "", langSpanText("<< /Lang (en_US) >>"), "", true)},
 		oracleDoc{"language: an outline, en-US, de on a Span", langClauseDoc("/Lang (en-US)", "", langSpanText("<< /Lang (de) >>"), "", true)},
+		// Marked content (P04.S04), both halves of all five clauses. The artifact document reaches 7.1 t1 AND
+		// 7.1 t2's failing half at once — one sequence breaks both, because `parentsTags` includes its own tag.
+		oracleDoc{"marked content: an artifact inside tagged content",
+			markedDoc{content: "/P <</MCID 0>> BDC\n" + markedArtifact + "\n72 100 100 10 re f\nEMC\n" + markedText + "\nEMC"}.build()},
+		oracleDoc{"marked content: an artifact beside tagged content",
+			markedDoc{content: markedArtifact + "\n72 100 100 10 re f\nEMC\n/P <</MCID 0>> BDC\n" + markedText + "\nEMC"}.build()},
+		// One Span carrying all three alternates with no language anywhere reaches t30, t31 and t32's failing
+		// half; the same Span with its own /Lang reaches the passing half through the disjunct that matters.
+		oracleDoc{"marked content: a Span with every alternate and no language",
+			markedDoc{content: "/P <</MCID 0>> BDC\n/Span << /ActualText (a) /Alt (b) /E (c) >> BDC\n" + markedText + "\nEMC\nEMC"}.build()},
+		oracleDoc{"marked content: a Span with every alternate and its own language",
+			markedDoc{content: "/P <</MCID 0>> BDC\n/Span << /ActualText (a) /Alt (b) /E (c) /Lang (en-US) >> BDC\n" + markedText + "\nEMC\nEMC"}.build()},
+		// **`/pending 635`'s own fixture, and the reason it was held out is gone.** A structure `/Lang` on an
+		// ANCESTOR of the element an annotation names moved 7.2 t34, where nib's second climb
+		// (`declaresLangFor`) answered differently from `parentLang` — so adding this document used to make
+		// the slice red over another rule's open defect. P04.S04 deleted that climb and t34 reads the one
+		// door, so the document belongs in the corpus now, with its near control beside it.
+		oracleDoc{"language: an annotation whose /Contents has a language only on an ancestor",
+			widgetMutation(t, describedForm(t), "contents-lang-on-ancestor")},
+		oracleDoc{"language: an annotation whose /StructParent element declares its own",
+			widgetMutation(t, describedForm(t), "contents-lang-on-element")},
 	)
 	if pdfops.LibreOfficeAvailable() {
 		lo, err := pdfops.ConvertOfficeToPDF(oracleODT(t), "odt")
@@ -356,7 +377,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 45
+	const wantGenerated = 51
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

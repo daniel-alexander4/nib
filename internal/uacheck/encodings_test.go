@@ -166,16 +166,23 @@ func TestTheCheckerReadsLangAndMarkedThroughItsOwnDoors(t *testing.T) {
 				t.Errorf("%s:%d reads /Lang or /Marked with a bare cast — use declaresLang / boolValue: %s", f, i+1, strings.TrimSpace(line))
 			}
 		}
-		langCalls += strings.Count(src, "declaresLang(") + strings.Count(src, "catalogLang(") + strings.Count(src, "propertyListLang(")
+		langCalls += strings.Count(src, "declaresLang(") + strings.Count(src, "catalogLang(") + strings.Count(src, `.text("Lang")`)
 		boolCalls += strings.Count(src, "boolValue(")
 	}
 	if scanned < 10 {
 		t.Fatalf("the scan read %d file(s) — not the package", scanned)
 	}
-	// The /Lang doors (P04.S01): declaresLang (its definition, declaresLangFor), catalogLang (its definition,
-	// catalogDeclaresLang, 7.2 t29) and propertyListLang (its definition, langOfBDC, recordLang, the unwalked-stream
-	// scan) — each reads through `d.text`, the typed-value door itself.
-	if langCalls < 9 {
+	// The /Lang doors, and every site that goes through one — SIX since P04.S04, listed so a drop names
+	// which reader left rather than being absorbed by a slack floor:
+	//
+	//	declaresLang            document.go (its definition), content.go (inheritedLangOf's element check)
+	//	catalogLang             rules_language.go (its definition, 7.2 t29), xmp.go (catalogDeclaresLang)
+	//	propertyList.text(Lang) content.go (openSequence — the marked-content property list)
+	//
+	// It was seven until this slice deleted `declaresLangFor`, the SECOND climb for "is a language
+	// determined" that 7.2 t34 read and that disagreed with `parentLang` on three shapes (`/pending 635`).
+	// One door fewer here is one question with one answer, which is the opposite of a reader leaving.
+	if langCalls < 6 {
 		t.Errorf("the /Lang doors are called %d time(s) — a reader has stopped going through them", langCalls)
 	}
 	if boolCalls < 2 {

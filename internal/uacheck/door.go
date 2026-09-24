@@ -19,7 +19,7 @@ import (
 //
 // The carried P04.S04 criterion is a REFUSAL: *"a document carrying non-embedded fonts is refused for
 // UA export with the reason named."* Writing the PDF/UA identification was to be P07.S07's, and S07's
-// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (60 since P04.S01), and a
+// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (70 of the 106 since P04.S04), and a
 // Markdown heading that skipped a level passed all of them while failing veraPDF's 7.4.2 t1. That one is checked
 // now; the class is not — a paragraph tagged `/Formula` with no alternate text passes all 60 and fails 7.7 t1
 // (`counterexample_test.go`). A door labelling on "every clause

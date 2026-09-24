@@ -1452,7 +1452,7 @@ func TestAGROUPINGFormElementWithNoPageSurvivesIfItsAnnotationDoes(t *testing.T)
 //
 // `Dict.Clone` copies `/P` with everything else, so a copied child pointed at the ORIGINAL's parent
 // while living in the copy's `/K` — a tree that disagrees with itself in the two directions a reader
-// walks it. `internal/uacheck`'s `declaresLangFor` climbs `/P`, and nothing here does, so it went
+// walks it. `internal/uacheck`'s `parentLang` climbs `/P`, and nothing here does, so it went
 // unseen with `structureCarriedCompletely` reporting zero defects.
 func TestADuplicatedChildElementNamesTheCOPYSParent(t *testing.T) {
 	objs := subsetFixtureObjects()

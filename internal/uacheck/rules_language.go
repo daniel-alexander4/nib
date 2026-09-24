@@ -9,7 +9,6 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-	"nib/internal/contentstream"
 )
 
 // Language — `PLAN-ua-coverage.md` P04. Each rule is veraPDF's own property, read from its source
@@ -253,9 +252,11 @@ type langClimb struct {
 // either: a `Div` ancestor's `/Lang` counts, which is the opposite of `significantParent`, whose job is to climb
 // PAST the pass-through types. The two climbs answer different questions and are deliberately not one door.
 //
-// **`declaresLangFor` (`structure.go`) asks an overlapping question and answers differently** — the StructTreeRoot's
-// `/Lang`, a `/P` cycle and the bound's arithmetic all diverge, measured. That is `/pending 635`, named at both
-// sites rather than silently left as two doors for one rule (ADR-009).
+// **It is the ONLY climb for this question now** (P04.S04). `structure.go` used to carry a second,
+// `declaresLangFor`, which 7.2 t34 read and which diverged on three shapes — a `/Lang` on the StructTreeRoot
+// (veraPDF passes, it returned false at the root test), a `/P` cycle with no `/Lang`, and the bound's
+// arithmetic. That was `/pending 635`, a live false FAIL in a shipped clause; t34 now reads `inheritedLangOf`,
+// which reads this, and the second climb is gone (ADR-009).
 //
 // **A cycle is a complete answer, not a refusal.** veraPDF seeds its loop guard with the element's own key and
 // returns null on a revisit, so `/P` naming itself and a true two-element cycle with no `/Lang` both FAIL there
@@ -411,16 +412,6 @@ func checkLanguageIdentifiers(d *Document) Result {
 		return Result{Verdict: CannotCheck, Why: ptWhy}
 	case contentWhy != "":
 		return Result{Verdict: CannotCheck, Why: contentWhy}
-	}
-	where, value, why := d.unwalkedBadLang()
-	switch {
-	case why != "":
-		return Result{Verdict: CannotCheck, Why: why}
-	case where != "":
-		return Result{Verdict: CannotCheck, Where: where,
-			Why: fmt.Sprintf("a marked-content /Lang %q that is not a language identifier sits in a stream nib does not walk "+
-				"(a tiling pattern, a Type 3 glyph, or a form one of those draws); veraPDF fails it when that stream is drawn, "+
-				"and nib cannot tell whether it is", value)}
 	}
 	if subjects == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document has no /Lang entry"}
@@ -608,183 +599,6 @@ func (d *Document) scanAnnotsAndFields() subjectScan {
 type mcLang struct {
 	value, where string
 }
-
-// propertyListLang is a marked-content property list's `/Lang` and whether it is a string: inline
-// (`/Span << /Lang (en-US) >> BDC`) or named and resolved through `/Resources /Properties` (`/Span /P0 BDC`).
-// veraPDF reads it as `getAttribute(LANG, COS_STRING)` on the property list, so a name is no answer.
-func (d *Document) propertyListLang(src []byte, operands []contentstream.Token, res types.Dict) (string, bool) {
-	for i, tk := range operands {
-		if tk.Kind != contentstream.Operand || string(tk.Bytes(src)) != "/Lang" || i+1 >= len(operands) {
-			continue
-		}
-		v := operands[i+1].Bytes(src)
-		switch {
-		case len(v) >= 2 && v[0] == '(' && v[len(v)-1] == ')':
-			return d.text(types.StringLiteral(v[1 : len(v)-1]))
-		case len(v) >= 2 && v[0] == '<' && v[len(v)-1] == '>':
-			return d.text(types.HexLiteral(v[1 : len(v)-1]))
-		}
-		return "", false
-	}
-	names := 0
-	for _, tk := range operands {
-		if tk.Kind != contentstream.Operand {
-			continue
-		}
-		b := tk.Bytes(src)
-		if len(b) == 0 || b[0] != '/' {
-			continue
-		}
-		names++
-		if names < 2 {
-			continue
-		}
-		if props := d.dict(d.dict(res["Properties"])[string(b[1:])]); props != nil {
-			return d.text(props["Lang"])
-		}
-	}
-	return "", false
-}
-
-// unwalkedBadLang looks for marked content veraPDF reads and nib's content walk does not — the streams of tiling
-// patterns and Type 3 glyph procedures, and every form XObject those draw — for a BDC property-list `/Lang` that
-// fails the grammar. It answers where and what, or why it could not finish looking.
-//
-// **It walks the resource graph, not the object table** (the slice review, measured: a Type 3 font written directly
-// in `/Resources` has no object number, and a form drawn only from inside a pattern is reached by nothing else, and
-// veraPDF fails both). From every page's resources and every appearance stream's, it follows `/Pattern`, `/Font`
-// (Type 3) and `/XObject` (forms) through each stream's own `/Resources`, once per dictionary, under
-// `maxUnwalkedStreams`. It reads what is DEFINED, not what is drawn, which is why a hit is only ever CannotCheck.
-// A form the content walk also drew is scanned again here; a bad value there would already have failed.
-func (d *Document) unwalkedBadLang() (where, value, why string) {
-	seen := map[uintptr]bool{}
-	streams := 0
-	var queue []types.Dict
-	var labels []string
-	push := func(res types.Dict, label string) {
-		if res != nil && !seen[dictID(res)] {
-			seen[dictID(res)] = true
-			queue = append(queue, res)
-			labels = append(labels, label)
-		}
-	}
-	scan := func(sd *types.StreamDict, fallback types.Dict, label string) (string, string, string) {
-		if streams++; streams > maxUnwalkedStreams {
-			return "", "", fmt.Sprintf("the patterns, Type 3 glyphs and forms nib does not walk hold more than %d streams; "+
-				"nib stops reading them there", maxUnwalkedStreams)
-		}
-		if err := sd.Decode(); err != nil {
-			return "", "", fmt.Sprintf("%s could not be decoded, so its marked content was never read: %v", label, err)
-		}
-		res := d.dict(sd.Dict["Resources"])
-		if res == nil {
-			res = fallback
-		}
-		push(res, label)
-		src := sd.Content
-		var operands []contentstream.Token
-		for _, tk := range contentstream.Tokenize(src) {
-			switch tk.Kind {
-			case contentstream.Whitespace:
-				continue
-			case contentstream.Operator:
-			default:
-				operands = append(operands, tk)
-				continue
-			}
-			if string(tk.Bytes(src)) == "BDC" {
-				if v, ok := d.propertyListLang(src, operands, res); ok && !languageTag.MatchString(v) {
-					return label, v, ""
-				}
-			}
-			operands = operands[:0]
-		}
-		return "", "", ""
-	}
-	stream := func(o types.Object, label string) (*types.StreamDict, string) {
-		sd, _, err := d.Ctx.DereferenceStreamDict(o)
-		if err != nil || sd == nil {
-			return nil, fmt.Sprintf("%s does not resolve to a stream, so its marked content was never read", label)
-		}
-		return sd, ""
-	}
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, _, err := d.Ctx.PageDict(p, false)
-		if err != nil || page == nil {
-			return "", "", fmt.Sprintf("page %d does not resolve", p)
-		}
-		push(d.resourcesOf(page), fmt.Sprintf("page %d", p))
-		annots, _ := d.Ctx.DereferenceArray(page["Annots"])
-		for i, a := range annots {
-			ap := d.dict(d.dict(a)["AP"])
-			for _, key := range []string{"N", "R", "D"} {
-				for state, so := range d.appearanceStreams(ap[key]) {
-					if sd, _, err := d.Ctx.DereferenceStreamDict(so); err == nil && sd != nil {
-						push(d.dict(sd.Dict["Resources"]), fmt.Sprintf("page %d, annotation %d, appearance /%s %s", p, i, key, state))
-					}
-				}
-			}
-		}
-	}
-	for i := 0; i < len(queue); i++ {
-		res, at := queue[i], labels[i]
-		for _, name := range sortedKeys(d.dict(res["Pattern"])) {
-			o := d.dict(res["Pattern"])[name]
-			label := fmt.Sprintf("%s → pattern /%s", at, name)
-			if sd, _, err := d.Ctx.DereferenceStreamDict(o); err == nil && sd != nil {
-				if pt, ok := d.intValue(sd.Dict["PatternType"]); ok && pt == 1 {
-					if w, v, why := scan(sd, res, label); w != "" || why != "" {
-						return w, v, why
-					}
-				}
-			}
-		}
-		for _, name := range sortedKeys(d.dict(res["Font"])) {
-			font := d.dict(d.dict(res["Font"])[name])
-			if font == nil {
-				// **A font entry nib's reader did not keep — or a `null` in the file**, and the validated context
-				// cannot say which (measured: a Type 3 font written directly in `/Resources` survives pdfcpu's
-				// `ReadContext` and is nil after the validator `open` runs; two corpus files carry a genuine `null`,
-				// which veraPDF reads as no font). So the raw file is asked, once, whether it writes a Type 3 font inline.
-				if d.hasInlineType3Font() {
-					return "", "", fmt.Sprintf("%s → font /%s is missing from what nib's reader kept, and the file writes "+
-						"a Type 3 font directly inside a dictionary, which pdfcpu's validator drops — so its glyphs were never read", at, name)
-				}
-				continue
-			}
-			if d.name(font["Subtype"]) != "Type3" {
-				continue
-			}
-			fontRes := d.dict(font["Resources"])
-			if fontRes == nil {
-				fontRes = res
-			}
-			procs := d.dict(font["CharProcs"])
-			for _, glyph := range sortedKeys(procs) {
-				label := fmt.Sprintf("%s → Type 3 font /%s, glyph /%s", at, name, glyph)
-				sd, why := stream(procs[glyph], label)
-				if why != "" {
-					return "", "", why
-				}
-				if w, v, why := scan(sd, fontRes, label); w != "" || why != "" {
-					return w, v, why
-				}
-			}
-		}
-		for _, name := range sortedKeys(d.dict(res["XObject"])) {
-			o := d.dict(res["XObject"])[name]
-			if sd, _, err := d.Ctx.DereferenceStreamDict(o); err == nil && sd != nil && d.name(sd.Dict["Subtype"]) == "Form" {
-				if w, v, why := scan(sd, res, fmt.Sprintf("%s → form /%s", at, name)); w != "" || why != "" {
-					return w, v, why
-				}
-			}
-		}
-	}
-	return "", "", ""
-}
-
-// maxUnwalkedStreams bounds unwalkedBadLang's reading, as P03's budgets bound the content walk's.
-const maxUnwalkedStreams = 1 << 14
 
 // sortedKeys is a dictionary's keys in order, so a first hit is reported the same way every run.
 func sortedKeys(d types.Dict) []string {

@@ -265,39 +265,6 @@ func (d *Document) standardTypes(nodes []structNode) ([]string, string) {
 	return out, unresolved
 }
 
-// declaresLangFor reports whether elem or any ancestor declares a `/Lang`, walking `/P` up to the
-// structure tree root — present counts, even empty (`declaresLang` says why).
-//
-// Language inherits down the tree (ISO 32000-1 §14.9.2), which is what lets one `/Lang` on a
-// `Document` element cover every paragraph beneath it.
-//
-// **The second result is why the climb stopped short of the root**, when it did (`/pending 496`): an
-// ancestor past the bound was never read, which is not the same as no ancestor declaring a language.
-//
-// **This is NOT `parentLang` (`rules_language.go`), and the two disagree — `/pending 635`.** They answer
-// overlapping questions with different climbs, and P04.S02's review measured three documents where the answers
-// differ, all in 7.2 t34's favour being wrong: a `/Lang` on the StructTreeRoot (veraPDF passes t34, this returns
-// false at the root test and nib FAILS), a `/P` cycle with no `/Lang` (veraPDF fails t34, this spins to the bound
-// and answers CannotCheck), and the bound itself (this charges depth 0 to the element, so it reads 63 ancestors
-// where `parentLang` reads 65). Named here rather than merged, because changing t34's verdicts is a shipped
-// rule's behaviour and wants its own measurement against the corpus.
-func (d *Document) declaresLangFor(elem types.Dict) (bool, string) {
-	for depth := 0; elem != nil; depth++ {
-		if d.name(elem["Type"]) == "StructTreeRoot" {
-			return false, ""
-		}
-		if depth >= maxWalkDepth {
-			return false, fmt.Sprintf("the element describing this text sits deeper than %d levels below the structure "+
-				"root; nib stops climbing there, so an ancestor's /Lang was never read", maxWalkDepth)
-		}
-		if d.declaresLang(elem["Lang"]) {
-			return true, ""
-		}
-		elem = d.dict(elem["P"])
-	}
-	return false, ""
-}
-
 // resourcesOf returns a page's `/Resources`, climbing `/Parent` for the inherited case.
 //
 // Resources are inheritable through the page tree, and a document whose pages share one resource

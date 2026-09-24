@@ -70,6 +70,14 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 			continue
 		}
 		pageEvents++
+		// **`covered` is `isTaggedContent || parentsTags.contains('Artifact')`, and the first half is not
+		// "an MCID is present"** (`taggedContent`, P04.S04). An MCID naming a parent-tree slot that does not
+		// exist, and one naming an element detached from the structure tree root, both used to read as tagged
+		// here and veraPDF fails both — two measured false passes. A coverage nib could not settle is
+		// CannotCheck for the document, never a Pass over the operator it could not place.
+		if events[i].coverUnread != "" {
+			return Result{Verdict: CannotCheck, Why: events[i].coverUnread, Where: events[i].where}
+		}
 		if !events[i].covered {
 			uncovered++
 			if first == nil {

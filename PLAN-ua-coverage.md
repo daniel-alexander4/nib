@@ -1351,7 +1351,7 @@ not its StructTreeRoot special case. It is filed there with the fixture name rat
 is that item's work, and putting the document in the oracle corpus would make every later slice red until it is
 done. 7.2 t24 itself AGREES with veraPDF on that document, which is what measures the no-climb finding.
 
-#### P04.S04 — marked content: Span alternates and artifact nesting
+#### P04.S04 — marked content: Span alternates and artifact nesting *(done 2026-09-23, v1.148.0)*
 Scope: `7.2 t30`, `t31`, `t32` (a Span property list's ActualText/Alt/E, determined by its own `/Lang`, an inherited
 one, or the catalog) and `7.1 t1`, `t2` (an Artifact sequence inside tagged content; tagged content inside an
 Artifact), over the content walk's marked-content stack. **(pin, P04.S01 grill)** veraPDF reads marked content inside
@@ -1363,6 +1363,142 @@ Acceptance:
   and annotation appearance streams.
 - A content walk that stopped (P03's budgets, an unreadable stream) is CannotCheck for all five, never Pass.
 - Each clause holds a measured pass and fail fixture and a `corpusReach` row.
+
+**(grill, 2026-09-23)** Read off veraPDF 1.30.2's profile and its `validation-model` source, then measured over
+**47 purpose-built fixtures** and the corpus's own nine, before a rule was written. The predicates are
+`tag != 'Artifact' || isTaggedContent == false` (7.1 t1), `isTaggedContent == false ||
+parentsTags.contains('Artifact') == false` (7.1 t2) and, for t30/t31/t32, `tag != 'Span' || <KEY> == null ||
+Lang != null || inheritedLang != null || gContainsCatalogLang == true`.
+
+- **The subject is one balanced BMC *or* BDC sequence, at every depth** (`GFPDSemanticContentStream.java:109`,
+  `GFSEMarkedContent.java:95`): the object is added in the `EMC` branch, so an **unbalanced** sequence produces
+  no subject at all — its operators fall to `GFSEUnmarkedContent`. Measured: a `BDC` with no `EMC` yields one
+  subject, not two. **`tag` is the name without its slash**, and it is `arguments[size-2]` for BDC against the
+  *last* argument for BMC (`GFOpMarkedContent.java:108-116`, `GFOp_BMC.java:57-65`) — so a malformed
+  `/Artifact BDC` written with no property list has a **null** tag and breaks no rule. Three of this slice's
+  first-round fixtures were that shape and measured the wrong thing; the round that fixed them is what produced
+  the table below.
+- **`isTaggedContent` is NOT "an MCID is present"** (`GFSEGroupedContent.java:145-163`). It resolves the
+  sequence's struct element — its own `/MCID` through the `/ParentTree`, else the one inherited from the
+  enclosing sequence — and climbs `/P` asking whether the chain **reaches the StructTreeRoot**. An MCID naming
+  a slot the parent tree does not hold, and an element detached from the root, are both *untagged*.
+- **The three inheritances differ, and that is the slice.** `parentsTags` includes the object's **own** tag
+  (`GFOpMarkedContent.java:142-151`) and **crosses a form XObject boundary** into the invoking stream
+  (`OperatorParser.java:538-550`). `isTaggedContent`'s struct element crosses it too. **`inheritedLang` does
+  not** — its chain is per-content-stream (`OperatorParser.java:168,176`), so a `/Lang` in force on the page
+  does not reach a Span inside a form the page draws. All three measured, in both directions.
+- **`inheritedLang`'s order** (`GFOpMarkedContent.java:153-166`), stopping at the first hit: the sequence's own
+  `/MCID`-resolved element with a `/P` climb; else the **enclosing** sequence's own property-list `/Lang`; else
+  that enclosing sequence's `inheritedLang`. It never consults the page or the catalog — the catalog is the
+  separate `gContainsCatalogLang` disjunct, which is `catalogDeclaresLang`, P04.S01's door.
+- **`Lang`/`ActualText`/`Alt`/`E` come from the BDC property list only** — inline dictionary or a name resolved
+  through `/Resources /Properties` (`GFOpMarkedContent.java:68-84`, `:203-211`). **BMC has no property list**,
+  so t30-t32 can never fire on one. Measured: `/Span /MC0 BDC` with `/MC0` holding `/Alt` fails t31.
+
+**(grill) The P04.S01 pin is REFUTED as stated, and the two populations it conflated are why.** veraPDF does
+**not** read marked content inside a tiling pattern, a Type 3 glyph procedure or an annotation appearance:
+`GFPDTilingPattern.java:99-103`, `GFPDType3Font.java:116` and `GFPDAnnot.java:465-473` each build a plain
+`GFPDContentStream`, and `new GFPDSemanticContentStream` occurs at exactly two sites — the page
+(`GFPDPage.java:250`) and a form XObject drawn from a semantic stream (`GFPDXForm.java:211`). Measured with the
+page fully covered so only the nested stream could fail: a pattern's and a glyph's marked content moves neither
+7.1 t3 nor 7.2 t30-t32 nor 7.2 t34. What veraPDF *does* read there is **`CosLang`**, t29's population — a
+different object, and the one S01 actually measured. **So the walk does not enter them for these five rules,
+and 7.1 t3's and the font rules' event counts do not move: the answer to the pin's parenthesis is `nothing`.**
+
+**(grill) S01's CannotCheck is retired anyway, because the population turned out to be DRAWN rather than
+DEFINED.** Measured: a bad `/Lang` in a pattern that is *defined in `/Resources` and never selected* passes
+7.2 t29 with **zero** checks, and so does one in a Type 3 font no glyph is shown in, and one in a form no `Do`
+invokes, and one in an object nothing references. `unwalkedBadLang` reads what is defined, which is why it could
+only ever answer CannotCheck. The two entry conditions, both measured: a tiling pattern is read once
+`scn`/`SCN` **selects** it — painting is not required — and a Type 3 font's **every** `CharProc` is read once
+*any* glyph is shown in it (showing `/b` fails on `/a`'s bad `/Lang`), while selecting the font with `Tf` and
+showing nothing reads none. So the content walk enters both, in a **lang-only** mode that emits no content
+event and no marked-content subject, and t29 answers Fail or Pass where it answered CannotCheck.
+
+**(grill) FOUR measured false passes in shipped rules, all downstream of the two predicates above.** Each is nib
+`Pass` where veraPDF fails — `Verdict.conformant`, so each lets a non-conformant document be called conformant,
+which is law 5's own failure mode. They are fixed here rather than filed, because both predicates are what this
+slice is required to state from veraPDF's source and a rule gets ONE door (ADR-009):
+
+| fixture | veraPDF | nib today | cause |
+|---|---|---|---|
+| `h_mcid_unresolved` | 7.1 t3 **fail** | pass | `covered` counts any `/MCID n`; the slot is not in the parent tree |
+| `h_mcid_detached` | 7.1 t3 **fail** | pass | the element resolves but its `/P` chain never reaches the StructTreeRoot |
+| `j_text_in_artifact_nolang` | 7.2 t34 **fail** | pass | nib exempts text inside an `/Artifact`; **veraPDF's test has no such disjunct** |
+| `j_text_in_artifact_in_form` | 7.2 t34 **fail** | pass | the same, across a form boundary |
+| `e_form_inside_mcid_lang` | 7.2 t34 **fail** | pass | the language crosses a form boundary; veraPDF's chain is per-stream |
+| `e_form_inside_mcid_elemlang` | 7.2 t34 **fail** | pass | the same, in the structure-element spelling |
+
+**(grill, found DURING implementation) The last two were found by reading the finished walk back, and they
+are why 7.2 t34 now reads the one door.** The first four were measured before a line was written; these two
+were not, because they are not about the marked-content SEQUENCE the slice set out to model — they are the
+same boundary applied to a content ITEM, in a rule the slice was only editing. Both were already sitting in
+the probe output, unread. **The boundary is the WALKER's stream and not the innermost frame's**: a form whose
+own content opens no sequence has a stack of INHERITED frames only, every one carrying the invoking stream's
+number, so comparing against the last frame inherits exactly what the rule forbids.
+
+**And `/pending 635` closes here rather than separately, because the second climb WAS the defect.** t34
+answered "is a language determined" with `declaresLangFor`, a second implementation that disagreed with
+`parentLang` at the StructTreeRoot, at a `/P` cycle and by one on the bound — a live false FAIL in a shipped
+clause, filed before this slice and amended by P04.S03 with a second reproduction. Leaving it would have
+shipped two disagreeing implementations of the exact predicate this slice is required to state from veraPDF's
+source, which is the ADR-009 violation 635 itself complains about. `declaresLangFor` is **deleted**, t34 reads
+`inheritedLangOf`, and 635's own held-out fixture and its control are now oracle-corpus documents where
+veraPDF measures both rules on them. The item was marked `/grill`-required on the ground that a shipped rule's
+verdicts change; the evidence it asked for is the 297-file corpus, which is green.
+
+Tasks:
+- T01 — `isTaggedContent` as ONE door over the content walk's frames: resolve the innermost struct parent
+  (own `/MCID`, else inherited across the form boundary), climb `/P` to the StructTreeRoot under a bound, and
+  distinguish *definitely untagged* from *nib could not read the parent tree* — S03's `unresolved` split, which
+  exists because collapsing them downgraded definite failures document-wide.
+- T02 — the walk emits marked-content **subjects** beside its drawing events: one per balanced sequence, with
+  tag, property-list `/Lang`/`/ActualText`/`/Alt`/`/E`, `parentTags` (own tag included, crossing forms) and the
+  per-stream `inheritedLang` chain. Appearance streams emit events as now and **no** subjects.
+- T03 — `7.1 t1`, `7.1 t2` and `7.2 t30`/`t31`/`t32` over that population; a stopped walk is CannotCheck for
+  all five, and so is an `isTaggedContent` nib could not settle.
+- T04 — 7.1 t3 reads the T01 door, closing the first two false passes; 7.2 t34 drops its `/Artifact` exemption,
+  closing the other two.
+- T05 — the lang-only walk into selected tiling patterns and shown Type 3 glyphs; `unwalkedBadLang` and
+  `maxUnwalkedStreams` retire with the CannotCheck they served.
+- T06 — fixtures: each of the five clauses gains a measured pass and fail fixture of its own, the four
+  false-pass documents become standing gap-down tests, and `corpusReach` gains five rows.
+- T07 — the count claim: 65 → 70 in the README and the parity doc, and the two prose copies still reading
+  **60** (`uacheck.go:112`, `door.go:22`) — which P04.S02's and S03's own T05 missed — are corrected AND
+  given a reader, so every copy of the number now has one. Two slices' T05 each said "the two prose copies"
+  and each meant a different two, which is the argument for a reader rather than a third correction.
+- T08 — 7.2 t34 reads the one language door: the stream boundary for a content item, and
+  `declaresLangFor` deleted, closing `/pending 635` with its fixture promoted into the oracle corpus.
+- T09 — the lang-only walk is memoised per STREAM. Found by reading the walk back: `enterType3` fires on
+  every text operator and `enterPattern` on every `scn`, each spending a `maxFormWalks` unit, so an ordinary
+  page of Type 3 text would have tripped the budget and turned EVERY content rule into CannotCheck.
+
+**(acceptance ledger, 2026-09-23, v1.148.0)** Every clause split on `and`; nothing `not exercised`.
+
+| # | clause | how it was discharged |
+|---|---|---|
+| 1 | `inheritedLang` stated from veraPDF's source | `GFOpMarkedContent.java:153-166` — struct-parent lang, then the enclosing sequence's own `/Lang`, then recurse; per-content-stream |
+| 2 | `isTaggedContent` stated from veraPDF's source | `GFSEGroupedContent.java:145-163` — resolve the struct parent, climb `/P`, ask whether it reaches the StructTreeRoot |
+| 3 | and measured | 47 purpose-built fixtures over five rounds + veraPDF's own nine + the 297-file corpus |
+| 4 | including inside form XObjects | `TestInheritedLanguageDoesNotCrossAFormBoundaryWhileTheArtifactDoes`, `TestTheContentLanguageStopsAtTheStreamBoundary` — both directions, each with its control |
+| 5 | and annotation appearance streams | `TestAnAppearanceStreamIsNoMarkedContentSubject` — measured on 1.30.2, one sequence counted where the document holds three |
+| 6 | a stopped content walk is CannotCheck for all five, never Pass | `TestAStoppedContentWalkIsCannotCheckForAllFive`, with a two-level control; `TestTheMarkedContentRulesAreCannotCheckWhenTheTreeRunsOut` for the tree half |
+| 7 | each clause holds a measured pass fixture | the oracle's four new documents + the unit tables |
+| 8 | and a fail fixture | the oracle reported all five clauses' failing half unreachable by name until those documents were added |
+| 9 | and a `corpusReach` row | 7.1 t1/t2 and 7.2 t30/t31/t32 at **293** each; pairs 19,137 → 20,612 |
+
+**Gates.** `suiterun OK` fp `47f7cb06a46c`, 7m33s — `go build ./...`, `go test ./...` (24 packages, 0 FAIL),
+jsdom **454/454**, uirepro **160/160**. Corpus **0 false pass, 0 false fail**. `/redproof`: ten mutations, one
+condition each, **no survivors**, plus three probed during implementation. **Tiers 4 and 6 did NOT fire** — the
+slice touches neither `internal/server`'s session, ceremony, delivery or discovery paths, nor `internal/p2p`,
+nor `internal/rendezvous`; the whole diff is `internal/uacheck` plus two comment repoints in `internal/pdfops`.
+
+**What the slice cost beyond its scope, and why it was in scope anyway.** Five new rules were the smallest part
+of it. Reading each predicate off veraPDF's source and measuring it before writing a line turned up **six false
+passes in three shipped clauses** — 7.1 t3 twice, 7.2 t34 four times — and one **false FAIL** (`/pending 635`)
+that a second implementation of "is a language determined" had been causing since P07.S02. Every one is a rule
+reporting a document conformant that veraPDF does not, which is what law 5 exists to catch and what the corpus
+could not see: no corpus file has a dangling MCID, and none has its only unlanguaged text inside an `/Artifact`.
 
 ### P05 — Checker: annotations (~9 rules)
 **Goal.** Annotation containment, alternate descriptions, tab order, links, media clips, TrapNet, PrinterMark.
