@@ -125,9 +125,8 @@ func checkTaggedContentNotInsideArtifact(d *Document) Result {
 // checkSpanAlternateLanguage evaluates ua1 7.2 t30, t31 and t32 — `tag != 'Span' || KEY == null ||
 // Lang != null || inheritedLang != null || gContainsCatalogLang == true`.
 //
-// **The catalog's `/Lang` settles every subject at once**, so it is asked first — `catalogDeclaresLang` is
-// P04.S01's one door for that question. The walk still runs, because the SUBJECT count is what decides between
-// Pass and NotApplicable.
+// **The catalog's `/Lang` settles every subject at once**, so it is asked FIRST — `catalogDeclaresLang` is
+// P04.S01's one door for that question, and every other language clause asks it before reading anything.
 //
 // **The subject is every marked-content sequence, not every Span carrying the key** — veraPDF runs one check
 // per `SEMarkedContent` and PASSES it where the tag is not Span or the key is absent. So a tagged document with
@@ -135,15 +134,21 @@ func checkTaggedContentNotInsideArtifact(d *Document) Result {
 // no marked content at all. Measured: the oracle reported "veraPDF passed, nib not applicable" on fifteen
 // documents before this, which is the same class as P04.S02's finding about `PDStructElem`.
 func checkSpanAlternateLanguage(d *Document, row spanAlternate) Result {
+	// **Asked FIRST, and the phase close is what caught it being asked third.** `gContainsCatalogLang` is a
+	// disjunct of the predicate, so a catalog `/Lang` satisfies every check veraPDF runs and a refusal over a
+	// walk nib could not finish would be a refusal over a question already answered. Asked after the walk,
+	// this clause reported CannotCheck on a document with `/Lang (en)` and nine levels of nested forms while
+	// 7.2 t21-t23, t24/t25, t33 and t34 all reported Pass on the same file — S02 and S03 wrote this order
+	// deliberately and said why, and S04 diverged from it silently.
+	if catalogDeclaresLang(d) {
+		return Result{Verdict: Pass}
+	}
 	subjects, why := markedContentSubjects(d)
 	if why != "" {
 		return Result{Verdict: CannotCheck, Why: why}
 	}
 	if len(subjects) == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document has no marked-content sequences"}
-	}
-	if catalogDeclaresLang(d) {
-		return Result{Verdict: Pass}
 	}
 	for _, s := range subjects {
 		if s.tag != "Span" || !row.carries(s) || s.ownLang || s.inheritedLang {

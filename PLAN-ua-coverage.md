@@ -1153,7 +1153,7 @@ Acceptance:
   computation as 7.5 t1 (`hasConnectedHeader` with `unknownHeaders` set), so it shares the layout rather than
   re-deriving it. S06 keeps `7.9 t1`/`t2`, `7.18.4 t2` and `7.1 t12`.
 
-### P04 — Checker: language (~10 rules)
+### P04 — Checker: language (~10 rules) *(done 2026-09-23, v1.148.1)*
 **Goal.** Outline entries, ActualText/Alt/E, annotation Contents, form TU and marked-content spans.
 **Exit criteria.** As P03.
 
@@ -1499,6 +1499,55 @@ passes in three shipped clauses** — 7.1 t3 twice, 7.2 t34 four times — and o
 that a second implementation of "is a language determined" had been causing since P07.S02. Every one is a rule
 reporting a document conformant that veraPDF does not, which is what law 5 exists to catch and what the corpus
 could not see: no corpus file has a dangling MCID, and none has its only unlanguaged text inside an `/Artifact`.
+
+**(phase close, 2026-09-23, v1.148.1)** Exit criteria are P03's, split and each discharged:
+
+| # | clause | how |
+|---|---|---|
+| 1 | every rule in the family passes `veracorpus_test.go` | all **twelve** carry a `corpusReach` row and the corpus is **0 false pass, 0 false fail** over 20,612 pairs |
+| 2 | rules without corpus files agree with veraPDF on fixtures of their own | the oracle names any clause whose failing or passing half no document reaches; it names none — both halves of all twelve are reachable, which is the stronger form of the clause |
+| 3 | *(phase-open pin)* twelve rules land the checker at 70 of 106 | `len(Clauses())` **= 70**, run rather than counted |
+
+**Required-run gates, enumerated rather than assumed.** The project's gate is: did the work touch
+`internal/server`'s session, ceremony, delivery or discovery paths, `internal/p2p`, or `internal/rendezvous`?
+Across P04's four slice commits (`b527bcf`, `f71c428`, `27020aa`, `dcf16da`) — **no**, so **tiers 4 and 6 did
+not fire for this phase**. The range `b527bcf~1..HEAD` *does* show `internal/p2p/attestation.go`, and it belongs
+to `ee1100c`, the `/pending 613` signature fix that landed interleaved between S02 and S03; that commit fired
+both gates and recorded them (tier 4 pairrepro over both transports, tier 6 ceremonyrepro 28/0). Checked by
+attributing the path to its commit, not by reading the range's file list.
+
+**The cross-slice review is what this phase close was for, and it found what a slice review structurally
+cannot.** Nine findings over the four slices' combined code. The one that mattered: **S04 asked the catalog
+short-circuit THIRD while every other language clause asks it FIRST** — S02 and S03 had written that order
+deliberately and documented why — so on a document with a catalog `/Lang` and a walk that could not finish,
+7.2 t30/t31/t32 refused while t21-t23, t24/t25, t33 and t34 all passed. Fixed; **corpus reach rose 293 → 295**
+on those three, two files moving from refused to settled. Five further real defects: two `/P` climbs charging
+one bound an ancestor apart under a comment claiming they were identical; the inline-image path spending a
+budget unit without consulting the ceiling; `scanInlineType3` turning "nib did not look" into "there is none";
+a parent-tree slot present-but-unreadable reported as "names no element"; and a comment S04 falsified.
+
+**Two reported majors were REFUTED or INVERTED by measuring instead of reasoning**, and both are recorded as
+tests rather than as fixes: a `/Lang` on the **StructTreeRoot** is accepted by the climb and never graded by
+7.2 t29 — veraPDF does not grade it either (zero checks) — and an **appearance stream's** BDC `/Lang` IS graded
+by t29 although that sequence is no `SEMarkedContent`. nib already matched the oracle on both; what was missing
+was the measurement.
+
+**The phase-close gate went RED once, and the cadence datum it owes is: the per-commit tier WOULD have caught
+it.** `TestEveryDocCommentNamesItsOwnFunction` (repo root, `/pending 352`) fired on a doc comment added during
+this close's own fix pass — Go binds a doc block to the function below it, so a block not opening with that
+function's name leaves it undocumented and reads as a paragraph about its neighbour. The targeted run used
+during the fix pass was `go test . -run Parity`, never `go test .` whole, and the whole-package run is part of
+the per-commit tier. So this instance argues for running the cheaper tier more often, not the full suite.
+
+**Graduation pass:** 56 rows, **53 keep-live mechanically**, **3 needing judgement**, **0 hot-path**. One
+graduated — S03's row S11 described `/pending 635` and its own note said "whoever fixes it adds them"; S04 did,
+so the row now names a standing reader instead of a parked defect. Nothing deleted, nothing gated. Recorded in
+`instruments/ua-coverage.md`; `inventorycheck` exit 0, 253 readers resolve.
+
+**Pending sweep against the closure:** no item in the `Phase` section is gated on a P04 coordinate (457 waits
+on P05, 493 on P07), so the closure falsifies none of them — the sweep ran and found nothing, which is not the
+same as not running. `/pending 612` stays open and is the graduation pass's one live diagnostic; `/pending 635`
+closed; `/pending 637` filed.
 
 ### P05 — Checker: annotations (~9 rules)
 **Goal.** Annotation containment, alternate descriptions, tab order, links, media clips, TrapNet, PrinterMark.

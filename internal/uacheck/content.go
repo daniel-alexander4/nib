@@ -363,6 +363,12 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 		case contentstream.InlineImage:
 			opIndex++
 			w.d.contentOps++
+			// **Spending a unit and never consulting the ceiling is the same defect one step along.** A page
+			// whose stream is nothing but `BI … EI` grew the events past `maxContentEvents` with `contentErr`
+			// never set inside that stream, because `overBudget` was reached only from the operator branch.
+			if w.d.overBudget() {
+				return
+			}
 			w.emit(stack, false, fmt.Sprintf("%s, operator #%d `BI … EI` (inline image)", w.where, opIndex))
 			operands = operands[:0]
 			continue
@@ -597,6 +603,11 @@ func (d *Document) taggedContent(stack []frame) (bool, string) {
 // **The bound and the loop guard are `parentLang`'s, for `parentLang`'s reasons** — a sideways `/P` chain is
 // not the tree and is unbounded in the input, and a cycle is a complete answer rather than a refusal: every
 // ancestor was seen and none was the root.
+//
+// **And the ARITHMETIC is `parentLang`'s too, which it was not.** This refused one ancestor later, so an element
+// whose `/P` chain reaches the StructTreeRoot at link 66 read as tagged content here while 7.2 t34 answered
+// CannotCheck over the same element in the same walk — two readers of one chain disagreeing by one, under a
+// comment claiming they were identical. Found at the P04 close; both climbs now refuse at the same link.
 func (d *Document) reachesStructTreeRoot(elem types.Dict) (bool, string) {
 	// **Memoised for `parentLang`'s reason too**: `taggedContent` asks once per drawing operator AND once per
 	// closed sequence, so a deep tree under a page of text repeats one 65-link climb ten thousand times. A
@@ -617,7 +628,7 @@ func (d *Document) reachesStructTreeRoot(elem types.Dict) (bool, string) {
 		if id := dictID(p); seen[id] {
 			d.rootReach[dictID(elem)] = false
 			return false, ""
-		} else if n >= maxLangClimb {
+		} else if n+1 > maxLangClimb {
 			return false, fmt.Sprintf("the element describing this content climbs through more than %d /P links "+
 				"without reaching the structure tree root; nib stops climbing there, so whether it is tagged "+
 				"content was never settled", maxLangClimb)

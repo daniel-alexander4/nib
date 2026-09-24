@@ -50,7 +50,7 @@ a document can pass every clause Nib checks and still fail one it does not.
 Every *Gap* and *Unmeasured* row above, plus what the *Partial* rows say is missing:
 
 - a fix from the check's results;
-- a WCAG check, and the 89 PDF/UA-1 rules Nib does not check;
+- a WCAG check, and the 36 PDF/UA-1 rules Nib does not check;
 - proposing tables and figures;
 - removing a tree to retag;
 - tagging a region selected on the page, and reordering by dragging on the page;

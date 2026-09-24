@@ -328,7 +328,14 @@ func (d *Document) elementForMCID(spKey, mcid int) (types.Dict, string) {
 		return nil, unread
 	}
 	arr, err := d.Ctx.DereferenceArray(entry)
-	if err != nil || mcid < 0 || mcid >= len(arr) {
+	if err != nil {
+		// The slot is THERE and nib could not read it, which is not the same fact as the content naming no
+		// element — `scanAnnotsAndFields` already separates those two for the annotation population, and this
+		// reader collapsed them. Its callers turn the reason into CannotCheck; a bare nil reads as definite.
+		return nil, fmt.Sprintf("the parent tree's entry for /StructParents %d could not be read as an array, "+
+			"so the element describing this content was never reached: %v", spKey, err)
+	}
+	if mcid < 0 || mcid >= len(arr) {
 		return nil, ""
 	}
 	return d.dict(arr[mcid]), ""
