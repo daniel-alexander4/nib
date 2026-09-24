@@ -41,15 +41,26 @@ type contentEvent struct {
 	// as "used for rendering": measured, a non-embedded Helvetica in `3 Tr` passes 7.21.4.1 and the
 	// same text drawn visibly fails it. An OCR layer is exactly this text.
 	invisible bool
-	// covered is whether some enclosing marked-content sequence is an artifact or carries an MCID —
-	// the two states 7.1 t3 accepts.
-	covered  bool
-	artifact bool // the nearest relevant enclosing sequence is an /Artifact
-	mcid     int  // the innermost MCID in force, or -1
-	spKey    int  // the /StructParents key of the stream that owns mcid, or -1
-	// lang is whether some enclosing marked-content sequence declares a `/Lang` — how a producer states
-	// the language of a run of text on the content itself (`/pending 489`).
-	lang bool
+	// covered is 7.1 t3's disjunction, `isTaggedContent == true || parentsTags.contains('Artifact')`:
+	// some enclosing sequence is an `/Artifact`, or the innermost struct parent in force reaches the
+	// structure tree root. **An MCID is not enough** — see `taggedContent`.
+	covered bool
+	// coverUnread is why nib could not settle `covered`, and it is `CannotCheck`, never a Pass. It is
+	// empty whenever `covered` is true.
+	coverUnread string
+	// langDetermined is whether anything enclosing this content — IN THIS STREAM — determines its
+	// language: a sequence's own property-list `/Lang` (`/pending 489`), or the structure element an
+	// `/MCID` names, by that element's own `/Lang` or an ancestor's. It is 7.2 t34's `Lang != null`, and
+	// it is the same `inheritedLangOf` the Span rules read, which is the point: the question had two
+	// implementations that disagreed (`/pending 635`) and now has one door (ADR-009).
+	langDetermined bool
+	// langUnread is why nib could not settle it, and it is `CannotCheck`, never a Pass.
+	langUnread string
+	// mcid and spKey are the innermost `/MCID` in force IN THIS STREAM, or -1. **They exist only to word
+	// a failure**, which is not decoration: deleting the "in no tagged sequence" branch once left the rule
+	// green while handing the user a reason about a missing structure element, so the three shapes 7.2 t34
+	// can fail in are told apart by name. Nothing reads them on the passing path.
+	mcid, spKey int
 }
 
 // textState is the part of the graphics state the font rules need. `Tf` and `Tr` are graphics
@@ -61,13 +72,65 @@ type textState struct {
 	renderMode int
 }
 
-// frame is one open marked-content sequence.
+// frame is one open marked-content sequence — and, once it closes, one `SEMarkedContent` subject.
+//
+// **veraPDF adds the subject in the `EMC` branch**, so an UNBALANCED `BMC`/`BDC` is no subject at all:
+// its operators fall to `GFSEUnmarkedContent` instead (`GFPDSemanticContentStream.java:109-121`,
+// measured — a `BDC` with no `EMC` yields one subject on a page holding two sequences, not two).
 type frame struct {
-	artifact bool
+	// tag is the sequence's tag operand without its slash, or "" when the operator does not carry one
+	// where veraPDF looks for it. See `markedContentTag` — the position differs between BMC and BDC,
+	// and a malformed `/Artifact BDC` written with no property list has NO tag and breaks no rule.
+	tag      string
+	artifact bool // tag == "Artifact"
 	mcid     int
 	spKey    int
 	// lang is whether the sequence's own property list declares a `/Lang`.
 	lang bool
+	// actualText, alt and expansion are whether the property list carries `/ActualText`, `/Alt` and `/E`
+	// as strings — 7.2 t30, t31 and t32 each ask about one of them.
+	actualText, alt, expansion bool
+	// elem is the structure element this sequence's OWN `/MCID` resolves to through the parent tree, and
+	// elemUnread why nib could not tell. Exactly one is ever set.
+	//
+	// **A sequence sets NEITHER when it has no `/MCID` — and also when its `/MCID` resolves to nothing**, and
+	// both then inherit the struct parent of the sequence around them. That is veraPDF's own fallback
+	// (`GFOp_BDC.getStructElem` returns null on a failed lookup and `GFOpMarkedContent.java:172-174` takes the
+	// enclosing one), and it is MEASURED rather than reasoned: `/Span <</MCID 5>>` naming a slot the parent
+	// tree does not hold FAILS 7.1 t3 at the top level and PASSES nested inside a `/Div <</MCID 0>>` that
+	// resolves. A review read this as the false pass surviving one level of nesting; the oracle says it is the
+	// rule.
+	elem       types.Dict
+	elemUnread string
+	// stream numbers the content stream the sequence was opened in.
+	//
+	// **`inheritedLang` does not cross a stream boundary while `parentsTags` and the struct parent do**,
+	// and all three were measured in both directions: a `/Lang` in force on the page does not reach a Span
+	// inside a form the page draws (`GFOpMarkedContent.java:153-166` walks a per-parser stack), while an
+	// `/Artifact` around the `Do` does reach it (`OperatorParser.java:538-550`).
+	stream int
+	where  string
+}
+
+// mcSubject is one closed marked-content sequence as veraPDF's `SEMarkedContent` — the subject of
+// `7.1 t1`, `7.1 t2` and `7.2 t30`/`t31`/`t32`.
+//
+// It is built where the sequence closes, from the stack in force there, because each of its three
+// inheritances reads a different part of that stack (`subject`).
+type mcSubject struct {
+	where string
+	tag   string
+	// actualText, alt and expansion are the three keys t30, t31 and t32 ask about, and ownLang the
+	// sequence's own `/Lang` — the rules' `Lang != null` disjunct.
+	actualText, alt, expansion, ownLang bool
+	// inheritedLang is the rules' `inheritedLang != null`, and langUnread why nib could not settle it.
+	inheritedLang bool
+	langUnread    string
+	// tagged is `isTaggedContent`, and taggedUnread why nib could not settle it.
+	tagged       bool
+	taggedUnread string
+	// insideArtifact is `parentsTags.contains('Artifact')`, the OWN tag included.
+	insideArtifact bool
 }
 
 // textOperators and paintOperators are the operators that put something on the page.
@@ -113,7 +176,7 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		if sp, ok := d.intValue(page["StructParents"]); ok {
 			spKey = sp
 		}
-		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey}
+		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey, stream: d.nextStream()}
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
 	}
 	d.walkAppearances()
@@ -185,7 +248,7 @@ func (d *Document) walkAppearances() {
 					if state != "" {
 						label += " /" + state
 					}
-					w := walker{d: d, where: label, spKey: -1, appearance: true}
+					w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream()}
 					w.walk(sd.Content, res, nil, map[int]bool{}, 0)
 				}
 			}
@@ -218,6 +281,13 @@ type walker struct {
 	where      string
 	spKey      int
 	appearance bool
+	// stream is this stream's number, taken from `d.streams` when the walk starts.
+	stream int
+	// langOnly walks a stream for 7.2 t29's `/Lang` values and NOTHING else: no drawing event, no
+	// marked-content subject. It is how the tiling patterns and Type 3 glyph procedures veraPDF reads
+	// `CosLang` in are read without putting their content in front of the rules that must not see it
+	// (`walkPattern`, `walkType3`).
+	langOnly bool
 }
 
 // walk classifies one content stream's drawing operators, recursing into form XObjects.
@@ -245,7 +315,9 @@ const maxFormDepth = 8
 const (
 	maxFormWalks     = 1 << 16
 	maxContentEvents = 1 << 20
-	// maxContentOperators counts every operator, drawing or not: a stream of marked-content operators draws nothing
+	// maxContentOperators counts every operator, drawing or NOT — including an inline image, which is one token
+	// and used to spend nothing, so a stream of `BI … EI` grew the events with no ceiling evaluated at all.
+	// A stream of marked-content operators draws nothing
 	// and trips neither budget above, and 4,368 walks of one ran 10.5 s and 13.6 GB (the P04.S01 review, measured).
 	maxContentOperators = 1 << 24
 )
@@ -258,8 +330,12 @@ func (d *Document) overBudget() bool {
 		why = fmt.Sprintf("the page content, with every form XObject it draws, runs more than %d operators; nib stops "+
 			"reading there, so what lies beyond was never read", maxContentOperators)
 	case d.formWalks > maxFormWalks:
-		why = fmt.Sprintf("the page content enters form XObjects more than %d times (a form drawn inside forms fans "+
+		why = fmt.Sprintf("the page content enters nested streams — form XObjects, and the tiling patterns and "+
+			"Type 3 glyph procedures read for their /Lang — more than %d times (a form drawn inside forms fans "+
 			"out); nib stops reading there, so what lies beyond was never read", maxFormWalks)
+	case len(d.mcSubjects) > maxContentEvents:
+		why = fmt.Sprintf("the page content, with every form XObject it draws, opens more than %d marked-content "+
+			"sequences; nib stops reading there, so what lies beyond was never read", maxContentEvents)
 	case len(d.content) > maxContentEvents:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, holds more than %d drawing operators; "+
 			"nib stops reading there, so what lies beyond was never read", maxContentEvents)
@@ -286,7 +362,8 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			continue
 		case contentstream.InlineImage:
 			opIndex++
-			w.d.content = append(w.d.content, w.event(stack, false, fmt.Sprintf("%s, operator #%d `BI … EI` (inline image)", w.where, opIndex)))
+			w.d.contentOps++
+			w.emit(stack, false, fmt.Sprintf("%s, operator #%d `BI … EI` (inline image)", w.where, opIndex))
 			operands = operands[:0]
 			continue
 		case contentstream.Operator:
@@ -301,17 +378,15 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 		}
 		op := string(tk.Bytes(src))
 		switch op {
-		case "BMC":
-			stack = append(stack, frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1})
-		case "BDC":
-			w.recordLang(src, operands, res, opIndex, op)
-			f := frame{artifact: w.firstName(src, operands) == "/Artifact", mcid: -1, spKey: -1, lang: w.langOfBDC(src, operands, res)}
-			if m, ok := w.mcidOf(src, operands, res); ok {
-				f.mcid, f.spKey = m, w.spKey
-			}
-			stack = append(stack, f)
+		case "BMC", "BDC":
+			stack = append(stack, w.openSequence(src, operands, res, opIndex, op))
 		case "EMC":
+			// A sequence becomes a subject only where it CLOSES, and only inside its own stream — the
+			// guard is what keeps an `EMC` in a form from closing the sequence that drew it.
 			if len(stack) > len(inherited) {
+				if !w.appearance && !w.langOnly {
+					w.d.mcSubjects = append(w.d.mcSubjects, w.subject(stack))
+				}
 				stack = stack[:len(stack)-1]
 			}
 		case "q":
@@ -333,22 +408,41 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 		case "Do":
 			name := w.firstName(src, operands)
 			w.doXObject(name, res, stack, chain, depth, opIndex, ts)
+		case "scn", "SCN":
+			// **Selecting a tiling pattern is enough to read it — painting is not required.** Measured on
+			// 1.30.2: a bad `/Lang` inside a pattern the page selects and never paints fails 7.2 t29, while
+			// the same pattern merely NAMED in `/Resources` is not a subject at all (zero checks).
+			w.enterPattern(w.firstName(src, operands), res, chain, depth, opIndex)
 		default:
-			if textOperators[op] || paintOperators[op] {
-				ev := w.event(stack, textOperators[op], fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op))
-				if ev.text {
-					ev.fontName = ts.fontName
-					ev.invisible = ts.renderMode == 3
-					if fonts := w.d.dict(res["Font"]); fonts != nil && len(ts.fontName) > 1 {
-						raw := fonts[ts.fontName[1:]]
-						ev.font = w.d.dict(raw)
-						if ir, ok := raw.(types.IndirectRef); ok {
-							ev.fontObj = ir.ObjectNumber.Value()
-						}
+			if !textOperators[op] && !paintOperators[op] {
+				break
+			}
+			text := textOperators[op]
+			var font types.Dict
+			fontObj := 0
+			if text {
+				if fonts := w.d.dict(res["Font"]); fonts != nil && len(ts.fontName) > 1 {
+					raw := fonts[ts.fontName[1:]]
+					font = w.d.dict(raw)
+					if ir, ok := raw.(types.IndirectRef); ok {
+						fontObj = ir.ObjectNumber.Value()
 					}
 				}
-				w.d.content = append(w.d.content, ev)
+				// **Showing ANY glyph reads EVERY `CharProc`.** Measured: a document that shows `/b` fails
+				// 7.2 t29 on a bad `/Lang` in `/a`'s procedure, while selecting the font with `Tf` and showing
+				// nothing reads none of them.
+				w.enterType3(font, ts.fontName, res, chain, depth, opIndex)
 			}
+			if w.langOnly {
+				break
+			}
+			ev := w.event(stack, text, fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op))
+			if ev.text {
+				ev.fontName = ts.fontName
+				ev.invisible = ts.renderMode == 3
+				ev.font, ev.fontObj = font, fontObj
+			}
+			w.d.content = append(w.d.content, ev)
 		}
 		operands = operands[:0]
 	}
@@ -359,17 +453,17 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	where := fmt.Sprintf("%s, operator #%d `%s Do`", w.where, opIndex, name)
 	xobjs := w.d.dict(res["XObject"])
 	if xobjs == nil || len(name) < 2 {
-		w.d.content = append(w.d.content, w.event(stack, false, where+" (unresolvable XObject)"))
+		w.emit(stack, false, where+" (unresolvable XObject)")
 		return
 	}
 	raw := xobjs[name[1:]]
 	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
 	if err != nil || sd == nil {
-		w.d.content = append(w.d.content, w.event(stack, false, where+" (unresolvable XObject)"))
+		w.emit(stack, false, where+" (unresolvable XObject)")
 		return
 	}
 	if w.d.name(sd.Dict["Subtype"]) != "Form" {
-		w.d.content = append(w.d.content, w.event(stack, false, where+" (image)"))
+		w.emit(stack, false, where+" (image)")
 		return
 	}
 	objNr := 0
@@ -398,7 +492,10 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if formRes == nil {
 		formRes = res
 	}
-	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance}
+	// `langOnly` travels INTO the form: veraPDF's semantic branch requires the invoking stream to be
+	// semantic (`GFPDXForm.java:205-211`), so a form drawn from a tiling pattern or a glyph procedure is a
+	// plain content stream too, and nothing it draws is a content item or a marked-content subject.
+	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly}
 	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
 		inner.spKey = sp
 	}
@@ -414,43 +511,436 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 // (the slice review, measured), and the rule needs one failure and a count. A DP's is not
 // kept: measured, veraPDF 1.30.2 passes 7.2-29 on `/Span << /Lang (en_US) >> DP` although its source lists DP as
 // marked content — the oracle's answer, not its source's, is the one nib agrees with.
-func (w walker) recordLang(src []byte, operands []contentstream.Token, res types.Dict, opIndex int, op string) {
-	v, ok := w.d.propertyListLang(src, operands, res)
+func (w walker) recordLang(value string, ok bool, opIndex int, op string) {
 	if !ok {
 		return
 	}
 	w.d.mcLangCount++
-	if w.d.mcLangBad == nil && !languageTag.MatchString(v) {
-		w.d.mcLangBad = &mcLang{value: v, where: fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op)}
+	if w.d.mcLangBad == nil && !languageTag.MatchString(value) {
+		w.d.mcLangBad = &mcLang{value: value, where: fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op)}
 	}
+}
+
+// openSequence builds the frame one `BMC` or `BDC` opens.
+func (w walker) openSequence(src []byte, operands []contentstream.Token, res types.Dict, opIndex int, op string) frame {
+	tag, props := w.d.markedContent(src, operands, res, op)
+	f := frame{
+		tag:    tag,
+		mcid:   -1,
+		spKey:  -1,
+		stream: w.stream,
+		where:  fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op),
+	}
+	f.artifact = tag == "Artifact"
+	lang, hasLang := props.text("Lang")
+	w.recordLang(lang, hasLang, opIndex, op)
+	f.lang = hasLang
+	_, f.actualText = props.text("ActualText")
+	_, f.alt = props.text("Alt")
+	_, f.expansion = props.text("E")
+	if m, ok := props.integer("MCID"); ok {
+		f.mcid, f.spKey = m, w.spKey
+		f.elem, f.elemUnread = w.d.elementForMCID(w.spKey, m)
+	}
+	return f
+}
+
+// subject is one closed marked-content sequence as the five rules read it. The stack's LAST frame is the
+// one that just closed; everything below it is what encloses it.
+func (w walker) subject(stack []frame) mcSubject {
+	f := stack[len(stack)-1]
+	s := mcSubject{
+		where:      f.where,
+		tag:        f.tag,
+		actualText: f.actualText,
+		alt:        f.alt,
+		expansion:  f.expansion,
+		ownLang:    f.lang,
+	}
+	// `parentsTags` includes the object's OWN tag (`GFOpMarkedContent.java:142-151`) and crosses a form
+	// XObject boundary into the invoking stream, so 7.1 t2 fires on an `/Artifact` itself and on anything a
+	// form draws inside one. Measured in both directions.
+	for _, e := range stack {
+		if e.artifact {
+			s.insideArtifact = true
+		}
+	}
+	s.tagged, s.taggedUnread = w.d.taggedContent(stack)
+	s.inheritedLang, s.langUnread = w.d.inheritedLangOf(stack, w.stream, false)
+	return s
+}
+
+// taggedContent is veraPDF's `isTaggedContent` (`GFSEGroupedContent.java:145-163`), and it is NOT
+// "an MCID is present".
+//
+// It takes the innermost struct parent in force — the sequence's own `/MCID` resolved through the parent
+// tree, else the one it inherits from the sequence around it, which DOES cross a form XObject boundary —
+// and asks whether that element's `/P` chain reaches the structure tree root. **An MCID naming a slot the
+// parent tree does not hold, and an element detached from the root, are both untagged**: measured, veraPDF
+// fails 7.1 t3 on both and nib passed them, which is a false pass in the sense `Verdict.conformant` means.
+//
+// The second result is why nib could not settle it, and it is `CannotCheck` — never a Pass.
+func (d *Document) taggedContent(stack []frame) (bool, string) {
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i].elem != nil {
+			return d.reachesStructTreeRoot(stack[i].elem)
+		}
+		if stack[i].elemUnread != "" {
+			return false, stack[i].elemUnread
+		}
+	}
+	return false, ""
+}
+
+// reachesStructTreeRoot climbs an element's `/P` chain asking whether it arrives at the structure tree root.
+//
+// **The bound and the loop guard are `parentLang`'s, for `parentLang`'s reasons** — a sideways `/P` chain is
+// not the tree and is unbounded in the input, and a cycle is a complete answer rather than a refusal: every
+// ancestor was seen and none was the root.
+func (d *Document) reachesStructTreeRoot(elem types.Dict) (bool, string) {
+	// **Memoised for `parentLang`'s reason too**: `taggedContent` asks once per drawing operator AND once per
+	// closed sequence, so a deep tree under a page of text repeats one 65-link climb ten thousand times. A
+	// refusal is NOT memoised — it depends on where the climb started, which is the same rule `parentLang`
+	// keeps for the same reason.
+	if d.rootReach == nil {
+		d.rootReach = map[uintptr]bool{}
+	}
+	if answer, ok := d.rootReach[dictID(elem)]; ok {
+		return answer, ""
+	}
+	seen := map[uintptr]bool{dictID(elem): true}
+	for p, n := d.dict(elem["P"]), 0; p != nil; p, n = d.dict(p["P"]), n+1 {
+		if d.name(p["Type"]) == "StructTreeRoot" {
+			d.rootReach[dictID(elem)] = true
+			return true, ""
+		}
+		if id := dictID(p); seen[id] {
+			d.rootReach[dictID(elem)] = false
+			return false, ""
+		} else if n >= maxLangClimb {
+			return false, fmt.Sprintf("the element describing this content climbs through more than %d /P links "+
+				"without reaching the structure tree root; nib stops climbing there, so whether it is tagged "+
+				"content was never settled", maxLangClimb)
+		} else {
+			seen[id] = true
+		}
+	}
+	d.rootReach[dictID(elem)] = false
+	return false, ""
+}
+
+// inheritedLangOf is veraPDF's `inheritedLang` for the sequence that just closed
+// (`GFOpMarkedContent.java:153-166`), in the order it stops at the first hit: the sequence's own
+// `/MCID`-resolved element, its own `/Lang` or an ancestor's; else the ENCLOSING sequence's own property-list
+// `/Lang`; else that sequence's own inherited language, recursively.
+//
+// **It stops at the stream boundary**, which `parentsTags` and the struct parent do not: veraPDF's chain is a
+// per-parser stack (`OperatorParser.java:168,176`), and measured, a `/Lang` in force on the page does not
+// reach a Span inside a form the page draws — in both the marked-content and the structure-element spelling.
+//
+// **The element's own `/Lang` counts and the climb is `parentLang`'s blind one**, measured: a `/Lang` on the
+// StructTreeRoot, on a non-ancestor dictionary named by `/P`, and an EMPTY `()` on the element all satisfy
+// the rule. `declaresLangFor` answered differently at exactly those points and was 7.2 t34's second
+// implementation of this question (`/pending 635`); it is gone, and t34 reads this.
+// **`stream` is the WALKER's, never `stack[last].stream`.** A form XObject whose own content opens no
+// sequence has a stack of INHERITED frames only, every one carrying the invoking stream's number — so
+// comparing against the last frame would walk the invoker's frames and inherit exactly what the boundary
+// forbids. Measured: text in such a form, drawn from inside a sequence the page gave a `/Lang`, FAILS 7.2 t34.
+//
+// **`ownCounts` is the difference between a sequence asking and a content ITEM asking.** A sequence's own
+// `/Lang` is not part of its inherited language — the rules carry a separate `Lang != null` disjunct for it —
+// while a content item has no property list of its own, so the sequence around it counts in full.
+func (d *Document) inheritedLangOf(stack []frame, stream int, ownCounts bool) (bool, string) {
+	last := len(stack) - 1
+	for i := last; i >= 0 && stack[i].stream == stream; i-- {
+		if (i < last || ownCounts) && stack[i].lang {
+			return true, ""
+		}
+		switch {
+		case stack[i].elem != nil:
+			if d.declaresLang(stack[i].elem["Lang"]) {
+				return true, ""
+			}
+			found, why := d.parentLang(stack[i].elem)
+			if why != "" {
+				return false, why
+			}
+			if found {
+				return true, ""
+			}
+		case stack[i].elemUnread != "":
+			return false, stack[i].elemUnread
+		}
+	}
+	return false, ""
+}
+
+// emit records one drawing operator — and is the ONE door that does, apart from the text/paint branch that
+// needs to decorate its event with the font first.
+//
+// **`langOnly` is honoured here and not at each append site**, because it was not: the check lived in the
+// text-and-paint branch alone, so an inline image, an image XObject and an unresolvable one all reached the
+// content events from inside a tiling pattern or a Type 3 glyph procedure. An inline image is the canonical
+// Type 3 bitmap glyph, and `enterLangOnly` passes an empty stack, so such a glyph was UNCOVERED content on a
+// fully tagged page — a false FAIL of 7.1 t3 on an ordinary document, and it falsified this file's own claim
+// that nothing in those streams is a content item.
+func (w walker) emit(stack []frame, text bool, where string) {
+	if w.langOnly {
+		return
+	}
+	w.d.content = append(w.d.content, w.event(stack, text, where))
 }
 
 // event builds one event, deriving its coverage from the open sequences.
 func (w walker) event(stack []frame, text bool, where string) contentEvent {
-	ev := contentEvent{where: where, text: text, mcid: -1, spKey: -1, appearance: w.appearance}
+	ev := contentEvent{where: where, text: text, appearance: w.appearance, mcid: -1, spKey: -1}
+	artifact := false
 	for i := len(stack) - 1; i >= 0; i-- {
-		f := stack[i]
-		if f.artifact || f.mcid >= 0 {
-			ev.covered = true
+		if stack[i].artifact {
+			artifact = true
 		}
-		if ev.mcid < 0 && f.mcid >= 0 && !ev.artifact {
-			ev.mcid, ev.spKey = f.mcid, f.spKey
+		if ev.mcid < 0 && stack[i].mcid >= 0 && stack[i].stream == w.stream {
+			ev.mcid, ev.spKey = stack[i].mcid, stack[i].spKey
 		}
-		if f.artifact && ev.mcid < 0 {
-			ev.artifact = true
-		}
-		if f.lang {
-			ev.lang = true
-		}
+	}
+	// 7.1 t3 is `isTaggedContent == true || parentsTags.contains('Artifact')`, so an enclosing `/Artifact`
+	// settles coverage without the parent tree being read at all. It does NOT settle the language: measured,
+	// text inside an artifact still needs one, and still inherits it from the sequence around the artifact.
+	if artifact {
+		ev.covered = true
+	} else {
+		ev.covered, ev.coverUnread = w.d.taggedContent(stack)
+	}
+	if text {
+		ev.langDetermined, ev.langUnread = w.d.inheritedLangOf(stack, w.stream, true)
 	}
 	return ev
 }
 
-// langOfBDC reports whether a `BDC` declares a `/Lang`, in an inline property dictionary or in a named
-// property list in the stream's resources, through the checker's one `/Lang` reader.
-func (w walker) langOfBDC(src []byte, operands []contentstream.Token, res types.Dict) bool {
-	_, ok := w.d.propertyListLang(src, operands, res)
-	return ok
+// enterPattern walks a tiling pattern `scn`/`SCN` selects, for its `/Lang` values and nothing else.
+func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, depth, opIndex int) {
+	if len(name) < 2 {
+		return
+	}
+	raw := w.d.dict(res["Pattern"])[name[1:]]
+	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
+	if err != nil || sd == nil {
+		return
+	}
+	if pt, ok := w.d.intValue(sd.Dict["PatternType"]); !ok || pt != 1 {
+		return // a shading pattern has no content stream to read
+	}
+	objNr := 0
+	if ir, ok := raw.(types.IndirectRef); ok {
+		objNr = ir.ObjectNumber.Value()
+	}
+	w.enterLangOnly(sd, objNr, res, fmt.Sprintf("%s, operator #%d → tiling pattern %s", w.where, opIndex, name),
+		chain, depth)
+}
+
+// enterType3 walks EVERY `CharProc` of a Type 3 font a text operator shows a glyph in.
+//
+// A font entry that is nil is not "no font": pdfcpu's validator DROPS a Type 3 font dictionary written
+// directly inside another dictionary, and what it dropped may have held glyphs with marked content. The raw
+// file is asked once whether the document writes one (`hasInlineType3Font`), and that is `contentErr`.
+func (w walker) enterType3(font types.Dict, fontName string, res types.Dict, chain map[int]bool, depth, opIndex int) {
+	if font == nil {
+		if len(fontName) > 1 && w.d.dict(res["Font"]) != nil && w.d.hasInlineType3Font() {
+			if w.d.contentErr == "" {
+				w.d.contentErr = fmt.Sprintf("%s, operator #%d shows text in font %s, which is missing from what nib's "+
+					"reader kept while the file writes a Type 3 font directly inside a dictionary — the shape pdfcpu's "+
+					"validator drops — so that font's glyph procedures were never read", w.where, opIndex, fontName)
+			}
+		}
+		return
+	}
+	if w.d.name(font["Subtype"]) != "Type3" {
+		return
+	}
+	fontRes := w.d.dict(font["Resources"])
+	if fontRes == nil {
+		fontRes = res
+	}
+	procs := w.d.dict(font["CharProcs"])
+	for _, glyph := range sortedKeys(procs) {
+		sd, _, err := w.d.Ctx.DereferenceStreamDict(procs[glyph])
+		if err != nil || sd == nil {
+			if w.d.contentErr == "" {
+				w.d.contentErr = fmt.Sprintf("%s, Type 3 font %s glyph /%s does not resolve to a stream, so its marked "+
+					"content was never read", w.where, fontName, glyph)
+			}
+			continue
+		}
+		objNr := 0
+		if ir, ok := procs[glyph].(types.IndirectRef); ok {
+			objNr = ir.ObjectNumber.Value()
+		}
+		w.enterLangOnly(sd, objNr, fontRes, fmt.Sprintf("%s → Type 3 font %s, glyph /%s", w.where, fontName, glyph),
+			chain, depth)
+	}
+}
+
+// enterLangOnly decodes one nested stream and walks it in lang-only mode, under the walk's own budgets.
+//
+// **The enclosing marked-content stack is NOT passed in.** veraPDF builds a plain content stream for a
+// pattern and a glyph procedure, so nothing in them is a marked-content subject or a content item at all;
+// the only thing this walk contributes is 7.2 t29's `/Lang` values.
+func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, label string, chain map[int]bool, depth int) {
+	if chain[objNr] && objNr != 0 {
+		return
+	}
+	// **Once per stream, not once per use.** `enterType3` fires on every text-showing operator and
+	// `enterPattern` on every `scn`, so a page showing ten thousand glyphs in one Type 3 font would walk that
+	// font's every `CharProc` ten thousand times — and each entry spends a `formWalks` unit, so an ordinary
+	// document would trip `maxFormWalks` and turn EVERY content rule into CannotCheck. veraPDF reads a pattern
+	// and a font once, as objects, so repeating is not faithful either. Keyed by the stream dictionary's
+	// identity rather than its object number, because a pattern or glyph procedure written inline has none.
+	if w.d.langWalked == nil {
+		w.d.langWalked = map[uintptr]bool{}
+	}
+	if id := dictID(sd.Dict); w.d.langWalked[id] {
+		return
+	} else {
+		w.d.langWalked[id] = true
+	}
+	if depth+1 > maxFormDepth {
+		if w.d.contentErr == "" {
+			w.d.contentErr = fmt.Sprintf("%s nests deeper than %d levels; nib stops walking there, so what lies "+
+				"below was never read", label, maxFormDepth)
+		}
+		return
+	}
+	if w.d.formWalks++; w.d.overBudget() {
+		return
+	}
+	if err := sd.Decode(); err != nil {
+		if w.d.contentErr == "" {
+			w.d.contentErr = fmt.Sprintf("%s could not be decoded, so its marked content was never read: %v", label, err)
+		}
+		return
+	}
+	inner := walker{d: w.d, where: label, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true}
+	next := map[int]bool{objNr: true}
+	for k := range chain {
+		next[k] = true
+	}
+	streamRes := w.d.dict(sd.Dict["Resources"])
+	if streamRes == nil {
+		streamRes = res
+	}
+	inner.walkWithState(sd.Content, streamRes, nil, next, depth+1, textState{})
+}
+
+// markedContent reads a `BMC`/`BDC`'s tag and property list the way veraPDF locates them.
+//
+// **The tag's position differs between the two operators**: `BDC` takes `arguments[size-2]`
+// (`GFOpMarkedContent.java:108-116`) and `BMC` the LAST argument (`GFOp_BMC.java:57-65`). So a malformed
+// `/Artifact BDC` written with no property list has NO tag and breaks no rule — measured on 1.30.2, and
+// three of this slice's first-round fixtures were that shape and measured the wrong thing.
+//
+// The property list is an inline dictionary or a name resolved through `/Resources /Properties`
+// (`GFOpMarkedContent.java:68-84`); `BMC` never has one, so `/Lang`, `/ActualText`, `/Alt` and `/E` are all
+// absent for it and 7.2 t30-t32 cannot fire on one.
+func (d *Document) markedContent(src []byte, operands []contentstream.Token, res types.Dict, op string) (string, propertyList) {
+	names := []int{}
+	dictAt := -1
+	for i, tk := range operands {
+		switch {
+		case tk.Kind == contentstream.DictOpen && dictAt < 0:
+			dictAt = i
+		case tk.Kind == contentstream.Operand && dictAt < 0:
+			if b := tk.Bytes(src); len(b) > 0 && b[0] == '/' {
+				names = append(names, i)
+			}
+		}
+	}
+	if op == "BMC" {
+		// BMC takes its last argument, and it has no property list.
+		if len(names) == 0 {
+			return "", propertyList{}
+		}
+		return string(operands[names[len(names)-1]].Bytes(src)[1:]), propertyList{}
+	}
+	if dictAt >= 0 {
+		if len(names) == 0 {
+			return "", propertyList{}
+		}
+		return string(operands[names[len(names)-1]].Bytes(src)[1:]), propertyList{d: d, src: src, inline: operands[dictAt:]}
+	}
+	// `/Tag /MC0 BDC`: the tag is the argument before the property name, so one name alone is no tag.
+	if len(names) < 2 {
+		return "", propertyList{}
+	}
+	named := string(operands[names[len(names)-1]].Bytes(src)[1:])
+	return string(operands[names[len(names)-2]].Bytes(src)[1:]), propertyList{dict: d.dict(d.dict(res["Properties"])[named]), d: d}
+}
+
+// propertyList is a marked-content property list read from one of its two spellings.
+//
+// The inline form holds TOKENS, because a content stream's dictionary is never parsed into objects — and it
+// cannot hold an indirect reference either, so a value is whatever its own bytes say.
+type propertyList struct {
+	dict   types.Dict
+	d      *Document
+	src    []byte
+	inline []contentstream.Token
+}
+
+// text is a key's value when it is a STRING, which is what veraPDF's `getAttribute(…, COS_STRING)` requires
+// of every one of `/Lang`, `/ActualText`, `/Alt` and `/E` — a name is no answer.
+func (p propertyList) text(key string) (string, bool) {
+	if p.dict != nil {
+		return p.d.text(p.dict[key])
+	}
+	tk, ok := p.at(key)
+	if !ok {
+		return "", false
+	}
+	b := tk.Bytes(p.src)
+	switch {
+	case tk.Kind == contentstream.LiteralString && len(b) >= 2:
+		return p.d.text(types.StringLiteral(b[1 : len(b)-1]))
+	case tk.Kind == contentstream.HexString && len(b) >= 2:
+		return p.d.text(types.HexLiteral(b[1 : len(b)-1]))
+	}
+	return "", false
+}
+
+// integer is a key's value when it is an integer — `/MCID` is the only one asked for.
+func (p propertyList) integer(key string) (int, bool) {
+	if p.dict != nil {
+		return p.d.intValue(p.dict[key])
+	}
+	tk, ok := p.at(key)
+	if !ok || tk.Kind != contentstream.Operand {
+		return 0, false
+	}
+	n, err := strconv.Atoi(string(tk.Bytes(p.src)))
+	return n, err == nil
+}
+
+// at is the token following a key at the inline dictionary's TOP level — a nested dictionary's keys are not
+// this property list's, and an `/Artifact << /BBox [ … ] >>`'s array must not swallow the key after it.
+func (p propertyList) at(key string) (contentstream.Token, bool) {
+	depth := 0
+	want := "/" + key
+	for i, tk := range p.inline {
+		switch tk.Kind {
+		case contentstream.DictOpen, contentstream.ArrayOpen:
+			depth++
+			continue
+		case contentstream.DictClose, contentstream.ArrayClose:
+			depth--
+			if depth == 0 {
+				return contentstream.Token{}, false
+			}
+			continue
+		}
+		if depth == 1 && tk.Kind == contentstream.Operand && string(tk.Bytes(p.src)) == want && i+1 < len(p.inline) {
+			return p.inline[i+1], true
+		}
+	}
+	return contentstream.Token{}, false
 }
 
 // firstName returns the first name operand, or "".
@@ -463,39 +953,4 @@ func (w walker) firstName(src []byte, operands []contentstream.Token) string {
 		}
 	}
 	return ""
-}
-
-// mcidOf reads the MCID a `BDC` declares, from an inline property dictionary or from a named
-// property list in the stream's resources.
-func (w walker) mcidOf(src []byte, operands []contentstream.Token, res types.Dict) (int, bool) {
-	// Inline: /Tag << … /MCID n … >> BDC
-	for i, tk := range operands {
-		if tk.Kind == contentstream.Operand && string(tk.Bytes(src)) == "/MCID" && i+1 < len(operands) {
-			if n, err := strconv.Atoi(string(operands[i+1].Bytes(src))); err == nil {
-				return n, true
-			}
-		}
-	}
-	// Named: /Tag /MC0 BDC, resolved through /Resources /Properties.
-	names := 0
-	for _, tk := range operands {
-		if tk.Kind != contentstream.Operand {
-			continue
-		}
-		b := tk.Bytes(src)
-		if len(b) == 0 || b[0] != '/' {
-			continue
-		}
-		names++
-		if names < 2 {
-			continue
-		}
-		props := w.d.dict(w.d.dict(res["Properties"])[string(b[1:])])
-		if props != nil {
-			if n, ok := w.d.intValue(props["MCID"]); ok {
-				return n, true
-			}
-		}
-	}
-	return -1, false
 }

@@ -1050,7 +1050,7 @@ func (c *subtreeClone) of(src types.IndirectRef) (*types.IndirectRef, error) {
 // walk it, which is the defect `appendToElementKids` and the structure editor both maintain `/P` to
 // avoid (ADR-009). Measured before the fix: `elem 44 /S=P /P=(40 0 R)` under tree parent 43, with
 // `structureCarriedCompletely` reporting zero defects — no reader in this package looks at `/P`, and
-// `internal/uacheck`'s `declaresLangFor` climbs it.
+// `internal/uacheck`'s `parentLang` climbs it.
 func (c *subtreeClone) kidsOf(o types.Object, parent types.IndirectRef) (types.Array, error) {
 	if o == nil {
 		return nil, nil

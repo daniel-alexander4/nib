@@ -45,6 +45,20 @@ type Document struct {
 	circular map[string]bool
 	// content is every page's classified drawing operators, built on first use by contentEvents.
 	content []contentEvent
+	// mcSubjects is every marked-content sequence the same walk closed, which is a different population
+	// from `content`: a sequence enclosing no drawing operator is still a subject of 7.1 t1/t2 and
+	// 7.2 t30-t32, and a drawing operator inside none is still a subject of 7.1 t3.
+	mcSubjects []mcSubject
+	// rootReach memoises `reachesStructTreeRoot` per element — `taggedContent` asks it once per drawing
+	// operator and once per closed sequence, so without it one deep `/P` chain is climbed per event.
+	rootReach map[uintptr]bool
+	// langWalked is every tiling pattern and Type 3 glyph procedure the lang-only walk has already read,
+	// keyed by the stream dictionary's identity — see `enterLangOnly` for why once per stream and not once
+	// per use.
+	langWalked map[uintptr]bool
+	// streams numbers the content streams the walk has entered, so a frame knows which one it was opened
+	// in. `inheritedLang` stops at that boundary where `parentsTags` and the struct parent cross it.
+	streams int
 	// contentErr is why content could not be read, or not all of it, when it could not.
 	contentErr  string
 	contentDone bool
@@ -73,6 +87,12 @@ type Document struct {
 	xmpDone bool
 	// tableSlots is every grid slot the document's tables have asked for so far (`maxDocumentTableSlots`).
 	tableSlots int64
+}
+
+// nextStream hands out the next content-stream number.
+func (d *Document) nextStream() int {
+	d.streams++
+	return d.streams
 }
 
 // roleResolution is what one `/S` name resolves to through the role map: a standard structure type, or

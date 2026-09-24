@@ -112,6 +112,16 @@ func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T
 		// wrong, so it is read from the registry here like every other copy.
 		{"rules_catalog.go", count},
 		{"../pdfops/labelua.go", count},
+		// **P04.S04 adds the last two, and they are why this list keeps growing.** Both were stale at
+		// **60** — they had missed P04.S02's move to 63 AND S03's to 65, while the four copies above were
+		// corrected by the slice that moved the count. Two slices' T05 steps each said "the two prose
+		// copies" and each meant a different two. **Every copy of the CURRENT count now has a reader** — the
+		// six rows above. Three other files say "of the 106" and are deliberately not here, because none of
+		// them states the coverage figure: `uaid.go` says "only part of the 106" with no number,
+		// `rules_structure.go` gives one rule's ordinal at the time it was added, and ADR-032/033 quote 19
+		// as the figure when they were decided, which an ADR may not restate (STANDARDS §11, immutable).
+		{"uacheck.go", count},
+		{"door.go", count},
 	} {
 		b, err := os.ReadFile(f.path)
 		if err != nil {

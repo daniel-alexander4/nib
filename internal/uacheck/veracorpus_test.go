@@ -72,9 +72,19 @@ var corpusAllow = map[string]string{}
 // field, so a file with neither is not evaluated at all — where t21-t23 run once per structure element and reach
 // almost every file. 71 and 19 are what "every file holding an annotation" and "every file holding a form field"
 // come to on this corpus, and a figure near 294 here would mean the population had been widened by mistake.
+// P04.S04: `7.1 t1` and `7.1 t2` join at 293 each — every corpus file holding a marked-content sequence — and
+// `7.2 t30`, `t31` and `t32` at 293 too — the SAME population, because the subject is the sequence and veraPDF
+// passes a check whose tag is not Span or whose key is absent. They read 259 first, which is the subset whose
+// catalog `/Lang` settles the clause, and the oracle caught the difference by name on fifteen documents:
+// "veraPDF passed, nib not applicable". **The same slice changed two SHIPPED rules and no corpus verdict moved**: 7.1 t3 stopped
+// reading a bare `/MCID` as tagged content (it must resolve through the parent tree to an element whose `/P` chain
+// reaches the root) and 7.2 t34 stopped exempting text inside an `/Artifact`. Measured before and after over the
+// 297-file set: 0 false pass, 0 false fail either way, and every reach figure above unchanged — the corpus holds
+// no document with a dangling MCID and none whose only unlanguaged text is an artifact's, which is why four
+// measured false passes had survived it.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
-	"7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
+	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,
 	"7.2 t36": 21, "7.2 t37": 19, "7.2 t38": 17,
@@ -86,6 +96,7 @@ var corpusReach = map[string]int{
 	"7.2 t2": 276, "7.2 t29": 291,
 	"7.2 t21": 294, "7.2 t22": 294, "7.2 t23": 294,
 	"7.2 t24": 71, "7.2 t25": 19,
+	"7.2 t30": 293, "7.2 t31": 293, "7.2 t32": 293,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,

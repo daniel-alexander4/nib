@@ -233,22 +233,32 @@ func checkMetadataLanguage(d *Document) Result {
 	return Result{Verdict: Pass}
 }
 
-// checkContentLanguage evaluates ua1 7.2 t34 — with the tree walk P07.S02 deferred to this slice.
+// checkContentLanguage evaluates ua1 7.2 t34 — `gContainsCatalogLang == true || Lang != null`.
 //
 // With a catalog `/Lang`, every piece of text has a language and the clause passes. Without one, each
-// text-showing operator is resolved individually:
-//
-//   - inside an `/Artifact` sequence — not text a reader is given, so it needs no language;
-//   - inside a marked-content sequence whose property list declares `/Lang` — that is its language;
-//   - inside an MCID sequence — the MCID resolves through the parent tree to an element, and the
-//     language is that element's `/Lang` or its nearest ancestor's (ISO 32000-1 §14.9.2);
-//   - inside none of those — nothing could declare its language.
+// text-showing operator carries its own answer from the walk (`contentEvent.langDetermined`): some sequence
+// enclosing it, **in the same content stream**, declares a `/Lang` on its property list, or names a structure
+// element through an `/MCID` whose own `/Lang` or an ancestor's supplies one.
 //
 // **A marked-content `/Lang` counts** (`/pending 489`). This rule used to skip it, citing a P06.S04
-// measurement that its section never recorded. veraPDF's test is `gContainsCatalogLang == true ||
-// Lang != null` on each text item, and veraPDF passes 7.2 t34 on its own corpus file
-// `7.2-t34-pass-c.pdf`, whose text declares its language only that way — measured 2026-09-14, and held
-// by veracorpus_test.go.
+// measurement that its section never recorded. veraPDF passes 7.2 t34 on its own corpus file
+// `7.2-t34-pass-c.pdf`, whose text declares its language only that way — measured 2026-09-14.
+//
+// # Four false passes this rule carried, all measured on 1.30.2 and all closed by P04.S04
+//
+//   - **Text inside an `/Artifact` was exempted.** veraPDF's test has no artifact disjunct, and a document
+//     whose only unlanguaged text sits in one FAILS there while nib passed it — in page content and across a
+//     form boundary. The language still reaches THROUGH the artifact into the sequence around it, which is
+//     why the exemption and the inheritance had looked alike.
+//   - **The language crossed a form XObject boundary**, in the marked-content spelling: a `/Lang` on a
+//     sequence the page opened reached text inside a form that sequence drew.
+//   - **And in the structure-element spelling**: a `/Lang` on the element the page sequence's `/MCID` named
+//     reached it too. They are two disjuncts of veraPDF's chain, which is per-content-stream, and each was
+//     its own measured document.
+//
+// **And it no longer owns a second implementation of "is a language determined".** It asked that question
+// with `declaresLangFor`, which disagreed with `parentLang` at the StructTreeRoot, at a `/P` cycle and by one
+// on the bound — `/pending 635`, a live false FAIL in this clause. Both now read `inheritedLangOf` (ADR-009).
 func checkContentLanguage(d *Document) Result {
 	// A declared catalog /Lang determines every piece of text — present counts, even empty: veraPDF's
 	// test is `gContainsCatalogLang`, and an empty value is 7.2 t29's failure, which nib does not check.
@@ -262,38 +272,35 @@ func checkContentLanguage(d *Document) Result {
 	texts := 0
 	for _, ev := range events {
 		// Appearance streams are outside "page content" for this clause, as they are for 7.1 t3.
-		if !ev.text || ev.artifact || ev.appearance {
+		if !ev.text || ev.appearance {
 			continue
 		}
 		texts++
-		if ev.lang {
-			continue // the enclosing sequence's own /Lang determines this text's language
+		if ev.langDetermined {
+			continue
 		}
-		if ev.mcid < 0 {
+		if ev.langUnread != "" {
+			return Result{Verdict: CannotCheck, Why: ev.langUnread, Where: ev.where}
+		}
+		// **The three shapes told apart by name.** The verdict is one disjunction, but the reason a user
+		// acts on is not: deleting the "in no tagged sequence" branch once left this rule green while
+		// handing back a reason about a missing structure element. Resolved here, on the failing path only.
+		switch elem, _ := d.elementForMCID(ev.spKey, ev.mcid); {
+		case ev.mcid < 0:
 			return Result{
 				Verdict: Fail,
-				Why: "the catalog declares no /Lang and this text is in no tagged sequence, so " +
-					"nothing could declare its language",
+				Why: "the catalog declares no /Lang and this text is in no tagged sequence in its own content " +
+					"stream, so nothing could declare its language",
 				Where: ev.where,
 			}
-		}
-		elem, unread := d.elementForMCID(ev.spKey, ev.mcid)
-		if elem == nil && unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: ev.where}
-		}
-		if elem == nil {
+		case elem == nil:
 			return Result{
 				Verdict: Fail,
 				Why: fmt.Sprintf("the catalog declares no /Lang and MCID %d resolves to no structure "+
 					"element, so no element could declare this text's language", ev.mcid),
 				Where: ev.where,
 			}
-		}
-		declared, unread := d.declaresLangFor(elem)
-		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: ev.where}
-		}
-		if !declared {
+		default:
 			return Result{
 				Verdict: Fail,
 				Why: "the catalog declares no /Lang and neither the element describing this text " +
@@ -331,7 +338,7 @@ func (d *Document) elementForMCID(spKey, mcid int) (types.Dict, string) {
 //
 // **This checker's report never labels a document**, and that is decided rather than pending a slice.
 // Writing `pdfuaid:part` claims conformance to all of PDF/UA, and P07.S07 measured that nib's checker cannot
-// support that claim: it implements 65 of the 106 rules veraPDF evaluates (15 when that was measured), and a
+// support that claim: it implements 70 of the 106 rules veraPDF evaluates (15 when that was measured), and a
 // document can pass all of them while failing one it does not check (ADR-031 law 1). **The one label nib
 // writes is `pdfops.LabelUA`'s** (ADR-033): on its own Markdown conversion, in a language someone chose,
 // resting on veraPDF's measurement of that conversion rather than on this report — so such a document passes

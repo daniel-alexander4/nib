@@ -127,6 +127,13 @@ var notTreeRules = map[string]string{
 	// answer and CannotCheck would be a refusal over a question nothing asked. They ARE CannotCheck when
 	// the PARENT tree is the thing nib could not finish, which is a different bound and its own test.
 	"7.2 t24": "annotations and the parent tree", "7.2 t25": "form fields and the parent tree",
+	// P04.S04. Their subject is a marked-content SEQUENCE, not a structure element: a document seventy
+	// Divs deep that draws nothing has no sequence, so there is nothing to refuse over. They reach the
+	// tree only to settle `isTaggedContent` and `inheritedLang` for a sequence that exists, and both of
+	// those are CannotCheck when the climb runs out — a different bound, with its own test.
+	"7.1 t1": "marked-content sequences", "7.1 t2": "marked-content sequences",
+	"7.2 t30": "marked-content sequences", "7.2 t31": "marked-content sequences",
+	"7.2 t32": "marked-content sequences",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
@@ -233,8 +240,10 @@ func TestALanguageInheritedFromPastTheBoundIsCannotCheckNeverAFail(t *testing.T)
 	if got := verdictOf(t, deepLanguage(3), "7.2 t34"); got.Verdict != Pass {
 		t.Fatalf("control: /Lang three ancestors up reports %v for 7.2 t34 (%s), want Pass", got.Verdict, got.Why)
 	}
+	// The wording is `parentLang`'s since P04.S04 — t34 climbs through `inheritedLangOf` now, and the
+	// climb that said "deeper than" was the second implementation this slice deleted (`/pending 635`).
 	got := verdictOf(t, deepLanguage(70), "7.2 t34")
-	if got.Verdict != CannotCheck || !strings.Contains(got.Why, "deeper than") {
+	if got.Verdict != CannotCheck || got.Why != langClimbTooFar {
 		t.Errorf("/Lang seventy ancestors up reports %v for 7.2 t34 (%s), want CannotCheck naming the bound", got.Verdict, got.Why)
 	}
 }

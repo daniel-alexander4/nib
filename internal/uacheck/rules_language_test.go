@@ -126,7 +126,8 @@ func TestTheLanguageRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 // "pattern" a drawn tiling pattern; "unused" the same pattern, never drawn; "type3" a drawn Type 3 glyph whose font
 // is its own object; "type3-direct" the same font written directly in /Resources; "form-in-pattern" a drawn pattern
 // whose only content is a form carrying the /Lang. Measured on veraPDF 1.30.2: every drawn one FAILS 7.2-29 and the
-// undrawn pattern passes; nib walks none of these streams, so every one is CannotCheck — never Pass, never Fail.
+// undrawn pattern passes with ZERO checks. Since P04.S04 nib agrees on every one of them — the walk enters a
+// pattern the stream SELECTS and every `CharProc` of a font it SHOWS a glyph in, for `/Lang` and nothing else.
 func patternDoc(mode, bad string) []byte {
 	st := func(body string) string { return fmt.Sprintf("/Length %d >>\nstream\n%s\nendstream", len(body), body) }
 	span := "/Span << /Lang " + bad + " >> BDC 0 0 5 5 re f EMC"
@@ -165,23 +166,70 @@ func patternDoc(mode, bad string) []byte {
 	return buildPDF(objs)
 }
 
-func TestALanguageInAStreamNibDoesNotWalkIsCannotCheck(t *testing.T) {
-	for _, mode := range []string{"pattern", "unused", "type3", "type3-direct", "form-in-pattern"} {
-		// A direct Type 3 font never reaches nib at all (pdfcpu's validator drops it), so its reason is that one.
-		reason := "does not walk"
-		if mode == "type3-direct" {
-			reason = "validator drops"
+// TestALanguageInADRAWNPatternOrGlyphIsSETTLED — P04.S04, where the CannotCheck this test used to assert
+// retired.
+//
+// **The population turned out to be DRAWN rather than DEFINED, and that is what made it settleable.**
+// `unwalkedBadLang` read every pattern, Type 3 font and form the resource graph DEFINED, which cannot tell a
+// stream that is rendered from one that is not — so a hit could only ever be CannotCheck. Measured on veraPDF
+// 1.30.2, the entry conditions are narrower and both are decidable from the content stream itself: a tiling
+// pattern is read once `scn`/`SCN` SELECTS it (painting is not required), and a Type 3 font's EVERY `CharProc`
+// is read once any glyph is shown in it, while a font selected with `Tf` and never shown reads none. The walk
+// now enters exactly those, in lang-only mode, and the verdicts below are veraPDF's own.
+//
+// `type3-direct` keeps its CannotCheck for a different reason, and it is the one that is genuinely unreadable:
+// pdfcpu's validator DROPS a Type 3 font written directly inside `/Resources`, so the glyphs are not there to
+// walk.
+func TestALanguageInADrawnPatternOrGlyphIsSettled(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		bad  Verdict // what a NON-identifier /Lang in that stream comes to
+	}{
+		{"pattern", Fail},
+		{"type3", Fail},
+		{"form-in-pattern", Fail},
+		// Defined and never selected: veraPDF evaluates 7.2 t29 with ZERO checks, so the document's only
+		// /Lang is the catalog's and nib must not reach into the stream at all.
+		{"unused", Pass},
+		{"type3-direct", CannotCheck},
+	} {
+		got := verdictOf(t, patternDoc(tc.mode, "(en_US)"), "7.2 t29")
+		if got.Verdict != tc.bad {
+			t.Errorf("%s: a bad /Lang reports 7.2 t29 = %v (%s), want %v", tc.mode, got.Verdict, got.Why, tc.bad)
 		}
-		got := verdictOf(t, patternDoc(mode, "(en_US)"), "7.2 t29")
-		if got.Verdict != CannotCheck || !strings.Contains(got.Why, reason) {
-			t.Errorf("%s: 7.2 t29 = %v (%s), want CannotCheck naming %q", mode, got.Verdict, got.Why, reason)
-		}
-		if mode == "type3-direct" {
+		if tc.mode == "type3-direct" {
+			if !strings.Contains(got.Why, "validator drops") {
+				t.Errorf("type3-direct: the reason %q does not say the validator dropped the font", got.Why)
+			}
 			continue // a valid /Lang there is just as unreadable, so it has no Pass control
 		}
-		// The control, per mode: a valid /Lang in the same stream changes nothing, and the catalog's passes.
-		if got := verdictOf(t, patternDoc(mode, "(en-GB)"), "7.2 t29"); got.Verdict != Pass {
-			t.Errorf("%s control: a valid /Lang reports %v (%s), want Pass", mode, got.Verdict, got.Why)
+		// The control, per mode: the SAME stream with a valid /Lang passes. Without it a rule that failed
+		// every pattern it was shown would score perfectly on the rows above.
+		if got := verdictOf(t, patternDoc(tc.mode, "(en-GB)"), "7.2 t29"); got.Verdict != Pass {
+			t.Errorf("%s control: a valid /Lang reports %v (%s), want Pass", tc.mode, got.Verdict, got.Why)
+		}
+	}
+}
+
+// TestADrawnPatternAndGlyphPutNoCONTENTInFrontOfTheOtherRules is the other half of that walk, and the half a
+// test of 7.2 t29 alone cannot see.
+//
+// veraPDF builds a PLAIN content stream for a tiling pattern and a Type 3 glyph procedure — `SEMarkedContent`
+// is created at two sites only, the page and a form XObject drawn from a semantic stream — so nothing in
+// either is a marked-content subject or a content item. Measured with the page fully covered so that only the
+// nested stream could fail: an uncovered paint and an unlanguaged Span inside a drawn pattern or glyph move
+// neither 7.1 t3 nor 7.1 t1/t2 nor 7.2 t34 — and, on their own fixtures, not 7.2 t30-t32 either.
+func TestADrawnPatternAndGlyphPutNoContentInFrontOfTheOtherRules(t *testing.T) {
+	for _, mode := range []string{"pattern", "type3", "form-in-pattern"} {
+		pdf := patternDoc(mode, "(en-GB)")
+		// 7.2 t30-t32 are deliberately NOT in this list: `patternDoc`'s catalog declares a `/Lang`, which
+		// settles them before the walk is run, and its Span carries no `/Alt`, `/ActualText` or `/E` to be a
+		// subject of them anyway. A clause that cannot fail here would be a row asserting nothing.
+		for _, clause := range []string{"7.1 t3", "7.1 t1", "7.1 t2", "7.2 t34"} {
+			if got := verdictOf(t, pdf, clause); got.Verdict == Fail {
+				t.Errorf("%s: %s reports Fail (%s at %s) over content veraPDF does not read there",
+					mode, clause, got.Why, got.Where)
+			}
 		}
 	}
 }
@@ -198,7 +246,7 @@ func TestALanguageNibDidNotFinishReadingIsCannotCheck(t *testing.T) {
 	if got := verdictOf(t, formFanOut(2, false), "7.2 t29"); got.Verdict != NotApplicable {
 		t.Fatalf("control: two levels of forms report %v (%s) for 7.2 t29, want NotApplicable", got.Verdict, got.Why)
 	}
-	if got := verdictOf(t, formFanOut(7, false), "7.2 t29"); got.Verdict != CannotCheck || !strings.Contains(got.Why, "enters form XObjects") {
+	if got := verdictOf(t, formFanOut(7, false), "7.2 t29"); got.Verdict != CannotCheck || !strings.Contains(got.Why, "enters nested streams") || !strings.Contains(got.Why, "more than") {
 		t.Errorf("a content walk past its budget reports %v (%s) for 7.2 t29, want CannotCheck naming the budget", got.Verdict, got.Why)
 	}
 }
@@ -810,12 +858,11 @@ func describedForm(t *testing.T) []byte {
 // (`GFPDAnnot.java:245-259`, `GFPDFormField.java:93-105`) — there is no climb. An implementation that
 // reused `parentLang` would pass this document, and it would pass documents veraPDF fails.
 //
-// **Why this is a unit assertion and not an oracle document.** The fixture is built and available
-// (`widgetMutation(..., "contents-lang-on-ancestor")`), but putting a structure `/Lang` on an ancestor
-// also moves 7.2 t34, where nib and veraPDF are known to disagree already — `/pending 635`, filed
-// before this slice and amended with this second reproduction. Adding it to the oracle corpus would
-// make this slice red over another rule's open defect. What is measured here is t24's own answer; t24
-// and t25 agree with veraPDF over 19,137 corpus pairs and over the oracle's own fail fixture.
+// **It is a unit assertion AND an oracle document since P04.S04.** Putting a structure `/Lang` on an
+// ancestor also moves 7.2 t34, where nib used to disagree with veraPDF — `/pending 635` — so the document
+// was held out of the oracle corpus to keep P04.S03 from going red over another rule's open defect. That
+// defect was nib's SECOND climb for "is a language determined"; P04.S04 deleted it, t34 reads the one door,
+// and this document and its control now sit in the corpus where the oracle measures both rules on them.
 func TestAnAnnotationDoesNotInheritALanguageFromAnAncestor(t *testing.T) {
 	base := describedForm(t)
 	// Control: the same document without the mutation, so a fixture that failed for some other reason
