@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -649,7 +648,7 @@ func (d *Document) hasInlineType3Font() bool {
 // `false` because nib stopped looking would turn "nib did not look" into "there is none" — the collapse
 // `hasInlineType3Font` refuses one function up, where a file that will not parse raw answers true.
 func (d *Document) scanInlineType3() bool {
-	ctx, err := api.ReadContext(bytes.NewReader(d.raw), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(bytes.NewReader(d.raw), checkerConfig())
 	if err != nil {
 		return true
 	}

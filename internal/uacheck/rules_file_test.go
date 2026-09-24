@@ -472,22 +472,61 @@ func TestAnEmbeddedFilelessSpecificationDoesNotStopTheScan(t *testing.T) {
 	}
 }
 
-// **The XFA value is trimmed at BOTH ends** (P06.S02, found by a blind mutation pass). veraPDF's own
-// fixture puts the newline before the closing bracket; a producer that puts it after the text instead
-// yields `"required\n"`, which never equals `"required"` — and a dynamic form reads as Pass. Trimming
-// only the left survived the whole package.
+// **7.15 t1 reads `dynamicRender` exactly where veraPDF reads it** (P06.S02, re-cut at the P06 phase close).
+//
+// Every row was run on veraPDF 1.30.2 before it was written, and the verdict beside it is veraPDF's. The
+// old tests asserted a reading nobody had measured — the value trimmed, its text joined across anything,
+// every packet searched at any depth — and the phase-close review measured four of their premises FALSE:
+// veraPDF passes ` required `, `requi<?pi?>red`, and a `dynamicRender` anywhere off
+// `config/acrobat/acrobat7`. See `xfaDynamicRender` for the predicate.
 func TestTheXFAValueIsTrimmedAtBothEnds(t *testing.T) {
 	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, packet := range []string{
-		"<config><acrobat><acrobat7><dynamicRender>required\n</dynamicRender></acrobat7></acrobat></config>",
-		"<config><acrobat><acrobat7><dynamicRender>\n  required  \n</dynamicRender></acrobat7></acrobat></config>",
+	onPath := func(v string) string {
+		return "<config><acrobat><acrobat7><dynamicRender>" + v + "</dynamicRender></acrobat7></acrobat></config>"
+	}
+	for _, c := range []struct {
+		packet string
+		want   Verdict
+		why    string
+	}{
+		{onPath("required"), Fail, "the plain case"},
+		{onPath("required\n"), Pass, "the value is not trimmed"},
+		{onPath("\n  required  \n"), Pass, "at either end"},
+		{onPath("requi<!--x-->red"), Fail, "a comment is not a node: the text is one run"},
+		{onPath("<!--x-->required"), Fail, "nor at the start"},
+		{onPath("re<!--a-->qui<!--b-->red"), Fail, "nor twice"},
+		{onPath("<![CDATA[required]]>"), Fail, "a CDATA section is a node and can be the first child"},
+		{onPath("requi<![CDATA[red]]>"), Pass, "and it is a SEPARATE node from the text before it"},
+		{onPath("requi<?pi?>red"), Pass, "a processing instruction ends the run"},
+		{onPath("<?pi?>required"), Pass, "and is itself the first child"},
+		{onPath("requ&#105;red"), Fail, "a character reference is part of the run"},
+		{onPath("<x/>required"), Pass, "an element first: its value is null"},
+		{onPath("required<x/>"), Fail, "an element after the run does not touch it"},
+		{"<config><dynamicRender>required</dynamicRender></config>", Pass, "off the acrobat/acrobat7 path"},
+		{"<config><dynamicRender><x><dynamicRender/></x>required</dynamicRender></config>", Pass, "still off it"},
+		{"<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\">" + onPath("required") + "</xdp:xdp>", Fail, "under xdp:xdp"},
+		{"<config><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat><acrobat></acrobat></config>", Fail, "the first acrobat"},
+		{"<config><acrobat></acrobat><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Pass, "ONLY the first acrobat"},
+		{"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>" + onPath("required"), Fail, "an ISO-8859-1 packet is read"},
+		{onPath("required") + "<config/>", Pass, "two roots: not a document, and veraPDF's parse fails"},
+		{"<config><p>a&nbsp;b</p><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Pass, "an undeclared entity: not a document"},
+		// The R1 re-review's shapes — Go's decoder and veraPDF's parser disagree about what a document is.
+		{"\xef\xbb\xbf" + onPath("required"), Fail, "a byte-order mark is skipped, not a syntax error"},
+		{"<?xml version=\"1.0\"?>" + onPath("required"), Fail, "a declaration at the very start is fine"},
+		{" <?xml version=\"1.0\"?>" + onPath("required"), Pass, "but not after anything, even a space"},
+		{"<!DOCTYPE config>" + onPath("required"), Pass, "a DOCTYPE: veraPDF's parser refuses the document"},
+		{"<config><foo:bar/><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Pass, "an unbound prefix: not namespace-well-formed"},
+		{"<config a=\"1\" a=\"2\"><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Pass, "an attribute written twice"},
+		{"<?XML version=\"1.0\"?>" + onPath("required"), Pass, "the reserved name in another case (R1 round 3)"},
+		{"<config xmlns:a=\"u:x\" xmlns:b=\"u:x\" a:q=\"1\" b:q=\"2\"><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Pass, "one attribute by URI under two prefixes"},
+		{"<config xmlns:foo=\"\"><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Pass, "a prefix bound to nothing"},
+		{"<config xmlns=\"http://www.xfa.org/schema/xci/3.0/\"><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>", Fail, "a default namespace is no prefix at all"},
 	} {
-		if got := verdictOf(t, withXFAConfig(t, base, packet), "7.15 t1"); got.Verdict != Fail {
-			t.Errorf("a dynamicRender of %q reports %v (%s), want Fail — the value is the element's "+
-				"text, not its whitespace", packet, got.Verdict, got.Why)
+		if got := verdictOf(t, withXFAConfig(t, base, c.packet), "7.15 t1"); got.Verdict != c.want {
+			t.Errorf("config packet %q reports %v (%s), want %v — %s (measured on veraPDF)", c.packet, got.Verdict, got.Why, c.want, c.why)
 		}
 	}
 }
@@ -600,6 +639,28 @@ func TestANonStringNameOnASpecificationIsAFailure(t *testing.T) {
 	}
 }
 
+// **Only the stream after the `config` entry is read** (P06.S02, re-cut at the P06 phase close). The old
+// version of this test put the answer in a packet named `packet1` and expected nib to find it; veraPDF
+// reads no stream there at all and PASSES the document, measured. What nib cannot read the way veraPDF
+// does is refused instead — a packet in an encoding Go's reader does not know.
+func TestAnUnparseableXFAPacketDoesNotRefuseTheForm(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := verdictOf(t, withXFAPackets(t, base,
+		"<template><p>a&nbsp;b</p></template>",
+		"<config><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>",
+	), "7.15 t1")
+	if named.Verdict != Pass {
+		t.Errorf("an XFA array with no `config` entry reports %v (%s), want Pass — veraPDF reads no stream there", named.Verdict, named.Why)
+	}
+	odd := verdictOf(t, withXFAConfig(t, base, "<?xml version=\"1.0\" encoding=\"UTF-16\"?><config/>"), "7.15 t1")
+	if odd.Verdict != CannotCheck || !strings.Contains(odd.Why, "cannot parse the way veraPDF") {
+		t.Errorf("a config packet in an encoding nib's reader does not know reports %v (%s), want CannotCheck", odd.Verdict, odd.Why)
+	}
+}
+
 // **An empty `/XFA []` PASSES**, and it reaches the rule through the VALIDATED catalog (P06.S02).
 //
 // pdfcpu accepts an empty XFA array, and a non-empty `/Fields` keeps the AcroForm alive, so this is a
@@ -627,51 +688,83 @@ func TestAnEmptyXFAArrayPasses(t *testing.T) {
 	}
 }
 
-// **A packet nib's XML parser rejects does not refuse the form** (P06.S02).
-//
-// Go's `encoding/xml` rejects several things a Java parser accepts and XFA templates routinely carry:
-// `encoding="ISO-8859-1"`, `version="1.1"`, and XHTML rich text with `&nbsp;`. Refusing the clause
-// because the `template` packet has a named entity would report "could not check" for ordinary forms
-// veraPDF passes, so each packet is tried and the first value found wins.
-func TestAnUnparseableXFAPacketDoesNotRefuseTheForm(t *testing.T) {
-	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The unreadable packet comes FIRST, so a reader that aborts on it never sees the answer.
-	d := verdictOf(t, withXFAPackets(t, base,
-		"<template><p>a&nbsp;b</p></template>",
-		"<config><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>",
-	), "7.15 t1")
-	if d.Verdict != Fail {
-		t.Errorf("with an unparseable template packet before the config packet, 7.15 t1 reports %v "+
-			"(%s), want Fail — the config packet answered the question", d.Verdict, d.Why)
-	}
-	// But when NO packet answers and one could not be read, the honest answer is a refusal.
-	only := verdictOf(t, withXFAPackets(t, base, "<template><p>a&nbsp;b</p></template>"), "7.15 t1")
-	if only.Verdict != CannotCheck {
-		t.Errorf("with only an unparseable packet, 7.15 t1 reports %v (%s), want CannotCheck — nothing "+
-			"declared the setting and nib could not read the one packet there was", only.Verdict, only.Why)
-	}
-}
-
-// **The element's text survives being split, and a nested element of the same name does not collapse
-// the reading** (P06.S02). A counter merely SET on the opening tag lost both: `requi<!--x-->red` read
-// as `requi`, and a nested `dynamicRender` ended the outer one early — each a Pass on a dynamic form.
+// **The `config` entry is the FIRST string `config` in the array, and the stream right after it** (P06 phase
+// close). A name `/config` is not a string, so it does not count.
 func TestTheDynamicRenderTextIsReadWhole(t *testing.T) {
 	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, packet := range []string{
-		"<config><dynamicRender>requi<!--x-->red</dynamicRender></config>",
-		"<config><dynamicRender><x><dynamicRender/></x>required</dynamicRender></config>",
-		"<config><dynamicRender>requi<?pi?>red</dynamicRender></config>",
-	} {
-		if got := verdictOf(t, withXFAConfig(t, base, packet), "7.15 t1"); got.Verdict != Fail {
-			t.Errorf("packet %q reports %v (%s), want Fail — the element's text is `required`",
-				packet, got.Verdict, got.Why)
+	req := "<config><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>"
+	// Stimulus before response: the same packet under the STRING `config` fails.
+	if got := verdictOf(t, withXFAConfig(t, base, req), "7.15 t1"); got.Verdict != Fail {
+		t.Fatalf("setup: the config door reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	// One mutation pass, not two: pdfcpu's reader deletes an XFA-only AcroForm, so a second pass over
+	// `withXFAConfig`'s output would find nothing to rename.
+	named := mutate(t, base, func(ctx *model.Context) error {
+		sd, err := ctx.NewStreamDictForBuf([]byte(req))
+		if err != nil {
+			return err
 		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		cat, err := ctx.XRefTable.Catalog()
+		if err != nil {
+			return err
+		}
+		form, err := ctx.IndRefForNewObject(types.Dict{"Fields": types.Array{}, "XFA": types.Array{types.Name("config"), *ref}})
+		if err != nil {
+			return err
+		}
+		cat["AcroForm"] = *form
+		return nil
+	})
+	if got := verdictOf(t, named, "7.15 t1"); got.Verdict != Pass {
+		t.Errorf("an XFA array whose `config` is a NAME reports %v (%s), want Pass — veraPDF matches a string only (measured)", got.Verdict, got.Why)
+	}
+	// **The FIRST `config` entry, not the last** (found by the phase close's blind mutation pass, measured on
+	// veraPDF): two config packets, a static one first and a dynamic one second, PASS; the reverse FAILS.
+	twoConfigs := func(first, second string) []byte {
+		return mutate(t, base, func(ctx *model.Context) error {
+			arr := types.Array{}
+			for _, v := range []string{first, second} {
+				sd, err := ctx.NewStreamDictForBuf([]byte("<config><acrobat><acrobat7><dynamicRender>" + v +
+					"</dynamicRender></acrobat7></acrobat></config>"))
+				if err != nil {
+					return err
+				}
+				if err := sd.Encode(); err != nil {
+					return err
+				}
+				ref, err := ctx.IndRefForNewObject(*sd)
+				if err != nil {
+					return err
+				}
+				arr = append(arr, types.StringLiteral("config"), *ref)
+			}
+			cat, err := ctx.XRefTable.Catalog()
+			if err != nil {
+				return err
+			}
+			form, err := ctx.IndRefForNewObject(types.Dict{"Fields": types.Array{}, "XFA": arr})
+			if err != nil {
+				return err
+			}
+			cat["AcroForm"] = *form
+			return nil
+		})
+	}
+	if got := verdictOf(t, twoConfigs("forbidden", "required"), "7.15 t1"); got.Verdict != Pass {
+		t.Errorf("a static config packet before a dynamic one reports %v (%s), want Pass — veraPDF reads the first", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, twoConfigs("required", "forbidden"), "7.15 t1"); got.Verdict != Fail {
+		t.Errorf("a dynamic config packet before a static one reports %v (%s), want Fail — veraPDF reads the first", got.Verdict, got.Why)
 	}
 }
 
@@ -893,8 +986,8 @@ func TestAnEncryptedDocumentMustAllowAccessibleExtraction(t *testing.T) {
 	}
 }
 
-// **nib's own "Protect with a password" output FAILS this clause, and that is recorded rather than
-// fixed** (P06.S03). `pdfops.Encrypt` never sets `conf.Permissions`, so the written `/P` is `-3901` and
+// **nib's own "Protect with a password" output FAILS this clause when the checker is given the password,
+// and that is recorded rather than fixed** (P06.S03). `pdfops.Encrypt` never sets `conf.Permissions`, so the written `/P` is `-3901` and
 // bit 10 is clear: a document nib protected cannot be read aloud.
 //
 // Which permissions that door should grant is a product decision with no single right answer, so the
@@ -910,9 +1003,14 @@ func TestNibsOwnProtectedOutputFailsTheAccessibilityPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// **Opened WITH the password, which no product door does** (the P06 phase-close review): `Check` and
+	// `CheckForUA` read without one, so on this file they stop at "please provide the correct password" and
+	// emit no report at all. What this pins is the rule's answer on nib's own `/P`, the fact /pending 640
+	// rests on — not what a user running `nib ua` on the file would see. A failed re-open is the fixture
+	// not presenting its shape, so it is fatal rather than a skip.
 	d, oerr := openEncrypted(t, protected, "a-password")
 	if oerr != "" {
-		t.Skipf("nib cannot re-open its own protected output without the password here: %s", oerr)
+		t.Fatalf("setup: nib's own protected output did not re-open with its password: %s", oerr)
 	}
 	got := registry["7.16 t1"].Check(d)
 	if got.Verdict != Fail {
@@ -1311,9 +1409,13 @@ func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	flipped := strings.Replace(string(b), "optimizeDuplicateContentStreams: false", "optimizeDuplicateContentStreams: true", 1)
-	if flipped == string(b) {
-		t.Fatal("setup: pdfcpu's default config no longer spells optimizeDuplicateContentStreams: false")
+	// And `optimize` OFF (the P06 phase-close review): it switches off the form fusion `formTwins` exists to
+	// account for, so a pin of one field alone left the answer to the machine.
+	flipped2 := strings.Replace(flipped, "optimize: true", "optimize: false", 1)
+	if flipped == string(b) || flipped2 == flipped {
+		t.Fatal("setup: pdfcpu's default config no longer spells optimizeDuplicateContentStreams: false / optimize: true")
 	}
+	flipped = flipped2
 	if err := os.WriteFile(path, []byte(flipped), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1321,14 +1423,24 @@ func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stimulus before response: the planted config really is what `NewDefaultConfiguration` now hands out.
-	if !model.NewDefaultConfiguration().OptimizeDuplicateContentStreams {
-		t.Fatal("setup: pdfcpu did not load the planted config, so the flag this test pins is not set")
+	if c := model.NewDefaultConfiguration(); !c.OptimizeDuplicateContentStreams || c.Optimize {
+		t.Fatal("setup: pdfcpu did not load the planted config, so the flags this test pins are not set")
 	}
 	X := "/XObject << /X0 10 0 R >>"
 	pdf := buildPDF(spDoc([][2]string{{"/X0 Do", X}, {"/X0 Do", X}}, map[int]string{10: spForm("/StructParents 0", spMC)}))
 	if got := verdictOf(t, pdf, "7.20 t2"); got.Verdict != Fail {
 		t.Errorf("with the user's pdfcpu config merging duplicate content streams, 7.20 t2 reports %v (%s), "+
 			"want Fail — veraPDF fails a keyed form drawn once on each of two pages", got.Verdict, got.Why)
+	}
+	// Two equal outer forms, each drawing a keyed inner: fused under the pinned `optimize`, so nib refuses
+	// exactly as it does with no config at all. With `optimize` left to the planted config the outers stay
+	// apart and the answer moves — the verdict this test exists to hold still.
+	twins := buildPDF(spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
+		map[int]string{10: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"),
+			11: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"), 12: spForm("/StructParents 0", spMC)}))
+	if got := verdictOf(t, twins, "7.20 t2"); got.Verdict != CannotCheck {
+		t.Errorf("with the user's pdfcpu config turning optimize off, two equal outer forms report %v (%s), "+
+			"want the same CannotCheck the default config gives", got.Verdict, got.Why)
 	}
 }
 

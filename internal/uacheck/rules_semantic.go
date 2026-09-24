@@ -71,32 +71,40 @@ func hasAlternateText(d *Document, n structNode) bool {
 // checkFigureAlt evaluates ua1 7.3 t1: every Figure (through the role map) has a non-empty `/Alt` or an
 // `/ActualText`.
 func checkFigureAlt(d *Document) Result {
+	return checkAlternateTextOn(d, "Figure",
+		"a Figure has neither an alternate description (/Alt) nor replacement text (/ActualText), so a screen reader has nothing to say for it")
+}
+
+// checkAlternateTextOn is `7.3 t1` and `7.7 t1`'s one door (ADR-009): every element of type `typ` has
+// alternate text, by `hasAlternateText`.
+//
+// **A definite failure beats a refusal** (the package's convention, `checkEmbeddedFileNames`): the scan
+// runs over the elements nib DID read and type before either refusal is considered. Until the P06 phase
+// close both clauses refused first — so a Formula with no alternate text that nib had already read went
+// unreported whenever the tree ran past its bound, or some OTHER element could not be typed.
+func checkAlternateTextOn(d *Document, typ, failWhy string) Result {
 	nodes, unread := d.structNodes()
-	if unread != "" {
-		return Result{Verdict: CannotCheck, Why: unread}
-	}
 	std, untyped := d.standardTypes(nodes)
-	if untyped != "" {
-		// An element nib cannot type may be the Figure, so "the document has no Figure" is not nib's to say.
-		return Result{Verdict: CannotCheck, Why: untyped}
-	}
-	figures := 0
+	found := 0
 	for i, n := range nodes {
-		if std[i] != "Figure" {
+		if std[i] != typ {
 			continue
 		}
-		figures++
+		found++
 		if hasAlternateText(d, n) {
 			continue
 		}
-		return Result{
-			Verdict: Fail,
-			Why:     "a Figure has neither an alternate description (/Alt) nor replacement text (/ActualText), so a screen reader has nothing to say for it",
-			Where:   nodeWhere(n, d.name(n.dict["S"])),
-		}
+		return Result{Verdict: Fail, Why: failWhy, Where: nodeWhere(n, d.name(n.dict["S"]))}
 	}
-	if figures == 0 {
-		return Result{Verdict: NotApplicable, Why: "the document has no Figure structure elements"}
+	if unread != "" {
+		return Result{Verdict: CannotCheck, Why: unread}
+	}
+	if untyped != "" {
+		// An element nib cannot type may be one of these, so "the document has none" is not nib's to say.
+		return Result{Verdict: CannotCheck, Why: untyped}
+	}
+	if found == 0 {
+		return Result{Verdict: NotApplicable, Why: "the document has no " + typ + " structure elements"}
 	}
 	return Result{Verdict: Pass}
 }
@@ -120,34 +128,7 @@ func checkFigureAlt(d *Document) Result {
 // alternate description a screen reader reads whatever glyphs happen to be there, which for an
 // equation is noise.
 func checkFormulaAlt(d *Document) Result {
-	nodes, unread := d.structNodes()
-	if unread != "" {
-		return Result{Verdict: CannotCheck, Why: unread}
-	}
-	std, untyped := d.standardTypes(nodes)
-	if untyped != "" {
-		// An element nib cannot type may be the Formula, so "the document has no Formula" is not
-		// nib's to say — the same refusal `7.3 t1` makes for the same reason.
-		return Result{Verdict: CannotCheck, Why: untyped}
-	}
-	formulas := 0
-	for i, n := range nodes {
-		if std[i] != "Formula" {
-			continue
-		}
-		formulas++
-		if hasAlternateText(d, n) {
-			continue
-		}
-		return Result{
-			Verdict: Fail,
-			Why: "a Formula has neither an alternate description (/Alt) nor replacement text " +
-				"(/ActualText), so a screen reader reads the equation's glyphs rather than the equation",
-			Where: nodeWhere(n, d.name(n.dict["S"])),
-		}
-	}
-	if formulas == 0 {
-		return Result{Verdict: NotApplicable, Why: "the document has no Formula structure elements"}
-	}
-	return Result{Verdict: Pass}
+	return checkAlternateTextOn(d, "Formula",
+		"a Formula has neither an alternate description (/Alt) nor replacement text "+
+			"(/ActualText), so a screen reader reads the equation's glyphs rather than the equation")
 }

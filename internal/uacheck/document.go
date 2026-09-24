@@ -140,6 +140,29 @@ type roleResolution struct {
 	unresolved string
 }
 
+// checkerConfig is the ONE pdfcpu configuration every read in this package uses (ADR-009): `open`, and
+// the two unvalidated re-parses (`dynamicRenderFromRawFile`, and `rules_language.go`'s).
+//
+// **Every field that shapes a READ is pinned to pdfcpu's own built-in default**, because
+// `NewDefaultConfiguration` otherwise takes them from the user's `$XDG_CONFIG_HOME/pdfcpu/config.yml` —
+// and a checker whose answer depends on which machine asks is not a checker. Measured at P06.S05's review:
+// `optimizeDuplicateContentStreams: true` there fused two pages' content streams and turned a keyed form
+// drawn once on each from Fail to Pass (`TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer`). The P06
+// phase-close review then found the pin covered that one field: `optimize: false` would switch off the
+// form fusion `formTwins` exists to account for, and `validationMode` decides which files open at all.
+func checkerConfig() *model.Configuration {
+	conf := model.NewDefaultConfiguration()
+	conf.Reader15 = true
+	conf.DecodeAllStreams = false
+	conf.ValidationMode = model.ValidationRelaxed
+	conf.ValidateLinks = false
+	conf.Optimize = true
+	conf.OptimizeResourceDicts = true
+	conf.OptimizeDuplicateContentStreams = false
+	conf.Limits = model.DefaultResourceLimits()
+	return conf
+}
+
 // open parses pdf for the rules to read.
 //
 // **A document that cannot be opened is an error, not a report full of failures.** A checker that
@@ -150,14 +173,7 @@ func open(pdf []byte) (*Document, error) {
 	if len(pdf) == 0 {
 		return nil, fmt.Errorf("uacheck: no document to check")
 	}
-	// **`OptimizeDuplicateContentStreams` is pinned off, not left to the user's pdfcpu config.**
-	// `NewDefaultConfiguration` reads `$XDG_CONFIG_HOME/pdfcpu/config.yml`, and with that flag on pdfcpu
-	// merges byte-identical PAGE content streams — so two pages' identical content becomes one object,
-	// which `7.20 t2`'s once-per-key traversal then reads as ONE traversal: measured, a keyed form drawn
-	// once on each of two pages turns from Fail to Pass on a machine that set it (the P06.S05 review).
-	// The default is off; this makes the checker's answer not depend on which machine asks.
-	conf := model.NewDefaultConfiguration()
-	conf.OptimizeDuplicateContentStreams = false
+	conf := checkerConfig()
 	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)

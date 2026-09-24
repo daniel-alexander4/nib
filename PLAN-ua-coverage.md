@@ -1983,7 +1983,7 @@ rows across S01–S04, every one class 1 with a named standing reader, so all 44
 row). That is what a checker's inventory looks like — every observable here IS a shipped assertion —
 and it is recorded with both counts, plus what the pass could not see.
 
-### P06 — Checker: file-level rules (~11 rules)
+### P06 — Checker: file-level rules (~11 rules) *(done 2026-09-23, v1.158.1)*
 **Goal.** Identification prefix and properties, header, Suspects, embedded-file keys, XFA, encryption P,
 reference and Form XObjects, Formula.
 **Exit criteria.** As P03.
@@ -2025,6 +2025,49 @@ It is carried to P07 with its declaration intact, not silently absorbed here.
 adds eleven read-only clauses to a checker, writes no bytes, moves no format, and sends nothing. `7.15 t1`
 (XFA) and `7.16 t1` (encryption) touch security-flavoured *subjects* without changing any security
 behaviour. Recorded because a trigger nobody records is one nobody can tell was evaluated.
+
+**Phase close (2026-09-23, v1.158.1).** Acceptance ledger over the exit criteria ("As P03") and every phase-open
+amendment, split on `and`:
+- *"Every rule in the family passes `veracorpus_test.go`"* — **met**: 297 files, 26,806 scored pairs, 0 false pass,
+  0 false fail; all eleven of the phase's clauses registered, each with an exact `corpusReach` row.
+- *"rules without corpus files agree with veraPDF on fixtures of their own"* — **met**: `6.1 t1` has no corpus file
+  and `7.15 t1` no passing one; the live oracle (**7,735 of 7,735 pairs over 85 documents**) reaches BOTH veraPDF
+  states for every P06 clause and declares none unreachable (`notYetReachable` holds no P06 row).
+- *"eleven rules … lands the checker at 91"* — **met**: 91 of 106, guarded by the registry-count test.
+- *"`7.1 t12` is NOT in this phase … carried to P07 with its declaration intact"* — **met**: still unregistered,
+  still declared.
+- *"`7.7 t1` … RETIRES that counterexample … owes a NEW counterexample and the prose sites"* — **met** at P06.S04.
+- *"`7.16 t1` will FAIL nib's own `Encrypt` output … the phase says plainly"* — **met, and corrected**: the phase-close
+  review found no product door REPORTS it (`Encrypt` sets a user password, and the checker reads without one), so the
+  rule's comment and test now say the failure is the writer's predicate. Which permissions to grant is /pending 640,
+  Dan's.
+
+**The full-repo review** (eight reviewers, `code-reviews/v1.158.0-p06-phase-close-2026-09-23.md`) found 71 findings,
+six critical — **none of the criticals in this phase's package**. Inside it, R1's seven were all fixed, and two were
+live disagreements with veraPDF in rules this phase BUILT, invisible to both oracles because the corpus's one `7.15`
+document fails and no document varied the `part` value:
+- `7.15 t1` read every packet at any depth and trimmed; veraPDF reads the stream after the first STRING `config`,
+  walks `xdp:xdp?/config/acrobat/acrobat7/dynamicRender` taking the first child of each name, and takes the first
+  child NODE's raw value. The port found more than the review listed — veraPDF merges text across comments but not
+  across CDATA — and found **P06.S02's own tests had asserted behaviour nobody measured**: their fixtures named no
+  `config` entry at all. Three re-review rounds then found eleven shapes Go's decoder accepts and veraPDF's parser
+  refuses (false FAILS), each now refused and pinned; the rest of XML well-formedness is declared and filed
+  (/pending 673) rather than assumed.
+- `5 t2` read `part` trimmed and first-run and compared strings; veraPDF reads the whole raw text as an integer (`01`
+  and `+1` pass, ` 1 ` fails), and a qualified property's value is its `rdf:value`, element or attribute form.
+- The checker's pdfcpu configuration is now ONE door that pins every read-shaping field, used by all three reads;
+  `optimize` off was measured to move `7.20 t2`'s answer (and to give veraPDF's EXACT answer where nib now refuses —
+  /pending 672).
+Outside the phase: 64 findings filed as /pending 660-671 (five criticals individually: a shared consent slot that
+signs the wrong ceremony, a decoy field hiding appended content, a transport certificate expiring 15 minutes into an
+arm, `pagenum` overwriting an input, pdfops' unbudgeted form walks) and /pending 580 re-confirmed.
+
+**Red-proof of the fix pass**: 18 targeted mutations, 18 red; 5 blind, 4 red on first run and the survivor (the LAST
+`config` entry read instead of the first) closed by a measured pin. **Graduation**: 66 P06 inventory rows, 60
+`keep-live` mechanically, 6 actionable all `keep-live`, 0 gated, 0 deleted (`instruments/ua-coverage.md`).
+**Required-run gates**: tiers 4 and 6 NOT FIRED — no slice nor the close touched a session, ceremony, delivery,
+discovery, p2p or rendezvous path (the diff is `internal/uacheck`, one `pdfops` comment, docs). **Pending sweep
+against the closure**: 654/655/656 stay open (the phase never touched them), 657 is P07's, 658/659 new; nothing closed.
 
 #### P06.S01 — the identification's prefixes, and the file header *(done 2026-09-23, v1.154.0)*
 Scope: `5 t3`, `5 t4`, `5 t5` — each property of the PDF/UA identification schema carries namespace prefix
