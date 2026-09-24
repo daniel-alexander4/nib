@@ -220,6 +220,27 @@ func (d *Document) text(obj types.Object) (string, bool) {
 	return s, err == nil
 }
 
+// nameOf reports the name a key holds and whether the key holds a NAME at all.
+//
+// `d.name` cannot tell an absent key from a present empty name (`/S /`), and for 7.18.8 t1 that is a false
+// PASS: veraPDF's `getNameKeyStringValue` yields `""` for the empty name, the profile tests
+// `structParentType == null`, and `"" != null` — so veraPDF FAILS a printer's mark in an element whose `/S`
+// is empty. Measured 2026-09-23: pdfcpu accepts such a file, veraPDF fails it, and nib passed it.
+func (d *Document) nameOf(o types.Object) (string, bool) {
+	if o == nil {
+		return "", false
+	}
+	r, err := d.Ctx.Dereference(o)
+	if err != nil || r == nil {
+		return "", false
+	}
+	n, ok := r.(types.Name)
+	if !ok {
+		return "", false
+	}
+	return n.Value(), true
+}
+
 // dict resolves obj to a dictionary, or nil.
 func (d *Document) dict(obj types.Object) types.Dict {
 	if obj == nil {

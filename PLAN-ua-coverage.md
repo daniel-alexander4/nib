@@ -1696,7 +1696,7 @@ paths, nor `internal/p2p`, nor `internal/rendezvous`; it is `internal/uacheck` p
 number, which is exactly what veraPDF reports on that file; on nib's own Markdown conversion and on a real
 third-party fillable form both clauses report `not applicable` with "the document has no annotations".
 
-#### P05.S02 — the typed annotations: links, TrapNet and PrinterMark
+#### P05.S02 — the typed annotations: links, TrapNet and PrinterMark *(done 2026-09-23, v1.150.0)*
 Scope: `7.18.5 t1` and `t2` (a Link nested in a `Link` tag; a Link with `/Contents`), `7.18.2 t1` (TrapNet refused),
 `7.18.8 t1` (a PrinterMark has no structure parent). Refs: S01's door, P03.S01's standard-type resolution.
 Acceptance:
@@ -1707,6 +1707,78 @@ Acceptance:
 - `7.18.2-t01-fail-a.pdf` either stays on `corpusUnreadable` with its reason restated against this clause, or moves
   off it with the reason retired — stated either way, never left implicit.
 - Four `corpusReach` rows, measured.
+
+**(grill, 2026-09-23)** Read from veraPDF's own source (`GFPDAnnot`, `GFPDLinkAnnot`, `GFPDTrapNetAnnot`,
+`GFPDPrinterMarkAnnot`, and the profile in the 1.30.2 jar), then measured on **seventeen fixtures** before a
+rule was written. Three of the four are one predicate over S01's door; the readings that reading alone would
+have got wrong:
+
+- **`7.18.8 t1` reads the element's RAW `/S`, not its standard type** (`GFPDAnnot.getstructParentType` takes
+  `getNameKeyStringValue(ASAtom.S)` and stops). It is the ONLY clause in this family that does not go through
+  `standardType`, so a private type on a role-map loop — which makes every other clause answer CannotCheck —
+  is still a definite Fail here, because the raw name is there to read.
+- **And `7.18.8 t1`'s own description reads BACKWARDS.** It says a PrinterMark "shall be considered Incidental
+  Artifacts", which invites tagging one `/Artifact`; the test is `structParentType == null`, and measured on
+  1.30.2 a printer's mark whose `/StructParent` names an `/Artifact` element **FAILS**. An incidental artifact
+  is content *no element describes*, never content described as an artifact. A rule written from the prose
+  would pass the document veraPDF fails.
+- **A `/StructParent` whose parent-tree row is not an element reads as null and PASSES** — measured with a row
+  holding an array. So the clause is not "carries no `/StructParent`"; it is "nothing in the tree types it".
+- **`7.18.5 t2` reads the ANNOTATION's `/Contents` and has no fallback**, where `7.18.1 t2` falls back to the
+  enclosing element's `/Alt`. The decisive fixture is one document: a link with no `/Contents` whose Link
+  element carries `/Alt` **passes 7.18.1 t2 and fails 7.18.5 t2**. Two rules over one annotation, and only a
+  description in the right place satisfies both.
+- **`7.18.2 t1`'s whole test is the shared exemption**: a TrapNet is permitted only where it is hidden or off
+  the crop box. Measured all three ways. A visible TrapNet also fails `7.18.1 t1`, because TrapNet is not on
+  that clause's exclusion list — two clauses firing on one annotation is correct here, not a double report.
+
+**Nothing nib writes carries any of these three subtypes** — measured, including the Markdown conversion,
+which emits **no `/Annots` at all**. So no product door reaches any half of these four clauses, and the oracle's
+six new documents are mutations (`addAnnotation`), which the corpus cannot make up for: it holds **one** TrapNet
+file and pdfcpu refuses it, and **one** PrinterMark file, a fail.
+
+Tasks:
+- T01 — `annotsOfSubtype` over S01's door: the population of a typed clause is the annotations of one
+  `/Subtype`, which is how veraPDF picks the model subclass the profile names as each rule's object.
+- T02 — `7.18.5 t1` and `t2`, `7.18.2 t1`, `7.18.8 t1`, each with the shared exemption and the same verdict
+  precedence S01 established (a definite Fail on a read annotation beats a refusal from a short population).
+- T03 — `7.18.8 t1` reads the raw `/S`, with a role-map loop fixture proving it does not consult the map and
+  its 7.18.1 t1 control proving the same document does make another clause refuse.
+- T04 — fixtures: the seventeen-row measured table, the decisive `7.18.1 t2` / `7.18.5 t2` pair on one
+  document, and `addAnnotation` — a mutation that injects an annotation, a structure element and a
+  parent-tree row at the next free key.
+- T05 — the count claim: 72 → 76 across the six copies with a reader, and the complement 34 → 30.
+- T06 — `corpusReach`: 31, 31, 1 and **0**, the zero recorded rather than omitted, with the reason.
+
+**(acceptance ledger, 2026-09-23, v1.150.0)** Every clause split on `and`; nothing `not exercised`.
+
+| # | clause | how it was discharged |
+|---|---|---|
+| 1 | all four hold a measured pass fixture of their own | the 23-row table, every verdict veraPDF 1.30.2's, plus six oracle documents |
+| 2 | and a fail fixture | same table; the oracle reaches both halves of all four (law 5 green over 60 documents) |
+| 3 | because the corpus carries a pass file for neither 7.18.2 nor 7.18.8 | measured: `7.18.2` reach is **0** — its one corpus file is unreadable to pdfcpu — and `7.18.8` reach is **1**, a fail |
+| 4 | `7.18.8 t1` reads the raw `/S` and not the standard type | `TestAPrinterMarksTagIsReadRawAndNotThroughTheRoleMap`: a role-map loop leaves it a definite Fail, and a `/Text` annotation in the SAME looped element makes 7.18.1 t1 refuse — the control that proves the difference is the role map and not the fixture |
+| 5 | measured on a fixture where a role map makes the two differ | `/MyMark → /Artifact` fails, and so does the loop; both rows measured |
+| 6 | the same fixture measures which one 7.18.5 t1 reads | it reads the STANDARD type: `/MyLink → /Link` passes, and a looping `/MyLink` is CannotCheck |
+| 7 | `7.18.2-t01-fail-a.pdf` stays on `corpusUnreadable` with its reason restated | stated, and the reason is `/F` and not `/AP` — read from pdfcpu's `validateAnnotationDictTrapNet`, which requires neither `/AP` nor anything else but `/F` |
+| 8 | four `corpusReach` rows, measured | 31, 31, 1 and **0**, the zero recorded with its reason rather than omitted |
+
+**Gates.** `suiterun` green (fingerprint in the close notes); `go test ./internal/uacheck/` 45s; corpus **0 false
+pass, 0 false fail** over 22,382 pairs; `len(Clauses())` = **76**, run rather than counted. `/redproof`: **8
+mutations, one condition each, all red** after the review's fixes — five of them were survivors the review
+found. **Tiers 4 and 6 did NOT fire**: the diff is `internal/uacheck` plus one count copy in
+`internal/pdfops/labelua.go` and two documents.
+
+**Live-verified through the real binary**: `nib ua` on veraPDF's own `7.18.5-t01-fail-a.pdf` reports
+`7.18.5 t1` fail — naming the link's object number — and `7.18.5 t2` pass, which is exactly veraPDF's pair of
+verdicts on that file.
+
+**What the review found, and it is the reason this slice is not four one-line rules.** Six coverage holes and
+one **live false pass**: an element whose `/S` is an EMPTY name. `d.name` cannot tell `/S /` from no `/S` at
+all, veraPDF's `getNameKeyStringValue` yields `""` there and the profile tests `structParentType == null`, so
+veraPDF FAILS a printer's mark in such an element and nib passed it. Measured: pdfcpu accepts the file. Fixed
+by a `nameOf` door that answers presence separately from value — which the package's own ADR-009 guard then
+required be moved into `document.go`, where every typed reader lives.
 
 #### P05.S03 — the interactive surface: a widget's alternative description, and the page's tab order
 Scope: `7.18.1 t3` (the field's `/TU`, else every one of its widgets has an enclosing `/Alt`) and `7.18.3 t1` (a page

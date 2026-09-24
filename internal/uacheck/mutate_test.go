@@ -444,6 +444,123 @@ func alternateTextWithNoLanguage(t *testing.T, pdf []byte, keys ...string) []byt
 }
 
 // widgetMutation breaks one link of a described form's widget ↔ Form-element linkage.
+// addAnnotation puts one annotation of `subtype` on page 1, for the clauses P05.S02 checks over
+// subtypes **nib writes nothing of**: Link, TrapNet and PrinterMark. `nib office`'s Markdown conversion
+// emits no `/Annots` at all (measured), `AddNotes` writes only `/Text` and form authoring only `/Widget`,
+// so neither half of 7.18.5 t1/t2, 7.18.2 t1 or 7.18.8 t1 is reachable through a product door — and the
+// veraPDF corpus reaches only 7.18.8's failing half, its one 7.18.2 file being unreadable to pdfcpu.
+//
+// `tag` empty leaves the annotation with no `/StructParent`; otherwise a structure element with that tag
+// is added to the tree, the parent tree gains a row naming it, and the annotation points at that row.
+// Every annotation gets an `/AP` because **pdfcpu requires one on a PrinterMark** (`validateAnnotationDict`
+// → `validateAnnotationDictPrinterMark`); on a TrapNet it is surplus, whose one REQUIRED entry is `/F`
+// (measured both ways — a TrapNet with `/F` and no `/AP` reads fine and nib and veraPDF agree on it, which is
+// also what `corpusUnreadable`'s row for the corpus TrapNet file says). pdfcpu additionally requires a TrapNet
+// to be the LAST entry of `/Annots`; this helper appends, so a caller that inserts elsewhere will be refused
+// opaquely.
+func addAnnotation(t *testing.T, pdf []byte, subtype string, entries types.Dict, tag string) []byte {
+	t.Helper()
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		page, _, _, err := ctx.PageDict(1, false)
+		if err != nil {
+			return err
+		}
+		sd, serr := ctx.NewStreamDictForBuf(nil)
+		if serr != nil {
+			return serr
+		}
+		sd.Dict["Type"] = types.Name("XObject")
+		sd.Dict["Subtype"] = types.Name("Form")
+		sd.Dict["BBox"] = types.NewNumberArray(0, 0, 10, 10)
+		if eerr := sd.Encode(); eerr != nil {
+			return eerr
+		}
+		ap, aerr := ctx.IndRefForNewObject(*sd)
+		if aerr != nil {
+			return aerr
+		}
+		annot := types.Dict{
+			"Type":    types.Name("Annot"),
+			"Subtype": types.Name(subtype),
+			"Rect":    types.NewNumberArray(10, 10, 30, 30),
+			"F":       types.Integer(4),
+			"AP":      types.Dict{"N": *ap},
+		}
+		for k, v := range entries {
+			annot[k] = v
+		}
+		aref, rerr := ctx.IndRefForNewObject(annot)
+		if rerr != nil {
+			return rerr
+		}
+		if tag != "" {
+			cat, cerr := ctx.XRefTable.Catalog()
+			if cerr != nil {
+				return cerr
+			}
+			rootRef, ok := cat["StructTreeRoot"].(types.IndirectRef)
+			if !ok {
+				return fmt.Errorf("the fixture's /StructTreeRoot is not an indirect reference")
+			}
+			root, derr := ctx.DereferenceDict(cat["StructTreeRoot"])
+			if derr != nil || root == nil {
+				return fmt.Errorf("the fixture has no structure tree to add an element to")
+			}
+			elem, eerr := ctx.IndRefForNewObject(types.Dict{
+				"Type": types.Name("StructElem"),
+				"S":    types.Name(tag),
+				"P":    rootRef,
+				"K":    types.Dict{"Type": types.Name("OBJR"), "Obj": *aref},
+			})
+			if eerr != nil {
+				return eerr
+			}
+			kids, kerr := ctx.DereferenceArray(root["K"])
+			if kerr != nil {
+				return kerr
+			}
+			root["K"] = append(kids, *elem)
+			// The parent tree's next free key, so the row cannot collide with one the document already has.
+			pt, perr := ctx.DereferenceDict(root["ParentTree"])
+			if perr != nil || pt == nil {
+				return fmt.Errorf("the fixture's parent tree does not resolve")
+			}
+			// **The key's PRESENCE is checked separately from its value.** `DereferenceArray` answers
+			// `(nil, nil)` for an absent key, so testing only the error let a `/Kids`-form parent tree through
+			// as "a flat /Nums with no rows" — `next` would compute to 0 and collide with the key the `/Kids`
+			// side already holds. No caller passes such a tree today; the guard could not have said so.
+			if _, flat := pt["Nums"]; !flat {
+				return fmt.Errorf("the fixture's parent tree has no flat /Nums; this helper cannot pick a free key in a /Kids tree")
+			}
+			nums, nerr := ctx.DereferenceArray(pt["Nums"])
+			if nerr != nil {
+				return fmt.Errorf("the fixture's parent tree is not a flat /Nums: %v", nerr)
+			}
+			next := 0
+			for i := 0; i+1 < len(nums); i += 2 {
+				if k, ok := nums[i].(types.Integer); ok && k.Value() >= next {
+					next = k.Value() + 1
+				}
+			}
+			pt["Nums"] = append(nums, types.Integer(next), *elem)
+			annot["StructParent"] = types.Integer(next)
+			// The annotation is now reachable from the structure tree as well as from the page, and pdfcpu's
+			// validator walks both; marking the object valid keeps the second walk from re-validating a
+			// dictionary it is already inside. Only this branch creates that second path.
+			if uerr := ctx.SetValid(*aref); uerr != nil {
+				return uerr
+			}
+		}
+		annots, aerr2 := ctx.DereferenceArray(page["Annots"])
+		if aerr2 != nil {
+			// A dropped error here would silently discard the page's existing annotations.
+			return fmt.Errorf("the fixture's /Annots does not resolve to an array: %v", aerr2)
+		}
+		page["Annots"] = append(annots, *aref)
+		return nil
+	})
+}
+
 // annotMutation breaks the first NON-widget annotation of a document, for the halves of 7.18.1 t1 and
 // t2 that no product door reaches: `pdfops.AddNotes` writes a described note with `/Contents`, which is
 // both clauses' passing half, and nothing nib ships writes an undescribed or untagged annotation.
