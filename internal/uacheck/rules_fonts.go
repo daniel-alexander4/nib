@@ -44,6 +44,8 @@ type usedFont struct {
 	where     string
 	visible   bool // selected by at least one text operator not in render mode 3
 	hidden    bool // selected by at least one text operator in render mode 3
+	modes     map[int]bool
+	offPage   bool // selected somewhere other than a page's own content stream
 	unresolve bool // a text operator named a font resource that does not resolve
 }
 
@@ -69,6 +71,11 @@ func (d *Document) usedFonts() ([]*usedFont, string) {
 			byKey[key] = uf
 			order = append(order, uf)
 		}
+		if uf.modes == nil {
+			uf.modes = map[int]bool{}
+		}
+		uf.modes[ev.mode] = true
+		uf.offPage = uf.offPage || ev.offPage
 		if ev.invisible {
 			uf.hidden = true
 		} else {
@@ -172,8 +179,20 @@ func checkFontsEmbedded(d *Document) Result {
 			}
 		} else if cid := d.descendantOf(f.dict); cid != nil && d.cidProgram(cid) != "" {
 			// A Type 0 font passes by its Subtype; its DESCENDANT is the subject that must embed — through the keys
-			// `PDCIDFont` opens (`cidProgram`).
-			continue
+			// `PDCIDFont` opens (`cidProgram`), and for a CIDFontType2 only if veraPDF PARSES the program (/pending 677's
+			// CIDFontType2 half, P07.S04a: measured failing on a program whose hhea lies past its end).
+			switch st, why := d.cidTrueTypeParsed(cid); st {
+			case ttParsed:
+				continue
+			case ttUnknown:
+				if unsure == nil {
+					unsure = &Result{Verdict: CannotCheck, Where: f.where,
+						Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its TrueType program is not known — %s", f.name, d.baseFontName(f.dict), why)}
+				}
+				continue
+			default:
+				notEmbedded = "veraPDF cannot read its embedded TrueType program (" + why + ")"
+			}
 		}
 		return Result{
 			Verdict: Fail,
@@ -372,6 +391,14 @@ func checkCIDSetsComplete(d *Document) Result {
 		}
 	}
 	if withSet == 0 {
+		// A font that did not resolve may be the CID font veraPDF judges — pdfcpu drops a CIDFont it finds malformed
+		// (measured at P07.S04a: veraPDF passes one nib had called absent).
+		for _, f := range fonts {
+			if f.unresolve {
+				return Result{Verdict: CannotCheck, Where: f.where, Why: fmt.Sprintf("text selects font %s, which does not "+
+					"resolve in nib's reading of its resources, so whether it is an embedded CID font was never read", fontLabel(f.name))}
+			}
+		}
 		return Result{Verdict: NotApplicable, Why: "no embedded CID font is used by text"}
 	}
 	return Result{Verdict: Pass}

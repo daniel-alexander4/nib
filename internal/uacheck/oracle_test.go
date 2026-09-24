@@ -340,6 +340,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	for _, f := range ttFixtures() {
 		docs = append(docs, oracleDoc{"truetype: " + f.name, f.pdf})
 	}
+	// P07.S04a: every shape of the per-glyph metric clauses, simple TrueType and CIDFontType2.
+	for _, f := range metricFixtures() {
+		docs = append(docs, oracleDoc{"metrics: " + f.name, f.pdf})
+	}
 	return docs
 }
 
@@ -518,6 +522,55 @@ var knownCannotCheck = map[string]string{
 	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.6 t4":    "which font veraPDF opens first",
 	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.4.1 t1":  "which font veraPDF opens first",
 	"truetype: two fonts share a program, both MacExpert, the first drawn invisibly / 7.21.4.1 t1":    "which font veraPDF opens first",
+	// P07.S04a: the per-glyph clauses refuse where the program read is a later slice's, or where veraPDF's answer
+	// rests on a font nib could not resolve or an order it does not follow.
+	"Type 0 font over an unknown CMap / 7.21.4.1 t2":                                                  "the font's CMap is neither embedded nor a predefined name",
+	"Type 0 font over an unknown CMap / 7.21.5 t1":                                                    "the font's CMap is neither embedded nor a predefined name",
+	"Type 0 font over an unknown CMap / 7.21.8 t1":                                                    "the font's CMap is neither embedded nor a predefined name",
+	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.4.1 t2":                                           "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.5 t1":                                             "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.8 t1":                                             "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"embedded CMap referencing GB-EUC-H / 7.21.4.1 t2":                                                "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"embedded CMap referencing GB-EUC-H / 7.21.5 t1":                                                  "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"embedded CMap referencing GB-EUC-H / 7.21.8 t1":                                                  "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"glyphs: a Type 3 glyph procedure shows text in its own font / 7.21.4.1 t2":                       "a Type 3 font's glyph procedures are P07.S04b's",
+	"glyphs: a Type 3 glyph procedure shows text in its own font / 7.21.5 t1":                         "a Type 3 font's glyph procedures are P07.S04b's",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.1 t2":                 "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.2 t2":                 "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.5 t1":                   "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.8 t1":                   "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.3.1 t1":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.3.2 t1":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.3.3 t1":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.3.3 t2":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.3.3 t3":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.4.1 t1":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.4.1 t2":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.4.2 t2":                                "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.5 t1":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.6 t1":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.6 t2":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.6 t3":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.6 t4":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.7 t1":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.7 t2":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.8 t1":                                  "an unresolved font: absent, or dropped by pdfcpu",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.4.1 t2":  "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.5 t1":    "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and abcdef+ (MacExpert) / 7.21.4.1 t2": "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and abcdef+ (MacExpert) / 7.21.5 t1":   "which font veraPDF opens first",
+	"truetype: two fonts share a program, MacExpert then WinAnsi / 7.21.4.1 t2":                       "which font veraPDF opens first",
+	"truetype: two fonts share a program, MacExpert then WinAnsi / 7.21.5 t1":                         "which font veraPDF opens first",
+	"truetype: two fonts share a program, WinAnsi then MacExpert / 7.21.4.1 t2":                       "which font veraPDF opens first",
+	"truetype: two fonts share a program, WinAnsi then MacExpert / 7.21.5 t1":                         "which font veraPDF opens first",
+	"truetype: two fonts share a program, both MacExpert, the first drawn invisibly / 7.21.4.1 t2":    "which font veraPDF opens first",
+	"truetype: two fonts share a program, both MacExpert, the first drawn invisibly / 7.21.5 t1":      "which font veraPDF opens first",
+	"truetype: two identical fonts share a program, both named MacExpert / 7.21.4.1 t2":               "pdfcpu fused the twin fonts",
+	"truetype: two identical fonts share a program, both named MacExpert / 7.21.5 t1":                 "pdfcpu fused the twin fonts",
+	"metrics: MacExpert-named, mode 0 on the page and 2 in a pattern / 7.21.5 t1":                     "a second font object inside a pattern: not measured",
+	"metrics: MacExpert-named, mode 0 on the page and 2 in a pattern / 7.21.4.1 t2":                   "a second font object inside a pattern: not measured",
+	"metrics: MacExpert-named, mode 0 on the page and 2 in a form / 7.21.5 t1":                        "a second font object inside a form: not measured-explained",
+	"metrics: MacExpert-named, mode 0 on the page and 2 in a form / 7.21.4.1 t2":                      "a second font object inside a form: not measured-explained",
 	"truetype: two identical fonts share a program, both named MacExpert / 7.21.6 t1":                 "pdfcpu fused the twin fonts",
 	"truetype: two identical fonts share a program, both named MacExpert / 7.21.6 t4":                 "pdfcpu fused the twin fonts",
 	"truetype: two identical fonts share a program, both named MacExpert / 7.21.4.1 t1":               "pdfcpu fused the twin fonts",
@@ -565,7 +618,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 256 // 148 + P07.S03's 108 TrueType shapes
+	const wantGenerated = 316 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

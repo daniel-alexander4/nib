@@ -43,6 +43,10 @@ type contentEvent struct {
 	// as "used for rendering": measured, a non-embedded Helvetica in `3 Tr` passes 7.21.4.1 and the
 	// same text drawn visibly fails it. An OCR layer is exactly this text.
 	invisible bool
+	// mode is the render mode in force (P07.S04: a font drawn in two modes is two font objects to veraPDF).
+	mode int
+	// offPage is drawing inside a form XObject or an annotation appearance, not a page's own content.
+	offPage bool
 	// covered is 7.1 t3's disjunction, `isTaggedContent == true || parentsTags.contains('Artifact')`:
 	// some enclosing sequence is an `/Artifact`, or the innermost struct parent in force reaches the
 	// structure tree root. **An MCID is not enough** — see `taggedContent`.
@@ -531,9 +535,17 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			if text {
 				// **Glyphs are read in the lang-only streams too**: veraPDF judges the glyphs a tiling pattern or a
 				// Type 3 procedure draws like any other (`GFPDTilingPattern`, `GFPDType3Font.getCharProcStreams`).
-				w.showGlyphs(src, operands, font, fontObj, ts.fontName, where)
+				w.showGlyphs(src, operands, font, fontObj, ts.fontName, where, ts.renderMode != 3)
 				if w.d.contentOver {
 					return
+				}
+				if w.langOnly && font != nil {
+					// A pattern or a Type 3 procedure draws this font where no font event is recorded (/pending 678),
+					// so its render modes there are unseen — the per-glyph clauses refuse where that decides.
+					if w.d.drawnUnrecorded == nil {
+						w.d.drawnUnrecorded = map[uintptr]bool{}
+					}
+					w.d.drawnUnrecorded[dictID(font)] = true
 				}
 			}
 			if w.langOnly {
@@ -543,6 +555,8 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			if ev.text {
 				ev.fontName = ts.fontName
 				ev.invisible = ts.renderMode == 3
+				ev.mode = ts.renderMode
+				ev.offPage = w.form != 0 || w.appearance
 				ev.font, ev.fontObj = font, fontObj
 			}
 			w.d.content = append(w.d.content, ev)

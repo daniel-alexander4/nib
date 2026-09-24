@@ -2740,12 +2740,72 @@ clause's premise was wrong, pinned at the grill. `embeddedProgram` is now Type 1
   / 0 false fail over 29,739 pairs. Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck` only — none of the
   session, ceremony, delivery, discovery, p2p or rendezvous paths.
 
-#### P07.S04 — TrueType per glyph: widths, presence, `.notdef`
+#### P07.S04 — TrueType per glyph: widths, presence, `.notdef` *(split at its grill — S04a, S04b)*
 Scope: `7.21.5 t1`, `7.21.4.1 t2`, `7.21.8 t1` for simple TrueType and CIDFontType2 (`CIDToGIDMap` stream included) —
 `hmtx`, `loca`/`glyf` presence, `post` names, against `pdfops`' dictionary widths through one door.
 Acceptance:
 - 7.21.5 t1 agrees on its corpus pair; every other half is a veraPDF-measured fixture.
 - `len(Clauses())` 104 (the three clauses register here, answering `CannotCheck` for CFF and Type 1 until S05/S06).
+
+**(grill, 2026-09-23 — premise amended, slice split)** Deep-dive `deepdives/2026-09-23-p07s04-truetype-per-glyph.md`
+(source-read), every claim then measured on veraPDF over 65 hand-built documents.
+- **`loca`/`glyf` are never read by veraPDF**: presence is a cmap (or CIDToGIDMap) lookup and `gid < maxp.numGlyphs`.
+  The scope's "loca/glyf presence" is struck; a glyf reader would fail pdfcpu's slot-keeping subsets.
+- **"pdfops' dictionary widths through one door" names a door that does not exist in a form the checker can use**:
+  `pdfops/fontwidth.go` is unexported and its rules are not veraPDF's (it ignores /LastChar, falls back to
+  /MissingWidth where veraPDF reads 0, uses standard-14 metrics, keys /W by code). The checker reads veraPDF's
+  `PDFont.getWidth` / `PDCIDFont.getWidth` itself, declared apart from pdfops' layout reading.
+- **The three clauses judge EVERY font's glyphs**, not TrueType's: a font with no program, or one veraPDF did not
+  parse, leaves presence and widths null and passes; so a non-embedded font answers without any program reader.
+- **Split, measured**: nib's own Markdown conversion draws in CIDFontType2 over Identity-H, so without that path every
+  converted document refuses all three — S04a takes it. **S04a**: simple TrueType; CIDFontType2 over Identity-H/V with
+  an Identity or stream CIDToGIDMap; every font with no usable program; 7.21.8 by encoding for simple non-TrueType
+  fonts. **S04b**: Type 3 (presence by CharProcs, width by the procedure's `d0`/`d1`) and code-to-CID mapping for
+  non-Identity CMaps. Embedded Type 1 and CFF metrics stay S05/S06's.
+
+#### P07.S04a — the per-glyph clauses over TrueType, CIDFontType2 and unembedded fonts *(done 2026-09-24, v1.162.0)*
+Scope: 7.21.5 t1, 7.21.4.1 t2, 7.21.8 t1 as above; the render mode on the glyph population (mode 3 exempts the first
+two, not 7.21.8); `readTrueType` keeping veraPDF's values (units per em, advances, glyph count, subtable maps with
+their first code, `post` names) under the document budget.
+Acceptance:
+- 7.21.5 t1 agrees on its corpus pair; every other half is a veraPDF-measured fixture.
+- `len(Clauses())` 104; a refusal names the slice that reads the program (S04b, S05, S06).
+
+- T01 — the reader keeps veraPDF's values; the Mac glyph-name and Mac OS Roman tables generated from veraPDF-parser.
+- T02 — the glyph population carries visibility; `metricsOf` and `glyphName`, one door each.
+- T03 — CIDFontType2 over Identity CMaps: `cidTrueTypeOf`, `cidDictWidth` (veraPDF's `CIDWArray`).
+- T04 — fixtures, oracle, corpus reach, knownCannotCheck, the count to 104, and the retired counterexample.
+
+**(review + red-proof, 2026-09-24)** Three review rounds (four reviewers), `code-reviews/v1.161.0-p07s04a-2026-09-24.md`.
+- **Seven live disagreements closed**, all measured: a /FontFile3 program is never marked parsed by a second font object;
+  a throwing font's second render mode inside a form (and, unmeasured, a pattern or Type 3 procedure) refuses; an empty
+  `post` name is a name where Java's null is none; the `.notdef` refill matters to presence; two shipped clauses — 7.21.4.1
+  t1 passed an unparsable CIDFontType2 program (/pending 677's CID half) and 7.21.4.2 t2 answered NotApplicable for a CIDFont
+  pdfcpu dropped; and the new clauses answered "no glyph" where a font did not resolve.
+- **Three costs bounded, measured**: a Type 0 font's CIDToGIDMap and /W read once (0.9 ms and 2.4 ms per glyph before), a map
+  entry charged 8 reads (a 1 KB program pinned 142 MiB), subtables indexed at parse.
+- **The counterexample is retired**: 7.21.5 t1 catches `7.21.5-t01-fail-a`, and no replacement exists — nib calls 131
+  corpus files conformant and veraPDF fails none; the one unchecked failable rule, 7.21.4.2 t1, is covered by a refusal.
+  The README, `nib ua`'s comment and `door.go` say only that; whether the door's refusal to label should change is parked
+  for Dan.
+- **Red-proof**: 38 mutations (30 targeted, 8 blind), all red after 16 measured fixtures closed the survivors.
+- Filed: /pending 680 (7.21.3.2 t1's own CID parse test).
+
+**Acceptance ledger.**
+- 7.21.5 t1 agrees on its corpus pair — MET (fail-a fails on code 0x20, 192 vs 250; pass-a passes).
+- Every other half is a veraPDF-measured fixture — MET: 60 shapes, both halves of all three clauses over simple TrueType
+  and CIDFontType2, each measured before it was pinned.
+- `len(Clauses())` 104 — MET.
+- A refusal names the slice that reads the program — MET (S04b for Type 3 and non-Identity CMaps, S05/S06 for Type 1/CFF).
+- Oracle 33,384 pairs over 321 documents agree strictly; corpus 0 false pass / 0 false fail over 30,553 pairs; reach
+  265/265/268. Live: nib's own Markdown conversion passes all three, veraPDF 19 checks each. Tiers 4 and 6 did NOT fire:
+  the slice touched `internal/uacheck`, docs and a CLI comment only.
+
+#### P07.S04b — Type 3 glyphs, and codes to CIDs
+Scope: 7.21.5 t1 and 7.21.4.1 t2 for Type 3 fonts (`PDType3Font.containsCharString`, `Type3CharProcParser` width);
+a code-to-CID reader (`fontcode` keeping `cidrange`/`cidchar`/`notdef*`) for the three clauses over non-Identity CMaps.
+Acceptance:
+- Every half a veraPDF-measured fixture; the S04a refusals naming S04b are gone from knownCannotCheck.
 
 #### P07.S05 — the CFF program
 Scope: a CFF reader (INDEX, Top DICT, charset, charstring count, widths, CID FDSelect) — `7.21.4.2 t1` (the CharSet

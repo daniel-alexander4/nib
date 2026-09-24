@@ -45,10 +45,13 @@ type ttNames struct {
 	state ttState // ttParsed: table; ttFailed: every code null; ttUnknown: why
 	table []string
 	why   string
+	// symbolic is the program's " " answer — a symbolic font, or one with no /Encoding: null to 7.21.7 (no list holds
+	// " "), but NOT `.notdef` to 7.21.8, where a null name asks whether the program holds the code (P07.S04).
+	symbolic bool
 }
 
 func (n ttNames) equal(o ttNames) bool {
-	if n.state != o.state {
+	if n.state != o.state || n.symbolic != o.symbolic {
 		return false
 	}
 	for i := range n.table {
@@ -120,6 +123,13 @@ func (d *Document) trueTypeFonts() ([]*ttFont, string) {
 				prev.where = uf.where // report where it is first drawn visibly, as `usedFonts` does
 			}
 			prev.visible, prev.hidden = prev.visible || uf.visible, prev.hidden || uf.hidden
+			prev.offPage = prev.offPage || uf.offPage
+			for m := range uf.modes {
+				if prev.modes == nil {
+					prev.modes = map[int]bool{}
+				}
+				prev.modes[m] = true
+			}
 			continue
 		}
 		f := &ttFont{usedFont: uf, symbolic: d.isSymbolic(uf.dict)}
@@ -201,25 +211,32 @@ func (d *Document) trueTypeProgramOf(f *ttFont) int {
 		if ir, ok := desc[k.key].(types.IndirectRef); ok {
 			obj = ir.ObjectNumber.Value()
 		}
-		// **One parse per stream, charged to one document budget** — fonts sharing a program re-read it otherwise, each
-		// with a full budget (the P07.S03 review measured 200 fonts on one program at 3.4 s, linear in the fonts).
-		if p, done := d.ttPrograms[dictID(sd.Dict)]; done {
-			f.program = p
-			return obj
-		}
-		if sd.Decode() != nil {
-			f.program = trueTypeProgram{state: ttUnknown, why: "its program stream could not be decoded"}
-		} else {
-			f.program = readTrueType(sd.Content, maxTrueTypeReads-d.ttReads)
-			d.ttReads += f.program.reads
-		}
-		if d.ttPrograms == nil {
-			d.ttPrograms = map[uintptr]trueTypeProgram{}
-		}
-		d.ttPrograms[dictID(sd.Dict)] = f.program
+		f.program = d.parseProgramStream(sd)
 		return obj
 	}
 	return 0
+}
+
+// parseProgramStream is the one place a TrueType program stream is read — simple and composite fonts alike, since
+// `CIDFontType2Program` parses through the same `TrueTypeFontParser`. **One parse per stream, charged to one document
+// budget**: fonts sharing a program re-read it otherwise, each with a full budget (the P07.S03 review measured 200 fonts
+// on one program at 3.4 s, linear in the fonts).
+func (d *Document) parseProgramStream(sd *types.StreamDict) trueTypeProgram {
+	if p, done := d.ttPrograms[dictID(sd.Dict)]; done {
+		return p
+	}
+	var p trueTypeProgram
+	if sd.Decode() != nil {
+		p = trueTypeProgram{state: ttUnknown, why: "its program stream could not be decoded"}
+	} else {
+		p = readTrueType(sd.Content, maxTrueTypeReads-d.ttReads)
+		d.ttReads += p.reads
+	}
+	if d.ttPrograms == nil {
+		d.ttPrograms = map[uintptr]trueTypeProgram{}
+	}
+	d.ttPrograms[dictID(sd.Dict)] = p
+	return p
 }
 
 // ownNames is `TrueTypeFontProgram.getGlyphName` for a program built with THIS font's flags and encoding, and
@@ -236,7 +253,7 @@ func (d *Document) trueTypeProgramOf(f *ttFont) int {
 func (d *Document) ownNames(f *ttFont) (ttNames, ttState) {
 	enc := d.resolve(f.dict["Encoding"])
 	if f.symbolic || enc == nil {
-		return ttNames{state: ttFailed}, ttParsed
+		return ttNames{state: ttFailed, symbolic: true}, ttParsed
 	}
 	if f.program.state == ttUnknown {
 		return ttNames{state: ttUnknown, why: f.program.why}, ttUnknown
@@ -267,9 +284,15 @@ func (d *Document) ownNames(f *ttFont) (ttNames, ttState) {
 				table[code] = name
 			}
 		}
-		// veraPDF then refills every `.notdef` from Standard; nib does not, because the table is only ever ASKED when the
-		// font's own encoding named nothing — which is exactly when its base was Standard already (a WinAnsi, MacRoman
-		// or MacExpert base names every code itself), so the refill is a no-op here (the P07.S03 red-proof found it inert).
+		// Every `.notdef` is refilled from Standard. The glyph-name fallback never sees it (it asks the table only where
+		// the font's own encoding named nothing, i.e. over a Standard base already — P07.S03's red-proof found it inert
+		// there), but the per-glyph PRESENCE and WIDTH read the table for every code (P07.S04: a MacExpert base's 0x41
+		// is `.notdef` in the encoding and `A` here, and veraPDF finds it present).
+		for i, n := range table {
+			if n == ".notdef" {
+				table[i] = standardEncoding[i]
+			}
+		}
 		return ttNames{state: ttParsed, table: table}, ttParsed
 	}
 	return ttNames{state: ttFailed}, ttFailed
