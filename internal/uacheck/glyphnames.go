@@ -173,11 +173,11 @@ func (d *Document) differences(enc types.Dict) map[int]string {
 	for _, o := range arr {
 		switch v := d.resolve(o).(type) {
 		case types.Integer:
-			idx = v.Value()
+			idx = int(int32(v.Value())) // `getInteger().intValue()`: a code past 2^31 wraps (measured: 4294967361 is 65)
 		case types.Name:
 			if idx != -1 {
 				out[idx] = v.Value()
-				idx++
+				idx = int(int32(idx + 1)) // a Java int: 2147483647 steps to -2147483648 (the re-review; veraPDF then throws)
 			}
 		}
 	}
@@ -191,6 +191,18 @@ func (d *Document) simpleFallback(f *glyphFont, code int) (string, uniState, str
 		f.enc = &e
 	}
 	name, ok := f.enc.name(code)
+	if !ok && d.name(f.dict["Subtype"]) == "TrueType" {
+		// A TrueType program's name comes from its own table, which P07.S03's door reads (/pending 677).
+		n, known, why := d.trueTypeFallbackName(f.dict, code)
+		if !known {
+			return "", uniUnknown, fmt.Sprintf("its encoding names no glyph for code %#x, and what its TrueType program "+
+				"names is not known: %s", code, why)
+		}
+		if n == "" {
+			return "", uniNull, ""
+		}
+		name, ok = n, true
+	}
 	if !ok {
 		// `fontProgram.getGlyphName(code)` — a Type 3 font has no program, and neither does a font that embeds none.
 		if kind := d.embeddedProgram(f.dict); kind != "" {
@@ -208,17 +220,15 @@ func (d *Document) simpleFallback(f *glyphFont, code int) (string, uniState, str
 	return "", uniNull, ""
 }
 
-// embeddedProgram names the program veraPDF would open for a simple font, or "" for none: a Type 1 font reads
-// `/FontFile` then `/FontFile3`, a TrueType font `/FontFile2` then `/FontFile3` (`PDType1Font.getFontProgram`,
-// `PDTrueTypeFont.getFontProgram`, each through `canParseFontFile` — the key present AND a stream), and a Type 3
-// font none. A program under another key is no program to veraPDF, so the glyph's name is null.
+// embeddedProgram names the program veraPDF would open for a Type 1 font, or "" for none: `/FontFile` then
+// `/FontFile3` (`PDType1Font.getFontProgram`, through `canParseFontFile` — the key present AND a stream); a Type 3 font
+// has none. A program under another key is no program to veraPDF, so the glyph's name is null. **A TrueType font is
+// not asked here** — its program, and whether veraPDF parses it, is `trueTypeFonts`' (P07.S03).
 func (d *Document) embeddedProgram(font types.Dict) string {
 	var keys []struct{ key, kind string }
 	switch d.name(font["Subtype"]) {
 	case "Type1", "MMType1":
 		keys = []struct{ key, kind string }{{"FontFile", "Type 1"}, {"FontFile3", "CFF"}}
-	case "TrueType":
-		keys = []struct{ key, kind string }{{"FontFile2", "TrueType"}, {"FontFile3", "OpenType"}}
 	}
 	desc := d.dict(font["FontDescriptor"])
 	for _, k := range keys {

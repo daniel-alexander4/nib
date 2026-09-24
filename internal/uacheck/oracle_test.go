@@ -336,6 +336,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	for _, f := range glyphFixtures() {
 		docs = append(docs, oracleDoc{"glyphs: " + f.name, f.pdf})
 	}
+	// P07.S03: every shape of 7.21.6, and of the TrueType parse 7.21.4.1 t1 and the glyph fallback now ask.
+	for _, f := range ttFixtures() {
+		docs = append(docs, oracleDoc{"truetype: " + f.name, f.pdf})
+	}
 	return docs
 }
 
@@ -498,6 +502,25 @@ var knownCannotCheck = map[string]string{
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.3 t1": "an unresolved font: absent, or dropped by pdfcpu",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.3 t2": "an unresolved font: absent, or dropped by pdfcpu",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.3 t3": "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.6 t1":   "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.6 t2":   "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.6 t3":   "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.6 t4":   "an unresolved font: absent, or dropped by pdfcpu",
+	// P07.S03: fonts sharing one TrueType program share one parse in veraPDF, and the FIRST opened decides it —
+	// where the fonts disagree, which one that is decides 7.21.4.1 t1 (measured both orders); and pdfcpu fuses
+	// byte-identical fonts, so nib cannot count how many share it.
+	"truetype: two fonts share a program, MacExpert then WinAnsi / 7.21.4.1 t1":                       "which font veraPDF opens first",
+	"truetype: two fonts share a program, WinAnsi then MacExpert / 7.21.4.1 t1":                       "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and abcdef+ (MacExpert) / 7.21.6 t1":   "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and abcdef+ (MacExpert) / 7.21.6 t4":   "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and abcdef+ (MacExpert) / 7.21.4.1 t1": "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.6 t1":    "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.6 t4":    "which font veraPDF opens first",
+	"truetype: an OpenType program shared by ABCDEF+ (WinAnsi) and Probe6 (MacExpert) / 7.21.4.1 t1":  "which font veraPDF opens first",
+	"truetype: two fonts share a program, both MacExpert, the first drawn invisibly / 7.21.4.1 t1":    "which font veraPDF opens first",
+	"truetype: two identical fonts share a program, both named MacExpert / 7.21.6 t1":                 "pdfcpu fused the twin fonts",
+	"truetype: two identical fonts share a program, both named MacExpert / 7.21.6 t4":                 "pdfcpu fused the twin fonts",
+	"truetype: two identical fonts share a program, both named MacExpert / 7.21.4.1 t1":               "pdfcpu fused the twin fonts",
 
 	// P06.S04. `7.7 t1` cannot type an element whose role map loops, exactly as `7.3 t1` cannot — both
 	// refuse rather than say "the document has no Formula", because the untypable element MAY be one.
@@ -542,7 +565,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 148
+	const wantGenerated = 256 // 148 + P07.S03's 108 TrueType shapes
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

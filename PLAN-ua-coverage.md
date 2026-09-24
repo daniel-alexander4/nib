@@ -2676,7 +2676,7 @@ door: the slice's own fixtures reached them.
   `internal/uacheck`, `internal/fontcode` and `pdfops/textrun.go` — none of the session, ceremony, delivery, discovery,
   p2p or rendezvous paths.
 
-#### P07.S03 — the TrueType program, at the font
+#### P07.S03 — the TrueType program, at the font *(done 2026-09-23, v1.161.0)*
 Scope: `7.21.6 t1`-`t4` — a TrueType reader grown from `truetype.go` (table directory tolerant of unaligned offsets,
 the cmap subtable list), and the symbolic flag against `/Encoding`.
 Acceptance:
@@ -2684,6 +2684,61 @@ Acceptance:
   was run on, and the zero corpus reach is recorded with its reason.
 - A program the reader refuses is `CannotCheck` naming "TrueType".
 - `len(Clauses())` 101.
+
+**(grill, 2026-09-23 — premise amended, scope widened by /pending 677)** Every claim of the pre-slice deep-dive was
+measured on veraPDF 1.30.2 over 111 hand-built documents (a synthetic sfnt generator); the grill is
+`grills/2026-09-23-p07s03-the-truetype-program.md`.
+- **The first acceptance clause's premise is wrong**: all ten 7.21.6 corpus files evaluate t1 and t4 (and pass) — only
+  their FAIL halves have no corpus file. Read as: t1/t4's fail halves are measured fixtures, and their corpus reach
+  is whatever the corpus measures, not zero.
+- **veraPDF parses lazily and bounds reads by the program, not the table**: a failed parse leaves the program object
+  (so t2's Differences test is FALSE, not skipped), a truncated subtable followed by other tables parses, and a
+  program of 10240 bytes or more whose seek runs past its end throws an exception veraPDF does not catch — it reports
+  nothing for the document, and nib refuses.
+- **The program cache is keyed on the encoding's OBJECT key**, so fonts with direct encodings share one parse and the
+  first opened decides it — measured order-dependent on 7.21.4.1 t1. nib emulates the order-independent half and
+  refuses the rest.
+- **/pending 677's TrueType half lands here** (it names S03 as its closer): 7.21.4.1 t1 passed every broken TrueType
+  program veraPDF fails, and the glyph fallback refused where veraPDF answers from the program's own name table.
+  CIDFontType2's program stays with S04.
+
+- T01 — `readTrueType`: veraPDF's `TrueTypeFontParser` and `TrueTypeFontProgram.parseFont`, three outcomes, budgeted.
+- T02 — `rules_truetype.go`: one population door (`trueTypeFonts`) and 7.21.6 t1-t4.
+- T03 — /pending 677's TrueType half: 7.21.4.1 t1 and the glyph fallback ask the door.
+- T04 — the measured fixtures as a table and in the live oracle; corpus reach, knownCannotCheck, the count to 101.
+
+**(review + red-proof, 2026-09-23)** Five review rounds (six reviewers), every finding dispositioned in
+`code-reviews/v1.160.0-p07s03-2026-09-23.md`; each divergence re-measured on veraPDF before it was pinned.
+- **Seven live disagreements closed**: /Flags written as a real (veraPDF casts it); a /FontFile3 program's name-table
+  throw leaves EVERY sharing font unparsed; the OpenType cache key's subset flag is "six characters before the first
+  plus"; a /Differences code and its running index are Java ints (a wrap past 2^32 re-targets a code, a step past 2^31
+  makes veraPDF report nothing); an unrelated unresolved font had silenced definite failures on 7.21.4.1 t1 and 7.21.6
+  t3; and where an unresolved font could be opened first, an OpenType group and the fallback names refuse.
+- **One attacker-reachable cost bounded**: a program is parsed once per stream against one document read budget (200
+  fonts on one program cost 3.4 s before; 400 now cost one parse).
+- **Deferred**: 7.21.4.1 t1 reads a font's FIRST use's render mode in veraPDF and ANY visible use in nib — pre-existing,
+  every font type, /pending 679; a /Flags beyond 2^63 reaches nib as 0 through pdfcpu's parser, /pending 656.
+- **Red-proof**: 45 mutations (37 targeted, 8 blind — the blind agent read no test); three blind survivors and five
+  targeted ones closed with measured fixtures, one inert branch (the `.notdef` refill) deleted.
+
+**Plan divergence, stated.** Scope widened by /pending 677's TrueType half (7.21.4.1 t1 and the glyph fallback ask the
+parse) and by `glyphnames.go`'s `differences` (the Java-int reading every simple font shares). The first acceptance
+clause's premise was wrong, pinned at the grill. `embeddedProgram` is now Type 1's only.
+
+**Acceptance ledger.**
+- t2 agrees on the corpus — MET (4 fail files, all agree strictly; reach 255).
+- t3 agrees on the corpus — MET for the readable files (reach 255); its one fail file is unreadable to pdfcpu
+  (`corpusUnreadable`), so the fail half is measured fixtures (six shapes).
+- t1 and t4's fail halves are fixtures veraPDF was run on — MET (t1: 4 fail shapes, t4: 15, and 40 no-subject shapes each); their pass halves reach the
+  corpus at 255, so "zero corpus reach" is recorded as the grill's corrected premise, not a zero.
+- A program the reader refuses is `CannotCheck` naming "TrueType" — MET: every unknown outcome reads "whether veraPDF
+  parses its TrueType program is not known"; a program veraPDF itself fails to parse is NOT a refusal but no subject
+  (t1/t4) and not embedded (7.21.4.1 t1), as veraPDF answers.
+- `len(Clauses())` 101 — MET.
+- Phase exit (a program nib cannot parse is `CannotCheck` naming its type, never `Pass`) — MET for TrueType.
+- Oracle 26,361 pairs over 261 documents agree strictly (108 TrueType shapes, 12 declared refusals); corpus 0 false pass
+  / 0 false fail over 29,739 pairs. Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck` only — none of the
+  session, ceremony, delivery, discovery, p2p or rendezvous paths.
 
 #### P07.S04 — TrueType per glyph: widths, presence, `.notdef`
 Scope: `7.21.5 t1`, `7.21.4.1 t2`, `7.21.8 t1` for simple TrueType and CIDFontType2 (`CIDToGIDMap` stream included) —

@@ -140,6 +140,10 @@ var corpusReach = map[string]int{
 	// t1 reach every readable file that shows text (62 — most NotApplicable, the Type 0 files agreeing both ways);
 	// t2 needs an EMBEDDED CMap (12) and t3 one reached through /UseCMap (2). `7.21.3.2-t01-fail-a` and `-c` are
 	// refused, not scored: pdfcpu's validator drops the very Type 0 font the clause fails, so nib has nothing to read.
+	// P07.S03: 255 readable files draw a simple TrueType font, and nib settles all four clauses on every one; the
+	// corpus holds t2's four fail files and no fail file for t1 or t4 (their fail halves are `ttFixtures`), and t3's
+	// one fail file is unreadable to pdfcpu (below). No other row moved.
+	"7.21.6 t1": 255, "7.21.6 t2": 255, "7.21.6 t3": 255, "7.21.6 t4": 255,
 	"7.21.3.1 t1": 62, "7.21.3.2 t1": 62, "7.21.3.3 t1": 62, "7.21.3.3 t2": 12, "7.21.3.3 t3": 2,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,

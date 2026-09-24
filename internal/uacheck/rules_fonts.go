@@ -43,6 +43,7 @@ type usedFont struct {
 	name      string
 	where     string
 	visible   bool // selected by at least one text operator not in render mode 3
+	hidden    bool // selected by at least one text operator in render mode 3
 	unresolve bool // a text operator named a font resource that does not resolve
 }
 
@@ -68,7 +69,9 @@ func (d *Document) usedFonts() ([]*usedFont, string) {
 			byKey[key] = uf
 			order = append(order, uf)
 		}
-		if !ev.invisible {
+		if ev.invisible {
+			uf.hidden = true
+		} else {
 			if !uf.visible {
 				uf.where = ev.where
 			}
@@ -145,7 +148,25 @@ func checkFontsEmbedded(d *Document) Result {
 		// also asks (`embeddedProgram`): veraPDF's Type 1 font opens `/FontFile` or `/FontFile3` and never `/FontFile2`,
 		// so a Type 1 program filed there is no program and the font fails (measured at P07.S02, where nib had passed it
 		// on the key's presence). A Type 0 font is judged by its descendant's descriptor, as it was measured before.
-		if d.name(f.dict["Subtype"]) != "Type0" {
+		notEmbedded := "its program is not embedded"
+		if d.name(f.dict["Subtype"]) == "TrueType" {
+			// **A TrueType program counts only if veraPDF PARSES it** — `containsFontFile` is "exists AND parsed"
+			// (/pending 677, measured at P07.S03 on every shape of broken program): the door says, share group applied.
+			st, why := d.trueTypeEmbedded(f.dict)
+			switch st {
+			case ttParsed:
+				continue
+			case ttUnknown:
+				if unsure == nil {
+					unsure = &Result{Verdict: CannotCheck, Where: f.where,
+						Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its TrueType program is not known — %s", f.name, d.baseFontName(f.dict), why)}
+				}
+				continue
+			}
+			if why != "" {
+				notEmbedded = why
+			}
+		} else if d.name(f.dict["Subtype"]) != "Type0" {
 			if d.embeddedProgram(f.dict) != "" {
 				continue
 			}
@@ -156,8 +177,8 @@ func checkFontsEmbedded(d *Document) Result {
 		}
 		return Result{
 			Verdict: Fail,
-			Why: fmt.Sprintf("font %s (%s) draws visible text and its program is not embedded, so how "+
-				"the glyphs look depends on whatever the reader substitutes", f.name, d.baseFontName(f.dict)),
+			Why: fmt.Sprintf("font %s (%s) draws visible text and %s, so how "+
+				"the glyphs look depends on whatever the reader substitutes", f.name, d.baseFontName(f.dict), notEmbedded),
 			Where: f.where,
 		}
 	}
