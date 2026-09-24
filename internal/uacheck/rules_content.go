@@ -2,8 +2,7 @@ package uacheck
 
 import (
 	"fmt"
-
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"strings"
 )
 
 // The structure rules — `PLAN-accessibility.md` P07.S03.
@@ -115,76 +114,63 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 // annotation up. The `OBJR` is still what lets a tree-walking reader reach the widget, and
 // `pdfops.AuthorTaggedForm` still writes it — but no ua1 clause nib checks fails without it, and a
 // checker reporting a failure the oracle does not is wrong in exactly the way law 5 exists to catch.
+//
+// **P05.S01 retired the last of that same defect.** The rule still FAILED a widget written INLINE in
+// `/Annots`, on the ground that an inline dictionary has no object number an `OBJR` could name — the
+// OBJR requirement this comment says the clause does not have, surviving in one arm. Measured:
+// veraPDF PASSES such a document when the `/StructParent` resolves to a Form element, so the arm is
+// gone and the population is the shared door's.
 func checkWidgetsInFormElements(d *Document) Result {
+	subjects, missed := d.annots()
 	widgets := 0
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, _, err := d.Ctx.PageDict(p, false)
-		if err != nil || page == nil {
-			return Result{Verdict: CannotCheck, Why: fmt.Sprintf("page %d does not resolve", p)}
+	for _, a := range subjects {
+		if a.subtype(d) != "Widget" {
+			continue
 		}
-		annots, aerr := d.Ctx.DereferenceArray(page["Annots"])
-		if aerr != nil {
-			// An /Annots nib cannot read is not a page with no widgets (`/pending 507`). A dangling
-			// reference is NOT this: it dereferences to null with no error, which is a page saying it
-			// has no annotations. Measured against pdfcpu v0.13.0, `open`'s validator refuses every
-			// wrong-typed /Annots before a rule runs ("validateArrayEntry: dict=pageDict entry=Annots
-			// invalid type"), so nothing reaches this today — the guard is here because the silent `_`
-			// rested on that and said so nowhere.
-			return Result{Verdict: CannotCheck, Why: fmt.Sprintf("page %d's /Annots could not be read: %v", p, aerr)}
+		// Hidden, or wholly off the crop box, is a PASSING check — the clause's own test says so and this
+		// rule shipped without it (P05.S01). Measured on veraPDF 1.30.2: a hidden widget with no
+		// `/StructParent`, a widget outside the crop box, and a hidden widget under a `P` tag are three
+		// documents veraPDF passes and nib failed, and no corpus file holds one.
+		widgets++
+		if d.annotExempt(a) {
+			continue
 		}
-		for i, a := range annots {
-			ad := d.dict(a)
-			if ad == nil {
-				continue
-			}
-			if d.name(ad["Subtype"]) != "Widget" {
-				continue
-			}
-			widgets++
-			where := fmt.Sprintf("page %d, annotation %d", p, i)
-			ir, isRef := a.(types.IndirectRef)
-			if !isRef {
-				return Result{
-					Verdict: Fail,
-					Why:     "a widget annotation is written inline in /Annots, so it has no object number an OBJR could name",
-					Where:   where,
-				}
-			}
-			where = fmt.Sprintf("page %d, widget annotation (object %d)", p, ir.ObjectNumber.Value())
-			sp, hasSP := d.intValue(ad["StructParent"])
-			if !hasSP {
-				return Result{
-					Verdict: Fail,
-					Why:     "the widget carries no /StructParent, so nothing in the structure tree describes it",
-					Where:   where,
-				}
-			}
-			pt, unread := d.parentTree()
-			entry, found := pt[sp]
-			if !found && unread != "" {
-				return Result{Verdict: CannotCheck, Why: unread, Where: where}
-			}
-			elem := d.dict(entry)
-			if elem == nil {
-				return Result{
-					Verdict: Fail,
-					Why:     fmt.Sprintf("the widget's /StructParent %d names no element in the parent tree", sp),
-					Where:   where,
-				}
-			}
-			ty, untyped := d.standardType(elem)
-			if untyped != "" {
-				// The element may well be a Form; nib could not follow the role map to find out.
-				return Result{Verdict: CannotCheck, Why: untyped, Where: where}
-			}
-			if ty != "Form" {
-				return Result{
-					Verdict: Fail,
-					Why:     fmt.Sprintf("the widget is nested in a %q element, not Form", ty),
-					Where:   where,
-				}
+		// This clause's subject is the widget, so its report says so — the shared door's `where` is
+		// written for every annotation and says "annotation".
+		where := strings.Replace(a.where, "annotation", "widget annotation", 1)
+		elem, sp, has, unread := d.annotElement(a)
+		if unread != "" {
+			return Result{Verdict: CannotCheck, Why: unread, Where: where}
+		}
+		if !has {
+			return Result{
+				Verdict: Fail,
+				Why:     "the widget carries no /StructParent, so nothing in the structure tree describes it",
+				Where:   where,
 			}
 		}
+		if elem == nil {
+			return Result{
+				Verdict: Fail,
+				Why:     fmt.Sprintf("the widget's /StructParent %d names no element in the parent tree", sp),
+				Where:   where,
+			}
+		}
+		ty, untyped := d.standardType(elem)
+		if untyped != "" {
+			// The element may well be a Form; nib could not follow the role map to find out.
+			return Result{Verdict: CannotCheck, Why: untyped, Where: a.where}
+		}
+		if ty != "Form" {
+			return Result{
+				Verdict: Fail,
+				Why:     fmt.Sprintf("the widget is nested in a %q element, not Form", ty),
+				Where:   where,
+			}
+		}
+	}
+	if missed != "" {
+		return Result{Verdict: CannotCheck, Why: missed}
 	}
 	if widgets == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document has no widget annotations"}

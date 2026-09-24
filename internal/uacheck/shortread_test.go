@@ -226,19 +226,25 @@ func annotDoc() []byte {
 // error, so a page whose `/Annots` nib cannot read answered NotApplicable: "the document has no widget
 // annotations".
 func TestAnAnnotsThatDoesNotResolveIsNotAPageWithoutWidgets(t *testing.T) {
-	check := registry["7.18.4 t1"].Check
-	if got := check(openMutated(t, annotDoc(), func(*Document, types.Dict) {})); got.Verdict != Pass {
-		t.Fatalf("control: unmutated, 7.18.4 t1 reports %v (%s), want Pass — the fixture does not carry its subject", got.Verdict, got.Why)
-	}
-	d := openMutated(t, annotDoc(), func(_ *Document, page types.Dict) {
-		page["Annots"] = types.Name("NotAnArray")
-	})
-	got := check(d)
-	if got.Verdict != CannotCheck {
-		t.Fatalf("with an /Annots that does not resolve to an array, 7.18.4 t1 reports %v (%s), want CannotCheck", got.Verdict, got.Why)
-	}
-	if !strings.Contains(got.Why, "/Annots could not be read") {
-		t.Errorf("the reason %q does not say the /Annots could not be read", got.Why)
+	// **Every clause over the shared annotation door, not just the one whose bug wrote this test**
+	// (P05.S01). The door reports a short population once and each rule must turn it into a refusal;
+	// measured, deleting that branch from 7.18.1 t1 and t2 left the package green, so a page whose
+	// `/Annots` nib cannot read answered "the document has no annotations" — `/pending 507`'s own shape.
+	for _, clause := range []string{"7.18.4 t1", "7.18.1 t1", "7.18.1 t2"} {
+		check := registry[clause].Check
+		if got := check(openMutated(t, annotDoc(), func(*Document, types.Dict) {})); got.Verdict != Pass {
+			t.Fatalf("control: unmutated, %s reports %v (%s), want Pass — the fixture does not carry its subject", clause, got.Verdict, got.Why)
+		}
+		d := openMutated(t, annotDoc(), func(_ *Document, page types.Dict) {
+			page["Annots"] = types.Name("NotAnArray")
+		})
+		got := check(d)
+		if got.Verdict != CannotCheck {
+			t.Fatalf("with an /Annots that does not resolve to an array, %s reports %v (%s), want CannotCheck", clause, got.Verdict, got.Why)
+		}
+		if !strings.Contains(got.Why, "/Annots could not be read") {
+			t.Errorf("%s: the reason %q does not say the /Annots could not be read", clause, got.Why)
+		}
 	}
 }
 

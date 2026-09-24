@@ -132,6 +132,11 @@ var notTreeRules = map[string]string{
 	// tree only to settle `isTaggedContent` and `inheritedLang` for a sequence that exists, and both of
 	// those are CannotCheck when the climb runs out — a different bound, with its own test.
 	"7.1 t1": "marked-content sequences", "7.1 t2": "marked-content sequences",
+	// P05.S01. Their subject is an ANNOTATION — the same shape as `7.18.4 t1` and `7.2 t24` above. A
+	// document seventy Divs deep with no annotation has no subject at all, so NotApplicable is the
+	// honest answer; they ARE CannotCheck when the PARENT tree is what nib could not finish, which is a
+	// different bound with its own row in the table test.
+	"7.18.1 t1": "annotations and the parent tree", "7.18.1 t2": "annotations and the parent tree",
 	"7.2 t30": "marked-content sequences", "7.2 t31": "marked-content sequences",
 	"7.2 t32": "marked-content sequences",
 }
@@ -167,33 +172,43 @@ func deepParentTree(depth int) []byte {
 	objs := map[int]string{
 		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
 		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Annots [30 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Annots [30 0 R 31 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
 		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
 		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		7: "<< /Type /StructTreeRoot /K [8 0 R 9 0 R] /ParentTree 200 0 R >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R 9 0 R 10 0 R] /ParentTree 200 0 R >>",
 		8: "<< /Type /StructElem /S /P /P 7 0 R /Lang (en) /Pg 3 0 R /K 0 >>",
 		// P04.S03: the Form element declares its own `/Lang` and the widget carries `/Contents`, so
 		// 7.2 t24 is a SUBJECT here and passes while the tree resolves — which is what makes its
 		// CannotCheck past the bound a change of answer rather than the same answer twice.
 		9:  "<< /Type /StructElem /S /Form /P 7 0 R /Lang (en) /K << /Type /OBJR /Obj 30 0 R >> >>",
 		30: "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /StructParent 1 /Contents (a note) >>",
+		// P05.S01: a NON-widget annotation, because 7.18.1 t1 and t2 exclude a widget — with only object
+		// 30 on the page the two clauses had no subject here and could not have been on the list below.
+		// It names key 2, an element whose tag IS `Annot`, so both clauses PASS while the tree resolves.
+		// **No `/Contents`**: with one, 7.18.1 t2 answers from the annotation itself and never consults the
+		// tree, so it would report a definite Pass past the bound rather than a refusal — a Pass that is
+		// correct, and therefore a row that would prove nothing. Without it, t2 must reach element 10's
+		// `/Alt` through the parent tree, which is the read the bound stops.
+		31: "<< /Type /Annot /Subtype /Text /Rect [0 0 10 10] /F 4 /StructParent 2 >>",
+		// Its own `/Lang`, for the same reason element 9 carries one: without it 7.2 t24 fails the control.
+		10: "<< /Type /StructElem /S /Annot /P 7 0 R /Lang (en) /Alt (a described note) /K << /Type /OBJR /Obj 31 0 R >> >>",
 	}
 	for i := 0; i < depth; i++ {
-		objs[200+i] = fmt.Sprintf("<< /Kids [%d 0 R] /Limits [0 1] >>", 201+i)
+		objs[200+i] = fmt.Sprintf("<< /Kids [%d 0 R] /Limits [0 2] >>", 201+i)
 	}
-	objs[200+depth] = "<< /Nums [0 [8 0 R] 1 9 0 R] /Limits [0 1] >>"
+	objs[200+depth] = "<< /Nums [0 [8 0 R] 1 9 0 R 2 10 0 R] /Limits [0 2] >>"
 	return buildPDF(objs)
 }
 
 func TestAParentTreePastItsBoundIsCannotCheckNeverAFalseAnswer(t *testing.T) {
 	shallow := deepParentTree(3)
-	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24"} {
+	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24", "7.18.1 t1", "7.18.1 t2"} {
 		if got := verdictOf(t, shallow, clause); got.Verdict != Pass {
 			t.Fatalf("control: a parent tree three levels deep reports %v for %s (%s), want Pass — the fixture does not resolve", got.Verdict, clause, got.Why)
 		}
 	}
 	deep := deepParentTree(70)
-	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24"} {
+	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24", "7.18.1 t1", "7.18.1 t2"} {
 		got := verdictOf(t, deep, clause)
 		if got.Verdict != CannotCheck {
 			t.Errorf("a parent tree seventy levels deep reports %v for %s (%s) over keys nib never read, want CannotCheck", got.Verdict, clause, got.Why)

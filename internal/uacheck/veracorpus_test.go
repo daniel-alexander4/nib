@@ -85,6 +85,12 @@ var corpusAllow = map[string]string{}
 // 297-file set: 0 false pass, 0 false fail either way, and every reach figure above unchanged — the corpus holds
 // no document with a dangling MCID and none whose only unlanguaged text is an artifact's, which is why four
 // measured false passes had survived it.
+// P05.S01: `7.18.1 t1` and `t2` join at **71** each — the same figure as 7.2 t24 and for the same reason,
+// since all three are one check per annotation and 71 is what "every corpus file holding an annotation" comes
+// to on this set. Pairs 20,612 → 21,202 (run, not computed). **No other row moved, and three shipped readers were re-expressed over
+// the new door in the same slice** (`checkWidgetsInFormElements`, `scanAnnotsAndFields`, `walkAppearances`), so
+// the unchanged figures are the evidence that absorbing them changed no population: 7.18.4 t1 stays at 19 with
+// its exemption now applied, 7.2 t24 at 71 and t25 at 19, measured before and after.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
@@ -100,6 +106,7 @@ var corpusReach = map[string]int{
 	"7.2 t21": 294, "7.2 t22": 294, "7.2 t23": 294,
 	"7.2 t24": 71, "7.2 t25": 19,
 	"7.2 t30": 295, "7.2 t31": 295, "7.2 t32": 295,
+	"7.18.1 t1": 71, "7.18.1 t2": 71,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,

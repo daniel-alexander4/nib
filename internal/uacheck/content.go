@@ -191,68 +191,64 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 // flagged, because 7.1 t3 does not apply to appearances and must not start failing forms on content
 // veraPDF does not ask about.
 func (d *Document) walkAppearances() {
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, _, err := d.Ctx.PageDict(p, false)
-		if err != nil || page == nil {
+	// The population is the shared annotation door's (`annots.go`, ADR-009): the question "which entries
+	// of this page's /Annots are annotations" is one rule, and it used to be answered here, in
+	// `scanAnnotsAndFields` and in `checkWidgetsInFormElements` independently.
+	subjects, missed := d.annots()
+	for _, a := range subjects {
+		p, i, ad, page := a.page, a.index, a.dict, a.pageDict
+		ap := d.dict(ad["AP"])
+		if ap == nil {
+			if ad["AP"] != nil {
+				// An /AP that is there and does not resolve to a dictionary is an appearance nib did not
+				// read, not an annotation without one (`/pending 507`).
+				d.contentErr = fmt.Sprintf("page %d annotation %d carries an /AP that is not a dictionary, "+
+					"so its appearance streams were never walked", p, i)
+				return
+			}
 			continue
 		}
-		annots, aerr := d.Ctx.DereferenceArray(page["Annots"])
-		if aerr != nil {
-			// The appearances on this page were never read, so nothing they draw may be reported as read
-			// (`/pending 507`). `rules_content.go` says why nothing reaches this today and why it is here.
-			d.contentErr = fmt.Sprintf("page %d's /Annots could not be read, so the appearance streams on it "+
-				"were never walked: %v", p, aerr)
-			return
-		}
-		for i, a := range annots {
-			ad := d.dict(a)
-			if ad == nil {
-				continue
-			}
-			ap := d.dict(ad["AP"])
-			if ap == nil {
-				if ad["AP"] != nil {
-					// An /AP that is there and does not resolve to a dictionary is an appearance nib did not
-					// read, not an annotation without one (`/pending 507`).
-					d.contentErr = fmt.Sprintf("page %d annotation %d carries an /AP that is not a dictionary, "+
-						"so its appearance streams were never walked", p, i)
+		for _, key := range []string{"N", "R", "D"} {
+			for state, so := range d.appearanceStreams(ap[key]) {
+				sd, _, serr := d.Ctx.DereferenceStreamDict(so)
+				if serr != nil {
+					// An /AP entry that is not a stream is an appearance nib did not read (`/pending 507`).
+					// `sd == nil` with no error is NOT this: the entry resolves to null, so there is no
+					// appearance to walk. Measured against pdfcpu v0.13.0, `open`'s validator refuses every
+					// non-stream /AP entry ahead of the rules, on every annotation subtype tried
+					// ("DereferenceStreamDict: wrong type"), so nothing reaches this today.
+					d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s entry is not a stream nib can "+
+						"read, so what it draws was never walked: %v", p, i, key, serr)
 					return
 				}
-				continue
-			}
-			for _, key := range []string{"N", "R", "D"} {
-				for state, so := range d.appearanceStreams(ap[key]) {
-					sd, _, serr := d.Ctx.DereferenceStreamDict(so)
-					if serr != nil {
-						// An /AP entry that is not a stream is an appearance nib did not read (`/pending 507`).
-						// `sd == nil` with no error is NOT this: the entry resolves to null, so there is no
-						// appearance to walk. Measured against pdfcpu v0.13.0, `open`'s validator refuses every
-						// non-stream /AP entry ahead of the rules, on every annotation subtype tried
-						// ("DereferenceStreamDict: wrong type"), so nothing reaches this today.
-						d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s entry is not a stream nib can "+
-							"read, so what it draws was never walked: %v", p, i, key, serr)
-						return
-					}
-					if sd == nil {
-						continue
-					}
-					if derr := sd.Decode(); derr != nil {
-						d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s stream could not be decoded: %v", p, i, key, derr)
-						return
-					}
-					res := d.dict(sd.Dict["Resources"])
-					if res == nil {
-						res = d.resourcesOf(page)
-					}
-					label := fmt.Sprintf("page %d, annotation %d, appearance /%s", p, i, key)
-					if state != "" {
-						label += " /" + state
-					}
-					w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream()}
-					w.walk(sd.Content, res, nil, map[int]bool{}, 0)
+				if sd == nil {
+					continue
 				}
+				if derr := sd.Decode(); derr != nil {
+					d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s stream could not be decoded: %v", p, i, key, derr)
+					return
+				}
+				res := d.dict(sd.Dict["Resources"])
+				if res == nil {
+					res = d.resourcesOf(page)
+				}
+				label := fmt.Sprintf("page %d, annotation %d, appearance /%s", p, i, key)
+				if state != "" {
+					label += " /" + state
+				}
+				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream()}
+				w.walk(sd.Content, res, nil, map[int]bool{}, 0)
 			}
 		}
+	}
+	// The appearances past the page the door stopped at were never read, so nothing they draw may be
+	// reported as read (`/pending 507`). `rules_content.go` says why nothing reaches this today.
+	//
+	// **Set LAST and only when nothing else failed, because the door stops the population at that page.**
+	// Every subject above therefore sits on an earlier page, so an `/AP` failure among them is the
+	// FIRST failure in page order — which is the one the early return this replaced used to report.
+	if missed != "" && d.contentErr == "" {
+		d.contentErr = missed + ", so the appearance streams there were never walked"
 	}
 }
 
