@@ -1553,6 +1553,185 @@ closed; `/pending 637` filed.
 **Goal.** Annotation containment, alternate descriptions, tab order, links, media clips, TrapNet, PrinterMark.
 **Exit criteria.** As P03.
 
+**(phase-open, 2026-09-23, v1.148.1)** The family is **ten unbuilt** rules, read off veraPDF 1.30.2's own profile
+(`PDFUA-1.xml` in the CLI jar): `7.18.1 t1` (an annotation that is not Widget, PrinterMark or Link is nested in an
+`Annot` tag), `t2` (it has `/Contents`, or its enclosing element has `/Alt`), `t3` (a field carries `/TU`, or every
+widget of it has an enclosing `/Alt`); `7.18.2 t1` (a TrapNet annotation is not permitted); `7.18.3 t1` (a page
+carrying annotations declares `/Tabs` `S`); `7.18.5 t1` (a Link annotation is nested in a `Link` tag), `t2` (it has
+`/Contents`); `7.18.6.2 t1` (a media clip has `/CT`), `t2` (its `/Alt` is well formed); `7.18.8 t1` (a PrinterMark is
+not in the structure tree). **The heading's ~9 is wrong in both directions**: 7.18 holds twelve rules in the profile,
+and two of them — `7.18.4 t1` and `t2` — already shipped in P03.S06. Ten rules land the checker at **80 of 106**.
+
+- **Six of the ten share one exemption clause**, `isOutsideCropBox == true || (F & 2) == 2`, and it gets ONE door
+  (ADR-009). Read from the parser's source rather than from the profile's wording: `isOutsideCropBox` is
+  **disjointness against the INHERITED `/CropBox`, clipped to the `/MediaBox` and falling back to it entirely when
+  absent** (`PDAnnotation.java:285-294`, `PDPage.getCropBox():112-119`), compared with `>=`/`<=` so an annotation
+  touching the box edge counts as outside — and it answers **null**, not `true`, when either rectangle is missing or
+  shorter than four numbers. Null is not the exemption, because the profile tests `== true`. Measured on 1.30.2 for
+  the absent, short, reversed, inherited and oversized cases before any rule reads it.
+- **The annotation population already has THREE enumerations in the package** — `rules_content.go:125` (7.18.4 t1),
+  `rules_language.go:565` (7.2 t24/t25) and `content.go:199` (appearance streams) — and P05 adds up to six more
+  subjects over the same array. That is ADR-009's exposure at its widest anywhere in `internal/uacheck`: S01's door
+  absorbs the first two, and the appearance walk either joins them or is declared a different question **at its
+  site**.
+- **`structParentStandardType` for an annotation is the ParentTree element's STANDARD type** (`GFPDAnnot.java:186-202`)
+  — the same association 7.2 t24 already builds joined to the same `standardType` door P03.S01 owns. Three of the ten
+  are that join, not new reading. `7.18.8 t1` is the exception and reads `structParentType`, the element's raw `/S`.
+- **An annotation's `Alt` is the ENCLOSING STRUCTURE ELEMENT's `/Alt`, never the annotation's own key**
+  (`GFPDAnnot.java:289-304`), and only when it is a string. `7.18.1 t2` and `t3` both rest on it; reading `/Alt` off
+  the annotation dictionary would pass documents veraPDF fails.
+- **A widget's `TU` is the FIELD's, and the field is either the widget itself (merged) or its `/Parent` — one level,
+  never a climb** (`GFPDWidgetAnnot.java:30-36`). So 7.2 t25's population (form fields) and `7.18.1 t3`'s (widget
+  annotations) are different objects over one key: the population trap P04.S03 recorded for t24 against t25, again.
+- **`hasCorrectAlt` is a SHAPE, not a presence** (`PDMediaClip.java:58-73`): an array of even length, every entry a
+  string, and every ODD-indexed entry non-empty. And a media clip is reached through **actions**, not through
+  `/Annots`, so `7.18.6.2` is the one pair of the ten whose subject nib has no path to today.
+- **`containsAnnotations` is `!getAnnotations().isEmpty()` over veraPDF's own population** (`GFPDPage.java:200-201`),
+  so `7.18.3 t1`'s subject depends on exactly which array entries that population keeps. Measured before the rule is
+  written: a page whose only annotation veraPDF drops is a pass there and a fail for a naive `len(/Annots) > 0`.
+- **The corpus cannot carry this phase.** Of the 48 files under `7.18 Annotations`, `7.18.2` has **one** and it is on
+  `corpusUnreadable` (pdfcpu refuses a TrapNet annotation without its `/F`), `7.18.8` has **one**, a fail, and five
+  more sit under `7.18.7`, a clause the 1.30.2 profile does not implement at all. Every clause owes a measured pass
+  **and** fail fixture of its own — P03's phase trap, binding harder here than in any phase so far.
+
+#### P05.S01 — the annotation population, one door, and the two general rules *(done 2026-09-23, v1.149.0)*
+Scope: `annots()` as the single annotation door — per page, with subtype, `/F`, `isOutsideCropBox` over the inherited
+`/CropBox`, `/Contents`, and the `/StructParent` → parent-tree element with its raw `/S`, its standard type and its
+`/Alt`; `rules_content.go:125` and `rules_language.go:565` re-expressed over it; then `7.18.1 t1` and `t2`. Refs:
+ADR-009, law 5, P03.S01's `standardType`, P04.S03's annotation association.
+Acceptance:
+- One enumeration of annotations in `internal/uacheck`, and a guard asserts the **routing** (`runtime.FuncForPC`, the
+  shape P04.S02's review settled on), with any deliberate exemption named at its own site.
+- The crop-box predicate matches veraPDF on measured fixtures for: no `/CropBox` (inherit the `/MediaBox`), an
+  inherited `/CropBox`, a `/CropBox` larger than the `/MediaBox`, an absent or short `/Rect`, a reversed `/Rect`, and
+  an annotation touching the box edge.
+- `7.18.1 t1` and `t2` each hold a measured pass and a measured fail fixture, and each gains a `corpusReach` row
+  measured over the 297-file set.
+- No shipped clause's verdict moves: `7.18.4 t1`, `7.2 t24` and `7.2 t25` re-measured over the corpus before and after
+  the door lands, and the before/after figures recorded.
+
+**(grill, 2026-09-23)** Read from veraPDF's own source — `GFPDAnnot`, `GFPDPage`, `GFPDWidgetAnnot`
+(validation-model) and `PDAnnotation`, `PDPage` (parser) — then measured on 1.30.2 over **70 purpose-built
+fixtures** before a rule was written. What the reading alone would have got wrong:
+
+- **The population is every `/Annots` entry that resolves to a DICTIONARY**, the array itself possibly
+  indirect. Measured, each its own fixture: an annotation written **inline** in the array IS a subject; a
+  **dangling reference is NOT**; an entry resolving to an array is NOT; a `/Popup` IS; and an annotation with
+  **no `/Subtype` at all** IS.
+- **An excluded subtype and an exempt annotation are PASSING CHECKS, not absent subjects.** This is the whole
+  shape of the first implementation's error: written as "skip it", nib answered `NotApplicable` on 24 of the
+  70 fixtures where veraPDF reports **passed** — the *"veraPDF passed, nib not applicable"* gap P04.S04 named,
+  which the oracle scores as agreement and which would have silently halved both clauses' corpus reach. The
+  exclusions live in the profile's test EXPRESSION; the population is every annotation.
+- **`isOutsideCropBox` is disjointness against the inherited `/CropBox` CLIPPED to the `/MediaBox`**, falling
+  back to the media box entirely, with `>=`/`<=` so a **touching edge counts as outside** and an overlap of one
+  unit does not. It answers **null** — not `true` — with no `/Rect` or a `/Rect` of fewer than four numbers, and
+  the profile tests `== true`, so **an annotation with no rectangle is not exempt**. And the rectangle is used
+  **as written**: `[600 600 50 50]` inside a `/CropBox [100 100 500 500]` is OUTSIDE to veraPDF and INSIDE to
+  any implementation that sorts the corners first. Measured, with its control.
+- **The tag is the enclosing element's STANDARD type** (a private type role-mapped to `/Annot` passes), and the
+  `Alt` of 7.18.1 t2 is **that element's**, never the annotation's own key — an `/Alt` on the annotation
+  dictionary fails, and both `/Contents` and `/Alt` must be non-empty strings, indirect accepted.
+
+**And the grill found two live false FAILs in a SHIPPED clause, which is why the door lands in this slice
+rather than beside it.** `7.18.4 t1` shipped in P03.S06 carrying **neither half of its own exemption** and
+refusing a widget written inline in `/Annots` for an `OBJR` the clause does not ask for — the very requirement
+that rule's own doc comment says P06.S07 and P07.S03 already removed, surviving in one arm. Four documents
+veraPDF **passes** and nib **failed**: a hidden widget outside a Form tag, a widget wholly off the crop box, a
+hidden widget under a `P` tag, and an inline widget under a Form tag. **Invisible to the 297-file corpus** —
+no corpus file holds a hidden or off-page widget outside a Form tag — and invisible to a rule-by-rule review,
+because the defect is a clause of the profile that was never transcribed.
+
+Tasks:
+- T01 — `annots()` as the ONE annotation door (`annots.go`): the population above, the page's clipped
+  crop box carried on each subject, `/F`'s hidden bit, the tri-state `isOutsideCropBox`, the shared
+  `annotExempt`, and `annotElement`'s three-way answer (no `/StructParent` / names nothing / nib could not
+  finish the tree).
+- T02 — `7.18.1 t1` and `t2` over that door, with the exclusion lists taken from the profile's test
+  expression and graded as passes.
+- T03 — the three shipped enumerations re-expressed over it: `checkWidgetsInFormElements`,
+  `scanAnnotsAndFields` and `walkAppearances`. `7.18.4 t1` gains the exemption and loses the inline arm,
+  which changes a shipped clause's verdicts and is measured over the corpus before and after.
+- T04 — `TestEveryAnnotationReaderRoutesThroughOneDoor`: an AST scan asserting `annots.go` is the only
+  file in the package that indexes a page dictionary by `"Annots"`. Routing, not agreement — three readers
+  agreeing said nothing about the fourth, and the one that disagreed was the oldest.
+- T05 — fixtures: the 40-row measured table, the four-row `7.18.4 t1` regression with its two controls,
+  `AddNotes` as the oracle's product door for both clauses' passing half, and two mutations for the
+  failing half that nothing nib ships can write.
+- T06 — the count claim: 70 → 72 across the six copies that have a reader, and the complement 36 → 34.
+
+**(acceptance ledger, 2026-09-23, v1.149.0)** Every clause split on `and`; nothing `not exercised`.
+
+| # | clause | how it was discharged |
+|---|---|---|
+| 1 | one enumeration of annotations in `internal/uacheck` | `annots.go` is the only file in the package holding the literal `"Annots"` — three sites before this slice |
+| 2 | and a guard asserts the ROUTING | `TestEveryAnnotationReaderRoutesThroughOneDoor`, an AST scan over every string literal, so `ArrayEntry("Annots")`, `Find("Annots")` and a named const are all caught |
+| 3 | with any exemption named at its site | none taken: all three readers joined, the appearance walk included |
+| 4 | the crop-box predicate matches veraPDF on six named shapes | all six measured rows plus their controls: no `/CropBox` (media box), inherited, larger than the media box, absent `/Rect`, short `/Rect`, reversed `/Rect`, and the touching edge on BOTH corners |
+| 5 | `7.18.1 t1` holds a measured pass and fail fixture | 41 rows, every verdict veraPDF 1.30.2's, plus `AddNotes` and one mutation in the oracle |
+| 6 | `t2` likewise | same table; the oracle's failing half is a note with its `/Contents` dropped |
+| 7 | each gains a `corpusReach` row measured over the 297-file set | **71** each, exact, and the test fails on a drop |
+| 8 | no shipped clause's verdict moves | `7.18.4 t1` 19, `7.2 t24` 71, `7.2 t25` 19 — unchanged, asserted as exact equalities; corpus **0 false pass, 0 false fail** over 21,202 pairs |
+| 9 | measured before and after the door lands | the figures above were the before-figures and the test compares against them; the oracle is 4,032 pairs strictly agreeing over 57 documents |
+
+**Beyond the acceptance, and the reason the door lands in this slice:** `7.18.4 t1` had **two live false
+FAILs** — no exemption clause at all, and an inline widget refused for an `OBJR` the clause does not ask for.
+Four documents veraPDF passes, nib failed. Neither was visible to the corpus (reach 19 at 0 false fails
+through P03 and P04) or to a rule-by-rule review, because the defect was a clause of the profile that had
+never been transcribed. `TestAHiddenOrOffPageWidgetIsNoLongerAFailure` carries all four with two visible
+controls.
+
+**Gates.** `go build ./...`, `go test ./internal/uacheck/` (green, 49s), `./internal/pdfops/`,
+`./internal/server/`, `.` (root guards, `TestEveryDocCommentNamesItsOwnFunction` included) all green;
+`gofmt -l` clean. Corpus **0 false pass, 0 false fail**, 21,202 pairs, 2 unreadable (both pre-existing).
+`/redproof`: **17 mutations, one condition each, 16 red and one declared survivor** — a non-dict `/Annots`
+entry, which pdfcpu's reader deletes before any rule sees it (measured: a dangling reference and a `null`
+literal are both removed, and an entry resolving to an array makes the validator refuse the file). **Tiers 4
+and 6 did NOT fire** — the diff touches neither `internal/server`'s session, ceremony, delivery or discovery
+paths, nor `internal/p2p`, nor `internal/rendezvous`; it is `internal/uacheck` plus one count copy in
+`internal/pdfops/labelua.go` and two documents.
+
+**Live-verified through the real binary**, not the suite: `nib ua` on veraPDF's own
+`7.18.1-t02-fail-a.pdf` reports `7.18.1 t1` pass and `t2` fail naming the offending annotation's object
+number, which is exactly what veraPDF reports on that file; on nib's own Markdown conversion and on a real
+third-party fillable form both clauses report `not applicable` with "the document has no annotations".
+
+#### P05.S02 — the typed annotations: links, TrapNet and PrinterMark
+Scope: `7.18.5 t1` and `t2` (a Link nested in a `Link` tag; a Link with `/Contents`), `7.18.2 t1` (TrapNet refused),
+`7.18.8 t1` (a PrinterMark has no structure parent). Refs: S01's door, P03.S01's standard-type resolution.
+Acceptance:
+- All four hold a measured pass and fail fixture of their own, because the corpus carries a pass file for neither
+  `7.18.2` nor `7.18.8`.
+- `7.18.8 t1` reads the **raw `/S`** and not the standard type, measured on a fixture where a role map makes the two
+  differ; the same fixture measures which one `7.18.5 t1` reads.
+- `7.18.2-t01-fail-a.pdf` either stays on `corpusUnreadable` with its reason restated against this clause, or moves
+  off it with the reason retired — stated either way, never left implicit.
+- Four `corpusReach` rows, measured.
+
+#### P05.S03 — the interactive surface: a widget's alternative description, and the page's tab order
+Scope: `7.18.1 t3` (the field's `/TU`, else every one of its widgets has an enclosing `/Alt`) and `7.18.3 t1` (a page
+carrying annotations declares `/Tabs` `S`). Refs: S01's door, 7.2 t25's field population.
+Acceptance:
+- The widget → field `/TU` read is one level (`/Parent`), never a climb, measured against veraPDF on a fixture whose
+  `/TU` sits on a grandparent field.
+- `7.18.3 t1`'s subject population is measured against veraPDF's `containsAnnotations` on pages whose only annotation
+  is hidden, outside the crop box, a Popup, or an unresolvable reference.
+- Both clauses hold a measured pass and fail fixture and a `corpusReach` row.
+
+#### P05.S04 — media clips, a population reached through actions
+Scope: `7.18.6.2 t1` (`/CT` present) and `t2` (`hasCorrectAlt`): the media-clip population — screen annotations,
+rendition actions and whatever else veraPDF's model reaches — and the `/Alt` array's shape. Refs: `PDMediaClip.java`,
+S01's door for the annotation half of the path.
+Acceptance:
+- The population is stated from veraPDF's source (which actions and which keys reach a media-clip dictionary) and
+  measured on a fixture for each path, including a clip reached from a document-level or additional action rather
+  than from an annotation — or that path is a declared, measured CannotCheck.
+- `hasCorrectAlt` matches veraPDF on: odd length, a non-string entry, an empty even-indexed entry, an empty
+  odd-indexed entry, an absent `/Alt` and a non-array `/Alt`.
+- Both clauses hold a measured pass and fail fixture and a `corpusReach` row.
+- `len(Clauses())` is **80**, run rather than counted, and the README, the parity doc and the complement figure move
+  with it through their existing readers.
+
 ### P06 — Checker: file-level rules (~11 rules)
 **Goal.** Identification prefix and properties, header, Suspects, embedded-file keys, XFA, encryption P,
 reference and Form XObjects, Formula.

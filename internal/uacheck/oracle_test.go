@@ -107,7 +107,16 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		must("stamped page", st, serr),
 		must("OCR layer tagged into a committed proposal", ocr, oerr),
 	}
+	// P05.S01. `AddNotes` is the product door for the PASSING side of 7.18.1 t1 and t2: it writes a
+	// `/Text` annotation with `/Contents` and, on a tagged document, nests it in an `/Annot` element.
+	// The two mutations are the only way to the FAILING side — nothing nib ships writes an annotation
+	// that is undescribed or outside an Annot tag.
+	noted, nerr := pdfops.AddNotes(w.pdf, []pdfops.Note{{Page: 1, X: 72, Y: 700, Text: "a note"}})
+
 	docs = append(docs,
+		must("committed proposal + a note", noted, nerr),
+		oracleDoc{"noted proposal − the note's /StructParent", annotMutation(t, noted, "drop-structparent")},
+		oracleDoc{"noted proposal − the note's /Contents", annotMutation(t, noted, "drop-contents")},
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},
 		oracleDoc{"Markdown + padded CIDSet", withCIDSet(t, md, cidPadded)},
 		oracleDoc{"committed proposal + element /Lang", langOnEveryElement(t, w.pdf, "en")},
@@ -377,7 +386,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 51
+	const wantGenerated = 54
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

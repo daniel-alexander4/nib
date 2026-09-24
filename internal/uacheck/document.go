@@ -85,6 +85,11 @@ type Document struct {
 	// xmp memoises readXMP.
 	xmp     xmpFacts
 	xmpDone bool
+	// annotList is every annotation on every page, built on first use by `annots` — the ONE door
+	// (ADR-009); annotsErr is why the population may be short, when it may be.
+	annotList  []annotSubject
+	annotsErr  string
+	annotsDone bool
 	// tableSlots is every grid slot the document's tables have asked for so far (`maxDocumentTableSlots`).
 	tableSlots int64
 }

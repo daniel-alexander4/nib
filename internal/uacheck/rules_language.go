@@ -557,20 +557,15 @@ func (d *Document) scanAnnotsAndFields() subjectScan {
 		sc.missed, sc.annots, sc.fields = why, why, why
 		return sc
 	}
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, _, err := d.Ctx.PageDict(p, false)
-		if err != nil || page == nil {
-			return truncateAll(fmt.Sprintf("page %d does not resolve", p))
-		}
-		annots, aerr := d.Ctx.DereferenceArray(page["Annots"])
-		if aerr != nil {
-			return truncateAll(fmt.Sprintf("page %d's /Annots could not be read: %v", p, aerr))
-		}
-		for i, a := range annots {
-			if ad := d.dict(a); ad != nil {
-				add(kindAnnotation, ad, fmt.Sprintf("page %d, annotation %d", p, i))
-			}
-		}
+	// The annotation population is the shared door's (`annots.go`, ADR-009) — this walk used to be one
+	// of three enumerations of `/Annots`. A door that stopped short still hands back what it read, so
+	// the subjects before the unreadable page are kept and the reason truncates both populations.
+	annots, annotsMissed := d.annots()
+	for _, a := range annots {
+		add(kindAnnotation, a.dict, a.where)
+	}
+	if annotsMissed != "" {
+		return truncateAll(annotsMissed)
 	}
 	seen := map[uintptr]bool{}
 	var fields func(o types.Object, depth int)

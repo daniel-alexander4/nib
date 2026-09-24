@@ -444,6 +444,47 @@ func alternateTextWithNoLanguage(t *testing.T, pdf []byte, keys ...string) []byt
 }
 
 // widgetMutation breaks one link of a described form's widget ↔ Form-element linkage.
+// annotMutation breaks the first NON-widget annotation of a document, for the halves of 7.18.1 t1 and
+// t2 that no product door reaches: `pdfops.AddNotes` writes a described note with `/Contents`, which is
+// both clauses' passing half, and nothing nib ships writes an undescribed or untagged annotation.
+func annotMutation(t *testing.T, pdf []byte, kind string) []byte {
+	t.Helper()
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		for p := 1; p <= ctx.PageCount; p++ {
+			page, _, _, err := ctx.PageDict(p, false)
+			if err != nil {
+				return err
+			}
+			annots, _ := ctx.DereferenceArray(page["Annots"])
+			for _, a := range annots {
+				ad, derr := ctx.DereferenceDict(a)
+				if derr != nil || ad == nil {
+					continue
+				}
+				if sub := ad.NameEntry("Subtype"); sub == nil || *sub == "Widget" {
+					continue
+				}
+				switch kind {
+				case "drop-structparent":
+					if _, ok := ad["StructParent"]; !ok {
+						return fmt.Errorf("the fixture's annotation has no /StructParent to drop")
+					}
+					delete(ad, "StructParent")
+				case "drop-contents":
+					if _, ok := ad["Contents"]; !ok {
+						return fmt.Errorf("the fixture's annotation has no /Contents to drop")
+					}
+					delete(ad, "Contents")
+				default:
+					return fmt.Errorf("unknown annotation mutation %q", kind)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("the fixture has no non-widget annotation to break")
+	})
+}
+
 func widgetMutation(t *testing.T, pdf []byte, kind string) []byte {
 	return mutate(t, pdf, func(ctx *model.Context) error {
 		page, _, _, err := ctx.PageDict(1, false)
