@@ -50,6 +50,26 @@ func init() {
 		Summary: `the value of "pdfuaid:part" shall be the part number of the International Standard to which the file conforms`,
 		Check:   checkUAPartValue,
 	})
+	// 5 t3, 5 t4 and 5 t5 are one rule over three property names: `checkUAPrefix` is the single door
+	// (ADR-009) and these three registrations differ only in which property they name. They are written
+	// out rather than looped because `TestEveryRuleWrittenInTheSourceIsActuallyRegistered` reads the
+	// clause from a STRING LITERAL in the source — a table-driven loop registers rules the guard that
+	// compares source to registry cannot see, which is the drift the guard exists to catch.
+	register(Rule{
+		Clause:  "5 t3",
+		Summary: `property "part" of the PDF/UA Identification Schema shall have namespace prefix "pdfuaid"`,
+		Check:   func(d *Document) Result { return checkUAPrefix(d, "part") },
+	})
+	register(Rule{
+		Clause:  "5 t4",
+		Summary: `property "amd" of the PDF/UA Identification Schema shall have namespace prefix "pdfuaid"`,
+		Check:   func(d *Document) Result { return checkUAPrefix(d, "amd") },
+	})
+	register(Rule{
+		Clause:  "5 t5",
+		Summary: `property "corr" of the PDF/UA Identification Schema shall have namespace prefix "pdfuaid"`,
+		Check:   func(d *Document) Result { return checkUAPrefix(d, "corr") },
+	})
 	register(Rule{
 		Clause:  "7.10 t1",
 		Summary: "each optional content configuration dictionary shall contain the Name key",
@@ -345,7 +365,7 @@ func (d *Document) elementForMCID(spKey, mcid int) (types.Dict, string) {
 //
 // **This checker's report never labels a document**, and that is decided rather than pending a slice.
 // Writing `pdfuaid:part` claims conformance to all of PDF/UA, and P07.S07 measured that nib's checker cannot
-// support that claim: it implements 80 of the 106 rules veraPDF evaluates (15 when that was measured), and a
+// support that claim: it implements 84 of the 106 rules veraPDF evaluates (15 when that was measured), and a
 // document can pass all of them while failing one it does not check (ADR-031 law 1). **The one label nib
 // writes is `pdfops.LabelUA`'s** (ADR-033): on its own Markdown conversion, in a language someone chose,
 // resting on veraPDF's measurement of that conversion rather than on this report — so such a document passes
@@ -362,12 +382,17 @@ func checkUAIdentification(d *Document) Result {
 	if !x.Readable {
 		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
 	}
-	if x.UAPart == "" {
+	// **The subject is the identification, and the identification is ANY property in the pdfuaid
+	// namespace** (P06.S01, measured on veraPDF 1.30.2 — `xmpFacts.UAProps` carries the measurements).
+	// This read `x.UAPart == ""` until P06.S01 and was a live false FAIL: a packet carrying
+	// `pdfuaid:corr` and no `part` passes this clause in veraPDF and fails `5 t2`, and nib had the two
+	// the wrong way round on both. The corpus could not see it — it holds no such file.
+	if len(x.UAProps) == 0 {
 		return Result{
 			Verdict: Fail,
-			Why: "the metadata packet carries no pdfuaid:part, so nothing in the document states " +
-				"which part of PDF/UA it claims to conform to",
-			Where: "catalog /Metadata, pdfuaid:part",
+			Why: "the metadata packet carries no property in the PDF/UA identification namespace, so " +
+				"nothing in the document states which part of PDF/UA it claims to conform to",
+			Where: "catalog /Metadata, " + nsPDFUAID,
 		}
 	}
 	// **The part's VALUE is not this clause** (`/pending 489`). This rule also failed a packet whose part
@@ -393,10 +418,32 @@ func checkUAPartValue(d *Document) Result {
 	if !x.Readable {
 		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
 	}
-	if x.UAPart == "" {
+	// **An identification with no `part` is a FAILURE here, not an absent subject** (P06.S01). veraPDF's
+	// subject is the identification — which exists on any pdfuaid property — and its test is `part == 1`,
+	// which a null part does not satisfy: measured, a packet whose only pdfuaid property is `corr`
+	// reports `failedChecks="1"` on this clause. nib answered NotApplicable, a live false PASS. The
+	// absent-subject answer belongs one step earlier, where there is no identification at all.
+	if len(x.UAProps) == 0 {
 		return Result{
 			Verdict: NotApplicable,
-			Why:     "the metadata packet carries no pdfuaid:part, so there is no value to check (5 t1 reports the absence)",
+			Why: "the metadata packet carries no property in the PDF/UA identification namespace, so " +
+				"there is no identification whose part could be checked (5 t1 reports the absence)",
+		}
+	}
+	// **Declared-and-empty is not the same fact as absent**, and the refusal says which. veraPDF fails
+	// both — its test is `part == 1` and neither satisfies it — so the verdict is unaffected; what
+	// changes is whether a user is told to add a part they have already written.
+	if part, declared := x.UAProps["part"]; !declared || part.Value == "" {
+		missing := "the document carries a PDF/UA identification but no pdfuaid:part, so it claims " +
+			"conformance without saying to which part of the standard"
+		if declared {
+			missing = "the document's pdfuaid:part is present but empty, so it claims conformance " +
+				"without saying to which part of the standard"
+		}
+		return Result{
+			Verdict: Fail,
+			Why:     missing,
+			Where:   "catalog /Metadata, pdfuaid:part",
 		}
 	}
 	if x.UAPart != "1" {
@@ -404,6 +451,67 @@ func checkUAPartValue(d *Document) Result {
 			Verdict: Fail,
 			Why:     fmt.Sprintf("pdfuaid:part is %q; a PDF/UA-1 file declares part 1", x.UAPart),
 			Where:   "catalog /Metadata, pdfuaid:part",
+		}
+	}
+	return Result{Verdict: Pass}
+}
+
+// checkUAPrefix evaluates ua1 5 t3, 5 t4 and 5 t5 — the identification's `part`, `amd` and `corr`
+// properties each carry the namespace prefix `pdfuaid` (P06.S01).
+//
+// The profile's test is `<prop>Prefix == null || <prop>Prefix == "pdfuaid"`, and both halves of that
+// disjunction are load-bearing:
+//
+//   - **An ABSENT property PASSES.** It is a check that ran and succeeded, not a subject that was
+//     missing — measured: `5-t03-pass-a.pdf` carries neither `amd` nor `corr` and veraPDF reports
+//     `passedChecks="1"` for `5 t4` and `5 t5` on it. Answering NotApplicable here would disagree with
+//     the oracle on the commonest document there is.
+//   - **The property is found by NAMESPACE and judged by PREFIX.** A `part` of `1` written as
+//     `pdfuaia:part`, with `pdfuaia` bound to the identification namespace, is the corpus's own
+//     `5-t03-fail-a.pdf`: the value is right, the binding is right, and the clause still fails.
+//
+// The subject gate is the identification itself, which exists on any property in the namespace —
+// `checkUAIdentification` says how that was measured.
+func checkUAPrefix(d *Document, prop string) Result {
+	x := readXMP(d)
+	if !x.Present {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the document has no metadata stream, so there is no identification whose " + prop + " prefix could be checked",
+		}
+	}
+	if !x.Readable {
+		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
+	}
+	if len(x.UAProps) == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why: "the metadata packet carries no property in the PDF/UA identification namespace, so " +
+				"there is no identification to check (5 t1 reports the absence)",
+		}
+	}
+	// **Both halves of `<prop>Prefix == null` are ONE comparison, deliberately.** An undeclared
+	// property yields the zero `xmpProp`, whose prefix is empty, and a property written under the
+	// DEFAULT namespace carries an empty prefix too — and veraPDF passes both. Testing `declared`
+	// first read as two cases and was one: deleting that branch changed no answer, so the assertion
+	// covering it could not have gone red. One comparison, stated once.
+	p := x.UAProps[prop]
+	if p.Prefix == "" {
+		return Result{Verdict: Pass}
+	}
+	// **An empty prefix is the `null` half too, and that is measured rather than reasoned.** A property
+	// written under the DEFAULT namespace — `xmlns="http://www.aiim.org/pdfua/ns/id/"` with a bare
+	// `<part>` — carries no prefix at all, and veraPDF PASSES `5 t3` on it: measured on a
+	// length-preserving mutation of `5-t03-pass-a.pdf`, where `5 t2` still reports `part == 1` (so the
+	// property was found) and `5 t3` reports `passedChecks="1"`. Refusing it here was a live false fail,
+	// found by a blind mutation pass rather than by reading — the targeted probes all used a WRONG
+	// prefix and never a missing one.
+	if p.Prefix != "pdfuaid" {
+		return Result{
+			Verdict: Fail,
+			Why: fmt.Sprintf("the identification's %s property is written under the prefix %q; "+
+				"PDF/UA-1 requires the prefix %q, whatever namespace that prefix is bound to", prop, p.Prefix, "pdfuaid"),
+			Where: "catalog /Metadata, " + p.Prefix + ":" + prop,
 		}
 	}
 	return Result{Verdict: Pass}

@@ -149,6 +149,12 @@ var notTreeRules = map[string]string{
 	"7.18.6.2 t1": "media clip dictionaries", "7.18.6.2 t2": "a media clip's /Alt array",
 	"7.2 t30": "marked-content sequences", "7.2 t31": "marked-content sequences",
 	"7.2 t32": "marked-content sequences",
+	// P06.S01. The three prefix clauses read the XMP packet, like `5 t1` and `5 t2` above. `6.1 t1` reads
+	// neither the document nor the packet but the FILE's own leading bytes, which no structure-tree bound
+	// can touch — a document seventy Divs deep still has a header, and refusing to read it would be a
+	// refusal over a question the tree does not answer.
+	"5 t3": "the XMP packet", "5 t4": "the XMP packet", "5 t5": "the XMP packet",
+	"6.1 t1": "the file's leading bytes",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
