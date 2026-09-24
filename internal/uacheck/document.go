@@ -97,6 +97,11 @@ type Document struct {
 	annotsDone bool
 	// tableSlots is every grid slot the document's tables have asked for so far (`maxDocumentTableSlots`).
 	tableSlots int64
+	// specList is every file specification carrying an /EF, built on first use by `fileSpecs` — the ONE
+	// door (ADR-009); specsErr is why the population may be short, when it may be.
+	specList  []fileSpec
+	specsErr  string
+	specsDone bool
 }
 
 // nextStream hands out the next content-stream number.

@@ -2131,7 +2131,7 @@ pairs, 297 files. `len(Clauses())` is **84**. Three pre-existing XMP-reader defe
 count), `README.md` and `docs/accessibility-parity.md` — no `internal/server`, `internal/p2p` or
 `internal/rendezvous`, so neither `pairrepro.sh` nor `ceremonyrepro.sh` has a subject.
 
-#### P06.S02 — the three one-key refusals: Suspects, an embedded file's names, dynamic XFA
+#### P06.S02 — the three one-key refusals: Suspects, an embedded file's names, dynamic XFA *(done 2026-09-23, v1.155.0)*
 Scope: `7.1 t4` (`Suspects != true` on the mark-info dictionary), `7.11 t1` (a file specification with an
 `/EF` carries non-empty `F` AND `UF`), `7.15 t1` (`dynamicRender != 'required'` on the AcroForm).
 Acceptance:
@@ -2141,8 +2141,102 @@ Acceptance:
 - `7.11 t1`'s conjunction is split: a spec with `F` and no `UF`, with `UF` and no `F`, and with an EMPTY
   string in either, are four fixtures and not one.
 - `7.15 t1` reads the XFA's own `dynamicRender`, so a static XFA passes; a document with no AcroForm at all
-  is a passing check and not an absent subject, per P05's measured trap.
+  ~~is a passing check and not an absent subject, per P05's measured trap~~ **has NO SUBJECT — pin,
+  2026-09-23.** Measured before the rule was written: veraPDF reports `passedChecks="0" failedChecks="0"`
+  for `7.15 t1` on every corpus document without an AcroForm, which is most of them. The sketch carried
+  P05's trap to a clause it does not fit — there the subject was an annotation that EXISTS and is exempt;
+  here there is no AcroForm to be a subject at all. `NotApplicable` is the agreeing answer.
 - Three measured pass and fail fixtures, three `corpusReach` rows; `len(Clauses())` is 87.
+
+**(grill, 2026-09-23 — *(in progress)*)** The three profile tests, transcribed: `Suspects != true`
+(object `CosDocument`), `containsEF == false || (F != null && F != '' && UF != null && UF != '')`
+(object `CosFileSpecification`), and `dynamicRender != 'required'` (object `PDAcroForm`).
+
+**`7.11 t1`'s SUBJECT POPULATION is a SIX-HOLDER WALK, and "the embedded-files name tree" is wrong.**
+This is the slice's whole risk and it is the P05.S04 media-clip shape again: a holder nib does not walk
+is a silent Pass over a file specification nobody looked at. Measured against veraPDF 1.30.2, each on a
+hand-built PDF carrying ONE defective spec (`/EF` and `/F`, no `/UF`) reachable only through the holder
+under test, **with the stimulus asserted in every build** (the spec's own filename present in the
+written bytes):
+
+| holder | veraPDF |
+|---|---|
+| `/Names /EmbeddedFiles` name tree | **failed**, 2 checks |
+| a `FileAttachment` annotation's `/FS` | **failed** |
+| the catalog's `/AF` | **failed** |
+| a page's `/AF` | **failed** |
+| a structure element's `/AF` | **failed** |
+| a form XObject's `/AF` | **failed** |
+
+The name-tree spec scores **two** checks for one object — veraPDF reaches it twice and grades it twice.
+That is irrelevant to nib, which reports one `Result` per clause, and it is recorded so the count is not
+mistaken later for two subjects. `FileSpecificationKeysHelper` names further routes this slice must
+measure before it claims the population: appearance streams, an image XObject's `/Mask` and
+`/Alternates`, and nested resources.
+
+**Two probes were VACUOUS and are recorded as such rather than as evidence.** An unreferenced `Filespec`
+and an `/AF`-borne one built through pdfcpu both came back "passed" — and in both cases pdfcpu had
+**dropped the object**, so the check ran with no subject present. Only the asserted stimulus (`spec
+present = false`) showed it. The hand-built harness above exists because of that, and the pdfcpu
+behaviour is its own finding (below).
+
+**`7.15 t1` DOES fail its corpus fixture** — 1 check on `7.15-t01-fail-a.pdf`. An earlier reading that
+it did not was taken from an interleaved four-document report and was wrong; re-measured per file. It is
+`NotApplicable` on every document with no AcroForm, which is most of them.
+
+**`7.1 t4`'s object is `CosDocument`, one check per document**, and `Suspects != true` means an ABSENT
+`/MarkInfo` or an absent `/Suspects` PASSES. **A non-boolean `/Suspects` is now
+measured, and the answer is not the interesting part.** veraPDF PASSES `/Suspects (true)` written as a
+STRING (`passedChecks="1"`), so `Suspects != true` means the boolean true and nothing else — which is what
+the rule does. **But nib cannot open such a document at all**: pdfcpu's `validateBooleanEntry` errors
+rather than deleting, so `Check` emits no report where veraPDF answers Pass. The branch is correct and
+unreachable through a file — the same class as `6.1 t1`'s `%PDF-1.9` — and it is tested in memory.
+
+Tasks:
+- `T01 — the file-specification population as ONE door, over every measured holder`.
+- `T02 — 7.11 t1 over that door, its conjunction split four ways`.
+- `T03 — 7.1 t4, including what a non-boolean /Suspects does`.
+- `T04 — 7.15 t1 over the AcroForm, reading the XFA's own dynamicRender`.
+- `T05 — corpusReach rows, oracle documents reaching both halves, notTreeRules; len(Clauses()) is 87`.
+
+**(review, 2026-09-23 — three reviewers over the diff, packs `go` + `verification`)** Both oracles were
+green when the review started. **Every finding below was invisible to them**, and four were live defects.
+
+- **A form XObject is a STREAM.** `types.StreamDict` EMBEDS `types.Dict`, so a type switch with a `Dict`
+  case and no `StreamDict` case walks neither. A specification on a form XObject's `/AF` — a holder this
+  slice had already MEASURED and written into its own table — was invisible. The holder list was right;
+  the holder was missed by TYPE. Probed red: 0 specs found.
+- **The walk was an attacker-supplied exponential.** Arrays carried no visited set and spent no budget,
+  so `[prev prev]` chained n deep was re-walked 2^n times: n=21 took 198 ms from a 3 KB file. The same
+  walk counted depth THROUGH references, so a 64-long chain of linked dictionaries — **an outline with
+  64 bookmarks** — refused the whole clause. Both are fixed by one change: indirect references are not
+  followed, because the object-table loop reaches every object anyway. Measured after: a 2^30 document
+  settles in 0.01 s and the 70-long chain reports its real defect.
+- **One unreadable XFA packet refused the form.** Go's `encoding/xml` rejects `encoding="ISO-8859-1"`,
+  `version="1.1"` and `&nbsp;` — all ordinary in XFA rich text — so a document whose `template` packet
+  carried a named entity answered CannotCheck where veraPDF passes. Packets are now tried in turn, and
+  the XFA read carries ceilings (64 packets, 32 MiB) against a flate bomb repeated 20,000 times in one
+  `/XFA` array.
+- **`dynamicRender`'s text was read in one piece.** `requi<!--x-->red` read as `requi` — a Pass on a
+  dynamic form — and a nested element of the same name collapsed the reading.
+- **The answer was nondeterministic.** Sorting object numbers left the per-dictionary key loop random:
+  40 opens of identical bytes gave two different reasons, 35 and 5.
+
+**Two reviewer findings were REFUTED by measurement rather than accepted.** An unreferenced specification
+was argued to be a false fail; veraPDF FAILS a truly orphaned spec, so nib agrees. A non-boolean
+`/Suspects` and a name-valued `/F` were argued to be a false pass and a wrong branch; veraPDF passes the
+first and fails the second, exactly as nib does — both branches were right and merely untested, and both
+are unreachable through a file because pdfcpu refuses such documents outright.
+
+**Red-proof: 14 targeted and 6 blind probes, 7 survivors, all disposed.** Two probes of my own were
+themselves defective and caught by their own stimulus assertions — one mutation left the live call intact
+beside a dead one, and one fixture's ordering depended on object numbers a test cannot control.
+
+**Gates.** Oracle **6,786 of 6,786** over 78 documents; corpus **0 false pass / 0 false fail** over 25,627
+pairs. `len(Clauses())` is **87**. `/pending 655` and `656` filed.
+
+**Tier 4 / tier 6 did NOT fire** — the diff is `internal/uacheck` plus a comment in `internal/pdfops`, two
+docs and the plan; no `internal/server`, `internal/p2p` or `internal/rendezvous`.
 
 #### P06.S03 — encryption's permission bit, and the reference XObject
 Scope: `7.16 t1` (an encrypted file's `/P` has bit 10 set) and `7.20 t1` (no reference XObjects).

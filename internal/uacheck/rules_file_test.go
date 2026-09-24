@@ -2,8 +2,11 @@ package uacheck
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -183,5 +186,618 @@ func TestTheHeaderRefusalDoesNotQuoteTheWholeFile(t *testing.T) {
 	}
 	if !strings.Contains(large.Why, "\u2026") {
 		t.Errorf("the refusal does not mark that it truncated what it quoted: %.120q", large.Why)
+	}
+}
+
+// 7.11 t1 — an embedded file's names (P06.S02).
+//
+// **The conjunction is split four ways, because it is four conditions.** The profile's test is
+// `containsEF == false || (F != null && F != ” && UF != null && UF != ”)`, and a fixture that only
+// removed `/UF` would leave three of the four unasserted — the shape `code-review` calls an assertion
+// narrower than its claim.
+func TestAnEmbeddedFilesNamesAreBothPresentAndNonEmpty(t *testing.T) {
+	base, err := pdfops.AddAttachment(plainDoc(t), "schedule.csv", []byte("a,b\n1,2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Control: the product door writes both names, so the unmutated document passes. Without this the
+	// four cases below could all be failing for a reason the mutation did not introduce.
+	if got := verdictOf(t, base, "7.11 t1"); got.Verdict != Pass {
+		t.Fatalf("control: AddAttachment's output reports %v for 7.11 t1 (%s), want Pass", got.Verdict, got.Why)
+	}
+	for _, c := range []struct {
+		name string
+		key  string
+		to   types.Object
+		why  string
+	}{
+		{"F absent", "F", nil, "no /F"},
+		{"UF absent", "UF", nil, "no /UF"},
+		{"F empty", "F", types.StringLiteral(""), "EMPTY /F"},
+		{"UF empty", "UF", types.StringLiteral(""), "EMPTY /UF"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := verdictOf(t, withSpecKey(t, base, c.key, c.to), "7.11 t1")
+			if got.Verdict != Fail {
+				t.Fatalf("with %s, 7.11 t1 reports %v (%s), want Fail", c.name, got.Verdict, got.Why)
+			}
+			if !strings.Contains(got.Why, c.why) {
+				t.Errorf("with %s, the refusal is %q, which does not name the condition that failed", c.name, got.Why)
+			}
+		})
+	}
+}
+
+// **A file specification with NO embedded file is a passing CHECK, not an absent subject** — the
+// profile's first disjunct. A document holding only such specs must answer Pass; answering
+// NotApplicable is a strict disagreement with the oracle, and it is what nib did until law 5 caught it
+// on three media-clip documents whose clip `/D` is exactly this shape.
+func TestASpecificationWithNoEmbeddedFileIsAPassingCheck(t *testing.T) {
+	doc := withBareFileSpec(t, plainDoc(t))
+	if got := verdictOf(t, doc, "7.11 t1"); got.Verdict != Pass {
+		t.Errorf("a document whose only file specification has no /EF reports %v (%s) for 7.11 t1, "+
+			"want Pass — it is a check that succeeded, not a subject that is missing", got.Verdict, got.Why)
+	}
+	// And a document with no file specification at all genuinely has no subject.
+	if got := verdictOf(t, plainDoc(t), "7.11 t1"); got.Verdict != NotApplicable {
+		t.Errorf("a document with no file specification reports %v (%s), want NotApplicable", got.Verdict, got.Why)
+	}
+}
+
+// 7.1 t4 — Suspects (P06.S02). `Suspects != true`, so both absences pass.
+func TestSuspectsIsOnlyAFailureWhenItIsTrue(t *testing.T) {
+	base := plainDoc(t)
+	if got := verdictOf(t, base, "7.1 t4"); got.Verdict != Pass {
+		t.Fatalf("control: a document with no /MarkInfo reports %v for 7.1 t4 (%s), want Pass", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, withSuspects(t, base, false), "7.1 t4"); got.Verdict != Pass {
+		t.Errorf("/Suspects false reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, withSuspects(t, base, true), "7.1 t4")
+	if got.Verdict != Fail {
+		t.Fatalf("/Suspects true reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "Suspects") {
+		t.Errorf("the refusal is %q, which does not name the key", got.Why)
+	}
+}
+
+// 7.15 t1 — dynamic XFA (P06.S02).
+//
+// **The fixture writes the element the way veraPDF's own does** — `<dynamicRender\n>` with the newline
+// before the closing bracket — because that serialisation is what a `bytes.Contains` search misses,
+// and the rule is parsed rather than searched for exactly that reason.
+func TestADynamicXFAFormIsRefusedAndAStaticOneIsNot(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verdictOf(t, base, "7.15 t1"); got.Verdict != NotApplicable {
+		t.Fatalf("control: a document with no AcroForm reports %v for 7.15 t1 (%s), want NotApplicable",
+			got.Verdict, got.Why)
+	}
+	got := verdictOf(t, withDynamicXFA(t, base), "7.15 t1")
+	if got.Verdict != Fail {
+		t.Fatalf("a dynamicRender of required reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "dynamicRender") {
+		t.Errorf("the refusal is %q, which does not name what it read", got.Why)
+	}
+	// **A STATIC XFA form PASSES** — the clause refuses dynamic rendering, not XFA.
+	if got := verdictOf(t, withStaticXFA(t, base), "7.15 t1"); got.Verdict != Pass {
+		t.Errorf("a dynamicRender of forbidden reports %v (%s), want Pass — the clause refuses "+
+			"dynamic rendering, not XFA itself", got.Verdict, got.Why)
+	}
+}
+
+// **pdfcpu DELETES an `/AcroForm` its validator refuses, and the rule re-reads the file to see it.**
+//
+// Measured on veraPDF's own `7.15-t01-fail-a.pdf`, the one corpus document that exists to fail this
+// clause: the file carries `/AcroForm 2 0 R` with the XFA packet, and after `ReadValidateAndOptimize`
+// the catalog has no `/AcroForm` key at all — it keeps `/NeedsRendering`, the marker of exactly the
+// form it dropped. Reading only the validated catalog reported NotApplicable, a live false pass on the
+// clause's own fixture, and the corpus guard is what caught it.
+func TestAnAcroFormPDFCPUDroppedIsStillFound(t *testing.T) {
+	path := corpusDir() + "/7.15 XFA/7.15-t01-fail-a.pdf"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("veraPDF's corpus is absent: %v", err)
+	}
+	d, oerr := open(raw)
+	if oerr != nil {
+		t.Fatalf("open: %v", oerr)
+	}
+	// The stimulus, asserted: this test is only meaningful while pdfcpu still drops the key. If a
+	// pdfcpu bump starts keeping it, this goes red and the fallback can be reconsidered.
+	if _, kept := d.Catalog["AcroForm"]; kept {
+		t.Fatal("pdfcpu now KEEPS the /AcroForm on this document, so the unvalidated re-read is no " +
+			"longer what makes this clause reachable — re-measure before trusting the fallback")
+	}
+	if got := registry["7.15 t1"].Check(d); got.Verdict != Fail {
+		t.Errorf("7.15 t1 reports %v (%s) on veraPDF's own failing fixture, want Fail", got.Verdict, got.Why)
+	}
+}
+
+// **An UNTYPED dictionary carrying an embedded file is still a file specification** (P06.S02).
+//
+// Measured against veraPDF on a hand-built document: a dictionary with `/EF` and no `/Type /Filespec`
+// is graded exactly as a typed one is, and fails when a name is missing. Keying the population on
+// `/Type` alone would pass it — and nothing else in this package reaches that case, because every
+// fixture's specification is typed. Probed: dropping the `/EF` half of the population predicate left
+// the whole package green until this test existed.
+//
+// **It is built in memory because pdfcpu refuses the state through a file**: its validator rejects the
+// document outright with `dict=fileSpecDict required entry=Type missing`, so a fixture written to disk
+// never reaches any rule. That is a fact about the DEPENDENCY rather than about nib — veraPDF reads
+// the same bytes and grades them — and `openMutated` exists for exactly this shape.
+func TestAnUntypedDictionaryCarryingAnEmbeddedFileIsASpecification(t *testing.T) {
+	base, err := pdfops.AddAttachment(plainDoc(t), "schedule.csv", []byte("a,b\n1,2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	untype := func(d *Document) int {
+		specs, serr := d.fileSpecs()
+		if serr != "" {
+			t.Fatalf("the specification walk was short: %s", serr)
+		}
+		n := 0
+		for _, sp := range specs {
+			if _, has := sp.dict["Type"]; has {
+				delete(sp.dict, "Type")
+				n++
+			}
+		}
+		// Reset the memoised population so the rule re-walks and sees the untyped shape.
+		d.specList, d.specsDone, d.specsErr = nil, false, ""
+		return n
+	}
+
+	// Complete but untyped: still a subject, so it PASSES rather than vanishing.
+	d := openMutated(t, base, func(_ *Document, _ types.Dict) {})
+	if n := untype(d); n == 0 {
+		t.Fatal("setup: no specification carried a /Type to remove, so the untyped case is never reached")
+	}
+	if got := registry["7.11 t1"].Check(d); got.Verdict != Pass {
+		t.Fatalf("an untyped specification with both names reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+
+	// Untyped AND missing a name: still a subject, and it FAILS — which is what makes it a subject
+	// rather than something the walk skipped.
+	d2 := openMutated(t, base, func(_ *Document, _ types.Dict) {})
+	untype(d2)
+	specs, _ := d2.fileSpecs()
+	for _, sp := range specs {
+		delete(sp.dict, "UF")
+	}
+	if got := registry["7.11 t1"].Check(d2); got.Verdict != Fail {
+		t.Errorf("an untyped specification missing /UF reports %v (%s), want Fail — it is a "+
+			"specification whether or not it says so", got.Verdict, got.Why)
+	}
+}
+
+// **A specification written as a DIRECT dictionary, inside a direct dictionary, inside an array, is
+// still a subject** (P06.S02) — measured against veraPDF on a hand-built document where the only
+// defective spec is an annotation's `/FS`, with neither the annotation nor the spec an object of its
+// own.
+//
+// It needs its own test because the walk reaches an INDIRECT annotation from the object table without
+// ever descending an array, so every other fixture here leaves that descent unexercised: probed,
+// removing the array case entirely left the package green.
+func TestADirectSpecificationInsideAnArrayIsFound(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := openMutated(t, base, func(_ *Document, page types.Dict) {
+		// Nothing here is an indirect object: the array holds a dictionary that holds the spec.
+		page["Annots"] = types.Array{types.Dict{
+			"Type":    types.Name("Annot"),
+			"Subtype": types.Name("FileAttachment"),
+			"Rect":    types.NewNumberArray(50, 50, 70, 70),
+			"F":       types.Integer(4),
+			"FS": types.Dict{
+				"Type": types.Name("Filespec"),
+				"F":    types.StringLiteral("direct.txt"),
+				"EF":   types.Dict{"F": types.StringLiteral("stand-in")},
+			},
+		}}
+	})
+	// The stimulus, asserted: the walk must actually find it, or the verdict below says nothing.
+	specs, serr := d.fileSpecs()
+	if serr != "" {
+		t.Fatalf("the specification walk was short: %s", serr)
+	}
+	found := false
+	for _, sp := range specs {
+		if s, _ := d.text(sp.dict["F"]); s == "direct.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the direct specification was not reached at all (%d spec(s) found), so the walk "+
+			"descends neither arrays nor nested dictionaries", len(specs))
+	}
+	if got := registry["7.11 t1"].Check(d); got.Verdict != Fail {
+		t.Errorf("a direct specification with /EF and no /UF reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+}
+
+// **A specification with no embedded file must not stop the scan** (P06.S02, found by a blind
+// mutation pass). Replacing the `continue` with a `break` left the whole package green, because no
+// fixture put an EF-less specification BEFORE a defective one — and since the population is walked in
+// object-number order, which one comes first is a property of the document rather than of the test.
+func TestAnEmbeddedFilelessSpecificationDoesNotStopTheScan(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := func(name string, ef bool) types.Dict {
+		d := types.Dict{"Type": types.Name("Filespec"), "F": types.StringLiteral(name)}
+		if ef {
+			// Carries an embedded file and NO /UF — the defect.
+			d["EF"] = types.Dict{"F": types.StringLiteral("stand-in")}
+		}
+		return d
+	}
+	annot := func(fs types.Dict) types.Dict {
+		return types.Dict{
+			"Type": types.Name("Annot"), "Subtype": types.Name("FileAttachment"),
+			"Rect": types.NewNumberArray(50, 50, 70, 70), "F": types.Integer(4), "FS": fs,
+		}
+	}
+	// **Both are DIRECT dictionaries in one array**, so the order the walk sees them in is the array's
+	// own — not a function of object numbers, which a fixture cannot control.
+	d := openMutated(t, base, func(_ *Document, page types.Dict) {
+		page["Annots"] = types.Array{annot(spec("bare.csv", false)), annot(spec("broken.csv", true))}
+	})
+	// The stimulus, asserted: the bare specification really does come first, or `break` and `continue`
+	// behave identically here and the probe proves nothing.
+	specs, serr := d.fileSpecs()
+	if serr != "" {
+		t.Fatalf("the specification walk was short: %s", serr)
+	}
+	if len(specs) < 2 {
+		t.Fatalf("setup: %d specification(s) found, want both", len(specs))
+	}
+	if _, hasEF := specs[0].dict["EF"]; hasEF {
+		t.Fatalf("setup: the FIRST specification carries an /EF, so nothing is stepped past")
+	}
+	got := registry["7.11 t1"].Check(d)
+	if got.Verdict != Fail {
+		t.Errorf("7.11 t1 reports %v (%s); a specification with no embedded file stopped the scan "+
+			"before the defective one behind it", got.Verdict, got.Why)
+	}
+}
+
+// **The XFA value is trimmed at BOTH ends** (P06.S02, found by a blind mutation pass). veraPDF's own
+// fixture puts the newline before the closing bracket; a producer that puts it after the text instead
+// yields `"required\n"`, which never equals `"required"` — and a dynamic form reads as Pass. Trimming
+// only the left survived the whole package.
+func TestTheXFAValueIsTrimmedAtBothEnds(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, packet := range []string{
+		"<config><acrobat><acrobat7><dynamicRender>required\n</dynamicRender></acrobat7></acrobat></config>",
+		"<config><acrobat><acrobat7><dynamicRender>\n  required  \n</dynamicRender></acrobat7></acrobat></config>",
+	} {
+		if got := verdictOf(t, withXFAConfig(t, base, packet), "7.15 t1"); got.Verdict != Fail {
+			t.Errorf("a dynamicRender of %q reports %v (%s), want Fail — the value is the element's "+
+				"text, not its whitespace", packet, got.Verdict, got.Why)
+		}
+	}
+}
+
+// **A refusal survives being asked twice** (P06.S02, found by a blind mutation pass). The population
+// is memoised, and returning a clean answer on the second ask would mean the first rule to look says
+// CannotCheck while every rule after it silently Passes the same truncated document. Only one clause
+// reads this door today, so the hole is latent — which is exactly the kind that is cheap now and
+// invisible later.
+func TestTheSpecificationRefusalSurvivesMemoisation(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := openMutated(t, base, func(_ *Document, page types.Dict) {
+		// A chain deeper than the walk's bound, so the population is knowingly short.
+		deep := types.Dict{}
+		cur := deep
+		for i := 0; i < maxWalkDepth+5; i++ {
+			next := types.Dict{}
+			cur["K"] = next
+			cur = next
+		}
+		page["Nested"] = deep
+	})
+	_, first := d.fileSpecs()
+	if first == "" {
+		t.Fatal("setup: the walk finished, so there is no refusal to preserve")
+	}
+	// **Asserted as non-empty, not as equal.** `specsErr` is write-once, so removing the memo makes
+	// the second call re-walk and return the SAME string — an equality check could only catch a
+	// mutation that CLEARS the error, not one that drops it. What matters to a second reader is that
+	// a refusal is still there at all.
+	if _, second := d.fileSpecs(); second == "" {
+		t.Errorf("asked twice, the door returned %q then nothing — a second reader would grade a "+
+			"population it was told was short", first)
+	}
+	if got := registry["7.11 t1"].Check(d); got.Verdict != CannotCheck {
+		t.Errorf("7.11 t1 reports %v (%s) over a population nib knows is short, want CannotCheck", got.Verdict, got.Why)
+	}
+}
+
+// **A non-boolean `/Suspects` is not the boolean true, so it PASSES** (P06.S02).
+//
+// Measured: veraPDF passes `/Suspects (true)` written as a STRING, `passedChecks="1"` — the profile's
+// `Suspects != true` means the boolean and nothing else. **nib cannot open such a document**, because
+// pdfcpu's `validateBooleanEntry` errors rather than deleting, so `Check` emits no report at all where
+// veraPDF answers Pass. That divergence is outside the clause and is declared in the plan; the branch
+// itself is reached here the way this package always reaches a state pdfcpu refuses — in memory.
+func TestANonBooleanSuspectsIsNotTheBooleanTrue(t *testing.T) {
+	base := plainDoc(t)
+	for _, v := range []types.Object{
+		types.StringLiteral("true"), types.Name("true"), types.Integer(1),
+	} {
+		d := openMutated(t, base, func(d *Document, _ types.Dict) {
+			mi := d.dict(d.Catalog["MarkInfo"])
+			if mi == nil {
+				mi = types.Dict{}
+				d.Catalog["MarkInfo"] = mi
+			}
+			mi["Suspects"] = v
+		})
+		// The stimulus, asserted: the key really is there and really is not a boolean.
+		mi := d.dict(d.Catalog["MarkInfo"])
+		if _, isBool := d.boolValue(mi["Suspects"]); isBool {
+			t.Fatalf("setup: %v reads as a boolean, so the non-boolean branch is never reached", v)
+		}
+		if got := registry["7.1 t4"].Check(d); got.Verdict != Pass {
+			t.Errorf("/Suspects %v reports %v (%s), want Pass — only the boolean true fails this clause",
+				v, got.Verdict, got.Why)
+		}
+	}
+}
+
+// **A `/F` that is not a string names nothing, and veraPDF fails it** (P06.S02).
+//
+// Measured on a hand-built document: `/F /probe.txt` — a NAME rather than a string — is FAILED by
+// veraPDF (`failedChecks="2"`). nib fails it too. Like the untyped case, pdfcpu refuses the document
+// outright (`decodeString: dict=fileSpecDict entry=F invalid type types.Name`), so the branch is
+// reached in memory. It is the fifth condition of a test whose comment claims four, and nothing
+// reached it before this test existed.
+func TestANonStringNameOnASpecificationIsAFailure(t *testing.T) {
+	base, err := pdfops.AddAttachment(plainDoc(t), "schedule.csv", []byte("a,b\n1,2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"F", "UF"} {
+		d := openMutated(t, base, func(d *Document, _ types.Dict) {})
+		specs, serr := d.fileSpecs()
+		if serr != "" {
+			t.Fatalf("the specification walk was short: %s", serr)
+		}
+		changed := 0
+		for _, sp := range specs {
+			if _, hasEF := sp.dict["EF"]; hasEF {
+				sp.dict[key] = types.Name("probe.txt")
+				changed++
+			}
+		}
+		if changed == 0 {
+			t.Fatalf("setup: no specification carries an /EF, so /%s was never replaced", key)
+		}
+		got := registry["7.11 t1"].Check(d)
+		if got.Verdict != Fail {
+			t.Fatalf("a name-valued /%s reports %v (%s), want Fail", key, got.Verdict, got.Why)
+		}
+		if !strings.Contains(got.Why, "not a string") {
+			t.Errorf("the refusal is %q, which does not say the value names nothing", got.Why)
+		}
+	}
+}
+
+// **An empty `/XFA []` PASSES**, and it reaches the rule through the VALIDATED catalog (P06.S02).
+//
+// pdfcpu accepts an empty XFA array, and a non-empty `/Fields` keeps the AcroForm alive, so this is a
+// document the checker really sees. `dynamicRender` is then null and `null != 'required'` — refusing
+// it would be a CannotCheck where veraPDF passes.
+func TestAnEmptyXFAArrayPasses(t *testing.T) {
+	base, err := pdfops.AuthorForm(plainDoc(t), []pdfops.FormField{{
+		Page: 1, Rect: [4]float64{100, 700, 300, 720}, Kind: "text", Name: "n", Label: "Name"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := openMutated(t, base, func(d *Document, _ types.Dict) {
+		form := d.dict(d.Catalog["AcroForm"])
+		if form == nil {
+			t.Fatal("setup: AuthorForm's output has no AcroForm to give an /XFA")
+		}
+		form["XFA"] = types.Array{}
+	})
+	// The stimulus, asserted: this must be the VALIDATED path, or it measures the re-read again.
+	if _, kept := d.Catalog["AcroForm"]; !kept {
+		t.Fatal("setup: the AcroForm is not in the validated catalog, so this exercises the fallback")
+	}
+	if got := registry["7.15 t1"].Check(d); got.Verdict != Pass {
+		t.Errorf("an empty /XFA reports %v (%s), want Pass — nothing declares dynamicRender", got.Verdict, got.Why)
+	}
+}
+
+// **A packet nib's XML parser rejects does not refuse the form** (P06.S02).
+//
+// Go's `encoding/xml` rejects several things a Java parser accepts and XFA templates routinely carry:
+// `encoding="ISO-8859-1"`, `version="1.1"`, and XHTML rich text with `&nbsp;`. Refusing the clause
+// because the `template` packet has a named entity would report "could not check" for ordinary forms
+// veraPDF passes, so each packet is tried and the first value found wins.
+func TestAnUnparseableXFAPacketDoesNotRefuseTheForm(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The unreadable packet comes FIRST, so a reader that aborts on it never sees the answer.
+	d := verdictOf(t, withXFAPackets(t, base,
+		"<template><p>a&nbsp;b</p></template>",
+		"<config><acrobat><acrobat7><dynamicRender>required</dynamicRender></acrobat7></acrobat></config>",
+	), "7.15 t1")
+	if d.Verdict != Fail {
+		t.Errorf("with an unparseable template packet before the config packet, 7.15 t1 reports %v "+
+			"(%s), want Fail — the config packet answered the question", d.Verdict, d.Why)
+	}
+	// But when NO packet answers and one could not be read, the honest answer is a refusal.
+	only := verdictOf(t, withXFAPackets(t, base, "<template><p>a&nbsp;b</p></template>"), "7.15 t1")
+	if only.Verdict != CannotCheck {
+		t.Errorf("with only an unparseable packet, 7.15 t1 reports %v (%s), want CannotCheck — nothing "+
+			"declared the setting and nib could not read the one packet there was", only.Verdict, only.Why)
+	}
+}
+
+// **The element's text survives being split, and a nested element of the same name does not collapse
+// the reading** (P06.S02). A counter merely SET on the opening tag lost both: `requi<!--x-->red` read
+// as `requi`, and a nested `dynamicRender` ended the outer one early — each a Pass on a dynamic form.
+func TestTheDynamicRenderTextIsReadWhole(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, packet := range []string{
+		"<config><dynamicRender>requi<!--x-->red</dynamicRender></config>",
+		"<config><dynamicRender><x><dynamicRender/></x>required</dynamicRender></config>",
+		"<config><dynamicRender>requi<?pi?>red</dynamicRender></config>",
+	} {
+		if got := verdictOf(t, withXFAConfig(t, base, packet), "7.15 t1"); got.Verdict != Fail {
+			t.Errorf("packet %q reports %v (%s), want Fail — the element's text is `required`",
+				packet, got.Verdict, got.Why)
+		}
+	}
+}
+
+// **A specification on a form XObject's `/AF` is a subject, and a form XObject is a STREAM** (P06.S02).
+//
+// `types.StreamDict` embeds `types.Dict` rather than being one, so a type switch with a `Dict` case and
+// no `StreamDict` case walks neither the stream's dictionary nor anything under it. Measured: veraPDF
+// FAILS a defective specification hung off a form XObject's `/AF`, and nib found nothing there — a
+// false pass on a holder this slice had already measured and written into its own table. The holder
+// list was right; it was missed by TYPE.
+//
+// The indirect spelling survives such a bug by accident, because the object-table loop finds the
+// specification independently, so this fixture writes the specification DIRECTLY on the stream.
+func TestASpecificationOnAFormXObjectIsFound(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// **Built in memory, because a WRITE defeats the fixture.** Round-tripping through
+	// `api.WriteContext` hoists the direct `/AF` dictionary into an object of its own, and the
+	// object-table loop then finds it whatever the stream case does — the first version of this test
+	// passed with the `StreamDict` case removed for exactly that reason.
+	d := openMutated(t, base, func(d *Document, page types.Dict) {
+		sd, serr := d.Ctx.NewStreamDictForBuf([]byte(""))
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		sd.Dict["Type"] = types.Name("XObject")
+		sd.Dict["Subtype"] = types.Name("Form")
+		sd.Dict["BBox"] = types.NewNumberArray(0, 0, 10, 10)
+		sd.Dict["AF"] = types.Array{types.Dict{
+			"Type": types.Name("Filespec"),
+			"F":    types.StringLiteral("on-a-form.txt"),
+			"EF":   types.Dict{"F": types.StringLiteral("stand-in")},
+		}}
+		ref, rerr := d.Ctx.IndRefForNewObject(*sd)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		res, _ := d.Ctx.DereferenceDict(page["Resources"])
+		if res == nil {
+			res = types.Dict{}
+			page["Resources"] = res
+		}
+		res["XObject"] = types.Dict{"X0": *ref}
+	})
+	// The stimulus, asserted: the specification must be reached, and reached THROUGH the stream rather
+	// than as an object of its own, or the stream case is not what is under test.
+	specs, serr := d.fileSpecs()
+	if serr != "" {
+		t.Fatalf("the specification walk was short: %s", serr)
+	}
+	found := false
+	for _, sp := range specs {
+		if s, _ := d.text(sp.dict["F"]); s == "on-a-form.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the specification on the form XObject was not reached (%d spec(s) found) — a stream "+
+			"dictionary is a dictionary and must be walked as one", len(specs))
+	}
+	if got := registry["7.11 t1"].Check(d); got.Verdict != Fail {
+		t.Errorf("7.11 t1 reports %v (%s) for a specification on a form XObject, want Fail", got.Verdict, got.Why)
+	}
+}
+
+// **The walk does not follow indirect references, and these are the two documents that say why**
+// (P06.S02, both found by review and both measured before and after).
+//
+// Every object in the table is visited by the door's own loop, so following a reference from inside
+// one object only reaches what the loop reaches anyway — while making both of these possible.
+func TestTheSpecificationWalkIsNotDefeatedByTheObjectGraph(t *testing.T) {
+	// A file specification with a defect, so both documents have something real to find.
+	spec := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 5 0 R /Names 8 0 R %s >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+		5: "<< /Type /StructTreeRoot /K [] >>",
+		6: "<< /Type /Filespec /F (probe.txt) /EF << /F 7 0 R >> >>",
+		7: "<< /Length 5 >>\nstream\nhello\nendstream",
+		8: "<< /EmbeddedFiles << /Names [(probe.txt) 6 0 R] >> >>",
+	}
+	build := func(extra string, objs map[int]string) []byte {
+		out := map[int]string{}
+		for k, v := range spec {
+			out[k] = v
+		}
+		out[1] = fmt.Sprintf(spec[1], extra)
+		for k, v := range objs {
+			out[k] = v
+		}
+		return buildPDF(out)
+	}
+
+	// **Exponential if arrays were re-walked.** Each object holds the previous one TWICE, so following
+	// references would visit 2^n paths; measured before the fix, n=21 took 198 ms from a 3 KB file and
+	// n=40 would have taken about thirty hours. The budget could not fire because only dictionaries
+	// spent it.
+	const n = 30
+	exp := map[int]string{20: "[]"}
+	for i := 1; i <= n; i++ {
+		exp[20+i] = fmt.Sprintf("[%d 0 R %d 0 R]", 19+i, 19+i)
+	}
+	done := make(chan Result, 1)
+	go func() { done <- verdictOf(t, build(fmt.Sprintf("/ZZ %d 0 R", 20+n), exp), "7.11 t1") }()
+	select {
+	case got := <-done:
+		if got.Verdict != Fail {
+			t.Errorf("the doubling document reports %v (%s), want Fail — the defective specification "+
+				"is still there to find", got.Verdict, got.Why)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the doubling document did not finish in 30s — the walk is following references again")
+	}
+
+	// **A refusal on an ordinary document.** Depth counted THROUGH references, so any long chain of
+	// linked dictionaries exhausted the bound — and an outline is exactly that chain, so a document
+	// with sixty-four bookmarks made the whole clause CannotCheck.
+	chain := map[int]string{}
+	for i := 0; i < 70; i++ {
+		next := ""
+		if i < 69 {
+			next = fmt.Sprintf(" /Next %d 0 R", 21+i)
+		}
+		chain[20+i] = fmt.Sprintf("<< /Type /Bookmark%s >>", next)
+	}
+	if got := verdictOf(t, build("/ZZ 20 0 R", chain), "7.11 t1"); got.Verdict != Fail {
+		t.Errorf("a document with a seventy-long chain of linked dictionaries reports %v (%s), want "+
+			"Fail — the chain is not nesting and must not spend the depth bound", got.Verdict, got.Why)
 	}
 }
