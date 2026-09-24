@@ -76,7 +76,17 @@ type Document struct {
 	glyphs     []glyph
 	glyphSeen  map[glyphKey]struct{}
 	glyphFonts map[any]*glyphFont
-	glyphCodes int
+	// ttList is the used TrueType fonts (`trueTypeFonts`), built once; ttByDict finds one by its dictionary.
+	ttList   []*ttFont
+	ttByDict map[uintptr]*ttFont
+	ttErr    string
+	ttDone   bool
+	// ttUnresolved is the first used font that did not resolve — a refusal the TrueType clauses give only where no
+	// font nib did read fails; ttPrograms is each program stream's parse, once, and ttReads their shared budget.
+	ttUnresolved string
+	ttPrograms   map[uintptr]trueTypeProgram
+	ttReads      int
+	glyphCodes   int
 	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
 	toUnicodes      map[uintptr]*fontcode.ToUnicode
 	toUnicodeBlocks int

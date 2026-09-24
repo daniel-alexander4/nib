@@ -175,6 +175,8 @@ var notTreeRules = map[string]string{
 	// P07.S01. The CMap clauses read a used Type 0 font's dictionaries and the CMaps they name — no structure.
 	"7.21.3.1 t1": "Type 0 fonts", "7.21.3.2 t1": "Type 0 fonts", "7.21.3.3 t1": "Type 0 fonts",
 	"7.21.3.3 t2": "Type 0 fonts", "7.21.3.3 t3": "Type 0 fonts",
+	// P07.S03. The TrueType clauses read a used simple TrueType font's dictionary and its program — no structure.
+	"7.21.6 t1": "TrueType fonts", "7.21.6 t2": "TrueType fonts", "7.21.6 t3": "TrueType fonts", "7.21.6 t4": "TrueType fonts",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
