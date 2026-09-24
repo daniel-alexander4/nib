@@ -126,6 +126,10 @@ var corpusReach = map[string]int{
 	// 0 passed / 0 failed on it — so no corpus document passes this clause WITH a subject, and the
 	// oracle has to supply that half.
 	"7.20 t1": 42, "7.16 t1": 1,
+	// P06.S04. `7.7 t1` joins at 5 — the corpus files holding a Formula element. It shares `7.3 t1`'s
+	// predicate through one door, and `7.3 t1`'s 18 did not move: the two clauses differ only in the
+	// structure type they look for.
+	"7.7 t1": 5,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,

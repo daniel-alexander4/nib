@@ -211,6 +211,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"Markdown + title, encrypted, all permissions", withEncryption(t, mdt, model.PermissionsAll)},
 		oracleDoc{"Markdown + title, encrypted, no permissions", withEncryption(t, mdt, model.PermissionsNone)},
 		oracleDoc{"committed proposal + a reference XObject", withReferenceXObject(t, w.pdf)},
+		// P06.S04. Both halves through the structure editor's own door — the construction that used to
+		// be the documented counterexample, now that the checker catches it.
+		oracleDoc{"Markdown, a paragraph retyped Formula with no alternate text", withFormulaParagraph(t, mdl, "")},
+		oracleDoc{"Markdown, a paragraph retyped Formula with alternate text", withFormulaParagraph(t, mdl, "the quadratic formula")},
 		oracleDoc{"Markdown + title + a dynamic XFA form", withDynamicXFA(t, mdt)},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
 		// structure editor's own door retypes a correctly nested heading one level too deep.
@@ -416,6 +420,9 @@ type veraReport struct {
 // A row appearing is a gap in nib a person must look at; a row that stops appearing means the gap closed
 // and the row is a claim about code that no longer behaves that way.
 var knownCannotCheck = map[string]string{
+	// P06.S04. `7.7 t1` cannot type an element whose role map loops, exactly as `7.3 t1` cannot — both
+	// refuse rather than say "the document has no Formula", because the untypable element MAY be one.
+	"Markdown + title + lang, one element on a role-map loop / 7.7 t1": "the role map loops, so no element can be typed and any of them might be the Formula",
 	// `/pending 548`: the tree rules over the document whose role map loops. They KEEP answering `CannotCheck`
 	// and that is right — the cycle is reported by 7.1 t6, which is the clause about the cycle, and they still
 	// cannot type the element their own subject might be. (7.5 t1 was a third row until P03.S04 ported
@@ -456,7 +463,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 76
+	const wantGenerated = 78
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

@@ -137,9 +137,9 @@ look and reviewed by you, or not recorded at all. On the
 command line it's `nib ua IN`, which exits 1 and prints every reason when a checked clause fails or
 could not be checked.
 
-**This is a checker, not a certificate.** Nib checks 89 of the 106 rules the reference validator
+**This is a checker, not a certificate.** Nib checks 90 of the 106 rules the reference validator
 evaluates, so a document can pass every clause Nib checks and still fail one it does not — measured:
-a paragraph tagged as a formula with no alternate text passes all of Nib's checks and fails veraPDF. That is also why Nib never
+a font whose glyph widths disagree with the widths in its own embedded font program passes all of Nib's checks and fails veraPDF. That is also why Nib never
 writes the PDF/UA identification on the strength of its own report. Nib's answers on the clauses it does check are tested
 against [veraPDF](https://verapdf.org/) on every build; for a conformance verdict, use veraPDF.
 
@@ -1285,7 +1285,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib nup IN -o OUT --n N` | Place N pages per sheet — 2/4/6/9/16… (`--border` for outlines). |
 | `nib normalize IN -o OUT` | Resize every page to the document's most common page size — make a mixed-size PDF uniform (content scaled to fit, centred; orientation kept). |
 | `nib pdfa IN -o OUT` | Convert to a **PDF/A-2b** archival candidate (embed sRGB OutputIntent + PDF/A XMP, strip active content). Refuses documents with non-embedded fonts or encryption. Verify the result with [veraPDF](https://verapdf.org/) — Nib can't certify conformance itself. |
-| `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **89 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
+| `nib ua IN` | Check a document against the **PDF/UA-1** accessibility rules Nib can verify itself — **90 of the 106** veraPDF evaluates — each marked passes / fails / does not apply / **Nib could not check** (never shown as a pass). Exits 1 with every reason when any checked clause fails or could not be checked. **Exit 0 is not a PDF/UA certificate**: a document can pass every clause Nib checks and still fail one it does not. |
 | `nib tag tree IN [--json]` | Print the document's existing structure tree in reading order: each element's id, type, page, missing alt text or header scope, and text. `--json` is the shape the app reads. |
 | `nib tag propose IN [--json]` | Print the headings, paragraphs and list items Nib would propose. Writes nothing. |
 | `nib tag commit IN -o OUT --review REVIEW.json` | Write a reviewed proposal (`nib tag propose --json` is a review that keeps every role). A signed document is refused. |

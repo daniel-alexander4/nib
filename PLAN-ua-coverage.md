@@ -2327,7 +2327,7 @@ holders.
 **Tier 4 / tier 6 did NOT fire** — the diff is `internal/uacheck` plus a comment in `internal/pdfops`,
 two docs and the plan.
 
-#### P06.S04 — Formula, and the counterexample it retires
+#### P06.S04 — Formula, and the counterexample it retires *(done 2026-09-23, v1.157.0)*
 Scope: `7.7 t1` — an `SEFormula` carries a non-empty `/Alt` or an `/ActualText`. One rule, its own slice,
 for the coupling above. Refs: `counterexample_test.go`, ADR-031 law 1.
 Acceptance:
@@ -2340,6 +2340,42 @@ Acceptance:
 - Every prose site citing the formula example moves with it: `README.md`, `internal/uacheck/door.go`,
   `internal/uacheck/rules_catalog.go`, `docs/accessibility-parity.md`.
 - A measured pass and fail fixture and a `corpusReach` row; `len(Clauses())` is 90.
+
+**(grill + review, 2026-09-23)** One rule, and its predicate already existed: `7.3 t1` (Figure) has the
+IDENTICAL profile test, so `hasAlternateText` is now one door (ADR-009) and `7.3 t1`'s corpus reach of
+18 is unmoved — which is the evidence the extraction changed nothing.
+
+**The asymmetry is reproduced, not tidied**: `(Alt != null && Alt != '') || ActualText != null` means an
+EMPTY `/Alt` FAILS while an EMPTY `/ActualText` PASSES. Both probed red.
+
+**The slice's real work was the counterexample, and it went badly before it went well.** The test is
+built to go red when a rule catches its example, and `7.7 t1` caught it — the second time, after
+`/pending 487` caught a skipped heading level. The replacement hunt produced a **critical finding**: a
+nib document whose `/ToUnicode` destination is rewritten to `<0000>` is conformant to nib and failed by
+veraPDF, but on `7.21.7 t1`, **a clause nib implements** — veraPDF's object there is `Glyph` and its
+test `toUnicode != null`, i.e. per USED GLYPH, where nib asks only whether the font has a mapping
+mechanism. That is a live false pass in a shipped rule, filed `/pending 657` for P07. Using it would
+have rested the docs' central honesty claim on a checker bug, so the test now asserts the example fails
+**only** clauses nib does not implement.
+
+**The review found a second live false pass, in the door this slice had just extracted.** `/ActualText`
+was read straight from the map while `/Alt` resolved, so a reference to a missing object counted as
+present: measured, a Formula whose only alternate text was `/ActualText 9999 0 R` PASSED nib and FAILED
+veraPDF, while the same dangling reference on `/Alt` was failed by both. Pre-existing in `7.3 t1` and
+extended to `7.7 t1` by the extraction — which is also what put the two halves side by side where the
+asymmetry was visible. Fixed and probed red on both keys.
+
+**Two claims of mine were false and are corrected rather than quietly dropped.** The phase open said
+FOUR prose sites cite the formula example and named two that never did; the real set is SIX, and three
+(`internal/cli/commands.go`, `cli_test.go`, `door_test.go`) were missed on the first pass — one of them
+asserting "which nib does not check" about a clause this slice implements. And the new test's first
+draft justified abandoning a buildable counterexample by claiming every remaining clause is a font rule;
+`7.20 t2` is not, and nib's own `pdfops` tests record producing a document that fails it. The honest
+reason is narrower: `7.20 t2` is **P06.S05**, so an example built on it would be retired within the week.
+
+**Gates.** Oracle **7,290 of 7,290** over 81 documents; corpus **0 false pass / 0 false fail** over
+26,511 pairs. `len(Clauses())` is **90**. Live-verified on all five of veraPDF's own `7.7` fixtures.
+Tiers 4 / 6 did NOT fire.
 
 #### P06.S05 — a Form XObject's content has one semantic parent
 Scope: `7.20 t2` — `isUniqueSemanticParent`. Its own slice because it is the only clause in this family
