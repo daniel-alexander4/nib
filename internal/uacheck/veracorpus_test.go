@@ -105,6 +105,9 @@ var corpusAllow = map[string]string{}
 // the form population and 19 is what "every corpus file holding a widget or a field" comes to here — and
 // `7.18.3 t1` at **295**, the highest row in this table, because its subject is a PAGE and veraPDF runs one
 // check per page whether or not the page carries an annotation. Pairs 22,382 → 22,972.
+// P05.S04: both media-clip clauses join at **5** — every corpus file under `7.18.6 Media`, and unlike P05.S02's
+// TrapNet clause this family has real corpus evidence on BOTH halves (two `t01` files and three `t02`). Pairs
+// 22,972 → 23,562, and the phase closes the checker at 80 of the 106.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
@@ -123,6 +126,7 @@ var corpusReach = map[string]int{
 	"7.18.1 t1": 71, "7.18.1 t2": 71,
 	"7.18.5 t1": 31, "7.18.5 t2": 31, "7.18.8 t1": 1, "7.18.2 t1": 0,
 	"7.18.1 t3": 19, "7.18.3 t1": 295,
+	"7.18.6.2 t1": 5, "7.18.6.2 t2": 5,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,

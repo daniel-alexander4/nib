@@ -85,6 +85,11 @@ type Document struct {
 	// xmp memoises readXMP.
 	xmp     xmpFacts
 	xmpDone bool
+	// clipList is every media clip dictionary the document's actions reach, built on first use by
+	// `mediaClips`; clipsErr is why the population may be short.
+	clipList  []mediaClip
+	clipsErr  string
+	clipsDone bool
 	// annotList is every annotation on every page, built on first use by `annots` — the ONE door
 	// (ADR-009); annotsErr is why the population may be short, when it may be.
 	annotList  []annotSubject

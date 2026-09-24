@@ -699,3 +699,278 @@ func TestWhetherAWidgetIsTheFieldIsAPresenceTest(t *testing.T) {
 		}
 	}
 }
+
+// P05.S04 — media clips. Every verdict below is veraPDF 1.30.2's, measured on that document before the rule was
+// written: eleven `/Alt` and `/CT` shapes, seven holder paths, and the corpus's own five files.
+
+// clipFixture is a one-page tagged document whose Screen annotation's `/A` is a Rendition action carrying one
+// media clip. `alt` and `ct` are the clip's entries verbatim, so a row can write a malformed shape.
+func clipFixture(alt, ct string) []byte {
+	clip := "<< /Type /MediaClip /S /MCD /D 45 0 R " + ct + alt + " >>"
+	return buildPDF(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-US) >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Tabs /S /Annots [30 0 R] " +
+			"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(annotFixtureText), annotFixtureText),
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R >>",
+		8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K 0 >>",
+		9:  "<< /Nums [0 [8 0 R]] >>",
+		30: "<< /Type /Annot /Subtype /Screen /Rect [0 0 10 10] /F 4 /Contents (a clip) /A 44 0 R >>",
+		44: "<< /Type /Action /S /Rendition /R << /Type /Rendition /S /MR /C " + clip + " >> >>",
+		45: "<< /Type /Filespec /F (clip.mp3) /UF (clip.mp3) >>",
+	})
+}
+
+func TestTheMediaClipRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
+	const ct = "/CT (audio/mpeg) "
+	for _, tc := range []struct {
+		name   string
+		pdf    []byte
+		t1, t2 Verdict
+	}{
+		{"one language/description pair", clipFixture("/Alt [() (a clip)]", ct), Pass, Pass},
+		{"two pairs", clipFixture("/Alt [() (a clip) (en) (a clip)]", ct), Pass, Pass},
+		// **The shape, not the presence.** An odd length, and an empty DESCRIPTION, both fail.
+		{"an odd number of entries", clipFixture("/Alt [() (a clip) (en)]", ct), Pass, Fail},
+		{"an empty description", clipFixture("/Alt [() ()]", ct), Pass, Fail},
+		// An empty LANGUAGE is the default entry ISO 32000-1 Table 274 describes, and it passes — which is why
+		// the rule tests only the odd indices.
+		{"empty languages with real descriptions", clipFixture("/Alt [() (a clip) () (another)]", ct), Pass, Pass},
+		{"no /Alt at all", clipFixture("", ct), Pass, Fail},
+		// An EMPTY array passes: even length, and every entry it has is a string. Measured, not reasoned — it
+		// is the row that says `hasCorrectAlt` is a shape test and not "there is a description".
+		{"an empty /Alt array", clipFixture("/Alt []", ct), Pass, Pass},
+		{"no /CT", clipFixture("/Alt [() (a clip)]", ""), Fail, Pass},
+	} {
+		if got := verdictOf(t, tc.pdf, "7.18.6.2 t1"); got.Verdict != tc.t1 {
+			t.Errorf("%s: 7.18.6.2 t1 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t1)
+		}
+		if got := verdictOf(t, tc.pdf, "7.18.6.2 t2"); got.Verdict != tc.t2 {
+			t.Errorf("%s: 7.18.6.2 t2 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t2)
+		}
+	}
+	// Three shapes veraPDF grades and nib's reader refuses, each with the refusal pdfcpu actually prints —
+	// recorded so that a bump which starts accepting them turns this row red rather than reintroducing a
+	// divergence silently. **Read, not assumed**: the three errors name three different entries.
+	for _, tc := range []struct {
+		name, want string
+		pdf        []byte
+	}{
+		{"a non-string /Alt entry", "validateStringArrayEntry: invalid type at index 1", clipFixture("/Alt [() /aname]", ct)},
+		{"an /Alt that is not an array", "entry=Alt invalid type", clipFixture("/Alt (a clip)", ct)},
+		{"a name-typed /CT", "entry=CT invalid type", clipFixture("/Alt [() (a clip)]", "/CT /audio ")},
+	} {
+		_, err := open(tc.pdf)
+		if err == nil {
+			t.Errorf("%s: pdfcpu now accepts this document; veraPDF grades it, so the clause needs a verdict row "+
+				"here rather than a reading limit", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: pdfcpu refuses it with %q, which does not name %q — the refusal this row records is a "+
+				"different one from the refusal it now gets", tc.name, err.Error(), tc.want)
+		}
+	}
+}
+
+// TestAMediaClipIsReachedThroughSixHolders — the population, and the seventh holder that is NOT one.
+//
+// A clip sits at `<action>/R/C` for a Rendition action, and veraPDF's model reaches an action from an
+// annotation's `/A` and `/AA`, an outline item's `/A`, the catalog's `/OpenAction` and `/AA`, and a page's
+// `/AA`. **A form field's `/AA` is not a path**: `GFPDFormField` links one, and veraPDF evaluates NO check on a
+// document whose only clip hangs off a non-widget parent field's `/AA` — measured, where nib first failed it.
+func TestAMediaClipIsReachedThroughSixHolders(t *testing.T) {
+	const act = "<< /Type /Action /S /Rendition /R << /Type /Rendition /S /MR /C " +
+		"<< /Type /MediaClip /S /MCD /D 45 0 R /Alt [() (a clip)] >> >> >>"
+	// The clip carries no /CT, so 7.18.6.2 t1 FAILS wherever the path is walked — "reached" is visible as a
+	// failure, and a path silently dropped shows up as a Pass.
+	doc := func(pageExtra, cat, annot string, extra map[int]string) []byte {
+		objs := map[int]string{
+			1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-US) " + cat + " >>",
+			2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(annotFixtureText), annotFixtureText),
+			5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+			7:  "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R >>",
+			8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K 0 >>",
+			9:  "<< /Nums [0 [8 0 R]] >>",
+			44: act,
+			45: "<< /Type /Filespec /F (clip.mp3) /UF (clip.mp3) >>",
+		}
+		annots := ""
+		if annot != "" {
+			objs[30], annots = annot, "/Annots [30 0 R] "
+		}
+		objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Tabs /S " + annots +
+			pageExtra + " /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+		for k, v := range extra {
+			objs[k] = v
+		}
+		return buildPDF(objs)
+	}
+	screen := func(action string) string {
+		return "<< /Type /Annot /Subtype /Screen /Rect [0 0 10 10] /F 4 /Contents (a clip) " + action + " >>"
+	}
+	for _, tc := range []struct {
+		name string
+		pdf  []byte
+	}{
+		{"an annotation's /A", doc("", "", screen("/A 44 0 R"), nil)},
+		{"an annotation's /AA", doc("", "", screen("/AA << /PV 44 0 R >>"), nil)},
+		{"a page's /AA", doc("/AA << /O 44 0 R >>", "", "", nil)},
+		// Two more trigger names, because the rows above used only one per holder and the walk now iterates a
+		// FIXED LIST per holder rather than every `/AA` entry — `/C` for a page, `/Fo` for an annotation.
+		{"a page's /AA under /C", doc("/AA << /C 44 0 R >>", "", "", nil)},
+		{"an annotation's /AA under /Fo", doc("", "", screen("/AA << /Fo 44 0 R >>"), nil)},
+		{"the catalog's /OpenAction", doc("", "/OpenAction 44 0 R", "", nil)},
+		{"the catalog's /AA", doc("", "/AA << /WC 44 0 R >>", "", nil)},
+		{"an outline item's /A", doc("", "/Outlines 20 0 R", "", map[int]string{
+			20: "<< /Type /Outlines /First 21 0 R /Last 21 0 R /Count 1 >>",
+			21: "<< /Title (One) /Parent 20 0 R /A 44 0 R >>"})},
+	} {
+		if got := verdictOf(t, tc.pdf, "7.18.6.2 t1"); got.Verdict != Fail {
+			t.Errorf("a clip reached through %s reports %v (%s), want Fail — the path is not being walked",
+				tc.name, got.Verdict, got.Why)
+		}
+	}
+	// **Only a Rendition action carries a clip.** The same `/R` → `/C` under a `/GoTo` or a `/Movie` action is
+	// graded by NEITHER reader — measured, both — and without these rows dropping the subtype check leaves the
+	// package green, because every other fixture's action is a Rendition.
+	for _, subtype := range []string{"/GoTo", "/Movie"} {
+		pdf := doc("", "", screen("/A 44 0 R"), map[int]string{
+			44: "<< /Type /Action /S " + subtype + " /R << /Type /Rendition /S /MR /C " +
+				"<< /Type /MediaClip /S /MCD /D 45 0 R /Alt [() (a clip)] >> >> >>"})
+		if got := verdictOf(t, pdf, "7.18.6.2 t1"); got.Verdict != NotApplicable {
+			t.Errorf("a clip-shaped /R /C under a %s action reports %v (%s), want NotApplicable — only a Rendition "+
+				"action carries a media clip, and the dictionary here is not one", subtype, got.Verdict, got.Why)
+		}
+	}
+	// **A trigger name outside the holder's own list is refused by pdfcpu**, which enforces the same lists
+	// veraPDF's `getActionNames()` hard-codes — so the over-broad walk this replaced (every `/AA` entry) was
+	// unreachable through nib's reader. Recorded with the refusal, because the narrowing is what makes the
+	// population veraPDF's rather than pdfcpu's.
+	for _, tc := range []struct {
+		name, want string
+		pdf        []byte
+	}{
+		{"a page's /AA under an annotation trigger", "action PV not allowed for source page",
+			doc("/AA << /PV 44 0 R >>", "", "", nil)},
+		{"an annotation's /AA under a page trigger", "action O not allowed for source fieldOrAnnot",
+			doc("", "", screen("/AA << /O 44 0 R >>"), nil)},
+		{"the catalog's /AA under a page trigger", "action O not allowed for source root",
+			doc("", "/AA << /O 44 0 R >>", "", nil)},
+	} {
+		_, err := open(tc.pdf)
+		if err == nil {
+			t.Errorf("%s: pdfcpu now accepts it, so the trigger list is the only thing keeping nib in step with "+
+				"veraPDF here and this row should assert a NotApplicable verdict instead", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: pdfcpu refuses it with %q, which does not name %q", tc.name, err.Error(), tc.want)
+		}
+	}
+	// The seventh holder, which veraPDF does not traverse: nib must NOT see this clip.
+	field := doc("", "/AcroForm << /Fields [31 0 R] >>",
+		"<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /F 4 /FT /Btn /T (b) /TU (b) /DA (/Helv 0 Tf 0 g) /Parent 31 0 R >>",
+		map[int]string{31: "<< /FT /Btn /T (f) /TU (f) /DA (/Helv 0 Tf 0 g) /Kids [30 0 R] /AA << /U 44 0 R >> >>"})
+	if got := verdictOf(t, field, "7.18.6.2 t1"); got.Verdict != NotApplicable {
+		t.Errorf("a clip reached only through a non-widget parent field's /AA reports %v (%s), want NotApplicable "+
+			"— veraPDF evaluates no check on that document and nib failed it before this was measured",
+			got.Verdict, got.Why)
+	}
+}
+
+// TestAMediaClipIsReachedThroughEveryPathVeraPDFWalks — the four the review found, each a measured divergence.
+//
+// Two false PASSES, one false FAIL, and one silent truncation, all in the population rather than in either
+// rule. The clip in every row below carries no `/CT`, so "reached" shows up as a Fail and a path silently
+// dropped shows up as a Pass.
+func TestAMediaClipIsReachedThroughEveryPathVeraPDFWalks(t *testing.T) {
+	const clip = "<< /Type /MediaClip /S /MCD /D 45 0 R /Alt [() (a clip)] >>"
+	const rend = "<< /Type /Action /S /Rendition /R << /Type /Rendition /S /MR /C " + clip + " >> >>"
+	base := func(extra map[int]string, annot, cat, pageExtra string) []byte {
+		objs := map[int]string{
+			1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-US) " + cat + " >>",
+			2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(annotFixtureText), annotFixtureText),
+			5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+			7:  "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R >>",
+			8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K 0 >>",
+			9:  "<< /Nums [0 [8 0 R]] >>",
+			30: annot,
+			45: "<< /Type /Filespec /F (clip.mp3) /UF (clip.mp3) >>",
+		}
+		objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Tabs /S /Annots [30 0 R] " +
+			pageExtra + " /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+		for k, v := range extra {
+			objs[k] = v
+		}
+		return buildPDF(objs)
+	}
+	const screen = "<< /Type /Annot /Subtype /Screen /Rect [0 0 10 10] /F 4 /Contents (a clip) /A 44 0 R >>"
+	const widget = "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /F 4 /FT /Btn /T (b) /TU (b) " +
+		"/DA (/Helv 0 Tf 0 g) /Parent 31 0 R >>"
+	for _, tc := range []struct {
+		name string
+		pdf  []byte
+	}{
+		// **A form field's `/AA` IS a path** — under ITS OWN triggers `{K, F, V, C}`. The measurement that
+		// dropped this path used `/U`, which is in the annotation list and not the field's, so veraPDF
+		// evaluated nothing and the null result was misread as "fields are not traversed".
+		{"a form field's /AA under /K", base(map[int]string{
+			31: "<< /FT /Btn /T (f) /TU (f) /DA (/Helv 0 Tf 0 g) /Kids [30 0 R] /AA << /K 46 0 R >> >>",
+			46: rend}, widget, "/AcroForm << /Fields [31 0 R] >>", "")},
+		// **An action's `/Next` chain is walked**, as a dictionary and as an array — `PDAction.getNext` reads
+		// both, and `GFPDAction` links it.
+		{"a /Next chain, as a dictionary", base(map[int]string{
+			44: "<< /Type /Action /S /GoTo /D [3 0 R /Fit] /Next 46 0 R >>", 46: rend}, screen, "", "")},
+		{"a /Next chain, as an array", base(map[int]string{
+			44: "<< /Type /Action /S /GoTo /D [3 0 R /Fit] /Next [46 0 R] >>", 46: rend}, screen, "", "")},
+		// The outline's two recursion edges, which no fixture walked: a SIBLING and a CHILD.
+		{"an outline item's sibling", base(map[int]string{
+			20: "<< /Type /Outlines /First 21 0 R /Last 22 0 R /Count 2 >>",
+			21: "<< /Title (One) /Parent 20 0 R /Next 22 0 R >>",
+			22: "<< /Title (Two) /Parent 20 0 R /Prev 21 0 R /A 46 0 R >>",
+			46: rend}, screen[:len(screen)-len("/A 44 0 R >>")]+">>", "/Outlines 20 0 R", "")},
+		{"an outline item's child", base(map[int]string{
+			20: "<< /Type /Outlines /First 21 0 R /Last 21 0 R /Count 2 >>",
+			21: "<< /Title (One) /Parent 20 0 R /First 22 0 R /Last 22 0 R /Count 1 >>",
+			22: "<< /Title (Child) /Parent 21 0 R /A 46 0 R >>",
+			46: rend}, screen[:len(screen)-len("/A 44 0 R >>")]+">>", "/Outlines 20 0 R", "")},
+	} {
+		if got := verdictOf(t, tc.pdf, "7.18.6.2 t1"); got.Verdict != Fail {
+			t.Errorf("a clip reached through %s reports %v (%s), want Fail — the path is not being walked",
+				tc.name, got.Verdict, got.Why)
+		}
+	}
+	// **A false FAIL: the catalog has no `/A`.** `GFPDDocument` links `/OpenAction`, its destination form and
+	// `/AA`, and nothing else; reading an `/A` there graded a clip veraPDF never sees.
+	noA := base(map[int]string{46: rend}, screen[:len(screen)-len("/A 44 0 R >>")]+">>", "/A 46 0 R", "")
+	if got := verdictOf(t, noA, "7.18.6.2 t1"); got.Verdict != NotApplicable {
+		t.Errorf("a Rendition action under a catalog /A reports %v (%s), want NotApplicable — the catalog has no "+
+			"/A key in veraPDF's model", got.Verdict, got.Why)
+	}
+	// **A truncated outline is a REFUSAL, not a Pass.** veraPDF's walk is unbounded; nib's stops, and an
+	// ordinary table of contents is long enough to reach the bound.
+	long := map[int]string{46: rend}
+	first := 100
+	for i := 0; i <= maxWalkDepth+4; i++ {
+		item := fmt.Sprintf("<< /Title (Item) /Parent 20 0 R /Next %d 0 R >>", first+i+1)
+		if i == maxWalkDepth+4 {
+			item = "<< /Title (Last) /Parent 20 0 R /A 46 0 R >>"
+		}
+		long[first+i] = item
+	}
+	long[20] = fmt.Sprintf("<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>", first, first+maxWalkDepth+4, maxWalkDepth+5)
+	deepOutline := base(long, screen[:len(screen)-len("/A 44 0 R >>")]+">>", "/Outlines 20 0 R", "")
+	got := verdictOf(t, deepOutline, "7.18.6.2 t1")
+	if got.Verdict != CannotCheck {
+		t.Errorf("an outline chain past the walk bound reports %v (%s), want CannotCheck — a clip nib never "+
+			"reached is not a document without one", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "more than") {
+		t.Errorf("the reason %q does not say the outline chain ran past the bound", got.Why)
+	}
+}

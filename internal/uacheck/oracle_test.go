@@ -140,6 +140,12 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// since an empty label deliberately writes no `/TU` — and a mutation that drops `/Tabs`.
 		must("unlabelled form", uf, uferr),
 		oracleDoc{"noted proposal − /Tabs", withoutTabs(t, noted)},
+		// P05.S04. **Nib plays no media and writes no clip**, so unlike the phase's other clauses this one has no
+		// product door for either half — all three documents are mutations, and between them they reach all four
+		// halves: the first passes both clauses, the second fails t1, the third fails t2.
+		oracleDoc{"committed proposal + a described media clip", addMediaClip(t, w.pdf, "audio/mpeg", "|a media clip")},
+		oracleDoc{"committed proposal + a media clip with no /CT", addMediaClip(t, w.pdf, "", "|a media clip")},
+		oracleDoc{"committed proposal + a media clip whose /Alt is odd", addMediaClip(t, w.pdf, "audio/mpeg", "|a media clip|en")},
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},
 		oracleDoc{"Markdown + padded CIDSet", withCIDSet(t, md, cidPadded)},
 		oracleDoc{"committed proposal + element /Lang", langOnEveryElement(t, w.pdf, "en")},
@@ -409,7 +415,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 62
+	const wantGenerated = 65
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
