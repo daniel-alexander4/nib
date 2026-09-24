@@ -2377,7 +2377,7 @@ reason is narrower: `7.20 t2` is **P06.S05**, so an example built on it would be
 26,511 pairs. `len(Clauses())` is **90**. Live-verified on all five of veraPDF's own `7.7` fixtures.
 Tiers 4 / 6 did NOT fire.
 
-#### P06.S05 — a Form XObject's content has one semantic parent
+#### P06.S05 — a Form XObject's content has one semantic parent *(done 2026-09-23, v1.158.0)*
 Scope: `7.20 t2` — `isUniqueSemanticParent`. Its own slice because it is the only clause in this family
 that is a GRAPH property over the structure tree rather than a key read, and because ADR-038 built the
 write side of exactly this machinery. Refs: ADR-038, `/Stm` as a marked-content reference's key; P02.S08.
@@ -2389,6 +2389,71 @@ Acceptance:
   broken and repaired on every instrument the repo had.
 - A measured pass and fail fixture and a `corpusReach` row; `len(Clauses())` is **91**, completing P06's
   rule set.
+
+**(grill, 2026-09-23)** **The predicate reads no MCID and no structure tree.** veraPDF 1.30.2's
+`GFPDXForm.getisUniqueSemanticParent` (`GFPDXForm.java:163-176`) is: no `/StructParents` KEY → pass; no object
+key → pass; object key already in `XFormKeysSet` → FAIL; else add it and pass. `knownKey` is key PRESENCE — a
+`/StructParents 30 0 R` naming `null`, or naming nothing, is a key (both measured FAILED twice-drawn), while a
+direct `null` is not (measured passed). The message's *"contains MCIDs"* is prose, not the test: a form with
+MCIDs and no `/StructParents` drawn twice PASSES, one with `/StructParents` and no MCIDs FAILS, and a form whose
+MCIDs are claimed by elements under two different parents PASSES — the acceptance's third document is measured
+and it is not a subject of this clause at all.
+
+**The tally is veraPDF's TRAVERSAL, and that is the slice.** A `GFPDXForm` is built at every `Do` and at every
+annotation appearance entry, and has no id, so each is checked; but a content stream HAS one (its object key),
+and veraPDF's validator visits an object with an id once. So a `Do` counts only in the first traversal of the
+stream that holds it. Measured, 38 documents (31 at the grill, 7 from the review and red-proof): an outer form drawn twice whose inner form carries the key PASSES
+(3 checks, the inner once); a tiling pattern used twice PASSES while one whose content draws the form twice
+FAILS; two pages sharing ONE content stream PASS while two sharing it through an `/Contents` ARRAY (no key) FAIL;
+a Type 3 font shown twice PASSES while one whose two glyph procedures each draw the form FAILS although only one
+glyph is shown; a form drawing itself FAILS (the self-`Do` is the second reach); one annotation on two pages
+PASSES (the annotation has an id); two annotations sharing an appearance, `/N` and `/D` naming one stream, and a
+hidden or `/Popup` annotation beside a `Do`, all FAIL.
+
+**pdfcpu's optimize pass FUSES equal form XObjects** (`optimize.go:556-593`, `EqualObjects`), which is the
+ADR-038 origin seen from the reader: two identical forms each carrying `/StructParents 0`, each drawn once, are
+PASSED by veraPDF and read by nib as one form drawn twice — a false FAIL — and two identical outer forms each
+drawing a keyed inner form are FAILED by veraPDF and read by nib as one traversal — a false PASS. The fused
+duplicates stay in the xref table, measured, so the fusion is detectable with pdfcpu's own predicate: a form
+with no twin is exact; a keyed form reached more times than it has twins is a definite FAIL (pigeonhole); any
+other reached form with a twin is `CannotCheck`, never a verdict on a count nib knows is not veraPDF's.
+
+- T01 — the walk tallies reaches by object number and traverses each keyed stream once for the tally
+  (`repeat` on the walker; page `/Contents`, forms, appearances; patterns and glyph procedures already once).
+- T02 — `7.20 t2` over the tally, with the twin refusal; `len(Clauses())` 91.
+- T03 — measured fixtures for every shape above as a standing test; `corpusReach` and population rows.
+- T04 — nib's own n-up output into the live oracle, and the fused-carry mutation beside it.
+
+**(review + red-proof, 2026-09-23)** The diff review found **two live defects the 31 measured documents could not
+show**, both in the population rather than the predicate: pdfcpu's `EqualObjects` is ASYMMETRIC on a null
+(`o1 == nil → o2 != nil`), so a twin asked one way round was missed — a false FAIL on 27 of 40 runs of a file
+veraPDF passes, the verdict riding on Go's map order; and annotations were deduplicated by map identity, which a
+DIRECT annotation in an `/Annots` array two pages share also has — a false PASS, since veraPDF gives a keyless
+object a fresh id on every visit. A third, environment-dependent: `NewDefaultConfiguration` reads the user's own
+pdfcpu config, and `optimizeDuplicateContentStreams: true` there fused two pages' content into one traversal.
+All three fixed and probed red. **The red-proof then found a fourth**: its two survivors could only be reached by
+a form inheriting its page's resources, and building that shape showed pdfcpu's reader DROPS the inherited
+`/Pattern` binding while `enterPattern` returned without a word — a false PASS on a file veraPDF fails. Now a
+refusal, like the XObject route already was, and the same documents measured veraPDF keeping the FIRST
+traversal's binding, which settles the gap the grill left open. Probes: 21 targeted (19 red, the two survivors
+declared unreachable through a file), 5 blind (5 red).
+
+**Out of scope and filed**: nib's own Markdown conversion past ~35 sections has veraPDF typing fewer headings than
+it writes and `7.4.4 t3` losing its subject (`/pending 658`) — found because a 40-section n-up source disagreed on
+that clause, so the oracle's n-up is 20 sections; and every other content rule still grades a repeated stream
+veraPDF traverses once (`/pending 659`). `pdfops`' completeness condition 4 claimed to BE `7.20 t2` and keys on
+MCIDs; its comment now says it is a neighbour.
+
+**Acceptance ledger (2026-09-23).** Predicate read from source and stated — MET (`GFPDXForm.java:163-176`; the
+key, never an MCID). Non-uniqueness stated — MET (a second `PDXForm` for one object key; once per traversed
+stream). Drawn twice on one page — MET (veraPDF 1/1 failed, nib Fail). Drawn on two pages — MET (1/1, Fail).
+MCIDs claimed under two parents — MET (veraPDF passes, 1 check; not a subject of the failing half). nib's own n-up
+checked — MET (live: n-up passed 4 checks / nib Pass; the fused carry failed 3/1 / nib Fail; both in the oracle).
+Measured pass and fail fixture — MET (corpus `7.20-t02-pass-a`/`-fail-a` via the real `nib ua`, and 34 table rows).
+`corpusReach` row — MET (42). `len(Clauses())` 91 — MET (`TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo`
+reads "91 of the 106" from the registry). P06's rule set complete — MET (all eleven registered). **Gates**: oracle
+7,735/7,735 over 85 documents; corpus 0 false pass / 0 false fail over 26,806 pairs; tiers 4 and 6 did NOT fire (no
+session, ceremony, delivery, discovery, p2p or rendezvous path in the diff).
 
 ### P07 — Checker: font programs (~12 rules)
 **Goal.** CMaps, CIDToGIDMap, width agreement, TrueType cmap and encoding, CharSet, `.notdef`, ToUnicode values.

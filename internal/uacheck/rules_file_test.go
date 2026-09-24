@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1024,5 +1026,329 @@ func TestEveryAppearanceStateIsAFormXObject(t *testing.T) {
 			t.Errorf("a widget whose /%s appearance carries /Ref reports %v (%s), want Fail — "+
 				"measured on veraPDF, which fails all three states", state, got.Verdict, got.Why)
 		}
+	}
+}
+
+// 7.20 t2 — a form XObject carrying /StructParents is drawn once (P06.S05).
+
+// spStream is one stream object with its dictionary entries and body.
+func spStream(dict, body string) string {
+	return fmt.Sprintf("<< %s /Length %d >>\nstream\n%s\nendstream", dict, len(body), body)
+}
+
+// spForm is a form XObject; `extra` carries `/StructParents` or `/Resources` where a case wants them.
+func spForm(extra, body string) string {
+	return spStream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] "+extra, body)
+}
+
+// spMC is content with a marked-content sequence carrying an MCID — present in most cases so that the
+// ones without it show the clause does not read it.
+const spMC = "/P <</MCID 0>> BDC 0 0 5 5 re f EMC"
+
+// spType3 is a Type 3 font whose two glyph procedures are objects 13 (/a) and 14 (/b), drawing through
+// resources that name form 10 as /X0.
+const spType3 = "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [0.1 0 0 0.1 0 0] " +
+	"/CharProcs << /a 13 0 R /b 14 0 R >> /Encoding << /Type /Encoding /Differences [97 /a /b] >> " +
+	"/FirstChar 97 /LastChar 98 /Widths [10 10] /Resources << /XObject << /X0 10 0 R >> >> >>"
+
+// spDoc lays out one page per {content, resources-body} pair — page objects 20, 22, … and their content
+// streams 21, 23, … — then adds `extra`, which may replace any of them.
+func spDoc(pages [][2]string, extra map[int]string) map[int]string {
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 5 0 R /Lang (en) >>",
+		5: "<< /Type /StructTreeRoot /K [] >>",
+	}
+	kids := ""
+	for i, p := range pages {
+		pn, cn := 20+2*i, 21+2*i
+		kids += fmt.Sprintf("%d 0 R ", pn)
+		objs[pn] = fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents %d 0 R "+
+			"/Resources << %s >> >>", cn, p[1])
+		objs[cn] = spStream("", p[0])
+	}
+	objs[2] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids, len(pages))
+	for k, v := range extra {
+		objs[k] = v
+	}
+	return objs
+}
+
+// TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt — every shape veraPDF 1.30.2 was run on
+// before the rule was written or found by its review — 33 of the 38 documents measured, each with the
+// verdict veraPDF gave it (the other five: a string `/StructParents`, which pdfcpu refuses to open and the
+// rule declares; a reference to an integer, which veraPDF fails exactly as the null-reference row; the first
+// fused row spread over two pages, which veraPDF passes exactly as that row; and the page-reversed XObject
+// inheritance and a nested pattern inheritance, which nib refuses for the same reason as the rows here).
+//
+// The clause's message says *"contains MCIDs and is referenced more than once"*; its test reads neither
+// MCIDs nor the structure tree, only the `/StructParents` KEY and how often veraPDF builds the form — and
+// that is once per `Do` in a stream it TRAVERSES, which it does once per object key. The rows are grouped
+// by which of those facts they pin. `CannotCheck` rows are forms pdfcpu fused on opening, where nib's
+// count is not veraPDF's (`formTwins`): veraPDF's own answer is in the row's reason.
+func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
+	X := "/XObject << /X0 10 0 R >>"
+	SP := "/StructParents 0"
+	square := func(ap string) string {
+		return "<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /Contents (x) /AP << " + ap + " >> >>"
+	}
+	pattern := func(body string) string {
+		return spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] "+
+			"/XStep 10 /YStep 10 /Resources << /XObject << /X0 10 0 R >> >>", body)
+	}
+	sharedContents := func(contents string) map[int]string {
+		o := spDoc([][2]string{{"/X0 Do", X}, {"/X0 Do", X}}, map[int]string{10: spForm(SP, spMC)})
+		for _, pn := range []int{20, 22} {
+			o[pn] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents " + contents +
+				" /Resources << " + X + " >> >>"
+		}
+		delete(o, 23)
+		return o
+	}
+	// hasTwin reports whether form 10 has an `EqualObjects` twin in the file — the stimulus every
+	// CannotCheck row below exists to present. A refusal for some OTHER reason would pass the verdict check.
+	// (Not "pdfcpu fused the two": in the drawn-twice row it does NOT — the undrawn copy survives unfused —
+	// and the refusal there is the conservative one the rule's doc declares.)
+	hasTwin := func(t *testing.T, pdf []byte) bool {
+		t.Helper()
+		d, err := open(pdf)
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		n, ok := d.formTwins(10)
+		return ok && n > 0
+	}
+	// because is, for each CannotCheck row, a phrase its refusal must carry — so a refusal for some other
+	// reason does not pass as this one.
+	because := map[string]string{
+		"two equal keyed forms, each drawn once":                                         "equal to",
+		"two equal keyed forms, one drawn twice":                                         "equal to",
+		"two equal outer forms each drawing a keyed inner":                               "equal to",
+		"two keyed forms equal only one way round":                                       "equal to",
+		"an inherited pattern that draws the keyed form twice, bound on the FIRST page":  "could not resolve",
+		"an inherited pattern that draws the keyed form twice, bound on the SECOND page": "could not resolve",
+		"an inherited XObject binding, the drawing one on the first page":                "could not be read",
+	}
+	for _, c := range []struct {
+		name string
+		objs map[int]string
+		want Verdict
+		why  string
+	}{
+		// ── The key, and nothing but the key.
+		{"drawn once", spDoc([][2]string{{"/X0 Do", X}}, map[int]string{10: spForm(SP, spMC)}), Pass,
+			"one reach is one semantic parent"},
+		{"drawn twice on one page", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"the second Do is the second reach"},
+		{"drawn once on each of two pages", spDoc([][2]string{{"/X0 Do", X}, {"/X0 Do", X}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"the tally is the document's, not the page's"},
+		{"MCIDs and no /StructParents, drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm("", spMC)}), Pass,
+			"veraPDF passes it, 2 checks: the MCIDs are the message's word, not the test's"},
+		{"/StructParents and no MCIDs, drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm(SP, "0 0 5 5 re f")}), Fail,
+			"the key alone makes it a subject"},
+		{"/StructParent (singular), drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm("/StructParent 0", "0 0 5 5 re f")}), Pass,
+			"a whole-form content item is a different key"},
+		{"a direct null /StructParents, drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm("/StructParents null", spMC)}), Pass,
+			"a direct null is no key to veraPDF, and pdfcpu drops it"},
+		{"/StructParents naming a null object, drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm("/StructParents 30 0 R", spMC), 30: "null"}), Fail,
+			"knownKey is presence: a reference is a key whatever it resolves to"},
+		{"/StructParents naming nothing, drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", X}}, map[int]string{10: spForm("/StructParents 99 0 R", spMC)}), Fail,
+			"a dangling reference is still a key"},
+		{"MCIDs claimed by elements under two different parents, drawn once", spDoc([][2]string{{"/X0 Do", X}}, map[int]string{
+			5:  "<< /Type /StructTreeRoot /K [40 0 R] /ParentTree << /Nums [0 [42 0 R 43 0 R]] >> >>",
+			40: "<< /Type /StructElem /S /Document /P 5 0 R /K [41 0 R 43 0 R] >>",
+			41: "<< /Type /StructElem /S /Sect /P 40 0 R /K [42 0 R] >>",
+			42: "<< /Type /StructElem /S /P /P 41 0 R /K [0] >>",
+			43: "<< /Type /StructElem /S /P /P 40 0 R /K [1] >>",
+			10: spForm(SP, "/P <</MCID 0>> BDC 0 0 5 5 re f EMC /P <</MCID 1>> BDC 0 0 6 6 re f EMC")}), Pass,
+			"the structure tree is never read: this is not a subject of the clause's failing half at all"},
+
+		// ── Once per traversed stream.
+		{"an outer form drawn twice, its inner form carrying the key", spDoc([][2]string{{"/X0 Do /X0 Do", X}},
+			map[int]string{10: spForm("/Resources << /XObject << /Y0 11 0 R >> >>", "/Y0 Do"), 11: spForm(SP, spMC)}), Pass,
+			"veraPDF passes it with 3 checks: the outer's content is traversed once, so the inner is built once"},
+		{"a form drawing itself", spDoc([][2]string{{"/X0 Do", X}},
+			map[int]string{10: spForm(SP+" /Resources << /XObject << /X0 10 0 R >> >>", spMC+" /X0 Do")}), Fail,
+			"the self-Do inside the first traversal is the second reach"},
+		{"a tiling pattern used twice, drawing the form once", spDoc([][2]string{{"/Pattern cs /P0 scn 0 0 50 50 re f /P0 scn 0 0 60 60 re f", "/Pattern << /P0 12 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 12: pattern("/X0 Do")}), Pass,
+			"the pattern's content is traversed once"},
+		{"a gradient fill through a shading pattern beside a form drawn once", spDoc([][2]string{{"/Pattern cs /Sh0 scn 0 0 50 50 re f /X0 Do",
+			X + " /Pattern << /Sh0 << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 50 0] " +
+				"/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >> >>"}},
+			map[int]string{10: spForm(SP, spMC)}), Pass,
+			"a shading pattern has no content, so it is skipped — the re-review's finding 9, where the unbound-pattern " +
+				"refusal fired on every gradient fill"},
+		{"a tiling pattern drawing the form twice", spDoc([][2]string{{"/Pattern cs /P0 scn 0 0 50 50 re f", "/Pattern << /P0 12 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 12: pattern("/X0 Do /X0 Do")}), Fail,
+			"two Dos in one traversed stream"},
+		{"a Type 3 glyph drawing the form, shown three times", spDoc([][2]string{{"BT /T3 12 Tf 10 10 Td (a) Tj (a) Tj ET BT /T3 12 Tf (a) Tj ET", "/Font << /T3 12 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 12: spType3, 13: spStream("", "10 0 d0 /X0 Do"), 14: spStream("", "10 0 d0")}), Pass,
+			"each glyph procedure is traversed once"},
+		{"two Type 3 glyphs each drawing the form, one shown", spDoc([][2]string{{"BT /T3 12 Tf 10 10 Td (a) Tj ET", "/Font << /T3 12 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 12: spType3, 13: spStream("", "10 0 d0 /X0 Do"), 14: spStream("", "10 0 d0 /X0 Do")}), Fail,
+			"every procedure of a shown font is traversed, used or not"},
+		{"two pages naming one content stream", sharedContents("21 0 R"), Pass,
+			"one key, one traversal"},
+		{"two pages naming one content stream through an array", sharedContents("[21 0 R]"), Fail,
+			"an array has no key, so each page's content is traversed"},
+
+		// ── Annotations: once per annotation, once per appearance entry.
+		{"an appearance and a Do", spDoc([][2]string{{"/X0 Do", X + " >> /Annots [" + square("/N 10 0 R") + "] /Dummy <<"}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"an appearance stream is a PDXForm of its own"},
+		{"/N and /D naming one stream", spDoc([][2]string{{"", " >> /Annots [" + square("/N 10 0 R /D 10 0 R") + "] /Dummy <<"}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"each appearance entry is a PDXForm"},
+		{"two annotations sharing one appearance", spDoc([][2]string{{"", " >> /Annots [" + square("/N 10 0 R") + " " + square("/N 10 0 R") + "] /Dummy <<"}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"two annotations, two PDXForms"},
+		{"a hidden annotation's appearance and a Do", spDoc([][2]string{{"/X0 Do", X + " >> /Annots [<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 2 /Contents (x) /AP << /N 10 0 R >> >>] /Dummy <<"}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"hidden is not exempt here"},
+		{"a Popup's appearance and a Do", spDoc([][2]string{{"/X0 Do", X + " >> /Annots [<< /Type /Annot /Subtype /Popup /Rect [0 0 10 10] /AP << /N 10 0 R >> >>] /Dummy <<"}}, map[int]string{10: spForm(SP, spMC)}), Fail,
+			"nor is a Popup"},
+		{"one DIRECT annotation in an /Annots array two pages share", func() map[int]string {
+			o := spDoc([][2]string{{"", ""}, {"", ""}}, map[int]string{10: spForm(SP, spMC), 51: "[" + square("/N 10 0 R") + "]"})
+			o[20] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 21 0 R /Resources << >> /Annots 51 0 R >>"
+			o[22] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 23 0 R /Resources << >> /Annots 51 0 R >>"
+			return o
+		}(), Fail, "a direct annotation has no key, so veraPDF visits it from each page — the review's finding 2, a false pass when deduped by map identity"},
+		{"one annotation on two pages", func() map[int]string {
+			o := spDoc([][2]string{{"", ""}, {"", ""}}, map[int]string{10: spForm(SP, spMC), 50: square("/N 10 0 R")})
+			o[20] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 21 0 R /Resources << >> /Annots [50 0 R] >>"
+			o[22] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 23 0 R /Resources << >> /Annots [50 0 R] >>"
+			return o
+		}(), Pass, "the annotation has a key, so it is visited once"},
+
+		// ── Fused on opening: nib's count is not veraPDF's.
+		{"two equal keyed forms, each drawn once", spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), CannotCheck,
+			"veraPDF PASSES (two keys); pdfcpu fused them into one drawn twice"},
+		{"two equal keyed forms, one drawn twice", spDoc([][2]string{{"/X0 Do /X0 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), CannotCheck,
+			"veraPDF FAILS; pdfcpu does NOT fuse here, and the refusal is the conservative one — an equal copy " +
+				"anywhere in the file refuses, since nib cannot tell a copy it fused from one it did not"},
+		{"two equal outer forms each drawing a keyed inner", spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
+			map[int]string{10: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"),
+				11: spForm("/Resources << /XObject << /Y0 12 0 R >> >>", "/Y0 Do"), 12: spForm(SP, spMC)}), CannotCheck,
+			"veraPDF FAILS (two outers, two traversals); fused, nib sees one — a false pass without the refusal"},
+		{"two keyed forms equal only one way round", spDoc([][2]string{{"/X0 Do /X1 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
+			map[int]string{10: spForm(SP+" /Foo 5", spMC), 11: spForm(SP+" /Foo 30 0 R", spMC), 30: "null"}), CannotCheck,
+			"veraPDF PASSES (2 checks); pdfcpu's EqualObjects is asymmetric on a null, so asking it one way only " +
+				"missed the twin and FAILED this on 27 of 40 runs — the review's finding 1"},
+
+		// ── A form with no /Resources inherits its invoker's, and the FIRST traversal's binding is the one
+		// veraPDF keeps — measured both ways round. pdfcpu's reader drops the page's binding the form
+		// inherits, so nib cannot follow either and refuses; before the refusal the pattern route was a false pass.
+		{"an inherited pattern that draws the keyed form twice, bound on the FIRST page", spDoc([][2]string{
+			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 15 0 R >>"},
+			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 14 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Pattern cs /P0 scn 0 0 5 5 re f"),
+				14: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "0 0 1 1 re f"), 15: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), CannotCheck,
+			"veraPDF FAILS (3 passed, 1 failed); nib PASSED it, reading nothing, until an unbound pattern became a refusal"},
+		{"an inherited pattern that draws the keyed form twice, bound on the SECOND page", spDoc([][2]string{
+			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 14 0 R >>"},
+			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 15 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Pattern cs /P0 scn 0 0 5 5 re f"),
+				14: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "0 0 1 1 re f"), 15: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), CannotCheck,
+			"veraPDF PASSES (2 checks): A is traversed once, with page 1's binding, so the drawing pattern is never reached"},
+		{"an inherited XObject binding, the drawing one on the first page", spDoc([][2]string{
+			{"/A Do", "/XObject << /A 11 0 R /Y 13 0 R >>"},
+			{"/A Do", "/XObject << /A 11 0 R /Y 12 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Y Do"), 12: spForm("", "0 0 1 1 re f"),
+				13: spForm("/Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), CannotCheck,
+			"veraPDF FAILS (4 passed, 1 failed), and passes the page-reversed file (3 checks)"},
+		{"two equal keyed forms, one drawn three times", spDoc([][2]string{{"/X0 Do /X0 Do /X0 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), Fail,
+			"three reaches over two keys: one of them was reached twice whatever pdfcpu fused"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pdf := buildPDF(c.objs)
+			if c.want == CannotCheck {
+				if because[c.name] == "equal to" && !hasTwin(t, pdf) {
+					t.Fatal("setup: form 10 has no twin, so this row does not present the shape it names")
+				}
+				if got := verdictOf(t, pdf, "7.20 t2"); because[c.name] == "" || !strings.Contains(got.Why, because[c.name]) {
+					t.Fatalf("7.20 t2 refused for another reason (%s), want one naming %q", got.Why, because[c.name])
+				}
+			}
+			// Forty runs, because a twin missed one way round made this answer depend on map order.
+			for i := 0; i < 40; i++ {
+				if got := verdictOf(t, pdf, "7.20 t2"); got.Verdict != c.want {
+					t.Fatalf("7.20 t2 reports %v (%s) on run %d, want %v — %s", got.Verdict, got.Why, i+1, c.want, c.why)
+				}
+			}
+			got := verdictOf(t, pdf, "7.20 t2")
+			if got.Verdict != c.want {
+				t.Errorf("7.20 t2 reports %v (%s), want %v — %s", got.Verdict, got.Why, c.want, c.why)
+			}
+		})
+	}
+}
+
+// TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer — the P06.S05 review's finding 3. `open` pins
+// `OptimizeDuplicateContentStreams` off, because `NewDefaultConfiguration` reads the user's own pdfcpu
+// config, and with the flag on two pages' identical content streams become one object — which the
+// once-per-key traversal then reads as one traversal, turning a keyed form drawn once on each of two
+// pages from Fail to Pass.
+func TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer(t *testing.T) {
+	if os.Getenv("NIB_UA_CONFIG_CHILD") == "" {
+		// pdfcpu caches its config per process (`loadedDefaultConfig`) and a later load in THIS process would
+		// leave every test after this one reading the planted file, so the plant happens in a fresh process.
+		cmd := exec.Command(os.Args[0], "-test.run=^TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer$", "-test.v")
+		cmd.Env = append(os.Environ(), "NIB_UA_CONFIG_CHILD="+t.TempDir())
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "--- PASS") {
+			t.Fatalf("the child run under a planted pdfcpu config did not pass (%v):\n%s", err, out)
+		}
+		return
+	}
+	// The child: pdfcpu writes its own complete default config (a partial one is refused — "invalid
+	// validationMode"), the one flag is flipped in it, and pdfcpu is made to load it again.
+	dir := os.Getenv("NIB_UA_CONFIG_CHILD")
+	if err := model.EnsureDefaultConfigAt(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "pdfcpu", "config.yml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flipped := strings.Replace(string(b), "optimizeDuplicateContentStreams: false", "optimizeDuplicateContentStreams: true", 1)
+	if flipped == string(b) {
+		t.Fatal("setup: pdfcpu's default config no longer spells optimizeDuplicateContentStreams: false")
+	}
+	if err := os.WriteFile(path, []byte(flipped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.EnsureDefaultConfigAt(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus before response: the planted config really is what `NewDefaultConfiguration` now hands out.
+	if !model.NewDefaultConfiguration().OptimizeDuplicateContentStreams {
+		t.Fatal("setup: pdfcpu did not load the planted config, so the flag this test pins is not set")
+	}
+	X := "/XObject << /X0 10 0 R >>"
+	pdf := buildPDF(spDoc([][2]string{{"/X0 Do", X}, {"/X0 Do", X}}, map[int]string{10: spForm("/StructParents 0", spMC)}))
+	if got := verdictOf(t, pdf, "7.20 t2"); got.Verdict != Fail {
+		t.Errorf("with the user's pdfcpu config merging duplicate content streams, 7.20 t2 reports %v (%s), "+
+			"want Fail — veraPDF fails a keyed form drawn once on each of two pages", got.Verdict, got.Why)
+	}
+}
+
+// TestNibsOwnNUpPassesAndItsFusedCarryFails — the n-up pair from the oracle, graded without veraPDF, so
+// its failing half is asserted to FAIL rather than only to agree (the P06.S05 review's finding 4).
+func TestNibsOwnNUpPassesAndItsFusedCarryFails(t *testing.T) {
+	md := "# N-up\n\n" + strings.Repeat("## Section\n\nA paragraph of ordinary prose, long enough to wrap "+
+		"across the measure of the page.\n\n- one\n- two\n\n", 20)
+	src, err := pdfops.ConvertDocToPDF([]byte(md), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nup, err := pdfops.NUp(src, 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verdictOf(t, nup, "7.20 t2"); got.Verdict != Pass {
+		t.Errorf("nib's own n-up reports %v (%s), want Pass — veraPDF passes it with 7 checks", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, withSheetFormFused(t, nup), "7.20 t2"); got.Verdict != Fail {
+		t.Errorf("the fused carry reports %v (%s), want Fail — veraPDF fails it", got.Verdict, got.Why)
 	}
 }

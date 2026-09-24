@@ -115,6 +115,20 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	noted, nerr := pdfops.AddNotes(w.pdf, []pdfops.Note{{Page: 1, X: 72, Y: 700, Text: "a note"}})
 	uf, uferr := pdfops.AuthorForm(plain, []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 620, 300, 640},
 		Kind: "text", Name: "unnamed", Label: ""}})
+	// P06.S05: several pages, so `NUp` composes more than one sheet. **Twenty sections, and the number is
+	// measured, not chosen**: at 35 or more, veraPDF evaluates fewer numbered headings than nib's own
+	// conversion writes (28 of 36 at 35, 13 of 41 at 40) and gives `7.4.4 t3` no subject at all, a
+	// divergence of the conversion that has nothing to do with n-up and is filed on its own.
+	var long strings.Builder
+	long.WriteString("# N-up\n\n")
+	for i := 0; i < 20; i++ {
+		long.WriteString("## Section\n\nA paragraph of ordinary prose, long enough to wrap across the measure of the page.\n\n- one\n- two\n\n")
+	}
+	nupSrc, nerr2 := pdfops.ConvertDocToPDF([]byte(long.String()), ".md")
+	var nup []byte
+	if nerr2 == nil {
+		nup, nerr2 = pdfops.NUp(nupSrc, 2, false)
+	}
 	// P06.S02: the product door for an embedded file.
 	attached, aerr := pdfops.AddAttachment(w.pdf, "schedule.csv", []byte("a,b\n1,2\n"))
 
@@ -216,6 +230,14 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"Markdown, a paragraph retyped Formula with no alternate text", withFormulaParagraph(t, mdl, "")},
 		oracleDoc{"Markdown, a paragraph retyped Formula with alternate text", withFormulaParagraph(t, mdl, "the quadratic formula")},
 		oracleDoc{"Markdown + title + a dynamic XFA form", withDynamicXFA(t, mdt)},
+		// P06.S05. `7.20 t2`'s PASSING half with a subject is a product door, and it is the one whose history
+		// made the clause its own slice: `NUp` places each page as a form XObject carrying `/StructParents`,
+		// and until P02.S02 pdfcpu's optimize pass fused equal forms across sheets so one keyed form was drawn
+		// on several — scored identically broken and repaired by every instrument the repo then had (ADR-038).
+		// The failing half is that fusion, written back: sheet 2 drawing sheet 1's form. Measured on veraPDF
+		// before being pinned: 7 checks passed on the first, 6 passed and 1 failed on the second.
+		must("Markdown n-up, two pages a sheet", nup, nerr2),
+		oracleDoc{"Markdown n-up, sheet 2 drawing sheet 1's form", withSheetFormFused(t, nup)},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
 		// structure editor's own door retypes a correctly nested heading one level too deep.
 		oracleDoc{"Markdown, second heading retyped H3 (skips a level)", headingSkipped(t)},
@@ -463,7 +485,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 78
+	const wantGenerated = 80
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

@@ -3,6 +3,7 @@ package uacheck
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1683,4 +1684,49 @@ func withFormulaParagraph(t *testing.T, pdf []byte, alt string) []byte {
 		t.Fatalf("retype to Formula: %v", err)
 	}
 	return out
+}
+
+// withSheetFormFused makes an n-up document's second sheet draw its FIRST sheet's first form in place of its
+// own — the shape pdfcpu's optimize pass produced before P02.S02 made the carry un-fuse it (ADR-038): one
+// form carrying `/StructParents`, drawn on two sheets. 7.20 t2's failing half.
+func withSheetFormFused(t *testing.T, pdf []byte) []byte {
+	t.Helper()
+	sheetForms := func(ctx *model.Context, p int) types.Dict {
+		page, _, _, err := ctx.PageDict(p, false)
+		if err != nil || page == nil {
+			t.Fatalf("setup: sheet %d does not resolve: %v", p, err)
+		}
+		res, _ := ctx.DereferenceDict(page["Resources"])
+		xo, _ := ctx.DereferenceDict(res["XObject"])
+		if len(xo) == 0 {
+			t.Fatalf("setup: sheet %d draws no form XObject, so there is nothing to fuse", p)
+		}
+		return xo
+	}
+	first := func(d types.Dict) string {
+		keys := make([]string, 0, len(d))
+		for k := range d {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys[0]
+	}
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		if ctx.PageCount < 2 {
+			t.Fatalf("setup: the n-up document has %d sheet(s); fusing needs two", ctx.PageCount)
+		}
+		one, two := sheetForms(ctx, 1), sheetForms(ctx, 2)
+		// Stimulus before response: the two sheets' forms must start out DIFFERENT objects, or the
+		// document is already fused and this helper measures nothing.
+		if one[first(one)] == two[first(two)] {
+			t.Fatalf("setup: sheets 1 and 2 already draw the same form %v", one[first(one)])
+		}
+		// And the form grafted must carry the key, or the second sheet draws an unkeyed form twice and
+		// 7.20 t2 has nothing to fail.
+		if sd, _, err := ctx.DereferenceStreamDict(one[first(one)]); err != nil || sd == nil || sd.Dict["StructParents"] == nil {
+			t.Fatalf("setup: sheet 1's form %v carries no /StructParents, so drawing it twice fails nothing", one[first(one)])
+		}
+		two[first(two)] = one[first(one)]
+		return nil
+	})
 }

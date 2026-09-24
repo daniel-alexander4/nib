@@ -19,7 +19,7 @@ import (
 //
 // The carried P04.S04 criterion is a REFUSAL: *"a document carrying non-embedded fonts is refused for
 // UA export with the reason named."* Writing the PDF/UA identification was to be P07.S07's, and S07's
-// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (90 of the 106 since P06.S04), and a
+// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (91 of the 106 since P06.S05), and a
 // Markdown heading that skipped a level passed all of them while failing veraPDF's 7.4.2 t1. That one is checked
 // now; the class is not — a font whose glyph widths disagree with its own embedded
 // font program passes every clause nib checks and fails 7.21.5 t1

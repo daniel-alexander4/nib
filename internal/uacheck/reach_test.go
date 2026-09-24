@@ -169,6 +169,9 @@ var notTreeRules = map[string]string{
 	// depth and budget refusals and never reads a structure element. A document seventy Divs deep
 	// draws no form, so NotApplicable is the honest answer.
 	"7.16 t1": "the trailer's encryption dictionary", "7.20 t1": "form XObjects",
+	// P06.S05. `7.20 t2` is `7.20 t1`'s population counted rather than listed — the same content walk, and
+	// the same reason a seventy-Div document has nothing for it to read.
+	"7.20 t2": "form XObjects",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
