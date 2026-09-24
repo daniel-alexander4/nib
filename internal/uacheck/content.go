@@ -236,6 +236,11 @@ func (d *Document) walkAppearances() {
 				if state != "" {
 					label += " /" + state
 				}
+				// **An appearance stream IS a form XObject**, and veraPDF grades it as one: measured,
+				// a widget's `/AP /N` carrying `/Ref` fails 7.20 t1 on a document that draws nothing
+				// else. Recorded here rather than at the `Do` operator, because nothing draws it —
+				// the annotation is what puts it on the page.
+				d.recordDrawnForm(sd.Dict, label)
 				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream()}
 				w.walk(sd.Content, res, nil, map[int]bool{}, 0)
 			}
@@ -453,14 +458,40 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 // doXObject handles `Do`: an image is drawn content; a form is walked with its own resources.
 func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[int]bool, depth, opIndex int, ts textState) {
 	where := fmt.Sprintf("%s, operator #%d `%s Do`", w.where, opIndex, name)
+	// **An XObject nib cannot reach is a form it may not have graded.** Since P06.S03 the drawing walk
+	// is also `7.20 t1`'s population, so silently skipping one turns a missing subject into a Pass —
+	// the refusal below is what keeps "nib did not read it" from reading as "there is none".
 	xobjs := w.d.dict(res["XObject"])
+	if xobjs == nil && res["XObject"] != nil && w.d.contentErr == "" {
+		w.d.contentErr = fmt.Sprintf("%s: /Resources /XObject is not a dictionary nib can read, so "+
+			"what it names was never walked", where)
+	}
 	if xobjs == nil || len(name) < 2 {
 		w.emit(stack, false, where+" (unresolvable XObject)")
 		return
 	}
 	raw := xobjs[name[1:]]
 	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
-	if err != nil || sd == nil {
+	if err != nil {
+		// Separated from `sd == nil` the way `walkAppearances` separates them (`/pending 507`): an
+		// entry that ERRORS is one nib could not read, and it may have been a form carrying /Ref.
+		//
+		// **A DECLARED unreached branch, measured.** pdfcpu's validator refuses a non-stream
+		// `/XObject` entry ahead of the rules — `DereferenceStreamDict: wrong type <(9 0 R)>
+		// types.Dict` — so a document that would reach this never opens, and probing the refusal away
+		// leaves the package green. veraPDF FAILS such a document, so nib emitting no report at all is
+		// a real divergence, of the same declared class as `6.1 t1`'s `%PDF-1.9`. The refusal is kept
+		// because the walk is now a POPULATION as well as a reader: the day this becomes reachable,
+		// the alternative is a subject dropped in silence.
+		if w.d.contentErr == "" {
+			w.d.contentErr = fmt.Sprintf("%s: the XObject %s could not be read, so whether it is a "+
+				"form and what it draws were never established: %v", where, name, err)
+		}
+		w.emit(stack, false, where+" (unresolvable XObject)")
+		return
+	}
+	if sd == nil {
+		// Resolves to null: there is no XObject there to walk, which is not a failure to read one.
 		w.emit(stack, false, where+" (unresolvable XObject)")
 		return
 	}
@@ -486,6 +517,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if w.d.formWalks++; w.d.overBudget() {
 		return
 	}
+	w.d.recordDrawnForm(sd.Dict, where)
 	if derr := sd.Decode(); derr != nil {
 		w.d.contentErr = fmt.Sprintf("form XObject %s (object %d) could not be decoded: %v", name, objNr, derr)
 		return

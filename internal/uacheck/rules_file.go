@@ -36,6 +36,16 @@ func init() {
 		Check:   checkDynamicXFA,
 	})
 	register(Rule{
+		Clause:  "7.16 t1",
+		Summary: "an encrypted file's encryption dictionary shall contain a P key whose 10th bit is true",
+		Check:   checkEncryptionPermissions,
+	})
+	register(Rule{
+		Clause:  "7.20 t1",
+		Summary: "a conforming file shall not contain any reference XObjects",
+		Check:   checkReferenceXObjects,
+	})
+	register(Rule{
 		Clause:  "6.1 t1",
 		Summary: `the file header shall be "%PDF-1.n" for a single digit n between 0 and 7, followed by a single EOL marker`,
 		Check:   checkFileHeader,
@@ -516,4 +526,97 @@ func (d *Document) dynamicRenderFromRawFile() (found bool, render string, why st
 	}
 	render, why = raw.xfaDynamicRender(xfa)
 	return true, render, why
+}
+
+// checkReferenceXObjects evaluates ua1 7.20 t1 (P06.S03) over the forms the document DRAWS.
+//
+// The profile's test is `containsRef == false` on every `PDXForm`. A reference XObject imports the
+// content of ANOTHER document by reference, so what a reader shows depends on a file that may not be
+// there — and nothing in the structure tree describes it.
+//
+// **The population is what the document DRAWS, not what it holds** — `formXObjects` says why, and the
+// distinction was measured rather than reasoned. Four holders were measured to be subjects: a form the
+// page's content draws, a form an outer form's content draws, and an annotation's `/AP` appearance in
+// its `/N`, `/R` and `/D` states. A form sitting in a page's resources that nothing draws is NOT one.
+func checkReferenceXObjects(d *Document) Result {
+	forms, ferr := d.formXObjects()
+	for _, f := range forms {
+		if _, hasRef := f.dict["Ref"]; hasRef {
+			return Result{
+				Verdict: Fail,
+				Why: "a form XObject carries /Ref, so it imports another document's content by " +
+					"reference — what a reader shows depends on a file that may not be there, and " +
+					"nothing in this document's structure describes it",
+				Where: f.where,
+			}
+		}
+	}
+	// A definite failure beats a refusal, so the short-population check comes after the scan.
+	if ferr != "" {
+		return Result{Verdict: CannotCheck, Why: ferr}
+	}
+	if len(forms) == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the document holds no form XObjects, so there is none to be a reference XObject",
+		}
+	}
+	return Result{Verdict: Pass}
+}
+
+// checkEncryptionPermissions evaluates ua1 7.16 t1 (P06.S03).
+//
+// The profile's test is `P != null && (P & 512) == 512`, and its object is the ENCRYPTION DICTIONARY —
+// so an unencrypted document has no subject at all, which is most documents. Bit 10 (value 512) is
+// *"extract text and graphics in support of accessibility to users with disabilities"*: a protected
+// document that denies it cannot be read aloud.
+//
+// **nib's own `Encrypt` output FAILS this clause**, measured: it never sets `conf.Permissions`, so the
+// written `/P` is `-3901` = `0xF0C3`, and `0xF0C3 & 512 == 0`. That is recorded here rather than fixed
+// — which permissions "Protect with a password" should grant is a product decision with no single right
+// answer, and `/pending 640` owns it. The checker's job is to say so.
+func checkEncryptionPermissions(d *Document) Result {
+	// **`XRefTable.Encrypt` is a POINTER to an indirect reference**, not an object. Handing the pointer
+	// to `dict` resolved nothing, so every encrypted document read as unencrypted — a false pass on
+	// veraPDF's own fixture for this clause, caught by the corpus guard.
+	ref := d.Ctx.XRefTable.Encrypt
+	if ref == nil {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the document is not encrypted, so it has no permissions to withhold",
+		}
+	}
+	enc := d.dict(*ref)
+	if enc == nil {
+		return Result{
+			Verdict: CannotCheck,
+			Why:     "the trailer names an encryption dictionary that does not resolve, so nib cannot read the permissions",
+			Where:   "trailer /Encrypt",
+		}
+	}
+	// **This branch is correct and unreachable through a file, which is declared rather than removed.**
+	// pdfcpu reads `/P` once, with `IntEntry`, which matches a direct integer and does not dereference:
+	// an encrypted document with no `/P`, an indirect `/P` or a real-valued `/P` fails to OPEN
+	// ("unsupported encryption: required entry \"P\" missing"), so `Check` emits no report at all. The
+	// verdict here agrees with veraPDF anyway — its `P != null` fails a missing key — and the branch is
+	// kept because the day nib reads a document pdfcpu did not validate, it is the honest answer.
+	p, isInt := d.intValue(enc["P"])
+	if !isInt {
+		return Result{
+			Verdict: Fail,
+			Why: "the encryption dictionary has no /P, so nothing states which permissions the " +
+				"document grants",
+			Where: "the encryption dictionary",
+		}
+	}
+	if p&512 != 512 {
+		return Result{
+			Verdict: Fail,
+			Why: fmt.Sprintf("the encryption dictionary's /P is %d, whose bit 10 is clear: this "+
+				"document denies extracting text and graphics in support of accessibility, so a "+
+				"screen reader may not read it", p),
+			Where: "the encryption dictionary /P",
+		}
+	}
+	return Result{Verdict: Pass}
 }
