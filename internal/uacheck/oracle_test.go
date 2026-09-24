@@ -114,6 +114,8 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	noted, nerr := pdfops.AddNotes(w.pdf, []pdfops.Note{{Page: 1, X: 72, Y: 700, Text: "a note"}})
 	uf, uferr := pdfops.AuthorForm(plain, []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 620, 300, 640},
 		Kind: "text", Name: "unnamed", Label: ""}})
+	// P06.S02: the product door for an embedded file.
+	attached, aerr := pdfops.AddAttachment(w.pdf, "schedule.csv", []byte("a,b\n1,2\n"))
 
 	docs = append(docs,
 		must("committed proposal + a note", noted, nerr),
@@ -188,6 +190,19 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// `%PDF-2.0` is a version pdfcpu knows, fails the profile's literal `1.`, and keeps every xref
 		// offset in the file. `checkFileHeader` records what that leaves unreachable.
 		oracleDoc{"Markdown + title, header %PDF-2.0", withFileHeader(t, mdt, "%PDF-2.0")},
+		// P06.S02. `7.11 t1`'s PASSING half is a product door — `AddAttachment` writes both `/F` and
+		// `/UF` — and its failing half is a mutation, since nothing nib ships omits one. `7.1 t4` and
+		// `7.15 t1` have no product door at all: nib never marks its own tagging as suspect and writes
+		// no XFA, so both halves of the first and the failing half of the second are mutations.
+		must("attached file", attached, aerr),
+		oracleDoc{"attached file − its /UF", withSpecKey(t, attached, "UF", nil)},
+		oracleDoc{"committed proposal + Suspects true", withSuspects(t, w.pdf, true)},
+		// `Suspects false` was here and reached no veraPDF STATE that another document did not: this
+		// harness grades states, and every other document supplies 7.1 t4's passing half. A static XFA
+		// form does something nothing else does — it puts 7.15 t1's passing half WITH A SUBJECT in
+		// front of veraPDF, which is a different fact from having no AcroForm at all.
+		oracleDoc{"Markdown + title + a static XFA form", withStaticXFA(t, mdt)},
+		oracleDoc{"Markdown + title + a dynamic XFA form", withDynamicXFA(t, mdt)},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
 		// structure editor's own door retypes a correctly nested heading one level too deep.
 		oracleDoc{"Markdown, second heading retyped H3 (skips a level)", headingSkipped(t)},
@@ -432,7 +447,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 68
+	const wantGenerated = 73
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

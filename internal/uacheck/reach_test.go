@@ -155,6 +155,15 @@ var notTreeRules = map[string]string{
 	// refusal over a question the tree does not answer.
 	"5 t3": "the XMP packet", "5 t4": "the XMP packet", "5 t5": "the XMP packet",
 	"6.1 t1": "the file's leading bytes",
+	// P06.S02. `7.1 t4` reads the catalog's `/MarkInfo` and `7.15 t1` the AcroForm's XFA packet; neither
+	// touches a structure element. `7.11 t1` is exempt for a DIFFERENT reason, and the distinction
+	// matters: a structure element's `/AF` IS a measured holder, so the clause does reach the tree — but
+	// through its own whole-object-table walk, which carries its own depth refusal rather than the
+	// structure walk's. A document seventy Divs deep holds no file specification, so NotApplicable is
+	// the honest answer. Deleting that walk's refusal on the strength of "this clause does not read the
+	// tree" would be wrong, which is why the reason is written out rather than shared with the two above.
+	"7.1 t4": "the catalog's /MarkInfo", "7.11 t1": "file specifications",
+	"7.15 t1": "the AcroForm's XFA packet",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {

@@ -114,6 +114,11 @@ var corpusReach = map[string]int{
 	// they share its reach. `6.1 t1` reads the file's own leading bytes, which every readable file has,
 	// so its reach is every file nib opens: it is the widest row in this table by construction.
 	"5 t3": 293, "5 t4": 293, "5 t5": 293, "6.1 t1": 295,
+	// P06.S02. `7.1 t4` is asked of every document, like `6.1 t1`. `7.11 t1`'s and `7.15 t1`'s are the
+	// documents that carry a file specification or an AcroForm at all — and `7.15 t1`'s rose from 19 to
+	// 25 when the rule learned to re-read the file unvalidated, because pdfcpu's validator DELETES an
+	// `/AcroForm` it refuses and six corpus documents had lost theirs that way.
+	"7.1 t4": 295, "7.11 t1": 16, "7.15 t1": 25,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,

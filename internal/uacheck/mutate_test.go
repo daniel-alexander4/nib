@@ -1291,3 +1291,174 @@ func withOneUAPropertyWronglyPrefixed(t *testing.T, pdf []byte, wrong string) []
 			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
 	})
 }
+
+// withSuspects sets `/MarkInfo /Suspects` (P06.S02) — the only way to 7.1 t4's failing half, since
+// no nib door writes the key and the autotagger has no notion of unreliable tagging to record.
+func withSuspects(t *testing.T, pdf []byte, v bool) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		mi, derr := ctx.DereferenceDict(cat["MarkInfo"])
+		if derr != nil {
+			return derr
+		}
+		if mi == nil {
+			mi = types.Dict{}
+			cat["MarkInfo"] = mi
+		}
+		mi["Suspects"] = types.Boolean(v)
+		return nil
+	})
+}
+
+// withDynamicXFA installs an AcroForm whose XFA config packet declares `dynamicRender required`
+// (P06.S02) — 7.15 t1's failing half. Nib writes no XFA at all, so this is the only route.
+//
+// **The element is written the way veraPDF's own fixture writes it**, with the newline before the
+// closing angle bracket, because that is the serialisation a `bytes.Contains` search misses and the
+// rule is parsed rather than searched for exactly that reason.
+func withDynamicXFA(t *testing.T, pdf []byte) []byte {
+	return withXFAConfig(t, pdf, "<config xmlns=\"http://www.xfa.org/schema/xci/3.0/\"><acrobat>"+
+		"<acrobat7><dynamicRender\n>required</dynamicRender\n></acrobat7></acrobat></config>")
+}
+
+// withSpecKey rewrites one key on every file specification carrying an embedded file (P06.S02):
+// `to == nil` deletes it, otherwise it is set. Splitting 7.11 t1's conjunction needs all four.
+func withSpecKey(t *testing.T, pdf []byte, key string, to types.Object) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		touched := 0
+		for nr := range ctx.XRefTable.Table {
+			o, err := ctx.Dereference(types.IndirectRef{ObjectNumber: types.Integer(nr)})
+			if err != nil {
+				continue
+			}
+			dict, ok := o.(types.Dict)
+			if !ok {
+				continue
+			}
+			if _, hasEF := dict["EF"]; !hasEF {
+				continue
+			}
+			// **Counts a CHANGE, not a specification.** Counting the specs it found meant the delete
+			// case reported success on a document whose specs never carried the key — returning the
+			// UNMUTATED document while claiming, in the error string below, to prevent exactly that.
+			if to == nil {
+				if _, had := dict[key]; !had {
+					continue
+				}
+				delete(dict, key)
+			} else {
+				dict[key] = to
+			}
+			touched++
+		}
+		if touched == 0 {
+			return fmt.Errorf("no file specification with an /EF changed, so this fixture IS the " +
+				"unmutated document and the case it names is never reached")
+		}
+		return nil
+	})
+}
+
+// withBareFileSpec adds a typed file specification carrying NO embedded file (P06.S02) — the shape
+// that is a PASSING check rather than an absent subject, and the one nib used to miss.
+//
+// **It hangs off an annotation's `/FS` rather than an `/AF` array, and that is forced rather than
+// chosen.** A spec reached only from `/AF` does not survive a pdfcpu write: measured, the `/AF` key is
+// written and the specification object it names is dropped, leaving a dangling reference
+// (`/pending 655`). A fixture built that way has no subject at all, so it would assert nothing — the
+// first version of this helper did exactly that and the test failed for the wrong reason.
+func withBareFileSpec(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		annot, err := ctx.IndRefForNewObject(types.Dict{
+			"Type":    types.Name("Annot"),
+			"Subtype": types.Name("FileAttachment"),
+			"Rect":    types.NewNumberArray(50, 50, 70, 70),
+			"F":       types.Integer(4),
+			"FS": types.Dict{
+				"Type": types.Name("Filespec"),
+				"F":    types.StringLiteral("elsewhere.csv"),
+			},
+		})
+		if err != nil {
+			return err
+		}
+		page, _, _, perr := ctx.PageDict(1, false)
+		if perr != nil {
+			return perr
+		}
+		page["Annots"] = types.Array{*annot}
+		return nil
+	})
+}
+
+// withStaticXFA installs an XFA form whose `dynamicRender` is `forbidden` (P06.S02) — 7.15 t1's
+// passing half with a subject present, which is a different answer from having no form at all.
+func withStaticXFA(t *testing.T, pdf []byte) []byte {
+	return withXFAConfig(t, pdf, "<config xmlns=\"http://www.xfa.org/schema/xci/3.0/\"><acrobat>"+
+		"<acrobat7><dynamicRender\n>forbidden</dynamicRender\n></acrobat7></acrobat></config>")
+}
+
+// withXFAConfig is `withDynamicXFA`'s door, taking the config packet verbatim.
+func withXFAConfig(t *testing.T, pdf []byte, config string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		sd, err := ctx.NewStreamDictForBuf([]byte(config))
+		if err != nil {
+			return err
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		form, err := ctx.IndRefForNewObject(types.Dict{
+			"Fields": types.Array{},
+			"XFA":    types.Array{types.StringLiteral("config"), *ref},
+		})
+		if err != nil {
+			return err
+		}
+		cat["AcroForm"] = *form
+		return nil
+	})
+}
+
+// withXFAPackets installs an AcroForm whose `/XFA` array holds the given packets in order, each under
+// a name (P06.S02) — so a packet nib cannot read can be put BEFORE the one that answers.
+func withXFAPackets(t *testing.T, pdf []byte, packets ...string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		arr := types.Array{}
+		for i, p := range packets {
+			sd, err := ctx.NewStreamDictForBuf([]byte(p))
+			if err != nil {
+				return err
+			}
+			if err := sd.Encode(); err != nil {
+				return err
+			}
+			ref, err := ctx.IndRefForNewObject(*sd)
+			if err != nil {
+				return err
+			}
+			arr = append(arr, types.StringLiteral(fmt.Sprintf("packet%d", i)), *ref)
+		}
+		cat, cerr := ctx.XRefTable.Catalog()
+		if cerr != nil {
+			return cerr
+		}
+		form, err := ctx.IndRefForNewObject(types.Dict{"Fields": types.Array{}, "XFA": arr})
+		if err != nil {
+			return err
+		}
+		cat["AcroForm"] = *form
+		return nil
+	})
+}
