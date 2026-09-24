@@ -750,3 +750,45 @@ func TestEachPrefixClauseReadsItsOwnProperty(t *testing.T) {
 		}
 	}
 }
+
+// **`pdfuaid:part` is the element's whole text, untrimmed, read as an INTEGER** (the P06 phase-close review).
+// Every row was run on veraPDF 1.30.2 first; the verdict is veraPDF's. nib used to trim and take the first
+// text run, then compare to the string "1" — four of these eight disagreed.
+func TestTheIdentificationPartIsAnIntegerOverTheWholeText(t *testing.T) {
+	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdt, err := pdfops.SetTitle(md, "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		part string
+		want Verdict
+		why  string
+	}{
+		{"1", Pass, "the plain case"},
+		{"01", Pass, "an integer, so a leading zero is still 1"},
+		{"+1", Pass, "and so is a sign"},
+		{"&#x31;", Pass, "a character reference is the character"},
+		{" 1 ", Fail, "untrimmed: a space is not a digit"},
+		{"\n1\n", Fail, "nor is a newline"},
+		{"1<!---->1", Fail, "the whole text — a comment splits nothing — and 11 is not 1"},
+		{"1.0", Fail, "not an integer"},
+		{"<rdf:Description><rdf:value>1</rdf:value></rdf:Description>", Pass, "a qualified value is read from rdf:value"},
+		{"\n  <rdf:Description>\n    <rdf:value>1</rdf:value>\n  </rdf:Description>\n", Pass, "pretty-printed: the indentation is not the value (R1 re-review)"},
+		{"<rdf:Description><rdf:value>1</rdf:value><xmp:q xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">2</xmp:q></rdf:Description>", Pass, "and another qualifier is not part of it"},
+		{`<rdf:Description rdf:value="1"/>`, Pass, "rdf:value written as an attribute (R1 round 3)"},
+	} {
+		if got := verdictOf(t, withUAPart(t, mdt, c.part), "5 t2"); got.Verdict != c.want {
+			t.Errorf("pdfuaid:part %q reports %v (%s), want %v — %s (measured on veraPDF)", c.part, got.Verdict, got.Why, c.want, c.why)
+		}
+	}
+	// And on the property element itself, which `withUAPart` cannot write (it wraps the value in an element).
+	attr := withPacketBody(t, mdt, `<dc:title><rdf:Alt><rdf:li xml:lang="x-default">A named document</rdf:li></rdf:Alt></dc:title>`+
+		`<pdfuaid:part xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" rdf:value="1"/>`)
+	if got := verdictOf(t, attr, "5 t2"); got.Verdict != Pass {
+		t.Errorf("<pdfuaid:part rdf:value=\"1\"/> reports %v (%s), want Pass — measured on veraPDF", got.Verdict, got.Why)
+	}
+}

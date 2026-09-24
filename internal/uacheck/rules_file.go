@@ -3,6 +3,7 @@ package uacheck
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -10,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -279,9 +279,6 @@ func checkEmbeddedFileNames(d *Document) Result {
 // passes: the clause refuses dynamic rendering, not XFA. veraPDF fails its own `7.15-t01-fail-a.pdf`
 // with one check, which is the measurement this rule is written against.
 func checkDynamicXFA(d *Document) Result {
-	// **The validated catalog is not enough, and that is measured** — `rawCatalog` says why: pdfcpu
-	// DELETES the `/AcroForm` key on veraPDF's own fixture for this clause, so reading only the
-	// validated catalog reports "no form" for a document whose form is the defect.
 	// **The validated catalog is not enough, and that is measured.** pdfcpu DELETES an `/AcroForm`
 	// whose `/Fields` is empty or absent — an XFA-only form, which is exactly veraPDF's own fixture for
 	// this clause — so reading only the validated catalog reports "no form" for a document whose form
@@ -339,145 +336,281 @@ const (
 	maxXFABytes   = 32 << 20
 )
 
-// xfaDynamicRender reads the XFA packet's `dynamicRender` setting (P06.S02). It returns the value and,
-// separately, a reason nib could not read part of the form — never a silent empty string, which would
-// read as "not dynamic".
+// xfaDynamicRender reads the XFA form's `dynamicRender` setting exactly where veraPDF reads it (P06.S02,
+// ported at the P06 phase close). It returns the value and, separately, a reason nib could not read it —
+// never a silent empty string, which would read as "not dynamic".
 //
-// # Why this is parsed and not searched, with a concrete counterexample
+// # veraPDF's predicate, transcribed (`GFPDAcroForm.java:87-125`)
 //
-// `xmp.go` states the general form of this rule; here is the specific trap. veraPDF's own fixture
-// writes the element as:
+//   - `/XFA` is a stream, or an ARRAY of alternating names and streams; from an array veraPDF takes the
+//     entry right after the FIRST string `config`, and if there is none, nothing — the test then passes.
+//   - That stream is parsed as a whole XML document by a non-namespace-aware `DocumentBuilder`; a document
+//     that does not parse gives no value, and the test passes.
+//   - From the root it walks `xdp:xdp` (optional) → `config` → `acrobat` → `acrobat7` → `dynamicRender`,
+//     each the FIRST child whose qualified name — prefix included — is exactly that.
+//   - The value is `dynamicRender`'s FIRST CHILD NODE's value, untrimmed: its text run, or nothing.
 //
-//	<dynamicRender
-//	>required</dynamicRender
-//	>
+// **Until the phase close nib read every packet at any depth and trimmed**, which the review measured as
+// four live divergences on variations of veraPDF's own fixture: the element moved into `template`, the
+// value written ` required `, the element moved off the `acrobat7` path — all PASSED by veraPDF and FAILED
+// by nib — and `&nbsp;` in the config packet, passed by veraPDF and refused by nib. The corpus's one
+// `7.15` document fails the clause, so none of the four was visible to it.
 //
-// XFA serialisers routinely put the newline before the closing angle bracket, so
-// `bytes.Contains(x, "<dynamicRender>")` finds nothing in the one document in the corpus that is
-// supposed to fail this clause. The element name is a token, not a string.
+// # Where Go and veraPDF's parser differ, nib refuses rather than guesses
 //
-// # The /XFA value has two shapes, and one bad packet must not refuse the form
+// A syntax error — a mismatched tag, an undeclared entity like `&nbsp;` — is a document neither parser
+// accepts, and passes. But Go's decoder also refuses what a Java parser reads: an `encoding` other than
+// UTF-8 or ISO-8859-1, and `version="1.1"`. Those are `CannotCheck`: the packet may be dynamic, and nib
+// did not read it.
 //
-// It is either a single stream holding the whole XDP packet, or an ARRAY of alternating name and
-// stream pairs — veraPDF's fixture uses the array, with entries named `config`, `template`, `form` and
-// so on, and `dynamicRender` lives in `config`.
-//
-// **A packet that will not parse is skipped, not fatal.** Go's `encoding/xml` rejects things a Java
-// parser accepts and XFA templates routinely contain: `encoding="ISO-8859-1"` or `"UTF-16"` (no
-// `CharsetReader` is set), `version="1.1"`, and XHTML rich text carrying `&nbsp;`. Refusing the whole
-// clause because the `template` packet has a named entity would make nib report "could not check" for
-// ordinary forms that veraPDF passes — so each packet is tried, the first value found wins, and a
-// packet nib could not read is remembered and only reported if NO packet yielded a value.
+// **And Go's decoder accepts shapes veraPDF's parser refuses**, which without a check are false FAILS. Three
+// review rounds measured eleven and each is now refused as not-a-document: a DOCTYPE, an unbound prefix, a
+// prefix bound to "", one attribute twice (by URI and local name), anything before the XML declaration, the
+// reserved name `xml` in another case — and a UTF-8 byte-order mark, which veraPDF skips and Go does not.
+// **This list is not proven complete**: it is the part of XML 1.0 + Namespaces well-formedness that Go
+// omits and three passes found, and the remainder is `/pending 673`, not an assumption.
 func (d *Document) xfaDynamicRender(xfa types.Object) (string, string) {
-	var packets [][]byte
-	var unread string
-	total := 0
-	add := func(o types.Object) {
-		if len(packets) >= maxXFAPackets {
-			if unread == "" {
-				unread = fmt.Sprintf("the XFA form holds more than %d packets and nib stopped reading "+
-					"there", maxXFAPackets)
+	target := xfa
+	if arr, isArr := d.resolve(xfa).(types.Array); isArr {
+		target = nil
+		for i := 0; i+1 < len(arr); i++ {
+			if str, ok := d.text(arr[i]); ok && str == "config" {
+				target = arr[i+1]
+				break
 			}
-			return
 		}
-		sd, _, err := d.Ctx.DereferenceStreamDict(o)
-		if err != nil || sd == nil {
-			// A name entry in the alternating array lands here and is not a packet; so does a stream
-			// nib cannot resolve. Only the second is worth reporting, and the two are indistinguishable
-			// at this point, so neither is — the packet COUNT is what the caller checks.
-			return
-		}
-		if err := sd.Decode(); err != nil {
-			// **Recorded, not dropped.** A `config` packet that will not decode while `template` does
-			// would otherwise make nib answer Pass having never read the setting.
-			if unread == "" {
-				unread = "an XFA packet could not be decoded: " + err.Error()
-			}
-			return
-		}
-		if total+len(sd.Content) > maxXFABytes {
-			if unread == "" {
-				unread = fmt.Sprintf("the XFA form's packets exceed %d bytes decoded and nib stopped "+
-					"reading there", maxXFABytes)
-			}
-			return
-		}
-		total += len(sd.Content)
-		packets = append(packets, sd.Content)
-	}
-	switch v := d.resolve(xfa).(type) {
-	case types.Array:
-		for _, e := range v {
-			add(e)
-		}
-	default:
-		add(xfa)
-	}
-	for _, p := range packets {
-		v, err := dynamicRenderIn(p)
-		if err != "" {
-			if unread == "" {
-				unread = err
-			}
-			continue
-		}
-		if v != "" {
-			return v, ""
+		if target == nil {
+			// No `config` entry: veraPDF reads no stream, `dynamicRender` is null, and the test passes.
+			return "", ""
 		}
 	}
-	if unread != "" {
-		return "", unread
+	sd, _, err := d.Ctx.DereferenceStreamDict(target)
+	if err != nil || sd == nil {
+		// Not a stream (a name, a dictionary, null): veraPDF reads nothing from it either.
+		return "", ""
 	}
-	// **No packet declared it — including the case of no packets at all.** `dynamicRender` is then
-	// null, and the profile's test is `dynamicRender != 'required'`, which null satisfies. An empty
-	// `/XFA []` reaches here and must PASS: pdfcpu's validator accepts an empty array, so it is a
-	// document the checker really sees.
-	return "", ""
+	if err := sd.Decode(); err != nil {
+		// Recorded, not dropped: a config packet nib cannot decode may say `required`.
+		return "", "the XFA form's config packet could not be decoded: " + err.Error()
+	}
+	if len(sd.Content) > maxXFABytes {
+		return "", fmt.Sprintf("the XFA form's config packet exceeds %d bytes decoded and nib stopped there", maxXFABytes)
+	}
+	return dynamicRenderIn(sd.Content)
 }
 
-// dynamicRenderIn returns the text of the first `dynamicRender` element in one XFA packet.
+// xfaPath is the element path veraPDF walks to `dynamicRender`, by qualified name; the leading `xdp:xdp`
+// is optional.
+var xfaPath = []string{"xdp:xdp", "config", "acrobat", "acrobat7", "dynamicRender"}
+
+// dynamicRenderIn returns the value of the first child node of the `dynamicRender` element at veraPDF's
+// path in one XFA packet, and a reason when nib could not read the packet the way veraPDF does.
 //
-// `RawToken` is used rather than `Token` because an XFA packet is a FRAGMENT: veraPDF's own fixture
-// splits `<xdp:xdp>` across packets and carries the closing tag as its own array entry, so no single
-// packet is a well-formed document and a matching-tag parser refuses the whole thing.
-//
-// **The element's text is accumulated and the nesting is counted, not flagged.** A counter that was
-// merely set to 1 on the opening tag collapsed on a nested element of the same name, and a single
-// captured run lost text split by a comment or a processing instruction — `requi<!--x-->red` read as
-// `requi`, which is not `required`, so a dynamic form passed.
+// `RawToken` keeps the prefix as written, which is what a non-namespace-aware DOM's node names are; the
+// well-formedness `Token` would enforce is checked here by hand, because veraPDF parses the WHOLE document
+// before walking it — a value found early in a document that is broken later is not a value.
 func dynamicRenderIn(packet []byte) (string, string) {
+	// A UTF-8 byte-order mark is skipped, as veraPDF's parser skips it; Go's decoder calls it a syntax error,
+	// which the rule below would have turned into a Pass on a packet veraPDF FAILS (the R1 re-review, measured).
+	packet = bytes.TrimPrefix(packet, []byte("\xef\xbb\xbf"))
 	dec := xml.NewDecoder(bytes.NewReader(packet))
-	depth, inside := 0, 0
-	var text strings.Builder
+	dec.CharsetReader = latin1Reader
+	// **Go's decoder accepts four shapes veraPDF's parser rejects**, each measured as a live false FAIL by the
+	// R1 re-review: a DOCTYPE, a prefix no `xmlns:` binds, anything before the XML declaration, and one attribute
+	// written twice. veraPDF's parse fails on all four and the test passes, so here they are what a syntax
+	// error is — not a document.
+	type frame struct {
+		name string
+		// bound is the prefixes this element's own `xmlns:` attributes declare, and the URIs they bind.
+		bound map[string]string
+		// at is how far along xfaPath this element is (-1 off the path); took is whether a child has
+		// already been taken as the next path step, since veraPDF takes only the FIRST child of a name.
+		at   int
+		took bool
+	}
+	var stack []frame
+	rootSeen := false
+	var value strings.Builder
+	capturing, captured := false, false
+	// kind is what the first child node is: 0 not yet seen, 1 a text run, 2 a CDATA section.
+	kind := 0
+	end := func() { capturing, captured = false, true }
 	for {
+		off := dec.InputOffset()
 		tok, err := dec.RawToken()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			// A packet nib cannot parse is reported to the caller, which decides whether any other
-			// packet answered the question.
-			return "", "an XFA packet is not well-formed XML: " + err.Error()
+			var se *xml.SyntaxError
+			if errors.As(err, &se) && !strings.Contains(se.Msg, "unsupported version") {
+				// A document neither parser accepts: veraPDF catches the exception and the test passes.
+				return "", ""
+			}
+			return "", "the XFA config packet is XML nib's reader cannot parse the way veraPDF's does: " + err.Error()
+		}
+		if len(stack) > maxXMPDepth {
+			return "", fmt.Sprintf("the XFA config packet nests deeper than %d elements and nib stopped reading there", maxXMPDepth)
+		}
+		// uriOf resolves a prefix through the bindings in scope; "" with false when nothing binds it.
+		uriOf := func(prefix string) (string, bool) {
+			switch prefix {
+			case "":
+				return "", true
+			case "xml":
+				return "http://www.w3.org/XML/1998/namespace", true
+			case "xmlns":
+				return "http://www.w3.org/2000/xmlns/", true
+			}
+			for i := len(stack) - 1; i >= 0; i-- {
+				if u, ok := stack[i].bound[prefix]; ok {
+					return u, true
+				}
+			}
+			return "", false
 		}
 		switch t := tok.(type) {
+		case xml.Directive:
+			return "", "" // a DOCTYPE (or any declaration): veraPDF's parser refuses the document
 		case xml.StartElement:
-			depth++
-			if inside == 0 && t.Name.Local == "dynamicRender" {
-				inside = depth
+			own := map[string]string{}
+			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" {
+					if a.Value == "" {
+						return "", "" // `xmlns:foo=""` unbinds nothing in XML 1.0: not a document (R1 round 3)
+					}
+					own[a.Name.Local] = a.Value
+				}
+			}
+			stack = append(stack, frame{bound: own}) // provisional, so this element's own bindings count
+			_, ok := uriOf(t.Name.Space)
+			// **Duplicate attributes are compared by (URI, local name)**, as a namespace-aware parser does —
+			// two prefixes bound to one URI name the same attribute (R1 round 3, measured).
+			seen := map[[2]string]bool{}
+			for _, a := range t.Attr {
+				if a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns") {
+					key := [2]string{"xmlns", a.Name.Local}
+					if seen[key] {
+						ok = false
+					}
+					seen[key] = true
+					continue
+				}
+				uri, bound := uriOf(a.Name.Space)
+				if a.Name.Space == "" {
+					uri = "" // an unprefixed attribute is in no namespace, whatever the default is
+				}
+				key := [2]string{uri, a.Name.Local}
+				if !bound || seen[key] {
+					ok = false
+				}
+				seen[key] = true
+			}
+			stack = stack[:len(stack)-1]
+			if !ok {
+				return "", "" // an unbound prefix or one attribute twice: not a document
+			}
+			name := t.Name.Local
+			if t.Name.Space != "" {
+				name = t.Name.Space + ":" + name
+			}
+			if capturing {
+				end() // an element ends the first child, or IS it, and an element's value is null
+			}
+			at := -1
+			if len(stack) == 0 {
+				if rootSeen {
+					return "", "" // two root elements: not a document
+				}
+				rootSeen = true
+				switch name {
+				case "xdp:xdp":
+					at = 0
+				case "config":
+					at = 1
+				}
+			} else if parent := &stack[len(stack)-1]; parent.at >= 0 && parent.at+1 < len(xfaPath) &&
+				!parent.took && name == xfaPath[parent.at+1] {
+				parent.took = true
+				at = parent.at + 1
+			}
+			stack = append(stack, frame{name: name, at: at, bound: own})
+			if at == len(xfaPath)-1 && !captured {
+				capturing = true
 			}
 		case xml.EndElement:
-			if inside == depth {
-				// The element nib was reading has closed; its text is complete.
-				return strings.TrimSpace(text.String()), ""
+			name := t.Name.Local
+			if t.Name.Space != "" {
+				name = t.Name.Space + ":" + name
 			}
-			depth--
+			if len(stack) == 0 || stack[len(stack)-1].name != name {
+				return "", "" // a mismatched end tag: not a document
+			}
+			if capturing {
+				end() // the element closed: its first child, if any, is complete
+			}
+			stack = stack[:len(stack)-1]
 		case xml.CharData:
-			if inside > 0 {
-				text.Write(t)
+			// **The first child node, as veraPDF's DOM builds it — measured, each case on veraPDF 1.30.2**:
+			// a text run MERGES across comments (`requi<!--x-->red` and `<!--x-->required` both FAIL), a
+			// CDATA section is a node of its own (`requi<![CDATA[red]]>` PASSES, `<![CDATA[required]]>`
+			// FAILS), and a processing instruction or an element ends the run (`requi<?pi?>red` and
+			// `<x/>required` PASS). Go reports CDATA as ordinary character data, so the input decides.
+			if capturing {
+				cdata := off < int64(len(packet)) && bytes.HasPrefix(packet[off:], []byte("<![CDATA["))
+				switch {
+				case kind == 0 && cdata:
+					value.Write(t)
+					end()
+				case kind == 0:
+					kind = 1
+					value.Write(t)
+				case kind == 1 && !cdata:
+					value.Write(t)
+				default:
+					end()
+				}
+			} else if len(stack) == 0 && strings.TrimSpace(string(t)) != "" {
+				return "", "" // text outside the root element: not a document
+			}
+		case xml.Comment:
+			// Ignored: veraPDF's DOM carries no comment nodes, so text on either side is one run.
+		case xml.ProcInst:
+			if strings.EqualFold(t.Target, "xml") && (t.Target != "xml" || off != 0) {
+				// The declaration is exactly `xml`, at the very start; any other case of the reserved name, or
+				// the declaration anywhere else, is not a document (R1 re-review, rounds 2 and 3).
+				return "", ""
+			}
+			if capturing {
+				if kind == 0 {
+					value.Write(t.Inst) // a processing instruction first: that is the first child's value
+				}
+				end()
 			}
 		}
 	}
-	return strings.TrimSpace(text.String()), ""
+	if len(stack) != 0 || !rootSeen {
+		return "", "" // unclosed or empty: not a document
+	}
+	return value.String(), ""
+}
+
+// latin1Reader lets the decoder read an ISO-8859-1 packet, which a Java parser reads natively; any other
+// declared encoding stays an error, and `dynamicRenderIn` turns it into a refusal.
+func latin1Reader(label string, in io.Reader) (io.Reader, error) {
+	switch strings.ToLower(label) {
+	case "iso-8859-1", "latin1", "latin-1", "iso_8859-1", "us-ascii":
+		b, err := io.ReadAll(in)
+		if err != nil {
+			return nil, err
+		}
+		r := make([]rune, len(b))
+		for i, c := range b {
+			r[i] = rune(c)
+		}
+		return strings.NewReader(string(r)), nil
+	}
+	return nil, fmt.Errorf("encoding %q is not one nib's XML reader supports", label)
 }
 
 // dynamicRenderFromRawFile re-reads the file UNVALIDATED and returns its AcroForm's `dynamicRender`.
@@ -513,7 +646,7 @@ func (d *Document) dynamicRenderFromRawFile() (found bool, render string, why st
 		return false, "", "this document was assembled in memory rather than read from a file, so nib " +
 			"cannot re-read what pdfcpu's validator may have dropped"
 	}
-	ctx, err := api.ReadContext(bytes.NewReader(d.raw), model.NewDefaultConfiguration())
+	ctx, err := api.ReadContext(bytes.NewReader(d.raw), checkerConfig())
 	if err != nil {
 		return false, "", "the file could not be re-read without validation: " + err.Error()
 	}
@@ -564,7 +697,7 @@ func checkReferenceXObjects(d *Document) Result {
 	if len(forms) == 0 {
 		return Result{
 			Verdict: NotApplicable,
-			Why:     "the document holds no form XObjects, so there is none to be a reference XObject",
+			Why:     "the document draws no form XObjects, so there is none to be a reference XObject",
 		}
 	}
 	return Result{Verdict: Pass}
@@ -680,10 +813,12 @@ func checkUniqueSemanticParent(d *Document) Result {
 // *"extract text and graphics in support of accessibility to users with disabilities"*: a protected
 // document that denies it cannot be read aloud.
 //
-// **nib's own `Encrypt` output FAILS this clause**, measured: it never sets `conf.Permissions`, so the
-// written `/P` is `-3901` = `0xF0C3`, and `0xF0C3 & 512 == 0`. That is recorded here rather than fixed
-// — which permissions "Protect with a password" should grant is a product decision with no single right
-// answer, and `/pending 640` owns it. The checker's job is to say so.
+// **nib's own `Encrypt` output fails this clause's PREDICATE**, measured: it never sets `conf.Permissions`,
+// so the written `/P` is `-3901` = `0xF0C3`, and `0xF0C3 & 512 == 0`. **No product door reports it**, though
+// (the P06 phase-close review): `Encrypt` sets a user password, and `Check`/`CheckForUA` read without one,
+// so on that file they stop at the password and emit no report. The failure is therefore a fact about the
+// writer that `/pending 640` owns — which permissions "Protect with a password" should grant is a product
+// decision with no single right answer — and not something a user of `nib ua` is shown.
 func checkEncryptionPermissions(d *Document) Result {
 	// **`XRefTable.Encrypt` is a POINTER to an indirect reference**, not an object. Handing the pointer
 	// to `dict` resolved nothing, so every encrypted document read as unencrypted — a false pass on

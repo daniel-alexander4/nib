@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -446,7 +447,10 @@ func checkUAPartValue(d *Document) Result {
 			Where:   "catalog /Metadata, pdfuaid:part",
 		}
 	}
-	if x.UAPart != "1" {
+	// veraPDF's test is `part == 1` over an INTEGER — `Integer.valueOf` of the whole untrimmed text, so `01`
+	// and `+1` are 1 and ` 1 ` is no integer at all (measured, the P06 phase-close review). `strconv.Atoi`
+	// has the same grammar for ASCII: an optional sign, then digits, nothing else.
+	if n, err := strconv.Atoi(x.UAPart); err != nil || n != 1 {
 		return Result{
 			Verdict: Fail,
 			Why:     fmt.Sprintf("pdfuaid:part is %q; a PDF/UA-1 file declares part 1", x.UAPart),

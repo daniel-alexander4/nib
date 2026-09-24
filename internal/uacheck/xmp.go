@@ -84,6 +84,11 @@ type xmpProp struct {
 	Prefix string
 	// Value is the property's character data.
 	Value string
+	// own and rdfValue are the raw text directly inside the property and inside its first `rdf:value`;
+	// `Value` is settled from them when the packet has been read (a qualified property's value IS its
+	// `rdf:value`, and its other qualifiers are not part of it).
+	own, rdfValue string
+	hasRDFValue   bool
 }
 
 // The namespaces the clauses name. Compared by URI rather than by prefix, because a prefix is the
@@ -286,6 +291,33 @@ func parseXMP(d *Document) xmpFacts {
 					fr.owns = t.Name.Local
 				}
 			}
+			// **`rdf:value` written as an ATTRIBUTE is the value too** — on the property itself
+			// (`<pdfuaid:part rdf:value="1"/>`) or on its `rdf:Description`; veraPDF passes both, measured by
+			// the R1 re-review's third round, and reading `rdf:value` only as an element failed them.
+			for _, a := range t.Attr {
+				if a.Name.Local != "value" || a.Name.Space == "" || resolve(a.Name.Space) != nsRDF {
+					continue
+				}
+				owner := ""
+				if fr.space == nsPDFUAID {
+					owner = fr.owns
+				} else {
+					for i := len(path) - 1; i >= 0; i-- {
+						if path[i].space == nsPDFUAID {
+							owner = path[i].owns
+							break
+						}
+					}
+				}
+				if owner != "" {
+					p := f.UAProps[owner]
+					if !p.hasRDFValue {
+						p.rdfValue, p.hasRDFValue = a.Value, true
+						f.UAProps[owner] = p
+					}
+				}
+			}
+
 			path = append(path, fr)
 		case xml.EndElement:
 			// The check `Token()` used to perform. A packet whose tags do not nest is unreadable, not empty.
@@ -308,10 +340,14 @@ func parseXMP(d *Document) xmpFacts {
 			if len(path) == 0 {
 				continue
 			}
-			text := strings.TrimSpace(string(t))
-			if text == "" {
-				continue
-			}
+			// The identification property keeps its character data RAW and WHOLE; `dc:title` keeps its first
+			// trimmed run, as it always has. The difference is measured, not stylistic (the P06 phase-close
+			// review): veraPDF reads `pdfuaid:part` as all of the element's text, untrimmed, parsed as an
+			// integer — `01` and `+1` pass `5 t2`, while ` 1 `, a newline-wrapped `1` and `1<!---->1` (two runs,
+			// "11") fail it. Trimming made the second group false PASSES and the string compare made the first
+			// false FAILS.
+			raw := string(t)
+			text := strings.TrimSpace(raw)
 			// The property is the nearest ancestor in a namespace we care about — `dc:title`
 			// wraps an `rdf:Alt` wrapping an `rdf:li`, so the character data is three levels
 			// down from the element that names the property.
@@ -322,17 +358,27 @@ func parseXMP(d *Document) xmpFacts {
 			// property instead, giving it a value from an element that is not it.
 			for i := len(path) - 1; i >= 0; i-- {
 				if path[i].space == nsDC && path[i].raw.Local == "title" {
-					if f.Title == "" {
+					if f.Title == "" && text != "" {
 						f.Title = text
 					}
 					break
 				}
 				if path[i].space == nsPDFUAID {
+					// **The property's OWN text, or — if it is qualified — its `rdf:value`'s, and nothing else.**
+					// Measured by the R1 re-review on veraPDF: the qualified form pretty-printed, and one with a
+					// second qualifier, both PASS; reading every descendant's text made them `"\n  \n 1\n"` and
+					// `"12"` and failed them. The unqualified form stays raw — ` 1 ` fails there, measured.
 					if owns := path[i].owns; owns != "" {
-						if p := f.UAProps[owns]; p.Value == "" {
-							p.Value = text
-							f.UAProps[owns] = p
+						p := f.UAProps[owns]
+						top := path[len(path)-1]
+						switch {
+						case i == len(path)-1:
+							p.own += raw
+						case top.space == nsRDF && top.raw.Local == "value":
+							p.rdfValue += raw
+							p.hasRDFValue = true
 						}
+						f.UAProps[owns] = p
 					}
 					break
 				}
@@ -342,6 +388,15 @@ func parseXMP(d *Document) xmpFacts {
 	if len(path) != 0 {
 		f.Why = "the metadata packet is not well-formed XML: an element was never closed"
 		return f
+	}
+	for k, p := range f.UAProps {
+		switch {
+		case p.hasRDFValue:
+			p.Value = p.rdfValue
+		case p.own != "":
+			p.Value = p.own // an attribute-form value, set when the element opened, is kept otherwise
+		}
+		f.UAProps[k] = p
 	}
 	f.UAPart = f.UAProps["part"].Value
 	f.Readable = true

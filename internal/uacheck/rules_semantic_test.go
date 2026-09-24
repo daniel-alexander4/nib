@@ -366,3 +366,32 @@ func TestADanglingAlternateTextReferenceIsAbsent(t *testing.T) {
 		}
 	}
 }
+
+// **A definite failure beats a refusal, for 7.3 t1 and 7.7 t1 alike** (the P06 phase-close review). A
+// Formula with no alternate text, in a document where ANOTHER element sits on a role-map loop nib cannot
+// type, is failed by veraPDF (7.7-1: 0 passed, 1 failed, measured). Both clauses used to refuse before
+// scanning, so nib answered CannotCheck over a failure it had already read; `checkAlternateTextOn` now
+// scans first.
+func TestAFormulaWithoutAlternateTextFailsBesideAnUntypableElement(t *testing.T) {
+	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nA paragraph.\n\nAnother paragraph.\n\n- one\n- two\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdt, err := pdfops.SetTitle(md, "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdl, err := pdfops.SetLang(mdt, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := withRoleMapCycle(t, withFormulaParagraph(t, mdl, ""), true)
+	// Stimulus before response: some element really is untypable, or the refusal never had a chance.
+	if got := verdictOf(t, doc, "7.3 t1"); got.Verdict != CannotCheck {
+		t.Fatalf("setup: 7.3 t1 reports %v (%s); the fixture must hold an element nib cannot type", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, doc, "7.7 t1"); got.Verdict != Fail {
+		t.Errorf("7.7 t1 reports %v (%s), want Fail — the Formula nib read has no alternate text, and an "+
+			"untypable element elsewhere does not make that a question", got.Verdict, got.Why)
+	}
+}
