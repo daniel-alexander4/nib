@@ -121,11 +121,14 @@ func cidSetExact(set []byte, n int) (ok bool, missing, extra int) {
 // veraPDFMemoryLimit is the program length from which veraPDF reads through a temporary file instead of memory.
 const veraPDFMemoryLimit = 10240
 
-// maxTrueTypeReads bounds the reads NIB spends on a document's TrueType programs, all of them together — a `cmap` of
+// maxTrueTypeReads bounds the work NIB spends on a document's TrueType programs, all of them together — a `cmap` of
 // 65,535 format 4 subtables of 32,767 segments each is 8.6e9 reads, and past this nib says it did not finish rather
-// than guess. It counts nib's reads, not veraPDF's work: format 4's glyph-index loop is checked at its extremes and
-// never walked, so a program under this budget can still cost veraPDF hours to reach the same answer.
+// than guess. Reads count one each and a code-to-glyph map entry `mapEntryCost` (its memory: a 1 KB program of
+// overlapping 64K-code segments pinned 142 MiB at one read per entry, the P07.S04a review measured).
 const maxTrueTypeReads = 1 << 22
+
+// mapEntryCost is what one map entry is charged, in reads.
+const mapEntryCost = 8
 
 // macGlyphNameCount is `TrueTypePredefined.MAC_INDEX_TO_GLYPH_NAME.length`, which a format 2.5 `post` indexes.
 const macGlyphNameCount = 258
@@ -145,6 +148,16 @@ type trueTypeProgram struct {
 	nrCmaps int             // the cmap table's subtable count, duplicates included; 0 with no cmap table
 	pairs   map[[2]int]bool // the (platform, encoding) pairs present
 	reads   int             // what reading it cost, charged to the document's budget
+	// What the per-glyph clauses read (P07.S04), valid when state is ttParsed.
+	unitsPerEm int
+	advances   []int
+	numGlyphs  int
+	hasCmap    bool
+	subtables  []*ttSubtable
+	hasPost    bool
+	post       map[string]int
+	byPair     map[[2]int]*ttSubtable // the first subtable of each (platform, encoding)
+	mapping    []*ttSubtable          // the subtables holding any entry, in record order
 }
 
 func (p trueTypeProgram) has(platform, encoding int) bool { return p.pairs[[2]int{platform, encoding}] }
@@ -221,7 +234,12 @@ func (r *ttReader) block(n int64) []byte {
 }
 
 // readTrueType is `TrueTypeFontParser.readHeader`, `readTableDirectory` and `readTables` — the tables half of
-// `BaseTrueTypeProgram.parseFont`. The font-dependent half (`createCIDToNameTable`) is the caller's.
+// `BaseTrueTypeProgram.parseFont`. The font-dependent half (`createCIDToNameTable`) is the caller's. `budget` is what is
+// left of the document's reads.
+//
+// It keeps what the per-glyph clauses ask of the program (P07.S04): the units per em (2048 with no `head`), the
+// `hmtx` advances, the glyph count (`maxp`, else the advance count), every cmap subtable's code-to-glyph map in record
+// order, and a format 2 or 2.5 `post` table's names.
 func readTrueType(prog []byte, budget int) trueTypeProgram {
 	r := &ttReader{b: prog, limit: budget}
 	type table struct {
@@ -250,10 +268,11 @@ func readTrueType(prog []byte, budget int) trueTypeProgram {
 			post = t
 		}
 	}
+	p := trueTypeProgram{pairs: map[[2]int]bool{}, unitsPerEm: 2048}
 	if head.present {
 		r.seek(head.off, "the head table")
 		r.skip(18)
-		r.u16()
+		p.unitsPerEm = r.u16()
 	}
 	if !hhea.present {
 		r.stop(ttFailed, "it has no hhea table")
@@ -269,29 +288,76 @@ func readTrueType(prog []byte, budget int) trueTypeProgram {
 	}
 	r.seek(hmtx.off, "the hmtx table")
 	for i := 0; i < nh && r.ok(); i++ {
-		r.u16()
+		p.advances = append(p.advances, r.u16())
 		r.skip(2)
 	}
-	p := trueTypeProgram{pairs: map[[2]int]bool{}}
 	if cmap.present {
-		p.nrCmaps = r.readCmap(cmap.off, p.pairs)
+		p.hasCmap = true
+		p.nrCmaps, p.subtables = r.readCmap(cmap.off, p.pairs)
 	}
-	numGlyphs := nh
+	p.numGlyphs = nh
 	if maxp.present {
 		r.seek(maxp.off, "the maxp table")
 		r.skip(4)
-		numGlyphs = r.u16()
+		p.numGlyphs = r.u16()
 	}
 	if post.present {
-		r.readPost(post.off, post.length, numGlyphs)
+		p.hasPost = true
+		p.post = r.readPost(post.off, post.length, p.numGlyphs)
 	}
 	p.state, p.why, p.reads = r.state, r.why, r.reads
+	if p.state != ttParsed {
+		p.advances, p.subtables, p.post = nil, nil, nil // nothing reads them, and a stopped walk may hold a great deal
+	}
+	for _, s := range p.subtables {
+		if p.byPair == nil {
+			p.byPair = map[[2]int]*ttSubtable{}
+		}
+		if _, seen := p.byPair[[2]int{s.platform, s.encoding}]; !seen {
+			p.byPair[[2]int{s.platform, s.encoding}] = s // `getCmapTable` answers the FIRST matching record
+		}
+		if len(s.m) > 0 {
+			p.mapping = append(p.mapping, s) // only a subtable that maps something can answer `getGID`
+		}
+	}
 	return p
 }
 
+// ttSubtable is one cmap subtable as `TrueTypeCmapSubtable` holds it: a code-to-glyph map, and the FIRST code put into
+// it, which a (3,0) subtable's lookup masks by (`sampleCode`) — insertion order a Go map alone would lose.
+type ttSubtable struct {
+	platform, encoding int
+	m                  map[int]int
+	first              int
+}
+
+func (t *ttSubtable) put(code, gid int) {
+	if t.first < 0 {
+		t.first = code
+	}
+	t.m[code] = gid
+}
+
+// put is a map entry read from the program, charged what an entry costs.
+func (r *ttReader) put(t *ttSubtable, code, gid int) {
+	if r.charge(mapEntryCost); r.ok() {
+		t.put(code, gid)
+	}
+}
+
+// charge counts n units of work against the budget — a map entry costs what a read does.
+func (r *ttReader) charge(n int) {
+	if !r.ok() {
+		return
+	}
+	if r.reads += n; r.reads > r.limit {
+		r.stop(ttUnknown, fmt.Sprintf("the document's TrueType programs cost more than %d reads, where nib stops", maxTrueTypeReads))
+	}
+}
+
 // readCmap is `TrueTypeCmapTable.readTable`: every subtable record, then each subtable's body by its format —
-// 0, 4 and 6 are read, 2 and every other format stop after the format field.
-func (r *ttReader) readCmap(tableOff int64, pairs map[[2]int]bool) int {
+// 0, 4 and 6 are read, 2 and every other format stop after the format field and map nothing.
+func (r *ttReader) readCmap(tableOff int64, pairs map[[2]int]bool) (int, []*ttSubtable) {
 	r.seek(tableOff, "the cmap table")
 	r.skip(2)
 	n := r.u16()
@@ -303,35 +369,40 @@ func (r *ttReader) readCmap(tableOff int64, pairs map[[2]int]bool) int {
 	for i := 0; i < n && r.ok(); i++ {
 		recs = append(recs, rec{r.u16(), r.u16(), r.u32()})
 	}
+	var subs []*ttSubtable
 	for _, s := range recs {
 		if !r.ok() {
 			break
 		}
 		pairs[[2]int{s.platform, s.encoding}] = true
+		t := &ttSubtable{platform: s.platform, encoding: s.encoding, m: map[int]int{}, first: -1}
+		subs = append(subs, t)
 		r.seek(s.off+tableOff, "a cmap subtable")
 		switch r.u16() {
 		case 0:
 			r.skip(4)
 			for i := 0; i < 256 && r.ok(); i++ {
-				r.byte()
+				r.put(t, i, r.byte())
 			}
 		case 4:
-			r.readSegmentMapping()
+			r.readSegmentMapping(t)
 		case 6:
 			r.skip(4)
-			r.u16()
+			first := r.u16()
 			count := r.u16()
 			for i := 0; i < count && r.ok(); i++ {
-				r.u16()
+				r.put(t, first+i, r.u16())
 			}
 		}
 	}
-	return n
+	return n, subs
 }
 
-// readSegmentMapping is format 4. Its glyph-index loop seeks once per code of every segment with a range offset;
-// the offsets rise by 2 with each code, so only the first code that fails is asked for, never walked to.
-func (r *ttReader) readSegmentMapping() {
+// readSegmentMapping is format 4, walked as veraPDF walks it: a segment with no range offset maps EVERY code from its
+// start to its end (the 0xFFFF sentinel included) to `(idDelta + code) % 65536`; one with a range offset — unless it
+// starts or ends at 0xFFFF — reads each code's glyph index, and a non-zero one takes `idDelta` too. Every entry is
+// charged to the budget: overlapping segments are 2^31 entries in a few kilobytes.
+func (r *ttReader) readSegmentMapping(t *ttSubtable) {
 	r.skip(4)
 	seg := r.u16() / 2
 	r.skip(6)
@@ -344,54 +415,85 @@ func (r *ttReader) readSegmentMapping() {
 	}
 	ends := read()
 	r.skip(2)
-	starts, _, ranges := read(), read(), read()
+	starts, deltas, ranges := read(), read(), read()
 	if !r.ok() {
 		return
 	}
-	begin, size := r.pos, int64(len(r.b))
-	for i := 0; i < seg; i++ {
-		if ranges[i] == 0 || starts[i] == 0xFFFF || ends[i] == 0xFFFF || ends[i] < starts[i] {
+	begin := r.pos
+	for i := 0; i < seg && r.ok(); i++ {
+		if ranges[i] == 0 {
+			if ends[i] >= starts[i] {
+				r.charge((ends[i] - starts[i] + 1) * mapEntryCost)
+			}
+			for j := starts[i]; j <= ends[i] && r.ok(); j++ {
+				t.put(j, (deltas[i]+j)%65536)
+			}
 			continue
 		}
-		first := begin + int64(ranges[i]/2+(i-seg))*2
-		last := first + int64(ends[i]-starts[i])*2
-		if first >= 0 && last+2 <= size {
+		if starts[i] == 0xFFFF || ends[i] == 0xFFFF {
 			continue
 		}
-		// The first code whose read does not fit: a seek before the start, past the end, or a read over it.
-		at := first
-		if first >= 0 && first+2 <= size {
-			at = first + ((size-first-2)/2+1)*2
+		for j := 0; j <= ends[i]-starts[i] && r.ok(); j++ {
+			r.seek(begin+int64(ranges[i]/2+j+(i-seg))*2, "a format 4 glyph index")
+			g := r.u16()
+			if g != 0 {
+				g = (g + deltas[i]) % 65536
+			}
+			if r.ok() {
+				r.put(t, j+starts[i], g)
+			}
 		}
-		if at < 0 || at > size {
-			r.seek(at, "a format 4 glyph index")
-		}
-		r.stop(ttFailed, "a format 4 glyph index runs past the program's end")
-		return
 	}
 }
 
-// readPost is `TrueTypePostTable.readTable`: formats 2 and 2.5 are read, every other format stops at its header.
-func (r *ttReader) readPost(off, length int64, numGlyphs int) {
+// readPost is `TrueTypePostTable.readTable`: formats 2 and 2.5 are read into a name-to-glyph map (a later glyph wins a
+// duplicated name), every other format stops at its header and names nothing.
+func (r *ttReader) readPost(off, length int64, numGlyphs int) map[string]int {
 	r.seek(off, "the post table")
 	var f [4]byte
 	copy(f[:], r.block(4))
 	format := binary.BigEndian.Uint32(f[:])
 	r.skip(28)
+	names := map[string]int{}
 	switch format {
 	case 0x00020000:
 		numGlyphs = r.u16() // `setNumGlyphs` when it differs from maxp's: the post table's own count is the one read
+		index := make([]int, 0, numGlyphs)
 		for i := 0; i < numGlyphs && r.ok(); i++ {
-			r.u16()
+			index = append(index, r.u16())
 		}
+		var strs []string
 		for r.ok() && r.pos < off+length {
-			r.block(int64(r.byte()))
+			strs = append(strs, latin1(r.block(int64(r.byte()))))
+		}
+		r.charge(len(index))
+		for i, idx := range index {
+			if !r.ok() {
+				break
+			}
+			if idx < macGlyphNameCount {
+				names[macGlyphNames[idx]] = i
+			} else if k := idx - macGlyphNameCount; k < len(strs) {
+				names[strs[k]] = i
+			}
 		}
 	case 0x00028000:
 		for i := 0; i < numGlyphs && r.ok(); i++ {
 			if idx := int(int8(r.byte())) + i; r.ok() && (idx < 0 || idx >= macGlyphNameCount) {
 				r.stop(ttFailed, "its format 2.5 post table indexes past the Macintosh glyph names")
+			} else if r.ok() {
+				names[macGlyphNames[idx]] = i
 			}
 		}
 	}
+	return names
+}
+
+// latin1 is `new String(bytes, ISO_8859_1)`.
+func latin1(b []byte) string {
+	rs := make([]rune, len(b))
+	for i, c := range b {
+		rs[i] = rune(c)
+	}
+	return string(rs)
 }

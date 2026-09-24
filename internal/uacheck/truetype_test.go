@@ -607,6 +607,14 @@ func TestAProgramPastTheReadBudgetIsUnknown(t *testing.T) {
 	prog := func(records int) []byte {
 		return sfnt(ttTable{"cmap", cmap(records)}, ttTable{"head", ttHead()}, ttTable{"hhea", ttHhea(ttGlyphs)}, ttTable{"hmtx", ttHmtx(ttGlyphs)})
 	}
+	// A map entry costs `mapEntryCost` reads, so one segment mapping every code costs at least 65,536 of them (a 1 KB
+	// program of such segments pinned 142 MiB at one read per entry — the P07.S04a review).
+	wide := beBytes(uint16(4), uint16(32), uint16(0), uint16(4), uint16(0), uint16(0), uint16(0), uint16(0xFFFE), uint16(0xFFFF),
+		uint16(0), uint16(0), uint16(0xFFFF), uint16(0), uint16(1), uint16(0), uint16(0))
+	full := sfnt(ttTable{"cmap", ttCmap(ttSub{3, 1, wide})}, ttTable{"head", ttHead()}, ttTable{"hhea", ttHhea(ttGlyphs)}, ttTable{"hmtx", ttHmtx(ttGlyphs)})
+	if p := readTrueType(full, maxTrueTypeReads); p.state != ttParsed || p.reads < 65535*mapEntryCost || mapEntryCost < 4 {
+		t.Errorf("one segment over every code: state %v after %d reads, want parsed and charged at least %d (mapEntryCost %d)", p.state, p.reads, 65535*4, mapEntryCost)
+	}
 	if p := readTrueType(prog(1), maxTrueTypeReads); p.state != ttParsed || p.nrCmaps != 1 {
 		t.Fatalf("one record: state %v (%s), %d subtables, want parsed with 1", p.state, p.why, p.nrCmaps)
 	}

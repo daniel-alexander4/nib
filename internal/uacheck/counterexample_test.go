@@ -8,84 +8,85 @@ import (
 	"testing"
 )
 
-// TestADocumentCanPassEveryClauseNibChecksAndStillFailVeraPDF — the counterexample the docs cite, standing.
+// TestNoCorpusDocumentNibCallsConformantFailsVeraPDF — the docs' claim about a clean report, standing.
 //
-// The README, `nib ua`'s comment and the door's comment all say a document can pass every clause nib
-// checks and still fail PDF/UA, and each named an example. **Two examples have now gone stale by being
-// CAUGHT**, which is the healthy direction: a skipped heading level stopped being one when `/pending 487`
-// taught the checker 7.4.2 t1, and a `/Formula` with no alternate text stopped being one when P06.S04
-// taught it 7.7 t1. Each time this test went red and said to find a new one, which is what it is for.
+// For most of this checker's life the README, `nib ua`'s comment and the door's comment each cited a document that
+// passed every clause nib checks and still failed veraPDF, and a test here held that document up and went red the day
+// a rule caught it. **Three were retired that way** — a skipped heading level (`/pending 487`), a `/Formula` with no
+// alternate text (P06.S04), and a font whose glyph widths disagree with its own program (P07.S04a, which taught the
+// checker 7.21.5 t1). After the third, none was left to cite, and this test asserts what the docs now say instead.
 //
-// # The current example, and why it is a corpus document rather than a built one
+// **Measured at P07.S04a over veraPDF's own PDF/UA-1 corpus: nib reports 131 files conformant, and veraPDF fails none
+// of them.** The two rules nib does not check cannot produce such a file today, for different reasons: 7.1 t12 is one
+// veraPDF never fails (P03), and 7.21.4.2 t1 — a Type 1 font's /CharSet against its program — applies only to an
+// EMBEDDED Type 1 or CFF font, whose metrics nib reports as "could not check" until P07.S05/S06 read those programs.
+// That second reason is a refusal, not a check, which is why the corpus's 7.21.4.2 t01 files are asserted here as NOT
+// conformant rather than as agreeing: the day S05/S06 lands, those refusals become verdicts and the hole reopens
+// unless 7.21.4.2 t1 lands with them.
 //
-// `7.21 Fonts/7.21.5 Font metrics/7.21.5-t01-fail-a.pdf`: a font whose glyph widths in the PDF disagree
-// with the widths in the embedded font program. Measured — veraPDF fails it on `7.21.5 t1` and NOTHING
-// else, and nib reports it conformant across all its clauses.
-//
-// **This is weaker than the two examples before it in one specific way, and that is stated rather than
-// glossed**: they were built from nib's own doors, so the test ran on a fresh clone. This one needs
-// veraPDF's corpus, so without it the test SKIPS and the docs' claim is unverified in that run. The
-// reason is NOT that no buildable example exists — an earlier draft of this comment said the sixteen
-// remaining clauses are all font-program rules about bytes nib does not write, and that was **false**:
-// `7.20 t2` is among them, and `pdfops`'s own tests record nib producing a document that fails it (one
-// marked-content form painted twice has two semantic parents). The reason is that `7.20 t2` is the very
-// next slice, **P06.S05**, so an example built on it would be retired again within the week — and the
-// whole point of this test is that its example survives until a rule catches it.
-//
-// **A mutation was tried and rejected, and the rejection is the more useful record.** Rewriting a
-// `/ToUnicode` destination to `<0000>` in nib's own output produces a document nib calls conformant and
-// veraPDF fails — but it fails `7.21.7 t1`, a clause nib IMPLEMENTS. So it is not a counterexample at
-// all, it is a live FALSE PASS, filed critical as `/pending 657`. Building the docs' central honesty
-// claim on a checker bug would be the worst of both, and the per-clause assertion at the end of this
-// test is what makes that impossible to do by accident again.
-func TestADocumentCanPassEveryClauseNibChecksAndStillFailVeraPDF(t *testing.T) {
-	const rel = "7.21 Fonts/7.21.5 Font metrics/7.21.5-t01-fail-a.pdf"
-	path := filepath.Join(corpusDir(), rel)
-	pdf, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("SKIP (unchecked): veraPDF's corpus is absent, so the documented counterexample cannot "+
-			"be exercised in this run: %v", err)
+// **This is still not a certificate**, and the docs keep saying so: nib's verdicts are tested against veraPDF on every
+// build, not proven, and a corpus is evidence about the documents in it.
+func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
+	root := corpusDir()
+	if _, err := os.Stat(root); err != nil {
+		t.Skipf("SKIP (unchecked): veraPDF's corpus is absent, so the docs' claim cannot be exercised in this run: %v", err)
 	}
-	r, cerr := Check(pdf)
-	if cerr != nil {
-		t.Fatalf("nib cannot read the documented counterexample: %v", cerr)
-	}
-	if !r.Conformant() {
-		var not []string
-		for _, res := range r.Results {
-			if res.Verdict != Pass && res.Verdict != NotApplicable {
-				not = append(not, res.Clause+" ("+res.Why+")")
-			}
+	var conformant []string
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || filepath.Ext(p) != ".pdf" {
+			return err
 		}
-		t.Fatalf("nib now reports the documented counterexample as NOT conformant (%v) — the checker "+
-			"catches it, so the README, cmdUA's and door.go's comments cite an example that is no "+
-			"longer one: find a new one", not)
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		if r, cerr := Check(b); cerr == nil && r.Conformant() {
+			conformant = append(conformant, p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	// **The count is the README's**, so a set that shrank would leave the docs' figure standing over fewer files.
+	const readmeCount = 131
+	if len(conformant) != readmeCount {
+		t.Errorf("nib calls %d corpus files conformant and the README says %d — measure it again and move both", len(conformant), readmeCount)
+	}
+	for _, f := range []string{"7.21.4.2-t01-fail-a.pdf", "7.21.4.2-t01-fail-b.pdf"} {
+		p := filepath.Join(root, "7.21 Fonts", "7.21.4 Embedding", "7.21.4.2 Subset embedding", f)
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			t.Fatalf("the corpus lacks %s: %v", f, rerr)
+		}
+		if r, cerr := Check(b); cerr == nil && r.Conformant() {
+			t.Errorf("%s fails 7.21.4.2 t1, which nib does not check, and nib now calls it conformant — the docs' claim "+
+				"that a clean report has no measured counterexample is false; cite this file, or land 7.21.4.2 t1", f)
+		}
+	}
 	vp := veraPDFPath()
 	if vp == "" {
-		t.Skip("SKIP (half checked): nib's side holds; veraPDF is absent, so that the example FAILS PDF/UA is unchecked in this run")
+		t.Skipf("SKIP (half checked): nib calls %d corpus files conformant; veraPDF is absent, so that it fails none is unchecked", len(conformant))
 	}
-	out, _ := exec.Command(vp, "--flavour", "ua1", "--passed", path).Output()
+	out, _ := exec.Command(vp, append([]string{"--flavour", "ua1"}, conformant...)...).Output()
 	var rep veraReport
 	if err := xml.Unmarshal(out, &rep); err != nil {
 		t.Fatalf("the veraPDF report did not parse: %v", err)
 	}
-	states := veraStates(rep, []string{path})
-	if states[0] == nil || states[0]["7.21.5 t1"] != veraFailed {
-		t.Errorf("veraPDF does not fail 7.21.5 t1 on the documented counterexample (state %q) — the "+
-			"docs' example no longer shows a nib-conformant document failing PDF/UA", states[0]["7.21.5 t1"])
+	if len(rep.Jobs) != len(conformant) {
+		t.Fatalf("veraPDF reported %d jobs for %d files", len(rep.Jobs), len(conformant))
 	}
-	// **The example must fail ONLY a clause nib does not implement.** Otherwise it is a false pass in
-	// nib rather than a limit of its coverage, and the docs' sentence would be resting on a bug.
-	implemented := map[string]bool{}
-	for _, c := range Clauses() {
-		implemented[c] = true
-	}
-	for clause, st := range states[0] {
-		if st == veraFailed && implemented[clause] {
-			t.Errorf("veraPDF fails %s on the counterexample and nib IMPLEMENTS that clause, so nib "+
-				"passing the document is a false pass, not a coverage limit", clause)
+	for _, j := range rep.Jobs {
+		// A job veraPDF did not finish lists no rules, which would read as "fails none".
+		if j.Report.Status != "normal" {
+			t.Errorf("veraPDF did not finish %s (jobEndStatus %q), so whether it fails that file is unchecked", j.Item.Name, j.Report.Status)
+		}
+		for _, r := range j.Report.Rules {
+			if r.Status == "failed" {
+				t.Errorf("nib calls %s conformant and veraPDF fails %s t%s — a counterexample the docs must cite (or a false "+
+					"pass, if nib implements that clause)", j.Item.Name, r.Clause, r.Test)
+			}
 		}
 	}
+	t.Logf("nib calls %d corpus files conformant; veraPDF fails none of them", len(conformant))
 }

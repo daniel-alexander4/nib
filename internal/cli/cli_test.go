@@ -1664,10 +1664,9 @@ func TestUARefusesWithEveryReasonAndNamesTheFont(t *testing.T) {
 	}
 }
 
-// TestUAExitZeroSaysItIsNotACertificate — P07.S07's correction. A document can pass every clause nib
-// checks and fail one it does not (measured: a font whose glyph widths disagree with its own embedded
-// font program fails veraPDF's 7.21.5 t1 — `uacheck/counterexample_test.go`), so a
-// passing run must say so rather than let exit 0 read as "is PDF/UA".
+// TestUAExitZeroSaysItIsNotACertificate — P07.S07's correction. nib checks most of PDF/UA-1's rules, not all,
+// and its verdicts are tested against veraPDF rather than proven (`uacheck/counterexample_test.go` holds the
+// measured state), so a passing run must say so rather than let exit 0 read as "is PDF/UA".
 func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
 	// The wording is asserted on the source of the message, because producing a document that passes
 	// every clause nib checks needs the whole tagging pipeline and is uacheck's to test.

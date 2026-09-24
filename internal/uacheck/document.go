@@ -74,7 +74,7 @@ type Document struct {
 	// gathered by the same walk; glyphSeen dedupes it, glyphFonts reads each font once, and glyphCodes counts
 	// the codes read against `maxGlyphCodes`.
 	glyphs     []glyph
-	glyphSeen  map[glyphKey]struct{}
+	glyphSeen  map[glyphKey]int
 	glyphFonts map[any]*glyphFont
 	// ttList is the used TrueType fonts (`trueTypeFonts`), built once; ttByDict finds one by its dictionary.
 	ttList   []*ttFont
@@ -86,7 +86,10 @@ type Document struct {
 	ttUnresolved string
 	ttPrograms   map[uintptr]trueTypeProgram
 	ttReads      int
-	glyphCodes   int
+	cidReads     map[uintptr]cidRead
+	// drawnUnrecorded is every font a pattern or Type 3 procedure draws — glyphs recorded, font events not.
+	drawnUnrecorded map[uintptr]bool
+	glyphCodes      int
 	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
 	toUnicodes      map[uintptr]*fontcode.ToUnicode
 	toUnicodeBlocks int

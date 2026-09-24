@@ -19,11 +19,11 @@ import (
 //
 // The carried P04.S04 criterion is a REFUSAL: *"a document carrying non-embedded fonts is refused for
 // UA export with the reason named."* Writing the PDF/UA identification was to be P07.S07's, and S07's
-// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (101 of the 106 since P07.S03), and a
+// measurement overturned it: nib checked 15 of the 106 rules veraPDF evaluates (104 of the 106 since P07.S04a), and a
 // Markdown heading that skipped a level passed all of them while failing veraPDF's 7.4.2 t1. That one is checked
-// now; the class is not — a font whose glyph widths disagree with its own embedded
-// font program passes every clause nib checks and fails 7.21.5 t1
-// (`counterexample_test.go`). A door labelling on "every clause
+// now, and so are the two examples that replaced it; since P07.S04a none is measured — veraPDF passes every corpus
+// file nib calls conformant (`counterexample_test.go`) — but the one unchecked rule a file can fail, 7.21.4.2 t1, is
+// covered by a REFUSAL rather than a check, and nib's verdicts are tested, not proven. A door labelling on "every clause
 // nib checks passes" would write a conformance assertion over a non-conformant document — ADR-031 law
 // 1, by name. So nothing labels on this checker's say-so, and the word "conformant" in this package means only
 // that. The one label nib writes is `pdfops.LabelUA`'s, on its own Markdown conversion, and it rests on

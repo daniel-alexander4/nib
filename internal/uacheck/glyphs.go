@@ -31,6 +31,11 @@ type glyph struct {
 	code   int
 	where  string
 	unread string
+	// visible is whether any use of it is drawn in a render mode other than 3 — veraPDF makes one glyph per mode,
+	// and 7.21.5 t1 and 7.21.4.1 t2 exempt mode 3 where 7.21.7 and 7.21.8 do not (P07.S04, measured).
+	visible bool
+	// visibleWhere is the first place it is drawn visibly — where a rule exempting mode 3 points.
+	visibleWhere string
 }
 
 // glyphKey dedupes the population. A typed key, not an `any`: boxing it allocated per code, and the review's
@@ -75,7 +80,7 @@ const maxToUnicodeBlocks = 1 << 16
 const maxDistinctGlyphs = 1 << 20
 
 // showGlyphs records the glyphs one text-showing operator draws.
-func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font types.Dict, fontObj int, fontName, where string) {
+func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font types.Dict, fontObj int, fontName, where string, visible bool) {
 	if font == nil || len(operands) == 0 {
 		return // an unresolved font draws nothing veraPDF judges; `usedFonts` refuses it for the rules
 	}
@@ -111,7 +116,7 @@ func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font type
 		if gf.unread != "" {
 			// The codes are unknown, but that there IS at least one glyph is not: record one, so the rules
 			// refuse rather than read an unreadable font as drawing nothing.
-			w.d.addGlyph(glyph{font: gf, where: where, unread: gf.unread})
+			w.d.addGlyph(glyph{font: gf, where: where, unread: gf.unread, visible: visible})
 			continue
 		}
 		read := func(_ []byte, v int) bool {
@@ -120,12 +125,12 @@ func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font type
 				w.d.overBudget()
 				return false
 			}
-			w.d.addGlyph(glyph{font: gf, code: v, where: where})
+			w.d.addGlyph(glyph{font: gf, code: v, where: where, visible: visible})
 			return !w.d.contentOver
 		}
 		if gf.cs != nil {
 			if !gf.cs.Codes(s, read) {
-				w.d.addGlyph(glyph{font: gf, where: where, unread: "the font's CMap cuts this string where veraPDF's own " +
+				w.d.addGlyph(glyph{font: gf, where: where, visible: visible, unread: "the font's CMap cuts this string where veraPDF's own " +
 					"reader throws (a byte no range admits with no range of the CMap's own, or the code FFFFFFFF)"})
 			}
 		} else {
@@ -144,9 +149,12 @@ func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font type
 func (d *Document) addGlyph(g glyph) {
 	k := glyphKey{g.font, g.code, g.unread != ""}
 	if d.glyphSeen == nil {
-		d.glyphSeen = map[glyphKey]struct{}{}
+		d.glyphSeen = map[glyphKey]int{}
 	}
-	if _, seen := d.glyphSeen[k]; seen {
+	if i, seen := d.glyphSeen[k]; seen {
+		if g.visible && !d.glyphs[i].visible {
+			d.glyphs[i].visible, d.glyphs[i].visibleWhere = true, g.where
+		}
 		return
 	}
 	if len(d.glyphs) >= maxDistinctGlyphs {
@@ -154,7 +162,10 @@ func (d *Document) addGlyph(g glyph) {
 		d.overBudget()
 		return
 	}
-	d.glyphSeen[k] = struct{}{}
+	if g.visible {
+		g.visibleWhere = g.where
+	}
+	d.glyphSeen[k] = len(d.glyphs)
 	d.glyphs = append(d.glyphs, g)
 }
 

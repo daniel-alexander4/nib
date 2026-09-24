@@ -111,12 +111,11 @@ func cmdPDFA(args []string) int {
 // It reaches the same door as the UI's report (`uacheck.CheckForUA`); a repo-root guard refuses a
 // direct `uacheck.Check` here, so the CLI and the UI cannot hold two readings of the verdicts.
 //
-// **Exit 0 means every clause nib checks passes, and nothing more** — measured: a document whose
-// font's glyph widths disagree with its own embedded font program passes all of nib's clauses and
-// fails veraPDF's 7.21.5 t1, which nib does not check. **Two earlier examples were RETIRED by being
-// caught** — a skipped heading level by `/pending 487`, a `/Formula` with no alternate text by P06.S04
-// — which is the healthy direction; `uacheck/counterexample_test.go` holds the current one and goes red
-// when it too is caught. Exit 1
+// **Exit 0 means every clause nib checks passes, and nothing more.** Three documents that passed every
+// clause nib checked and failed veraPDF were RETIRED by being caught — a skipped heading level by
+// `/pending 487`, a `/Formula` with no alternate text by P06.S04, a font whose widths disagree with its
+// program by P07.S04a — and none is measured now (`uacheck/counterexample_test.go` asserts it over veraPDF's
+// corpus); but nib's verdicts are tested, not proven, and one rule it skips is covered only by a refusal. Exit 1
 // means a checked clause failed or could not be checked, with every reason on stderr. Neither is a
 // PDF/UA verdict, and the output says so.
 func cmdUA(args []string) int {

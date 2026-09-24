@@ -143,6 +143,12 @@ var corpusReach = map[string]int{
 	// P07.S03: 255 readable files draw a simple TrueType font, and nib settles all four clauses on every one; the
 	// corpus holds t2's four fail files and no fail file for t1 or t4 (their fail halves are `ttFixtures`), and t3's
 	// one fail file is unreadable to pdfcpu (below). No other row moved.
+	// P07.S04a: the three per-glyph clauses settle on every readable file that draws a glyph nib can judge — 265 for
+	// the two metric clauses, 268 for 7.21.8 (which reads an encoding's name where the metrics need a program read that
+	// is P07.S04b's or S05's, so three more files settle); every Type 3, predefined-CMap and CFF refusal is the rest, and
+	// so are `7.21.3.2-t01-fail-a`/`-c`, where pdfcpu drops the very CIDFont veraPDF judges (a font that does not
+	// resolve refuses; it had read as drawing no glyph). No other row moved.
+	"7.21.5 t1": 265, "7.21.4.1 t2": 265, "7.21.8 t1": 268,
 	"7.21.6 t1": 255, "7.21.6 t2": 255, "7.21.6 t3": 255, "7.21.6 t4": 255,
 	"7.21.3.1 t1": 62, "7.21.3.2 t1": 62, "7.21.3.3 t1": 62, "7.21.3.3 t2": 12, "7.21.3.3 t3": 2,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
