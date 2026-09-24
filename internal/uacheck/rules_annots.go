@@ -333,3 +333,136 @@ func checkPrinterMarksAreNotInTheTree(d *Document) Result {
 	}
 	return Result{Verdict: Pass, Why: fmt.Sprintf("none of the document's %d printer's mark(s) is in the structure tree", len(marks))}
 }
+
+// The interactive surface — P05.S03: a widget's alternative description, and the page's tab order. Both
+// verdicts below were measured on veraPDF 1.30.2 over thirteen fixtures before a rule was written.
+
+func init() {
+	register(Rule{
+		Clause:  "7.18.1 t3",
+		Summary: "a form field shall carry TU, or every widget of it shall have an Alt on its enclosing element",
+		Check:   checkWidgetsCarryADescription,
+	})
+	register(Rule{
+		Clause:  "7.18.3 t1",
+		Summary: "a page carrying annotations shall declare Tabs with the value S",
+		Check:   checkPagesWithAnnotationsDeclareTabOrder,
+	})
+}
+
+// fieldTU is the `/TU` veraPDF reads for a widget, and **which dictionary it comes from turns on one key**.
+//
+// `GFPDWidgetAnnot.getTU` asks `PDFormField.isField`, which is exactly *"this dictionary has a `/T`"*
+// (`PDFormField.java:186-188`). A widget carrying `/T` is itself the field, so its OWN `/TU` is read; a widget
+// without one is a kid, and its `/Parent`'s `/TU` is read — **one level, never a climb**.
+//
+// Two measured consequences, each its own fixture: a `/TU` on the GRANDPARENT field is not found (7.18.1 t3
+// fails), and a kid widget's own `/TU` is **ignored** (it fails too, though the key is right there on the
+// annotation). Reading the widget's own `/TU` unconditionally would pass both documents veraPDF fails.
+func (d *Document) fieldTU(a annotSubject) (string, bool) {
+	// **PRESENCE, never a typed read.** `isField` is `knownKey(ASAtom.T)` — the key, whatever it holds —
+	// and reading `/T` as a STRING instead was a live false pass: measured, a `/T` naming a FREE object is a
+	// document pdfcpu accepts, veraPDF FAILS (the key is there, so the widget IS the field and its own absent
+	// `/TU` decides it) and nib PASSED, because a dangling reference is not a string so it read the parent's
+	// `/TU` instead.
+	if _, isField := a.dict["T"]; isField {
+		return d.text(a.dict["TU"])
+	}
+	parent := d.dict(a.dict["Parent"])
+	if parent == nil {
+		return "", false
+	}
+	return d.text(parent["TU"])
+}
+
+// checkWidgetsCarryADescription evaluates ua1 7.18.1 t3.
+//
+// Its description reads *"a form field shall have a TU key present or all its Widget annotations shall have
+// alternative descriptions"*, but **the profile's object is the WIDGET**, so each widget satisfies the clause
+// on its own: one widget's `/Alt` cannot cover for a sibling's, and a field's `/TU` covers every widget under
+// it because they all read the same key.
+func checkWidgetsCarryADescription(d *Document) Result {
+	widgets, missed := d.annotsOfSubtype("Widget")
+	for _, a := range widgets {
+		if d.annotExempt(a) {
+			continue
+		}
+		if tu, ok := d.fieldTU(a); ok && tu != "" {
+			continue
+		}
+		elem, _, _, unread := d.annotElement(a)
+		if unread != "" {
+			return Result{Verdict: CannotCheck, Why: unread, Where: a.where}
+		}
+		if elem != nil {
+			if alt, ok := d.text(elem["Alt"]); ok && alt != "" {
+				continue
+			}
+		}
+		return Result{
+			Verdict: Fail,
+			Why: "neither the field's /TU nor the structure element enclosing the widget describes it, so a " +
+				"reader announcing this field has nothing to say",
+			Where: a.where,
+		}
+	}
+	if missed != "" {
+		return Result{Verdict: CannotCheck, Why: missed}
+	}
+	if len(widgets) == 0 {
+		return Result{Verdict: NotApplicable, Why: "the document has no widget annotations"}
+	}
+	return Result{Verdict: Pass, Why: fmt.Sprintf("all %d widget annotations are described, hidden or off the crop box", len(widgets))}
+}
+
+// checkPagesWithAnnotationsDeclareTabOrder evaluates ua1 7.18.3 t1.
+//
+// **The subject is the PAGE, and a page with no annotations is a PASSING check rather than no subject** —
+// measured: veraPDF runs one check per page and passes a page whose `/Annots` is absent, so this clause
+// answers NotApplicable for no document that has a page.
+//
+// **The clause carries NO exemption**, which is the trap: a hidden annotation and one wholly off the crop box
+// both still oblige the page to declare its tab order (measured, both). `containsAnnotations` is
+// `!getAnnotations().isEmpty()` over veraPDF's own population, and it agrees with the door's on ENTRIES — an
+// entry that is not a dictionary counts for neither, and nib reaches that by a different route, since pdfcpu
+// deletes a dangling one before any rule runs.
+//
+// **It does NOT agree on an `/Annots` that is not an array at all**: `PDPage.getAnnotations` returns an empty
+// list, so veraPDF answers `containsAnnotations == false` and PASSES the page, while the door reports a
+// population it could not read and this rule refuses. That is nib's declared conservatism (`/pending 507`),
+// recorded in the slice's inventory as a gap rather than as parity.
+func checkPagesWithAnnotationsDeclareTabOrder(d *Document) Result {
+	subjects, missed := d.annots()
+	carries := map[int]annotSubject{}
+	for _, a := range subjects {
+		if _, seen := carries[a.page]; !seen {
+			carries[a.page] = a
+		}
+	}
+	for p := 1; p <= d.Ctx.PageCount; p++ {
+		first, has := carries[p]
+		if !has {
+			continue
+		}
+		// `/Tabs` may be indirect, and `d.name` dereferences — measured: an indirect name reading `/S` passes.
+		if tabs := d.name(first.pageDict["Tabs"]); tabs != "S" {
+			why := fmt.Sprintf("the page carries annotations and declares /Tabs /%s, not /S", tabs)
+			if tabs == "" {
+				why = "the page carries annotations and declares no /Tabs, so nothing fixes the order a reader " +
+					"moves through them in"
+			}
+			return Result{Verdict: Fail, Why: why, Where: fmt.Sprintf("page %d", p)}
+		}
+	}
+	// **After the pages, like every sibling rule over this door.** veraPDF grades each page on its own, so a
+	// page that definitely breaches is a Fail even when a LATER page's `/Annots` could not be read — checking
+	// `missed` first turned that document into a refusal. A page whose `/Annots` nib could not read is still
+	// not a page without annotations, which is what this reason says.
+	if missed != "" {
+		return Result{Verdict: CannotCheck, Why: missed}
+	}
+	if len(carries) == 0 {
+		return Result{Verdict: Pass, Why: "no page carries an annotation, so every page satisfies the clause"}
+	}
+	return Result{Verdict: Pass, Why: fmt.Sprintf("all %d page(s) carrying annotations declare /Tabs /S", len(carries))}
+}

@@ -31,6 +31,9 @@ type annotFixture struct {
 	// cat is extra catalog entries, and extra adds or replaces objects.
 	cat   string
 	extra map[int]string
+	// noTabs drops the page's `/Tabs /S`, which is otherwise always written — 7.18.3 t1 is the only clause
+	// that reads it, and every other row wants it present so that clause does not fail for an unrelated reason.
+	noTabs bool
 }
 
 const annotFixtureText = "/P << /MCID 0 >> BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC"
@@ -58,7 +61,11 @@ func (f annotFixture) build() []byte {
 	if f.annots != "" {
 		annots = "/Annots " + f.annots + " "
 	}
-	objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Tabs /S " + annots +
+	tabs := "/Tabs /S "
+	if f.noTabs {
+		tabs = ""
+	}
+	objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 " + tabs + annots +
 		f.page + " /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
 	objs[1] = "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-US) " +
 		f.cat + " >>"
@@ -81,7 +88,7 @@ func note(entries ...string) string {
 	}
 	// A stable order, so a fixture's bytes do not move between runs. A key not on the list would be
 	// dropped silently and the fixture would still "pass", so an unknown one panics instead.
-	order := []string{"Type", "Subtype", "Rect", "F", "Contents", "StructParent", "Alt", "FT", "T", "TU", "Parent", "AP"}
+	order := []string{"Type", "Subtype", "Rect", "F", "Contents", "StructParent", "Alt", "FT", "T", "TU", "Parent", "AP", "DA"}
 	for k := range d {
 		if !contains(order, k) {
 			panic("annotFixture: /" + k + " is not in note()'s key order, so it would be dropped silently")
@@ -517,6 +524,178 @@ func TestAnUnreadableAnnotsIsARefusalForEveryTypedClause(t *testing.T) {
 		}
 		if !strings.Contains(got.Why, "/Annots could not be read") {
 			t.Errorf("%s: the reason %q does not say the /Annots could not be read", clause, got.Why)
+		}
+	}
+}
+
+// P05.S03 — a widget's alternative description, and the page's tab order. Thirteen fixtures, every verdict
+// veraPDF 1.30.2's, measured before a rule was written.
+
+// formFixture builds a one-page tagged document with one widget annotation in a Form element. pdfcpu requires
+// `/DA` on a form field dictionary (measured: without it the document does not open at all), so every widget
+// or field here carries one.
+func formFixture(widget, elem, acro string, extra map[int]string, page, tabs string) annotFixture {
+	fx := annotFixture{annot: widget, elem: elem, cat: acro, page: page, extra: extra}
+	switch tabs {
+	case "S":
+	case "":
+		fx.noTabs = true
+	default:
+		// The parameter only ever distinguishes present-as-/S from absent, so any other value would be
+		// silently written as `/Tabs /S`. A row wanting `/Tabs /R` passes it through `page`, which is what the
+		// one such row does — this refuses the misuse instead of honouring it wrongly.
+		panic("formFixture: tabs must be \"S\" or \"\"; write any other /Tabs value through the page argument")
+	}
+	return fx
+}
+
+// widget is a `/Widget` annotation with `/DA`, overridable per row.
+func widget(entries ...string) string {
+	return note(append([]string{"Subtype", "/Widget", "FT", "/Tx", "DA", "(/Helv 0 Tf 0 g)",
+		"Contents", "", "T", "(f)"}, entries...)...)
+}
+
+const acroSelf = "/AcroForm << /Fields [30 0 R] >>"
+const acroParent = "/AcroForm << /Fields [31 0 R] >>"
+
+func TestTheInteractiveSurfaceRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
+	const da = "/DA (/Helv 0 Tf 0 g) "
+	for _, tc := range []struct {
+		name   string
+		fx     annotFixture
+		t3, tb Verdict
+	}{
+		// --- 7.18.1 t3: the field's /TU, else the enclosing element's /Alt --------------------
+		{"a merged widget with its own /TU", formFixture(widget("TU", "(Your name)"), "/S /Form", acroSelf, nil, "", "S"), Pass, Pass},
+		{"a merged widget described by its element", formFixture(widget(), "/S /Form /Alt (Your name)", acroSelf, nil, "", "S"), Pass, Pass},
+		{"a merged widget with neither", formFixture(widget(), "/S /Form", acroSelf, nil, "", "S"), Fail, Pass},
+		{"an empty /TU", formFixture(widget("TU", "()"), "/S /Form", acroSelf, nil, "", "S"), Fail, Pass},
+		{"an empty /Alt on the element", formFixture(widget(), "/S /Form /Alt ()", acroSelf, nil, "", "S"), Fail, Pass},
+		// A widget with no `/T` is not the field, so its PARENT's /TU is read — one level.
+		{"a kid widget whose parent field carries /TU", formFixture(
+			widget("T", "", "FT", "", "DA", "", "Parent", "31 0 R"), "/S /Form", acroParent,
+			map[int]string{31: "<< /FT /Tx /T (f) /TU (Your name) " + da + "/Kids [30 0 R] >>"}, "", "S"), Pass, Pass},
+		// **No climb**: a /TU on the GRANDPARENT field is not found.
+		{"a kid widget whose grandparent carries /TU", formFixture(
+			widget("T", "", "FT", "", "DA", "", "Parent", "31 0 R"), "/S /Form", "/AcroForm << /Fields [32 0 R] >>",
+			map[int]string{31: "<< /T (sub) /Parent 32 0 R /Kids [30 0 R] >>",
+				32: "<< /FT /Tx /T (top) /TU (Your name) " + da + "/Kids [31 0 R] >>"}, "", "S"), Fail, Pass},
+		// **The sharpest row**: the widget's OWN /TU is ignored because it carries no /T, so it is not the
+		// field. Reading the annotation's /TU unconditionally passes a document veraPDF fails.
+		{"a kid widget carrying /TU itself", formFixture(
+			widget("T", "", "FT", "", "DA", "", "Parent", "31 0 R", "TU", "(on the widget)"), "/S /Form", acroParent,
+			map[int]string{31: "<< /FT /Tx /T (f) " + da + "/Kids [30 0 R] >>"}, "", "S"), Fail, Pass},
+		{"a hidden widget with nothing describing it", formFixture(widget("F", "2"), "/S /Form", acroSelf, nil, "", "S"), Pass, Pass},
+		{"a widget off the crop box", formFixture(widget(), "/S /Form", acroSelf, nil, "/CropBox [100 100 500 500]", "S"), Pass, Pass},
+		// --- 7.18.3 t1: a page carrying annotations declares /Tabs /S -------------------------
+		{"a page with an annotation and no /Tabs", formFixture(widget("TU", "(n)"), "/S /Form", acroSelf, nil, "", ""), Pass, Fail},
+		{"a page declaring /Tabs /R", formFixture(widget("TU", "(n)"), "/S /Form", acroSelf, nil, "/Tabs /R", ""), Pass, Fail},
+		// `/Tabs` may be indirect, and veraPDF dereferences it.
+		{"an indirect /Tabs naming /S", formFixture(widget("TU", "(n)"), "/S /Form", acroSelf,
+			map[int]string{41: "/S"}, "/Tabs 41 0 R", ""), Pass, Pass},
+	} {
+		pdf := tc.fx.build()
+		if got := verdictOf(t, pdf, "7.18.1 t3"); got.Verdict != tc.t3 {
+			t.Errorf("%s: 7.18.1 t3 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.t3)
+		}
+		if got := verdictOf(t, pdf, "7.18.3 t1"); got.Verdict != tc.tb {
+			t.Errorf("%s: 7.18.3 t1 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.tb)
+		}
+	}
+}
+
+// TestTabOrderCountsEveryAnnotationAndRefusesWhatItCannotRead — 7.18.3 t1 carries NO exemption, which is what
+// separates it from every other clause over the door.
+//
+// A hidden annotation and one wholly off the crop box both still oblige the page to declare its tab order
+// (measured, both). And a page whose `/Annots` nib cannot read is not a page without annotations.
+func TestTabOrderCountsEveryAnnotationAndRefusesWhatItCannotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fx   annotFixture
+		want Verdict
+	}{
+		{"a hidden annotation still counts", annotFixture{annot: note("F", "2"), elem: annotTag, noTabs: true}, Fail},
+		{"an annotation off the crop box still counts", annotFixture{annot: note(), elem: annotTag,
+			page: "/CropBox [100 100 500 500]", noTabs: true}, Fail},
+		{"a page with no annotations at all", annotFixture{noTabs: true}, Pass},
+		{"an empty /Annots", annotFixture{annots: "[]", noTabs: true}, Pass},
+	} {
+		if got := verdictOf(t, tc.fx.build(), "7.18.3 t1"); got.Verdict != tc.want {
+			t.Errorf("%s: 7.18.3 t1 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.want)
+		}
+	}
+	// A page whose /Annots does not resolve: the clause refuses rather than reporting that the page's tab
+	// order does not matter.
+	d := openMutated(t, annotFixture{annot: note(), elem: annotTag, noTabs: true}.build(),
+		func(_ *Document, page types.Dict) { page["Annots"] = types.Name("NotAnArray") })
+	got := registry["7.18.3 t1"].Check(d)
+	if got.Verdict != CannotCheck {
+		t.Errorf("with an /Annots that does not resolve, 7.18.3 t1 = %v (%s), want CannotCheck", got.Verdict, got.Why)
+	}
+}
+
+// TestWhetherAWidgetIsTheFieldIsAPresenceTest — P05.S03's false pass, and the shape that caught it.
+//
+// veraPDF's `isField` is `knownKey(ASAtom.T)`: the KEY, whatever it holds. The first draft read `/T` as a
+// string, and a `/T` naming a FREE object then flipped the branch — pdfcpu accepts such a document, veraPDF
+// FAILS it (the key is present, so the widget is the field and its own absent `/TU` decides the clause), and
+// nib PASSED it by reading the parent field's `/TU` instead.
+//
+// **Seven shapes, each measured against veraPDF 1.30.2.** Two of them nib cannot reach — pdfcpu refuses a
+// non-string `/T` outright — and they are named here rather than dropped, because "unreachable" is a fact about
+// this reader and not about the rule.
+func TestWhetherAWidgetIsTheFieldIsAPresenceTest(t *testing.T) {
+	const da = "/DA (/Helv 0 Tf 0 g) "
+	// The parent field carries the /TU. So the verdict says which dictionary was read: Pass means the
+	// PARENT's /TU was used (the widget is not the field), Fail means the widget's own absent /TU was.
+	parent := map[int]string{31: "<< /FT /Tx /T (f) /TU (Your name) " + da + "/Kids [30 0 R] >>"}
+	// **The widget is OBJECT 30 and not an inline dictionary**, so the field's `/Kids [30 0 R]` resolves and
+	// pdfcpu validates it as a form field. The first draft of this test inlined it, `/Kids` dangled, and
+	// pdfcpu never looked — which made two rows below claim a reachability the CLI contradicted.
+	fx := func(tKey string, extra map[int]string) annotFixture {
+		objs := map[int]string{}
+		for k, v := range parent {
+			objs[k] = v
+		}
+		for k, v := range extra {
+			objs[k] = v
+		}
+		return annotFixture{elem: "/S /Form", cat: acroParent, extra: objs,
+			annot: "<< /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /F 4 /StructParent 1 " +
+				tKey + " /Parent 31 0 R >>"}
+	}
+	for _, tc := range []struct {
+		name string
+		fx   annotFixture
+		want Verdict
+	}{
+		// The key is absent: the widget is not the field, so the parent's /TU describes it.
+		{"no /T at all", fx("", nil), Pass},
+		// The key is PRESENT in every row below, so the widget is the field and its own /TU is read — and it
+		// has none, so every one fails. This is the whole finding.
+		{"a /T naming a free object", fx("/T 99 0 R", nil), Fail},
+		{"an empty /T", fx("/T ()", nil), Fail},
+		{"an indirect /T that resolves", fx("/T 41 0 R", map[int]string{41: "(f)"}), Fail},
+		{"a direct string /T", fx("/T (f)", nil), Fail},
+	} {
+		if got := verdictOf(t, tc.fx.build(), "7.18.1 t3"); got.Verdict != tc.want {
+			t.Errorf("%s: 7.18.1 t3 = %v (%s), want %v", tc.name, got.Verdict, got.Why, tc.want)
+		}
+	}
+	// `/T null` is a sixth shape and it is the ABSENT case, not a present one: pdfcpu drops a null-valued key
+	// before any rule sees it, so both readers find no `/T` and the parent's /TU applies. Measured on both.
+	if got := verdictOf(t, fx("/T null", nil).build(), "7.18.1 t3"); got.Verdict != Pass {
+		t.Errorf("a /T null reports %v (%s), want Pass — pdfcpu drops the key, so the widget is not the field",
+			got.Verdict, got.Why)
+	}
+	// The seventh and eighth shapes — `/T` as a NAME and as a NUMBER — are where a presence test and a string
+	// read differ most sharply, and nib cannot reach either: pdfcpu refuses the document. Asserted as a
+	// reading limit so that a pdfcpu bump which starts accepting them is caught here rather than in the field.
+	for _, bad := range []string{"/T /aname", "/T 42"} {
+		if _, err := open(fx(bad, nil).build()); err == nil {
+			t.Errorf("pdfcpu now accepts %q on a widget; the presence test above is what keeps nib in step with "+
+				"veraPDF on it, and this row should become a verdict assertion", bad)
 		}
 	}
 }

@@ -112,6 +112,8 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	// The two mutations are the only way to the FAILING side — nothing nib ships writes an annotation
 	// that is undescribed or outside an Annot tag.
 	noted, nerr := pdfops.AddNotes(w.pdf, []pdfops.Note{{Page: 1, X: 72, Y: 700, Text: "a note"}})
+	uf, uferr := pdfops.AuthorForm(plain, []pdfops.FormField{{Page: 1, Rect: [4]float64{100, 620, 300, 640},
+		Kind: "text", Name: "unnamed", Label: ""}})
 
 	docs = append(docs,
 		must("committed proposal + a note", noted, nerr),
@@ -132,6 +134,12 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			addAnnotation(t, w.pdf, "PrinterMark", types.Dict{"Contents": types.StringLiteral("a registration mark")}, "")},
 		oracleDoc{"committed proposal + a printer's mark tagged /Artifact",
 			addAnnotation(t, w.pdf, "PrinterMark", types.Dict{"Contents": types.StringLiteral("a registration mark")}, "Artifact")},
+		// P05.S03. Both PASSING halves are product doors already above: `AuthorForm` writes `/TU` from the
+		// field's label (`form.go:42`) and `setStructureTabOrder` writes `/Tabs /S` on every page carrying an
+		// annotation. The failing halves are a form whose field the user named NOTHING — a product door too,
+		// since an empty label deliberately writes no `/TU` — and a mutation that drops `/Tabs`.
+		must("unlabelled form", uf, uferr),
+		oracleDoc{"noted proposal − /Tabs", withoutTabs(t, noted)},
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},
 		oracleDoc{"Markdown + padded CIDSet", withCIDSet(t, md, cidPadded)},
 		oracleDoc{"committed proposal + element /Lang", langOnEveryElement(t, w.pdf, "en")},
@@ -401,7 +409,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 60
+	const wantGenerated = 62
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
