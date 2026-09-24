@@ -1988,6 +1988,109 @@ and it is recorded with both counts, plus what the pass could not see.
 reference and Form XObjects, Formula.
 **Exit criteria.** As P03.
 
+**(phase-open, 2026-09-23, v1.153.0)** The family is **eleven** rules and the sketch's "~11" is right for
+once — counted the way P05's open counted, from veraPDF 1.30.2's own `PDFUA-1.xml` inside
+`~/verapdf/bin/cli-1.30.2.jar` (106 rules parsed, 80 diffed against `Clauses()`, 26 unbuilt). P06 takes
+eleven of the 26 and lands the checker at **91**; the other fifteen are P07's, which is **14 font rules
+plus `7.1 t12`**, not the sketch's ~12.
+
+The eleven: `5 t3`/`t4`/`t5` (the `pdfuaid` prefix on `part`, `amd`, `corr`), `6.1 t1` (the file header),
+`7.1 t4` (`Suspects != true`), `7.7 t1` (Formula carries `/Alt` or `/ActualText`), `7.11 t1` (an embedded
+file's `F` and `UF`), `7.15 t1` (no dynamic XFA), `7.16 t1` (encryption `/P` bit 10), `7.20 t1` (no
+reference XObjects), `7.20 t2` (a Form XObject's content has one semantic parent).
+
+**`7.1 t12` is NOT in this phase.** P03's close registered it as *declared, not registered* — veraPDF
+1.30.2 cannot fail it for an element reached through the tree — and nothing about this phase changes that.
+It is carried to P07 with its declaration intact, not silently absorbed here.
+
+**TWO couplings the sketch could not see, both measured at this open.**
+
+- **`7.7 t1` IS the counterexample the docs cite, and building it RETIRES that counterexample.** The
+  README, `door.go`, `rules_catalog.go` and `docs/accessibility-parity.md` all say *"a paragraph tagged as
+  a formula with no alternate text passes all of Nib's checks and fails veraPDF"*, and
+  `TestADocumentCanPassEveryClauseNibChecksAndStillFailVeraPDF` builds exactly that document and asserts
+  it. **That test is designed to go red here** — its own doc says *"If a future rule makes nib catch it,
+  this test says the docs need a new example"* — and the slice that lands `7.7 t1` therefore owes a NEW
+  counterexample and four prose sites, not a deleted test. ADR-031 law 1 rests on there being one: a
+  checker that cannot name a document it passes and veraPDF fails is a checker claiming conformance.
+  This is why `7.7 t1` gets a slice of its own rather than riding along with a key read.
+- **`7.16 t1` will FAIL nib's own `Encrypt` output**, measured at this open and filed the same day as
+  `/pending 640`: `Encrypt` never sets `conf.Permissions`, so the written `/P` is `-3901` = `0xF0C3`, and
+  `0xF0C3 & 512 == 0` — bit 10, *"extract text and graphics in support of accessibility"*, is denied. The
+  checker rule and the writer defect are two halves of one fact, so S03 builds the rule and the phase says
+  plainly that nib's own protected output does not pass it. **Which permissions `Encrypt` should grant is
+  Dan's call** (`/pending 640`), so the slice does not silently pick one.
+
+**`/plan-review` did NOT fire.** The trigger is a security-, migration- or egress-heavy phase; this one
+adds eleven read-only clauses to a checker, writes no bytes, moves no format, and sends nothing. `7.15 t1`
+(XFA) and `7.16 t1` (encryption) touch security-flavoured *subjects* without changing any security
+behaviour. Recorded because a trigger nobody records is one nobody can tell was evaluated.
+
+#### P06.S01 — the identification's prefixes, and the file header
+Scope: `5 t3`, `5 t4`, `5 t5` — each property of the PDF/UA identification schema carries namespace prefix
+`pdfuaid`, with `null` passing — and `6.1 t1`, the header being `%PDF-1.n` for a single digit 0–7 followed
+by a single EOL marker. Refs: the package already reads XMP for `5 t1`/`t2` (`xmpFacts`, `readXMP`).
+Acceptance:
+- The three prefix clauses read the PREFIX, not the value: a `part` of `1` under a namespace bound to a
+  different prefix fails, and an ABSENT property passes (the profile is `partPrefix == null || …`).
+- `6.1 t1` is nib's first reader of the file's raw leading bytes; it states where those bytes come from and
+  what it does when the document was rebuilt in memory rather than read from disk.
+- The EOL half is measured, not assumed: veraPDF's test is a regex over `header`, so what that string
+  contains — and whether a `%PDF-1.7\r\n` passes — is read off the parser's source before the rule is
+  written.
+- Both clauses hold a measured pass and fail fixture and a `corpusReach` row; `len(Clauses())` is 84.
+
+#### P06.S02 — the three one-key refusals: Suspects, an embedded file's names, dynamic XFA
+Scope: `7.1 t4` (`Suspects != true` on the mark-info dictionary), `7.11 t1` (a file specification with an
+`/EF` carries non-empty `F` AND `UF`), `7.15 t1` (`dynamicRender != 'required'` on the AcroForm).
+Acceptance:
+- Each clause's SUBJECT population is stated from veraPDF's source before the rule is written — in
+  particular which file specifications `CosFileSpecification` reaches (every one in the document, or only
+  the embedded-files name tree), because that decides whether an attachment on an annotation is a subject.
+- `7.11 t1`'s conjunction is split: a spec with `F` and no `UF`, with `UF` and no `F`, and with an EMPTY
+  string in either, are four fixtures and not one.
+- `7.15 t1` reads the XFA's own `dynamicRender`, so a static XFA passes; a document with no AcroForm at all
+  is a passing check and not an absent subject, per P05's measured trap.
+- Three measured pass and fail fixtures, three `corpusReach` rows; `len(Clauses())` is 87.
+
+#### P06.S03 — encryption's permission bit, and the reference XObject
+Scope: `7.16 t1` (an encrypted file's `/P` has bit 10 set) and `7.20 t1` (no reference XObjects).
+Acceptance:
+- `7.16 t1` is NotApplicable for an unencrypted document and a definite Fail for an encrypted one whose
+  bit 10 is clear — the two are different answers and the fixture set proves it.
+- **The phase records that nib's own `Encrypt` output fails this clause**, with the measured `/P` value, and
+  files nothing new: `/pending 640` owns the writer. The rule does not pick permissions for it.
+- `7.20 t1`'s subject is a Form XObject carrying `/Ref`; the population is stated from veraPDF's source,
+  since `PDXForm` is reached through resources that may nest.
+- Two measured pass and fail fixtures, two `corpusReach` rows; `len(Clauses())` is 89.
+
+#### P06.S04 — Formula, and the counterexample it retires
+Scope: `7.7 t1` — an `SEFormula` carries a non-empty `/Alt` or an `/ActualText`. One rule, its own slice,
+for the coupling above. Refs: `counterexample_test.go`, ADR-031 law 1.
+Acceptance:
+- The predicate matches veraPDF's exactly: `(Alt != null && Alt != '') || ActualText != null` — so an EMPTY
+  `/Alt` fails while an empty `/ActualText` PASSES, which is an asymmetry to measure rather than tidy.
+- `TestADocumentCanPassEveryClauseNibChecksAndStillFailVeraPDF` is made to pass again **by a new
+  counterexample that veraPDF is measured to fail and nib is measured to pass**, not by weakening or
+  deleting the test. If no such document can be found from the remaining 15 unbuilt rules, that is a
+  finding about the docs' sentence and it is reported rather than worked around.
+- Every prose site citing the formula example moves with it: `README.md`, `internal/uacheck/door.go`,
+  `internal/uacheck/rules_catalog.go`, `docs/accessibility-parity.md`.
+- A measured pass and fail fixture and a `corpusReach` row; `len(Clauses())` is 90.
+
+#### P06.S05 — a Form XObject's content has one semantic parent
+Scope: `7.20 t2` — `isUniqueSemanticParent`. Its own slice because it is the only clause in this family
+that is a GRAPH property over the structure tree rather than a key read, and because ADR-038 built the
+write side of exactly this machinery. Refs: ADR-038, `/Stm` as a marked-content reference's key; P02.S08.
+Acceptance:
+- The predicate is read from veraPDF's source and stated: what makes a semantic parent, and what makes it
+  non-unique — a form drawn twice on one page, a form drawn on two pages, and a form whose MCIDs are
+  claimed by elements under different parents are three different documents and each is measured.
+- nib's own n-up output is checked against it, since ADR-038's origin was a carry that scored identically
+  broken and repaired on every instrument the repo had.
+- A measured pass and fail fixture and a `corpusReach` row; `len(Clauses())` is **91**, completing P06's
+  rule set.
+
 ### P07 — Checker: font programs (~12 rules)
 **Goal.** CMaps, CIDToGIDMap, width agreement, TrueType cmap and encoding, CharSet, `.notdef`, ToUnicode values.
 **Exit criteria.** As P03, and a font program nib cannot parse returns `CannotCheck` naming its type, never
