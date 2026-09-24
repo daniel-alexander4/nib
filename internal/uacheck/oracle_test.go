@@ -117,6 +117,21 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		must("committed proposal + a note", noted, nerr),
 		oracleDoc{"noted proposal − the note's /StructParent", annotMutation(t, noted, "drop-structparent")},
 		oracleDoc{"noted proposal − the note's /Contents", annotMutation(t, noted, "drop-contents")},
+		// P05.S02. Nib writes no Link, TrapNet or PrinterMark annotation — measured, including the Markdown
+		// conversion, which emits no `/Annots` at all — so every half of these four clauses is a mutation.
+		// `addAnnotation` says why that is the honest route here rather than a product door.
+		oracleDoc{"committed proposal + a described link in a Link element",
+			addAnnotation(t, w.pdf, "Link", types.Dict{"Contents": types.StringLiteral("a link to the schedule")}, "Link")},
+		oracleDoc{"committed proposal + an undescribed link in a P element",
+			addAnnotation(t, w.pdf, "Link", nil, "P")},
+		oracleDoc{"committed proposal + a visible TrapNet",
+			addAnnotation(t, w.pdf, "TrapNet", types.Dict{"Contents": types.StringLiteral("a trapping network")}, "")},
+		oracleDoc{"committed proposal + a hidden TrapNet",
+			addAnnotation(t, w.pdf, "TrapNet", types.Dict{"F": types.Integer(2)}, "")},
+		oracleDoc{"committed proposal + an untagged printer's mark",
+			addAnnotation(t, w.pdf, "PrinterMark", types.Dict{"Contents": types.StringLiteral("a registration mark")}, "")},
+		oracleDoc{"committed proposal + a printer's mark tagged /Artifact",
+			addAnnotation(t, w.pdf, "PrinterMark", types.Dict{"Contents": types.StringLiteral("a registration mark")}, "Artifact")},
 		oracleDoc{"Markdown + exact CIDSet", withCIDSet(t, md, cidExact)},
 		oracleDoc{"Markdown + padded CIDSet", withCIDSet(t, md, cidPadded)},
 		oracleDoc{"committed proposal + element /Lang", langOnEveryElement(t, w.pdf, "en")},
@@ -386,7 +401,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 54
+	const wantGenerated = 60
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

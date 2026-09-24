@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // P05.S01 — every verdict in the table below is veraPDF 1.30.2's, measured on that exact document
@@ -338,6 +340,183 @@ func TestEveryAnnotationReaderRoutesThroughOneDoor(t *testing.T) {
 		if f != "annots.go" {
 			t.Errorf("%s dereferences a page's /Annots %d time(s) of its own; the population is `annots()`'s "+
 				"(ADR-009). Route it through the door, or name the exemption at the site and here", f, n)
+		}
+	}
+}
+
+// P05.S02 — the typed annotations. Every verdict below is veraPDF 1.30.2's, measured on that exact
+// document before the rule was written (seventeen fixtures, the slice's grill table in the plan).
+
+// typedFixture builds a one-page tagged document carrying one annotation of a given subtype, with an
+// `/AP` because pdfcpu refuses a PrinterMark or a TrapNet without one (measured).
+func typedFixture(subtype, elem string, entries ...string) annotFixture {
+	const form = "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"
+	a := note(append([]string{"Subtype", "/" + subtype, "AP", "<< /N 41 0 R >>"}, entries...)...)
+	return annotFixture{annot: a, elem: elem, extra: map[int]string{41: form}}
+}
+
+func TestTheTypedAnnotationRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		fx         annotFixture
+		clause     string
+		want       Verdict
+		alsoClause string
+		alsoWant   Verdict
+	}{
+		// --- 7.18.5 t1: a Link is nested in a Link tag -----------------------------------------
+		{"a link in a Link element", typedFixture("Link", "/S /Link"), "7.18.5 t1", Pass, "7.18.5 t2", Pass},
+		{"a link in a P element", typedFixture("Link", "/S /P"), "7.18.5 t1", Fail, "7.18.5 t2", Pass},
+		{"a link with no /StructParent", typedFixture("Link", "/S /Link", "StructParent", ""), "7.18.5 t1", Fail, "7.18.5 t2", Pass},
+		{"a link in a type role-mapped to /Link", annotFixture{
+			annot: note("Subtype", "/Link", "AP", "<< /N 41 0 R >>"), elem: "/S /MyLink",
+			extra: map[int]string{41: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream",
+				7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] /ParentTree 9 0 R /RoleMap << /MyLink /Link >> >>"}},
+			"7.18.5 t1", Pass, "7.18.5 t2", Pass},
+		{"a hidden link outside any Link tag", typedFixture("Link", "/S /P", "StructParent", "", "F", "2", "Contents", ""),
+			"7.18.5 t1", Pass, "7.18.5 t2", Pass},
+		{"a link off the crop box", annotFixture{
+			annot: note("Subtype", "/Link", "AP", "<< /N 41 0 R >>", "StructParent", "", "Contents", ""),
+			page:  "/CropBox [100 100 500 500]",
+			extra: map[int]string{41: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"}},
+			"7.18.5 t1", Pass, "7.18.5 t2", Pass},
+		// --- 7.18.5 t2 reads the ANNOTATION's /Contents, and 7.18.1 t2 does not ----------------
+		{"a link with no /Contents", typedFixture("Link", "/S /Link", "Contents", ""), "7.18.5 t2", Fail, "7.18.5 t1", Pass},
+		{"a link with an empty /Contents", typedFixture("Link", "/S /Link", "Contents", "()"), "7.18.5 t2", Fail, "7.18.5 t1", Pass},
+		// **The decisive pair**: the description is on the ELEMENT, so 7.18.1 t2 passes and 7.18.5 t2
+		// fails — on one document. An implementation that shared a predicate between them cannot.
+		{"a link described only by its element's /Alt", typedFixture("Link", "/S /Link /Alt (a description)", "Contents", ""),
+			"7.18.5 t2", Fail, "7.18.1 t2", Pass},
+		// --- 7.18.2 t1: the subtype is refused outright ----------------------------------------
+		{"a visible TrapNet", typedFixture("TrapNet", "/S /P", "StructParent", ""), "7.18.2 t1", Fail, "7.18.1 t1", Fail},
+		{"a hidden TrapNet", typedFixture("TrapNet", "/S /P", "StructParent", "", "F", "2"), "7.18.2 t1", Pass, "7.18.1 t1", Pass},
+		{"a TrapNet off the crop box", annotFixture{
+			annot: note("Subtype", "/TrapNet", "AP", "<< /N 41 0 R >>", "StructParent", ""),
+			page:  "/CropBox [100 100 500 500]",
+			extra: map[int]string{41: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"}},
+			"7.18.2 t1", Pass, "7.18.1 t1", Pass},
+		// --- 7.18.8 t1: a printer's mark is in NO element, and reads the RAW /S ----------------
+		{"an untagged printer's mark", typedFixture("PrinterMark", "/S /P", "StructParent", ""), "7.18.8 t1", Pass, "7.18.1 t1", Pass},
+		// The description says a PrinterMark "shall be considered Incidental Artifacts" — and veraPDF
+		// FAILS one tagged /Artifact. The clause is "described by no element at all".
+		{"a printer's mark tagged /Artifact", typedFixture("PrinterMark", "/S /Artifact"), "7.18.8 t1", Fail, "7.18.1 t1", Pass},
+		{"a printer's mark in a P element", typedFixture("PrinterMark", "/S /P"), "7.18.8 t1", Fail, "7.18.1 t1", Pass},
+		// A /StructParent whose row is not an element reads as null, so it PASSES — a definite answer,
+		// not a refusal, and the row that proves the clause is `structParentType == null` and not
+		// "carries no /StructParent".
+		{"a printer's mark whose /StructParent row is an array", annotFixture{
+			annot: note("Subtype", "/PrinterMark", "AP", "<< /N 41 0 R >>"), elem: "/S /P",
+			extra: map[int]string{41: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream",
+				9: "<< /Nums [0 [8 0 R] 1 [10 0 R]] >>"}},
+			"7.18.8 t1", Pass, "7.18.1 t1", Pass},
+		{"a hidden printer's mark in a P element", typedFixture("PrinterMark", "/S /P", "F", "2"), "7.18.8 t1", Pass, "7.18.1 t1", Pass},
+		// **A present but EMPTY `/S` is a type.** veraPDF fails this document and nib passed it until the
+		// review: `d.name` answers "" for an absent key and for `/S /` alike, and the clause tests presence.
+		{"a printer's mark in an element whose /S is an empty name", typedFixture("PrinterMark", "/S /"),
+			"7.18.8 t1", Fail, "7.18.1 t1", Pass},
+		// --- the branches a table of passing documents does not reach ---------------------------
+		{"a link whose /StructParent names no row", typedFixture("Link", "/S /Link", "StructParent", "7"),
+			"7.18.5 t1", Fail, "7.18.5 t2", Pass},
+		{"a link in a type on a role-map loop", annotFixture{
+			annot: note("Subtype", "/Link", "AP", "<< /N 41 0 R >>"), elem: "/S /MyLink",
+			extra: map[int]string{41: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream",
+				7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] /ParentTree 9 0 R /RoleMap << /MyLink /Other /Other /MyLink >> >>"}},
+			"7.18.5 t1", CannotCheck, "7.18.5 t2", Pass},
+		// --- the NotApplicable arm of each clause -----------------------------------------------
+		// The oracle catches a NotApplicable silently turned into a Pass ("veraPDF no subject, nib pass"),
+		// but it SKIPS when veraPDF is absent — which is the fresh-clone tier-1 case this repo supports.
+		{"a document whose only annotation is a note: no link", typedFixture("Text", annotTag),
+			"7.18.5 t1", NotApplicable, "7.18.5 t2", NotApplicable},
+		{"a document whose only annotation is a note: no TrapNet and no mark", typedFixture("Text", annotTag),
+			"7.18.2 t1", NotApplicable, "7.18.8 t1", NotApplicable},
+	} {
+		pdf := tc.fx.build()
+		if got := verdictOf(t, pdf, tc.clause); got.Verdict != tc.want {
+			t.Errorf("%s: %s = %v (%s), want %v", tc.name, tc.clause, got.Verdict, got.Why, tc.want)
+		}
+		if got := verdictOf(t, pdf, tc.alsoClause); got.Verdict != tc.alsoWant {
+			t.Errorf("%s: %s = %v (%s), want %v", tc.name, tc.alsoClause, got.Verdict, got.Why, tc.alsoWant)
+		}
+	}
+}
+
+// TestAPrinterMarksTagIsReadRawAndNotThroughTheRoleMap — 7.18.8 t1 is the one clause in this family that
+// does NOT go through `standardType`, and nothing else would notice.
+//
+// `GFPDAnnot.getstructParentType` takes the element's `/S` by name and stops there. So a printer's mark in
+// an element whose private type is role-mapped to something harmless is still IN the tree and still fails,
+// where a standard-type reading would resolve the map and could let it through.
+func TestAPrinterMarksTagIsReadRawAndNotThroughTheRoleMap(t *testing.T) {
+	const form = "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"
+	// /MyMark maps to /Artifact; the raw /S is /MyMark, which is a name either way, so the mark is in the
+	// tree and the clause fails. A reading that resolved the map would also fail here — so the row that
+	// discriminates is the one below it, where the map dead-ends and `standardType` gives up.
+	mapped := annotFixture{annot: note("Subtype", "/PrinterMark", "AP", "<< /N 41 0 R >>"), elem: "/S /MyMark",
+		extra: map[int]string{41: form,
+			7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] /ParentTree 9 0 R /RoleMap << /MyMark /Artifact >> >>"}}
+	if got := verdictOf(t, mapped.build(), "7.18.8 t1"); got.Verdict != Fail {
+		t.Errorf("a printer's mark in a type mapped to /Artifact reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	// A private type on a role-map LOOP: `standardType` cannot resolve it and answers CannotCheck for
+	// every clause that asks. This clause never asks, so it stays a definite Fail — the raw /S is there.
+	looped := annotFixture{annot: note("Subtype", "/PrinterMark", "AP", "<< /N 41 0 R >>"), elem: "/S /MyMark",
+		extra: map[int]string{41: form,
+			7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] /ParentTree 9 0 R /RoleMap << /MyMark /Other /Other /MyMark >> >>"}}
+	if got := verdictOf(t, looped.build(), "7.18.8 t1"); got.Verdict != Fail {
+		t.Errorf("a printer's mark on a role-map loop reports %v (%s), want Fail — this clause reads the raw /S "+
+			"and never consults the role map, so a loop cannot make it refuse", got.Verdict, got.Why)
+	}
+	// **The control has to change the SUBTYPE, not the clause.** 7.18.1 t1 excludes a PrinterMark by subtype
+	// and never reaches `standardType`, so asking it about this document proves nothing about the role map —
+	// the row would stay green with `standardType` deleted from that clause. A `/Text` annotation in the SAME
+	// looped element is the honest control: it does resolve a type, and it refuses.
+	loopedNote := annotFixture{annot: note(), elem: "/S /MyMark",
+		extra: map[int]string{7: "<< /Type /StructTreeRoot /K [8 0 R 10 0 R] /ParentTree 9 0 R /RoleMap << /MyMark /Other /Other /MyMark >> >>"}}
+	if got := verdictOf(t, loopedNote.build(), "7.18.1 t1"); got.Verdict != CannotCheck {
+		t.Errorf("control: a /Text annotation in the same looped element reports %v (%s) for 7.18.1 t1, want "+
+			"CannotCheck — that clause DOES consult the role map, which is what makes 7.18.8 t1's definite "+
+			"Fail over the same element a statement about reading the raw /S", got.Verdict, got.Why)
+	}
+}
+
+// TestAnUnreadableAnnotsIsARefusalForEveryTypedClause — the door reports a short population once, and each
+// typed clause must turn it into a refusal rather than into "the document has no X".
+//
+// Measured: deleting the `missed` branch from all four left the whole package green. The clause that wrote
+// `TestAnAnnotsThatDoesNotResolveIsNotAPageWithoutWidgets` cannot cover these — its fixture's only annotation
+// is a Widget, which every typed clause here excludes, so its control would be NotApplicable rather than Pass.
+func TestAnUnreadableAnnotsIsARefusalForEveryTypedClause(t *testing.T) {
+	const form = "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"
+	// A link in a Link element (passes both link clauses), a hidden TrapNet (passes 7.18.2 t1) and an
+	// untagged printer's mark (passes 7.18.8 t1) — so every clause has a subject and a definite Pass.
+	// **The TrapNet is LAST, because pdfcpu refuses any other order** — "invalid page annotation list,
+	// \"TrapNet\" has to be the last entry", measured here rather than read: the first spelling of this
+	// fixture put it in the middle and the document would not open at all.
+	fx := annotFixture{elem: "/S /Link", annots: "[30 0 R 32 0 R 31 0 R]",
+		extra: map[int]string{
+			30: note("Subtype", "/Link"),
+			31: note("Subtype", "/TrapNet", "StructParent", "", "F", "2", "Contents", ""),
+			32: note("Subtype", "/PrinterMark", "StructParent", "", "AP", "<< /N 41 0 R >>"),
+			41: form,
+		}}
+	clauses := []string{"7.18.5 t1", "7.18.5 t2", "7.18.2 t1", "7.18.8 t1"}
+	for _, clause := range clauses {
+		check := registry[clause].Check
+		if got := check(openMutated(t, fx.build(), func(*Document, types.Dict) {})); got.Verdict != Pass {
+			t.Fatalf("control: unmutated, %s reports %v (%s), want Pass — the fixture does not carry its subject",
+				clause, got.Verdict, got.Why)
+		}
+		d := openMutated(t, fx.build(), func(_ *Document, page types.Dict) {
+			page["Annots"] = types.Name("NotAnArray")
+		})
+		got := check(d)
+		if got.Verdict != CannotCheck {
+			t.Errorf("with an /Annots that does not resolve to an array, %s reports %v (%s), want CannotCheck",
+				clause, got.Verdict, got.Why)
+			continue
+		}
+		if !strings.Contains(got.Why, "/Annots could not be read") {
+			t.Errorf("%s: the reason %q does not say the /Annots could not be read", clause, got.Why)
 		}
 	}
 }
