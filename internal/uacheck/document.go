@@ -106,6 +106,18 @@ type Document struct {
 	// which is what the document DRAWS rather than what it holds; drawnSeen dedups by identity.
 	drawnForms []formXObject
 	drawnSeen  map[uintptr]bool
+	// formReaches is `7.20 t2`'s tally: per form XObject object number, every time veraPDF would build a
+	// `PDXForm` for it. traversed is every stream object the walk has traversed the way veraPDF does, ONCE
+	// per object key, and reachedAnnots every annotation already tallied — `retraversal` says why.
+	formReaches   map[int]*formReach
+	traversed     map[int]bool
+	reachedAnnots map[int]bool
+	// twinsOf memoises `formTwins` per object number; formsByLength and twinCompares are its index and budget.
+	twinsOf map[int]int
+	// drawsForms is every form XObject whose content draws another form (`walker.form`).
+	drawsForms    map[int]bool
+	formsByLength map[int64][]int
+	twinCompares  int
 }
 
 // nextStream hands out the next content-stream number.
@@ -138,7 +150,15 @@ func open(pdf []byte) (*Document, error) {
 	if len(pdf) == 0 {
 		return nil, fmt.Errorf("uacheck: no document to check")
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	// **`OptimizeDuplicateContentStreams` is pinned off, not left to the user's pdfcpu config.**
+	// `NewDefaultConfiguration` reads `$XDG_CONFIG_HOME/pdfcpu/config.yml`, and with that flag on pdfcpu
+	// merges byte-identical PAGE content streams — so two pages' identical content becomes one object,
+	// which `7.20 t2`'s once-per-key traversal then reads as ONE traversal: measured, a keyed form drawn
+	// once on each of two pages turns from Fail to Pass on a machine that set it (the P06.S05 review).
+	// The default is off; this makes the checker's answer not depend on which machine asks.
+	conf := model.NewDefaultConfiguration()
+	conf.OptimizeDuplicateContentStreams = false
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}

@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 
 	"nib/internal/contentstream"
@@ -176,7 +177,14 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		if sp, ok := d.intValue(page["StructParents"]); ok {
 			spKey = sp
 		}
-		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey, stream: d.nextStream()}
+		// A page's content is a stream veraPDF traverses once per object KEY: two pages naming one
+		// content stream traverse it once, and an array names no key at all (`retraversal`).
+		contentsNr := 0
+		if ir, ok := page["Contents"].(types.IndirectRef); ok {
+			contentsNr = ir.ObjectNumber.Value()
+		}
+		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey, stream: d.nextStream(),
+			repeat: d.retraversal(contentsNr, false)}
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
 	}
 	d.walkAppearances()
@@ -197,6 +205,21 @@ func (d *Document) walkAppearances() {
 	subjects, missed := d.annots()
 	for _, a := range subjects {
 		p, i, ad, page := a.page, a.index, a.dict, a.pageDict
+		// **An INDIRECT annotation is tallied once, however many pages name it**: it has an object key,
+		// so veraPDF's validator visits it once (measured: one annotation on two pages PASSES `7.20 t2`).
+		// **A DIRECT one has no key** — veraPDF gives it a fresh id each time it is reached
+		// (`GFPDObject.java:74-80`) — so one direct annotation in an `/Annots` array two pages share is
+		// visited twice, and measured, FAILS. Keyed by object number, never by dictionary identity, which
+		// is the same map for both of those shapes (the slice review's finding 2). Each appearance entry of
+		// one visit is its own `PDXForm`, so `/N` and `/D` naming one stream are two (measured FAILED).
+		firstVisit := true
+		if a.object != 0 {
+			if d.reachedAnnots == nil {
+				d.reachedAnnots = map[int]bool{}
+			}
+			firstVisit = !d.reachedAnnots[a.object]
+			d.reachedAnnots[a.object] = true
+		}
 		ap := d.dict(ad["AP"])
 		if ap == nil {
 			if ad["AP"] != nil {
@@ -209,7 +232,15 @@ func (d *Document) walkAppearances() {
 			continue
 		}
 		for _, key := range []string{"N", "R", "D"} {
-			for state, so := range d.appearanceStreams(ap[key]) {
+			states := d.appearanceStreams(ap[key])
+			names := make([]string, 0, len(states))
+			for state := range states {
+				names = append(names, state)
+			}
+			// In a fixed order, so a report names the same two appearances for the same file every run.
+			sort.Strings(names)
+			for _, state := range names {
+				so := states[state]
 				sd, _, serr := d.Ctx.DereferenceStreamDict(so)
 				if serr != nil {
 					// An /AP entry that is not a stream is an appearance nib did not read (`/pending 507`).
@@ -240,8 +271,13 @@ func (d *Document) walkAppearances() {
 				// a widget's `/AP /N` carrying `/Ref` fails 7.20 t1 on a document that draws nothing
 				// else. Recorded here rather than at the `Do` operator, because nothing draws it —
 				// the annotation is what puts it on the page.
-				d.recordDrawnForm(sd.Dict, label)
-				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream()}
+				apNr := 0
+				if ir, ok := so.(types.IndirectRef); ok {
+					apNr = ir.ObjectNumber.Value()
+				}
+				d.recordDrawnForm(sd.Dict, apNr, label, firstVisit)
+				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream(),
+					repeat: d.retraversal(apNr, !firstVisit), form: apNr}
 				w.walk(sd.Content, res, nil, map[int]bool{}, 0)
 			}
 		}
@@ -289,6 +325,14 @@ type walker struct {
 	// `CosLang` in are read without putting their content in front of the rules that must not see it
 	// (`walkPattern`, `walkType3`).
 	langOnly bool
+	// repeat is whether this stream is one veraPDF does NOT traverse here, because it already traversed
+	// the same object — so a `Do` inside it builds no `PDXForm` and is not tallied for `7.20 t2`. It
+	// gates that tally and nothing else (`retraversal`).
+	repeat bool
+	// form is the object number of the form XObject whose content this walk is inside — itself for a form
+	// or appearance walk, inherited by a pattern or glyph procedure it enters, 0 in page content. It lets
+	// `formTwins`' caller ask whether a form draws any other, which is when a fusion could move a count.
+	form int
 }
 
 // walk classifies one content stream's drawing operators, recursing into form XObjects.
@@ -503,6 +547,19 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if ir, ok := raw.(types.IndirectRef); ok {
 		objNr = ir.ObjectNumber.Value()
 	}
+	// Tallied BEFORE the self-draw stop: veraPDF builds a form at every `Do` in a traversed stream,
+	// including one naming the form being traversed — measured, a form that draws itself FAILS
+	// `7.20 t2`, its own `Do` being the second reach. It is also ahead of the depth and budget stops,
+	// which moves `7.20 t1` too: a `/Ref` form reached past either is now FAILED where it was refused.
+	// That is veraPDF's answer — it has no depth cap, so it builds the form — and a definite failure on
+	// the form in hand beats a refusal about what lies below it.
+	w.d.recordDrawnForm(sd.Dict, objNr, where, !w.repeat)
+	if w.form != 0 {
+		if w.d.drawsForms == nil {
+			w.d.drawsForms = map[int]bool{}
+		}
+		w.d.drawsForms[w.form] = true
+	}
 	if chain[objNr] {
 		// A form drawing itself: its content is already being walked once up the chain, so nothing is unread.
 		return
@@ -517,7 +574,6 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if w.d.formWalks++; w.d.overBudget() {
 		return
 	}
-	w.d.recordDrawnForm(sd.Dict, where)
 	if derr := sd.Decode(); derr != nil {
 		w.d.contentErr = fmt.Sprintf("form XObject %s (object %d) could not be decoded: %v", name, objNr, derr)
 		return
@@ -529,7 +585,8 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	// `langOnly` travels INTO the form: veraPDF's semantic branch requires the invoking stream to be
 	// semantic (`GFPDXForm.java:205-211`), so a form drawn from a tiling pattern or a glyph procedure is a
 	// plain content stream too, and nothing it draws is a content item or a marked-content subject.
-	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly}
+	inner := walker{d: w.d, where: fmt.Sprintf("%s → form XObject %s (object %d)", w.where, name, objNr), spKey: w.spKey, appearance: w.appearance, stream: w.d.nextStream(), langOnly: w.langOnly,
+		repeat: w.d.retraversal(objNr, w.repeat), form: objNr}
 	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
 		inner.spKey = sp
 	}
@@ -763,7 +820,30 @@ func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, de
 	}
 	raw := w.d.dict(res["Pattern"])[name[1:]]
 	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
+	if err != nil && raw != nil {
+		// **A SHADING pattern is a dictionary, not a stream**, and `DereferenceStreamDict` answers "wrong type"
+		// for it — it has no content to walk, so it is skipped, not refused. The P06.S05 re-review measured the
+		// refusal below firing here: nine content clauses CannotCheck on an ordinary gradient fill.
+		// `/PatternType 2` is asked here rather than trusted to pdfcpu's validator, which enforces it today
+		// (`validate/pattern.go`) — a tiling pattern written as a plain dictionary must still refuse.
+		if pd, derr := w.d.Ctx.DereferenceDict(raw); derr == nil && pd != nil {
+			if pt, ok := w.d.intValue(pd["PatternType"]); ok && pt == 2 {
+				return
+			}
+		}
+	}
 	if err != nil || sd == nil {
+		// **A pattern name that resolves to nothing is a pattern nib did not read, never one that draws
+		// nothing** (P06.S05). pdfcpu's reader DROPS a page's `/Pattern` resource that the page's own
+		// content never selects — measured: a form with no `/Resources` inheriting the page's pattern loses
+		// it — so the name reaches here unbound although the file binds it. Since P06.S05 a pattern's `Do`s
+		// are `7.20 t2`'s population, and returning quietly was a live false PASS: veraPDF FAILS a document
+		// whose inherited pattern draws a keyed form twice, and nib passed it. `doXObject` already refuses
+		// the same drop on the XObject route.
+		if w.d.contentErr == "" {
+			w.d.contentErr = fmt.Sprintf("%s, operator #%d selects the pattern %s, which nib's reader could not "+
+				"resolve, so what that pattern draws was never read", w.where, opIndex, name)
+		}
 		return
 	}
 	if pt, ok := w.d.intValue(sd.Dict["PatternType"]); !ok || pt != 1 {
@@ -858,7 +938,10 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 		}
 		return
 	}
-	inner := walker{d: w.d, where: label, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true}
+	// Once per stream already (`langWalked` above), which is veraPDF's own once-per-key for a pattern
+	// and a glyph procedure: measured, a pattern used twice PASSES `7.20 t2` and one whose content draws
+	// the form twice FAILS. So the stream inherits only whether its invoker was traversed.
+	inner := walker{d: w.d, where: label, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true, repeat: w.repeat, form: w.form}
 	next := map[int]bool{objNr: true}
 	for k := range chain {
 		next[k] = true

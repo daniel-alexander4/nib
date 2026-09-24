@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -44,6 +45,11 @@ func init() {
 		Clause:  "7.20 t1",
 		Summary: "a conforming file shall not contain any reference XObjects",
 		Check:   checkReferenceXObjects,
+	})
+	register(Rule{
+		Clause:  "7.20 t2",
+		Summary: "a form XObject whose content is incorporated into structure elements shall be referenced only once",
+		Check:   checkUniqueSemanticParent,
 	})
 	register(Rule{
 		Clause:  "6.1 t1",
@@ -559,6 +565,109 @@ func checkReferenceXObjects(d *Document) Result {
 		return Result{
 			Verdict: NotApplicable,
 			Why:     "the document holds no form XObjects, so there is none to be a reference XObject",
+		}
+	}
+	return Result{Verdict: Pass}
+}
+
+// checkUniqueSemanticParent evaluates ua1 7.20 t2 (P06.S05).
+//
+// # The predicate reads no MCID and no structure tree
+//
+// veraPDF's test is `isUniqueSemanticParent == true` on every `PDXForm`, and `GFPDXForm.java:163-176` is
+// the whole of it: a form with no `/StructParents` KEY passes; a form with no object key passes; a form
+// whose key was already seen FAILS; otherwise the key is recorded and it passes. The profile's message —
+// *"Form XObject contains MCIDs and is referenced more than once"* — is prose about why the rule exists,
+// not what it tests, and every half of that difference was measured: a form with MCIDs and no
+// `/StructParents` drawn twice PASSES, one with `/StructParents` and no MCIDs drawn twice FAILS, and one
+// whose MCIDs are claimed by elements under two different parents PASSES. `knownKey` is key PRESENCE: a
+// `/StructParents` naming a `null` object, or naming nothing at all, is a key and fails twice-drawn,
+// while a direct `null` is no key (pdfcpu drops it, and veraPDF passes it).
+//
+// # The count is veraPDF's traversal, not the document's draws
+//
+// `recordDrawnForm` tallies a reach only where veraPDF builds a `PDXForm`, which is every `Do` in a
+// stream it TRAVERSES and every appearance entry of an annotation it visits — and it traverses a stream
+// once per object key. `retraversal` has the rule and the measurements.
+//
+// # And the count may not be nib's to give
+//
+// pdfcpu fuses equal form XObjects when it opens the file, so the object numbers the walk sees are not
+// always veraPDF's. `formTwins` asks pdfcpu's own predicate which reached forms could have been fused. A
+// keyed form with no twin reached twice is exact. One reached more times than it has twins is a definite
+// failure, since some one of them was reached twice. Anything else touched by a twin is a count nib knows
+// is not veraPDF's, and the answer is a refusal.
+//
+// **The refusal is deliberately wider than the fusion.** A twin is any equal form in the xref table,
+// including an unreferenced copy pdfcpu never fused — so one orphaned duplicate turns a real failure into
+// `CannotCheck`. Telling a fused copy from an unfused one would need the file's references before the
+// optimize pass rewrote them, and a refusal is never a wrong verdict. On veraPDF's corpus it costs nothing.
+//
+// # Two declared gaps
+//
+//   - A `/StructParents` that is neither an integer nor a reference — `(a)` — is FAILED twice-drawn by
+//     veraPDF, and pdfcpu's validator refuses to open the file ("validateIntegerEntry … invalid type"),
+//     so nib emits no report at all: the same declared class as `6.1 t1`'s `%PDF-1.9`.
+//   - A stream is traversed once, so which forms a stream's `Do`s name is settled by the resources in
+//     force at its FIRST traversal — measured: a form with no `/Resources` drawn on two pages that bind its
+//     name differently is FAILED when the drawing binding is on page 1 and PASSED when it is on page 2.
+//     nib cannot follow either, because pdfcpu's reader drops the page binding only the form uses, so both
+//     are refusals (the XObject route in `doXObject`, the pattern route in `enterPattern`). That leaves
+//     `retraversal`'s `underRepeat` and `enterLangOnly`'s inherited `repeat` unreachable through a file:
+//     measured red-proof survivors, kept because they are veraPDF's semantics the day the binding survives.
+//     Whether nib's walk order (page content, then appearances) is veraPDF's link order across the two
+//     routes is still unmeasured.
+func checkUniqueSemanticParent(d *Document) Result {
+	forms, ferr := d.formXObjects()
+	nrs := make([]int, 0, len(d.formReaches))
+	for nr := range d.formReaches {
+		nrs = append(nrs, nr)
+	}
+	sort.Ints(nrs)
+	var unsure string
+	for _, nr := range nrs {
+		r := d.formReaches[nr]
+		twins, ok := d.formTwins(nr)
+		if !ok {
+			if unsure == "" {
+				unsure = fmt.Sprintf("the document holds more equal-length form XObjects than nib will compare (%d pairs), so "+
+					"which of them pdfcpu fused when it opened the file — and so how often each was drawn — was never "+
+					"established", maxTwinCompares)
+			}
+			continue
+		}
+		keyed := r.dict["StructParents"] != nil
+		if keyed && r.count > twins+1 {
+			return Result{
+				Verdict: Fail,
+				Why: fmt.Sprintf("form XObject (object %d) carries /StructParents and is drawn %d times, so its "+
+					"content has more than one place in the structure tree and a reader cannot tell which is "+
+					"its parent", nr, r.count),
+				Where: r.first + "; and " + r.second,
+			}
+		}
+		// **A twin moves nothing when neither the key nor a drawn form is involved**: fusing two forms that
+		// carry no `/StructParents` and draw no other form changes how often an unkeyed form is counted and
+		// how often content with no `Do` is traversed, and neither can fail the clause. Measured on veraPDF's
+		// corpus, five annotation files hold exactly such twins — identical appearance streams — and were
+		// refused before this line and are settled after it, agreeing with veraPDF on every one.
+		if twins > 0 && (keyed || d.drawsForms[nr]) && unsure == "" {
+			unsure = fmt.Sprintf("form XObject (object %d) is equal to %d other form XObject(s) in the file, which "+
+				"pdfcpu fuses into one when it opens it, so how many times each of them is drawn — and so whether "+
+				"one carrying /StructParents is drawn twice — is not something nib can count", nr, twins)
+		}
+	}
+	// A definite failure beats a refusal, so both refusals come after the scan.
+	if ferr != "" {
+		return Result{Verdict: CannotCheck, Why: ferr}
+	}
+	if unsure != "" {
+		return Result{Verdict: CannotCheck, Why: unsure}
+	}
+	if len(forms) == 0 {
+		return Result{
+			Verdict: NotApplicable,
+			Why:     "the document draws no form XObjects, so none can be drawn twice",
 		}
 	}
 	return Result{Verdict: Pass}

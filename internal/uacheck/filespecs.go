@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -217,12 +218,38 @@ type formXObject struct {
 	where string
 }
 
+// formReach is one form XObject's `7.20 t2` tally: how many times veraPDF builds a `PDXForm` for it, and
+// where the first two of those were.
+type formReach struct {
+	dict          types.Dict
+	count         int
+	first, second string
+}
+
 // recordDrawnForm notes a form XObject the content walk entered. It is called from the two places
-// that enter one — the `Do` operator and an appearance stream — and dedups by dictionary identity,
-// since one form drawn on ten pages is still one subject.
-func (d *Document) recordDrawnForm(dict types.Dict, where string) {
+// that enter one — the `Do` operator and an appearance stream — and is the ONE door for both of the
+// clauses that ask about a drawn form (ADR-009).
+//
+// For `7.20 t1` it dedups by dictionary identity, since one form drawn on ten pages is still one
+// subject. For `7.20 t2` it TALLIES, by object number, when `counts` says veraPDF would build a
+// `PDXForm` here at all — `retraversal` says when it would not. A form with no object number is never
+// tallied: veraPDF's test passes a form with no key before it counts anything (`GFPDXForm.java:167`).
+func (d *Document) recordDrawnForm(dict types.Dict, objNr int, where string, counts bool) {
 	if dict == nil {
 		return
+	}
+	if counts && objNr != 0 {
+		if d.formReaches == nil {
+			d.formReaches = map[int]*formReach{}
+		}
+		r := d.formReaches[objNr]
+		if r == nil {
+			r = &formReach{dict: dict, first: where}
+			d.formReaches[objNr] = r
+		} else if r.count == 1 {
+			r.second = where
+		}
+		r.count++
 	}
 	id := dictID(dict)
 	if d.drawnSeen == nil {
@@ -256,4 +283,109 @@ func (d *Document) recordDrawnForm(dict types.Dict, where string) {
 func (d *Document) formXObjects() ([]formXObject, string) {
 	_, cerr := d.contentEvents()
 	return d.drawnForms, cerr
+}
+
+// retraversal reports whether veraPDF would NOT traverse the stream with this object number here, and
+// marks it traversed when it would. `underRepeat` is whether the stream holding this one is itself
+// untraversed, in which case nothing inside it is traversed either.
+//
+// **veraPDF's validator visits an object with an id once, and a content stream HAS one** — its object
+// key (`GFPDObject.java:74-80`) — while a `PDXForm` has none (`GFPDXForm.java:179`). So every `Do` in a
+// traversed stream builds a form and is checked, but a stream reached a second time is not traversed
+// again, and the `Do`s inside it build nothing. Measured, not reasoned: an outer form drawn twice whose
+// inner form carries `/StructParents` is PASSED (three checks — the outer twice, the inner once), and
+// two pages sharing one content stream are passed where two sharing it through a `/Contents` ARRAY,
+// which has no key, are failed.
+//
+// nib's walk still walks a repeated stream — the other content rules read what it draws, and changing
+// that is not this clause's to do — so `repeat` gates the tally and nothing else.
+func (d *Document) retraversal(objNr int, underRepeat bool) bool {
+	if underRepeat {
+		return true
+	}
+	if objNr == 0 {
+		return false
+	}
+	if d.traversed == nil {
+		d.traversed = map[int]bool{}
+	}
+	if d.traversed[objNr] {
+		return true
+	}
+	d.traversed[objNr] = true
+	return false
+}
+
+// maxTwinCompares bounds how many pairs of equal-length form streams `formTwins` compares in one document.
+// It is NOT a cost pdfcpu already paid: pdfcpu compares only forms reached through page resources and stops
+// at the first match, while this compares every equal-length form in the file, both ways. Each comparison
+// walks both streams and whatever `EqualObjects` reaches from them, so the real bound is this many times
+// that — acceptable, and past it the answer is a refusal, never a verdict.
+const maxTwinCompares = 1 << 14
+
+// formTwins counts the OTHER form XObjects in the file that pdfcpu's own `EqualObjects` finds equal to
+// this one — the forms its optimize pass may have fused into this object number when the document was
+// opened (`optimize.go:556-593`), with `ok` false when the comparison budget ran out.
+//
+// **The fusion is invisible to the walk and changes `7.20 t2`'s answer in BOTH directions**, measured:
+// two identical forms each carrying `/StructParents 0` and each drawn once are PASSED by veraPDF and read
+// by nib as one form drawn twice; two identical outer forms each drawing a keyed inner form are FAILED by
+// veraPDF and read by nib as one outer traversed once. The fused duplicates stay in the xref table, so
+// asking pdfcpu's predicate against it is how nib knows which of its counts it can trust.
+func (d *Document) formTwins(objNr int) (int, bool) {
+	if n, done := d.twinsOf[objNr]; done {
+		return n, true
+	}
+	if d.formsByLength == nil {
+		d.formsByLength = map[int64][]int{}
+		for nr, e := range d.Ctx.XRefTable.Table {
+			if e == nil || e.Free {
+				continue
+			}
+			if sd, ok := e.Object.(types.StreamDict); ok && sd.StreamLength != nil && d.name(sd.Dict["Subtype"]) == "Form" {
+				d.formsByLength[*sd.StreamLength] = append(d.formsByLength[*sd.StreamLength], nr)
+			}
+		}
+	}
+	me, ok := d.Ctx.XRefTable.Table[objNr]
+	if !ok || me == nil {
+		return 0, true
+	}
+	sd, isStream := me.Object.(types.StreamDict)
+	if !isStream || sd.StreamLength == nil {
+		return 0, true
+	}
+	n := 0
+	for _, nr := range d.formsByLength[*sd.StreamLength] {
+		if nr == objNr {
+			continue
+		}
+		if d.twinCompares++; d.twinCompares > maxTwinCompares {
+			return 0, false
+		}
+		other := d.Ctx.XRefTable.Table[nr].Object.(types.StreamDict)
+		// **Both argument orders, because pdfcpu's predicate is not symmetric**: `if o1 == nil { return
+		// o2 != nil }` (`equal.go:80`) makes a pair with an entry resolving to null on one side equal one
+		// way and unequal the other, and pdfcpu's own fusion asks it as (new, cached) where which form is
+		// "new" is map iteration order. Asking one way only missed twins pdfcpu had fused: measured, a false
+		// FAIL on 27 of 40 runs of one file veraPDF passes (the slice review's finding 1). Counting a pair
+		// either way can only refuse more often, never answer wrongly.
+		if twinEqual(sd, other, d.Ctx.XRefTable) {
+			n++
+		}
+	}
+	if d.twinsOf == nil {
+		d.twinsOf = map[int]int{}
+	}
+	d.twinsOf[objNr] = n
+	return n, true
+}
+
+// twinEqual is pdfcpu's `EqualObjects` asked in both orders — see `formTwins`.
+func twinEqual(a, b types.StreamDict, xrt *model.XRefTable) bool {
+	if eq, err := model.EqualObjects(a, b, xrt, nil); err == nil && eq {
+		return true
+	}
+	eq, err := model.EqualObjects(b, a, xrt, nil)
+	return err == nil && eq
 }

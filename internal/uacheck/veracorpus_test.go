@@ -130,7 +130,13 @@ var corpusReach = map[string]int{
 	// predicate through one door, and `7.3 t1`'s 18 did not move: the two clauses differ only in the
 	// structure type they look for.
 	"7.7 t1": 5,
-	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
+	// P06.S05. `7.20 t2` joins at 42, `7.20 t1`'s figure, because its subject is the same drawn form. It
+	// was 37 on the first run: five annotation files hold identical appearance streams, which pdfcpu's
+	// predicate calls twins, and the rule refused all five until it learned that a twin carrying no key and
+	// drawing no form cannot move the count. The corpus's own pair (`7.20-t02-fail-a`, a keyed form drawn
+	// three times, and `-pass-a`) is settled on both halves.
+	"7.20 t2": 42,
+	"7.1 t1":  293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,
 	"7.2 t36": 21, "7.2 t37": 19, "7.2 t38": 17,

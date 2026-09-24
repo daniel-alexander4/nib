@@ -72,8 +72,12 @@ const maxFormDrawDepth = 8
 //     the reverse linkage, so an entry nothing claims is a row of elements no content can reach —
 //     which is exactly what a carry leaves behind when two source pages collapse onto one XObject.
 //  4. **No MCID-bearing form XObject is drawn more than once.** Its marked content would then have
-//     two semantic parents, which is veraPDF's 7.20 t2 (`isUniqueSemanticParent`) and is
-//     unresolvable rather than merely untidy: one `/StructParents` key cannot name two places.
+//     two semantic parents, which is unresolvable rather than merely untidy: one `/StructParents` key
+//     cannot name two places. It is NEIGHBOUR to veraPDF's 7.20 t2 (`isUniqueSemanticParent`), not the
+//     same test: veraPDF keys on the `/StructParents` KEY and never reads an MCID, and counts a `Do`
+//     once per traversed stream — measured at P06.S05, a form with MCIDs and no key drawn twice passes
+//     it and one with the key and no MCIDs fails it. `uacheck`'s `7.20 t2` is the port of the clause;
+//     this condition is the carry's own property about MCIDs, and is kept as that.
 //  5. **No `/ParentTree` key is claimed by more than one owner** — condition 4 read from the other
 //     side. Two pages carrying the same `/StructParents` share one row of elements, so the elements
 //     describe one of them and the other's content is described by references that name its twin.

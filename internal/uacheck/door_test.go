@@ -3,6 +3,7 @@ package uacheck
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -137,6 +138,23 @@ func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T
 		}
 		if !strings.Contains(string(b), f.must) {
 			t.Errorf("%s no longer says %q — a passing report would read as a conformance verdict", f.path, f.must)
+		}
+	}
+	// **Containing the count is not the same as containing no OTHER count** (P06.S05). The parity document
+	// passed the row above at 90 while two table cells further down still said 90 after the move to 91 —
+	// one copy had a reader and the other two rode on it. In the two files a person reads for the figure,
+	// every "N of the 106" must BE the figure; the Go files keep their dated history ("15 of the 106 when
+	// that was measured") and are held to containing it instead.
+	stated := regexp.MustCompile(`(\d+) of the 106`)
+	for _, path := range []string{"../../README.md", "../../docs/accessibility-parity.md"} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range stated.FindAllStringSubmatch(string(b), -1) {
+			if m[0] != count {
+				t.Errorf("%s says %q, but nib checks %s — a stale copy of the coverage figure", path, m[0], count)
+			}
 		}
 	}
 	readme, _ := os.ReadFile("../../README.md")
