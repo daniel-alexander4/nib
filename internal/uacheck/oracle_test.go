@@ -171,6 +171,23 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// (`/pending 486`), so these are mutations, named for the value they declare.
 		oracleDoc{"Markdown + title + pdfuaid:part 1", withUAPart(t, mdt, "1")},
 		oracleDoc{"Markdown + title + pdfuaid:part 2", withUAPart(t, mdt, "2")},
+		// 5 t3, t4 and t5 in both directions (P06.S01). No product door writes the identification at all
+		// (`/pending 486`), so both halves are mutations of the same packet: the same three properties,
+		// bound to the same namespace, written once under the required prefix and once under another.
+		// The passing document also covers the case veraPDF counts as a real check rather than an absent
+		// subject — `amd` and `corr` PRESENT and correctly prefixed.
+		oracleDoc{"Markdown + title + identification under pdfuaid", withUAPrefix(t, mdt, "pdfuaid")},
+		oracleDoc{"Markdown + title + identification under a foreign prefix", withUAPrefix(t, mdt, "pdfuaia")},
+		// 6.1 t1's FAILED half (P06.S01). Every other document here reaches the passing half, since every
+		// file nib can open has a header.
+		//
+		// **It has to be the MAJOR version, and that is a measured constraint rather than a choice.**
+		// `%PDF-1.9` is the obvious fixture — one byte, inside the digit class the clause names — and
+		// pdfcpu refuses to open it at all: *"headerVersion: unknown PDF Header Version: 1.9"*. So the
+		// document veraPDF validates is one nib cannot read, and the clause could never report it.
+		// `%PDF-2.0` is a version pdfcpu knows, fails the profile's literal `1.`, and keeps every xref
+		// offset in the file. `checkFileHeader` records what that leaves unreachable.
+		oracleDoc{"Markdown + title, header %PDF-2.0", withFileHeader(t, mdt, "%PDF-2.0")},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
 		// structure editor's own door retypes a correctly nested heading one level too deep.
 		oracleDoc{"Markdown, second heading retyped H3 (skips a level)", headingSkipped(t)},
@@ -415,7 +432,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 65
+	const wantGenerated = 68
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

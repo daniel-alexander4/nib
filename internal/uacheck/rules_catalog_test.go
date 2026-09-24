@@ -193,9 +193,12 @@ func TestAnUnreadableMetadataPacketIsCannotCheckNotFail(t *testing.T) {
 	// **The stimulus, asserted first — because this test once passed on the wrong stimulus.** The
 	// original fixture never landed its malformed XML; the reader parsed zlib bytes and reported
 	// "invalid UTF-8", which is also CannotCheck. The reason must name the XML the fixture wrote.
-	if got := verdictOf(t, broken, "5 t1"); !strings.Contains(got.Why, "not well-formed XML") ||
+	// **Named to the BRANCH, not just to "not well-formed XML".** Three branches share that phrase —
+	// an unclosed element, a mismatched end tag and a stray end tag — so the looser assertion could
+	// not tell which one fired, and the other two are pinned by name in their own test.
+	if got := verdictOf(t, broken, "5 t1"); !strings.Contains(got.Why, "never closed") ||
 		strings.Contains(got.Why, "invalid UTF-8") {
-		t.Fatalf("setup: the unreadable packet is not the malformed XML this fixture supplies — "+
+		t.Fatalf("setup: the unreadable packet is not the unclosed element this fixture supplies — "+
 			"the reason is %q", got.Why)
 	}
 	for _, clause := range []string{"7.1 t9", "5 t1"} {
@@ -381,7 +384,7 @@ func TestAWrongIdentificationIsDistinguishedFromAMissingOne(t *testing.T) {
 	if missing.Verdict != Fail {
 		t.Fatalf("control: a titled document reports %v for 5 t1, want Fail", missing.Verdict)
 	}
-	if !strings.Contains(missing.Why, "no pdfuaid:part") {
+	if !strings.Contains(missing.Why, "no property in the PDF/UA identification namespace") {
 		t.Errorf("an ABSENT identification is reported as %q, which does not say it is absent",
 			missing.Why)
 	}
@@ -454,6 +457,296 @@ func TestMetadataLanguageFollowsTheLanguageAlternatives(t *testing.T) {
 		got := verdictOf(t, withPacketBody(t, titled, c.body), "7.2 t33")
 		if got.Verdict != c.want {
 			t.Errorf("%s: 7.2 t33 reports %v (%s), want %v — measured against veraPDF", c.name, got.Verdict, got.Why, c.want)
+		}
+	}
+}
+
+// 5 t3, 5 t4 and 5 t5 — the identification's namespace prefixes (P06.S01).
+//
+// **Every expectation here was measured on veraPDF 1.30.2 before it was written**, on its own corpus
+// files and on length-preserving mutations of them. The clause is easy to get backwards in two ways,
+// and both are covered below: an absent property PASSES rather than having no subject, and the
+// property is located by NAMESPACE while being judged by the PREFIX that namespace was bound to.
+func TestTheIdentificationsPrefixesAreJudgedNotItsValues(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, clause := range []string{"5 t3", "5 t4", "5 t5"} {
+		// No identification at all: no subject. Measured — veraPDF reports 0 passed, 0 failed on its
+		// own `5-t01-fail-a.pdf` for all three.
+		if got := verdictOf(t, titled, clause); got.Verdict != NotApplicable {
+			t.Errorf("with no identification, %s reports %v (%s), want NotApplicable", clause, got.Verdict, got.Why)
+		}
+		// The required prefix on all three properties.
+		if got := verdictOf(t, withUAPrefix(t, titled, "pdfuaid"), clause); got.Verdict != Pass {
+			t.Errorf("under the pdfuaid prefix, %s reports %v (%s), want Pass", clause, got.Verdict, got.Why)
+		}
+		// A foreign prefix bound to the RIGHT namespace: found, and refused.
+		got := verdictOf(t, withUAPrefix(t, titled, "pdfuaia"), clause)
+		if got.Verdict != Fail {
+			t.Errorf("under a foreign prefix, %s reports %v (%s), want Fail", clause, got.Verdict, got.Why)
+		}
+		if !strings.Contains(got.Why, "pdfuaia") {
+			t.Errorf("%s refuses with %q, which does not name the prefix it found", clause, got.Why)
+		}
+	}
+	// **An ABSENT property is a passing check, not an absent subject** — `withUAPart` writes `part`
+	// alone, so `amd` and `corr` are missing and both must pass. This is the trap P05 measured in the
+	// annotation family, one phase later: veraPDF reports `passedChecks="1"` for 5 t4 and 5 t5 on its
+	// own `5-t03-pass-a.pdf`, which carries neither.
+	// **A property under the DEFAULT namespace has no prefix, and that PASSES.** Measured on veraPDF
+	// with a length-preserving mutation of `5-t03-pass-a.pdf` that rebinds `xmlns:pdfuaid` to a bare
+	// `xmlns` and writes `<part>`: `5 t2` still reports `part == 1`, so the property was found, and
+	// `5 t3` reports `passedChecks="1"`. nib refused it until a blind mutation pass asked — every
+	// targeted probe had used a WRONG prefix and none a missing one.
+	for _, clause := range []string{"5 t3", "5 t4", "5 t5"} {
+		if got := verdictOf(t, withUADefaultNamespace(t, titled), clause); got.Verdict != Pass {
+			t.Errorf("under the default namespace, %s reports %v (%s), want Pass — no prefix is the "+
+				"`null` half of the profile's disjunction, not a wrong prefix", clause, got.Verdict, got.Why)
+		}
+	}
+	// **A binding made on the OUTERMOST element resolves like any other.** Real packets declare their
+	// namespaces on `rdf:Description`, so a reader whose scope stack skipped the root element passed
+	// every other fixture in this package — found by a blind mutation pass.
+	if got := verdictOf(t, withUARootBinding(t, titled), "5 t3"); got.Verdict != Fail {
+		t.Errorf("with the identification bound on the packet's root element, 5 t3 reports %v (%s), "+
+			"want Fail — the binding is a foreign prefix wherever it was declared", got.Verdict, got.Why)
+	}
+
+	partOnly := withUAPart(t, titled, "1")
+	for _, clause := range []string{"5 t4", "5 t5"} {
+		if got := verdictOf(t, partOnly, clause); got.Verdict != Pass {
+			t.Errorf("with the property absent, %s reports %v (%s), want Pass — nothing declared it, so "+
+				"nothing declared it wrongly", clause, got.Verdict, got.Why)
+		}
+	}
+}
+
+// **The identification exists on ANY property in its namespace, not on `part`.** Measured on veraPDF
+// by three length-preserving mutations of `5-t03-pass-a.pdf`: a packet whose only pdfuaid property is
+// `corr` PASSES 5 t1 and FAILS 5 t2, and one whose only property is an unknown name does the same,
+// while a packet carrying the pdfaExtension schema for the namespace but no property in it fails 5 t1
+// and leaves the rest of the family with no subject.
+//
+// nib had both of those backwards until P06.S01 — a live false fail on 5 t1 and a live false pass on
+// 5 t2 — and the corpus could not see either, because it holds no such file.
+func TestAnIdentificationWithoutAPartStillExists(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrOnly := withUAProperty(t, titled, "corr", "0")
+	if got := verdictOf(t, corrOnly, "5 t1"); got.Verdict != Pass {
+		t.Errorf("a packet whose only identification property is corr reports %v for 5 t1 (%s), want "+
+			"Pass — the identification is present", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, corrOnly, "5 t2")
+	if got.Verdict != Fail {
+		t.Fatalf("an identification with no part reports %v for 5 t2 (%s), want Fail — veraPDF's test is "+
+			"`part == 1` and a null part does not satisfy it", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "no pdfuaid:part") {
+		t.Errorf("5 t2 refuses with %q, which does not say the part is the thing that is missing", got.Why)
+	}
+	// An unknown property in the namespace counts too — measured, veraPDF passes 5 t1 on a `zzzz`.
+	if got := verdictOf(t, withUAProperty(t, titled, "zzzz", "x"), "5 t1"); got.Verdict != Pass {
+		t.Errorf("a packet whose only identification property is an unknown name reports %v for 5 t1 "+
+			"(%s), want Pass", got.Verdict, got.Why)
+	}
+}
+
+// **A packet whose tags do not NEST is unreadable too, and that is a separate condition from one
+// whose tags are never closed** (P06.S01, found by probing).
+//
+// It needs its own test because of how `parseXMP` reads the packet. `Token()` verified that start and
+// end elements match and returned an error when they did not; `RawToken()`, which the prefix clauses
+// require, performs no such check, so nib now makes it itself. `corruptMetadataXML`'s fixture leaves
+// an element UNCLOSED, which a different branch catches — so removing the mismatch check left every
+// test in the package green while a packet like `<a></b>` read as perfectly well-formed, and nib would
+// have reported `Fail` over a document it had misparsed rather than `CannotCheck`.
+func TestAPacketWhoseTagsDoNotNestIsCannotCheck(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Well-formed but for the one thing under test: every tag is closed, and one is closed by the
+	// wrong name. A reader that only counts opens and closes cannot tell this from the control.
+	broken := withRawPacket(t, titled, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+		`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+		`<rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/">`+
+		`<pdfuaid:part>1</pdfuaid:corr>`+
+		`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+
+	got := verdictOf(t, broken, "5 t1")
+	// The stimulus before the response, as the sibling test above does: the refusal must be about the
+	// nesting, not about some other way the fixture failed to land.
+	if !strings.Contains(got.Why, "mismatched end tag") {
+		t.Fatalf("setup: the packet was refused as %q, which is not the mismatched nesting this "+
+			"fixture supplies", got.Why)
+	}
+	for _, clause := range []string{"5 t1", "5 t2", "5 t3", "5 t4", "5 t5", "7.1 t9"} {
+		if got := verdictOf(t, broken, clause); got.Verdict != CannotCheck {
+			t.Errorf("%s on a packet whose tags do not nest reports %v (%s), want CannotCheck — nib "+
+				"could not read the packet, which is not the same as the document lacking what the "+
+				"clause wants", clause, got.Verdict, got.Why)
+		}
+	}
+
+	// **An end tag with nothing open is a third condition**, and it is the one that would CRASH rather
+	// than answer: the reader's stack is empty, so without its own guard the pop indexes a zero-length
+	// slice. `runOne` would recover the panic into a CannotCheck, so the package stays green and the
+	// clause's reason becomes a stack message — measured reachable, from a stray tag either before or
+	// after the root element.
+	for _, packet := range []string{
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta></stray>`,
+		`</stray><x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta>`,
+	} {
+		got := verdictOf(t, withRawPacket(t, titled, packet), "5 t1")
+		if got.Verdict != CannotCheck {
+			t.Errorf("a packet with a stray end tag reports %v (%s), want CannotCheck", got.Verdict, got.Why)
+		}
+		if !strings.Contains(got.Why, "end tag with no open element") {
+			t.Errorf("a stray end tag is refused as %q, which is not the reader's own diagnosis — a "+
+				"recovered panic reads as CannotCheck too and says nothing useful", got.Why)
+		}
+	}
+}
+
+// **Attribute-form properties — RDF/XML's abbreviated syntax — are ordinary XMP, and nib read none
+// of them** (P06.S01, found by review). A simple-valued property may be written as an attribute on
+// `rdf:Description` rather than as a child element, and veraPDF reads it either way.
+//
+// Measured on a length-preserving mutation of `5-t03-pass-a.pdf`: with `pdfuaid:part="1"` as an
+// attribute, veraPDF passes all five clause-5 tests, while nib reported `5 t1` **Fail** and the other
+// four NotApplicable — a live false fail across a whole serialisation form, invisible to the corpus
+// because every corpus identification is element-form.
+func TestAnAttributeFormIdentificationIsRead(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All three properties as attributes under the required prefix: veraPDF passes all five.
+	ok := withUAAttributes(t, titled, "pdfuaid", "1")
+	for _, clause := range []string{"5 t1", "5 t2", "5 t3", "5 t4", "5 t5"} {
+		if got := verdictOf(t, ok, clause); got.Verdict != Pass {
+			t.Errorf("with an attribute-form identification, %s reports %v (%s), want Pass — "+
+				"measured on veraPDF, which passes all five", clause, got.Verdict, got.Why)
+		}
+	}
+	// The value is read, not merely the presence: a part of 2 fails 5 t2 in attribute form too.
+	if got := verdictOf(t, withUAAttributes(t, titled, "pdfuaid", "2"), "5 t2"); got.Verdict != Fail {
+		t.Errorf("an attribute-form pdfuaid:part of 2 reports %v (%s) for 5 t2, want Fail", got.Verdict, got.Why)
+	}
+	// And the PREFIX is read: the same attributes under a foreign prefix fail the prefix clauses.
+	bad := withUAAttributes(t, titled, "pdfuaia", "1")
+	for _, clause := range []string{"5 t3", "5 t4", "5 t5"} {
+		if got := verdictOf(t, bad, clause); got.Verdict != Fail {
+			t.Errorf("attribute-form properties under a foreign prefix report %v (%s) for %s, want Fail",
+				got.Verdict, got.Why, clause)
+		}
+	}
+	// An UNPREFIXED attribute is in no namespace at all under XML Namespaces, so it is not a property
+	// of the identification and must not create a subject.
+	if got := verdictOf(t, withUnprefixedPartAttribute(t, titled), "5 t1"); got.Verdict != Fail {
+		t.Errorf("a bare part=\"1\" attribute reports %v (%s) for 5 t1, want Fail — an unprefixed "+
+			"attribute is in no namespace and names no property", got.Verdict, got.Why)
+	}
+}
+
+// **A property's prefix and its value must come from the SAME element.** Recording the prefix at the
+// start tag and letting any later character data fill the value let the two be synthesised from two
+// different elements — a pairing no element in the packet has, which both the value clause and the
+// prefix clause then judged.
+func TestAPropertysPrefixAndValueComeFromOneElement(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty `pdfuaid:part` first, then a `pdfuaia:part` carrying the value. First occurrence wins,
+	// so the property is the EMPTY one: prefix `pdfuaid`, no value.
+	doc := withRawPacket(t, titled, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+		`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+		`<rdf:Description rdf:about="" xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" `+
+		`xmlns:pdfuaia="http://www.aiim.org/pdfua/ns/id/">`+
+		`<pdfuaid:part></pdfuaid:part><pdfuaia:part>1</pdfuaia:part>`+
+		`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	if got := verdictOf(t, doc, "5 t3"); got.Verdict != Pass {
+		t.Errorf("5 t3 reports %v (%s); the first part is written `pdfuaid:`, so the prefix passes — "+
+			"a Fail means the prefix was taken from the second element", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, doc, "5 t2")
+	if got.Verdict != Fail {
+		t.Fatalf("5 t2 reports %v (%s); the first part carries no value, so it cannot be 1 — a Pass "+
+			"means the value was taken from a different element than the prefix", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "present but empty") {
+		t.Errorf("5 t2 refuses with %q, which does not distinguish a declared-and-empty part from an "+
+			"absent one — they are different things to fix", got.Why)
+	}
+}
+
+// **A packet nested past the reader's ceiling is refused, not parsed.** Before the bound, resolving a
+// prefix walked the open-element stack, so the parse was O(depth²) on a packet whose decoded size the
+// document chooses: measured end to end through `Check`, 5,000 deep took 57 ms, 20,000 deep 667 ms and
+// 80,000 deep **11.1 s** — an attacker-supplied quadratic reached by opening a PDF.
+func TestADeeplyNestedPacketIsRefusedRatherThanWalked(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deep := withRawPacket(t, titled, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:z="urn:z">`+
+		strings.Repeat("<z:a>", maxXMPDepth+5)+strings.Repeat("</z:a>", maxXMPDepth+5)+
+		`</x:xmpmeta><?xpacket end="w"?>`)
+	got := verdictOf(t, deep, "5 t1")
+	if got.Verdict != CannotCheck {
+		t.Fatalf("a packet nested past the ceiling reports %v (%s) for 5 t1, want CannotCheck — nib "+
+			"stopped reading, which is not the same as the document lacking an identification", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "nests more than") {
+		t.Errorf("the refusal is %q, which does not name the bound nib hit", got.Why)
+	}
+	// The stimulus, asserted: one element under the ceiling must still be READ, or the test above
+	// would pass against a reader that refused every packet.
+	shallow := withRawPacket(t, titled, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:z="urn:z">`+
+		strings.Repeat("<z:a>", maxXMPDepth-5)+strings.Repeat("</z:a>", maxXMPDepth-5)+
+		`</x:xmpmeta><?xpacket end="w"?>`)
+	if got := verdictOf(t, shallow, "5 t1"); got.Verdict != Fail {
+		t.Errorf("a packet just under the ceiling reports %v (%s) for 5 t1, want Fail — it is readable "+
+			"and carries no identification", got.Verdict, got.Why)
+	}
+}
+
+// **Each prefix clause reads ITS OWN property, and nothing else pinned that.** Every other fixture
+// gives `part`, `amd` and `corr` the same fate at once, so swapping the property names in the `5 t4`
+// and `5 t5` registrations left the whole package green except the corpus test — which is skipped
+// wherever veraPDF's corpus is absent. One property wrong at a time is what separates them.
+func TestEachPrefixClauseReadsItsOwnProperty(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ prop, clause string }{
+		{"part", "5 t3"}, {"amd", "5 t4"}, {"corr", "5 t5"},
+	} {
+		doc := withOneUAPropertyWronglyPrefixed(t, titled, c.prop)
+		if got := verdictOf(t, doc, c.clause); got.Verdict != Fail {
+			t.Errorf("with only %s wrongly prefixed, %s reports %v (%s), want Fail — the clause is "+
+				"reading some other property", c.prop, c.clause, got.Verdict, got.Why)
+		}
+		// And every OTHER prefix clause must pass on that same document, or the three are not distinct.
+		for _, other := range []string{"5 t3", "5 t4", "5 t5"} {
+			if other == c.clause {
+				continue
+			}
+			if got := verdictOf(t, doc, other); got.Verdict != Pass {
+				t.Errorf("with only %s wrongly prefixed, %s reports %v (%s), want Pass — it is reading "+
+					"%s rather than its own property", c.prop, other, got.Verdict, got.Why, c.prop)
+			}
 		}
 	}
 }

@@ -110,6 +110,10 @@ var corpusAllow = map[string]string{}
 // 22,972 → 23,562, and the phase closes the checker at 80 of the 106.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
+	// P06.S01. The three prefix clauses share `5 t2`'s subject gate — the identification's presence — so
+	// they share its reach. `6.1 t1` reads the file's own leading bytes, which every readable file has,
+	// so its reach is every file nib opens: it is the widest row in this table by construction.
+	"5 t3": 293, "5 t4": 293, "5 t5": 293, "6.1 t1": 295,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,

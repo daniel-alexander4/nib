@@ -326,6 +326,105 @@ func withUAPart(t *testing.T, pdf []byte, part string) []byte {
 	})
 }
 
+// withUAPrefix installs an identification whose `part`, `amd` and `corr` properties are each written
+// under the given prefix, with that prefix bound to the identification namespace (P06.S01).
+//
+// **The binding is always the right URI and only the prefix moves**, because that is the whole content
+// of `5 t3`/`t4`/`t5`: veraPDF finds the property by namespace and then refuses the prefix it was
+// written under. A packet binding a different URI would be a different clause's fixture — the property
+// would not be found at all, and the identification would not exist.
+//
+// This is the shape of veraPDF's own `5-t04-fail-a.pdf`, which binds BOTH `pdfuaia` and `pdfuaid` to
+// the identification namespace: the second binding is what makes "which prefix maps to this URI"
+// ambiguous and is why `parseXMP` reads raw prefixes rather than resolved ones.
+func withUAPrefix(t *testing.T, pdf []byte, prefix string) []byte {
+	// **The second binding only when the prefix is a foreign one.** Declaring `xmlns:pdfuaid` twice on
+	// one element is a duplicate attribute and therefore not well-formed XML: measured, veraPDF then
+	// reads NO packet at all and reports `5 t1` and `7.1 t9` failed with the rest of the family having
+	// no subject — a fixture that looks like a prefix test and is really a broken-packet test.
+	bindings := `xmlns:` + prefix + `="http://www.aiim.org/pdfua/ns/id/"`
+	if prefix != "pdfuaid" {
+		bindings = `xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" ` + bindings
+	}
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" `+
+			bindings+`>`+
+			`<dc:title><rdf:Alt><rdf:li xml:lang="x-default">A named document</rdf:li></rdf:Alt></dc:title>`+
+			`<`+prefix+`:part>1</`+prefix+`:part>`+
+			`<`+prefix+`:amd>2014</`+prefix+`:amd>`+
+			`<`+prefix+`:corr>0</`+prefix+`:corr>`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withFileHeader rewrites the file's `%PDF-1.n` header to header, in place and without reparsing
+// (P06.S01). `6.1 t1` is about the BYTES, so its fixture cannot go through pdfcpu: a mutation that
+// rewrote the document would have the writer put a well-formed header back.
+//
+// **Length-preserving, so every xref offset stays true.** A shifted file would be refused by the
+// reader before the clause ever ran, and the fixture would measure nothing.
+func withFileHeader(t *testing.T, pdf []byte, header string) []byte {
+	t.Helper()
+	i := bytes.Index(pdf, []byte("%PDF-"))
+	if i < 0 {
+		t.Fatalf("the fixture has no %%PDF- header to rewrite")
+	}
+	end := i + bytes.IndexAny(pdf[i:], "\r\n")
+	if end < i {
+		t.Fatalf("the fixture's header line never ends")
+	}
+	if len(header) != end-i {
+		t.Fatalf("header %q is %d bytes against the original's %d — rewriting it would shift every "+
+			"xref offset in the file and the document would stop parsing", header, len(header), end-i)
+	}
+	out := append([]byte(nil), pdf...)
+	copy(out[i:end], header)
+	return out
+}
+
+// withUAProperty installs an identification whose ONLY property is the named one, under the required
+// prefix (P06.S01) — the shape that separates "the identification exists" from "the part exists".
+//
+// veraPDF's `containsPDFUAIdentification` is true for any property in the namespace, whatever it is
+// called, so `withUAProperty(t, pdf, "corr", "0")` produces a document that PASSES `5 t1` and FAILS
+// `5 t2`. Both were measured on length-preserving mutations of the corpus file `5-t03-pass-a.pdf`
+// before either rule was changed.
+func withUAProperty(t *testing.T, pdf []byte, prop, value string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" `+
+			`xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/">`+
+			`<dc:title><rdf:Alt><rdf:li xml:lang="x-default">A named document</rdf:li></rdf:Alt></dc:title>`+
+			`<pdfuaid:`+prop+`>`+value+`</pdfuaid:`+prop+`>`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withHeaderEOL replaces the single byte that ends the header line, leaving the header itself alone
+// (P06.S01) — so "which bytes end the line" can be measured apart from "what the line says".
+func withHeaderEOL(t *testing.T, pdf []byte, eol string) []byte {
+	t.Helper()
+	if len(eol) != 1 {
+		t.Fatalf("withHeaderEOL rewrites ONE byte; %q is %d", eol, len(eol))
+	}
+	i := bytes.Index(pdf, []byte("%PDF-"))
+	if i < 0 {
+		t.Fatalf("the fixture has no %%PDF- header")
+	}
+	at := i + bytes.IndexAny(pdf[i:], "\r\n")
+	if at < i {
+		t.Fatalf("the fixture's header line never ends")
+	}
+	out := append([]byte(nil), pdf...)
+	out[at] = eol[0]
+	return out
+}
+
 // withPacket installs a packet whose `dc:` prefix is bound to dcURI, so a namespace-by-URI reader can
 // be told from a prefix-trusting one.
 func withPacket(t *testing.T, pdf []byte, dcURI string) []byte {
@@ -1086,5 +1185,109 @@ func withPacketBody(t *testing.T, pdf []byte, body string) []byte {
 			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
 			`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">`+
 			body+`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withRawPacket installs an arbitrary metadata packet verbatim, well-formed or not (P06.S01) — so a
+// fixture can break ONE property of the XML and leave the rest of it intact.
+//
+// `corruptMetadataXML` truncates, which breaks several things at once; this writes exactly what it is
+// given. `replaceMetadataPacket` asserts the bytes landed, which is what stops a fixture like this
+// from silently measuring zlib garbage instead of the shape it meant to supply.
+func withRawPacket(t *testing.T, pdf []byte, packet string) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, packet)
+	})
+}
+
+// withUADefaultNamespace writes the identification under the DEFAULT namespace, so its properties
+// carry no prefix at all (P06.S01) — the `null` half of `5 t3`/`t4`/`t5`, which veraPDF passes.
+func withUADefaultNamespace(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns="http://www.aiim.org/pdfua/ns/id/">`+
+			`<part>1</part><amd>2014</amd><corr>0</corr>`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withUARootBinding declares the identification's prefix on the packet's OUTERMOST element rather
+// than on `rdf:Description` (P06.S01), which is where every other fixture here declares it.
+//
+// It is legal XML and it is the case a scope stack that starts one frame too high cannot see: with
+// the binding on the root, the prefix resolves to nothing and the whole identification reads as
+// absent. The prefix is a foreign one so the expected answer is a definite Fail — a reader that
+// missed the binding would answer NotApplicable instead.
+func withUARootBinding(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:pdfuaia="http://www.aiim.org/pdfua/ns/id/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="">`+
+			`<pdfuaia:part>1</pdfuaia:part>`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withUAAttributes writes the identification in RDF/XML's ABBREVIATED syntax — the three properties
+// as attributes on `rdf:Description` rather than as child elements (P06.S01).
+//
+// This is ordinary XMP, not an exotic shape, and veraPDF reads it: measured on a length-preserving
+// mutation of `5-t03-pass-a.pdf`, an attribute-form identification passes all five clause-5 tests
+// there while nib — reading start elements only — failed `5 t1` and found no subject for the rest.
+func withUAAttributes(t *testing.T, pdf []byte, prefix, part string) []byte {
+	bindings := `xmlns:` + prefix + `="http://www.aiim.org/pdfua/ns/id/"`
+	if prefix != "pdfuaid" {
+		bindings = `xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" ` + bindings
+	}
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" `+bindings+` `+
+			prefix+`:part="`+part+`" `+prefix+`:amd="2014" `+prefix+`:corr="0">`+
+			`<dc:title><rdf:Alt><rdf:li xml:lang="x-default">A named document</rdf:li></rdf:Alt></dc:title>`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withUnprefixedPartAttribute writes `part="1"` with NO prefix (P06.S01). Under XML Namespaces an
+// unprefixed attribute is in no namespace at all — not even the element's default one — so it names
+// no property of the identification and must not create a subject for the clause-5 family.
+func withUnprefixedPartAttribute(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" xmlns="http://www.aiim.org/pdfua/ns/id/" part="1">`+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	})
+}
+
+// withOneUAPropertyWronglyPrefixed writes all three identification properties, with exactly ONE of
+// them under a foreign prefix (P06.S01) — the fixture that tells `5 t3`, `5 t4` and `5 t5` apart.
+func withOneUAPropertyWronglyPrefixed(t *testing.T, pdf []byte, wrong string) []byte {
+	prefixOf := func(prop string) string {
+		if prop == wrong {
+			return "pdfuaia"
+		}
+		return "pdfuaid"
+	}
+	body := ""
+	for _, p := range []struct{ name, value string }{{"part", "1"}, {"amd", "2014"}, {"corr", "0"}} {
+		q := prefixOf(p.name)
+		body += `<` + q + `:` + p.name + `>` + p.value + `</` + q + `:` + p.name + `>`
+	}
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		return replaceMetadataPacket(ctx, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+			`<x:xmpmeta xmlns:x="adobe:ns:meta/">`+
+			`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+			`<rdf:Description rdf:about="" `+
+			`xmlns:pdfuaid="http://www.aiim.org/pdfua/ns/id/" `+
+			`xmlns:pdfuaia="http://www.aiim.org/pdfua/ns/id/">`+
+			body+
+			`</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
 	})
 }

@@ -2026,7 +2026,7 @@ adds eleven read-only clauses to a checker, writes no bytes, moves no format, an
 (XFA) and `7.16 t1` (encryption) touch security-flavoured *subjects* without changing any security
 behaviour. Recorded because a trigger nobody records is one nobody can tell was evaluated.
 
-#### P06.S01 — the identification's prefixes, and the file header
+#### P06.S01 — the identification's prefixes, and the file header *(done 2026-09-23, v1.154.0)*
 Scope: `5 t3`, `5 t4`, `5 t5` — each property of the PDF/UA identification schema carries namespace prefix
 `pdfuaid`, with `null` passing — and `6.1 t1`, the header being `%PDF-1.n` for a single digit 0–7 followed
 by a single EOL marker. Refs: the package already reads XMP for `5 t1`/`t2` (`xmpFacts`, `readXMP`).
@@ -2039,6 +2039,97 @@ Acceptance:
   contains — and whether a `%PDF-1.7\r\n` passes — is read off the parser's source before the rule is
   written.
 - Both clauses hold a measured pass and fail fixture and a `corpusReach` row; `len(Clauses())` is 84.
+
+**(grill, 2026-09-23 — *(in progress)*)** Everything below was MEASURED against veraPDF 1.30.2, not read
+off a description. The four profile tests are `partPrefix == null || partPrefix == "pdfuaid"` (likewise
+`amd`, `corr`) and `/^%PDF-1\.[0-7]$/.test(header)`.
+
+**The grill found TWO live defects in the SHIPPED `5 t1`/`5 t2`, and they are this slice's first two
+tasks.** The subject gate for the whole family is `containsPDFUAIdentification`, and it is **not**
+`part`: measured by three length-preserving mutations of `5-t03-pass-a.pdf`, a packet carrying
+`pdfuaid:corr` and no `part` PASSES `5 t1` and FAILS `5 t2`, and so does one carrying an unknown
+`pdfuaid:zzzz`, while a packet with the pdfaExtension schema describing the pdfuaid namespace but **no
+property in it** FAILS `5 t1` and gives `5 t2`/`t3`/`t4`/`t5` **no subject** (0 passed, 0 failed). So the
+identification exists iff the packet carries **at least one property in the pdfuaid namespace**, whatever
+its local name. nib's `checkUAIdentification` returns `Fail` on that first document (a live **false
+fail**) and `checkUAPartValue` returns `NotApplicable` where veraPDF fails (a live **false pass**). The
+corpus cannot see either: it has no such file.
+
+**An absent `amd`/`corr` is a PASSING check, not an absent subject** — P05's measured trap again.
+`5-t03-pass-a.pdf` carries neither and veraPDF reports `passedChecks="1"` for both `5 t4` and `5 t5`.
+
+**Go's `encoding/xml` cannot implement these three clauses as `parseXMP` is written.** `Token()` resolves
+a prefix to its URI and discards the prefix, and the inversion "which prefix maps to this URI" is
+ambiguous on exactly the fixture that matters: `5-t04-fail-a.pdf` binds **both** `pdfuaia` and `pdfuaid`
+to `http://www.aiim.org/pdfua/ns/id/`. The reader therefore moves to `RawToken()` with nib's own
+namespace scope stack — which also means nib now owns the well-formedness check `Token()` was supplying,
+so a mismatched or unclosed tag must still reach `Readable=false` or `7.1 t9`, `5 t1`, `5 t2` and
+`7.2 t33` silently stop being `CannotCheck` on a broken packet.
+
+**`6.1 t1`: `header` is the first line from `%PDF-`, not the eight-byte match.** Measured by four
+length-preserving header mutations, reading the value back out of veraPDF's own `%1` argument:
+`%PDF-1.9` fails and reports `%PDF-1.9`; `%PDF-2.6` fails; replacing the EOL byte with `X` fails and
+reports **`%PDF-1.6X%öäüß`** — the rest of the line, so nothing is truncated; and replacing the EOL with a
+lone `\r` **PASSES**, so a CR terminates the line. The ISO sentence's "followed by a single EOL marker"
+is therefore tested only in the sense that any byte between the digit and the EOL lengthens the string
+past the anchored regex: `%PDF-1.7\r\n` passes, `%PDF-1.7 ` fails. **nib matches veraPDF, and the
+divergence from the ISO text is declared rather than fixed.**
+
+**Where the bytes come from.** `d.raw` (`document.go:81`), already the second reader of it after
+`hasInlineType3Font` (`rules_language.go:652`). A `*Document` built in memory by `openMutated` has no
+`raw`, so the clause is `CannotCheck` naming that — never a `Pass` over bytes nib never saw.
+
+**`6.1 t1`'s `corpusReach` is the whole corpus and `5 t3`/`t4`/`t5`'s is small** — the corpus carries
+`5-t03-pass-a`/`fail-a`, `5-t04-fail-a`, `5-t05-fail-a`. There is no `6.1` directory, so unlike
+`7.18.2 t1`'s zero this clause's reach comes from every file having a header.
+
+Tasks:
+- `T01 — 5 t1's subject is any pdfuaid property, not part` (the false fail).
+- `T02 — 5 t2 fails an identification with no part` (the false pass).
+- `T03 — parseXMP moves to RawToken with nib's own scope stack, keeping well-formedness`.
+- `T04 — 5 t3, 5 t4, 5 t5 over one prefix door`.
+- `T05 — 6.1 t1 in rules_file.go, reading d.raw`.
+- `T06 — oracle documents reaching both halves of all four clauses; corpusReach rows; notTreeRules`.
+
+**(review, 2026-09-23 — three reviewers over the diff, packs `go` + `verification`)** The slice's own
+tests were green and its two oracles agreed when the review started; **every finding below is something
+neither the corpus nor the oracle could see**, and four were live divergences from veraPDF.
+
+- **`6.1 t1` read the wrong string, in both directions.** `header` is the whole LINE that first mentions
+  `%PDF-`, taken from the line's START — measured: veraPDF FAILS `ZZZZ…%PDF-1.6` (junk on the header's own
+  line) and PASSES the same junk on a prior line. Slicing at the `%PDF-` occurrence made the profile's `^`
+  anchor **unfalsifiable**, so nib passed the file veraPDF fails; and a 1 KiB search window refused a file
+  with 2,144 bytes of preamble that pdfcpu opens and veraPDF passes. Seven header shapes now agree exactly.
+- **Attribute-form XMP was invisible, a false FAIL across a whole serialisation.** RDF/XML's abbreviated
+  syntax writes a simple property as an attribute on `rdf:Description`. Measured: veraPDF passes all five
+  clause-5 tests on an attribute-form identification while nib reported `5 t1` Fail and the other four
+  NotApplicable. The corpus cannot see it — every corpus identification is element-form. An UNPREFIXED
+  attribute is in no namespace and must NOT create a subject; that is its own case.
+- **The reader was an attacker-supplied quadratic.** Resolving a prefix walked the open-element stack where
+  `Token()` had kept a flat map. Measured through `Check`: 5,000 deep 57 ms, 20,000 deep 667 ms, 80,000 deep
+  **11.1 s**. The packet is a flate stream inside a PDF the user opened and nothing bounds its decoded size.
+  One binding map popped at each end tag restores O(1), and `maxXMPDepth` refuses past 1,000 as `CannotCheck`
+  — measured after: 100/400/900 deep is 81µs/177µs/403µs.
+- **Three coverage holes with no divergence behind them, each closed by a test that now goes red**: a
+  property's PREFIX and VALUE could be taken from different elements; `5 t4` and `5 t5` were
+  **interchangeable** (swapping their properties left everything green but the corpus, which is skipped where
+  veraPDF is absent); and the `[0-7]` digit class — the clause's namesake — was asserted nowhere, because
+  pdfcpu refuses `%PDF-1.8`/`1.9` before any rule runs.
+- **`checkUAPrefix`'s `!declared` branch was INERT** — an absent property and a default-namespace one both
+  yield an empty prefix, so the two cases are one comparison, stated once.
+
+**Nineteen red-proof probes across two passes; four survivors, all closed.** The blind pass — an adversary
+that never saw the tests — found the one the targeted pass structurally could not: every targeted probe used a
+WRONG prefix and none a MISSING one, so the family agreed with itself and nib refused a default-namespace
+property veraPDF passes.
+
+**Gates.** Oracle **6,132 of 6,132** over 73 documents; corpus **0 false pass / 0 false fail** over 24,742
+pairs, 297 files. `len(Clauses())` is **84**. Three pre-existing XMP-reader defects filed rather than fixed
+(`/pending 654`), each outside this slice's clauses.
+
+**Tier 4 / tier 6 did NOT fire.** The diff touches `internal/uacheck`, `internal/pdfops/labelua.go` (a comment
+count), `README.md` and `docs/accessibility-parity.md` — no `internal/server`, `internal/p2p` or
+`internal/rendezvous`, so neither `pairrepro.sh` nor `ceremonyrepro.sh` has a subject.
 
 #### P06.S02 — the three one-key refusals: Suspects, an embedded file's names, dynamic XFA
 Scope: `7.1 t4` (`Suspects != true` on the mark-info dictionary), `7.11 t1` (a file specification with an
