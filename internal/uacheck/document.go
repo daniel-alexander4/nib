@@ -3,6 +3,7 @@ package uacheck
 import (
 	"bytes"
 	"fmt"
+	"nib/internal/fontcode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -62,11 +63,24 @@ type Document struct {
 	// contentErr is why content could not be read, or not all of it, when it could not.
 	contentErr  string
 	contentDone bool
+	// contentFinished is set when the walk RETURNS; contentDone when it starts. A panic leaves only the second.
+	contentFinished bool
 	// formWalks counts the form XObjects the content walk has entered, and contentOver records that it spent
 	// its budget (`overBudget`).
 	formWalks   int
 	contentOps  int
 	contentOver bool
+	// glyphs is every distinct (font, code) a text-showing operator draws — veraPDF's `Glyph` (`glyphs.go`) —
+	// gathered by the same walk; glyphSeen dedupes it, glyphFonts reads each font once, and glyphCodes counts
+	// the codes read against `maxGlyphCodes`.
+	glyphs     []glyph
+	glyphSeen  map[glyphKey]struct{}
+	glyphFonts map[any]*glyphFont
+	glyphCodes int
+	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
+	toUnicodes      map[uintptr]*fontcode.ToUnicode
+	toUnicodeBlocks int
+	glyphsOver      bool
 	// kids memoises elementKids, keyed by the element's dictionary (`dictID`), and kidBudget is how many more
 	// kids the document may expand before nib stops (`maxKidExpansion`).
 	kids      map[uintptr]kidsResult

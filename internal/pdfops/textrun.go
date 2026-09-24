@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"unicode/utf16"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -12,6 +11,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 
 	"nib/internal/contentstream"
+	"nib/internal/fontcode"
 )
 
 // Positioned runs — `PLAN-accessibility.md` P08.S02, which is `PLAN-text-reflow.md` P03.
@@ -132,14 +132,6 @@ type pageRuns struct {
 // documents do it anyway.
 const maxFormDepth = 12
 
-// maxToUnicodeRange bounds one `bfrange`: a 16-bit code space has 65,536 codes.
-const maxToUnicodeRange = 1 << 16
-
-// maxToUnicodeExpansion bounds the codes one CMap's ranges may expand to in TOTAL: two full 16-bit code
-// spaces. A font nib can split has at most one (a simple font 256 codes, Identity-H 65,536), so the second
-// is headroom for ranges that overlap, not for more distinct codes.
-const maxToUnicodeExpansion = 2 << 16
-
 // readPageRuns reads one page's positioned runs.
 func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
 	return containRunRead(pageNr, func() (pageRuns, error) {
@@ -238,7 +230,7 @@ func loadRunFont(xt *model.XRefTable, obj types.Object) *runFont {
 	if tu, ok := d["ToUnicode"]; ok {
 		if sd, _, serr := xt.DereferenceStreamDict(tu); serr == nil && sd != nil {
 			if body := streamContent(sd); body != nil {
-				f.toUni = parseToUnicode(body)
+				f.toUni = fontcode.TextMap(body)
 			}
 		}
 	}
@@ -468,7 +460,7 @@ func (o runOperand) name(src []byte) (string, bool) {
 	if len(b) < 2 || b[0] != '/' {
 		return "", false
 	}
-	return decodePDFName(b[1:]), true
+	return fontcode.Name(b[1:]), true
 }
 
 func (o runOperand) str(src []byte) ([]byte, bool) {
@@ -478,7 +470,7 @@ func (o runOperand) str(src []byte) ([]byte, bool) {
 	if o.tok.Kind != contentstream.LiteralString && o.tok.Kind != contentstream.HexString {
 		return nil, false
 	}
-	return decodePDFString(o.tok.Bytes(src)), true
+	return fontcode.String(o.tok.Bytes(src)), true
 }
 
 // tjPiece is one element of a `TJ` array: codes to show, or a position adjustment.
@@ -552,12 +544,12 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case contentstream.Whitespace, contentstream.InlineImage:
 			continue
 		case contentstream.ArrayOpen:
-			end := matchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
+			end := fontcode.MatchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
 			ops = append(ops, runOperand{arr: toks[i+1 : end], isArr: true, start: tok.Start})
 			i = end
 			continue
 		case contentstream.DictOpen:
-			end := matchingClose(toks, i, contentstream.DictOpen, contentstream.DictClose)
+			end := fontcode.MatchingClose(toks, i, contentstream.DictOpen, contentstream.DictClose)
 			ops = append(ops, runOperand{opaque: true, dict: toks[i+1 : end], start: tok.Start})
 			i = end
 			continue
@@ -644,7 +636,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				for _, at := range os[0].arr {
 					switch at.Kind {
 					case contentstream.LiteralString, contentstream.HexString:
-						pieces = append(pieces, tjPiece{codes: decodePDFString(at.Bytes(src))})
+						pieces = append(pieces, tjPiece{codes: fontcode.String(at.Bytes(src))})
 					case contentstream.Operand:
 						if v, err := strconv.ParseFloat(string(at.Bytes(src)), 64); err == nil {
 							pieces = append(pieces, tjPiece{adjust: v, isAdjust: true})
@@ -729,7 +721,7 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 			run.codes++
 			w0, src := 0.0, widthNone
 			if gs.font != nil && gs.font.splittable {
-				w0, src = gs.font.widths.advance(codeValue(code))
+				w0, src = gs.font.widths.advance(fontcode.Value(code))
 			}
 			weakest = weakerWidthSource(weakest, src)
 			if s, ok := gs.font.textFor(code); ok {
@@ -874,31 +866,11 @@ func streamContent(sd *types.StreamDict) []byte {
 	return sd.Content
 }
 
-// matchingClose returns the index of the token closing the one at i, or len(toks) when the stream ends
-// first — a malformed stream still tokenizes, and so still walks. Callers slice `toks[i+1:end]` and
-// resume at `end`, which with len(toks) takes the rest and stops.
-//
-// **It returned len(toks)-1 until P08.S04, and that panicked** when the opener was itself the last
-// token: `toks[i+1:len-1]` is a reversed slice. The array branch had that exposure from S02; the
-// truncation test found it only once the dictionary branch began slicing too, because nib's own
-// Markdown draws no `TJ` array for a truncation to cut through.
-func matchingClose(toks []contentstream.Token, i int, open, close contentstream.Kind) int {
-	depth := 0
-	for j := i; j < len(toks); j++ {
-		switch toks[j].Kind {
-		case open:
-			depth++
-		case close:
-			depth--
-			if depth == 0 {
-				return j
-			}
-		}
-	}
-	return len(toks)
-}
-
 // splitCodes cuts shown bytes into character codes: two bytes under Identity, otherwise one.
+//
+// **This is the text reader's lenient cut, not the checker's** (ADR-052): a string ending inside a two-byte code
+// keeps its last byte as a one-byte code, where veraPDF — and so `fontcode.Codespace` — completes it with 0xFF and
+// judges a glyph nobody drew. Reading a width and text for CID 0x41FF would be inventing one.
 func splitCodes(f *runFont, b []byte) [][]byte {
 	n := 1
 	if f != nil && f.twoByte {
@@ -913,254 +885,4 @@ func splitCodes(f *runFont, b []byte) [][]byte {
 		out = append(out, b[i:end])
 	}
 	return out
-}
-
-func codeValue(c []byte) int {
-	v := 0
-	for _, b := range c {
-		v = v<<8 | int(b)
-	}
-	return v
-}
-
-// decodePDFName decodes a name's `#xx` escapes.
-func decodePDFName(b []byte) string {
-	out := make([]byte, 0, len(b))
-	for i := 0; i < len(b); i++ {
-		if b[i] == '#' && i+2 < len(b) {
-			hi, hok := hexNibble(b[i+1])
-			lo, lok := hexNibble(b[i+2])
-			if hok && lok {
-				out = append(out, hi<<4|lo)
-				i += 2
-				continue
-			}
-		}
-		out = append(out, b[i])
-	}
-	return string(out)
-}
-
-// decodePDFString returns a literal or hex string token's bytes, delimiters and escapes removed.
-//
-// `contentstream` deliberately hands out spans, not values — *"a caller that does need one decodes
-// the span itself"* — so this is the reader's, and nothing in the tokenizer changes for it.
-func decodePDFString(raw []byte) []byte {
-	if len(raw) == 0 {
-		return nil
-	}
-	if raw[0] == '<' {
-		return decodeHexString(raw)
-	}
-	if raw[0] != '(' {
-		return nil
-	}
-	body := raw[1:]
-	if n := len(body); n > 0 && body[n-1] == ')' {
-		body = body[:n-1]
-	}
-	out := make([]byte, 0, len(body))
-	for i := 0; i < len(body); i++ {
-		c := body[i]
-		if c == '\r' {
-			// An unescaped end-of-line in a literal is read as a single newline, whatever its spelling.
-			out = append(out, '\n')
-			if i+1 < len(body) && body[i+1] == '\n' {
-				i++
-			}
-			continue
-		}
-		if c != '\\' {
-			out = append(out, c)
-			continue
-		}
-		i++
-		if i >= len(body) {
-			break
-		}
-		switch e := body[i]; e {
-		case 'n':
-			out = append(out, '\n')
-		case 'r':
-			out = append(out, '\r')
-		case 't':
-			out = append(out, '\t')
-		case 'b':
-			out = append(out, '\b')
-		case 'f':
-			out = append(out, '\f')
-		case '(', ')', '\\':
-			out = append(out, e)
-		case '\r':
-			// A backslash at the end of a line continues the string; neither byte is content.
-			if i+1 < len(body) && body[i+1] == '\n' {
-				i++
-			}
-		case '\n':
-		default:
-			if e >= '0' && e <= '7' {
-				v := int(e - '0')
-				for n := 1; n < 3 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7'; n++ {
-					i++
-					v = v*8 + int(body[i]-'0')
-				}
-				out = append(out, byte(v))
-				continue
-			}
-			// An unknown escape: the specification says the backslash is ignored.
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-func decodeHexString(raw []byte) []byte {
-	body := raw[1:]
-	if n := len(body); n > 0 && body[n-1] == '>' {
-		body = body[:n-1]
-	}
-	nibbles := make([]byte, 0, len(body))
-	for _, c := range body {
-		if v, ok := hexNibble(c); ok {
-			nibbles = append(nibbles, v)
-		}
-	}
-	if len(nibbles)%2 == 1 {
-		nibbles = append(nibbles, 0) // a missing final digit is zero
-	}
-	out := make([]byte, len(nibbles)/2)
-	for i := range out {
-		out[i] = nibbles[2*i]<<4 | nibbles[2*i+1]
-	}
-	return out
-}
-
-func hexNibble(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
-}
-
-// cmapItem is one operand inside a `bfchar`/`bfrange` block.
-type cmapItem struct {
-	b     []byte
-	arr   [][]byte
-	isArr bool
-}
-
-// parseToUnicode reads a `/ToUnicode` CMap's `bfchar` and `bfrange` blocks — both range forms, the
-// incrementing destination and the array of destinations — into code bytes → text.
-//
-// # A total budget, not only a per-range one (`/pending 503`)
-//
-// `maxToUnicodeRange` bounds ONE range, and one range is not the cost: a 2.2 KB CMap of a hundred
-// overlapping full-plane ranges expanded 6.5 million codes into 65,536 entries, 5.1 s and 110 MB, reached
-// from `ProposeTags` and `CommitTags` on any page drawn in that font. So every range spends from
-// `maxToUnicodeExpansion`, and a range that does not fit what is left is not expanded — its codes read as
-// undecoded, which the run already reports, rather than as a stall.
-func parseToUnicode(src []byte) map[string]string {
-	out := map[string]string{}
-	budget := maxToUnicodeExpansion
-	toks := contentstream.Tokenize(src)
-	mode := ""
-	var items []cmapItem
-	for i := 0; i < len(toks); i++ {
-		t := toks[i]
-		switch t.Kind {
-		case contentstream.Whitespace:
-			continue
-		case contentstream.HexString:
-			if mode != "" {
-				items = append(items, cmapItem{b: decodeHexString(t.Bytes(src))})
-			}
-			continue
-		case contentstream.ArrayOpen:
-			end := matchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
-			if mode != "" {
-				var arr [][]byte
-				for _, at := range toks[i+1 : end] {
-					if at.Kind == contentstream.HexString {
-						arr = append(arr, decodeHexString(at.Bytes(src)))
-					}
-				}
-				items = append(items, cmapItem{arr: arr, isArr: true})
-			}
-			i = end
-			continue
-		}
-		switch string(t.Bytes(src)) {
-		case "beginbfchar":
-			mode, items = "char", nil
-		case "beginbfrange":
-			mode, items = "range", nil
-		case "endbfchar":
-			for j := 0; j+1 < len(items); j += 2 {
-				if !items[j].isArr && !items[j+1].isArr {
-					out[string(items[j].b)] = utf16Text(items[j+1].b)
-				}
-			}
-			mode, items = "", nil
-		case "endbfrange":
-			for j := 0; j+2 < len(items); j += 3 {
-				lo, hi := items[j], items[j+1]
-				if lo.isArr || hi.isArr || len(lo.b) != len(hi.b) {
-					continue
-				}
-				expandBFRange(out, lo.b, hi.b, items[j+2], &budget)
-			}
-			mode, items = "", nil
-		}
-	}
-	return out
-}
-
-func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem, budget *int) {
-	l, h := codeValue(lo), codeValue(hi)
-	if h < l || h-l >= maxToUnicodeRange || h-l+1 > *budget {
-		return
-	}
-	*budget -= h - l + 1
-	for k := 0; k <= h-l; k++ {
-		code := make([]byte, len(lo))
-		v := l + k
-		for b := len(code) - 1; b >= 0; b-- {
-			code[b] = byte(v)
-			v >>= 8
-		}
-		if dst.isArr {
-			if k < len(dst.arr) {
-				out[string(code)] = utf16Text(dst.arr[k])
-			}
-			continue
-		}
-		d := append([]byte(nil), dst.b...)
-		switch {
-		case len(d) >= 2:
-			u := int(d[len(d)-2])<<8 | int(d[len(d)-1])
-			u += k
-			d[len(d)-2], d[len(d)-1] = byte(u>>8), byte(u)
-		case len(d) == 1:
-			d[0] += byte(k)
-		}
-		out[string(code)] = utf16Text(d)
-	}
-}
-
-// utf16Text decodes a CMap destination, which is UTF-16BE and may carry surrogate pairs or several
-// characters (a ligature maps to two).
-func utf16Text(b []byte) string {
-	if len(b)%2 == 1 {
-		return string(b)
-	}
-	u := make([]uint16, len(b)/2)
-	for i := range u {
-		u[i] = uint16(b[2*i])<<8 | uint16(b[2*i+1])
-	}
-	return string(utf16.Decode(u))
 }

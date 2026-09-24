@@ -117,6 +117,14 @@ func TestEveryVendoredThingIsInTheNotices(t *testing.T) {
 			"not reading web/vendor/", dirs)
 	}
 
+	// The Adobe Glyph List the PDF/UA checker embeds (P07.S02).
+	if !strings.Contains(body, "internal/uacheck/agl/") {
+		t.Error("internal/uacheck/agl/glyphlist.txt ships in the binary and THIRD-PARTY-NOTICES.md does not name it")
+	} else if sec := body[strings.Index(body, "## Adobe Glyph List"):]; !strings.Contains(sec, "Copyright 2002-2019 Adobe") ||
+		!strings.Contains(sec, "Neither the name of Adobe") || !strings.Contains(sec, "SUCH DAMAGE.") {
+		t.Error("the Adobe Glyph List section does not carry its licence — copyright line, no-endorsement clause and disclaimer")
+	}
+
 	// The fonts, by family name. Each file is <Family>-<Style>.ttf; the notices credit
 	// families, which is the right granularity for an OFL/Apache attribution.
 	fonts, err := os.ReadDir("internal/pdfops/fonts")

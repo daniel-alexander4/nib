@@ -2,7 +2,6 @@ package pdfops
 
 import (
 	"bytes"
-	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -49,88 +48,6 @@ func TestARunKnowsWhetherItsBaselineTurns(t *testing.T) {
 		if v, ok := got[text]; !ok || v != want {
 			t.Errorf("run %q reads rotated=%v (present %v), want %v", text, v, ok, want)
 		}
-	}
-}
-
-// TestAPDFStringDecodesEveryEscapeForm — the reader's half of what `contentstream` leaves as spans.
-func TestAPDFStringDecodesEveryEscapeForm(t *testing.T) {
-	for _, c := range []struct{ raw, want string }{
-		{`(plain)`, "plain"},
-		{`(a\(b\)c)`, "a(b)c"},
-		{`(back\\slash)`, `back\slash`},
-		{`(\101\102)`, "AB"},
-		{`(\0053)`, "\x053"},
-		{`(\7)`, "\x07"},
-		{`(\n\r\t\b\f)`, "\n\r\t\b\f"},
-		{"(x\\\ny)", "xy"},
-		{"(x\\\r\ny)", "xy"},
-		{"(a\r\nb)", "a\nb"},
-		{`(\q)`, "q"},
-		{`<48656C6C6F>`, "Hello"},
-		{`<48 65 6c>`, "Hel"},
-		{`<486>`, "H`"},
-		{`<>`, ""},
-		{`()`, ""},
-	} {
-		if got := string(decodePDFString([]byte(c.raw))); got != c.want {
-			t.Errorf("%s decodes to %q, want %q", c.raw, got, c.want)
-		}
-	}
-}
-
-// TestToUnicodeReadsCharsRangesAndSurrogates — both producers the corpus measured write `bfchar`
-// only; the specification's two `bfrange` forms are driven here, where no generated document reaches.
-func TestToUnicodeReadsCharsRangesAndSurrogates(t *testing.T) {
-	cm := parseToUnicode([]byte(`/CIDInit /ProcSet findresource begin
-12 dict begin begincmap
-1 begincodespacerange <0000> <FFFF> endcodespacerange
-3 beginbfchar
-<0001> <005A>
-<0002> <00660069>
-<0003> <D83DDE00>
-endbfchar
-2 beginbfrange
-<0010> <0012> <0041>
-<0020> <0021> [<0061> <0062>]
-endbfrange
-endcmap`))
-	for code, want := range map[string]string{
-		"\x00\x01": "Z", "\x00\x02": "fi", "\x00\x03": "\U0001F600",
-		"\x00\x10": "A", "\x00\x11": "B", "\x00\x12": "C",
-		"\x00\x20": "a", "\x00\x21": "b",
-	} {
-		if got, ok := cm[code]; !ok || got != want {
-			t.Errorf("code % X maps to %q (present %v), want %q", code, got, ok, want)
-		}
-	}
-	if _, ok := cm["\x00\x13"]; ok {
-		t.Error("a code past the incrementing range's end was mapped")
-	}
-	huge := parseToUnicode([]byte("1 beginbfrange <000000> <FFFFFF> <0041> endbfrange"))
-	if len(huge) != 0 {
-		t.Errorf("a range of 2^24 codes expanded to %d entries — one line in a document allocating without limit", len(huge))
-	}
-}
-
-// TestACMapHasATotalExpansionBudget — `/pending 503`. Each range was bounded and their sum was not: a
-// hundred overlapping full-plane ranges in 2.2 KB cost 5.1 s and 110 MB. Asserted on WHICH ranges
-// expanded, not on a clock: range n maps code 0000 to the letter n, so the surviving value names the last
-// range that was expanded.
-func TestACMapHasATotalExpansionBudget(t *testing.T) {
-	var b strings.Builder
-	b.WriteString("100 beginbfrange\n")
-	for i := 0; i < 100; i++ {
-		fmt.Fprintf(&b, "<0000> <FFFF> <%04X>\n", 0x41+i)
-	}
-	b.WriteString("endbfrange\n")
-	got := parseToUnicode([]byte(b.String()))["\x00\x00"]
-	if got != "B" {
-		t.Errorf("code 0000 maps to %q: ranges past the second full plane were still expanded (want %q, "+
-			"the second range's value — %q would be the hundredth)", got, "B", string(rune(0x41+99)))
-	}
-	// The floor under the budget: ONE full plane is a real Identity-H font's whole ToUnicode.
-	if plane := parseToUnicode([]byte("1 beginbfrange <0000> <FFFF> <0041> endbfrange")); len(plane) != 1<<16 {
-		t.Errorf("one full-plane range expanded to %d entries, want %d — the budget refuses a real font", len(plane), 1<<16)
 	}
 }
 

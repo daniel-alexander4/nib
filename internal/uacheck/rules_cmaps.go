@@ -150,38 +150,50 @@ func (d *Document) type0Fonts() ([]type0Font, string) {
 		if kids, err := d.Ctx.DereferenceArray(uf.dict["DescendantFonts"]); err == nil && len(kids) > 0 {
 			f.cidFont = d.dict(kids[0])
 		}
-		seen := map[int]bool{}
-		obj, referenced := uf.dict["Encoding"], false
-		for hop := 0; obj != nil; hop++ {
-			if hop >= maxUseCMapChain {
-				return nil, fmt.Sprintf("%s: the font's /UseCMap chain runs past %d CMaps and nib stopped reading there", uf.where, maxUseCMapChain)
-			}
-			if ir, ok := obj.(types.IndirectRef); ok {
-				if seen[ir.ObjectNumber.Value()] {
-					// A cycle. Not reachable through a file today — pdfcpu's validator recurses on one and the
-					// process dies (/pending 675) — and veraPDF throws "Loop inside CMap" and reports nothing;
-					// stopping here is what keeps the walk finite the day the reader stops recursing.
-					break
-				}
-				seen[ir.ObjectNumber.Value()] = true
-			}
-			c := cmapRef{obj: obj, referenced: referenced, where: uf.where}
-			var next types.Object
-			if n, ok := d.nameOf(obj); ok {
-				c.name = n
-			} else if sd, _, err := d.Ctx.DereferenceStreamDict(obj); err == nil && sd != nil {
-				c.stream = sd
-				if n, ok := d.nameOf(sd.Dict["CMapName"]); ok {
-					c.name = n
-				} else if t, ok := d.text(sd.Dict["CMapName"]); ok {
-					c.name = t
-				}
-				next = sd.Dict["UseCMap"]
-			}
-			f.cmaps = append(f.cmaps, c)
-			obj, referenced = next, true
+		cmaps, why := d.cmapChain(uf.dict, uf.where)
+		if why != "" {
+			return nil, why
 		}
+		f.cmaps = cmaps
 		out = append(out, f)
+	}
+	return out, ""
+}
+
+// cmapChain is a Type 0 font's `/Encoding` CMap followed by every CMap its `/UseCMap` chain references, each
+// object once — the one reading of that chain, which the CMap clauses and the glyph population both take.
+func (d *Document) cmapChain(font types.Dict, where string) ([]cmapRef, string) {
+	var out []cmapRef
+	seen := map[int]bool{}
+	obj, referenced := font["Encoding"], false
+	for hop := 0; obj != nil; hop++ {
+		if hop >= maxUseCMapChain {
+			return nil, fmt.Sprintf("%s: the font's /UseCMap chain runs past %d CMaps and nib stopped reading there", where, maxUseCMapChain)
+		}
+		if ir, ok := obj.(types.IndirectRef); ok {
+			if seen[ir.ObjectNumber.Value()] {
+				// A cycle. Not reachable through a file today — pdfcpu's validator recurses on one and the
+				// process dies (/pending 675) — and veraPDF throws "Loop inside CMap" and reports nothing;
+				// stopping here is what keeps the walk finite the day the reader stops recursing.
+				break
+			}
+			seen[ir.ObjectNumber.Value()] = true
+		}
+		c := cmapRef{obj: obj, referenced: referenced, where: where}
+		var next types.Object
+		if n, ok := d.nameOf(obj); ok {
+			c.name = n
+		} else if sd, _, err := d.Ctx.DereferenceStreamDict(obj); err == nil && sd != nil {
+			c.stream = sd
+			if n, ok := d.nameOf(sd.Dict["CMapName"]); ok {
+				c.name = n
+			} else if t, ok := d.text(sd.Dict["CMapName"]); ok {
+				c.name = t
+			}
+			next = sd.Dict["UseCMap"]
+		}
+		out = append(out, c)
+		obj, referenced = next, true
 	}
 	return out, ""
 }

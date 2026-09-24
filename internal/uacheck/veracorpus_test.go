@@ -160,7 +160,7 @@ var corpusReach = map[string]int{
 	"7.18.6.2 t1": 5, "7.18.6.2 t2": 5,
 	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
-	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 274,
+	"7.21.4.1 t1": 287, "7.21.4.2 t2": 43, "7.21.7 t1": 282, "7.21.7 t2": 282,
 }
 
 // corpusUnreadable is every corpus file nib's reader cannot open, with why. Reported, not scored. Both

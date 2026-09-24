@@ -177,6 +177,26 @@ if [ -d web/vendor/pdfjs/cmaps ]; then
   emit ""
 fi
 
+# The Adobe Glyph List, vendored unmodified for the PDF/UA checker's glyph names (P07.S02). Adobe's again,
+# under its own three-clause BSD licence, which the file carries in its header — reproduced from there, so
+# the notice and the file cannot disagree.
+if [ -f internal/uacheck/agl/glyphlist.txt ]; then
+  emit "## Adobe Glyph List"
+  emit ""
+  emit "Vendored under \`internal/uacheck/agl/\` ($(cat internal/uacheck/agl/VERSION)), read by the"
+  emit "PDF/UA checker to map a glyph name to Unicode. Redistributed under the following three-clause"
+  emit "BSD licence, reproduced from the file's own header:"
+  emit ""
+  # The header between the file's first two rules of dashes, whatever its length — a fixed line range would cut
+  # a longer upstream header silently.
+  awk '/^# -+$/ { n++; next } n == 1' internal/uacheck/agl/glyphlist.txt | sed -e 's/^# \{0,1\}//' | sed -e 's/[[:space:]]*$//' >>"$tmp"
+  emit ""
+  emit "Upstream: <https://github.com/adobe-type-tools/agl-aglfn>."
+  emit ""
+  emit "---"
+  emit ""
+fi
+
 # The one class of licence in the walk that is not permissive gets its obligations stated, and
 # the modules it covers are the walk's own list (see `mpl_mods` above) — never a hand-typed one.
 # The earlier form of this note said the DHT was "reached only from tests" long after

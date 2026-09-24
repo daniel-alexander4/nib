@@ -246,6 +246,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"embedded CMap referencing GB-EUC-H", buildPDF(type0Doc("20 0 R", gbInfo, map[int]string{20: cmapStream("/UseCMap /GB-EUC-H "+gbInfo, "Cust", "")}))},
 		oracleDoc{"embedded CMap referencing an embedded CMap", buildPDF(type0Doc("20 0 R", gbInfo, map[int]string{20: cmapStream("/UseCMap 21 0 R "+gbInfo, "Cust", ""), 21: cmapStream(gbInfo, "Base", "")}))},
 		oracleDoc{"CIDFontType2 with no CIDToGIDMap", withCIDFontType2(t, false)},
+		// P07.S02. The two `/pending 657` shapes on nib's own conversion — a <0000> destination (7.21.7 t2) and a
+		// drawn code left with no entry (t1) — on the product door whose /ToUnicode a user's own text runs through.
+		oracleDoc{"Markdown + title + lang, a ToUnicode destination rewritten to <0000>", toUnicodeRewritten(t, mdl, true)},
+		oracleDoc{"Markdown + title + lang, a drawn code's ToUnicode entry moved away", toUnicodeRewritten(t, mdl, false)},
 		must("Markdown n-up, two pages a sheet", nup, nerr2),
 		oracleDoc{"Markdown n-up, sheet 2 drawing sheet 1's form", withSheetFormFused(t, nup)},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
@@ -327,6 +331,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	} else {
 		t.Log("NOTE (a narrower corpus, not a pass): LibreOffice is absent, so the documents " +
 			"whose structure nib did not write — and the only tables and figures — are missing from this run")
+	}
+	// P07.S02: every shape of 7.21.7 the glyph door reads, each asked of veraPDF on every run.
+	for _, f := range glyphFixtures() {
+		docs = append(docs, oracleDoc{"glyphs: " + f.name, f.pdf})
 	}
 	return docs
 }
@@ -452,16 +460,44 @@ type veraReport struct {
 // A row appearing is a gap in nib a person must look at; a row that stops appearing means the gap closed
 // and the row is a claim about code that no longer behaves that way.
 var knownCannotCheck = map[string]string{
-	// P07.S01's seven CMap documents use a Type 0 font with no /ToUnicode, and the SHIPPED 7.21.7 t1 is per-FONT and
-	// refuses one (/pending 657). P07.S02 rebuilds the clause per glyph; these rows are the stimulus that proves it
-	// did — the guard fails "nib now answers — remove the row" the moment they close.
-	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.7 t1":     "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
-	"Type 0 font over an unknown CMap / 7.21.7 t1":            "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
-	"embedded CMap, /WMode agreeing / 7.21.7 t1":              "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
-	"embedded CMap, /WMode 1 in the program only / 7.21.7 t1": "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
-	"embedded CMap referencing GB-EUC-H / 7.21.7 t1":          "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
-	"embedded CMap referencing an embedded CMap / 7.21.7 t1":  "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
-	"CIDFontType2 with no CIDToGIDMap / 7.21.7 t1":            "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	// P07.S01's CMap documents draw a Type 0 font with no /ToUnicode, and 7.21.7 is per GLYPH since P07.S02: where
+	// veraPDF's answer needs data nib does not carry — a predefined CMap's codespace, or Adobe's UCS2 CMaps — both
+	// halves refuse, naming which. (The CIDFontType2 document closed at P07.S02: Adobe-Identity has no UCS2 CMap,
+	// so its glyphs are null and it fails, as veraPDF does.)
+	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.7 t1":     "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.7 t2":     "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"Type 0 font over an unknown CMap / 7.21.7 t1":            "the font's CMap is neither embedded nor a predefined name (veraPDF throws reading its codes and drops the string)",
+	"Type 0 font over an unknown CMap / 7.21.7 t2":            "the font's CMap is neither embedded nor a predefined name (veraPDF throws reading its codes and drops the string)",
+	"embedded CMap, /WMode agreeing / 7.21.7 t1":              "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	"embedded CMap, /WMode agreeing / 7.21.7 t2":              "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	"embedded CMap, /WMode 1 in the program only / 7.21.7 t1": "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	"embedded CMap, /WMode 1 in the program only / 7.21.7 t2": "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	"embedded CMap referencing GB-EUC-H / 7.21.7 t1":          "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"embedded CMap referencing GB-EUC-H / 7.21.7 t2":          "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
+	"embedded CMap referencing an embedded CMap / 7.21.7 t1":  "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	"embedded CMap referencing an embedded CMap / 7.21.7 t2":  "no /ToUnicode, and veraPDF falls back to Adobe-GB1-UCS2, which nib does not carry",
+	// P07.S02: veraPDF discards a /ToUnicode its parser throws on and falls back to the encoding; nib refuses rather
+	// than claim to know which CMaps its PostScript interpreter throws on.
+	"glyphs: a malformed ToUnicode / 7.21.7 t1": "a /ToUnicode with an entry of the wrong kind, which veraPDF discards whole",
+	"glyphs: a malformed ToUnicode / 7.21.7 t2": "a /ToUnicode with an entry of the wrong kind, which veraPDF discards whole",
+	// An embedded Encoding CMap NAMED Identity-H falls back through the DESCENDANT's collection — Japan1 here — and
+	// nib does not carry Adobe-Japan1-UCS2 (veraPDF passes).
+	"glyphs: an embedded CMap NAMED Identity-H falls back through the descendant (Adobe-Japan1) / 7.21.7 t1": "the fallback is Adobe-Japan1-UCS2, which nib does not carry",
+	"glyphs: an embedded CMap NAMED Identity-H falls back through the descendant (Adobe-Japan1) / 7.21.7 t2": "the fallback is Adobe-Japan1-UCS2, which nib does not carry",
+	// A ToUnicode program that `usecmap`s a UCS2 CMap: veraPDF merges that CMap's entries at the operator, and nib
+	// does not carry it (veraPDF passes).
+	"glyphs: a ToUnicode program using Adobe-Japan1-UCS2 / 7.21.7 t1": "the ToUnicode uses Adobe-Japan1-UCS2, which nib does not carry",
+	"glyphs: a ToUnicode program using Adobe-Japan1-UCS2 / 7.21.7 t2": "the ToUnicode uses Adobe-Japan1-UCS2, which nib does not carry",
+	// Text drawn only in a font that does not resolve: veraPDF has no font and so no subject; a font pdfcpu DROPPED
+	// would be one veraPDF sees. nib cannot tell the two apart, so every font clause refuses.
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.1 t1": "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.7 t1":   "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.7 t2":   "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.1 t1": "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.2 t1": "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.3 t1": "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.3 t2": "an unresolved font: absent, or dropped by pdfcpu",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.3.3 t3": "an unresolved font: absent, or dropped by pdfcpu",
 
 	// P06.S04. `7.7 t1` cannot type an element whose role map loops, exactly as `7.3 t1` cannot — both
 	// refuse rather than say "the document has no Formula", because the untypable element MAY be one.
@@ -506,7 +542,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 87
+	const wantGenerated = 148
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

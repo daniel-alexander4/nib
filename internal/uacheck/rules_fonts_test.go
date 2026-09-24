@@ -89,10 +89,12 @@ func TestRenderingIsDecidedByTheRenderModeInForce(t *testing.T) {
 		want          Verdict
 	}{
 		{"visible text", "BT /F1 12 Tf 72 700 Td (abc) Tj ET", Fail},
-		{"invisible text (3 Tr) is not used for rendering", "BT /F1 12 Tf 3 Tr 72 700 Td (abc) Tj ET", NotApplicable},
+		// Not used for rendering, so the font PASSES (`renderingMode == 3`) — a subject, not an absence: veraPDF
+		// reports one passed check (P07.S02; NotApplicable here had never been scored strictly).
+		{"invisible text (3 Tr) is not used for rendering", "BT /F1 12 Tf 3 Tr 72 700 Td (abc) Tj ET", Pass},
 		{"clipping text (7 Tr) IS used for rendering", "BT /F1 12 Tf 7 Tr 72 700 Td (abc) Tj ET", Fail},
 		{"Q restores the render mode", "q BT /F1 12 Tf 3 Tr ET Q BT /F1 12 Tf 72 700 Td (abc) Tj ET", Fail},
-		{"ET does NOT reset the render mode", "BT /F1 12 Tf 3 Tr ET BT 72 700 Td (abc) Tj ET", NotApplicable},
+		{"ET does NOT reset the render mode", "BT /F1 12 Tf 3 Tr ET BT 72 700 Td (abc) Tj ET", Pass},
 		{"Tf with nothing shown", "BT /F1 12 Tf ET", NotApplicable},
 	} {
 		got := verdictOf(t, pageWithContent(c.content), "7.21.4.1 t1")
@@ -113,7 +115,8 @@ func TestUnicodeMappingHasNoInvisibleExemption(t *testing.T) {
 		{"ZapfDingbats visible", "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>", "BT /F1 12 Tf 72 700 Td (4) Tj ET", Fail},
 		{"ZapfDingbats invisible", "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>", "BT /F1 12 Tf 3 Tr 72 700 Td (4) Tj ET", Fail},
 		{"Symbol visible", "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>", "BT /F1 12 Tf 72 700 Td (a) Tj ET", Fail},
-		{"an unmeasured TrueType with no ToUnicode", "<< /Type /Font /Subtype /TrueType /BaseFont /SomeFace >>", "BT /F1 12 Tf 72 700 Td (a) Tj ET", CannotCheck},
+		// No encoding and no program: nothing names the glyph, so its Unicode is null (measured at P07.S02).
+		{"a TrueType face with no encoding, no program and no ToUnicode", "<< /Type /Font /Subtype /TrueType /BaseFont /SomeFace >>", "BT /F1 12 Tf 72 700 Td (a) Tj ET", Fail},
 	} {
 		got := verdictOf(t, pageWithFont(c.font, c.content), "7.21.7 t1")
 		if got.Verdict != c.want {
