@@ -92,8 +92,9 @@ func TestEveryRegisteredClauseHasASummaryTheReportCanShow(t *testing.T) {
 //
 // P07.S07's counterexample was a tagged Markdown document whose heading skipped a level: it passed all
 // of nib's clauses and failed veraPDF's 7.4.2 t1. `/pending 487` made nib check that rule, and the class
-// remains — a paragraph tagged `/Formula` with no alternate text passes all of them and fails 7.7 t1,
-// held by `counterexample_test.go`. The code cannot close the class without implementing the whole
+// remains: a `/Formula` with no alternate text replaced it and was itself caught by P06.S04, and the
+// example now held by `counterexample_test.go` is a font whose glyph widths disagree with its own
+// embedded font program, which fails 7.21.5 t1. The code cannot close the class without implementing the whole
 // profile, so what is asserted here is that nothing a person reads calls a passing report "PDF/UA".
 func TestPassingEveryClauseNibChecksIsNotConformanceAndTheDocsSaySo(t *testing.T) {
 	// The count is the registry's, never a literal: a literal here and a literal in the README agree with each

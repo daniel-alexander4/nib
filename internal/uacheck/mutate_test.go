@@ -1649,3 +1649,38 @@ func openEncrypted(t *testing.T, pdf []byte, password string) (*Document, string
 	}
 	return &Document{Ctx: ctx, Catalog: cat, raw: pdf}, ""
 }
+
+// withFormulaParagraph retypes the document's first addressable paragraph to `/Formula` through the
+// structure editor's own door, optionally giving it alternate text (P06.S04).
+//
+// **This is the construction that used to BE the documented counterexample.** Until `7.7 t1` shipped,
+// a Markdown conversion whose paragraph was retyped `/Formula` with no alternate text passed every
+// clause nib checked and failed veraPDF; `counterexample_test.go` built exactly this and asserted it.
+// Now that the checker catches it, the same construction is what puts both halves of the clause in
+// front of the oracle — the example did not disappear, it became a test.
+func withFormulaParagraph(t *testing.T, pdf []byte, alt string) []byte {
+	t.Helper()
+	tree, err := pdfops.ReadStructure(pdf)
+	if err != nil {
+		t.Fatalf("read structure: %v", err)
+	}
+	para := 0
+	for _, e := range tree.Elements {
+		if e.Standard == "P" && e.ID > 0 {
+			para = e.ID
+			break
+		}
+	}
+	if para == 0 {
+		t.Fatal("setup: no addressable paragraph to retype, so the fixture is the unmutated document")
+	}
+	edits := []pdfops.StructureEdit{{Kind: "retype", Element: para, Value: "Formula", Index: -1}}
+	if alt != "" {
+		edits = append(edits, pdfops.StructureEdit{Kind: "alt", Element: para, Value: alt, Index: -1})
+	}
+	out, err := pdfops.EditStructure(pdf, edits)
+	if err != nil {
+		t.Fatalf("retype to Formula: %v", err)
+	}
+	return out
+}

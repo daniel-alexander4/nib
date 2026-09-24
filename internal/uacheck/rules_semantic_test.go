@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/pdfops"
 )
 
 // The clauses the structure editor exists to satisfy — `PLAN-accessibility.md` P09.S05.
@@ -241,5 +245,124 @@ func TestTheFigureAndTableCasesAgreeWithVeraPDF(t *testing.T) {
 	// CannotCheck agrees with anything, so a rule that answered it everywhere would pass the loop above.
 	if settled < 20 {
 		t.Errorf("only %d case(s) settled either way — the agreement above is mostly CannotCheck agreeing with everything", settled)
+	}
+}
+
+// 7.7 t1 — a Formula's alternate text (P06.S04).
+//
+// **The profile's asymmetry is measured, not tidied**: the test is
+// `(Alt != null && Alt != ”) || ActualText != null`, so an EMPTY `/Alt` FAILS while an EMPTY
+// `/ActualText` PASSES. Making the two consistent would be nib disagreeing with the oracle on a
+// document veraPDF accepts.
+func TestAFormulaNeedsAlternateTextAndTheEmptyCasesDiffer(t *testing.T) {
+	md, err := pdfops.ConvertDocToPDF([]byte("# A heading\n\nA paragraph of body text.\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	titled, err := pdfops.SetTitle(md, "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Control: no Formula at all, so the clause has no subject.
+	if got := verdictOf(t, titled, "7.7 t1"); got.Verdict != NotApplicable {
+		t.Fatalf("control: a document with no Formula reports %v (%s), want NotApplicable", got.Verdict, got.Why)
+	}
+	bare := withFormulaParagraph(t, titled, "")
+	got := verdictOf(t, bare, "7.7 t1")
+	if got.Verdict != Fail {
+		t.Fatalf("a Formula with no alternate text reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	// **`Where`, not `Why`.** `Why` is a hard-coded literal containing the word "Formula", so asserting
+	// on it cannot go red for any input; `Where` is derived from the element nib actually found.
+	if !strings.Contains(got.Where, "Formula") {
+		t.Errorf("the refusal points at %q, which does not name the element nib found — `Why` is a "+
+			"literal and says nothing about which element failed", got.Where)
+	}
+	if got := verdictOf(t, withFormulaParagraph(t, titled, "the quadratic formula"), "7.7 t1"); got.Verdict != Pass {
+		t.Errorf("a Formula with alternate text reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+
+	// The two empty cases, driven directly on the parsed document — the structure editor will not
+	// write an empty `/Alt`, and this is the asymmetry the clause turns on.
+	for _, c := range []struct {
+		key  string
+		to   types.Object
+		want Verdict
+		why  string
+	}{
+		{"Alt", types.StringLiteral(""), Fail, "an EMPTY /Alt fails: the test requires it non-empty"},
+		{"ActualText", types.StringLiteral(""), Pass, "an EMPTY /ActualText passes: the test only requires it present"},
+	} {
+		d := openMutated(t, bare, func(d *Document, _ types.Dict) {
+			nodes, unread := d.structNodes()
+			if unread != "" {
+				t.Fatalf("the structure walk was short: %s", unread)
+			}
+			std, untyped := d.standardTypes(nodes)
+			if untyped != "" {
+				t.Fatalf("an element could not be typed: %s", untyped)
+			}
+			set := 0
+			for i, n := range nodes {
+				if std[i] == "Formula" {
+					n.dict[c.key] = c.to
+					set++
+				}
+			}
+			if set == 0 {
+				t.Fatalf("setup: no Formula element to put /%s on", c.key)
+			}
+		})
+		if v := registry["7.7 t1"].Check(d); v.Verdict != c.want {
+			t.Errorf("/%s = \"\" reports %v (%s), want %v — %s", c.key, v.Verdict, v.Why, c.want, c.why)
+		}
+	}
+}
+
+// **A dangling `/ActualText` reference is an ABSENT value, not a present one** (P06.S04, found by
+// review). A raw map read returns true for a reference to an object that does not exist, and veraPDF
+// reads such a value as absent — measured: a Formula whose only alternate text was `/ActualText 9999 0
+// R` with object 9999 missing was PASSED by nib and FAILED by veraPDF, while the same dangling
+// reference on `/Alt` was failed by both, because that arm already resolved.
+//
+// The two clauses share one predicate, so this asserts BOTH — the defect was pre-existing in `7.3 t1`
+// and the extraction is what put the two halves side by side where the asymmetry was visible.
+func TestADanglingAlternateTextReferenceIsAbsent(t *testing.T) {
+	md, err := pdfops.ConvertDocToPDF([]byte("# A heading\n\nA paragraph of body text.\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	titled, err := pdfops.SetTitle(md, "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare := withFormulaParagraph(t, titled, "")
+	for _, key := range []string{"ActualText", "Alt"} {
+		d := openMutated(t, bare, func(d *Document, _ types.Dict) {
+			nodes, unread := d.structNodes()
+			if unread != "" {
+				t.Fatalf("the structure walk was short: %s", unread)
+			}
+			std, untyped := d.standardTypes(nodes)
+			if untyped != "" {
+				t.Fatalf("an element could not be typed: %s", untyped)
+			}
+			set := 0
+			for i, n := range nodes {
+				if std[i] == "Formula" {
+					delete(n.dict, "Alt")
+					delete(n.dict, "ActualText")
+					n.dict[key] = types.IndirectRef{ObjectNumber: types.Integer(9999)}
+					set++
+				}
+			}
+			if set == 0 {
+				t.Fatalf("setup: no Formula element to put a dangling /%s on", key)
+			}
+		})
+		if got := registry["7.7 t1"].Check(d); got.Verdict != Fail {
+			t.Errorf("a Formula whose only /%s is a dangling reference reports %v (%s), want Fail — "+
+				"veraPDF reads a reference to a missing object as ABSENT", key, got.Verdict, got.Why)
+		}
 	}
 }

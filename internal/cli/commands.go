@@ -112,9 +112,11 @@ func cmdPDFA(args []string) int {
 // direct `uacheck.Check` here, so the CLI and the UI cannot hold two readings of the verdicts.
 //
 // **Exit 0 means every clause nib checks passes, and nothing more** — measured: a document whose
-// paragraph is tagged `/Formula` with no alternate text passes all of nib's clauses and fails veraPDF's
-// 7.7 t1, which nib does not check (P07.S07's first example, a skipped heading level, is checked since
-// `/pending 487`; `uacheck/counterexample_test.go` holds the current one). Exit 1
+// font's glyph widths disagree with its own embedded font program passes all of nib's clauses and
+// fails veraPDF's 7.21.5 t1, which nib does not check. **Two earlier examples were RETIRED by being
+// caught** — a skipped heading level by `/pending 487`, a `/Formula` with no alternate text by P06.S04
+// — which is the healthy direction; `uacheck/counterexample_test.go` holds the current one and goes red
+// when it too is caught. Exit 1
 // means a checked clause failed or could not be checked, with every reason on stderr. Neither is a
 // PDF/UA verdict, and the output says so.
 func cmdUA(args []string) int {
