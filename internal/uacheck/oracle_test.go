@@ -71,6 +71,7 @@ type oracleDoc struct {
 // not write.
 func oracleCorpus(t *testing.T) []oracleDoc {
 	t.Helper()
+	gbInfo := "/CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >>"
 	must := func(name string, b []byte, err error) oracleDoc {
 		if err != nil {
 			t.Fatalf("corpus: %s: %v", name, err)
@@ -236,6 +237,15 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// on several — scored identically broken and repaired by every instrument the repo then had (ADR-038).
 		// The failing half is that fusion, written back: sheet 2 drawing sheet 1's form. Measured on veraPDF
 		// before being pinned: 7 checks passed on the first, 6 passed and 1 failed on the second.
+		// P07.S01. Nib writes no Type 0 font with a CMap other than Identity-H, so every half of the five CMap
+		// clauses beyond "passed" is a built document — each measured on veraPDF before being pinned.
+		oracleDoc{"Type 0 font, GB-EUC-H over supplement 2", buildPDF(type0Doc("/GB-EUC-H", "/CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >>", nil))},
+		oracleDoc{"Type 0 font over an unknown CMap", buildPDF(type0Doc("/Foo-H", "/CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >>", nil))},
+		oracleDoc{"embedded CMap, /WMode agreeing", buildPDF(type0Doc("20 0 R", gbInfo, map[int]string{20: cmapStream("/WMode 1 "+gbInfo, "Cust", "/WMode 1 def")}))},
+		oracleDoc{"embedded CMap, /WMode 1 in the program only", buildPDF(type0Doc("20 0 R", gbInfo, map[int]string{20: cmapStream(gbInfo, "Cust", "/WMode 1 def")}))},
+		oracleDoc{"embedded CMap referencing GB-EUC-H", buildPDF(type0Doc("20 0 R", gbInfo, map[int]string{20: cmapStream("/UseCMap /GB-EUC-H "+gbInfo, "Cust", "")}))},
+		oracleDoc{"embedded CMap referencing an embedded CMap", buildPDF(type0Doc("20 0 R", gbInfo, map[int]string{20: cmapStream("/UseCMap 21 0 R "+gbInfo, "Cust", ""), 21: cmapStream(gbInfo, "Base", "")}))},
+		oracleDoc{"CIDFontType2 with no CIDToGIDMap", withCIDFontType2(t, false)},
 		must("Markdown n-up, two pages a sheet", nup, nerr2),
 		oracleDoc{"Markdown n-up, sheet 2 drawing sheet 1's form", withSheetFormFused(t, nup)},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
@@ -442,6 +452,17 @@ type veraReport struct {
 // A row appearing is a gap in nib a person must look at; a row that stops appearing means the gap closed
 // and the row is a claim about code that no longer behaves that way.
 var knownCannotCheck = map[string]string{
+	// P07.S01's seven CMap documents use a Type 0 font with no /ToUnicode, and the SHIPPED 7.21.7 t1 is per-FONT and
+	// refuses one (/pending 657). P07.S02 rebuilds the clause per glyph; these rows are the stimulus that proves it
+	// did — the guard fails "nib now answers — remove the row" the moment they close.
+	"Type 0 font, GB-EUC-H over supplement 2 / 7.21.7 t1":     "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	"Type 0 font over an unknown CMap / 7.21.7 t1":            "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	"embedded CMap, /WMode agreeing / 7.21.7 t1":              "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	"embedded CMap, /WMode 1 in the program only / 7.21.7 t1": "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	"embedded CMap referencing GB-EUC-H / 7.21.7 t1":          "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	"embedded CMap referencing an embedded CMap / 7.21.7 t1":  "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+	"CIDFontType2 with no CIDToGIDMap / 7.21.7 t1":            "a Type 0 font with no /ToUnicode — per-glyph 7.21.7 is P07.S02 (/pending 657)",
+
 	// P06.S04. `7.7 t1` cannot type an element whose role map loops, exactly as `7.3 t1` cannot — both
 	// refuse rather than say "the document has no Formula", because the untypable element MAY be one.
 	"Markdown + title + lang, one element on a role-map loop / 7.7 t1": "the role map loops, so no element can be typed and any of them might be the Formula",
@@ -485,7 +506,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 80
+	const wantGenerated = 87
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

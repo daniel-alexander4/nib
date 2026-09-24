@@ -245,6 +245,10 @@ func checkCIDSetsComplete(d *Document) Result {
 		_, ff2 := fd["FontFile2"]
 		_, ff3 := fd["FontFile3"]
 		if !ff2 && !ff3 {
+			// **A NON-embedded CID font is a subject too, and passes** (measured at P07.S01, on six documents):
+			// the profile's test opens with `containsFontFile == false ||`, so veraPDF runs the check and it
+			// passes; nib answered NotApplicable, which the oracle scores as a different state.
+			withSet++
 			continue
 		}
 		// **The subject is the embedded CID font, not the /CIDSet — measured by law 5.** veraPDF

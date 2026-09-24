@@ -136,7 +136,12 @@ var corpusReach = map[string]int{
 	// drawing no form cannot move the count. The corpus's own pair (`7.20-t02-fail-a`, a keyed form drawn
 	// three times, and `-pass-a`) is settled on both halves.
 	"7.20 t2": 42,
-	"7.1 t1":  293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
+	// P07.S01. The CMap clauses' subject is a Type 0 font the content USES, so 7.21.3.1 t1, 7.21.3.2 t1 and 7.21.3.3
+	// t1 reach every readable file that shows text (62 — most NotApplicable, the Type 0 files agreeing both ways);
+	// t2 needs an EMBEDDED CMap (12) and t3 one reached through /UseCMap (2). `7.21.3.2-t01-fail-a` and `-c` are
+	// refused, not scored: pdfcpu's validator drops the very Type 0 font the clause fails, so nib has nothing to read.
+	"7.21.3.1 t1": 62, "7.21.3.2 t1": 62, "7.21.3.3 t1": 62, "7.21.3.3 t2": 12, "7.21.3.3 t3": 2,
+	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,
 	"7.2 t3": 36, "7.2 t4": 36, "7.2 t5": 21, "7.2 t6": 19, "7.2 t7": 17, "7.2 t8": 36, "7.2 t9": 36,
 	"7.2 t10": 36, "7.2 t17": 44, "7.2 t18": 24, "7.2 t19": 43, "7.2 t20": 44, "7.2 t26": 6, "7.2 t27": 6,
 	"7.2 t36": 21, "7.2 t37": 19, "7.2 t38": 17,

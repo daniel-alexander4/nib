@@ -172,6 +172,9 @@ var notTreeRules = map[string]string{
 	// P06.S05. `7.20 t2` is `7.20 t1`'s population counted rather than listed — the same content walk, and
 	// the same reason a seventy-Div document has nothing for it to read.
 	"7.20 t2": "form XObjects",
+	// P07.S01. The CMap clauses read a used Type 0 font's dictionaries and the CMaps they name — no structure.
+	"7.21.3.1 t1": "Type 0 fonts", "7.21.3.2 t1": "Type 0 fonts", "7.21.3.3 t1": "Type 0 fonts",
+	"7.21.3.3 t2": "Type 0 fonts", "7.21.3.3 t3": "Type 0 fonts",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {

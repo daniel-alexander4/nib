@@ -12,7 +12,7 @@ import (
 
 // The PDF/UA identification nib writes — `/pending 486`, option B, ADR-033.
 //
-// nib's checker covers 91 of the 106 rules veraPDF evaluates, so a report of "every clause passes" cannot
+// nib's checker covers 96 of the 106 rules veraPDF evaluates, so a report of "every clause passes" cannot
 // support a conformance claim, and nib never writes one on its checker's say-so. What it CAN support is a
 // claim about its own output: a Markdown conversion, tagged from its own AST, titled, declared in a
 // language someone asserted, is veraPDF-compliant across every construct mdpdf emits — measured, and held
