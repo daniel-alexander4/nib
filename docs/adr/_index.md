@@ -490,3 +490,8 @@ home today.
   let the attacker write both sides of the key (a decoy field supplying the bag for a real signature
   listed nowhere) and reinstated the bug inside its own fix. 18.7 ms at 400 pages beside the 20.0 ms
   call it follows, paid deliberately.
+- **[ADR-052 — shown bytes are read through one door, and the checker reads CMaps as veraPDF does](052-shown-bytes-are-read-through-one-door-and-the-checker-reads-cmaps-as-verapdf-does.md)**
+  — P07.S02, `/pending 657`. `internal/fontcode` decodes string operands, cuts codes by codespace and reads
+  `/ToUnicode` for both the checker and `pdfops`, and holds two readings of a CMap side by side: veraPDF's
+  (counted lists, a range cut at its last byte, a malformed CMap discarded whole) for the checker, and the
+  specification's lenient one for text extraction. What the checker cannot reproduce it refuses.

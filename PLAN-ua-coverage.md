@@ -2582,7 +2582,7 @@ the font the clause fails (declared, /pending 656). The predefined table carries
 its source triple). `len(Clauses())` 96 — MET. Oracle 8,832 of 8,832 over 92 documents; corpus 0 false pass / 0 false
 fail. Tiers 4 and 6 did NOT fire.
 
-#### P07.S02 — the glyph population, and 7.21.7 per glyph
+#### P07.S02 — the glyph population, and 7.21.7 per glyph *(done 2026-09-23, v1.160.0)*
 Scope: a per-glyph door over every text-showing operator — codes split by the font's codespace, each with its
 font, render mode and ToUnicode value — shared with `pdfops/textrun.go` (ADR-009); `7.21.7 t1` rebuilt on it
 (closing `/pending 657`) and `7.21.7 t2` (ToUnicode values never U+0000, U+FEFF or U+FFFE).
@@ -2592,6 +2592,89 @@ Acceptance:
   naming why — never a Pass over glyphs nib did not read.
 - The walk's existing budgets bound the new population (a string operand is attacker-sized).
 - `len(Clauses())` 97.
+
+**(grill, 2026-09-23 — premise amended, slice split)** veraPDF 1.30.2's source was read for the whole `Glyph`
+path (validation-model `GFOpTextShow`/`GFGlyph`, parser `CMap`/`PDCMap`/`PDSimpleFont`/`PDType0Font`/`AdobeGlyphList`).
+- **`/pending 657`'s `<0000>` premise does not reproduce, measured.** Rewriting the first `bfchar` DESTINATION to
+  `<0000>` in nib's own Markdown conversion makes veraPDF fail **7.21.7 t2** (2 checks), not t1: a destination is
+  `new String(bytes, UTF_16BE)`, so `<0000>` is `"\u0000"`, never null. t1 fails when the code has NO mapping —
+  rewriting the SOURCE does that. The first acceptance clause is read as: the `<0000>`-destination document goes red
+  on **t2**, and a document whose drawn code is unmapped goes red on t1.
+- **The population**: `Tj`, `TJ` and `'` only — `"`'s argument 0 is a number, so it yields no glyph; invisible text
+  counts; page content, forms, the N/D/R appearances (`GFPDAnnot.java:414-426`), tiling patterns and Type 3 procedures.
+  Codes are read by the Encoding CMap's codespace (`CMap.getCodeFromStream`), and ToUnicode is keyed by the code's
+  INTEGER value. A glyph is checked once per (font, code, Tr, marked content, element).
+- **The fallbacks need data nib does not carry.** A Type 0 font under an Adobe Japan1/CNS1/GB1/Korea1/KR ordering
+  falls back to Adobe's UCS2 CMaps, and a non-Identity predefined CMap needs its codespace — both `CannotCheck` naming
+  why (filed). A simple font falls back to its encoding's glyph name through **veraPDF's own** Adobe Glyph List, which
+  maps `.notdef` to U+0000 and `zerowidthjoiner` to U+FEFF — so a glyph without a ToUnicode entry can FAIL t2, and
+  neither clause may pass one on a guess.
+- **Split at the grill, and folded back at T03, measured.** The grill cut the simple-font fallback out as S02b;
+  registering t2 without it made **forty-odd of the oracle's own documents** — every one drawn in Helvetica —
+  refuse t2, because a standard face's codes reach U+0000 through `.notdef` and nib could not say which. So the
+  encoding path landed here: veraPDF's encoding construction (a NAMED encoding is MacRoman, MacExpert or WinAnsi
+  and nothing else — `/StandardEncoding` named in a font is EMPTY; a dictionary's `/Differences` over its
+  `/BaseEncoding`; a standard Type 1 face with no descriptor reads its metrics' scheme), Adobe's Glyph List with
+  veraPDF's one addition, and the Symbol/ZapfDingbats name sets. A name only a font program could give is
+  `CannotCheck` naming the program's type.
+- **The slice's own fixture found a live strict disagreement in SHIPPED 7.21.4.1 t1**: text drawn only in `3 Tr`
+  is a subject that PASSES (`renderingMode == 3`), and nib answered NotApplicable — measured on Helvetica and
+  on a non-embedded TrueType face, fixed here.
+
+- T01 — `internal/fontcode` (ADR-052): string operands, veraPDF's `/ToUnicode` reading beside the lenient one
+  `pdfops` keeps, the codespace code reader; `pdfops/textrun.go` moved onto it.
+- T02 — the glyph population in uacheck's walker, deduplicated per (font, code), bounded by `overBudget`.
+- T03 — `toUnicode` per glyph, three-valued (mapped / null / unknown with a reason), the Type 0 and simple-font
+  fallbacks; 7.21.7 t1 rebuilt, t2 registered.
+- T04 — 32 veraPDF-measured glyph fixtures and the two `/pending 657` shapes in the live oracle, corpus reach,
+  the knownCannotCheck reasons, the count to 97.
+
+**(review + red-proof, 2026-09-23)** Four review rounds (seven reviewers), 39 findings, all dispositioned; the fix pass
+found more than the slice's first draft did, and every one was measured on veraPDF before it was pinned.
+- **Eight live false passes closed**, each now a fixture: a font rebound in a form was judged by NAME at the show (veraPDF
+  binds it at `Tf`); a /ToUnicode stream whose `/CMapName` is Identity-H is identity; a /ToUnicode dictionary's
+  `/UseCMap` overwrites its entries; an ExtGState `/Font` rebinds the font (only a dictionary of a type veraPDF builds);
+  a tiling pattern inherits its invoking stream's STARTING font and a Type 3 procedure its own; and SHIPPED 7.21.4.1
+  t1 called a program embedded on any key's presence — a Type 1 font reads /FontFile or /FontFile3, a TrueType
+  /FontFile2 or /FontFile3, a CIDFont what `PDCIDFont` opens.
+- **Two attacker-reachable costs bounded**: a linear range lookup (~2.25 ms per code over 2^20 ranges) is a per-256-code
+  block index under one document budget, parsed once per stream; and the distinct (font, code) population is capped —
+  16.2 s / 10.7 GB became 0.4 s.
+- **A panic in the CMap parser** (an empty range code) had left the content population half built for every later rule;
+  it refuses now, and a walk that did not return reports as unread.
+- Filed: /pending 676 (UCS2 and predefined CMaps not carried), 677 (a program is "embedded" without being parsed),
+  678 (fonts used only in patterns / Type 3 procedures are outside the FONT population).
+- **Red-proof**: 38 mutations (30 targeted, 8 blind — the blind agent read no test), 38 red after closing three survivors
+  (nested TJ arrays and an in-program UCS2 `usecmap` gained fixtures; a dead `prev == 0 ||` conjunct and an inert Type 3
+  font assignment were deleted).
+
+**Plan divergence, stated.** The third acceptance clause assumed the walk's EXISTING budgets bound the population; they
+did not — one `Tj` is one operator whatever its string holds — so three ceilings were added (`maxGlyphCodes`,
+`maxDistinctGlyphs`, `maxToUnicodeBlocks`). T01's "pdfops moved onto it" holds for strings, names and the ToUnicode read;
+`pdfops` keeps its own lenient Identity split (ADR-052), because veraPDF's 0xFF completion invents a glyph a text
+extractor must not read. The binding, inheritance and 7.21.4.1 fixes are outside the plan's scope and inside the slice's
+door: the slice's own fixtures reached them.
+
+**Acceptance ledger.**
+- `7.21.7-t01-fail-a` fails the same glyphs veraPDF counts — MET (`TestTheFailingGlyphsAreTheOnesVeraPDFCounts`: codes 3,
+  40, 55, 68, 69, 76, 79, 82, exactly veraPDF's eight).
+- `/pending 657`'s `<0000>` document goes red — MET as pinned at the grill: on **t2** (the destination is U+0000), and the
+  drawn-code-unmapped shape on t1; both are oracle documents on nib's own conversion, and `nib ua` agrees on the CLI.
+- A composite font whose codespace nib cannot split is `CannotCheck` naming why — MET (GB-EUC-H rows: "a predefined CMap
+  whose codespace nib does not carry").
+- A non-Identity ordering with no ToUnicode is `CannotCheck` naming why — MET where veraPDF's answer needs a UCS2 CMap
+  (named in the reason); where veraPDF has none, nib FAILS as veraPDF does (Adobe-Identity, measured).
+- Never a Pass over glyphs nib did not read — MET (an unread string, a malformed or truncated CMap, and an unfinished walk
+  each refuse; `TestAWalkThatDidNotFinishIsNotAWalkThatFoundNothing`).
+- The budgets bound the new population — MET by the three new ceilings, each with a control-then-refusal test.
+- `len(Clauses())` 97 — MET.
+- (S02b, folded in) `7.21.7-t01-pass-b` and `-c` agree — MET; a `.notdef` name fails t2 and not t1 — MET, measured.
+- Phase exit: a program nib cannot parse is `CannotCheck` naming its type — MET for the glyph fallback (names the program
+  type); parse-ability of an "embedded" program is /pending 677.
+- Oracle 14,000+ pairs over 148 documents agree strictly (52 glyph fixtures, 3 declared refusals); corpus 0 false pass /
+  0 false fail over 28,567 pairs, 7.21.7 t1/t2 reach 282/282. Tiers 4 and 6 did NOT fire: the slice touched
+  `internal/uacheck`, `internal/fontcode` and `pdfops/textrun.go` — none of the session, ceremony, delivery, discovery,
+  p2p or rendezvous paths.
 
 #### P07.S03 — the TrueType program, at the font
 Scope: `7.21.6 t1`-`t4` — a TrueType reader grown from `truetype.go` (table directory tolerant of unaligned offsets,

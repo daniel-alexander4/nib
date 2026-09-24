@@ -47,7 +47,7 @@ func TestContentPastTheFormBoundIsCannotCheckNeverAPass(t *testing.T) {
 		}
 	}
 	deep := nestedForms(12)
-	for _, clause := range []string{"7.1 t3", "7.2 t34", "7.21.4.1 t1", "7.21.7 t1", "7.21.4.2 t2"} {
+	for _, clause := range []string{"7.1 t3", "7.2 t34", "7.21.4.1 t1", "7.21.7 t1", "7.21.7 t2", "7.21.4.2 t2"} {
 		got := verdictOf(t, deep, clause)
 		if got.Verdict != CannotCheck {
 			t.Errorf("twelve forms down, %s reports %v (%s) over text nib never walked, want CannotCheck", clause, got.Verdict, got.Why)
@@ -119,7 +119,7 @@ var notTreeRules = map[string]string{
 	"7.2 t33": "the XMP packet", "7.1 t10": "the catalog's /ViewerPreferences", "7.1 t11": "the catalog's /StructTreeRoot and /MarkInfo",
 	"7.2 t2": "the catalog's /Outlines and /Lang", "7.10 t1": "optional content", "7.10 t2": "optional content",
 	"6.2 t1": "page content", "7.1 t3": "page content", "7.2 t34": "page content and the parent tree",
-	"7.18.4 t1": "widgets and the parent tree", "7.21.4.1 t1": "fonts", "7.21.4.2 t2": "fonts", "7.21.7 t1": "fonts",
+	"7.18.4 t1": "widgets and the parent tree", "7.21.4.1 t1": "fonts", "7.21.4.2 t2": "fonts", "7.21.7 t1": "glyphs", "7.21.7 t2": "glyphs",
 	// P04.S03. Their subjects are annotations and form fields, not structure elements: veraPDF runs t24
 	// once per annotation and t25 once per form field, and each reaches a structure element only through
 	// the holder's `/StructParent` and the parent tree — the same shape as `7.18.4 t1` above. A document

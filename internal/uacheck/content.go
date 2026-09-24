@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"nib/internal/contentstream"
+	"nib/internal/fontcode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -68,8 +69,15 @@ type contentEvent struct {
 // state, saved by `q` and restored by `Q`, and NOT reset by `BT`/`ET` — both measured against veraPDF:
 // a `3 Tr` inside `q … Q` does not survive the `Q`, and one set inside a closed `BT … ET` does survive
 // into the next text object.
+//
+// **The font is BOUND at `Tf`**, to the object the name resolves to in the resources in force there, and a
+// form XObject inherits that object — not the name. veraPDF resolves it in `OperatorParser`'s `Tf` branch
+// (`OperatorParser.java:371`); resolving the name again at the show let a form whose own /Resources rebinds `/F0`
+// judge its text against the wrong font, both ways round (the P07.S02 review, measured on veraPDF).
 type textState struct {
 	fontName   string
+	font       types.Dict
+	fontObj    int
 	renderMode int
 }
 
@@ -152,6 +160,12 @@ var (
 // is not the stream being untagged.
 func (d *Document) contentEvents() ([]contentEvent, string) {
 	if d.contentDone {
+		// **A walk that did not finish must not read as a complete one.** A panic inside it (recovered per rule by
+		// `runOne`) left the population half built with no error, and every LATER rule read it as whole — the P07.S02
+		// re-review measured 7.1 t3 going from Fail to NotApplicable that way.
+		if !d.contentFinished && d.contentErr == "" {
+			return d.content, "the content walk stopped part-way on an internal error, so what it had not reached was never read"
+		}
 		return d.content, d.contentErr
 	}
 	d.contentDone = true
@@ -188,6 +202,8 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
 	}
 	d.walkAppearances()
+	// Set on RETURN only — never deferred, since a deferred assignment runs while a panic unwinds too.
+	d.contentFinished = true
 	return d.content, d.contentErr
 }
 
@@ -381,6 +397,12 @@ func (d *Document) overBudget() bool {
 	case len(d.mcSubjects) > maxContentEvents:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, opens more than %d marked-content "+
 			"sequences; nib stops reading there, so what lies beyond was never read", maxContentEvents)
+	case d.glyphsOver:
+		why = fmt.Sprintf("the page content, with every form XObject it draws, shows more than %d distinct glyphs; nib "+
+			"stops reading there, so the glyphs beyond were never read", maxDistinctGlyphs)
+	case d.glyphCodes > maxGlyphCodes:
+		why = fmt.Sprintf("the page content, with every form XObject it draws, shows more than %d character codes; nib "+
+			"stops reading there, so the glyphs beyond were never read", maxGlyphCodes)
 	case len(d.content) > maxContentEvents:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, holds more than %d drawing operators; "+
 			"nib stops reading there, so what lies beyond was never read", maxContentEvents)
@@ -397,6 +419,9 @@ func (d *Document) overBudget() bool {
 // walkWithState is walk with the text state in force at the point of invocation — a form XObject
 // inherits the invoking stream's graphics state (ISO 32000-1 §8.10.1).
 func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, chain map[int]bool, depth int, ts textState) {
+	// start is the text state the stream was entered with: a tiling pattern this stream selects inherits THAT, not
+	// the state at the `scn` (`GFPDTilingPattern` takes the invoking stream's inherited graphics state).
+	start := ts
 	stack := append([]frame(nil), inherited...)
 	gs := []textState{}
 	var operands []contentstream.Token
@@ -446,9 +471,35 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			if n := len(gs); n > 0 {
 				ts, gs = gs[n-1], gs[:n-1]
 			}
+		case "gs":
+			// **An ExtGState's `/Font` binds the font as `Tf` does** (`GraphicState.copyPropertiesFormExtGState`):
+			// `[font size]`, the font an indirect dictionary. Without it, text after the `gs` was judged in the stale
+			// `Tf` font — a false pass the P07.S02 re-review measured.
+			// Only a DICTIONARY of a font subtype veraPDF builds rebinds it (`PDExtGState.getFont`, `PDFontFactory`); any
+			// other `/Font` leaves the font in force, as a missing one does (the P07.S02 re-review measured both).
+			if name := w.firstName(src, operands); len(name) > 1 {
+				egs := w.d.dict(w.d.dict(res["ExtGState"])[fontcode.Name([]byte(name[1:]))])
+				if arr, err := w.d.Ctx.DereferenceArray(egs["Font"]); err == nil && len(arr) > 0 {
+					if f := w.d.dict(arr[0]); f != nil && extGStateFontTypes[w.d.name(f["Subtype"])] {
+						ts.fontName = name + " (its ExtGState /Font)"
+						ts.font, ts.fontObj = f, 0
+						if ir, ok := arr[0].(types.IndirectRef); ok {
+							ts.fontObj = ir.ObjectNumber.Value()
+						}
+					}
+				}
+			}
 		case "Tf":
 			if name := w.firstName(src, operands); name != "" {
 				ts.fontName = name
+				ts.font, ts.fontObj = nil, 0
+				if fonts := w.d.dict(res["Font"]); fonts != nil && len(name) > 1 {
+					raw := fonts[fontcode.Name([]byte(name[1:]))]
+					ts.font = w.d.dict(raw)
+					if ir, ok := raw.(types.IndirectRef); ok {
+						ts.fontObj = ir.ObjectNumber.Value()
+					}
+				}
 			}
 		case "Tr":
 			for _, o := range operands {
@@ -463,31 +514,32 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			// **Selecting a tiling pattern is enough to read it — painting is not required.** Measured on
 			// 1.30.2: a bad `/Lang` inside a pattern the page selects and never paints fails 7.2 t29, while
 			// the same pattern merely NAMED in `/Resources` is not a subject at all (zero checks).
-			w.enterPattern(w.firstName(src, operands), res, chain, depth, opIndex)
+			w.enterPattern(w.firstName(src, operands), res, chain, depth, opIndex, start)
 		default:
 			if !textOperators[op] && !paintOperators[op] {
 				break
 			}
 			text := textOperators[op]
-			var font types.Dict
-			fontObj := 0
+			font, fontObj := ts.font, ts.fontObj
 			if text {
-				if fonts := w.d.dict(res["Font"]); fonts != nil && len(ts.fontName) > 1 {
-					raw := fonts[ts.fontName[1:]]
-					font = w.d.dict(raw)
-					if ir, ok := raw.(types.IndirectRef); ok {
-						fontObj = ir.ObjectNumber.Value()
-					}
-				}
 				// **Showing ANY glyph reads EVERY `CharProc`.** Measured: a document that shows `/b` fails
 				// 7.2 t29 on a bad `/Lang` in `/a`'s procedure, while selecting the font with `Tf` and showing
 				// nothing reads none of them.
-				w.enterType3(font, ts.fontName, res, chain, depth, opIndex)
+				w.enterType3(font, ts, res, chain, depth, opIndex)
+			}
+			where := fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op)
+			if text {
+				// **Glyphs are read in the lang-only streams too**: veraPDF judges the glyphs a tiling pattern or a
+				// Type 3 procedure draws like any other (`GFPDTilingPattern`, `GFPDType3Font.getCharProcStreams`).
+				w.showGlyphs(src, operands, font, fontObj, ts.fontName, where)
+				if w.d.contentOver {
+					return
+				}
 			}
 			if w.langOnly {
 				break
 			}
-			ev := w.event(stack, text, fmt.Sprintf("%s, operator #%d `%s`", w.where, opIndex, op))
+			ev := w.event(stack, text, where)
 			if ev.text {
 				ev.fontName = ts.fontName
 				ev.invisible = ts.renderMode == 3
@@ -814,7 +866,7 @@ func (w walker) event(stack []frame, text bool, where string) contentEvent {
 }
 
 // enterPattern walks a tiling pattern `scn`/`SCN` selects, for its `/Lang` values and nothing else.
-func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, depth, opIndex int) {
+func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, depth, opIndex int, ts textState) {
 	if len(name) < 2 {
 		return
 	}
@@ -854,7 +906,7 @@ func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, de
 		objNr = ir.ObjectNumber.Value()
 	}
 	w.enterLangOnly(sd, objNr, res, fmt.Sprintf("%s, operator #%d → tiling pattern %s", w.where, opIndex, name),
-		chain, depth)
+		chain, depth, ts)
 }
 
 // enterType3 walks EVERY `CharProc` of a Type 3 font a text operator shows a glyph in.
@@ -862,7 +914,8 @@ func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, de
 // A font entry that is nil is not "no font": pdfcpu's validator DROPS a Type 3 font dictionary written
 // directly inside another dictionary, and what it dropped may have held glyphs with marked content. The raw
 // file is asked once whether the document writes one (`hasInlineType3Font`), and that is `contentErr`.
-func (w walker) enterType3(font types.Dict, fontName string, res types.Dict, chain map[int]bool, depth, opIndex int) {
+func (w walker) enterType3(font types.Dict, ts textState, res types.Dict, chain map[int]bool, depth, opIndex int) {
+	fontName := ts.fontName
 	if font == nil {
 		if len(fontName) > 1 && w.d.dict(res["Font"]) != nil && w.d.hasInlineType3Font() {
 			if w.d.contentErr == "" {
@@ -894,8 +947,11 @@ func (w walker) enterType3(font types.Dict, fontName string, res types.Dict, cha
 		if ir, ok := procs[glyph].(types.IndirectRef); ok {
 			objNr = ir.ObjectNumber.Value()
 		}
+		// A glyph procedure is parsed in the state of the operator that showed the Type 3 font (`GFPDType3Font`, which
+		// FontFactory hands that graphics state) — whose font IS this font, so text a procedure shows without a `Tf`
+		// is judged in it.
 		w.enterLangOnly(sd, objNr, fontRes, fmt.Sprintf("%s → Type 3 font %s, glyph /%s", w.where, fontName, glyph),
-			chain, depth)
+			chain, depth, ts)
 	}
 }
 
@@ -904,7 +960,7 @@ func (w walker) enterType3(font types.Dict, fontName string, res types.Dict, cha
 // **The enclosing marked-content stack is NOT passed in.** veraPDF builds a plain content stream for a
 // pattern and a glyph procedure, so nothing in them is a marked-content subject or a content item at all;
 // the only thing this walk contributes is 7.2 t29's `/Lang` values.
-func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, label string, chain map[int]bool, depth int) {
+func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, label string, chain map[int]bool, depth int, ts textState) {
 	if chain[objNr] && objNr != 0 {
 		return
 	}
@@ -914,6 +970,11 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	// document would trip `maxFormWalks` and turn EVERY content rule into CannotCheck. veraPDF reads a pattern
 	// and a font once, as objects, so repeating is not faithful either. Keyed by the stream dictionary's
 	// identity rather than its object number, because a pattern or glyph procedure written inline has none.
+	//
+	// **The FIRST entry's font is the one its glyphs are judged in** (P07.S02): text a pattern or glyph procedure shows
+	// without its own `Tf` inherits the font it was entered with, and veraPDF reads the object once — a pattern entered
+	// under two fonts is judged under the first only (measured: walking it again under the second failed a document
+	// veraPDF passes).
 	if w.d.langWalked == nil {
 		w.d.langWalked = map[uintptr]bool{}
 	}
@@ -950,7 +1011,7 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	if streamRes == nil {
 		streamRes = res
 	}
-	inner.walkWithState(sd.Content, streamRes, nil, next, depth+1, textState{})
+	inner.walkWithState(sd.Content, streamRes, nil, next, depth+1, ts)
 }
 
 // markedContent reads a `BMC`/`BDC`'s tag and property list the way veraPDF locates them.
@@ -1076,3 +1137,6 @@ func (w walker) firstName(src []byte, operands []contentstream.Token) string {
 	}
 	return ""
 }
+
+// extGStateFontTypes are the subtypes veraPDF's `PDFontFactory` builds a font for; any other yields null.
+var extGStateFontTypes = map[string]bool{"Type1": true, "MMType1": true, "TrueType": true, "Type3": true, "Type0": true}
