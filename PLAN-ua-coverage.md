@@ -2238,7 +2238,7 @@ pairs. `len(Clauses())` is **87**. `/pending 655` and `656` filed.
 **Tier 4 / tier 6 did NOT fire** — the diff is `internal/uacheck` plus a comment in `internal/pdfops`, two
 docs and the plan; no `internal/server`, `internal/p2p` or `internal/rendezvous`.
 
-#### P06.S03 — encryption's permission bit, and the reference XObject
+#### P06.S03 — encryption's permission bit, and the reference XObject *(done 2026-09-23, v1.156.0)*
 Scope: `7.16 t1` (an encrypted file's `/P` has bit 10 set) and `7.20 t1` (no reference XObjects).
 Acceptance:
 - `7.16 t1` is NotApplicable for an unencrypted document and a definite Fail for an encrypted one whose
@@ -2248,6 +2248,84 @@ Acceptance:
 - `7.20 t1`'s subject is a Form XObject carrying `/Ref`; the population is stated from veraPDF's source,
   since `PDXForm` is reached through resources that may nest.
 - Two measured pass and fail fixtures, two `corpusReach` rows; `len(Clauses())` is 89.
+
+**(grill, 2026-09-23 — *(in progress)*)** The two profile tests: `P != null && (P & 512) == 512` on the
+object `PDEncryption`, and `containsRef == false` on the object `PDXForm`.
+
+~~**`7.20 t1`'s population is the SAME object graph `7.11 t1` walks.**~~ **REFUTED BY MEASUREMENT —
+pin, 2026-09-23.** The first three measurements all drew the form, so they could not see the property
+that matters. Re-measured: **a form XObject is a subject only when the document DRAWS it.**
+
+| document | veraPDF |
+|---|---|
+| a page-resources form, DRAWN by `/X0 Do` | **failed** |
+| the same form, in resources and never drawn | **passed, 0 checks — NO SUBJECT** |
+| a form an outer form DRAWS | **failed** (outer passes, inner fails) |
+| the same inner form, in the outer's resources but not drawn | **passed**, outer alone |
+| an annotation's `/AP` in `/N`, `/R` or `/D` | **failed**, each |
+
+**So the population is the CONTENT WALK, not the object-graph door**, and the two clauses deliberately
+do NOT share one: `7.11 t1`'s subject is every dictionary of a shape wherever it hangs, and `7.20 t1`'s
+is what the page actually paints. The object-graph reading would report a failure veraPDF does not — a
+false FAIL, which for a checker is as bad as a missed one. **The oracle caught it on the very document
+added to reach this clause's failing half**, which is the whole argument for adding both halves before
+believing a population.
+
+This is S02's lesson in the mirror: there, enumerating holders was too NARROW; here, the object graph
+is too WIDE. Neither error is visible from the clause's wording.
+
+**`7.16 t1`'s subject is the ENCRYPTION DICTIONARY, and the corpus cannot supply its passing half.**
+Measured: `7.16-t01-fail-a.pdf` fails with one check, and `7.16-t01-pass-a.pdf` reports **0 passed / 0
+failed — no subject at all**, because it carries no encryption dictionary. So the corpus has NO document
+where the clause passes WITH a subject, and the oracle must supply one or the reach row records the zero
+with its reason, as `7.18.2 t1` does.
+
+**Both encrypted fixtures OPEN in nib** — measured, pdfcpu handles the empty-password case — so unlike
+`6.1 t1`'s `%PDF-1.9` this clause is reachable through a file.
+
+**The declared coupling, unchanged from the phase open**: nib's own `Encrypt` writes `/P = -3901 =
+0xF0C3`, and `0xF0C3 & 512 == 0`, so **nib's own protected output fails this clause**. The slice records
+that with the measured value and files nothing new — `/pending 640` owns the writer, and which
+permissions `Encrypt` should grant is Dan's call, not a defect with one right answer.
+
+Tasks:
+- `T01 — lift filespecs.go's descent into one door` *(done; `7.11 t1` is its only caller — see the pin)*.
+- `T02 — 7.20 t1 over the CONTENT walk, across all four measured holders`.
+- `T03 — 7.16 t1 over the encryption dictionary, with the bit-10 test and the no-subject case`.
+- `T04 — record that nib's own Encrypt output fails it, with the measured /P`.
+- `T05 — corpusReach rows, oracle documents for both halves, notTreeRules; len(Clauses()) is 89`.
+
+**(review, 2026-09-23 — one reviewer over the diff, packs `go` + `verification`)** The reviewer
+confirmed the population change and found one real defect plus a set of contract and fixture problems.
+**Two of its findings were REFUTED by measurements it named as missing**, and both measurements are now
+tests: a form an outer form DRAWS is a subject while one merely in the outer's resources is not, and all
+three appearance states — `/N`, `/R` and `/D` — are graded, not just the normal one.
+
+- **The drawing walk silently dropped a form it could not read.** Since this slice it is also
+  `7.20 t1`'s population, so an XObject that fails to resolve removed a SUBJECT with no refusal and the
+  clause answered Pass. Now recorded — and the branch is declared unreached, because pdfcpu refuses a
+  non-stream `/XObject` ahead of the rules while veraPDF grades the document, which is a divergence of
+  `6.1 t1`'s class.
+- **Four doc comments and this plan's own holder table asserted the refuted design** — that both clauses
+  share the object-graph door. Corrected at every site; the table above carries the pin.
+- **`withRefOnAppearance` stamped every form in the file**, not the appearances its test names, so a
+  Fail could have come from page content and nothing asserted otherwise. It now goes through the
+  annotation door.
+- **One bit-table case measured nothing**: `-3901 &^ 512` is `-3901`, since bit 10 is already clear
+  there. Replaced with `-1 &^ 512`, which is the value the case claimed to be.
+- The `7.11 t1` refusals had lost their specificity in the lift, and a drawn form's `Where` discarded
+  the walker's location; both restored.
+
+**Red-proof: 6 targeted probes, 2 survivors.** One was a real hole — the bit mask, which neither
+`PermissionsAll` nor `PermissionsNone` can isolate — now pinned by `/P` values that set bit 10 alone,
+bit 9 alone and bit 11 alone. The other is the declared unreached refusal above.
+
+**Gates.** Oracle **7,209 of 7,209** over 81 documents; corpus **0 false pass / 0 false fail** over
+26,217 pairs. `len(Clauses())` is **89**. Live-verified through the real binary on all six measured
+holders.
+
+**Tier 4 / tier 6 did NOT fire** — the diff is `internal/uacheck` plus a comment in `internal/pdfops`,
+two docs and the plan.
 
 #### P06.S04 — Formula, and the counterexample it retires
 Scope: `7.7 t1` — an `SEFormula` carries a non-empty `/Alt` or an `/ActualText`. One rule, its own slice,

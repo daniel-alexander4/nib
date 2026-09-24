@@ -164,6 +164,11 @@ var notTreeRules = map[string]string{
 	// tree" would be wrong, which is why the reason is written out rather than shared with the two above.
 	"7.1 t4": "the catalog's /MarkInfo", "7.11 t1": "file specifications",
 	"7.15 t1": "the AcroForm's XFA packet",
+	// P06.S03. `7.16 t1` reads the trailer's encryption dictionary and touches no structure at all.
+	// `7.20 t1`'s population is the CONTENT walk — the forms the document draws — which has its own
+	// depth and budget refusals and never reads a structure element. A document seventy Divs deep
+	// draws no form, so NotApplicable is the honest answer.
+	"7.16 t1": "the trailer's encryption dictionary", "7.20 t1": "form XObjects",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {

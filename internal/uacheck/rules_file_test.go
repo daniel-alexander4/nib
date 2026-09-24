@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfops"
@@ -799,5 +800,229 @@ func TestTheSpecificationWalkIsNotDefeatedByTheObjectGraph(t *testing.T) {
 	if got := verdictOf(t, build("/ZZ 20 0 R", chain), "7.11 t1"); got.Verdict != Fail {
 		t.Errorf("a document with a seventy-long chain of linked dictionaries reports %v (%s), want "+
 			"Fail — the chain is not nesting and must not spend the depth bound", got.Verdict, got.Why)
+	}
+}
+
+// 7.20 t1 — reference XObjects (P06.S03).
+//
+// **The population is what the document DRAWS, not what it holds**, and that distinction is the whole
+// test. Measured on veraPDF: a form XObject sitting in a page's `/Resources /XObject` that nothing
+// draws is reported `0 passed / 0 failed` — no subject — while the same form drawn by a `/X0 Do` is
+// FAILED. An object-graph population would report a failure veraPDF does not, which for a checker is
+// as bad as missing one.
+func TestOnlyADrawnFormXObjectIsASubject(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drawn, carrying /Ref: a definite failure.
+	drawn := withReferenceXObject(t, base)
+	got := verdictOf(t, drawn, "7.20 t1")
+	if got.Verdict != Fail {
+		t.Fatalf("a drawn form carrying /Ref reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "/Ref") {
+		t.Errorf("the refusal is %q, which does not name the key it read", got.Why)
+	}
+	// The same form, NOT drawn: no subject.
+	undrawn := withUndrawnReferenceXObject(t, base)
+	// The stimulus, asserted: the form really is in the document, just not drawn.
+	d, oerr := open(undrawn)
+	if oerr != nil {
+		t.Fatalf("open: %v", oerr)
+	}
+	refs := 0
+	d.eachObjectDict(func(dict types.Dict, _ string) {
+		if _, has := dict["Ref"]; has && d.name(dict["Subtype"]) == "Form" {
+			refs++
+		}
+	})
+	if refs == 0 {
+		t.Fatal("setup: the undrawn fixture carries no form with /Ref, so it measures nothing")
+	}
+	if v := registry["7.20 t1"].Check(d); v.Verdict != NotApplicable {
+		t.Errorf("an UNDRAWN form carrying /Ref reports %v (%s), want NotApplicable — veraPDF "+
+			"instantiates no PDXForm for a form nothing draws", v.Verdict, v.Why)
+	}
+}
+
+// **An appearance stream IS a form XObject**, and nothing draws it with a `Do` — the annotation is
+// what puts it on the page, so it is recorded where the appearance walk enters it rather than at the
+// operator. Measured: veraPDF FAILS a widget whose `/AP /N` carries `/Ref`.
+func TestAnAppearanceStreamIsAFormXObject(t *testing.T) {
+	base, err := pdfops.AuthorForm(plainDoc(t), []pdfops.FormField{{
+		Page: 1, Rect: [4]float64{100, 700, 300, 720}, Kind: "text", Name: "n", Label: "Name"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The control: a form document's widget appearances are forms, so the clause has a SUBJECT and
+	// passes. Without this the failure below could come from an empty population.
+	if got := verdictOf(t, base, "7.20 t1"); got.Verdict != Pass {
+		t.Fatalf("control: a form document reports %v (%s) for 7.20 t1, want Pass — its widget "+
+			"appearance streams are form XObjects", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, withRefOnAppearance(t, base), "7.20 t1"); got.Verdict != Fail {
+		t.Errorf("a widget whose appearance carries /Ref reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+}
+
+// 7.16 t1 — the encryption permission bit (P06.S03).
+//
+// Bit 10 (value 512) is *"extract text and graphics in support of accessibility"*. The subject is the
+// ENCRYPTION DICTIONARY, so an unencrypted document has none — which is most documents.
+func TestAnEncryptedDocumentMustAllowAccessibleExtraction(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := verdictOf(t, base, "7.16 t1"); got.Verdict != NotApplicable {
+		t.Fatalf("an unencrypted document reports %v (%s), want NotApplicable — it has no permissions "+
+			"to withhold", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, withEncryption(t, base, model.PermissionsAll), "7.16 t1"); got.Verdict != Pass {
+		t.Errorf("an encrypted document granting everything reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, withEncryption(t, base, model.PermissionsNone), "7.16 t1")
+	if got.Verdict != Fail {
+		t.Fatalf("an encrypted document granting nothing reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	if !strings.Contains(got.Why, "bit 10") || !strings.Contains(got.Why, "-3901") {
+		t.Errorf("the refusal is %q, which does not name the bit or quote the /P a reader must change", got.Why)
+	}
+}
+
+// **nib's own "Protect with a password" output FAILS this clause, and that is recorded rather than
+// fixed** (P06.S03). `pdfops.Encrypt` never sets `conf.Permissions`, so the written `/P` is `-3901` and
+// bit 10 is clear: a document nib protected cannot be read aloud.
+//
+// Which permissions that door should grant is a product decision with no single right answer, so the
+// checker says so and `/pending 640` owns the writer. **This test is the standing evidence**: if
+// `Encrypt` ever starts granting bit 10, it goes red and the claim in the plan and in `/pending 640`
+// has to be re-read rather than quietly surviving.
+func TestNibsOwnProtectedOutputFailsTheAccessibilityPermission(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := pdfops.Encrypt(base, "a-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, oerr := openEncrypted(t, protected, "a-password")
+	if oerr != "" {
+		t.Skipf("nib cannot re-open its own protected output without the password here: %s", oerr)
+	}
+	got := registry["7.16 t1"].Check(d)
+	if got.Verdict != Fail {
+		t.Errorf("nib's own protected output reports %v (%s) for 7.16 t1, want Fail — `Encrypt` sets "+
+			"no permissions, so /P is -3901 and bit 10 is clear. If this has changed, /pending 640 and "+
+			"P06's phase-open note both need re-reading", got.Verdict, got.Why)
+	}
+}
+
+// **The bit is 10 and nothing else** (P06.S03, found by probing). `PermissionsAll` sets every bit and
+// `PermissionsNone` clears every bit, so a fixture built from those two cannot tell bit 10 from any
+// other — probed, reading bit 9 instead left the whole package green. These values isolate it.
+func TestTheAccessibilityPermissionIsBitTenExactly(t *testing.T) {
+	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := withEncryption(t, base, model.PermissionsNone)
+	for _, c := range []struct {
+		p    int
+		want Verdict
+		why  string
+	}{
+		// Bit 10 alone set, every other permission denied: the clause is satisfied.
+		{512, Pass, "bit 10 is the only bit this clause reads"},
+		// Bit 9 set, bit 10 clear — the mutation that survived until this test existed.
+		{256, Fail, "bit 9 is not bit 10"},
+		// Bit 11 set, bit 10 clear.
+		{1024, Fail, "bit 11 is not bit 10"},
+		// Everything EXCEPT bit 10. `-3901 &^ 512` would have been the same value as `-3901` — bit 10
+		// is already clear there — so that case repeated a fixture two tests above and measured nothing.
+		{-1 &^ 512, Fail, "clearing bit 10 alone fails, however many other bits are set"},
+		// Everything including bit 10.
+		{-1, Pass, "all permissions granted includes bit 10"},
+	} {
+		d, oerr := openEncrypted(t, enc, "")
+		if oerr != "" {
+			t.Fatalf("open: %s", oerr)
+		}
+		ed := d.dict(*d.Ctx.XRefTable.Encrypt)
+		if ed == nil {
+			t.Fatal("setup: the encryption dictionary does not resolve, so no /P can be set")
+		}
+		ed["P"] = types.Integer(c.p)
+		if got := registry["7.16 t1"].Check(d); got.Verdict != c.want {
+			t.Errorf("/P = %d reports %v (%s), want %v — %s", c.p, got.Verdict, got.Why, c.want, c.why)
+		}
+	}
+}
+
+// **A form an OUTER form draws is a subject; one merely sitting in the outer's resources is not**
+// (P06.S03). Measured on veraPDF: the nested-and-drawn document reports 1 passed and 1 failed — the
+// outer form passes, the inner fails — while the nested-but-undrawn document reports 1 passed and 0
+// failed, the outer alone. nib agrees on both.
+//
+// This is the same drawn/undrawn distinction one level down, and no other fixture covers nesting.
+func TestANestedFormIsASubjectOnlyWhenTheOuterDrawsIt(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		inner string
+		want  Verdict
+	}{
+		{"the outer form draws the inner", "/Y0 Do", Fail},
+		{"the outer form merely holds it", "", Pass},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			objs := map[int]string{
+				1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 5 0 R >>",
+				2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R " +
+					"/Resources << /XObject << /X0 10 0 R >> >> >>",
+				4: "<< /Length 6 >>\nstream\n/X0 Do\nendstream",
+				5: "<< /Type /StructTreeRoot /K [] >>",
+				9: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Ref << /F << /Type /Filespec " +
+					"/F (ext.pdf) >> /Page 0 >> /Length 0 >>\nstream\n\nendstream",
+				10: fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources "+
+					"<< /XObject << /Y0 9 0 R >> >> /Length %d >>\nstream\n%s\nendstream", len(c.inner), c.inner),
+			}
+			if got := verdictOf(t, buildPDF(objs), "7.20 t1"); got.Verdict != c.want {
+				t.Errorf("%s: 7.20 t1 reports %v (%s), want %v — measured on veraPDF", c.name, got.Verdict, got.Why, c.want)
+			}
+		})
+	}
+}
+
+// **All three appearance states are graded, not just `/N`** (P06.S03). Measured: a widget whose
+// `/D` (down) appearance carries `/Ref` is FAILED by veraPDF, and so is one whose `/R` (rollover)
+// does — each reporting 1 passed and 1 failed, the clean `/N` passing beside the defective state.
+// nib walks `N`, `R` and `D`, and until this test nothing said whether it should.
+func TestEveryAppearanceStateIsAFormXObject(t *testing.T) {
+	for _, state := range []string{"N", "R", "D"} {
+		objs := map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 5 0 R >>",
+			2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3: fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R "+
+				"/Resources << >> /Annots [<< /Type /Annot /Subtype /Widget /FT /Btn /T (b) "+
+				"/Rect [0 0 10 10] /F 4 /AP << /N 11 0 R /%s 9 0 R >> >>] >>", state),
+			4: "<< /Length 0 >>\nstream\n\nendstream",
+			5: "<< /Type /StructTreeRoot /K [] >>",
+			9: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Ref << /F << /Type /Filespec " +
+				"/F (ext.pdf) >> /Page 0 >> /Length 0 >>\nstream\n\nendstream",
+			11: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream",
+		}
+		if state == "N" {
+			// /N is both the clean one and the defective one here; keep one entry.
+			objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R " +
+				"/Resources << >> /Annots [<< /Type /Annot /Subtype /Widget /FT /Btn /T (b) " +
+				"/Rect [0 0 10 10] /F 4 /AP << /N 9 0 R >> >>] >>"
+		}
+		if got := verdictOf(t, buildPDF(objs), "7.20 t1"); got.Verdict != Fail {
+			t.Errorf("a widget whose /%s appearance carries /Ref reports %v (%s), want Fail — "+
+				"measured on veraPDF, which fails all three states", state, got.Verdict, got.Why)
+		}
 	}
 }

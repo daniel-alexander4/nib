@@ -1462,3 +1462,190 @@ func withXFAPackets(t *testing.T, pdf []byte, packets ...string) []byte {
 		return nil
 	})
 }
+
+// withEncryption encrypts pdf with an OWNER password only, under the given permissions (P06.S03).
+//
+// **The user password is empty on purpose.** `pdfops.Encrypt` refuses an empty one — it sets the same
+// secret as both user and owner so `RemovePassword` reverses it exactly — but an oracle document has to
+// be readable by veraPDF, which is run without a password. An owner-only restriction is the shape the
+// corpus's own `7.16-t01-fail-a.pdf` uses, and veraPDF reads both of these: measured, it reports
+// `passedChecks="1"` for the permissive one and `failedChecks="1"` for the restrictive one.
+//
+// **`model.PermissionsNone` yields `/P = -3901`, which is exactly what `pdfops.Encrypt` writes today**
+// — it never sets `conf.Permissions` at all. That is the coupling P06 declared at its open, and it is
+// why this clause fails nib's own protected output.
+func withEncryption(t *testing.T, pdf []byte, perms model.PermissionFlags) []byte {
+	t.Helper()
+	conf := model.NewAESConfiguration("", "owner", 256)
+	conf.Permissions = perms
+	var out bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(pdf), &out, conf); err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	return out.Bytes()
+}
+
+// withReferenceXObject adds a form XObject carrying `/Ref` to page 1's resources (P06.S03) —
+// 7.20 t1's failing half. Nib writes no reference XObject, so there is no product door to it.
+func withReferenceXObject(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		sd, err := ctx.NewStreamDictForBuf([]byte(""))
+		if err != nil {
+			return err
+		}
+		sd.Dict["Type"] = types.Name("XObject")
+		sd.Dict["Subtype"] = types.Name("Form")
+		sd.Dict["BBox"] = types.NewNumberArray(0, 0, 10, 10)
+		sd.Dict["Ref"] = types.Dict{
+			"F":    types.Dict{"Type": types.Name("Filespec"), "F": types.StringLiteral("external.pdf")},
+			"Page": types.Integer(0),
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		page, _, _, perr := ctx.PageDict(1, false)
+		if perr != nil {
+			return perr
+		}
+		res, _ := ctx.DereferenceDict(page["Resources"])
+		if res == nil {
+			res = types.Dict{}
+			page["Resources"] = res
+		}
+		xo, _ := ctx.DereferenceDict(res["XObject"])
+		if xo == nil {
+			xo = types.Dict{}
+			res["XObject"] = xo
+		}
+		xo["Xref0"] = *ref
+		// **The form must be DRAWN, or it is not a subject at all.** Measured: veraPDF reports
+		// 0 passed / 0 failed for a form that sits in a page's resources and is never drawn, and FAILS
+		// the same form once the content stream draws it. The first version of this helper omitted the
+		// operator, and the oracle caught it — nib failed a document veraPDF found no subject in.
+		cs, cerr := ctx.PageContent(page, 1)
+		if cerr != nil {
+			return cerr
+		}
+		drawn, derr := ctx.NewStreamDictForBuf(append(append([]byte{}, cs...), []byte("\nq /Xref0 Do Q\n")...))
+		if derr != nil {
+			return derr
+		}
+		if eerr := drawn.Encode(); eerr != nil {
+			return eerr
+		}
+		cref, rerr := ctx.IndRefForNewObject(*drawn)
+		if rerr != nil {
+			return rerr
+		}
+		page["Contents"] = *cref
+		return nil
+	})
+}
+
+// withUndrawnReferenceXObject puts a `/Ref`-carrying form in page 1's resources and does NOT draw it
+// (P06.S03) — the shape veraPDF reports no subject for.
+func withUndrawnReferenceXObject(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		sd, err := ctx.NewStreamDictForBuf([]byte(""))
+		if err != nil {
+			return err
+		}
+		sd.Dict["Type"] = types.Name("XObject")
+		sd.Dict["Subtype"] = types.Name("Form")
+		sd.Dict["BBox"] = types.NewNumberArray(0, 0, 10, 10)
+		sd.Dict["Ref"] = types.Dict{
+			"F":    types.Dict{"Type": types.Name("Filespec"), "F": types.StringLiteral("external.pdf")},
+			"Page": types.Integer(0),
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, rerr := ctx.IndRefForNewObject(*sd)
+		if rerr != nil {
+			return rerr
+		}
+		page, _, _, perr := ctx.PageDict(1, false)
+		if perr != nil {
+			return perr
+		}
+		res, _ := ctx.DereferenceDict(page["Resources"])
+		if res == nil {
+			res = types.Dict{}
+			page["Resources"] = res
+		}
+		xo, _ := ctx.DereferenceDict(res["XObject"])
+		if xo == nil {
+			xo = types.Dict{}
+			res["XObject"] = xo
+		}
+		xo["Unused0"] = *ref
+		return nil
+	})
+}
+
+// withRefOnAppearance puts `/Ref` on the NORMAL appearance stream of every annotation (P06.S03).
+//
+// **It stamps `/AP /N` through the annotation door, not every form in the file.** The first version
+// walked the xref table and stamped any stream whose `/Subtype` is `Form`, so a Fail could have come
+// from a page-content form rather than an appearance — the test's whole claim. Nothing asserted the
+// difference, and the fixture passed only because `AuthorForm`'s output happens to draw no other form.
+func withRefOnAppearance(t *testing.T, pdf []byte) []byte {
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		touched := 0
+		for p := 1; ; p++ {
+			page, _, _, perr := ctx.PageDict(p, false)
+			if perr != nil || page == nil {
+				break
+			}
+			annots, _ := ctx.DereferenceArray(page["Annots"])
+			for _, ao := range annots {
+				ad, derr := ctx.DereferenceDict(ao)
+				if derr != nil || ad == nil {
+					continue
+				}
+				ap, aerr := ctx.DereferenceDict(ad["AP"])
+				if aerr != nil || ap == nil {
+					continue
+				}
+				sd, _, serr := ctx.DereferenceStreamDict(ap["N"])
+				if serr != nil || sd == nil {
+					continue
+				}
+				sd.Dict["Ref"] = types.Dict{
+					"F":    types.Dict{"Type": types.Name("Filespec"), "F": types.StringLiteral("external.pdf")},
+					"Page": types.Integer(0),
+				}
+				if ir, ok := ap["N"].(types.IndirectRef); ok {
+					ctx.XRefTable.Table[ir.ObjectNumber.Value()].Object = *sd
+				}
+				touched++
+			}
+		}
+		if touched == 0 {
+			return fmt.Errorf("no annotation carried an /AP /N stream to stamp, so this fixture is the " +
+				"unmutated document")
+		}
+		return nil
+	})
+}
+
+// openEncrypted opens a password-protected document for a rule to read (P06.S03). `open` uses the
+// default configuration, which has no password, so a protected document cannot go through it.
+func openEncrypted(t *testing.T, pdf []byte, password string) (*Document, string) {
+	t.Helper()
+	conf := model.NewDefaultConfiguration()
+	conf.UserPW, conf.OwnerPW = password, password
+	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
+	if err != nil {
+		return nil, err.Error()
+	}
+	cat, cerr := ctx.XRefTable.Catalog()
+	if cerr != nil {
+		return nil, cerr.Error()
+	}
+	return &Document{Ctx: ctx, Catalog: cat, raw: pdf}, ""
+}

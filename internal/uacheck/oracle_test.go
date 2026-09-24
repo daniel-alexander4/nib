@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfops"
@@ -202,6 +203,14 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		// form does something nothing else does — it puts 7.15 t1's passing half WITH A SUBJECT in
 		// front of veraPDF, which is a different fact from having no AcroForm at all.
 		oracleDoc{"Markdown + title + a static XFA form", withStaticXFA(t, mdt)},
+		// P06.S03. `7.16 t1` has no product door for EITHER half: `pdfops.Encrypt` sets the same secret
+		// as user and owner, and a document with a user password is one veraPDF cannot open. Both are
+		// owner-only encryptions, and the restrictive one carries `/P = -3901`, the exact value nib's
+		// own `Encrypt` writes. `7.20 t1`'s failing half is a mutation too — nib writes no reference
+		// XObject — while its passing half is every other document holding a form.
+		oracleDoc{"Markdown + title, encrypted, all permissions", withEncryption(t, mdt, model.PermissionsAll)},
+		oracleDoc{"Markdown + title, encrypted, no permissions", withEncryption(t, mdt, model.PermissionsNone)},
+		oracleDoc{"committed proposal + a reference XObject", withReferenceXObject(t, w.pdf)},
 		oracleDoc{"Markdown + title + a dynamic XFA form", withDynamicXFA(t, mdt)},
 		// 7.4.2 t1's FAILED half (`/pending 487`). No product door writes a skipped level any more, so the
 		// structure editor's own door retypes a correctly nested heading one level too deep.
@@ -447,7 +456,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 73
+	const wantGenerated = 76
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

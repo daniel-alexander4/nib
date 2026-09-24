@@ -102,6 +102,10 @@ type Document struct {
 	specList  []fileSpec
 	specsErr  string
 	specsDone bool
+	// drawnForms is every form XObject the content walk actually entered — `7.20 t1`'s population,
+	// which is what the document DRAWS rather than what it holds; drawnSeen dedups by identity.
+	drawnForms []formXObject
+	drawnSeen  map[uintptr]bool
 }
 
 // nextStream hands out the next content-stream number.
