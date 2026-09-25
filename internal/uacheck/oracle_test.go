@@ -220,8 +220,8 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 		oracleDoc{"Markdown + title + a static XFA form", withStaticXFA(t, mdt)},
 		// P06.S03. `7.16 t1` has no product door for EITHER half: `pdfops.Encrypt` sets the same secret
 		// as user and owner, and a document with a user password is one veraPDF cannot open. Both are
-		// owner-only encryptions, and the restrictive one carries `/P = -3901`, the exact value nib's
-		// own `Encrypt` writes. `7.20 t1`'s failing half is a mutation too — nib writes no reference
+		// owner-only encryptions: the restrictive one carries `/P = -3901`, the value nib's own `Encrypt`
+		// wrote until /pending 640, and the permissive one what it writes now. `7.20 t1`'s failing half is a mutation too — nib writes no reference
 		// XObject — while its passing half is every other document holding a form.
 		oracleDoc{"Markdown + title, encrypted, all permissions", withEncryption(t, mdt, model.PermissionsAll)},
 		oracleDoc{"Markdown + title, encrypted, no permissions", withEncryption(t, mdt, model.PermissionsNone)},

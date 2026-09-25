@@ -443,7 +443,9 @@ produces a new, **unsigned** copy — save it to keep the cleaned version.
 
 ### Add password protection
 **Secure → Add password protection…** saves a separate **AES-256 encrypted copy**
-that needs the password to open (the same password opens and owns the file). You
+that needs the password to open (the same password opens and owns the file, so it
+controls who can open the copy and restricts nothing else — printing, copying, editing
+and screen readers all work for anyone who has it). You
 type it twice — Nib can't recover a forgotten one. Your open document is left
 unprotected and editable; the protection is a standalone export, never combined
 with signing (encrypting rewrites the file, so the copy won't carry a signature).

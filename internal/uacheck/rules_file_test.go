@@ -986,15 +986,12 @@ func TestAnEncryptedDocumentMustAllowAccessibleExtraction(t *testing.T) {
 	}
 }
 
-// **nib's own "Protect with a password" output FAILS this clause when the checker is given the password,
-// and that is recorded rather than fixed** (P06.S03). `pdfops.Encrypt` never sets `conf.Permissions`, so the written `/P` is `-3901` and
-// bit 10 is clear: a document nib protected cannot be read aloud.
-//
-// Which permissions that door should grant is a product decision with no single right answer, so the
-// checker says so and `/pending 640` owns the writer. **This test is the standing evidence**: if
-// `Encrypt` ever starts granting bit 10, it goes red and the claim in the plan and in `/pending 640`
-// has to be re-read rather than quietly surviving.
-func TestNibsOwnProtectedOutputFailsTheAccessibilityPermission(t *testing.T) {
+// **nib's own "Protect with a password" output PASSES this clause when the checker is given the password**
+// (/pending 640, decided 2026-09-24). It FAILED from P06.S03 until then: `pdfops.Encrypt` set no permissions, so
+// the written `/P` was `-3901` and bit 10 was clear. With one password that both opens and owns the copy, no
+// permission bit binds anyone who can open it, so `Encrypt` now grants them all, bit 10 included. This test was
+// written to go red on that day, and now stands the other way round.
+func TestNibsOwnProtectedOutputGrantsTheAccessibilityPermission(t *testing.T) {
 	base, err := pdfops.SetTitle(plainDoc(t), "A named document")
 	if err != nil {
 		t.Fatal(err)
@@ -1013,10 +1010,9 @@ func TestNibsOwnProtectedOutputFailsTheAccessibilityPermission(t *testing.T) {
 		t.Fatalf("setup: nib's own protected output did not re-open with its password: %s", oerr)
 	}
 	got := registry["7.16 t1"].Check(d)
-	if got.Verdict != Fail {
-		t.Errorf("nib's own protected output reports %v (%s) for 7.16 t1, want Fail — `Encrypt` sets "+
-			"no permissions, so /P is -3901 and bit 10 is clear. If this has changed, /pending 640 and "+
-			"P06's phase-open note both need re-reading", got.Verdict, got.Why)
+	if got.Verdict != Pass {
+		t.Errorf("nib's own protected output reports %v (%s) for 7.16 t1, want Pass — `Encrypt` grants every "+
+			"permission since /pending 640, bit 10 included", got.Verdict, got.Why)
 	}
 }
 

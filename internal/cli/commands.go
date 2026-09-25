@@ -527,7 +527,7 @@ func cmdEncrypt(args []string) int {
 	outFlag(fs, &out)
 	inPlaceFlag(fs, &inPlace)
 	fs.StringVar(&passFile, "password-file", "", "read the password from `FILE` (else $NIB_PDF_PASSWORD); required")
-	fs.Usage = usageFunc(fs, "nib encrypt IN -o OUT --password-file FILE  |  nib encrypt -w FILE...", "Add AES-256 password protection. The same password opens and owns the file; an already-encrypted PDF is reported, not re-encrypted.")
+	fs.Usage = usageFunc(fs, "nib encrypt IN -o OUT --password-file FILE  |  nib encrypt -w FILE...", "Add AES-256 password protection. The same password opens and owns the file, so it controls who can open it and restricts nothing else (printing, copying, editing and screen readers are all allowed); an already-encrypted PDF is reported, not re-encrypted.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
