@@ -171,21 +171,15 @@ func checkStructTreeRoot(d *Document) Result {
 			Where:   "/StructTreeRoot /K",
 		}
 	}
-	// **A root with no kids is the state ADR-031 law 1 is about**, and it is a fail rather than a
-	// pass-on-a-technicality: the catalog claims structure and nothing hangs off it, which is what
-	// `tagState.orphaned()` reports and what P01's phase review caught being rated `carried`.
-	kids, kerr := d.Ctx.DereferenceArray(root["K"])
-	if kerr != nil {
+	// **A root with no kids PASSES, as veraPDF passes it** (`containsStructTreeRoot == true` — presence only;
+	// /pending 674, decided 2026-09-24). This rule used to fail it, citing ADR-031 law 1 — but law 1 governs what
+	// nib WRITES ("no output may carry …"), and nib's writers keep their own guard (`tagState.orphaned()`). A
+	// checker verdict is veraPDF's, and the untagged content under an empty root is failed where it lives: 7.1 t3
+	// fails its text (measured on both checkers), and a blank page under one fails exactly what veraPDF fails.
+	if _, kerr := d.Ctx.DereferenceArray(root["K"]); kerr != nil {
 		return Result{
 			Verdict: CannotCheck,
 			Why:     fmt.Sprintf("the structure root's /K could not be resolved: %v", kerr),
-			Where:   "/StructTreeRoot /K",
-		}
-	}
-	if len(kids) == 0 {
-		return Result{
-			Verdict: Fail,
-			Why:     "the structure root has no children, so the catalog claims logical structure that holds nothing",
 			Where:   "/StructTreeRoot /K",
 		}
 	}

@@ -2561,7 +2561,8 @@ the half the validation model does not hold.
   unreachable through a file.
 - **Adding the oracle documents found three shipped-rule divergences on an untagged page**: 7.21.4.2 t2 (a
   non-embedded CID font is a subject that passes — fixed), and 7.1 t11 on an empty root and 7.2 t30-t32 with no
-  marked content (/pending 674 — 7.1 t11's strictness is ADR-031's and is parked for Dan).
+  marked content (/pending 674 — 7.1 t11's strictness is ADR-031's and is parked for Dan). **(pin, 2026-09-24: decided —
+  7.1 t11 is presence-only, as veraPDF's; law 1 governs nib's writers, not the checker. The 7.2 t30-t32 half stays open.)**
 
 - T01 — the five rules over one population door (`type0Fonts`), the predefined table transcribed from source.
 - T02 — measured fixtures and oracle documents for every half; `corpusReach` and population rows.

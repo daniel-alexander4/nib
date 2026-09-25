@@ -68,29 +68,27 @@ func TestStructTreeRootAgreesWithWhatP05AndP06Measured(t *testing.T) {
 	}
 }
 
-// TestAClaimedStructureThatHoldsNothingFAILS — ADR-031 law 1's first case, read from the other side.
-//
-// A catalog naming a `/StructTreeRoot` whose tree is empty is `tagState.orphaned()` — the state P01's
-// phase review caught being rated `carried`. The checker must call that a failure and not a
-// pass-on-a-technicality: the clause asks for logical structure, and an empty root is a claim with
-// nothing behind it.
-func TestAClaimedStructureThatHoldsNothingFAILS(t *testing.T) {
+// TestAnEmptyStructureRootPassesAndItsContentStillFails — /pending 674, decided 2026-09-24. veraPDF's 7.1 t11 is
+// `containsStructTreeRoot == true`, so a root with no kids passes it (measured); nib had failed it, citing ADR-031 law
+// 1, which governs what nib writes, not what the checker reports. The untagged content under such a root is failed
+// where it lives — 7.1 t3 — on both checkers, so nothing is called conformant for an empty tree over real content.
+func TestAnEmptyStructureRootPassesAndItsContentStillFails(t *testing.T) {
 	rep, err := Check(emptyRootFixture())
 	if err != nil {
 		t.Fatalf("the fixture could not be read: %v", err)
 	}
-	var got Result
+	got := map[string]Result{}
 	for _, r := range rep.Results {
-		if r.Clause == "7.1 t11" {
-			got = r
-		}
+		got[r.Clause] = r
 	}
-	if got.Verdict != Fail {
-		t.Errorf("a catalog naming a structure root that holds nothing reports %v (%s), want Fail",
-			got.Verdict, got.Why)
+	if r := got["7.1 t11"]; r.Verdict != Pass {
+		t.Errorf("7.1 t11 over an empty structure root reports %v (%s), want Pass as veraPDF gives", r.Verdict, r.Why)
 	}
-	if !strings.Contains(got.Why, "no children") && !strings.Contains(got.Why, "holds nothing") {
-		t.Errorf("the reason does not say the root is empty: %q", got.Why)
+	if r := got["7.1 t3"]; r.Verdict != Fail {
+		t.Errorf("7.1 t3 over untagged text under an empty root reports %v (%s), want Fail — the content is what is untagged", r.Verdict, r.Why)
+	}
+	if rep.Conformant() {
+		t.Error("a document of untagged text under an empty structure root reads as conformant")
 	}
 }
 
