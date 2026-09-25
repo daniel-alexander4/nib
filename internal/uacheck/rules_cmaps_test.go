@@ -14,8 +14,8 @@ func type0Doc(enc, cid string, extra map[int]string) map[int]string {
 		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /StructParents 0 " +
 			"/Resources << /Font << /F0 10 0 R >> >> >>",
 		// **Tagged, one P element over the one text run** — so the documents exercise the CMap clauses and not
-		// two unrelated divergences an untagged page reaches (/pending 674: an empty structure root, and
-		// marked-content clauses answering Pass with no marked content).
+		// the divergence an untagged page reaches (/pending 674's open half: marked-content clauses answering Pass
+		// with no marked content; its empty-structure-root half was decided presence-only on 2026-09-24).
 		4:  spStream("", "/P <</MCID 0>> BDC BT /F0 12 Tf 10 10 Td <2121> Tj ET EMC"),
 		5:  "<< /Type /StructTreeRoot /K [6 0 R] /ParentTree 7 0 R >>",
 		6:  "<< /Type /StructElem /S /P /P 5 0 R /Pg 3 0 R /K [0] >>",
