@@ -74,10 +74,17 @@ func (d *Document) metricsOf(g glyph) glyphMetrics {
 		}
 		return glyphMetrics{known: true, valid: true, present: g.code == 0 || p.containsCode(g.code), program: p.width(g.code), dictionary: dw}
 	case "Type1", "MMType1":
-		if kind := d.embeddedProgram(font); kind != "" {
-			return glyphMetrics{why: fmt.Sprintf("its embedded %s program is one nib does not read yet (P07.S05/S06)", kind)}
+		c, known, why, throws := d.type1COf(font)
+		switch {
+		case throws != "":
+			return glyphMetrics{why: throws}
+		case !known:
+			return glyphMetrics{why: why}
+		case c == nil:
+			return glyphMetrics{known: true}
 		}
-		return glyphMetrics{known: true}
+		m, _ := d.type1CMetrics(g, c)
+		return m
 	case "Type3":
 		return d.type3Metrics(g)
 	case "Type0":

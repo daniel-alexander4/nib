@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -245,6 +246,38 @@ func noReportFixtures() []struct {
 		{"a code mapped to a negative CID", neg("/Identity", "<0021> Tj", nil)},
 		{"a code mapped to a negative CID over a CIDToGIDMap stream", neg("30 0 R", "<0021> Tj", map[int]string{30: spStream("", string([]byte{0, 0, 0, 5, 0, 7}))})},
 		{"a code mapped to a negative CID, drawn invisibly", neg("/Identity", "3 Tr <0021> Tj", nil)},
+		// P07.S05a: a CFF naming the ISOAdobe charset (229 names) over 230 glyphs — `initializeCharSet` indexes past it.
+		{"a Type1C program naming the ISOAdobe charset past its 229 glyphs", t1cDoc("ABCDEF+Probe", "/FirstChar 65 /LastChar 67 /Widths [500 500 500] /Encoding /WinAnsiEncoding", "", "(ABC) Tj", cffSpec{predefined: 1, charstrings: make230()}.build(), "Type1C")},
+		// P07.S05a: a Type1C program of 10240 bytes or more whose CharStrings offset lies past its end — the file-backed
+		// stream's seek throws an IllegalArgumentException (the boundary P07.S03 measured on TrueType).
+		{"a big Type1C program whose CharStrings lie past its end", func() []byte {
+			p := cffSpec{names: []string{"A", "B", "C"}}.build()
+			for len(p) < 12000 {
+				p = append(p, 0)
+			}
+			for i := 0; i+5 < len(p); i++ {
+				if p[i] == 29 && p[i+5] == 17 {
+					copy(p[i+1:i+5], []byte{0, 0x10, 0, 0})
+					break
+				}
+			}
+			return t1cDoc("ABCDEF+Probe", "/FirstChar 65 /LastChar 67 /Widths [500 500 500] /Encoding /WinAnsiEncoding", "", "(A) Tj", p, "Type1C")
+		}()},
+		// The P07.S05a review: a program that throws is read when the FONT object is built — an empty string suffices —
+		// and a String INDEX whose offsets run backwards throws from `Arrays.copyOfRange`.
+		{"a Type1C program that throws, drawn only by an empty string", t1cDoc("ABCDEF+Probe", "/FirstChar 65 /LastChar 67 /Widths [500 500 500] /Encoding /WinAnsiEncoding", "", "() Tj", cffSpec{predefined: 1, charstrings: make230()}.build(), "Type1C")},
+		{"a Type1C program whose String INDEX runs backwards", t1cDoc("ABCDEF+Probe", "/FirstChar 65 /LastChar 67 /Widths [500 500 500] /Encoding /WinAnsiEncoding", "", "(A) Tj", func() []byte {
+			p := cffSpec{names: []string{"A", "xa", "C"}}.build()
+			p[bytes.Index(p, []byte{0, 1, 1, 1, 3, 'x', 'a'})+3] = 4
+			return p
+		}(), "Type1C")},
+		// P07.S05a's red-proof: a subset font computes every width at parse, so an UNDRAWN charstring running backwards throws.
+		{"a subset Type1C program with an undrawn charstring running backwards", func() []byte {
+			p := cffSpec{names: []string{"A", "B", "C"}, charstrings: [][]byte{cs(300, "endchar"), cs(500, "endchar"), cs(500, "endchar"), cs(500, 1, "hmoveto")}}.build()
+			i := bytes.Index(p, []byte{0, 4, 1, 1})
+			p[i+6] = p[i+7] + 1
+			return t1cDoc("ABCDEF+Probe", "/FirstChar 65 /LastChar 67 /Widths [500 500 500] /Encoding /WinAnsiEncoding", "/CharSet (/A/B/C)", "(A) Tj", p, "Type1C")
+		}()},
 		{"a TrueType width off, then a Type 3 font whose /CharProcs is an array", failFirst(map[int]string{
 			50: t3Font("97 /a", "/FirstChar 97 /LastChar 97 /Widths [10]", "/CharProcs [26 0 R]", ""), 26: proc("10 0 d0")}, "(a)")},
 		{"a TrueType width off, then a negative CID", failFirst(map[int]string{

@@ -16,13 +16,12 @@ import (
 // alternate text (P06.S04), and a font whose glyph widths disagree with its own program (P07.S04a, which taught the
 // checker 7.21.5 t1). After the third, none was left to cite, and this test asserts what the docs now say instead.
 //
-// **Measured at P07.S04a over veraPDF's own PDF/UA-1 corpus: nib reports 131 files conformant, and veraPDF fails none
-// of them.** The two rules nib does not check cannot produce such a file today, for different reasons: 7.1 t12 is one
-// veraPDF never fails (P03), and 7.21.4.2 t1 — a Type 1 font's /CharSet against its program — applies only to an
-// EMBEDDED Type 1 or CFF font, whose metrics nib reports as "could not check" until P07.S05/S06 read those programs.
-// That second reason is a refusal, not a check, which is why the corpus's 7.21.4.2 t01 files are asserted here as NOT
-// conformant rather than as agreeing: the day S05/S06 lands, those refusals become verdicts and the hole reopens
-// unless 7.21.4.2 t1 lands with them.
+// **Measured at P07.S05a over veraPDF's own PDF/UA-1 corpus: nib reports 132 files conformant, and veraPDF fails none
+// of them** (131 at P07.S04a; `7.21.4.2-t01-pass-a` joined when its Type1C program became readable). The one rule nib
+// does not check, 7.1 t12, is one veraPDF never fails (P03). 7.21.4.2 t1 — a Type 1 font's /CharSet against its
+// program — landed WITH the Type1C metrics, as this test demanded: the corpus's two t01 fail files are asserted
+// non-conformant below, so a regression in that clause shows here as well as in the oracle. A Type 1 (/FontFile) or
+// CID-keyed CFF program is still a refusal (P07.S06, P07.S05b), and the day those land the same rule applies to them.
 //
 // **This is still not a certificate**, and the docs keep saying so: nib's verdicts are tested against veraPDF on every
 // build, not proven, and a corpus is evidence about the documents in it.
@@ -49,7 +48,7 @@ func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
 		t.Fatal(err)
 	}
 	// **The count is the README's**, so a set that shrank would leave the docs' figure standing over fewer files.
-	const readmeCount = 131
+	const readmeCount = 132
 	if len(conformant) != readmeCount {
 		t.Errorf("nib calls %d corpus files conformant and the README says %d — measure it again and move both", len(conformant), readmeCount)
 	}
@@ -60,8 +59,7 @@ func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
 			t.Fatalf("the corpus lacks %s: %v", f, rerr)
 		}
 		if r, cerr := Check(b); cerr == nil && r.Conformant() {
-			t.Errorf("%s fails 7.21.4.2 t1, which nib does not check, and nib now calls it conformant — the docs' claim "+
-				"that a clean report has no measured counterexample is false; cite this file, or land 7.21.4.2 t1", f)
+			t.Errorf("%s fails 7.21.4.2 t1, and nib calls it conformant — a false pass in the clause P07.S05a landed", f)
 		}
 	}
 	vp := veraPDFPath()

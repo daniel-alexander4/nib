@@ -149,7 +149,10 @@ var corpusReach = map[string]int{
 	// `7.21.3.2-t01-fail-a`/`-c`, where pdfcpu drops the very CIDFont veraPDF judges (a font that does not resolve
 	// refuses; it had read as drawing no glyph). No other row moved. P07.S04b moved none: the corpus draws no Type 3
 	// glyph the population judges and no embedded CMap outside a CFF font — its fixtures are the slice's own.
-	"7.21.5 t1": 265, "7.21.4.1 t2": 265, "7.21.8 t1": 268,
+	// P07.S05a: the three simple Type1C files (all 7.21.4.2 t01) now settle the two metric clauses. 7.21.4.2 t1 settles
+	// on 4 — those three (2 F, 1 P, agreeing) and `7.21.4.1-t01-fail-a`, whose Type 1 font embeds nothing and passes;
+	// `7.21.3.2-t01-fail-a`/`-c` refuse, their font unresolved (pdfcpu drops it). The CID-keyed CFF refusals are P07.S05b's.
+	"7.21.5 t1": 268, "7.21.4.1 t2": 268, "7.21.8 t1": 268, "7.21.4.2 t1": 4,
 	"7.21.6 t1": 255, "7.21.6 t2": 255, "7.21.6 t3": 255, "7.21.6 t4": 255,
 	"7.21.3.1 t1": 62, "7.21.3.2 t1": 62, "7.21.3.3 t1": 62, "7.21.3.3 t2": 12, "7.21.3.3 t3": 2,
 	"7.1 t1": 293, "7.1 t2": 293, "7.1 t3": 292, "7.1 t5": 5, "7.1 t6": 294, "7.1 t7": 294, "7.1 t8": 295, "7.1 t9": 294, "7.1 t10": 295, "7.1 t11": 295,

@@ -204,7 +204,26 @@ func (d *Document) simpleFallback(f *glyphFont, code int) (string, uniState, str
 		name, ok = n, true
 	}
 	if !ok {
-		// `fontProgram.getGlyphName(code)` — a Type 3 font has no program, and neither does a font that embeds none.
+		// `fontProgram.getGlyphName(code)` — a Type 3 font has no program, and neither does a font that embeds none. A
+		// PARSED Type1C program answers through its own encoding and charset (P07.S05a); one whose parse failed may be
+		// half-read in veraPDF, so it still refuses.
+		if st := d.name(f.dict["Subtype"]); (st == "Type1" || st == "MMType1") && d.embeddedProgram(f.dict) == "CFF" {
+			switch sub := d.fontFile3Subtype(f.dict); {
+			case sub != "Type1C" && sub != "OpenType":
+				return "", uniNull, "" // "Invalid subtype of the embedded font stream": no program, no name
+			case sub == "Type1C":
+				c, known, _, throws := d.type1COf(f.dict)
+				switch {
+				case known && throws == "" && c != nil:
+					name, ok = c.glyphName(code), true
+				case known && throws == "":
+					return "", uniUnknown, fmt.Sprintf("its encoding names no glyph for code %#x, so veraPDF asks its "+
+						"CFF program for the name — a program whose parse failed, which veraPDF may have half-read", code)
+				}
+			}
+		}
+	}
+	if !ok {
 		if kind := d.embeddedProgram(f.dict); kind != "" {
 			return "", uniUnknown, fmt.Sprintf("its encoding names no glyph for code %#x, so veraPDF asks the embedded %s "+
 				"program for the name, which nib does not read", code, kind)

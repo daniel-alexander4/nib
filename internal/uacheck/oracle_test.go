@@ -348,6 +348,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	for _, f := range type3AndCMapFixtures() {
 		docs = append(docs, oracleDoc{"metrics: " + f.name, f.pdf})
 	}
+	// P07.S05a: the Type1C program — the per-glyph clauses, 7.21.4.2 t1 and 7.21.4.1 t1's parse.
+	for _, f := range append(append(type1CFixtures(), type1CFixturesMore()...), type1CFixturesProbed()...) {
+		docs = append(docs, oracleDoc{"type1c: " + f.name, f.pdf})
+	}
 	return docs
 }
 
@@ -540,6 +544,13 @@ var knownCannotCheck = map[string]string{
 	"metrics: CMap: a real CID / 7.21.4.1 t2":                                                         "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"metrics: CMap: a real CID / 7.21.5 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"metrics: CMap: a real CID / 7.21.8 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
+	"type1c: T1C: Encoding with no operand before ROS / 7.21.5 t1":                                    "a CID-keyed CFF under a simple font: P07.S05b's reader",
+	"type1c: T1C: Encoding with no operand before ROS / 7.21.4.1 t2":                                  "a CID-keyed CFF under a simple font: P07.S05b's reader",
+	"type1c: T1C: Encoding with no operand before ROS / 7.21.4.1 t1":                                  "a CID-keyed CFF under a simple font: P07.S05b's reader",
+	"type1c: T1C: charstring type 1 / 7.21.5 t1":                                                      "Type 1 charstrings inside a CFF: veraPDF's Type1CharStringParser, not mirrored",
+	"type1c: T1C: charstring type 1 / 7.21.4.1 t2":                                                    "Type 1 charstrings inside a CFF: the width refuses, and the glyph's metrics with it",
+	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.2 t1":                 "an unresolved font: absent, or dropped by pdfcpu",
+	"metrics: CID: /W range whose width is not a number / 7.21.4.2 t1":                                "an unresolved font: absent, or dropped by pdfcpu",
 	"metrics: CMap: a real CID / 7.21.7 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"metrics: CMap: a real CID / 7.21.7 t2":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.1 t2":                 "an unresolved font: absent, or dropped by pdfcpu",
@@ -625,7 +636,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 404 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88
+	const wantGenerated = 457 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
