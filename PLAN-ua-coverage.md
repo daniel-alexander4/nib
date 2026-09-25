@@ -2818,12 +2818,25 @@ Acceptance:
 #### P07.S06 — the Type 1 program
 Scope: eexec and charstring decryption, `/CharStrings` names, `hsbw` widths — the Type 1 halves of 7.21.4.1 t2, 7.21.5
 t1, 7.21.8 t1 and 7.21.4.2 t1. **Zero corpus reach**, so every half is a hand-built fixture measured on veraPDF, and
-a real-producer Type 1 file is sought first (P08's LibreOffice and Ghostscript output); if none exists the slice may
-close as `CannotCheck` naming "Type 1", which the exit criterion already permits — decided at its grill.
+a real-producer Type 1 file is sought first; if none exists the slice may close as `CannotCheck` naming "Type 1",
+which the exit criterion already permits — decided at its grill.
+**(pin, 2026-09-24, measured: the real-producer Type 1 source is pdfLaTeX, not Ghostscript.)** A one-line `article`
+through `pdflatex` embeds `cmr10.pfb` as `/Subtype /Type1` with `/FontFile` carrying `/Length1` and `/Length2`
+(cleartext and eexec) — exactly the program this slice reads. The same file through Ghostscript `pdfwrite` came out
+as `/FontFile3 /Subtype /Type1C` on both runs: Ghostscript converts Type 1 to CFF, so its output is S05's evidence,
+not this slice's. `pdflatex`, `t1asm`/`t1disasm` and the URW base-35 `.pfb` set are installed here, so the corpus is
+producible locally: **pass** files are pdfLaTeX output (Computer Modern, URW via `\usepackage{times}` and similar —
+subset, so `/CharSet` is exercised); **fail** files are those mutated one condition each (a glyph dropped from
+`/CharStrings` via `t1disasm`/`t1asm`, an `hsbw` width disagreeing with `/Widths`, a `/CharSet` out of step with
+the program); every file carries veraPDF's verdict. LibreOffice was not measured. The zero corpus reach above is
+veraPDF's corpus; it is not a lack of producible files, so the `CannotCheck` close stays a fallback.
 
 ### P08 — A real-producer corpus
-**Goal.** LibreOffice, Word export, Acrobat and Ghostscript files scored rule by rule, nib against veraPDF.
+**Goal.** LibreOffice, Word export, Acrobat, Ghostscript and pdfLaTeX files scored rule by rule, nib against veraPDF.
 Refs: D7.
+**(pin, 2026-09-24)** pdfLaTeX joins the producer list: it is the one measured local producer that embeds a Type 1
+`/FontFile` (Ghostscript re-encodes Type 1 as CFF — see P07.S06's pin), and its output (most academic papers) is
+where Type 1 still appears in the field.
 **Exit criteria.** Every rule agrees on the corpus or its disagreement is filed by name; the docs and `nib ua`
 say "agrees with veraPDF on N rules", never "conformant" (law 2).
 
@@ -2832,7 +2845,7 @@ say "agrees with veraPDF on N rules", never "conformant" (law 2).
 ## Standing caveats
 
 - **Word and Acrobat output are not producible on this machine.** P08's corpus for those producers needs files
-  from somewhere else; LibreOffice and Ghostscript output can be made locally.
+  from somewhere else; LibreOffice, Ghostscript and pdfLaTeX output can be made locally.
 - **The census's population is one Markdown fixture.** A loss that only appears on documents nib did not author
   is outside what it can see; P08's corpus is the wider population.
 - **Seam inventory:** `~/.claude/projects/-home-dan-repos-nib/memory/instruments/ua-coverage.md`.
