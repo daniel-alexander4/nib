@@ -813,12 +813,11 @@ func checkUniqueSemanticParent(d *Document) Result {
 // *"extract text and graphics in support of accessibility to users with disabilities"*: a protected
 // document that denies it cannot be read aloud.
 //
-// **nib's own `Encrypt` output fails this clause's PREDICATE**, measured: it never sets `conf.Permissions`,
-// so the written `/P` is `-3901` = `0xF0C3`, and `0xF0C3 & 512 == 0`. **No product door reports it**, though
-// (the P06 phase-close review): `Encrypt` sets a user password, and `Check`/`CheckForUA` read without one,
-// so on that file they stop at the password and emit no report. The failure is therefore a fact about the
-// writer that `/pending 640` owns — which permissions "Protect with a password" should grant is a product
-// decision with no single right answer — and not something a user of `nib ua` is shown.
+// **nib's own `Encrypt` output passes this clause since /pending 640** (2026-09-24): it grants every permission,
+// because one password opens and owns the copy and no bit binds whoever can open it. Until then it failed the
+// predicate (`/P` `-3901` = `0xF0C3`, bit 10 clear). No product door reports either way (the P06 phase-close
+// review): `Encrypt` sets a user password, and `Check`/`CheckForUA` read without one, so on that file they stop
+// at the password and emit no report.
 func checkEncryptionPermissions(d *Document) Result {
 	// **`XRefTable.Encrypt` is a POINTER to an indirect reference**, not an object. Handing the pointer
 	// to `dict` resolved nothing, so every encrypted document read as unencrypted — a false pass on

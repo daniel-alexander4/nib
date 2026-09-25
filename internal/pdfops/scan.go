@@ -411,7 +411,15 @@ var (
 
 // Encrypt password-protects pdf with AES-256, producing a copy that needs the
 // password to open. The single password is set as both the user (open) and owner
-// password, so RemovePassword(password) reverses it exactly. password must be
+// password, so RemovePassword(password) reverses it exactly.
+//
+// **The password controls opening and nothing else, and the file says so** (/pending 640). With one
+// password for both roles, whoever can open the copy authenticates as its OWNER, and an owner is
+// bound by no permission bit — pdfcpu skips them (`read.go`'s owner branch) as the PDF spec says a
+// reader must. So restricting printing, copying or editing would write flags that bind nobody, while
+// `NewAESConfiguration`'s default denied all of them (`/P` 0xF0C3), including bit 10, "extract for
+// accessibility". Every permission is granted instead, and the configuration is pinned rather than
+// read from the user's `~/.config/pdfcpu/config.yml` (`protectConfig`). password must be
 // non-empty — an empty one is rejected rather than silently producing an
 // unprotected file — and an already-encrypted input returns ErrAlreadyEncrypted
 // (pdfcpu will not re-encrypt). Like RemovePassword, api.Encrypt rewrites the
@@ -421,7 +429,7 @@ func Encrypt(pdf []byte, password string) ([]byte, error) {
 	if password == "" {
 		return nil, errors.New("a password is required to protect the document")
 	}
-	conf := model.NewAESConfiguration(password, password, 256)
+	conf := protectConfig(password)
 	var out bytes.Buffer
 	if err := api.Encrypt(bytes.NewReader(pdf), &out, conf); err != nil {
 		if strings.Contains(err.Error(), "this file is encrypted") {
@@ -430,6 +438,18 @@ func Encrypt(pdf []byte, password string) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// protectConfig is Encrypt's configuration: what the protection promises — AES-256, both passwords, and every
+// permission — is set here, never taken from the user's `~/.config/pdfcpu/config.yml`, which
+// `NewDefaultConfiguration` would otherwise read (its `permissions` line decided nib's flags before /pending 640).
+// `NewAESConfiguration` itself sets the cipher and key length after loading that file.
+func protectConfig(password string) *model.Configuration {
+	c := model.NewAESConfiguration(password, password, 256)
+	// Every permission bit from 3 to 12 (and the reserved high bits) — but not bits 1-2, which ISO 32000 says must
+	// be 0: `PermissionsAll` is 0xFFFF and would write `/P -1` (the review, reading pdfcpu's `newEncryptDict`).
+	c.Permissions = model.PermissionsAll &^ 3
+	return c
 }
 
 // RemovePassword strips a PDF's encryption — both an open/user password and
