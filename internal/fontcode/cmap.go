@@ -1,7 +1,6 @@
 package fontcode
 
 import (
-	"strconv"
 	"unicode/utf16"
 
 	"nib/internal/contentstream"
@@ -56,16 +55,6 @@ func (t *cmapTokens) hex() ([]byte, bool) {
 	return Hex(tk.Bytes(t.src)), true
 }
 
-// integer reads the next token as an integer.
-func (t *cmapTokens) integer() bool {
-	tk, ok := t.next()
-	if !ok || tk.Kind != contentstream.Operand {
-		return false
-	}
-	_, err := strconv.Atoi(t.text(tk))
-	return err == nil
-}
-
 // maxCMapEntries bounds the entries one CMap may announce in total. The count is attacker-written and
 // each entry is read from real tokens, so a count past the tokens simply runs out — but it is also the
 // loop bound, and a stated count should never be one.
@@ -78,22 +67,33 @@ const maxCMapEntries = 1 << 20
 //
 // It returns false where veraPDF would throw — an entry of the wrong kind — which empties the CMap.
 func (t *cmapTokens) lists(each func(key string) bool, use func(name string)) bool {
+	// lastName is `CMapParser.lastCOSName`: the last NAME object processed at the top level, where a PostScript parser's
+	// names include its keywords (`def`, `findresource`) and `<<`/`>>` (`PSParser.getDictionary`) — measured: after
+	// `/Identity-H << >> usecmap` nothing is loaded. A name is taken RAW, since a PostScript parser does not decode
+	// `#xx` (`BaseParser.readName`; measured: `/Identity#2DH usecmap` loads nothing). An array or a procedure is ONE
+	// object to `nextObject`, so nothing inside one is seen (measured: `/Identity-H [ /X ] usecmap` loads Identity-H).
 	lastName := ""
+	depth := 0
 	budget := maxCMapEntries
 	for {
 		tk, ok := t.next()
 		if !ok {
 			return true
 		}
+		if t.nests(tk, &depth) || depth > 0 {
+			continue
+		}
 		switch tk.Kind {
+		case contentstream.DictOpen, contentstream.DictClose:
+			lastName = t.text(tk)
 		case contentstream.Operand:
 			b := tk.Bytes(t.src)
 			if len(b) > 0 && b[0] == '/' {
-				lastName = Name(b[1:])
+				lastName = string(b[1:])
 				continue
 			}
-			v, err := strconv.ParseInt(string(b), 10, 64)
-			if err != nil {
+			n, isInt := javaIntegerValue(b)
+			if !isInt {
 				continue
 			}
 			// **An integer CONSUMES the object after it** (`CMapParser.processObject`): it is a list only when that
@@ -105,12 +105,12 @@ func (t *cmapTokens) lists(each func(key string) bool, use func(name string)) bo
 			}
 			key := t.text(kw)
 			// A name consumed here is executed, not remembered: veraPDF sets `lastCOSName` only in its own name branch.
-			if kw.Kind != contentstream.Operator || len(key) < 5 || key[:5] != "begin" {
+			if t.nests(kw, &depth) || kw.Kind != contentstream.Operator || len(key) < 5 || key[:5] != "begin" {
 				continue
 			}
-			// The count is a Java int. `processList` loops it: zero or negative reads nothing and ACCEPTS whatever the
-			// key; a positive count of a key it does not know fails on the first entry and is executed instead.
-			n := javaInt(v)
+			// The count is `readNumber`'s Java int (`javaIntegerValue`: past a long it is -1). `processList` loops it:
+			// zero or negative reads nothing and ACCEPTS whatever the key; a positive count of a key it does not know
+			// fails on the first entry and is executed instead.
 			if n > 0 && !cmapListKey[key[5:]] {
 				continue
 			}
@@ -128,11 +128,30 @@ func (t *cmapTokens) lists(each func(key string) bool, use func(name string)) bo
 			// veraPDF reads one token after the list and only LOGS when it is not the matching `end`.
 			t.next()
 		case contentstream.Operator:
-			if t.text(tk) == "usecmap" && lastName != "" && use != nil {
-				use(lastName)
+			if t.text(tk) == "usecmap" {
+				if lastName != "" && use != nil {
+					use(lastName)
+				}
+				continue
 			}
+			lastName = t.text(tk)
 		}
 	}
+}
+
+// nests keeps the array and procedure depth: `[`/`]` and `{`/`}` are each one object to veraPDF's parser.
+func (t *cmapTokens) nests(tk contentstream.Token, depth *int) bool {
+	switch text := t.text(tk); {
+	case tk.Kind == contentstream.ArrayOpen || text == "{":
+		*depth++
+	case tk.Kind == contentstream.ArrayClose || text == "}":
+		if *depth > 0 {
+			*depth--
+		}
+	default:
+		return false
+	}
+	return true
 }
 
 // cmapListKey is the set `CMapParser.processList` recognises; any other `begin…` returns false there and
@@ -152,10 +171,12 @@ func (t *cmapTokens) skipEntry(key string) bool {
 	case "cidrange", "notdefrange":
 		_, a := t.hex()
 		_, b := t.hex()
-		return a && b && t.integer()
+		_, c := t.javaInteger()
+		return a && b && c
 	case "cidchar", "notdefchar":
 		_, a := t.hex()
-		return a && t.integer()
+		_, c := t.javaInteger()
+		return a && c
 	case "bfchar":
 		_, a := t.hex()
 		return a && t.unicodeToken()
@@ -358,9 +379,10 @@ type ToUnicode struct {
 	// Truncated is a CMap whose ranges span more blocks than `maxRangeBlocks`; a code none of the indexed ones
 	// maps is then unknown, not unmapped.
 	Truncated bool
-	// UseCMapName is the CMap a `/Name usecmap` in the PROGRAM names. veraPDF merges it at that point in the
-	// parse — its entries overwriting what came before — and only when the name is a CMap it carries.
-	UseCMapName string
+	// UseCMapNames are the CMaps each `/Name usecmap` in the PROGRAM names, in order. veraPDF merges each at that
+	// point in the parse — its entries overwriting what came before — and only when the name is a CMap it carries;
+	// every one is kept, since a later name it does not carry leaves an earlier one merged.
+	UseCMapNames []string
 	// used is the CMap a `/UseCMap` in the stream's DICTIONARY names (`Use`), consulted on a miss.
 	used *ToUnicode
 }
@@ -406,7 +428,7 @@ func ParseToUnicode(src []byte, blockBudget *int) *ToUnicode {
 			return a && b && t.bfRangeTail(lo, hi, u.chars, &u.ranges)
 		}
 		return t.skipEntry(key)
-	}, func(name string) { u.UseCMapName = name })
+	}, func(name string) { u.UseCMapNames = append(u.UseCMapNames, name) })
 	u.Malformed = !ok
 	u.index(blockBudget)
 	return u

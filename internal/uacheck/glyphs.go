@@ -236,8 +236,10 @@ func (d *Document) toUnicodeCMap(obj types.Object) (tu *fontcode.ToUnicode, iden
 			tu = fontcode.ParseToUnicode(sd.Content, &d.toUnicodeBlocks)
 			d.toUnicodes[dictID(sd.Dict)] = tu
 		}
-		if ucs2WithEntries[tu.UseCMapName] {
-			return nil, fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", tu.UseCMapName)
+		for _, n := range tu.UseCMapNames {
+			if ucs2WithEntries[n] {
+				return nil, fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)
+			}
 		}
 		switch n, isName := d.nameOf(sd.Dict["UseCMap"]); {
 		case isName && ucs2WithEntries[n]:
@@ -310,8 +312,10 @@ func (d *Document) cmapCodespace(c cmapRef) (*fontcode.Codespace, string) {
 	}
 	// Identity is merged inside the parse, where veraPDF merges it; a predefined CMap veraPDF would load and nib
 	// does not carry refuses, and any other name loads nothing there either.
-	if u := cs.UsesCMap; isPredefinedCMapName(u) {
-		return nil, fmt.Sprintf("the font's embedded CMap uses the CMap %s, whose codespace nib does not carry", u)
+	for _, u := range cs.UsesCMaps {
+		if isPredefinedCMapName(u) {
+			return nil, fmt.Sprintf("the font's embedded CMap uses the CMap %s, whose codespace nib does not carry", u)
+		}
 	}
 	return cs, ""
 }

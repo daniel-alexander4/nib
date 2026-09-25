@@ -204,6 +204,14 @@ func Check(pdf []byte) (Report, error) {
 		return Report{}, err
 	}
 	var rep Report
+	// A document veraPDF reports nothing on is one no clause can be compared on: every clause refuses, before any rule
+	// can return a verdict the oracle never gave (`reportsNothing`).
+	if why := d.reportsNothing(); why != "" {
+		for _, clause := range Clauses() {
+			rep.Results = append(rep.Results, Result{Clause: clause, Verdict: CannotCheck, Why: why})
+		}
+		return rep, nil
+	}
 	for _, clause := range Clauses() {
 		rule := registry[clause]
 		rep.Results = append(rep.Results, runOne(rule, d))

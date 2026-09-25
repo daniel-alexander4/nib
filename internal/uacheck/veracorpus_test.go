@@ -145,9 +145,10 @@ var corpusReach = map[string]int{
 	// one fail file is unreadable to pdfcpu (below). No other row moved.
 	// P07.S04a: the three per-glyph clauses settle on every readable file that draws a glyph nib can judge — 265 for
 	// the two metric clauses, 268 for 7.21.8 (which reads an encoding's name where the metrics need a program read that
-	// is P07.S04b's or S05's, so three more files settle); every Type 3, predefined-CMap and CFF refusal is the rest, and
-	// so are `7.21.3.2-t01-fail-a`/`-c`, where pdfcpu drops the very CIDFont veraPDF judges (a font that does not
-	// resolve refuses; it had read as drawing no glyph). No other row moved.
+	// is S05's, so three more files settle); every CFF and predefined-CMap refusal is the rest, and so are
+	// `7.21.3.2-t01-fail-a`/`-c`, where pdfcpu drops the very CIDFont veraPDF judges (a font that does not resolve
+	// refuses; it had read as drawing no glyph). No other row moved. P07.S04b moved none: the corpus draws no Type 3
+	// glyph the population judges and no embedded CMap outside a CFF font — its fixtures are the slice's own.
 	"7.21.5 t1": 265, "7.21.4.1 t2": 265, "7.21.8 t1": 268,
 	"7.21.6 t1": 255, "7.21.6 t2": 255, "7.21.6 t3": 255, "7.21.6 t4": 255,
 	"7.21.3.1 t1": 62, "7.21.3.2 t1": 62, "7.21.3.3 t1": 62, "7.21.3.3 t2": 12, "7.21.3.3 t3": 2,
