@@ -2802,11 +2802,53 @@ Acceptance:
   265/265/268. Live: nib's own Markdown conversion passes all three, veraPDF 19 checks each. Tiers 4 and 6 did NOT fire:
   the slice touched `internal/uacheck`, docs and a CLI comment only.
 
-#### P07.S04b — Type 3 glyphs, and codes to CIDs
+#### P07.S04b — Type 3 glyphs, and codes to CIDs *(done 2026-09-24, v1.163.0)*
 Scope: 7.21.5 t1 and 7.21.4.1 t2 for Type 3 fonts (`PDType3Font.containsCharString`, `Type3CharProcParser` width);
 a code-to-CID reader (`fontcode` keeping `cidrange`/`cidchar`/`notdef*`) for the three clauses over non-Identity CMaps.
 Acceptance:
 - Every half a veraPDF-measured fixture; the S04a refusals naming S04b are gone from knownCannotCheck.
+
+**(grill, 2026-09-24 — confirmed)** `grills/2026-09-24-p07s04b-type3-and-cids.md`: source read twice (once independently),
+67 documents measured, every prediction held. Type 3 presence has **no code-0 exemption**; its width is the procedure's
+first token only when `d0` is token 3 or `d1` token 7, cast to float, a -1 falling back to /MissingWidth; `toCID` takes
+the LAST-read cid mapping, then notdef mappings in file order, and a used CMap's lists come after the CMap's own. Two
+shapes make veraPDF report nothing — a /CharProcs that is not a dictionary, a negative CID — and nib refuses them.
+"Non-Identity CMaps" means embedded ones: a predefined CMap's codespace is the population's gap, not this slice's.
+
+- T01 — `fontcode.CIDMap`: cid and notdef mappings in veraPDF's order, `usecmap` Identity appended, `Use` for the chain.
+- T02 — CIDFontType2 over any embedded CMap: `cidTrueType` maps code → CID through the chain; a negative CID refuses.
+- T03 — Type 3: presence by the encoding's name in /CharProcs, width by the procedure's head (`BaseParser`'s tokens).
+- T04 — fixtures, oracle, corpus reach, knownCannotCheck.
+
+**(review + red-proof, 2026-09-24)** Two review rounds (four reviewers), `code-reviews/v1.162.3-p07s04b-2026-09-24.md`.
+- **The door the plan did not name**: a document veraPDF reports NOTHING on (a /CharProcs that is not a dictionary or is
+  a reference to `null`, a code mapped to a negative CID, measured) had been refused only in the glyph clauses and only
+  from the failing glyph on — a Fail on an EARLIER glyph returned first, and every other clause answered. `Check` now
+  asks ONE door, `reportsNothing`, before any rule, and every clause refuses; veraPDF is re-asked that it still reports
+  nothing on each such document. P07.S03's two older throws still refuse per clause — /pending 682.
+- **Five live veraPDF divergences in the shared CMap walker, all measured**: a `#`-escaped `usecmap` name decoded where
+  veraPDF's PostScript reader does not; names inside `[ ]` read and keywords and `<<`/`>>` ignored where veraPDF's
+  `lastCOSName` is the reverse; a list count past a long opening a list veraPDF does not; only the LAST of several
+  `usecmap` names kept — in the codespace reader and, the second round found, the ToUnicode reader too.
+- **Costs bounded**: CMap lookups have their own budget (`maxCIDAsks`, a walk the budget stops), a /UseCMap chain is read
+  in place rather than copied per font, each CMap and each glyph procedure is read once. Pre-existing and filed: the
+  population parses a shared CMap's codespace per FONT — 20 fonts over one maximal CMap cost 5.2 s (/pending 681).
+- **Red-proof**: 50 mutations (40 targeted, 10 blind). 31 and 8 red first time; three survivors were dead conjuncts
+  and one an inert nil test, all four deleted; four were holes closed by measured fixtures (a keyword where `d0`
+  stands, an unparsable width against /Widths 0, a CID one past the CIDToGIDMap, an in-stream predefined `usecmap`),
+  each re-probed red; two are the /UseCMap loop checks, which no file reaches (/pending 675), declared.
+
+**Acceptance ledger.**
+- Every half a veraPDF-measured fixture — MET: 88 fixtures, each measured before it was pinned; Type 3 7.21.5 t1 P/F,
+  7.21.4.1 t2 P/F (no code-0 exemption), 7.21.8 t1 P/F by /Differences `.notdef`; CIDFontType2 under an embedded CMap
+  all three clauses P/F (cidrange, cidchar, notdef lists, in-stream and dictionary `usecmap`, the -1 sentinel).
+- The S04a refusals naming S04b are gone from knownCannotCheck — MET: the two rows removed and nib now agrees on both;
+  no refusal anywhere names P07.S04b. The CMap refusals left are predefined CMaps' codespaces (/pending 676) and
+  CFF/Type 1 programs (S05/S06).
+- Oracle 42,120 pairs over 405 documents agree strictly; corpus 0 false pass / 0 false fail, reach unchanged at
+  265/265/268 — the corpus draws no Type 3 glyph the population judges and no embedded CMap outside a CFF font. Live:
+  `nib ua` on the fixtures gives veraPDF's verdicts, and every clause refuses on a no-report document. Tiers 4 and 6
+  did NOT fire: the slice touched `internal/uacheck` and `internal/fontcode` only.
 
 #### P07.S05 — the CFF program
 Scope: a CFF reader (INDEX, Top DICT, charset, charstring count, widths, CID FDSelect) — `7.21.4.2 t1` (the CharSet

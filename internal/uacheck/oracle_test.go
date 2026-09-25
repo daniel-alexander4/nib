@@ -344,6 +344,10 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 	for _, f := range metricFixtures() {
 		docs = append(docs, oracleDoc{"metrics: " + f.name, f.pdf})
 	}
+	// P07.S04b: the same clauses over a Type 3 font and a CIDFontType2 font under an embedded CMap.
+	for _, f := range type3AndCMapFixtures() {
+		docs = append(docs, oracleDoc{"metrics: " + f.name, f.pdf})
+	}
 	return docs
 }
 
@@ -533,8 +537,11 @@ var knownCannotCheck = map[string]string{
 	"embedded CMap referencing GB-EUC-H / 7.21.4.1 t2":                                                "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
 	"embedded CMap referencing GB-EUC-H / 7.21.5 t1":                                                  "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
 	"embedded CMap referencing GB-EUC-H / 7.21.8 t1":                                                  "GB-EUC-H is a predefined CMap whose codespace nib does not carry",
-	"glyphs: a Type 3 glyph procedure shows text in its own font / 7.21.4.1 t2":                       "a Type 3 font's glyph procedures are P07.S04b's",
-	"glyphs: a Type 3 glyph procedure shows text in its own font / 7.21.5 t1":                         "a Type 3 font's glyph procedures are P07.S04b's",
+	"metrics: CMap: a real CID / 7.21.4.1 t2":                                                         "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
+	"metrics: CMap: a real CID / 7.21.5 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
+	"metrics: CMap: a real CID / 7.21.8 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
+	"metrics: CMap: a real CID / 7.21.7 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
+	"metrics: CMap: a real CID / 7.21.7 t2":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.1 t2":                 "an unresolved font: absent, or dropped by pdfcpu",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.2 t2":                 "an unresolved font: absent, or dropped by pdfcpu",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.5 t1":                   "an unresolved font: absent, or dropped by pdfcpu",
@@ -618,7 +625,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 316 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes
+	const wantGenerated = 404 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

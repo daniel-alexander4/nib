@@ -87,9 +87,17 @@ type Document struct {
 	ttPrograms   map[uintptr]trueTypeProgram
 	ttReads      int
 	cidReads     map[uintptr]cidRead
+	cidMaps      map[uintptr]*fontcode.CIDMap // each embedded CMap stream's code-to-CID mappings, parsed once
 	// drawnUnrecorded is every font a pattern or Type 3 procedure draws — glyphs recorded, font events not.
 	drawnUnrecorded map[uintptr]bool
 	glyphCodes      int
+	// nothing is `reportsNothing`'s answer, computed once; t3Widths each Type 3 glyph procedure's width, read once.
+	nothing     string
+	nothingDone bool
+	t3Widths    map[uintptr]t3Width
+	// cidAsks is what the document's embedded CMaps have cost — entries parsed and mappings asked — against
+	// `maxCIDAsks`, apart from `ttReads` so a large CMap cannot starve the TrueType clauses of their budget.
+	cidAsks int
 	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
 	toUnicodes      map[uintptr]*fontcode.ToUnicode
 	toUnicodeBlocks int

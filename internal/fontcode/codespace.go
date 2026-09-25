@@ -11,9 +11,10 @@ type Codespace struct {
 	// above its end byte): checking a partial match against it throws inside the reader, and nib does not
 	// model where that leaves the stream. A caller treats such a font's codes as unread.
 	Invalid bool
-	// UsesCMap names another CMap (`/Name usecmap`) whose ranges veraPDF adds AT that point of the parse. Identity
-	// is merged here; any other name is the caller's to resolve.
-	UsesCMap string
+	// UsesCMaps names every other CMap (`/Name usecmap`) whose ranges veraPDF adds AT that point of the parse, in
+	// order. Identity is merged here; any other name is the caller's to resolve — ALL of them, since a CMap may use
+	// several and veraPDF merges each.
+	UsesCMaps []string
 	// Malformed is a CMap veraPDF-parser throws on, and so reads as holding no range at all.
 	Malformed bool
 }
@@ -107,7 +108,7 @@ func ParseCodespace(src []byte) *Codespace {
 			c.Merge(Identity())
 			return
 		}
-		c.UsesCMap = name
+		c.UsesCMaps = append(c.UsesCMaps, name)
 	})
 	c.Malformed = !ok
 	return c

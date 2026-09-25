@@ -5,6 +5,8 @@ import (
 	"math"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/fontcode"
 )
 
 // The per-glyph font clauses — `PLAN-ua-coverage.md` P07.S04a.
@@ -19,8 +21,9 @@ import (
 // `GFGlyph` fills the presence and both widths ONLY when the font's program exists and was parsed; otherwise they stay
 // null and the first two tests pass. So a font with no program — non-embedded Helvetica, a broken one — is a subject
 // that passes, and the only fonts that need a program read are the embedded ones. This slice reads a simple TrueType
-// program (`readTrueType`, the door P07.S03 built); an embedded Type 1, CFF or composite font's metrics, and a Type 3
-// font's glyph procedures, are refusals naming the slice that reads them.
+// program (`readTrueType`, the door P07.S03 built), a CIDFontType2 one under any CMap nib carries (P07.S04b maps codes
+// to CIDs), and a Type 3 font's glyph procedures (P07.S04b, `type3.go`); an embedded Type 1 or CFF font's metrics are
+// refusals naming the slice that reads them.
 //
 // **Two measured facts the source did not make obvious**: veraPDF's WinAnsi table names 0x81 `bullet`, not `.notdef`
 // (so it passes 7.21.8 and fails the other two, being absent from the program); and a symbolic font whose only cmap is
@@ -76,7 +79,7 @@ func (d *Document) metricsOf(g glyph) glyphMetrics {
 		}
 		return glyphMetrics{known: true}
 	case "Type3":
-		return glyphMetrics{why: "a Type 3 font's glyph procedures are not read yet (P07.S04b)"}
+		return d.type3Metrics(g)
 	case "Type0":
 		c, known, why := d.cidTrueTypeOf(font)
 		switch {
@@ -85,12 +88,16 @@ func (d *Document) metricsOf(g glyph) glyphMetrics {
 		case c == nil:
 			return glyphMetrics{known: true}
 		}
-		dw, ok, why := c.dictWidth(g.code)
+		cid, why := d.toCID(c, g.code)
+		if why != "" {
+			return glyphMetrics{why: why}
+		}
+		dw, ok, why := c.dictWidth(cid)
 		if !ok {
 			return glyphMetrics{why: why}
 		}
-		return glyphMetrics{known: true, valid: true, present: g.code == 0 || c.containsCode(g.code),
-			program: c.withCheck(c.gid(g.code)), dictionary: dw}
+		return glyphMetrics{known: true, valid: true, present: g.code == 0 || c.containsCID(cid),
+			program: c.withCheck(c.gid(cid)), dictionary: dw}
 	default:
 		return glyphMetrics{why: fmt.Sprintf("a font of subtype %q is not one nib reads", st)}
 	}
@@ -431,7 +438,14 @@ func (d *Document) glyphName(g glyph) (string, bool, string) {
 		switch {
 		case !known:
 			return "", false, why
-		case c == nil || c.containsCode(g.code):
+		case c == nil:
+			return "", true, ""
+		}
+		cid, why := d.toCID(c, g.code)
+		switch {
+		case why != "":
+			return "", false, why
+		case c.containsCID(cid):
 			return "", true, ""
 		}
 		return ".notdef", true, ""
@@ -504,28 +518,68 @@ type cidTrueType struct {
 	wOK      bool
 	wWhy     string
 	cid      types.Dict
-	identity bool  // the CIDToGIDMap is the identity: anything but a stream (`CIDToGIDMapping`'s default)
-	cidToGID []int // otherwise the stream's big-endian pairs, an odd last byte shifted high
+	cmap     fontcode.CIDChain // the Type 0 font's CMap chain, code to CID
+	cids     map[int]int       // each code's CID, asked of the CMap once per font
+	identity bool              // the CIDToGIDMap is the identity: anything but a stream (`CIDToGIDMapping`'s default)
+	cidToGID []int             // otherwise the stream's big-endian pairs, an odd last byte shifted high
 }
 
-// gid is `CIDToGIDMapping.getGID(cMap.toCID(code))` — an Identity CMap's CID is its code.
-func (c *cidTrueType) gid(code int) int {
-	if c.identity {
-		return code
+// maxCIDAsks bounds what a document's embedded CMaps may cost, entries parsed plus mappings asked: a lookup is a walk,
+// measured at ~2 ns a mapping, so the ceiling is ~10 ms of lookups; a maximal CMap parse (1,048,575 entries, ~340 ms)
+// spends a quarter of it. A real CJK subset CMap walked by thousands of distinct codes can reach it and refuse — as it
+// did before P07.S04b read such CMaps at all.
+const maxCIDAsks = 1 << 22
+
+// toCID is `CMap.toCID` and `CMap.containsCode` for one code, remembered per font and charged to the document's
+// CMap budget (`maxCIDAsks`) by the mappings asked — a CMap may hold a million entries, and each distinct code walks them. The walk
+// stops where the budget does, and once the budget is spent no later lookup walks at all.
+//
+// **A negative CID is a document veraPDF reports nothing on** (measured, over an identity and a stream CIDToGIDMap):
+// `getGID` indexes the stream's array with it, and `getWidthWithCheck` the advances, and nothing catches the
+// ArrayIndexOutOfBoundsException. veraPDF builds a glyph for invisible text too, so this refuses every use.
+//
+// A code no mapping holds is CID 0, and CID 0 is never present, so whether the CMap HELD the code decides nothing a CID
+// does not (`CMap.containsCode` then `containsCID(cid != 0)`; the P07.S04b red-proof found the separate test dead).
+func (d *Document) toCID(c *cidTrueType, code int) (int, string) {
+	cid, done := c.cids[code]
+	if !done {
+		v, _, asked, complete := c.cmap.Lookup(code, maxCIDAsks-d.cidAsks)
+		d.cidAsks += asked
+		if !complete {
+			return 0, fmt.Sprintf("the document's CMaps cost more than %d lookups, where nib stops", maxCIDAsks)
+		}
+		cid = v
+		if c.cids == nil {
+			c.cids = map[int]int{}
+		}
+		c.cids[code] = cid
 	}
-	if code >= 0 && code < len(c.cidToGID) {
-		return c.cidToGID[code]
+	if cid < 0 {
+		return 0, fmt.Sprintf("its CMap maps code %#x to the negative CID %d, where veraPDF throws an exception it "+
+			"does not handle and reports nothing on the document", code, cid)
+	}
+	return cid, ""
+}
+
+// gid is `CIDToGIDMapping.getGID` of a CID toCID has answered (never negative: veraPDF throws on one, and toCID
+// refuses it before any caller gets here).
+func (c *cidTrueType) gid(cid int) int {
+	if c.identity {
+		return cid
+	}
+	if cid >= 0 && cid < len(c.cidToGID) {
+		return c.cidToGID[cid]
 	}
 	return 0
 }
 
-// containsCode is `CIDFontType2Program.containsCode`: the CMap holds the code (an Identity CMap holds every one), and
-// `containsCID` — mapped, not CID 0, and a glyph below the program's count.
-func (c *cidTrueType) containsCode(code int) bool {
-	if code == 0 || (!c.identity && (code < 0 || code >= len(c.cidToGID))) {
+// containsCID is `CIDFontType2Program.containsCode` for the code toCID mapped: not CID 0 (which an unheld code also
+// is), within the CIDToGIDMap, and a glyph below the program's count.
+func (c *cidTrueType) containsCID(cid int) bool {
+	if cid == 0 || (!c.identity && cid >= len(c.cidToGID)) {
 		return false
 	}
-	return c.gid(code) < c.p.numGlyphs
+	return c.gid(cid) < c.p.numGlyphs
 }
 
 // cidTrueTypeOf reads a Type 0 font's CIDFontType2 program: nil and known when veraPDF has no parsed program (none, or
@@ -562,9 +616,7 @@ func (d *Document) readCIDTrueType(font types.Dict) (*cidTrueType, bool, string)
 	case sd == nil:
 		return nil, false, fmt.Sprintf("its embedded %s program is one nib does not read yet (P07.S05)", kind)
 	}
-	if enc, _ := d.nameOf(font["Encoding"]); enc != "Identity-H" && enc != "Identity-V" {
-		return nil, false, "its CMap is not Identity-H or Identity-V, and nib does not yet map codes to CIDs (P07.S04b)"
-	}
+	// The program first: a font veraPDF did not parse leaves every metric null and passes, whatever its CMap says.
 	prog := d.parseProgramStream(sd)
 	switch prog.state {
 	case ttUnknown:
@@ -572,7 +624,11 @@ func (d *Document) readCIDTrueType(font types.Dict) (*cidTrueType, bool, string)
 	case ttFailed:
 		return nil, true, ""
 	}
-	c := &cidTrueType{ttGlyphProgram: ttGlyphProgram{p: prog}, cid: cid, identity: true}
+	cmap, why := d.cidMapOf(font)
+	if why != "" {
+		return nil, false, why
+	}
+	c := &cidTrueType{ttGlyphProgram: ttGlyphProgram{p: prog}, cid: cid, cmap: cmap, identity: true}
 	c.w, c.dw, c.wOK, c.wWhy = d.parseCIDW(cid)
 	if m, ok := cid["CIDToGIDMap"]; ok {
 		if ms, _, err := d.Ctx.DereferenceStreamDict(m); err == nil && ms != nil {
@@ -591,6 +647,67 @@ func (d *Document) readCIDTrueType(font types.Dict) (*cidTrueType, bool, string)
 		}
 	}
 	return c, true, ""
+}
+
+// cidMapOf is a Type 0 font's code-to-CID mapping as `PDType0Font`'s CMap holds it: the /Encoding CMap's own mappings,
+// then each CMap down its /UseCMap chain after (`PDCMap.getCMapFile`). Identity-H and -V are the identity; an embedded
+// CMap is read by `fontcode.ParseCIDMap`, once per stream and charged to the document's CMap budget by its
+// entries (a maximal one is 13 MB and ~340 ms) against `maxCIDAsks`. The population has already refused a predefined CMap nib does not
+// carry and a malformed one (`cmapCodespace`), so those refusals here keep the door honest on its own.
+func (d *Document) cidMapOf(font types.Dict) (fontcode.CIDChain, string) {
+	chain, why := d.cmapChain(font, "")
+	switch {
+	case why != "":
+		return nil, why
+	case len(chain) == 0:
+		return nil, "the Type 0 font has no /Encoding CMap"
+	}
+	if why := cmapChainLoops(chain); why != "" {
+		return nil, why
+	}
+	var out fontcode.CIDChain
+	for _, c := range chain {
+		var part *fontcode.CIDMap
+		switch {
+		case c.stream != nil:
+			if part = d.cidMaps[dictID(c.stream.Dict)]; part == nil {
+				if c.stream.Content == nil && c.stream.Decode() != nil {
+					return nil, "the font's embedded CMap could not be decoded"
+				}
+				part = fontcode.ParseCIDMap(c.stream.Content)
+				d.cidAsks += part.Entries()
+				if d.cidMaps == nil {
+					d.cidMaps = map[uintptr]*fontcode.CIDMap{}
+				}
+				d.cidMaps[dictID(c.stream.Dict)] = part
+			}
+			if d.cidAsks > maxCIDAsks {
+				return nil, fmt.Sprintf("the document's CMaps cost more than %d lookups, where nib stops", maxCIDAsks)
+			}
+			if part.Malformed {
+				return nil, "the font's embedded CMap holds an entry of the wrong kind, where veraPDF discards it whole"
+			}
+		case c.name == "Identity-H" || c.name == "Identity-V":
+			part = fontcode.IdentityCIDs()
+		default:
+			return nil, fmt.Sprintf("the font's CMap %q is not one nib carries", c.name)
+		}
+		out = append(out, part)
+	}
+	return out, ""
+}
+
+// cmapChainLoops is a /UseCMap chain `cmapChain` stopped because it loops: veraPDF throws "Loop inside CMap"
+// (`PDCMap.getCMapFile`) building the font, whatever its program, and reports nothing on the document. Unreachable through
+// a file today — pdfcpu's validator recurses on the same loop and the process dies (/pending 675) — so it is reasoned,
+// not measured.
+func cmapChainLoops(chain []cmapRef) string {
+	if len(chain) > 0 {
+		if last := chain[len(chain)-1]; last.stream != nil && last.stream.Dict["UseCMap"] != nil {
+			return "its /UseCMap chain loops, where veraPDF throws an exception it does not handle and reports nothing on the document"
+		}
+	}
+	return ""
 }
 
 // cidWidths is a /W array as `CIDWArray` holds it: single widths, and ranges in order.
@@ -651,17 +768,16 @@ parse:
 	return cw, dw, true, ""
 }
 
-// dictWidth is `PDCIDFont.getWidth` by CID — an Identity CMap's CID is its code: a single width, else the first range
-// holding it, else /DW.
-func (c *cidTrueType) dictWidth(code int) (float64, bool, string) {
+// dictWidth is `PDCIDFont.getWidth` by CID: a single width, else the first range holding it, else /DW.
+func (c *cidTrueType) dictWidth(cid int) (float64, bool, string) {
 	if !c.wOK {
 		return 0, false, c.wWhy
 	}
-	if x, ok := c.w.single[code]; ok {
+	if x, ok := c.w.single[cid]; ok {
 		return x, true, ""
 	}
 	for _, r := range c.w.ranges {
-		if code >= r.lo && code <= r.hi {
+		if cid >= r.lo && cid <= r.hi {
 			return r.w, true, ""
 		}
 	}

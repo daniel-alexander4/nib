@@ -174,8 +174,12 @@ func TestAMalformedToUnicodeIsNotAReading(t *testing.T) {
 			t.Errorf("%q mapped 0x41 — veraPDF reads no list there", src)
 		}
 	}
-	if u := parseTU([]byte("/Foo usecmap 1 beginbfchar <01> <0041> endbfchar")); u.UseCMapName != "Foo" || u.Malformed {
+	if u := parseTU([]byte("/Foo usecmap 1 beginbfchar <01> <0041> endbfchar")); strings.Join(u.UseCMapNames, " ") != "Foo" || u.Malformed {
 		t.Errorf("a usecmap was not reported: %+v", u)
+	}
+	// Every name is kept: a UCS2 map used before a name veraPDF does not carry is still merged there.
+	if u := parseTU([]byte("/Adobe-Japan1-UCS2 usecmap /Nope usecmap")); strings.Join(u.UseCMapNames, " ") != "Adobe-Japan1-UCS2 Nope" {
+		t.Errorf("two usecmaps read as %q", u.UseCMapNames)
 	}
 }
 
@@ -275,8 +279,9 @@ func TestCodesAreCutTheWayVeraPDFCutsThem(t *testing.T) {
 	if bad := ParseCodespace([]byte("1 begincodespacerange <80> <00> endcodespacerange")); !bad.Invalid {
 		t.Error("a range whose begin is above its end was not flagged")
 	}
-	if use := ParseCodespace([]byte("/GB-EUC-H usecmap")); use.UsesCMap != "GB-EUC-H" {
-		t.Errorf("usecmap read as %q", use.UsesCMap)
+	// Every used name is kept, in order: a CMap using a predefined CMap and then another name still uses the first.
+	if use := ParseCodespace([]byte("/GB-EUC-H usecmap /Nope usecmap")); strings.Join(use.UsesCMaps, " ") != "GB-EUC-H Nope" {
+		t.Errorf("usecmap read as %q", use.UsesCMaps)
 	}
 	// The P07.S02 review: Identity merged AT the operator drops the program's later one-byte range, so `41 42` is
 	// ONE code; merged after the parse it was two.
