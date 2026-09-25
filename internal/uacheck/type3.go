@@ -121,10 +121,12 @@ func (d *Document) missingWidth(font types.Dict) float64 {
 // exception its validator does not handle — measured: the job ends with no validation report at all, so no clause of
 // the document can be compared, and `Check` refuses them all. veraPDF builds a glyph for invisible text too, so every
 // glyph is asked, and the first answer is kept. Two throws are known and measured here: a Type 3 font whose /CharProcs
-// is not a dictionary, and a code its CMap maps to a negative CID. (P07.S03's two TrueType throws still refuse only
+// is not a dictionary, and a code its CMap maps to a negative CID; P07.S05a adds a Type1C program veraPDF throws reading
+// (asked per FONT, since the program is read when the font object is built) or reading one glyph's width. (P07.S03's two TrueType throws still refuse only
 // the font clauses that read them — /pending 682.)
 //
-// **What the door cannot see, declared:** a glyph population nib cannot build, a code whose CMap lookup ran past the
+// **What the door cannot see, declared:** a content walk that fails (no font and no glyph is asked — every clause that
+// reads them refuses on its own), a glyph population nib cannot build, a code whose CMap lookup ran past the
 // budget, and a reader that panics are not answers — the walk carries on past each, so a LATER throw is still found,
 // but where the only throw sits behind one of them the glyph clauses refuse on their own and the rest answer.
 func (d *Document) reportsNothing() (why string) {
@@ -138,6 +140,17 @@ func (d *Document) reportsNothing() (why string) {
 		}
 		d.nothing = why
 	}()
+	// A font's program is read when veraPDF builds the FONT object, whether or not a glyph is drawn (measured: a Type1C
+	// program whose predefined charset overflows, shown by `() Tj`, reports nothing).
+	if fonts, why := d.usedFonts(); why == "" {
+		for _, f := range fonts {
+			if st := d.name(f.dict["Subtype"]); f.dict != nil && (st == "Type1" || st == "MMType1") {
+				if _, _, _, throws := d.type1COf(f.dict); throws != "" {
+					return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), throws)
+				}
+			}
+		}
+	}
 	glyphs, _ := d.glyphsDrawn() // unbuilt: whatever was built is still asked
 	for _, g := range glyphs {
 		if w := d.throwsBuilding(g); w != "" {
@@ -151,6 +164,8 @@ func (d *Document) reportsNothing() (why string) {
 func (d *Document) throwsBuilding(g glyph) string {
 	font := g.font.dict
 	switch d.name(font["Subtype"]) {
+	case "Type1", "MMType1":
+		return d.type1CThrowsFor(g)
 	case "Type3":
 		_, why := d.charProcs(font)
 		return why

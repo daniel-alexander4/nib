@@ -2850,12 +2850,55 @@ shapes make veraPDF report nothing — a /CharProcs that is not a dictionary, a 
   `nib ua` on the fixtures gives veraPDF's verdicts, and every clause refuses on a no-report document. Tiers 4 and 6
   did NOT fire: the slice touched `internal/uacheck` and `internal/fontcode` only.
 
-#### P07.S05 — the CFF program
+#### P07.S05 — the CFF program *(split at its grill — S05a, S05b)*
 Scope: a CFF reader (INDEX, Top DICT, charset, charstring count, widths, CID FDSelect) — `7.21.4.2 t1` (the CharSet
 against the program) and the CFF halves of S04's three clauses.
 Acceptance:
 - 7.21.4.2 t1 agrees on its corpus (2F/1P) and 7.21.8 t1 on its one fail file.
 - `len(Clauses())` 105.
+
+**(grill, 2026-09-24 — split at its grill: S05a, S05b)** `grills/2026-09-24-p07s05a-type1c.md`. veraPDF's CFF path read
+from source twice; measured on the corpus: simple Type1C fonts in 3 files (all 7.21.4.2 t01), CIDFontType0 CFF in 19
+(7.21.8-t01-fail-a among them). 7.21.4.2 t1 must land WITH the Type1C metrics (`TestNoCorpusDocumentNibCallsConformantFailsVeraPDF`).
+
+#### P07.S05a — simple Type1C: the reader, 7.21.4.2 t1, and the per-glyph clauses *(done 2026-09-24, v1.164.0)*
+Scope: `cff.go` — header, INDEXes, Top/Private DICT, Encoding, charset, Type 2 charstring widths with subrs, as
+veraPDF 1.30.2 reads them; the Type1C half of 7.21.5 t1 / 7.21.4.1 t2 (7.21.8 reads the PDF's encoding, unchanged);
+7.21.4.2 t1; 7.21.4.1 t1's CFF half for simple fonts (/pending 677 — embedded means parsed).
+Acceptance:
+- 7.21.4.2 t1 agrees on its corpus (2F/1P); every other half a veraPDF-measured fixture.
+- `len(Clauses())` 105; the refusals left name S05b (CID-keyed CFF) or S06 (Type 1 programs).
+- T01 — `cff.go`: the reader, its failure classes (not parsed / refused / veraPDF reports nothing), generated tables.
+- T02 — Type1C presence and widths in `metricsOf`, one read per program stream and subset-ness.
+- T03 — 7.21.4.2 t1; 7.21.4.1 t1's CFF parse; the door for a CFF throw.
+- T04 — fixtures, oracle, corpus reach, the count, the docs' 104 → 105.
+
+**(review + red-proof, 2026-09-24)** Two rounds (three reviewers), `code-reviews/v1.163.0-p07s05a-2026-09-24.md`.
+- **The reader, measured on 53 documents** (plus 5 veraPDF reports nothing on): every presence, width and CharSet shape
+  agrees. The agent-written spec had one claim the source refuted — "Type1C presence without a PDF name is always true"
+  holds only under a custom built-in encoding; under Standard or Expert it asks the charset by the encoding's name.
+- **Two criticals in the reader, both fixed and measured**: a middle INDEX offset zero-padded without bound (512 MB from
+  a 100-byte program) — now a per-program budget; and `copyOfRange`'s exception order reversed, answering "not parsed"
+  where veraPDF throws. The door learned that a program is read when the FONT object is built (`() Tj` suffices).
+- **Beyond the plan's tasks, recorded**: 7.21.7's glyph-name fallback now asks a parsed Type1C program (it refused), and
+  answers null for a /FontFile3 of an invalid subtype — two fixtures agree; /pending 677's simple-font CFF half closed.
+- **Red-proof**: 36 mutations; 13 survivors closed by measured fixtures, one dead conjunct deleted, one declared (S05b).
+
+**Acceptance ledger.**
+- 7.21.4.2 t1 agrees on its corpus (2F/1P) — MET: `7.21.4.2-t01-fail-a`/`-b` fail, `-pass-a` passes, as veraPDF.
+- Every other half a veraPDF-measured fixture — MET: 53 fixtures over the five clauses, both halves of each.
+- `len(Clauses())` 105 — MET; the docs say 105 of 106 (door guard green).
+- The refusals left name S05b or S06 — MET: CID-keyed CFF ("P07.S05b"), /FontFile Type 1 ("P07.S06"); plus declared
+  refusals (charstring type 1 widths, /FontFile3 /OpenType under Type 1, a non-name /CharSet token).
+- Oracle 48,510 pairs over 462 documents agree strictly; corpus 0/0, reach 268/268/268 and 7.21.4.2 t1 at 4; nib calls
+  132 corpus files conformant and veraPDF fails none. Live: `nib ua` on the fixtures. Tiers 4 and 6 did NOT fire: the
+  slice touched `internal/uacheck` (and one comment in `internal/pdfops/labelua.go`) only.
+
+#### P07.S05b — CIDFontType0C
+Scope: the CID-keyed CFF (charset CID → GID, FDSelect, FDArray per-FD Private and FontMatrix) under a Type 0 font — the
+three per-glyph clauses' CFF half.
+Acceptance:
+- 7.21.8 t1 agrees on its one fail file; every other half a veraPDF-measured fixture.
 
 #### P07.S06 — the Type 1 program
 Scope: eexec and charstring decryption, `/CharStrings` names, `hsbw` widths — the Type 1 halves of 7.21.4.1 t2, 7.21.5

@@ -179,6 +179,8 @@ var notTreeRules = map[string]string{
 	"7.21.6 t1": "TrueType fonts", "7.21.6 t2": "TrueType fonts", "7.21.6 t3": "TrueType fonts", "7.21.6 t4": "TrueType fonts",
 	// P07.S04a. The per-glyph metric clauses read the glyphs text draws and their fonts — no structure.
 	"7.21.5 t1": "glyphs", "7.21.4.1 t2": "glyphs", "7.21.8 t1": "glyphs",
+	// P07.S05a. 7.21.4.2 t1 reads a used Type 1 font's descriptor and its CFF program — no structure.
+	"7.21.4.2 t1": "Type 1 fonts",
 }
 
 func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {

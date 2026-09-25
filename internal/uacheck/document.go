@@ -98,6 +98,10 @@ type Document struct {
 	// cidAsks is what the document's embedded CMaps have cost — entries parsed and mappings asked — against
 	// `maxCIDAsks`, apart from `ttReads` so a large CMap cannot starve the TrueType clauses of their budget.
 	cidAsks int
+	// type1CReads is each Type1C program's reading per stream and subset-ness (P07.S05a), type1CThrows where veraPDF
+	// throws reading it.
+	type1CReads  map[type1CKey]type1CRead
+	type1CThrows map[type1CKey]string
 	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
 	toUnicodes      map[uintptr]*fontcode.ToUnicode
 	toUnicodeBlocks int
