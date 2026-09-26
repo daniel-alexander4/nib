@@ -122,8 +122,10 @@ func (d *Document) missingWidth(font types.Dict) float64 {
 // the document can be compared, and `Check` refuses them all. veraPDF builds a glyph for invisible text too, so every
 // glyph is asked, and the first answer is kept. Two throws are known and measured here: a Type 3 font whose /CharProcs
 // is not a dictionary, and a code its CMap maps to a negative CID; P07.S05a adds a Type1C program veraPDF throws reading
-// (asked per FONT, since the program is read when the font object is built) or reading one glyph's width. (P07.S03's two TrueType throws still refuse only
-// the font clauses that read them — /pending 682.)
+// (asked per FONT, since the program is read when the font object is built) or reading one glyph's width; P07.S05b the
+// same for a CIDFontType0C program (`cidFontThrows`, and a full font's width per glyph), and a CID-keyed program under a
+// simple font — an unnamed code drawn, or a subset name with a /CharSet (`cidUnderSimpleFontThrows`). (P07.S03's two
+// TrueType throws still refuse only the font clauses that read them — /pending 682.)
 //
 // **What the door cannot see, declared:** a content walk that fails (no font and no glyph is asked — every clause that
 // reads them refuses on its own), a glyph population nib cannot build, a code whose CMap lookup ran past the
@@ -146,6 +148,14 @@ func (d *Document) reportsNothing() (why string) {
 		for _, f := range fonts {
 			if st := d.name(f.dict["Subtype"]); f.dict != nil && (st == "Type1" || st == "MMType1") {
 				if _, _, _, throws := d.type1COf(f.dict); throws != "" {
+					return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), throws)
+				}
+				if throws := d.cidUnderSimpleFontThrows(f.dict); throws != "" {
+					return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), throws)
+				}
+			}
+			if f.dict != nil && d.name(f.dict["Subtype"]) == "Type0" {
+				if throws := d.cidFontThrows(f.dict); throws != "" {
 					return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), throws)
 				}
 			}
@@ -178,10 +188,18 @@ func (d *Document) throwsBuilding(g glyph) string {
 		if g.unread != "" {
 			return ""
 		}
-		if c, known, _ := d.cidTrueTypeOf(font); known && c != nil {
-			if _, why := d.toCID(c, g.code); why != "" {
+		if c, known, _ := d.cidFontOf(font); known && c != nil {
+			cid, why := d.toCID(c, g.code)
+			if why != "" {
 				if cid, asked := c.cids[g.code]; asked && cid < 0 {
 					return why
+				}
+				return ""
+			}
+			// A full CFF font's width is read when the glyph is built, and a charstring INDEX running backwards throws.
+			if c.cff != nil {
+				if _, err := c.cffWidth(cid); err != nil && err.kind == errThrow {
+					return err.why
 				}
 			}
 		}

@@ -200,7 +200,7 @@ func TestCIDLookupsPastTheBudgetAreCannotCheck(t *testing.T) {
 	if why != "" || len(fonts) == 0 {
 		t.Fatalf("no used font (%s)", why)
 	}
-	c, known, why := d.cidTrueTypeOf(fonts[0].dict)
+	c, known, why := d.cidFontOf(fonts[0].dict)
 	if !known || c == nil {
 		t.Fatalf("no CIDFontType2 reading: %s", why)
 	}
@@ -236,7 +236,7 @@ func noReportFixtures() []struct {
 		return glyphPage("BT /F0 12 Tf 10 10 Td (A) Tj /F1 12 Tf "+show+" Tj ET", "/F1 50 0 R", "",
 			mfDict("/FirstChar 65 /LastChar 65 /Widths [900]", "/Encoding /WinAnsiEncoding"), mergeObjs(ttObjects("/Flags 32", "FontFile2", std, ""), f1))
 	}
-	return []struct {
+	out := []struct {
 		name string
 		pdf  []byte
 	}{
@@ -285,6 +285,16 @@ func noReportFixtures() []struct {
 			52: "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Probe /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 12 0 R /DW 500 /CIDToGIDMap /Identity >>",
 			21: cidCMap("", "1 begincidchar <0021> -5 endcidchar")}, "<0021>")},
 	}
+	// P07.S05b: a CID-keyed CFF program under a simple Type 1 font, drawn or compared with a /CharSet.
+	for _, f := range cidCFFFixtures() {
+		if strings.Contains(f.vera, "X") {
+			out = append(out, struct {
+				name string
+				pdf  []byte
+			}{f.name, f.pdf})
+		}
+	}
+	return out
 }
 
 // TestADocumentVeraPDFReportsNothingOnRefusesEveryClause — there is no report to agree with, so EVERY clause refuses

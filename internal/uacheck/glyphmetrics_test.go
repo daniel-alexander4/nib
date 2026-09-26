@@ -399,8 +399,8 @@ func TestACompositeFontIsReadOnce(t *testing.T) {
 		t.Fatalf("no used font (%s)", why)
 	}
 	font := fonts[0].dict
-	a, _, _ := d.cidTrueTypeOf(font)
-	b, _, _ := d.cidTrueTypeOf(font)
+	a, _, _ := d.cidFontOf(font)
+	b, _, _ := d.cidFontOf(font)
 	if a == nil || a != b {
 		t.Fatalf("two readings of one Type 0 font are %p and %p, want one", a, b)
 	}

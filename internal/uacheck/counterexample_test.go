@@ -16,12 +16,14 @@ import (
 // alternate text (P06.S04), and a font whose glyph widths disagree with its own program (P07.S04a, which taught the
 // checker 7.21.5 t1). After the third, none was left to cite, and this test asserts what the docs now say instead.
 //
-// **Measured at P07.S05a over veraPDF's own PDF/UA-1 corpus: nib reports 132 files conformant, and veraPDF fails none
-// of them** (131 at P07.S04a; `7.21.4.2-t01-pass-a` joined when its Type1C program became readable). The one rule nib
+// **Measured at P07.S05b over veraPDF's own PDF/UA-1 corpus: nib reports 140 files conformant, and veraPDF fails none
+// of them** (131 at P07.S04a; 132 at P07.S05a, when `7.21.4.2-t01-pass-a`'s Type1C program became readable; eight more
+// at P07.S05b, whose CIDFontType0C programs did). The one rule nib
 // does not check, 7.1 t12, is one veraPDF never fails (P03). 7.21.4.2 t1 — a Type 1 font's /CharSet against its
 // program — landed WITH the Type1C metrics, as this test demanded: the corpus's two t01 fail files are asserted
-// non-conformant below, so a regression in that clause shows here as well as in the oracle. A Type 1 (/FontFile) or
-// CID-keyed CFF program is still a refusal (P07.S06, P07.S05b), and the day those land the same rule applies to them.
+// non-conformant below, so a regression in that clause shows here as well as in the oracle — and so is
+// `7.21.8-t01-fail-a`, the .notdef glyph drawn in a CID-keyed CFF font, the file P07.S05b's acceptance names. A Type 1
+// (/FontFile) program is still a refusal (P07.S06), and the day it lands the same rule applies to it.
 //
 // **This is still not a certificate**, and the docs keep saying so: nib's verdicts are tested against veraPDF on every
 // build, not proven, and a corpus is evidence about the documents in it.
@@ -48,7 +50,7 @@ func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
 		t.Fatal(err)
 	}
 	// **The count is the README's**, so a set that shrank would leave the docs' figure standing over fewer files.
-	const readmeCount = 132
+	const readmeCount = 140
 	if len(conformant) != readmeCount {
 		t.Errorf("nib calls %d corpus files conformant and the README says %d — measure it again and move both", len(conformant), readmeCount)
 	}
@@ -61,6 +63,12 @@ func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
 		if r, cerr := Check(b); cerr == nil && r.Conformant() {
 			t.Errorf("%s fails 7.21.4.2 t1, and nib calls it conformant — a false pass in the clause P07.S05a landed", f)
 		}
+	}
+	notdef := filepath.Join(root, "7.21 Fonts", "7.21.8 Use of .notdef glyph", "7.21.8-t01-fail-a.pdf")
+	if b, rerr := os.ReadFile(notdef); rerr != nil {
+		t.Fatalf("the corpus lacks %s: %v", notdef, rerr)
+	} else if r, cerr := Check(b); cerr != nil || r.Conformant() || verdictIn(t, r, "7.21.8 t1") != Fail {
+		t.Errorf("7.21.8-t01-fail-a draws .notdef in a CID-keyed CFF font, and nib does not fail 7.21.8 t1 there — P07.S05b's acceptance")
 	}
 	vp := veraPDFPath()
 	if vp == "" {

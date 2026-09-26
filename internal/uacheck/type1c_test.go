@@ -285,11 +285,6 @@ func make230() [][]byte {
 var type1CRefusals = map[string]bool{
 	"T1C: charstring type 1 / 7.21.5 t1":   true,
 	"T1C: charstring type 1 / 7.21.4.1 t2": true,
-	// A CID-keyed CFF under a simple Type 1 font: veraPDF's CID parse of it fails (7.21.4.1 t1 FAILS, metrics null);
-	// nib reads CID-keyed programs at P07.S05b and refuses until then.
-	"T1C: Encoding with no operand before ROS / 7.21.5 t1":   true,
-	"T1C: Encoding with no operand before ROS / 7.21.4.1 t2": true,
-	"T1C: Encoding with no operand before ROS / 7.21.4.1 t1": true,
 }
 
 // type1CClauses are the clauses P07.S05a's fixtures are measured over, in the order of their `vera` strings.
@@ -365,7 +360,7 @@ func type1CFixturesMore() []measuredFixture {
 		// The review's shapes (measured).
 		{name: "CS: drawn only invisibly, CharSet short", vera: "PPPFP", pdf: t1cDoc(sub, w500+" /Encoding /WinAnsiEncoding", "/CharSet (/A/B)", "3 Tr (ABC) Tj", cffSpec{names: abc, charstrings: [][]byte{cs(0, "endchar"), cs(500, "endchar"), cs(500, "endchar"), cs(500, "endchar")}}.build(), "Type1C")},
 		{name: "CS: a hex-string CharSet, short", vera: "PPPFP", pdf: t1cDoc(sub, w500+" /Encoding /WinAnsiEncoding", "/CharSet <2F412F42>", "(ABC) Tj", cffSpec{names: abc, charstrings: [][]byte{cs(0, "endchar"), cs(500, "endchar"), cs(500, "endchar"), cs(500, "endchar")}}.build(), "Type1C")},
-		{name: "T1C: Encoding with no operand before ROS", vera: "PPPPF", refused: "CID-keyed", pdf: t1cDoc(sub, w500+" /Encoding /WinAnsiEncoding", "", "(A) Tj", cffSpec{names: abc, topPrefix: []byte{16, 0x8b, 0x8b, 0x8b, 12, 30}}.build(), "Type1C")},
+		{name: "T1C: Encoding with no operand before ROS", vera: "PPPPF", pdf: t1cDoc(sub, w500+" /Encoding /WinAnsiEncoding", "", "(A) Tj", cffSpec{names: abc, topPrefix: []byte{16, 0x8b, 0x8b, 0x8b, 12, 30}}.build(), "Type1C")},
 	}
 }
 
