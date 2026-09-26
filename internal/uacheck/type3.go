@@ -2,8 +2,6 @@ package uacheck
 
 import (
 	"fmt"
-	"math"
-	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -147,7 +145,7 @@ func (d *Document) reportsNothing() (why string) {
 	if fonts, why := d.usedFonts(); why == "" {
 		for _, f := range fonts {
 			if st := d.name(f.dict["Subtype"]); f.dict != nil && (st == "Type1" || st == "MMType1") {
-				if _, _, _, throws := d.type1COf(f.dict); throws != "" {
+				if _, _, _, throws := d.simpleProgramOf(f.dict); throws != "" {
 					return fmt.Sprintf("veraPDF reports nothing on this document — %s, font %s: %s", f.where, fontLabel(f.name), throws)
 				}
 				if throws := d.cidUnderSimpleFontThrows(f.dict); throws != "" {
@@ -248,147 +246,4 @@ type bpToken struct {
 	kind  bpKind
 	text  string
 	value float64
-}
-
-// bpTokens is veraPDF-parser's `BaseParser.nextToken`, as far as a glyph procedure's head needs it: which bytes make
-// one token, and a number's value.
-type bpTokens struct {
-	b []byte
-	i int
-}
-
-// bpSpace and bpDelimiter are `CharTable`'s SPACE and DELIMITER classes.
-func bpSpace(c byte) bool { return c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32 }
-
-func bpDelimiter(c byte) bool {
-	switch c {
-	case '(', ')', '<', '>', '[', ']', '{', '}', '/', '%':
-		return true
-	}
-	return bpSpace(c)
-}
-
-func (p *bpTokens) next() bpToken {
-	// `skipSpaces(true)`: whitespace, and comments to the end of the line.
-	for p.i < len(p.b) {
-		switch c := p.b[p.i]; {
-		case bpSpace(c):
-			p.i++
-		case c == '%':
-			for p.i < len(p.b) && p.b[p.i] != '\n' && p.b[p.i] != '\r' {
-				p.i++
-			}
-		default:
-			goto token
-		}
-	}
-	return bpToken{kind: bpEOF}
-token:
-	c := p.b[p.i]
-	p.i++
-	switch c {
-	case '(':
-		depth := 0
-		for p.i < len(p.b) {
-			ch := p.b[p.i]
-			p.i++
-			switch {
-			case ch == '\\':
-				p.i++
-			case ch == '(':
-				depth++
-			case ch == ')':
-				if depth == 0 {
-					return bpToken{}
-				}
-				depth--
-			}
-		}
-		return bpToken{}
-	case '<':
-		if p.i < len(p.b) && p.b[p.i] == '<' {
-			p.i++
-			return bpToken{}
-		}
-		if p.i < len(p.b) && p.b[p.i] == '~' {
-			// `readASCII85`: everything up to `~>` (or the end), which a bad payload only LOGS about (measured: an
-			// ASCII85 string as the first token and as the second both answer as veraPDF does).
-			for p.i++; p.i < len(p.b) && !(p.b[p.i] == '~' && p.i+1 < len(p.b) && p.b[p.i+1] == '>'); p.i++ {
-			}
-			p.i += 2
-			return bpToken{}
-		}
-		for p.i < len(p.b) {
-			p.i++
-			if p.b[p.i-1] == '>' {
-				break
-			}
-		}
-		return bpToken{}
-	case '>':
-		if p.i < len(p.b) && p.b[p.i] == '>' {
-			p.i++
-			return bpToken{}
-		}
-		p.i++ // `readByte` consumed it before the throw
-		return bpToken{kind: bpThrow}
-	case ')', '[', ']', '{', '}':
-		return bpToken{}
-	case '/':
-		for p.i < len(p.b) && !bpDelimiter(p.b[p.i]) {
-			p.i++
-		}
-		return bpToken{}
-	case '+':
-		return p.number(false)
-	case '-':
-		return p.number(true)
-	}
-	if c >= '0' && c <= '9' || c == '.' {
-		p.i--
-		return p.number(false)
-	}
-	start := p.i - 1
-	for p.i < len(p.b) && !bpDelimiter(p.b[p.i]) {
-		p.i++
-	}
-	return bpToken{kind: bpKeyword, text: string(p.b[start:p.i])}
-}
-
-// number is `readNumber`: digits and dots up to the first other byte (which starts the next token), an INTEGER unless a
-// dot was seen, and Double.MAX_VALUE where Java's parse throws (no digits, two dots, a long overflowing) — negated for
-// a leading `-`.
-func (p *bpTokens) number(neg bool) bpToken {
-	start, real := p.i, false
-	for p.i < len(p.b) {
-		c := p.b[p.i]
-		if c == '.' {
-			real = true
-		} else if c < '0' || c > '9' {
-			break
-		}
-		p.i++
-	}
-	s := string(p.b[start:p.i])
-	t := bpToken{kind: bpInteger}
-	var err error
-	if real {
-		t.kind = bpReal
-		// Java's parseDouble answers Infinity past the range rather than throwing; Go reports it as an error.
-		t.value, err = strconv.ParseFloat(s, 64)
-		if math.IsInf(t.value, 0) {
-			err = nil
-		}
-	} else {
-		var n int64
-		n, err = strconv.ParseInt(s, 10, 64)
-		t.value = float64(n)
-	}
-	if err != nil {
-		t.value = math.MaxFloat64
-	}
-	if neg {
-		t.value = -t.value
-	}
-	return t
 }

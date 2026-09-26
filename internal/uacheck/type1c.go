@@ -28,17 +28,65 @@ type type1CKey struct {
 	subset bool
 }
 
-// type1COf is a simple Type 1 font's Type1C program: nil and known where veraPDF has no parsed program (none, one of
-// another subtype, or one its parse failed — the metrics then stay null), not known where nib does not read what
-// veraPDF would. `throws` is set where veraPDF throws reading it, so that it reports nothing on the document.
-func (d *Document) type1COf(font types.Dict) (c *cffProgram, known bool, why, throws string) {
-	desc := d.dict(font["FontDescriptor"])
-	switch d.embeddedProgram(font) {
-	case "":
-		return nil, true, "", ""
-	case "Type 1":
-		return nil, false, "its embedded Type 1 program is one nib does not read yet (P07.S06)", ""
+// simpleProgram is the program a simple Type 1 font's glyphs are read through: its /FontFile Type 1 program (P07.S06)
+// or its /FontFile3 Type1C one (P07.S05a) — at most one is set, and neither where veraPDF has no parsed program.
+type simpleProgram struct {
+	kind string // "Type 1" or "CFF": which one `PDType1Font.getFontProgram` opens, "" for none
+	t1   *type1Program
+	cff  *cffProgram
+}
+
+// parsed is whether veraPDF holds a parsed program — `containsFontFile`.
+func (s simpleProgram) parsed() bool { return s.t1 != nil || s.cff != nil }
+
+// glyphName is the program's `getGlyphName(code)`, false for null (a CID-keyed CFF program's is always null).
+func (s simpleProgram) glyphName(code int) (string, bool) {
+	switch {
+	case s.t1 != nil:
+		return s.t1.glyphName(code)
+	case s.cff != nil && !s.cff.cid:
+		return s.cff.glyphName(code), true
 	}
+	return "", false
+}
+
+// charSet is the program's `getCharSet()` names — nil where there is no parsed program or it is CID-keyed.
+func (s simpleProgram) charSet() map[string]int {
+	switch {
+	case s.t1 != nil:
+		out := make(map[string]int, len(s.t1.widths))
+		for n := range s.t1.widths {
+			out[n] = 0
+		}
+		return out
+	case s.cff != nil && !s.cff.cid:
+		return s.cff.charSet
+	}
+	return nil
+}
+
+// simpleProgramOf is the ONE door for a simple Type 1 font's embedded program (ADR-009): /FontFile before /FontFile3,
+// as `embeddedProgram` says, each read by its own reader — `type1Of`, `type1CProgramOf` — which nothing else calls.
+// `known` is false where nib refuses (with `why`), `throws` is set where veraPDF throws reading it.
+func (d *Document) simpleProgramOf(font types.Dict) (s simpleProgram, known bool, why, throws string) {
+	s.kind = d.embeddedProgram(font)
+	switch s.kind {
+	case "Type 1":
+		s.t1, known, why, throws = d.type1Of(font)
+	case "CFF":
+		s.cff, known, why, throws = d.type1CProgramOf(font)
+	default:
+		known = true
+	}
+	return s, known, why, throws
+}
+
+// type1CProgramOf is a simple Type 1 font's Type1C program (read only through `simpleProgramOf`): nil and known where
+// veraPDF has no parsed program (none, one of another subtype, or one its parse failed — the metrics then stay null),
+// not known where nib does not read what veraPDF would. `throws` is set where veraPDF throws reading it, so that it
+// reports nothing on the document.
+func (d *Document) type1CProgramOf(font types.Dict) (c *cffProgram, known bool, why, throws string) {
+	desc := d.dict(font["FontDescriptor"])
 	sd, _, err := d.Ctx.DereferenceStreamDict(desc["FontFile3"])
 	if err != nil || sd == nil {
 		return nil, true, "", ""
@@ -153,7 +201,8 @@ const cidUnderSimpleFont = "its CFF program is CID-keyed, which veraPDF parses a
 // cidUnderSimpleFontThrows is whether veraPDF throws judging 7.21.4.2 t1 on this simple font, whatever is drawn: a parsed
 // CID-keyed program, a subset name, and a /CharSet string — exactly the conditions under which the test reaches the cast.
 func (d *Document) cidUnderSimpleFontThrows(font types.Dict) string {
-	c, known, _, throws := d.type1COf(font)
+	sp, known, _, throws := d.simpleProgramOf(font)
+	c := sp.cff
 	if throws != "" || !known || c == nil || !c.cid {
 		return ""
 	}
@@ -190,7 +239,8 @@ func (d *Document) cidCFFOf(cid types.Dict) (c *cffProgram, known bool, why, thr
 // widths are read when a glyph asks, so a charstring whose INDEX runs backwards throws only then), or reading the
 // program at all?
 func (d *Document) type1CThrowsFor(g glyph) string {
-	c, known, _, throws := d.type1COf(g.font.dict)
+	sp, known, _, throws := d.simpleProgramOf(g.font.dict)
+	c := sp.cff
 	if throws != "" {
 		return throws
 	}
@@ -209,10 +259,10 @@ func init() {
 //
 //	containsFontFile == false || fontName.search(/[A-Z]{6}\+/) != 0 || CharSet == null || charSetListsAllGlyphs == true
 //
-// A font that is not subset-named, or has no /CharSet, passes whatever its program — so a Type 1 program nib does not
-// read yet is asked only where the test reaches it. `charSetListsAllGlyphs` (`GFPDType1Font`) is a set comparison: the
-// /CharSet's names D against the program charset's names P, |D| equal to |P| or one short, and each side's names other
-// than `.notdef` found in the other.
+// A font that is not subset-named, or has no /CharSet, passes whatever its program, which is asked only where the test
+// reaches it. `charSetListsAllGlyphs` (`GFPDType1Font`) is a set comparison: the /CharSet's names D against the program
+// charset's names P — a Type1C program's charset, or a Type 1 program's glyphs WITH A WIDTH (`getCharSet` is the
+// widths' keys, P07.S06) — |D| equal to |P| or one short, and each side's names other than `.notdef` found in the other.
 func checkCharSets(d *Document) Result {
 	fonts, why := d.usedFonts()
 	if why != "" {
@@ -239,7 +289,8 @@ func checkCharSets(d *Document) Result {
 		if !subsetNamed(base) || !has {
 			continue
 		}
-		c, known, why, throws := d.type1COf(f.dict)
+		sp, known, why, throws := d.simpleProgramOf(f.dict)
+		c, program := sp.cff, sp.charSet()
 		switch {
 		case throws != "":
 			return Result{Verdict: CannotCheck, Where: f.where, Why: throws}
@@ -248,10 +299,10 @@ func checkCharSets(d *Document) Result {
 				unsure = &Result{Verdict: CannotCheck, Where: f.where, Why: fmt.Sprintf("font %s: %s", fontLabel(f.name), why)}
 			}
 			continue
-		case c == nil:
-			continue // containsFontFile is false
-		case c.cid:
+		case c != nil && c.cid:
 			return Result{Verdict: CannotCheck, Where: f.where, Why: cidUnderSimpleFont}
+		case program == nil:
+			continue // containsFontFile is false
 		}
 		names, ok := charSetNames(charSet)
 		if !ok {
@@ -261,7 +312,15 @@ func checkCharSets(d *Document) Result {
 			}
 			continue
 		}
-		if missing, extra := charSetDiff(names, c.charSet); missing != "" || extra != "" {
+		missing, extra := charSetDiff(names, program)
+		// |D| is |P| or one short: forced by the two inclusions where the program holds `.notdef` (every CFF charset
+		// does), but a Type 1 program may not — then a CharSet listing `.notdef` is one too many (measured).
+		_, pNotdef := program[".notdef"]
+		if !pNotdef && names[".notdef"] && missing == "" && extra == "" {
+			return Result{Verdict: Fail, Where: f.where, Why: fmt.Sprintf("font %s (%s): the CharSet lists /.notdef, "+
+				"which its program does not hold, so the CharSet is one entry longer than the program's", fontLabel(f.name), base)}
+		}
+		if missing != "" || extra != "" {
 			detail := ""
 			switch {
 			case extra != "":
@@ -272,8 +331,8 @@ func checkCharSets(d *Document) Result {
 			return Result{Verdict: Fail, Where: f.where, Why: fmt.Sprintf("font %s (%s): %s, so the descriptor "+
 				"misdescribes the embedded subset", fontLabel(f.name), base, detail)}
 		}
-		// veraPDF also asks |D| ∈ {|P|, |P|-1} first; the two inclusions already force it (P always holds .notdef), so
-		// the red-proof found that test dead here and it is not repeated.
+		// Given the two inclusions, |D| ∈ {|P|, |P|-1} can fail only where D lists `.notdef` and P does not, which the
+		// test above answers — every CFF charset holds `.notdef`, so it reaches Type 1 programs only.
 	}
 	if unsure != nil {
 		return *unsure

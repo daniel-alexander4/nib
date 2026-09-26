@@ -359,6 +359,12 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			docs = append(docs, oracleDoc{"cidcff: " + f.name, f.pdf})
 		}
 	}
+	// P07.S06: the Type 1 (/FontFile) program — its metric, CharSet and parse shapes, and 7.21.7's glyph-name fallback.
+	for _, f := range append(append(type1Fixtures(), type1NameFixtures()...), type1RefusedFixtures()...) {
+		if !strings.Contains(f.vera, "X") {
+			docs = append(docs, oracleDoc{"type1: " + f.name, f.pdf})
+		}
+	}
 	return docs
 }
 
@@ -555,6 +561,18 @@ var knownCannotCheck = map[string]string{
 	"type1c: T1C: charstring type 1 / 7.21.4.1 t2":                                                    "Type 1 charstrings inside a CFF: the width refuses, and the glyph's metrics with it",
 	"cidcff: CID: charstring type 1 / 7.21.5 t1":                                                      "Type 1 charstrings inside a CFF: veraPDF's Type1CharStringParser, not mirrored",
 	"cidcff: CID: charstring type 1 / 7.21.4.1 t2":                                                    "Type 1 charstrings inside a CFF: the width refuses, and the glyph's metrics with it",
+	"type1: REFUSED: a charstring of negative length, from a temporary file / 7.21.5 t1":              "a charstring of negative length in a private part veraPDF reads from a temporary file: its seek arithmetic there is not mirrored",
+	"type1: REFUSED: a charstring of negative length, from a temporary file / 7.21.4.1 t2":            "a charstring of negative length in a private part veraPDF reads from a temporary file: its seek arithmetic there is not mirrored",
+	"type1: REFUSED: a charstring of negative length, from a temporary file / 7.21.4.2 t1":            "a charstring of negative length in a private part veraPDF reads from a temporary file: its seek arithmetic there is not mirrored",
+	"type1: REFUSED: a charstring of negative length, from a temporary file / 7.21.4.1 t1":            "a charstring of negative length in a private part veraPDF reads from a temporary file: its seek arithmetic there is not mirrored",
+	"type1: REFUSED: a charstring past 32 bits, from a temporary file / 7.21.5 t1":                    "a charstring length past 32 bits in a private part veraPDF reads from a temporary file: not mirrored",
+	"type1: REFUSED: a charstring past 32 bits, from a temporary file / 7.21.4.1 t2":                  "a charstring length past 32 bits in a private part veraPDF reads from a temporary file: not mirrored",
+	"type1: REFUSED: a charstring past 32 bits, from a temporary file / 7.21.4.2 t1":                  "a charstring length past 32 bits in a private part veraPDF reads from a temporary file: not mirrored",
+	"type1: REFUSED: a charstring past 32 bits, from a temporary file / 7.21.4.1 t1":                  "a charstring length past 32 bits in a private part veraPDF reads from a temporary file: not mirrored",
+	"type1: REFUSED: lenIV -8193, from a temporary file / 7.21.5 t1":                                  "a /lenIV at or past veraPDF's decryption-buffer bounds over its temporary-file reader: not mirrored",
+	"type1: REFUSED: lenIV -8193, from a temporary file / 7.21.4.1 t2":                                "a /lenIV at or past veraPDF's decryption-buffer bounds over its temporary-file reader: not mirrored",
+	"type1: REFUSED: lenIV -8193, from a temporary file / 7.21.4.2 t1":                                "a /lenIV at or past veraPDF's decryption-buffer bounds over its temporary-file reader: not mirrored",
+	"type1: REFUSED: lenIV -8193, from a temporary file / 7.21.4.1 t1":                                "a /lenIV at or past veraPDF's decryption-buffer bounds over its temporary-file reader: not mirrored",
 	"glyphs: text drawn only invisibly in a font that does not resolve / 7.21.4.2 t1":                 "an unresolved font: absent, or dropped by pdfcpu",
 	"metrics: CID: /W range whose width is not a number / 7.21.4.2 t1":                                "an unresolved font: absent, or dropped by pdfcpu",
 	"metrics: CMap: a real CID / 7.21.7 t1":                                                           "veraPDF empties a CMap with a malformed entry and cuts every string into code 0; the population refuses the font",
@@ -642,7 +660,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 531 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53 + P07.S05b's 74
+	const wantGenerated = 656 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53 + P07.S05b's 74 + P07.S06's 125
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",
