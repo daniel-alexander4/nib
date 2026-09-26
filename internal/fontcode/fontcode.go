@@ -30,72 +30,104 @@ import "nib/internal/contentstream"
 // `contentstream` deliberately hands out spans, not values — *"a caller that does need one decodes the
 // span itself"* — so this is the readers' one decoder.
 func String(raw []byte) []byte {
+	out, _ := decodeString(raw, false)
+	return out
+}
+
+// StringEmpty is whether String(raw) is empty, answered without building it: a reader that needs only to know that a
+// string shows SOMETHING — the checker, for a font whose codes it cannot cut — pays no allocation for its bytes (the P07
+// phase-close review, R2-8). It is String's own walk, stopped at the first byte it would keep.
+func StringEmpty(raw []byte) bool {
+	_, kept := decodeString(raw, true)
+	return !kept
+}
+
+// decodeString is String's walk. With `probe` it keeps nothing and returns at the first byte it would have kept,
+// reporting only that there was one.
+func decodeString(raw []byte, probe bool) (out []byte, some bool) {
 	if len(raw) == 0 {
-		return nil
+		return nil, false
 	}
 	if raw[0] == '<' {
-		return Hex(raw)
+		if probe {
+			for _, c := range raw[1:] {
+				if _, ok := hexNibble(c); ok {
+					return nil, true // one digit is one byte: a missing final digit is zero
+				}
+			}
+			return nil, false
+		}
+		out = Hex(raw)
+		return out, len(out) > 0
 	}
 	if raw[0] != '(' {
-		return nil
+		return nil, false
 	}
 	body := raw[1:]
 	if n := len(body); n > 0 && body[n-1] == ')' {
 		body = body[:n-1]
 	}
-	out := make([]byte, 0, len(body))
+	if !probe {
+		out = make([]byte, 0, len(body))
+	}
 	for i := 0; i < len(body); i++ {
 		c := body[i]
-		if c == '\r' {
+		var kept byte
+		switch {
+		case c == '\r':
 			// An unescaped end-of-line in a literal is read as a single newline, whatever its spelling.
-			out = append(out, '\n')
+			kept = '\n'
 			if i+1 < len(body) && body[i+1] == '\n' {
 				i++
 			}
-			continue
-		}
-		if c != '\\' {
-			out = append(out, c)
-			continue
-		}
-		i++
-		if i >= len(body) {
-			break
-		}
-		switch e := body[i]; e {
-		case 'n':
-			out = append(out, '\n')
-		case 'r':
-			out = append(out, '\r')
-		case 't':
-			out = append(out, '\t')
-		case 'b':
-			out = append(out, '\b')
-		case 'f':
-			out = append(out, '\f')
-		case '(', ')', '\\':
-			out = append(out, e)
-		case '\r':
-			// A backslash at the end of a line continues the string; neither byte is content.
-			if i+1 < len(body) && body[i+1] == '\n' {
-				i++
-			}
-		case '\n':
+		case c != '\\':
+			kept = c
 		default:
-			if e >= '0' && e <= '7' {
-				v := int(e - '0')
-				for n := 1; n < 3 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7'; n++ {
-					i++
-					v = v*8 + int(body[i]-'0')
-				}
-				out = append(out, byte(v))
-				continue
+			i++
+			if i >= len(body) {
+				return out, len(out) > 0
 			}
-			// An unknown escape: the specification says the backslash is ignored.
-			out = append(out, e)
+			switch e := body[i]; e {
+			case 'n':
+				kept = '\n'
+			case 'r':
+				kept = '\r'
+			case 't':
+				kept = '\t'
+			case 'b':
+				kept = '\b'
+			case 'f':
+				kept = '\f'
+			case '(', ')', '\\':
+				kept = e
+			case '\r':
+				// A backslash at the end of a line continues the string; neither byte is content.
+				if i+1 < len(body) && body[i+1] == '\n' {
+					i++
+				}
+				continue
+			case '\n':
+				continue
+			default:
+				if e >= '0' && e <= '7' {
+					v := int(e - '0')
+					for n := 1; n < 3 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7'; n++ {
+						i++
+						v = v*8 + int(body[i]-'0')
+					}
+					kept = byte(v)
+				} else {
+					// An unknown escape: the specification says the backslash is ignored.
+					kept = e
+				}
+			}
 		}
+		if probe {
+			return nil, true
+		}
+		out = append(out, kept)
 	}
-	return out
+	return out, len(out) > 0
 }
 
 // Hex returns a hex string token's bytes. Whitespace and any other non-digit are skipped, and a missing

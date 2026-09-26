@@ -125,6 +125,9 @@ func (d *Document) missingWidth(font types.Dict) float64 {
 // simple font — an unnamed code drawn, or a subset name with a /CharSet (`cidUnderSimpleFontThrows`). (P07.S03's two
 // TrueType throws still refuse only the font clauses that read them — /pending 682.)
 //
+// A document whose CFF or Type 1 programs spent a document budget is refused here too, since the programs refused past
+// it were never asked whether veraPDF throws on them (RR1-6).
+//
 // **What the door cannot see, declared:** a content walk that fails (no font and no glyph is asked — every clause that
 // reads them refuses on its own), a glyph population nib cannot build, a code whose CMap lookup ran past the
 // budget, and a reader that panics are not answers — the walk carries on past each, so a LATER throw is still found,
@@ -165,11 +168,88 @@ func (d *Document) reportsNothing() (why string) {
 			return fmt.Sprintf("veraPDF reports nothing on this document — %s, %s: %s", g.where, glyphFontLabel(g), w)
 		}
 	}
+	// A parent-tree lookup veraPDF makes that meets a loop throws, and veraPDF reports nothing (RR3-2).
+	if why := d.parentTreeNothing(); why != "" {
+		return why
+	}
+	// **A spent document budget is itself the refusal** (the P07 phase-close re-review, RR1-6). Past one, the program
+	// being read and every later read charging that counter are refused UNREAD, so a throw veraPDF meets in one of them
+	// is invisible to the loops above — font A's cost hid font B's throw, and the other clauses answered a document
+	// veraPDF reports nothing on. Asked last, so every read above has charged what it will.
+	if why := d.cffSpent.exhausted(); why != "" {
+		return "nib stopped reading this document's font programs at its budget, so whether veraPDF reports nothing on " +
+			"it — a program it throws reading — is not known: " + why
+	}
+	if why := d.type1Spent.exhausted(); why != "" {
+		return "nib stopped reading this document's font programs at its budget, so whether veraPDF reports nothing on " +
+			"it — a program it throws reading — is not known: " + why
+	}
 	return ""
 }
 
 // throwsBuilding is whether veraPDF throws building this one glyph.
 func (d *Document) throwsBuilding(g glyph) string {
+	if w := d.throwsReadingFont(g); w != "" {
+		return w
+	}
+	return d.widthsThrow(g)
+}
+
+// firstLastThrows and wOpenerThrows are the two width reads veraPDF throws on (the P07 phase-close review, R2-4 —
+// measured on veraPDF 1.30.2): `getIntegerKey` is null for a value that is neither a number nor a STRING, and
+// `intValue()` on it throws — a name, a boolean or an array as /FirstChar or /LastChar (either one, whatever the code),
+// or as a /W entry's opening CID. A string is read as some number and reports; nib refuses that clause by clause.
+const (
+	firstLastThrows = "its /FirstChar or /LastChar is neither a number nor a string, where veraPDF throws an exception it " +
+		"does not handle"
+	wOpenerThrows = "its /W array opens an entry with something that is neither a number nor a string, where veraPDF " +
+		"throws an exception it does not handle"
+)
+
+// intKeyNull is whether veraPDF's `getIntegerKey` reads o as null: it is neither a number nor a string.
+func (d *Document) intKeyNull(o types.Object) bool {
+	switch d.resolve(o).(type) {
+	case types.Integer, types.Float, types.StringLiteral, types.HexLiteral:
+		return false
+	}
+	return true
+}
+
+// widthsThrow is where building a glyph reads a width veraPDF throws on. **It asks the metric door itself**, because
+// the throw comes only where veraPDF reads the dictionary width — a glyph drawn (measured: `() Tj` reports), in a font
+// whose program it parsed (measured: the same TrueType font with no program reports) — and `metricsOf` is where nib
+// reads it in exactly those cases. A cheap test of the dictionary goes first, so an ordinary font is not read twice.
+//
+// Neither shape reaches the door through a file today: pdfcpu's validator refuses a /FirstChar or /LastChar that is not
+// an integer (the document does not open) and drops a CIDFont whose /W holds one (the font does not resolve, and the
+// glyph clauses refuse on that). The door is written for the day either reader stops — measured, not reasoned.
+func (d *Document) widthsThrow(g glyph) string {
+	if g.unread != "" {
+		return ""
+	}
+	font := g.font.dict
+	switch d.name(font["Subtype"]) {
+	case "TrueType", "Type1", "MMType1", "Type3":
+		_, hasW := font["Widths"]
+		_, hasF := font["FirstChar"]
+		_, hasL := font["LastChar"]
+		if !hasW || !hasF || !hasL || (!d.intKeyNull(font["FirstChar"]) && !d.intKeyNull(font["LastChar"])) {
+			return ""
+		}
+		d.trueTypeFonts() // the TrueType metric path reads its font through that population
+		if m := d.metricsOf(g); m.why == firstLastThrows {
+			return m.why
+		}
+	case "Type0":
+		if c, known, _ := d.cidFontOf(font); known && c != nil && c.w != nil && !c.w.ok && c.w.why == wOpenerThrows {
+			return c.w.why
+		}
+	}
+	return ""
+}
+
+// throwsReadingFont is whether veraPDF throws reading this glyph's font for it: its program, its /CharProcs, its CMap.
+func (d *Document) throwsReadingFont(g glyph) string {
 	font := g.font.dict
 	switch d.name(font["Subtype"]) {
 	case "Type1", "MMType1":
@@ -178,7 +258,7 @@ func (d *Document) throwsBuilding(g glyph) string {
 		_, why := d.charProcs(font)
 		return why
 	case "Type0":
-		if chain, why := d.cmapChain(font, ""); why == "" {
+		if chain, why := d.chainOf(g.font); why == "" {
 			if loops := cmapChainLoops(chain); loops != "" {
 				return loops
 			}

@@ -118,6 +118,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*side).SetWriteDeadline":       "interface — net.Conn. Its three siblings on the same type are called; this one is not, and dropping it would stop the type satisfying the interface.",
+		"(intHeap).Less":                 "interface — container/heap's heap.Interface (sort.Interface), dispatched by the library for the /W range index.",
+		"(intHeap).Swap":                 "interface — container/heap's heap.Interface (sort.Interface), dispatched by the library for the /W range index.",
 
 		"(*Socket).Describe":  "test-only — the multicast interface selection rendered for a human. Read by the discovery tests and by nothing on a running path.",
 		"(*Socket).LocalPort": "test-only — the bound port, which only a harness needs to know.",

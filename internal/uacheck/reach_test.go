@@ -208,7 +208,8 @@ func TestEveryTreeRuleIsCannotCheckPastTheTreeBound(t *testing.T) {
 
 // deepParentTree is a document with no catalog /Lang whose one text run (MCID 0) belongs to a P declaring
 // /Lang, and whose one widget belongs to a Form element — both reached through a parent tree whose /Nums
-// sit depth /Kids levels down.
+// sit depth /Kids levels down. The tree's root is written inline, because pdfcpu refuses to open an
+// object-rooted number tree deeper than 100, and the lookup's bound is `maxParentTreeDepth` (RR3-2).
 func deepParentTree(depth int) []byte {
 	content := "/P << /MCID 0 >> BDC BT /F1 12 Tf 72 700 Td (x) Tj ET EMC"
 	objs := map[int]string{
@@ -217,7 +218,7 @@ func deepParentTree(depth int) []byte {
 		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Annots [30 0 R 31 0 R 32 0 R 33 0 R] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
 		4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
 		5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-		7: "<< /Type /StructTreeRoot /K [8 0 R 9 0 R 10 0 R 11 0 R 12 0 R] /ParentTree 200 0 R >>",
+		7: "<< /Type /StructTreeRoot /K [8 0 R 9 0 R 10 0 R 11 0 R 12 0 R] /ParentTree << /Kids [201 0 R] /Limits [0 4] >> >>",
 		8: "<< /Type /StructElem /S /P /P 7 0 R /Lang (en) /Pg 3 0 R /K 0 >>",
 		// P04.S03: the Form element declares its own `/Lang` and the widget carries `/Contents`, so
 		// 7.2 t24 is a SUBJECT here and passes while the tree resolves — which is what makes its
@@ -259,11 +260,17 @@ func TestAParentTreePastItsBoundIsCannotCheckNeverAFalseAnswer(t *testing.T) {
 			t.Fatalf("control: a parent tree three levels deep reports %v for %s (%s), want Pass — the fixture does not resolve", got.Verdict, clause, got.Why)
 		}
 	}
-	deep := deepParentTree(70)
+	// Past the bound the DOCUMENT is refused, since veraPDF, which reads on, stops reporting somewhere past 4,000
+	// (`reportsNothing`, RR3-2) — and under that each clause must refuse on its own: the rows below run the rule
+	// itself, so they measure the clause's `unread` branch and not the document-level refusal in front of it.
+	deep := deepParentTree(maxParentTreeDepth + 1)
+	if got := verdictOf(t, deep, "7.18.1 t1"); got.Verdict != CannotCheck || !strings.Contains(got.Why, "parent-tree lookup") {
+		t.Errorf("a parent tree past its bound: the document reports %v (%s), want every clause refused", got.Verdict, got.Why)
+	}
 	for _, clause := range []string{"7.2 t34", "7.18.4 t1", "7.2 t24", "7.18.1 t1", "7.18.1 t2", "7.18.5 t1"} {
-		got := verdictOf(t, deep, clause)
+		got := ruleVerdict(t, deep, clause)
 		if got.Verdict != CannotCheck {
-			t.Errorf("a parent tree seventy levels deep reports %v for %s (%s) over keys nib never read, want CannotCheck", got.Verdict, clause, got.Why)
+			t.Errorf("a parent tree past its depth bound reports %v for %s (%s) over keys nib never read, want CannotCheck", got.Verdict, clause, got.Why)
 			continue
 		}
 		if !strings.Contains(got.Why, "deeper than") {
@@ -282,8 +289,8 @@ func TestAParentTreePastItsBoundIsCannotCheckNeverAFalseAnswer(t *testing.T) {
 		if got := verdictOf(t, shallow, clause); got.Verdict != Fail {
 			t.Errorf("control: a parent tree three levels deep reports %v for %s (%s), want Fail", got.Verdict, clause, got.Why)
 		}
-		if got := verdictOf(t, deep, clause); got.Verdict != CannotCheck {
-			t.Errorf("a parent tree seventy levels deep reports %v for %s (%s), want CannotCheck — a tree nib "+
+		if got := ruleVerdict(t, deep, clause); got.Verdict != CannotCheck {
+			t.Errorf("a parent tree past its depth bound reports %v for %s (%s), want CannotCheck — a tree nib "+
 				"never read is not a document with nothing in it", got.Verdict, clause, got.Why)
 		}
 	}

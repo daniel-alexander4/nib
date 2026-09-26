@@ -345,8 +345,16 @@ type uniRange struct {
 // back into the destination's width, then read by `getUnicodeNameFromLong` — which answers U+FFFE for
 // EITHER adjacent byte pair FF FE or FE FF anywhere in it, a single character of the last byte when the
 // first byte is zero, and UTF-16BE otherwise.
+//
+// **The width is attacker-written and a lookup is per glyph**, so it is not the width written into (the P07 phase-close
+// review measured a 1 MB destination at 1.6 ms per lookup). Every byte above the low eight is the sign fill of a Java
+// `long` — 00 or FF — so a longer destination is read at `compactLength`: the fill cut to two or three bytes, keeping
+// the width's parity. Every answer above is the same over it — no pair inside a fill is FF FE, the first and last
+// bytes are unchanged, and each UTF-16 unit keeps its alignment — except that a run of U+FFFF units (a fill of FF
+// read as UTF-16) is shorter. No reader of the text counts them: 7.21.7 asks whether it is null and whether it holds
+// U+0000, U+FEFF or U+FFFE.
 func (r uniRange) value(code int64) string {
-	u := make([]byte, r.length)
+	u := make([]byte, compactLength(r.length))
 	n := code - r.begin + r.start
 	for i := len(u) - 1; i >= 0; i-- {
 		u[i] = byte(n)
@@ -354,13 +362,22 @@ func (r uniRange) value(code int64) string {
 	}
 	for i := 0; i+1 < len(u); i++ {
 		if (u[i] == 0xFF && u[i+1] == 0xFE) || (u[i] == 0xFE && u[i+1] == 0xFF) {
-			return "￾"
+			return "\uFFFE"
 		}
 	}
 	if u[0] == 0 {
 		return string(rune(u[len(u)-1]))
 	}
 	return javaUTF16BE(u)
+}
+
+// compactLength is the width `value` writes a destination of `length` bytes into: itself up to ten, and past that
+// eight bytes of value behind two or three of fill, the parity kept.
+func compactLength(length int) int {
+	if length <= 10 {
+		return length
+	}
+	return 10 + length%2
 }
 
 // ToUnicode is a `/ToUnicode` CMap as veraPDF 1.30.2 reads it.
@@ -472,32 +489,35 @@ func (u *ToUnicode) index(budget *int) {
 // Use is `PDCMap.getCMapFile`'s merge of a `/UseCMap` named in the stream's dictionary: the used CMap's
 // `bfchar` entries OVERWRITE this one's (`CMap.useCMap` is a `putAll`), and the used CMap answers a code this
 // one's entries and ranges do not.
+//
+// **Nothing is copied**: the used CMap is linked, and `Lookup` gives its entries precedence. The merge used to copy
+// every entry into the using CMap, per font and per `/UseCMap` hop — a million-entry CMap copied once for every font
+// that named a CMap using it (the P07 phase-close review, R2-2).
 func (u *ToUnicode) Use(o *ToUnicode) {
 	if o.Malformed {
 		// veraPDF would merge an EMPTY CMap here; nib does not claim to know that it would.
 		u.Malformed = true
 		return
 	}
-	for k, v := range o.chars {
-		u.chars[k] = v
-	}
 	u.used = o
 }
 
-// With is Use on a copy: the receiver, which a caller may have cached and shared, is left as parsed.
+// With is Use on a copy: the receiver, which a caller may have cached and shared, is left as parsed. The copy shares
+// the receiver's entries and index, which nothing writes after the parse.
 func (u *ToUnicode) With(o *ToUnicode) *ToUnicode {
 	c := *u
-	c.chars = make(map[int]string, len(u.chars)+len(o.chars))
-	for k, v := range u.chars {
-		c.chars[k] = v
-	}
 	c.Use(o)
 	return &c
 }
 
-// Lookup returns the Unicode text veraPDF gives a code, and whether it gives one: an entry first, then the
-// first incrementing range holding it in file order (`CMap.getUnicode`), then the CMap its dictionary uses
-// (`PDCMap.toUnicode`). `known` is false where nib cannot say — a malformed or truncated CMap.
+// maxUseDepth bounds the `/UseCMap` links a lookup follows. The caller that builds the chain refuses a loop and a
+// chain past its own ceiling; this only keeps a lookup finite should one ever be linked.
+const maxUseDepth = 256
+
+// Lookup returns the Unicode text veraPDF gives a code, and whether it gives one: an entry first — the one DEEPEST
+// down the `/UseCMap` chain, since each merge's entries overwrite the using CMap's — then the first incrementing
+// range holding it in file order (`CMap.getUnicode`), then the CMap its dictionary uses (`PDCMap.toUnicode`), and so
+// on down. `known` is false where nib cannot say — a malformed or truncated CMap.
 func (u *ToUnicode) Lookup(code int) (text string, mapped, known bool) {
 	if u == nil {
 		return "", false, true
@@ -505,23 +525,31 @@ func (u *ToUnicode) Lookup(code int) (text string, mapped, known bool) {
 	if u.Malformed {
 		return "", false, false
 	}
-	if s, ok := u.chars[code]; ok {
-		return s, true, true
-	}
-	c := int64(code)
-	if blk := u.blocks[c>>8]; blk != nil {
-		if slot := c & 255; blk.filled[slot>>6]&(uint64(1)<<(slot&63)) != 0 {
-			r := u.ranges[blk.idx[slot]]
-			if c >= r.begin && c <= r.end {
-				return r.value(c), true, true
-			}
+	depth := 0
+	for l := u; l != nil; l = l.used {
+		if depth++; depth > maxUseDepth {
+			return "", false, false
+		}
+		if s, ok := l.chars[code]; ok {
+			text, mapped = s, true
 		}
 	}
-	if u.Truncated {
-		return "", false, false
+	if mapped {
+		return text, true, true
 	}
-	if u.used != nil {
-		return u.used.Lookup(code)
+	c := int64(code)
+	for l := u; l != nil; l = l.used {
+		if blk := l.blocks[c>>8]; blk != nil {
+			if slot := c & 255; blk.filled[slot>>6]&(uint64(1)<<(slot&63)) != 0 {
+				r := l.ranges[blk.idx[slot]]
+				if c >= r.begin && c <= r.end {
+					return r.value(c), true, true
+				}
+			}
+		}
+		if l.Truncated {
+			return "", false, false
+		}
 	}
 	return "", false, true
 }
@@ -533,6 +561,20 @@ const maxToUnicodeRange = 1 << 16
 // 16-bit code spaces. A font pdfops can split has at most one (a simple font 256 codes, Identity-H 65,536),
 // so the second is headroom for ranges that overlap, not for more distinct codes.
 const maxToUnicodeExpansion = 2 << 16
+
+// maxRangeCodeBytes is the longest source code TextMap expands a range of: ISO 32000-1 9.10.3 and the codespace
+// allow four bytes, and each expanded code is allocated at that width.
+const maxRangeCodeBytes = 4
+
+// maxRangeDstBytes is the longest incrementing destination TextMap expands: "up to 512 bytes" (ISO 32000-1 9.10.3).
+// Each expanded code copies and decodes it, so its length multiplies the range's.
+const maxRangeDstBytes = 512
+
+// maxToUnicodeExpansionBytes bounds what one CMap's ranges may expand to in TOTAL, counted in the bytes each expanded
+// code allocates (its code, its destination copy, and the text decoded from it). A full 16-bit code space of two-byte
+// codes and four-byte destinations charges 2 + 4 + 6 = 12 bytes a code, 65,536 × 12 = 786,432 bytes (~0.75 MiB) of
+// it, so a real font never meets it.
+const maxToUnicodeExpansionBytes = 16 << 20
 
 // TextMap reads a `/ToUnicode` CMap's `bfchar` and `bfrange` blocks — both range forms, the incrementing
 // destination and the array of destinations — into code bytes → text, leniently: every entry up to the
@@ -546,9 +588,15 @@ const maxToUnicodeExpansion = 2 << 16
 // from `ProposeTags` and `CommitTags` on any page drawn in that font. So every range spends from
 // `maxToUnicodeExpansion`, and a range that does not fit what is left is not expanded — its codes read as
 // undecoded, which the run already reports, rather than as a stall.
+//
+// **A count of codes is not the cost either** (the P07 phase-close review, R3-5): each code allocates its source code
+// and a copy of its destination, both attacker-written in length, so a 32 KB CMap of ONE full-plane range with a 16 KB
+// destination allocated 11.4 GB. A range's codes are therefore at most `maxRangeCodeBytes` long and its incrementing
+// destination at most `maxRangeDstBytes` — the specification's own limits — and every range is charged its bytes
+// against `maxToUnicodeExpansionBytes` as well as its codes.
 func TextMap(src []byte) map[string]string {
 	out := map[string]string{}
-	budget := maxToUnicodeExpansion
+	budget := expansionBudget{codes: maxToUnicodeExpansion, bytes: maxToUnicodeExpansionBytes}
 	toks := contentstream.Tokenize(src)
 	mode := ""
 	var items []cmapItem
@@ -609,13 +657,32 @@ type cmapItem struct {
 	isArr bool
 }
 
-func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem, budget *int) {
-	l, h := Value(lo), Value(hi)
-	if h < l || h-l >= maxToUnicodeRange || h-l+1 > *budget {
+// expansionBudget is what TextMap's ranges may still expand to: codes, and the bytes those codes allocate.
+type expansionBudget struct{ codes, bytes int }
+
+// expandBFRange expands one range into out, or nothing when it is longer than one code space, its codes or its
+// destination are longer than the specification allows, or it does not fit what is left of the budget.
+func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem, budget *expansionBudget) {
+	if len(lo) > maxRangeCodeBytes || (!dst.isArr && len(dst.b) > maxRangeDstBytes) {
 		return
 	}
-	*budget -= h - l + 1
-	for k := 0; k <= h-l; k++ {
+	l, h := Value(lo), Value(hi)
+	if h < l || h-l >= maxToUnicodeRange || h-l+1 > budget.codes {
+		return
+	}
+	n := h - l + 1
+	// Each code allocates its bytes, a destination copy and the decoded text (at most 3/2 of the destination, when
+	// every UTF-16 unit becomes three UTF-8 bytes). An array destination's entries are read from the file, one per code.
+	per := len(lo)
+	if !dst.isArr {
+		per += len(dst.b) + (len(dst.b)*3+1)/2
+	}
+	if per > budget.bytes/n {
+		return
+	}
+	budget.codes -= n
+	budget.bytes -= n * per
+	for k := 0; k < n; k++ {
 		code := make([]byte, len(lo))
 		v := l + k
 		for b := len(code) - 1; b >= 0; b-- {

@@ -361,7 +361,7 @@ func TestTheCIDReaderBoundsWhatAHostileProgramCosts(t *testing.T) {
 	}
 	fds := make([]cidFD, 300)
 	fds[0] = cidFD{lsubrs: lsubrs}
-	shared := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: fds}.build(), true)
+	shared := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: fds}.build(), true, nil)
 	if shared.state != ttParsed {
 		t.Fatalf("300 font dicts carrying one Subrs index: %v (%s), want parsed", shared.state, shared.why)
 	}
@@ -381,24 +381,24 @@ func TestTheCIDReaderBoundsWhatAHostileProgramCosts(t *testing.T) {
 	for i := 1; i < len(carried); i++ {
 		carried[i] = cidFD{noPrivate: true}
 	}
-	if c := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: carried}.build(), true); c.state != ttUnknown || !strings.Contains(c.why, "DICT bytes") {
+	if c := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: carried}.build(), true, nil); c.state != ttUnknown || !strings.Contains(c.why, "DICT bytes") {
 		t.Errorf("20 font dicts re-reading a 1 MiB Private DICT: %v (%s), want a refusal naming the DICT budget", c.state, c.why)
 	}
 	own := make([]cidFD, 17) // each font dict's OWN Top DICT a mebibyte of numbers: the same budget
 	for i := range own {
 		own[i] = cidFD{extra: big}
 	}
-	if c := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: own}.build(), true); c.state != ttUnknown || !strings.Contains(c.why, "DICT bytes") {
+	if c := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: own}.build(), true, nil); c.state != ttUnknown || !strings.Contains(c.why, "DICT bytes") {
 		t.Errorf("17 font dicts of 1 MiB each: %v (%s), want a refusal naming the DICT budget", c.state, c.why)
 	}
 	// A Private DICT declared a gigabyte long is charged only what the program holds: it reads to the end and does not
 	// parse, as veraPDF's does — never a refusal in veraPDF's place.
-	long := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: []cidFD{{private: append(dictInt(0), 21), privSize: 1 << 30}}}.build(), true)
+	long := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: []cidFD{{private: append(dictInt(0), 21), privSize: 1 << 30}}}.build(), true, nil)
 	if long.state != ttFailed {
 		t.Errorf("a Private DICT declared 1 GiB long: %v (%s), want not parsed (the program ends first)", long.state, long.why)
 	}
 	carried = carried[:10] // 10 MiB is under the budget, and parses
-	if c := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: carried}.build(), true); c.state != ttParsed {
+	if c := readCFF(cidSpec{cids: []int{1, 2, 3}, fds: carried}.build(), true, nil); c.state != ttParsed {
 		t.Errorf("10 font dicts re-reading a 1 MiB Private DICT: %v (%s), want parsed", c.state, c.why)
 	}
 
@@ -417,10 +417,10 @@ func TestTheCIDReaderBoundsWhatAHostileProgramCosts(t *testing.T) {
 		}
 		return b
 	}
-	if c := readCFF(cidSpec{cids: cids, fdselect: sel(0xFFFF)}.build(), true); c.state != ttUnknown || !strings.Contains(c.why, "FDSelect") {
+	if c := readCFF(cidSpec{cids: cids, fdselect: sel(0xFFFF)}.build(), true, nil); c.state != ttUnknown || !strings.Contains(c.why, "FDSelect") {
 		t.Errorf("FDSelect ranges refilling 1,024 glyphs 32,768 times: %v (%s), want a refusal naming FDSelect", c.state, c.why)
 	}
-	if c := readCFF(cidSpec{cids: cids, fdselect: sel(2000)}.build(), true); c.state != ttParsed {
+	if c := readCFF(cidSpec{cids: cids, fdselect: sel(2000)}.build(), true, nil); c.state != ttParsed {
 		t.Errorf("2,000 such ranges (a million writes): %v (%s), want parsed", c.state, c.why)
 	}
 }
@@ -432,4 +432,52 @@ func cidBackwards() []byte {
 	i := bytes.Index(p, []byte{0, 4, 1, 1})
 	p[i+5] = p[i+6] + 1
 	return p
+}
+
+// TestTheCIDBudgetsAreTheDocuments — the DICT and FDSelect bounds are the DOCUMENT's (`cffSpend`): two programs, each
+// under the bound alone (the control), together over it — the second refused naming the document's CFF programs.
+func TestTheCIDBudgetsAreTheDocuments(t *testing.T) {
+	big := make([]byte, 1<<20)
+	for i := range big {
+		big[i] = 139
+	}
+	carried := make([]cidFD, 10) // ten font dicts re-reading a 1 MiB Private DICT: 10 MiB of the 16 MiB bound
+	carried[0] = cidFD{private: big}
+	for i := 1; i < len(carried); i++ {
+		carried[i] = cidFD{noPrivate: true}
+	}
+	cids := make([]int, 1023)
+	for i := range cids {
+		cids[i] = i + 1
+	}
+	sel := []byte{3, 0x4E, 0x20, 0, 0} // 20,000 ranges alternating up to 1024 and back: ~10.2 million writes of 16.8
+	for r := 0; r < 20000; r++ {
+		end := 1024
+		if r%2 == 1 {
+			end = 0
+		}
+		sel = append(sel, 0, byte(end>>8), byte(end))
+	}
+	for _, c := range []struct {
+		name, want string
+		prog       []byte
+		spent      func(*cffSpend) (int, int)
+	}{
+		{"DICT bytes", "DICT bytes", cidSpec{cids: []int{1, 2, 3}, fds: carried}.build(), func(s *cffSpend) (int, int) { return s.dict, cffMaxDictBytes }},
+		{"FDSelect writes", "FDSelect", cidSpec{cids: cids, fdselect: sel}.build(), func(s *cffSpend) (int, int) { return s.fill, cffMaxFDSelectFill }},
+	} {
+		spend := &cffSpend{}
+		if p := readCFF(c.prog, true, spend); p.state != ttParsed {
+			t.Fatalf("%s: one program: %v (%s), want parsed", c.name, p.state, p.why)
+		}
+		if n, bound := c.spent(spend); n < bound/2 || n > bound*3/4 {
+			t.Fatalf("%s: one program spent %d, want between half and three quarters of the bound %d", c.name, n, bound)
+		}
+		if p := readCFF(c.prog, true, nil); p.state != ttParsed {
+			t.Fatalf("%s: the second program alone: %v (%s), want parsed (the control)", c.name, p.state, p.why)
+		}
+		if p := readCFF(c.prog, true, spend); p.state != ttUnknown || !strings.Contains(p.why, "the document's CFF programs") || !strings.Contains(p.why, c.want) {
+			t.Errorf("%s: the second program after the first: %v (%s), want refused naming the document's CFF programs and %q", c.name, p.state, p.why, c.want)
+		}
+	}
 }

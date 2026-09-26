@@ -86,6 +86,16 @@ func (c *Codespace) Merge(o *Codespace) {
 	c.Invalid = c.Invalid || o.Invalid
 }
 
+// Clone is a copy a caller may Merge into without touching the original — **its shortest length included**, which is
+// why a chain is merged into a clone of the font's OWN CMap and never into an empty Codespace: an empty one's shortest
+// is unset, so a byte no range admits refused where veraPDF skips it as code 0 (the P07 phase-close review, R3-7).
+func (c *Codespace) Clone() *Codespace {
+	o := *c
+	o.spaces = append([]codeRange(nil), c.spaces...)
+	o.UsesCMaps = append([]string(nil), c.UsesCMaps...)
+	return &o
+}
+
 // ParseCodespace reads an embedded CMap program's `codespacerange` lists, with veraPDF's count rule.
 func ParseCodespace(src []byte) *Codespace {
 	t := newCMapTokens(src)

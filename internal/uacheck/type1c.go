@@ -94,7 +94,13 @@ func (d *Document) type1CProgramOf(font types.Dict) (c *cffProgram, known bool, 
 	switch d.name(sd.Dict["Subtype"]) {
 	case "Type1C":
 	case "OpenType":
-		return nil, false, "its embedded program is OpenType, which nib does not read under a Type 1 font", ""
+		// The SAME door `fontEmbedded` asks (the P07 phase-close re-review, RR1-5: this refused unread where 7.21.4.1 t1
+		// answered): with no "CFF " table veraPDF has no program, and its metrics stay null — measured, the metric and
+		// glyph clauses pass junk, a two-byte program and a TrueType one, as they pass a font with no program at all.
+		if st, why := d.openTypeProgram(desc); st != ttFailed {
+			return nil, false, "its embedded program is OpenType, which nib does not read under a Type 1 font — " + why, ""
+		}
+		return nil, true, "", ""
 	default:
 		return nil, true, "", "" // "Invalid subtype of the embedded font stream": no program
 	}
@@ -125,7 +131,7 @@ func (d *Document) cffRead(sd *types.StreamDict, subset bool) (c *cffProgram, kn
 	if sd.Content == nil && sd.Decode() != nil {
 		r = type1CRead{why: "its embedded CFF program could not be decoded"}
 	} else {
-		prog := readCFF(sd.Content, subset)
+		prog := readCFF(sd.Content, subset, &d.cffSpent)
 		switch {
 		case prog.throws != "":
 			throws = prog.throws

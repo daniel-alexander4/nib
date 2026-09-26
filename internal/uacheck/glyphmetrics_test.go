@@ -2,8 +2,13 @@ package uacheck
 
 import (
 	"encoding/binary"
+	"fmt"
+	"math"
+	"math/rand/v2"
 	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // P07.S04a's fixtures: every shape of 7.21.5 t1, 7.21.4.1 t2 and 7.21.8 t1 the slice reads, run on veraPDF 1.30.2
@@ -288,11 +293,28 @@ func metricFixtures() []metricFixture {
 func TestThePerGlyphClausesAgreeWithVeraPDF(t *testing.T) {
 	want := map[byte]Verdict{'P': Pass, 'F': Fail, '-': NotApplicable}
 	fx := metricFixtures()
-	if len(fx) != len(metricVeraPDF) {
-		t.Fatalf("%d fixtures and %d measured rows", len(fx), len(metricVeraPDF))
+	named := map[string]bool{}
+	for _, f := range fx {
+		if named[f.name] {
+			t.Fatalf("two fixtures are named %q, so one row of metricVeraPDF would answer for both", f.name)
+		}
+		named[f.name] = true
 	}
-	for i, f := range fx {
+	for name := range metricVeraPDF {
+		if !named[name] {
+			t.Errorf("metricVeraPDF holds %q, which no fixture is named", name)
+		}
+	}
+	for _, f := range fx {
+		vera, ok := metricVeraPDF[f.name]
+		if !ok || len(vera) != len(metricClauses) {
+			t.Fatalf("%s: no measured row of %d letters in metricVeraPDF (%q)", f.name, len(metricClauses), vera)
+		}
 		for j, clause := range metricClauses {
+			w, ok := want[vera[j]]
+			if !ok {
+				t.Fatalf("%s: verdict letter %q is not one of P, F, -", f.name, vera[j])
+			}
 			got := verdictOf(t, f.pdf, clause)
 			if f.refused != nil && f.refused[j] != "." {
 				if got.Verdict != CannotCheck || !strings.Contains(got.Why, f.refused[j]) {
@@ -300,75 +322,77 @@ func TestThePerGlyphClausesAgreeWithVeraPDF(t *testing.T) {
 				}
 				continue
 			}
-			if w := want[metricVeraPDF[i][j]]; got.Verdict != w {
-				t.Errorf("%s: %s reports %v (%s), veraPDF %c", f.name, clause, got.Verdict, got.Why, metricVeraPDF[i][j])
+			if got.Verdict != w {
+				t.Errorf("%s: %s reports %v (%s), veraPDF %c", f.name, clause, got.Verdict, got.Why, vera[j])
 			}
 		}
 	}
 }
 
-// metricVeraPDF is veraPDF 1.30.2's answer for each of metricFixtures, in order, over metricClauses.
-var metricVeraPDF = []string{
-	"PPP",
-	"FPP",
-	"PPP",
-	"FPP",
-	"FPP",
-	"FPP",
-	"FPP",
-	"PPP",
-	"FPP",
-	"PPP",
-	"FFP",
-	"FFP",
-	"PPF",
-	"PPF",
-	"PPP",
-	"PFP",
-	"PFP",
-	"PPP",
-	"PPF",
-	"PPP",
-	"PPP",
-	"PPP",
-	"PPF",
-	"PPP",
-	"PPF",
-	"FFF",
-	"PPF",
-	"PPF",
-	"PFF",
-	"PPP",
-	"PFP",
-	"PPP",
-	"PPP",
-	"PFP",
-	"PPP",
-	"PPF",
-	"PPF",
-	"PFP",
-	"PFP",
-	"PFP",
-	"PPP",
-	"PPP",
-	"PFP",
-	"PPP",
-	"PFF",
-	"PPP",
-	"FPP",
-	"PPF",
-	"PFF",
-	"FPP",
-	"PPP",
-	"FPP",
-	"PPP",
-	"PPP",
-	"PFF",
-	"PPP",
-	"PFF",
-	"PPP",
-	"PPF",
-	"PPP",
+// metricVeraPDF is veraPDF 1.30.2's answer for each of metricFixtures over metricClauses, KEYED by the fixture's
+// name: a positional list paired row i with fixture i, so inserting a fixture silently shifted every verdict after
+// it (R2-10).
+var metricVeraPDF = map[string]string{
+	"widths agree":                                           "PPP",
+	"a width 100 off":                                        "FPP",
+	"widths 1 off":                                           "PPP",
+	"a width 1.5 off":                                        "FPP",
+	"no /Widths":                                             "FPP",
+	"/LastChar short of the codes":                           "FPP",
+	"/Widths short of /LastChar":                             "FPP",
+	"/MissingWidth standing in for /Widths":                  "PPP",
+	"no head table, so 2048 units per em":                    "FPP",
+	"a width off, drawn invisibly":                           "PPP",
+	"eacute, which no subtable maps":                         "FFP",
+	"WinAnsi 0x81, bullet, absent":                           "FFP",
+	"code 0 under WinAnsi":                                   "PPF",
+	"code 0 under WinAnsi, drawn invisibly":                  "PPF",
+	"symbolic, (3,0), codes it maps":                         "PPP",
+	"symbolic, (3,0), a code it does not map":                "PFP",
+	"symbolic, only (3,1)":                                   "PFP",
+	"an absent glyph drawn invisibly":                        "PPP",
+	"no program, code 0":                                     "PPF",
+	"no program, 0x81":                                       "PPP",
+	"non-symbolic, no /Encoding":                             "PPP",
+	"a program veraPDF cannot parse, widths off":             "PPP",
+	"a MacExpert base, whose 0x41 is refilled from Standard": "PPF",
+	"Helvetica, not embedded, 0x81":                          "PPP",
+	"Helvetica, not embedded, code 0":                        "PPF",
+	"MacExpert-named, modes 0 and 2":                         "FFF",
+	"MacExpert-named, modes 0 and 2, /FontFile3":             "PPF",
+	"MacExpert-named, mode 0 on the page and 2 in a form":    "PPF",
+	"MacExpert-named, modes 0 and 2, an empty post name":     "PFF",
+	"a glyph past the advances but below the glyph count takes the last advance": "PPP",
+	"symbolic, a (1,0) subtable mapping the code to glyph 0":                     "PFP",
+	"non-symbolic, only a (1,0) subtable, found by Mac OS Roman code":            "PPP",
+	"non-symbolic, no subtable, the glyph named by post":                         "PPP",
+	"a Differences name no subtable maps, over glyph 0's advance":                "PFP",
+	"symbolic, WinAnsi named, code 0":                                            "PPP",
+	"no program, no encoding, code 0":                                            "PPF",
+	"MacExpert-named, mode 0 on the page and 2 in a pattern":                     "PPF",
+	"two (3,1) records, the first mapping the code to glyph 0":                   "PFP",
+	"symbolic, a (3,0) whose first code is 0 and whose glyphs sit at F020":       "PFP",
+	"a range-offset segment ending at FFFF, which veraPDF skips":                 "PFP",
+	"a post table counting fewer glyphs than maxp":                               "PPP",
+	"a post table counting fewer glyphs than maxp, more data after it":           "PPP",
+	"a glyph equal to the glyph count takes advance 0":                           "PFP",
+	"symbolic, a (3,0) in the F200 page":                                         "PPP",
+	"MacExpert-named, modes 0 and 2, no cmap table, an empty post name":          "PFF",
+	"CID: /DW agreeing":                                                      "PPP",
+	"CID: /DW absent, so 1000":                                               "FPP",
+	"CID: code 0":                                                            "PPF",
+	"CID: a CID past the glyph count":                                        "PFF",
+	"CID: /W single width off":                                               "FPP",
+	"CID: /W range agreeing over a /DW that is off":                          "PPP",
+	"CID: /W range whose width is not a number":                              "FPP",
+	"CID: /W single before a range":                                          "PPP",
+	"CID: a CIDToGIDMap stream mapping CID 1":                                "PPP",
+	"CID: a CIDToGIDMap stream shorter than the CID":                         "PFF",
+	"CID: no CIDToGIDMap":                                                    "PPP",
+	"CID: a CIDToGIDMap stream shorter than the CID, over glyph 0's advance": "PFF",
+	"CID: a program veraPDF cannot parse":                                    "PPP",
+	"CID: an absent glyph drawn invisibly":                                   "PPF",
+	"CID: no program":                                                        "PPP",
 }
 
 // TestTheShippedFontRulesReadTheNewDoors — two shipped clauses the per-glyph fixtures reach, asserted where veraPDF is
@@ -429,5 +453,133 @@ func TestAMetricFailurePointsAtTheVisibleUse(t *testing.T) {
 	got := verdictOf(t, pdf, "7.21.4.1 t2")
 	if got.Verdict != Fail || !strings.Contains(got.Where, "#8") {
 		t.Errorf("7.21.4.1 t2 reports %v at %q, want Fail at the visible Tj (operator #8; the invisible one is #6)", got.Verdict, got.Where)
+	}
+}
+
+// sharedDescendantDoc is `fonts` Type 0 fonts over ONE CIDFontType2 descendant carrying /W `w` and a CIDToGIDMap
+// stream, each drawing CIDs 1 to `codes`.
+func sharedDescendantDoc(fonts, codes int, w string) []byte {
+	m := make([]byte, 2*(codes+1))
+	for i := 0; i <= codes; i++ {
+		m[2*i], m[2*i+1] = byte(i>>8), byte(i)
+	}
+	objs := map[int]string{
+		11: "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Probe /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) " +
+			"/Supplement 0 >> /FontDescriptor 12 0 R /DW 500 /W " + w + " /CIDToGIDMap 31 0 R >>",
+		31: spStream("", string(m)),
+	}
+	for k, v := range ttObjects("/Flags 4", "FontFile2", ttProgram(sub31), "") {
+		objs[k] = v
+	}
+	var hex, res, content strings.Builder
+	for c := 1; c <= codes; c++ {
+		fmt.Fprintf(&hex, "%04X", c)
+	}
+	content.WriteString("BT 10 10 Td ")
+	for f := 0; f < fonts; f++ {
+		if f > 0 {
+			fmt.Fprintf(&res, " /F%d %d 0 R", f, 100+f)
+			objs[100+f] = fmt.Sprintf("<< /Type /Font /Subtype /Type0 /BaseFont /Probe%d /Encoding /Identity-H /DescendantFonts [11 0 R] >>", f)
+		}
+		fmt.Fprintf(&content, "/F%d 12 Tf <%s> Tj ", f, hex.String())
+	}
+	content.WriteString("ET")
+	return glyphPage(content.String(), res.String(), "", "<< /Type /Font /Subtype /Type0 /BaseFont /Probe0 /Encoding /Identity-H /DescendantFonts [11 0 R] >>", objs)
+}
+
+// TestACIDFontsWidthsAndMapAreReadOncePerDescendant — R2-3: /W and the CIDToGIDMap were read per TYPE 0 FONT, so N fonts
+// over one descendant paid N reads (and a range scan per glyph each: 50 fonts over 20,000 ranges drawing 2,000 codes
+// cost 2.5 s, measured; 0.58 s after, against 0.51 s for the same document with no /W at all).
+func TestACIDFontsWidthsAndMapAreReadOncePerDescendant(t *testing.T) {
+	const fonts, codes = 5, 40
+	d, err := open(sharedDescendantDoc(fonts, codes, "[1 20 500 30 [500 500] 5 45 500]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := checkGlyphWidths(d); r.Verdict != Pass {
+		t.Fatalf("7.21.5 t1 reports %v (%s), want Pass — every width agrees, so every glyph is asked", r.Verdict, r.Why)
+	}
+	// The stimulus first: every Type 0 font was read, and every glyph asked its width.
+	if len(d.cidReads) != fonts {
+		t.Fatalf("%d Type 0 fonts were read, want %d — the document did not exercise the sharing", len(d.cidReads), fonts)
+	}
+	if len(d.cidWidths) != 1 || len(d.cidGIDMaps) != 1 {
+		t.Errorf("one descendant read as %d /W tables and %d CIDToGIDMaps, want one each", len(d.cidWidths), len(d.cidGIDMaps))
+	}
+	if d.cidWEntries != 10 {
+		t.Errorf("the /W was charged %d entries, want its 10 once", d.cidWEntries)
+	}
+}
+
+// TestTheWidthBudgetRefusesPastItsCeiling — the ceiling on /W entries, with a control just under it: the charge is
+// asserted before the answer is graded, and the answer past it is a refusal naming the budget, never a width.
+func TestTheWidthBudgetRefusesPastItsCeiling(t *testing.T) {
+	const entries = 10
+	for _, c := range []struct {
+		spent  int
+		refuse bool
+	}{{maxCIDWEntries - entries, false}, {maxCIDWEntries - entries + 1, true}} {
+		d, err := open(sharedDescendantDoc(1, 2, "[1 20 480 30 [470 471] 5 40 490]"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.cidWEntries = c.spent
+		w := d.cidWidthsOf(d.descendantOf(d.dict(d.pageFont(t, "F0"))))
+		if d.cidWEntries != c.spent+entries {
+			t.Fatalf("spent %d: the /W was charged %d, want %d", c.spent, d.cidWEntries-c.spent, entries)
+		}
+		got, ok, why := w.width(1)
+		switch {
+		case c.refuse && (ok || !strings.Contains(why, "where nib stops")):
+			t.Errorf("spent %d: past the ceiling the width reads %v, %v (%s), want a refusal", c.spent, got, ok, why)
+		case !c.refuse && (!ok || got != 480):
+			t.Errorf("spent %d: at the ceiling the width reads %v, %v (%s), want 480", c.spent, got, ok, why)
+		}
+	}
+}
+
+// pageFont is the page's font resource `name`.
+func (d *Document) pageFont(t *testing.T, name string) types.Object {
+	t.Helper()
+	fonts, why := d.usedFonts()
+	for _, f := range fonts {
+		if f.name == "/"+name || f.name == name {
+			return f.dict
+		}
+	}
+	t.Fatalf("no used font %s (%s)", name, why)
+	return nil
+}
+
+// TestFirstRangeSegmentsAnswerAsTheRangeScanDoes — the index against `CIDWArray.getWidth`'s own loop (the first range, in
+// /W order, holding the CID), over random overlapping, nested, backwards and extreme ranges.
+func TestFirstRangeSegmentsAnswerAsTheRangeScanDoes(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	type rg = struct {
+		lo, hi int
+		w      float64
+	}
+	for trial := 0; trial < 300; trial++ {
+		var ranges []rg
+		for i, n := 0, rng.IntN(12); i < n; i++ {
+			lo, hi := rng.IntN(60)-5, rng.IntN(60)-5
+			ranges = append(ranges, rg{lo, hi, float64(i + 1)})
+		}
+		if trial%50 == 0 {
+			ranges = append(ranges, rg{math.MaxInt32 - 2, math.MaxInt32, 99}, rg{math.MinInt32, math.MinInt32 + 1, 98})
+		}
+		tbl := &cidWidthTable{segs: firstRangeSegments(ranges), dw: -1, ok: true}
+		for _, cid := range append(cidRange(-8, 64), math.MaxInt32, math.MaxInt32-3, math.MinInt32) {
+			want := -1.0
+			for _, r := range ranges {
+				if cid >= r.lo && cid <= r.hi {
+					want = r.w
+					break
+				}
+			}
+			if got, _, _ := tbl.width(cid); got != want {
+				t.Fatalf("ranges %v: CID %d reads %v, the scan %v", ranges, cid, got, want)
+			}
+		}
 	}
 }

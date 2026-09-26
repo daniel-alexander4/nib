@@ -2,9 +2,13 @@ package uacheck
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/pdfcpu/pdfcpu/pkg/filter"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Reading the XMP packet — `PLAN-accessibility.md` P07.S02.
@@ -112,6 +116,37 @@ const (
 // declines to read rather than one it reads wrongly. The refusal reaches the rules as `CannotCheck`.
 const maxXMPDepth = 1000
 
+// maxXMPBytes bounds the metadata packet's DECODED size, for the reason `maxXMPDepth` gives: the stream is
+// FlateDecode'd, pdfcpu's own ceiling is 512 MiB, and a producer's XMP is kilobytes (a packet carrying an
+// embedded thumbnail, the largest real shape, is a few hundred). A packet past it is refused, not read short.
+const maxXMPBytes = 16 << 20
+
+// decodeWithin decodes a stream nib is about to parse, refusing it once its DECODED size passes max, and
+// answers why when it would not decode or was refused ("" when sd.Content holds the whole stream).
+//
+// **The cap is applied DURING the decode, not after it** (the P07 phase-close review, R4-5): checking
+// `len(sd.Content)` after `sd.Decode()` bounded what nib parsed and nothing about what it inflated, which is
+// the half the document chooses. `DecodeWithLimit` stops the filter at the ceiling; the length check after it
+// covers what that cannot see — a stream decoded earlier by another reader, and an unfiltered stream, whose
+// raw bytes pdfcpu hands back without a limit.
+//
+// **It bounds nib's decode, not the document's open.** pdfcpu's validator decodes the catalog's /Metadata itself
+// at open (`catalogMetaData`, under its own 512 MiB ceiling, into a copy nib never sees), so a packet between this
+// cap and pdfcpu's is inflated once there and then refused here (the P07 phase-close re-review; read from pdfcpu's
+// source, unmeasured).
+func decodeWithin(sd *types.StreamDict, max int, what string) string {
+	if err := sd.DecodeWithLimit(int64(max)); err != nil {
+		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+			return fmt.Sprintf("%s exceeds %d bytes decoded, and nib stopped decoding it there", what, max)
+		}
+		return what + " could not be decoded: " + err.Error()
+	}
+	if len(sd.Content) > max {
+		return fmt.Sprintf("%s exceeds %d bytes decoded, and nib stopped decoding it there", what, max)
+	}
+	return ""
+}
+
 // readXMP gathers what the metadata rules need, in one pass over the packet.
 func readXMP(d *Document) xmpFacts {
 	if !d.xmpDone {
@@ -131,8 +166,8 @@ func parseXMP(d *Document) xmpFacts {
 		return xmpFacts{Present: true, Why: "the catalog's /Metadata does not resolve to a stream"}
 	}
 	f := xmpFacts{Present: true, StreamType: d.name(sd.Dict["Type"]), StreamSubtype: d.name(sd.Dict["Subtype"])}
-	if derr := sd.Decode(); derr != nil {
-		f.Why = "the metadata stream could not be decoded: " + derr.Error()
+	if why := decodeWithin(sd, maxXMPBytes, "the metadata stream"); why != "" {
+		f.Why = why
 		return f
 	}
 	dec := xml.NewDecoder(strings.NewReader(string(sd.Content)))
@@ -161,17 +196,45 @@ func parseXMP(d *Document) xmpFacts {
 	// O(depth) per element and therefore O(depth²) over a packet. `Token()` kept a flat map and was
 	// linear. Measured end to end through `Check` on a packet of nested elements: 5,000 deep 57 ms,
 	// 20,000 deep 667 ms, 80,000 deep **11.1 s** — four times the depth for seventeen times the work.
-	// The packet is a FlateDecode stream inside a PDF the user opened, and nothing bounds its decoded
-	// size, so that is an attacker-supplied quadratic. A prefix now maps to a stack of URIs in one
-	// map, popped at each end tag, which restores O(1) resolution, and the depth carries a ceiling the
-	// way every other walk in this package does (`overBudget`, `maxWalkDepth`).
+	// The packet is a FlateDecode stream inside a PDF the user opened, so that is an attacker-supplied
+	// quadratic. A prefix now maps to a stack of URIs in one map, popped at each end tag, which restores
+	// O(1) resolution, and the depth carries a ceiling the way every other walk in this package does
+	// (`overBudget`, `maxWalkDepth`).
+	//
+	// # And no other step may be per-token × something the packet chooses (the P07 phase close, R4-1)
+	//
+	// **This comment used to call the parse linear, and it was not.** Two more steps scaled with the packet
+	// twice: a property's text grew by `p.own += raw` once per character-data RUN, and a comment splits one
+	// value into as many runs as the packet likes (`1<!---->1<!---->…`), so each run copied the whole value so
+	// far — measured 200,000 runs 3.8 s and 400,000 runs 20.4 s, on a 3.2 MB packet. And every run walked the
+	// open-element stack to find its property, O(depth) per run. The text now grows in a builder (`bufs`), each
+	// frame carries the index of its nearest property ancestor (`anchor`, `uaAnchor`), computed once when it
+	// opens, so a run and an `rdf:value` attribute find their property in O(1), and the packet's decoded size
+	// is capped (`maxXMPBytes`), so the linear parse is a bounded one too.
 	type frame struct {
 		raw      xml.Name // as written: Space is the prefix, "" when the element carried none
 		space    string   // the namespace URI that prefix resolved to
 		declared []string // the prefixes this element bound, so the same ones are unbound at its end tag
 		owns     string   // the UAProps local name this element introduced, so its chardata is its own
+		// anchor is the index in path of the nearest frame — this one included — that is a `dc:title` or an
+		// identification property, -1 when none is open: the element a character-data run belongs to.
+		anchor int
+		// uaAnchor is the index of the nearest identification-property frame, this one included, or -1: the
+		// property an `rdf:value` attribute on this element belongs to. It does not stop at `dc:title`.
+		uaAnchor int
 	}
 	var path []frame
+	// bufs holds each identification property's text as it grows; `p.own += raw` per run was the quadratic.
+	type propBuf struct{ own, rdf strings.Builder }
+	bufs := map[string]*propBuf{}
+	buf := func(name string) *propBuf {
+		b := bufs[name]
+		if b == nil {
+			b = &propBuf{}
+			bufs[name] = b
+		}
+		return b
+	}
 	ns := map[string][]string{}
 	const nsRDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 	// resolve maps a prefix to the URI currently bound to it. The `xml` prefix is bound by the XML
@@ -206,7 +269,10 @@ func parseXMP(d *Document) xmpFacts {
 					"stopped reading it rather than spend the whole document's budget on one packet", maxXMPDepth)
 				return f
 			}
-			fr := frame{raw: t.Name}
+			fr := frame{raw: t.Name, anchor: -1, uaAnchor: -1}
+			if len(path) > 0 {
+				fr.anchor, fr.uaAnchor = path[len(path)-1].anchor, path[len(path)-1].uaAnchor
+			}
 			for _, a := range t.Attr {
 				// `xmlns="U"` arrives as a bare local name; `xmlns:p="U"` as Space "xmlns", Local "p".
 				prefix, isDecl := "", false
@@ -294,25 +360,30 @@ func parseXMP(d *Document) xmpFacts {
 			// **`rdf:value` written as an ATTRIBUTE is the value too** — on the property itself
 			// (`<pdfuaid:part rdf:value="1"/>`) or on its `rdf:Description`; veraPDF passes both, measured by
 			// the R1 re-review's third round, and reading `rdf:value` only as an element failed them.
+			// The frame's own index once pushed: an anchor naming it is this element.
+			if fr.space == nsPDFUAID {
+				fr.uaAnchor, fr.anchor = len(path), len(path)
+			} else if fr.space == nsDC && t.Name.Local == "title" {
+				fr.anchor = len(path)
+			}
 			for _, a := range t.Attr {
 				if a.Name.Local != "value" || a.Name.Space == "" || resolve(a.Name.Space) != nsRDF {
 					continue
 				}
 				owner := ""
-				if fr.space == nsPDFUAID {
+				switch {
+				case fr.space == nsPDFUAID:
 					owner = fr.owns
-				} else {
-					for i := len(path) - 1; i >= 0; i-- {
-						if path[i].space == nsPDFUAID {
-							owner = path[i].owns
-							break
-						}
-					}
+				case fr.uaAnchor >= 0:
+					owner = path[fr.uaAnchor].owns
 				}
 				if owner != "" {
 					p := f.UAProps[owner]
 					if !p.hasRDFValue {
-						p.rdfValue, p.hasRDFValue = a.Value, true
+						b := buf(owner)
+						b.rdf.Reset()
+						b.rdf.WriteString(a.Value)
+						p.hasRDFValue = true
 						f.UAProps[owner] = p
 					}
 				}
@@ -356,31 +427,30 @@ func parseXMP(d *Document) xmpFacts {
 			// outward let a second chardata run under an already-filled property — which a comment or
 			// a processing instruction inside the text is enough to produce — land on an ENCLOSING
 			// property instead, giving it a value from an element that is not it.
-			for i := len(path) - 1; i >= 0; i-- {
-				if path[i].space == nsDC && path[i].raw.Local == "title" {
-					if f.Title == "" && text != "" {
-						f.Title = text
-					}
-					break
+			//
+			// That nearest ancestor is the top frame's `anchor`, computed once when each element opened.
+			top := path[len(path)-1]
+			switch i := top.anchor; {
+			case i < 0:
+			case path[i].space == nsDC && path[i].raw.Local == "title":
+				if f.Title == "" && text != "" {
+					f.Title = text
 				}
-				if path[i].space == nsPDFUAID {
-					// **The property's OWN text, or — if it is qualified — its `rdf:value`'s, and nothing else.**
-					// Measured by the R1 re-review on veraPDF: the qualified form pretty-printed, and one with a
-					// second qualifier, both PASS; reading every descendant's text made them `"\n  \n 1\n"` and
-					// `"12"` and failed them. The unqualified form stays raw — ` 1 ` fails there, measured.
-					if owns := path[i].owns; owns != "" {
+			default: // an identification property
+				// **The property's OWN text, or — if it is qualified — its `rdf:value`'s, and nothing else.**
+				// Measured by the R1 re-review on veraPDF: the qualified form pretty-printed, and one with a
+				// second qualifier, both PASS; reading every descendant's text made them `"\n  \n 1\n"` and
+				// `"12"` and failed them. The unqualified form stays raw — ` 1 ` fails there, measured.
+				if owns := path[i].owns; owns != "" {
+					switch {
+					case i == len(path)-1:
+						buf(owns).own.WriteString(raw)
+					case top.space == nsRDF && top.raw.Local == "value":
+						buf(owns).rdf.WriteString(raw)
 						p := f.UAProps[owns]
-						top := path[len(path)-1]
-						switch {
-						case i == len(path)-1:
-							p.own += raw
-						case top.space == nsRDF && top.raw.Local == "value":
-							p.rdfValue += raw
-							p.hasRDFValue = true
-						}
+						p.hasRDFValue = true
 						f.UAProps[owns] = p
 					}
-					break
 				}
 			}
 		}
@@ -390,6 +460,9 @@ func parseXMP(d *Document) xmpFacts {
 		return f
 	}
 	for k, p := range f.UAProps {
+		if b := bufs[k]; b != nil {
+			p.own, p.rdfValue = b.own.String(), b.rdf.String()
+		}
 		switch {
 		case p.hasRDFValue:
 			p.Value = p.rdfValue

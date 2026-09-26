@@ -192,43 +192,65 @@ func (d *Document) outlineTruncated(why string) {
 	}
 }
 
-// outlineActions walks every outline item's actions, following `/First` and `/Next` under the walk bound.
+// maxOutlineItems bounds how many outline items the clip walk visits in one document.
 //
-// The bound is `maxWalkDepth` on the `/First` descent and on the `/Next` chain together, with a visited set, so
-// an outline that names itself cannot spin. 7.2 t2 reads `/Outlines` only for whether an item EXISTS; this is
-// the first reader in the package that walks the items themselves.
+// **It counts ITEMS, not the length of one chain** (the P07 phase-close review, R4-6). The walk used to apply
+// `maxWalkDepth` — a NESTING bound, 64 — to the `/Next` chain as well, so an outline with 66 top-level
+// bookmarks, an ordinary table of contents, refused 7.18.6.2 t1 and t2 where veraPDF checks every item:
+// measured, 70 bookmarks and no clip is no subject to veraPDF and was CannotCheck in nib, and 70 bookmarks whose
+// last carries a clip with no `/CT` FAIL t1 there and were CannotCheck here. Termination never needed that
+// bound — the visited set already stops a chain that names itself — so what is left to bound is the work, and
+// that is the item count. A large book's outline runs to a few thousand items; this is far past that, and a
+// document past it still refuses, because the items past the budget were never read.
+const maxOutlineItems = 100_000
+
+// outlineActions walks every outline item's actions, following `/First` and `/Next`, with a visited set so an
+// outline that names itself cannot spin. 7.2 t2 reads `/Outlines` only for whether an item EXISTS; this is the
+// first reader in the package that walks the items themselves.
 func (d *Document) outlineActions(visit func(types.Dict, string)) {
+	d.outlineActionsWithin(maxOutlineItems, visit)
+}
+
+// outlineActionsWithin is outlineActions under a given item budget, and answers how many items it visited — the
+// budget is a parameter so a test can put a control just under it without building a hundred thousand items.
+//
+// Two bounds, each a REFUSAL when it binds and never a quiet stop — veraPDF's `OutlinesHelper` walks the whole
+// outline, so an item nib did not read may hold the clip that fails the clause:
+//   - the item budget, over the whole outline, siblings and descendants alike;
+//   - `maxWalkDepth` on the `/First` descent, which is recursion. It binds only on an item that HAS a `/First`:
+//     a leaf at the bound has nothing below it to miss, and recording a truncation there was a false refusal.
+func (d *Document) outlineActionsWithin(budget int, visit func(types.Dict, string)) int {
 	root := d.dict(d.Catalog["Outlines"])
 	if root == nil {
-		return
+		return 0
 	}
 	seen := map[uintptr]bool{}
+	visited := 0
 	var walk func(item types.Dict, depth int, where string)
 	walk = func(item types.Dict, depth int, where string) {
-		n := 0
-		for ; item != nil; n++ {
+		for ; item != nil; item = d.dict(item["Next"]) {
 			if seen[dictID(item)] {
 				return
 			}
-			if n > maxWalkDepth {
-				// **A truncation must be a REASON, not a quiet stop.** veraPDF's `OutlinesHelper` walks the
-				// outline unbounded with only a containment check, so a document with 70 top-level bookmarks —
-				// an ordinary table of contents — would otherwise have its 70th item's action silently unread,
-				// and both clauses would report Pass over a clip nib never looked at.
-				d.outlineTruncated(fmt.Sprintf("the outline has more than %d items in one chain; nib stops "+
-					"reading there, so any media clip below was never seen", maxWalkDepth))
+			if visited >= budget {
+				d.outlineTruncated(fmt.Sprintf("the outline has more than %d items; nib stops reading there, so any "+
+					"media clip past them was never seen", budget))
 				return
 			}
 			seen[dictID(item)] = true
+			visited++
 			visit(item, where)
-			if depth < maxWalkDepth {
-				walk(d.dict(item["First"]), depth+1, where+" → a child outline item")
-			} else {
+			child := d.dict(item["First"])
+			switch {
+			case child == nil:
+			case depth < maxWalkDepth:
+				walk(child, depth+1, where+" → a child outline item")
+			default:
 				d.outlineTruncated(fmt.Sprintf("the outline nests deeper than %d levels; nib stops reading "+
 					"there, so any media clip below was never seen", maxWalkDepth))
 			}
-			item = d.dict(item["Next"])
 		}
 	}
 	walk(d.dict(root["First"]), 0, "an outline item")
+	return visited
 }

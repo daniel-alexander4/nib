@@ -2,8 +2,8 @@ package uacheck
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -286,10 +286,10 @@ func checkContentLanguage(d *Document) Result {
 	if catalogDeclaresLang(d) {
 		return Result{Verdict: Pass}
 	}
+	// A walk that stopped leaves the events it DID record, each settled where it was drawn; they are judged,
+	// and the stop is answered only when none of them fails (`heldRefusal`).
 	events, errWhy := d.contentEvents()
-	if errWhy != "" {
-		return Result{Verdict: CannotCheck, Why: errWhy}
-	}
+	var held heldRefusal
 	texts := 0
 	for _, ev := range events {
 		// Appearance streams are outside "page content" for this clause, as they are for 7.1 t3.
@@ -301,7 +301,8 @@ func checkContentLanguage(d *Document) Result {
 			continue
 		}
 		if ev.langUnread != "" {
-			return Result{Verdict: CannotCheck, Why: ev.langUnread, Where: ev.where}
+			held.hold(ev.langUnread, ev.where)
+			continue
 		}
 		// **The three shapes told apart by name.** The verdict is one disjunction, but the reason a user
 		// acts on is not: deleting the "in no tagged sequence" branch once left this rule green while
@@ -330,6 +331,12 @@ func checkContentLanguage(d *Document) Result {
 			}
 		}
 	}
+	if r, ok := held.result(); ok {
+		return r
+	}
+	if errWhy != "" {
+		return Result{Verdict: CannotCheck, Why: errWhy}
+	}
 	if texts == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document shows no text that a reader is given"}
 	}
@@ -343,8 +350,7 @@ func (d *Document) elementForMCID(spKey, mcid int) (types.Dict, string) {
 	if spKey < 0 {
 		return nil, ""
 	}
-	pt, unread := d.parentTree()
-	entry, found := pt[spKey]
+	entry, found, unread := d.parentTreeEntry(spKey)
 	if !found {
 		return nil, unread
 	}
@@ -448,9 +454,9 @@ func checkUAPartValue(d *Document) Result {
 		}
 	}
 	// veraPDF's test is `part == 1` over an INTEGER — `Integer.valueOf` of the whole untrimmed text, so `01`
-	// and `+1` are 1 and ` 1 ` is no integer at all (measured, the P06 phase-close review). `strconv.Atoi`
-	// has the same grammar for ASCII: an optional sign, then digits, nothing else.
-	if n, err := strconv.Atoi(x.UAPart); err != nil || n != 1 {
+	// and `+1` are 1 and ` 1 ` is no integer at all (measured, the P06 phase-close review). `javaParseInt`
+	// ports it, digits included: `strconv.Atoi` shared its grammar only for ASCII (R4-9).
+	if n, ok := javaParseInt(x.UAPart); !ok || n != 1 {
 		return Result{
 			Verdict: Fail,
 			Why:     fmt.Sprintf("pdfuaid:part is %q; a PDF/UA-1 file declares part 1", x.UAPart),
@@ -611,4 +617,60 @@ func optionalContentConfigs(d *Document) ([]ocConfig, *Result) {
 		}
 	}
 	return out, nil
+}
+
+// javaParseInt is Java's `Integer.parseInt(s, 10)`, which is what veraPDF's `Integer.valueOf` of the part
+// runs: an optional `+` or `-` (not alone), then one or more characters `Character.digit(c, 10)` accepts, with
+// the value in 32 bits.
+//
+// **`Character.digit` accepts every Unicode decimal digit, and reads the text one UTF-16 unit at a time**
+// (the P07 phase-close review, R4-9). Measured on veraPDF 1.30.2: `١` (Arabic-Indic), `۱`, `१` and the fullwidth
+// `１` all PASS `5 t2`, as do `٠١` and `+١`, while `𝟏` — a digit outside the Basic Multilingual Plane, so a
+// surrogate PAIR to Java — fails it, because neither surrogate is a digit. `strconv.Atoi` read ASCII only and
+// failed the first six: a live false FAIL on any packet written with a script's own digits.
+func javaParseInt(s string) (int64, bool) {
+	neg := false
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		neg, s = s[0] == '-', s[1:]
+	}
+	if s == "" {
+		return 0, false
+	}
+	var n int64
+	for _, r := range s {
+		v := javaDigit(r)
+		if v < 0 {
+			return 0, false
+		}
+		n = n*10 + int64(v)
+		if n > 1<<31 { // past both int bounds; -2^31 is the one magnitude only a negative may reach
+			return 0, false
+		}
+	}
+	if neg {
+		n = -n
+	}
+	if n > 1<<31-1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// javaDigit is `Character.digit(c, 10)` over one BMP character: its value when it is a Unicode decimal digit
+// (general category Nd), else -1. A rune past U+FFFF is two UTF-16 units to Java, and neither is a digit.
+//
+// Unicode assigns Nd characters only in contiguous runs of ten, zero first (its stability policy for
+// `Numeric_Type=Decimal`), so a digit's value is its distance from the start of its run, modulo ten.
+func javaDigit(r rune) int {
+	if r >= '0' && r <= '9' {
+		return int(r - '0')
+	}
+	if r > 0xFFFF || !unicode.Is(unicode.Nd, r) {
+		return -1
+	}
+	zero := r
+	for zero > 0 && unicode.Is(unicode.Nd, zero-1) {
+		zero--
+	}
+	return int(r-zero) % 10
 }

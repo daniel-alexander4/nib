@@ -656,7 +656,9 @@ func (d *Document) scanInlineType3() bool {
 	var walk func(o types.Object, nested bool, depth int) bool
 	walk = func(o types.Object, nested bool, depth int) bool {
 		if depth > maxWalkDepth {
-			return false
+			// The bound, answered as the doc comment above requires. It returned `false` here — "no font below"
+			// about objects nib had stopped reading — until the P07 phase close (R4-4).
+			return true
 		}
 		switch v := o.(type) {
 		case types.Dict:

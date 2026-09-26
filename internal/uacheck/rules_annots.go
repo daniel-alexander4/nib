@@ -42,6 +42,7 @@ func annotTagExcluded(subtype string) bool {
 // why this reads `standardType` and not the element's raw `/S`.
 func checkAnnotationsAreNestedInAnnotTags(d *Document) Result {
 	subjects, missed := d.annots()
+	var held heldRefusal // a definite failure beats a refusal
 	for _, a := range subjects {
 		// An excluded subtype and an exempt annotation are PASSING checks, not absent subjects: the
 		// profile puts both in the test expression, and veraPDF's subject is every annotation. Measured
@@ -53,7 +54,8 @@ func checkAnnotationsAreNestedInAnnotTags(d *Document) Result {
 		}
 		elem, sp, has, unread := d.annotElement(a)
 		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: a.where}
+			held.hold(unread, a.where)
+			continue
 		}
 		if !has {
 			return Result{
@@ -72,7 +74,8 @@ func checkAnnotationsAreNestedInAnnotTags(d *Document) Result {
 		ty, unresolved := d.standardType(elem)
 		if unresolved != "" {
 			// The element may well be an Annot; nib could not follow the role map to find out.
-			return Result{Verdict: CannotCheck, Why: unresolved, Where: a.where}
+			held.hold(unresolved, a.where)
+			continue
 		}
 		if ty != "Annot" {
 			return Result{
@@ -81,6 +84,9 @@ func checkAnnotationsAreNestedInAnnotTags(d *Document) Result {
 				Where:   a.where,
 			}
 		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if missed != "" {
 		return Result{Verdict: CannotCheck, Why: missed}
@@ -99,6 +105,7 @@ func checkAnnotationsAreNestedInAnnotTags(d *Document) Result {
 // indirect string on either passes.
 func checkAnnotationsCarryADescription(d *Document) Result {
 	subjects, missed := d.annots()
+	var held heldRefusal // a definite failure beats a refusal
 	for _, a := range subjects {
 		// Widgets alone are excluded here — a Link and a PrinterMark are graded, unlike in t1 — and an
 		// exclusion is a passing check, for the reason `checkAnnotationsAreNestedInAnnotTags` states.
@@ -110,7 +117,8 @@ func checkAnnotationsCarryADescription(d *Document) Result {
 		}
 		elem, _, _, unread := d.annotElement(a)
 		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: a.where}
+			held.hold(unread, a.where)
+			continue
 		}
 		if elem != nil {
 			if alt, ok := d.text(elem["Alt"]); ok && alt != "" {
@@ -122,6 +130,9 @@ func checkAnnotationsCarryADescription(d *Document) Result {
 			Why:     "the annotation has no /Contents and the element enclosing it has no /Alt, so nothing describes it",
 			Where:   a.where,
 		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if missed != "" {
 		return Result{Verdict: CannotCheck, Why: missed}
@@ -181,13 +192,15 @@ func (d *Document) annotsOfSubtype(subtype string) ([]annotSubject, string) {
 // `/Link` satisfies it (measured).
 func checkLinksAreNestedInLinkTags(d *Document) Result {
 	links, missed := d.annotsOfSubtype("Link")
+	var held heldRefusal // a definite failure beats a refusal
 	for _, a := range links {
 		if d.annotExempt(a) {
 			continue
 		}
 		elem, sp, has, unread := d.annotElement(a)
 		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: a.where}
+			held.hold(unread, a.where)
+			continue
 		}
 		if !has {
 			return Result{
@@ -206,7 +219,8 @@ func checkLinksAreNestedInLinkTags(d *Document) Result {
 		ty, unresolved := d.standardType(elem)
 		if unresolved != "" {
 			// The element may well be a Link; nib could not follow the role map to find out.
-			return Result{Verdict: CannotCheck, Why: unresolved, Where: a.where}
+			held.hold(unresolved, a.where)
+			continue
 		}
 		if ty != "Link" {
 			return Result{
@@ -215,6 +229,9 @@ func checkLinksAreNestedInLinkTags(d *Document) Result {
 				Where:   a.where,
 			}
 		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if missed != "" {
 		return Result{Verdict: CannotCheck, Why: missed}
@@ -296,13 +313,15 @@ func checkNoTrapNetAnnotations(d *Document) Result {
 // type through the standard-type door or read no element type at all.
 func checkPrinterMarksAreNotInTheTree(d *Document) Result {
 	marks, missed := d.annotsOfSubtype("PrinterMark")
+	var held heldRefusal // a definite failure beats a refusal
 	for _, a := range marks {
 		if d.annotExempt(a) {
 			continue
 		}
 		elem, _, has, unread := d.annotElement(a)
 		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: a.where}
+			held.hold(unread, a.where)
+			continue
 		}
 		if !has || elem == nil {
 			// No `/StructParent`, or a row that is not an element: veraPDF reads null and passes. Measured
@@ -324,6 +343,9 @@ func checkPrinterMarksAreNotInTheTree(d *Document) Result {
 				Where: a.where,
 			}
 		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if missed != "" {
 		return Result{Verdict: CannotCheck, Why: missed}
@@ -383,6 +405,7 @@ func (d *Document) fieldTU(a annotSubject) (string, bool) {
 // it because they all read the same key.
 func checkWidgetsCarryADescription(d *Document) Result {
 	widgets, missed := d.annotsOfSubtype("Widget")
+	var held heldRefusal // a definite failure beats a refusal
 	for _, a := range widgets {
 		if d.annotExempt(a) {
 			continue
@@ -392,7 +415,8 @@ func checkWidgetsCarryADescription(d *Document) Result {
 		}
 		elem, _, _, unread := d.annotElement(a)
 		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: a.where}
+			held.hold(unread, a.where)
+			continue
 		}
 		if elem != nil {
 			if alt, ok := d.text(elem["Alt"]); ok && alt != "" {
@@ -405,6 +429,9 @@ func checkWidgetsCarryADescription(d *Document) Result {
 				"reader announcing this field has nothing to say",
 			Where: a.where,
 		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if missed != "" {
 		return Result{Verdict: CannotCheck, Why: missed}

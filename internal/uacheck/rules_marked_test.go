@@ -516,12 +516,13 @@ func TestADrawnPatternAndGlyphContributeNoSubjectAndNoEvent(t *testing.T) {
 // bound. And each is reached only through its clause's own guard — 7.1 t1 needs an `/Artifact` tag, t30-t32
 // need a Span carrying the key — so a fixture without those measures nothing.
 func TestTheMarkedContentRulesAreCannotCheckWhenTheTreeRunsOut(t *testing.T) {
-	// A parent tree whose one row sits under seventy levels of /Kids: the MCID resolves to nothing nib read.
-	unreadTree := map[int]string{8: "<< /Kids [300 0 R] /Limits [0 0] >>"}
-	for i := 0; i < 70; i++ {
+	// A parent tree whose one row sits past the lookup's depth bound: the MCID resolves to nothing nib read. The root
+	// is inline, because pdfcpu refuses to open an object-rooted number tree deeper than 100 (RR3-2).
+	unreadTree := map[int]string{6: "<< /Type /StructTreeRoot /K 7 0 R /ParentTree << /Kids [300 0 R] /Limits [0 0] >> /ParentTreeNextKey 1 >>"}
+	for i := 0; i < maxParentTreeDepth; i++ {
 		unreadTree[300+i] = fmt.Sprintf("<< /Kids [%d 0 R] /Limits [0 0] >>", 301+i)
 	}
-	unreadTree[370] = "<< /Nums [0 [9 0 R]] /Limits [0 0] >>"
+	unreadTree[300+maxParentTreeDepth] = "<< /Nums [0 [9 0 R]] /Limits [0 0] >>"
 
 	// A /P chain seventy links long with no /Lang on it: the climb runs out before it can answer.
 	longClimb := map[int]string{9: "<< /Type /StructElem /S /P /P 400 0 R /Pg 3 0 R /K [0] >>"}
@@ -553,7 +554,7 @@ func TestTheMarkedContentRulesAreCannotCheckWhenTheTreeRunsOut(t *testing.T) {
 	} {
 		pdf := tc.doc.build()
 		for _, clause := range tc.clauses {
-			got := verdictOf(t, pdf, clause)
+			got := ruleVerdict(t, pdf, clause) // the clause itself: a deep parent tree also refuses the document (RR3-2)
 			if got.Verdict != CannotCheck {
 				t.Errorf("%s: %s reports %v (%s), want CannotCheck — nib did not finish reading the tree, so it "+
 					"cannot say whether the clause holds", tc.name, clause, got.Verdict, got.Why)

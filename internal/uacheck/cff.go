@@ -73,6 +73,41 @@ const cffMaxAlloc = 1 << 26
 // IllegalArgumentException nothing catches (P07.S03 measured the same boundary on TrueType programs).
 const cffBuffered = 10240
 
+// cffSpend is what the document's CFF programs have cost nib, all of them together — the TrueType budget's shape
+// (`maxTrueTypeReads`, `TestTheReadBudgetIsTheDocuments`): each bound below was once a program's, so a document of N
+// programs each just under it cost N times the bound (the P07 phase-close review measured a Type 1 program at 66 ms
+// against its bound; ten thousand of them are minutes). Past any of them nib refuses the program it was reading, naming
+// the document's CFF programs, and every later read that charges the SAME counter — a later program that never reaches
+// that counter is still read (the re-review, RR1-7: this said "every later one"). Because a refused program may be one
+// veraPDF throws on, a spent counter is itself `reportsNothing`'s refusal (`exhausted`, RR1-6).
+type cffSpend struct {
+	charstring int // charstring bytes the widths read through their subroutines (`cffMaxCharstringTotal`)
+	dict       int // DICT bytes the FDArray's font dicts read (`cffMaxDictBytes`)
+	fill       int // FDSelect format 3 entries written (`cffMaxFDSelectFill`)
+	names      int // glyph-name bytes the String INDEX yields (`cffMaxNameBytes`)
+}
+
+// exhausted names the document budget a CFF read went past, "" while none has (RR1-6, `reportsNothing`).
+func (s cffSpend) exhausted() string {
+	switch {
+	case s.charstring > cffMaxCharstringTotal:
+		return fmt.Sprintf("the document's CFF programs' charstrings read more than %d bytes through their subroutines", cffMaxCharstringTotal)
+	case s.dict > cffMaxDictBytes:
+		return fmt.Sprintf("the document's CFF programs' font dicts read more than %d DICT bytes", cffMaxDictBytes)
+	case s.fill > cffMaxFDSelectFill:
+		return fmt.Sprintf("the document's CFF programs' FDSelect ranges write more than %d entries", cffMaxFDSelectFill)
+	case s.names > cffMaxNameBytes:
+		return fmt.Sprintf("the document's CFF programs name more than %d bytes of glyph names", cffMaxNameBytes)
+	}
+	return ""
+}
+
+// cffMaxNameBytes bounds the String INDEX bytes the document's programs turn into names. Only an INDEX's last offset is
+// bounded by its data, so offsets that run forwards and back let every second SID name the whole INDEX — and a charset
+// of 2,000 SIDs over one megabyte allocated 4 GB (measured at the P07 phase close). A real charset's names are a few
+// hundred kilobytes.
+const cffMaxNameBytes = 1 << 24
+
 // cffSrc is the program's bytes with veraPDF's stream semantics.
 type cffSrc struct {
 	b      []byte
@@ -183,25 +218,52 @@ func (s *cffSrc) readIndex() (cffIndex, *cffErr) {
 // veraPDF allocates (an OutOfMemoryError past its heap) and nib will not: past `cffMaxAlloc` of padding over the whole
 // program, nib refuses.
 func (x cffIndex) get(n int) ([]byte, *cffErr) {
+	v, err := x.view(n)
+	if err != nil {
+		return nil, err
+	}
+	return v.bytes(), nil
+}
+
+// cffBytes is an entry as `get` returns it without the copy: the bytes it holds inside the data, then `zeros` bytes of
+// padding. A charstring and a subroutine are read through it, so a call costs what it reads, never the entry's length
+// (a 1 MB subroutine that calls itself was copied whole at every call: 500 glyphs cost 30 GB and 7.5 s, measured at the
+// P07 phase close).
+type cffBytes struct {
+	b     []byte
+	zeros int
+}
+
+func (v cffBytes) len() int { return len(v.b) + v.zeros }
+
+// bytes is the entry materialised, as `get`'s `copyOfRange` builds it.
+func (v cffBytes) bytes() []byte {
+	out := make([]byte, v.len())
+	copy(out, v.b)
+	return out
+}
+
+// view is `get` with the same exceptions, in the same order, and the same padding charge — and no copy.
+func (x cffIndex) view(n int) (cffBytes, *cffErr) {
 	if n < 0 || n >= x.count || x.offsets[n] <= 0 || x.offsets[n+1] <= 0 {
-		return nil, &cffErr{errIO, "aioobe"}
+		return cffBytes{}, &cffErr{errIO, "aioobe"}
 	}
 	from, to := x.offsets[n]-1, x.offsets[n+1]-1
 	switch {
 	case from > to:
-		return nil, throwErr("an INDEX whose offsets run backwards, where veraPDF throws an IllegalArgumentException it " +
+		return cffBytes{}, throwErr("an INDEX whose offsets run backwards, where veraPDF throws an IllegalArgumentException it " +
 			"does not handle")
 	case from > len(x.data):
-		return nil, &cffErr{errIO, "aioobe"}
+		return cffBytes{}, &cffErr{errIO, "aioobe"}
 	}
-	if pad := to - len(x.data); pad > 0 && x.padded != nil {
+	pad := to - len(x.data)
+	if pad > 0 && x.padded != nil {
 		if *x.padded += pad; *x.padded > cffMaxAlloc {
-			return nil, refuse("its INDEX offsets ask for %d bytes past the data, which veraPDF allocates and nib will not", *x.padded)
+			return cffBytes{}, refuse("its INDEX offsets ask for %d bytes past the data, which veraPDF allocates and nib will not", *x.padded)
 		}
 	}
-	out := make([]byte, to-from)
-	copy(out, x.data[from:min(to, len(x.data))])
-	return out, nil
+	end := min(to, len(x.data))
+	return cffBytes{b: x.data[from:end:end], zeros: max(pad, 0)}, nil
 }
 
 // isAIOOBE is an ArrayIndexOutOfBoundsException from `get`, which some callers catch.
@@ -332,6 +394,8 @@ type cffParser struct {
 	cidMode                 bool
 	hasMatrix               bool // a FontMatrix was read (the CID program's matrices start null)
 	fdArrayOff, fdSelectOff int64
+
+	spend *cffSpend // the document's, shared by every program it reads
 }
 
 // stringBySID is `getStringBySID`: a standard string, else the String INDEX's entry, an ArrayIndexOutOfBoundsException
@@ -343,11 +407,20 @@ func (p *cffParser) stringBySID(sid int) (string, *cffErr) {
 	if sid < 0 {
 		return "", ioErr("the negative SID %d", sid)
 	}
-	b, err := p.names.get(sid - len(cffStandardStrings))
+	v, err := p.names.view(sid - len(cffStandardStrings))
 	if isAIOOBE(err) {
 		return "", ioErr("the SID %d names no string", sid)
 	}
-	return string(b), err // ISO-8859-1: one rune per byte is what a Go string of the bytes compares as
+	if err != nil {
+		return "", err
+	}
+	if p.spend.names += v.len(); p.spend.names > cffMaxNameBytes {
+		return "", refuse("the document's CFF programs name more than %d bytes of glyph names, where nib stops", cffMaxNameBytes)
+	}
+	if v.zeros == 0 {
+		return string(v.b), nil
+	}
+	return string(v.bytes()), nil // ISO-8859-1: one rune per byte is what a Go string of the bytes compares as
 }
 
 // topOf returns the element `back` from the stack's top, or the IndexOutOfBoundsException `readTopDictUnit` turns into
@@ -503,11 +576,15 @@ func cffBias(n int) int {
 }
 
 // readCFF reads a CFF program, `subset` being `PDFont.isSubset` of the font that opens it (for a CIDFont, the DESCENDANT's
-// /BaseFont decides).
-func readCFF(b []byte, subset bool) (prog cffProgram) {
+// /BaseFont decides). `spend` is the document's budget, charged by this program and — through its widths, which a full
+// font computes when asked — after it returns; nil is a fresh one.
+func readCFF(b []byte, subset bool, spend *cffSpend) (prog cffProgram) {
+	if spend == nil {
+		spend = &cffSpend{}
+	}
 	src := &cffSrc{b: b}
 	p := &cffParser{src: src, subset: subset, charStringType: 2, subrsOff: -1,
-		fontMatrix: [6]float32{0.001, 0, 0, 0.001, 0, 0}}
+		fontMatrix: [6]float32{0.001, 0, 0, 0.001, 0, 0}, spend: spend}
 	defer func() {
 		if prog.state == ttUnknown && prog.why == "" && prog.throws == "" {
 			prog.why = "the program could not be read"
@@ -593,7 +670,7 @@ func (p *cffParser) isCIDFont(top cffIndex) (bool, *cffErr) {
 			return true, nil
 		}
 	}
-	scan := &cffParser{src: &cffSrc{b: p.src.b}, names: p.names, charStringType: 2, subrsOff: -1, scanOnly: true}
+	scan := &cffParser{src: &cffSrc{b: p.src.b}, names: p.names, charStringType: 2, subrsOff: -1, scanOnly: true, spend: p.spend}
 	if err := scan.src.seek(p.topBegin); err != nil {
 		if err.kind != errIO {
 			return false, err
@@ -811,7 +888,6 @@ func (p *cffParser) readFDSelect(n int) ([]int, *cffErr) {
 		if err != nil {
 			return nil, err
 		}
-		fill := 0
 		for r := 0; r < ranges; r++ {
 			fd, err := src.card8()
 			if err != nil {
@@ -822,8 +898,9 @@ func (p *cffParser) readFDSelect(n int) ([]int, *cffErr) {
 				return nil, err
 			}
 			if end > first && first < n {
-				if fill += min(end, n) - first; fill > cffMaxFDSelectFill {
-					return nil, refuse("its FDSelect ranges write more than %d entries, which veraPDF performs and nib will not", cffMaxFDSelectFill)
+				if p.spend.fill += min(end, n) - first; p.spend.fill > cffMaxFDSelectFill {
+					return nil, refuse("the document's CFF programs' FDSelect ranges write more than %d entries, which veraPDF "+
+						"performs and nib will not", cffMaxFDSelectFill)
 				}
 			}
 			for j := first; j < end && j < n; j++ {
@@ -849,11 +926,11 @@ func (p *cffParser) readFontDicts() ([]cffFD, *cffErr) {
 	}
 	top, topSet := p.fontMatrix, p.hasMatrix
 	fds := make([]cffFD, idx.count)
-	spent := int64(0)
 	charge := func(from, to int64) *cffErr { // the bytes a DICT loop from `from` to `to` can read before the program ends
 		if n := min(to, int64(len(src.b))) - from; n > 0 {
-			if spent += n; spent > cffMaxDictBytes {
-				return refuse("its font dicts read more than %d DICT bytes, which veraPDF performs and nib will not", cffMaxDictBytes)
+			if p.spend.dict += int(n); p.spend.dict > cffMaxDictBytes {
+				return refuse("the document's CFF programs' font dicts read more than %d DICT bytes, which veraPDF performs "+
+					"and nib will not", cffMaxDictBytes)
 			}
 		}
 		return nil
@@ -1125,7 +1202,6 @@ type cffWidths struct {
 	csBase   int64
 	subset   []float32
 	full     map[int]float32
-	spent    int            // charstring bytes read across every width, against `cffMaxProgramBytes`
 	errs     map[int]string // a glyph whose reading nib refuses, or on which veraPDF throws
 }
 
@@ -1235,34 +1311,37 @@ func (w *cffWidths) compute(gid int) (float32, *cffErr) {
 // charString is `CFFCharStringsHandler.getCharString`: past the count an empty charstring; a small CharStrings INDEX
 // read through `CFFIndex.get`; a large one from the stream at computed offsets — a negative length there a
 // NegativeArraySizeException nothing catches, a short read zero-padded.
-func (w *cffWidths) charString(gid int) ([]byte, *cffErr) {
+//
+// It returns a view, never a copy: a charstring is fetched at every width asked of a type-1 program, and one entry may
+// span the whole program.
+func (w *cffWidths) charString(gid int) (cffBytes, *cffErr) {
 	if gid < 0 || gid >= w.cs.count {
-		return nil, nil
+		return cffBytes{}, nil
 	}
 	if !w.bigCS {
-		return w.cs.get(gid)
+		return w.cs.view(gid)
 	}
 	from := w.csBase + int64(w.cs.offsets[gid])
 	to := w.csBase + int64(w.cs.offsets[gid+1])
 	src := &cffSrc{b: w.p.src.b}
 	if err := src.seek(from); err != nil { // the seek comes first in `getCharString`
-		return nil, err
+		return cffBytes{}, err
 	}
 	n := int(int32(to - from))
 	switch {
 	case n < 0:
-		return nil, throwErr("a charstring of negative length, where veraPDF throws a NegativeArraySizeException it does not handle")
+		return cffBytes{}, throwErr("a charstring of negative length, where veraPDF throws a NegativeArraySizeException it does not handle")
 	case n > cffMaxAlloc:
-		return nil, refuse("a charstring of %d bytes, which veraPDF allocates and nib will not", n)
+		return cffBytes{}, refuse("a charstring of %d bytes, which veraPDF allocates and nib will not", n)
 	}
-	if pad := n - (len(src.b) - src.pos); pad > 0 { // the zero-padded tail counts against the program's budget too
+	pad := n - (len(src.b) - src.pos)
+	if pad > 0 { // the zero-padded tail counts against the program's budget too
 		if w.p.src.padded += pad; w.p.src.padded > cffMaxAlloc {
-			return nil, refuse("its charstrings ask for %d bytes past the program, which veraPDF allocates and nib will not", w.p.src.padded)
+			return cffBytes{}, refuse("its charstrings ask for %d bytes past the program, which veraPDF allocates and nib will not", w.p.src.padded)
 		}
 	}
-	out := make([]byte, n)
-	copy(out, src.b[src.pos:min(src.pos+n, len(src.b))])
-	return out, nil
+	end := min(src.pos+n, len(src.b))
+	return cffBytes{b: src.b[src.pos:end:end], zeros: max(pad, 0)}, nil
 }
 
 // cffMaxSubrDepth bounds nested subroutine calls. veraPDF has none — a subroutine calling itself grows its stream
@@ -1270,11 +1349,12 @@ func (w *cffWidths) charString(gid int) ([]byte, *cffErr) {
 const cffMaxSubrDepth = 64
 
 // cffMaxCharstringBytes bounds the bytes one width reads across its subroutines, for the same reason, and
-// cffMaxProgramBytes the bytes every width of one program reads together — a subset font computes them all at parse,
-// and a tree of subroutines costs ~24 ms a glyph (measured by the P07.S05a review), so 65,535 glyphs are minutes.
+// cffMaxCharstringTotal the bytes every width of the DOCUMENT's CFF programs reads together (`cffSpend`) — a subset font
+// computes them all at parse, and a tree of subroutines costs ~24 ms a glyph (measured by the P07.S05a review), so
+// 65,535 glyphs are minutes, and a document of many such programs more.
 const (
 	cffMaxCharstringBytes = 1 << 20
-	cffMaxProgramBytes    = 1 << 25
+	cffMaxCharstringTotal = 1 << 25
 )
 
 // charstringWidth is `Type2CharStringParser`: numbers pushed, the FIRST operator other than a subroutine call or return
@@ -1295,16 +1375,22 @@ func (w *cffWidths) charstringWidth(gid int) (cffNumber, bool, *cffErr) {
 	if !ok {
 		return cffNumber{}, false, ioErr("the glyph's font dict does not exist")
 	}
-	streams := [][]byte{body}
+	streams := []cffBytes{body}
 	var stack []cffNumber
 	read := 0
 	next := func() (byte, bool) {
 		for len(streams) > 0 {
-			top := streams[len(streams)-1]
-			if len(top) > 0 {
-				streams[len(streams)-1] = top[1:]
+			top := &streams[len(streams)-1]
+			switch {
+			case len(top.b) > 0:
+				c := top.b[0]
+				top.b = top.b[1:]
 				read++
-				return top[0], true
+				return c, true
+			case top.zeros > 0:
+				top.zeros--
+				read++
+				return 0, true
 			}
 			streams = streams[:len(streams)-1]
 		}
@@ -1330,7 +1416,7 @@ func (w *cffWidths) charstringWidth(gid int) (cffNumber, bool, *cffErr) {
 		stack = stack[:len(stack)-1]
 		idx := num + bias
 		if subrs.count > max(idx, 0) {
-			b, err := subrs.get(idx)
+			b, err := subrs.view(idx)
 			if err != nil {
 				return err
 			}
@@ -1341,13 +1427,15 @@ func (w *cffWidths) charstringWidth(gid int) (cffNumber, bool, *cffErr) {
 		}
 		return nil
 	}
-	defer func() { w.spent += read }()
+	spend := w.p.spend
+	defer func() { spend.charstring += read }()
 	for {
 		if read > cffMaxCharstringBytes {
 			return cffNumber{}, false, refuse("a charstring reads more than %d bytes through its subroutines", cffMaxCharstringBytes)
 		}
-		if w.spent+read > cffMaxProgramBytes {
-			return cffNumber{}, false, refuse("its charstrings read more than %d bytes through their subroutines", cffMaxProgramBytes)
+		if spend.charstring+read > cffMaxCharstringTotal {
+			return cffNumber{}, false, refuse("the document's CFF programs' charstrings read more than %d bytes through "+
+				"their subroutines, where nib stops", cffMaxCharstringTotal)
 		}
 		c, ok := next()
 		if !ok {

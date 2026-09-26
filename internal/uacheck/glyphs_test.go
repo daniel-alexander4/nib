@@ -224,7 +224,12 @@ func TestTheGlyphClausesAgreeWithVeraPDF(t *testing.T) {
 	v := map[string]Verdict{"pass": Pass, "fail": Fail, "-": NotApplicable}
 	for _, f := range glyphFixtures() {
 		for _, c := range []struct{ clause, want string }{{"7.21.7 t1", f.t1}, {"7.21.7 t2", f.t2}} {
-			want := v[c.want]
+			// An unknown word is a typo in the table, never the zero Verdict (R2-10: it read as NotRun and could agree
+			// with nothing without saying so).
+			want, known := v[c.want]
+			if !known {
+				t.Fatalf("%s: %s's measured verdict %q is not one of pass, fail, -", f.name, c.clause, c.want)
+			}
 			got := verdictOf(t, f.pdf, c.clause)
 			if f.refused != "" {
 				if got.Verdict != CannotCheck || !strings.Contains(got.Why, f.refused) {
