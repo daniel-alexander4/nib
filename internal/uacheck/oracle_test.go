@@ -795,6 +795,8 @@ type oracleComparison struct {
 	agreed, total int
 	reached       map[string]bool   // "<clause> <state>" veraPDF reported on some document
 	cannot        map[string]string // "<document> / <clause>" → nib's reason
+	disagree      map[string]string // "<document> / <clause>" → the disagreement, for a harness that names them (P08)
+	unexcusable   []string          // the errors that are NOT disagreements (a lost job, an unlisted clause): never named away
 }
 
 // compareToOracle holds the guard's whole judgment as a pure function, so every branch of it can be
@@ -806,10 +808,11 @@ type oracleComparison struct {
 // no stimulus. A guard whose failure paths only a broken veraPDF run could reach is a guard nobody
 // has seen fail. Here each one is driven by a synthetic input.
 func compareToOracle(names []string, vera []map[string]veraState, nib []*Report) oracleComparison {
-	c := oracleComparison{reached: map[string]bool{}, cannot: map[string]string{}}
+	c := oracleComparison{reached: map[string]bool{}, cannot: map[string]string{}, disagree: map[string]string{}}
 	for i, name := range names {
 		if vera[i] == nil {
-			c.errors = append(c.errors, fmt.Sprintf("%s: veraPDF returned no job for it — a lost file reads exactly like a clean one", name))
+			msg := fmt.Sprintf("%s: veraPDF returned no job for it — a lost file reads exactly like a clean one", name)
+			c.errors, c.unexcusable = append(c.errors, msg), append(c.unexcusable, msg)
 			continue
 		}
 		if nib[i] == nil {
@@ -819,8 +822,9 @@ func compareToOracle(names []string, vera []map[string]veraState, nib []*Report)
 			c.total++
 			v, listed := vera[i][r.Clause]
 			if !listed {
-				c.errors = append(c.errors, fmt.Sprintf("%s: veraPDF's report does not list %s at all, so there is "+
-					"nothing to agree with — the clause spelling may have drifted from veraPDF's", name, r.Clause))
+				msg := fmt.Sprintf("%s: veraPDF's report does not list %s at all, so there is "+
+					"nothing to agree with — the clause spelling may have drifted from veraPDF's", name, r.Clause)
+				c.errors, c.unexcusable = append(c.errors, msg), append(c.unexcusable, msg)
 				continue
 			}
 			c.reached[r.Clause+" "+string(v)] = true
@@ -831,7 +835,9 @@ func compareToOracle(names []string, vera []map[string]veraState, nib []*Report)
 				c.agreed++
 				continue
 			}
-			c.errors = append(c.errors, fmt.Sprintf("%s: %s — veraPDF %s, nib %v (%s at %s)", name, r.Clause, v, r.Verdict, r.Why, r.Where))
+			msg := fmt.Sprintf("%s: %s — veraPDF %s, nib %v (%s at %s)", name, r.Clause, v, r.Verdict, r.Why, r.Where)
+			c.errors = append(c.errors, msg)
+			c.disagree[name+" / "+r.Clause] = msg
 		}
 	}
 	return c
