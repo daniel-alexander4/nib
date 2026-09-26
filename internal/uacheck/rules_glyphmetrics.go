@@ -74,16 +74,18 @@ func (d *Document) metricsOf(g glyph) glyphMetrics {
 		}
 		return glyphMetrics{known: true, valid: true, present: g.code == 0 || p.containsCode(g.code), program: p.width(g.code), dictionary: dw}
 	case "Type1", "MMType1":
-		c, known, why, throws := d.type1COf(font)
+		sp, known, why, throws := d.simpleProgramOf(font)
 		switch {
 		case throws != "":
 			return glyphMetrics{why: throws}
 		case !known:
 			return glyphMetrics{why: why}
-		case c == nil:
+		case sp.t1 != nil:
+			return d.type1Metrics(g, sp.t1)
+		case sp.cff == nil:
 			return glyphMetrics{known: true}
 		}
-		m, _ := d.type1CMetrics(g, c)
+		m, _ := d.type1CMetrics(g, sp.cff)
 		return m
 	case "Type3":
 		return d.type3Metrics(g)

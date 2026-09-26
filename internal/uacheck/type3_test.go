@@ -285,8 +285,10 @@ func noReportFixtures() []struct {
 			52: "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Probe /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 12 0 R /DW 500 /CIDToGIDMap /Identity >>",
 			21: cidCMap("", "1 begincidchar <0021> -5 endcidchar")}, "<0021>")},
 	}
-	// P07.S05b: a CID-keyed CFF program under a simple Type 1 font, drawn or compared with a /CharSet.
-	for _, f := range cidCFFFixtures() {
+	// P07.S05b: a CID-keyed CFF program under a simple Type 1 font, drawn or compared with a /CharSet; a CID program whose
+	// charstrings run backwards. P07.S06: a Type 1 program whose PostScript throws (an empty-stack pop or dup, an idiv by
+	// zero, a cleartomark with no mark, a FontMatrix of seven numbers).
+	for _, f := range append(cidCFFFixtures(), type1Fixtures()...) {
 		if strings.Contains(f.vera, "X") {
 			out = append(out, struct {
 				name string

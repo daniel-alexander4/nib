@@ -207,22 +207,34 @@ func (d *Document) simpleFallback(f *glyphFont, code int) (string, uniState, str
 		// `fontProgram.getGlyphName(code)` — a Type 3 font has no program, and neither does a font that embeds none. A
 		// PARSED Type1C program answers through its own encoding and charset (P07.S05a); one whose parse failed may be
 		// half-read in veraPDF, so it still refuses.
-		if st := d.name(f.dict["Subtype"]); (st == "Type1" || st == "MMType1") && d.embeddedProgram(f.dict) == "CFF" {
-			switch sub := d.fontFile3Subtype(f.dict); {
-			case sub != "Type1C" && sub != "OpenType":
+		unread := ""
+		if st := d.name(f.dict["Subtype"]); st == "Type1" || st == "MMType1" {
+			switch sp, known, why, throws := d.simpleProgramOf(f.dict); {
+			case sp.kind == "CFF" && d.fontFile3Subtype(f.dict) != "Type1C" && d.fontFile3Subtype(f.dict) != "OpenType":
 				return "", uniNull, "" // "Invalid subtype of the embedded font stream": no program, no name
-			case sub == "Type1C":
-				c, known, _, throws := d.type1COf(f.dict)
-				switch {
-				case known && throws == "" && c != nil && c.cid:
-					return "", uniNull, "" // `CFFCIDFontProgram.getGlyphName` is null
-				case known && throws == "" && c != nil:
-					name, ok = c.glyphName(code), true
-				case known && throws == "":
-					return "", uniUnknown, fmt.Sprintf("its encoding names no glyph for code %#x, so veraPDF asks its "+
-						"CFF program for the name — a program whose parse failed, which veraPDF may have half-read", code)
+			case !known || throws != "":
+				if throws != "" {
+					why = throws
 				}
+				unread = why
+			case sp.parsed():
+				n, has := sp.glyphName(code)
+				if !has {
+					return "", uniNull, "" // null — and always so for a CID-keyed program (`CFFCIDFontProgram`)
+				}
+				name, ok = n, true
+			case sp.kind == "Type 1":
+				// A Type 1 program whose parse failed names nothing — measured both where the parse threw before the
+				// encoding was read and where it failed only for want of charstrings, after it (P07.S06).
+				return "", uniNull, ""
+			case sp.kind == "CFF":
+				return "", uniUnknown, fmt.Sprintf("its encoding names no glyph for code %#x, so veraPDF asks its "+
+					"CFF program for the name — a program whose parse failed, which veraPDF may have half-read", code)
 			}
+		}
+		if !ok && unread != "" {
+			return "", uniUnknown, fmt.Sprintf("its encoding names no glyph for code %#x, so veraPDF asks the embedded %s "+
+				"program for the name, which nib cannot read: %s", code, d.embeddedProgram(f.dict), unread)
 		}
 	}
 	if !ok {

@@ -23,7 +23,7 @@ import (
 // program — landed WITH the Type1C metrics, as this test demanded: the corpus's two t01 fail files are asserted
 // non-conformant below, so a regression in that clause shows here as well as in the oracle — and so is
 // `7.21.8-t01-fail-a`, the .notdef glyph drawn in a CID-keyed CFF font, the file P07.S05b's acceptance names. A Type 1
-// (/FontFile) program is still a refusal (P07.S06), and the day it lands the same rule applies to it.
+// (/FontFile) program is read since P07.S06; veraPDF's corpus holds none, so its evidence is `type1Fixtures`.
 //
 // **This is still not a certificate**, and the docs keep saying so: nib's verdicts are tested against veraPDF on every
 // build, not proven, and a corpus is evidence about the documents in it.

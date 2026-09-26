@@ -102,6 +102,8 @@ type Document struct {
 	// throws reading it.
 	type1CReads  map[type1CKey]type1CRead
 	type1CThrows map[type1CKey]string
+	// type1Reads is each /FontFile Type 1 program's reading, per stream (P07.S06).
+	type1Reads map[uintptr]*type1Program
 	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
 	toUnicodes      map[uintptr]*fontcode.ToUnicode
 	toUnicodeBlocks int

@@ -2940,7 +2940,7 @@ veraPDF parses and then reports nothing on once a glyph is drawn. Acceptance ame
 - Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck` only (no session, ceremony, delivery, discovery,
   `internal/p2p` or `internal/rendezvous` path).
 
-#### P07.S06 — the Type 1 program
+#### P07.S06 — the Type 1 program *(done 2026-09-26, v1.166.0)*
 Scope: eexec and charstring decryption, `/CharStrings` names, `hsbw` widths — the Type 1 halves of 7.21.4.1 t2, 7.21.5
 t1, 7.21.8 t1 and 7.21.4.2 t1. **Zero corpus reach**, so every half is a hand-built fixture measured on veraPDF, and
 a real-producer Type 1 file is sought first; if none exists the slice may close as `CannotCheck` naming "Type 1",
@@ -2955,6 +2955,38 @@ subset, so `/CharSet` is exercised); **fail** files are those mutated one condit
 `/CharStrings` via `t1disasm`/`t1asm`, an `hsbw` width disagreeing with `/Widths`, a `/CharSet` out of step with
 the program); every file carries veraPDF's verdict. LibreOffice was not measured. The zero corpus reach above is
 veraPDF's corpus; it is not a lack of producible files, so the `CannotCheck` close stays a fallback.
+
+**(grill, 2026-09-26)** `grills/2026-09-26-p07s06-type1.md`. veraPDF parses the cleartext with a PostScript interpreter
+(the /Encoding and /FontMatrix come from executing it), then eexec, a token-level private parser and Type 1 charstrings.
+7.21.8 needs no program (a simple font's glyph name is the PDF encoding's); `.notdef` is never PRESENT in a Type 1
+program. The port is the answer; the CannotCheck close stays a fallback.
+- T01 — `type1.go`: the reader (tokens in PostScript mode through the Type 3 tokenizer's door, the object layer, the
+  operators, eexec, the private parser, charstring widths), its failure classes and its bounds.
+- T02 — `type1COf`'s /FontFile half: metrics, the CharSet test, 7.21.4.1 t1's parse, 7.21.7's glyph-name fallback, the door.
+- T03 — pdfLaTeX pass files and mutated fail files, each measured on veraPDF; oracle, reach, docs.
+
+**(review + red-proof, 2026-09-26)** `code-reviews/v1.165.0-p07s06-2026-09-26.md` — two rounds, four reviewers and a blind
+pass. The reader (`type1.go`, and `baseparser.go` — veraPDF's tokenizer, now the ONE copy, Type 3 moved onto it with 3M
+random inputs showing no divergence) was ported by one agent; every fixture was re-measured on veraPDF here before it counted.
+- **One critical, a panic**: a /Subrs length overflowing int64 — now compared against what is left (both reader branches
+  measured: not parsed). **Three cost defects**, each measured: roll/counttomark charged one object for O(n) work (200
+  rolls = 10 s, 30.6 GB), 2^24 slots letting 906 MB live (now 2^21), dictionary keys compared at full length for one unit
+  (63 s at a 2 MiB key; now charged per 64 bytes).
+- **One door** for a simple Type 1 font's program (`simpleProgramOf`: /FontFile Type 1 or /FontFile3 Type1C), guarded.
+- **Red-proof**: 27 + 10 targeted mutations and 7 blind — all killed but two shown equivalent (`<<`/`>>` only parse as
+  names; a charstring cannot start at offset 0 of the private part). 24 survivors along the way, each closed by a measured
+  fixture whose operator result decides a verdict.
+
+**Acceptance ledger.**
+- Every Type 1 half of 7.21.4.1 t2, 7.21.5 t1 and 7.21.4.2 t1 agrees with veraPDF on measured fixtures — MET: 116 fixtures
+  over five clauses (both halves of each), two real pdfLaTeX fonts (Computer Modern, Times) and their one-condition
+  mutations among them; 0 disagreements, re-measured here.
+- 7.21.8 t1's Type 1 half — MET without the program (a simple font's name is the PDF encoding's; the fixtures carry it).
+- 7.21.4.1 t1's Type 1 half (/pending 677's last) — MET: an unparsed program fails, measured.
+- 7.21.7's glyph-name fallback through the program — MET: 9 measured fixtures.
+- `len(Clauses())` 105 — MET. No refusal names S06 — MET: three declared temporary-file refusals, named by their own reason.
+- Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck` only. Corpus reach unchanged — veraPDF's corpus holds
+  no Type 1 program.
 
 ### P08 — A real-producer corpus
 **Goal.** LibreOffice, Word export, Acrobat, Ghostscript and pdfLaTeX files scored rule by rule, nib against veraPDF.

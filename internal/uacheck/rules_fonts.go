@@ -175,11 +175,11 @@ func checkFontsEmbedded(d *Document) Result {
 			}
 		} else if st := d.name(f.dict["Subtype"]); st != "Type0" {
 			// A Type1C program counts only if veraPDF PARSES it (/pending 677's CFF half, P07.S05a); a /FontFile3 of
-			// another subtype is no program at all. A /FontFile (Type 1) program is still counted by presence until
-			// P07.S06 reads it.
+			// another subtype is no program at all. A /FontFile (Type 1) program counts only if veraPDF parses it too
+			// (P07.S06).
 			kind := d.embeddedProgram(f.dict)
-			if kind == "CFF" && (st == "Type1" || st == "MMType1") && d.fontFile3Subtype(f.dict) != "OpenType" {
-				c, known, why, throws := d.type1COf(f.dict)
+			if (st == "Type1" || st == "MMType1") && (kind == "Type 1" || kind == "CFF" && d.fontFile3Subtype(f.dict) != "OpenType") {
+				sp, known, why, throws := d.simpleProgramOf(f.dict)
 				switch {
 				case throws != "" || !known:
 					if throws != "" {
@@ -187,13 +187,17 @@ func checkFontsEmbedded(d *Document) Result {
 					}
 					if unsure == nil {
 						unsure = &Result{Verdict: CannotCheck, Where: f.where,
-							Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its CFF program is not known — %s", f.name, d.baseFontName(f.dict), why)}
+							Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its %s program is not known — %s", f.name, d.baseFontName(f.dict), kind, why)}
 					}
 					continue
-				case c != nil:
+				case sp.parsed():
 					continue
 				}
-				notEmbedded = "veraPDF has no parsed program for it (its CFF program does not parse, or its /FontFile3 is of a subtype veraPDF does not open)"
+				notEmbedded = "veraPDF has no parsed program for it (its " + kind + " program does not parse, or its " +
+					"/FontFile3 is of a subtype veraPDF does not open)"
+				if kind == "Type 1" {
+					notEmbedded = "veraPDF has no parsed program for it (its Type 1 program does not parse)"
+				}
 			} else if kind != "" {
 				continue
 			}
