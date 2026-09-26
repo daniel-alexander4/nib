@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"encoding/xml"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,6 +188,33 @@ var corpusUnreadable = map[string]string{
 	"7.21 Fonts/7.21.6 Character encodings/7.21.6-t03-fail-a.pdf":    "pdfcpu: an /Encoding named Custom, which it refuses",
 }
 
+// veraPDFBatch runs veraPDF once over files already on disk and returns one clause→state map per file, in order —
+// shared by the corpus test and the producer harness, whose files keep the names their producers gave them. (The oracle
+// and the per-slice fixture tests write their own uniquely named files and call veraPDF directly.) veraPDF names each job
+// by BASE name and `veraStates` matches on it, so two files called `headings.pdf` in different directories would lose a
+// job; each file is run through a link named by its index, so no two collide.
+func veraPDFBatch(t *testing.T, vp string, files []string) []map[string]veraState {
+	t.Helper()
+	tmp := t.TempDir()
+	links := make([]string, len(files))
+	for i, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		links[i] = filepath.Join(tmp, fmt.Sprintf("f%05d.pdf", i))
+		if err := os.Symlink(abs, links[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, _ := exec.Command(vp, append([]string{"--flavour", "ua1", "--passed"}, links...)...).Output()
+	var rep veraReport
+	if err := xml.Unmarshal(out, &rep); err != nil {
+		t.Fatalf("the veraPDF report did not parse: %v\n%.500s", err, out)
+	}
+	return veraStates(rep, links)
+}
+
 func corpusDir() string {
 	if d := os.Getenv("NIB_UA_CORPUS"); d != "" {
 		return d
@@ -224,25 +252,12 @@ func TestTheCheckerAgreesWithVeraPDFsOwnCorpus(t *testing.T) {
 		t.Fatalf("the corpus holds %d PDF(s) — too few to be veraPDF's PDF/UA-1 set (297 when this was written)", len(files))
 	}
 
-	// veraPDF names each job by base name; the corpus reuses names across directories, so run it over
-	// uniquely-named links in a temp dir.
-	tmp := t.TempDir()
-	links := make([]string, len(files))
 	names := make([]string, len(files))
 	for i, f := range files {
 		rel, _ := filepath.Rel(dir, f)
 		names[i] = filepath.ToSlash(rel)
-		links[i] = filepath.Join(tmp, strings.NewReplacer("/", "__", " ", "_").Replace(names[i]))
-		if err := os.Symlink(f, links[i]); err != nil {
-			t.Fatal(err)
-		}
 	}
-	out, _ := exec.Command(vp, append([]string{"--flavour", "ua1", "--passed"}, links...)...).Output()
-	var rep veraReport
-	if err := xml.Unmarshal(out, &rep); err != nil {
-		t.Fatalf("the veraPDF report did not parse: %v\n%.500s", err, out)
-	}
-	vera := veraStates(rep, links)
+	vera := veraPDFBatch(t, vp, files)
 
 	implemented := map[string]bool{}
 	for _, c := range Clauses() {

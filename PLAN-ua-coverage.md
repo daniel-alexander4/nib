@@ -3046,6 +3046,86 @@ where Type 1 still appears in the field.
 **Exit criteria.** Every rule agrees on the corpus or its disagreement is filed by name; the docs and `nib ua`
 say "agrees with veraPDF on N rules", never "conformant" (law 2).
 
+**(phase-open, 2026-09-26, v1.166.1)** Firmed against the tree as it stands at P07's close. Measured here: LibreOffice
+24.2.7, Ghostscript 10.02.1, pdfTeX and LuaHBTeX from TeX Live 2023 (with `tagpdf` and `pdfmanagement-testphase`, so
+LaTeX's own tagged output is producible too) are installed; Word and Acrobat are not (the standing caveat). The report
+already never calls a document conformant — the clean summary reads *"Every clause Nib checks passes — … this is not a
+conformance certificate"* (`web/app.js:5198`) — so the wording slice's work is the "agrees with veraPDF on N rules" figure,
+which does not exist yet because nothing measures N.
+
+**The corpus is never committed.** Third-party documents carry their authors' rights and a public AGPL repo is not the
+place for them; the veraPDF corpus already sets the pattern (`veracorpus_test.go`: a local clone, `NIB_UA_CORPUS`, a
+SKIP that says so). Locally generated files are regenerated from sources that ARE committed; sourced files are pinned by a
+committed manifest (URL, SHA-256, `/Producer`, provenance) and fetched into a local directory. Files under `~/nib/` are
+the user's own documents and are NOT a corpus.
+
+#### P08.S01 — the producer harness *(done 2026-09-26, v1.166.2)*
+Scope: one standing test scoring nib against veraPDF per (file, clause) over a local producer corpus
+(`NIB_UA_PRODUCERS`, default `~/nib/producers/<producer>/`), strict where nib answers, a refusal counted and allowed; every
+disagreement named in one table with its `/pending` number or a fix; a per-producer and per-clause reach tally; SKIP naming
+what is absent.
+Acceptance:
+- A planted disagreement (a file whose verdict the table does not name) fails the test; a named one does not.
+- Absent veraPDF or an absent corpus is a SKIP that says which, never a pass.
+- Reach per clause is printed, so a clause no producer file reaches is visible.
+
+**(grill, 2026-09-26)** `grills/2026-09-26-p08s01-producer-harness.md`. Strict law-5 agreement (`veraState.agrees`), not
+the corpus test's false-pass/false-fail pair — the exit criterion says "agrees". Refusals permitted and not named (the
+corpus is open-ended); a veraPDF batch keys jobs by base name, so the link step becomes one shared door.
+- T01 — `veraPDFBatch`: one door for running veraPDF over files (unique links, one call), used by the corpus test too.
+- T02 — `compareToOracle` gains a keyed disagreement map, additively.
+- T03 — `producers_test.go`: the corpus walk, per-producer grouping, the pure judge, reach logged, SKIPs naming what is absent.
+- T04 — the judge's branches driven synthetically: planted, named, stale, lost.
+
+**(review + red-proof, 2026-09-26)** One diff reviewer; seven warnings, all in the slice's own code and all fixed: a
+document every clause refuses (a recovered panic, `reportsNothing`) scored as agreement — it is now a file-level fact that
+must be named (`/ refused`); a veraPDF job with no rules (a file it did not validate) became an unnameable per-clause error
+— now one nameable fact (`/ veraPDF`); the logged "agree" figure and the reach tally counted refusals and disagreements —
+both now count SETTLED agreement only; the error split is checked, not trusted; a linked corpus root is followed and a
+linked producer directory or an unreadable one is an error, never a silent hole. Red-proof: 9 targeted mutations on the
+judge, all red (one first written as a non-compiling mutation and re-run).
+
+**Acceptance ledger.**
+- A planted disagreement fails the test; a named one does not — MET (`TestTheProducerJudgeNamesEveryDisagreement`,
+  planted/named/stale/unopened/unlisted/lost/split branches, each red-proved).
+- Absent veraPDF or corpus is a SKIP that says which, never a pass — MET (both SKIP messages; measured: the absent corpus SKIPs).
+- Reach per clause printed — MET (settled-and-agreeing reach per clause, logged).
+- Live: a three-producer corpus (LibreOffice tagged HTML export, Ghostscript `pdfwrite` of it, pdfLaTeX), two files both
+  named `doc.pdf` — 315 of 315 pairs settled and agreeing, every job kept; a linked producer directory reported red.
+- Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck`'s tests only.
+
+#### P08.S02 — the local producers
+Scope: committed source documents covering the checker's families (headings, lists, tables, figures with and without
+alternate text, links, notes, a form, two languages, CJK text, embedded and substituted fonts) and one script rendering
+them through LibreOffice (tagged and untagged export), Ghostscript `pdfwrite`, pdfLaTeX (untagged) and LuaLaTeX with
+`\DocumentMetadata{tagging=on}` into the producer corpus; each file's veraPDF report is taken by the harness.
+Acceptance:
+- The script regenerates the corpus byte-for-byte-stable enough to score (a producer timestamp aside).
+- Every family reaches at least one producer file; the harness's reach table shows which clauses none reaches.
+
+#### P08.S03 — the sourced producers
+Scope: Word-exported and Acrobat-produced files for the producers this machine cannot run, pinned by a committed manifest
+of public-domain documents (U.S. federal works, 17 U.S.C. § 105) whose `/Producer` names the producer, and a fetch script
+that verifies each SHA-256 and refuses a mismatch.
+Acceptance:
+- Each producer named in the Goal has files in the corpus, or the phase says by name why not.
+- A file whose hash does not match is refused, never scored.
+
+#### P08.S04 — score and disposition
+Scope: run the harness over the whole corpus; each disagreement is fixed where nib is wrong (measured on veraPDF, a fixture
+pinned) or filed by name.
+Acceptance:
+- The exit criterion's first half: every rule agrees on the corpus or its disagreement is filed by name.
+
+#### P08.S05 — "agrees with veraPDF on N rules"
+Scope: N measured by the harness (rules with no disagreement over both corpora), written into the README, `docs/`, and
+`nib ua`'s and the GUI's report, and guarded so the prose cannot drift from the measurement.
+Acceptance:
+- The exit criterion's second half, verbatim; the figure's source is the harness, not a hand-typed number.
+
+`/plan-review` did NOT fire: the phase adds tests, test tooling and wording. The one network step (S03's fetch) is
+developer tooling pulling pinned public documents, not a product path — nib itself sends and receives nothing new.
+
 ---
 
 ## Standing caveats
