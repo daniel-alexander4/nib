@@ -3094,7 +3094,7 @@ judge, all red (one first written as a non-compiling mutation and re-run).
   named `doc.pdf` — 315 of 315 pairs settled and agreeing, every job kept; a linked producer directory reported red.
 - Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck`'s tests only.
 
-#### P08.S02 — the local producers
+#### P08.S02 — the local producers *(done 2026-09-26, v1.166.3)*
 Scope: committed source documents covering the checker's families (headings, lists, tables, figures with and without
 alternate text, links, notes, a form, two languages, CJK text, embedded and substituted fonts) and one script rendering
 them through LibreOffice (tagged and untagged export), Ghostscript `pdfwrite`, pdfLaTeX (untagged) and LuaLaTeX with
@@ -3102,6 +3102,39 @@ them through LibreOffice (tagged and untagged export), Ghostscript `pdfwrite`, p
 Acceptance:
 - The script regenerates the corpus byte-for-byte-stable enough to score (a producer timestamp aside).
 - Every family reaches at least one producer file; the harness's reach table shows which clauses none reaches.
+
+**(grill, 2026-09-26 — amended by measurement)** `grills/2026-09-26-p08s02-local-producers.md`.
+**(pin, 2026-09-26: LuaLaTeX is out, Chromium is in, both measured.)** LuaLaTeX cannot run on this machine — luaotfload
+fails to load `lmroman10-regular` ("metric data") even with a writable font cache, so every run dies before output;
+pdfLaTeX's `\DocumentMetadata{testphase=phase-III}` gives the tagged LaTeX file instead. LibreOffice never writes a
+Type 0 font (300 distinct CJK glyphs became two simple CFF fonts), so the composite-font family needs a producer that
+does: headless Chromium (Skia/PDF) writes CIDFontType2 over Identity-H, tagged. An ODF-authored form control does not
+survive LibreOffice 24.2's import; the form is an HTML source through Writer/Web with `ExportFormFields` explicit.
+- T01 — sources in `build/producers/`: `writer.fodt`, `form.html`, `web.html`, `article.tex`, `times.tex`, `tagged.tex`.
+- T02 — `build/producers.sh`: LibreOffice ×6, pdfLaTeX ×3, Chromium, Ghostscript re-distil of all ten; a missing producer SKIPs.
+- T03 — score the corpus and name every disagreement; CONTRIBUTING names the script and both corpora.
+
+**(review, 2026-09-26)** One diff reviewer; three warnings, all fixed and each driven: a producer that failed mid-run left
+the corpus a mix of this run's and the last run's files, and a removed variant's file was scored forever — each producer
+now builds in scratch space and REPLACES its own directory only on success (a planted stale file is gone after a run);
+an installed producer that failed exited silently — it now says which, prints its log's tail, removes its directory and
+the script exits 1 after the others (driven with a fake failing `pdflatex`); Chromium wrote in place — it now writes to
+scratch and must produce a non-empty file. Info items fixed: the Type 0 and Type 3 prose, CONTRIBUTING's veraPDF
+requirement, and an output directory inside the repository is refused (exit 2). The table's two rows red-proved against
+the live corpus: a removed row reads "not named", a planted row "no longer disagrees".
+
+**Acceptance ledger.**
+- Regenerates the corpus stably enough to score — MET: two independent regenerations score identically (bytes differ by
+  dates and IDs, declared in the script).
+- Every family reaches at least one producer file — MET: headings, lists, tables, figures (7.3 t1: 5), links, notes
+  (7.18.1 t1/t2: 12), a form (7.18.4 t1: 3, t2: 2; 7.2 t25: 3), two languages (7.2 t24: 12), CJK and composite fonts
+  (7.21.3.1/3.2/3.3 t1: 2), simple fonts of every kind (7.21.4.1 t1, 7.21.5 t1, 7.21.7, 7.21.8 t1: 20).
+- The reach table shows which clauses none reaches — MET: 29 at 0 (optional content, embedded files, XFA, encryption,
+  media, trap nets, printer marks, reference XObjects, Formula, and seven 7.2 containment/ordering clauses this corpus
+  does not author).
+- Scored: 2,093 of 2,100 pairs settled and agreeing over 20 files and five producers; the seven disagreements named
+  (/pending 674 ×6, /pending 694), P08.S04's to work.
+- Tiers 4 and 6 did NOT fire: the slice touched test tooling, sources, a test table and CONTRIBUTING.
 
 #### P08.S03 — the sourced producers
 Scope: Word-exported and Acrobat-produced files for the producers this machine cannot run, pinned by a committed manifest

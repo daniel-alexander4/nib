@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- P08.S02's LibreOffice source: one Writer document carrying every family the checker judges that
+     Writer can author — headings, lists, a table with a header row, a figure with alternate text and one
+     without, a link, a footnote, a passage in a second language and CJK text. (A form control authored in ODF does not survive
+     LibreOffice 24.2's import — measured — so the form is `form.html`'s.) Rendered by
+     build/producers.sh into ~/nib/producers/libreoffice/ as tagged, PDF/UA and untagged exports. -->
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+  xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+  xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+  xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+  xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
+  xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+ 
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+  office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+ <office:meta>
+  <dc:title>Producer corpus probe</dc:title>
+  <dc:language>en-US</dc:language>
+ </office:meta>
+ <office:font-face-decls>
+  <style:font-face style:name="Liberation Serif" svg:font-family="'Liberation Serif'"/>
+  <style:font-face style:name="Noto Serif CJK JP" svg:font-family="'Noto Serif CJK JP'"/>
+ </office:font-face-decls>
+ <office:styles>
+  <style:default-style style:family="paragraph">
+   <style:text-properties style:font-name="Liberation Serif" fo:language="en" fo:country="US"/>
+  </style:default-style>
+ </office:styles>
+ <office:automatic-styles>
+  <style:style style:name="German" style:family="text">
+   <style:text-properties fo:language="de" fo:country="DE"/>
+  </style:style>
+  <style:style style:name="CJK" style:family="paragraph">
+   <style:text-properties style:font-name-asian="Noto Serif CJK JP" style:language-asian="ja" style:country-asian="JP"/>
+  </style:style>
+ </office:automatic-styles>
+ <office:body>
+  <office:text>
+   <text:h text:outline-level="1">A heading</text:h>
+   <text:p>Some text with a <text:a xlink:type="simple" xlink:href="https://example.org/">link to an example</text:a>, and a
+    note.<text:note text:id="n1" text:note-class="footnote"><text:note-citation>1</text:note-citation><text:note-body><text:p>The
+    footnote's own text.</text:p></text:note-body></text:note></text:p>
+   <text:h text:outline-level="2">A list</text:h>
+   <text:list>
+    <text:list-item><text:p>The first item.</text:p></text:list-item>
+    <text:list-item><text:p>The second item.</text:p></text:list-item>
+   </text:list>
+   <text:h text:outline-level="2">A table</text:h>
+   <table:table table:name="Figures">
+    <table:table-column table:number-columns-repeated="2"/>
+    <table:table-header-rows>
+     <table:table-row>
+      <table:table-cell office:value-type="string"><text:p>Name</text:p></table:table-cell>
+      <table:table-cell office:value-type="string"><text:p>Value</text:p></table:table-cell>
+     </table:table-row>
+    </table:table-header-rows>
+    <table:table-row>
+     <table:table-cell office:value-type="string"><text:p>one</text:p></table:table-cell>
+     <table:table-cell office:value-type="string"><text:p>1</text:p></table:table-cell>
+    </table:table-row>
+   </table:table>
+   <text:h text:outline-level="2">Figures</text:h>
+   <text:p><draw:frame draw:name="WithAlt" svg:width="1cm" svg:height="1cm" text:anchor-type="as-char"><draw:image><office:binary-data>iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mM4YWSEFTEMLQkAc/tLAeVUENYAAAAASUVORK5CYII=</office:binary-data></draw:image><svg:title>A red square</svg:title><svg:desc>A small red square.</svg:desc></draw:frame>
+    A figure with alternate text.</text:p>
+   <text:p><draw:frame draw:name="WithoutAlt" svg:width="1cm" svg:height="1cm" text:anchor-type="as-char"><draw:image><office:binary-data>iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mM4YWSEFTEMLQkAc/tLAeVUENYAAAAASUVORK5CYII=</office:binary-data></draw:image></draw:frame>
+    A figure without it.</text:p>
+   <text:h text:outline-level="2">Languages</text:h>
+   <text:p>An English sentence, then <text:span text:style-name="German">ein deutscher Satz</text:span>.</text:p>
+   <text:p text:style-name="CJK">日本語の文です。</text:p>
+  </office:text>
+ </office:body>
+</office:document>

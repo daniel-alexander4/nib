@@ -1,0 +1,14 @@
+% P08.S02's pdfLaTeX source with LaTeX's own tagging (\DocumentMetadata, the tagpdf test phase in TeX Live 2023).
+% LuaLaTeX is not used: on the measuring machine luaotfload cannot load lmroman10-regular ("metric data"), so every
+% LuaLaTeX run fails before output — measured 2026-09-26.
+\DocumentMetadata{testphase=phase-III, lang=en-US, pdfversion=1.7}
+\documentclass{article}
+\usepackage{hyperref}
+\title{Producer corpus probe}
+\begin{document}
+\maketitle
+\section{A heading}
+Some text with a \href{https://example.org/}{link to an example}.
+\begin{itemize}\item The first item.\item The second item.\end{itemize}
+\begin{tabular}{ll}Name&Value\\one&1\end{tabular}
+\end{document}

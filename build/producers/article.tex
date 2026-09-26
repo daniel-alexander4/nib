@@ -1,0 +1,17 @@
+% P08.S02's pdfLaTeX source, untagged: Computer Modern Type 1 fonts (cmr10.pfb and friends), the shape most
+% academic PDFs still have — plus, measured on the building machine, one Type 3 bitmap font for a glyph no installed
+% Type 1 program covers, so the font population depends on the TeX installation. Rendered by build/producers.sh into
+% ~/nib/producers/pdflatex/.
+\documentclass{article}
+\usepackage{hyperref}
+\title{Producer corpus probe}
+\begin{document}
+\maketitle
+\section{A heading}
+Some text with a \href{https://example.org/}{link to an example}, a note\footnote{The footnote's own text.} and
+some mathematics, $\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$.
+\subsection{A list}
+\begin{itemize}\item The first item.\item The second item.\end{itemize}
+\subsection{A table}
+\begin{tabular}{ll}\textbf{Name}&\textbf{Value}\\one&1\end{tabular}
+\end{document}
