@@ -27,7 +27,16 @@ import (
 // producerDisagreements is every (file, clause) disagreement the corpus is known to hold, keyed
 // "<producer>/<file> / <clause>" (or "/ open" for a file nib cannot read), each with the `/pending` item that owns it or
 // the reason it stands. A row that stops disagreeing is an error: it is a claim about code that no longer behaves so.
-var producerDisagreements = map[string]string{}
+var producerDisagreements = map[string]string{
+	// Measured at P08.S02 over build/producers.sh's corpus (20 files, 5 producers); P08.S04 works each one.
+	"libreoffice/form-untagged.pdf / 7.2 t30":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	"libreoffice/form-untagged.pdf / 7.2 t31":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	"libreoffice/form-untagged.pdf / 7.2 t32":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	"libreoffice/writer-untagged.pdf / 7.2 t30": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	"libreoffice/writer-untagged.pdf / 7.2 t31": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	"libreoffice/writer-untagged.pdf / 7.2 t32": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	"ghostscript/pdflatex-article.pdf / 7.1 t9": "/pending 694 — a live false fail: nib fails a missing dc:title that veraPDF passes on Ghostscript's re-distil of pdfLaTeX output; P08.S04",
+}
 
 // refusedWhole is whether nib refused every clause of a document — the shape a recovered panic and `reportsNothing`
 // both leave.

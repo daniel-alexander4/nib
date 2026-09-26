@@ -42,6 +42,15 @@ playwright-core, dev-only, `node_modules/` is git-ignored) and have a
 Chromium-family browser on `PATH` — the same browser Nib itself needs to show its
 UI, so if Nib runs at all, tier 3 can run.
 
+**The accessibility checker is scored against veraPDF over two local corpora it does not ship**, both
+inside tier 1 and both a SKIP that says so when absent (veraPDF itself is required too — `NIB_VERAPDF`, `verapdf` on
+`PATH`, or `~/verapdf`): veraPDF's own PDF/UA-1 corpus (`NIB_UA_CORPUS`, a sparse
+clone into `~/nib/verapdfs`) and a real-producer corpus (`NIB_UA_PRODUCERS`, default `~/nib/producers`).
+`./build/producers.sh` builds the second from the committed sources in `build/producers/` through every producer this
+machine has — LibreOffice, pdfLaTeX, headless Chromium and Ghostscript — and says which it skipped or which failed.
+Neither corpus is committed: third-party documents carry their authors' rights, and the script refuses an output
+directory inside the repository.
+
 There is also `./build/dhtlive.sh`, the **one harness that is not hermetic**. It runs
 the self-address probe against the real BitTorrent DHT, because P04.S02's acceptance
 requires this host's mapped port to be observed *on the wire from a real node* and no

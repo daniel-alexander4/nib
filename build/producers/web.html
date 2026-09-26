@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- P08.S02's Chromium source: headless Chromium (Skia/PDF) writes a tagged PDF with Type 0 CIDFontType2 fonts under
+     Identity-H — the one source rendered into composite fonts (LibreOffice splits CJK into simple fonts; Ghostscript's
+     re-distil of THIS file keeps them). -->
+<html lang="en"><head><meta charset="utf-8"><title>Chromium probe</title></head><body>
+<h1>A heading</h1><p>Some text with a <a href="https://example.org/">link to an example</a>.</p>
+<h2>A list</h2><ul><li>The first item.</li><li>The second item.</li></ul>
+<h2>A table</h2><table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td>one</td><td>1</td></tr></tbody></table>
+<h2>Figures</h2>
+<p><img alt="A red square" width="16" height="16" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mM4YWSEFTEMLQkAc/tLAeVUENYAAAAASUVORK5CYII="> A figure with alternate text.</p>
+<p><img width="16" height="16" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mM4YWSEFTEMLQkAc/tLAeVUENYAAAAASUVORK5CYII="> A figure without it.</p>
+<h2>Languages</h2><p>An English sentence, then <span lang="de">ein deutscher Satz</span>.</p><p lang="ja">日本語の文です。</p>
+</body></html>
