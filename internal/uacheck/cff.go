@@ -8,8 +8,8 @@ import (
 	"unicode/utf8"
 )
 
-// A CFF font program as veraPDF-parser 1.30.2 reads it — `PLAN-ua-coverage.md` P07.S05a. The reader mirrors
-// `CFFFontProgram` → `CFFType1FontProgram` (and `CFFFileBaseParser`, `CFFFontBaseParser`, `CFFIndex`,
+// A CFF font program as veraPDF-parser 1.30.2 reads it — `PLAN-ua-coverage.md` P07.S05a, its CID-keyed half P07.S05b.
+// The reader mirrors `CFFFontProgram` → `CFFType1FontProgram` or `CFFCIDFontProgram` (and `CFFFileBaseParser`, `CFFFontBaseParser`, `CFFIndex`,
 // `CharStringsWidths`, `CFFCharStringsHandler`, `Type2CharStringParser`) line for line, because 7.21.5 t1, 7.21.4.1 t2
 // and 7.21.4.2 t1 are judged against what veraPDF computes, not against what the CFF specification says: its Top DICT
 // reads byte 28 unsigned, its encoding supplements store a SID where a glyph index belongs, its format 1/2 charsets
@@ -21,12 +21,15 @@ import (
 // `reportsNothing` turns into a refusal of every clause). Where nib does not mirror veraPDF the answer is `ttUnknown`,
 // a refusal naming why.
 
-// cffProgram is one simple (non-CID) CFF program's reading.
+// cffProgram is one CFF program's reading: a Type1-keyed one's charset and encoding, or a CID-keyed one's CID charset.
 type cffProgram struct {
 	state  ttState
 	why    string // for ttUnknown and ttFailed
 	throws string // veraPDF throws an exception it does not handle: it reports nothing on the document
-	cid    bool   // CID-keyed: P07.S05b's
+	cid    bool   // CID-keyed (`CFFCIDFontProgram`): cidCharSet and cidDefault hold its charset; charSet and encoding nothing
+
+	cidCharSet map[int]int // CID → GID, seeded CID 0 → GID 0 and a later duplicate winning
+	cidDefault bool        // a charset of an unknown format: every CID is its own GID, and no CID is contained
 
 	charSet     map[string]int // glyph name → GID, a later duplicate winning
 	inverseSize int            // `inverseCharSet.size()`: GIDs 0..inverseSize-1 are named
@@ -324,6 +327,11 @@ type cffParser struct {
 	scanOnly          bool // a plain `CFFFontBaseParser` (the ROS scan): operator 16 is not Encoding there
 	lsubrs            cffIndex
 	bias              int
+
+	// `CFFCIDFontProgram`'s: operator 16 is not Encoding there either, and 12 36 / 12 37 are read.
+	cidMode                 bool
+	hasMatrix               bool // a FontMatrix was read (the CID program's matrices start null)
+	fdArrayOff, fdSelectOff int64
 }
 
 // stringBySID is `getStringBySID`: a standard string, else the String INDEX's entry, an ArrayIndexOutOfBoundsException
@@ -397,7 +405,7 @@ func (p *cffParser) readTopDictUnit() *cffErr {
 		off, _ := p.topOf(1)
 		p.privSize, p.privOff = size.getInteger(), off.getInteger()
 	case 16:
-		if p.scanOnly {
+		if p.scanOnly || p.cidMode {
 			break // `readTopDictOneByteOps` of the base parser: clear the stack
 		}
 		n, err := p.topOf(1)
@@ -418,6 +426,7 @@ func (p *cffParser) readTopDictUnit() *cffErr {
 			for i := range p.fontMatrix {
 				p.fontMatrix[i] = p.stack[i].real
 			}
+			p.hasMatrix = true
 		case 6:
 			n, err := p.topOf(1)
 			if err != nil {
@@ -426,7 +435,19 @@ func (p *cffParser) readTopDictUnit() *cffErr {
 			p.charStringType = int(int32(n.getInteger()))
 		case 30:
 			p.containsROS = true
-			return nil // ROS does not clear the stack
+			return nil // ROS does not clear the stack — and `CFFCIDFontProgram`'s own ROS case is never reached
+		case 36, 37: // FDArray, FDSelect — the CID program's `readTopDictTwoByteOps`; elsewhere they only clear
+			if p.cidMode {
+				n, err := p.topOf(1)
+				if err != nil {
+					return err
+				}
+				if c == 36 {
+					p.fdArrayOff = n.getInteger() // in a font dict too, moving where the later ones are read
+				} else {
+					p.fdSelectOff = n.getInteger()
+				}
+			}
 		}
 	}
 	p.stack = p.stack[:0]
@@ -481,7 +502,8 @@ func cffBias(n int) int {
 	return 32768
 }
 
-// readCFF reads a CFF program for a simple font, `subset` being `PDFont.isSubset` of the font that opens it.
+// readCFF reads a CFF program, `subset` being `PDFont.isSubset` of the font that opens it (for a CIDFont, the DESCENDANT's
+// /BaseFont decides).
 func readCFF(b []byte, subset bool) (prog cffProgram) {
 	src := &cffSrc{b: b}
 	p := &cffParser{src: src, subset: subset, charStringType: 2, subrsOff: -1,
@@ -533,7 +555,13 @@ func readCFF(b []byte, subset bool) (prog cffProgram) {
 		return fail(err)
 	}
 	if cid {
-		return cffProgram{state: ttUnknown, cid: true, why: "its CFF program is CID-keyed, which nib reads at P07.S05b"}
+		prog.cid = true
+		p.cidMode = true
+		if err := p.parseCID(&prog); err != nil {
+			return fail(err)
+		}
+		prog.state = ttParsed
+		return prog
 	}
 	if err := p.parseType1(&prog); err != nil {
 		return fail(err)
@@ -641,12 +669,284 @@ func (p *cffParser) parseType1(prog *cffProgram) *cffErr {
 	if err := p.readCharSet(prog); err != nil {
 		return err
 	}
-	w, err := newCFFWidths(p, cs)
+	w, err := newCFFWidths(p, cs, []cffFD{{lsubrs: p.lsubrs, bias: p.bias, defaultW: p.defaultWidthX,
+		nominalW: p.nominalWidthX, matrix: p.fontMatrix}}, nil)
 	if err != nil {
 		return err
 	}
 	prog.widths = w
 	return nil
+}
+
+// cffMaxFDSelectFill bounds the entries FDSelect format 3's ranges write. A range runs from the previous one's end, so
+// ranges that alternate high and low refill the whole array each time — 65,535 ranges over 65,535 glyphs is two billion
+// writes, which veraPDF performs and nib will not.
+const cffMaxFDSelectFill = 1 << 24
+
+// cffMaxDictBytes bounds the DICT bytes the FDArray's font dicts read, their own and the Private DICTs they carry. Their
+// offsets need not rise and a Private DICT is carried from one dict to the next, so 65,535 font dicts can each re-read the
+// same megabyte — minutes of work (~10 ns a byte, measured by the P07.S05b review) that veraPDF performs and nib will not.
+const cffMaxDictBytes = 1 << 24
+
+// parseCID is `CFFCIDFontProgram.parseFont`: the Top DICT, CharStrings, the charset, FDSelect, then the FDArray's font
+// dicts, then the widths.
+func (p *cffParser) parseCID(prog *cffProgram) *cffErr {
+	src := p.src
+	if err := src.seek(p.topBegin); err != nil {
+		return err
+	}
+	for int64(src.pos) < p.topEnd {
+		if err := p.readTopDictUnit(); err != nil {
+			return err
+		}
+	}
+	p.stack = p.stack[:0]
+	if err := src.seek(p.charStringsOff); err != nil {
+		return err
+	}
+	cs, err := src.readIndex()
+	if err != nil {
+		return err
+	}
+	prog.charStrings, prog.amount = cs, cs.count
+	if err := src.seek(p.charSetOff); err != nil { // no charset operator: offset 0, the header read as a format
+		return err
+	}
+	if err := p.readCIDCharSet(prog); err != nil {
+		return err
+	}
+	if err := src.seek(p.fdSelectOff); err != nil {
+		return err
+	}
+	fdSelect, err := p.readFDSelect(cs.count)
+	if err != nil {
+		return err
+	}
+	if err := src.seek(p.fdArrayOff); err != nil {
+		return err
+	}
+	fds, err := p.readFontDicts()
+	if err != nil {
+		return err
+	}
+	w, err := newCFFWidths(p, cs, fds, fdSelect)
+	if err != nil {
+		return err
+	}
+	prog.widths = w
+	return nil
+}
+
+// readCIDCharSet is `CFFCIDFontProgram.readCharSet`: CID → GID. Unlike the Type1-keyed reader, a format 1 or 2 range is
+// CLAMPED to the glyph count, and a format other than 0, 1 or 2 is no error: every CID is then its own GID (`getGid`)
+// while `containsCID` holds for none, the map having only CID 0.
+func (p *cffParser) readCIDCharSet(prog *cffProgram) *cffErr {
+	n := prog.amount
+	prog.cidCharSet = map[int]int{0: 0}
+	src := p.src
+	format, err := src.card8()
+	if err != nil {
+		return err
+	}
+	switch format {
+	case 0:
+		for i := 1; i < n; i++ {
+			cid, err := src.card16()
+			if err != nil {
+				return err
+			}
+			prog.cidCharSet[cid] = i
+		}
+	case 1, 2:
+		for ptr := 1; ptr < n; {
+			first, err := src.card16()
+			if err != nil {
+				return err
+			}
+			var left int
+			if format == 1 {
+				left, err = src.card8()
+			} else {
+				left, err = src.card16()
+			}
+			if err != nil {
+				return err
+			}
+			if ptr+left >= n {
+				left = n - ptr - 1
+			}
+			for i := 0; i <= left; i++ {
+				prog.cidCharSet[first+i] = ptr
+				ptr++
+			}
+		}
+	default:
+		prog.cidDefault = true
+	}
+	return nil
+}
+
+// readFDSelect is `readFDSelect`: format 0 (a font dict per glyph) or 3 (ranges, each from the previous one's end, entries
+// past the glyphs dropped); any other format does not parse. A glyph no range reaches stays font dict 0.
+func (p *cffParser) readFDSelect(n int) ([]int, *cffErr) {
+	src := p.src
+	format, err := src.card8()
+	if err != nil {
+		return nil, err
+	}
+	sel := make([]int, n)
+	switch format {
+	case 0:
+		for i := range sel {
+			if sel[i], err = src.card8(); err != nil {
+				return nil, err
+			}
+		}
+	case 3:
+		ranges, err := src.card16()
+		if err != nil {
+			return nil, err
+		}
+		first, err := src.card16()
+		if err != nil {
+			return nil, err
+		}
+		fill := 0
+		for r := 0; r < ranges; r++ {
+			fd, err := src.card8()
+			if err != nil {
+				return nil, err
+			}
+			end, err := src.card16()
+			if err != nil {
+				return nil, err
+			}
+			if end > first && first < n {
+				if fill += min(end, n) - first; fill > cffMaxFDSelectFill {
+					return nil, refuse("its FDSelect ranges write more than %d entries, which veraPDF performs and nib will not", cffMaxFDSelectFill)
+				}
+			}
+			for j := first; j < end && j < n; j++ {
+				sel[j] = fd
+			}
+			first = end
+		}
+	default:
+		return nil, ioErr("an FDSelect of format %d", format)
+	}
+	return sel, nil
+}
+
+// readFontDicts is `readFontDicts`: each font dict's Top DICT read from a NULL matrix, then its Private DICT with only
+// nominalWidthX and defaultWidthX reset — so a font dict with no Private operator reads the one before's Private DICT,
+// and one whose Private DICT has no Subrs reads the one before's local subroutines (both measured). The matrix is the
+// Top DICT's times the font dict's, either alone, or the default.
+func (p *cffParser) readFontDicts() ([]cffFD, *cffErr) {
+	src := p.src
+	idx, err := src.readIndex()
+	if err != nil {
+		return nil, err
+	}
+	top, topSet := p.fontMatrix, p.hasMatrix
+	fds := make([]cffFD, idx.count)
+	spent := int64(0)
+	charge := func(from, to int64) *cffErr { // the bytes a DICT loop from `from` to `to` can read before the program ends
+		if n := min(to, int64(len(src.b))) - from; n > 0 {
+			if spent += n; spent > cffMaxDictBytes {
+				return refuse("its font dicts read more than %d DICT bytes, which veraPDF performs and nib will not", cffMaxDictBytes)
+			}
+		}
+		return nil
+	}
+	// One index per Subrs offset: a font dict without its own Subrs re-reads the one before's, and the bytes are the same,
+	// so the reading is shared — 65,535 font dicts each holding a fresh copy of a 65,535-entry index is 32 GiB (measured
+	// at 0.5 MB a dict by the P07.S05b review).
+	subrs := map[int64]cffIndex{}
+	for i := range fds {
+		p.hasMatrix = false
+		p.stack = p.stack[:0]
+		at := int64(src.pos)
+		from := int64(idx.offsets[i]) + p.fdArrayOff + int64(idx.shift) - 1
+		to := int64(idx.offsets[i+1]) + p.fdArrayOff + int64(idx.shift) - 1
+		if err := src.seek(from); err != nil {
+			return nil, err
+		}
+		if err := charge(from, to); err != nil {
+			return nil, err
+		}
+		for int64(src.pos) < to {
+			if err := p.readTopDictUnit(); err != nil {
+				return nil, err
+			}
+		}
+		if err := src.seek(at); err != nil {
+			return nil, err
+		}
+		// `readPrivateDict`.
+		p.stack = p.stack[:0]
+		p.nominalWidthX, p.defaultWidthX = 0, 0
+		if err := src.seek(p.privOff); err != nil {
+			return nil, err
+		}
+		if err := charge(p.privOff, p.privOff+p.privSize); err != nil {
+			return nil, err
+		}
+		for int64(src.pos) < p.privOff+p.privSize {
+			if err := p.readPrivateDictUnit(); err != nil {
+				return nil, err
+			}
+		}
+		if err := src.seek(at); err != nil {
+			return nil, err
+		}
+		fd := cffFD{defaultW: p.defaultWidthX, nominalW: p.nominalWidthX, matrix: cffDefaultMatrix}
+		// `readLocalSubrsAndBias`: the offset is whatever the last Subrs operator set, in this dict or an earlier one.
+		if p.subrsOff != -1 {
+			if idx, done := subrs[p.subrsOff]; done {
+				fd.lsubrs = idx
+			} else {
+				if err := src.seek(p.subrsOff); err != nil {
+					return nil, err
+				}
+				if fd.lsubrs, err = src.readIndex(); err != nil {
+					return nil, err
+				}
+				if err := src.seek(at); err != nil {
+					return nil, err
+				}
+				subrs[p.subrsOff] = fd.lsubrs
+			}
+			if p.charStringType != 1 {
+				fd.bias = cffBias(fd.lsubrs.count)
+			}
+		}
+		switch { // `calculateMatrix`
+		case topSet && p.hasMatrix:
+			fd.matrix = multiplyMatrices(top, p.fontMatrix)
+		case topSet:
+			fd.matrix = top
+		case p.hasMatrix:
+			fd.matrix = p.fontMatrix
+		}
+		fds[i] = fd
+	}
+	return fds, nil
+}
+
+// cffDefaultMatrix is `DEFAULT_FONT_MATRIX`.
+var cffDefaultMatrix = [6]float32{0.001, 0, 0, 0.001, 0, 0}
+
+// multiplyMatrices is `multiplyArrays`, in float32 with each product rounded before the sum as Java rounds it (the
+// explicit conversions keep Go from fusing a multiply and an add).
+func multiplyMatrices(a, b [6]float32) [6]float32 {
+	var c [6]float32
+	c[0] = float32(a[0]*b[0]) + float32(a[1]*b[2])
+	c[1] = float32(a[0]*b[1]) + float32(a[1]*b[3])
+	c[2] = float32(a[2]*b[0]) + float32(a[3]*b[2])
+	c[3] = float32(a[2]*b[1]) + float32(a[3]*b[3])
+	c[4] = float32(float32(a[4]*b[0])+float32(a[5]*b[2])) + b[4]
+	c[5] = float32(float32(a[4]*b[1])+float32(a[5]*b[3])) + b[5]
+	return c
 }
 
 // readEncoding is `readEncoding`. **A supplement stores the SID where the glyph index belongs** (`encoding[code] =
@@ -805,28 +1105,39 @@ func (p *cffParser) readCharSet(prog *cffProgram) *cffErr {
 	return nil
 }
 
-// cffWidths is `CharStringsWidths` for a single-dictionary (non-CID) font: a subset font's widths all computed at parse,
-// a full font's per glyph when asked.
-type cffWidths struct {
-	p      *cffParser
-	cs     cffIndex
-	bigCS  bool // the CharStrings data is ≥ 10240 bytes: read from the stream by computed offsets (`CFFCharStringsHandler`)
-	csBase int64
-	subset []float32
-	full   map[int]float32
-	spent  int            // charstring bytes read across every width, against `cffMaxProgramBytes`
-	errs   map[int]string // a glyph whose reading nib refuses, or on which veraPDF throws
-	isDef  bool
+// cffFD is one font dict's share of `CharStringsWidths`' arrays; a Type1-keyed program has exactly one.
+type cffFD struct {
+	lsubrs             cffIndex // an absent index is an empty one (`BaseCharStringParser`), so a call is skipped
+	bias               int
+	defaultW, nominalW int
+	matrix             [6]float32
+	isDef              bool // the matrix equals the default by bits (`Arrays.equals`)
 }
 
-func newCFFWidths(p *cffParser, cs cffIndex) (*cffWidths, *cffErr) {
-	w := &cffWidths{p: p, cs: cs, bigCS: len(cs.data) >= cffBuffered, csBase: p.charStringsOff + int64(cs.shift) - 1,
-		full: map[int]float32{}, errs: map[int]string{}}
-	def := [6]float32{0.001, 0, 0, 0.001, 0, 0}
-	w.isDef = true
-	for i := range def { // `Arrays.equals(float[], float[])`: by bits, so -0.0 is not 0.0
-		if math.Float32bits(p.fontMatrix[i]) != math.Float32bits(def[i]) {
-			w.isDef = false
+// cffWidths is `CharStringsWidths`: a subset font's widths all computed at parse, a full font's per glyph when asked; a
+// CID-keyed program's per-glyph values come from the font dict FDSelect names.
+type cffWidths struct {
+	p        *cffParser
+	fds      []cffFD
+	fdSelect []int // nil for a Type1-keyed program
+	cs       cffIndex
+	bigCS    bool // the CharStrings data is ≥ 10240 bytes: read from the stream by computed offsets (`CFFCharStringsHandler`)
+	csBase   int64
+	subset   []float32
+	full     map[int]float32
+	spent    int            // charstring bytes read across every width, against `cffMaxProgramBytes`
+	errs     map[int]string // a glyph whose reading nib refuses, or on which veraPDF throws
+}
+
+func newCFFWidths(p *cffParser, cs cffIndex, fds []cffFD, fdSelect []int) (*cffWidths, *cffErr) {
+	w := &cffWidths{p: p, fds: fds, fdSelect: fdSelect, cs: cs, bigCS: len(cs.data) >= cffBuffered,
+		csBase: p.charStringsOff + int64(cs.shift) - 1, full: map[int]float32{}, errs: map[int]string{}}
+	for k := range w.fds {
+		w.fds[k].isDef = true
+		for i := range cffDefaultMatrix { // `Arrays.equals(float[], float[])`: by bits, so -0.0 is not 0.0
+			if math.Float32bits(w.fds[k].matrix[i]) != math.Float32bits(cffDefaultMatrix[i]) {
+				w.fds[k].isDef = false
+			}
 		}
 	}
 	if p.subset {
@@ -880,25 +1191,43 @@ func (w *cffWidths) width(gid int) (float32, *cffErr) {
 	return v, nil
 }
 
+// fdOf is the font dict whose values a glyph takes: `fdSelect[gid]`, then that entry of the arrays — either index past
+// its array an ArrayIndexOutOfBoundsException.
+func (w *cffWidths) fdOf(gid int) (*cffFD, bool) {
+	if w.fdSelect == nil {
+		return &w.fds[0], true
+	}
+	if gid < 0 || gid >= len(w.fdSelect) || w.fdSelect[gid] >= len(w.fds) {
+		return nil, false
+	}
+	return &w.fds[w.fdSelect[gid]], true
+}
+
 // compute is `getWidthFromCharstring` then `getActualWidth`: an IOException or ArrayIndexOutOfBoundsException while
-// reading the charstring is the width -1 — to which nominalWidthX is STILL added, and the matrix scale applied.
+// reading the charstring is the width -1 — to which nominalWidthX is STILL added, and the matrix scale applied. A glyph
+// whose font dict does not exist (a GID past FDSelect, an FDSelect entry past the FDArray) is -1 outright, because
+// `getActualWidth` catches that exception itself (measured).
 func (w *cffWidths) compute(gid int) (float32, *cffErr) {
 	var res float32
 	width, found, err := w.charstringWidth(gid)
-	switch {
-	case err != nil && err.kind != errIO:
+	if err != nil && err.kind != errIO {
 		return 0, err
-	case err != nil:
-		res = -1 + float32(w.p.nominalWidthX)
-	case !found:
-		res = float32(w.p.defaultWidthX)
-	case width.isInt:
-		res = float32(width.integer) + float32(w.p.nominalWidthX)
-	default:
-		res = width.real + float32(w.p.nominalWidthX)
 	}
-	if !w.isDef {
-		res *= w.p.fontMatrix[0] * 1000
+	fd, ok := w.fdOf(gid)
+	switch {
+	case !ok:
+		return -1, nil
+	case err != nil:
+		res = -1 + float32(fd.nominalW)
+	case !found:
+		res = float32(fd.defaultW)
+	case width.isInt:
+		res = float32(width.integer) + float32(fd.nominalW)
+	default:
+		res = width.real + float32(fd.nominalW)
+	}
+	if !fd.isDef {
+		res *= fd.matrix[0] * 1000
 	}
 	return res, nil
 }
@@ -961,6 +1290,10 @@ func (w *cffWidths) charstringWidth(gid int) (cffNumber, bool, *cffErr) {
 	case 2:
 	default: // "Can't process CharString of type N": an IOException, caught — the width -1
 		return cffNumber{}, false, ioErr("charstrings of type %d", w.p.charStringType)
+	}
+	fd, ok := w.fdOf(gid) // `getLocalSubrs(gid)`, after the fetch
+	if !ok {
+		return cffNumber{}, false, ioErr("the glyph's font dict does not exist")
 	}
 	streams := [][]byte{body}
 	var stack []cffNumber
@@ -1041,7 +1374,7 @@ func (w *cffWidths) charstringWidth(gid int) (cffNumber, bool, *cffErr) {
 			stack = append(stack, cffInt(int(int16(uint16(x[0])<<8|uint16(x[1])))))
 			continue
 		case b == 10:
-			if err := subr(w.p.lsubrs, w.p.bias); err != nil {
+			if err := subr(fd.lsubrs, fd.bias); err != nil {
 				return cffNumber{}, false, err
 			}
 			continue
@@ -1148,4 +1481,21 @@ func (c *cffProgram) widthOfCode(code int) (float32, *cffErr) {
 		return c.widthByGID(c.encoding[code]+1, true)
 	}
 	return c.widthOfName(c.glyphName(code))
+}
+
+// cidGID is `CFFCIDFontProgram.getGid`: the charset's GID for a CID, false for one it does not name — every CID its own
+// GID under a charset of an unknown format.
+func (c *cffProgram) cidGID(cid int) (int, bool) {
+	if c.cidDefault {
+		return cid, true
+	}
+	gid, ok := c.cidCharSet[cid]
+	return gid, ok
+}
+
+// containsCID is `CFFCIDFontProgram.containsCID`: the charset maps the CID to a glyph other than 0 (so never under a
+// charset of an unknown format, whose map holds only CID 0).
+func (c *cffProgram) containsCID(cid int) bool {
+	gid, ok := c.cidCharSet[cid]
+	return ok && gid != 0
 }

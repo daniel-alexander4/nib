@@ -61,6 +61,13 @@ func (d *Document) type1COf(font types.Dict) (c *cffProgram, known bool, why, th
 	if !ok {
 		return nil, true, "", ""
 	}
+	return d.cffRead(sd, subset)
+}
+
+// cffRead is the ONE read of a /FontFile3 CFF stream for one subset-ness — a simple Type 1 font's Type1C and a CIDFont's
+// CIDFontType0C alike — kept, since several fonts may share a stream. veraPDF's cache adds the Type 0 font's CMap to the
+// key; the parse reads no CMap, so one reading serves both.
+func (d *Document) cffRead(sd *types.StreamDict, subset bool) (c *cffProgram, known bool, why, throws string) {
 	key := type1CKey{dictID(sd.Dict), subset}
 	if r, done := d.type1CReads[key]; done {
 		return r.c, r.known, r.why, d.type1CThrows[key]
@@ -93,6 +100,10 @@ func (d *Document) type1COf(font types.Dict) (c *cffProgram, known bool, why, th
 // type1CMetrics is `GFGlyph` over a Type1C font (`PDType1Font.glyphIsPresent` / `getWidthFromProgram`): the PDF's own
 // encoding names the glyph where it can — present if the program's charset holds the name, the width that name's glyph —
 // and where it names nothing the PROGRAM's built-in encoding decides (`containsCode`, `getWidth(int)`).
+//
+// A CID-keyed program answers a NAME with no glyph and width 0 (`containsGlyph`, `getWidth(String)`), and a code its PDF
+// encoding does not name — through a CMap a simple font does not have — with an exception veraPDF does not handle
+// (measured: WinAnsi-named codes are judged, a font with no /Encoding reports nothing).
 func (d *Document) type1CMetrics(g glyph, c *cffProgram) (m glyphMetrics, throws string) {
 	font := g.font.dict
 	if g.font.enc == nil {
@@ -103,10 +114,15 @@ func (d *Document) type1CMetrics(g glyph, c *cffProgram) (m glyphMetrics, throws
 	var present bool
 	var w float32
 	var err *cffErr
-	if named {
+	switch {
+	case c.cid && !named:
+		return glyphMetrics{why: cidUnderSimpleFont}, cidUnderSimpleFont
+	case c.cid:
+		// present stays false, w 0
+	case named:
 		_, present = c.charSet[name]
 		w, err = c.widthOfName(name)
-	} else {
+	default:
 		present = c.containsCode(g.code)
 		w, err = c.widthOfCode(g.code)
 	}
@@ -125,6 +141,49 @@ func (d *Document) type1CMetrics(g glyph, c *cffProgram) (m glyphMetrics, throws
 		program = d.missingWidth(font)
 	}
 	return glyphMetrics{known: true, valid: true, present: g.code == 0 || present, program: program, dictionary: dw}, ""
+}
+
+// cidUnderSimpleFont is a CID-keyed CFF program under a simple Type 1 font: veraPDF parses it (so the font is embedded),
+// then looks a glyph its PDF encoding does not name up through the CMap a simple font does not have, and compares a
+// /CharSet against it by a cast to the Type1-keyed program — both exceptions it does not handle (measured: an unnamed
+// code drawn, or a subset-named font with a /CharSet, and it reports nothing on the document).
+const cidUnderSimpleFont = "its CFF program is CID-keyed, which veraPDF parses and then reads through a CMap a simple " +
+	"font does not have, throwing an exception it does not handle"
+
+// cidUnderSimpleFontThrows is whether veraPDF throws judging 7.21.4.2 t1 on this simple font, whatever is drawn: a parsed
+// CID-keyed program, a subset name, and a /CharSet string — exactly the conditions under which the test reaches the cast.
+func (d *Document) cidUnderSimpleFontThrows(font types.Dict) string {
+	c, known, _, throws := d.type1COf(font)
+	if throws != "" || !known || c == nil || !c.cid {
+		return ""
+	}
+	base, _ := d.nameOf(font["BaseFont"])
+	if _, has := d.text(d.dict(font["FontDescriptor"])["CharSet"]); !subsetNamed(base) || !has {
+		return ""
+	}
+	return cidUnderSimpleFont
+}
+
+// cidCFFOf is a CIDFont's CIDFontType0C program (`PDCIDFont.getFontProgram`): subset-ness is the DESCENDANT's /BaseFont
+// (the CIDFont is the dictionary `PDType0Font` is built over), and anything failing before the parse — no name, a name
+// `isSubset` throws on — is no program, the exception caught there.
+func (d *Document) cidCFFOf(cid types.Dict) (c *cffProgram, known bool, why, throws string) {
+	sd, _, err := d.Ctx.DereferenceStreamDict(d.dict(cid["FontDescriptor"])["FontFile3"])
+	if err != nil || sd == nil {
+		return nil, true, "", ""
+	}
+	base, isName := d.nameOf(cid["BaseFont"])
+	if !isName {
+		return nil, true, "", ""
+	}
+	if !utf8.ValidString(base) {
+		return nil, false, "its CIDFont's /BaseFont is not valid UTF-8, where Java's decoder and nib's count its characters differently", ""
+	}
+	subset, ok := subsetFont(base)
+	if !ok {
+		return nil, true, "", ""
+	}
+	return d.cffRead(sd, subset)
 }
 
 // type1CThrowsFor is the door's question for one glyph: does veraPDF throw reading this glyph's width (a full font's
@@ -191,6 +250,8 @@ func checkCharSets(d *Document) Result {
 			continue
 		case c == nil:
 			continue // containsFontFile is false
+		case c.cid:
+			return Result{Verdict: CannotCheck, Where: f.where, Why: cidUnderSimpleFont}
 		}
 		names, ok := charSetNames(charSet)
 		if !ok {

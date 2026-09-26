@@ -2894,11 +2894,51 @@ Acceptance:
   132 corpus files conformant and veraPDF fails none. Live: `nib ua` on the fixtures. Tiers 4 and 6 did NOT fire: the
   slice touched `internal/uacheck` (and one comment in `internal/pdfops/labelua.go`) only.
 
-#### P07.S05b — CIDFontType0C
+#### P07.S05b — CIDFontType0C *(done 2026-09-26, v1.165.0)*
 Scope: the CID-keyed CFF (charset CID → GID, FDSelect, FDArray per-FD Private and FontMatrix) under a Type 0 font — the
 three per-glyph clauses' CFF half.
 Acceptance:
 - 7.21.8 t1 agrees on its one fail file; every other half a veraPDF-measured fixture.
+
+**(grill, 2026-09-26 — amended)** `grills/2026-09-26-p07s05b-cidfonttype0c.md`; 50 shapes measured on veraPDF before the
+reader. The scope gains **7.21.4.2 t2's CFF half** (the same reader answers it; 19 corpus files refuse it today) and
+**7.21.4.1 t1's CID CFF parse half** (/pending 677's last CFF half), and a CID-keyed program under a SIMPLE font, which
+veraPDF parses and then reports nothing on once a glyph is drawn. Acceptance amended: the corpus's 19 CID CFF files settle
+7.21.4.1 t2, 7.21.5 t1, 7.21.8 t1 and 7.21.4.2 t2 with no false pass or false fail; no refusal names S05b.
+- T01 — `cff.go`: the CID branch — Top DICT (FDArray, FDSelect), the CID→GID charset, FDSelect, the FDArray's per-dict
+  Private, Subrs and FontMatrix as veraPDF carries them, per-dict widths.
+- T02 — the CID font door carries either program (CIDFontType0C under CIDFontType0 or CIDFontType2, and a Type1-keyed CFF
+  under a CIDFont); presence, widths and `.notdef` per the measured shapes.
+- T03 — 7.21.4.1 t1's CID CFF parse, 7.21.4.2 t2's CFF half, a CID-keyed program under a simple font.
+- T04 — fixtures as a standing test and oracle documents, corpus reach, knownCannotCheck, docs.
+
+**(review + red-proof, 2026-09-26)** `code-reviews/v1.164.0-p07s05b-2026-09-26.md` — two rounds, four reviewers.
+- **Two criticals in the reader, both measured and fixed**: a Subrs index carried through the FDArray was re-read per font
+  dict (0.5 MB a dict; 65,535 dicts extrapolate to an OOM that kills nib) — now one index per offset; and the font-dict
+  and carried Private DICT loops had no bound (~10 ns a dict-byte) — now `cffMaxDictBytes`.
+- **A live false pass, measured**: a CID-keyed charset can map CID 0 to a glyph, so presence must also ask whether the CMap
+  HELD the code (`CFFCIDFontProgram.containsCode`); nib's TrueType-era shortcut did not.
+- **Refusals where veraPDF answers, measured**: a CID-keyed program under a simple font is judged by name for every code
+  the PDF encoding names (absent, width 0); only an unnamed code makes veraPDF report nothing.
+- **Beyond the plan's tasks**: 7.21.3.2 t1's CIDFontType0C branch now asks the CFF reader (it refused); /pending 677's CID
+  CFF half closed; /pending 683 (a non-name FontFile3 /Subtype) and 684 (7.21.4.2 t2's TrueType branch) filed.
+- **Red-proof**: 31 targeted mutations all red; a blind pass's 5 proposals — one survivor (a charset range ending exactly
+  at the glyph count), closed by a measured fixture.
+
+**Acceptance ledger.**
+- 7.21.8 t1 agrees on its one fail file — MET: `7.21.8-t01-fail-a` fails 7.21.8 t1 as veraPDF does, asserted non-conformant
+  by `TestNoCorpusDocumentNibCallsConformantFailsVeraPDF`; live `nib ua` exits 1 on it.
+- Every other half a veraPDF-measured fixture — MET: 74 fixtures over six clauses (7.21.5 t1, 7.21.4.1 t2, 7.21.8 t1,
+  7.21.4.2 t2, 7.21.4.1 t1, 7.21.4.2 t1), both halves of each; three reports-nothing shapes in `noReportFixtures`.
+- (amended) 7.21.4.2 t2's CFF half and 7.21.4.1 t1's CID CFF half land — MET: both answered by the reader, measured.
+- (amended) the 19 CID CFF corpus files settle 7.21.4.1 t2 / 7.21.5 t1 / 7.21.8 t1 / 7.21.4.2 t2 — MET: reach 268 → 284
+  (the three metric clauses; the other 3 — `7.21.3.3-t01-fail-a`, `-t03-fail-a`, `-t03-pass-a` — refuse at the glyph
+  population, their CMap a predefined one whose codespace nib does not carry or one named but not embedded, measured) and 43 → 62; 0 false pass, 0 false
+  fail over the corpus. nib now calls 140 corpus files conformant (was 132), veraPDF fails none.
+- (amended) no refusal names S05b — MET: `grep -rn S05b internal/uacheck/*.go` holds only provenance comments.
+- `len(Clauses())` stays 105 — MET (the door guard is green).
+- Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck` only (no session, ceremony, delivery, discovery,
+  `internal/p2p` or `internal/rendezvous` path).
 
 #### P07.S06 — the Type 1 program
 Scope: eexec and charstring decryption, `/CharStrings` names, `hsbw` widths — the Type 1 halves of 7.21.4.1 t2, 7.21.5

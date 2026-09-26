@@ -127,9 +127,10 @@ func TestACIDFontType2IsJudgedWhereverItsProgramIs(t *testing.T) {
 		{"FontFile2, no map", false, "", Fail},
 		{"FontFile2, Identity map", true, "", Pass},
 		{"FontFile3 /OpenType, no map", false, "OpenType", Fail},
-		// TrueType bytes under a CFF subtype: veraPDF reads them AS CFF, fails, and PASSES the clause (measured). nib
-		// parses no CFF, so it refuses — a real CFF program there is failed by veraPDF, a bad one passed.
-		{"FontFile3 /CIDFontType0C, no map", false, "CIDFontType0C", CannotCheck},
+		// TrueType bytes under a CFF subtype: veraPDF reads them AS CFF, fails, and PASSES the clause (measured). nib's
+		// CFF reader (P07.S05b) fails to parse them too; a real CFF program there veraPDF fails (`cidcff:` "CID: under
+		// a CIDFontType2" in the oracle).
+		{"FontFile3 /CIDFontType0C, no map", false, "CIDFontType0C", Pass},
 	} {
 		pdf := withCIDFontType2(t, c.withMap)
 		if c.ff3 != "" {

@@ -312,20 +312,33 @@ func checkCIDToGIDMap(d *Document) Result {
 		// **The program is `/FontFile2`, or ANY `/FontFile3`** — veraPDF-parser's `PDCIDFont` reads a CIDFontType2's
 		// program from both, whatever the `FontFile3` subtype (`/OpenType`, `/CIDFontType0C`). The review measured
 		// each as a false PASS in turn: veraPDF fails a map-less CIDFontType2 carrying its program there, and nib,
-		// reading FontFile2 only and then OpenType only, passed it. A program nib's TrueType reader cannot open —
-		// a CFF one — is refused below, never "no program".
+		// reading FontFile2 only and then OpenType only, passed it. A CFF one is read by the CFF reader (P07.S05b),
+		// never taken as "no program".
 		//
 		// **And the program is parsed as its SUBTYPE says, not as its bytes suggest**, measured: TrueType bytes under
 		// `/FontFile3 /CIDFontType0C` are PASSED by veraPDF — it reads them as CFF, fails, and has no parsed program
-		// — while nib, opening them as TrueType, failed the clause. So only `/OpenType` goes to nib's sfnt reader;
-		// any other `FontFile3` is a CFF program nib does not parse, and whether veraPDF parses it decides the clause.
+		// — while nib, opening them as TrueType, failed the clause. So only `/OpenType` goes to nib's sfnt reader,
+		// `/CIDFontType0C` to the CFF reader, and whether veraPDF parses it decides the clause.
 		prog, _, err := d.Ctx.DereferenceStreamDict(desc["FontFile2"])
 		if err != nil || prog == nil {
 			if ff3, _, err3 := d.Ctx.DereferenceStreamDict(desc["FontFile3"]); err3 == nil && ff3 != nil {
-				if sub := d.name(ff3.Dict["Subtype"]); sub != "OpenType" {
+				if sub := d.name(ff3.Dict["Subtype"]); sub == "CIDFontType0C" {
+					// P07.S05b: the CFF reader answers whether veraPDF parses it — a program it does not parse passes.
+					switch c, known, why, throws := d.cidCFFOf(f.cidFont); {
+					case throws != "" || !known:
+						if unsure == "" {
+							unsure = fmt.Sprintf("%s: whether veraPDF parses the CIDFont's CFF program is not known — %s", f.where, why+throws)
+						}
+						continue
+					case c == nil:
+						continue
+					}
+					return Result{Verdict: Fail, Where: f.where,
+						Why: "an embedded Type 2 CIDFont has no CIDToGIDMap, so nothing says which glyph each CID draws"}
+				} else if sub != "OpenType" {
 					if unsure == "" {
-						unsure = fmt.Sprintf("%s: the CIDFont's program is a /FontFile3 /%s, a CFF program nib does not parse; "+
-							"veraPDF fails this clause only if IT parses it, so nib cannot say which way it goes", f.where, sub)
+						unsure = fmt.Sprintf("%s: the CIDFont's program is a /FontFile3 /%s, which nib has not measured veraPDF "+
+							"opening, so nib cannot say which way this clause goes", f.where, sub)
 					}
 					continue
 				}

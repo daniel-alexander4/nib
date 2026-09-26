@@ -214,6 +214,8 @@ func (d *Document) simpleFallback(f *glyphFont, code int) (string, uniState, str
 			case sub == "Type1C":
 				c, known, _, throws := d.type1COf(f.dict)
 				switch {
+				case known && throws == "" && c != nil && c.cid:
+					return "", uniNull, "" // `CFFCIDFontProgram.getGlyphName` is null
 				case known && throws == "" && c != nil:
 					name, ok = c.glyphName(code), true
 				case known && throws == "":

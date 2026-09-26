@@ -139,9 +139,9 @@ could not be checked.
 
 **This is a checker, not a certificate.** Nib checks 105 of the 106 rules the reference validator
 evaluates, so a document can pass every clause Nib checks and still fail one it does not. None is measured
-today — veraPDF passes all 132 files of its own PDF/UA-1 test corpus that Nib calls conformant — and the one rule
+today — veraPDF passes all 140 files of its own PDF/UA-1 test corpus that Nib calls conformant — and the one rule
 Nib does not check is one veraPDF has never been seen to fail. Where a glyph or CharSet check needs a font program
-Nib cannot read yet (a Type 1 program, a CID-keyed CFF one) it says "could not check" rather than passing; the
+Nib cannot read yet (a Type 1 program) it says "could not check" rather than passing; the
 embedding check still counts such a program by its presence. Nib's verdicts are tested, not proven, and that is also why Nib never
 writes the PDF/UA identification on the strength of its own report. Nib's answers on the clauses it does check are tested
 against [veraPDF](https://verapdf.org/) on every build; for a conformance verdict, use veraPDF.
