@@ -47,7 +47,9 @@ inside tier 1 and both a SKIP that says so when absent (veraPDF itself is requir
 `PATH`, or `~/verapdf`): veraPDF's own PDF/UA-1 corpus (`NIB_UA_CORPUS`, a sparse
 clone into `~/nib/verapdfs`) and a real-producer corpus (`NIB_UA_PRODUCERS`, default `~/nib/producers`).
 `./build/producers.sh` builds the second from the committed sources in `build/producers/` through every producer this
-machine has — LibreOffice, pdfLaTeX, headless Chromium and Ghostscript — and says which it skipped or which failed.
+machine has — LibreOffice, pdfLaTeX, headless Chromium and Ghostscript — and says which it skipped or which failed;
+`./build/producers-fetch.sh` adds the producers this machine cannot run (Word, Acrobat and three others), fetched from
+U.S. government servers by the SHA-256 manifest `build/producers/sourced.tsv`, refusing any file whose hash differs.
 Neither corpus is committed: third-party documents carry their authors' rights, and the script refuses an output
 directory inside the repository.
 

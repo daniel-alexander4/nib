@@ -3136,7 +3136,7 @@ the live corpus: a removed row reads "not named", a planted row "no longer disag
   (/pending 674 ×6, /pending 694), P08.S04's to work.
 - Tiers 4 and 6 did NOT fire: the slice touched test tooling, sources, a test table and CONTRIBUTING.
 
-#### P08.S03 — the sourced producers
+#### P08.S03 — the sourced producers *(done 2026-09-26, v1.166.4)*
 Scope: Word-exported and Acrobat-produced files for the producers this machine cannot run, pinned by a committed manifest
 of public-domain documents (U.S. federal works, 17 U.S.C. § 105) whose `/Producer` names the producer, and a fetch script
 that verifies each SHA-256 and refuses a mismatch.
@@ -3144,11 +3144,55 @@ Acceptance:
 - Each producer named in the Goal has files in the corpus, or the phase says by name why not.
 - A file whose hash does not match is refused, never scored.
 
-#### P08.S04 — score and disposition
+**(grill, 2026-09-26 — measured)** Word and Acrobat output came from the FDA's own document server (`/media/<id>/download`),
+chosen by reading each file's `/Producer`; the IRS, the Census Bureau and the CDC supplied three producers the plan did not
+name (Adobe Designer 6.5, Antenna House, InDesign/Adobe PDF Library) and they are kept — D7's point is breadth. DOL, SEC,
+GAO, HHS and ED refuse a plain HTTP client (403). CDC refuses a browser-like agent and FDA refuses curl's, so the fetch tries
+both. A file is filed under the program that WROTE it (`/Producer`), not the one its author typed into (`/Creator`).
+- T01 — `build/producers/sourced.tsv`: 16 rows (word 2, acrobat 9, designer 2, antennahouse 1, indesign 2), each pinned by SHA-256.
+- T02 — `build/producers-fetch.sh`: fetch, verify, refuse a mismatch (driven: the row is not written, exit 1), replace each
+  sourced producer's directory whole, refuse an in-repo out-dir.
+**(pin, 2026-09-26: S03 closes WITH S04.)** Scored, the sourced files hold ~455 disagreements, nearly all "veraPDF no
+subject, nib Pass" on structure-element rules over twelve files — one root cause, not 455 defects — and a standing harness
+cannot go green over a corpus holding them unworked. Sequencing is the arc's: the two slices close together.
+
+**Acceptance ledger (S03).**
+- Each producer named in the Goal has files in the corpus — MET: LibreOffice 6, Word 2, Acrobat 9, Ghostscript 10,
+  pdfLaTeX 3 — and four the Goal did not name: Chromium 1, Adobe Designer 2, Antenna House 1, InDesign 2 (36 files).
+- A file whose hash does not match is refused, never scored — MET, driven: a corrupted manifest hash leaves the file
+  unwritten and the script exits 1. After the review, a row this run cannot fetch or refuses KEEPS the corpus's copy when
+  that copy still matches the manifest (driven with an unreachable URL), so an outage or a re-issue never shrinks the corpus.
+
+#### P08.S04 — score and disposition *(done 2026-09-26, v1.166.4)*
 Scope: run the harness over the whole corpus; each disagreement is fixed where nib is wrong (measured on veraPDF, a fixture
 pinned) or filed by name.
 Acceptance:
 - The exit criterion's first half: every rule agrees on the corpus or its disagreement is filed by name.
+
+**(scored, 2026-09-26)** `grills/2026-09-26-p08s03s04-sourced-and-scored.md`. The first score over 36 files was ~455
+disagreements, all "veraPDF no subject, nib Pass", on 14 files — and the cause was **veraPDF's report, not nib**:
+`BaseValidator` keeps ~10,000 assertion results per job (`MAX_CHECKS_NUMBER`, confirmed in 1.30.2's bytecode) and drops the
+assertions of later passes while still counting them, so a rule counted after the cap reads 0/0. Measured on a minimal pair
+differing only in the number of `Tj` operators, and on fda-170357 (208,365 passed in the job total, 9,998 across its
+rules). The oracle now reads a capped 0/0 as "pass or no subject" (`veraUnrecorded` — it agrees with Pass or NotApplicable,
+never Fail, since every failure is still recorded), and a job veraPDF did not finish as no report. **455 → 3**, and no
+checker line changed.
+
+**(review, 2026-09-26)** One diff reviewer; three warnings fixed and driven — the fetch's keep-on-failure above; a named
+row whose file is absent from a narrower corpus is skipped rather than reported as fixed (a partial corpus scored green);
+and an unfinished veraPDF job was scored — it is now no report. The reviewer read veraPDF's bytecode with the JDK's own
+`javap` module and confirmed the cap detection is exact and that a capped 0/0 cannot hide a failure. Red-proof: 4
+mutations on the cap reading and 2 on the fixes, all red.
+
+**Acceptance ledger (S04).**
+- Every rule agrees on the corpus or its disagreement is filed by name — MET: 3,666 of 3,675 pairs settled and agreeing
+  over 36 files; ten named rows — /pending 674 (7.2 t30-t32, LibreOffice untagged, ×6), 694 (7.1 t9, Ghostscript over
+  pdfLaTeX), 695 (7.11 t1, both IRS Designer forms), 696 (an Acrobat file nib cannot open). The veraPDF corpus stays 0/0
+  over 30,920 pairs and the oracle 73,395/73,395.
+- "Fixed where nib is wrong" — NOT DONE in the slice, deliberately: each disagreement is a live checker defect with its own
+  measurement owed (694-696) and they are filed rather than fixed; the exit criterion's first half requires naming. The
+  capped-report strictness loss is /pending 697.
+- Tiers 4 and 6 did NOT fire: test code, test tooling and a manifest only.
 
 #### P08.S05 — "agrees with veraPDF on N rules"
 Scope: N measured by the harness (rules with no disagreement over both corpora), written into the README, `docs/`, and

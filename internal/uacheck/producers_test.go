@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,10 @@ var producerDisagreements = map[string]string{
 	"libreoffice/writer-untagged.pdf / 7.2 t30": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
 	"libreoffice/writer-untagged.pdf / 7.2 t31": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
 	"libreoffice/writer-untagged.pdf / 7.2 t32": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
+	// Measured at P08.S03/S04 over the sourced files (build/producers/sourced.tsv), once the capped-report reading was right.
+	"designer/irs-fw9.pdf / 7.11 t1":            "/pending 695 — nib fails an embedded-file spec with no /F that veraPDF does not fail",
+	"designer/irs-f1040.pdf / 7.11 t1":          "/pending 695 — nib fails an embedded-file spec with no /F that veraPDF does not fail",
+	"acrobat/fda-176439.pdf / open":             "/pending 696 — nib cannot open an Acrobat PDFMaker 25 document veraPDF validates",
 	"ghostscript/pdflatex-article.pdf / 7.1 t9": "/pending 694 — a live false fail: nib fails a missing dc:title that veraPDF passes on Ghostscript's re-distil of pdfLaTeX output; P08.S04",
 }
 
@@ -66,7 +71,7 @@ func producersDir() string {
 // judgeProducers is the harness's whole judgment as a pure function, as `compareToOracle` is the oracle's: every
 // disagreement in cmp or in unopened must be named in known, and every row in known must still disagree. Errors that are
 // not disagreements (a lost job, a clause veraPDF does not list) are passed through: they are never excusable by name.
-func judgeProducers(cmp oracleComparison, unopened map[string]string, known map[string]string) []string {
+func judgeProducers(cmp oracleComparison, unopened map[string]string, known map[string]string, present map[string]bool) []string {
 	var errs []string
 	disagreeing := map[string]bool{}
 	named := func(key, msg string) {
@@ -89,6 +94,11 @@ func judgeProducers(cmp oracleComparison, unopened map[string]string, known map[
 		named(key, msg)
 	}
 	for key := range known {
+		// A row whose FILE is not in this corpus says nothing either way — a narrower corpus (a producer not installed, a
+		// sourced file unavailable) is not a fixed defect, and telling the reader to delete the row would lose it.
+		if !present[strings.SplitN(key, " / ", 2)[0]] {
+			continue
+		}
 		if !disagreeing[key] {
 			errs = append(errs, fmt.Sprintf("producerDisagreements has %q, which no longer disagrees — remove the row", key))
 		}
@@ -146,7 +156,7 @@ func TestTheCheckerAgreesWithVeraPDFOnRealProducers(t *testing.T) {
 		// **A job with no rules is veraPDF not reporting on the file** (it could not parse or validate it), and every
 		// clause would then read as "not listed" — an error no row could name. It is one nameable fact about the file.
 		if vera[i] != nil && len(vera[i]) == 0 {
-			unopened[names[i]+" / veraPDF"] = fmt.Sprintf("%s: veraPDF returned a job with no rules — it did not validate the file", names[i])
+			unopened[names[i]+" / veraPDF"] = fmt.Sprintf("%s: veraPDF returned a job with no rules, or one it did not finish — it did not validate the file", names[i])
 			continue // never scored clause by clause; its empty job is not a lost one, which stays nil and is reported
 		}
 		pdf, err := os.ReadFile(f)
@@ -167,7 +177,11 @@ func TestTheCheckerAgreesWithVeraPDFOnRealProducers(t *testing.T) {
 		reports[i] = &nr
 	}
 	cmp := compareToOracle(names, vera, reports)
-	for _, e := range judgeProducers(cmp, unopened, producerDisagreements) {
+	present := map[string]bool{}
+	for _, n := range names {
+		present[n] = true
+	}
+	for _, e := range judgeProducers(cmp, unopened, producerDisagreements, present) {
 		t.Error(e)
 	}
 
@@ -211,49 +225,99 @@ func TestTheProducerJudgeNamesEveryDisagreement(t *testing.T) {
 		{Results: []Result{{Clause: "7.1 t1", Verdict: Pass}}}, // agrees
 	}
 	cmp := compareToOracle(names, vera, nib)
+	all := map[string]bool{"libreoffice/a.pdf": true, "word/b.pdf": true, "word/c.pdf": true}
 	// The stimulus before the response: the planted input IS a disagreement, and only that one.
 	if len(cmp.disagree) != 1 || cmp.disagree["libreoffice/a.pdf / 7.1 t1"] == "" {
 		t.Fatalf("stimulus: the planted pair should be the one disagreement, got %v", cmp.disagree)
 	}
 
-	if errs := judgeProducers(cmp, nil, map[string]string{}); len(errs) != 1 || !strings.Contains(errs[0], "not named") {
+	if errs := judgeProducers(cmp, nil, map[string]string{}, all); len(errs) != 1 || !strings.Contains(errs[0], "not named") {
 		t.Errorf("an unnamed disagreement: %v, want exactly one \"not named\" error", errs)
 	}
 	named := map[string]string{"libreoffice/a.pdf / 7.1 t1": "/pending 0 — a test row"}
-	if errs := judgeProducers(cmp, nil, named); len(errs) != 0 {
+	if errs := judgeProducers(cmp, nil, named, all); len(errs) != 0 {
 		t.Errorf("a named disagreement: %v, want none", errs)
 	}
 	stale := map[string]string{"libreoffice/a.pdf / 7.1 t1": "x", "word/b.pdf / 7.1 t1": "no longer disagrees"}
-	if errs := judgeProducers(cmp, nil, stale); len(errs) != 1 || !strings.Contains(errs[0], "no longer disagrees") {
+	if errs := judgeProducers(cmp, nil, stale, all); len(errs) != 1 || !strings.Contains(errs[0], "no longer disagrees") {
 		t.Errorf("a stale row: %v, want exactly one stale-row error", errs)
 	}
 	unopened := map[string]string{"word/c.pdf / open": "word/c.pdf: nib cannot open it"}
-	if errs := judgeProducers(cmp, unopened, named); len(errs) != 1 || !strings.Contains(errs[0], "word/c.pdf") {
+	if errs := judgeProducers(cmp, unopened, named, all); len(errs) != 1 || !strings.Contains(errs[0], "word/c.pdf") {
 		t.Errorf("a file nib cannot open, unnamed: %v, want exactly one error naming it", errs)
 	}
 	namedOpen := map[string]string{"libreoffice/a.pdf / 7.1 t1": "x", "word/c.pdf / open": "/pending 0 — a test row"}
-	if errs := judgeProducers(cmp, unopened, namedOpen); len(errs) != 0 {
+	if errs := judgeProducers(cmp, unopened, namedOpen, all); len(errs) != 0 {
 		t.Errorf("a file nib cannot open, named: %v, want none — a named file-level row is neither an error nor stale", errs)
 	}
 	// A clause veraPDF does not list is never excusable by name either.
 	unlisted := compareToOracle(names, []map[string]veraState{{"7.1 t1": veraFailed}, {"7.1 t2": veraPassed}}, nib)
-	if errs := judgeProducers(unlisted, nil, named); len(errs) != 1 || !strings.Contains(errs[0], "does not list") {
+	if errs := judgeProducers(unlisted, nil, named, all); len(errs) != 1 || !strings.Contains(errs[0], "does not list") {
 		t.Errorf("an unlisted clause: %v, want exactly the unlisted-clause error", errs)
 	}
 	// The split is checked: an error the comparison raised that is in neither half is reported, not dropped.
 	leaky := cmp
 	leaky.errors = append(append([]string{}, cmp.errors...), "an error in neither half")
-	if errs := judgeProducers(leaky, nil, named); len(errs) != 1 || !strings.Contains(errs[0], "no longer feeds the split") {
+	if errs := judgeProducers(leaky, nil, named, all); len(errs) != 1 || !strings.Contains(errs[0], "no longer feeds the split") {
 		t.Errorf("an error outside the split: %v, want the split error", errs)
 	}
 	if !refusedWhole(Report{Results: []Result{{Verdict: CannotCheck}, {Verdict: CannotCheck}}}) ||
 		refusedWhole(Report{Results: []Result{{Verdict: CannotCheck}, {Verdict: Pass}}}) || refusedWhole(Report{}) {
 		t.Error("refusedWhole must be true only for a report every clause of which refuses")
 	}
+	// A named row whose file is ABSENT from the corpus is neither stale nor an error: the corpus is narrower, not fixed.
+	absent := map[string]string{"libreoffice/a.pdf / 7.1 t1": "x", "acrobat/gone.pdf / open": "/pending 0 — a file not fetched"}
+	if errs := judgeProducers(cmp, nil, absent, all); len(errs) != 0 {
+		t.Errorf("a named row for an absent file: %v, want none", errs)
+	}
 	// A lost job is never excusable by name, however the table reads.
 	lost := compareToOracle(names, []map[string]veraState{nil, {"7.1 t1": veraPassed}}, nib)
-	if errs := judgeProducers(lost, nil, map[string]string{"libreoffice/a.pdf / 7.1 t1": "x"}); len(errs) != 2 ||
+	if errs := judgeProducers(lost, nil, map[string]string{"libreoffice/a.pdf / 7.1 t1": "x"}, all); len(errs) != 2 ||
 		!strings.Contains(strings.Join(errs, "\n"), "no job") {
 		t.Errorf("a lost job: %v, want the lost-job error and the now-stale row", errs)
+	}
+}
+
+// TestACappedVeraPDFReportIsNotReadAsNoSubject — P08.S04. veraPDF records at most 10,000 passed checks per job and a
+// rule counted after that reads 0 passed / 0 failed; read as "no subject", that made ~450 false disagreements over
+// real producers' files. A report is capped when its job total exceeds the sum across its rules, and only then is 0/0
+// the weaker state — which agrees with a Pass or a NotApplicable and never with a Fail.
+func TestACappedVeraPDFReportIsNotReadAsNoSubject(t *testing.T) {
+	report := func(total int) string {
+		return fmt.Sprintf(`<report><jobs><job><item><name>/x/f.pdf</name></item><validationReport jobEndStatus="normal">`+
+			`<details passedChecks="%d" failedChecks="1">`+
+			`<rule clause="7.1" testNumber="6" status="passed" passedChecks="0" failedChecks="0"/>`+
+			`<rule clause="7.1" testNumber="3" status="passed" passedChecks="9999" failedChecks="0"/>`+
+			`<rule clause="7.3" testNumber="1" status="failed" passedChecks="0" failedChecks="1"/>`+
+			`</details></validationReport></job></jobs></report>`, total)
+	}
+	states := func(total int) map[string]veraState {
+		var rep veraReport
+		if err := xml.Unmarshal([]byte(report(total)), &rep); err != nil {
+			t.Fatal(err)
+		}
+		return veraStates(rep, []string{"f.pdf"})[0]
+	}
+	whole, capped := states(9999), states(208365)
+	// The stimulus: the two reports differ ONLY in the job total, and the uncapped one reads 0/0 as no subject.
+	if whole["7.1 t6"] != veraNoSubject {
+		t.Fatalf("stimulus: an uncapped 0/0 rule reads %q, want no subject", whole["7.1 t6"])
+	}
+	if capped["7.1 t6"] != veraUnrecorded {
+		t.Errorf("a capped 0/0 rule reads %q, want %q", capped["7.1 t6"], veraUnrecorded)
+	}
+	if capped["7.3 t1"] != veraFailed || capped["7.1 t3"] != veraPassed {
+		t.Errorf("a capped report's recorded verdicts must stand: 7.3 t1 %q, 7.1 t3 %q", capped["7.3 t1"], capped["7.1 t3"])
+	}
+	// A job veraPDF did not finish is no report at all, capped or not.
+	var unfinished veraReport
+	if err := xml.Unmarshal([]byte(strings.Replace(report(208365), `jobEndStatus="normal"`, `jobEndStatus="timeout"`, 1)), &unfinished); err != nil {
+		t.Fatal(err)
+	}
+	if st := veraStates(unfinished, []string{"f.pdf"})[0]; st == nil || len(st) != 0 {
+		t.Errorf("an unfinished job reads %v, want an empty (non-nil) map — no report, not a lost job", st)
+	}
+	if !veraUnrecorded.agrees(Pass) || !veraUnrecorded.agrees(NotApplicable) || veraUnrecorded.agrees(Fail) {
+		t.Error("an unrecorded rule must agree with Pass and NotApplicable and disagree with Fail — a failure is always recorded")
 	}
 }

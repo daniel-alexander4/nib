@@ -455,6 +455,14 @@ const (
 	veraFailed    veraState = "failed"
 	veraPassed    veraState = "passed"
 	veraNoSubject veraState = "no subject"
+	// veraUnrecorded is a rule reading 0 passed / 0 failed in a report veraPDF CAPPED. `BaseValidator` keeps at most
+	// ~10,000 assertion results per job (`MAX_CHECKS_NUMBER`, `sipush 10000` twice in 1.30.2's class) and drops the
+	// assertions of later passes, while it still COUNTS them into the job total and still records the first failure of
+	// every rule and the full failure count — so a rule's `passedChecks` can read 0 after the cap while its failures
+	// cannot be lost. 0/0 there is "no failure" — a pass or no subject — never "no subject" (measured at P08.S04: one
+	// real 45-page document reports 208,365 passed checks in its job total and 9,998 across its rules). A job is capped
+	// exactly when its total exceeds that sum, which is why no threshold constant appears here.
+	veraUnrecorded veraState = "passed or no subject (report capped)"
 )
 
 // agrees is the strict three-state mapping, with CannotCheck permitted against any state.
@@ -465,9 +473,9 @@ func (v veraState) agrees(nib Verdict) bool {
 	case Fail:
 		return v == veraFailed
 	case Pass:
-		return v == veraPassed
+		return v == veraPassed || v == veraUnrecorded
 	case NotApplicable:
-		return v == veraNoSubject
+		return v == veraNoSubject || v == veraUnrecorded
 	}
 	return false
 }
@@ -478,14 +486,17 @@ type veraReport struct {
 			Name string `xml:"name"`
 		} `xml:"item"`
 		Report struct {
-			Status string `xml:"jobEndStatus,attr"`
-			Rules  []struct {
-				Clause string `xml:"clause,attr"`
-				Test   string `xml:"testNumber,attr"`
-				Status string `xml:"status,attr"`
+			Status  string `xml:"jobEndStatus,attr"`
+			Details struct {
 				Passed string `xml:"passedChecks,attr"`
-				Failed string `xml:"failedChecks,attr"`
-			} `xml:"details>rule"`
+				Rules  []struct {
+					Clause string `xml:"clause,attr"`
+					Test   string `xml:"testNumber,attr"`
+					Status string `xml:"status,attr"`
+					Passed string `xml:"passedChecks,attr"`
+					Failed string `xml:"failedChecks,attr"`
+				} `xml:"rule"`
+			} `xml:"details"`
 		} `xml:"validationReport"`
 	} `xml:"jobs>job"`
 }
@@ -772,13 +783,30 @@ func veraStates(rep veraReport, files []string) []map[string]veraState {
 			continue
 		}
 		m := map[string]veraState{}
-		for _, r := range j.Report.Rules {
+		// **A job veraPDF did not finish is no report**: its unevaluated rules read 0/0 or a partial count, and against a
+		// nib Pass either scores as agreement over a failure veraPDF never reached. An empty map is how every caller
+		// already treats "veraPDF did not validate this file" — loudly (every clause unlisted) or as one named fact.
+		if j.Report.Status != "" && j.Report.Status != "normal" {
+			out[i] = m
+			continue
+		}
+		// A report is capped when its job total of passed checks exceeds the sum its rules record (see veraUnrecorded).
+		sum := 0
+		for _, r := range j.Report.Details.Rules {
+			pc, _ := strconv.Atoi(r.Passed)
+			sum += pc
+		}
+		total, _ := strconv.Atoi(j.Report.Details.Passed)
+		capped := total > sum
+		for _, r := range j.Report.Details.Rules {
 			pc, _ := strconv.Atoi(r.Passed)
 			fc, _ := strconv.Atoi(r.Failed)
 			s := veraPassed
 			switch {
 			case r.Status == "failed" || fc > 0:
 				s = veraFailed
+			case pc == 0 && fc == 0 && capped:
+				s = veraUnrecorded
 			case pc == 0 && fc == 0:
 				s = veraNoSubject
 			}

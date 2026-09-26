@@ -87,7 +87,7 @@ func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
 		if j.Report.Status != "normal" {
 			t.Errorf("veraPDF did not finish %s (jobEndStatus %q), so whether it fails that file is unchecked", j.Item.Name, j.Report.Status)
 		}
-		for _, r := range j.Report.Rules {
+		for _, r := range j.Report.Details.Rules {
 			if r.Status == "failed" {
 				t.Errorf("nib calls %s conformant and veraPDF fails %s t%s — a counterexample the docs must cite (or a false "+
 					"pass, if nib implements that clause)", j.Item.Name, r.Clause, r.Test)

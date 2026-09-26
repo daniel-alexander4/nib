@@ -45,11 +45,11 @@ func veraAsk(t *testing.T, docs [][]byte) []map[string]string {
 				continue
 			}
 			seen++
-			if len(j.Report.Rules) == 0 {
+			if len(j.Report.Details.Rules) == 0 {
 				continue // no report
 			}
 			res[i] = map[string]string{}
-			for _, r := range j.Report.Rules {
+			for _, r := range j.Report.Details.Rules {
 				st := r.Status
 				if st == "passed" && r.Passed == "0" && r.Failed == "0" {
 					st = "none"
