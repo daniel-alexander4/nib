@@ -1,0 +1,22 @@
+# P08.S03's sourced producers: documents this machine cannot produce, pinned by SHA-256 and fetched by
+# build/producers-fetch.sh into <corpus>/<producer>/<name>.pdf. Every one is a work of the United States government,
+# public domain under 17 U.S.C. § 105 as works of federal agencies (not verified per document for contractor content);
+# only this manifest is committed, never the files. The producer directory is the program that WROTE the bytes (the
+# /Producer; the /Creator only where there is no /Producer), not the one the author typed into. Measured 2026-09-26.
+# producer	name	sha256	url	/Creator → /Producer
+word	fda-82395	06a64f30e22a3cf02534defcc29e9c605ea6c9404e20b84cca618e2b8ee93d29	https://www.fda.gov/media/82395/download	Microsoft® Word 2010 → Microsoft® Word 2010
+word	fda-166703	2f402f46678ef12171b90ec0c9f4db79a1e4bce29d044a97fe29a3b699c4d487	https://www.fda.gov/media/166703/download	Microsoft Word → (none)
+acrobat	fda-71021	821788a1127a9215670e60a7010e35bf2eafb408cf346e74440fb73a01869792	https://www.fda.gov/media/71021/download	Acrobat PDFMaker 8.1 for Word → Acrobat Distiller 8.2.5 (Windows)
+acrobat	fda-83122	c0af38e4f6807c0abc71d4a5af803195f4516ffa6699f871bb0241d2afde4864	https://www.fda.gov/media/83122/download	Acrobat PDFMaker 8.1 for Word → Acrobat Distiller 8.1.0 (Windows)
+acrobat	fda-99140	92e72a3811da541e079cf16b86aaa91e0009073b3cb5be426b439e63919fbd11	https://www.fda.gov/media/99140/download	Acrobat PDFMaker 15 for Word → Adobe PDF Library 15.0
+acrobat	fda-112558	d69e15ef4a417bad30d3be91e3a2cd10c171a922ca68fa7cc5a4e2309feb816e	https://www.fda.gov/media/112558/download	PScript5.dll Version 5.2.2 → Acrobat Distiller 11.0 (Windows)
+acrobat	fda-135045	420387d4a9ea4eb2e3e65db76f4eb49f8950f4b99fa32646e5cf67cbfdb92979	https://www.fda.gov/media/135045/download	Writer → Adobe Acrobat Pro 2017 17 Paper Capture Plug-in
+acrobat	fda-156618	9fac574f1d9ca7534fe71934f53f43b86fdd6c058ffe7dbc43ee28c95549c2de	https://www.fda.gov/media/156618/download	Aspose Ltd. → Acrobat Distiller 24.0 (Windows)
+acrobat	fda-161471	49bbe724f0034aa526207ae1afe428b432ad01d888150e3dfca2372548600141	https://www.fda.gov/media/161471/download	Acrobat PDFMaker 22 for Word → Adobe PDF Library 22.2.223
+acrobat	fda-170357	aac4335d9c0ab49d3cb32a4d77b04d30a75e79ed841ce193c3ac716aef3e09f7	https://www.fda.gov/media/170357/download	(none) → Adobe Acrobat Pro (64-bit) 23 Paper Capture Plug-in
+acrobat	fda-176439	a04add27c4e218e1b466ae22d5f7fcc322485b80af45c7da10a21f5b13121882	https://www.fda.gov/media/176439/download	Acrobat PDFMaker 25 for Word → Adobe PDF Library 25.1.51
+designer	irs-fw9	2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53	https://www.irs.gov/pub/irs-pdf/fw9.pdf	Designer 6.5 → Designer 6.5
+designer	irs-f1040	3d31c226df0d189ced80e039d01cf0f8820c1019681a0f0ca6264de277b7e982	https://www.irs.gov/pub/irs-pdf/f1040.pdf	Designer 6.5 → Designer 6.5
+antennahouse	irs-p15	b46c3622439d8521e3a0faca4cd5b5ece3451b526f65f06a5e38d5c9f804c88b	https://www.irs.gov/pub/irs-pdf/p15.pdf	AH XSL Formatter V6.6 → Antenna House PDF Output Library 6.6.1437, modified using iText 2.1.7
+indesign	census-p60-280	6c5d9798c31150da219cbb3cf35d478cb246e1d874eaf05f0b511336fb3b4537	https://www.census.gov/content/dam/Census/library/publications/2023/demo/p60-280.pdf	Adobe InDesign 18.2 (Windows) → Adobe PDF Library 17.0
+indesign	cdc-mm7201-H	237dbfe746ee0414fd771f5b0fd50c1fb5912f825f60d7175551232fd90e1948	https://www.cdc.gov/mmwr/volumes/72/wr/pdfs/mm7201-H.pdf	Adobe InDesign 18.1 (Windows) → Adobe PDF Library 17.0

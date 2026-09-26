@@ -347,8 +347,8 @@ func TestADocumentVeraPDFReportsNothingOnRefusesEveryClause(t *testing.T) {
 		for i, f := range files {
 			if filepath.Base(j.Item.Name) == filepath.Base(f) {
 				seen++
-				if len(j.Report.Rules) != 0 || j.Report.Status != "" {
-					t.Errorf("%s: veraPDF now reports on it (%d rules) — nib refuses a document veraPDF judges", fixtures[i].name, len(j.Report.Rules))
+				if len(j.Report.Details.Rules) != 0 || j.Report.Status != "" {
+					t.Errorf("%s: veraPDF now reports on it (%d rules) — nib refuses a document veraPDF judges", fixtures[i].name, len(j.Report.Details.Rules))
 				}
 			}
 		}
