@@ -16,89 +16,19 @@ import (
 // answering `CannotCheck` for every such file would leave the report unable to settle a question that
 // is in fact decidable.
 //
-// # What "present in the font program" means, MEASURED rather than read
+// # What "present in the font program" means — MEASURED, and read the way veraPDF reads it
 //
-// pdfcpu subsets a TrueType face by keeping every glyph SLOT and emptying the glyphs it did not use:
-// on one authored page the program reported `maxp.numGlyphs` 3359 with only 8 non-empty `loca`
-// intervals. The clause could mean either population, so both were written into the `/CIDSet` and
-// handed to veraPDF: a set of the 8 non-empty glyphs FAILS 7.21.4.2 t2, and a set of all 3359 slots
-// PASSES. **So the population is `numGlyphs`**, and the rule needs only `maxp` — not `glyf`/`loca`,
-// which P04.S02's comment named as the cost of computing a correct set.
+// pdfcpu subsets a TrueType face by keeping every glyph SLOT and emptying the glyphs it did not use: on one authored
+// page the program reported `maxp.numGlyphs` 3359 with only 8 non-empty `loca` intervals. A set of the 8 non-empty
+// glyphs FAILS 7.21.4.2 t2 and a set of all 3359 slots PASSES, so the population is glyph SLOTS, not glyphs drawn.
 //
-// pdfcpu's own TrueType reader (`pkg/font/install.go`) is unexported, so this is the minimum a
-// checker needs: the table directory and one field of `maxp`.
-//
-// **It is not `readTrueType` below, deliberately, and the two read one directory by different rules**: this one is
-// strict (it refuses `OTTO` and `ttcf`, and takes the FIRST `maxp`) because 7.21.4.2 t2 reads a CIDFontType2 program,
-// which veraPDF opens through `CIDFontType2Program`, not `TrueTypeFontParser`; `readTrueType` is the latter, line for
-// line. P07.S04 builds the CIDFontType2 reader, and that is where the two meet or are declared apart.
-
-// trueTypeGlyphCount returns `maxp.numGlyphs` from a TrueType font program.
-//
-// It refuses anything it cannot vouch for rather than guessing: a collection (`ttcf`), a CFF-flavoured
-// OpenType (`OTTO`), a truncated directory, or a `maxp` too short to hold the field. Each refusal
-// becomes `CannotCheck` in the rule, because nib failing to read a program is not the program being
-// wrong.
-func trueTypeGlyphCount(prog []byte) (int, error) {
-	if len(prog) < 12 {
-		return 0, fmt.Errorf("the font program is %d bytes, too short for a table directory", len(prog))
-	}
-	switch tag := string(prog[0:4]); tag {
-	case "\x00\x01\x00\x00", "true":
-	case "OTTO":
-		return 0, fmt.Errorf("the font program is CFF-flavoured OpenType, whose glyph set nib does not read")
-	case "ttcf":
-		return 0, fmt.Errorf("the font program is a TrueType collection, which nib does not read")
-	default:
-		return 0, fmt.Errorf("the font program has an unrecognised signature %q", tag)
-	}
-	tables := int(binary.BigEndian.Uint16(prog[4:6]))
-	for i := 0; i < tables; i++ {
-		rec := 12 + i*16
-		if rec+16 > len(prog) {
-			return 0, fmt.Errorf("the table directory is truncated at record %d of %d", i, tables)
-		}
-		if string(prog[rec:rec+4]) != "maxp" {
-			continue
-		}
-		off := int(binary.BigEndian.Uint32(prog[rec+8:]))
-		length := int(binary.BigEndian.Uint32(prog[rec+12:]))
-		if off < 0 || length < 6 || off+length > len(prog) {
-			return 0, fmt.Errorf("the maxp table lies outside the font program or is too short")
-		}
-		return int(binary.BigEndian.Uint16(prog[off+4 : off+6])), nil
-	}
-	return 0, fmt.Errorf("the font program has no maxp table")
-}
-
-// cidSetExact reports whether set identifies exactly the CIDs in [0, n): every one of them present,
-// and no bit set at or beyond n. It returns the first CID missing, and the first CID claimed that the
-// program does not hold, or -1 for either.
-//
-// **Both directions are the clause, measured.** A set covering every glyph slot and nothing more
-// PASSES veraPDF; the same set with the unused bits of its last byte turned on FAILS, and so does one
-// with an extra byte of set bits. A set claiming glyphs the program does not have misidentifies the
-// CIDs exactly as one omitting glyphs does — and the first version of this function checked only
-// coverage, which the law 5 check at S04's close caught as a disagreement.
-//
-// Bit order is PDF's: the high-order bit of the first byte is CID 0 (ISO 32000-1 §9.8.3). Zero bytes
-// past the end are not a claim and are not refused.
-func cidSetExact(set []byte, n int) (ok bool, missing, extra int) {
-	missing, extra = -1, -1
-	for cid := 0; cid < len(set)*8; cid++ {
-		on := set[cid/8]&(0x80>>uint(cid%8)) != 0
-		switch {
-		case cid < n && !on && missing < 0:
-			missing = cid
-		case cid >= n && on && extra < 0:
-			extra = cid
-		}
-	}
-	if len(set)*8 < n && missing < 0 {
-		missing = len(set) * 8
-	}
-	return missing < 0 && extra < 0, missing, extra
-}
+// **Which slots is veraPDF's `CIDFontType2Program`, and it reads two counts, neither of them the first `maxp`**
+// (measured at the P07 phase close, R1-2): the CIDs the set must list are `getCIDList` — under an identity map every
+// CID below the `hhea` numberOfHMetrics (the `hmtx` advances), under a /CIDToGIDMap stream every CID the map holds whose
+// glyph is below `maxp.numGlyphs` — and the CIDs it may list are `containsCID`, a glyph below `maxp.numGlyphs`, where a
+// later duplicate `maxp` replaces an earlier one. CID 0 is skipped both ways. Both counts are `readTrueType`'s, the one
+// reader of a TrueType program (ADR-009): a strict first-`maxp` reader stood beside it here until that review measured
+// it passing a set veraPDF fails (`trueTypeCIDSetResult`).
 
 // # Opening a program the way veraPDF opens it — `PLAN-ua-coverage.md` P07.S03
 //
@@ -487,6 +417,28 @@ func (r *ttReader) readPost(off, length int64, numGlyphs int) map[string]int {
 		}
 	}
 	return names
+}
+
+// openTypeHasCFFTable is `OpenTypeFontProgram.getCFFTable`'s search, which is how veraPDF opens a /FontFile3 /OpenType
+// program under a Type 1 font or a CIDFontType0 (`isCFF`): skip 4 bytes, read the table count, skip 6, then read that
+// many 16-byte records and take the first tagged "CFF ". A read past the end is Java's -1 masked to 0xFF, so a record
+// the program cuts short can never carry the tag, and a program with no such record throws — caught where the program
+// is built, so veraPDF has no program and 7.21.4.1 t1 FAILS (measured on junk, a two-byte program, and a TrueType
+// program under that subtype: the P07 phase close, R2-1).
+func openTypeHasCFFTable(b []byte) bool {
+	at := func(i int) byte {
+		if i < len(b) {
+			return b[i]
+		}
+		return 0xFF
+	}
+	n := int(at(4))<<8 | int(at(5))
+	for i := 0; i < n && 12+16*i+4 <= len(b); i++ {
+		if string(b[12+16*i:12+16*i+4]) == "CFF " {
+			return true
+		}
+	}
+	return false
 }
 
 // latin1 is `new String(bytes, ISO_8859_1)`.

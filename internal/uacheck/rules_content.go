@@ -56,10 +56,15 @@ func checkMarkInfo(d *Document) Result {
 // and a checker saying only "7.1 t3 fails" reproduces the problem it exists to solve. So the result
 // names the first uncovered operator by page, stream and position, and says how many more there are.
 func checkContentTaggedOrArtifact(d *Document) Result {
+	// **A walk that stopped is answered FIRST here, deliberately unlike 7.2 t34 and the marked-content rules.**
+	// This clause is the package's instrument for the content budgets (`bounds_test.go` reads each budget's
+	// refusal through it, over untagged drawing), so it keeps the stop's reason; a refusal is always permitted.
+	// A subject whose coverage nib could not settle is held (`heldRefusal`) like every other rule's.
 	events, errWhy := d.contentEvents()
 	if errWhy != "" {
 		return Result{Verdict: CannotCheck, Why: errWhy}
 	}
+	var held heldRefusal
 	var first *contentEvent
 	uncovered, pageEvents := 0, 0
 	for i := range events {
@@ -75,7 +80,8 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 		// here and veraPDF fails both — two measured false passes. A coverage nib could not settle is
 		// CannotCheck for the document, never a Pass over the operator it could not place.
 		if events[i].coverUnread != "" {
-			return Result{Verdict: CannotCheck, Why: events[i].coverUnread, Where: events[i].where}
+			held.hold(events[i].coverUnread, events[i].where)
+			continue
 		}
 		if !events[i].covered {
 			uncovered++
@@ -84,20 +90,23 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 			}
 		}
 	}
+	if first != nil {
+		why := "content is neither inside an /Artifact sequence nor inside a marked-content sequence with an MCID"
+		if uncovered > 1 {
+			why = fmt.Sprintf("%s — %d drawing operator(s) of %d, the first located here", why, uncovered, pageEvents)
+		}
+		return Result{Verdict: Fail, Why: why, Where: first.where}
+	}
+	if r, ok := held.result(); ok {
+		return r
+	}
 	if pageEvents == 0 {
 		return Result{
 			Verdict: NotApplicable,
 			Why:     "no page draws anything, so there is no content to be tagged or artifacted",
 		}
 	}
-	if first == nil {
-		return Result{Verdict: Pass}
-	}
-	why := "content is neither inside an /Artifact sequence nor inside a marked-content sequence with an MCID"
-	if uncovered > 1 {
-		why = fmt.Sprintf("%s — %d drawing operator(s) of %d, the first located here", why, uncovered, pageEvents)
-	}
-	return Result{Verdict: Fail, Why: why, Where: first.where}
+	return Result{Verdict: Pass}
 }
 
 // checkWidgetsInFormElements evaluates ua1 7.18.4 t1 — in the direction veraPDF reads it.
@@ -122,6 +131,7 @@ func checkContentTaggedOrArtifact(d *Document) Result {
 // gone and the population is the shared door's.
 func checkWidgetsInFormElements(d *Document) Result {
 	subjects, missed := d.annots()
+	var held heldRefusal // a definite failure beats a refusal
 	widgets := 0
 	for _, a := range subjects {
 		if a.subtype(d) != "Widget" {
@@ -140,7 +150,8 @@ func checkWidgetsInFormElements(d *Document) Result {
 		where := strings.Replace(a.where, "annotation", "widget annotation", 1)
 		elem, sp, has, unread := d.annotElement(a)
 		if unread != "" {
-			return Result{Verdict: CannotCheck, Why: unread, Where: where}
+			held.hold(unread, where)
+			continue
 		}
 		if !has {
 			return Result{
@@ -161,7 +172,8 @@ func checkWidgetsInFormElements(d *Document) Result {
 			// The element may well be a Form; nib could not follow the role map to find out. `where`, not
 			// `a.where`: this was the one branch of the clause that printed the door's "annotation"
 			// spelling, so the locator changed word depending on why the clause answered (P05 phase close).
-			return Result{Verdict: CannotCheck, Why: untyped, Where: where}
+			held.hold(untyped, where)
+			continue
 		}
 		if ty != "Form" {
 			return Result{
@@ -170,6 +182,9 @@ func checkWidgetsInFormElements(d *Document) Result {
 				Where:   where,
 			}
 		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if missed != "" {
 		return Result{Verdict: CannotCheck, Why: missed}

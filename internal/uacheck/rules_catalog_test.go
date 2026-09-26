@@ -780,6 +780,17 @@ func TestTheIdentificationPartIsAnIntegerOverTheWholeText(t *testing.T) {
 		{"\n  <rdf:Description>\n    <rdf:value>1</rdf:value>\n  </rdf:Description>\n", Pass, "pretty-printed: the indentation is not the value (R1 re-review)"},
 		{"<rdf:Description><rdf:value>1</rdf:value><xmp:q xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">2</xmp:q></rdf:Description>", Pass, "and another qualifier is not part of it"},
 		{`<rdf:Description rdf:value="1"/>`, Pass, "rdf:value written as an attribute (R1 round 3)"},
+		// **Java's digits, not ASCII's** (the P07 phase-close review, R4-9). `Integer.valueOf` reads any Unicode
+		// decimal digit, one UTF-16 unit at a time; `strconv.Atoi` read ASCII only, and failed all six of these.
+		{"١", Pass, "an Arabic-Indic one"},
+		{"۱", Pass, "an Extended Arabic-Indic one"},
+		{"१", Pass, "a Devanagari one"},
+		{"１", Pass, "a fullwidth one"},
+		{"٠١", Pass, "a leading Arabic-Indic zero"},
+		{"0١", Pass, "digits of two scripts in one number"},
+		{"+١", Pass, "a sign before a non-ASCII digit"},
+		{"٢", Fail, "an Arabic-Indic two is 2"},
+		{"\U0001D7CF", Fail, "a digit outside the BMP is a surrogate pair to Java, and a surrogate is no digit"},
 	} {
 		if got := verdictOf(t, withUAPart(t, mdt, c.part), "5 t2"); got.Verdict != c.want {
 			t.Errorf("pdfuaid:part %q reports %v (%s), want %v — %s (measured on veraPDF)", c.part, got.Verdict, got.Why, c.want, c.why)

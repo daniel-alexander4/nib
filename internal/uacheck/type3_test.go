@@ -166,6 +166,12 @@ func type3AndCMapFixtures() []measuredFixture {
 		{name: "CMap: a list count past a long opens nothing", vera: "FFF", pdf: cidCMapDoc(cidCMap("", "99999999999999999999 begincidchar 1 begincidchar <0021> 5 endcidchar"), wBy, c21, std, nil)},
 		{name: "CMap: a one-byte codespace", vera: "PPP", pdf: cidCMapDoc(spStream("/Type /CMap /CMapName /P1 /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>",
 			"begincmap 1 begincodespacerange <00> <FF> endcodespacerange 1 begincidrange <20> <7E> 1 endcidrange endcmap"), "/DW 900 /W [34 [500]] /CIDToGIDMap /Identity", show("(A) Tj"), std, nil)},
+		// The P07 phase-close review, R3-7: bytes no range admits under a CMap whose shortest range is ONE byte are each
+		// skipped as code 0. nib merged the chain into an empty codespace, lost that length, and refused the string.
+		{name: "CMap: bytes no range admits read as code 0, CID 0", vera: "PPF", pdf: cidCMapDoc(spStream("/Type /CMap /CMapName /P2 /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>",
+			"begincmap 2 begincodespacerange <00> <3F> <8000> <FFFF> endcodespacerange 1 begincidrange <00> <3F> 0 endcidrange endcmap"), "/DW 500 /CIDToGIDMap /Identity", show("<5041> Tj"), std, nil)},
+		{name: "CMap: bytes no range admits read as code 0, CID 5", vera: "PPP", pdf: cidCMapDoc(spStream("/Type /CMap /CMapName /P2 /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>",
+			"begincmap 2 begincodespacerange <00> <3F> <8000> <FFFF> endcodespacerange 1 begincidrange <00> <3F> 5 endcidrange endcmap"), "/DW 900 /W [5 [500]] /CIDToGIDMap /Identity", show("<5041> Tj"), std, nil)},
 	}
 }
 

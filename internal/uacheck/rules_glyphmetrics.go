@@ -1,8 +1,11 @@
 package uacheck
 
 import (
+	"container/heap"
 	"fmt"
 	"math"
+	"slices"
+	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -111,8 +114,17 @@ func (d *Document) metricsOf(g glyph) glyphMetrics {
 		return glyphMetrics{known: true, valid: true, present: g.code == 0 || c.containsCID(cid),
 			program: c.withCheck(c.gid(cid)), dictionary: dw}
 	default:
-		return glyphMetrics{why: fmt.Sprintf("a font of subtype %q is not one nib reads", st)}
+		return glyphMetrics{why: unreadSubtype(st)}
 	}
+}
+
+// unreadSubtype is the one answer the font clauses give a font whose /Subtype is none of the five `FontFactory`
+// builds — 7.21.8 t1 passed it, 7.21.4.1 t1 failed it and the metric clauses refused it (R2-9). veraPDF builds no font
+// and no glyph for one, so it has no subject in any of them (measured on /Foo and on a missing /Subtype, all seven font
+// clauses); nib meets one only where pdfcpu let it through — which it does not, measured, so a refusal is the answer
+// that cannot be wrong.
+func unreadSubtype(st string) string {
+	return fmt.Sprintf("a font of subtype %q is not one veraPDF builds, so it has no subject here, which nib cannot agree with", st)
 }
 
 // simpleDictWidth is `PDFont.getWidth` as `GFGlyph` reads it — **declared apart from `pdfops/fontwidth.go`** (ADR-009's
@@ -127,8 +139,11 @@ func (d *Document) simpleDictWidth(font types.Dict, code int) (float64, bool, st
 	if hasW && hasF && hasL {
 		first, okF := d.javaInt(font["FirstChar"])
 		last, okL := d.javaInt(font["LastChar"])
+		if d.intKeyNull(font["FirstChar"]) || d.intKeyNull(font["LastChar"]) {
+			return 0, false, firstLastThrows // the door's (`widthsThrow`): veraPDF reports nothing on the document
+		}
 		if !okF || !okL {
-			return 0, false, "its /FirstChar or /LastChar is not a number, where veraPDF throws an exception it does not handle"
+			return 0, false, "its /FirstChar or /LastChar is a string, which veraPDF reads as a number nib does not model"
 		}
 		if arr, ok := d.resolve(font["Widths"]).(types.Array); ok && len(arr) > 0 && code >= first && code <= last {
 			if i := code - first; i < len(arr) {
@@ -463,7 +478,7 @@ func (d *Document) glyphName(g glyph) (string, bool, string) {
 		return ".notdef", true, ""
 	case "TrueType", "Type1", "MMType1", "Type3":
 	default:
-		return "", true, ""
+		return "", false, unreadSubtype(d.name(font["Subtype"]))
 	}
 	tt := d.name(font["Subtype"]) == "TrueType"
 	var f *ttFont
@@ -527,17 +542,13 @@ func (f *ttFont) secondObjectUnknown() bool {
 // `CFFFontProgram` does.
 type cidFontRead struct {
 	ttGlyphProgram
-	cff      *cffProgram // the CFF program, when that is what the descendant carries; ttGlyphProgram is then unused
-	w        cidWidths
-	dw       float64
-	wOK      bool
-	wWhy     string
-	cid      types.Dict
-	cmap     fontcode.CIDChain // the Type 0 font's CMap chain, code to CID
-	cids     map[int]int       // each code's CID, asked of the CMap once per font
-	held     map[int]bool      // whether the CMap held each code (`CMap.containsCode`)
-	identity bool              // the CIDToGIDMap is the identity: anything but a stream (`CIDToGIDMapping`'s default)
-	cidToGID []int             // otherwise the stream's big-endian pairs, an odd last byte shifted high
+	cff    *cffProgram    // the CFF program, when that is what the descendant carries; ttGlyphProgram is then unused
+	w      *cidWidthTable // the DESCENDANT's /W and /DW, shared by every Type 0 font over it
+	cid    types.Dict
+	cmap   fontcode.CIDChain // the Type 0 font's CMap chain, code to CID
+	cids   map[int]int       // each code's CID, asked of the CMap once per font
+	held   map[int]bool      // whether the CMap held each code (`CMap.containsCode`)
+	gidMap *cidGIDMap        // the /CIDToGIDMap stream; nil is the identity — anything but a stream (`CIDToGIDMapping`'s default)
 }
 
 // maxCIDAsks bounds what a document's embedded CMaps may cost, entries parsed plus mappings asked: a lookup is a walk,
@@ -582,13 +593,10 @@ func (d *Document) toCID(c *cidFontRead, code int) (int, string) {
 // gid is `CIDToGIDMapping.getGID` of a CID toCID has answered (never negative: veraPDF throws on one, and toCID
 // refuses it before any caller gets here).
 func (c *cidFontRead) gid(cid int) int {
-	if c.identity {
+	if c.gidMap == nil {
 		return cid
 	}
-	if cid >= 0 && cid < len(c.cidToGID) {
-		return c.cidToGID[cid]
-	}
-	return 0
+	return c.gidMap.gid(cid)
 }
 
 // present is `PDCIDFont.glyphIsPresent` for a code toCID mapped to `cid`. A CID-keyed CFF program holds a code the CMap
@@ -634,7 +642,7 @@ func (d *Document) cidCFFMetrics(g glyph, c *cidFontRead, cid int, dw float64) g
 	}
 	program := float64(w)
 	if w == -1 {
-		program = c.dw
+		program = c.w.dw
 	}
 	return glyphMetrics{known: true, valid: true, present: g.code == 0 || c.present(g.code, cid), program: program, dictionary: dw}
 }
@@ -642,10 +650,21 @@ func (d *Document) cidCFFMetrics(g glyph, c *cidFontRead, cid int, dw float64) g
 // containsCID is `CIDFontType2Program.containsCode` for the code toCID mapped: not CID 0 (which an unheld code also
 // is), within the CIDToGIDMap, and a glyph below the program's count.
 func (c *cidFontRead) containsCID(cid int) bool {
-	if cid == 0 || (!c.identity && cid >= len(c.cidToGID)) {
+	return cidType2Contains(c.gidMap, c.p, cid)
+}
+
+// cidType2Contains is `CIDFontType2Program.containsCID`, the ONE reading of it — the glyph clauses and 7.21.4.2 t2's
+// over-claim both ask it: not CID 0, a CID the map holds (every CID, under the identity), and a glyph below the
+// program's `maxp.numGlyphs` (the LAST `maxp`, else the advance count — `readTrueType`).
+func cidType2Contains(m *cidGIDMap, p trueTypeProgram, cid int) bool {
+	if cid == 0 || (m != nil && cid >= m.size()) {
 		return false
 	}
-	return c.gid(cid) < c.p.numGlyphs
+	gid := cid
+	if m != nil {
+		gid = m.gid(cid)
+	}
+	return gid < p.numGlyphs
 }
 
 // cidFontOf reads a Type 0 font's program — a CIDFontType2's TrueType one, or a CIDFontType0C CFF one: nil and known
@@ -705,7 +724,12 @@ func (d *Document) readCIDFont(font types.Dict) (*cidFontRead, bool, string) {
 		}
 		c = &cidFontRead{cff: prog}
 	case sd == nil:
-		return nil, false, fmt.Sprintf("its embedded program is %s under a %s, which nib does not read", kind, d.name(cid["Subtype"]))
+		// An OpenType program under a CIDFontType0: veraPDF reads its "CFF " table and, with none, has no program — the
+		// metrics stay null and pass (measured, R2-1). One that has the table is a program nib does not read.
+		if st, why := d.cidProgramParsed(cid); st != ttFailed {
+			return nil, false, why
+		}
+		return nil, true, ""
 	default:
 		// The program first: a font veraPDF did not parse leaves every metric null and passes, whatever its CMap says.
 		prog := d.parseProgramStream(sd)
@@ -721,25 +745,69 @@ func (d *Document) readCIDFont(font types.Dict) (*cidFontRead, bool, string) {
 	if why != "" {
 		return nil, false, why
 	}
-	c.cid, c.cmap, c.identity = cid, cmap, true
-	c.w, c.dw, c.wOK, c.wWhy = d.parseCIDW(cid)
-	if m, ok := cid["CIDToGIDMap"]; ok && c.cff == nil {
-		if ms, _, err := d.Ctx.DereferenceStreamDict(m); err == nil && ms != nil {
-			if ms.Decode() != nil {
-				return nil, false, "its /CIDToGIDMap stream could not be decoded"
-			}
-			c.identity = false
-			b := ms.Content
-			for i := 0; i < len(b); i += 2 {
-				v := int(b[i]) << 8
-				if i+1 < len(b) {
-					v += int(b[i+1])
-				}
-				c.cidToGID = append(c.cidToGID, v)
-			}
+	c.cid, c.cmap = cid, cmap
+	c.w = d.cidWidthsOf(cid)
+	if c.cff == nil {
+		m, why := d.cidGIDMapOf(cid)
+		if why != "" {
+			return nil, false, why
 		}
+		c.gidMap = m
 	}
 	return c, true, ""
+}
+
+// cidGIDMap is a /CIDToGIDMap stream as `CIDToGIDMapping.readMapping` reads it — big-endian pairs, an odd last byte
+// shifted high — kept as the decoded bytes, not widened into a slice of ints four times their size (R2-3).
+type cidGIDMap struct{ b []byte }
+
+// size is `getMappingSize`.
+func (m *cidGIDMap) size() int { return (len(m.b) + 1) / 2 }
+
+// gid is `getGID` for a non-negative CID: the pair's value, 0 past the map.
+func (m *cidGIDMap) gid(cid int) int {
+	if cid < 0 || cid >= m.size() {
+		return 0
+	}
+	v := int(m.b[2*cid]) << 8
+	if 2*cid+1 < len(m.b) {
+		v += int(m.b[2*cid+1])
+	}
+	return v
+}
+
+// cidGIDRead is one /CIDToGIDMap stream's reading, kept.
+type cidGIDRead struct {
+	m   *cidGIDMap
+	why string
+}
+
+// maxCIDToGIDMapDecoded bounds a /CIDToGIDMap's decoded size (the re-review, RR1-3: it was a plain `Decode()`, and
+// 7.21.4.2 t2 walks every CID the map holds). A map over every 16-bit CID is 128 KiB, so past a mebibyte nib refuses.
+const maxCIDToGIDMapDecoded = 1 << 20
+
+// cidGIDMapOf is a CIDFont's /CIDToGIDMap: nil for the identity (anything but a stream), else the stream — decoded
+// ONCE per stream however many CIDFonts and Type 0 fonts name it (R2-3: it was decoded per Type 0 font), and no further
+// than `maxCIDToGIDMapDecoded`.
+func (d *Document) cidGIDMapOf(cid types.Dict) (*cidGIDMap, string) {
+	ms, _, err := d.Ctx.DereferenceStreamDict(cid["CIDToGIDMap"])
+	if err != nil || ms == nil {
+		return nil, ""
+	}
+	if r, done := d.cidGIDMaps[dictID(ms.Dict)]; done {
+		return r.m, r.why
+	}
+	var r cidGIDRead
+	if why := decodeWithin(ms, maxCIDToGIDMapDecoded, "its /CIDToGIDMap stream"); why != "" {
+		r.why = why
+	} else {
+		r.m = &cidGIDMap{b: ms.Content}
+	}
+	if d.cidGIDMaps == nil {
+		d.cidGIDMaps = map[uintptr]cidGIDRead{}
+	}
+	d.cidGIDMaps[dictID(ms.Dict)] = r
+	return r.m, r.why
 }
 
 // cidMapOf is a Type 0 font's code-to-CID mapping as `PDType0Font`'s CMap holds it: the /Encoding CMap's own mappings,
@@ -829,8 +897,11 @@ func (d *Document) parseCIDW(cid types.Dict) (cidWidths, float64, bool, string) 
 parse:
 	for i := 0; i < len(w); i++ {
 		begin, ok := d.javaInt(w[i])
+		if !ok && d.intKeyNull(w[i]) {
+			return cw, dw, false, wOpenerThrows // the door's (`widthsThrow`): veraPDF reports nothing on the document
+		}
 		if !ok {
-			return cw, dw, false, "its /W array opens an entry with something other than a number, where veraPDF throws an exception it does not handle"
+			return cw, dw, false, "its /W array opens an entry with a string, which veraPDF reads as a number nib does not model"
 		}
 		i++
 		if i >= len(w) {
@@ -853,7 +924,7 @@ parse:
 		case types.Array:
 			for j, o := range v {
 				if x, ok := d.real(o); ok {
-					cw.single[begin+j] = x
+					cw.single[int(int32(begin+j))] = x // Java's `cidBegin + i`, an int that wraps
 				}
 			}
 		}
@@ -861,27 +932,152 @@ parse:
 	return cw, dw, true, ""
 }
 
-// dictWidth is `PDCIDFont.getWidth` by CID: a single width, else the first range holding it, else /DW.
-func (c *cidFontRead) dictWidth(cid int) (float64, bool, string) {
-	if !c.wOK {
-		return 0, false, c.wWhy
-	}
-	if x, ok := c.w.single[cid]; ok {
-		return x, true, ""
-	}
-	for _, r := range c.w.ranges {
-		if cid >= r.lo && cid <= r.hi {
-			return r.w, true, ""
-		}
-	}
-	return c.dw, true, ""
+// maxCIDWEntries bounds the /W entries a document's CIDFonts may hold between them, counted once per CIDFont: past it
+// nib says it stopped rather than guess. Each is read once and indexed in O(n log n), so what is bounded is the index's
+// memory — a real CJK /W holds tens of thousands.
+const maxCIDWEntries = 1 << 22
+
+// cidWidthTable is one CIDFont's /W as `CIDWArray` answers it, with its /DW: the single widths, and the ranges cut into
+// disjoint segments each owned by the FIRST range, in /W order, that holds its CIDs — `getWidth` scans the ranges in
+// order and stops at the first, so an overlap goes to the earlier range whatever the later one says.
+type cidWidthTable struct {
+	single map[int]float64
+	segs   []cidWidthSeg
+	dw     float64
+	ok     bool
+	why    string
 }
 
-// cidProgramParsed is `containsFontFile`'s parse half for a CIDFont: a CIDFontType2 program is read by the same parser
-// as a simple TrueType one, and a CIDFontType0C one by the CFF reader (P07.S05b, /pending 677's last CFF half) — where
-// no program results (no name, an unparsed one) it is not embedded. An OpenType-wrapped program is taken as parsed.
+type cidWidthSeg struct {
+	lo, hi int64
+	w      float64
+}
+
+// cidWidthsOf reads a CIDFont's /W and /DW ONCE, however many Type 0 fonts name it as their descendant — R2-3 measured
+// the read, and a range scan per glyph, repeated per Type 0 font: 50 fonts over one descendant of 20,000 ranges drawing
+// 2,000 codes each cost 2.5 s. The entries are charged to `maxCIDWEntries` before they are parsed.
+func (d *Document) cidWidthsOf(cid types.Dict) *cidWidthTable {
+	if t, done := d.cidWidths[dictID(cid)]; done {
+		return t
+	}
+	t := d.readCIDWidths(cid)
+	if d.cidWidths == nil {
+		d.cidWidths = map[uintptr]*cidWidthTable{}
+	}
+	d.cidWidths[dictID(cid)] = t
+	return t
+}
+
+func (d *Document) readCIDWidths(cid types.Dict) *cidWidthTable {
+	n := 0
+	if w, ok := d.resolve(cid["W"]).(types.Array); ok {
+		n = len(w)
+		for _, o := range w {
+			if a, ok := d.resolve(o).(types.Array); ok {
+				n += len(a)
+			}
+		}
+	}
+	if d.cidWEntries += n; d.cidWEntries > maxCIDWEntries {
+		return &cidWidthTable{why: fmt.Sprintf("the document's CIDFont /W arrays hold more than %d entries, where nib stops", maxCIDWEntries)}
+	}
+	cw, dw, ok, why := d.parseCIDW(cid)
+	return &cidWidthTable{single: cw.single, segs: firstRangeSegments(cw.ranges), dw: dw, ok: ok, why: why}
+}
+
+// firstRangeSegments cuts ranges into disjoint segments, sorted, each carrying the width of the FIRST range (lowest
+// index) holding it: a sweep over the ranges' boundaries with the ranges open at each held in a heap by index.
+func firstRangeSegments(ranges []struct {
+	lo, hi int
+	w      float64
+}) []cidWidthSeg {
+	var pts []int64
+	var order []int // the non-empty ranges, by start
+	for i, r := range ranges {
+		if r.lo <= r.hi { // `contains` is lo <= cid <= hi, so a backwards range holds nothing
+			pts = append(pts, int64(r.lo), int64(r.hi)+1)
+			order = append(order, i)
+		}
+	}
+	slices.Sort(pts)
+	pts = slices.Compact(pts)
+	sort.SliceStable(order, func(a, b int) bool { return ranges[order[a]].lo < ranges[order[b]].lo })
+	open := &intHeap{}
+	var segs []cidWidthSeg
+	owner := -1
+	next := 0
+	for k := 0; k+1 < len(pts); k++ {
+		p := pts[k]
+		for next < len(order) && int64(ranges[order[next]].lo) == p {
+			heap.Push(open, order[next])
+			next++
+		}
+		for open.Len() > 0 && int64(ranges[(*open)[0]].hi) < p {
+			heap.Pop(open)
+		}
+		if open.Len() == 0 {
+			owner = -1
+			continue
+		}
+		top := (*open)[0]
+		if top == owner && len(segs) > 0 && segs[len(segs)-1].hi == p-1 {
+			segs[len(segs)-1].hi = pts[k+1] - 1
+			continue
+		}
+		owner = top
+		segs = append(segs, cidWidthSeg{p, pts[k+1] - 1, ranges[top].w})
+	}
+	return segs
+}
+
+// intHeap is a min-heap of range indices.
+type intHeap []int
+
+func (h intHeap) Len() int           { return len(h) }
+func (h intHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h intHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *intHeap) Push(x any)        { *h = append(*h, x.(int)) }
+func (h *intHeap) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
+}
+
+// dictWidth is `PDCIDFont.getWidth` by CID: a single width, else the first range holding it, else /DW.
+func (c *cidFontRead) dictWidth(cid int) (float64, bool, string) {
+	return c.w.width(cid)
+}
+
+func (t *cidWidthTable) width(cid int) (float64, bool, string) {
+	if !t.ok {
+		return 0, false, t.why
+	}
+	if x, ok := t.single[cid]; ok {
+		return x, true, ""
+	}
+	c := int64(cid)
+	if i := sort.Search(len(t.segs), func(i int) bool { return t.segs[i].hi >= c }); i < len(t.segs) && t.segs[i].lo <= c {
+		return t.segs[i].w, true, ""
+	}
+	return t.dw, true, ""
+}
+
+// cidProgramParsed is `containsFontFile` for a CIDFont — the ONE door 7.21.4.1 t1, 7.21.3.2 t1 and 7.21.4.2 t2 ask
+// (ADR-009; /pending 680 was 7.21.3.2 t1 answering it with a second, stricter reader): ttFailed where veraPDF has no
+// parsed program — none under a key `PDCIDFont` opens, or one its parser rejects — with why. A CIDFontType2 program is
+// read by the same parser as a simple TrueType one, a CIDFontType0C one by the CFF reader (P07.S05b), and an OpenType
+// one under a CIDFontType0 through its "CFF " table (`openTypeProgram`, R2-1: it was taken as parsed unread).
 func (d *Document) cidProgramParsed(cid types.Dict) (ttState, string) {
 	sd, kind := d.cidTrueTypeStream(cid)
+	switch kind {
+	case "":
+		return ttFailed, "there is no program under a key veraPDF opens for this CIDFont"
+	case "OpenType":
+		if sd == nil { // under a CIDFontType0: `OpenTypeFontProgram` with isCFF
+			return d.openTypeProgram(d.dict(cid["FontDescriptor"]))
+		}
+	}
 	if kind == "CFF" {
 		c, known, why, throws := d.cidCFFOf(cid)
 		switch {
@@ -895,10 +1091,42 @@ func (d *Document) cidProgramParsed(cid types.Dict) (ttState, string) {
 		return ttParsed, ""
 	}
 	if sd == nil {
-		return ttParsed, "" // no program, or an OpenType one under a CIDFontType0, which nib does not read
+		return ttUnknown, "its " + kind + " program stream could not be read"
 	}
 	p := d.parseProgramStream(sd)
 	return p.state, p.why
+}
+
+// openTypeRead is one /FontFile3 /OpenType stream's answer, kept.
+type openTypeRead struct {
+	st  ttState
+	why string
+}
+
+// openTypeProgram is whether veraPDF has a parsed program for a /FontFile3 /OpenType stream it opens as CFF-flavoured —
+// under a simple Type 1 font or a CIDFontType0 (`isCFF`): with no "CFF " table it has none (measured, R2-1: junk, a
+// two-byte program and a TrueType one all FAIL 7.21.4.1 t1, where nib passed them unread); with one, it parses that table
+// as CFF, which nib does not read through the wrapper — a refusal naming OpenType, never a pass. Decoded once per stream.
+func (d *Document) openTypeProgram(desc types.Dict) (ttState, string) {
+	sd, _, err := d.Ctx.DereferenceStreamDict(desc["FontFile3"])
+	if err != nil || sd == nil {
+		return ttFailed, "there is no /FontFile3 stream"
+	}
+	if r, done := d.openTypeCFF[dictID(sd.Dict)]; done {
+		return r.st, r.why
+	}
+	r := openTypeRead{ttUnknown, "its OpenType program holds a \"CFF \" table, which nib does not read inside an OpenType wrapper"}
+	switch {
+	case sd.Content == nil && sd.Decode() != nil:
+		r.why = "its OpenType program stream could not be decoded"
+	case !openTypeHasCFFTable(sd.Content):
+		r = openTypeRead{ttFailed, "its OpenType program has no \"CFF \" table, which is where veraPDF reads a CFF-flavoured one"}
+	}
+	if d.openTypeCFF == nil {
+		d.openTypeCFF = map[uintptr]openTypeRead{}
+	}
+	d.openTypeCFF[dictID(sd.Dict)] = r
+	return r.st, r.why
 }
 
 // cidTrueTypeStream is the ONE choice of a CIDFont's TrueType program stream — `PDCIDFont.getFontProgram` through

@@ -26,15 +26,23 @@ type Document struct {
 	// Catalog is the root dictionary, resolved once because nearly every rule wants it.
 	Catalog types.Dict
 
-	// pt is the resolved /ParentTree, built on first use by parentTree, and ptErr is why part of it was not
-	// read, when part was not.
-	pt    map[int]types.Object
-	ptErr string
+	// ptAns memoises parentTreeEntry's lookups by key, and ptParsed each parent-tree node's /Limits, /Nums and /Kids
+	// by dictionary (`dictID`). ptLoop is the first loop a lookup met (veraPDF reports nothing), ptUnknown the first
+	// lookup nib stopped short of, and ptSpent the read budget's refusal once it is spent (RR3-1, RR3-2).
+	ptAns     map[int]ptAnswer
+	ptParsed  map[uintptr]*ptNode
+	ptLoop    string
+	ptUnknown string
+	ptSpent   string
 	// nodes is every structure element reached from the root, built on first use by structNodes, and
 	// nodesErr is why part of the tree was not read, when part was not.
 	nodes     []structNode
 	nodesErr  string
 	nodesDone bool
+	// nodeEntries and ptNodes are what `structNodes` and `parentTreeEntry` read — `/K` entries, repeats included, and
+	// parent-tree node reads across every lookup — kept so a test can assert the stimulus of their bounds (R3-8, RR3-1).
+	nodeEntries int
+	ptNodes     int
 	// roles memoises standardType's walk of the /RoleMap, keyed by every name on the path it followed —
 	// the chain is followed to its end now (`/pending 507`), so a document with a long chain and many
 	// elements would otherwise re-walk it once per element.
@@ -57,6 +65,10 @@ type Document struct {
 	// keyed by the stream dictionary's identity — see `enterLangOnly` for why once per stream and not once
 	// per use.
 	langWalked map[uintptr]bool
+	// charProcsRead is every Type 3 `/CharProcs` dictionary `enterType3` has handed whole to the lang-only walk,
+	// and charProcAsks what re-enumerating one has cost against `maxCharProcAsks` (R3-1).
+	charProcsRead map[uintptr]bool
+	charProcAsks  int
 	// streams numbers the content streams the walk has entered, so a frame knows which one it was opened
 	// in. `inheritedLang` stops at that boundary where `parentsTags` and the struct parent cross it.
 	streams int
@@ -88,6 +100,21 @@ type Document struct {
 	ttReads      int
 	cidReads     map[uintptr]cidRead
 	cidMaps      map[uintptr]*fontcode.CIDMap // each embedded CMap stream's code-to-CID mappings, parsed once
+	// cidWidths is each CIDFont's /W and /DW, read once however many Type 0 fonts share it, and cidWEntries what they
+	// cost against `maxCIDWEntries`; cidGIDMaps each /CIDToGIDMap stream, decoded once; openTypeCFF each /FontFile3
+	// /OpenType stream's "CFF " search, once (the P07 phase close, R2-3 and R2-1).
+	cidWidths   map[uintptr]*cidWidthTable
+	cidWEntries int
+	cidGIDMaps  map[uintptr]cidGIDRead
+	// cidSets is each subset-named descendant's 7.21.4.2 t2 answer, read once however many Type 0 fonts share it;
+	// cidSetJudged counts the /CIDSet reads that reached the program's population (RR1-3).
+	cidSets      map[uintptr]cidSetRead
+	cidSetJudged int
+	// cmapMalformedRead is each embedded CMap stream's "malformed" answer for 7.21.3.3 t2, parsed once; the parses are
+	// counted in cmapMalformedParses (RR1-4).
+	cmapMalformedRead   map[uintptr]bool
+	cmapMalformedParses int
+	openTypeCFF         map[uintptr]openTypeRead
 	// drawnUnrecorded is every font a pattern or Type 3 procedure draws — glyphs recorded, font events not.
 	drawnUnrecorded map[uintptr]bool
 	glyphCodes      int
@@ -104,10 +131,20 @@ type Document struct {
 	type1CThrows map[type1CKey]string
 	// type1Reads is each /FontFile Type 1 program's reading, per stream (P07.S06).
 	type1Reads map[uintptr]*type1Program
+	// cffSpent and type1Spent are what the document's CFF and Type 1 programs have cost, all of them together — one
+	// budget per program type, as `ttReads` is TrueType's.
+	cffSpent   cffSpend
+	type1Spent t1Spend
 	// toUnicodes caches each /ToUnicode stream's parse, and toUnicodeBlocks is the range-index budget they share.
 	toUnicodes      map[uintptr]*fontcode.ToUnicode
 	toUnicodeBlocks int
-	glyphsOver      bool
+	// toUnicodeChains is each /ToUnicode stream's reading WITH its /UseCMap chain linked (`toUnicodeCMap`), so fonts
+	// sharing a stream share the chain; toUnicodeHops counts the streams that chain walk actually read.
+	toUnicodeChains map[uintptr]toUnicodeChain
+	toUnicodeHops   int
+	// fontChainReads counts the Type 0 CMap chains the glyph door walked (`chainOf`): once per font, never per glyph.
+	fontChainReads int
+	glyphsOver     bool
 	// kids memoises elementKids, keyed by the element's dictionary (`dictID`), and kidBudget is how many more
 	// kids the document may expand before nib stops (`maxKidExpansion`).
 	kids      map[uintptr]kidsResult

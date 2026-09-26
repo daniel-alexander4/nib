@@ -140,9 +140,10 @@ func TestACIDFontType2IsJudgedWhereverItsProgramIs(t *testing.T) {
 			t.Errorf("%s reports %v (%s), want %v (measured on veraPDF)", c.name, got.Verdict, got.Why, c.want)
 		}
 	} // A /FontFile2 no parser opens: veraPDF has no PARSED program, so containsFontFile is false and it PASSES
-	// (measured); nib cannot tell unparseable-to-veraPDF from unparseable-to-nib, so it refuses.
+	// (measured). nib refused it while this clause read the program with a strict reader of its own; it now asks
+	// `cidProgramParsed`, veraPDF's parser ported, which says the same (/pending 680).
 	garbage := withCIDFontType2Program(t, []byte("this is not a TrueType program at all, only text"), false)
-	if got := verdictOf(t, garbage, "7.21.3.2 t1"); got.Verdict != CannotCheck {
-		t.Errorf("a map-less CIDFontType2 over an unparseable program reports %v (%s), want CannotCheck", got.Verdict, got.Why)
+	if got := verdictOf(t, garbage, "7.21.3.2 t1"); got.Verdict != Pass {
+		t.Errorf("a map-less CIDFontType2 over an unparseable program reports %v (%s), want Pass", got.Verdict, got.Why)
 	}
 }

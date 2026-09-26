@@ -64,8 +64,15 @@ func TestACyclicRoleMapIsCannotCheckNeverAPass(t *testing.T) {
 	}
 	// 7.5 t1 left this list with P03.S04: it follows veraPDF's table algorithm now (`rules_table.go`), in which
 	// an element on a loop has no standard type and so is never a table, a row or a cell — and the in-repo
-	// oracle agrees with its verdict over the loop document. The other two keep `/pending 507`'s refusal.
-	for _, clause := range []string{"7.4.2 t1", "7.3 t1"} {
+	// oracle agrees with its verdict over the loop document. 7.4.2 t1 left it at the P07 phase close (R4-10):
+	// veraPDF types a looped element as no heading, measured on this very document as no subject at all (0
+	// passed, 0 failed), so the one heading-shaped element here is none and the clause has nothing to judge.
+	if got := verdictOf(t, roleMapDoc(cyclicRoleMap), "7.4.2 t1"); got.Verdict != NotApplicable {
+		t.Errorf("with /Alpha role-mapped around a loop, 7.4.2 t1 reports %v (%s), want NotApplicable — veraPDF's "+
+			"verdict on this document", got.Verdict, got.Why)
+	}
+	// 7.3 t1 keeps `/pending 507`'s refusal.
+	for _, clause := range []string{"7.3 t1"} {
 		got := verdictOf(t, roleMapDoc(cyclicRoleMap), clause)
 		if got.Verdict != CannotCheck {
 			t.Errorf("with /Alpha role-mapped around a loop, %s reports %v (%s) over an element nib cannot type, want CannotCheck", clause, got.Verdict, got.Why)

@@ -2498,7 +2498,7 @@ reads "91 of the 106" from the registry). P06's rule set complete — MET (all e
 7,735/7,735 over 85 documents; corpus 0 false pass / 0 false fail over 26,806 pairs; tiers 4 and 6 did NOT fire (no
 session, ceremony, delivery, discovery, p2p or rendezvous path in the diff).
 
-### P07 — Checker: font programs (~12 rules)
+### P07 — Checker: font programs (~12 rules) *(done 2026-09-26, v1.166.1)*
 **Goal.** CMaps, CIDToGIDMap, width agreement, TrueType cmap and encoding, CharSet, `.notdef`, ToUnicode values.
 **Exit criteria.** As P03, and a font program nib cannot parse returns `CannotCheck` naming its type, never
 `Pass`. Refs: law 1. Residual doubt: `/pending 493`.
@@ -2529,6 +2529,55 @@ The corpus holds **46** files for the family; seven clause halves have NO corpus
 t1/t4 both, 7.21.8 t1's pass) and **no Type 1 `FontFile` program exists in it at all**.
 
 `/plan-review` did NOT fire: read-only clauses over the document, no format, migration or egress change.
+
+**Phase close (2026-09-26, v1.166.1).** Acceptance ledger over the exit criteria ("As P03, and a font program nib cannot
+parse returns `CannotCheck` naming its type, never `Pass`") and the phase-open amendments, split on `and`:
+- *"Every rule in the family passes `veracorpus_test.go`"* — **met**: 297 files, 30,920 scored pairs, 0 false pass, 0 false
+  fail; nib calls 140 corpus files conformant and veraPDF fails none.
+- *"rules without corpus files agree with veraPDF on fixtures of their own"* — **met**: the live oracle agrees strictly on
+  all 73,395 (document, clause) pairs over 699 documents (the P07 slices' font shapes and the close's 36 font-door
+  shapes among them); the seven clause halves with no corpus file are each hand-built fixtures measured on veraPDF.
+- *"a font program nib cannot parse returns `CannotCheck` naming its type"* — **met after the close's fix**: every refusal
+  names TrueType, CFF, Type 1 or OpenType.
+- *"… never `Pass`"* — **met after the close's fix, and it had NOT been met**: the review found a live false pass (R2-1,
+  measured) — a `/FontFile3 /OpenType` program under a Type 1 font or a CIDFontType0 was counted embedded unread, and
+  veraPDF FAILS 7.21.4.1 t1 when it holds no "CFF " table. Fixed by opening the program for the table as veraPDF does;
+  the re-review then walked every path from a font to a verdict and found none that passes an unparsed program.
+- *"fourteen font rules … takes the checker to 105"* — **met**: 105 of 106, guarded by the registry count.
+- *"`7.1 t12` … still declared and not registered"* — **met**.
+- Residual doubt `/pending 493` — **amended, not closed**: the readers agree on synthetic and one-construct files; agreement
+  on real producers is P08's first question.
+
+**The full-repo review** (nine reviewers, packs go/crypto/verification, `code-reviews/v1.166.0-p07-phase-close-2026-09-26.md`)
+found 87 findings, 22 critical. **Inside the checker (uacheck, fontcode) all were fixed**, by five parallel fix agents and three
+re-review rounds, every verdict change measured on veraPDF first:
+- **Seven live veraPDF divergences closed**: R2-1 above; the CIDFontType2 CIDSet population (R1-2 — veraPDF lists the hhea
+  count, holds by the LAST `maxp`, skips CID 0: two false passes, three false fails; closes /pending 680 and 684); a
+  malformed CMap's `/WMode` (R2-5, a false pass and a false fail); Unicode digits in `pdfuaid:part` (R4-9, false fails);
+  and **four in the SHIPPED parent-tree reader** found by the second re-review (first-found across nodes, last pair within a
+  /Nums, no /Kids under a /Nums node, /Limits honoured) — the reader is now a per-key lookup as veraPDF's `getObject`.
+- **A number-tree loop veraPDF throws on** (reports nothing) had been answered definitively; it now refuses every clause
+  through `reportsNothing`, measured over 15 shapes (only a lookup that REACHES the loop throws).
+- **Hostile-input costs, each measured before and after**: CFF subroutine calls (30.7 GB → 2 MB), per-program Type 1/CFF
+  budgets made the document's, `/W` and CIDToGIDMap per descendant, ToUnicode chains linked not copied, `TextMap` range
+  expansion (11.4 GB → 0), Type 3 `/CharProcs` per show (5m29s → 19 ms), the marked-content stack (O(N²) → O(N)), XMP text
+  (quadratic → linear), two table scans (quadratic → linear), and the parent-tree walk (60 s → a per-key budget).
+- **A definite failure beats a refusal** at fifteen sites (`heldRefusal`); the heading site is /pending 692.
+- **Red-proof**: every fix agent probed its own tests — 12 + 30 + 32 + 17 + 21 targeted mutations, all red after the
+  survivors were closed by measured fixtures; two shown equivalent.
+Outside the phase: 46 findings filed as /pending 685-693 (six critical individually — a CSRF token any local process can
+read from `/api/status` (a design call, Dan's), a termination written into another ceremony's folder, an unchecked
+`/ByteRange` structure (reproduction owed), a redaction that leaves an inherited-resource drawing in the file, an AcroForm
+`/Kids` walk exponential in 1.6 KB, and two DHT paths skipping the rendezvous switch) and /pending 664 re-measured.
+
+**Graduation**: 110 P07 inventory rows (97 slice + 13 added at the close), all class 1 with a standing reader, 110
+`keep-live`, 0 gated, 0 deleted; actionable subset 0; `inventorycheck` resolves all 405 readers.
+**Required-run gates**: tiers 4 and 6 NOT FIRED — no slice nor the close touched a session, ceremony, delivery, discovery,
+p2p or rendezvous path (the close's diff is `internal/uacheck`, `internal/fontcode` and one README paragraph); tiers 0-3 run
+over the closing tree: `go test ./...` green after one red — `TestEveryExportedFunctionUnderInternalHasAProductionCaller` on a
+heap's `Less`/`Swap` (declared `interface`; the per-commit tier's guards WOULD have caught it — the fix agents ran package
+tests only), jsdom 454/454, uirepro 160/160. **Pending sweep against the closure**: 680, 684 closed; 682, 664, 493 amended; 675, 676, 678, 679,
+681, 683 re-confirmed open (the phase did not build them); 685-693 filed.
 
 #### P07.S01 — composite fonts' CMaps, at the dictionary *(done 2026-09-23, v1.159.0)*
 Scope: `7.21.3.1 t1` (CIDSystemInfo against the CMap), `7.21.3.2 t1` (a CIDFontType2 with an embedded program has a

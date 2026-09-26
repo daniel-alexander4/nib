@@ -63,18 +63,14 @@ func markedContentSubjects(d *Document) ([]mcSubject, string) {
 // checkArtifactNotInsideTaggedContent evaluates ua1 7.1 t1 — `tag != 'Artifact' || isTaggedContent == false`.
 func checkArtifactNotInsideTaggedContent(d *Document) Result {
 	subjects, why := markedContentSubjects(d)
-	if why != "" {
-		return Result{Verdict: CannotCheck, Why: why}
-	}
-	if len(subjects) == 0 {
-		return Result{Verdict: NotApplicable, Why: "the document has no marked-content sequences"}
-	}
+	var held heldRefusal // a definite failure beats a refusal; the stopped walk's reason comes last
 	for _, s := range subjects {
 		if s.tag != "Artifact" {
 			continue
 		}
 		if s.taggedUnread != "" {
-			return Result{Verdict: CannotCheck, Why: s.taggedUnread, Where: s.where}
+			held.hold(s.taggedUnread, s.where)
+			continue
 		}
 		if s.tagged {
 			return Result{
@@ -84,6 +80,23 @@ func checkArtifactNotInsideTaggedContent(d *Document) Result {
 				Where: s.where,
 			}
 		}
+	}
+	return markedVerdict(held, why, len(subjects))
+}
+
+// markedVerdict is how the marked-content rules answer once their subjects are judged and none failed: a subject
+// nib could not settle, then a walk that stopped, then no subject at all, then a Pass. **The walk's stop is
+// judged after the subjects it DID record**, each settled where it was drawn (`heldRefusal`), and a stopped walk
+// with no subject is a refusal, never NotApplicable — the sequences past the stop were never read.
+func markedVerdict(held heldRefusal, walkStopped string, subjects int) Result {
+	if r, ok := held.result(); ok {
+		return r
+	}
+	switch {
+	case walkStopped != "":
+		return Result{Verdict: CannotCheck, Why: walkStopped}
+	case subjects == 0:
+		return Result{Verdict: NotApplicable, Why: "the document has no marked-content sequences"}
 	}
 	return Result{Verdict: Pass}
 }
@@ -97,18 +110,14 @@ func checkArtifactNotInsideTaggedContent(d *Document) Result {
 // failure and miss t2's on the same document.
 func checkTaggedContentNotInsideArtifact(d *Document) Result {
 	subjects, why := markedContentSubjects(d)
-	if why != "" {
-		return Result{Verdict: CannotCheck, Why: why}
-	}
-	if len(subjects) == 0 {
-		return Result{Verdict: NotApplicable, Why: "the document has no marked-content sequences"}
-	}
+	var held heldRefusal
 	for _, s := range subjects {
 		if !s.insideArtifact {
 			continue
 		}
 		if s.taggedUnread != "" {
-			return Result{Verdict: CannotCheck, Why: s.taggedUnread, Where: s.where}
+			held.hold(s.taggedUnread, s.where)
+			continue
 		}
 		if s.tagged {
 			return Result{
@@ -119,7 +128,7 @@ func checkTaggedContentNotInsideArtifact(d *Document) Result {
 			}
 		}
 	}
-	return Result{Verdict: Pass}
+	return markedVerdict(held, why, len(subjects))
 }
 
 // checkSpanAlternateLanguage evaluates ua1 7.2 t30, t31 and t32 — `tag != 'Span' || KEY == null ||
@@ -144,18 +153,14 @@ func checkSpanAlternateLanguage(d *Document, row spanAlternate) Result {
 		return Result{Verdict: Pass}
 	}
 	subjects, why := markedContentSubjects(d)
-	if why != "" {
-		return Result{Verdict: CannotCheck, Why: why}
-	}
-	if len(subjects) == 0 {
-		return Result{Verdict: NotApplicable, Why: "the document has no marked-content sequences"}
-	}
+	var held heldRefusal
 	for _, s := range subjects {
 		if s.tag != "Span" || !row.carries(s) || s.ownLang || s.inheritedLang {
 			continue
 		}
 		if s.langUnread != "" {
-			return Result{Verdict: CannotCheck, Why: s.langUnread, Where: s.where}
+			held.hold(s.langUnread, s.where)
+			continue
 		}
 		return Result{
 			Verdict: Fail,
@@ -164,5 +169,5 @@ func checkSpanAlternateLanguage(d *Document, row spanAlternate) Result {
 			Where: s.where,
 		}
 	}
-	return Result{Verdict: Pass}
+	return markedVerdict(held, why, len(subjects))
 }

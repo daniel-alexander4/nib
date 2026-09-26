@@ -365,6 +365,11 @@ func oracleCorpus(t *testing.T) []oracleDoc {
 			docs = append(docs, oracleDoc{"type1: " + f.name, f.pdf})
 		}
 	}
+	// The P07 phase close: the font doors' measured shapes — /FontFile3 /OpenType opened for its "CFF " table, the
+	// CIDFontType2 CIDSet population, and 7.21.3.2 t1 asking the shared parse (/pending 680, 684).
+	for _, f := range fontDoorFixtures() {
+		docs = append(docs, oracleDoc{"fontdoor: " + f.name, f.pdf})
+	}
 	return docs
 }
 
@@ -489,6 +494,29 @@ type veraReport struct {
 // A row appearing is a gap in nib a person must look at; a row that stops appearing means the gap closed
 // and the row is a claim about code that no longer behaves that way.
 var knownCannotCheck = map[string]string{
+	// The P07 phase close's font doors: a /FontFile3 /OpenType program nib does not open beyond its table directory.
+	"fontdoor: T1 OpenType: a CFF table / 7.21.4.2 t1":             "a /CharSet against a /FontFile3 /OpenType program under a Type 1 font: nib does not read the program",
+	"fontdoor: T1 OpenType: a CFF table, widths off / 7.21.4.2 t1": "a /CharSet against a /FontFile3 /OpenType program under a Type 1 font: nib does not read the program",
+	"fontdoor: T1 OpenType: a CFF table / 7.21.4.1 t1":             "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: T1 OpenType: a CFF table / 7.21.5 t1":               "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: T1 OpenType: a CFF table / 7.21.4.1 t2":             "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: T1 OpenType: a CFF table, widths off / 7.21.4.1 t1": "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: T1 OpenType: a CFF table, widths off / 7.21.5 t1":   "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: T1 OpenType: a CFF table, widths off / 7.21.4.1 t2": "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table / 7.21.4.1 t1":           "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table / 7.21.5 t1":             "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table / 7.21.4.1 t2":           "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table / 7.21.8 t1":             "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	// RR1-2: the same program under a /CIDSet — not subset-named, 7.21.4.2 t2 passes without it; subset-named, it refuses.
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, not subset-named / 7.21.4.1 t1": "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, not subset-named / 7.21.5 t1":   "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, not subset-named / 7.21.4.1 t2": "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, not subset-named / 7.21.8 t1":   "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.4.1 t1":     "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.5 t1":       "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.4.1 t2":     "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.8 t1":       "an OpenType program with a \"CFF \" table: veraPDF parses it, and nib does not read the CFF inside an OpenType wrapper",
+	"fontdoor: CID0 OpenType: a CFF table, a short CIDSet, subset-named / 7.21.4.2 t2":     "a subset-named CIDFont's /CIDSet judged against an OpenType program with a \"CFF \" table, which nib does not read inside the wrapper",
 	// P07.S01's CMap documents draw a Type 0 font with no /ToUnicode, and 7.21.7 is per GLYPH since P07.S02: where
 	// veraPDF's answer needs data nib does not carry — a predefined CMap's codespace, or Adobe's UCS2 CMaps — both
 	// halves refuse, naming which. (The CIDFontType2 document closed at P07.S02: Adobe-Identity has no UCS2 CMap,
@@ -623,9 +651,9 @@ var knownCannotCheck = map[string]string{
 	// `/pending 548`: the tree rules over the document whose role map loops. They KEEP answering `CannotCheck`
 	// and that is right — the cycle is reported by 7.1 t6, which is the clause about the cycle, and they still
 	// cannot type the element their own subject might be. (7.5 t1 was a third row until P03.S04 ported
-	// veraPDF's table algorithm, which never takes an untyped element for a cell; the oracle agrees with it.)
-	"Markdown + title + lang, one element on a role-map loop / 7.3 t1":   "an element on a role-map loop may be the Figure",
-	"Markdown + title + lang, one element on a role-map loop / 7.4.2 t1": "an element on a role-map loop may be a numbered heading, and one moves the whole sequence",
+	// veraPDF's table algorithm, which never takes an untyped element for a cell; the oracle agrees with it.
+	// 7.4.2 t1 was a fourth until the P07 phase close measured veraPDF typing a looped element as no heading.)
+	"Markdown + title + lang, one element on a role-map loop / 7.3 t1": "an element on a role-map loop may be the Figure",
 }
 
 // cardinalityBroken breaks every P03.S03 clause at once: two THeads and two TFoots with no TBody, a Caption
@@ -660,7 +688,7 @@ func TestTheOracleValidatesTheChecker(t *testing.T) {
 			generated++
 		}
 	}
-	const wantGenerated = 656 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53 + P07.S05b's 74 + P07.S06's 125
+	const wantGenerated = 694 // 148 + P07.S03's 108 TrueType shapes + P07.S04a's 60 metric shapes + P07.S04b's 88 + P07.S05a's 53 + P07.S05b's 74 + P07.S06's 125 + the P07 close's 36 font-door shapes (33, and the re-review's 3: RR1-2, RR1-5) and 2 codespace shapes (R3-7)
 	if generated != wantGenerated {
 		t.Fatalf("the corpus holds %d generated document(s), want exactly %d — change this number in the "+
 			"same edit that adds or removes a document, so a shrunken corpus cannot pass as the whole one",

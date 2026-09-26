@@ -324,17 +324,19 @@ func xfaVerdict(render, why string) Result {
 	return Result{Verdict: Pass}
 }
 
-// maxXFAPackets and maxXFABytes bound the XFA reading, because `/XFA` is an array the document
-// chooses the length of and each entry is a compressed stream it chooses the expansion of.
+// maxXFABytes bounds the one XFA packet nib reads — the `config` entry — by its DECODED size, applied DURING
+// the decode (`decodeWithin`), because the packet is a compressed stream the document chooses the expansion of
+// and pdfcpu's own ceiling is 512 MiB. It used to be checked after `sd.Decode()`, which bounded what nib parsed
+// and nothing about what it inflated.
 //
-// **Measured as a real amplification, not a hypothetical**: pdfcpu caps ONE stream's decode at 512 MiB
-// and caches the decoded bytes per object, so `/XFA [(a) 5 0 R (a) 5 0 R …]` repeated twenty thousand
-// times — a few hundred bytes in the file — has nib scan half a gigabyte twenty thousand times in one
-// request. Every other walk in this package declares a ceiling; this one now does too.
-const (
-	maxXFAPackets = 64
-	maxXFABytes   = 32 << 20
-)
+// **There is no packet-count bound, and the comment that claimed one described code that no longer existed**
+// (the P07 phase-close review, R4-5). A `maxXFAPackets` constant sat here under the words "bound the XFA
+// reading", and nothing read it. It dated from a reader that scanned EVERY packet — where `/XFA [(a) 5 0 R …]`
+// twenty thousand times over had nib scan one stream twenty thousand times — and P06's phase close replaced
+// that reader with veraPDF's: take the entry after the FIRST `config` string and read that one stream. The
+// array walk is one string comparison per entry, linear in a length the parse already paid for, and exactly
+// one stream is decoded, so the amplification the constant answered has no path left to it.
+const maxXFABytes = 32 << 20
 
 // xfaDynamicRender reads the XFA form's `dynamicRender` setting exactly where veraPDF reads it (P06.S02,
 // ported at the P06 phase close). It returns the value and, separately, a reason nib could not read it —
@@ -389,12 +391,9 @@ func (d *Document) xfaDynamicRender(xfa types.Object) (string, string) {
 		// Not a stream (a name, a dictionary, null): veraPDF reads nothing from it either.
 		return "", ""
 	}
-	if err := sd.Decode(); err != nil {
-		// Recorded, not dropped: a config packet nib cannot decode may say `required`.
-		return "", "the XFA form's config packet could not be decoded: " + err.Error()
-	}
-	if len(sd.Content) > maxXFABytes {
-		return "", fmt.Sprintf("the XFA form's config packet exceeds %d bytes decoded and nib stopped there", maxXFABytes)
+	// Recorded, not dropped: a config packet nib cannot decode, or stopped decoding, may say `required`.
+	if why := decodeWithin(sd, maxXFABytes, "the XFA form's config packet"); why != "" {
+		return "", why
 	}
 	return dynamicRenderIn(sd.Content)
 }

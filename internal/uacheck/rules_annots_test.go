@@ -238,8 +238,12 @@ func TestTheAnnotationRulesAgreeWithWhatVeraPDFMeasured(t *testing.T) {
 // malformed row, with nothing declaring it. Measured: collapsing the two again leaves every other test
 // in this package green.
 //
-// The fixture needs both halves at once: key 1's row is present and is an ARRAY, and a sibling branch
-// nests past `maxWalkDepth` so the walk reports a reason. Definite beats refusal.
+// **Since the P07 phase close the lookup is per KEY** (`parentTreeEntry`, RR3-1), and a key it finds carries no reason
+// by construction — veraPDF's `getObject` answers from the first node holding the key, whatever lies after it. So the
+// collapse cannot reach the door through a sibling branch any more; what this test now pins is that invariant on the
+// fixture that used to exercise it (key 1 is found in node 290 with no reason; the deep sibling is never reached —
+// the search returns first, and its /Limits [9 9] would exclude key 1 anyway), plus the
+// door's definite Fail over a present row that is not an element.
 func TestAPresentButUnusableRowIsDefiniteEvenWhenTheTreeIsShort(t *testing.T) {
 	deepBranch := map[int]string{}
 	for i := 0; i <= maxWalkDepth+2; i++ {
@@ -252,6 +256,15 @@ func TestAPresentButUnusableRowIsDefiniteEvenWhenTheTreeIsShort(t *testing.T) {
 	deepBranch[290] = "<< /Nums [1 [10 0 R]] /Limits [1 1] >>"
 	fx := annotFixture{annot: note(), elem: annotTag, extra: deepBranch}
 	pdf := fx.build()
+	// The stimulus: the lookup FOUND key 1's row and gave no reason — the invariant the door's `!found` conjunct
+	// now rests on.
+	d, err := open(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, why := d.parentTreeEntry(1); !found || why != "" {
+		t.Fatalf("precondition: key 1's row should be found with no reason, got found=%v why=%q", found, why)
+	}
 	got := verdictOf(t, pdf, "7.18.1 t1")
 	if got.Verdict != Fail {
 		t.Errorf("a present row that is not an element reports %v (%s), want Fail — the tree being short "+
@@ -352,6 +365,13 @@ func TestEveryAnnotationReaderRoutesThroughOneDoor(t *testing.T) {
 		t.Errorf("annots.go names /Annots and /StructParent %d times between them, want exactly 2 — the two "+
 			"doors themselves, one read each", got)
 	}
+	// The one named exemption: `structParentKeys` (structure.go) collects every /StructParent and /StructParents KEY in
+	// the file for `reportsNothing`'s loop question (RR3-2). It resolves no element and enumerates no annotation — it
+	// asks which lookups veraPDF may make — so it is not a second door onto either population.
+	if got := sites["structure.go"]; got != 1 {
+		t.Errorf("structure.go names /Annots or /StructParent %d times, want exactly 1 — `structParentKeys`' key sweep", got)
+	}
+	delete(sites, "structure.go")
 	for f, n := range sites {
 		if f != "annots.go" {
 			t.Errorf("%s reads a page's /Annots or a holder's /StructParent %d time(s) of its own; those "+
@@ -962,27 +982,135 @@ func TestAMediaClipIsReachedThroughEveryPathVeraPDFWalks(t *testing.T) {
 		t.Errorf("a Rendition action under a catalog /A reports %v (%s), want NotApplicable — the catalog has no "+
 			"/A key in veraPDF's model", got.Verdict, got.Why)
 	}
-	// **A truncated outline is a REFUSAL, not a Pass.** veraPDF's walk is unbounded; nib's stops, and an
-	// ordinary table of contents is long enough to reach the bound.
-	long := map[int]string{46: rend}
-	first := 100
-	for i := 0; i <= maxWalkDepth+4; i++ {
-		item := fmt.Sprintf("<< /Title (Item) /Parent 20 0 R /Next %d 0 R >>", first+i+1)
-		if i == maxWalkDepth+4 {
-			item = "<< /Title (Last) /Parent 20 0 R /A 46 0 R >>"
+	// **A long outline is READ, not refused** (the P07 phase-close review, R4-6). The chain used to stop at
+	// `maxWalkDepth` — a nesting bound — so an ordinary table of contents refused both clauses. Each row is
+	// veraPDF 1.30.2's verdict, measured on exactly this document.
+	for _, tc := range []struct {
+		name     string
+		pdf      []byte
+		t1, t2   Verdict
+		whyNotIn string
+	}{
+		// 70 top-level bookmarks and no clip: veraPDF runs no check (passed 0, failed 0).
+		{"seventy bookmarks, no clip", outlineDoc(70, false), NotApplicable, NotApplicable, ""},
+		// The 70th carries a clip with no /CT: veraPDF fails t1 (failed 1) and passes t2 (passed 1).
+		{"seventy bookmarks, a clip on the last", outlineDoc(70, true), Fail, Pass, ""},
+	} {
+		if got := verdictOf(t, tc.pdf, "7.18.6.2 t1"); got.Verdict != tc.t1 {
+			t.Errorf("%s: 7.18.6.2 t1 = %v (%s), want %v — veraPDF's verdict on this document", tc.name, got.Verdict, got.Why, tc.t1)
 		}
-		long[first+i] = item
+		if got := verdictOf(t, tc.pdf, "7.18.6.2 t2"); got.Verdict != tc.t2 {
+			t.Errorf("%s: 7.18.6.2 t2 = %v (%s), want %v — veraPDF's verdict on this document", tc.name, got.Verdict, got.Why, tc.t2)
+		}
 	}
-	long[20] = fmt.Sprintf("<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>", first, first+maxWalkDepth+4, maxWalkDepth+5)
-	deepOutline := base(long, screen[:len(screen)-len("/A 44 0 R >>")]+">>", "/Outlines 20 0 R", "")
-	got := verdictOf(t, deepOutline, "7.18.6.2 t1")
-	if got.Verdict != CannotCheck {
-		t.Errorf("an outline chain past the walk bound reports %v (%s), want CannotCheck — a clip nib never "+
-			"reached is not a document without one", got.Verdict, got.Why)
+}
+
+// outlineDoc is a tagged one-page document whose outline is n top-level bookmarks; with clipLast the last one's
+// `/A` is a Rendition action whose clip carries no `/CT`, so reaching it fails 7.18.6.2 t1. Measured on veraPDF
+// 1.30.2 at n = 3 and n = 70, with and without the clip.
+func outlineDoc(n int, clipLast bool) []byte {
+	const clip = "<< /Type /MediaClip /S /MCD /D 45 0 R /Alt [() (a clip)] >>"
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-US) /Outlines 20 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 /Resources << /Font << /F1 5 0 R >> >> " +
+			"/Contents 4 0 R >>",
+		4:  fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(annotFixtureText), annotFixtureText),
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 9 0 R >>",
+		8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K 0 >>",
+		9:  "<< /Nums [0 [8 0 R]] >>",
+		45: "<< /Type /Filespec /F (clip.mp3) /UF (clip.mp3) >>",
+		46: "<< /Type /Action /S /Rendition /R << /Type /Rendition /S /MR /C " + clip + " >> >>",
 	}
-	if !strings.Contains(got.Why, "more than") {
-		t.Errorf("the reason %q does not say the outline chain ran past the bound", got.Why)
+	const first = 100
+	for i := 0; i < n; i++ {
+		item := fmt.Sprintf("<< /Title (Item) /Parent 20 0 R /Next %d 0 R >>", first+i+1)
+		if i == n-1 {
+			item = "<< /Title (Last) /Parent 20 0 R >>"
+			if clipLast {
+				item = "<< /Title (Last) /Parent 20 0 R /A 46 0 R >>"
+			}
+		}
+		objs[first+i] = item
 	}
+	objs[20] = fmt.Sprintf("<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>", first, first+n-1, n)
+	return buildPDF(objs)
+}
+
+// TestTheOutlineWalkIsBoundedByItemsNotByChainLength — R4-6's budget. The walk still has a ceiling, because the
+// work is the document's choice; what changed is that the ceiling counts items, and it still REFUSES when it
+// binds. The budget is a parameter so the control can sit just under it.
+func TestTheOutlineWalkIsBoundedByItemsNotByChainLength(t *testing.T) {
+	const n = 70
+	for _, tc := range []struct {
+		budget    int
+		refused   bool
+		wantVisit int
+	}{
+		{n, false, n},        // the control: exactly enough budget reads every item and records nothing
+		{n - 1, true, n - 1}, // one short: the last item is unread, and that is a refusal
+	} {
+		d, err := open(outlineDoc(n, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		visited := d.outlineActionsWithin(tc.budget, func(types.Dict, string) {})
+		// The stimulus first: the walk read what the budget allowed, not fewer.
+		if visited != tc.wantVisit {
+			t.Fatalf("budget %d: the walk visited %d of %d items, want %d", tc.budget, visited, n, tc.wantVisit)
+		}
+		if refused := d.clipsErr != ""; refused != tc.refused {
+			t.Errorf("budget %d over %d items: refused=%v (%q), want %v", tc.budget, n, refused, d.clipsErr, tc.refused)
+		}
+	}
+	// The production budget is the constant, and it is no nesting bound in disguise.
+	if maxOutlineItems <= 1000 {
+		t.Errorf("maxOutlineItems is %d; a large book's outline runs to thousands of items", maxOutlineItems)
+	}
+	// **A leaf at the nesting bound is not a truncation.** It has no /First, so nothing below it went unread.
+	for _, tc := range []struct {
+		depth   int
+		refused bool
+	}{
+		{maxWalkDepth + 1, false}, // the deepest item sits at depth maxWalkDepth, a leaf
+		{maxWalkDepth + 2, true},  // an item at depth maxWalkDepth has a /First nib does not descend into
+	} {
+		d, err := open(deepOutlineDoc(tc.depth))
+		if err != nil {
+			t.Fatal(err)
+		}
+		visited := d.outlineActionsWithin(maxOutlineItems, func(types.Dict, string) {})
+		if want := min(tc.depth, maxWalkDepth+1); visited != want {
+			t.Fatalf("an outline nested %d deep: the walk visited %d items, want %d", tc.depth, visited, want)
+		}
+		if refused := d.clipsErr != ""; refused != tc.refused {
+			t.Errorf("an outline nested %d deep: refused=%v (%q), want %v", tc.depth, refused, d.clipsErr, tc.refused)
+		}
+	}
+}
+
+// deepOutlineDoc is an outline of one item per level, n levels deep: each item is the `/First` of the one above.
+func deepOutlineDoc(n int) []byte {
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Outlines 20 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+	}
+	const first = 100
+	for i := 0; i < n; i++ {
+		parent := first + i - 1
+		if i == 0 {
+			parent = 20
+		}
+		kid := ""
+		if i < n-1 {
+			kid = fmt.Sprintf(" /First %d 0 R /Last %d 0 R /Count 1", first+i+1, first+i+1)
+		}
+		objs[first+i] = fmt.Sprintf("<< /Title (Level) /Parent %d 0 R%s >>", parent, kid)
+	}
+	objs[20] = fmt.Sprintf("<< /Type /Outlines /First %d 0 R /Last %d 0 R /Count %d >>", first, first, n)
+	return buildPDF(objs)
 }
 
 // TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation — P05's phase-close regression.
@@ -999,9 +1127,12 @@ func TestAMediaClipIsReachedThroughEveryPathVeraPDFWalks(t *testing.T) {
 // The fixture is `TestAPresentButUnusableRowIsDefiniteEvenWhenTheTreeIsShort`'s, with a form field
 // added on the same key and the catalog's `/Lang` removed — with it, `checkAssociatedTextLanguage`
 // answers from the catalog and never reaches the subject at all.
+//
+// Since the P07 phase close both doors ask the same per-key lookup (`parentTreeEntry`), which never pairs a found row
+// with a reason; the test now pins that the two doors AGREE on the present row, with that invariant as its stimulus.
 func TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation(t *testing.T) {
-	// Row 1 is present and is an ARRAY (not an element), and a sibling branch nests past the bound so
-	// the walk reports a reason. Both halves at once are what separate the two answers.
+	// Row 1 is present and is an ARRAY (not an element). The deep sibling branch is a relic of the whole-tree walk: the
+	// per-key lookup finds key 1 first and never reaches it (see the precondition below).
 	shortTreeWithAPresentRow := func() map[int]string {
 		m := map[int]string{}
 		for i := 0; i <= maxWalkDepth+2; i++ {
@@ -1018,6 +1149,11 @@ func TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation(t *testing.
 		return m
 	}
 	fx := annotFixture{annot: note(), elem: annotTag, extra: shortTreeWithAPresentRow()}
+	if d, err := open(fx.build()); err != nil {
+		t.Fatal(err)
+	} else if _, found, why := d.parentTreeEntry(1); !found || why != "" {
+		t.Fatalf("precondition: key 1's row should be found with no reason, got found=%v why=%q", found, why)
+	}
 	if got := verdictOf(t, fx.build(), "7.2 t25"); got.Verdict != Fail {
 		t.Errorf("a field naming a present row that is not an element reports %v (%s), want Fail — the "+
 			"annotation door calls that row definite, and one key may not have two answers", got.Verdict, got.Why)
@@ -1059,7 +1195,7 @@ func TestOneStructParentDoorAnswersTheSameForAFieldAsForAnAnnotation(t *testing.
 //     population from the same walk, so a dropped field path would also have left `7.18.6.2 t1/t2`
 //     answering Pass over a clip nobody looked at — the silent truncation S04 fixed for the OUTLINE
 //     walk, twelve lines from this one.
-//   - `parentTree` skipped a present-but-unreadable `/Nums` or `/Kids` without setting `ptErr`, so the
+//   - The parent-tree walk skipped a present-but-unreadable `/Nums` or `/Kids` without recording why, so the
 //     keys below were simply missing with no reason — and `elementForStructParent` then takes its
 //     DEFINITE branch and reports "the /StructParent names no element", a Fail over a tree nib never
 //     finished reading. `elementForMCID` separates the two for its own array read; this walk did not.
@@ -1094,13 +1230,15 @@ func TestAnUnreadablePopulationIsARefusalAndNotAnEmptyOne(t *testing.T) {
 		t.Errorf("control: an empty /Fields reports %v (%s), want NotApplicable", got.Verdict, got.Why)
 	}
 
-	// The parent-tree half. `/Nums` is present and unreadable, so every row below it is unread.
+	// The parent-tree half. `/Nums` is present and unreadable — a reference whose object pdfcpu cannot decode — so
+	// every row below it is unread. (A /Nums that is merely NOT AN ARRAY is not this: veraPDF reads it as empty, and
+	// so does nib since the P07 phase-close re-review, RR3-3 — `TestTheParentTreeReadsLoopsAndOddValuesAsVeraPDFDoes`.)
 	tree := openMutated(t, (annotFixture{annot: note(), elem: annotTag}).build(), func(d *Document, _ types.Dict) {
 		root := d.dict(d.Catalog["StructTreeRoot"])
 		if root == nil {
 			t.Fatal("the fixture has no StructTreeRoot")
 		}
-		root["ParentTree"] = types.Dict{"Nums": notAnArray}
+		root["ParentTree"] = types.Dict{"Nums": undecodableRef(t, d)}
 	})
 	if got := checkAnnotationsAreNestedInAnnotTags(tree); got.Verdict != CannotCheck {
 		t.Errorf("an annotation whose parent tree nib could not read reports %v (%s), want CannotCheck — "+
@@ -1115,5 +1253,13 @@ func TestAnUnreadablePopulationIsARefusalAndNotAnEmptyOne(t *testing.T) {
 	})
 	if got := checkAnnotationsAreNestedInAnnotTags(noRow); got.Verdict != Fail {
 		t.Errorf("control: a readable tree with no row 1 reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+	// And a /Nums that is not an array is an EMPTY one, a definite Fail — veraPDF's `parseNums` (RR3-3, measured).
+	wrongType := openMutated(t, (annotFixture{annot: note(), elem: annotTag}).build(), func(d *Document, _ types.Dict) {
+		root := d.dict(d.Catalog["StructTreeRoot"])
+		root["ParentTree"] = types.Dict{"Nums": notAnArray}
+	})
+	if got := checkAnnotationsAreNestedInAnnotTags(wrongType); got.Verdict != Fail {
+		t.Errorf("a /Nums that is a dictionary reports %v (%s), want Fail — veraPDF reads it as no rows", got.Verdict, got.Why)
 	}
 }

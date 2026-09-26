@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -316,12 +317,19 @@ func TestANameIsDecoded(t *testing.T) {
 // TestTheReadersRouteThroughThisDoor is ADR-009's half: the checker and the text reader both read shown bytes
 // and /ToUnicode CMaps, and a second copy of either is how the two came apart before (`/pending 657`).
 //
-// It asserts ROUTING over every package under internal/: no function outside this one holds a string literal
-// naming a CMap list (`bfchar`, `bfrange`, `codespacerange`, `cidrange`, in any spelling), and none declares one of
-// the decoders this package replaced. **One reader is exempt, by name, with its reason**: pdfops' stamp writer
+// It asserts ROUTING over every package under internal/ and cmd/, at every depth: no function outside this one holds a
+// string naming a CMap list (`bfchar`, `bfrange`, `codespacerange`, `cidrange`, in any spelling) — a literal, or a
+// constant concatenation of literals — and none declares one of the decoders this package replaced; and the two
+// readers CALL the door for what they read. **One reader is exempt, by name, with its reason**: pdfops' stamp writer
 // mirrors PDFCPU's strict ToUnicode parser to predict what pdfcpu will refuse — a third reading, of a different
 // program, which ADR-052 names. A new exemption is added here, with its reason, or the reader routes through here.
-// The first cut scanned two packages for three exact spellings and missed that reader entirely (the P07.S02 review).
+//
+// **What it cannot see, declared**: a list name spelled out byte by byte, or read from a file. A reader written that
+// way is written to evade a guard, and review is the instrument for it.
+//
+// The first cut scanned two packages for three exact spellings and missed that reader entirely (the P07.S02 review);
+// the second scanned one directory level, passed over a package that failed to parse, read only single literals, and
+// asked only that a reader IMPORT this package (the P07 phase-close review, R3-9).
 func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 	exempt := map[string]string{
 		"pdfops.pdfcpuToUnicode": "mirrors pdfcpu's usedGIDsFromCMap, to refuse what pdfcpu would refuse",
@@ -331,22 +339,56 @@ func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 	listWords := []string{"bfchar", "bfrange", "codespacerange", "cidrange", "cidchar", "notdefrange", "notdefchar", "usecmap"}
 	bannedFuncs := map[string]bool{"decodePDFString": true, "decodeHexString": true, "hexNibble": true,
 		"parseToUnicode": true, "matchingClose": true}
+	// The door each reader must call for what it reads: pdfops a /ToUnicode as text and a string operand's bytes; the
+	// checker a /ToUnicode, a codespace and a CID map as veraPDF reads them, and a string operand's bytes.
+	mustCall := map[string][]string{
+		"pdfops":  {"TextMap", "String"},
+		"uacheck": {"ParseToUnicode", "ParseCodespace", "ParseCIDMap", "String"},
+	}
+	self, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var dirs []string
-	for _, pattern := range []string{"../*", "../../cmd/*"} {
-		m, err := filepath.Glob(pattern)
+	for _, root := range []string{"..", "../../cmd"} {
+		err := filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !e.IsDir() {
+				return nil
+			}
+			abs, _ := filepath.Abs(path)
+			if name := e.Name(); abs == self || name == "testdata" || (strings.HasPrefix(name, ".") && path != root) {
+				return filepath.SkipDir
+			}
+			dirs = append(dirs, path)
+			return nil
+		})
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("walking %s: %v", root, err)
 		}
-		dirs = append(dirs, m...)
 	}
 	scanned, hits := 0, map[string]bool{}
-	for _, dir := range dirs {
-		if filepath.Base(dir) == "fontcode" {
-			continue
+	calls := map[string]map[string]bool{}
+	check := func(fset *token.FileSet, owner string, pos token.Pos, text string) {
+		for _, w := range listWords {
+			if strings.Contains(text, w) {
+				if _, ok := exempt[owner]; ok {
+					hits[owner] = true
+					return
+				}
+				t.Errorf("%s: %s names a CMap list (%s) — read CMaps through internal/fontcode, or name the "+
+					"exemption and its reason here and in ADR-052", fset.Position(pos), owner, text)
+			}
 		}
+	}
+	for _, dir := range dirs {
 		fset := token.NewFileSet()
 		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
 		if err != nil {
+			// A package this guard cannot read is a package it has not checked: never a silent pass.
+			t.Errorf("%s does not parse, so the routing guard has not read it: %v", dir, err)
 			continue
 		}
 		for pkgName, pkg := range pkgs {
@@ -364,18 +406,25 @@ func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 						}
 					}
 					ast.Inspect(decl, func(n ast.Node) bool {
-						lit, ok := n.(*ast.BasicLit)
-						if !ok || lit.Kind != token.STRING {
-							return true
-						}
-						for _, w := range listWords {
-							if strings.Contains(lit.Value, w) {
-								if _, ok := exempt[owner]; ok {
-									hits[owner] = true
-									return true
+						switch x := n.(type) {
+						case *ast.BinaryExpr:
+							// `"begin" + "bfchar"` is one string to the compiler, and so to this guard.
+							if text, ok := constString(x); ok {
+								check(fset, owner, x.Pos(), text)
+								return false
+							}
+						case *ast.BasicLit:
+							if x.Kind == token.STRING {
+								check(fset, owner, x.Pos(), x.Value)
+							}
+						case *ast.CallExpr:
+							if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+								if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fontcode" {
+									if calls[pkgName] == nil {
+										calls[pkgName] = map[string]bool{}
+									}
+									calls[pkgName][sel.Sel.Name] = true
 								}
-								t.Errorf("%s: %s names a CMap list (%s) — read CMaps through internal/fontcode, or name the "+
-									"exemption and its reason here and in ADR-052", fset.Position(lit.Pos()), owner, lit.Value)
 							}
 						}
 						return true
@@ -393,18 +442,38 @@ func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 			t.Errorf("exemption %s matched no CMap literal — remove it", id)
 		}
 	}
-	for _, dir := range []string{"../pdfops", "../uacheck"} {
-		imports := false
-		files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-		for _, f := range files {
-			if b, err := os.ReadFile(f); err == nil && !strings.HasSuffix(f, "_test.go") && strings.Contains(string(b), `"nib/internal/fontcode"`) {
-				imports = true
+	for pkg, fns := range mustCall {
+		for _, fn := range fns {
+			if !calls[pkg][fn] {
+				t.Errorf("%s never calls fontcode.%s, so it reads what that door reads some other way", pkg, fn)
 			}
 		}
-		if !imports {
-			t.Errorf("%s does not import internal/fontcode, so it reads shown bytes some other way", dir)
-		}
 	}
+}
+
+// constString folds a string expression built only of literals and `+` — a constant the compiler would fold.
+func constString(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		if x.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(x.Value)
+		return v, err == nil
+	case *ast.ParenExpr:
+		return constString(x.X)
+	case *ast.BinaryExpr:
+		if x.Op != token.ADD {
+			return "", false
+		}
+		l, ok := constString(x.X)
+		if !ok {
+			return "", false
+		}
+		r, ok := constString(x.Y)
+		return l + r, ok
+	}
+	return "", false
 }
 
 // parseTU is ParseToUnicode with a budget of its own, as a test reading one CMap wants.

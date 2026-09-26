@@ -62,6 +62,21 @@ type glyphFont struct {
 	tuUnread   string
 	// enc is a simple font's encoding, built on first use (`encodingOf`).
 	enc *simpleEncoding
+	// chain is a Type 0 font's CMap chain (`cmapChain`), read on first use (`chainOf`) — the glyph door asks it per
+	// glyph, and walking it again for each one was the P07 phase-close review's R2-7.
+	chain     []cmapRef
+	chainWhy  string
+	chainRead bool
+}
+
+// chainOf is gf's CMap chain, read once per font.
+func (d *Document) chainOf(gf *glyphFont) ([]cmapRef, string) {
+	if !gf.chainRead {
+		gf.chainRead = true
+		d.fontChainReads++
+		gf.chain, gf.chainWhy = d.cmapChain(gf.dict, gf.name)
+	}
+	return gf.chain, gf.chainWhy
 }
 
 // maxGlyphCodes bounds the character codes the walk reads out of string operands. The operator ceiling does
@@ -86,10 +101,12 @@ func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font type
 	}
 	gf := w.d.glyphFontFor(font, fontObj, fontName)
 	first := operands[0]
+	// The string operands' raw spans: decoded only for a font whose codes are read, since an unread font needs only to
+	// know that a string shows something (`fontcode.StringEmpty` — R2-8: every string was decoded, uncharged, first).
 	var strs [][]byte
 	switch first.Kind {
 	case contentstream.LiteralString, contentstream.HexString:
-		strs = append(strs, fontcode.String(first.Bytes(src)))
+		strs = append(strs, first.Bytes(src))
 	case contentstream.ArrayOpen:
 		// `GFOpTextShow.addArrayElements` takes the array's own strings; a nested array is not one.
 		end := fontcode.MatchingClose(operands, 0, contentstream.ArrayOpen, contentstream.ArrayClose)
@@ -102,21 +119,24 @@ func (w walker) showGlyphs(src []byte, operands []contentstream.Token, font type
 				depth--
 			case contentstream.LiteralString, contentstream.HexString:
 				if depth == 0 {
-					strs = append(strs, fontcode.String(tk.Bytes(src)))
+					strs = append(strs, tk.Bytes(src))
 				}
 			}
 		}
 	default:
 		return // `"`: aw ac string — the first argument is a number
 	}
-	for _, s := range strs {
-		if len(s) == 0 {
-			continue
-		}
+	for _, raw := range strs {
 		if gf.unread != "" {
 			// The codes are unknown, but that there IS at least one glyph is not: record one, so the rules
 			// refuse rather than read an unreadable font as drawing nothing.
-			w.d.addGlyph(glyph{font: gf, where: where, unread: gf.unread, visible: visible})
+			if !fontcode.StringEmpty(raw) {
+				w.d.addGlyph(glyph{font: gf, where: where, unread: gf.unread, visible: visible})
+			}
+			continue
+		}
+		s := fontcode.String(raw)
+		if len(s) == 0 {
 			continue
 		}
 		read := func(_ []byte, v int) bool {
@@ -184,7 +204,7 @@ func (d *Document) glyphFontFor(font types.Dict, obj int, name string) *glyphFon
 	gf := &glyphFont{dict: font, name: name}
 	d.glyphFonts[key] = gf
 	if d.name(font["Subtype"]) == "Type0" {
-		gf.cs, gf.unread = d.type0Codespace(font, name)
+		gf.cs, gf.unread = d.type0Codespace(gf)
 	}
 	if tu, ok := font["ToUnicode"]; ok {
 		gf.tu, gf.tuIdentity, gf.tuUnread = d.toUnicodeCMap(tu)
@@ -215,49 +235,7 @@ func (d *Document) toUnicodeCMap(obj types.Object) (tu *fontcode.ToUnicode, iden
 	if n, ok := d.stringKey(sd.Dict, "CMapName"); ok && strings.HasPrefix(n, "Identity-") {
 		return nil, true, ""
 	}
-	seen := map[*types.StreamDict]bool{}
-	var read func(sd *types.StreamDict, hop int) (*fontcode.ToUnicode, string)
-	read = func(sd *types.StreamDict, hop int) (*fontcode.ToUnicode, string) {
-		if seen[sd] || hop >= maxUseCMapChain {
-			return nil, "its /ToUnicode's /UseCMap chain loops or runs past " + fmt.Sprint(maxUseCMapChain) + " CMaps"
-		}
-		seen[sd] = true
-		// **Parsed once per stream, from ONE budget for the document**: fonts sharing a CMap share its parse, and a
-		// document of many CMaps cannot hold 34 MB of range index apiece (the P07.S02 re-review: 32 fonts, 1.56 GB).
-		tu, cached := d.toUnicodes[dictID(sd.Dict)]
-		if !cached {
-			if sd.Content == nil && sd.Decode() != nil {
-				return nil, "its /ToUnicode stream could not be decoded"
-			}
-			if d.toUnicodes == nil {
-				d.toUnicodes = map[uintptr]*fontcode.ToUnicode{}
-				d.toUnicodeBlocks = maxToUnicodeBlocks
-			}
-			tu = fontcode.ParseToUnicode(sd.Content, &d.toUnicodeBlocks)
-			d.toUnicodes[dictID(sd.Dict)] = tu
-		}
-		for _, n := range tu.UseCMapNames {
-			if ucs2WithEntries[n] {
-				return nil, fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)
-			}
-		}
-		switch n, isName := d.nameOf(sd.Dict["UseCMap"]); {
-		case isName && ucs2WithEntries[n]:
-			return nil, fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)
-		case isName:
-		default:
-			if used, _, err := d.Ctx.DereferenceStreamDict(sd.Dict["UseCMap"]); err == nil && used != nil {
-				u, why := read(used, hop+1)
-				if why != "" {
-					return nil, why
-				}
-				// `Use` merges into the using CMap, so a cached parse is copied first rather than written through.
-				tu = tu.With(u)
-			}
-		}
-		return tu, ""
-	}
-	tu, why := read(sd, 0)
+	tu, why, _ := d.toUnicodeChainFrom(sd, 0, map[uintptr]bool{})
 	if why == "" && tu.Malformed {
 		why = "its /ToUnicode CMap holds an entry of the wrong kind, where veraPDF discards the whole CMap — nib " +
 			"does not claim to reproduce that parser byte for byte"
@@ -265,10 +243,100 @@ func (d *Document) toUnicodeCMap(obj types.Object) (tu *fontcode.ToUnicode, iden
 	return tu, false, why
 }
 
+// toUnicodeChain is one /ToUnicode stream's reading with its dictionary's /UseCMap chain linked: the CMap, or why nib
+// cannot read it, and how many streams the chain holds from this one down.
+type toUnicodeChain struct {
+	tu    *fontcode.ToUnicode
+	why   string
+	depth int
+}
+
+// toUnicodeChainFrom reads the /ToUnicode stream `sd`, reached `hop` streams down a chain, and links every CMap its
+// /UseCMap chain names (`PDCMap.getCMapFile`).
+//
+// **Read once per stream, for the document** (the P07 phase-close review, R2-2): the chain used to be re-walked, and
+// each hop's entries copied into the using CMap, once per FONT — a million-entry CMap under a /UseCMap was copied for
+// every font naming a CMap that used it. A stream's chain is kept (`toUnicodeChains`) unless the answer depended on
+// how far down it was reached, which only the chain ceiling does.
+//
+// `open` is the streams on the walk so far, keyed by their dictionary: a stream met again is a loop. It was keyed by
+// the `*StreamDict`, which pdfcpu builds afresh on every dereference, so it never matched and a loop ran to the
+// ceiling instead (R2-6).
+func (d *Document) toUnicodeChainFrom(sd *types.StreamDict, hop int, open map[uintptr]bool) (*fontcode.ToUnicode, string, bool) {
+	id := dictID(sd.Dict)
+	ceiling := "its /ToUnicode's /UseCMap chain loops or runs past " + fmt.Sprint(maxUseCMapChain) + " CMaps"
+	if c, done := d.toUnicodeChains[id]; done {
+		if c.why == "" && hop+c.depth > maxUseCMapChain {
+			return nil, ceiling, false
+		}
+		return c.tu, c.why, true
+	}
+	if open[id] {
+		return nil, ceiling, true
+	}
+	if hop >= maxUseCMapChain {
+		return nil, ceiling, false
+	}
+	open[id] = true
+	defer delete(open, id)
+	d.toUnicodeHops++
+	c, keep := d.readToUnicodeLink(sd, hop, open)
+	if keep {
+		if d.toUnicodeChains == nil {
+			d.toUnicodeChains = map[uintptr]toUnicodeChain{}
+		}
+		d.toUnicodeChains[id] = c
+	}
+	return c.tu, c.why, keep
+}
+
+// readToUnicodeLink is one stream of the chain: its own parse, then the CMap its dictionary's /UseCMap names.
+func (d *Document) readToUnicodeLink(sd *types.StreamDict, hop int, open map[uintptr]bool) (toUnicodeChain, bool) {
+	// **Parsed once per stream, from ONE budget for the document**: fonts sharing a CMap share its parse, and a
+	// document of many CMaps cannot hold 34 MB of range index apiece (the P07.S02 re-review: 32 fonts, 1.56 GB).
+	tu, cached := d.toUnicodes[dictID(sd.Dict)]
+	if !cached {
+		if sd.Content == nil && sd.Decode() != nil {
+			return toUnicodeChain{why: "its /ToUnicode stream could not be decoded"}, true
+		}
+		if d.toUnicodes == nil {
+			d.toUnicodes = map[uintptr]*fontcode.ToUnicode{}
+			d.toUnicodeBlocks = maxToUnicodeBlocks
+		}
+		tu = fontcode.ParseToUnicode(sd.Content, &d.toUnicodeBlocks)
+		d.toUnicodes[dictID(sd.Dict)] = tu
+	}
+	for _, n := range tu.UseCMapNames {
+		if ucs2WithEntries[n] {
+			return toUnicodeChain{why: fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)}, true
+		}
+	}
+	switch n, isName := d.nameOf(sd.Dict["UseCMap"]); {
+	case isName && ucs2WithEntries[n]:
+		return toUnicodeChain{why: fmt.Sprintf("its /ToUnicode uses %s, whose entries veraPDF merges and nib does not carry", n)}, true
+	case isName:
+	default:
+		if used, _, err := d.Ctx.DereferenceStreamDict(sd.Dict["UseCMap"]); err == nil && used != nil {
+			u, why, keep := d.toUnicodeChainFrom(used, hop+1, open)
+			if why != "" {
+				return toUnicodeChain{why: why}, keep
+			}
+			// `Use` links into the using CMap, so a cached parse is copied first rather than written through.
+			return toUnicodeChain{tu: tu.With(u), depth: d.toUnicodeChains[dictID(used.Dict)].depth + 1}, keep
+		}
+	}
+	return toUnicodeChain{tu: tu, depth: 1}, true
+}
+
 // type0Codespace is the codespace a Type 0 font's strings are cut by: its /Encoding CMap's ranges, with every
 // CMap its chain uses merged in (`CMap.useCMap`), or why nib cannot cut them as veraPDF does.
-func (d *Document) type0Codespace(font types.Dict, name string) (*fontcode.Codespace, string) {
-	chain, why := d.cmapChain(font, name)
+//
+// **The chain is merged into the /Encoding CMap's own codespace**, never into an empty one: `useCMap` leaves the using
+// CMap's shortest range length as it was, and that length decides how far a byte no range admits is skipped. Merged
+// into an empty Codespace the length was unset, so every such byte refused where veraPDF reads code 0 (R3-7, measured).
+func (d *Document) type0Codespace(gf *glyphFont) (*fontcode.Codespace, string) {
+	font := gf.dict
+	chain, why := d.chainOf(gf)
 	if why != "" {
 		return nil, why
 	}
@@ -278,11 +346,15 @@ func (d *Document) type0Codespace(font types.Dict, name string) (*fontcode.Codes
 	if kids, err := d.Ctx.DereferenceArray(font["DescendantFonts"]); err != nil || len(kids) == 0 || d.dict(kids[0]) == nil {
 		return nil, "the Type 0 font has no descendant CIDFont, which is where veraPDF reads its codes"
 	}
-	cs := &fontcode.Codespace{}
+	var cs *fontcode.Codespace
 	for _, c := range chain {
 		part, why := d.cmapCodespace(c)
 		if why != "" {
 			return nil, why
+		}
+		if cs == nil {
+			cs = part.Clone()
+			continue
 		}
 		cs.Merge(part)
 	}
@@ -372,7 +444,7 @@ var ucs2Orderings = map[string]bool{"Japan1": true, "CNS1": true, "GB1": true, "
 // `Adobe-<ordering>-UCS2`, any other CMap to its OWN collection's `<registry>-<ordering>-UCS2` — and where
 // veraPDF carries no such CMap, the answer is null.
 func (d *Document) type0Fallback(f *glyphFont) (string, uniState, string) {
-	chain, _ := d.cmapChain(f.dict, f.name)
+	chain, _ := d.chainOf(f)
 	var info types.Dict
 	// Identity is `PDType0Font`'s NAME comparison, and an embedded Encoding stream's name is its `/CMapName`: such a
 	// stream falls back through the descendant's collection like the named CMap does (measured, the P07.S02 review).

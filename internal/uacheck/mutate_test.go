@@ -1047,10 +1047,11 @@ func withCIDSet(t *testing.T, pdf []byte, mode cidSetMode) []byte {
 			if ff == nil || ff.Decode() != nil {
 				continue
 			}
-			n, err := trueTypeGlyphCount(ff.Content)
-			if err != nil {
-				return err
+			p := readTrueType(ff.Content, maxTrueTypeReads)
+			if p.state != ttParsed {
+				return fmt.Errorf("the fixture's TrueType program does not parse (%s)", p.why)
 			}
+			n := p.numGlyphs
 			set := make([]byte, (n+7)/8)
 			for cid := 0; cid < len(set)*8; cid++ {
 				on := false
@@ -1142,7 +1143,8 @@ func withRoleMapOnLeaf(t *testing.T, pdf []byte, roleMap types.Dict, leafType st
 		// root's `/K`**: a single `Document` reference puts the root's child at depth 0 and retypes its first kid,
 		// but an ARRAY `/K` puts the root's own children at depth 1, so the first of them is retyped — on the
 		// Markdown oracle fixture (root `/K [25 0 R 26 0 R 27 0 R]`, no Document element) that is the heading,
-		// which is why 7.4.2 t1 sits in `knownCannotCheck`. (P03's phase close corrected this comment, which
+		// which is why 7.4.2 t1 sat in `knownCannotCheck` until the P07 phase close (R4-10), when veraPDF was measured
+		// typing a looped element as no heading at all, so the sequence is judged without it. (P03's phase close corrected this comment, which
 		// said the root's own child was always skipped; veraPDF agrees with every verdict either way.)
 		var retyped types.Dict
 		var walk func(o types.Object, depth int)

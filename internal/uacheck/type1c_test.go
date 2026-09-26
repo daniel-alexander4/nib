@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // P07.S05a's fixture generator: a small CFF program, laid out header → Name → Top DICT → String → Global Subr INDEX →
@@ -427,5 +430,185 @@ func type1CFixturesProbed() []measuredFixture {
 		{name: "T1C: a negative 16-bit charstring width", vera: "PPPPP", pdf: t1cDoc(sub, w(500, 500, 500)+win, full, "(A) Tj", cffSpec{names: abc, charstrings: css([]byte{28, 0xFF, 0x38, 14}, e500, e500), private: append(dictInt(700), 21)}.build(), "Type1C")},
 		{name: "T1C: defaultWidthX written with byte 28 above 32767", vera: "PPPPP", pdf: t1cDoc(sub, "/FirstChar 65 /LastChar 67 /Widths [40000 500 500]"+win, full, "(A) Tj", cffSpec{names: abc, charstrings: css(cs("endchar"), e500, e500), private: []byte{28, 0x9C, 0x40, 20}}.build(), "Type1C")},
 		{name: "T1C: 1240 local subroutines, bias 1131", vera: "PPPPP", pdf: t1cDoc(sub, w(500, 500, 500)+win, full, "(A) Tj", cffSpec{names: abc, charstrings: css(cs(-1131, "callsubr"), e500, e500), lsubrs: lsubrs}.build(), "Type1C")},
+	}
+}
+
+// allocated is the bytes the process has allocated so far — the work count the view tests below read in place of a
+// clock, since a copy costs its length whatever the machine.
+func allocated() uint64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.TotalAlloc
+}
+
+// TestASubroutineCallCostsWhatItReads — a call reads its subroutine through a view, never a copy: a 1 MB subroutine
+// that calls itself was copied whole at each of its 64 nested calls, so 500 glyphs allocated 30 GB (7.5 s, measured at
+// the P07 phase close) while reading 130 bytes each. The control is the same megabyte holding a real width.
+func TestASubroutineCallCostsWhatItReads(t *testing.T) {
+	names := make([]string, 499)
+	for i := range names {
+		names[i] = fmt.Sprintf("g%d", i+1)
+	}
+	css := make([][]byte, 500)
+	for i := range css {
+		css[i] = []byte{32, 10} // -107 callsubr: local subroutine 0 under a bias of 107
+	}
+	build := func(head []byte) []byte {
+		subr := make([]byte, 1<<20)
+		copy(subr, head)
+		return cffSpec{names: names, charstrings: css, lsubrs: [][]byte{subr}}.build()
+	}
+	for _, c := range []struct {
+		name string
+		head []byte
+		want func(p cffProgram) string // "" when the stimulus happened
+	}{
+		{"a subroutine calling itself", []byte{32, 10}, func(p cffProgram) string {
+			for gid := range 500 {
+				if !strings.Contains(p.widths.errs[gid], "deeper than") {
+					return fmt.Sprintf("glyph %d: %q, want refused at the nesting bound", gid, p.widths.errs[gid])
+				}
+			}
+			return ""
+		}},
+		{"a subroutine setting a width (the control)", cs(500, "endchar"), func(p cffProgram) string {
+			for gid, w := range p.widths.subset {
+				if w != 500 || p.widths.errs[gid] != "" {
+					return fmt.Sprintf("glyph %d: width %v (%q), want 500", gid, w, p.widths.errs[gid])
+				}
+			}
+			return ""
+		}},
+	} {
+		prog := build(c.head)
+		spend := &cffSpend{}
+		before := allocated()
+		p := readCFF(prog, true, spend)
+		spent := allocated() - before
+		if p.state != ttParsed || p.widths == nil || len(p.widths.subset) != 500 {
+			t.Fatalf("%s: %v (%s), want parsed with 500 widths", c.name, p.state, p.why)
+		}
+		if msg := c.want(p); msg != "" {
+			t.Fatalf("%s: %s", c.name, msg)
+		}
+		if spend.charstring < 500*2 {
+			t.Fatalf("%s: %d charstring bytes read, want at least each glyph's own", c.name, spend.charstring)
+		}
+		if spent > 64<<20 {
+			t.Errorf("%s: reading 500 glyphs allocated %d MB — the subroutine is copied, not read through a view", c.name, spent>>20)
+		}
+	}
+}
+
+// TestAFetchedCharstringIsAViewNotACopy — a charstring is fetched at every width asked of a type-1 CFF program (which
+// then refuses), and from a large CharStrings INDEX one entry may span the program: 256 asks of a 4 MB glyph allocated
+// 1 GB before the fetch became a view (measured at the P07 phase close).
+func TestAFetchedCharstringIsAViewNotACopy(t *testing.T) {
+	big := make([]byte, 4<<20)
+	big[0] = 14
+	p := readCFF(cffSpec{names: []string{"A"}, charstrings: [][]byte{big, {14}}, topExtra: append(dictInt(1), 12, 6)}.build(), false, nil)
+	if p.state != ttParsed || !p.widths.bigCS {
+		t.Fatalf("a type-1 program with a 4 MB glyph: %v (%s), big CharStrings %v, want parsed from the stream", p.state, p.why, p.widths != nil && p.widths.bigCS)
+	}
+	before := allocated()
+	refused := 0
+	for range 256 {
+		if _, err := p.widths.width(0); err != nil && strings.Contains(err.why, "type 1") {
+			refused++
+		}
+	}
+	spent := allocated() - before
+	if refused != 256 {
+		t.Fatalf("%d of 256 asks refused naming type 1, want every one (each fetches the charstring first)", refused)
+	}
+	if spent > 64<<20 {
+		t.Errorf("256 fetches of a 4 MB charstring allocated %d MB — it is copied, not viewed", spent>>20)
+	}
+}
+
+// TestTheCFFBudgetsAreTheDocuments — the CFF bounds are the DOCUMENT's, as the TrueType budget is
+// (`TestTheReadBudgetIsTheDocuments`): each case is two programs, each under the bound alone (the control), together
+// over it — the second refused naming the document's CFF programs. Through a document once (the names), and at the
+// reader for the charstring bytes; `TestTheCIDBudgetsAreTheDocuments` holds the DICT and FDSelect ones.
+func TestTheCFFBudgetsAreTheDocuments(t *testing.T) {
+	// Glyph names: a charset of ten SIDs over one 1 MB string is 10 MB of the 16 MB bound.
+	named := func(tag string) []byte {
+		nm := make([]string, 10)
+		for i := range nm {
+			nm[i] = tag + strings.Repeat("x", 1<<20)
+		}
+		return cffSpec{names: nm}.build()
+	}
+	a, b := named("a"), named("b")
+	spend := &cffSpend{}
+	if p := readCFF(a, false, spend); p.state != ttParsed || spend.names < cffMaxNameBytes/2 || spend.names > cffMaxNameBytes*3/4 {
+		t.Fatalf("one program of 10 MB of names: %v (%s) after %d bytes, want parsed between half and three quarters of the bound", p.state, p.why, spend.names)
+	}
+	if p := readCFF(b, false, nil); p.state != ttParsed {
+		t.Fatalf("the second program alone: %v (%s), want parsed (the control)", p.state, p.why)
+	}
+	doc := func(progA, progB []byte) []byte {
+		objs := map[int]string{}
+		for i, prog := range [][]byte{progA, progB} {
+			objs[12+i] = fmt.Sprintf("<< /Type /FontDescriptor /FontName /P%d /Flags 32 /FontBBox [0 0 1000 1000] /ItalicAngle 0 "+
+				"/Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 /FontFile3 %d 0 R >>", i, 20+i)
+			objs[20+i] = spStream("/Subtype /Type1C", string(prog))
+		}
+		objs[11] = "<< /Type /Font /Subtype /Type1 /BaseFont /P1 /FontDescriptor 13 0 R /Encoding /WinAnsiEncoding >>"
+		return glyphPage("BT /F0 12 Tf 10 10 Td (A) Tj /F1 12 Tf (A) Tj ET", "/F1 11 0 R", "",
+			"<< /Type /Font /Subtype /Type1 /BaseFont /P0 /FontDescriptor 12 0 R /Encoding /WinAnsiEncoding >>", objs)
+	}
+	d, err := open(doc(a, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var known []bool
+	var whys []string
+	for _, n := range []int{10, 11} {
+		sp, ok, why, _ := d.simpleProgramOf(d.dict(*types.NewIndirectRef(n, 0)))
+		if sp.kind != "CFF" {
+			t.Fatalf("font %d: program kind %q, want CFF", n, sp.kind)
+		}
+		known, whys = append(known, ok), append(whys, why)
+	}
+	if len(d.type1CReads) != 2 {
+		t.Fatalf("%d programs read, want both", len(d.type1CReads))
+	}
+	if !known[0] || known[1] || !strings.Contains(whys[1], "the document's CFF programs") {
+		t.Fatalf("two name-heavy programs in one document: known %v (%q), want the first read and the second refused naming the document's CFF programs", known, whys)
+	}
+
+	// Charstring bytes: 20 glyphs each reading just under a megabyte of `return` through one subroutine is 20 MB of the
+	// 32 MB bound; a width is one glyph's, so the second program's later glyphs are refused and the program parses.
+	read := func() []byte {
+		subr := bytes.Repeat([]byte{11}, 1<<20-64)
+		css := make([][]byte, 20)
+		for i := range css {
+			css[i] = []byte{32, 10}
+		}
+		nm := make([]string, 19)
+		for i := range nm {
+			nm[i] = fmt.Sprintf("g%d", i+1)
+		}
+		return cffSpec{names: nm, charstrings: css, lsubrs: [][]byte{subr}}.build()
+	}
+	refusedBy := func(p cffProgram) int {
+		n := 0
+		for _, why := range p.widths.errs {
+			if strings.Contains(why, "the document's CFF programs") {
+				n++
+			}
+		}
+		return n
+	}
+	spend = &cffSpend{}
+	if p := readCFF(read(), true, spend); p.state != ttParsed || len(p.widths.errs) != 0 || spend.charstring < cffMaxCharstringTotal/2 || spend.charstring > cffMaxCharstringTotal*3/4 {
+		t.Fatalf("one program reading 20 MB: %v (%s), %d glyphs refused, %d bytes read, want parsed with none refused between half and three quarters of the bound", p.state, p.why, len(p.widths.errs), spend.charstring)
+	}
+	if p := readCFF(read(), true, nil); p.state != ttParsed || len(p.widths.errs) != 0 {
+		t.Fatalf("the second program alone: %v (%s), %d glyphs refused, want none (the control)", p.state, p.why, len(p.widths.errs))
+	}
+	if p := readCFF(read(), true, spend); p.state != ttParsed || refusedBy(p) == 0 {
+		t.Fatalf("the second program after the first: %v (%s), %d glyphs refused naming the document's CFF programs, want some", p.state, p.why, refusedBy(p))
 	}
 }

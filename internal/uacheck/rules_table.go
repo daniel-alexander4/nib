@@ -54,6 +54,9 @@ type tableLayout struct {
 	headerless               uintptr          // the one data cell flagged hasConnectedHeader=false, or 0
 	unknownHeaders           bool             // whether that cell named headers no TH carries
 	unscopedRow, unscopedCol int              // the first TH in grid order with no Scope, 1-based — the cell a person fixes
+	// headerSteps is how many grid slots the geometric header search read — tabulating and then asking — the
+	// work counter a test reads to show it is linear in the grid (`headerReachOf`), never per cell × height.
+	headerSteps int
 }
 
 type tableCell struct {
@@ -361,6 +364,7 @@ func (d *Document) computeLayout(table types.Dict) *tableLayout {
 	if allScoped {
 		return l
 	}
+	var reach *headerReach // built on the first headerless cell, once per table
 	for r := 0; r < height; r++ {
 		for c := 0; c < width; c++ {
 			cell := grid[r][c]
@@ -388,7 +392,14 @@ func (d *Document) computeLayout(table types.Dict) *tableLayout {
 			// name joins to '' and reads as no unknown header at all (t1, not t2), where two join to ",". Ported as
 			// written; found by P03.S04's review from the 1.30.2 bytecode.
 			unknown := strings.Join(unknowns, ",") != ""
-			if connected || d.headerInLine(grid, cell) {
+			if connected {
+				continue
+			}
+			if reach == nil {
+				reach = d.headerReachOf(grid)
+				l.headerSteps = reach.steps
+			}
+			if reach.inLine(cell, &l.headerSteps) {
 				continue
 			}
 			l.headerless, l.unknownHeaders = cell.id, unknown
@@ -480,18 +491,42 @@ func checkTableShortRow(d *Document) Result {
 // cellVerdict is the shape the cell-scoped rules share (veraPDF's SETableCell and SETD): the subjects are the
 // document's cells of the given types, wherever they sit, and a cell fails only when its table's layout
 // flagged it — so a cell outside any table passes, as veraPDF's null property does.
+//
+// # Why the layouts are indexed by cell (the P07 phase-close review, R4-3)
+//
+// Each cell used to be offered to EVERY layout, so a document of many small tables paid cells × tables per
+// rule, and three rules read this: 20,000 one-cell tables measured 4.5 s on one call of 7.2 t15. A layout
+// flags a cell only through `intersecting` and `headerless` — the two per-cell outputs `computeLayout` has —
+// so the layouts that could flag a cell are indexed by it once, in layout order, and a cell is offered to
+// those alone. `flagged` must therefore flag only a cell one of those two names; every caller below does.
 func (d *Document) cellVerdict(kinds map[string]bool, flagged func(l *tableLayout, id uintptr) string) Result {
+	r, _ := d.cellVerdictCounted(kinds, flagged)
+	return r
+}
+
+// cellVerdictCounted is cellVerdict with its work counter: how many (layout, cell) pairs it offered to flagged.
+func (d *Document) cellVerdictCounted(kinds map[string]bool, flagged func(l *tableLayout, id uintptr) string) (Result, int) {
 	layouts, _, unread := d.tablesIn()
 	nodes, _ := d.structNodes()
-	subjects := 0
+	byCell := map[uintptr][]*tableLayout{}
+	for _, l := range layouts {
+		for id := range l.intersecting {
+			byCell[id] = append(byCell[id], l)
+		}
+		if l.headerless != 0 && !l.intersecting[l.headerless] {
+			byCell[l.headerless] = append(byCell[l.headerless], l)
+		}
+	}
+	subjects, offered := 0, 0
 	for _, n := range nodes {
 		if !kinds[d.typedAs(n.dict)] {
 			continue
 		}
 		subjects++
-		for _, l := range layouts {
+		for _, l := range byCell[dictID(n.dict)] {
+			offered++
 			if why := flagged(l, dictID(n.dict)); why != "" {
-				return Result{Verdict: Fail, Why: why, Where: nodeWhere(n, d.name(n.dict["S"]))}
+				return Result{Verdict: Fail, Why: why, Where: nodeWhere(n, d.name(n.dict["S"]))}, offered
 			}
 		}
 	}
@@ -504,13 +539,13 @@ func (d *Document) cellVerdict(kinds map[string]bool, flagged func(l *tableLayou
 	}
 	switch {
 	case unread != "":
-		return Result{Verdict: CannotCheck, Why: unread}
+		return Result{Verdict: CannotCheck, Why: unread}, offered
 	case cannot != "":
-		return Result{Verdict: CannotCheck, Why: cannot}
+		return Result{Verdict: CannotCheck, Why: cannot}, offered
 	case subjects == 0:
-		return Result{Verdict: NotApplicable, Why: "the document has no table cells of that kind"}
+		return Result{Verdict: NotApplicable, Why: "the document has no table cells of that kind"}, offered
 	}
-	return Result{Verdict: Pass}
+	return Result{Verdict: Pass}, offered
 }
 
 func checkCellIntersection(d *Document) Result {
@@ -545,44 +580,97 @@ func checkUnknownHeaders(d *Document) Result {
 	})
 }
 
-// headerInLine is veraPDF's geometric `hasHeaders` (PDF/UA-1, where a header's default scope is none): looking
+// headerReach is veraPDF's geometric `hasHeaders` (PDF/UA-1, where a header's default scope is none): looking
 // up each column the cell covers, and left along each row it covers, the nearest run of TH cells is read, and a
 // TH whose explicit Scope is Both — or Column looking up, Row looking left — connects the cell. The run ends at
 // the first non-TH cell after a TH, so a header beyond an intervening data cell is not the cell's header.
-func (d *Document) headerInLine(grid [][]*tableCell, cell *tableCell) bool {
+//
+// # Why it is two tables and not a scan per cell (the P07 phase-close review, R4-2)
+//
+// It was a scan per cell: from each headerless data cell, up its column until the run ended. Above a column of
+// data cells the run does not end until it meets a TH, so every such cell re-read every row above it — O(rows²)
+// per column, measured 16,000 rows 0.79 s and 32,000 rows 3.08 s on one 7.5 t1 call. The scan from a slot
+// depends only on that slot and on whether a TH has been seen, so it is tabulated once per table, top-down and
+// left-to-right, each slot visited once; a cell then asks one slot per column (and row) it spans.
+//
+// up[r][c] answers "scanning up from row r in column c, inclusive"; bit 0 is with no TH seen yet, bit 1 with
+// one seen. A TH continues the scan with a TH seen; a non-TH ends it if one was, and passes it on if not.
+// left[r][c] is the same along a row.
+type headerReach struct {
+	width    int
+	up, left []uint8 // indexed r*width+c
+	steps    int     // slots tabulated — the work counter
+}
+
+func (d *Document) headerReachOf(grid [][]*tableCell) *headerReach {
+	height := len(grid)
+	width := 0
+	if height > 0 {
+		width = len(grid[0])
+	}
+	h := &headerReach{width: width, up: make([]uint8, height*width), left: make([]uint8, height*width)}
+	// A cell spanning several slots is read once, not once per slot.
+	scopes := map[*tableCell]string{}
 	scope := func(c *tableCell) string {
 		if c.std != "TH" {
 			return ""
 		}
-		return d.name(d.tableAttributeOfType(c.dict, "Scope", attrName))
+		sc, done := scopes[c]
+		if !done {
+			sc = d.name(d.tableAttributeOfType(c.dict, "Scope", attrName))
+			scopes[c] = sc
+		}
+		return sc
 	}
+	// step is one slot's answer from the answer of the slot before it along the scan (prev; 0 past the edge).
+	step := func(c *tableCell, hit bool, prev uint8) uint8 {
+		if hit {
+			return 3
+		}
+		if c.std == "TH" {
+			// A TH continues the scan with a TH seen, whether or not one was seen before.
+			v := (prev >> 1) & 1
+			return v | v<<1
+		}
+		// A non-TH ends a scan that has seen a TH, and passes an unseen one on unchanged.
+		return prev & 1
+	}
+	for r := 0; r < height; r++ {
+		for c := 0; c < width; c++ {
+			cell := grid[r][c]
+			sc := scope(cell)
+			var above, before uint8
+			if r > 0 {
+				above = h.up[(r-1)*width+c]
+			}
+			if c > 0 {
+				before = h.left[r*width+c-1]
+			}
+			h.up[r*width+c] = step(cell, sc == "Both" || sc == "Column", above)
+			h.left[r*width+c] = step(cell, sc == "Both" || sc == "Row", before)
+			h.steps++
+		}
+	}
+	return h
+}
+
+// inLine reports whether a header in line with the cell connects it — the scan starting in the slot above each
+// column it covers, and in the slot left of each row it covers, with no TH seen yet. Each slot it reads is
+// counted into steps.
+func (h *headerReach) inLine(cell *tableCell, steps *int) bool {
 	if cell.row > 0 {
 		for col := cell.col; col < cell.col+int(cell.colSpan); col++ {
-			seen := false
-			for r := cell.row - 1; r >= 0; r-- {
-				if sc := scope(grid[r][col]); sc == "Both" || sc == "Column" {
-					return true
-				}
-				if grid[r][col].std == "TH" {
-					seen = true
-				} else if seen {
-					break
-				}
+			*steps++
+			if h.up[(cell.row-1)*h.width+col]&1 != 0 {
+				return true
 			}
 		}
 	}
 	if cell.col > 0 {
 		for r := cell.row; r < cell.row+int(cell.rowSpan); r++ {
-			seen := false
-			for col := cell.col - 1; col >= 0; col-- {
-				if sc := scope(grid[r][col]); sc == "Both" || sc == "Row" {
-					return true
-				}
-				if grid[r][col].std == "TH" {
-					seen = true
-				} else if seen {
-					break
-				}
+			*steps++
+			if h.left[r*h.width+cell.col-1]&1 != 0 {
+				return true
 			}
 		}
 	}

@@ -240,7 +240,8 @@ func TestALanguageNibDidNotFinishReadingIsCannotCheck(t *testing.T) {
 	if got := verdictOf(t, deepParentTree(3), "7.2 t29"); got.Verdict != Pass {
 		t.Fatalf("control: a parent tree three levels deep reports %v (%s) for 7.2 t29, want Pass", got.Verdict, got.Why)
 	}
-	if got := verdictOf(t, deepParentTree(70), "7.2 t29"); got.Verdict != CannotCheck {
+	// Past the lookup's bound (RR3-2); the rule itself, since the document is refused in front of it.
+	if got := ruleVerdict(t, deepParentTree(maxParentTreeDepth+1), "7.2 t29"); got.Verdict != CannotCheck {
 		t.Errorf("a parent tree past its bound reports %v (%s) for 7.2 t29, want CannotCheck", got.Verdict, got.Why)
 	}
 	if got := verdictOf(t, formFanOut(2, false), "7.2 t29"); got.Verdict != NotApplicable {
@@ -960,5 +961,38 @@ func TestAPopulationNibReadInFullIsNeverCannotCheck(t *testing.T) {
 	if got := verdictOf(t, noKey, "7.2 t25"); got.Verdict != NotApplicable {
 		t.Errorf("a document with no form field reports %v (%s) for 7.2 t25, want not applicable — the "+
 			"annotations' unread slots are not t25's population", got.Verdict, got.Why)
+	}
+}
+
+// nestedArrayDoc is a one-page document holding one object of `depth` directly nested arrays and no font at all.
+func nestedArrayDoc(depth int) []byte {
+	return buildPDF(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Junk 5 0 R >>",
+		5: strings.Repeat("[", depth) + strings.Repeat("]", depth),
+	})
+}
+
+// TestTheInlineType3ScanAnswersTrueAtItsBound — R4-4. `scanInlineType3`'s doc comment says a bound reached is
+// `true`, because its one reader turns `true` into a refusal and `false` into "there is no such font"; the walk
+// returned `false` at the bound, which is "nib did not look" reported as "there is none".
+func TestTheInlineType3ScanAnswersTrueAtItsBound(t *testing.T) {
+	// The control first: just under the bound the walk reads everything, finds no font, and says so.
+	shallow, err := open(nestedArrayDoc(maxWalkDepth - 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shallow.scanInlineType3() {
+		t.Fatalf("a document with no Type 3 font, nested %d deep, scans as holding one — the control must answer "+
+			"definitely or the row below proves nothing", maxWalkDepth-2)
+	}
+	deep, err := open(nestedArrayDoc(maxWalkDepth + 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deep.scanInlineType3() {
+		t.Errorf("an object nested past the walk bound scans as holding no inline Type 3 font; nib stopped reading " +
+			"it, so the answer must be the one its reader refuses on")
 	}
 }

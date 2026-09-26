@@ -214,12 +214,11 @@ func (d *Document) elementForStructParent(holder types.Dict) (elem types.Dict, s
 	if !has {
 		return nil, 0, false, ""
 	}
-	pt, why := d.parentTree()
 	// **Present-but-not-an-element is DEFINITE; absent from a tree nib did not finish is not.** The rule
 	// this door absorbed drew that line with a `found` check and the first draft of the door lost it,
 	// which turned a shipped clause's definite Fail into a refusal on a document with a deep tree AND a
 	// malformed row. The same collapse P04 found in `elementForMCID`, in the other direction.
-	entry, found := pt[sp]
+	entry, found, why := d.parentTreeEntry(sp)
 	if !found && why != "" {
 		return nil, sp, true, why
 	}

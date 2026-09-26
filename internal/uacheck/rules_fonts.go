@@ -148,85 +148,22 @@ func checkFontsEmbedded(d *Document) Result {
 			}
 			continue
 		}
-		if d.name(f.dict["Subtype"]) == "Type3" {
+		switch st, why := d.fontEmbedded(f.dict); st {
+		case ttParsed:
 			continue
-		}
-		// **A simple font's program is embedded only under a key the font's TYPE reads** — the door the glyph fallback
-		// also asks (`embeddedProgram`): veraPDF's Type 1 font opens `/FontFile` or `/FontFile3` and never `/FontFile2`,
-		// so a Type 1 program filed there is no program and the font fails (measured at P07.S02, where nib had passed it
-		// on the key's presence). A Type 0 font is judged by its descendant's descriptor, as it was measured before.
-		notEmbedded := "its program is not embedded"
-		if d.name(f.dict["Subtype"]) == "TrueType" {
-			// **A TrueType program counts only if veraPDF PARSES it** — `containsFontFile` is "exists AND parsed"
-			// (/pending 677, measured at P07.S03 on every shape of broken program): the door says, share group applied.
-			st, why := d.trueTypeEmbedded(f.dict)
-			switch st {
-			case ttParsed:
-				continue
-			case ttUnknown:
-				if unsure == nil {
-					unsure = &Result{Verdict: CannotCheck, Where: f.where,
-						Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its TrueType program is not known — %s", f.name, d.baseFontName(f.dict), why)}
-				}
-				continue
+		case ttUnknown:
+			if unsure == nil {
+				unsure = &Result{Verdict: CannotCheck, Where: f.where,
+					Why: fmt.Sprintf("font %s (%s): %s", f.name, d.baseFontName(f.dict), why)}
 			}
-			if why != "" {
-				notEmbedded = why
+			continue
+		default:
+			return Result{
+				Verdict: Fail,
+				Why: fmt.Sprintf("font %s (%s) draws visible text and %s, so how "+
+					"the glyphs look depends on whatever the reader substitutes", f.name, d.baseFontName(f.dict), why),
+				Where: f.where,
 			}
-		} else if st := d.name(f.dict["Subtype"]); st != "Type0" {
-			// A Type1C program counts only if veraPDF PARSES it (/pending 677's CFF half, P07.S05a); a /FontFile3 of
-			// another subtype is no program at all. A /FontFile (Type 1) program counts only if veraPDF parses it too
-			// (P07.S06).
-			kind := d.embeddedProgram(f.dict)
-			if (st == "Type1" || st == "MMType1") && (kind == "Type 1" || kind == "CFF" && d.fontFile3Subtype(f.dict) != "OpenType") {
-				sp, known, why, throws := d.simpleProgramOf(f.dict)
-				switch {
-				case throws != "" || !known:
-					if throws != "" {
-						why = throws
-					}
-					if unsure == nil {
-						unsure = &Result{Verdict: CannotCheck, Where: f.where,
-							Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its %s program is not known — %s", f.name, d.baseFontName(f.dict), kind, why)}
-					}
-					continue
-				case sp.parsed():
-					continue
-				}
-				notEmbedded = "veraPDF has no parsed program for it (its " + kind + " program does not parse, or its " +
-					"/FontFile3 is of a subtype veraPDF does not open)"
-				if kind == "Type 1" {
-					notEmbedded = "veraPDF has no parsed program for it (its Type 1 program does not parse)"
-				}
-			} else if kind != "" {
-				continue
-			}
-		} else if cid := d.descendantOf(f.dict); cid != nil && d.cidProgram(cid) != "" {
-			// A Type 0 font passes by its Subtype; its DESCENDANT is the subject that must embed — through the keys
-			// `PDCIDFont` opens (`cidProgram`), and for a CIDFontType2 only if veraPDF PARSES the program (/pending 677's
-			// CIDFontType2 half, P07.S04a: measured failing on a program whose hhea lies past its end).
-			kind := map[string]string{"CFF": "CFF", "OpenType": "OpenType"}[d.cidProgram(cid)]
-			if kind == "" {
-				kind = "TrueType"
-			}
-			switch st, why := d.cidProgramParsed(cid); st {
-			case ttParsed:
-				continue
-			case ttUnknown:
-				if unsure == nil {
-					unsure = &Result{Verdict: CannotCheck, Where: f.where,
-						Why: fmt.Sprintf("font %s (%s): whether veraPDF parses its %s program is not known — %s", f.name, d.baseFontName(f.dict), kind, why)}
-				}
-				continue
-			default:
-				notEmbedded = "veraPDF cannot read its embedded " + kind + " program (" + why + ")"
-			}
-		}
-		return Result{
-			Verdict: Fail,
-			Why: fmt.Sprintf("font %s (%s) draws visible text and %s, so how "+
-				"the glyphs look depends on whatever the reader substitutes", f.name, d.baseFontName(f.dict), notEmbedded),
-			Where: f.where,
 		}
 	}
 	// **Invisible text is a subject that PASSES, not an absent one** — veraPDF's test is `… || renderingMode == 3
@@ -250,6 +187,88 @@ func checkFontsEmbedded(d *Document) Result {
 		return *unsure
 	}
 	return Result{Verdict: Pass}
+}
+
+// fontEmbedded is 7.21.4.1 t1's question for one resolved font — veraPDF's `containsFontFile`, "a program exists AND
+// was parsed" — as ONE door over every font type: ttParsed where the font passes, ttFailed with the words for why it
+// does not, ttUnknown with the words for why nib cannot say.
+//
+//   - A Type 3 font carries its glyphs as content streams and has no program to embed.
+//   - **A simple font's program is embedded only under a key the font's TYPE reads**: veraPDF's Type 1 font opens
+//     `/FontFile` or `/FontFile3` and never `/FontFile2` (measured at P07.S02), and counts a program only if it PARSES
+//     it — a Type 1 program (P07.S06), a Type1C one (P07.S05a), and an OpenType one through its "CFF " table (R2-1:
+//     measured failing on junk nib had passed unread).
+//   - A TrueType program counts only if veraPDF parses it (/pending 677, P07.S03), share group applied.
+//   - A Type 0 font passes by its Subtype; its DESCENDANT is the subject that must embed, through the keys `PDCIDFont`
+//     opens — `cidProgramParsed`, the door 7.21.3.2 t1 and 7.21.4.2 t2 ask too.
+//   - A font of any other subtype is one veraPDF builds no font for (`unreadSubtype`, R2-9).
+func (d *Document) fontEmbedded(font types.Dict) (ttState, string) {
+	const none = "its program is not embedded"
+	switch st := d.name(font["Subtype"]); st {
+	case "Type3":
+		return ttParsed, ""
+	case "TrueType":
+		switch st, why := d.trueTypeEmbedded(font); st {
+		case ttParsed:
+			return ttParsed, ""
+		case ttUnknown:
+			return ttUnknown, "whether veraPDF parses its TrueType program is not known — " + why
+		default:
+			if why == "" {
+				why = none
+			}
+			return ttFailed, why
+		}
+	case "Type1", "MMType1":
+		kind := d.embeddedProgram(font)
+		switch {
+		case kind == "":
+			return ttFailed, none
+		case kind == "CFF" && d.fontFile3Subtype(font) == "OpenType":
+			switch st, why := d.openTypeProgram(d.dict(font["FontDescriptor"])); st {
+			case ttFailed:
+				return ttFailed, "veraPDF has no parsed program for it (" + why + ")"
+			default:
+				return ttUnknown, "whether veraPDF parses its OpenType program is not known — " + why
+			}
+		}
+		sp, known, why, throws := d.simpleProgramOf(font)
+		switch {
+		case throws != "" || !known:
+			if throws != "" {
+				why = throws
+			}
+			return ttUnknown, "whether veraPDF parses its " + kind + " program is not known — " + why
+		case sp.parsed():
+			return ttParsed, ""
+		case kind == "Type 1":
+			return ttFailed, "veraPDF has no parsed program for it (its Type 1 program does not parse)"
+		}
+		return ttFailed, "veraPDF has no parsed program for it (its CFF program does not parse, or its /FontFile3 is of a " +
+			"subtype veraPDF does not open)"
+	case "Type0":
+		cid := d.descendantOf(font)
+		if cid == nil {
+			return ttFailed, none
+		}
+		program := d.cidProgram(cid)
+		kind := map[string]string{"CFF": "CFF", "OpenType": "OpenType"}[program]
+		if kind == "" {
+			kind = "TrueType"
+		}
+		switch st, why := d.cidProgramParsed(cid); {
+		case st == ttParsed:
+			return ttParsed, ""
+		case st == ttUnknown:
+			return ttUnknown, "whether veraPDF parses its " + kind + " program is not known — " + why
+		case program == "":
+			return ttFailed, none
+		default:
+			return ttFailed, "veraPDF cannot read its embedded " + kind + " program (" + why + ")"
+		}
+	default:
+		return ttUnknown, unreadSubtype(st)
+	}
 }
 
 // checkFontsMapToUnicode evaluates ua1 7.21.7 t1, `toUnicode != null`, over every GLYPH — veraPDF's object
@@ -337,93 +356,44 @@ func glyphFontLabel(g glyph) string {
 	return "font " + fontLabel(g.font.name)
 }
 
-// checkCIDSetsComplete evaluates ua1 7.21.4.2 t2 over the CID fonts text selects — the set must be
-// EXACT, neither omitting a glyph slot nor claiming one the program does not hold.
+// checkCIDSetsComplete evaluates ua1 7.21.4.2 t2 over the CID fonts text selects — veraPDF's `PDCIDFont` test, in its
+// order (`cidSetResult`):
 //
-// The clause is conditional on a /CIDSet existing, but its SUBJECT is every embedded CID font: a
-// font with no /CIDSet satisfies it and passes, which is what veraPDF reports. nib's own output never
-// carries a /CIDSet (P04.S02 removes pdfcpu's), so its embedded fonts pass. For a document that does, the
-// population the set must cover is `maxp.numGlyphs` — measured: a set of the non-empty glyphs FAILS
-// and a set of every glyph slot PASSES — so for a TrueType program the rule reads only its `maxp` table. A CFF
-// program's population is its charset's CIDs (`cffCIDSetResult`, P07.S05b).
+//	containsFontFile == false || fontName.search(/[A-Z]{6}\+/) != 0 || containsCIDSet == false || cidSetListsAllGlyphs == true
+//
+// The clause is conditional on a /CIDSet existing, but its SUBJECT is every CID font: a font with no /CIDSet, no
+// program, or a program veraPDF did not parse satisfies it and passes, which is what veraPDF reports. nib's own output
+// never carries a /CIDSet (P04.S02 removes pdfcpu's), so its embedded fonts pass.
 func checkCIDSetsComplete(d *Document) Result {
 	fonts, errWhy := d.usedFonts()
 	if errWhy != "" {
 		return Result{Verdict: CannotCheck, Why: errWhy}
 	}
 	withSet := 0
+	// **A font nib cannot settle is held, and the later fonts are still judged** (the package's convention, `heldRefusal`;
+	// the P07 phase-close re-review RR1-1): returning at the first refusal reported "nib could not look" about a document
+	// whose next font plainly fails.
+	var held heldRefusal
 	for _, f := range fonts {
-		if f.unresolve {
-			continue
-		}
-		if d.name(f.dict["Subtype"]) != "Type0" {
+		if f.unresolve || d.name(f.dict["Subtype"]) != "Type0" {
 			continue
 		}
 		fd := d.descriptorOf(f.dict)
 		if fd == nil {
 			continue
 		}
-		program := ""
-		if cid := d.descendantOf(f.dict); cid != nil {
-			program = d.cidProgram(cid)
-		}
-		if program == "" {
-			// **A NON-embedded CID font is a subject too, and passes** (measured at P07.S01, on six documents):
-			// the profile's test opens with `containsFontFile == false ||`, so veraPDF runs the check and it
-			// passes; nib answered NotApplicable, which the oracle scores as a different state.
-			withSet++
-			continue
-		}
-		// **The subject is the embedded CID font, not the /CIDSet — measured by law 5.** veraPDF
-		// runs this check on every embedded CID font descriptor and PASSES one with no /CIDSet: the
-		// condition is inside the check, not a filter on its population. nib answered NotApplicable
-		// here until the S05 guard found four documents disagreeing.
+		// **A NON-embedded CID font is a subject too, and passes** (measured at P07.S01, on six documents), and so is
+		// one with no /CIDSet (law 5 at S05): the conditions are inside the check, not a filter on its population.
 		withSet++
-		csObj, has := fd["CIDSet"]
-		if !has {
-			continue
-		}
-		where := fmt.Sprintf("%s, font %s (%s)", f.where, f.name, d.baseFontName(f.dict))
-		cs, _, err := d.Ctx.DereferenceStreamDict(csObj)
-		if err != nil || cs == nil || cs.Decode() != nil {
-			return Result{Verdict: CannotCheck, Why: "the /CIDSet stream could not be read", Where: where}
-		}
-		if program == "CFF" {
-			if r := d.cffCIDSetResult(f, cs.Content, where); r != nil {
+		if r := d.cidSetResult(f, fd); r != nil {
+			if r.Verdict != CannotCheck {
 				return *r
 			}
-			continue
+			held.hold(r.Why, r.Where)
 		}
-		if program != "TrueType" {
-			return Result{Verdict: CannotCheck, Why: "the CID font's program is " + program + ", whose glyph count nib does not read", Where: where}
-		}
-		prog, _, perr := d.Ctx.DereferenceStreamDict(fd["FontFile2"])
-		if perr != nil || prog == nil || prog.Decode() != nil {
-			return Result{Verdict: CannotCheck, Why: "the CID font carries a /CIDSet but no readable TrueType program", Where: where}
-		}
-		kids, _ := d.Ctx.DereferenceArray(f.dict["DescendantFonts"])
-		if len(kids) > 0 {
-			if desc := d.dict(kids[0]); desc != nil {
-				if m, ok := desc["CIDToGIDMap"]; ok {
-					if d.name(m) != "Identity" {
-						return Result{Verdict: CannotCheck, Why: "the CID font maps CIDs to glyphs through a /CIDToGIDMap stream, which nib does not resolve", Where: where}
-					}
-				}
-			}
-		}
-		n, gerr := trueTypeGlyphCount(prog.Content)
-		if gerr != nil {
-			return Result{Verdict: CannotCheck, Why: gerr.Error(), Where: where}
-		}
-		if ok, missing, extra := cidSetExact(cs.Content, n); !ok {
-			why := fmt.Sprintf("the /CIDSet does not identify CID %d, and the font program holds %d glyphs — "+
-				"a set covering only the glyphs a page uses is exactly what veraPDF rejects", missing, n)
-			if missing < 0 {
-				why = fmt.Sprintf("the /CIDSet claims CID %d, and the font program holds only %d glyphs — "+
-					"a set that over-claims misidentifies the program as surely as one that omits", extra, n)
-			}
-			return Result{Verdict: Fail, Why: why, Where: where}
-		}
+	}
+	if r, ok := held.result(); ok {
+		return r
 	}
 	if withSet == 0 {
 		// A font that did not resolve may be the CID font veraPDF judges — pdfcpu drops a CIDFont it finds malformed
@@ -439,29 +409,114 @@ func checkCIDSetsComplete(d *Document) Result {
 	return Result{Verdict: Pass}
 }
 
-// cffCIDSetResult is 7.21.4.2 t2 over a CIDFontType0C program (P07.S05b), `GFPDCIDFont.getcidSetListsAllGlyphs` in the
-// test's order: a program veraPDF did not parse passes (`containsFontFile == false`), as does a CIDFont whose /BaseFont
-// is not subset-named; otherwise every CID the program's charset names (`getCIDList`) must be set, CID 0 aside, and every
-// set bit from 1 up must be a CID the program holds (`containsCID`). A Type1-keyed program names no CID and holds none,
-// so any bit past 0 fails it (measured). veraPDF reads at most 16,384 bytes of the set.
-func (d *Document) cffCIDSetResult(f *usedFont, set []byte, where string) *Result {
+// cidSetMaxBytes is `GFPDCIDFont.maxSize`: veraPDF reads no more of a /CIDSet than this, so a bit past it is no claim
+// (measured, R1-2: a stray bit past byte 16,384 passes).
+const cidSetMaxBytes = 16384
+
+// maxCIDSetDecoded bounds what nib DECODES of a /CIDSet before cutting it at `cidSetMaxBytes` (the P07 phase-close
+// re-review, RR1-3: a plain `Decode()` let a compressed set expand as far as the document chose). A set naming every
+// 16-bit CID is 8 KiB, so a stream decoding past a mebibyte is refused through the one door for capped decodes
+// (`decodeWithin`) rather than cut: veraPDF reads such a stream's first 16 KiB, and nib does not decode the rest to reach them.
+const maxCIDSetDecoded = 1 << 20
+
+// cidSetRead is one descendant's 7.21.4.2 t2 answer without its location: nil where it passes.
+type cidSetRead struct{ r *Result }
+
+// cidSetResult is 7.21.4.2 t2 for one Type 0 font, the ONE door for both programs (/pending 684: the CFF branch applied
+// veraPDF's short-circuits and the TrueType one none): nil where it passes. Each short-circuit is measured on a
+// CIDFontType2 at the P07 phase close — a program veraPDF did not parse (no hhea, a cmap subtable past the end), a
+// descendant whose /BaseFont is not subset-named, and a /CIDSet that is not a stream all pass an incomplete set — and
+// only then is the set read, cut at `cidSetMaxBytes`, and judged against the program's population.
+//
+// The answer is the DESCENDANT's — its name, its descriptor's /CIDSet, its program — so it is read once per descendant
+// however many Type 0 fonts share it (the re-review, RR1-3: it was re-read per font); `cidSetJudged` counts the reads.
+func (d *Document) cidSetResult(f *usedFont, fd types.Dict) *Result {
 	cid := d.descendantOf(f.dict)
-	c, known, why, throws := d.cidCFFOf(cid)
-	switch {
-	case throws != "":
-		return &Result{Verdict: CannotCheck, Where: where, Why: throws}
-	case !known:
-		return &Result{Verdict: CannotCheck, Where: where, Why: why}
-	case c == nil:
-		return nil
+	// **veraPDF's terms do not throw, so ITS order decides nothing — but nib's program term can be unknown**, and a
+	// disjunction is settled by any one true term (the re-review, RR1-2: the program was asked first, so a font its name
+	// alone passes was refused). So the terms nib always settles go first — no /CIDSet stream, a /BaseFont that is not
+	// subset-named — and the program, the one term nib may not know, is asked only when neither has passed the font.
+	cs, _, err := d.Ctx.DereferenceStreamDict(fd["CIDSet"])
+	if err != nil || cs == nil || cid == nil {
+		return nil // `getCIDSet` answers only a stream: anything else is containsCIDSet == false
 	}
 	if base, _ := d.nameOf(cid["BaseFont"]); !subsetNamed(base) {
 		return nil
 	}
-	if len(set) > 16384 {
-		set = set[:16384]
+	read, done := d.cidSets[dictID(cid)]
+	if !done {
+		read = cidSetRead{d.readCIDSet(cid, cs)}
+		if d.cidSets == nil {
+			d.cidSets = map[uintptr]cidSetRead{}
+		}
+		d.cidSets[dictID(cid)] = read
+	}
+	if read.r == nil {
+		return nil
+	}
+	r := *read.r
+	r.Where = fmt.Sprintf("%s, font %s (%s)", f.where, f.name, d.baseFontName(f.dict))
+	return &r
+}
+
+// readCIDSet is cidSetResult's read for one subset-named descendant carrying a /CIDSet stream: the program term, then
+// the set against the program's population.
+func (d *Document) readCIDSet(cid types.Dict, cs *types.StreamDict) *Result {
+	switch st, why := d.cidProgramParsed(cid); st {
+	case ttFailed:
+		return nil
+	case ttUnknown:
+		return &Result{Verdict: CannotCheck, Why: "whether veraPDF parses the CID font's program is not known — " + why}
+	}
+	d.cidSetJudged++
+	if why := decodeWithin(cs, maxCIDSetDecoded, "the /CIDSet stream"); why != "" {
+		return &Result{Verdict: CannotCheck, Why: why}
+	}
+	set := cs.Content
+	if len(set) > cidSetMaxBytes {
+		set = set[:cidSetMaxBytes]
 	}
 	bit := func(i int) bool { return i >= 0 && i/8 < len(set) && set[i/8]&(0x80>>uint(i%8)) != 0 }
+	if d.cidProgram(cid) == "CFF" {
+		c, _, _, _ := d.cidCFFOf(cid) // parsed: cidProgramParsed has answered
+		return cffCIDSetResult(c, bit, len(set), "")
+	}
+	sd, _ := d.cidTrueTypeStream(cid)
+	return d.trueTypeCIDSetResult(cid, d.parseProgramStream(sd), bit, len(set), "")
+}
+
+// trueTypeCIDSetResult is `getcidSetListsAllGlyphs` over a `CIDFontType2Program` (R1-2, measured): every CID of its
+// `getCIDList` but 0 must be set — under the identity, every CID below the hhea numberOfHMetrics; under a
+// /CIDToGIDMap stream, every CID the map holds whose glyph the program has — and every set bit from 1 up must be a CID
+// the program holds (`cidType2Contains`, by the LAST maxp).
+func (d *Document) trueTypeCIDSetResult(cid types.Dict, p trueTypeProgram, bit func(int) bool, setBytes int, where string) *Result {
+	m, why := d.cidGIDMapOf(cid)
+	if why != "" {
+		return &Result{Verdict: CannotCheck, Where: where, Why: why}
+	}
+	listed := len(p.advances)
+	if m != nil {
+		listed = m.size()
+	}
+	for i := 1; i < listed; i++ {
+		if (m == nil || cidType2Contains(m, p, i)) && !bit(i) {
+			return &Result{Verdict: Fail, Where: where, Why: fmt.Sprintf("the /CIDSet does not identify CID %d, and the font "+
+				"program holds it — a set covering only the glyphs a page uses is exactly what veraPDF rejects", i)}
+		}
+	}
+	for i := 1; i < setBytes*8; i++ {
+		if bit(i) && !cidType2Contains(m, p, i) {
+			return &Result{Verdict: Fail, Where: where, Why: fmt.Sprintf("the /CIDSet claims CID %d, and the font program "+
+				"holds only %d glyphs — a set that over-claims misidentifies the program as surely as one that omits", i, p.numGlyphs)}
+		}
+	}
+	return nil
+}
+
+// cffCIDSetResult is the population half of 7.21.4.2 t2 over a CIDFontType0C program veraPDF parsed (P07.S05b): every
+// CID the program's charset names (`getCIDList`) must be set, CID 0 aside, and every set bit from 1 up must be a CID the
+// program holds (`containsCID`). A Type1-keyed program names no CID and holds none, so any bit past 0 fails it (measured).
+func cffCIDSetResult(c *cffProgram, bit func(int) bool, setBytes int, where string) *Result {
 	if c.cid {
 		missing := -1
 		for k := range c.cidCharSet {
@@ -474,7 +529,7 @@ func (d *Document) cffCIDSetResult(f *usedFont, set []byte, where string) *Resul
 				"CFF program's charset holds — a set covering only the glyphs a page uses is exactly what veraPDF rejects", missing)}
 		}
 	}
-	for i := 1; i < len(set)*8; i++ {
+	for i := 1; i < setBytes*8; i++ {
 		if bit(i) && !(c.cid && c.containsCID(i)) {
 			return &Result{Verdict: Fail, Where: where, Why: fmt.Sprintf("the /CIDSet claims CID %d, which the CFF program "+
 				"does not hold — a set that over-claims misidentifies the program as surely as one that omits", i)}

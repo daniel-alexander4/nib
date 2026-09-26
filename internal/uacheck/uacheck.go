@@ -198,12 +198,25 @@ func Clauses() []string {
 // reader panic deep inside pdfcpu — `handleOCR` already recovers one for exactly this reason — and
 // a rule that vanished from the report would leave `Conformant()` reading the remaining rules as the
 // whole story. Recovered, named, and counted as unresolved.
-func Check(pdf []byte) (Report, error) {
-	d, err := open(pdf)
+//
+// **And a panic OUTSIDE a rule is answered the same way** (the P07 phase-close review, R3-11). Opening the document
+// and `reportsNothing` run before any rule and outside `runOne`'s recover, so a pdfcpu panic there killed `nib ua`
+// outright. It is recovered here into CannotCheck for every clause, naming the panic — nib failing to read a file
+// is a refusal, never a failure charged to the document, and never a crash.
+func Check(pdf []byte) (rep Report, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			why := fmt.Sprintf("nib's reader stopped on an internal error before any clause could be checked: %v", rec)
+			rep, err = Report{}, nil
+			for _, clause := range Clauses() {
+				rep.Results = append(rep.Results, Result{Clause: clause, Verdict: CannotCheck, Why: why})
+			}
+		}
+	}()
+	d, err := openDocument(pdf)
 	if err != nil {
 		return Report{}, err
 	}
-	var rep Report
 	// A document veraPDF reports nothing on is one no clause can be compared on: every clause refuses, before any rule
 	// can return a verdict the oracle never gave (`reportsNothing`).
 	if why := d.reportsNothing(); why != "" {
@@ -218,6 +231,10 @@ func Check(pdf []byte) (Report, error) {
 	}
 	return rep, nil
 }
+
+// openDocument is `open`, as a variable only so a test can make it panic: no input is known today that panics
+// pdfcpu's reader, and the recover in `Check` must not wait for one to be found in the field (R3-11).
+var openDocument = open
 
 // runOne evaluates one rule and guarantees the result is well-formed whatever the rule did.
 func runOne(rule Rule, d *Document) (res Result) {

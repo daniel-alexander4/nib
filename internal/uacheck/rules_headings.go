@@ -81,14 +81,16 @@ func checkHeadingNesting(d *Document) Result {
 		// The order of the headings past the bound is unknown, so no heading sequence can be said to hold.
 		return Result{Verdict: CannotCheck, Why: unread}
 	}
-	std, untyped := d.standardTypes(nodes)
-	if untyped != "" {
-		// An element nib cannot type may be a heading, and one unplaced heading moves the whole sequence.
-		return Result{Verdict: CannotCheck, Why: untyped}
-	}
+	// **An element on a role-map loop is NOT a heading, and this rule answers over the rest** (the P07 phase
+	// close, R4-10). It refused here — "an element nib cannot type may be a heading" — but veraPDF types such an
+	// element as nothing standard, the reading `typedAs` already gives. Measured on 1.30.2, seven documents: a
+	// looped `/Foo` between H1 and H2 passes (2 checks) and between H1 and H3 fails; an element whose own `/S` is
+	// `/H2`, `/H3` or `/H1` with that name on the loop (`/H2 → /Zed → /H2`) is no heading either — H1, it, H3
+	// fails (1 passed, 1 failed), H1 then it passes with one check, and it before an H2 fails as a first heading
+	// that is not H1.
 	prev := 0
-	for i, n := range nodes {
-		level, ok := numberedHeading(std[i])
+	for _, n := range nodes {
+		level, ok := numberedHeading(d.typedAs(n.dict))
 		if !ok {
 			continue
 		}

@@ -5,12 +5,12 @@ import (
 	"compress/zlib"
 	"encoding/base64"
 	"fmt"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The Type 1 (/FontFile) program — `PLAN-ua-coverage.md` P07.S06. Every fixture's veraPDF letters were measured on
@@ -756,48 +756,111 @@ const timesType1 = "" +
 // 10000-iteration `for` and 64-deep user-dictionary lookup, so a program nesting loops, filling the stack or allocating
 // arrays costs what its author chooses; and a private part whose subroutines have negative lengths decrypts the rest of
 // the part once per subroutine. None is reachable by a veraPDF-measured fixture (veraPDF performs the work); nib refuses
-// past its bounds, and each case here must be refused, quickly, naming the bound.
+// past its bounds, and each case here must be refused naming the ONE charge that fired — its counter past its bound
+// (the stimulus) — and having done no more than twice that bound's work (the response, as a work count: a clock
+// measures the machine, not the reader).
 func TestTheType1ReaderBoundsWhatAHostileProgramCosts(t *testing.T) {
 	// The slot bound leaves room for what fonts do: 31 arrays of veraPDF's largest size parse, a 32nd is refused below,
 	// and both pdfLaTeX programs parse.
-	if p := readType1(t1Spec{pre: "0 1 30 {pop 65536 array pop} for\n"}.build()); p.state != ttParsed {
+	if p := readType1(t1Spec{pre: "0 1 30 {pop 65536 array pop} for\n"}.build(), nil); p.state != ttParsed {
 		t.Errorf("31 arrays of 65536: state %v (%s), want parsed", p.state, p.why)
 	}
 	for _, b64 := range []string{cmType1, timesType1} {
-		if _, dec := realT1(b64); readType1(dec).state != ttParsed {
+		if _, dec := realT1(b64); readType1(dec, nil).state != ttParsed {
 			t.Errorf("a pdfLaTeX program does not parse under the bounds")
 		}
 	}
+	ops := func(s *t1Spend) (int, int) { return s.ops, t1MaxOps }
+	alloc := func(s *t1Spend) (int, int) { return s.alloc, t1MaxAlloc }
+	decrypted := func(s *t1Spend) (int, int) { return s.decrypted, t1MaxDecrypt }
 	negSubrs := "/Subrs 20000 array\n" + strings.Repeat("dup 0 -1 RD NP\n", 20000) + "ND\n"
 	for _, c := range []struct {
-		name string
-		prog []byte
-		want string
+		name   string
+		prog   []byte
+		want   string
+		charge func(*t1Spend) (int, int) // the counter that must be past its bound; nil for a bound on one program's state
 	}{
-		{"nested loops", t1Spec{pre: "0 1 9999 {pop 0 1 9999 {pop} for} for\n"}.build(), "PostScript objects"},
-		{"a filled stack", t1Spec{pre: strings.Repeat("0 1 9999 {} for\n", 110)}.build(), "operand stack"},
-		{"arrays allocated in a loop", t1Spec{pre: "0 1 9999 {pop 65536 array pop} for\n"}.build(), "array slots"},
-		{"arrays nested past the bound", t1Spec{pre: strings.Repeat("[", 300) + "\n"}.build(), "nests arrays"},
-		{"subroutines of negative length", t1Spec{priv: negSubrs}.build(), "decrypt to more than"},
+		{"nested loops", t1Spec{pre: "0 1 9999 {pop 0 1 9999 {pop} for} for\n"}.build(), "PostScript objects", ops},
+		{"a filled stack", t1Spec{pre: strings.Repeat("0 1 9999 {} for\n", 110)}.build(), "operand stack", nil},
+		{"arrays allocated in a loop", t1Spec{pre: "0 1 9999 {pop 65536 array pop} for\n"}.build(), "array slots", alloc},
+		{"arrays nested past the bound", t1Spec{pre: strings.Repeat("[", 300) + "\n"}.build(), "nests arrays", nil},
+		{"subroutines of negative length", t1Spec{priv: negSubrs}.build(), "decrypt to more than", decrypted},
 		// Each O(n) stack operator is charged its n: measured unbounded, 200 rolls of a deep stack took 10 s and 30 GB.
-		{"rolls of a deep stack", t1Spec{pre: "0 1 9999 {} for\n" + strings.Repeat("10000 1 roll\n", 300)}.build(), "nib's bound"},
-		{"counttomark over a deep stack", t1Spec{pre: "0 1 9999 {} for\n" + strings.Repeat("counttomark pop\n", 500)}.build(), "PostScript objects"},
-		{"copies of a deep stack", t1Spec{pre: "0 1 9999 {} for\n" + strings.Repeat("10000 copy clear 0 1 9999 {} for\n", 400)}.build(), "nib's bound"},
+		// A roll charges 2n objects and n slots, and the objects' bound is twice the slots', so the objects' (checked
+		// first, and already carrying the loop that built the stack) is the one that fires.
+		{"rolls of a deep stack", t1Spec{pre: "0 1 9999 {} for\n" + strings.Repeat("10000 1 roll\n", 300)}.build(), "PostScript objects", ops},
+		{"counttomark over a deep stack", t1Spec{pre: "0 1 9999 {} for\n" + strings.Repeat("counttomark pop\n", 500)}.build(), "PostScript objects", ops},
+		// A copy charges its n slots, and each rebuild of the stack ~20,000 objects: the slots cross first.
+		{"copies of a deep stack", t1Spec{pre: "0 1 9999 {} for\n" + strings.Repeat("10000 copy clear 0 1 9999 {} for\n", 400)}.build(), "array slots", alloc},
 		// A dictionary access costs its key's length (measured unbounded: 63 s for a 2 MiB key looked up 10^8 times).
-		{"lookups of a long key", t1Spec{pre: "/K" + strings.Repeat("k", 2<<20) + " 1 def 0 1 9999 {pop 0 1 9999 {pop /K" + strings.Repeat("k", 2<<20) + " load pop} for} for\n"}.build(), "PostScript objects"},
-		{"arrays one past the slot bound", t1Spec{pre: "0 1 31 {pop 65536 array pop} for\n"}.build(), "array slots"},
+		{"lookups of a long key", t1Spec{pre: "/K" + strings.Repeat("k", 2<<20) + " 1 def 0 1 9999 {pop 0 1 9999 {pop /K" + strings.Repeat("k", 2<<20) + " load pop} for} for\n"}.build(), "PostScript objects", ops},
+		{"arrays one past the slot bound", t1Spec{pre: "0 1 31 {pop 65536 array pop} for\n"}.build(), "array slots", alloc},
 	} {
-		start := time.Now()
-		p := readType1(c.prog)
-		if strings.Contains(c.want, "nib's bound") && p.state == ttUnknown && strings.Contains(p.why, "bound") {
-			c.want = p.why // either of the operator's two charges may bind first
-		}
+		spend := &t1Spend{}
+		p := readType1(c.prog, spend)
 		if p.state != ttUnknown || !strings.Contains(p.why, c.want) {
 			t.Errorf("%s: state %v (%s), want a refusal naming %q", c.name, p.state, p.why, c.want)
 		}
-		if d := time.Since(start); d > 5*time.Second {
-			t.Errorf("%s: took %v to refuse", c.name, d)
+		if c.charge == nil {
+			continue
 		}
+		if n, bound := c.charge(spend); n <= bound {
+			t.Errorf("%s: the charge named spent %d, not past its bound %d — some other bound refused it", c.name, n, bound)
+		}
+		for _, k := range []func(*t1Spend) (int, int){ops, alloc, decrypted} {
+			if n, bound := k(spend); n > 2*bound {
+				t.Errorf("%s: a counter reached %d, past twice its bound %d, before the refusal", c.name, n, bound)
+			}
+		}
+	}
+}
+
+// TestTheType1BudgetIsTheDocuments — the Type 1 bounds are the DOCUMENT's, as the TrueType budget is
+// (`TestTheReadBudgetIsTheDocuments`): two different programs, each well under the objects' bound alone, together over
+// it — the first is read and the second refused naming the document's Type 1 programs. As a program's bound, a
+// document of N programs each just under it cost N times it (66 ms each, measured at the P07 phase close).
+func TestTheType1BudgetIsTheDocuments(t *testing.T) {
+	heavy := func(tag string) []byte {
+		return t1Spec{pre: "/" + tag + " 0 def 0 1 119 {pop 0 1 9999 {pop} for} for\n"}.build()
+	}
+	a, b := heavy("a"), heavy("b")
+	spend := &t1Spend{}
+	if p := readType1(a, spend); p.state != ttParsed || spend.ops < t1MaxOps/2 || spend.ops > t1MaxOps*3/4 {
+		t.Fatalf("one heavy program: %v (%s) after %d objects, want parsed between half and three quarters of the bound", p.state, p.why, spend.ops)
+	}
+	if p := readType1(b, nil); p.state != ttParsed {
+		t.Fatalf("the second program alone: %v (%s), want parsed (the control)", p.state, p.why)
+	}
+	doc := func(progA, progB []byte) []byte {
+		objs := map[int]string{}
+		for i, prog := range [][]byte{progA, progB} {
+			l1 := bytes.Index(prog, []byte("eexec")) + 6
+			objs[12+i] = fmt.Sprintf("<< /Type /FontDescriptor /FontName /P%d /Flags 32 /FontBBox [0 0 1000 1000] /ItalicAngle 0 "+
+				"/Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 /FontFile %d 0 R >>", i, 20+i)
+			objs[20+i] = spStream(fmt.Sprintf("/Length1 %d /Length2 %d /Length3 0", l1, len(prog)-l1), string(prog))
+		}
+		objs[11] = "<< /Type /Font /Subtype /Type1 /BaseFont /P1 /FontDescriptor 13 0 R /Encoding /WinAnsiEncoding >>"
+		return glyphPage("BT /F0 12 Tf 10 10 Td (A) Tj /F1 12 Tf (A) Tj ET", "/F1 11 0 R", "",
+			"<< /Type /Font /Subtype /Type1 /BaseFont /P0 /FontDescriptor 12 0 R /Encoding /WinAnsiEncoding >>", objs)
+	}
+	d, err := open(doc(a, b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var known []bool
+	var whys []string
+	for _, n := range []int{10, 11} {
+		sp, ok, why, _ := d.simpleProgramOf(d.dict(*types.NewIndirectRef(n, 0)))
+		if sp.kind != "Type 1" {
+			t.Fatalf("font %d: program kind %q, want Type 1", n, sp.kind)
+		}
+		known, whys = append(known, ok), append(whys, why)
+	}
+	if len(d.type1Reads) != 2 {
+		t.Fatalf("%d programs read, want both", len(d.type1Reads))
+	}
+	if !known[0] || known[1] || !strings.Contains(whys[1], "the document's Type 1 programs") {
+		t.Fatalf("two heavy programs in one document: known %v (%q), want the first read and the second refused naming the document's Type 1 programs", known, whys)
 	}
 }
 

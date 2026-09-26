@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/fontcode"
 )
 
 // The composite-font CMap clauses — `PLAN-ua-coverage.md` P07.S01.
@@ -285,7 +287,7 @@ func checkCIDSystemInfoCompatible(d *Document) Result {
 //
 // **`containsFontFile` is not the key's presence** — it is `getFontProgram() != null && fontProgramParsed`
 // (`GFPDFont.java:171-173`), so veraPDF PASSES a CIDFontType2 whose embedded program it could not parse. nib cannot
-// run veraPDF's parser, so it fails only a program its own TrueType reader opens, and refuses the rest.
+// run veraPDF's parser, so it fails only a program its own readers parse as veraPDF's do, and refuses the rest.
 func checkCIDToGIDMap(d *Document) Result {
 	fonts, why := d.type0Fonts()
 	if why != "" {
@@ -308,57 +310,19 @@ func checkCIDToGIDMap(d *Document) Result {
 		if sd, _, err := d.Ctx.DereferenceStreamDict(m); err == nil && sd != nil {
 			continue
 		}
-		desc := d.dict(f.cidFont["FontDescriptor"])
-		// **The program is `/FontFile2`, or ANY `/FontFile3`** — veraPDF-parser's `PDCIDFont` reads a CIDFontType2's
-		// program from both, whatever the `FontFile3` subtype (`/OpenType`, `/CIDFontType0C`). The review measured
-		// each as a false PASS in turn: veraPDF fails a map-less CIDFontType2 carrying its program there, and nib,
-		// reading FontFile2 only and then OpenType only, passed it. A CFF one is read by the CFF reader (P07.S05b),
-		// never taken as "no program".
-		//
-		// **And the program is parsed as its SUBTYPE says, not as its bytes suggest**, measured: TrueType bytes under
-		// `/FontFile3 /CIDFontType0C` are PASSED by veraPDF — it reads them as CFF, fails, and has no parsed program
-		// — while nib, opening them as TrueType, failed the clause. So only `/OpenType` goes to nib's sfnt reader,
-		// `/CIDFontType0C` to the CFF reader, and whether veraPDF parses it decides the clause.
-		prog, _, err := d.Ctx.DereferenceStreamDict(desc["FontFile2"])
-		if err != nil || prog == nil {
-			if ff3, _, err3 := d.Ctx.DereferenceStreamDict(desc["FontFile3"]); err3 == nil && ff3 != nil {
-				if sub := d.name(ff3.Dict["Subtype"]); sub == "CIDFontType0C" {
-					// P07.S05b: the CFF reader answers whether veraPDF parses it — a program it does not parse passes.
-					switch c, known, why, throws := d.cidCFFOf(f.cidFont); {
-					case throws != "" || !known:
-						if unsure == "" {
-							unsure = fmt.Sprintf("%s: whether veraPDF parses the CIDFont's CFF program is not known — %s", f.where, why+throws)
-						}
-						continue
-					case c == nil:
-						continue
-					}
-					return Result{Verdict: Fail, Where: f.where,
-						Why: "an embedded Type 2 CIDFont has no CIDToGIDMap, so nothing says which glyph each CID draws"}
-				} else if sub != "OpenType" {
-					if unsure == "" {
-						unsure = fmt.Sprintf("%s: the CIDFont's program is a /FontFile3 /%s, which nib has not measured veraPDF "+
-							"opening, so nib cannot say which way this clause goes", f.where, sub)
-					}
-					continue
-				}
-				prog = ff3
-			}
-		}
-		if prog == nil {
-			continue // no program: containsFontFile is false, and the test passes
-		}
-		if derr := prog.Decode(); derr != nil {
+		// **`containsFontFile` is `cidProgramParsed`, the door 7.21.4.1 t1 and 7.21.4.2 t2 ask** (/pending 680, ADR-009):
+		// a program under a key `PDCIDFont` opens — `/FontFile2`, or a `/FontFile3` of `/CIDFontType0C` (the CFF reader) or
+		// `/OpenType` (the sfnt reader) — parsed as its SUBTYPE says, not as its bytes suggest (TrueType bytes under
+		// `/CIDFontType0C` pass: veraPDF reads them as CFF and fails). This clause read the program with a strict first-maxp
+		// reader of its own, and the P07 phase close measured both of its disagreements: a program whose cmap subtable lies
+		// past its end is not parsed and PASSES, where nib failed it, and a `/FontFile3` of another subtype is no program and
+		// passes, where nib refused.
+		switch st, why := d.cidProgramParsed(f.cidFont); st {
+		case ttFailed:
+			continue // no program veraPDF parsed: containsFontFile is false, and the test passes
+		case ttUnknown:
 			if unsure == "" {
-				unsure = fmt.Sprintf("%s: the CIDFont's embedded font program could not be decoded, so whether veraPDF parses it — "+
-					"which decides this clause — was never established: %v", f.where, derr)
-			}
-			continue
-		}
-		if _, perr := trueTypeGlyphCount(prog.Content); perr != nil {
-			if unsure == "" {
-				unsure = fmt.Sprintf("%s: nib's TrueType reader does not open the CIDFont's font program (%v); veraPDF passes this clause "+
-					"for a program it cannot parse, so nib cannot say which way it goes", f.where, perr)
+				unsure = fmt.Sprintf("%s: whether veraPDF parses the CIDFont's program, which decides this clause, is not known — %s", f.where, why)
 			}
 			continue
 		}
@@ -422,6 +386,9 @@ func checkCMapWMode(d *Document) Result {
 		return Result{Verdict: CannotCheck, Why: err}
 	}
 	subjects := 0
+	// A CMap nib cannot settle is HELD and the later CMaps still judged (`heldRefusal`; the P07 phase-close re-review
+	// RR1-4: the refusals below returned inside the loop, hiding a later CMap's definite Fail).
+	var held heldRefusal
 	for _, f := range fonts {
 		for _, c := range f.cmaps {
 			if c.stream == nil {
@@ -433,11 +400,28 @@ func checkCMapWMode(d *Document) Result {
 				dictW = int64(v)
 			}
 			if derr := c.stream.Decode(); derr != nil {
-				return Result{Verdict: CannotCheck, Where: c.where, Why: "an embedded CMap could not be decoded: " + derr.Error()}
+				held.hold("an embedded CMap could not be decoded: "+derr.Error(), c.where)
+				continue
 			}
 			progW, ok := cmapProgramWMode(c.stream.Content)
 			if !ok {
-				return Result{Verdict: CannotCheck, Where: c.where, Why: "an embedded CMap's /WMode is not an integer nib can read"}
+				held.hold("an embedded CMap's /WMode is not an integer nib can read", c.where)
+				continue
+			}
+			// **A CMap veraPDF's parser throws on is read as an EMPTY one, whose WMode is 0 whatever the program says**
+			// (measured, the P07 phase-close review R2-5: `/WMode 1 def` then a `cidchar` of the wrong kind FAILS under a
+			// dictionary /WMode 1 and PASSES under none). Whether the parser throws is `fontcode`'s question (ADR-052), and
+			// nib's tokenizer is not veraPDF's PostScript interpreter, so where the two readings differ — the program
+			// declares a /WMode other than 0 — a CMap it finds malformed is asked under BOTH: read whole, the program's
+			// /WMode is progW; discarded, it is 0. Where the dictionary says neither (dictW is not 0 and not progW) both
+			// readings Fail and so does nib (RR1-4); otherwise one reading passes, and nib refuses rather than pick. Where
+			// the program declares 0 or nothing, both readings are 0 and the answer stands.
+			if progW != 0 && (dictW == 0 || dictW == progW) {
+				if d.cmapMalformed(c.stream) {
+					held.hold("an embedded CMap holds an entry of the wrong kind, where veraPDF discards the whole CMap and "+
+						"reads its /WMode as 0 — nib does not claim to reproduce that parser byte for byte", c.where)
+					continue
+				}
 			}
 			if progW != dictW {
 				return Result{Verdict: Fail, Where: c.where, Why: fmt.Sprintf("an embedded CMap's program declares /WMode %d while its "+
@@ -445,10 +429,29 @@ func checkCMapWMode(d *Document) Result {
 			}
 		}
 	}
+	if r, ok := held.result(); ok {
+		return r
+	}
 	if subjects == 0 {
 		return Result{Verdict: NotApplicable, Why: "the document uses no embedded CMap"}
 	}
 	return Result{Verdict: Pass}
+}
+
+// cmapMalformed is `fontcode.ParseCodespace(...).Malformed` for one embedded CMap stream, parsed ONCE however many fonts
+// and chains name it (the re-review, RR1-4: it was re-parsed per font). `cmapMalformedParses` counts the parses.
+func (d *Document) cmapMalformed(sd *types.StreamDict) bool {
+	id := dictID(sd.Dict)
+	if m, done := d.cmapMalformedRead[id]; done {
+		return m
+	}
+	d.cmapMalformedParses++
+	m := fontcode.ParseCodespace(sd.Content).Malformed
+	if d.cmapMalformedRead == nil {
+		d.cmapMalformedRead = map[uintptr]bool{}
+	}
+	d.cmapMalformedRead[id] = m
+	return m
 }
 
 // cmapProgramWMode scans a CMap program's PostScript for `/WMode <int> def`, the last one winning as a later

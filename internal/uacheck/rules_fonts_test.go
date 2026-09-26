@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
 	"nib/internal/pdfops"
 	"nib/internal/testpdf"
 )
@@ -156,44 +158,210 @@ func TestACIDSetMustCoverEveryGlyphSlotNotEveryUsedGlyph(t *testing.T) {
 	}
 }
 
-// TestTheTrueTypeReaderRefusesWhatItCannotVouchFor.
-func TestTheTrueTypeReaderRefusesWhatItCannotVouchFor(t *testing.T) {
-	// **Each refusal is checked by its REASON — found by probing.** Accepting `OTTO` left this green
-	// because a 24-byte fixture has no maxp table, so the next guard refused it anyway, for a
-	// different reason. A reader that then met a real CFF program would parse it as TrueType.
+// fontDoorClauses are the clauses `fontDoorFixtures` are measured over, in the order of their verdict strings.
+var fontDoorClauses = []string{"7.21.4.1 t1", "7.21.5 t1", "7.21.4.1 t2", "7.21.8 t1", "7.21.7 t1", "7.21.4.2 t2", "7.21.3.2 t1"}
+
+// fontDoorFixture is one shape the P07 phase close measured: `vera` is veraPDF 1.30.2's verdict on each of
+// fontDoorClauses (P, F, or - for no subject), `nib` is nib's — the same letter, or C where nib refuses, and then its
+// reason holds `refused`. Each fixture carries its own verdicts, so no table can drift out of step with another.
+type fontDoorFixture struct {
+	name, vera, nib, refused string
+	pdf                      []byte
+}
+
+// cid2Doc is a Type 0 font over a CIDFontType2 descendant named `base` carrying `cidExtra`, its program `prog` under
+// `key` (a /FontFile3 of `ff3Subtype`), and a /CIDSet object when `set` is not empty, drawing CIDs 1 and 2.
+func cid2Doc(base, cidExtra string, prog []byte, key, ff3Subtype, set string, extra map[int]string) []byte {
+	objs := map[int]string{
+		11: "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /" + base + " /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) " +
+			"/Supplement 0 >> /FontDescriptor 12 0 R " + cidExtra + " >>",
+	}
+	pd := ""
+	if key == "FontFile3" {
+		pd = "/Subtype /" + ff3Subtype
+	}
+	for k, v := range ttObjects("/Flags 4", key, prog, pd) {
+		objs[k] = v
+	}
+	if set != "" {
+		objs[12] = strings.TrimSuffix(objs[12], " >>") + " /CIDSet 30 0 R >>"
+		objs[30] = set
+	}
+	for k, v := range extra {
+		objs[k] = v
+	}
+	return glyphPage("BT /F0 12 Tf 10 10 Td <00010002> Tj ET", "", "", "<< /Type /Font /Subtype /Type0 /BaseFont /"+base+
+		" /Encoding /Identity-H /DescendantFonts [11 0 R] >>", objs)
+}
+
+// ttCounts is a TrueType program whose hhea/hmtx pair declares each of `hmetrics` in turn and whose maxp tables declare
+// each of `maxps` in turn — a later duplicate replacing an earlier one, as veraPDF's parser reads a directory.
+func ttCounts(hmetrics, maxps []int, cmap []byte) []byte {
+	ts := []ttTable{{"cmap", cmap}, {"head", ttHead()}}
+	for _, n := range hmetrics {
+		ts = append(ts, ttTable{"hhea", ttHhea(n)}, ttTable{"hmtx", ttHmtx(n)})
+	}
+	for _, n := range maxps {
+		ts = append(ts, ttTable{"maxp", ttMaxp(n)})
+	}
+	return sfnt(append(ts, ttTable{"post", ttPost3()})...)
+}
+
+func cidRange(a, b int) []int {
+	var out []int
+	for i := a; i < b; i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
+func fontDoorFixtures() []fontDoorFixture {
+	sub := "ABCDEF+Probe"
+	std := cffSpec{names: []string{"A", "B", "C"}, charstrings: [][]byte{cs(0, "endchar"), cs(500, "endchar"), cs(500, "endchar"), cs(500, "endchar")}}.build()
+	cidStd := cidSpec{cids: []int{1, 2, 3}, charstrings: [][]byte{cs(0, "endchar"), cs(500, "endchar"), cs(500, "endchar"), cs(500, "endchar")}}.build()
+	w500 := "/FirstChar 65 /LastChar 67 /Widths [500 500 500] /Encoding /WinAnsiEncoding"
+	junk := []byte("this is not a font program at all, just some junk bytes for veraPDF")
+	cm := ttCmap(ttSub{3, 1, cmapFmt4(0x20, 95)})
+	badCmap := beBytes(uint16(0), uint16(1), uint16(3), uint16(1), uint32(0x00FFFFF0)) // one subtable, past the end
+	p100 := ttCounts([]int{100}, []int{100}, cm)
+	t1 := func(prog []byte, widths string) []byte {
+		return t1cDoc(sub, widths, "/CharSet (/A/B/C)", "(ABC) Tj", prog, "OpenType")
+	}
+	c0 := func(prog []byte) []byte {
+		return cid0Doc("CIDFontType0", sub, "/W [1 [500 500 500]]", "", hexCodes(1, 2, 3), prog, "OpenType", "", nil)
+	}
+	all := func(n int) string { return cidSetBytes(cidRange(0, n)...) }
+	id := "/CIDToGIDMap /Identity"
+	mapped := map[int]string{31: spStream("", string([]byte{0, 0, 0, 1, 0, 2, 0, 3}))}
+	pastProgram := map[int]string{31: spStream("", string([]byte{0, 0, 0, 1, 0, 2, 0, 200}))} // CID 3 → glyph 200 of 100
+	stray := make([]byte, cidSetMaxBytes+10)
+	for i := 0; i < 13; i++ {
+		stray[i] = 0xFF
+	}
+	stray[cidSetMaxBytes+5] = 0xFF
+	const ot = "OpenType"
+	return []fontDoorFixture{
+		// R2-1: a /FontFile3 /OpenType program is opened for its "CFF " table; with none there is no program.
+		// RR1-5: the metric and glyph clauses ask the same door, so with no "CFF " table they answer as veraPDF does.
+		{name: "T1 OpenType: junk", vera: "FPPPP--", nib: "FPPPP--", pdf: t1(junk, w500)},
+		{name: "T1 OpenType: two bytes", vera: "FPPPP--", nib: "FPPPP--", pdf: t1([]byte{1, 2}, w500)},
+		{name: "T1 OpenType: a TrueType program", vera: "FPPPP--", nib: "FPPPP--", pdf: t1(p100, w500)},
+		{name: "T1 OpenType: junk, widths off", vera: "FPPPP--", nib: "FPPPP--",
+			pdf: t1(junk, "/FirstChar 65 /LastChar 67 /Widths [700 700 700] /Encoding /WinAnsiEncoding")},
+		{name: "T1 OpenType: a CFF table", vera: "PPPPP--", nib: "CCCPP--", refused: ot, pdf: t1(sfnt(ttTable{"CFF ", std}), w500)},
+		{name: "T1 OpenType: a CFF table, widths off", vera: "PFPPP--", nib: "CCCPP--", refused: ot,
+			pdf: t1(sfnt(ttTable{"CFF ", std}), "/FirstChar 65 /LastChar 67 /Widths [700 700 700] /Encoding /WinAnsiEncoding")},
+		{name: "CID0 OpenType: junk", vera: "FPPPFPP", nib: "FPPPFPP", pdf: c0(junk)},
+		{name: "CID0 OpenType: a TrueType program", vera: "FPPPFPP", nib: "FPPPFPP", pdf: c0(p100)},
+		{name: "CID0 OpenType: a CFF table", vera: "PPPPFPP", nib: "CCCCFPP", refused: ot, pdf: c0(sfnt(ttTable{"CFF ", cidStd}))},
+		// RR1-2: a name that is not subset-named passes 7.21.4.2 t2 whatever the program, so the program nib cannot
+		// read is not asked; subset-named, the set is judged against it, and nib refuses.
+		{name: "CID0 OpenType: a CFF table, a short CIDSet, not subset-named", vera: "PPPPFPP", nib: "CCCCFPP", refused: ot,
+			pdf: cid0Doc("CIDFontType0", "Probe", "/W [1 [500 500 500]]", "/CIDSet 22 0 R", hexCodes(1, 2, 3),
+				sfnt(ttTable{"CFF ", cidStd}), "OpenType", "", map[int]string{22: cidSetBytes(1)})},
+		{name: "CID0 OpenType: a CFF table, a short CIDSet, subset-named", vera: "PPPPFFP", nib: "CCCCFCP", refused: ot,
+			pdf: cid0Doc("CIDFontType0", sub, "/W [1 [500 500 500]]", "/CIDSet 22 0 R", hexCodes(1, 2, 3),
+				sfnt(ttTable{"CFF ", cidStd}), "OpenType", "", map[int]string{22: cidSetBytes(1)})},
+		// R1-2 and /pending 684: the CIDFontType2 population is the hhea count listed and the LAST maxp held, CID 0 aside.
+		{name: "CIDSet: every slot", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, id, p100, "FontFile2", "", all(100), nil)},
+		{name: "CIDSet: CID 0 unset", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, id, p100, "FontFile2", "", cidSetBytes(cidRange(1, 100)...), nil)},
+		{name: "CIDSet: 100 over maxp 100 then 50", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{100, 50}, cm), "FontFile2", "", all(100), nil)},
+		{name: "CIDSet: 50 over maxp 100 then 50", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{100, 50}, cm), "FontFile2", "", all(50), nil)},
+		{name: "CIDSet: 50 over maxp 50 then 100", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{50, 100}, cm), "FontFile2", "", all(50), nil)},
+		{name: "CIDSet: 50 over hhea 50, maxp 100", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, id, ttCounts([]int{50}, []int{100}, cm), "FontFile2", "", all(50), nil)},
+		{name: "CIDSet: 100 over hhea 50, maxp 100", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, id, ttCounts([]int{50}, []int{100}, cm), "FontFile2", "", all(100), nil)},
+		{name: "CIDSet: 50 over hhea 100, maxp 50", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{50}, cm), "FontFile2", "", all(50), nil)},
+		{name: "CIDSet: 100 over hhea 100, maxp 50", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{50}, cm), "FontFile2", "", all(100), nil)},
+		{name: "CIDSet: short, not subset-named", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc("Probe", id, p100, "FontFile2", "", all(10), nil)},
+		{name: "CIDSet: short, subset-named", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, p100, "FontFile2", "", all(10), nil)},
+		{name: "CIDSet: short, a program with no hhea", vera: "FPPPFPP", nib: "FPPPFPP", pdf: cid2Doc(sub, id, ttCounts(nil, []int{100}, cm), "FontFile2", "", all(10), nil)},
+		{name: "CIDSet: short, a cmap past the end", vera: "FPPPFPP", nib: "FPPPFPP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{100}, badCmap), "FontFile2", "", all(10), nil)},
+		{name: "CIDSet: a stray bit past 16,384 bytes", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, id, ttCounts([]int{100}, []int{104}, cm), "FontFile2", "", spStream("", string(stray)), nil)},
+		{name: "CIDSet: a four-CID map, 1 to 3", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, "/CIDToGIDMap 31 0 R", p100, "FontFile2", "", cidSetBytes(1, 2, 3), mapped)},
+		{name: "CIDSet: a four-CID map, 1 to 2", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, "/CIDToGIDMap 31 0 R", p100, "FontFile2", "", cidSetBytes(1, 2), mapped)},
+		{name: "CIDSet: a four-CID map, 1 to 4", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, "/CIDToGIDMap 31 0 R", p100, "FontFile2", "", cidSetBytes(1, 2, 3, 4), mapped)},
+		// A mapped CID whose glyph the program lacks is neither listed nor holdable: unset passes, set fails.
+		{name: "CIDSet: a map past the program, 1 to 2", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, "/CIDToGIDMap 31 0 R", p100, "FontFile2", "", cidSetBytes(1, 2), pastProgram)},
+		{name: "CIDSet: a map past the program, 1 to 3", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, "/CIDToGIDMap 31 0 R", p100, "FontFile2", "", cidSetBytes(1, 2, 3), pastProgram)},
+		{name: "CIDSet: FontFile3 OpenType, every slot", vera: "PFPPFPP", nib: "PFPPFPP", pdf: cid2Doc(sub, id, p100, "FontFile3", ot, all(100), nil)},
+		{name: "CIDSet: FontFile3 OpenType, short", vera: "PFPPFFP", nib: "PFPPFFP", pdf: cid2Doc(sub, id, p100, "FontFile3", ot, all(10), nil)},
+		// /pending 680: 7.21.3.2 t1 asks the same door.
+		{name: "no map: a cmap past the end", vera: "FPPPFPP", nib: "FPPPFPP", pdf: cid2Doc(sub, "", ttCounts([]int{100}, []int{100}, badCmap), "FontFile2", "", "", nil)},
+		{name: "no map: a program veraPDF parses", vera: "PFPPFPF", nib: "PFPPFPF", pdf: cid2Doc(sub, "", p100, "FontFile2", "", "", nil)},
+		{name: "no map: a /FontFile3 of another subtype", vera: "FPPPFPP", nib: "FPPPFPP", pdf: cid2Doc(sub, "", p100, "FontFile3", "Foo", "", nil)},
+		{name: "no map: FontFile3 OpenType, a cmap past the end", vera: "FPPPFPP", nib: "FPPPFPP", pdf: cid2Doc(sub, "", ttCounts([]int{100}, []int{100}, badCmap), "FontFile3", ot, "", nil)},
+	}
+}
+
+// TestTheFontDoorsAgreeWithVeraPDF — every shape above against veraPDF's verdicts, measured at the P07 phase close
+// before the doors changed. A letter outside the declared alphabet fails the test rather than reading as a verdict.
+func TestTheFontDoorsAgreeWithVeraPDF(t *testing.T) {
+	want := map[byte]Verdict{'P': Pass, 'F': Fail, '-': NotApplicable, 'C': CannotCheck}
+	for _, f := range fontDoorFixtures() {
+		if len(f.vera) != len(fontDoorClauses) || len(f.nib) != len(fontDoorClauses) {
+			t.Fatalf("%s: %d veraPDF and %d nib letters for %d clauses", f.name, len(f.vera), len(f.nib), len(fontDoorClauses))
+		}
+		for j, clause := range fontDoorClauses {
+			v, n := f.vera[j], f.nib[j]
+			if _, ok := want[v]; !ok || v == 'C' {
+				t.Fatalf("%s: veraPDF letter %q is not one of P, F, -", f.name, v)
+			}
+			if _, ok := want[n]; !ok {
+				t.Fatalf("%s: nib letter %q is not one of P, F, -, C", f.name, n)
+			}
+			if n != 'C' && n != v {
+				t.Fatalf("%s: %s declares nib %c where veraPDF says %c — only a refusal may differ", f.name, clause, n, v)
+			}
+			got := verdictOf(t, f.pdf, clause)
+			if got.Verdict != want[n] {
+				t.Errorf("%s: %s reports %v (%s), want %c (veraPDF %c)", f.name, clause, got.Verdict, got.Why, n, v)
+			} else if n == 'C' && !strings.Contains(got.Why, f.refused) {
+				t.Errorf("%s: %s refuses (%s), not naming %q", f.name, clause, got.Why, f.refused)
+			}
+		}
+	}
+}
+
+// TestTheOpenTypeSearchReadsAsVeraPDFDoes — `getCFFTable`'s search, record by record: a count read past the end is
+// 0xFFFF, and a record the program cuts short cannot carry the tag.
+func TestTheOpenTypeSearchReadsAsVeraPDFDoes(t *testing.T) {
+	withCFF := sfnt(ttTable{"head", ttHead()}, ttTable{"CFF ", []byte{1, 0, 4, 1}})
 	for _, c := range []struct {
-		name, reason string
-		prog         []byte
+		name string
+		prog []byte
+		want bool
 	}{
-		{"too short", "too short", []byte{0, 1, 0}},
-		{"CFF-flavoured OpenType", "CFF", append([]byte("OTTO"), make([]byte, 20)...)},
-		{"a collection", "collection", append([]byte("ttcf"), make([]byte, 20)...)},
-		{"no maxp table", "no maxp", append([]byte{0, 1, 0, 0, 0, 0}, make([]byte, 10)...)},
+		{"a CFF table second", withCFF, true},
+		{"the count one short of it", append(append([]byte{}, withCFF[:5]...), append([]byte{1}, withCFF[6:]...)...), false},
+		{"no CFF table", ttProgram(), false},
+		{"the tag cut at the end", withCFF[:12+16+3], false},
+		{"the tag and nothing after it", withCFF[:12+16+4], true},
+		{"a count past the end", []byte{0, 1, 0, 0}, false},
 	} {
-		_, err := trueTypeGlyphCount(c.prog)
-		if err == nil {
-			t.Errorf("%s: read a glyph count from a program nib cannot vouch for", c.name)
-			continue
-		}
-		if !strings.Contains(err.Error(), c.reason) {
-			t.Errorf("%s: refused for %q, not because it is %s", c.name, err, c.reason)
+		if got := openTypeHasCFFTable(c.prog); got != c.want {
+			t.Errorf("%s: found a CFF table %v, want %v", c.name, got, c.want)
 		}
 	}
-	// PDF bit order: the high bit of byte 0 is CID 0.
-	if ok, _, _ := cidSetExact([]byte{0x80}, 1); !ok {
-		t.Error("0x80 does not identify exactly CID 0 — the bit order is reversed")
+}
+
+// TestAnUnreadSubtypeGetsOneAnswer — R2-9: a font of a subtype veraPDF builds no font for had three answers from three
+// clauses. pdfcpu refuses such a document (measured), so the doors are asked directly.
+func TestAnUnreadSubtypeGetsOneAnswer(t *testing.T) {
+	d, err := open(ttDoc("/Flags 32", "", "(A) Tj", ttProgram(sub31)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ok, missing, _ := cidSetExact([]byte{0x01}, 1); ok || missing != 0 {
-		t.Errorf("0x01 identifies CID 0 (missing=%d) — the bit order is reversed", missing)
-	}
-	if ok, missing, _ := cidSetExact([]byte{0xFF}, 9); ok || missing != 8 {
-		t.Errorf("a one-byte set for nine CIDs reports ok=%v missing=%d, want the ninth missing", ok, missing)
-	}
-	if ok, _, extra := cidSetExact([]byte{0xFF}, 7); ok || extra != 7 {
-		t.Errorf("a full byte for seven CIDs reports ok=%v extra=%d, want CID 7 over-claimed", ok, extra)
-	}
-	if ok, _, _ := cidSetExact([]byte{0xFE, 0x00}, 7); !ok {
-		t.Error("an exact set followed by a zero byte is refused — a zero byte claims nothing")
+	for _, font := range []types.Dict{{"Subtype": types.Name("Foo")}, {}} {
+		g := glyph{font: &glyphFont{dict: font}, code: 65}
+		if st, why := d.fontEmbedded(font); st != ttUnknown || !strings.Contains(why, "not one veraPDF builds") {
+			t.Errorf("%v: 7.21.4.1 t1's door answers %v (%s), want a refusal", font, st, why)
+		}
+		if m := d.metricsOf(g); m.known || !strings.Contains(m.why, "not one veraPDF builds") {
+			t.Errorf("%v: the metric door answers known=%v (%s), want a refusal", font, m.known, m.why)
+		}
+		if _, known, why := d.glyphName(g); known || !strings.Contains(why, "not one veraPDF builds") {
+			t.Errorf("%v: 7.21.8 t1's door answers known=%v (%s), want a refusal", font, known, why)
+		}
 	}
 }
 

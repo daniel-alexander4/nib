@@ -1,6 +1,7 @@
 package uacheck
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -87,5 +88,191 @@ func TestTheLayoutSurvivesWhatVeraPDFSurvives(t *testing.T) {
 		if tc.want == CannotCheck && !strings.Contains(got.Why, "more than nib lays out") {
 			t.Errorf("%s: the reason %q is not the layout's slot cap; a recovered panic reads as CannotCheck too", tc.name, got.Why)
 		}
+	}
+}
+
+// bruteHeaderInLine is the geometric header search as it was written before the P07 phase close — a scan per
+// cell — kept here as the reference `headerReach` must agree with on every cell.
+func bruteHeaderInLine(d *Document, grid [][]*tableCell, cell *tableCell) bool {
+	scope := func(c *tableCell) string {
+		if c.std != "TH" {
+			return ""
+		}
+		return d.name(d.tableAttributeOfType(c.dict, "Scope", attrName))
+	}
+	if cell.row > 0 {
+		for col := cell.col; col < cell.col+int(cell.colSpan); col++ {
+			seen := false
+			for r := cell.row - 1; r >= 0; r-- {
+				if sc := scope(grid[r][col]); sc == "Both" || sc == "Column" {
+					return true
+				}
+				if grid[r][col].std == "TH" {
+					seen = true
+				} else if seen {
+					break
+				}
+			}
+		}
+	}
+	if cell.col > 0 {
+		for r := cell.row; r < cell.row+int(cell.rowSpan); r++ {
+			seen := false
+			for col := cell.col - 1; col >= 0; col-- {
+				if sc := scope(grid[r][col]); sc == "Both" || sc == "Row" {
+					return true
+				}
+				if grid[r][col].std == "TH" {
+					seen = true
+				} else if seen {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+// TestTheHeaderReachTablesAgreeWithTheScanTheyReplaced — R4-2's semantics. The tabulation is a rewrite of a
+// search whose every verdict was measured on veraPDF, so it is held to the old scan cell by cell, over 400
+// seeded grids of TH and TD in every Scope, rather than to a handful of hand-picked tables.
+func TestTheHeaderReachTablesAgreeWithTheScanTheyReplaced(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	scopes := []string{"", "!scope=Row", "!scope=Column", "!scope=Both"}
+	compared, connected := 0, 0
+	for trial := 0; trial < 400; trial++ {
+		w, h := 1+rng.Intn(5), 1+rng.Intn(6)
+		var rows []string
+		for r := 0; r < h; r++ {
+			var cells []string
+			for c := 0; c < w; c++ {
+				if rng.Intn(2) == 0 {
+					cells = append(cells, "TD")
+				} else {
+					cells = append(cells, "TH"+scopes[rng.Intn(len(scopes))])
+				}
+			}
+			rows = append(rows, "TR("+strings.Join(cells, ",")+")")
+		}
+		d, err := open(treeDoc("", "Document(Table("+strings.Join(rows, ",")+"))"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodes, _ := d.structNodes()
+		grid := make([][]*tableCell, h)
+		i := 0
+		for _, n := range nodes {
+			std := d.typedAs(n.dict)
+			if std != "TH" && std != "TD" {
+				continue
+			}
+			r, c := i/w, i%w
+			grid[r] = append(grid[r], &tableCell{dict: n.dict, std: std, row: r, col: c, rowSpan: 1, colSpan: 1})
+			i++
+		}
+		if i != w*h {
+			t.Fatalf("trial %d: the fixture laid out %d cells, want %d", trial, i, w*h)
+		}
+		reach := d.headerReachOf(grid)
+		steps := 0
+		for r := range grid {
+			for _, cell := range grid[r] {
+				want := bruteHeaderInLine(d, grid, cell)
+				if got := reach.inLine(cell, &steps); got != want {
+					t.Fatalf("trial %d: the cell at row %d, column %d is connected=%v by the tables and %v by the scan "+
+						"(grid %s)", trial, r+1, cell.col+1, got, want, strings.Join(rows, ","))
+				}
+				compared++
+				if want {
+					connected++
+				}
+			}
+		}
+	}
+	// The stimulus: both answers occurred, or agreement is agreement on one of them.
+	if connected == 0 || connected == compared {
+		t.Fatalf("%d of %d cells connected — the seeded grids exercised only one answer", connected, compared)
+	}
+}
+
+// tallTable is one table of rows — a Column-scoped TH, an unscoped TH, then data cells — the reviewer's shape:
+// every data cell's upward scan used to cross every data cell above it before meeting the headers.
+func tallTable(rows int) []byte {
+	var b strings.Builder
+	b.WriteString("Document(Table(TR(TH!scope=Column),TR(TH)")
+	for i := 2; i < rows; i++ {
+		b.WriteString(",TR(TD)")
+	}
+	b.WriteString("))")
+	return treeDoc("", b.String())
+}
+
+// TestTheHeaderSearchIsLinearInTheGrid — R4-2, measured 16,000 rows 0.79 s and 32,000 rows 3.08 s on one 7.5 t1
+// call before the tabulation, 0.62 s and 0.93 s after (most of it now the tree walk, not the search). Asserted as
+// WORK, not time: the slots the search read, against the slots the grid has.
+func TestTheHeaderSearchIsLinearInTheGrid(t *testing.T) {
+	const rows = 3000
+	d, err := open(tallTable(rows))
+	if err != nil {
+		t.Fatal(err)
+	}
+	layouts, _, _ := d.tablesIn()
+	if len(layouts) != 1 {
+		t.Fatalf("%d tables laid out, want 1", len(layouts))
+	}
+	l := layouts[0]
+	// The stimulus first: the search ran, over the whole grid.
+	if l.headerSteps < rows {
+		t.Fatalf("the header search read %d slots of a %d-slot grid — it did not run over the table this test is about",
+			l.headerSteps, rows)
+	}
+	if got := checkTableHeaders(d); got.Verdict != Pass {
+		t.Fatalf("7.5 t1 over the tall table = %v (%s), want Pass — every data cell sits under a Column-scoped header",
+			got.Verdict, got.Why)
+	}
+	// Tabulating reads each slot once and each data cell asks one; a scan per cell reads ~rows²/2.
+	if l.headerSteps > 3*rows {
+		t.Errorf("the header search read %d slots of a %d-slot grid; it is linear in the grid or it is the "+
+			"quadratic the P07 phase close measured", l.headerSteps, rows)
+	}
+}
+
+// TestACellIsOfferedOnlyToTheLayoutsThatFlagIt — R4-3, measured 20,000 one-cell tables 4.5 s on one 7.2 t15 call
+// before the index, 1.6 s after. Asserted as work: how many (layout, cell) pairs the verdict looked at.
+func TestACellIsOfferedOnlyToTheLayoutsThatFlagIt(t *testing.T) {
+	const tables = 2000
+	var b strings.Builder
+	b.WriteString("Document(")
+	for i := 0; i < tables; i++ {
+		b.WriteString("Table(TR(TD)),")
+	}
+	b.WriteString("Table(TR(TD,TD!r2),TR(TD!c2)))")
+	d, err := open(treeDoc("", b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	intersect := map[string]bool{"TH": true, "TD": true}
+	got, offered := d.cellVerdictCounted(intersect, func(l *tableLayout, id uintptr) string {
+		if l.intersecting[id] {
+			return "intersects"
+		}
+		return ""
+	})
+	// The stimulus first: the flagged cell was reached, past two thousand tables.
+	if got.Verdict != Fail || offered == 0 {
+		t.Fatalf("7.2 t15 = %v (%s) with %d pairs offered, want Fail — the intersecting table is the last one",
+			got.Verdict, got.Why, offered)
+	}
+	if offered > 2 {
+		t.Errorf("%d (layout, cell) pairs were offered for %d tables; only the one table that flagged a cell should "+
+			"see any", offered, tables+1)
+	}
+	// And the index keeps a layout's order: the Pass over the same tables without the last one offers nothing.
+	d2, err := open(treeDoc("", strings.TrimSuffix(b.String(), ",Table(TR(TD,TD!r2),TR(TD!c2)))")+")"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, n := d2.cellVerdictCounted(intersect, func(l *tableLayout, id uintptr) string { return "" }); res.Verdict != Pass || n != 0 {
+		t.Errorf("over %d regular tables 7.2 t15 = %v with %d pairs offered, want Pass with none", tables, res.Verdict, n)
 	}
 }

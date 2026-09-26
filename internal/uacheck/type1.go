@@ -83,6 +83,10 @@ func (p *type1Program) widthOfCode(code int) float32 {
 }
 
 // Bounds veraPDF does not have. Past any of them nib refuses rather than hang or exhaust memory on a hostile program.
+// t1MaxOps, t1MaxAlloc, t1MaxDecrypt and t1MaxSteps bound the DOCUMENT's Type 1 programs together (`t1Spend`), as
+// `maxTrueTypeReads` bounds its TrueType ones: as a program's they let N programs cost N times the bound (the P07
+// phase-close review measured 66 ms for an 862-byte program reaching t1MaxOps — ten thousand of them are minutes).
+// The others bound one program's own state.
 const (
 	t1MaxBytes = 1 << 26 // the decoded /FontFile stream
 	t1MaxOps   = 1 << 22 // PostScript objects executed, procedures' bodies included
@@ -174,14 +178,37 @@ type t1Reader struct {
 	stack []psObj
 	dict  map[string]psObj
 
-	ops, alloc, decrypted, steps int
+	spend *t1Spend // the document's
 
 	widths    map[string]int32
 	hasWidths bool
 }
 
-// readType1 is `Type1FontProgram.parseFont` over the decoded stream.
-func readType1(data []byte) (p type1Program) {
+// t1Spend is what the document's Type 1 programs have cost, all of them together.
+type t1Spend struct{ ops, alloc, decrypted, steps int }
+
+// exhausted names the document budget a Type 1 read went past, "" while none has: past one, the program being read
+// and every later read that charges that counter are refused unread (RR1-6, `reportsNothing`).
+func (s t1Spend) exhausted() string {
+	switch {
+	case s.ops > t1MaxOps:
+		return fmt.Sprintf("the document's Type 1 programs execute more than %d PostScript objects", t1MaxOps)
+	case s.alloc > t1MaxAlloc:
+		return fmt.Sprintf("the document's Type 1 programs build more than %d array slots", t1MaxAlloc)
+	case s.decrypted > t1MaxDecrypt:
+		return fmt.Sprintf("the document's Type 1 programs decrypt more than %d bytes", t1MaxDecrypt)
+	case s.steps > t1MaxSteps:
+		return fmt.Sprintf("the document's Type 1 programs' private dictionaries read more than %d tokens", t1MaxSteps)
+	}
+	return ""
+}
+
+// readType1 is `Type1FontProgram.parseFont` over the decoded stream, charged to the document's budget `spend` (nil is a
+// fresh one).
+func readType1(data []byte, spend *t1Spend) (p type1Program) {
+	if spend == nil {
+		spend = &t1Spend{}
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			a, ok := r.(t1Abort)
@@ -202,7 +229,7 @@ func readType1(data []byte) (p type1Program) {
 	if len(data) > t1MaxBytes {
 		t1Fail(errRefuse, fmt.Sprintf("its Type 1 program is %d bytes, past nib's bound of %d", len(data), t1MaxBytes))
 	}
-	r := &t1Reader{src: newBufSrc(data), dict: map[string]psObj{}, flag: true}
+	r := &t1Reader{src: newBufSrc(data), dict: map[string]psObj{}, flag: true, spend: spend}
 	r.lx = &bpLexer{src: r.src, ps: true}
 	// The PFB probe: two bytes read and both given back.
 	if r.src.readByte() == 0x80 {
@@ -330,13 +357,13 @@ func (r *t1Reader) lookup(k string) (psObj, bool) {
 
 // charge counts executed objects and allocated slots against nib's bounds.
 func (r *t1Reader) charge(ops, alloc int) {
-	r.ops += ops
-	r.alloc += alloc
-	if r.ops > t1MaxOps {
-		t1Fail(errRefuse, fmt.Sprintf("its cleartext executes more than %d PostScript objects, nib's bound", t1MaxOps))
+	r.spend.ops += ops
+	r.spend.alloc += alloc
+	if r.spend.ops > t1MaxOps {
+		t1Fail(errRefuse, fmt.Sprintf("the document's Type 1 programs execute more than %d PostScript objects, nib's bound", t1MaxOps))
 	}
-	if r.alloc > t1MaxAlloc {
-		t1Fail(errRefuse, fmt.Sprintf("its cleartext builds more than %d array slots, nib's bound", t1MaxAlloc))
+	if r.spend.alloc > t1MaxAlloc {
+		t1Fail(errRefuse, fmt.Sprintf("the document's Type 1 programs build more than %d array slots, nib's bound", t1MaxAlloc))
 	}
 }
 
@@ -924,8 +951,9 @@ type t1Private struct {
 func (p *t1Private) src() *bpMemSrc { return p.lx.src.(*bpMemSrc) }
 
 func (p *t1Private) next() {
-	if p.r.steps++; p.r.steps > t1MaxSteps {
-		t1Fail(errRefuse, fmt.Sprintf("its private part takes more than %d tokens to read, nib's bound", t1MaxSteps))
+	if p.r.spend.steps++; p.r.spend.steps > t1MaxSteps {
+		t1Fail(errRefuse, fmt.Sprintf("the document's Type 1 programs' private parts take more than %d tokens to read, "+
+			"nib's bound", t1MaxSteps))
 	}
 	p.lx.next()
 	if p.lx.a85 && p.lx.typ == bpTHexString {
@@ -1091,8 +1119,9 @@ func (p *t1Private) decodeCharString() bool {
 // charStringWidth decrypts one charstring (`EexecFilterDecode` with lenIV, read through an `ASMemoryInStream`) and reads
 // its width.
 func (p *t1Private) charStringWidth(chunk []byte) *t1Num {
-	if p.r.decrypted += len(chunk); p.r.decrypted > t1MaxDecrypt {
-		t1Fail(errRefuse, fmt.Sprintf("its charstrings decrypt to more than %d bytes, nib's bound", t1MaxDecrypt))
+	if p.r.spend.decrypted += len(chunk); p.r.spend.decrypted > t1MaxDecrypt {
+		t1Fail(errRefuse, fmt.Sprintf("the document's Type 1 programs' charstrings decrypt to more than %d bytes, nib's "+
+			"bound", t1MaxDecrypt))
 	}
 	if len(chunk) == 0 {
 		return nil
@@ -1245,7 +1274,7 @@ func (d *Document) type1Of(font types.Dict) (p *type1Program, known bool, why, t
 		if sd.Content == nil && sd.Decode() != nil {
 			r = &type1Program{state: ttUnknown, why: "its embedded Type 1 program could not be decoded"}
 		} else {
-			prog := readType1(sd.Content)
+			prog := readType1(sd.Content, &d.type1Spent)
 			r = &prog
 		}
 		if d.type1Reads == nil {

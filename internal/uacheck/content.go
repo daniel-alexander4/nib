@@ -123,6 +123,84 @@ type frame struct {
 	// `/Artifact` around the `Do` does reach it (`OperatorParser.java:538-550`).
 	stream int
 	where  string
+
+	// **The aggregates below make every question the rules ask of the stack O(1)** (the P07 phase-close review,
+	// R3-2: every event and every closed sequence used to walk the whole stack, and 40,000 nested `BMC`s took
+	// 13.5 s). Each is set ONCE, by `pushFrame`, from this frame and the frame directly below it — which already
+	// carries the answer for everything beneath — so each one is exactly the old full scan over the stack up to
+	// and including this frame. The three inheritances differ in how they treat a stream boundary, and each
+	// aggregate keeps its own inheritance's rule:
+	//
+	//   - anyArtifact is `parentsTags.contains('Artifact')`: the own tag included, and it CROSSES the boundary.
+	//   - structElem/structUnread is the innermost struct parent in force (`taggedContent`): it CROSSES too.
+	//   - mcidIn/spKeyIn and langIn/langWhy stop at the boundary: they carry the frame below only when that frame
+	//     was opened in the same stream. `inheritedLang`'s boundary is the WALKER's stream, which the query
+	//     (`inheritedLangOf`) enforces by comparing it with the top frame's stream.
+	//
+	// `TestTheStackAggregatesAgreeWithTheFullScan` compares every one with the old scan over random nestings.
+	anyArtifact  bool
+	structElem   types.Dict
+	structUnread string
+	mcidIn       int
+	spKeyIn      int
+	// ownDecided is whether this frame's element settles the inherited language on its own (its own `/Lang`,
+	// an ancestor's, or a refusal), and ownLangFound/ownLangWhy that answer. It excludes the property list's
+	// own `/Lang`, which a sequence asking about itself does not count (`inheritedLangOf`'s `ownCounts`).
+	ownDecided   bool
+	ownLangFound bool
+	ownLangWhy   string
+	// langIn/langWhy is `inheritedLangOf(stack[:this+1], this.stream, ownCounts=true)`.
+	langIn  bool
+	langWhy string
+}
+
+// pushFrame opens f on top of stack, filling f's aggregates from the frame below (see `frame`).
+//
+// The appended slice may share `stack`'s backing array: a nested walk pushes only above the frames it
+// inherited and pops back only down to them, and its caller never reads past its own length, so no frame a
+// caller can see is ever overwritten (`walkWithState`).
+func (d *Document) pushFrame(stack []frame, f frame) []frame {
+	var below *frame
+	if n := len(stack); n > 0 {
+		below = &stack[n-1]
+	}
+	sameStream := below != nil && below.stream == f.stream
+	f.anyArtifact = f.artifact || (below != nil && below.anyArtifact)
+	switch {
+	case f.elem != nil:
+		f.structElem, f.structUnread = f.elem, ""
+	case f.elemUnread != "":
+		f.structElem, f.structUnread = nil, f.elemUnread
+	case below != nil:
+		f.structElem, f.structUnread = below.structElem, below.structUnread
+	}
+	f.mcidIn, f.spKeyIn = -1, -1
+	if f.mcid >= 0 {
+		f.mcidIn, f.spKeyIn = f.mcid, f.spKey
+	} else if sameStream {
+		f.mcidIn, f.spKeyIn = below.mcidIn, below.spKeyIn
+	}
+	switch {
+	case f.elem != nil:
+		if d.declaresLang(f.elem["Lang"]) {
+			f.ownDecided, f.ownLangFound = true, true
+		} else if found, why := d.parentLang(f.elem); why != "" {
+			f.ownDecided, f.ownLangWhy = true, why
+		} else if found {
+			f.ownDecided, f.ownLangFound = true, true
+		}
+	case f.elemUnread != "":
+		f.ownDecided, f.ownLangWhy = true, f.elemUnread
+	}
+	switch {
+	case f.lang:
+		f.langIn = true
+	case f.ownDecided:
+		f.langIn, f.langWhy = f.ownLangFound, f.ownLangWhy
+	case sameStream:
+		f.langIn, f.langWhy = below.langIn, below.langWhy
+	}
+	return append(stack, f)
 }
 
 // mcSubject is one closed marked-content sequence as veraPDF's `SEMarkedContent` — the subject of
@@ -385,6 +463,10 @@ const (
 	// A stream of marked-content operators draws nothing
 	// and trips neither budget above, and 4,368 walks of one ran 10.5 s and 13.6 GB (the P04.S01 review, measured).
 	maxContentOperators = 1 << 24
+	// maxCharProcAsks bounds how often `enterType3` meets a glyph procedure that is already read (R3-1). A real
+	// document meets none: each `/CharProcs` dictionary is enumerated once. Only procedures shared between fonts,
+	// or a font shown inside its own glyphs, spend it — and they spend it per procedure, not per operator.
+	maxCharProcAsks = 1 << 16
 )
 
 // overBudget reports whether the content walk has spent its budget, recording why the first time.
@@ -401,6 +483,10 @@ func (d *Document) overBudget() bool {
 	case len(d.mcSubjects) > maxContentEvents:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, opens more than %d marked-content "+
 			"sequences; nib stops reading there, so what lies beyond was never read", maxContentEvents)
+	case d.charProcAsks > maxCharProcAsks:
+		why = fmt.Sprintf("the page content asks for Type 3 glyph procedures it has already read more than %d times "+
+			"(fonts sharing procedures, or a font shown inside its own glyphs); nib stops reading there, so what lies "+
+			"beyond was never read", maxCharProcAsks)
 	case d.glyphsOver:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, shows more than %d distinct glyphs; nib "+
 			"stops reading there, so the glyphs beyond were never read", maxDistinctGlyphs)
@@ -426,7 +512,10 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 	// start is the text state the stream was entered with: a tiling pattern this stream selects inherits THAT, not
 	// the state at the `scn` (`GFPDTilingPattern` takes the invoking stream's inherited graphics state).
 	start := ts
-	stack := append([]frame(nil), inherited...)
+	// **Not copied** (R3-2): the copy was O(depth) per nested stream, so a deep nesting that draws a form at every
+	// level paid for the whole stack each time. Pushes land above `inherited` and pops stop at it (the `EMC`
+	// guard), so the caller's frames are never touched — see `pushFrame`.
+	stack := inherited
 	gs := []textState{}
 	var operands []contentstream.Token
 	opIndex := 0
@@ -459,7 +548,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 		op := string(tk.Bytes(src))
 		switch op {
 		case "BMC", "BDC":
-			stack = append(stack, w.openSequence(src, operands, res, opIndex, op))
+			stack = w.d.pushFrame(stack, w.openSequence(src, operands, res, opIndex, op))
 		case "EMC":
 			// A sequence becomes a subject only where it CLOSES, and only inside its own stream — the
 			// guard is what keeps an `EMC` in a form from closing the sequence that drew it.
@@ -626,7 +715,11 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 		}
 		w.d.drawsForms[w.form] = true
 	}
-	if chain[objNr] {
+	// **Object 0 is no object** (R3-10): a form with no object number is not one the chain can recognise, so
+	// it is neither looked up nor added below — otherwise the first key-less form would mark every later
+	// key-less form as "drawing itself" and they would go unwalked in silence. Unreachable today (a stream is
+	// always an indirect object, so `raw` is always a reference) and kept correct rather than merely unreached.
+	if objNr != 0 && chain[objNr] {
 		// A form drawing itself: its content is already being walked once up the chain, so nothing is unread.
 		return
 	}
@@ -656,10 +749,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if sp, ok := w.d.intValue(sd.Dict["StructParents"]); ok {
 		inner.spKey = sp
 	}
-	next := map[int]bool{objNr: true}
-	for k := range chain {
-		next[k] = true
-	}
+	next := withLink(chain, objNr)
 	inner.walkWithState(sd.Content, formRes, stack, next, depth+1, ts)
 }
 
@@ -716,12 +806,8 @@ func (w walker) subject(stack []frame) mcSubject {
 	}
 	// `parentsTags` includes the object's OWN tag (`GFOpMarkedContent.java:142-151`) and crosses a form
 	// XObject boundary into the invoking stream, so 7.1 t2 fires on an `/Artifact` itself and on anything a
-	// form draws inside one. Measured in both directions.
-	for _, e := range stack {
-		if e.artifact {
-			s.insideArtifact = true
-		}
-	}
+	// form draws inside one. Measured in both directions. (`anyArtifact` is that scan, carried — `pushFrame`.)
+	s.insideArtifact = f.anyArtifact
 	s.tagged, s.taggedUnread = w.d.taggedContent(stack)
 	s.inheritedLang, s.langUnread = w.d.inheritedLangOf(stack, w.stream, false)
 	return s
@@ -737,16 +823,19 @@ func (w walker) subject(stack []frame) mcSubject {
 // fails 7.1 t3 on both and nib passed them, which is a false pass in the sense `Verdict.conformant` means.
 //
 // The second result is why nib could not settle it, and it is `CannotCheck` — never a Pass.
+//
+// The innermost struct parent is the top frame's `structElem`/`structUnread`, which `pushFrame` carried up from
+// every frame below — the scan from the top for the first frame with `elem` or `elemUnread` set, done once per
+// push instead of once per question (R3-2).
 func (d *Document) taggedContent(stack []frame) (bool, string) {
-	for i := len(stack) - 1; i >= 0; i-- {
-		if stack[i].elem != nil {
-			return d.reachesStructTreeRoot(stack[i].elem)
-		}
-		if stack[i].elemUnread != "" {
-			return false, stack[i].elemUnread
-		}
+	if len(stack) == 0 {
+		return false, ""
 	}
-	return false, ""
+	top := &stack[len(stack)-1]
+	if top.structElem != nil {
+		return d.reachesStructTreeRoot(top.structElem)
+	}
+	return false, top.structUnread
 }
 
 // reachesStructTreeRoot climbs an element's `/P` chain asking whether it arrives at the structure tree root.
@@ -812,27 +901,24 @@ func (d *Document) reachesStructTreeRoot(elem types.Dict) (bool, string) {
 // **`ownCounts` is the difference between a sequence asking and a content ITEM asking.** A sequence's own
 // `/Lang` is not part of its inherited language — the rules carry a separate `Lang != null` disjunct for it —
 // while a content item has no property list of its own, so the sequence around it counts in full.
+//
+// **It is O(1)** (R3-2): the walk down the stack — stop at the first own `/Lang`, element language or refusal,
+// and at the first frame from another stream — is carried per frame as `langIn`, and only the top frame's
+// `ownCounts` exception is decided here.
 func (d *Document) inheritedLangOf(stack []frame, stream int, ownCounts bool) (bool, string) {
 	last := len(stack) - 1
-	for i := last; i >= 0 && stack[i].stream == stream; i-- {
-		if (i < last || ownCounts) && stack[i].lang {
-			return true, ""
-		}
-		switch {
-		case stack[i].elem != nil:
-			if d.declaresLang(stack[i].elem["Lang"]) {
-				return true, ""
-			}
-			found, why := d.parentLang(stack[i].elem)
-			if why != "" {
-				return false, why
-			}
-			if found {
-				return true, ""
-			}
-		case stack[i].elemUnread != "":
-			return false, stack[i].elemUnread
-		}
+	if last < 0 || stack[last].stream != stream {
+		return false, ""
+	}
+	top := &stack[last]
+	if ownCounts {
+		return top.langIn, top.langWhy
+	}
+	if top.ownDecided {
+		return top.ownLangFound, top.ownLangWhy
+	}
+	if last > 0 && stack[last-1].stream == stream {
+		return stack[last-1].langIn, stack[last-1].langWhy
 	}
 	return false, ""
 }
@@ -856,13 +942,14 @@ func (w walker) emit(stack []frame, text bool, where string) {
 // event builds one event, deriving its coverage from the open sequences.
 func (w walker) event(stack []frame, text bool, where string) contentEvent {
 	ev := contentEvent{where: where, text: text, appearance: w.appearance, mcid: -1, spKey: -1}
+	// Read off the top frame's aggregates (`pushFrame`, R3-2): the innermost MCID in THIS stream, and whether any
+	// enclosing sequence, in any stream, is an `/Artifact`.
 	artifact := false
-	for i := len(stack) - 1; i >= 0; i-- {
-		if stack[i].artifact {
-			artifact = true
-		}
-		if ev.mcid < 0 && stack[i].mcid >= 0 && stack[i].stream == w.stream {
-			ev.mcid, ev.spKey = stack[i].mcid, stack[i].spKey
+	if n := len(stack); n > 0 {
+		top := &stack[n-1]
+		artifact = top.anyArtifact
+		if top.stream == w.stream {
+			ev.mcid, ev.spKey = top.mcidIn, top.spKeyIn
 		}
 	}
 	// 7.1 t3 is `isTaggedContent == true || parentsTags.contains('Artifact')`, so an enclosing `/Artifact`
@@ -948,6 +1035,24 @@ func (w walker) enterType3(font types.Dict, ts textState, res types.Dict, chain 
 		fontRes = res
 	}
 	procs := w.d.dict(font["CharProcs"])
+	if len(procs) == 0 {
+		return
+	}
+	// **Once per `/CharProcs` dictionary, decided BEFORE the per-glyph work** (the P07 phase-close review, R3-1).
+	// `langWalked` below made each procedure's WALK once-only, but this loop ran on every text-showing operator
+	// ahead of it — sorting every key, dereferencing every procedure and formatting a label — so N shows of a font
+	// with N glyphs cost N² with no budget charged: 20,000 of each took 4m30s. Once every procedure has been
+	// handed to `enterLangOnly`, a second enumeration can only find them walked already, so it is skipped.
+	//
+	// **Not memoised when a procedure was skipped for being on the chain** — the font shown inside its own glyph
+	// procedure — because that procedure is still unread by this enumeration and a later show must reach it, as
+	// it always did. Such re-enumerations, and any other that meets a procedure already walked, are charged to
+	// `maxCharProcAsks`, so the recursive shape is bounded too and answers CannotCheck past the ceiling.
+	id := dictID(procs)
+	if w.d.charProcsRead[id] {
+		return
+	}
+	complete := true
 	for _, glyph := range sortedKeys(procs) {
 		sd, _, err := w.d.Ctx.DereferenceStreamDict(procs[glyph])
 		if err != nil || sd == nil {
@@ -961,12 +1066,45 @@ func (w walker) enterType3(font types.Dict, ts textState, res types.Dict, chain 
 		if ir, ok := procs[glyph].(types.IndirectRef); ok {
 			objNr = ir.ObjectNumber.Value()
 		}
+		onChain := objNr != 0 && chain[objNr]
+		if onChain {
+			complete = false
+		}
+		if onChain || w.d.langWalked[dictID(sd.Dict)] {
+			// `enterLangOnly` would return at once: charge the ask, and do not format a label nobody reads.
+			if w.d.charProcAsks++; w.d.overBudget() {
+				return
+			}
+			continue
+		}
 		// A glyph procedure is parsed in the state of the operator that showed the Type 3 font (`GFPDType3Font`, which
 		// FontFactory hands that graphics state) — whose font IS this font, so text a procedure shows without a `Tf`
 		// is judged in it.
 		w.enterLangOnly(sd, objNr, fontRes, fmt.Sprintf("%s → Type 3 font %s, glyph /%s", w.where, fontName, glyph),
 			chain, depth, ts)
+		if w.d.contentOver {
+			return
+		}
 	}
+	if complete {
+		if w.d.charProcsRead == nil {
+			w.d.charProcsRead = map[uintptr]bool{}
+		}
+		w.d.charProcsRead[id] = true
+	}
+}
+
+// withLink is chain with objNr added — a fresh map, since the caller's chain must not change. Object 0 is no
+// object and is never added (R3-10).
+func withLink(chain map[int]bool, objNr int) map[int]bool {
+	next := make(map[int]bool, len(chain)+1)
+	for k := range chain {
+		next[k] = true
+	}
+	if objNr != 0 {
+		next[objNr] = true
+	}
+	return next
 }
 
 // enterLangOnly decodes one nested stream and walks it in lang-only mode, under the walk's own budgets.
@@ -1017,10 +1155,7 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	// and a glyph procedure: measured, a pattern used twice PASSES `7.20 t2` and one whose content draws
 	// the form twice FAILS. So the stream inherits only whether its invoker was traversed.
 	inner := walker{d: w.d, where: label, spKey: -1, appearance: w.appearance, stream: w.d.nextStream(), langOnly: true, repeat: w.repeat, form: w.form}
-	next := map[int]bool{objNr: true}
-	for k := range chain {
-		next[k] = true
-	}
+	next := withLink(chain, objNr)
 	streamRes := w.d.dict(sd.Dict["Resources"])
 	if streamRes == nil {
 		streamRes = res
