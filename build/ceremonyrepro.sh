@@ -63,20 +63,7 @@ go run build/genpdf.go "$SP/lease.pdf" "the lease" >/dev/null 2>&1
 PASS=0; FAIL=0
 ok(){ echo "  ok   — $1"; PASS=$((PASS+1)); }
 no(){ echo "  FAIL — $1"; echo "        $2"; FAIL=$((FAIL+1)); }
-# launch_session trades the launch key a headless Nib logs (ADR-053) into a cookie jar and prints the
-# CSRF token. The log line is the only way in — `/api/status` stopped carrying the token because it
-# answers every process on the machine. Retried: the server can answer before the line is written.
-launch_session() { # $1=base $2=log $3=jar
-  local key="" _
-  for _ in $(seq 1 40); do
-    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
-    [ -n "$key" ] && break
-    sleep 0.1
-  done
-  [ -n "$key" ] || return 1
-  curl -s -c "$3" -b "$3" -X POST "$1/api/launch" -H "X-Nib-Launch: $key" \
-    | python3 -c "import json,sys;print(json.load(sys.stdin).get('csrf',''))" 2>/dev/null
-}
+. "$(dirname "$0")/launchkey.sh" # nib_answers, launch_token — the one reader of the keyed log line (ADR-054)
 start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   local n=$1 h="$SP/home_$1"
   rm -rf "$h"; mkdir -p "$h/.config"
@@ -87,12 +74,13 @@ start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
     NIB_ADDR="127.0.0.1:$port" "$SP/nib" >"$SP/$n.log" 2>&1 &
   eval "${n}_PID=$!"
   local base="http://127.0.0.1:$port"
-  for _ in $(seq 1 150); do curl -sf "$base/api/status" >/dev/null 2>&1 && break; sleep 0.1; done
-  curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/ssh/enroll" \
+  for _ in $(seq 1 150); do nib_answers "$base" && break; sleep 0.1; done
+  # The token first (ADR-054): every route but three requires it, the enrol included.
+  local csrf; csrf="$(launch_token "$base" "$SP/$n.log")"
+  [ -n "$csrf" ] || { echo "$n: could not trade the logged launch key: $(cat "$SP/$n.log")"; exit 1; }
+  curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/ssh/enroll" -H "X-CSRF-Token: $csrf" \
     -H 'content-type: application/json' -d "{\"mode\":\"create\",\"keyPath\":\"$h/id_ed25519\"}" \
     >"$SP/$n.enroll.json"
-  local csrf; csrf="$(launch_session "$base" "$SP/$n.log" "$SP/$n.jar")"
-  [ -n "$csrf" ] || { echo "$n: could not trade the logged launch key: $(cat "$SP/$n.log")"; exit 1; }
   eval "${n}_BASE='$base'; ${n}_CSRF='$csrf'; ${n}_HOME='$h'"
   # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and a ceremony is
   # one of them. A fresh instance therefore refuses convene and accept with 403 until its user
@@ -108,7 +96,7 @@ post(){ # $1=name $2=path $3=json -> body in $SP/resp.json, prints status
   curl -s -o "$SP/resp.json" -w '%{http_code}' -c "$SP/$n.jar" -b "$SP/$n.jar" \
     -X POST "$b$2" -H 'content-type: application/json' -H "X-CSRF-Token: $c" -H "Origin: $b" -d "$3"
 }
-get(){ local n=$1 b; eval "b=\$${n}_BASE"; curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" "$b$2"; }
+get(){ local n=$1 b c; eval "b=\$${n}_BASE; c=\$${n}_CSRF"; curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" -H "X-CSRF-Token: $c" "$b$2"; }
 jq_(){ python3 -c "import json,sys;d=json.load(open('$SP/resp.json'));print($1)" 2>/dev/null; }
 
 start A; start B
@@ -144,7 +132,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
 # adding the arrival check to the dial door, whose refusal names the ceremony mismatch and
 # arrives first. Capturing the right document here leaves the out-of-turn condition as the only
 # one present, which is what clause 7 has always claimed to test.
-curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/pdf" -o "$SP/convened1.pdf"
+curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/pdf" -o "$SP/convened1.pdf"
 [ -s "$SP/convened1.pdf" ] || { echo "could not capture the first ceremony's document"; exit 1; }
 
 # CLAUSE 1 — the convener's own pins (D21 from the hub side).
@@ -295,7 +283,7 @@ else no "second convene" "$code $(cat "$SP/resp.json")"; fi
 # This is the count a verifier needs before it can say a ceremony is incomplete. On the convened
 # document it is the extreme case — two obliged, zero signed — and it is drivable here because
 # convening is the one ceremony act this tier completes.
-curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/attestations" -o "$SP/atts.json"
+curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/attestations" -o "$SP/atts.json"
 python3 - "$SP/atts.json" <<'PYC' && ok "the convened document reports 0 of 2 obliged signers (C18)" || no "C18 counts" "$(head -c 300 "$SP/atts.json")"
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -308,7 +296,7 @@ PYC
 # a different name, and every ordinary co-sign in the product would grow a completeness line.
 code=$(post B /api/open "{\"path\":\"$SP/lease.pdf\"}")
 if [ "$code" = 200 ]; then
-  curl -fsS -c "$SP/B.jar" -b "$SP/B.jar" "$B_BASE/api/attestations" -o "$SP/atts_plain.json"
+  curl -fsS -c "$SP/B.jar" -b "$SP/B.jar" -H "X-CSRF-Token: $B_CSRF" "$B_BASE/api/attestations" -o "$SP/atts_plain.json"
   python3 - "$SP/atts_plain.json" <<'PYP' && ok "a document with no ceremony reports no obliged signers at all" || no "C18 third state" "$(head -c 200 "$SP/atts_plain.json")"
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -327,7 +315,7 @@ if [ ! -s "$SP/convened.pdf" ]; then no "L3 setup" "could not fetch the convened
   python3 -c "
 import base64,sys
 sys.stdout.buffer.write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" > "$SP/appearance.png"
-  code=$(curl -s -o "$SP/resp.json" -w '%{http_code}' -c "$SP/B.jar" -b "$SP/B.jar" \
+  code=$(curl -s -o "$SP/resp.json" -w '%{http_code}' -c "$SP/B.jar" -b "$SP/B.jar" -H "X-CSRF-Token: $B_CSRF" \
     -X POST "$B_BASE/api/session/initiate" -H "X-CSRF-Token: $B_CSRF" -H "Origin: $B_BASE" \
     -F "pdf=@$SP/convened.pdf" -F "params={\"fingerprint\":\"$A_FP\",\"intent\":\"I agree\"}" \
     -F "appearance=@$SP/appearance.png" \
@@ -360,7 +348,7 @@ fi
 # the slice.
 if [ -s "$SP/convened1.pdf" ]; then
   # The GET first: the server names whose turn it is. The client never computes one.
-  qcode=$(curl -s -o "$SP/hopquote.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+  qcode=$(curl -s -o "$SP/hopquote.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
     -X GET "$A_BASE/api/ceremony/hop?ceremony=$CID" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
     -H "X-Nib-Doc: $CDOC")
   if [ "$qcode" != "200" ]; then
@@ -378,7 +366,7 @@ if [ -s "$SP/convened1.pdf" ]; then
       ok "the hop quote names the next party server-side: $QPARTY"
     fi
     # And the POST refuses it for the same reason, rather than dialling this machine.
-    hcode=$(curl -s -o "$SP/hop.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+    hcode=$(curl -s -o "$SP/hop.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
       -X POST "$A_BASE/api/ceremony/hop" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
       -H 'Content-Type: application/json' -H "X-Nib-Doc: $CDOC" -d "{\"ceremony\":\"$CID\"}")
     if [ "$QMINE" = "True" ] && [ "$hcode" = "409" ] && grep -q "nobody to call" "$SP/hop.json"; then
@@ -392,7 +380,7 @@ if [ -s "$SP/convened1.pdf" ]; then
 
   # **The other half of the pair**: the OLD route, same document, the product's own field set —
   # which is to say WITHOUT the invitation the harness used to supply. It must still refuse.
-  ocode=$(curl -s -o "$SP/oldroute.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+  ocode=$(curl -s -o "$SP/oldroute.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
     -X POST "$A_BASE/api/session/initiate" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
     -F "pdf=@$SP/convened1.pdf" -F "params={\"fingerprint\":\"$B_FP\",\"intent\":\"I agree\"}" \
     -F "appearance=@$SP/appearance.png")
@@ -430,7 +418,7 @@ transfer_leg() { # $1 = transport
   # foreground polls below read `$SP/A.jar` every 100 ms for up to 20 s. A read landing on a
   # truncated jar sends no session cookie, gets a 401, and the clause reports "the spoken check
   # never appeared" — a false reason for a real race.
-  ( curl -s -o "$SP/send.$tr.json" -w '%{http_code}' -b "$SP/A.jar" \
+  ( curl -s -o "$SP/send.$tr.json" -w '%{http_code}' -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
       -X POST "$A_BASE/api/session/send" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
       -F "pdf=@$SP/send-$tr.pdf" -F "fingerprint=$B_FP" -F "address=$addr" -F "transport=$tr" \
       > "$SP/send.$tr.code" ) &
@@ -560,7 +548,7 @@ fi
 # distinction matters because a listing that silently drops the entry passes a removal test and
 # fails this one — and a ceremony that vanishes from the list is one whose only remedy is finding
 # and deleting the folder by hand, which is where the user already is.
-listing() { curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" "$A_BASE/api/ceremonies" -o "$1"; }
+listing() { curl -fsS -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" "$A_BASE/api/ceremonies" -o "$1"; }
 if ! listing "$SP/cer.before.json"; then
   no "C12 setup" "the ceremonies listing could not be read before the damage"
 else
@@ -656,12 +644,12 @@ else
     NIB_ADDR="127.0.0.1:$LOCK_PORT" "$SP/nib" >"$SP/locked.log" 2>&1 &
   LOCK_PID=$!
   LOCK_BASE="http://127.0.0.1:$LOCK_PORT"
-  for _ in $(seq 1 150); do curl -sf "$LOCK_BASE/api/status" >/dev/null 2>&1 && break; sleep 0.1; done
-  # With the session (ADR-053), so the 401 below is the VAULT answering and not the missing
-  # credential: a caller without the session is refused 403 whatever state the vault is in.
-  launch_session "$LOCK_BASE" "$SP/locked.log" "$SP/locked.jar" >/dev/null
-  peers_code="$(curl -s -o "$SP/locked.peers.json" -w '%{http_code}' -b "$SP/locked.jar" "$LOCK_BASE/api/peers")"
-  cer_code="$(curl -s -o "$SP/locked.cer.json" -w '%{http_code}' "$LOCK_BASE/api/ceremonies")"
+  for _ in $(seq 1 150); do nib_answers "$LOCK_BASE" && break; sleep 0.1; done
+  # With the token (ADR-054), so the 401 below is the VAULT answering and not the missing
+  # credential: a caller without it is refused 403 whatever state the vault is in.
+  LOCK_CSRF="$(launch_token "$LOCK_BASE" "$SP/locked.log")"
+  peers_code="$(curl -s -o "$SP/locked.peers.json" -w '%{http_code}' -H "X-CSRF-Token: $LOCK_CSRF" "$LOCK_BASE/api/peers")"
+  cer_code="$(curl -s -o "$SP/locked.cer.json" -w '%{http_code}' -H "X-CSRF-Token: $LOCK_CSRF" "$LOCK_BASE/api/ceremonies")"
   if [ "$peers_code" != "401" ]; then
     no "locked-read setup" "GET /api/peers returned $peers_code, want 401 — this instance is NOT locked, so a 200 from the ceremonies route below would say nothing at all"
   elif [ "$cer_code" != "200" ]; then
@@ -778,7 +766,7 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
         # `/pending 436` was about is the pasted INVITATION, and that is what stays absent here.
         # **The no-address variant belongs to tier 4 `--lan`**, which runs in a namespace where an
         # announcement can actually be heard; naming it here rather than pretending this covers it.
-        hop2=$(curl -s -o "$SP/hop2.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" \
+        hop2=$(curl -s -o "$SP/hop2.json" -w '%{http_code}' -c "$SP/A.jar" -b "$SP/A.jar" -H "X-CSRF-Token: $A_CSRF" \
           -X POST "$A_BASE/api/ceremony/hop" -H "X-CSRF-Token: $A_CSRF" -H "Origin: $A_BASE" \
           -H 'Content-Type: application/json' -H "X-Nib-Doc: $CDOC2" \
           -d "{\"ceremony\":\"$CID2\",\"address\":\"$BADDR2\"}")
@@ -882,7 +870,12 @@ if [ "$code" != 200 ]; then no "stop setup" "open: $code"; else
     # through a hop, which this clause is not about. What tier 6 shows is that a machine which is
     # not the convener cannot stop the ceremony THROUGH THE REAL ROUTE, whichever gate stops it.
     bcode=$(post B /api/ceremony/stop "{\"ceremony\":\"$CID3\"}")
-    if [ "$bcode" = "409" ] || [ "$bcode" = "403" ]; then
+    # A 403 counts only when it is the entitlement answering: since ADR-053 the credential door has
+    # its own 403s ("no session", "bad origin"), and B's broken credential must not read as B being
+    # refused a stop it was never entitled to (the P08 phase-close review, R8-7).
+    if [ "$bcode" = "403" ] && grep -qE 'no session|bad origin' "$SP/resp.json"; then
+      no "stop entitlement" "B was refused by the credential door, not by entitlement: $(head -c 200 "$SP/resp.json")"
+    elif [ "$bcode" = "409" ] || [ "$bcode" = "403" ]; then
       ok "a machine that did not convene it cannot stop it ($bcode; the 403 entitlement arm is driven at tier 1, where a foreign mirror can be staged)"
     else
       no "stop entitlement" "$bcode $(head -c 200 "$SP/resp.json")"

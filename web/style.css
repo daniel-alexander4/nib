@@ -1215,6 +1215,8 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   justify-content: center;
   z-index: 100;
 }
+/* Above every modal (110+) and the toast (300): nothing behind it is reachable (ADR-054, R7-3). */
+#launchOverlay { z-index: 400; }
 #authForm, #launchCard {
   display: flex;
   flex-direction: column;

@@ -503,3 +503,9 @@ home today.
   cookie (every method) and the CSRF token (writes), through one door, `requireSession`. A second launch gets
   a key through the hand-off, which is ADR-006's secret's one new grant. Residuals: a same-user process,
   and the key in the browser's argv from launch to trade (`/pending 701`).
+- **[ADR-054 — the token is the only credential, and every route but three needs it](054-the-token-is-the-only-credential-and-every-route-needs-it.md)**
+  — /pending 704, supersedes ADR-053's cookie and its public-route list. The wizard routes were a
+  passphrase oracle and `/api/quit` a kill switch for any local user; the cookie reached every other
+  loopback server the browser visited. The token alone, header on any method or `auth` query on a GET,
+  through `requireSession` on every route but launch, instance and handoff; the page keeps it in
+  per-origin `sessionStorage`. Guarded by a route census read from `server.go` and driven as a stranger.

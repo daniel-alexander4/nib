@@ -249,7 +249,7 @@ func conveneNonSigningConvener(t *testing.T, _ *httptest.Server) string {
 // askNext calls the route and decodes it.
 func askNext(t *testing.T, ts *httptest.Server, id string) ceremonyNextResponse {
 	t.Helper()
-	resp, err := http.Get(ts.URL + "/api/ceremony/next?ceremony=" + id)
+	resp, err := newClient(t).Get(ts.URL + "/api/ceremony/next?ceremony=" + id)
 	if err != nil {
 		t.Fatal(err)
 	}

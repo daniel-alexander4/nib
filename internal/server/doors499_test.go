@@ -340,7 +340,7 @@ func TestGETsThatActRefuseACrossSiteRequest(t *testing.T) {
 	get := func(route, site string) int {
 		req, _ := http.NewRequest(http.MethodGet, ts.URL+route, nil)
 		req.Header.Set("Sec-Fetch-Site", site)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := newClient(t).Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

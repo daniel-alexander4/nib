@@ -205,10 +205,10 @@ func TestDownloadRefusesWhatItShould(t *testing.T) {
 // the user's filesystem.
 func TestDownloadIsNotReachableWithoutTheVaultAndToken(t *testing.T) {
 	ts, _ := startServer(t)
-	c, _ := authedClient(t, ts)
+	authedClient(t, ts) // unlocked, so the refusal is the token and not the lock
 	for _, path := range []string{"/api/update/download", "/api/update/download/cancel", "/api/update/reveal"} {
-		// No CSRF token: refused.
-		resp, err := c.Post(ts.URL+path, "application/x-www-form-urlencoded", strings.NewReader("dir=/tmp"))
+		// No CSRF token (a bare client — `c` would attach its own): refused.
+		resp, err := (&http.Client{}).Post(ts.URL+path, "application/x-www-form-urlencoded", strings.NewReader("dir=/tmp"))
 		if err != nil {
 			t.Fatal(err)
 		}

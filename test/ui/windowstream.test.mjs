@@ -146,7 +146,10 @@ test('a real reload drops the window stream and opens a new one', async () => {
 
   // And nib is still serving. In THIS tier that is true because nothing armed a grace; the tier-1
   // test is what shows it would still be true if one had been.
-  const res = await page.request.get(`${BASE}/api/status`);
+  // With the token the reloaded page kept (ADR-054: every route needs it, and sessionStorage is what
+  // survives a reload) — so this asks "is nib serving", not "does nib answer a stranger".
+  const token = await page.evaluate(() => sessionStorage.getItem('nib-token'));
+  const res = await page.request.get(`${BASE}/api/status`, { headers: { 'X-CSRF-Token': token || '' } });
   assert.equal(res.status(), 200, 'nib stopped serving across a reload');
 
   await shutdown(h);

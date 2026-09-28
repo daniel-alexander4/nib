@@ -167,7 +167,7 @@ const els = {
   srvSigners: $('srvSigners'),
   srvIntentRow: $('srvIntentRow'), srvIntent: $('srvIntent'),
   srvDecline: $('srvDecline'), srvAccept: $('srvAccept'),
-  launchOverlay: $('launchOverlay'),
+  launchOverlay: $('launchOverlay'), launchText: $('launchText'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
@@ -271,9 +271,47 @@ const all = (sel) => document.querySelectorAll(sel);
 // Nib unlocks at startup from the user's SSH key. The first-run wizard
 // enrolls a key (or migrates an old password vault); after that the vault opens
 // with no prompt. csrf is the per-process token, handed to this page ONLY by trading the launch
-// key Nib put in the URL fragment it opened the window at (ADR-053) — never by /api/status, which
-// answers any local process.
+// key Nib put in the URL fragment it opened the window at (ADR-053). It is the one credential
+// (ADR-054): every request sends it — `authed()` for a fetch, `withAuth()` for a URL the browser
+// loads by itself (an <img>, pdf.js, the window stream, a download), which cannot carry a header.
 let csrf = null;
+
+// authed returns fetch options carrying the token.
+function authed(opts = {}) {
+  return { ...opts, headers: { ...(opts.headers || {}), 'X-CSRF-Token': csrf || '' } };
+}
+
+// withAuth puts the token on a URL the browser fetches by itself — an <img>, pdf.js, the window
+// stream. GET only: the server takes the query form on a GET and never on anything else. Never a
+// navigation: a URL the address bar shows is one the history keeps (see downloadAuthed).
+function withAuth(url) {
+  return url + (url.includes('?') ? '&' : '?') + 'auth=' + encodeURIComponent(csrf || '');
+}
+
+// downloadAuthed saves what a GET returns, fetched with the token in the header and handed to the
+// browser as a blob. Navigating to the route instead put `?auth=<token>` in the address bar and the
+// history on any answer that was not a file — a lock, a restart — and replaced the app page (the
+// review of /pending 704, #2). The filename is the server's Content-Disposition when it sends one.
+async function downloadAuthed(url, fallbackName) {
+  let res;
+  try { res = await apiFetch(url, { unpinned: true }); } catch { return; }
+  if (!res.ok) { toast(await errText(res, 'could not download')); return; }
+  const cd = res.headers.get('Content-Disposition') || '';
+  const name = (/filename="?([^";*]+)"?/.exec(cd) || [])[1] || fallbackName; // an RFC 5987 filename* falls back
+  const href = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = href; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+
+// checkSession asks whether this page's token still works, after a load the browser made by itself
+// failed — pdf.js, an <img>, the window stream — since those never pass through apiFetch and a 403
+// "no session" there would otherwise read as "could not render the document" (#6). apiFetch raises
+// the screen on the answer; nothing else is needed.
+async function checkSession() {
+  try { await apiFetch('/api/status', { unpinned: true }); } catch { /* apiFetch said what there is to say */ }
+}
 let authState = 'setup'; // setup | migrate | key-missing | key-locked | vault-unreadable | ready
 
 // repointKey is the key-missing recovery: unlock with a key the user points at, and have
@@ -285,11 +323,11 @@ async function repointKey() {
   if (!keyPath) { els.authError.textContent = 'Enter the path to your SSH private key'; return; }
   els.repointGo.disabled = true;
   try {
-    const res = await fetch('/api/ssh/repoint', {
+    const res = await fetch('/api/ssh/repoint', authed({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keyPath, passphrase: els.repointPw.value }),
-    });
+    }));
     if (!res.ok) { els.authError.textContent = await errText(res, 'could not unlock with that key'); return; }
     els.authError.textContent = '';
     els.repointPw.value = '';
@@ -304,7 +342,7 @@ let loAvailable = false; // LibreOffice installed (from /api/status) → offer o
 // apiFetch wraps fetch with the CSRF header on writes; a 401 reopens the wizard.
 async function apiFetch(url, opts = {}) {
   opts.headers = { ...(opts.headers || {}) };
-  if (opts.method && opts.method !== 'GET') opts.headers['X-CSRF-Token'] = csrf;
+  opts.headers['X-CSRF-Token'] = csrf || ''; // every method (ADR-054): reads need the token too
   // Name the document on every request, so no call site can omit it by
   // forgetting. That is the whole point of doing it here: the server accepts a
   // missing id and falls back to "whatever is active" — a compatibility path the
@@ -354,13 +392,12 @@ async function apiFetch(url, opts = {}) {
   else if (!unpinned && view.docMeta && view.docMeta.id) opts.headers['X-Nib-Doc'] = view.docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
-  // A 403 "no session" means this page's credentials are gone (ADR-053) — a restart on a pinned
-  // port leaves the page holding a dead cookie. Every later call would fail the same way behind a
-  // working-looking app, so say what works instead: open Nib again. Other 403s (a bad origin, a
-  // switched-off feature) are the caller's to handle, as before.
+  // A 403 "no session" means this page's token is not this process's (ADR-053/054) — Nib restarted
+  // under it, or it never had one. Every later call would fail the same way behind a working-looking
+  // app, so say what works instead: open Nib again. Other 403s (a bad origin, a switched-off
+  // feature) are the caller's to handle, as before.
   if (res.status === 403 && /no session/.test(await res.clone().text().catch(() => ''))) {
-    els.launchOverlay.hidden = false;
-    els.launchOverlay.focus();
+    showLaunchOverlay('lost');
     throw new Error('no session');
   }
   // A 409 ("the document you named is gone") is deliberately NOT thrown the way a 401
@@ -632,7 +669,16 @@ function applyStatus(st) {
 
 async function refreshStatus() {
   try {
-    applyStatus(await (await fetch('/api/status')).json());
+    const res = await fetch('/api/status', authed());
+    if (res.status === 403) {
+      // Only the session's own refusal means the connection is gone (#6); any other 403 is said as it is.
+      const why = await res.text().catch(() => '');
+      if (/no session/.test(why)) { showLaunchOverlay('lost'); return; }
+      els.authOverlay.hidden = false;
+      els.authError.textContent = 'Nib refused this window: ' + why;
+      return;
+    }
+    applyStatus(await res.json());
   } catch {
     els.authOverlay.hidden = false;
     els.authError.textContent = 'Could not reach Nib.';
@@ -644,10 +690,10 @@ els.authForm.addEventListener('submit', async (e) => {
   els.authError.textContent = '';
   // Passphrase unlock: the enrolled key is encrypted; send only the passphrase.
   if (authState === 'key-locked') {
-    const res = await fetch('/api/ssh/unlock', {
+    const res = await fetch('/api/ssh/unlock', authed({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ passphrase: els.authPw.value }),
-    });
+    }));
     const st = await res.json();
     if (!res.ok) { els.authError.textContent = st.error || 'failed'; return; }
     applyStatus(st);
@@ -683,17 +729,17 @@ els.authForm.addEventListener('submit', async (e) => {
     if (!body.keyPath) return (els.authError.textContent = 'No key selected.');
   }
   const url = authState === 'migrate' ? '/api/ssh/migrate' : '/api/ssh/enroll';
-  const res = await fetch(url, {
+  const res = await fetch(url, authed({
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  });
+  }));
   const st = await res.json();
   if (!res.ok) { els.authError.textContent = st.error || 'failed'; return; }
   applyStatus(st);
 });
 
 // --- vault backup / restore --------------------------------------------------
-els.backupBtn.onclick = () => { window.location = '/api/vault/export'; };
+els.backupBtn.onclick = () => downloadAuthed('/api/vault/export', 'vault.nib');
 els.restoreInput.onchange = async () => {
   const file = els.restoreInput.files[0]; if (!file) return;
   if (!confirm('Replace your current vault with this backup? It will only open if this machine’s SSH key is enrolled in it.')) return;
@@ -807,7 +853,7 @@ async function runUpdateCheck(auto) {
   updateChecking = true;
   let d;
   try {
-    const res = await fetch('/api/update/check');
+    const res = await fetch('/api/update/check', authed());
     if (!res.ok) throw new Error();
     d = await res.json();
   } catch {
@@ -1893,8 +1939,8 @@ async function loadPendingPreview(token, block) {
   els.srvPreview.innerHTML = '';
   const loading = emptyNote(els.srvPreview, 'Loading the document…');
   let doc;
-  try { doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: '/api/session/pending-pdf?t=' + Date.now() }).promise; }
-  catch { if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
+  try { doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: withAuth('/api/session/pending-pdf?t=' + Date.now()) }).promise; }
+  catch { checkSession(); if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
   // This function is the doc's sole holder, so it destroys it on every exit —
   // otherwise each consent preview leaks a worker-side document.
   //
@@ -3322,8 +3368,9 @@ async function setDocumentFromServer(meta, target = view) {
     // header would mean opting into its httpHeaders plumbing to gain a uniformity
     // nobody reads (D15). The URL already carries a cache-buster; the id joins it.
     const docParam = meta.id ? '&doc=' + encodeURIComponent(meta.id) : '';
-    doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: '/api/pdf?t=' + Date.now() + docParam }).promise;
+    doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: withAuth('/api/pdf?t=' + Date.now() + docParam) }).promise;
   } catch (e) {
+    if (!(e && e.name === 'PasswordException')) checkSession();
     // An encrypted PDF needs its open password before pdf.js can render it; prompt
     // for it and unlock the working copy rather than dead-end on a generic error.
     // The decrypt prompt is one shared modal and its Unlock handler reloads the ACTIVE
@@ -6880,7 +6927,7 @@ async function placeStamp(bitmapUrl) {
     const frac = [x / W, y / H, (x + dispW) / W, (y + dispH) / H];
     makeStamp(bitmapUrl, aspect, frac, { page: n, pageW: base.width, pageH: base.height }, pv, owner);
   };
-  img.onerror = () => toast('could not load image');
+  img.onerror = () => { checkSession(); toast('could not load image'); };
   img.src = bitmapUrl;
 }
 
@@ -6982,14 +7029,14 @@ async function loadImages() {
     card.className = 'libimg';
     card.title = 'Place ' + m.name;
     const img = document.createElement('img');
-    img.src = '/api/images/' + m.id;
+    img.src = withAuth('/api/images/' + m.id);
     const name = document.createElement('div');
     name.className = 'name';
     name.textContent = m.name;
     card.append(img, name);
     makeActivatable(card, (e) => {
       if (e.target.closest('.del')) return;
-      const src = '/api/images/' + m.id;
+      const src = withAuth('/api/images/' + m.id); // makeStamp reads the id up to the '?'
       if (view.fillTarget) resolveFillTarget(src); else placeStamp(src);
     }, 'Place ' + m.name);
     // Built-in (binary-shipped) signatures are read-only — no delete control.
@@ -8088,7 +8135,7 @@ async function exportFormData(format, ext) {
 els.exportFormJsonBtn.onclick = () => exportFormData('json', 'json');
 els.exportFormCsvBtn.onclick = () => exportFormData('csv', 'csv');
 els.exportFormXfdfBtn.onclick = () => exportFormData('xfdf', 'xfdf');
-els.exportCertBtn.onclick = () => { window.location = '/api/identity'; };
+els.exportCertBtn.onclick = () => downloadAuthed('/api/identity', 'nib-identity.cer');
 
 els.printBtn.onclick = async () => {
   if (!view.pdfDocument) return toast('Open a PDF first');
@@ -13721,6 +13768,9 @@ window.addEventListener('keydown', (e) => {
 // --- toast -------------------------------------------------------------------
 let toastEl;
 function toast(msg) {
+  // Behind the open-Nib-again screen nothing a toast says is actionable, and a failing poll's
+  // "Nib stopped answering" would contradict the screen (R7-10).
+  if (launchOverlayUp()) return;
   if (!toastEl) {
     toastEl = document.createElement('div');
     toastEl.id = 'toast';
@@ -13757,31 +13807,61 @@ window.addEventListener('unhandledrejection', (ev) => {
 
 // --- launch: take the session, then check unlock state ----------------------
 //
-// establishSession gets this page its credentials (ADR-053). A window Nib opened carries a
-// single-use key in its URL FRAGMENT — never sent to a server, never in a Referer — which is traded
-// once for the session cookie and the CSRF token. The fragment is removed from the address bar
-// FIRST, so a reload or a bookmark never replays a spent key; a reload instead recovers the token
-// with the cookie the trade set. A page with neither cannot reach the API at all, and says so.
+// establishSession gets this page its token (ADR-053/054). A window Nib opened carries a single-use
+// key in its URL FRAGMENT — never sent to a server, never in a Referer — which is traded once for the
+// token. The fragment is removed from the address bar FIRST, so a reload or a bookmark never replays
+// a spent key. The token is kept in sessionStorage, which is per ORIGIN — scheme, host AND port — so
+// a reload of this tab keeps it and no other loopback server can read it (a cookie could not promise
+// that: cookies ignore the port). A tab that never traded a key has no token, and says so.
+const TOKEN_KEY = 'nib-token';
 async function establishSession() {
   const m = /(?:^#|&)k=([^&]+)/.exec(location.hash);
   if (m) history.replaceState(null, '', location.pathname + location.search);
-  try {
-    const res = m
-      ? await fetch('/api/launch', { method: 'POST', headers: { 'X-Nib-Launch': decodeURIComponent(m[1]) } })
-      : null;
-    const got = (res && res.ok) ? res : await fetch('/api/launch');
-    if (!got.ok) return false;
-    csrf = (await got.json()).csrf || null;
-    return !!csrf;
-  } catch {
-    return false;
+  if (m) {
+    let res;
+    try {
+      res = await fetch('/api/launch', { method: 'POST', headers: { 'X-Nib-Launch': decodeURIComponent(m[1]) } });
+    } catch {
+      return 'unreachable';
+    }
+    if (res.ok) {
+      csrf = (await res.json()).csrf || null;
+      try { sessionStorage.setItem(TOKEN_KEY, csrf || ''); } catch { /* storage refused: this load still works */ }
+      return csrf ? 'ok' : 'none';
+    }
   }
+  try { csrf = sessionStorage.getItem(TOKEN_KEY) || null; } catch { csrf = null; }
+  return csrf ? 'ok' : 'none';
 }
 
-establishSession().then((ok) => {
-  if (ok) { refreshStatus(); return; }
+// LAUNCH_WORDS are the three things the open-Nib-again screen can say, by why it is up.
+const LAUNCH_WORDS = {
+  none: 'This window is not connected to Nib. Open Nib from your applications menu (or run nib) and it will open a window that is.',
+  lost: 'This window lost its connection to Nib — Nib was restarted or closed. Open Nib from your applications menu (or run nib) to get a working window. Changes you had not saved in this window may be gone.',
+  unreachable: 'Could not reach Nib — it may have stopped. Open Nib from your applications menu (or run nib) to start it again.',
+};
+// showLaunchOverlay puts up the one screen a page without a working token can show, and makes
+// everything behind it unreachable (the P08 phase-close review, R7-3): every other top-level element
+// goes inert — no focus, no clicks — the overlay sits above every modal, and global shortcuts are
+// swallowed while it is up. `reason` picks the words: 'none' (never had a token), 'lost' (Nib
+// restarted or stopped under this page), 'unreachable' (nothing answered).
+function showLaunchOverlay(reason) {
+  els.launchText.textContent = LAUNCH_WORDS[reason] || LAUNCH_WORDS.none;
+  if (!els.launchOverlay.hidden) return;
+  for (const el of document.body.children) if (el !== els.launchOverlay) el.inert = true;
+  // And anything added later — a modal built after the screen went up (#6).
+  new MutationObserver((ms) => {
+    for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1 && n !== els.launchOverlay) n.inert = true;
+  }).observe(document.body, { childList: true });
   els.launchOverlay.hidden = false;
   els.launchOverlay.focus();
+  window.addEventListener('keydown', (e) => { if (e.key !== 'Tab') e.stopImmediatePropagation(); }, true);
+}
+function launchOverlayUp() { return !!(els.launchOverlay && !els.launchOverlay.hidden); }
+
+establishSession().then((state) => {
+  if (state === 'ok') { refreshStatus(); openWindowStream(); return; }
+  showLaunchOverlay(state);
 });
 
 // --- this window declares itself, and holds the declaration open ------------
@@ -13855,7 +13935,7 @@ async function quitNib() {
   if (lose.length && !confirm(`Quit Nib? ${lose.join(', and ')}. Quitting ends ${lose.length > 1 ? 'them' : 'it'}.`)) {
     return;
   }
-  try { await fetch('/api/quit', { method: 'POST' }); } catch { /* the process is going; a dropped response is the expected shape */ }
+  try { await fetch('/api/quit', authed({ method: 'POST' })); } catch { /* the process is going; a dropped response is the expected shape */ }
 }
 els.quitBtn.onclick = () => quitNib();
 
@@ -13881,8 +13961,12 @@ els.quitBtn.onclick = () => quitNib();
 // **The one message is the machine's armed state**, pushed on connect and on change, and the
 // close prompt above turns on it. This comment said "nothing is ever sent on this stream"
 // until that landed.
+// openWindowStream runs once the page holds its token (the route requires it, ADR-054, and an
+// EventSource cannot set a header — the token rides in the query).
+function openWindowStream() {
 try {
-  const windowStream = new EventSource('/api/window');
+  const windowStream = new EventSource(withAuth('/api/window'));
+  windowStream.onerror = () => { checkSession(); };
   // The server pushes this on connect and on every change — never on a clock. See the route.
   // The release download's progress and outcome (ADR-039) — a second named event on the stream a
   // window already holds, never a second EventSource: each connection counts as a window, so
@@ -13904,6 +13988,7 @@ try {
   // A window that cannot declare itself still works; it only fails to keep nib
   // alive, which is the safe direction to fail in.
   console.error('window stream', e);
+}
 }
 
 // --- The Signing Ceremony panel (P06.S02) -----------------------------------

@@ -102,9 +102,12 @@ test('the setup form and the explanation are reachable together', async () => {
   // One overlay, not two stacked. The count is the observable jsdom CAN see; the reason it
   // matters — the upper one swallowing clicks aimed at the lower — is the tier-3 half this
   // file names as its ceiling.
-  const overlays = [...doc.querySelectorAll('body > div')]
-    .filter((d) => !d.hidden && (d.id === 'introOverlay' || d.id === 'authOverlay'));
-  assert.equal(overlays.length, 1,
+  // Every full-screen overlay the page has (the intro card was folded into #authOverlay in v1.109.3,
+  // and #launchOverlay joined in ADR-053), and the one this state must show — so the count can reach
+  // 2 and the assertion can fail (the P08 phase-close review, R7-5: it counted a gone id and could not).
+  const overlays = [...doc.querySelectorAll('#authOverlay, #launchOverlay')].filter((d) => !d.hidden);
+  assert.ok(doc.getElementById('launchOverlay'), 'setup: #launchOverlay is gone, so this count cannot see a second overlay');
+  assert.deepEqual(overlays.map((o) => o.id), ['authOverlay'],
     `first run shows ${overlays.length} stacked full-screen overlays (${overlays.map((o) => o.id).join(', ')}). The one on top covers the form the user is being asked to fill in, and in a real browser it swallows every click aimed at it.`);
 });
 

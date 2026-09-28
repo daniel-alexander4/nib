@@ -1,10 +1,10 @@
---- a/internal/server/server.go
-+++ b/internal/server/server.go
-@@ -305,7 +305,7 @@
+--- a/internal/server/server.go	2026-09-28 10:18:05.854911075 -0700
++++ b/internal/server/server.go	2026-09-28 10:18:05.855911072 -0700
+@@ -411,7 +411,7 @@
  	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
  	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
  	// reads.
--	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.handleCeremonies))
+-	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.requireSession(s.handleCeremonies)))
 +	mux.HandleFunc("GET /api/ceremonies", s.requireUnlocked(s.handleCeremonies))
  	// Whose turn is it, for ONE ceremony (P06.S03). Same footing as the listing above and for the
  	// same reasons: nothing here needs the vault, and `requirePublicLoopback` supplies the origin

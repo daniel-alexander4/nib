@@ -1,6 +1,6 @@
 # ADR-006: A hand-off credential on disk — single-purpose, separate from the probe token
 
-**Status:** Accepted
+**Status:** Accepted — premise superseded by ADR-053; since ADR-053/054 the secret also returns a launch key for the window the second launch opens, which trades for the whole API (see ADR-054)
 **Date:** 2026-08-17
 
 ## Context

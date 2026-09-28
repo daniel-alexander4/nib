@@ -20,7 +20,7 @@ const pageDivs = () => page.evaluate(() => document.querySelectorAll('.viewerCon
 // page divs, measured: this file found zero page divs, closed its document, and then saw three, because
 // the server still held a document an earlier file in the run leaked (`/pending 474`) and the app
 // activated it once this file's closed. Page divs cannot tell that from a leak of this file's own.
-const heldDocs = () => page.evaluate(async () => (await (await fetch('/api/docs')).json()).docs.length);
+const heldDocs = () => page.evaluate(async () => (await (await nibFetch('/api/docs')).json()).docs.length);
 let foundHeld = null;
 
 // A review left open by a failed assertion covers the page and intercepts every later click, so the

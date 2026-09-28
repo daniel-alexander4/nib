@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -118,22 +117,70 @@ func reopenedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	return c, sessionFor(t, c, ts.URL)
 }
 
-// newClient has a cookie jar because a window's session is a cookie (ADR-053): without one, every
-// GET behind `requireUnlocked` answers 403 however the client was set up.
+// newClient is a client that has been through the door a window takes (ADR-053/054): on its first
+// request to a server started with `serveTest` it mints a launch key there, trades it at
+// `POST /api/launch`, and from then on sends the token as `X-CSRF-Token` on every request that does
+// not already carry one. Every route but three requires the token, so a test about anything else
+// would otherwise be asserting the 403. **A test about the credential itself uses a bare
+// `&http.Client{}`** — the stranger — or sets the header it means to send.
 func newClient(t *testing.T) *http.Client {
 	t.Helper()
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &http.Client{Jar: jar}
+	return &http.Client{Transport: &sessionTransport{t: t, tok: map[string]string{}}}
 }
 
-// testServers maps a test server's base URL to the Server behind it, so a helper holding only the
+type sessionTransport struct {
+	t   *testing.T
+	mu  sync.Mutex
+	tok map[string]string // base URL → token
+}
+
+func (st *sessionTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := req.URL.Scheme + "://" + req.URL.Host
+	if _, set := req.Header["X-Csrf-Token"]; !set && req.URL.Path != "/api/launch" {
+		if tok := st.token(base); tok != "" {
+			req = req.Clone(req.Context())
+			req.Header.Set("X-CSRF-Token", tok)
+		}
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// token trades a launch key on the server behind base once, and remembers the answer. A base with no
+// registered server (a stub listener a test stood up) gets no token.
+func (st *sessionTransport) token(base string) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if tok, ok := st.tok[base]; ok {
+		return tok
+	}
+	v, ok := testServers.Load(base)
+	if !ok {
+		// A stub listener a test stood up gets no token. Said, not silent: a Nib server started
+		// without serveTest would otherwise answer every request "no session", and a test meaning a
+		// different refusal (a bad origin) would pass on that one (the review of /pending 704, #5).
+		st.t.Logf("newClient: no Nib server registered at %s — requests there carry no token", base)
+		return ""
+	}
+	req, _ := http.NewRequest(http.MethodPost, base+"/api/launch", nil)
+	req.Header.Set(headerLaunch, v.(*Server).MintLaunchKey())
+	res, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return ""
+	}
+	defer res.Body.Close()
+	var lr launchResponse
+	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&lr) != nil {
+		return ""
+	}
+	st.tok[base] = lr.CSRF
+	return lr.CSRF
+}
+
+// testServers maps a test server's base URL to the Server behind it, so a client holding only the
 // URL can mint a launch key the way `cmd/nib` does before it opens a window.
 var testServers sync.Map
 
-// serveTest is `httptest.NewServer(srv.Handler())` that also registers srv for `sessionFor`.
+// serveTest is `httptest.NewServer(srv.Handler())` that also registers srv for `newClient`.
 func serveTest(t *testing.T, srv *Server) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(srv.Handler())
@@ -142,27 +189,19 @@ func serveTest(t *testing.T, srv *Server) *httptest.Server {
 	return ts
 }
 
-// sessionFor puts c through the door a window takes (ADR-053): mint a launch key on the server
-// behind baseURL, trade it at `POST /api/launch`, and return the CSRF token. The session cookie
-// lands in c's jar.
+// sessionFor returns the token c holds for baseURL, trading a key for it first if c has not yet.
+// c must come from `newClient`.
 func sessionFor(t *testing.T, c *http.Client, baseURL string) string {
 	t.Helper()
-	v, ok := testServers.Load(baseURL)
+	st, ok := c.Transport.(*sessionTransport)
 	if !ok {
-		t.Fatalf("no test server registered at %s — start it with serveTest", baseURL)
+		t.Fatal("sessionFor needs a client from newClient")
 	}
-	req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/launch", nil)
-	req.Header.Set(headerLaunch, v.(*Server).MintLaunchKey())
-	res, err := c.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	tok := st.token(baseURL)
+	if tok == "" {
+		t.Fatalf("no launch key traded at %s — start the server with serveTest", baseURL)
 	}
-	defer res.Body.Close()
-	var lr launchResponse
-	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&lr) != nil || lr.CSRF == "" {
-		t.Fatalf("trading a launch key answered %d with no token", res.StatusCode)
-	}
-	return lr.CSRF
+	return tok
 }
 
 // authedClient enrolls a freshly generated SSH key (first run), which unlocks the

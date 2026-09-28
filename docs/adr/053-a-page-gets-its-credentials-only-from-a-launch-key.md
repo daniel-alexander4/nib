@@ -1,6 +1,6 @@
 # ADR-053 — a page gets its credentials only from a launch key
 
-**Status:** accepted. **Supersedes ADR-006's premise** — *"nib's CSRF token lives only in memory, so no
+**Status:** accepted. **Supersedes ADR-006's premise** — *"nib's CSRF token lives only in memory, so no **Superseded in part by ADR-054** (the cookie, and the public-route list).
 co-resident process can drive its API"* — which was false when it was written. ADR-006's decision (a
 separate, single-purpose hand-off credential on disk) stands, amended by one grant below.
 

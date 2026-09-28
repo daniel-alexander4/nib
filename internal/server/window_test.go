@@ -27,7 +27,7 @@ func openWindow(t *testing.T, base string) (closeIt func()) {
 	// Same-origin is what requirePublicLoopback checks; a browser sends this on
 	// every request and Go's client sends none, so the test supplies it.
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		cancel()
 		t.Fatalf("open window stream: %v", err)
@@ -129,7 +129,7 @@ func TestTheWindowStreamRefusesAForeignOrigin(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

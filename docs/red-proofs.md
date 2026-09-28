@@ -6204,3 +6204,13 @@ ISO 32000-1 Table 33 cannot go red through a file, because pdfcpu's own read alr
 re-recorded expressing the same defect.
 
 `recorded` 487 → 489.
+
+## /pending 685 and /pending 704 — the launch key, and the token as the only credential (2026-09-28)
+
+No register rows (see /pending 700); the probes, each run by mutation and each red for its assertion:
+`/api/status` re-carrying the token; `requireSession` skipping GETs; a traded key not retired; any key
+trading; a windowless hand-off answering 400 or returning no key; the key TTL ignored
+(`internal/server/launch_test.go`); the fragment not stripped, the overlay not raised, the token not the
+traded one, the `no session` 403 not raising the overlay (`test/jsdom/launch*.test.mjs`). /pending 704's
+census (`TestEveryRouteIsBehindTheSessionOrNamed`) and query-form tests are probed in its ledger in
+`completed.md`.

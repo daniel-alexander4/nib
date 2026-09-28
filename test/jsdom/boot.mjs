@@ -61,8 +61,7 @@ const BOOT_ROUTES = {
   // the worklist, none of which is about the switch, and without this every one of them would be
   // asserting a hidden panel. `advanced.test.mjs` passes its own status with the features OFF,
   // which keeps the default written down in exactly one place.
-  // The page's credentials (ADR-053): a window with no launch key asks with its cookie, and this
-  // answers as a server would for a page that holds the session.
+  // The page's credentials (ADR-053): the launch-key trade, for a boot whose URL carries `#k=`.
   '/api/launch': { csrf: 'test-csrf' },
   '/api/status': { state: 'ready', version: 'test', autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false, advanced: { ceremony: true, discovery: true, rendezvous: true, timestamp: true } },
   '/api/images': [],
@@ -81,7 +80,7 @@ const BOOT_ROUTES = {
 // boot builds the document, installs the globals app.js needs, and imports the
 // real module. Returns the jsdom window plus the recorded fetch calls, so a test
 // can assert what the app asked the server for as well as what it rendered.
-export async function boot({ routes = {}, search = '' } = {}) {
+export async function boot({ routes = {}, search = '', token = 'test-csrf' } = {}) {
   register('./hooks.mjs', import.meta.url);
 
   const html = fs.readFileSync(path.join(REPO, 'web', 'index.html'), 'utf8');
@@ -89,6 +88,9 @@ export async function boot({ routes = {}, search = '' } = {}) {
     url: 'http://127.0.0.1:65000/' + search,
     pretendToBeVisual: true,
   });
+  // A booted page holds a token, as a reloaded window does (ADR-054: it lives in sessionStorage).
+  // `token: null` boots a page that never traded a key; a `search` carrying `#k=` trades one.
+  if (token) dom.window.sessionStorage.setItem('nib-token', token);
 
   // app.js is written for a browser, so the browser's globals have to exist
   // before it is imported — it touches many of them at module-evaluation time
@@ -221,6 +223,9 @@ export async function boot({ routes = {}, search = '' } = {}) {
       return delivered;
     },
     document: dom.window.document,
+    // The URLs the page opened its window stream at — ADR-054 puts the token in it, since an
+    // EventSource cannot set a header.
+    windowStreamURLs: () => windowStreams.map((es) => es.url),
     calls,
     rejections,
     confirms,

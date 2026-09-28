@@ -44,12 +44,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const logText = () => { try { return fs.readFileSync(log, 'utf8'); } catch { return ''; } };
 const opens = () => { const m = [...logText().matchAll(/window (connected|gone) \((\d+) open\)/g)]; return m.length ? Number(m[m.length - 1][2]) : null; };
 
-for (let i = 0; i < 80; i++) { try { const r = await fetch(`${BASE}/api/status`); if (r.ok) break; } catch {} await sleep(250); }
+// Up means "answers at all": /api/status requires the token (ADR-054), so an up Nib answers it 403.
+for (let i = 0; i < 80; i++) { try { await fetch(`${BASE}/api/status`); break; } catch {} await sleep(250); }
+// The window is opened through the launch key the headless Nib logs (build/launchkey.sh reads the same
+// line), because a page without it shows "Open Nib again" and opens no stream — the thing measured
+// here (the P08 phase-close review, R8-9).
+let key = '';
+for (let i = 0; i < 40 && !key; i++) { key = (logText().match(/open Nib at [^#\s]*#k=([A-Za-z0-9_-]+)/) || [])[1] || ''; if (!key) await sleep(100); }
+if (!key) { console.log('SETUP FAILED — nib logged no launch key'); process.exit(2); }
 
 const browser = await chromium.launch({ executablePath: BROWSER, headless: true });
 const ctx = await browser.newContext();
 const page = await ctx.newPage();
-await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+await page.goto(`${BASE}/#k=${key}`, { waitUntil: 'domcontentloaded' });
 for (let i = 0; i < 60 && opens() !== 1; i++) await sleep(250);
 console.log(`[setup] after opening a window the server reports ${opens()} open`);
 if (opens() !== 1) { console.log('SETUP FAILED — no stream, so nothing below is measured'); process.exit(2); }
