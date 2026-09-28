@@ -22,6 +22,8 @@ import (
 // and page 1's form text was still in the file, decodable by anyone. It is `pageselect.go`'s own
 // header hazard — "delete page 4 ships page 4's text" — reached through the resource dictionary
 // instead of the structure tree, so it is closed for every subset door and not for redaction alone.
+// The form's own `/AcroForm /DR` is the same road from the catalog side, and a producer points it at
+// the pages' shared dictionary too: `pruneDefaultResources` rebuilds it (`/pending 705`).
 //
 // # What "can name" means, and why it over-approximates
 //
