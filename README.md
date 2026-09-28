@@ -138,9 +138,12 @@ command line it's `nib ua IN`, which exits 1 and prints every reason when a chec
 could not be checked.
 
 **This is a checker, not a certificate.** Nib checks 105 of the 106 rules the reference validator
-evaluates, so a document can pass every clause Nib checks and still fail one it does not. None is measured
-today — veraPDF passes all 140 files of its own PDF/UA-1 test corpus that Nib calls conformant — and the one rule
-Nib does not check is one veraPDF has never been seen to fail. Where a glyph or CharSet check needs a font program
+evaluates, so a document can pass every clause Nib checks and still fail one it does not — though no such document is
+known today: veraPDF passes all 140 files of its own PDF/UA-1 test corpus on which every clause Nib checks passes, and
+the one rule Nib does not check is one veraPDF has never been seen to fail. On the rules it does check, Nib agrees with
+veraPDF on 99 of the 105 — no false pass or false fail over veraPDF's own test corpus, and the same verdict on
+documents from real producers (Word, Acrobat, LibreOffice and others). It is known to disagree on 5, each filed, and 1
+no document has yet exercised. Where a glyph or CharSet check needs a font program
 Nib cannot read (an OpenType-wrapped one holding CFF outlines) it says "could not check" rather than
 passing; the embedding check opens such a program far enough to see whether it holds a font at all, as veraPDF
 does, and fails it when it does not. Nib's verdicts are tested, not proven, and that is also why Nib never

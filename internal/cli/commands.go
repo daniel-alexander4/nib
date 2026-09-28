@@ -169,6 +169,8 @@ func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
 	}
 	// D4's provenance line, in the same words the UI shows (one door, ADR-009).
 	notes = append(notes, pdfops.DescribeStructureSource(pdf))
+	// Law 2's figure, in the one sentence that states it (`uacheck.Agreement`).
+	notes = append(notes, uacheck.Agreement())
 	if len(refusals) == 0 {
 		notes = append(notes, fmt.Sprintf("every clause nib checks passes (%d of PDF/UA-1's rules) — this is not a PDF/UA certificate; "+
 			"a document can still fail a rule nib does not check", len(rep.Results)))
