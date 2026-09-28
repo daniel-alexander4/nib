@@ -302,6 +302,16 @@ func SignTermination(rec Record, state string, certPEM, keyPEM []byte) (Terminat
 // the same membership check, so neither source can produce an anchor naming a convener the roster
 // does not contain.
 type Anchor struct {
+	// Ceremony is the id of the proceeding this anchor stands for (/pending 686).
+	//
+	// **The roster hash already commits to it, so this is not a second binding — it is what makes
+	// the unsigned LABEL safe to use.** `Termination.Ceremony` is outside the preimage and
+	// `WriteTermination` takes its directory from it, so a convener of ceremony A, which the victim
+	// shares, could relabel A's valid termination with ceremony B's id: every other check is A's and
+	// passes, and the object landed in `ceremonies/<B>/`, write-once, refusing B's real end state for
+	// good. Comparing the label against the anchor's id closes that in the one door every reader and
+	// both receive paths already go through, with no change to the signed preimage or the file.
+	Ceremony string
 	// RosterHash is the record's commitment, raw bytes.
 	RosterHash []byte
 	// Convener is the hex fingerprint of the key entitled to end this proceeding.
@@ -319,7 +329,7 @@ func (r Record) Anchor() (Anchor, error) {
 		return Anchor{}, fmt.Errorf("%w: this record names no convener to compare against",
 			ErrBadTermination)
 	}
-	return Anchor{RosterHash: h, Convener: conv.Fingerprint}, nil
+	return Anchor{Ceremony: r.ID, RosterHash: h, Convener: conv.Fingerprint}, nil
 }
 
 // Anchor derives the same checking values from an invitation, for a party who holds no record.
@@ -342,7 +352,7 @@ func (i Invitation) Anchor() (Anchor, error) {
 	want := strings.ToLower(i.ConvenerFingerprint)
 	for _, p := range i.Roster {
 		if strings.EqualFold(p.Fingerprint, want) {
-			return Anchor{RosterHash: h, Convener: strings.ToLower(p.Fingerprint)}, nil
+			return Anchor{Ceremony: i.ID, RosterHash: h, Convener: strings.ToLower(p.Fingerprint)}, nil
 		}
 	}
 	return Anchor{}, fmt.Errorf("%w: this invitation names a convener who is not one of its "+
@@ -397,6 +407,14 @@ func (t Termination) VerifyAgainst(anchor Anchor) error {
 	if !bytes.Equal(want, got) {
 		return fmt.Errorf("%w: it ends a proceeding with a different roster commitment, so it is "+
 			"not this ceremony's", ErrBadTermination)
+	}
+	// **And the LABEL must name the same proceeding** (/pending 686). The commitment above binds the
+	// signed content; `Ceremony` is not signed, and it is the directory `WriteTermination` writes to.
+	// An honest object carries exactly the id its roster hash commits to (`SignTermination` copies
+	// `rec.ID`), so a label that differs from a verified anchor's id is a relabel and nothing else.
+	if t.Ceremony != anchor.Ceremony {
+		return fmt.Errorf("%w: it is labelled for ceremony %q and this is %q, so it would be filed "+
+			"under a proceeding it does not end", ErrBadTermination, t.Ceremony, anchor.Ceremony)
 	}
 	pre, err := t.preimage()
 	if err != nil {

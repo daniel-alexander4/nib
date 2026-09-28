@@ -27,6 +27,14 @@ import (
 // party holds: the invitation, and nothing else.
 func endedCeremonyFor(t *testing.T, me string) (ceremony.Invitation, ceremony.Record, ceremony.Termination) {
 	t.Helper()
+	inv, rec, term, _ := endedCeremonyWithDoc(t, me)
+	return inv, rec, term
+}
+
+// endedCeremonyWithDoc is endedCeremonyFor plus the convened document, for a test that has to
+// mirror the record the way a party who has signed holds it.
+func endedCeremonyWithDoc(t *testing.T, me string) (ceremony.Invitation, ceremony.Record, ceremony.Termination, []byte) {
+	t.Helper()
 	cert, key, err := sign.GenerateIdentity("Convener")
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +78,7 @@ func endedCeremonyFor(t *testing.T, me string) (ceremony.Invitation, ceremony.Re
 	if err != nil {
 		t.Fatal(err)
 	}
-	return inv, out.Record, term
+	return inv, out.Record, term, out.Document
 }
 
 // TestAPartyWhoNeverSignedCanCheckTheEndState is the slice's first acceptance clause.
@@ -179,5 +187,47 @@ func TestTheDeliverySweepStillAdmitsOnlySignedCeremonies(t *testing.T) {
 			"records as backed out after a deterministic tier-4d failure — re-run " +
 			"`./build/pairrepro.sh -n 4` and, if it is green, delete this guard with the evidence " +
 			"rather than editing around it")
+	}
+}
+
+// TestAnEndStateLabelledForAnotherCeremonyIsNotAccepted — /pending 686 at the gate that saves it.
+//
+// The delivery `save` writes the termination into the folder its `Ceremony` field names, and the
+// gate before it checked everything but that field. So ceremony A's convener could deliver A's
+// valid termination labelled with ceremony B's id and plant it in `ceremonies/<B>/`, write-once.
+// Driven both ways: a pre-hop party (anchored on the invitation) and a party holding a record.
+func TestAnEndStateLabelledForAnotherCeremonyIsNotAccepted(t *testing.T) {
+	for _, withRecord := range []bool{false, true} {
+		name := "pre-hop, anchored on the invitation"
+		if withRecord {
+			name = "signed, anchored on the record"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			me := strings.Repeat("ab", 32)
+			inv, rec, term, doc := endedCeremonyWithDoc(t, me)
+			if withRecord {
+				if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, doc); err != nil {
+					t.Fatalf("setup: %v", err)
+				}
+			}
+			victim, err := ceremony.NewID()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cer := &ceremonyID{inv: inv}
+			honest, _ := json.Marshal(term)
+			// STIMULUS: the honest object is accepted on this very path, so a refusal below is
+			// about the label and nothing else.
+			if err := (&Server{}).checkDeliveredPayload(cer, honest); err != nil {
+				t.Fatalf("setup: the honest end state is refused: %v", err)
+			}
+			term.Ceremony = victim
+			payload, _ := json.Marshal(term)
+			if err := (&Server{}).checkDeliveredPayload(cer, payload); err == nil {
+				t.Errorf("an end state for ceremony %s, labelled %s, was accepted — its save "+
+					"writes it into %s's folder, write-once", inv.ID, victim, victim)
+			}
+		})
 	}
 }
