@@ -1,14 +1,12 @@
 package pdfops
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
 	"strings"
 
 	"nib/internal/contentstream"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -54,9 +52,9 @@ import (
 // Like `checkStructConsistency`, an empty result means these invariants hold and nothing more. A
 // document can carry a complete tree and still fail PDF/UA on everything the tree says.
 
-// maxFormDrawDepth bounds recursion into form XObjects while counting draws. A form invoked twice at
-// every level is walked twice at every level, so the cost is exponential in the depth — the same
-// reasoning, and the same bound, as `internal/uacheck`'s own form walk.
+// maxFormDrawDepth bounds recursion into form XObjects while counting draws. It is `internal/uacheck`'s
+// depth, and it does NOT bound the cost: a form invoked ten times at every level is walked 10^8 times
+// inside it. `formWalkBudget` bounds the total (`/pending 664`).
 const maxFormDrawDepth = 8
 
 // structureCarriedCompletely reports every way a carried structure tree is INCOMPLETE — the
@@ -139,7 +137,13 @@ func structureCarriedCompletely(ctx *model.Context, tree *structTree) []structDe
 		}
 	}
 
-	for nr, d := range formDrawCountsOn(ctx, pages) {
+	draws, derr := formDrawCountsOn(ctx, pages)
+	if derr != nil {
+		// Counts from a walk that stopped are counts of part of the document: a form drawn twice beyond
+		// the stop would read as drawn once. So the condition is unanswered, and that is a defect.
+		add("form-walk-budget", "whether a marked form XObject is drawn more than once cannot be said: %v", derr)
+	}
+	for nr, d := range draws {
 		if d.count > 1 && d.mcid {
 			add(fmt.Sprintf("shared-form obj=%d", nr),
 				"form XObject %d carries marked content and is drawn %d times, so its MCIDs have "+
@@ -273,12 +277,16 @@ type formDraw struct {
 // **Invocations, not objects** — the opposite of `eachFormXObject`'s question. A form drawn twice
 // from one page is drawn twice, and that is the whole condition: the `chain` stops a form that draws
 // itself from recursing forever without collapsing the repeat that matters.
-func formDrawCounts(ctx *model.Context) map[int]formDraw {
+//
+// The walk is bounded by one `formWalkBudget` for the document; past it the counts are partial and the
+// error says so.
+func formDrawCounts(ctx *model.Context) (map[int]formDraw, error) {
 	return formDrawCountsOn(ctx, scanPages(ctx))
 }
 
-func formDrawCountsOn(ctx *model.Context, pages []pageRecord) map[int]formDraw {
+func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw, error) {
 	counts := map[int]formDraw{}
+	budget := newFormWalkBudget(len(pages))
 	for _, rec := range pages {
 		if rec.res == nil {
 			continue
@@ -290,9 +298,9 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) map[int]formDraw {
 		// A FRESH chain per page, deliberately: it stops a form that draws itself from recursing
 		// forever, and sharing it across pages would collapse the repeat this function exists to
 		// count.
-		countFormDraws(ctx, src, rec.res, counts, map[int]bool{}, 0)
+		countFormDraws(ctx, src, rec.res, counts, map[int]bool{}, 0, budget)
 	}
-	return counts
+	return counts, budget.err()
 }
 
 // countFormDraws walks one content stream, counting the forms it paints.
@@ -301,7 +309,7 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) map[int]formDraw {
 // every glyph nib draws is a two-byte index since P04 — and `alreadyMarked` records the same lesson
 // one file over: a byte scan reports a page as drawing a form because of what it says.
 func countFormDraws(ctx *model.Context, src []byte, res types.Dict, counts map[int]formDraw,
-	chain map[int]bool, depth int) {
+	chain map[int]bool, depth int, budget *formWalkBudget) {
 
 	if depth > maxFormDrawDepth {
 		return
@@ -319,7 +327,7 @@ func countFormDraws(ctx *model.Context, src []byte, res types.Dict, counts map[i
 		if string(tk.Bytes(src)) == "Do" && len(operands) > 0 {
 			// Operands precede their operator, so the name is the last one before `Do`.
 			name := strings.TrimPrefix(string(operands[len(operands)-1].Bytes(src)), "/")
-			drawForm(ctx, name, res, counts, chain, depth)
+			drawForm(ctx, name, res, counts, chain, depth, budget)
 		}
 		operands = operands[:0]
 	}
@@ -327,7 +335,7 @@ func countFormDraws(ctx *model.Context, src []byte, res types.Dict, counts map[i
 
 // drawForm records one painting of the named XObject and walks into it.
 func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]formDraw,
-	chain map[int]bool, depth int) {
+	chain map[int]bool, depth int, budget *formWalkBudget) {
 
 	xobjs, err := ctx.DereferenceDict(res["XObject"])
 	if err != nil || xobjs == nil || name == "" {
@@ -362,8 +370,11 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 	if ierr != nil || inner == nil {
 		inner = res // a form with no resources of its own inherits the invoking stream's
 	}
+	if depth+1 > maxFormDrawDepth || !budget.enterForm(len(body)) {
+		return
+	}
 	chain[nr] = true
-	countFormDraws(ctx, body, inner, counts, chain, depth+1)
+	countFormDraws(ctx, body, inner, counts, chain, depth+1, budget)
 	delete(chain, nr)
 }
 
@@ -397,7 +408,7 @@ func completeOrHonest(carried, raw []byte) ([]byte, error) {
 // is one nothing downstream can parse either, and answering "complete" on a failed read would make
 // the gate report its own blindness as a pass — the vacuous-green shape this slice exists to remove.
 func carryIsComplete(pdf []byte) bool {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return false
 	}

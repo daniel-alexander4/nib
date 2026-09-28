@@ -1,13 +1,11 @@
 package pdfops
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"math"
 	"sort"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -74,7 +72,7 @@ var reviewRoles = map[string]bool{"H1": true, "H2": true, "H3": true, "H4": true
 
 // ProposeTags proposes a structure for pdf. It writes nothing.
 func ProposeTags(pdf []byte) (TagProposal, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return TagProposal{}, err
 	}
@@ -108,7 +106,7 @@ func ProposeTags(pdf []byte) (TagProposal, error) {
 
 // CommitTags writes a reviewed proposal into pdf.
 func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

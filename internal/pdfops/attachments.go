@@ -9,7 +9,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 	"hash"
@@ -42,7 +41,7 @@ type AttachmentInfo struct {
 // (name + description, no data), so this is cheap. An empty result (neither
 // carrier present) is not an error.
 func Attachments(pdf []byte) ([]AttachmentInfo, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +311,7 @@ type digestStats struct {
 
 func contentDigest(pdf []byte) (string, *digestStats, error) {
 	st := &digestStats{}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return "", st, err
 	}
@@ -815,7 +814,7 @@ func RemoveAttachment(pdf []byte, name string) ([]byte, error) {
 // FileAttachment annotations (keyed by the same name pageFileAttachments lists).
 func ExtractAttachment(pdf []byte, name string) ([]byte, error) {
 	name = attachmentName(name)
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -876,7 +875,7 @@ type SignatureWidget struct {
 // it cannot see a block that is drawn in white on white, or one an /AP stream positions outside
 // its own BBox. The rendered half needs pdf.js and belongs at tier 3.
 func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

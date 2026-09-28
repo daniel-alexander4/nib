@@ -1,10 +1,8 @@
 package pdfops
 
 import (
-	"bytes"
 	"fmt"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -136,7 +134,7 @@ func claimTagging(given, pdf []byte, tier tagSource) (out []byte, ok bool, err e
 // marked here is what they mark. A page that cannot be read is an error: a claim over content nobody
 // could read is not one this door can verify.
 func UnmarkedTextRuns(pdf []byte) (int, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return 0, err
 	}
@@ -341,11 +339,12 @@ func imageXObjectNames(ctx *model.Context, res types.Dict) map[string]bool {
 //
 // A page that cannot be read is an error, for the reason `UnmarkedTextRuns` gives.
 func uncoveredDrawings(pdf []byte) (int, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return 0, err
 	}
 	n := 0
+	budget := newFormWalkBudget(ctx.PageCount)
 	for p := 1; p <= ctx.PageCount; p++ {
 		d, _, attrs, derr := ctx.PageDict(p, false)
 		if derr != nil || d == nil {
@@ -362,7 +361,11 @@ func uncoveredDrawings(pdf []byte) (int, error) {
 		if attrs != nil {
 			res = attrs.Resources
 		}
-		n += countDrawings(ctx, src, res, 0, map[int]bool{})
+		n += countDrawings(ctx, src, res, 0, map[int]bool{}, budget)
+	}
+	// A count from a walk that stopped is a count of part of the document, so it is an error, never n.
+	if err := budget.err(); err != nil {
+		return 0, err
 	}
 	return n, nil
 }
@@ -373,7 +376,8 @@ func uncoveredDrawings(pdf []byte) (int, error) {
 // **Drawn, not merely present in `/Resources`.** A form XObject a resource dictionary names and no
 // stream draws puts nothing on the page, so its content owes 7.1 t3 nothing — the shape
 // `mcrcarry_test.go` already pins for the run reader.
-func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, visiting map[int]bool) int {
+func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, visiting map[int]bool,
+	budget *formWalkBudget) int {
 	here, forms := uncoveredDrawingSpans(src, imageXObjectNames(ctx, res))
 	n := len(here)
 	if depth >= maxFormDepth || res == nil {
@@ -410,11 +414,14 @@ func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, vi
 		}
 		body := streamContent(sd)
 		if body != nil {
+			if !budget.enterForm(len(body)) {
+				return n
+			}
 			var inner types.Dict
 			if r, rerr := ctx.DereferenceDict(sd.Dict["Resources"]); rerr == nil {
 				inner = r
 			}
-			n += countDrawings(ctx, body, inner, depth+1, visiting)
+			n += countDrawings(ctx, body, inner, depth+1, visiting, budget)
 		}
 		if key >= 0 {
 			delete(visiting, key)

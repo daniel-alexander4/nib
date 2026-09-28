@@ -1,10 +1,8 @@
 package pdfops
 
 import (
-	"bytes"
 	"fmt"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -99,7 +97,7 @@ func setTagSource(ctx *model.Context, src tagSource) error {
 // every tree in the field today carries no record, so a reader that defaulted to the best tier
 // would describe every one of them as the most trustworthy kind.
 func StructureSource(pdf []byte) (tagSource, bool) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return "", false
 	}
