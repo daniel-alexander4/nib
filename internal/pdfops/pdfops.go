@@ -130,13 +130,13 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 // `Dests`, `Outlines`, `OpenAction`, `StructTreeRoot` and `OCProperties` whenever
 // `ApplyReducedFeatureSet()` is true (SPLIT, TRIM, EXTRACTPAGES, IMPORTIMAGES), and inverts the page
 // selection under REMOVEPAGES. COLLECT does neither, so what this code writes is what comes out.
-func subset(pdf []byte, pick func(total int) ([]int, error)) ([]byte, error) {
+func subset(pdf []byte, pick func(total int) ([]int, error), policy unreadablePolicy) ([]byte, error) {
 	return rewriteWithConf(pdf, subsetConf(), func(ctx *model.Context) error {
 		keep, err := pick(ctx.PageCount)
 		if err != nil {
 			return err
 		}
-		_, err = selectPages(ctx, keep, false)
+		_, err = selectPages(ctx, keep, false, policy)
 		return err
 	})
 }
@@ -187,7 +187,7 @@ func subsetCarrying(pdf []byte, pick func(total int) ([]int, error)) ([]byte, er
 		if perr != nil {
 			return perr
 		}
-		c, serr := selectPages(ctx, keep, true)
+		c, serr := selectPages(ctx, keep, true, keepUnreadable)
 		carried = c
 		return serr
 	})
@@ -197,7 +197,7 @@ func subsetCarrying(pdf []byte, pick func(total int) ([]int, error)) ([]byte, er
 	if !carried || carryIsComplete(out) {
 		return out, nil
 	}
-	return subset(pdf, pick)
+	return subset(pdf, pick, keepUnreadable)
 }
 
 // selectionError re-voices pdfcpu's complaint about a page selection as nib's own. The raw text is
@@ -308,8 +308,8 @@ func collectPick(order []string) func(int) ([]int, error) {
 // the call graph. The output-level reader becomes discriminating only when S04b lands, and until
 // then it is a backstop rather than coverage — recorded in the phase inventory's S03 section, and
 // policed by nothing, which is why S04b owes it a red probe against a carrying `Collect`.
-func collectWithoutStructure(pdf []byte, order []string) ([]byte, error) {
-	return subset(pdf, collectPick(order))
+func collectWithoutStructure(pdf []byte, order []string, policy unreadablePolicy) ([]byte, error) {
+	return subset(pdf, collectPick(order), policy)
 }
 
 // readLang resolves a `/Lang` value to its text — direct or indirect, a literal string or a hex one —
@@ -612,7 +612,9 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 		// **`collectWithoutStructure`, never `Collect`** (P02.S03): from S04b `Collect` carries the
 		// source tree onto the pages it keeps, and a tree carried across a redaction describes what
 		// the redacted pages said. The routing is guarded, because the two are identical today.
-		seg, err := collectWithoutStructure(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
+		// **`refuseUnreadable`** (`/pending 688`): a kept page whose drawing cannot be read cannot have its
+		// resources pruned, and keeping them keeps whatever the redacted page shared with it.
+		seg, err := collectWithoutStructure(original, []string{fmt.Sprintf("%d-%d", i, j-1)}, refuseUnreadable) // vector intact
 		if err != nil {
 			return nil, err
 		}
@@ -907,7 +909,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	// `/StructTreeRoot` for a carry to find, so today the carrying door would be a no-op here — but
 	// that is a fact about pdfcpu rather than a decision anyone made, and an unnamed site becomes a
 	// live carry the day it changes. P02.S06 owns what a tile should say.
-	tiles, err := collectWithoutStructure(tilesBuf.Bytes(), []string{"2-"})
+	tiles, err := collectWithoutStructure(tilesBuf.Bytes(), []string{"2-"}, keepUnreadable)
 	if err != nil {
 		return nil, err
 	}
@@ -986,7 +988,7 @@ func spliceOnce(pdf []byte, leftEnd, rightStart, n int, mid []byte, graft bool) 
 		for p := rightStart; p <= n; p++ {
 			keep = append(keep, p)
 		}
-		c, err := selectPages(ctx, keep, true)
+		c, err := selectPages(ctx, keep, true, keepUnreadable)
 		carried = c
 		return err
 	})
@@ -1002,7 +1004,7 @@ func spliceWithoutStructure(pdf []byte, leftEnd, rightStart, n int, mid []byte) 
 	// another document's words. See that door's own header; P02.S07 owns the graft.
 	segments := make([][]byte, 0, 3)
 	if leftEnd >= 1 {
-		left, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("1-%d", leftEnd)})
+		left, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("1-%d", leftEnd)}, keepUnreadable)
 		if err != nil {
 			return nil, err
 		}
@@ -1010,7 +1012,7 @@ func spliceWithoutStructure(pdf []byte, leftEnd, rightStart, n int, mid []byte) 
 	}
 	segments = append(segments, mid)
 	if rightStart <= n {
-		right, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("%d-", rightStart)})
+		right, err := collectWithoutStructure(pdf, []string{fmt.Sprintf("%d-", rightStart)}, keepUnreadable)
 		if err != nil {
 			return nil, err
 		}
@@ -1076,7 +1078,7 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 	// `normalizePage` below runs it through `CutPage`, which destroys the tree — so a carry here does
 	// a full prune and a verify parse and is then thrown away. Measured on a 73-page tagged document:
 	// the prologue goes from ~37 ms to ~172 ms for a byte-for-byte identical result.
-	pageOnly, err := collectWithoutStructure(pdf, []string{strconv.Itoa(page)})
+	pageOnly, err := collectWithoutStructure(pdf, []string{strconv.Itoa(page)}, keepUnreadable)
 	if err != nil {
 		return nil, err
 	}
@@ -1264,7 +1266,7 @@ func normalizePage(pdf []byte) ([]byte, error) {
 		return nil, err
 	}
 	// Non-carrying: `CutPage` has just rebuilt these pages and the tree went with them.
-	return collectWithoutStructure(buf.Bytes(), []string{"2-"}) // drop CutPage's outline page
+	return collectWithoutStructure(buf.Bytes(), []string{"2-"}, keepUnreadable) // drop CutPage's outline page
 }
 
 // cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,

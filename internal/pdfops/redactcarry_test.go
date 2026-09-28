@@ -81,7 +81,7 @@ func TestTheNonCarryingDoorStillKeepsTheDocumentsLanguage(t *testing.T) {
 	if lang := langOf(t, src); lang == "" {
 		t.Fatal("setup: the fixture carries no /Lang, so the assertion below cannot fail")
 	}
-	out, err := collectWithoutStructure(src, []string{"1"})
+	out, err := collectWithoutStructure(src, []string{"1"}, keepUnreadable)
 	if err != nil {
 		t.Fatal(err)
 	}

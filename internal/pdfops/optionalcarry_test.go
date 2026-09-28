@@ -167,7 +167,7 @@ func TestAHiddenLayerIsStillHiddenAfterASelection(t *testing.T) {
 	}{
 		{"Collect", func(b []byte) ([]byte, error) { return Collect(b, []string{"1", "3"}) }},
 		{"collectWithoutStructure", func(b []byte) ([]byte, error) {
-			return collectWithoutStructure(b, []string{"1", "3"})
+			return collectWithoutStructure(b, []string{"1", "3"}, keepUnreadable)
 		}},
 	} {
 		out, err := c.run(src)
@@ -277,7 +277,7 @@ func TestASelectionCarriesNoOutputIntent(t *testing.T) {
 	}{
 		{"Collect", func(b []byte) ([]byte, error) { return Collect(b, []string{"1", "3"}) }},
 		{"collectWithoutStructure", func(b []byte) ([]byte, error) {
-			return collectWithoutStructure(b, []string{"1", "3"})
+			return collectWithoutStructure(b, []string{"1", "3"}, keepUnreadable)
 		}},
 	} {
 		out, err := c.run(src)
@@ -336,7 +336,7 @@ func TestPageLayoutSurvivesASelection(t *testing.T) {
 	}{
 		{"Collect", func(b []byte) ([]byte, error) { return Collect(b, []string{"1", "3"}) }},
 		{"collectWithoutStructure", func(b []byte) ([]byte, error) {
-			return collectWithoutStructure(b, []string{"1", "3"})
+			return collectWithoutStructure(b, []string{"1", "3"}, keepUnreadable)
 		}},
 	} {
 		out, err := c.run(build(t, false))
