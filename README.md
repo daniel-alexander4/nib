@@ -497,7 +497,10 @@ supported — they'd require cgo, and Nib ships as one pure-Go static binary.)
 Every PDF you open also shows a **signature badge**: untampered, modified, or
 unsigned. Click **details** for the full picture — every signer (not just the
 first), and whether each signing time is backed by an independent timestamp
-authority or merely stated by the signer. The badge describes the copy Nib
+authority or merely stated by the signer. A timestamp counts as independent only
+when its authority's certificate chains to a root your computer trusts; one from
+an authority Nib cannot verify is shown as no better than the signer's own clock,
+since anyone can make such a timestamp with any date. The badge describes the copy Nib
 opened — so if the file changes on disk afterwards (another program, or `nib …
 -w` in a terminal), Nib says so in a banner and offers to reload it, and Save
 asks before replacing the changed file with what you have open.

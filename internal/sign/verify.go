@@ -42,9 +42,14 @@ const (
 	// SelfAsserted: a time is present but stated by the signer — it proves
 	// nothing on its own, since the signer chose the value.
 	SelfAsserted TimeBacking = "self-asserted"
-	// TSA: the time is fixed by an RFC3161 timestamp token from a timestamp
-	// authority, independent of the signer.
+	// TSA: the time is fixed by an RFC3161 timestamp token whose authority's certificate chains, as
+	// a timestamping certificate, to a root this machine trusts — independent of the signer.
 	TSA TimeBacking = "tsa"
+	// TSAUnverified: a timestamp token is present, and its authority could NOT be verified — a
+	// self-signed "authority", an unknown root, no certificate at all. The token proves only that
+	// whoever signed it chose that time, and whoever made the signature can mint one with any date
+	// (`/pending 708`: a backdated 2001 token from "Totally Independent TSA" read as independent).
+	TSAUnverified TimeBacking = "tsa-unverified"
 )
 
 // SignerInfo is the per-signer detail surfaced to the UI.
@@ -57,7 +62,7 @@ type SignerInfo struct {
 	Name        string      `json:"name,omitempty"`
 	Valid       bool        `json:"valid"`            // this signer's byte-range hash checks out
 	When        string      `json:"when,omitempty"`   // signing time (display string), when present
-	TimeBacking TimeBacking `json:"timeBacking"`      // none / self-asserted / tsa
+	TimeBacking TimeBacking `json:"timeBacking"`      // none / self-asserted / tsa / tsa-unverified
 	Reason      string      `json:"reason,omitempty"` // signature /Reason; for co-signing, carries the attestation
 	// Fingerprint is the hex SHA-256 SPKI of the certificate that SIGNED — the one this
 	// signature's SignerInfo names by issuer and serial, never whichever certificate happens to
@@ -431,7 +436,13 @@ func trailingContentAfterLastSignature(pdf []byte) (trailing, sawSignature bool,
 // supplied /M time (self-asserted) — NOT from the library's TimeSource field:
 // under our default (secure) verify options that field reports "current_time"
 // whenever no timestamp token is present, because the library refuses to trust
-// signer-supplied time. Token presence is the honest signal.
+// signer-supplied time.
+//
+// **Token presence is NOT the signal for "independent", and was read as one until /pending 708.**
+// `timestamp.Parse` checks a token only against the certificates inside it, so anyone can mint a
+// token with any date. `TimestampTrusted` is the library's answer to whether the token's authority
+// chains, as a timestamping certificate, to a system-trusted root (our options leave
+// `ValidateTimestampCertificates` on and `AllowUntrustedRoots` off); only that is TSA.
 func signerInfo(s *verify.Signer, byBag map[string]string) SignerInfo {
 	const layout = "2006-01-02 15:04 MST"
 	si := SignerInfo{Name: s.Name, Valid: s.ValidSignature, Reason: s.Reason}
@@ -444,7 +455,10 @@ func signerInfo(s *verify.Signer, byBag map[string]string) SignerInfo {
 	si.Fingerprint = byBag[bagKeyOfSigner(s)]
 	switch {
 	case s.TimeStamp != nil && !s.TimeStamp.Time.IsZero():
-		si.TimeBacking = TSA
+		si.TimeBacking = TSAUnverified
+		if s.TimestampTrusted {
+			si.TimeBacking = TSA
+		}
 		si.When = s.TimeStamp.Time.UTC().Format(layout)
 	case s.SignatureTime != nil:
 		si.TimeBacking = SelfAsserted
