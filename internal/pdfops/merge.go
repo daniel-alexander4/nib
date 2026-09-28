@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"nib/internal/pdfread"
 	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -92,7 +93,7 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 	conf.ValidationMode = model.ValidationRelaxed
 	conf.CreateBookmarks = false
 
-	dest, err := api.ReadAndValidate(bytes.NewReader(pdfs[0]), conf)
+	dest, err := pdfread.Validated(pdfs[0], conf)
 	if err != nil {
 		return nil, false, err
 	}
@@ -103,7 +104,7 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 	}
 	want := dest.PageCount
 	for i, b := range pdfs[1:] {
-		src, err := api.ReadAndValidate(bytes.NewReader(b), dest.Configuration)
+		src, err := pdfread.Validated(b, dest.Configuration)
 		if err != nil {
 			return nil, false, err
 		}
@@ -144,7 +145,7 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		return nil, false, err
 	}
 	if conf.OptimizeBeforeWriting {
-		if err := optimizeContext(dest); err != nil {
+		if err := pdfread.Optimize(dest); err != nil {
 			return nil, false, err
 		}
 	}

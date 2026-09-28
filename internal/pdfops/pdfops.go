@@ -21,6 +21,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"nib/internal/pdfread"
 	"nib/mdpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -81,7 +82,11 @@ func ImagesToPDF(pages []RasterPage) ([]byte, error) {
 	}
 	readers := make([]io.ReadSeeker, len(segs))
 	for i, b := range segs {
-		readers[i] = bytes.NewReader(b)
+		rs, err := pdfread.Reader(b, nil)
+		if err != nil {
+			return nil, err
+		}
+		readers[i] = rs
 	}
 	var out bytes.Buffer
 	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
@@ -407,7 +412,7 @@ func readBool(xt *model.XRefTable, obj types.Object) bool {
 // derived artifact should also carry, and losing it silently drops the accessibility
 // property Nib ships.
 func carryLang(src, dst []byte) ([]byte, error) {
-	sctx, err := readOptimized(src, model.NewDefaultConfiguration())
+	sctx, err := pdfread.ReadOptimized(src, model.NewDefaultConfiguration())
 	if err != nil {
 		return dst, nil // the source is what the operation already read; do not fail on it
 	}
@@ -598,7 +603,11 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			segments = append(segments, bytes.NewReader(seg))
+			rs, err := pdfread.Reader(seg, nil)
+			if err != nil {
+				return nil, err
+			}
+			segments = append(segments, rs)
 			i++
 			continue
 		}
@@ -618,7 +627,11 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		segments = append(segments, bytes.NewReader(seg))
+		rs, err := pdfread.Reader(seg, nil)
+		if err != nil {
+			return nil, err
+		}
+		segments = append(segments, rs)
 		i = j
 	}
 	var out bytes.Buffer
@@ -628,10 +641,15 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// PageCount returns the number of pages in the PDF. (pdfcpu's PageCount path
-// dereferences the configuration, so it must be non-nil.)
+// PageCount returns the number of pages in the PDF: `api.PageCount` (pkg/api/page.go:213, v0.13.0 — a
+// validated read, then the context's count) restated over the read door, so the `/UseCMap` loop is checked
+// on the one parse rather than a second (`/pending 675`; see FlagsJSON).
 func PageCount(pdf []byte) (int, error) {
-	return api.PageCount(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		return 0, err
+	}
+	return ctx.PageCount, nil
 }
 
 // SplitPart is one output file of a multi-file split (by bookmark or by page
@@ -651,7 +669,11 @@ type SplitPart struct {
 // per-bookmark PageThru: the read path neither sorts nor enforces page order, and
 // the last bookmark's PageThru is left 0, so trusting it is fragile.
 func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
-	bms, err := api.Bookmarks(bytes.NewReader(pdf), nil)
+	rs, err := pdfread.Reader(pdf, nil)
+	if err != nil {
+		return nil, err
+	}
+	bms, err := api.Bookmarks(rs, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -787,7 +809,11 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 		return nil, err
 	}
 	var out bytes.Buffer
-	if err := api.NUp(bytes.NewReader(pdf), &out, nil, nil, nup, conf); err != nil {
+	rs, err := pdfread.Reader(pdf, conf)
+	if err != nil {
+		return nil, err
+	}
+	if err := api.NUp(rs, &out, nil, nil, nup, conf); err != nil {
 		return nil, err
 	}
 	// **Carry the tag tree if it can be carried; be honest if it cannot.**
@@ -881,7 +907,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
 	}
 
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1253,7 +1279,7 @@ func cropWindow(attrs *model.InheritedPageAttrs, frac [4]float64) (*types.Rectan
 // one page in display orientation, so the client's display-space coordinates map
 // onto it directly.
 func normalizePage(pdf []byte) ([]byte, error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1282,7 +1308,7 @@ func cropToRect(normPage []byte, rect [4]float64, pageW, pageH float64) ([]byte,
 	if w > maxRegionPt || h > maxRegionPt {
 		return nil, fmt.Errorf("region too large")
 	}
-	ctx, err := readOptimized(normPage, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(normPage, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1350,7 +1376,7 @@ func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s
 // content is the original page's content stream behind an offset MediaBox; the
 // shared wrapPageToBox re-crop maps the tile's whole MediaBox onto an s× page.
 func scaleTiles(tiles []byte, s float64) ([]byte, error) {
-	ctx, err := readOptimized(tiles, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(tiles, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1860,7 +1886,11 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 		return pdf, nil
 	}
 	var out bytes.Buffer
-	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
+	rs, err := pdfread.Reader(pdf, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := api.AddWatermarksSliceMap(rs, &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
 	return honestOptionalContent(out.Bytes()), nil
@@ -2206,7 +2236,11 @@ func LangTag(s string) (string, error) {
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
 	var out bytes.Buffer
-	if err := api.ExportFormJSON(bytes.NewReader(pdf), &out, "nib", nil); err != nil {
+	rs, err := pdfread.Reader(pdf, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := api.ExportFormJSON(rs, &out, "nib", nil); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -2314,7 +2348,11 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 				err = fmt.Errorf("image extraction panicked: %v", r)
 			}
 		}()
-		return api.ExtractImages(bytes.NewReader(pdf), pages, digest, model.NewDefaultConfiguration())
+		rs, err := pdfread.Reader(pdf, nil)
+		if err != nil {
+			return err
+		}
+		return api.ExtractImages(rs, pages, digest, model.NewDefaultConfiguration())
 	}
 
 	if !perPage {
@@ -2358,9 +2396,9 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 func Optimize(pdf []byte) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.OPTIMIZE
-	// The optimization IS the read: `readOptimized` runs the pass `api.Optimize` runs before it writes,
+	// The optimization IS the read: `pdfread.ReadOptimized` runs the pass `api.Optimize` runs before it writes,
 	// so the operation needs no step of its own — and under `model.OPTIMIZE` a pass too costly to run is
-	// refused rather than skipped (`optimizeContext`, `/pending 706`).
+	// refused rather than skipped (`pdfread.Optimize`, `/pending 706`).
 	return rewriteWithConf(pdf, conf, func(*model.Context) error { return nil })
 }
 
@@ -2375,7 +2413,7 @@ func Optimize(pdf []byte) ([]byte, error) {
 //
 // `page` is 1-based, as everywhere else in this package.
 func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}

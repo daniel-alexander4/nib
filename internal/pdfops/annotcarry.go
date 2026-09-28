@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/contentstream"
+	"nib/internal/pdfread"
 )
 
 // Carrying a sticky note through an n-up — ADR-045, `/pending 562`.
@@ -176,7 +176,7 @@ func captureNoteAnnots(pdf []byte) (map[int]*noteSource, int, bool) {
 	// `ReadValidateAndOptimize` 15.7 ms. **`ReadContext` is not an option** — pdfcpu fills
 	// `ctx.PageCount` during validation, so a plain read reports zero pages and this walk visits
 	// none; it was tried, and the carry abandoned silently until the suffix check turned it red.
-	ctx, err := api.ReadAndValidate(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, 0, false
 	}

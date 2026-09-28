@@ -334,6 +334,9 @@ func TestTheReadersRouteThroughThisDoor(t *testing.T) {
 	exempt := map[string]string{
 		"pdfops.pdfcpuToUnicode": "mirrors pdfcpu's usedGIDsFromCMap, to refuse what pdfcpu would refuse",
 		"pdfops.recountBFChar":   "repairs pdfcpu's own bfchar counts in the shape pdfcpu writes",
+		// A WRITER of test documents, not a reader: the fixture CMaps /pending 675's loop tests hand to pdfcpu.
+		// Named in ADR-055, which added it.
+		"testpdf.cmap": "writes the fixture CMaps /pending 675's /UseCMap loop and chain are built from (ADR-055)",
 	}
 	// Case-sensitive, as a CMap program spells them — `/UseCMap`, the dictionary key, is not the `usecmap` operator.
 	listWords := []string{"bfchar", "bfrange", "codespacerange", "cidrange", "cidchar", "notdefrange", "notdefchar", "usecmap"}

@@ -1,7 +1,7 @@
-package pdfops
+package pdfread
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"sort"
@@ -14,9 +14,10 @@ import (
 
 // The optimize pass's cost, bounded before it runs — `/pending 706`.
 //
-// Every read in this package that wants pdfcpu's consolidated context calls `readOptimized`, and the one
-// place that optimizes a context it built itself (`mergeInto`) calls `optimizeContext`. Both ask
-// `optimizeAffordable` first. **pdfcpu's optimize pass has no budget of its own** (v0.13.0: no
+// Every read in nib that wants pdfcpu's consolidated context calls `ReadOptimized` — `pdfops`, the checker
+// (`uacheck.open`, `/pending 714`) and mdpdf's packet — and every place that optimizes a context it built
+// itself (`pdfops.mergeInto`) calls `Optimize`. Both ask
+// `Unaffordable` first. **pdfcpu's optimize pass has no budget of its own** (v0.13.0: no
 // `ResourceLimits` field reaches `optimize.go`), and two of its shapes are hostile:
 //
 //   - **The comparison.** `optimizeXObjectForm` compares each form XObject with every cached form of the
@@ -55,15 +56,34 @@ const (
 	maxUnfold = 1 << 24
 )
 
-// readOptimized is the package's one `ReadValidateAndOptimize`: it reads and validates exactly as pdfcpu does,
-// then optimizes only when `optimizeAffordable` says the pass is bounded.
-func readOptimized(pdf []byte, conf *model.Configuration) (*model.Context, error) {
-	ctx, err := api.ReadAndValidate(bytes.NewReader(pdf), conf)
+// ReadOptimized is nib's one `ReadValidateAndOptimize`: it reads and validates through `Validated` (so a `/UseCMap`
+// cycle is refused before pdfcpu's validator can recurse on it), exactly as pdfcpu does, then optimizes only
+// when `Unaffordable` says the pass is bounded.
+func ReadOptimized(pdf []byte, conf *model.Configuration) (*model.Context, error) {
+	return readOptimized(pdf, conf, false)
+}
+
+// ReadOptimizedOrRefuse is `ReadOptimized` for a reader whose ANSWER depends on the pass having run, where a
+// skipped pass would not degrade the output's size but change what is reported: past the budget it refuses.
+//
+// **The checker is that reader (`uacheck.open`, `/pending 714`).** Its rules were measured against the
+// optimized reading — the pass fuses equal forms (`formTwins`) and puts a page's inherited `/Resources` on the
+// page — and a run of its suite with the pass switched off (2026-09-28) failed four of its tests on moved
+// verdicts (two equal forms drawn once each read as one form drawn twice: 7.20 t2 Fail; merged-font
+// CannotChecks answered), though law 5 held over veraPDF's corpus. A report computed on the
+// other reading would be a confident answer about a document the checker was not calibrated to read; an
+// error says what happened.
+func ReadOptimizedOrRefuse(pdf []byte, conf *model.Configuration) (*model.Context, error) {
+	return readOptimized(pdf, conf, true)
+}
+
+func readOptimized(pdf []byte, conf *model.Configuration, strict bool) (*model.Context, error) {
+	ctx, err := Validated(pdf, conf)
 	if err != nil {
 		return nil, err
 	}
 	if conf.Optimize || cmdAssumingOptimization(conf.Cmd) {
-		if err := optimizeContext(ctx); err != nil {
+		if err := optimize(ctx, strict); err != nil {
 			return nil, err
 		}
 	}
@@ -75,7 +95,7 @@ func readOptimized(pdf []byte, conf *model.Configuration) (*model.Context, error
 }
 
 // cmdAssumingOptimization is pdfcpu's unexported list of the commands that optimize whatever
-// `conf.Optimize` says (pkg/api/api.go:205, v0.13.0), restated because `readOptimized` replaces the function
+// `conf.Optimize` says (pkg/api/api.go:205, v0.13.0), restated because `ReadOptimized` replaces the function
 // that consults it.
 func cmdAssumingOptimization(cmd model.CommandMode) bool {
 	switch cmd {
@@ -86,23 +106,43 @@ func cmdAssumingOptimization(cmd model.CommandMode) bool {
 	return false
 }
 
-// optimizeContext runs pdfcpu's optimize pass on ctx when it is affordable, skips it when it is not, and
+// Optimize runs pdfcpu's optimize pass on ctx when it is affordable, skips it when it is not, and
 // refuses when the pass is the operation itself (see the file comment).
-func optimizeContext(ctx *model.Context) error {
-	if why := optimizeUnaffordable(ctx); why != "" {
+func Optimize(ctx *model.Context) error {
+	return optimize(ctx, false)
+}
+
+// OptimizeOrRefuse is Optimize for a caller whose pass is the POINT — a normalization that proves a document
+// survives what comes after it — so an unaffordable pass is refused (ErrUnaffordable) rather than skipped. Skipping
+// would admit the document into a later pdfcpu write that runs the pass unbounded (`mdpdf`'s merge).
+func OptimizeOrRefuse(ctx *model.Context) error {
+	return optimize(ctx, true)
+}
+
+// optimize is Optimize, refusing past the budget when strict (`ReadOptimizedOrRefuse`) as well as when the
+// pass is the operation.
+func optimize(ctx *model.Context, strict bool) error {
+	if why := Unaffordable(ctx); why != "" {
 		if ctx.Cmd == model.OPTIMIZE {
-			return fmt.Errorf("pdfops: nib will not optimize this document: %s", why)
+			return fmt.Errorf("nib will not optimize this document: %s", why)
+		}
+		if strict {
+			return fmt.Errorf("%w: %s", ErrUnaffordable, why)
 		}
 		return nil
 	}
 	return api.OptimizeContext(ctx)
 }
 
-// optimizeUnaffordable says why pdfcpu's optimize pass over ctx would exceed a budget, or "" when it would not.
-func optimizeUnaffordable(ctx *model.Context) string {
+// ErrUnaffordable is `ReadOptimizedOrRefuse`'s refusal: the pass its reader depends on would exceed its budget.
+var ErrUnaffordable = errors.New("nib cannot read this document the way its checks were measured, because " +
+	"pdfcpu's optimize pass over it would not finish in reasonable time")
+
+// Unaffordable says why pdfcpu's optimize pass over ctx would exceed a budget, or "" when it would not.
+func Unaffordable(ctx *model.Context) string {
 	e := optimizeEstimate{ctx: ctx, forms: map[int]*types.StreamDict{}, memo: map[int]objShape{}}
-	for _, rec := range scanPages(ctx) {
-		if !e.walk(rec.res, nil) {
+	for _, res := range pageResources(ctx) {
+		if !e.walk(res, nil) {
 			return fmt.Sprintf("its resources reach form XObjects along more than %d paths, and the optimizer "+
 				"walks every one", maxOptimizeWalk)
 		}
@@ -347,4 +387,21 @@ func satMul(a, b int) int {
 		return maxUnfold * maxUnfold
 	}
 	return a * b
+}
+
+// pageResources is each page's own `/Resources`, uninherited, in page order — what `pdfops.scanPages` gives the
+// estimate there, restated because this package sits below `pdfops`. pdfcpu's pass starts from the same
+// dictionaries (optimize.go's `optimizeResources` over each page's `Resources`).
+func pageResources(ctx *model.Context) []types.Dict {
+	out := make([]types.Dict, 0, ctx.PageCount)
+	for p := 1; p <= ctx.PageCount; p++ {
+		d, _, _, err := ctx.PageDict(p, false)
+		if err != nil || d == nil {
+			continue
+		}
+		if res, e := ctx.DereferenceDict(d["Resources"]); e == nil && res != nil {
+			out = append(out, res)
+		}
+	}
+	return out
 }

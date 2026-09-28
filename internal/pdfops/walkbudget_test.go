@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"fmt"
+	"nib/internal/pdfread"
 	"strings"
 	"testing"
 
@@ -36,7 +37,7 @@ func walkFanOut(depth int) []byte {
 
 func TestEveryFormWalkerStopsAtTheWalkBudgetAndSaysSo(t *testing.T) {
 	read := func(pdf []byte) *model.Context {
-		ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+		ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +108,7 @@ func TestNestedSequencesCostTheRunReaderLinearTime(t *testing.T) {
 		{"under", "/Artifact BMC " + strings.Repeat("/P BMC ", n) + "BT /F1 1 Tf " + shows + "ET"},
 		{"over", strings.Repeat("/P BMC ", n) + "/Artifact BMC BT /F1 1 Tf " + shows + "ET"},
 	} {
-		ctx, err := readOptimized(page(where.content, ""), model.NewDefaultConfiguration())
+		ctx, err := pdfread.ReadOptimized(page(where.content, ""), model.NewDefaultConfiguration())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +134,7 @@ func TestNestedSequencesCostTheRunReaderLinearTime(t *testing.T) {
 	}
 	b.WriteString(strings.Repeat("/Fm Do ", n))
 	draws := page(b.String(), "/XObject << /Fm 9 0 R >>")
-	ctx, err := readOptimized(draws, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(draws, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestAFormDrawnManyTimesStopsAtTheByteBudget(t *testing.T) {
 		4: optStream(strings.Repeat("/Fm Do ", 2000), ""),
 		9: optStream(body, "/Type /XObject /Subtype /Form /BBox [0 0 10 10]"),
 	})
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}

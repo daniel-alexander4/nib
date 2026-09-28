@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"nib/internal/pdfread"
 	"strconv"
 	"strings"
 
@@ -134,7 +135,11 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 
 	// The blank form's typed skeleton (fields with their real options) is the
 	// template each record fills, so combobox/radio option-membership checks pass.
-	skeleton, err := api.ExportForm(bytes.NewReader(pdf), "nib", model.NewDefaultConfiguration())
+	rs, err := pdfread.Reader(pdf, nil)
+	if err != nil {
+		return nil, err
+	}
+	skeleton, err := api.ExportForm(rs, "nib", model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

@@ -8,13 +8,14 @@ import (
 
 	"crypto/sha256"
 	"errors"
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 	"image"
 	"image/color"
 	"image/png"
 	"nib/internal/testpdf"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // TestAttachmentName pins the basename reduction: paths are stripped and the

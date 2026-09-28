@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"nib/internal/testpdf"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
-	"nib/internal/testpdf"
 )
 
 // TestPreparePDFARefusesAcroFormDAFont: a form whose widget /AP draws text in a

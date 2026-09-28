@@ -114,6 +114,11 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"identification directly, which is exactly what production must never do unverified.",
 		"ClaimsUA": "test-support — /pending 492's namespace-aware claim reader for those same tests. " +
 			"Production drops a claim and never needs to ask whether one survived.",
+		"UseCMapLoops": "test-support — /pending 675's two /UseCMap loops, shared by the pdfread, pdfops and " +
+			"uacheck tests so every read door is tested against the same documents.",
+		"UseCMapChain": "test-support — /pending 675's legitimate /UseCMap chain, the no-false-refusal half of " +
+			"those same tests.",
+		"FormChain": "test-support — /pending 706's 400-form comparison shape, the unaffordable-optimize fixture mdpdf's exhibit test takes (ADR-055)",
 
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",

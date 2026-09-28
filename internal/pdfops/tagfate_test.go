@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"testing"
 
+	"nib/internal/testpdf"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-	"nib/internal/testpdf"
 )
 
 // Tag fate — `PLAN-accessibility.md` P01, ADR-031.

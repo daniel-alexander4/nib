@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"nib/internal/testpdf"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // labelsOf reads a document's page labels back as one string per page, in output order, using the

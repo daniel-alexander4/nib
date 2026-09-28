@@ -1,8 +1,8 @@
 package pdfops
 
 import (
-	"bytes"
 	"math"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
@@ -22,7 +22,11 @@ import (
 // orientation rather than rotating landscape content to fit one literal box.
 func NormalizePageSizes(pdf []byte) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
-	dims, err := api.PageDims(bytes.NewReader(pdf), conf)
+	rs, err := pdfread.Reader(pdf, conf)
+	if err != nil {
+		return nil, err
+	}
+	dims, err := api.PageDims(rs, conf)
 	if err != nil {
 		return nil, err
 	}
