@@ -226,7 +226,7 @@ func TestThePreHopEndStateMechanismIsStillWired(t *testing.T) {
 
 	// ── The PULL's own body: the window, the record, the teardown ────────────
 	pull := funcBodyFrom(string(delivery), strings.Index(string(delivery), "func (s *Server) fetchEndStateWhenSlow("))
-	if !strings.Contains(pull, "cer.rz.Fetch(") {
+	if !strings.Contains(pull, "cer.dhtFetch(") {
 		t.Fatal("fetchEndStateWhenSlow's body could not be read, or it no longer fetches at all — " +
 			"the clauses below would pass over nothing")
 	}

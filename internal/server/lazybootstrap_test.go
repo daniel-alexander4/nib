@@ -157,6 +157,13 @@ func TestTheBootstrapDoorSetsItsFlagEvenWhenTheBootstrapFAILS(t *testing.T) {
 // tests ask, which is whether the DHT was CONTACTED.
 func armedCeremony(t *testing.T) (*ceremonyID, []byte) {
 	t.Helper()
+	return armedCeremonyAt(t, t.TempDir())
+}
+
+// armedCeremonyAt is armedCeremony with the config directory — and so the node cache — chosen by
+// the caller, which is how a test points every traversal at a sink of its own.
+func armedCeremonyAt(t *testing.T, configDir string) (*ceremonyID, []byte) {
+	t.Helper()
 	invs, certs, fps := threeParty(t)
 	peerFP, err := hex.DecodeString(fps[1])
 	if err != nil {
@@ -172,7 +179,7 @@ func armedCeremony(t *testing.T) (*ceremonyID, []byte) {
 	}
 	// P08.S05f: `openRendezvous` is gone — it was the second door to a ceremony's shared socket
 	// and its QUIC branch was unreachable in production. This is what `handleSessionArm` does.
-	if err := cer.setupSharedEndpoint("127.0.0.1:0", t.TempDir()); err != nil {
+	if err := cer.setupSharedEndpoint("127.0.0.1:0", configDir); err != nil {
 		t.Fatal(err)
 	}
 	ln, err := p2p.QUICListenOn(cer.end, lnCert, lnKey, peerFP)

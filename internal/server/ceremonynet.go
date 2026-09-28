@@ -216,7 +216,7 @@ func (c *ceremonyID) publishCandidates(armCtx context.Context, transport string)
 	// regardless, and this keeps the arm ctx (which the refresh rides) uncancelled.
 	pctx, pcancel := context.WithTimeout(armCtx, rendezvousPublishBudget)
 	defer pcancel()
-	return c.rz.Publish(pctx, seed, c.gate.PublishSalt(), sealed)
+	return c.dhtPublish(pctx, seed, c.gate.PublishSalt(), sealed)
 }
 
 // appendMappedCandidate obtains a router port mapping for the shared endpoint's own port and,
@@ -338,13 +338,14 @@ func (c *ceremonyID) feedCandidates(ctx context.Context, out chan<- candidate, p
 	if !c.holdDHT(ctx, hold) {
 		return
 	}
-	// The DHT's first contact with the network, through its one door. A failure is not fatal — the
-	// fetch below simply finds nothing and D19 cause 2 is the sentence for it.
-	_ = c.ensureBootstrapped(ctx)
+	// The DHT's first contact with the network is inside `dhtFetch`, through its one door. A
+	// bootstrap failure is not fatal — the fetch simply finds nothing and D19 cause 2 is the
+	// sentence for it — but the switch IS: this line used to be `_ = c.ensureBootstrapped(ctx)`,
+	// which threw the switch's refusal away and fetched anyway (/pending 690).
 	sent := 0
 	started := time.Now()
 	for {
-		sealed, _, ferr := c.rz.Fetch(ctx, seed, c.gate.Salt())
+		sealed, _, ferr := c.dhtFetch(ctx, seed, c.gate.Salt())
 		if ferr == nil {
 			// The gate is the only door. It opens, verifies the signature, checks the
 			// author against this hop's expected party and the roster, checks the ceremony
