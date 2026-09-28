@@ -184,10 +184,11 @@ func TestSignerInfoTimeBacking(t *testing.T) {
 		want  TimeBacking
 		valid bool
 	}{
-		{"tsa", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}}, TSA, true},
+		{"tsa", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}, TimestampTrusted: true}, TSA, true},
+		{"a token whose authority did not verify", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}}, TSAUnverified, true},
 		{"self-asserted", verify.Signer{ValidSignature: true, SignatureTime: &ts}, SelfAsserted, true},
 		{"none", verify.Signer{ValidSignature: false}, NoTime, false},
-		{"tsa beats self-asserted", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}, SignatureTime: &ts}, TSA, true},
+		{"tsa beats self-asserted", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}, TimestampTrusted: true, SignatureTime: &ts}, TSA, true},
 	}
 	for _, tc := range tests {
 		got := signerInfo(&tc.in, nil)

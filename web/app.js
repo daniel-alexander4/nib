@@ -4876,6 +4876,9 @@ function updateBadge(sig, inCeremony, unverified) {
 // timeLabel turns a signer's time backing into honest plain English.
 function timeLabel(s) {
   if (s.timeBacking === 'tsa') return 'Timestamped ' + s.when + ' by an independent timestamp authority';
+  // A token whose authority Nib could not verify: anyone who makes a signature can mint one with any
+  // date, so it is worth no more than the signer's own clock (/pending 708).
+  if (s.timeBacking === 'tsa-unverified') return 'Dated ' + s.when + ' by a timestamp service Nib could not verify — no more trustworthy than the signer\'s own clock';
   if (s.timeBacking === 'self-asserted') return 'Dated ' + s.when + ' by the signer\'s own device';
   return 'No signing time recorded';
 }
