@@ -3037,7 +3037,7 @@ random inputs showing no divergence) was ported by one agent; every fixture was 
 - Tiers 4 and 6 did NOT fire: the slice touched `internal/uacheck` only. Corpus reach unchanged — veraPDF's corpus holds
   no Type 1 program.
 
-### P08 — A real-producer corpus
+### P08 — A real-producer corpus *(done 2026-09-28, v1.167.1)*
 **Goal.** LibreOffice, Word export, Acrobat, Ghostscript and pdfLaTeX files scored rule by rule, nib against veraPDF.
 Refs: D7.
 **(pin, 2026-09-24)** pdfLaTeX joins the producer list: it is the one measured local producer that embeds a Type 1
@@ -3234,6 +3234,42 @@ report, and the GUI's wording this slice left alone). Red-proof: 6 mutations, al
 
 `/plan-review` did NOT fire: the phase adds tests, test tooling and wording. The one network step (S03's fetch) is
 developer tooling pulling pinned public documents, not a product path — nib itself sends and receives nothing new.
+
+
+**(phase close, 2026-09-28, v1.167.1)** Full-repo `/code-review`, eight reviewers
+(`code-reviews/v1.167.0-p08-phase-close-2026-09-28.md`): 74 findings, 7 critical, every critical re-read by the parent.
+**One was this phase's, and it was a false statement of the exit criterion's own figure**: veraPDF's corpus was judged
+for false passes and false fails only, so nib's Pass where veraPDF found no subject reached no table there, and
+`knownDisagreements` counted `7.2 t34` as agreeing over seven corpus files where the producer harness would have called it
+a disagreement. Both corpora are now judged by law 5's three states (`corpusStrict`, 13 rows: /pending 674 ×6, 703 ×7).
+`unexercised` now means no corpus settles the clause, so `7.18.2 t1` — exercised both ways by the oracle's TrapNet
+documents — counts in. **N stays 99 of 105, for different reasons** (t34 out, 7.18.2 t1 in), and the sentence no longer
+claims every rule was checked on real producers (seven are settled on none). Also fixed: the README's counterexample count
+is read from the README; `producers.sh` removes a skipped producer's stale directory and `producers-fetch.sh` a producer
+whose last manifest row is gone (both driven); the README no longer says veraPDF runs "on every build". Red-proof: 4 of 5
+mutations red; the fifth (an empty veraPDF job) has no stimulus in the corpus and is recorded unproven. Everything outside
+the phase is filed: 704 (ADR-053 completion — /api/quit and the wizard routes' passphrase oracle), 705-708 (criticals:
+AcroForm /DR redaction leak, cubic optimize cost, DHT cache eclipse, self-minted TSA), 709-713 (grouped).
+
+**Phase acceptance ledger** (the criteria verbatim, split on "and"; measured at HEAD after the fixes):
+- "Every rule agrees on the corpus or its disagreement is filed by name" — MET: real producers 3,666 of 3,675 pairs settled
+  and agreeing over 36 files, every disagreement named (10 rows: 674, 694, 695, 696); veraPDF's own corpus 30,920 pairs,
+  0 false pass, 0 false fail, 13 other disagreements all named (674, 703) — the half that was NOT met before this close.
+- "the docs … say 'agrees with veraPDF on N rules'" — MET: README and `docs/accessibility-parity.md` say "agrees with veraPDF
+  on 99 of the 105", guarded against `AgreementFigures()`.
+- "… and `nib ua` say …" — MET: `nib ua` prints `Agreement()` (`TestNibUAStatesTheAgreementFigure`).
+- "never 'conformant' (law 2)" — MET by reading (README, docs, web/index.html, web/app.js, cli and server strings); **not
+  guarded** — no test forbids the word, filed /pending 713.
+- Goal: LibreOffice, Word export, Acrobat, Ghostscript and pdfLaTeX scored rule by rule — MET: 6, 2, 9, 10, 3 files.
+- Graduation: 13 rows — 11 keep-live mechanically, 2 (producer reach, class 2) kept as labelled diagnostics; their promised
+  reader was never built, which is why the sentence was narrowed.
+- Required-run gates: tiers 4 and 6 did NOT fire — the close touched `internal/uacheck`'s figure and tests, `build/producers*.sh`
+  and docs; none of the session, ceremony, delivery, discovery, p2p or rendezvous paths. Tiers 4, 4d and 6 were last run green
+  at v1.167.0 (/pending 685's gate, the same day).
+- Pending sweep against the closure: 674 and 694 named P08.S04 as owner and P08 closed them by naming — re-owned to the
+  backlog; 695-698 unchanged (their harness rows still disagree); 702 folded into 704.
+
+**PLAN-ua-coverage.md is exhausted.** 105 of 106 veraPDF PDF/UA-1 rules checked; agreement 99 of 105, measured.
 
 ---
 

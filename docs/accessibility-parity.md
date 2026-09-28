@@ -16,9 +16,9 @@ counterpart. *Unmeasured* — Nib has the control, and no test shows what it doe
 
 One number frames the checker rows. Nib checks **105 of the 106** rules veraPDF evaluates for PDF/UA-1, so
 a document can pass every clause Nib checks and still fail one it does not. A second number says how far those
-checks can be trusted: Nib agrees with veraPDF on 99 of the 105 — no false pass or false fail over veraPDF's own PDF/UA-1
-test corpus, and the same verdict on documents from real producers (Word, Acrobat, LibreOffice and others). It is known to
-disagree on 5, each filed, and 1 no document has yet exercised. Agreement is the claim; conformance is not.
+checks can be trusted: Nib agrees with veraPDF on 99 of the 105 — the same verdict on every document that exercises the rule,
+in veraPDF's own PDF/UA-1 test corpus, in Nib's generated test documents and in documents from real producers (Word,
+Acrobat, LibreOffice and others). It is known to disagree on 6, each filed. Agreement is the claim; conformance is not.
 
 ## The ledger
 
