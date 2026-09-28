@@ -26,6 +26,7 @@ import (
 	"nib/internal/pdfops"
 	"nib/internal/sign"
 	"nib/internal/testpdf"
+	"nib/internal/uacheck"
 
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
@@ -1688,4 +1689,24 @@ func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
 	if strings.Contains(fn, "is PDF/UA\"") || strings.Contains(fn, "conforms to PDF/UA") {
 		t.Error("cmdUA claims conformance somewhere in its output")
 	}
+}
+
+// TestNibUAStatesTheAgreementFigure — P08.S05, law 2: `nib ua`'s notes carry "agrees with veraPDF on N" from the one
+// door (`uacheck.Agreement`), whatever the verdict, so the report can never say more than agreement.
+func TestNibUAStatesTheAgreementFigure(t *testing.T) {
+	pdf, err := testpdf.Text("agreement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, notes, _, err := uaReport(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := uacheck.Agreement()
+	for _, n := range notes {
+		if n == want {
+			return
+		}
+	}
+	t.Errorf("nib ua's notes %q do not carry the agreement sentence %q", notes, want)
 }

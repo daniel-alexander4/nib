@@ -321,3 +321,62 @@ func TestACappedVeraPDFReportIsNotReadAsNoSubject(t *testing.T) {
 		t.Error("an unrecorded rule must agree with Pass and NotApplicable and disagree with Fail — a failure is always recorded")
 	}
 }
+
+// TestTheAgreementFigureIsTheHarnesssOwn — P08.S05. The N in "agrees with veraPDF on N rules" is computed from
+// `knownDisagreements`, so that list must be exactly the clauses this harness names (file-level rows aside), or the
+// figure could claim agreement the harness has seen broken — or hide a clause that has since been fixed. It holds in a
+// fresh clone with no corpus: both sides are committed.
+func TestTheAgreementFigureIsTheHarnesssOwn(t *testing.T) {
+	named := map[string]bool{}
+	for key := range producerDisagreements {
+		parts := strings.SplitN(key, " / ", 2)
+		if len(parts) != 2 {
+			t.Errorf("producerDisagreements key %q is not \"<file> / <clause>\"", key)
+			continue
+		}
+		switch parts[1] {
+		case "open", "veraPDF", "refused": // a fact about a file, not a clause
+			continue
+		}
+		named[parts[1]] = true
+	}
+	for c := range corpusAllow {
+		if parts := strings.SplitN(c, " / ", 2); len(parts) == 2 {
+			named[parts[1]] = true
+		} else {
+			t.Errorf("corpusAllow key %q is not \"<file> / <clause>\"", c)
+		}
+	}
+	// The stimulus: the harness names some clause, so the comparison below is over something.
+	if len(named) == 0 {
+		t.Fatal("stimulus: the harness names no clause, so the comparison is vacuous")
+	}
+	registered := map[string]bool{}
+	for _, c := range Clauses() {
+		registered[c] = true
+	}
+	for c := range named {
+		if _, ok := knownDisagreements[c]; !ok {
+			t.Errorf("the harness names a disagreement on %s, and knownDisagreements does not — N overstates agreement", c)
+		}
+	}
+	for c := range knownDisagreements {
+		if !named[c] {
+			t.Errorf("knownDisagreements holds %s, which no harness row names — the disagreement closed; remove it", c)
+		}
+		if !registered[c] {
+			t.Errorf("knownDisagreements holds %s, which nib does not check", c)
+		}
+	}
+	// `unexercised` is exactly the clauses the veraPDF corpus never settles, so N cannot count one as agreeing.
+	for c, reach := range corpusReach {
+		if _, idle := unexercised[c]; (reach == 0) != idle {
+			t.Errorf("%s: corpus reach %d, unexercised %v — the two must agree (an unsettled clause is not agreement)", c, reach, idle)
+		}
+	}
+	for c := range unexercised {
+		if _, has := corpusReach[c]; !has {
+			t.Errorf("unexercised holds %s, which has no corpus reach row", c)
+		}
+	}
+}

@@ -3194,11 +3194,43 @@ mutations on the cap reading and 2 on the fixes, all red.
   capped-report strictness loss is /pending 697.
 - Tiers 4 and 6 did NOT fire: test code, test tooling and a manifest only.
 
-#### P08.S05 — "agrees with veraPDF on N rules"
+#### P08.S05 — "agrees with veraPDF on N rules" *(done 2026-09-28, v1.166.5)*
 Scope: N measured by the harness (rules with no disagreement over both corpora), written into the README, `docs/`, and
 `nib ua`'s and the GUI's report, and guarded so the prose cannot drift from the measurement.
 Acceptance:
 - The exit criterion's second half, verbatim; the figure's source is the harness, not a hand-typed number.
+
+**(grill, 2026-09-26)** N must hold in a fresh clone with no corpus, so its source is the COMMITTED record of which clauses
+disagree: `knownDisagreements` in production code (`internal/uacheck/agreement.go`), kept equal to the clauses the two
+harnesses name by `TestTheAgreementFigureIsTheHarnesssOwn` — and the harnesses fail on any disagreement not named, so the
+record is complete wherever a corpus exists. N = 105 − 5 = **100**. One sentence states it (`uacheck.Agreement`, ADR-009);
+the README and the parity ledger are guarded against the same figure, and `nib ua` prints the sentence. The GUI keeps its
+existing summary (it already refuses to call a document conformant; the exit criterion names the docs and `nib ua`).
+- T01 — `agreement.go`: `knownDisagreements`, `AgreedClauses`, `Agreement`.
+- T02 — `nib ua` notes; README; `docs/accessibility-parity.md`.
+- T03 — guards: the record against the harness tables; the README and the ledger against the figure; `nib ua` against the sentence.
+
+**(review, 2026-09-26/28)** One diff reviewer; four warnings, all fixed. **N first counted a clause no corpus had ever
+settled** (`7.18.2 t1`, corpus reach 0 — the one TrapNet file is unreadable to pdfcpu) as agreeing: an absence of evidence
+read as agreement. N now excludes `unexercised`, kept equal to corpus reach's zero rows — **N = 99**, not 100. The sentence
+claimed strict agreement over veraPDF's corpus, whose test judges only false passes and false fails; it now says what each
+corpus measured. The README insertion had broken the next sentence's antecedent and kept "Nib calls conformant" — rewritten.
+"Five" and "nine" were hand-typed: every number the sentence gives is now in `AgreementFigures()`, which the README and the
+ledger are guarded against, and the producer count was dropped. Info fixed: `strings.Join`, a malformed table key named
+rather than panicking, a vacuous stimulus removed. Pre-existing and filed: /pending 698 ("Not PDF/UA" on a refusal-only
+report, and the GUI's wording this slice left alone). Red-proof: 6 mutations, all red.
+
+**Acceptance ledger.**
+- The exit criterion's second half, verbatim — MET: the README, `docs/accessibility-parity.md` and `nib ua` say "agrees with
+  veraPDF on 99 of the 105"; nothing says "conformant" of a document (the README's one positive use was rewritten).
+- The figure's source is the harness, not a hand-typed number — MET: N is computed from `knownDisagreements` and
+  `unexercised`, each guarded equal to what the harnesses record, and every figure in the prose is guarded against the door.
+- Deviation, recorded: the scope named the GUI's report; the GUI keeps its summary (/pending 698).
+- Tiers 4 and 6 did NOT fire: `internal/uacheck`, `internal/cli`'s `nib ua` notes, and docs.
+- Gate: the first full suite was RED on one guard — `AgreementFigures` had no production caller
+  (`TestEveryExportedFunctionUnderInternalHasAProductionCaller`); declared `test-support` (the root package's doc guards read
+  it). The per-commit tier's root guards WOULD have caught it. The commit landed before the red was read and was amended
+  with the fix after a green re-run — nothing was pushed.
 
 `/plan-review` did NOT fire: the phase adds tests, test tooling and wording. The one network step (S03's fetch) is
 developer tooling pulling pinned public documents, not a product path — nib itself sends and receives nothing new.

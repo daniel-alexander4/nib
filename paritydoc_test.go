@@ -144,9 +144,26 @@ func TestTheAccessibilityParityLedgerNamesEveryFeatureAndCitesEveryClaim(t *test
 		t.Fatalf("found %d nib tag subcommand(s) — the pattern no longer reads cmdTag", named)
 	}
 	// The count is the registry's, never a literal (P04.S01: this literal went stale on the first rule after P03).
-	for _, must := range []string{"--do ua", "--do tag", fmt.Sprintf("%d of the 106", len(uacheck.Clauses()))} {
+	must := append([]string{"--do ua", "--do tag", fmt.Sprintf("%d of the 106", len(uacheck.Clauses()))}, uacheck.AgreementFigures()...)
+	for _, must := range must {
 		if !strings.Contains(doc, must) {
 			t.Errorf("the ledger does not say %q", must)
+		}
+	}
+}
+
+// TestTheREADMEStatesTheAgreementFigure — law 2's figure (P08.S05) in the README, from the same door the ledger's is, so a
+// rule that joins or leaves `knownDisagreements` without the prose moving is red.
+func TestTheREADMEStatesTheAgreementFigure(t *testing.T) {
+	b, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Run from the repository root, where `go test` puts the root package.
+	flat := strings.Join(strings.Fields(string(b)), " ")
+	for _, want := range uacheck.AgreementFigures() {
+		if !strings.Contains(flat, want) {
+			t.Errorf("README.md does not say %q", want)
 		}
 	}
 }

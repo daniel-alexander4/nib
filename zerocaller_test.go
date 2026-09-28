@@ -118,6 +118,7 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*cidGen).GenerateConnectionID": "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",
 		"(*side).SetWriteDeadline":       "interface — net.Conn. Its three siblings on the same type are called; this one is not, and dropping it would stop the type satisfying the interface.",
+		"AgreementFigures":               "test-support — the phrases the README and parity-ledger guards (root package) require, from the one door that states law 2's figure (P08.S05).",
 		"(intHeap).Less":                 "interface — container/heap's heap.Interface (sort.Interface), dispatched by the library for the /W range index.",
 		"(intHeap).Swap":                 "interface — container/heap's heap.Interface (sort.Interface), dispatched by the library for the /W range index.",
 
