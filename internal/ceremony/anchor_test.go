@@ -2,6 +2,7 @@ package ceremony
 
 import (
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,52 @@ func TestTheInvitationReaderFindsAMovedCeremonyToo(t *testing.T) {
 	}
 	if got.State != StateDeclined {
 		t.Errorf("the recovered end state is %q, want %q", got.State, StateDeclined)
+	}
+}
+
+// TestATerminationIsRefusedWhenItsLabelNamesAnotherCeremony — /pending 686.
+//
+// `Ceremony` is outside the signed preimage, and `WriteTermination` takes its DIRECTORY from it. So
+// a convener of ceremony A, which the victim shares, could relabel A's valid termination with
+// another ceremony id B: every check passed (roster hash, signature, convener — all A's), and the
+// object landed in `ceremonies/<B>/termination.json`, write-once, refusing B's real end state
+// forever. The anchor now carries the id and the one door compares it.
+func TestATerminationIsRefusedWhenItsLabelNamesAnotherCeremony(t *testing.T) {
+	inv, rec, term := endedFixture(t)
+	other, err := NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relabelled := term
+	relabelled.Ceremony = other
+
+	// STIMULUS: the untouched object verifies against both anchors, and the relabel really does
+	// name a different ceremony — or every refusal below is about something else.
+	if err := term.Verify(rec); err != nil {
+		t.Fatalf("setup: the honest termination does not verify: %v", err)
+	}
+	if other == rec.ID {
+		t.Fatal("setup: the relabel names the same ceremony")
+	}
+
+	if err := relabelled.Verify(rec); !errors.Is(err, ErrBadTermination) {
+		t.Errorf("a termination labelled for ceremony %s verified against ceremony %s's record "+
+			"(err %v). Its label is the directory it is written to", other, rec.ID, err)
+	}
+	ia, err := inv.Anchor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := relabelled.VerifyAgainst(ia); !errors.Is(err, ErrBadTermination) {
+		t.Errorf("a relabelled termination verified against the invitation's anchor (err %v)", err)
+	}
+	// And the sealed road: the published end state is opened through the same door.
+	key, salt := make([]byte, 32), make([]byte, 32)
+	ra, err := rec.Anchor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := relabelled.Seal(key, salt, ra); err == nil {
+		t.Error("a relabelled termination was sealed for publication")
 	}
 }

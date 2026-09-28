@@ -169,7 +169,7 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 	return out
 }
 
-// inPackageOnlyRecorded is the population above, as it stands: **40 of 544 published fields**, close
+// inPackageOnlyRecorded is the population above, as it stands: **41 of 545 published fields**, close
 // to the `47 of 511` `observables_test.go`'s header measured when it refused the field-level rule.
 // It is a MEASUREMENT written down, not a list anybody chose.
 //
@@ -179,12 +179,13 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 // half. Reading 34 call sites to say which are genuinely unread is the second, and it is filed
 // rather than guessed: an automatic verdict is exactly what both unsound filters would give.
 //
-// **Six of the forty are already answered at SHAPE level.** `ceremony.Anchor` and `p2p.Channel`
+// **Seven of the forty-one are already answered at SHAPE level.** `ceremony.Anchor` and `p2p.Channel`
 // are in `internalShapes` with reasons — an opaque token and an inward parameter carrier — so
 // their fields are in this list because the per-field question is narrower than the rule, not
 // because anything is undecided about them.
 var inPackageOnlyRecorded = []string{
 	// ceremony.Anchor  // shape declared internal, with a reason
+	"ceremony.Anchor.Ceremony", // /pending 686: read by VerifyAgainst, the one door
 	"ceremony.Anchor.Convener",
 	"ceremony.Anchor.RosterHash",
 	// ceremony.CandidateRecord
