@@ -1,10 +1,10 @@
 --- a/internal/pdfops/pdfops.go
 +++ b/internal/pdfops/pdfops.go
-@@ -615,7 +615,7 @@
- 		// **`collectWithoutStructure`, never `Collect`** (P02.S03): from S04b `Collect` carries the
- 		// source tree onto the pages it keeps, and a tree carried across a redaction describes what
+@@ -614,7 +614,7 @@
  		// the redacted pages said. The routing is guarded, because the two are identical today.
--		seg, err := collectWithoutStructure(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
+ 		// **`refuseUnreadable`** (`/pending 688`): a kept page whose drawing cannot be read cannot have its
+ 		// resources pruned, and keeping them keeps whatever the redacted page shared with it.
+-		seg, err := collectWithoutStructure(original, []string{fmt.Sprintf("%d-%d", i, j-1)}, refuseUnreadable) // vector intact
 +		seg, err := Collect(original, []string{fmt.Sprintf("%d-%d", i, j-1)}) // vector intact
  		if err != nil {
  			return nil, err

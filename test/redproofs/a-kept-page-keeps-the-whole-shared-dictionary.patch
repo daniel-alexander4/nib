@@ -1,0 +1,11 @@
+--- a/internal/pdfops/pageselect.go
++++ b/internal/pdfops/pageselect.go
+@@ -378,7 +378,7 @@
+ 	// them** (`/pending 688`). The materialization just above hands each page the WHOLE inherited
+ 	// dictionary, and a shared one names every page's forms and images — so without this, the drawing
+ 	// only a dropped page made is written out through a page that never draws it.
+-	if err := pruneKeptResources(xt, keptDicts, keep, policy); err != nil {
++	if err := error(nil); err != nil {
+ 		return false, err
+ 	}
+ 

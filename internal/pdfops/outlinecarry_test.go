@@ -358,7 +358,7 @@ func TestAnOutlineDoesNotResurrectADroppedPage(t *testing.T) {
 // tree's, so the flag is shared — and a carry leaking onto that door is the regression.
 func TestASubsetFedToACompositionCarriesNoOutline(t *testing.T) {
 	src := bookmarkedPDF(t, 3, []pdfcpu.Bookmark{{Title: "Alpha", PageFrom: 1}})
-	out, err := collectWithoutStructure(src, []string{"2", "1"})
+	out, err := collectWithoutStructure(src, []string{"2", "1"}, keepUnreadable)
 	if err != nil {
 		t.Fatal(err)
 	}

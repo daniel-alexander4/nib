@@ -1376,7 +1376,7 @@ func TestSelectPagesRefusesASelectionItCannotHonour(t *testing.T) {
 		{"negative", []int{-1}, "is not in this document"},
 	} {
 		_, err := writeMutated(src, func(ctx *model.Context) error {
-			_, serr := selectPages(ctx, c.keep, false)
+			_, serr := selectPages(ctx, c.keep, false, keepUnreadable)
 			return serr
 		})
 		if err == nil {

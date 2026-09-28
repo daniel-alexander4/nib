@@ -920,7 +920,7 @@ func TestTheCarryIsSkippedEntirelyForAnUntaggedDocument(t *testing.T) {
 	// this test green, because both paths emit the same document. What IS observable is that the
 	// carrying door produced exactly what the non-carrying door produces: same catalog, same page
 	// count, same bytes but for the `/ID` and dates pdfcpu mints per write.
-	plain, perr := collectWithoutStructure(src, []string{"3", "1"})
+	plain, perr := collectWithoutStructure(src, []string{"3", "1"}, keepUnreadable)
 	if perr != nil {
 		t.Fatal(perr)
 	}

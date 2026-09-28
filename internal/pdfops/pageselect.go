@@ -293,7 +293,11 @@ func selectionCeiling(pages int) int {
 // succeeded, so a refusal produces exactly the honest loss this primitive produced before that slice.
 // It is one flag on one door rather than two implementations, and the two named wrappers at the
 // `subset` level are where each caller's choice is recorded (ADR-009).
-func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
+//
+// **`policy` says what happens to a kept page whose drawing cannot be read** (`/pending 688`,
+// `resourceprune.go`): every kept page's `/Resources` is pruned to what its drawing names, and a page
+// that cannot be read cannot be pruned. Redaction refuses; every other door keeps the page as it was.
+func selectPages(ctx *model.Context, keep []int, carry bool, policy unreadablePolicy) (bool, error) {
 	xt := ctx.XRefTable
 	root, err := xt.Catalog()
 	if err != nil {
@@ -369,6 +373,13 @@ func selectPages(ctx *model.Context, keep []int, carry bool) (bool, error) {
 		}
 		dic["Parent"] = pagesRef
 		kids = append(kids, ref)
+	}
+	// **Every kept page's resources are pruned to what its drawing names, before anything else reads
+	// them** (`/pending 688`). The materialization just above hands each page the WHOLE inherited
+	// dictionary, and a shared one names every page's forms and images — so without this, the drawing
+	// only a dropped page made is written out through a page that never draws it.
+	if err := pruneKeptResources(xt, keptDicts, keep, policy); err != nil {
+		return false, err
 	}
 
 	// The root /Pages node is reused so the catalog's reference stays valid, but its contents are
@@ -651,31 +662,15 @@ func dropSignature(xt *model.XRefTable, root types.Dict, pages []types.Dict) {
 			}
 		}
 	}
-	var scan func(ref types.IndirectRef, depth int)
-	scan = func(ref types.IndirectRef, depth int) {
-		if depth > 50 {
-			return
-		}
-		d := derefDict(xt, ref)
-		if d == nil {
-			return
-		}
-		if nameVal(d, "FT") == "Sig" {
-			mark(ref, 0)
-			return
-		}
-		for _, k := range derefArray(xt, d["Kids"]) {
-			if kr, ok := k.(types.IndirectRef); ok {
-				scan(kr, depth+1)
-			}
-		}
-	}
+	// The field tree is walked through `eachFormField`, the one walk with a visited set (ADR-009,
+	// `/pending 689`) — this function's own recursion had none, and a /Kids naming one child k times
+	// cost k^depth.
 	if form != nil {
-		for _, f := range derefArray(xt, form["Fields"]) {
-			if fr, ok := f.(types.IndirectRef); ok {
-				scan(fr, 0)
+		eachFormField(xt, form, func(o types.Object, d types.Dict) {
+			if ref, ok := o.(types.IndirectRef); ok && nameVal(d, "FT") == "Sig" {
+				mark(ref, 0)
 			}
-		}
+		})
 	}
 	// A signature merged with its widget and never listed in /Fields.
 	for _, page := range pages {
@@ -736,7 +731,20 @@ func stripAnnots(xt *model.XRefTable, page types.Dict, doomed map[int]bool) {
 // kept because one of its widgets is on a surviving page still referenced its other widgets, whose
 // /P names a page this operation dropped — and pdfcpu writes by reachability, so the dropped page's
 // dictionary and its /Contents went into the output. "Removed" would have meant "hidden".
+//
+// # Each field is decided ONCE (`/pending 689`)
+//
+// It is a rebuild rather than a visit, so it cannot simply be `eachFormField`; but it shares that
+// walk's bound. A field reached a second time — a /Kids array naming one child k times, or two
+// parents sharing it — gets the answer its first visit reached, so the cost is the number of distinct
+// fields rather than k^depth. A field reached while it is still being decided is a CYCLE and is
+// answered "not kept": the back edge is dropped from the rebuilt /Kids, and its first visit still
+// decides the field on its own merits.
 func keepFields(xt *model.XRefTable, fields types.Array, keep func(nr int, d types.Dict) bool, depth int) types.Array {
+	return keepFieldsMemo(xt, fields, keep, depth, map[int]bool{})
+}
+
+func keepFieldsMemo(xt *model.XRefTable, fields types.Array, keep func(nr int, d types.Dict) bool, depth int, decided map[int]bool) types.Array {
 	if depth > 50 {
 		return nil
 	}
@@ -746,21 +754,31 @@ func keepFields(xt *model.XRefTable, fields types.Array, keep func(nr int, d typ
 		if !ok {
 			continue
 		}
+		nr := fr.ObjectNumber.Value()
+		if kept, seen := decided[nr]; seen {
+			if kept {
+				out = append(out, f)
+			}
+			continue
+		}
 		d := derefDict(xt, fr)
 		if d == nil {
 			continue
 		}
+		decided[nr] = false // in progress: a cycle back to here reads "not kept"
 		kids := derefArray(xt, d["Kids"])
 		if len(kids) > 0 {
-			live := keepFields(xt, kids, keep, depth+1)
+			live := keepFieldsMemo(xt, kids, keep, depth+1, decided)
 			if len(live) == 0 {
 				continue
 			}
 			d["Kids"] = live
+			decided[nr] = true
 			out = append(out, f)
 			continue
 		}
-		if keep(fr.ObjectNumber.Value(), d) {
+		if keep(nr, d) {
+			decided[nr] = true
 			out = append(out, f)
 		}
 	}

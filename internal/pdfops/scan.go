@@ -144,7 +144,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 		// only active content is field-level JavaScript scanned CLEAN, and — because
 		// server/scan.go's residual re-scan is this same detector — StripActive then
 		// reported "all active content neutralized" with the scripts still in place.
-		eachFormField(xt, af, func(f types.Dict) {
+		eachFormField(xt, af, func(_ types.Object, f types.Dict) {
 			if _, ok := f.Find("AA"); ok {
 				add("additionalActions", "medium",
 					"Form field additional actions (keystroke, format, validate or calculate script)", 0)
@@ -242,11 +242,18 @@ func Scan(pdf []byte) (ScanReport, error) {
 // ancestor is a document the reader still opens, and this package has already paid once for
 // a walk that recursed on one (see eachPage's own cycle guard). Direct dicts have no object
 // number, so they are bounded by depth as well.
-func eachFormField(xt *model.XRefTable, af types.Dict, fn func(types.Dict)) {
+//
+// **It is the ONE walk of the field tree** (ADR-009, `/pending 689`). `dropSignature` kept its own
+// recursion with a depth cap and no visited set, so a field whose `/Kids` named one child k times was
+// walked k^depth times — measured, 1,596 bytes (k=4, 12 levels) cost `RemovePages` 1.15 s and k=8 did
+// not finish in 300 s. fn receives the object as the tree NAMES it as well as the dict, because a
+// caller that marks what it finds by object number needs the reference. The depth cap is the larger
+// of the two the walks used (50), so neither caller lost reach by the merge.
+func eachFormField(xt *model.XRefTable, af types.Dict, fn func(o types.Object, f types.Dict)) {
 	seen := map[int]bool{}
 	var walk func(o types.Object, depth int)
 	walk = func(o types.Object, depth int) {
-		if depth > 32 {
+		if depth > 50 {
 			return
 		}
 		if ir, ok := o.(types.IndirectRef); ok {
@@ -260,7 +267,7 @@ func eachFormField(xt *model.XRefTable, af types.Dict, fn func(types.Dict)) {
 		if f == nil {
 			return
 		}
-		fn(f)
+		fn(o, f)
 		for _, k := range derefArray(xt, f["Kids"]) {
 			walk(k, depth+1)
 		}
@@ -310,7 +317,7 @@ func StripActive(pdf []byte) ([]byte, error) {
 			// them: /AA on a PARENT field dict is not on any annotation, so the page walk
 			// never saw it. Deleting /CO alone would leave the scripts and only remove the
 			// order they run in.
-			eachFormField(xt, af, func(f types.Dict) {
+			eachFormField(xt, af, func(_ types.Object, f types.Dict) {
 				_ = xt.DeleteDictEntry(f, "AA")
 				_ = xt.DeleteDictEntry(f, "A")
 			})

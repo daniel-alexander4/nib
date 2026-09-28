@@ -6179,3 +6179,28 @@ produce two blobs sharing a bag, because `AddSignerChain` refuses a chain whose 
 the leaf.
 
 `recorded` 485 → 487.
+
+## /pending 688 and /pending 689 — what a dropped page drew, and a field tree walked per path (2026-09-28)
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `a-kept-page-keeps-the-whole-shared-dictionary` | `TestRedactionLeavesNothingOnlyTheRedactedPageDrew`, tier 1 | "the redacted file still carries the form only page 1 drew (\"SECRETPAGEONE\")" |
+| `the-field-rebuild-pays-per-path` | `TestKeepFieldsDecidesEachFieldOnce`, tier 1 | "keepFields asked its predicate 2048 times for ONE terminal field … the rebuild pays per path" |
+
+**The first row searches DECODED bytes.** Every stream of the output is decoded through pdfcpu and
+searched with the raw file, because a Flate stream hides its text from a byte search. It goes red for
+both shapes of sharing — resources inherited from `/Pages`, and one indirect dictionary two pages
+name — which is why the fix is a prune in `selectPages` and not "stop materializing inheritance".
+
+**Not rows, but probed red** (all in `redactresources_test.go` and `fielddag_test.go`): an inline
+image's `/CS` not read, a `#xx` name not decoded, a resource-less form's names not merged into its
+caller's, a form's own shared `/Resources` not pruned, redaction's fail-closed policy relaxed,
+`/ProcSet` dropped, annotation appearances not walked; `eachFormField`'s visited set removed, and
+`keepFields`' in-progress marker removed. **One survivor, declared:** dropping a resource key outside
+ISO 32000-1 Table 33 cannot go red through a file, because pdfcpu's own read already drops such a key
+— measured with the prune removed.
+
+`redaction-routes-through-the-carrying-collect` staled on the new argument to its line and was
+re-recorded expressing the same defect.
+
+`recorded` 487 → 489.

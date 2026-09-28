@@ -1,0 +1,11 @@
+--- a/internal/pdfops/pageselect.go
++++ b/internal/pdfops/pageselect.go
+@@ -755,7 +755,7 @@
+ 			continue
+ 		}
+ 		nr := fr.ObjectNumber.Value()
+-		if kept, seen := decided[nr]; seen {
++		if kept, seen := decided[nr]; seen && false {
+ 			if kept {
+ 				out = append(out, f)
+ 			}
