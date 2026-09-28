@@ -828,6 +828,7 @@ func pruneAcroForm(xt *model.XRefTable, root types.Dict, keptPages []types.Dict)
 		return nil
 	}
 	form["Fields"] = kept
+	pruneDefaultResources(xt, form)
 	dead := map[int]bool{}
 	for _, o := range derefArray(xt, form["CO"]) {
 		if r, ok := o.(types.IndirectRef); ok && !live[r.ObjectNumber.Value()] {
@@ -836,6 +837,67 @@ func pruneAcroForm(xt *model.XRefTable, root types.Dict, keptPages []types.Dict)
 	}
 	pruneFieldRefs(xt, form, "CO", dead)
 	return nil
+}
+
+// pruneDefaultResources rebuilds `/AcroForm /DR` as a fresh dictionary holding only the fonts the
+// surviving fields' `/DA` strings name (`/pending 705`).
+//
+// `/DR` is where a viewer finds the font to regenerate a field's appearance from its `/DA`, and a `/DA`
+// names a font and nothing else (`Tf`, plus colour operators that name no resource) — so a font the
+// kept fields name is the whole of what `/DR` is for. It used to be kept whole, and producers point it
+// at the pages' shared resource dictionary, so every form and image the dropped page drew stayed
+// reachable through it after `pruneKeptResources` had pruned them from the pages: the redacted page's
+// text was still in a redacted file. The fresh dictionary also stops a shared `/DR` object being
+// edited under a page that still names it. `/Encoding`, the other key ISO 32000-1 gives `/DR`, is a
+// differences table with no content, and is kept.
+func pruneDefaultResources(xt *model.XRefTable, form types.Dict) {
+	dr := derefDict(xt, form["DR"])
+	if dr == nil {
+		return
+	}
+	named := map[string]bool{}
+	addDA := func(d types.Dict) {
+		if da, ok := derefString(xt, d["DA"]); ok {
+			for n := range contentNames([]byte(da)) {
+				named[n] = true
+			}
+		}
+	}
+	addDA(form)
+	eachFormField(xt, form, func(_ types.Object, f types.Dict) { addDA(f) })
+	out := types.Dict{}
+	if fonts := derefDict(xt, dr["Font"]); fonts != nil {
+		kept := types.Dict{}
+		for name, obj := range fonts {
+			if named[name] {
+				kept[name] = obj
+			}
+		}
+		if len(kept) > 0 {
+			out["Font"] = kept
+		}
+	}
+	if enc, ok := dr["Encoding"]; ok {
+		out["Encoding"] = enc
+	}
+	form["DR"] = out
+}
+
+// derefString reads a string object — literal or hex — as its bytes.
+func derefString(xt *model.XRefTable, o types.Object) (string, bool) {
+	o, err := xt.Dereference(o)
+	if err != nil {
+		return "", false
+	}
+	switch v := o.(type) {
+	case types.StringLiteral:
+		s, err := types.StringLiteralToString(v)
+		return s, err == nil
+	case types.HexLiteral:
+		b, err := v.Bytes()
+		return string(b), err == nil
+	}
+	return "", false
 }
 
 // unlinkDestinations removes a link's destination when it names a page this subset dropped.
