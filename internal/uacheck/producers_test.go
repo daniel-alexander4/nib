@@ -340,11 +340,13 @@ func TestTheAgreementFigureIsTheHarnesssOwn(t *testing.T) {
 		}
 		named[parts[1]] = true
 	}
-	for c := range corpusAllow {
-		if parts := strings.SplitN(c, " / ", 2); len(parts) == 2 {
-			named[parts[1]] = true
-		} else {
-			t.Errorf("corpusAllow key %q is not \"<file> / <clause>\"", c)
+	for _, table := range []map[string]string{corpusAllow, corpusStrict} {
+		for c := range table {
+			if parts := strings.SplitN(c, " / ", 2); len(parts) == 2 {
+				named[parts[1]] = true
+			} else {
+				t.Errorf("corpus table key %q is not \"<file> / <clause>\"", c)
+			}
 		}
 	}
 	// The stimulus: the harness names some clause, so the comparison below is over something.
@@ -368,15 +370,17 @@ func TestTheAgreementFigureIsTheHarnesssOwn(t *testing.T) {
 			t.Errorf("knownDisagreements holds %s, which nib does not check", c)
 		}
 	}
-	// `unexercised` is exactly the clauses the veraPDF corpus never settles, so N cannot count one as agreeing.
+	// `unexercised` is exactly the clauses NO corpus settles: veraPDF's own never reaches them AND the oracle's generated
+	// documents do not reach both halves (a `notYetReachable` row). It used to read veraPDF's corpus alone, so a clause
+	// the oracle exercises in both directions and agrees on strictly was reported to users as one "no document has yet
+	// exercised" (the P08 phase-close review, R1-2: `7.18.2 t1`).
 	for c, reach := range corpusReach {
-		if _, idle := unexercised[c]; (reach == 0) != idle {
-			t.Errorf("%s: corpus reach %d, unexercised %v — the two must agree (an unsettled clause is not agreement)", c, reach, idle)
-		}
-	}
-	for c := range unexercised {
-		if _, has := corpusReach[c]; !has {
-			t.Errorf("unexercised holds %s, which has no corpus reach row", c)
+		_, gapF := notYetReachable[c+" "+string(veraFailed)]
+		_, gapP := notYetReachable[c+" "+string(veraPassed)]
+		want := reach == 0 && (gapF || gapP)
+		if _, idle := unexercised[c]; idle != want {
+			t.Errorf("%s: veraPDF-corpus reach %d, oracle gaps %v/%v, unexercised %v — unexercised must hold exactly the "+
+				"clauses no corpus settles", c, reach, gapF, gapP, idle)
 		}
 	}
 }

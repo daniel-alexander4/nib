@@ -2,9 +2,11 @@ package uacheck
 
 import (
 	"encoding/xml"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,10 +51,14 @@ func TestNoCorpusDocumentNibCallsConformantFailsVeraPDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// **The count is the README's**, so a set that shrank would leave the docs' figure standing over fewer files.
-	const readmeCount = 140
-	if len(conformant) != readmeCount {
-		t.Errorf("nib calls %d corpus files conformant and the README says %d — measure it again and move both", len(conformant), readmeCount)
+	// **The count is the README's, read from the README** — a hand-typed constant here could drift from the prose with
+	// nothing going red (the P08 phase-close review, R1-4), so a set that shrank would leave the docs' figure standing.
+	readme, rerr := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if want := fmt.Sprintf("veraPDF passes all %d files of its own PDF/UA-1 test corpus", len(conformant)); !strings.Contains(strings.Join(strings.Fields(string(readme)), " "), want) {
+		t.Errorf("nib calls %d corpus files conformant and the README does not say %q — measure it again and move the prose", len(conformant), want)
 	}
 	for _, f := range []string{"7.21.4.2-t01-fail-a.pdf", "7.21.4.2-t01-fail-b.pdf"} {
 		p := filepath.Join(root, "7.21 Fonts", "7.21.4 Embedding", "7.21.4.2 Subset embedding", f)

@@ -41,6 +41,29 @@ import (
 // corpusAllow is every (file, clause) pair this test excuses, with why. Keyed "<dir>/<file> / <clause>".
 var corpusAllow = map[string]string{}
 
+// corpusStrict names every (file, clause) pair on which nib and veraPDF give different answers that are NEITHER a false
+// pass NOR a false fail — nib Pass where veraPDF found no subject, or the reverse — with the item that owns it. Law 5's
+// agreement is three states, and the real-producer harness judges them so; this corpus used to be judged for the two
+// failures only, so a Pass-versus-no-subject difference here reached no table and `knownDisagreements` counted the
+// clause as agreeing (the P08 phase-close review, R1-1: `7.2 t34` on seven files). Keyed as corpusAllow; a row that
+// stops disagreeing is an error.
+var corpusStrict = map[string]string{
+	// Measured at the P08 phase close, 2026-09-28, veraPDF 1.30.2 over the 297-file set.
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t30":                        "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t31":                        "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t32":                        "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t30":                          "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t31":                          "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t32":                          "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t34":                        "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t34":                          "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.18 Annotations/7.18.1 General/7.18.1-t03-pass-f.pdf / 7.2 t34": "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.20 XObjects/7.20-t01-fail-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.20 XObjects/7.20-t01-pass-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.20 XObjects/7.20-t02-fail-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.20 XObjects/7.20-t02-pass-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+}
+
 // corpusReach is, per implemented clause, the number of corpus files on which veraPDF evaluated the clause and
 // nib settled it — measured 2026-09-15 over the 297-file set. Every implemented clause has a row.
 //
@@ -263,7 +286,8 @@ func TestTheCheckerAgreesWithVeraPDFsOwnCorpus(t *testing.T) {
 	for _, c := range Clauses() {
 		implemented[c] = true
 	}
-	var falsePass, falseFail []string
+	var falsePass, falseFail, strictOff []string
+	strictSeen := map[string]bool{}
 	reach := map[string]int{}
 	scored, unreadable := 0, 0
 	seenUnreadable := map[string]bool{}
@@ -274,6 +298,12 @@ func TestTheCheckerAgreesWithVeraPDFsOwnCorpus(t *testing.T) {
 		}
 		if vera[i] == nil {
 			t.Errorf("%s: veraPDF returned no job for it — a lost file reads exactly like a clean one", names[i])
+			continue
+		}
+		// A job that lists no rule at all (veraPDF did not finish it) would otherwise be skipped clause by clause below
+		// and score nothing, silently (the P08 phase-close review, R1-5). Say it by name.
+		if len(vera[i]) == 0 {
+			t.Errorf("%s: veraPDF's job lists no rule — it did not validate the file, so nothing about it is scored", names[i])
 			continue
 		}
 		nr, err := Check(pdf)
@@ -309,6 +339,11 @@ func TestTheCheckerAgreesWithVeraPDFsOwnCorpus(t *testing.T) {
 				falsePass = append(falsePass, key+" — veraPDF failed it; nib: "+r.Verdict.String()+" "+r.Why)
 			case r.Verdict == Fail && v != veraFailed:
 				falseFail = append(falseFail, key+" — veraPDF "+string(v)+"; nib: "+r.Why+" ("+r.Where+")")
+			case !v.agrees(r.Verdict):
+				strictSeen[key] = true
+				if _, named := corpusStrict[key]; !named {
+					strictOff = append(strictOff, key+" — veraPDF "+string(v)+"; nib: "+r.Verdict.String()+" "+r.Why)
+				}
 			}
 		}
 	}
@@ -317,13 +352,22 @@ func TestTheCheckerAgreesWithVeraPDFsOwnCorpus(t *testing.T) {
 			t.Errorf("corpusUnreadable has %q, which nib now opens — remove the row", k)
 		}
 	}
-	t.Logf("veraPDF corpus: %d file(s), %d (file, clause) pair(s) scored, %d unreadable, %d false pass, %d false fail",
-		len(files), scored, unreadable, len(falsePass), len(falseFail))
+	t.Logf("veraPDF corpus: %d file(s), %d (file, clause) pair(s) scored, %d unreadable, %d false pass, %d false fail, "+
+		"%d other disagreement(s) (%d named)", len(files), scored, unreadable, len(falsePass), len(falseFail),
+		len(strictSeen), len(strictSeen)-len(strictOff))
 	for _, e := range falsePass {
 		t.Errorf("FALSE PASS: %s", e)
 	}
 	for _, e := range falseFail {
 		t.Errorf("FALSE FAIL: %s", e)
+	}
+	for _, e := range strictOff {
+		t.Errorf("DISAGREE (neither a false pass nor a false fail, and not in corpusStrict): %s", e)
+	}
+	for k := range corpusStrict {
+		if !strictSeen[k] {
+			t.Errorf("corpusStrict names %q, which no longer disagrees — remove the row", k)
+		}
 	}
 	for c := range implemented {
 		want, has := corpusReach[c]

@@ -71,9 +71,20 @@ while IFS=$'\t' read -r producer name sha url _; do
 		echo "KEPT: $producer/$name — this run did not fetch it, and the corpus's copy still matches the manifest" >&2
 	fi
 done <"$manifest"
+# Each sourced producer's directory carries a `.sourced` marker, so one whose LAST manifest row was removed — no stage
+# directory this run — is still recognised as this script's and removed, rather than scored forever unpinned (the P08
+# phase-close review, R8-5). The local producers' directories carry no marker and are never touched here.
+for d in "$out"/*/; do
+	p=${d%/}; p=${p##*/}
+	if [ -e "$out/$p/.sourced" ] && [ ! -d "$work/stage-$p" ]; then
+		echo "DROPPED: $p — the manifest names no file for it any more" >&2
+		rm -rf "${out:?}/$p"
+	fi
+done
 for d in "$work"/stage-*; do
 	[ -d "$d" ] || continue
 	p=${d##*/stage-}
+	: >"$d/.sourced"
 	rm -rf "${out:?}/$p"
 	mv "$d" "$out/$p"
 done

@@ -49,7 +49,12 @@ url() { local p=${1// /%20}; echo "file://${p//#/%23}"; }
 
 made=0
 failed=()
-skip() { echo "SKIP: $1 is not installed, so its part of the corpus is not made (the corpus is narrower, not wrong)"; }
+# skip <name> <producer> — say so, and remove the producer's directory: a file an earlier run made is not this run's, and
+# left in place it was scored beside fresh files and re-distilled by Ghostscript below (the P08 phase-close review, R8-4).
+skip() {
+	echo "SKIP: $1 is not installed, so its part of the corpus is not made (the corpus is narrower, not wrong)"
+	rm -rf "${out:?}/$2"
+}
 # publish <producer> — swap the staged directory in for the producer's own.
 publish() {
 	rm -rf "${out:?}/$1"
@@ -91,7 +96,7 @@ lo() {
 if command -v soffice >/dev/null; then
 	if lo; then publish libreoffice; else fail libreoffice "a conversion wrote no PDF" "$work/lo.log"; fi
 else
-	skip LibreOffice
+	skip LibreOffice libreoffice
 fi
 
 # pdfLaTeX: two untagged sources (Computer Modern, Times) and one tagged. Run twice so references settle.
@@ -111,7 +116,7 @@ tex() {
 if command -v pdflatex >/dev/null; then
 	if tex; then publish pdflatex; else fail pdflatex "a source did not compile" "$work/tex.log"; fi
 else
-	skip pdfLaTeX
+	skip pdfLaTeX pdflatex
 fi
 
 # Chromium (headless, Skia/PDF): tagged output with Type 0 CIDFontType2 fonts. Any Chromium-family binary will do.
@@ -126,7 +131,7 @@ if [ -n "$chrome" ]; then
 		fail chromium "headless print wrote no PDF" "$work/chrome.log"
 	fi
 else
-	skip Chromium
+	skip Chromium chromium
 fi
 
 # Ghostscript: re-distil everything above. pdfwrite drops or rebuilds the structure and re-encodes fonts, which is the
@@ -144,7 +149,7 @@ if command -v gs >/dev/null; then
 	done
 	if [ "$ok" = 1 ]; then publish ghostscript; else fail ghostscript "a re-distil failed" "$work/gs.log"; fi
 else
-	skip Ghostscript
+	skip Ghostscript ghostscript
 fi
 
 echo "producers.sh: $made file(s) written under $out"
