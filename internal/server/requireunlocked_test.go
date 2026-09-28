@@ -85,6 +85,7 @@ func TestRequireUnlockedPinsVaultToRequest(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/recent", nil)
+	req.Header.Set("X-CSRF-Token", "test-token") // the session (ADR-053), so the vault is what is tested
 	s.requireUnlocked(probe)(httptest.NewRecorder(), req)
 
 	if before != want {
@@ -107,7 +108,11 @@ func TestRequireUnlockedRejectsLocked(t *testing.T) {
 	probe := func(w http.ResponseWriter, r *http.Request) { called = true }
 
 	rec := httptest.NewRecorder()
-	s.requireUnlocked(probe)(rec, httptest.NewRequest(http.MethodGet, "/api/recent", nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/recent", nil)
+	// Holding the session (ADR-053): without it the answer is 403 whatever the vault's state, and
+	// this would be asserting the credential rather than the lock.
+	req.Header.Set("X-CSRF-Token", s.csrf)
+	s.requireUnlocked(probe)(rec, req)
 
 	if called {
 		t.Fatal("handler ran while locked; requireUnlocked must reject first")

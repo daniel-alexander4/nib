@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -24,7 +23,7 @@ func TestTheProbeAnswersWhileTheVaultIsLOCKED(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test-version")
 	srv.SetInstanceToken("probe-token")
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	c := newClient(t)
 
@@ -50,7 +49,7 @@ func TestTheProbeAnswersWhileTheVaultIsLOCKED(t *testing.T) {
 func TestTheProbeRefusesAWrongTokenAndAServerWithNone(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test-version")
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	c := newClient(t)
 

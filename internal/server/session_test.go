@@ -1168,18 +1168,11 @@ type okVerifier struct{}
 
 func (okVerifier) ConfirmVerification(string) (bool, error) { return true, nil }
 
-// csrfFor reads the CSRF token off /api/status, so a helper that needs to POST does not
-// have to be handed one through every call site it already has.
+// csrfFor gives c this server's session and returns the CSRF token (ADR-053), so a helper that
+// needs to POST does not have to be handed one through every call site it already has.
 func csrfFor(t *testing.T, c *http.Client, baseURL string) string {
 	t.Helper()
-	var st struct {
-		CSRF string `json:"csrf"`
-	}
-	sessGet(t, c, baseURL+"/api/status", &st)
-	if st.CSRF == "" {
-		t.Fatal("no CSRF token on /api/status")
-	}
-	return st.CSRF
+	return sessionFor(t, c, baseURL)
 }
 
 // stubListener is two distinct p2p.Listener values and nothing else. The test it serves

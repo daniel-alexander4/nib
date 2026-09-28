@@ -156,6 +156,31 @@ go run build/genpdf.go "$WHOME/nibprobe/report.pdf" "report page 1" "report page
 go run build/genpdf.go "$WHOME/nibprobe/second.pdf" "second page 1" || exit 1
 printf 'not a pdf\n' > "$WHOME/nibprobe/notes.txt"
 
+# **Every curl below carries the session cookie through ONE setting** (ADR-053, `/pending 685`). A
+# caller without the session is refused on every route behind `requireUnlocked`, GETs included, and
+# this harness makes dozens of plain GETs. The cookie is named per port (`nib_<port>`), so one jar
+# holds every instance's and each instance reads only its own. `trade` below writes it.
+export CURL_HOME="$WORK/curlhome"
+mkdir -p "$CURL_HOME"
+: >"$WORK/jar"
+printf 'cookie = "%s"\n' "$WORK/jar" >"$CURL_HOME/.curlrc"
+
+# launch_token trades the launch key a headless Nib logs for the person who started it (ADR-053),
+# writing the session cookie into the shared jar and printing the CSRF token. The log line is the
+# ONLY way in — `/api/status` stopped carrying the token because it answers every process on the
+# machine. Retried: the server can answer before the line is written.
+launch_token() { # base log
+  local key="" _
+  for _ in $(seq 1 40); do
+    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
+    [ -n "$key" ] && break
+    sleep 0.1
+  done
+  [ -n "$key" ] || return 1
+  curl -fsS -b "$WORK/jar" -c "$WORK/jar" -X POST "$1/api/launch" -H "X-Nib-Launch: $key" \
+    | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p'
+}
+
 echo "starting nib.exe headless on $BASE"
 NIB_ADDR="127.0.0.1:$PORT" NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 wine "$EXE" > "$WORK/nib.log" 2>&1 &
 SERVER_PID=$!
@@ -170,7 +195,7 @@ curl -s --max-time 2 "$BASE/api/status" >/dev/null 2>&1 || {
 # First run: create a key, which creates and unlocks the vault. Every route the
 # dialogs use sits behind requireUnlocked.
 curl -s -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' -d '{"mode":"create"}' >/dev/null
-CSRF="$(curl -s "$BASE/api/status" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p')"
+CSRF="$(launch_token "$BASE" "$WORK/nib.log")"
 [ -n "$CSRF" ] || { echo "vault did not unlock; log follows"; cat "$WORK/nib.log"; exit 1; }
 
 echo

@@ -1205,8 +1205,8 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
 }
 .sigcard textarea { resize: vertical; }
 
-/* auth overlay */
-#authOverlay {
+/* auth overlay — and the launch overlay, which wears the same card (ADR-053) */
+#authOverlay, #launchOverlay {
   position: fixed;
   inset: 0;
   background: var(--crust);
@@ -1215,7 +1215,7 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   justify-content: center;
   z-index: 100;
 }
-#authForm {
+#authForm, #launchCard {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1232,8 +1232,8 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   border: 1px solid var(--surface0);
   border-radius: 12px;
 }
-#authForm h2 { margin: 0; font-weight: 600; }
-#authForm p { margin: 0; color: var(--subtext0); font-size: 13px; }
+#authForm h2, #launchCard h2 { margin: 0; font-weight: 600; }
+#authForm p, #launchCard p { margin: 0; color: var(--subtext0); font-size: 13px; }
 #authForm input { padding: 9px 10px; }
 #authForm button { background: var(--blue); color: var(--crust); border-color: var(--blue); font-weight: 600; padding: 9px; }
 .error { color: var(--red) !important; min-height: 1em; }

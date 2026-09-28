@@ -103,7 +103,7 @@ after(async () => {
 // shipping in the product (compare-align.test.mjs is the precedent for both).
 async function measure() {
   return page.evaluate(async ([src, peerFP, magenta, green]) => {
-    const csrf = (await (await fetch('/api/status')).json()).csrf;
+    const csrf = (await (await fetch('/api/launch')).json()).csrf;
     const post = (url, body, extra = {}) => fetch(url, {
       method: 'POST', headers: { 'X-CSRF-Token': csrf, ...(extra.headers || {}) }, body,
     });

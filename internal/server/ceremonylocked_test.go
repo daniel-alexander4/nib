@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -33,7 +32,7 @@ func TestTheCeremoniesListingAnswersWithTheVaultLocked(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 
 	rec, _, _ := ceremonyOnDisk(t)
@@ -68,7 +67,7 @@ func TestTheCeremoniesListingAnswersWithTheVaultLocked(t *testing.T) {
 	// Now unlock and read the same disk state. The two must agree field for field.
 	unlockedSrv, v := unlockedServer(t)
 	_ = v
-	uts := httptest.NewServer(unlockedSrv.Handler())
+	uts := serveTest(t, unlockedSrv)
 	t.Cleanup(uts.Close)
 	// unlockedServer sets its own configDir but HOME — which is what defaultOutputDir reads — is
 	// still this test's, so both servers see the same ceremonies directory.
@@ -106,7 +105,7 @@ func TestTheCeremoniesListingRefusesACrossSiteRead(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	srv, _ := unlockedServer(t)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 
 	rec, _, _ := ceremonyOnDisk(t)
@@ -160,7 +159,7 @@ func TestALockedReadRunsNoCloseOutSweep(t *testing.T) {
 	t.Setenv("HOME", home)
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
 	srv.instanceToken = "primary"
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 
 	rec, _, _ := ceremonyOnDisk(t)

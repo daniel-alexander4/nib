@@ -167,6 +167,7 @@ const els = {
   srvSigners: $('srvSigners'),
   srvIntentRow: $('srvIntentRow'), srvIntent: $('srvIntent'),
   srvDecline: $('srvDecline'), srvAccept: $('srvAccept'),
+  launchOverlay: $('launchOverlay'),
   authOverlay: $('authOverlay'), authForm: $('authForm'), authTitle: $('authTitle'),
   authHint: $('authHint'), authPw: $('authPw'), authPwLabel: $('authPwLabel'), migrateRow: $('migrateRow'),
   keyChoice: $('keyChoice'), keySelect: $('keySelect'), keyPath: $('keyPath'),
@@ -269,7 +270,9 @@ const all = (sel) => document.querySelectorAll(sel);
 // --- unlock: SSH key + CSRF --------------------------------------------------
 // Nib unlocks at startup from the user's SSH key. The first-run wizard
 // enrolls a key (or migrates an old password vault); after that the vault opens
-// with no prompt. csrf is the per-process token issued when the vault unlocks.
+// with no prompt. csrf is the per-process token, handed to this page ONLY by trading the launch
+// key Nib put in the URL fragment it opened the window at (ADR-053) — never by /api/status, which
+// answers any local process.
 let csrf = null;
 let authState = 'setup'; // setup | migrate | key-missing | key-locked | vault-unreadable | ready
 
@@ -351,6 +354,15 @@ async function apiFetch(url, opts = {}) {
   else if (!unpinned && view.docMeta && view.docMeta.id) opts.headers['X-Nib-Doc'] = view.docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
+  // A 403 "no session" means this page's credentials are gone (ADR-053) — a restart on a pinned
+  // port leaves the page holding a dead cookie. Every later call would fail the same way behind a
+  // working-looking app, so say what works instead: open Nib again. Other 403s (a bad origin, a
+  // switched-off feature) are the caller's to handle, as before.
+  if (res.status === 403 && /no session/.test(await res.clone().text().catch(() => ''))) {
+    els.launchOverlay.hidden = false;
+    els.launchOverlay.focus();
+    throw new Error('no session');
+  }
   // A 409 ("the document you named is gone") is deliberately NOT thrown the way a 401
   // is. Every document-route call site here already handles it correctly, with the
   // shape `if (!res.ok) { toast('…'); return; }` — 15 of them — so throwing would
@@ -431,7 +443,6 @@ function applyStatus(st) {
   if (els.officeRecheck) els.officeRecheck.hidden = loAvailable;
   els.aboutVersion.textContent = st.version || 'dev';
   if (st.state === 'ready') {
-    csrf = st.csrf;
     els.authOverlay.hidden = true;
     loadImages();
     // Apply saved preferences: theme and the auto-update toggle.
@@ -501,7 +512,6 @@ function applyStatus(st) {
     return;
   }
 
-  csrf = null;
   els.authError.textContent = '';
   els.authOverlay.hidden = false;
   // **The ceremonies on this machine, rendered while the vault is LOCKED (P06.S07, D29).**
@@ -13745,8 +13755,34 @@ window.addEventListener('unhandledrejection', (ev) => {
   toast(ev.reason?.message || 'operation failed');
 });
 
-// --- launch: check unlock state, then show the app or the first-run wizard ----
-refreshStatus();
+// --- launch: take the session, then check unlock state ----------------------
+//
+// establishSession gets this page its credentials (ADR-053). A window Nib opened carries a
+// single-use key in its URL FRAGMENT — never sent to a server, never in a Referer — which is traded
+// once for the session cookie and the CSRF token. The fragment is removed from the address bar
+// FIRST, so a reload or a bookmark never replays a spent key; a reload instead recovers the token
+// with the cookie the trade set. A page with neither cannot reach the API at all, and says so.
+async function establishSession() {
+  const m = /(?:^#|&)k=([^&]+)/.exec(location.hash);
+  if (m) history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const res = m
+      ? await fetch('/api/launch', { method: 'POST', headers: { 'X-Nib-Launch': decodeURIComponent(m[1]) } })
+      : null;
+    const got = (res && res.ok) ? res : await fetch('/api/launch');
+    if (!got.ok) return false;
+    csrf = (await got.json()).csrf || null;
+    return !!csrf;
+  } catch {
+    return false;
+  }
+}
+
+establishSession().then((ok) => {
+  if (ok) { refreshStatus(); return; }
+  els.launchOverlay.hidden = false;
+  els.launchOverlay.focus();
+});
 
 // --- this window declares itself, and holds the declaration open ------------
 //

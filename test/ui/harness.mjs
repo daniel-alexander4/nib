@@ -47,6 +47,19 @@ if (!BASE || !EXECUTABLE) {
 // ceremony rail renders its deadline with `toLocaleDateString()` + `toLocaleTimeString()`, so the
 // string's length — and how many lines it wraps to in a 200px column — varies by host locale and
 // zone. Unset for every test that asserts behaviour; set by the one that measures geometry.
+// The token uirepro.sh traded for each server's session. Server-side only: the browser gets its
+// own session by trading a key, exactly as a real window does.
+const TOKENS = {
+  [process.env.NIB_UI_BASE]: process.env.NIB_UI_CSRF,
+  [process.env.NIB_UI_LOCKED_BASE]: process.env.NIB_UI_LOCKED_CSRF,
+};
+
+async function mintLaunchKey(base) {
+  const res = await fetch(base + '/api/launch/key', { method: 'POST', headers: { 'X-CSRF-Token': TOKENS[base] || '' } });
+  if (!res.ok) throw new Error(`could not mint a launch key on ${base}: ${res.status} — uirepro.sh exports NIB_UI_CSRF / NIB_UI_LOCKED_CSRF`);
+  return (await res.json()).key;
+}
+
 export async function launch({ routes = null, waitFor = '#empty', base = BASE, locale = null, timezoneId = null } = {}) {
   const browser = await chromium.launch({
     executablePath: EXECUTABLE,
@@ -80,7 +93,11 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     }
   }
 
-  await page.goto(base);
+  // **Through a launch key, as every real window is opened (ADR-053).** A page with no key and no
+  // session shows the open-Nib-again screen and nothing else, so a bare `goto(base)` would test that
+  // screen. The key is minted with the token uirepro.sh traded for this server; it grants this
+  // browser nothing the harness does not already hold.
+  await page.goto(base + '#k=' + await mintLaunchKey(base));
   // The app boots asynchronously (status -> applyStatus -> the UI), so wait for a
   // marker of readiness rather than a fixed sleep.
   await page.waitForSelector(waitFor, { state: 'attached' });
@@ -352,8 +369,9 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // **The token is fetched, not borrowed from the page**, and that cost a tier-3 run to learn:
     // `app.js`'s `csrf` is a top-level `let`, which is NOT reachable from a `page.evaluate` —
     // six files failed with `ReferenceError: csrf is not defined`, and only those six because a
-    // file with nothing open never reached the POST. `/api/status` hands it out, which is where
-    // `applyStatus` gets it from too, so this asks the server rather than the page.
+    // file with nothing open never reached the POST. `GET /api/launch` hands it to a page holding
+    // the session cookie (ADR-053) — the same answer a reloaded window gets — so this asks the
+    // server rather than the page.
     //
     // It asks `/api/docs` rather than trusting the close, because the registry is what the next
     // file inherits, and it loops because a close racing an in-flight open would otherwise leave
@@ -367,7 +385,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
           return ((await r.json()).docs || []).length;
         };
         if ((await count()) === 0) return 0;
-        const st = await fetch('/api/status');
+        const st = await fetch('/api/launch');
         const token = st.ok ? (await st.json()).csrf : '';
         for (let i = 0; i < 5 && (await count()) > 0; i++) {
           await fetch('/api/close', { method: 'POST', headers: { 'X-CSRF-Token': token } });

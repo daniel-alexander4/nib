@@ -186,7 +186,7 @@ func TestTheNextRouteAnswersWithTheVaultLocked(t *testing.T) {
 	id := conveneNonSigningConvener(t, ts)
 
 	locked := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
-	lts := httptest.NewServer(locked.Handler())
+	lts := serveTest(t, locked)
 	t.Cleanup(lts.Close)
 	// SETUP: it really is locked, or this asserts nothing.
 	if locked.unlockedVault() != nil {
@@ -207,7 +207,7 @@ func TestTheNextRouteAnswersWithTheVaultLocked(t *testing.T) {
 func nextRouteFixture(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	srv, _ := unlockedServer(t)
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	return ts, srv
 }

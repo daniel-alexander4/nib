@@ -237,36 +237,41 @@ func Probe(rec Record) bool {
 // HandOff asks the instance the record names to open path (empty means "just surface
 // yourself"), and reports what it did.
 //
-// The four results are distinct because the caller has a decision to make and "it
+// The results are distinct because the caller has a decision to make and "it
 // worked" does not answer it: `opened` and `focused` mean exit; `queued` means exit, the
-// user will see it when they unlock; `refused` means exit but say so. Only an error
-// means "that instance is not usable — become the primary".
+// user will see it when they unlock; `refused` means exit but say so; `window` (an empty
+// path) means exit, having been given a window. Only an error means "that instance is not
+// usable — become the primary".
+//
+// `launch` is the single-use key for the window the caller opens next (ADR-053): the running
+// instance serves its API only to a page that traded one, so a window opened without it
+// could do nothing.
 // HandOff posts path to the running instance. `myVersion` is the LAUNCHING build, used
 // only to annotate a refusal — see Record.Version.
-func HandOff(rec Record, path, myVersion string) (result string, reason string, err error) {
+func HandOff(rec Record, path, myVersion string) (result, reason, launch string, err error) {
 	if rec.Handoff == "" {
-		return "", "", errors.New("the instance record carries no hand-off secret")
+		return "", "", "", errors.New("the instance record carries no hand-off secret")
 	}
 	// The same door as Probe's (/pending 502). The one production caller probes first, so this
 	// is not reachable from it today — but HandOff sends the hand-off SECRET, the more sensitive
 	// of the two requests, and was the one that did not check where it was sending it.
 	if err := checkLoopback(rec.Addr); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	body, err := json.Marshal(map[string]string{"path": path})
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+rec.Addr+"/api/handoff", bytes.NewReader(body))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(HeaderHandoff, rec.Handoff)
 	c := &http.Client{Timeout: probeTimeout}
 	resp, err := c.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -284,16 +289,17 @@ func HandOff(rec Record, path, myVersion string) (result string, reason string, 
 			running = "unknown"
 		}
 		if myVersion != "" && running != myVersion {
-			return "", "", fmt.Errorf("the running instance (version %s) refused the hand-off from this build (version %s) with HTTP %d — the two builds differ, which is the likeliest cause", running, myVersion, resp.StatusCode)
+			return "", "", "", fmt.Errorf("the running instance (version %s) refused the hand-off from this build (version %s) with HTTP %d — the two builds differ, which is the likeliest cause", running, myVersion, resp.StatusCode)
 		}
-		return "", "", fmt.Errorf("the running instance (version %s) refused the hand-off with HTTP %d", running, resp.StatusCode)
+		return "", "", "", fmt.Errorf("the running instance (version %s) refused the hand-off with HTTP %d", running, resp.StatusCode)
 	}
 	var out struct {
 		Result string `json:"result"`
 		Reason string `json:"reason"`
+		Launch string `json:"launch"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return out.Result, out.Reason, nil
+	return out.Result, out.Reason, out.Launch, nil
 }

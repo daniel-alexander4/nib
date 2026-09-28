@@ -174,6 +174,9 @@ test('nothing bypasses apiFetch to reach a document route', () => {
     // Guarded server-side by requirePublicLoopback, like its three neighbours here.
     '/api/status', '/api/ssh/unlock', '/api/ssh/enroll', '/api/ssh/migrate', '/api/ssh/repoint',
     '/api/update/check', '/api/vault/export', '/api/identity',
+    // The page's credentials (ADR-053): the launch-key trade runs BEFORE there is a token for
+    // apiFetch to attach, and it is about the process, never a document.
+    '/api/launch',
     // pdf.js issues these fetches itself, so the id rides in the URL rather than a
     // header — D15, decided rather than overlooked.
     '/api/pdf', '/api/session/pending-pdf',

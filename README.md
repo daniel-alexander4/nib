@@ -1048,8 +1048,9 @@ your vault. (Defaults to dark.)
 
 ### Private by design
 - The web interface binds **`127.0.0.1` only** — never reachable from the
-  network; writes are guarded by a per-process CSRF token and a loopback-origin
-  check. Two deliberate exceptions, both of which you start and neither of which
+  network; every request needs a per-process session that only the window Nib
+  opens can obtain (a single-use key in its address, never served to other
+  programs), and writes also need a CSRF token and a loopback-origin check. Two deliberate exceptions, both of which you start and neither of which
   runs in the background. First, a **live co-signing session you arm yourself**:
   while armed, Nib opens a single routable listener that accepts only the one peer
   whose key you pinned, and tears it down after one exchange (see *Co-sign with a
@@ -1264,7 +1265,7 @@ half-finished file behind.
 | Variable | Effect |
 | --- | --- |
 | `NIB_ADDR` | Pin a fixed loopback address (e.g. `127.0.0.1:8791`) instead of a random port. Must be loopback (`127.0.0.1`, `localhost`, or `::1`) — a non-loopback address is refused at startup. |
-| `NIB_NO_BROWSER` | Don't open a window — just serve and log the URL (headless / remote). |
+| `NIB_NO_BROWSER` | Don't open a window — just serve and log the URL to open (headless / remote). The logged URL carries a single-use key after `#k=`; open it exactly as printed, since a window without it cannot reach Nib. |
 | `NIB_NO_UPDATE_CHECK` | Disable the automatic startup update check (clicking the version pill still checks). |
 
 ---

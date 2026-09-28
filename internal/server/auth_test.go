@@ -38,6 +38,7 @@ func TestStatusProgressesToReady(t *testing.T) {
 func TestProtectedRouteRequiresUnlock(t *testing.T) {
 	ts, _ := startServer(t)
 	c := newClient(t)
+	sessionFor(t, c, ts.URL)                // the session (ADR-053) — without it this is 403, not the lock's 401
 	resp, err := c.Get(ts.URL + "/api/pdf") // vault not yet unlocked
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func TestVaultExportImportRoundTrip(t *testing.T) {
 	if imp.StatusCode != http.StatusOK || st.State != "ready" {
 		t.Errorf("import status = %d state = %q, want 200/ready", imp.StatusCode, st.State)
 	}
-	csrf = st.CSRF // import rotates the token; the client refreshes from the response
+	// The token is per process (ADR-053), so an import leaves the page holding a valid one.
 
 	// Garbage is rejected.
 	bad := write(t, c, csrf, http.MethodPost, ts.URL+"/api/vault/import", "application/octet-stream", bytes.NewReader([]byte("not a vault")))

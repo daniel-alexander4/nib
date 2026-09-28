@@ -28,7 +28,7 @@ const h = await boot({
     // the switch, so it states the default explicitly. One place where "off is the default" is
     // written down and driven, rather than an emergent property of a shared fixture.
     '/api/status': {
-      state: 'ready', csrf: 'test-csrf', version: 'test',
+      state: 'ready', version: 'test',
       autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false,
     },
     '/api/settings': (opts) => {

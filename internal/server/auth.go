@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -82,7 +81,8 @@ func (s *Server) ensureUnlocked() {
 	s.adoptVault(v)
 }
 
-// adoptVault installs a freshly opened vault and mints the CSRF token for the session.
+// adoptVault installs a freshly opened vault. The CSRF token is NOT minted here any more: it is a
+// per-process credential issued through a launch key (ADR-053), independent of the vault.
 //
 // **One place, because something now happens ON unlock.** These four lines were written
 // twice — here and in handleUnlock — identically, which was harmless while they only
@@ -92,14 +92,13 @@ func (s *Server) ensureUnlocked() {
 // That is the duplicate-derivation defect this repo has paid for repeatedly — most
 // recently `closeDocument` carrying its own copy of `tearDownView`.
 //
-// The nil check is the guard that makes it idempotent: a second unlock must not mint a
-// new CSRF token under a client already holding the first.
+// The nil check is the guard that makes it idempotent: a second unlock must not run the drain
+// and the sweeps twice.
 func (s *Server) adoptVault(v *vault.Vault) {
 	s.mu.Lock()
 	fresh := s.vault == nil
 	if fresh {
 		s.vault = v
-		s.csrf = newToken()
 	}
 	s.mu.Unlock()
 	if fresh {
@@ -168,29 +167,24 @@ type advancedStatus struct {
 	Timestamp  bool `json:"timestamp"`
 }
 
-// requireUnlocked guards protected routes: the vault must be open, and writes
-// must carry the CSRF token and a loopback Origin.
+// requireUnlocked guards protected routes: the caller must hold the session (ADR-053, through
+// `requireSession`, which also applies the CSRF token and a loopback Origin to writes), and the vault
+// must be open.
+//
+// **The session is checked BEFORE the vault**, so an unauthenticated caller is answered the same
+// 403 whatever state the vault is in; a page that holds the session and meets a locked vault gets
+// the 401 its wizard re-opens on.
 func (s *Server) requireUnlocked(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return s.requireSession(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
-		v, csrf := s.vault, s.csrf
+		v := s.vault
 		s.mu.Unlock()
 		if v == nil {
 			httpError(w, http.StatusUnauthorized, "locked")
 			return
 		}
-		if r.Method != http.MethodGet {
-			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(csrf)) != 1 {
-				httpError(w, http.StatusForbidden, "bad csrf token")
-				return
-			}
-			if !originIsLoopback(r) {
-				httpError(w, http.StatusForbidden, "bad origin")
-				return
-			}
-		}
 		next(w, r.WithContext(context.WithValue(r.Context(), vaultCtxKey{}, v)))
-	}
+	})
 }
 
 // originIsLoopback allows requests with no Origin (same-origin) and rejects any
@@ -244,10 +238,9 @@ func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
 // --- status ------------------------------------------------------------------
 
 type statusResponse struct {
-	State             string   `json:"state"`               // ready | setup | migrate | key-missing | key-locked | vault-unreadable
-	Problem           string   `json:"problem,omitempty"`   // why the vault could not be read (vault-unreadable)
-	VaultPath         string   `json:"vaultPath,omitempty"` // the file that could not be read (vault-unreadable)
-	CSRF              string   `json:"csrf,omitempty"`
+	State             string   `json:"state"`                    // ready | setup | migrate | key-missing | key-locked | vault-unreadable
+	Problem           string   `json:"problem,omitempty"`        // why the vault could not be read (vault-unreadable)
+	VaultPath         string   `json:"vaultPath,omitempty"`      // the file that could not be read (vault-unreadable)
 	Candidates        []string `json:"candidates,omitempty"`     // detected ~/.ssh keys
 	DefaultKeyPath    string   `json:"defaultKeyPath,omitempty"` // where a new key would be created
 	KeyPath           string   `json:"keyPath,omitempty"`        // enrolled key path (key-missing)
@@ -309,10 +302,9 @@ func (s *Server) currentStatus() statusResponse {
 
 func (s *Server) vaultStatus() statusResponse {
 	if s.unlockedVault() != nil {
-		s.mu.Lock()
-		csrf := s.csrf
-		s.mu.Unlock()
-		return statusResponse{State: "ready", CSRF: csrf}
+		// **No CSRF token here** (ADR-053, `/pending 685`): this route answers any loopback caller,
+		// curl included, so a token served here was a token served to every process on the machine.
+		return statusResponse{State: "ready"}
 	}
 	if !vault.Exists(s.configDir) {
 		return statusResponse{State: "setup", Candidates: sshkey.Candidates(), DefaultKeyPath: sshkey.DefaultNewKeyPath()}
@@ -597,7 +589,7 @@ func (s *Server) handleVaultImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.vault, s.csrf = nil, ""
+	s.vault = nil
 	s.mu.Unlock()
 	s.ensureUnlocked()
 	writeJSON(w, s.currentStatus())

@@ -476,6 +476,31 @@ ELAPSED_TOTAL=0
 WORK="$(mktemp -d)"
 for i in $(seq 1 "$N"); do HOMES[$((i-1))]="$WORK/i$i"; done
 
+# **Every curl below carries the session cookie through ONE setting** (ADR-053, `/pending 685`). A
+# caller without the session is refused on every route behind `requireUnlocked`, GETs included, and
+# this harness makes dozens of plain GETs. The cookie is named per port (`nib_<port>`), so one jar
+# holds every instance's and each instance reads only its own. `trade` below writes it.
+export CURL_HOME="$WORK/curlhome"
+mkdir -p "$CURL_HOME"
+: >"$WORK/jar"
+printf 'cookie = "%s"\n' "$WORK/jar" >"$CURL_HOME/.curlrc"
+
+# launch_token trades the launch key a headless Nib logs for the person who started it (ADR-053),
+# writing the session cookie into the shared jar and printing the CSRF token. The log line is the
+# ONLY way in — `/api/status` stopped carrying the token because it answers every process on the
+# machine. Retried: the server can answer before the line is written.
+launch_token() { # base log
+  local key="" _
+  for _ in $(seq 1 40); do
+    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
+    [ -n "$key" ] && break
+    sleep 0.1
+  done
+  [ -n "$key" ] || return 1
+  curl -fsS -b "$WORK/jar" -c "$WORK/jar" -X POST "$1/api/launch" -H "X-Nib-Launch: $key" \
+    | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p'
+}
+
 # ── Teardown, and why the trap reads $? ──────────────────────────────────────
 #
 # `cleanup` takes the exit status as an ARGUMENT rather than reading a flag,
@@ -732,7 +757,7 @@ restart() { # index (1-based) — kill an instance and bring it back on the same
   # diagnosis. Refreshing it here keeps the verb honest: what a restart must NOT lose is the
   # ceremony, and a session token is not part of that.
   local tok
-  tok="$(csrf "${URLS[$idx]}")"
+  tok="$(csrf "${URLS[$idx]}" "${HOMES[$idx]}")"
   [ -n "$tok" ] || { echo "restart: instance $i returned no CSRF token after coming back" >&2; return 1; }
   CSRFS[$idx]="$tok"
   return 0
@@ -777,11 +802,11 @@ for i in $(seq 1 "$N"); do
     || fail "could not enrol a key on instance $i ($url)"
 done
 
-csrf() { curl -fsS "$1/api/status" | jget csrf; }
+csrf() { launch_token "$1" "$2/nib.log"; } # url home
 CSRFS=(); FPS=()
 for i in $(seq 1 "$N"); do
   url="${URLS[$((i-1))]}"
-  tok="$(csrf "$url")"
+  tok="$(csrf "$url" "${HOMES[$((i-1))]}")"
   [ -n "$tok" ] || fail "instance $i ($url) returned no CSRF token"
   CSRFS+=( "$tok" )
   # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and ceremonies,
@@ -1488,7 +1513,7 @@ import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.tim
   python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || exit 1
 import json, sys, urllib.request
 base, csrf = sys.argv[1], sys.argv[2]
-d = json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+d = json.load(urllib.request.urlopen(urllib.request.Request(base + "/api/docs", headers={"X-CSRF-Token": csrf}))).get("docs") or []
 if d:
     req = urllib.request.Request(base + "/api/close", method="POST",
                                  data=json.dumps({"id": d[0]["id"]}).encode(),
@@ -1670,7 +1695,7 @@ import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.tim
   python3 - "${URLS[0]}" "${CSRFS[0]}" <<'PYCLOSE' || exit 1
 import json, sys, urllib.request
 base, csrf = sys.argv[1], sys.argv[2]
-d = json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+d = json.load(urllib.request.urlopen(urllib.request.Request(base + "/api/docs", headers={"X-CSRF-Token": csrf}))).get("docs") or []
 if d:
     req = urllib.request.Request(base + "/api/close", method="POST",
                                  data=json.dumps({"id": d[0]["id"]}).encode(),
@@ -1924,7 +1949,7 @@ import json, sys, urllib.request
 base, csrf = sys.argv[1], sys.argv[2]
 
 def docs():
-    return json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+    return json.load(urllib.request.urlopen(urllib.request.Request(base + "/api/docs", headers={"X-CSRF-Token": csrf}))).get("docs") or []
 
 open_docs = docs()
 if open_docs:
@@ -3290,7 +3315,7 @@ import json, sys, urllib.request
 base, csrf = sys.argv[1], sys.argv[2]
 
 def docs():
-    return json.load(urllib.request.urlopen(base + "/api/docs")).get("docs") or []
+    return json.load(urllib.request.urlopen(urllib.request.Request(base + "/api/docs", headers={"X-CSRF-Token": csrf}))).get("docs") or []
 
 open_docs = docs()
 if open_docs:

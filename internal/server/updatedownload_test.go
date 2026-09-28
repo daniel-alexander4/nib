@@ -64,7 +64,7 @@ func downloadServer(t *testing.T) (*httptest.Server, *Server, *http.Client, stri
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	c, csrf := authedClient(t, ts)
 	return ts, srv, c, csrf
