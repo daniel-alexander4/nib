@@ -114,8 +114,9 @@ func TestTheDeliveryRoundOpensOneEndpointForTheWholeWalk(t *testing.T) {
 	}
 	round := body[start : start+end]
 
-	if n := strings.Count(round, "openSharedRendezvous("); n != 1 {
-		t.Errorf("runDeliveryRound calls openSharedRendezvous %d times, want exactly 1. The round "+
+	// `openRoundRendezvous` since /pending 690: `openSharedRendezvous` plus the round's own door.
+	if n := strings.Count(round, "openRoundRendezvous("); n != 1 {
+		t.Errorf("runDeliveryRound calls openRoundRendezvous %d times, want exactly 1. The round "+
 			"owns ONE endpoint; opening more puts the per-server DHT send limiter back on a per-leg "+
 			"footing, which is what /pending 376 was about", n)
 	}

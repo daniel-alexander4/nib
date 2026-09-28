@@ -1031,7 +1031,7 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 	// the user asked for; a socket this machine could not open for the round is one it can still
 	// open one at a time, and refusing the whole round over it would trade every party's copy for a
 	// resource decision.
-	shared, closeShared, serr := openSharedRendezvous("0.0.0.0:0", s.configDir)
+	shared, closeShared, serr := s.openRoundRendezvous("0.0.0.0:0")
 	if serr != nil {
 		log.Printf("delivery round %s: could not open one endpoint for the round (%v) — each leg "+
 			"will open its own, which is what it did before this was shared", rec.ID, serr)
@@ -1209,8 +1209,11 @@ func (s *Server) runDeliveryRound(ctx context.Context, v *vault.Vault, rec cerem
 // round into a failed one. What is lost is a pre-hop party learning early, and their arm's own
 // fetch retries.
 func (s *Server) publishEndStateFor(ctx context.Context, inv ceremony.Invitation, t ceremony.Termination, shared *sharedRendezvous) {
-	if shared == nil || shared.rz == nil {
-		return // no round endpoint: nothing to publish through, and a leg's own is already closed
+	if shared == nil || shared.door == nil {
+		// No round endpoint, or one with no door onto its DHT: nothing to publish through, and a
+		// leg's own is already closed. A door-less endpoint is refused rather than published through
+		// because a publish that skips the door never reads the rendezvous switch (/pending 690).
+		return
 	}
 	anchor, aerr := inv.Anchor()
 	if aerr != nil {
@@ -1229,9 +1232,12 @@ func (s *Server) publishEndStateFor(ctx context.Context, inv ceremony.Invitation
 		log.Printf("ceremony %s: end state not published (%v)", inv.ID, err)
 		return
 	}
+	// Through the round's door, on the publish's own budget: the first publish of a round is also
+	// its bootstrap (ADR-011's one door), and sharing the budget keeps a party's worst case at the
+	// `rendezvousPublishBudget` it always was rather than a bootstrap budget on top of it.
 	pctx, cancel := context.WithTimeout(ctx, rendezvousPublishBudget)
 	defer cancel()
-	if perr := shared.rz.Publish(pctx, seed, salt, sealed); perr != nil {
+	if perr := shared.door.dhtPublish(pctx, seed, salt, sealed); perr != nil {
 		log.Printf("ceremony %s: end state not published (%v)", inv.ID, perr)
 	}
 }
@@ -2075,7 +2081,10 @@ func (s *Server) fetchEndStateWhenSlow(ctx context.Context, cer *ceremonyID, hol
 	publishLoop(ctx, 0, republishEvery(), func(ctx context.Context) {
 		fctx, cancel := context.WithTimeout(ctx, rendezvousPublishBudget)
 		defer cancel()
-		sealed, _, ferr := cer.rz.Fetch(fctx, seed, salt)
+		// Through the door (/pending 690): with the switch off this is a refusal, and the end state
+		// then reaches this party only as the delivery round can — which is what switching the
+		// rendezvous off asks for.
+		sealed, _, ferr := cer.dhtFetch(fctx, seed, salt)
 		if ferr != nil || len(sealed) == 0 {
 			return // nothing published yet is the ORDINARY state of a live proceeding
 		}

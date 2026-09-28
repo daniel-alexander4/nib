@@ -499,7 +499,7 @@ func TestLiveAPreHopPartyReadsTheEndStateOverTheRealDHT(t *testing.T) {
 	// derivations the pull reads with — so a change to either side that broke the pairing would
 	// surface here rather than in a test that re-derived both.
 	srv := &Server{}
-	srv.publishEndStateFor(ctx, inv, term, &sharedRendezvous{rz: pub})
+	srv.publishEndStateFor(ctx, inv, term, &sharedRendezvous{rz: pub, door: &ceremonyID{rz: pub}})
 	if n := pub.Stats().PublishNodes; n == 0 {
 		pubClose()
 		t.Skip("no node answered the token traversal, so there was nowhere to write")

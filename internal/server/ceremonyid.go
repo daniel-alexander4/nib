@@ -323,6 +323,36 @@ func (c *ceremonyID) ensureBootstrapped(ctx context.Context) error {
 	return c.bootstrapErr
 }
 
+// dhtPublish and dhtFetch are the only roads to the DHT's two verbs, and each goes through
+// `ensureBootstrapped` first (/pending 690).
+//
+// **The door guarded the bootstrap and not the verbs, so three roads went around it.** The round's
+// end-state publish and the pre-hop end-state pull never called it, and the candidate feed called
+// it and discarded its refusal — `_ = c.ensureBootstrapped(ctx)`, then `Fetch` regardless. With
+// an empty routing table a traversal starts from the node cache or the shipped seeds, so all three
+// sent to strangers with the rendezvous switch OFF, measured at a loopback sink named in the cache
+// (`rendezvousswitch_test.go`). Moving the door onto the verbs makes the refusal something no
+// caller can drop, and `TestTheDHTVerbsHaveExactlyOneDoorEach` fails on a fourth road.
+//
+// **Only the switch refuses.** A bootstrap that FAILED is not fatal, which is what the feed always
+// said of it: the verb then finds or reaches nothing, and D19's cause 2 is the sentence for that.
+// The switch is re-read on every call, because the user can turn it back on while a ceremony is
+// open and the next tick should see that.
+func (c *ceremonyID) dhtPublish(ctx context.Context, seed, salt, value []byte) error {
+	if err := c.ensureBootstrapped(ctx); errors.Is(err, errRendezvousOff) || errors.Is(err, errNoCeremony) {
+		return err
+	}
+	return c.rz.Publish(ctx, seed, salt, value)
+}
+
+// dhtFetch is dhtPublish's read half — see there.
+func (c *ceremonyID) dhtFetch(ctx context.Context, seed, salt []byte) ([]byte, int64, error) {
+	if err := c.ensureBootstrapped(ctx); errors.Is(err, errRendezvousOff) || errors.Is(err, errNoCeremony) {
+		return nil, 0, err
+	}
+	return c.rz.Fetch(ctx, seed, salt)
+}
+
 // reDeliverKey hashes the inbound document — the idempotency key for re-delivery (P05.S10).
 func reDeliverKey(inbound []byte) string {
 	sum := sha256.Sum256(inbound)
@@ -1145,6 +1175,22 @@ func ceremonyFor(text string, myCertPEM, myKeyPEM []byte, peerFP []byte) (*cerem
 type sharedRendezvous struct {
 	end *p2p.SharedEndpoint
 	rz  *rendezvous.Server
+	// door is the round's own entrance to `rz` (/pending 690): the legs each borrow `rz` into a
+	// ceremony of their own, but the round's end-state publish has no ceremony, and a publish with
+	// no door is one that never reads the rendezvous switch. Nil means nothing may be published.
+	door *ceremonyID
+}
+
+// openRoundRendezvous opens the round's shared endpoint with its door already stamped with this
+// server's rendezvous switch. It is the only production opener of a `sharedRendezvous`, so a round
+// cannot hold one whose publish skips the switch.
+func (s *Server) openRoundRendezvous(bind string) (*sharedRendezvous, func(), error) {
+	sh, closeSh, err := openSharedRendezvous(bind, s.configDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	sh.door = s.gateRendezvous(&ceremonyID{rz: sh.rz})
+	return sh, closeSh, nil
 }
 
 // openSharedRendezvous opens the one endpoint a round lends to every leg.
