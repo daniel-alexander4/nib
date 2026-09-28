@@ -170,7 +170,7 @@ func TestTheResponderQuotePinsAndEchoesItsTime(t *testing.T) {
 	}
 	srv.sess.mu.Unlock()
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/session/quote", strings.NewReader(`{"intent":"ok"}`))
 	req.Header.Set("Content-Type", "application/json")

@@ -203,7 +203,12 @@ type Server struct {
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
-	csrf  string       // per-process CSRF token, issued when the vault unlocks
+	csrf  string       // per-process CSRF token, handed only to a caller holding a launch key (ADR-053)
+	// session is the per-process session cookie's value (ADR-053). Minted with csrf in New, and
+	// independent of the vault: a page holds it across a lock, an unlock and a vault import.
+	session string
+	// launchKeys are the outstanding single-use keys a window's URL fragment carries (launch.go).
+	launchKeys []launchKey
 
 	// legMu guards legs: the delivery round's in-flight leg, per ceremony (/pending 370).
 	//
@@ -316,7 +321,8 @@ func New(web, legal fs.FS, configDir, version string) *Server {
 	}
 	// The epoch is per-process and is minted before anything can open a document,
 	// so no id can ever be issued without one.
-	return &Server{web: web, legal: legal, configDir: configDir, version: version, epoch: newToken()}
+	return &Server{web: web, legal: legal, configDir: configDir, version: version, epoch: newToken(),
+		csrf: newToken(), session: newToken()}
 }
 
 // SetInstanceToken tells the server which probe token identifies it. Called by main
@@ -340,6 +346,11 @@ func (s *Server) Handler() http.Handler {
 	// the user had open trigger first-run vault creation with a plain cross-site request.
 	mux.HandleFunc("GET /api/status", requirePublicLoopback(s.handleStatus))
 	mux.HandleFunc("GET /api/instance", s.handleInstance)
+	// How a page gets its credentials (ADR-053): a launch key from the URL fragment Nib opened it
+	// at, traded once; a reload recovers the token with the cookie; a holder mints another key.
+	mux.HandleFunc("POST /api/launch", requirePublicLoopback(s.handleLaunchTrade))
+	mux.HandleFunc("GET /api/launch", requirePublicLoopback(s.requireSession(s.handleLaunchResume)))
+	mux.HandleFunc("POST /api/launch/key", s.requireSession(s.handleLaunchKey))
 	// A window declares itself and holds the stream for as long as it exists; the count is
 	// what P01.S04 will read to decide the process is done. Public, not requireUnlocked (D3):
 	// a window on the unlock screen is a real window.

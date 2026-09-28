@@ -495,3 +495,11 @@ home today.
   `/ToUnicode` for both the checker and `pdfops`, and holds two readings of a CMap side by side: veraPDF's
   (counted lists, a range cut at its last byte, a malformed CMap discarded whole) for the checker, and the
   specification's lenient one for text extraction. What the checker cannot reproduce it refuses.
+- **[ADR-053 — a page gets its credentials only from a launch key](053-a-page-gets-its-credentials-only-from-a-launch-key.md)**
+  — /pending 685, supersedes ADR-006's premise. `/api/status` served the CSRF token to any loopback caller
+  (curl sends neither `Sec-Fetch-Site` nor `Origin`), and GETs behind `requireUnlocked` needed no token at
+  all, so every local process — other OS users included — could read and drive Nib. Nib now opens its window
+  at a single-use key in the URL fragment, traded once for a per-port `HttpOnly` `SameSite=Strict` session
+  cookie (every method) and the CSRF token (writes), through one door, `requireSession`. A second launch gets
+  a key through the hand-off, which is ADR-006's secret's one new grant. Residuals: a same-user process,
+  and the key in the browser's argv from launch to trade (`/pending 701`).

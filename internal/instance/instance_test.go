@@ -219,7 +219,7 @@ func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testi
 
 	t.Run("versions differ", func(t *testing.T) {
 		rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.90.0"}
-		_, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		_, _, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 		if err == nil {
 			t.Fatal("a 404 from the running instance was not reported as a failure")
 		}
@@ -232,7 +232,7 @@ func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testi
 
 	t.Run("versions match", func(t *testing.T) {
 		rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.109.2"}
-		_, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		_, _, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 		if err == nil {
 			t.Fatal("a 404 from the running instance was not reported as a failure")
 		}
@@ -246,7 +246,7 @@ func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testi
 
 	t.Run("a record with no version says so rather than reading blank", func(t *testing.T) {
 		rec := Record{Addr: addr, Token: "t", Handoff: "h"}
-		_, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		_, _, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 		if err == nil || !strings.Contains(err.Error(), "unknown") {
 			t.Errorf("a versionless record produced %v; want the version reported as unknown rather than as an empty string", err)
 		}
@@ -267,7 +267,7 @@ func TestHandOffConnectionFailureDoesNotBlameVersions(t *testing.T) {
 	ln.Close()
 
 	rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.90.0"}
-	_, _, err = HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+	_, _, _, err = HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 	if err == nil {
 		t.Fatal("handing off to a dead address succeeded")
 	}

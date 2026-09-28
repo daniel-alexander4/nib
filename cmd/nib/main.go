@@ -189,11 +189,20 @@ func run() int {
 	// them differ. The idle-exit arms on the second, because a process with no window must never
 	// be one that exits for want of one.
 	noBrowser := os.Getenv("NIB_NO_BROWSER") != ""
+	// **The window is opened at a URL FRAGMENT carrying a single-use launch key** (ADR-053,
+	// `/pending 685`). The page trades it for its credentials; nothing else serves them. The key
+	// is never logged when a window was launched — a log can outlive the process and be read by
+	// someone it was not meant for — and is logged when none was, because then the log is the only
+	// way the person who started this process can get in. That is the channel the headless
+	// harnesses read.
 	var openErr error
 	if !noBrowser {
-		if _, openErr = browser.Open(uiURL); openErr != nil {
+		if _, openErr = browser.Open(uiURL + "#k=" + s.MintLaunchKey()); openErr != nil {
 			log.Printf("could not open a browser window: %v", openErr)
 		}
+	}
+	if noBrowser || openErr != nil {
+		log.Printf("open Nib at %s#k=%s", uiURL, s.MintLaunchKey())
 	}
 	s.ArmIdleExit(server.IdleExitDecision(noBrowser, openErr))
 
@@ -284,7 +293,7 @@ func handedOff(cfgDir, path string) bool {
 			_ = instance.Remove(cfgDir)
 			continue
 		}
-		result, reason, err := instance.HandOff(rec, path, version)
+		result, reason, launch, err := instance.HandOff(rec, path, version)
 		if err != nil {
 			log.Printf("could not hand off to the running instance: %v", err)
 			return false
@@ -315,14 +324,23 @@ func handedOff(cfgDir, path string) bool {
 		// pointing at the same Nib rather than raising the first. That is survivable:
 		// a second window is a second client, and the reload restore brings it up
 		// showing the same documents including this one.
+		url := "http://" + rec.Addr + "/"
+		if notice != "" {
+			url += "?notice=" + notice
+		}
+		// The running instance's key for this window (ADR-053): without it the page it
+		// surfaces could not reach that instance's API.
+		if launch != "" {
+			url += "#k=" + launch
+		}
 		if os.Getenv("NIB_NO_BROWSER") == "" {
-			url := "http://" + rec.Addr + "/"
-			if notice != "" {
-				url += "?notice=" + notice
-			}
 			if _, err := browser.Open(url); err != nil {
 				log.Printf("could not surface the running window: %v", err)
+				log.Printf("open Nib at %s", url)
 			}
+		} else {
+			// Headless: the log is the only way in, exactly as for a first launch.
+			log.Printf("open Nib at %s", url)
 		}
 		return true
 	}

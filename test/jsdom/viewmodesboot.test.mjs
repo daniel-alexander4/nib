@@ -20,7 +20,7 @@ import { boot } from './boot.mjs';
 const h = await boot({
   routes: {
     '/api/status': {
-      state: 'ready', csrf: 'test-csrf', version: 'test',
+      state: 'ready', version: 'test',
       autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false,
       viewLayout: 'continuous',
     },

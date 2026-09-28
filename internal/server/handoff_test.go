@@ -341,7 +341,11 @@ func TestTheVaultIsAdoptedInExactlyOnePlace(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(src), "\n") {
-			if strings.Contains(line, "s.vault = ") {
+			// A reset to nil is not an unlock route and cannot skip the drain — the import's reset
+			// is followed by `ensureUnlocked`, which adopts through the one door. It used to be
+			// written `s.vault, s.csrf = nil, ""` and escaped this scan by its SPELLING; the token
+			// is per-process since ADR-053, so the reset is now stated and excluded by name.
+			if strings.Contains(line, "s.vault = ") && !strings.Contains(line, "s.vault = nil") {
 				sites++
 				where = append(where, fmt.Sprintf("%s:%d", name, i+1))
 			}

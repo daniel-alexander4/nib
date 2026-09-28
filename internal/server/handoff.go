@@ -26,9 +26,21 @@ type handoffRequest struct {
 // `refused` means "say so somewhere the user can see". A single ok/error pair would
 // collapse queued into opened, and a launch would report success for a document that
 // will not appear until an unlock that may never come.
+//
+// `window` is the fifth, for a launch that carried no document: it wants only a window onto this
+// instance. It used to be a 400, which sent the launch down its become-primary path and started a
+// second Nib beside this one — and since ADR-053 "open Nib again" is how a tab that never held the
+// session gets in, so that path would now strand the user's open documents in the first.
+//
+// **`Launch` is a fresh launch key for the window the launch is about to open** (ADR-053). This is
+// the one place the hand-off secret grants more than a verb: a window without a key could not
+// reach this instance at all. The holder is a process that can read the user's 0600 config file,
+// which is a process running as the user — outside what Nib can defend against, and stated so in
+// ADR-053.
 type handoffResponse struct {
-	Result string `json:"result"` // opened | focused | queued | refused
+	Result string `json:"result"` // opened | focused | queued | refused | window
 	Reason string `json:"reason,omitempty"`
+	Launch string `json:"launch,omitempty"`
 }
 
 // SetHandoffSecret tells the server which secret authorises POST /api/handoff. Empty
@@ -72,8 +84,12 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	s.cancelIdleExit(idleExitCauseHandoff)
 
 	var req handoffRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil || req.Path == "" {
-		httpError(w, http.StatusBadRequest, "a path is required")
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "could not read the hand-off")
+		return
+	}
+	if req.Path == "" {
+		writeJSON(w, handoffResponse{Result: "window", Launch: s.MintLaunchKey()})
 		return
 	}
 	// Canonicalise ONCE, here, so the comparison below and the install below see the same
@@ -89,7 +105,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// two independent working copies of the same file, and whichever saves last silently
 	// discards the other's work.
 	if s.focusPath(path) {
-		writeJSON(w, handoffResponse{Result: "focused"})
+		writeJSON(w, handoffResponse{Result: "focused", Launch: s.MintLaunchKey()})
 		return
 	}
 
@@ -100,14 +116,14 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// never opens. queuePendingOpen therefore re-checks under the SAME lock adoptVault
 	// sets the vault under, and reports false when there is nothing left to wait for.
 	if !unlocked && s.queuePendingOpen(path) {
-		writeJSON(w, handoffResponse{Result: "queued"})
+		writeJSON(w, handoffResponse{Result: "queued", Launch: s.MintLaunchKey()})
 		return
 	}
 	if err := s.openHandedOff(path); err != nil {
-		writeJSON(w, handoffResponse{Result: "refused", Reason: err.Error()})
+		writeJSON(w, handoffResponse{Result: "refused", Reason: err.Error(), Launch: s.MintLaunchKey()})
 		return
 	}
-	writeJSON(w, handoffResponse{Result: "opened"})
+	writeJSON(w, handoffResponse{Result: "opened", Launch: s.MintLaunchKey()})
 }
 
 // openHandedOff installs a path through the SAME machinery an ordinary open uses —

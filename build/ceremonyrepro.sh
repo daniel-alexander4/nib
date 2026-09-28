@@ -63,6 +63,20 @@ go run build/genpdf.go "$SP/lease.pdf" "the lease" >/dev/null 2>&1
 PASS=0; FAIL=0
 ok(){ echo "  ok   — $1"; PASS=$((PASS+1)); }
 no(){ echo "  FAIL — $1"; echo "        $2"; FAIL=$((FAIL+1)); }
+# launch_session trades the launch key a headless Nib logs (ADR-053) into a cookie jar and prints the
+# CSRF token. The log line is the only way in — `/api/status` stopped carrying the token because it
+# answers every process on the machine. Retried: the server can answer before the line is written.
+launch_session() { # $1=base $2=log $3=jar
+  local key="" _
+  for _ in $(seq 1 40); do
+    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
+    [ -n "$key" ] && break
+    sleep 0.1
+  done
+  [ -n "$key" ] || return 1
+  curl -s -c "$3" -b "$3" -X POST "$1/api/launch" -H "X-Nib-Launch: $key" \
+    | python3 -c "import json,sys;print(json.load(sys.stdin).get('csrf',''))" 2>/dev/null
+}
 start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   local n=$1 h="$SP/home_$1"
   rm -rf "$h"; mkdir -p "$h/.config"
@@ -77,8 +91,8 @@ start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   curl -s -c "$SP/$n.jar" -b "$SP/$n.jar" -X POST "$base/api/ssh/enroll" \
     -H 'content-type: application/json' -d "{\"mode\":\"create\",\"keyPath\":\"$h/id_ed25519\"}" \
     >"$SP/$n.enroll.json"
-  local csrf; csrf=$(python3 -c "import json;print(json.load(open('$SP/$n.enroll.json')).get('csrf',''))")
-  [ -n "$csrf" ] || { echo "$n: no csrf: $(cat "$SP/$n.enroll.json")"; exit 1; }
+  local csrf; csrf="$(launch_session "$base" "$SP/$n.log" "$SP/$n.jar")"
+  [ -n "$csrf" ] || { echo "$n: could not trade the logged launch key: $(cat "$SP/$n.log")"; exit 1; }
   eval "${n}_BASE='$base'; ${n}_CSRF='$csrf'; ${n}_HOME='$h'"
   # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and a ceremony is
   # one of them. A fresh instance therefore refuses convene and accept with 403 until its user
@@ -643,7 +657,10 @@ else
   LOCK_PID=$!
   LOCK_BASE="http://127.0.0.1:$LOCK_PORT"
   for _ in $(seq 1 150); do curl -sf "$LOCK_BASE/api/status" >/dev/null 2>&1 && break; sleep 0.1; done
-  peers_code="$(curl -s -o "$SP/locked.peers.json" -w '%{http_code}' "$LOCK_BASE/api/peers")"
+  # With the session (ADR-053), so the 401 below is the VAULT answering and not the missing
+  # credential: a caller without the session is refused 403 whatever state the vault is in.
+  launch_session "$LOCK_BASE" "$SP/locked.log" "$SP/locked.jar" >/dev/null
+  peers_code="$(curl -s -o "$SP/locked.peers.json" -w '%{http_code}' -b "$SP/locked.jar" "$LOCK_BASE/api/peers")"
   cer_code="$(curl -s -o "$SP/locked.cer.json" -w '%{http_code}' "$LOCK_BASE/api/ceremonies")"
   if [ "$peers_code" != "401" ]; then
     no "locked-read setup" "GET /api/peers returned $peers_code, want 401 — this instance is NOT locked, so a 200 from the ceremonies route below would say nothing at all"

@@ -26,7 +26,7 @@ let check = { updateAvailable: false, current: CURRENT, latest: CURRENT };
 const h = await boot({
   routes: {
     '/api/status': () => ({
-      state: 'ready', csrf: 'test-csrf', version: CURRENT,
+      state: 'ready', version: CURRENT,
       autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false,
     }),
     '/api/update/check': () => check,

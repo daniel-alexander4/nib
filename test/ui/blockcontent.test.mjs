@@ -77,7 +77,7 @@ after(async () => {
 // through the API rather than the Peers UI: this file is about the block, and driving a second
 // surface to set up the first buys nothing it asserts.
 await page.evaluate(async (fp) => {
-  const csrf = (await (await fetch('/api/status')).json()).csrf;
+  const csrf = (await (await fetch('/api/launch')).json()).csrf;
   const r = await fetch('/api/peers/pin', {
     method: 'POST',
     headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' },
@@ -110,7 +110,7 @@ const OUT = path.join(OUT_DIR, 'cosigned.pdf');
 // `AppearanceLines` is Go's, and a literal 5 in this file would be a second statement of it
 // that goes stale the first time a line is added (ADR-009 in the small).
 const quote = await page.evaluate(async (fp) => {
-  const csrf = (await (await fetch('/api/status')).json()).csrf;
+  const csrf = (await (await fetch('/api/launch')).json()).csrf;
   const r = await fetch('/api/cosign/quote', {
     method: 'POST',
     headers: { 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' },

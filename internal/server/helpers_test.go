@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -66,7 +68,7 @@ func startServer(t *testing.T) (*httptest.Server, string) {
 	if err := os.WriteFile(pdfPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test").Handler())
+	ts := serveTest(t, New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test"))
 	t.Cleanup(ts.Close)
 	return ts, pdfPath
 }
@@ -86,7 +88,7 @@ func startServer(t *testing.T) (*httptest.Server, string) {
 func startServerOverSameHome(t *testing.T, configDir string) (*httptest.Server, *Server) {
 	t.Helper()
 	srv := New(os.DirFS("."), os.DirFS("."), configDir, "test")
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	return ts, srv
 }
@@ -109,16 +111,58 @@ func reopenedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	if err := json.NewDecoder(res.Body).Decode(&st); err != nil {
 		t.Fatal(err)
 	}
-	if st.State != "ready" || st.CSRF == "" {
-		t.Fatalf("a reopened server reports state=%q csrf-present=%v, want a ready vault — without "+
-			"one this is a fresh install and not a restart", st.State, st.CSRF != "")
+	if st.State != "ready" {
+		t.Fatalf("a reopened server reports state=%q, want a ready vault — without "+
+			"one this is a fresh install and not a restart", st.State)
 	}
-	return c, st.CSRF
+	return c, sessionFor(t, c, ts.URL)
 }
 
+// newClient has a cookie jar because a window's session is a cookie (ADR-053): without one, every
+// GET behind `requireUnlocked` answers 403 however the client was set up.
 func newClient(t *testing.T) *http.Client {
 	t.Helper()
-	return &http.Client{}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{Jar: jar}
+}
+
+// testServers maps a test server's base URL to the Server behind it, so a helper holding only the
+// URL can mint a launch key the way `cmd/nib` does before it opens a window.
+var testServers sync.Map
+
+// serveTest is `httptest.NewServer(srv.Handler())` that also registers srv for `sessionFor`.
+func serveTest(t *testing.T, srv *Server) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(srv.Handler())
+	testServers.Store(ts.URL, srv)
+	t.Cleanup(func() { testServers.Delete(ts.URL); ts.Close() })
+	return ts
+}
+
+// sessionFor puts c through the door a window takes (ADR-053): mint a launch key on the server
+// behind baseURL, trade it at `POST /api/launch`, and return the CSRF token. The session cookie
+// lands in c's jar.
+func sessionFor(t *testing.T, c *http.Client, baseURL string) string {
+	t.Helper()
+	v, ok := testServers.Load(baseURL)
+	if !ok {
+		t.Fatalf("no test server registered at %s — start it with serveTest", baseURL)
+	}
+	req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/launch", nil)
+	req.Header.Set(headerLaunch, v.(*Server).MintLaunchKey())
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var lr launchResponse
+	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&lr) != nil || lr.CSRF == "" {
+		t.Fatalf("trading a launch key answered %d with no token", res.StatusCode)
+	}
+	return lr.CSRF
 }
 
 // authedClient enrolls a freshly generated SSH key (first run), which unlocks the
@@ -154,9 +198,10 @@ func authedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	}
 	var st statusResponse
 	json.NewDecoder(resp.Body).Decode(&st)
-	if st.State != "ready" || st.CSRF == "" {
-		t.Fatalf("enroll state = %q csrf=%q, want ready with csrf", st.State, st.CSRF)
+	if st.State != "ready" {
+		t.Fatalf("enroll state = %q, want ready", st.State)
 	}
+	csrf := sessionFor(t, c, ts.URL)
 	// Switched on through the REAL route rather than by writing the vault directly: the helper
 	// then stands for a user who went to Settings and ticked the boxes, which is the state these
 	// tests mean by "a machine set up for ceremonies".
@@ -164,7 +209,7 @@ func authedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	body2, _ := json.Marshal(settingsRequest{Advanced: &on})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/settings", bytes.NewReader(body2))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", st.CSRF)
+	req.Header.Set("X-CSRF-Token", csrf)
 	req.Header.Set("Origin", ts.URL)
 	if r2, err2 := c.Do(req); err2 == nil {
 		r2.Body.Close()
@@ -173,7 +218,7 @@ func authedClient(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 				"package would then be asserting the switch's 403", r2.StatusCode)
 		}
 	}
-	return c, st.CSRF
+	return c, csrf
 }
 
 // write issues a state-changing request with the CSRF header set.
@@ -228,7 +273,7 @@ func startServerWith(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
-	ts := httptest.NewServer(srv.Handler())
+	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 	return ts, srv
 }

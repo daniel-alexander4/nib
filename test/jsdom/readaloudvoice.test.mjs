@@ -35,7 +35,7 @@ const saved = [];
 const h = await boot({
   routes: {
     '/api/status': {
-      state: 'ready', csrf: 'test-csrf', version: 'test', autoUpdate: false, updateCheckLocked: false,
+      state: 'ready', version: 'test', autoUpdate: false, updateCheckLocked: false,
       ghostscript: false, libreoffice: false,
       advanced: { ceremony: true, discovery: true, rendezvous: true, timestamp: true },
       readAloudVoice: 'Daniel', readAloudRate: 1.25,

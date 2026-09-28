@@ -188,6 +188,10 @@ const PUBLISHED = [
   // Read in Go, not in the client — the whole reason this scan names its readers per
   // shape instead of always looking in app.js.
   { type: 'handoffResponse', readers: ['internal/instance/instance.go'] },
+  // ADR-053: the page's token comes from the launch trade and nowhere else.
+  { type: 'launchResponse', readers: ['web/app.js'] },
+  // Minted for another window by a caller already holding the session; tier 3 is the one reader.
+  { type: 'launchKeyResponse', readers: ['test/ui/harness.mjs'] },
   { type: 'Record', readers: ['internal/instance/instance.go', 'internal/server/handoff.go'] },
 
   // `/api/lan/heard`'s two shapes. Their reader is the tier-4 HARNESS, not the client — the

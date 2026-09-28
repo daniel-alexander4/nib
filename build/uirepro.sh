@@ -145,6 +145,21 @@ curl -fsS -o /dev/null "$BASE/api/status" 2>/dev/null || {
   echo "FAIL: nib did not come up on $BASE" >&2; cat "$WORK/nib.log" >&2; exit 1
 }
 
+# launch_token trades the launch key a headless Nib logs for the person who started it (ADR-053)
+# and prints the CSRF token. That log line is the ONLY way in: `/api/status` stopped carrying the
+# token because it answers every process on the machine. Retried, because the server can answer
+# /api/status a moment before the line is written.
+launch_token() { # base log
+  local key="" _
+  for _ in $(seq 1 40); do
+    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
+    [ -n "$key" ] && break
+    sleep 0.1
+  done
+  [ -n "$key" ] || return 1
+  curl -fsS -X POST "$1/api/launch" -H "X-Nib-Launch: $key" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p'
+}
+
 # Every document route is behind requireUnlocked, so without a vault the harness
 # would only ever see the auth overlay.
 curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
@@ -156,8 +171,8 @@ curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
 # panel is hidden while its feature is. Several files here drive that panel, so the harness sets the
 # machine up the way a user who wanted it would — through the real route, with the CSRF token the
 # enrol just issued.
-UI_CSRF="$(curl -fsS "$BASE/api/status" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p')"
-[ -n "$UI_CSRF" ] || { echo "FAIL: no CSRF token after enrolling" >&2; exit 1; }
+UI_CSRF="$(launch_token "$BASE" "$WORK/nib.log")"
+[ -n "$UI_CSRF" ] || { echo "FAIL: could not trade the launch key nib logged for a CSRF token" >&2; cat "$WORK/nib.log" >&2; exit 1; }
 curl -fsS -o /dev/null -X POST "$BASE/api/settings" -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $UI_CSRF" -H "Origin: $BASE" \
   -d '{"advanced":{"ceremony":true,"discovery":true,"rendezvous":true,"timestamp":true}}' || {
@@ -190,8 +205,13 @@ if [ "$locked_state" = "ready" ] || [ -z "$locked_state" ]; then
   exit 1
 fi
 
+LOCKED_CSRF="$(launch_token "$LOCKED_BASE" "$WORK/nib.locked.log")"
+[ -n "$LOCKED_CSRF" ] || { echo "FAIL: could not trade the locked server's launch key" >&2; cat "$WORK/nib.locked.log" >&2; exit 1; }
+
 export NIB_UI_BASE="$BASE" NIB_UI_BROWSER="$BROWSER" NIB_UI_WORK="$WORK"
 export NIB_UI_LOCKED_BASE="$LOCKED_BASE"
+# The tokens, so harness.mjs can mint each browser window a launch key (ADR-053).
+export NIB_UI_CSRF="$UI_CSRF" NIB_UI_LOCKED_CSRF="$LOCKED_CSRF"
 # --test-concurrency=1: the files run SERIALLY, because they share one nib process.
 #
 # node --test runs files in parallel by default, and this tier hands every file the same

@@ -415,7 +415,7 @@ test('this file leaves the shared server as it found it', async () => {
   const cleared = await page.evaluate(async () => {
     // The token is module state in app.js, not in the DOM, so it is re-read from the same place
     // app.js reads it — /api/status — rather than reached for through a global that does not exist.
-    const csrf = (await (await fetch('/api/status')).json()).csrf;
+    const csrf = (await (await fetch('/api/launch')).json()).csrf;
     const r = await fetch('/api/ceremony/draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
