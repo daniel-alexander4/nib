@@ -66,9 +66,9 @@ func TestEnrollRefusedWhenAlreadySetUp(t *testing.T) {
 
 func TestWriteRequiresCSRF(t *testing.T) {
 	ts, path := startServer(t)
-	c, _ := authedClient(t, ts) // unlocked, but we omit the CSRF header
+	authedClient(t, ts) // unlocked — so the refusal below is the missing token, not the lock
 	body, _ := json.Marshal(openRequest{Path: path})
-	resp, err := c.Post(ts.URL+"/api/open", "application/json", bytes.NewReader(body))
+	resp, err := (&http.Client{}).Post(ts.URL+"/api/open", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestEnrollRejectsForeignOrigin(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/ssh/enroll", bytes.NewReader([]byte("{}")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://evil.example.com")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRepointRejectsForeignOrigin(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://evil.example")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestRepointRejectsUnstableKeyPath(t *testing.T) {
 	ts, _ := startServerWith(t)
 	for _, bad := range []string{"id_ed25519", "./keys/id_ed25519", ""} {
 		body, _ := json.Marshal(map[string]string{"keyPath": bad})
-		resp, err := http.Post(ts.URL+"/api/ssh/repoint", "application/json", bytes.NewReader(body))
+		resp, err := newClient(t).Post(ts.URL+"/api/ssh/repoint", "application/json", bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

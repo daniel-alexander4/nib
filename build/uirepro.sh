@@ -93,7 +93,8 @@ trap cleanup EXIT INT TERM
 # "FAIL: could not enroll a key". Every word of that points at key enrolment and
 # none of it is what is wrong — and worse, the tier then reports on a binary it did
 # not build.
-if curl -fsS -o /dev/null --max-time 2 "$BASE/api/status" 2>/dev/null; then
+. "$(dirname "$0")/launchkey.sh"
+if nib_answers "$BASE"; then
   echo "FAIL: something is already serving $BASE — a leftover --keep run?" >&2
   echo "      stop it (or set NIB_UI_PORT to a free port) and re-run." >&2
   exit 1
@@ -138,31 +139,20 @@ HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/config" \
 SERVER_PID=$!
 
 for _ in $(seq 1 60); do
-  curl -fsS -o /dev/null "$BASE/api/status" 2>/dev/null && break
+  nib_answers "$BASE" && break
   sleep 0.25
 done
-curl -fsS -o /dev/null "$BASE/api/status" 2>/dev/null || {
+nib_answers "$BASE" || {
   echo "FAIL: nib did not come up on $BASE" >&2; cat "$WORK/nib.log" >&2; exit 1
 }
 
-# launch_token trades the launch key a headless Nib logs for the person who started it (ADR-053)
-# and prints the CSRF token. That log line is the ONLY way in: `/api/status` stopped carrying the
-# token because it answers every process on the machine. Retried, because the server can answer
-# /api/status a moment before the line is written.
-launch_token() { # base log
-  local key="" _
-  for _ in $(seq 1 40); do
-    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
-    [ -n "$key" ] && break
-    sleep 0.1
-  done
-  [ -n "$key" ] || return 1
-  curl -fsS -X POST "$1/api/launch" -H "X-Nib-Launch: $key" | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p'
-}
+# The token first (ADR-054): every route but three requires it, the enrol included.
+UI_CSRF="$(launch_token "$BASE" "$WORK/nib.log")"
+[ -n "$UI_CSRF" ] || { echo "FAIL: could not trade the launch key nib logged for a token" >&2; cat "$WORK/nib.log" >&2; exit 1; }
 
 # Every document route is behind requireUnlocked, so without a vault the harness
 # would only ever see the auth overlay.
-curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
+curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' -H "X-CSRF-Token: $UI_CSRF" \
   -d "{\"mode\":\"create\",\"keyPath\":\"$WORK/home/.ssh/id_ed25519\"}" >/dev/null || {
   echo "FAIL: could not enroll a key" >&2; exit 1
 }
@@ -171,8 +161,6 @@ curl -fsS -X POST "$BASE/api/ssh/enroll" -H 'Content-Type: application/json' \
 # panel is hidden while its feature is. Several files here drive that panel, so the harness sets the
 # machine up the way a user who wanted it would — through the real route, with the CSRF token the
 # enrol just issued.
-UI_CSRF="$(launch_token "$BASE" "$WORK/nib.log")"
-[ -n "$UI_CSRF" ] || { echo "FAIL: could not trade the launch key nib logged for a CSRF token" >&2; cat "$WORK/nib.log" >&2; exit 1; }
 curl -fsS -o /dev/null -X POST "$BASE/api/settings" -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $UI_CSRF" -H "Origin: $BASE" \
   -d '{"advanced":{"ceremony":true,"discovery":true,"rendezvous":true,"timestamp":true}}' || {
@@ -192,21 +180,20 @@ HOME="$WORK/home2" XDG_CONFIG_HOME="$WORK/config2" \
   >"$WORK/nib.locked.log" 2>&1 &
 LOCKED_PID=$!
 for _ in $(seq 1 60); do
-  curl -fsS -o /dev/null "$LOCKED_BASE/api/status" 2>/dev/null && break
+  nib_answers "$LOCKED_BASE" && break
   sleep 0.25
 done
+LOCKED_CSRF="$(launch_token "$LOCKED_BASE" "$WORK/nib.locked.log")"
+[ -n "$LOCKED_CSRF" ] || { echo "FAIL: could not trade the locked server's launch key" >&2; cat "$WORK/nib.locked.log" >&2; exit 1; }
 # **It must be LOCKED, and the harness asserts that rather than assuming it.** A second server
 # that had somehow enrolled would make every assertion in lockedpanel.test.mjs pass against an
 # unlocked app — the vacuous green this tier keeps finding, arriving through the fixture.
-locked_state="$(curl -fsS "$LOCKED_BASE/api/status" 2>/dev/null | sed -n 's/.*"state":"\([a-z-]*\)".*/\1/p')"
+locked_state="$(curl -fsS -H "X-CSRF-Token: $LOCKED_CSRF" "$LOCKED_BASE/api/status" 2>/dev/null | sed -n 's/.*"state":"\([a-z-]*\)".*/\1/p')"
 if [ "$locked_state" = "ready" ] || [ -z "$locked_state" ]; then
   echo "FAIL: the locked server reports state=\"$locked_state\", want anything but ready — the" >&2
   echo "      locked-view test would run against an unlocked app and pass for the wrong reason." >&2
   exit 1
 fi
-
-LOCKED_CSRF="$(launch_token "$LOCKED_BASE" "$WORK/nib.locked.log")"
-[ -n "$LOCKED_CSRF" ] || { echo "FAIL: could not trade the locked server's launch key" >&2; cat "$WORK/nib.locked.log" >&2; exit 1; }
 
 export NIB_UI_BASE="$BASE" NIB_UI_BROWSER="$BROWSER" NIB_UI_WORK="$WORK"
 export NIB_UI_LOCKED_BASE="$LOCKED_BASE"
@@ -223,7 +210,10 @@ export NIB_UI_CSRF="$UI_CSRF" NIB_UI_LOCKED_CSRF="$LOCKED_CSRF"
 # as opens refused by the eight-document cap once files stopped clearing up after each
 # other. Serial is the honest mode for a shared mutable server; per-file servers would be
 # the alternative and cost a build and an enrol each.
-out="$(node --test --test-concurrency=1 test/ui/ 2>&1)"
+# --test-timeout: a tier-3 test that fails before its `shutdown` leaves its browser open, and the file
+# then never exits — `node --test` waited on one for two hours (/pending 704's gate). Five minutes per
+# test turns that into a named failure; the slowest file measured here is well under a minute a test.
+out="$(node --test --test-concurrency=1 --test-timeout=300000 test/ui/ 2>&1)"
 code=$?
 echo "$out"
 

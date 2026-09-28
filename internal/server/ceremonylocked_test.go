@@ -121,7 +121,7 @@ func TestTheCeremoniesListingRefusesACrossSiteRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Sec-Fetch-Site", "cross-site")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestALockedReadRunsNoCloseOutSweep(t *testing.T) {
 // getCeremonies reads the listing route and decodes it, failing the test on anything but 200.
 func getCeremonies(t *testing.T, base string) ceremoniesResponse {
 	t.Helper()
-	resp, err := http.Get(base + "/api/ceremonies")
+	resp, err := newClient(t).Get(base + "/api/ceremonies")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -920,11 +920,11 @@
   <!-- A window that holds no session (ADR-053): opened without the launch key Nib puts in its
        URL fragment, and in a browser that never traded one. Nothing behind it can work, so it
        says what does: open Nib again, which hands a fresh key to this same instance. -->
-  <div id="launchOverlay" role="dialog" aria-modal="true" aria-labelledby="launchTitle" tabindex="-1" hidden>
+  <div id="launchOverlay" role="dialog" aria-modal="true" aria-labelledby="launchTitle" aria-describedby="launchText" tabindex="-1" hidden>
     <div id="launchCard">
       <img class="brand brand-lg" src="./nib.svg" alt="Nib" />
       <h2 id="launchTitle">Open Nib again</h2>
-      <p>This window is not connected to Nib. Open Nib from your applications menu (or run <code>nib</code>) and it will open a window that is &mdash; your open documents are still there.</p>
+      <p id="launchText">This window is not connected to Nib. Open Nib from your applications menu (or run nib) and it will open a window that is.</p>
     </div>
   </div>
   <div id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle" tabindex="-1" hidden>

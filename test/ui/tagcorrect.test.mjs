@@ -119,10 +119,10 @@ const { page } = h;
 let foundHeld = null;
 let brokenPath = '';
 
-const heldDocs = () => page.evaluate(async () => (await (await fetch('/api/docs')).json()).docs.length);
-const result = (clause) => page.evaluate(async (c) => (await (await fetch('/api/uacheck')).json()).results.find((r) => r.clause === c), clause);
+const heldDocs = () => page.evaluate(async () => (await (await nibFetch('/api/docs')).json()).docs.length);
+const result = (clause) => page.evaluate(async (c) => (await (await nibFetch('/api/uacheck')).json()).results.find((r) => r.clause === c), clause);
 const waitVerdict = (clause, verdict) => page.waitForFunction(async ([c, v]) =>
-  (await (await fetch('/api/uacheck')).json()).results.find((r) => r.clause === c)?.verdict === v, [clause, verdict], { timeout: 30000, polling: 500 });
+  (await (await nibFetch('/api/uacheck')).json()).results.find((r) => r.clause === c)?.verdict === v, [clause, verdict], { timeout: 30000, polling: 500 });
 
 after(async () => {
   try {
@@ -211,7 +211,7 @@ test('veraPDF agrees: the stripped document fails both clauses, and the correcte
     return;
   }
   const bytes = await page.evaluate(async () => {
-    const b = new Uint8Array(await (await fetch('/api/pdf')).arrayBuffer());
+    const b = new Uint8Array(await (await nibFetch('/api/pdf')).arrayBuffer());
     let s = '';
     for (const x of b) s += String.fromCharCode(x);
     return btoa(s);

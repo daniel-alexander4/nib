@@ -222,9 +222,10 @@ func originIsLoopback(r *http.Request) bool {
 	return addrscope.Loopback(u.Host)
 }
 
-// requirePublicLoopback guards a public (pre-unlock) mutating route. No CSRF
-// token exists before the vault unlocks, so a loopback Origin is the only write
-// guard these routes can apply.
+// requirePublicLoopback refuses a request whose origin is not loopback. Since ADR-054 it is never a
+// route's only guard: the routes it wraps also pass `requireSession` (the token exists from process
+// start, not from unlock), and it stays on their GETs as defence in depth against a cross-site
+// sub-resource, which `requireSession` does not origin-check.
 func requirePublicLoopback(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !originIsLoopback(r) {

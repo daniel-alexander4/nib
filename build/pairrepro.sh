@@ -476,29 +476,26 @@ ELAPSED_TOTAL=0
 WORK="$(mktemp -d)"
 for i in $(seq 1 "$N"); do HOMES[$((i-1))]="$WORK/i$i"; done
 
-# **Every curl below carries the session cookie through ONE setting** (ADR-053, `/pending 685`). A
-# caller without the session is refused on every route behind `requireUnlocked`, GETs included, and
-# this harness makes dozens of plain GETs. The cookie is named per port (`nib_<port>`), so one jar
-# holds every instance's and each instance reads only its own. `trade` below writes it.
-export CURL_HOME="$WORK/curlhome"
-mkdir -p "$CURL_HOME"
-: >"$WORK/jar"
-printf 'cookie = "%s"\n' "$WORK/jar" >"$CURL_HOME/.curlrc"
-
-# launch_token trades the launch key a headless Nib logs for the person who started it (ADR-053),
-# writing the session cookie into the shared jar and printing the CSRF token. The log line is the
-# ONLY way in — `/api/status` stopped carrying the token because it answers every process on the
-# machine. Retried: the server can answer before the line is written.
-launch_token() { # base log
-  local key="" _
-  for _ in $(seq 1 40); do
-    key="$(sed -n 's/.*open Nib at [^#]*#k=\([A-Za-z0-9_-]*\).*/\1/p' "$2" | tail -1)"
-    [ -n "$key" ] && break
-    sleep 0.1
+# **Every curl below carries its instance's token, through ONE wrapper** (ADR-053/054). Every route
+# but three requires the token, GETs included, and this harness makes dozens of plain requests to
+# several instances, each with its own token. The wrapper finds the instance by the port in the URL
+# and adds that instance's header; a URL with no known token (before the trade, or a foreign host)
+# goes through untouched. (A cookie jar did this before ADR-054 removed the cookie.)
+. "$(dirname "${BASH_SOURCE[0]}")/launchkey.sh"
+declare -A TOKS=() # API port → token
+curl() {
+  local a port="" own=""
+  for a in "$@"; do
+    case "$a" in
+      http://127.0.0.1:*) [ -n "$port" ] || { port=${a#http://127.0.0.1:}; port=${port%%/*}; } ;;
+      X-CSRF-Token:*) own=1 ;; # a clause that sends its own token (a stale one, on purpose) keeps it
+    esac
   done
-  [ -n "$key" ] || return 1
-  curl -fsS -b "$WORK/jar" -c "$WORK/jar" -X POST "$1/api/launch" -H "X-Nib-Launch: $key" \
-    | sed -n 's/.*"csrf":"\([^"]*\)".*/\1/p'
+  if [ -n "$port" ] && [ -z "$own" ] && [ -n "${TOKS[$port]:-}" ]; then
+    command curl -H "X-CSRF-Token: ${TOKS[$port]}" "$@"
+  else
+    command curl "$@"
+  fi
 }
 
 # ── Teardown, and why the trap reads $? ──────────────────────────────────────
@@ -759,13 +756,19 @@ restart() { # index (1-based) — kill an instance and bring it back on the same
   local tok
   tok="$(csrf "${URLS[$idx]}" "${HOMES[$idx]}")"
   [ -n "$tok" ] || { echo "restart: instance $i returned no CSRF token after coming back" >&2; return 1; }
-  CSRFS[$idx]="$tok"
+  CSRFS[$idx]="$tok"; TOKS[${API_PORTS[$idx]}]="$tok"
+  # **And ask its status, as the user's reopened window does first** — `handleStatus` is what unlocks
+  # the vault from the key on disk (`ensureUnlocked`). The readiness probe used to do this by accident,
+  # and since ADR-054 it gets a 403 before the handler runs, so a restarted instance stayed LOCKED and
+  # the next arm answered 401 — measured, tier 4d at /pending 704's gate.
+  curl -fsS -o /dev/null "${URLS[$idx]}/api/status" \
+    || { echo "restart: instance $i did not answer its status with its token" >&2; return 1; }
   return 0
 }
 
 wait_up() { # url
   for _ in $(seq 1 60); do
-    curl -fsS -o /dev/null "$1/api/status" 2>/dev/null && return 0
+    nib_answers "$1" && return 0
     sleep 0.25
   done
   return 1
@@ -795,20 +798,24 @@ done
 # Each instance enrols its OWN key under its OWN home, which is what gives them
 # different identities. A shared vault would make every assertion below vacuous —
 # the "peers" would be one key agreeing with itself.
+# The token first (ADR-054): every route but three requires it, the enrol included — and a logged
+# key trades once, so this is the only trade per process.
+csrf() { launch_token "$1" "$2/nib.log"; } # url home
+CSRFS=()
 for i in $(seq 1 "$N"); do
   url="${URLS[$((i-1))]}"; home="${HOMES[$((i-1))]}"
+  tok="$(csrf "$url" "$home")"
+  [ -n "$tok" ] || fail "instance $i ($url) returned no token for its logged launch key"
+  CSRFS+=( "$tok" ); TOKS[${API_PORTS[$((i-1))]}]="$tok"
   curl -fsS -X POST "$url/api/ssh/enroll" -H 'Content-Type: application/json' \
     -d "{\"mode\":\"create\",\"keyPath\":\"$home/home/.ssh/id_ed25519\"}" >/dev/null \
     || fail "could not enrol a key on instance $i ($url)"
 done
 
-csrf() { launch_token "$1" "$2/nib.log"; } # url home
-CSRFS=(); FPS=()
+FPS=()
 for i in $(seq 1 "$N"); do
   url="${URLS[$((i-1))]}"
-  tok="$(csrf "$url" "${HOMES[$((i-1))]}")"
-  [ -n "$tok" ] || fail "instance $i ($url) returned no CSRF token"
-  CSRFS+=( "$tok" )
+  tok="${CSRFS[$((i-1))]}"
   # **The advanced features are OFF by default since v1.129.5 (`/pending 451`)**, and ceremonies,
   # link-local discovery and the rendezvous are three of the four. A fresh instance refuses them
   # 403 until its user asks, so every instance here is set up the way a user would set it up —

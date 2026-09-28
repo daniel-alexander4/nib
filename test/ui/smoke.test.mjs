@@ -31,7 +31,7 @@ test('the harness reaches a real rendering engine', async () => {
 });
 
 test('it is driving the real nib binary, not a mock', async () => {
-  const st = await page.evaluate(async () => (await fetch('/api/status')).json());
+  const st = await page.evaluate(async () => (await nibFetch('/api/status')).json());
   // `ready` proves uirepro.sh's key enrollment actually took: an un-enrolled
   // server answers `setup`, and every document route would be behind the overlay.
   assert.equal(st.state, 'ready', `expected an unlocked vault, got ${st.state}`);

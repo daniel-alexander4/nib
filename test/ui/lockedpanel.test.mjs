@@ -52,7 +52,7 @@ const { browser, page } = h;
 after(() => shutdown(h));
 
 test('it is driving a LOCKED nib, not the shared unlocked one', async () => {
-  const st = await page.evaluate(async () => (await fetch('/api/status')).json());
+  const st = await page.evaluate(async () => (await nibFetch('/api/status')).json());
   assert.notEqual(st.state, 'ready',
     `expected a locked vault, got ${st.state} — every assertion below would pass against an ` +
     'unlocked app, which is the fixture-shaped vacuous green this tier keeps finding');

@@ -129,7 +129,7 @@ test('Save will not silently overwrite the changed file', async () => {
   // Unpinned deliberately: exactly one document is open here, so the compatibility
   // fallback resolves to it, and the app exposes no id to read from the page.
   const stillChanged = await page.evaluate(async () => {
-    const r = await fetch('/api/doc');
+    const r = await nibFetch('/api/doc');
     return (await r.json()).diskChanged === true;
   });
   assert.ok(stillChanged,

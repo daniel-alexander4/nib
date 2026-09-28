@@ -70,6 +70,12 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     ...(locale ? { locale } : {}),
     ...(timezoneId ? { timezoneId } : {}),
   });
+  // `nibFetch` is the TEST's way to read the API from inside the page: `fetch` plus the token the
+  // page keeps in sessionStorage (ADR-054 — every read needs it). A separate name, never a wrapper
+  // over `fetch`, so an app request that forgot its token still fails here as it would for a user.
+  await page.addInitScript(() => {
+    window.nibFetch = (u, o = {}) => fetch(u, { ...o, headers: { ...(o.headers || {}), 'X-CSRF-Token': sessionStorage.getItem('nib-token') || '' } });
+  });
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
@@ -369,9 +375,8 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // **The token is fetched, not borrowed from the page**, and that cost a tier-3 run to learn:
     // `app.js`'s `csrf` is a top-level `let`, which is NOT reachable from a `page.evaluate` —
     // six files failed with `ReferenceError: csrf is not defined`, and only those six because a
-    // file with nothing open never reached the POST. `GET /api/launch` hands it to a page holding
-    // the session cookie (ADR-053) — the same answer a reloaded window gets — so this asks the
-    // server rather than the page.
+    // file with nothing open never reached the POST. The page keeps it in sessionStorage (ADR-054),
+    // which IS reachable from a `page.evaluate` — the same place a reloaded window reads it from.
     //
     // It asks `/api/docs` rather than trusting the close, because the registry is what the next
     // file inherits, and it loops because a close racing an in-flight open would otherwise leave
@@ -380,13 +385,12 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     async closeAll() {
       return page.evaluate(async () => {
         const count = async () => {
-          const r = await fetch('/api/docs');
+          const r = await nibFetch('/api/docs');
           if (!r.ok) return 0; // locked, or a server that never held one: nothing to close
           return ((await r.json()).docs || []).length;
         };
         if ((await count()) === 0) return 0;
-        const st = await fetch('/api/launch');
-        const token = st.ok ? (await st.json()).csrf : '';
+        const token = sessionStorage.getItem('nib-token') || '';
         for (let i = 0; i < 5 && (await count()) > 0; i++) {
           await fetch('/api/close', { method: 'POST', headers: { 'X-CSRF-Token': token } });
         }

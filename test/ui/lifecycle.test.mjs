@@ -95,7 +95,7 @@ test('reopening after a close works normally', async () => {
   const c = await chrome();
   assert.equal(c.wrap, 'has-doc');
   assert.equal(c.pageCount, '/ 5', 'a different document must actually have opened');
-  const undo = await page.evaluate(async () => (await (await fetch('/api/doc')).json()).canUndo);
+  const undo = await page.evaluate(async () => (await (await nibFetch('/api/doc')).json()).canUndo);
   assert.equal(undo, false, 'the undo ring must not survive a close');
   h.dialogs.length = 0;
   await closeDoc();
@@ -125,7 +125,7 @@ test('the close prompt fires from a placed overlay alone', async () => {
   const kept = await chrome();
   assert.equal(kept.wrap, 'has-doc', 'cancelling must not close the document');
   assert.equal((await h.counts()).markers, 1, 'cancelling must not discard the overlay');
-  const pdfStatus = await page.evaluate(async () => (await fetch('/api/pdf')).status);
+  const pdfStatus = await page.evaluate(async () => (await nibFetch('/api/pdf')).status);
   assert.equal(pdfStatus, 200, 'the server must still hold the document after a cancel');
 
   h.answerDialogs(true);
@@ -195,7 +195,7 @@ test('a failed close tears nothing down', async () => {
   assert.equal(kept.wrap, 'has-doc', 'a failed close must not tear down the client');
   assert.equal(kept.pageCount, '/ 3');
   assert.equal(kept.closeDisabled, false, 'the control must stay usable');
-  const status = await page.evaluate(async () => (await fetch('/api/pdf')).status);
+  const status = await page.evaluate(async () => (await nibFetch('/api/pdf')).status);
   assert.equal(status, 200, 'the server must still be serving the document');
 
   await page.unroute('**/api/close');

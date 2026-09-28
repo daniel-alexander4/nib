@@ -32,7 +32,7 @@ func TestTheWindowStreamCarriesTheArmedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("open window stream: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestTheQuitRouteSignalsTheSameExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Origin", ts.URL) // requirePublicLoopback's guard
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("POST /api/quit: %v", err)
 	}

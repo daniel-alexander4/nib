@@ -203,10 +203,7 @@ type Server struct {
 
 	mu    sync.Mutex
 	vault *vault.Vault // unlocked vault, nil until the SSH key unlocks it
-	csrf  string       // per-process CSRF token, handed only to a caller holding a launch key (ADR-053)
-	// session is the per-process session cookie's value (ADR-053). Minted with csrf in New, and
-	// independent of the vault: a page holds it across a lock, an unlock and a vault import.
-	session string
+	csrf  string       // per-process token, handed only to a caller holding a launch key (ADR-053/054); vault-independent
 	// launchKeys are the outstanding single-use keys a window's URL fragment carries (launch.go).
 	launchKeys []launchKey
 
@@ -322,7 +319,7 @@ func New(web, legal fs.FS, configDir, version string) *Server {
 	// The epoch is per-process and is minted before anything can open a document,
 	// so no id can ever be issued without one.
 	return &Server{web: web, legal: legal, configDir: configDir, version: version, epoch: newToken(),
-		csrf: newToken(), session: newToken()}
+		csrf: newToken()}
 }
 
 // SetInstanceToken tells the server which probe token identifies it. Called by main
@@ -344,27 +341,29 @@ func (s *Server) Handler() http.Handler {
 	// deliberately, because this GET IS a write: handleStatus calls ensureUnlocked, which
 	// can run vault.AutoSetup and create a vault. The method-based guard let any web page
 	// the user had open trigger first-run vault creation with a plain cross-site request.
-	mux.HandleFunc("GET /api/status", requirePublicLoopback(s.handleStatus))
+	mux.HandleFunc("GET /api/status", requirePublicLoopback(s.requireSession(s.handleStatus)))
 	mux.HandleFunc("GET /api/instance", s.handleInstance)
-	// How a page gets its credentials (ADR-053): a launch key from the URL fragment Nib opened it
-	// at, traded once; a reload recovers the token with the cookie; a holder mints another key.
+	// How a page gets its credentials (ADR-053/054): a launch key from the URL fragment Nib opened it
+	// at, traded once for the token; a holder mints another key. **Every route below this line except
+	// `/api/instance` and `/api/handoff`, which carry their own secrets, passes `requireSession`** —
+	// the wizard, status, the window stream and quit included, since the page holds the token before
+	// it calls anything, locked or not (ADR-054). `TestEveryRouteIsBehindTheSessionOrNamed` holds it.
 	mux.HandleFunc("POST /api/launch", requirePublicLoopback(s.handleLaunchTrade))
-	mux.HandleFunc("GET /api/launch", requirePublicLoopback(s.requireSession(s.handleLaunchResume)))
 	mux.HandleFunc("POST /api/launch/key", s.requireSession(s.handleLaunchKey))
 	// A window declares itself and holds the stream for as long as it exists; the count is
 	// what P01.S04 will read to decide the process is done. Public, not requireUnlocked (D3):
 	// a window on the unlock screen is a real window.
-	mux.HandleFunc("GET /api/window", requirePublicLoopback(s.handleWindow))
+	mux.HandleFunc("GET /api/window", requirePublicLoopback(s.requireSession(s.handleWindow)))
 	mux.HandleFunc("POST /api/handoff", requirePublicLoopback(s.handleHandoff))
-	mux.HandleFunc("POST /api/quit", requirePublicLoopback(s.handleQuit))
+	mux.HandleFunc("POST /api/quit", s.requireSession(s.handleQuit))
 	// Behind the loopback door although it writes nothing here (/pending 499): it ACTS — an outbound
 	// request to GitHub on every hit — so any page in the user's browser could make Nib phone out with
 	// an <img src>. The UI's own fetch is same-origin and passes; the version pill is unaffected.
-	mux.HandleFunc("GET /api/update/check", requirePublicLoopback(s.handleUpdateCheck))
-	mux.HandleFunc("POST /api/ssh/enroll", requirePublicLoopback(s.handleEnroll))
-	mux.HandleFunc("POST /api/ssh/migrate", requirePublicLoopback(s.handleMigrate))
-	mux.HandleFunc("POST /api/ssh/unlock", requirePublicLoopback(s.handleUnlock))
-	mux.HandleFunc("POST /api/ssh/repoint", requirePublicLoopback(s.handleRepoint))
+	mux.HandleFunc("GET /api/update/check", requirePublicLoopback(s.requireSession(s.handleUpdateCheck)))
+	mux.HandleFunc("POST /api/ssh/enroll", s.requireSession(s.handleEnroll))
+	mux.HandleFunc("POST /api/ssh/migrate", s.requireSession(s.handleMigrate))
+	mux.HandleFunc("POST /api/ssh/unlock", s.requireSession(s.handleUnlock))
+	mux.HandleFunc("POST /api/ssh/repoint", s.requireSession(s.handleRepoint))
 
 	// Protected — require the vault unlocked (+ CSRF on writes).
 	//
@@ -412,11 +411,11 @@ func (s *Server) Handler() http.Handler {
 	// refuses `Sec-Fetch-Site: cross-site` outright. So this route ends up BETTER guarded after the
 	// move than it was before it, which is the opposite of how "taking a route off the auth gate"
 	// reads.
-	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.handleCeremonies))
+	mux.HandleFunc("GET /api/ceremonies", requirePublicLoopback(s.requireSession(s.handleCeremonies)))
 	// Whose turn is it, for ONE ceremony (P06.S03). Same footing as the listing above and for the
 	// same reasons: nothing here needs the vault, and `requirePublicLoopback` supplies the origin
 	// check `requireUnlocked` does not apply to GET. It is a pure read and must stay one.
-	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.handleCeremonyNext))
+	mux.HandleFunc("GET /api/ceremony/next", requirePublicLoopback(s.requireSession(s.handleCeremonyNext)))
 	mux.HandleFunc("POST /api/ceremony/accept", s.requireUnlocked(s.handleCeremonyAccept))
 	mux.HandleFunc("POST /api/ceremony/leave", s.requireUnlocked(s.handleCeremonyLeave))
 	mux.HandleFunc("POST /api/ceremony/name", s.requireUnlocked(s.handleCeremonyName))

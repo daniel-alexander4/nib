@@ -23,12 +23,12 @@ const DOC = writeFixture('tagedit.pdf', { pages: 2, label: 'section' });
 const h = await launch();
 const { page } = h;
 
-const heldDocs = () => page.evaluate(async () => (await (await fetch('/api/docs')).json()).docs.length);
+const heldDocs = () => page.evaluate(async () => (await (await nibFetch('/api/docs')).json()).docs.length);
 let foundHeld = null;
 
 // clause73 is 7.3 t1's verdict from the report door the modal reads.
 const clause73 = () => page.evaluate(async () => {
-  const rep = await (await fetch('/api/uacheck')).json();
+  const rep = await (await nibFetch('/api/uacheck')).json();
   return (rep.results || []).find((r) => r.clause === '7.3 t1')?.verdict;
 });
 
@@ -128,13 +128,13 @@ test('retype, alt text and undo, by keyboard alone, move the report there and ba
   assert.ok(toAlt.ok, 'Tab never reached the alt text field');
   await page.keyboard.type('A section heading');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(async () => (await (await fetch('/api/uacheck')).json()).results.find((r) => r.clause === '7.3 t1')?.verdict === 'pass', null, { timeout: 20000 });
+  await page.waitForFunction(async () => (await (await nibFetch('/api/uacheck')).json()).results.find((r) => r.clause === '7.3 t1')?.verdict === 'pass', null, { timeout: 20000 });
 
   // Off the text field first: a field with text in it owns Ctrl+Z, and the claim is the document's undo.
   const toSet = await tabTo('#tagEditAltApply');
   assert.ok(toSet.ok, 'Tab never reached Set alt text');
   await page.keyboard.press('Control+z');
-  await page.waitForFunction(async () => (await (await fetch('/api/uacheck')).json()).results.find((r) => r.clause === '7.3 t1')?.verdict === 'fail', null, { timeout: 20000 });
+  await page.waitForFunction(async () => (await (await nibFetch('/api/uacheck')).json()).results.find((r) => r.clause === '7.3 t1')?.verdict === 'fail', null, { timeout: 20000 });
 });
 
 test('the panel is no keyboard trap, and every stop in it is visible', async () => {
