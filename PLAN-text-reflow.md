@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 — the content-stream walker — is next.
+**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 CLOSED (v1.167.9 — the walker's evidence, and ADR-056's page-content door); P06 — reflow one paragraph on one page — is next.
 
 ---
 
@@ -412,7 +412,7 @@ P08 (D10).
 exists in exactly one place, asserted by a guard; columns and multi-column pages are either handled
 or explicitly reported as out of the tool's competence.
 
-### P05 — The content-stream walker
+### P05 — The content-stream walker *(done 2026-09-28, v1.167.9 — two slices; ledger 9 clauses, all met, E1′ as pinned; gates below)*
 **Goal.** Parse a content stream into operators and write it back. The new capability the whole plan
 rests on, and the one this repo has never had.
 
@@ -509,6 +509,18 @@ purpose. The two fused fixtures move it too, by ADR-056's named exemption (`/pen
 (`indesign/census-p60-280.pdf` p30, 134,220 bytes) walks — tokenize + write back — in **4.29–4.60 ms**
 (29–31 MB/s), allocating 7.0 MB in 27 allocations. A real page's walk is milliseconds; it is not the cost that
 decides whether reflow can sit on a request path.
+
+**P05 closed 2026-09-28 at v1.167.9.** Acceptance ledger (9 clauses, split on `and`): E1 law 1 at the decoded stream ✓;
+E1′ the document keeps its digest — met as pinned (content 356/356; two named, measured digest properties, /pending 720 and
+718); inline images ✓, string ✓, hex ✓, dicts ✓, marked content ✓, nested XObjects ✓ (each SEEN, by census); the walk's cost
+measured on a real page ✓ (4.29–4.60 ms). **The full-repo review found two regressions this phase made** — the n-up note
+and tag carries compare with pdfcpu's own join and lost a divided page's notes and tags — fixed by ADR-057, each red-proved;
+plus `wrapPageToBox`'s `Q` after a trailing comment. Out of phase: 23 already filed, 721–728 new
+(`code-reviews/v1.167.8-p05-phase-close-2026-09-28.md`). **Graduation**: 8 rows, 1 actionable, 1 hot-path, 0 deleted.
+**Closure sweep**: /pending 457 re-pointed to P06. **Required-run gates** (measured at v1.167.9): tier 0 `go build` ✓,
+`go vet` ✓, `gofmt` ✓, tier 1 `go test ./...` ✓ (suiterun fp c734a5a6), tier 2 jsdom ✓ 467/467, tier 3 uirepro ✓ 160/160, 0 skipped; **tiers 4 and 6 did NOT
+fire** — no slice touched `internal/server`'s session, ceremony, delivery or discovery paths, `internal/p2p` or
+`internal/rendezvous`.
 
 ### P06 — Reflow one paragraph on one page
 **Goal.** The feature, at its smallest honest scope: edit a word, re-wrap the paragraph in its own

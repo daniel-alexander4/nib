@@ -80,7 +80,9 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		if e != nil || ir == nil {
 			return nil, false
 		}
-		b, cerr := pdfread.PageContent(ctx, d, p)
+		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** This is matched byte for byte against the form
+		// `api.NUp` wrote from pdfcpu's OWN join, so it must be that join (`TestANUpCarriesTheNoteOfADividedPage`).
+		b, cerr := ctx.PageContent(d, p) //pagecontent:exempt tagcarry-nup
 		if cerr != nil || len(b) == 0 {
 			continue // an empty page has no marked content to re-anchor
 		}
