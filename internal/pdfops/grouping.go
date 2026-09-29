@@ -171,7 +171,7 @@ func lineSegments(runs []textRun) []textLine {
 			l := &out[n-1]
 			em := math.Max(l.size, r.size)
 			if math.Abs(l.y-r.y) <= 0.3*em && r.x-l.x1 <= joinGapEm*em {
-				if r.x-l.x1 > 0.15*em && !strings.HasSuffix(l.text, " ") && !strings.HasPrefix(r.text, " ") {
+				if separatesWords(r.x-l.x1, em) && !strings.HasSuffix(l.text, " ") && !strings.HasPrefix(r.text, " ") {
 					l.text += " "
 				}
 				l.text += r.text

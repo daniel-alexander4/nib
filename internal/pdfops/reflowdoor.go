@@ -3,8 +3,6 @@ package pdfops
 import (
 	"errors"
 	"fmt"
-	"math"
-	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
@@ -18,6 +16,10 @@ import (
 // decides it (`internal/server/reflow.go`, through `sign.HasSignatureBlob`, tagwrite's predicate): this package reads
 // no signatures, and `sign`'s own tests import it.
 const ReflowCauseSigned = "signed"
+
+// ReflowCauseInvalidOutput is the server door's refusal of a rewrite that does not validate as a PDF: the document is
+// left as it was.
+const ReflowCauseInvalidOutput = "invalid-output"
 
 // ErrReflowStale is a reflow whose paragraph no longer reads as the text the request says it edited — the page changed
 // under it, or the index names another paragraph now. ADR-001: an operation acts only on what it captured.
@@ -47,26 +49,10 @@ func Paragraphs(pdf []byte, page int) ([]Paragraph, error) {
 	out := make([]Paragraph, 0, len(l.paragraphs))
 	for i, p := range l.paragraphs {
 		para := Paragraph{Index: i, Text: p.text()}
-		if _, _, cause := paragraphWords(p); cause != "" {
-			para.Refusal = cause
-		}
+		para.Refusal = paragraphRefusal(ctx, page, p)
 		out = append(out, para)
 	}
 	return out, nil
-}
-
-// paragraphBox is the box a paragraph's lines occupy: their extent across, and from the lowest descender to the highest
-// ascender, taken as the size below and above each baseline — the glyph boxes are not read, so this is the lines' reach,
-// not their ink.
-func paragraphBox(p textParagraph) [4]float64 {
-	b := [4]float64{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}
-	for _, l := range p.lines {
-		b[0] = math.Min(b[0], l.x0)
-		b[2] = math.Max(b[2], l.x1)
-		b[1] = math.Min(b[1], l.y-0.25*l.size)
-		b[3] = math.Max(b[3], l.y+l.size)
-	}
-	return b
 }
 
 // ReflowParagraph re-sets paragraph index of page as text and returns the whole document rewritten — or the cause it
@@ -89,7 +75,7 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 		if index < 0 || index >= len(l.paragraphs) || normalizedText(l.paragraphs[index].text()) != normalizedText(original) {
 			return ErrReflowStale
 		}
-		o, err := reflowParagraph(ctx, page, index, text)
+		o, err := reflowParagraphIn(ctx, l, page, index, text)
 		if err != nil {
 			return err
 		}
@@ -114,5 +100,3 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 
 // errNothingToWrite stops the rewrite when the reflow fell back: the document is not written at all.
 var errNothingToWrite = errors.New("pdfops: nothing to write")
-
-func normalizedText(s string) string { return strings.Join(strings.Fields(s), " ") }

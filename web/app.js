@@ -6642,8 +6642,8 @@ els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
 // --- reflow a paragraph (PLAN-text-reflow.md P06) ------------------------------
 // The server reads the page's paragraphs and says which it cannot reflow and why; the edit goes back with the text the
 // user was shown, so the server refuses (409) a paragraph that changed meanwhile instead of rewriting whatever sits at
-// that index now. A signed document is refused by the server whatever this does (D11); the button is disabled for one
-// too, so the user is told before they type.
+// that index now. A signed document is refused by the server whatever this does (D11); the button stays enabled for one
+// (signing mode's lock is NibFlags, not a signature) and the click is answered with the reason, before any request.
 const REFLOW_CAUSES = {
   signed: 'This document is signed, and rewriting a page would change what its signatures cover.',
   'missing-glyph': "The document's font has no glyph for a character you typed.",
@@ -6656,6 +6656,20 @@ const REFLOW_CAUSES = {
   'styled-word': 'A word changes style part-way through.',
   rotated: 'The text is drawn turned.',
   'text-in-form': 'The text is drawn inside a stamp or overlay, not on the page itself.',
+  'mixed-state': "The paragraph's lines are set with different letter or word spacing.",
+  'mixed-content': 'Something other than the text itself — a colour change or a drawing — sits between its lines.',
+  'inline-follower': 'More text is drawn straight after the paragraph, and it would move.',
+  undecoded: "Some of the paragraph's characters cannot be read as text.",
+  'glyphs-not-kept': "The paragraph's letters cannot be read one by one.",
+  'empty-line': 'One of its lines draws no words.',
+  'no-space-width': 'The paragraph has no space between words to measure one by.',
+  'degenerate-state': 'The text is drawn at a size or position that cannot be measured.',
+  'no-such-paragraph': 'That paragraph is no longer on the page.',
+  'invalid-output': 'The rewritten page did not check out, so nothing was changed.',
+  'empty-text': 'There is no text to set. To remove the paragraph, redact it instead.',
+  'ambiguous-style': 'A word you used appears in the paragraph in two styles, and which one to keep is unclear.',
+  vertical: 'The text is written vertically.',
+  'invisible-text': 'The text is invisible — a search layer over a scanned image — so changing it would not change what the page shows.',
 };
 function reflowCauseSentence(cause) {
   const why = REFLOW_CAUSES[cause] || 'It cannot be re-set exactly (' + cause + ').';
@@ -6677,7 +6691,11 @@ async function reflowOpen() {
   const page = owner.viewer.currentPageNumber;
   const res = await apiFetch('/api/paragraphs?page=' + page, { docId: owner.docMeta && owner.docMeta.id });
   if (!res.ok) return toast(await errText(res, 'could not read the page'));
-  reflowParas = (await res.json()).paragraphs || [];
+  const paras = (await res.json()).paragraphs || [];
+  // The user may have switched tabs while the page was read: a dialog opened over another tab would list this one's
+  // paragraphs and its Reflow would then do nothing (ADR-001 refuses the write; nothing would say why).
+  if (owner !== view) return;
+  reflowParas = paras;
   if (!reflowParas.length) return toast('There is no text on this page to reflow');
   els.reflowPick.replaceChildren(...reflowParas.map((p) => {
     const o = document.createElement('option');
@@ -6702,8 +6720,22 @@ async function reflowSubmit() {
   fd.append('paragraph', String(p.index));
   fd.append('original', p.text);
   fd.append('text', els.reflowText.value);
-  const res = await apiFetch('/api/reflow', { method: 'POST', body: fd, docId: owner.docMeta.id });
-  if (res.status === 409) { els.reflowModal.hidden = true; return toast('That paragraph has changed — open Reflow again'); }
+  // One request at a time: a second click would commit the edit twice, or be told the paragraph it just changed has
+  // changed.
+  els.reflowGo.disabled = true;
+  let res;
+  try {
+    res = await apiFetch('/api/reflow', { method: 'POST', body: fd, docId: owner.docMeta.id });
+  } finally {
+    els.reflowGo.disabled = false;
+  }
+  // A 409 is the server's to word — the paragraph changed, the document is frozen for a ceremony, or it would pass the
+  // size cap — so its own sentence is shown, and the dialog stays open with what the user typed.
+  if (res.status === 409) {
+    els.reflowWhy.textContent = await errText(res, 'The document changed — open Reflow again');
+    els.reflowWhy.hidden = false;
+    return;
+  }
   if (!res.ok) return toast(await errText(res, 'reflow failed'));
   const out = await res.json();
   if (!out.ok) {

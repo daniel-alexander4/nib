@@ -364,8 +364,11 @@ covered: they are gone from the page, from copy-and-paste and from Find.
 It changes only what it can set exactly. The new text must fit in the lines the
 paragraph already has, and use only characters the document's font carries; a
 paragraph drawn in a way Nib cannot rewrite faithfully (text inside a stamp, turned
-text, lines tagged one by one for accessibility) is refused with the reason, and
-**Edit text** is there for those. A **signed** document is never reflowed — rewriting
+or vertical text, lines tagged one by one for accessibility, text a screen reader is
+told to read differently, or an invisible search layer over a scan) is refused with
+the reason, and **Edit text** is there for those. In a font that carries only the
+letters the document used, a letter the page never shows counts as missing. Clearing
+the whole paragraph is refused too — redact it instead. A **signed** document is never reflowed — rewriting
 a page would change what its signatures cover. **Undo** restores the paragraph.
 
 ### OCR — make a scan searchable

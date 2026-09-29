@@ -10,6 +10,26 @@ import (
 	"nib/internal/pdfread"
 )
 
+// rebreak breaks words at the paragraph's line measures with space between them, through the one line breaker — the
+// breaker as the rewrite calls it, over the words the paragraph already has. A test instrument.
+func rebreak(words []reflowWord, measures []float64, space float64) [][]reflowWord {
+	return breakAt(words, measures, func(w reflowWord) float64 { return w.width }, space)
+}
+
+// lineTexts renders broken lines as their words joined by a space — what a reader of the broken paragraph sees.
+func lineTexts(lines [][]reflowWord) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		for j, w := range l {
+			if j > 0 {
+				out[i] += " "
+			}
+			out[i] += w.text()
+		}
+	}
+	return out
+}
+
 // TestAnUneditedParagraphRebreaksWhereItWasBroken — `PLAN-text-reflow.md` P06.S03: a paragraph re-broken by the one line
 // breaker, at its own measure, with its own glyph advances and space, reproduces the line breaks it was set with — on
 // the hand-checked corpus, whose converters set ragged-right greedily. Anything else would mean a reflow that changes
