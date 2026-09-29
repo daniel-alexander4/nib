@@ -3,6 +3,7 @@ package pdfops
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 
@@ -421,8 +422,15 @@ type runWalker struct {
 	xt *model.XRefTable
 	// keepGlyphs asks `show` to record each run's glyphs (P06.S01). Off for every reader but reflow's.
 	keepGlyphs bool
-	fonts      map[int]*runFont
-	runs       []textRun
+	// fonts holds every font the walk has loaded, keyed by its object number when the resource names an
+	// indirect font and by the dictionary's identity when it is a direct one (`/pending 723`): a direct
+	// font reloaded at every `Tf` re-parsed its `/ToUnicode` each time, 17.7 s for 14.4 KB of content.
+	// Identity, never the resource NAME, because a form's own `/Resources` may bind `/F1` to another
+	// font. `internal/uacheck`'s `glyphFontFor` keys its cache the same way.
+	fonts map[any]*runFont
+	// fontLoads counts `loadRunFont` calls — the observable the cache is measured by.
+	fontLoads int
+	runs      []textRun
 	// mcStack is the marked-content sequences open at this point of the walk, innermost last. Shared
 	// across a page and the forms it draws, because a `BDC` around a `Do` tags what the form draws.
 	// Pushed only through `push`, which carries what the questions asked per show need, so none of them
@@ -652,7 +660,7 @@ func (w *runWalker) carriesReplacementText(o runOperand, res types.Dict, src []b
 }
 
 func newRunWalker(xt *model.XRefTable) *runWalker {
-	return &runWalker{xt: xt, fonts: map[int]*runFont{}, budget: newFormWalkBudget(1)}
+	return &runWalker{xt: xt, fonts: map[any]*runFont{}, budget: newFormWalkBudget(1)}
 }
 
 // runOperand is one operand of an operator: a token, or a whole array.
@@ -1002,7 +1010,8 @@ func weakerWidthSource(a, b widthSource) widthSource {
 	return a
 }
 
-// fontFor resolves a font resource, cached by object number.
+// fontFor resolves a font resource, loaded once per font: keyed by object number for an indirect font
+// and by dictionary identity for a direct one (see `runWalker.fonts`).
 func (w *runWalker) fontFor(res types.Dict, name string) *runFont {
 	if res == nil {
 		return nil
@@ -1015,16 +1024,22 @@ func (w *runWalker) fontFor(res types.Dict, name string) *runFont {
 	if !ok {
 		return nil
 	}
-	if ir, isRef := obj.(types.IndirectRef); isRef {
-		key := ir.ObjectNumber.Value()
-		if f, cached := w.fonts[key]; cached {
-			return f
-		}
-		f := loadRunFont(w.xt, obj)
-		w.fonts[key] = f
+	var key any
+	switch o := obj.(type) {
+	case types.IndirectRef:
+		key = o.ObjectNumber.Value()
+	case types.Dict:
+		key = reflect.ValueOf(o).Pointer()
+	default:
+		return nil // neither a reference nor a dictionary: loadRunFont would refuse it too
+	}
+	if f, cached := w.fonts[key]; cached {
 		return f
 	}
-	return loadRunFont(w.xt, obj)
+	w.fontLoads++
+	f := loadRunFont(w.xt, obj)
+	w.fonts[key] = f
+	return f
 }
 
 // drawForm walks a form XObject at its /Matrix, under its own resources where it has them.
