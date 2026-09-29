@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"nib/internal/sign"
@@ -50,6 +51,28 @@ func TestEveryUncheckedCauseHasACLISentence(t *testing.T) {
 	for c := range uncheckedWords {
 		if !causes[c] {
 			t.Errorf("uncheckedWords has a sentence for %q, which is no UncheckedCause", c)
+		}
+	}
+}
+
+// TestAnUncheckedSignatureBesideACheckedOneIsSaid is /pending 749's CLI half: a file on which Nib's
+// signature reader reached one signer and not another is `Invalid` WITH that signer listed and
+// `Unchecked` set. The status line must name the unchecked signature — "modified since signing" would
+// claim a check of bytes nobody hashed — however many signers, or refused records, sit beside it.
+func TestAnUncheckedSignatureBesideACheckedOneIsSaid(t *testing.T) {
+	alice := sign.SignerInfo{Name: "Alice", Valid: true, Fingerprint: "ab"}
+	for name, st := range map[string]sign.Status{
+		"one checked signer": {State: sign.Invalid, Signers: []sign.SignerInfo{alice}, AddedAfter: true,
+			AddedAfterCause: sign.AddedAfterCouldNotCheck, Unchecked: sign.UncheckedHybridReference},
+		"no signer, a refused record": {State: sign.Invalid, AddedAfter: true, AddedAfterCause: sign.AddedAfterCouldNotCheck,
+			Refused: []sign.RefusedSignature{{Obj: 5, Cause: sign.CauseUnparseableContents}}, Unchecked: sign.UncheckedHybridReference},
+	} {
+		got := describeStatus(st)
+		if want := uncheckedWords[sign.UncheckedHybridReference]; !strings.Contains(got, "could not check: "+want) {
+			t.Errorf("%s: %q does not name the signature Nib could not check", name, got)
+		}
+		if strings.Contains(got, "modified since signing") {
+			t.Errorf("%s: %q claims a modification nobody measured", name, got)
 		}
 	}
 }

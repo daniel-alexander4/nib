@@ -16,12 +16,15 @@ package sign
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/verify"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // State is the integrity verdict for a document.
@@ -114,10 +117,13 @@ type Status struct {
 	// it is neither a signer nor coverage (ADR-059, ADR-060). It is listed so a reader can say the
 	// document carries one rather than say nothing about an object it saw.
 	Timestamps []uint32 `json:"timestamps,omitempty"`
-	// Unchecked says why a document that carries a signature has no signer Nib checked and nothing
-	// else to name for it — no refused record, no timestamp — so a reader can say which fact made
-	// it `Invalid` (/pending 741). Empty everywhere else. Set only with `AddedAfterCause`
-	// `could-not-check`: nothing measured the coverage either.
+	// Unchecked says why a document carries a signature Nib did not check, so a reader can say which
+	// fact made it `Invalid`. Two shapes: no signer Nib checked and nothing else to name for it — no
+	// refused record, no timestamp (/pending 741); or pdfcpu's reading of the file holds a signature
+	// the signature reader never reached, whatever else was checked (/pending 749) — then `Signers`
+	// lists the ones that WERE checked, and `State` is `Invalid` however they verified, because a
+	// verdict over them is not a verdict over the document. Empty everywhere else. Always set with
+	// `State` `Invalid` and `AddedAfterCause` `could-not-check`: nothing measured the coverage either.
 	Unchecked UncheckedCause `json:"unchecked,omitempty"`
 }
 
@@ -253,7 +259,8 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// wrong with a signed document", and calling it *never signed* is the unsafe direction.
 	// `p2p.ContributionProgress` already renders exactly that — "this document carries a signature
 	// that cannot be read".
-	if err := pdfcpuCanRead(data); err != nil {
+	ctx, err := pdfcpuRead(data)
+	if err != nil {
 		// Said, not only badged (/pending 741): nothing was checked, so the cause is could-not-check.
 		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Unchecked: UncheckedUnreadable}, nil, err
 	}
@@ -273,6 +280,14 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	if sweepErr != nil {
 		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck}, nil, sweepErr
 	}
+	// **The population the verdict is over is checked against the one pdfcpu read** (/pending 749).
+	// The sweep enumerates as the library does, so a signature the library's reader never reaches
+	// — a hybrid file's `/XRefStm`-only object, the /pending 733 shape — is missing from both, and
+	// with another signature beside it the verdict read `Valid` over the signers it did reach. pdfcpu
+	// has just read every object (it follows `/XRefStm`), so asking it costs a walk over objects
+	// already in memory, and it names the gap only where one exists: an unsigned hybrid file, or a
+	// signed one whose stream holds no signature, reads as before.
+	unseen := unseenSignatures(ctx, revs)
 	if libraryWouldOverread(revs, len(data)) {
 		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Refused: refusedOf(revs), Timestamps: timestampsOf(revs)}, revs, errLibraryWouldOverread
 	}
@@ -319,9 +334,9 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 			st.State = Invalid
 		}
 		st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), jerr, false)
-		st.Unchecked = uncheckedOf(st, data)
-		if st.Unchecked != "" {
-			st.AddedAfter, st.AddedAfterCause = true, AddedAfterCouldNotCheck
+		st = withUnchecked(st, data, unseen)
+		if jerr == nil && unseen {
+			jerr = errUnseenSignature
 		}
 		return st, revs, jerr
 	}
@@ -388,11 +403,110 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// refused-only document has library signers and no counted one — following the new count would
 	// read it "nothing added" about bytes no valid signature covers.
 	st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), joinErr, len(resp.Signers) > 0)
+	// **A verdict over signers nib did reach is not a verdict over the document** (/pending 749):
+	// where pdfcpu read a signature the sweep did not, `Valid` would vouch for one nobody checked.
+	st = withUnchecked(st, data, unseen)
+	if joinErr == nil && unseen {
+		joinErr = errUnseenSignature
+	}
 	return st, revs, joinErr
 }
 
-// uncheckedOf names why a zero-signer `Invalid` verdict checked nothing, when nothing else in it
-// does (/pending 741). A signed hybrid-reference file reaches here since /pending 733 routed it to
+// errUnseenSignature is `verifyIndexed`'s error when pdfcpu read a signature the sweep did not: the
+// records are then not the document's signatures, and `Revisions` must not hand them out as such.
+var errUnseenSignature = errors.New("the document carries a signature nib's signature reader did not reach")
+
+// withUnchecked is the one place a verdict learns it checked less than the document carries
+// (/pending 741, 749): where `uncheckedOf` names a cause, the verdict is `Invalid` — fail-closed,
+// as it has been for the zero-signer shape since /pending 733 — and `AddedAfter` warns
+// `could-not-check`, because nothing measured the coverage of the signature nib did not read.
+// `Signers` keeps the signers that WERE checked: they are true, just not the whole answer.
+func withUnchecked(st Status, data []byte, unseen bool) Status {
+	if st.Unchecked = uncheckedOf(st, data, unseen); st.Unchecked != "" {
+		st.State = Invalid
+		st.AddedAfter, st.AddedAfterCause = true, AddedAfterCouldNotCheck
+	}
+	return st
+}
+
+// unseenSignatures reports whether pdfcpu's reading of the document holds a signature-shaped
+// dictionary (`signatureShaped`, the sweep's own test) with a non-empty `/Contents` that the sweep
+// made no record of. A placeholder (empty `/Contents`) claims nothing and is not counted, as
+// `refusedOf` does not publish one. Compared by object number: where the two readers disagree on
+// which version of an object is current, the one pdfcpu holds is a signature the sweep did not see.
+//
+// **A cross-check, not a second enumeration** (ADR-058's one home of "who signed" stands): nothing
+// is recorded from pdfcpu's view and no verdict is taken from it — it can only say the sweep's
+// population is short, which routes the verdict to `could-not-check`.
+func unseenSignatures(ctx *model.Context, revs []Revision) bool {
+	if ctx == nil || ctx.XRefTable == nil {
+		return false
+	}
+	seen := make(map[int]bool, len(revs))
+	for i := range revs {
+		seen[int(revs[i].Obj)] = true
+	}
+	name := func(d types.Dict, k string) string {
+		o, err := ctx.Dereference(d[k])
+		if n, ok := o.(types.Name); ok && err == nil {
+			return string(n)
+		}
+		return ""
+	}
+	for n, e := range ctx.XRefTable.Table {
+		if e == nil || e.Free || seen[n] {
+			continue
+		}
+		obj := e.Object
+		// pdfcpu leaves an object-stream member undecoded; its bytes are in memory, so a member that
+		// names none of the signature keys is skipped without a parse. `#` is in the filter because a
+		// name may spell its letters as escapes (`/#53ig`).
+		if l, ok := obj.(types.LazyObjectStreamObject); ok {
+			raw, err := l.GetData()
+			if err != nil {
+				continue
+			}
+			if !bytes.Contains(raw, []byte("ByteRange")) && !bytes.Contains(raw, []byte("Sig")) &&
+				!bytes.Contains(raw, []byte(ppkLite)) && !bytes.Contains(raw, []byte("DocTimeStamp")) &&
+				bytes.IndexByte(raw, '#') < 0 {
+				continue
+			}
+			if obj, err = l.DecodedObject(context.Background()); err != nil {
+				continue
+			}
+		}
+		var d types.Dict
+		switch o := obj.(type) {
+		case types.Dict:
+			d = o
+		case types.StreamDict:
+			d = o.Dict
+		default:
+			continue
+		}
+		if !signatureShaped(name(d, "Filter"), name(d, "Type"), d["ByteRange"] != nil) {
+			continue
+		}
+		switch c := d["Contents"].(type) {
+		case nil:
+			continue
+		case types.HexLiteral:
+			if len(c) == 0 {
+				continue
+			}
+		case types.StringLiteral:
+			if len(c) == 0 {
+				continue
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// uncheckedOf names why a verdict checked less than the document carries: always where pdfcpu read
+// a signature the sweep did not (`unseen`, /pending 749), and otherwise why a zero-signer `Invalid`
+// verdict checked nothing, when nothing else in it does (/pending 741). A signed hybrid-reference file reaches here since /pending 733 routed it to
 // the byte scan: `Invalid` — the safe direction — with no signer, no refused record, no timestamp
 // and no `AddedAfter`, so every reader was told "invalid" and nothing about why, and the CLI said
 // "modified since signing" of a document nobody had checked at all. The true fact is ADR-059's
@@ -400,8 +514,8 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 //
 // A refused record or a timestamp is its own answer and is left alone: `Refused` and `Timestamps`
 // already name it, and the readers already say "no signature Nib could check" beside them.
-func uncheckedOf(st Status, data []byte) UncheckedCause {
-	if st.State != Invalid || len(st.Signers) > 0 || len(st.Refused) > 0 || len(st.Timestamps) > 0 || st.AddedAfter {
+func uncheckedOf(st Status, data []byte, unseen bool) UncheckedCause {
+	if !unseen && (st.State != Invalid || len(st.Signers) > 0 || len(st.Refused) > 0 || len(st.Timestamps) > 0 || st.AddedAfter) {
 		return ""
 	}
 	if hybridReference(data) {
@@ -633,10 +747,17 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 //
 // The `recover` is defence in depth: pdfcpu did not panic once in 7,438 flips, but a panic here
 // would become the crash this exists to prevent.
-func pdfcpuCanRead(pdf []byte) (err error) {
+func pdfcpuCanRead(pdf []byte) error {
+	_, err := pdfcpuRead(pdf)
+	return err
+}
+
+// pdfcpuRead is `pdfcpuCanRead` keeping the context it built, which `verifyIndexed` asks whether
+// the sweep saw every signature pdfcpu read (`unseenSignatures`, /pending 749).
+func pdfcpuRead(pdf []byte) (ctx *model.Context, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("read pdf: %v", r)
+			ctx, err = nil, fmt.Errorf("read pdf: %v", r)
 		}
 	}()
 	// **Relaxed is pinned rather than inherited.** `model.NewDefaultConfiguration()` returns the
@@ -646,8 +767,7 @@ func pdfcpuCanRead(pdf []byte) (err error) {
 	// only one that belongs here: the question is "can this be parsed at all", never "is it valid".
 	conf := model.NewDefaultConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
-	_, err = api.ReadContext(bytes.NewReader(pdf), conf)
-	return err
+	return api.ReadContext(bytes.NewReader(pdf), conf)
 }
 
 // scanForSignatureBlob answers the narrow question without a parser.

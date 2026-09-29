@@ -553,3 +553,6 @@ home today.
   — /pending 741, 747. `Status.Unchecked` names why a verdict rests on no checked signer (`hybrid-reference`,
   `unread`, `unreadable`, with `could-not-check`); `runSign`'s `signedAsIntended` reads the new signature back via
   the sweep and one PKCS#7 verify — +20–25% time and +50% memory at 100 MB, where a full `Verify` cost +230%.
+- **[ADR-063 — a signature only one reader can see makes the verdict `Invalid`](063-a-signature-only-one-reader-sees-invalidates-the-verdict.md)**
+  — /pending 749; supersedes ADR-062 in part. pdfcpu's population (it follows `/XRefStm`) is compared with the
+  sweep's; a signature only pdfcpu holds makes `State=Invalid` with `Unchecked` named, on the signer path too.

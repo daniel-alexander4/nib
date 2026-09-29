@@ -1,12 +1,11 @@
-diff --git a/internal/sign/verify.go b/internal/sign/verify.go
 --- a/internal/sign/verify.go
 +++ b/internal/sign/verify.go
-@@ -319,7 +319,7 @@
- 			st.State = Invalid
- 		}
- 		st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), jerr, false)
--		st.Unchecked = uncheckedOf(st, data)
-+		_ = uncheckedOf
- 		if st.Unchecked != "" {
- 			st.AddedAfter, st.AddedAfterCause = true, AddedAfterCouldNotCheck
- 		}
+@@ -422,7 +422,7 @@
+ // `could-not-check`, because nothing measured the coverage of the signature nib did not read.
+ // `Signers` keeps the signers that WERE checked: they are true, just not the whole answer.
+ func withUnchecked(st Status, data []byte, unseen bool) Status {
+-	if st.Unchecked = uncheckedOf(st, data, unseen); st.Unchecked != "" {
++	if _ = uncheckedOf; st.Unchecked != "" {
+ 		st.State = Invalid
+ 		st.AddedAfter, st.AddedAfterCause = true, AddedAfterCouldNotCheck
+ 	}

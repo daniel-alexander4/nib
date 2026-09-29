@@ -158,3 +158,19 @@ test('a failed signer beside a refusal is still "modified since signing"', async
   assert.match(badge().textContent, /Modified since signing/, `a failed signer lost its verdict: ${badge().textContent}`);
   assert.match(badge().textContent, /a signature Nib refused is present/, `the refusal is gone: ${badge().textContent}`);
 });
+
+// ── /pending 749 ─────────────────────────────────────────────────────────────────────────────
+// A file whose signature library reached ONE signer and not another (the second listed only by a
+// hybrid `/XRefStm`) is `invalid` with that signer listed and `unchecked` set. "Modified since
+// signing" would claim a check of bytes nobody hashed; the badge names the unchecked signature
+// whatever signers are beside it.
+test('a signature Nib could not check beside one it did is named, not "modified"', async () => {
+  await openWith({
+    state: 'invalid', signers: alice, addedAfter: true, addedAfterCause: 'could-not-check', unchecked: 'hybrid-reference',
+  });
+  assert.match(badge().className, /badge-invalid/, `the fixture did not open as invalid: ${badge().className}`);
+  assert.match(badge().textContent, /A signature Nib could not check/, `the badge hides the unchecked signature: ${badge().textContent}`);
+  assert.doesNotMatch(badge().textContent, /Modified since signing/, 'the badge claims a modification nobody measured');
+  const txt = await openDetails();
+  assert.match(txt, /A signature is present that Nib could not check — /, `the panel does not say why: ${txt.slice(0, 400)}`);
+});

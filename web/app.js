@@ -4871,9 +4871,11 @@ function updateBadge(sig, inCeremony, unverified) {
   if (sig?.state === 'invalid' && !signers.length && (refused.length || timestamps.length)) {
     label = '⚠ No signature Nib could check';
   }
-  // Nothing refused and nothing checked (/pending 741): a signed hybrid-reference file, say. The
-  // details panel says which reading could not be made (UNCHECKED_WORDS).
-  if (sig?.state === 'invalid' && !signers.length && sig?.unchecked) {
+  // A signature Nib did not check (/pending 741): a signed hybrid-reference file, say. The details
+  // panel says which reading could not be made (UNCHECKED_WORDS). Whatever signers are listed: since
+  // /pending 749 it is also set beside signers Nib DID check, when the file carries one more its
+  // signature reader never reached — and "modified since signing" would claim a check nobody made.
+  if (sig?.state === 'invalid' && sig?.unchecked) {
     label = '⚠ A signature Nib could not check';
   }
   // **`Untampered` is reserved for the case it is true of (/pending 390).**
