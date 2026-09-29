@@ -195,7 +195,8 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 		// `--do sanitize` strips that document's metadata irreversibly.
 		//
 		// `writeAtomic`'s symlink-following is deliberate and stays — it is for `-w` on a
-		// path the USER named, which is a different provenance from directory discovery.
+		// path the USER named, which is a different provenance from directory discovery, and
+		// is why no watch action writes through it (watchTransform, `/pending 639`).
 		if !info.Mode().IsRegular() {
 			continue
 		}
@@ -242,21 +243,30 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 // Lstat-only protection scanOnce already gives it, plus the regular-file check below, which
 // is done on the OPEN HANDLE and so is not a second check-then-act.
 func readNoFollow(path string) ([]byte, error) {
+	data, _, err := readNoFollowMode(path)
+	return data, err
+}
+
+// readNoFollowMode is readNoFollow that also returns the permission bits of the file it READ —
+// taken from the open handle, so they belong to the same inode as the bytes and not to whatever
+// the entry names by the time anyone asks again. watchTransform carries them onto its rewrite.
+func readNoFollowMode(path string) ([]byte, os.FileMode, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|oNoFollow, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer f.Close()
 	// And a regular file: O_NOFOLLOW refuses a symlink, not a fifo or a device, either of
 	// which would make the read block or return something that is not the document.
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
+		return nil, 0, fmt.Errorf("%s is not a regular file", path)
 	}
-	return io.ReadAll(f)
+	data, err := io.ReadAll(f)
+	return data, info.Mode().Perm(), err
 }
 
 // watchTimestamp writes a .ots proof beside path, skipping a file that already
@@ -315,7 +325,7 @@ func watchUA(path string) (string, error) {
 }
 
 func watchTransform(path string, fn func([]byte) ([]byte, error), done string) (string, error) {
-	data, err := readNoFollow(path)
+	data, perm, err := readNoFollowMode(path)
 	if err != nil {
 		return "", err
 	}
@@ -330,7 +340,19 @@ func watchTransform(path string, fn func([]byte) ([]byte, error), done string) (
 	if err != nil {
 		return "", err
 	}
-	if err := writeAtomic(path, res); err != nil {
+	// **`atomicfile.WriteDurable`, NOT `writeAtomic`** (`/pending 639`) — the write half of the rule
+	// readNoFollow is the read half of. `writeAtomic` ends in `ReplaceDurable`, which resolves a symlink
+	// and writes to its TARGET: right for a path the user named, wrong here, where the path is the
+	// directory's. The read refuses a link at the open, but `fn` runs for as long as a rewrite takes, and
+	// the actor scanOnce's note describes can swap the entry for a symlink inside that window — the
+	// rewrite then landed on a file outside the watched directory. A rename replaces the ENTRY, so a link
+	// planted there is replaced rather than written through, as watchTimestamp's and watchUA's sidecars
+	// already are. Wider on Windows, where oNoFollow is 0 and this was the only half that could hold.
+	//
+	// The mode is the one the READ handle saw, so a rewrite keeps the document's own bits — what
+	// `ReplaceDurable` would have given it — without asking the entry, which by now may name something
+	// else. Durable for `writeNamedMode`'s reason: this rename lands over the user's only copy.
+	if err := atomicfile.WriteDurable(path, res, perm); err != nil {
 		return "", err
 	}
 	return done, nil
