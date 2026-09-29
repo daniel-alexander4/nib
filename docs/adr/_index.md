@@ -520,3 +520,6 @@ home today.
   `TjET` and a trailing comment swallowed the next stream's first line — in seventeen readers and seven writers.
   One door, `pdfread.PageContent`, separates only where the join would fuse (0 of 77 real joins); the digest and
   the checker are named exemptions, guarded by an AST census.
+- **[ADR-057 — a read compared with pdfcpu's own output reads pdfcpu's join](057-a-read-compared-with-pdfcpus-output-reads-pdfcpus-join.md)**
+  — supersedes ADR-056's exemption list in part. The n-up note and tag carries compare a page with the form pdfcpu's
+  `NUp` wrote from its OWN join; through the door a divided page failed the match and lost its notes and tags.

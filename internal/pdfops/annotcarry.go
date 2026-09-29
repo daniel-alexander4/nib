@@ -224,7 +224,12 @@ func captureNoteAnnots(pdf []byte) (map[int]*noteSource, int, bool) {
 			// pdfcpu answers with an error) would otherwise abandon the carry for every OTHER page's
 			// notes over a page this door was never going to touch. The page is still recorded, for
 			// its residue count.
-			b, cerr := pdfread.PageContent(ctx, d, p)
+			//
+			// **Exempt from `pdfread.PageContent` (ADR-056), by name.** This is compared with the form
+			// `api.NUp` wrote, and pdfcpu writes that form from its OWN join; on a divided page the door's
+			// join carries a separator pdfcpu's lacks, and the note was dropped
+			// (`TestANUpCarriesTheNoteOfADividedPage`).
+			b, cerr := ctx.PageContent(d, p) //pagecontent:exempt annotcarry-nup
 			if cerr != nil {
 				return nil, 0, false
 			}

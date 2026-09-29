@@ -1351,7 +1351,9 @@ func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s
 		fmt.Fprintf(&buf, "q %.5f %.5f %.5f %.5f re W n %.5f 0 0 %.5f %.5f %.5f cm ",
 			dx, dy, w*s, h*s, s, s, dx-s*x0, dy-s*y0)
 		buf.Write(content)
-		buf.WriteString(" Q")
+		// An END-OF-LINE, not a space: a page's content may end inside a `%` comment, which runs to the end of the
+		// line and would swallow a `Q` written after a space — leaving the clip `q` open over the neighbouring tile.
+		buf.WriteString("\nQ")
 		sd, err := ctx.NewStreamDictForBuf(buf.Bytes())
 		if err != nil {
 			return err
