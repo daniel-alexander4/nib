@@ -118,6 +118,9 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"uacheck tests so every read door is tested against the same documents.",
 		"UseCMapChain": "test-support — /pending 675's legitimate /UseCMap chain, the no-false-refusal half of " +
 			"those same tests.",
+		"SplitContents": "test-support — ADR-056's divided-page fixtures (a fused `Tj`+`ET`, an unterminated " +
+			"comment, a white-space control), shared by the pdfread and pdfops tests so the door and a reader " +
+			"above it are tested against the same documents.",
 		"FormChain": "test-support — /pending 706's 400-form comparison shape, the unaffordable-optimize fixture mdpdf's exhibit test takes (ADR-055)",
 
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",

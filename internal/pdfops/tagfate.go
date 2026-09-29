@@ -199,7 +199,7 @@ func inspectTags(pdf []byte) tagState {
 		live[n] = true
 		// `ErrNoContent` from an absent `/Contents` is the inserted-blank-page case and is not a
 		// gap: a page with nothing on it has nothing to tag.
-		if b, cerr := ctx.PageContent(d, p); cerr == nil && len(b) > 0 {
+		if b, cerr := pdfread.PageContent(ctx, d, p); cerr == nil && len(b) > 0 {
 			hasContent[n] = true
 		}
 		if a, aerr := ctx.DereferenceArray(d["Annots"]); aerr == nil {

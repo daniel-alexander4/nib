@@ -292,7 +292,7 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw,
 		if rec.res == nil {
 			continue
 		}
-		src, cerr := ctx.PageContent(rec.dict, rec.nr)
+		src, cerr := pdfread.PageContent(ctx, rec.dict, rec.nr)
 		if cerr != nil || len(src) == 0 {
 			continue
 		}

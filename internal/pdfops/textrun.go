@@ -12,6 +12,7 @@ import (
 
 	"nib/internal/contentstream"
 	"nib/internal/fontcode"
+	"nib/internal/pdfread"
 )
 
 // Positioned runs — `PLAN-accessibility.md` P08.S02, which is `PLAN-text-reflow.md` P03.
@@ -135,7 +136,7 @@ func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
 		if err != nil || d == nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 		}
-		content, cerr := ctx.PageContent(d, pageNr)
+		content, cerr := pdfread.PageContent(ctx, d, pageNr)
 		if cerr != nil && cerr != model.ErrNoContent {
 			return pageRuns{}, cerr
 		}

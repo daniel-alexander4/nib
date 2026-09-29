@@ -261,7 +261,10 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		if ir, e := d.Ctx.PageDictIndRef(p); e == nil && ir != nil {
 			objNr = ir.ObjectNumber.Value()
 		}
-		src, cerr := d.Ctx.PageContent(page, p)
+		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** The checker reads as veraPDF does (ADR-052), and
+		// how veraPDF joins a divided `/Contents` is unmeasured; a join nib chose here could make it disagree with the
+		// oracle it is scored against. /pending 719.
+		src, cerr := d.Ctx.PageContent(page, p) //pagecontent:exempt uacheck
 		if cerr == model.ErrNoContent || len(src) == 0 {
 			continue
 		}

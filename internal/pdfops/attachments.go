@@ -352,7 +352,10 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
 			}
 		}
-		c, err := ctx.PageContent(d, i)
+		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** The digest hashes pdfcpu's bare join, and what it
+		// covers is a format (ADR-013): hashing the token-boundary join instead would move `DocHash` on a divided
+		// page and read as tampering, so it is a `ContentDigestVersion` bump or nothing. /pending 718.
+		c, err := ctx.PageContent(d, i) //pagecontent:exempt ContentDigest
 		if err != nil && err != model.ErrNoContent {
 			return "", fmt.Errorf("page %d content: %w", i, err)
 		}

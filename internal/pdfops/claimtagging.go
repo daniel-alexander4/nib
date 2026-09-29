@@ -351,7 +351,7 @@ func uncoveredDrawings(pdf []byte) (int, error) {
 		if derr != nil || d == nil {
 			return 0, fmt.Errorf("pdfops: page %d does not resolve: %w", p, derr)
 		}
-		src, cerr := ctx.PageContent(d, p)
+		src, cerr := pdfread.PageContent(ctx, d, p)
 		if cerr == model.ErrNoContent {
 			continue
 		}

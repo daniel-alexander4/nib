@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"nib/internal/contentstream"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -61,7 +62,7 @@ func declareContentLang(pdf []byte, lang string) (out []byte, bracketed int, err
 			if derr != nil || d == nil {
 				continue
 			}
-			src, cerr := ctx.PageContent(d, p)
+			src, cerr := pdfread.PageContent(ctx, d, p)
 			if cerr == model.ErrNoContent || len(src) == 0 {
 				continue
 			}

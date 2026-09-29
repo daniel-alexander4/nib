@@ -96,7 +96,7 @@ func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word, 
 	if err != nil {
 		return err
 	}
-	src, cerr := ctx.PageContent(d, pageNr)
+	src, cerr := pdfread.PageContent(ctx, d, pageNr)
 	if cerr != nil {
 		return cerr
 	}
@@ -198,7 +198,7 @@ func artifactUncoveredDrawings(ctx *model.Context, pageNr int) error {
 	if derr != nil || d == nil {
 		return fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, derr)
 	}
-	src, cerr := ctx.PageContent(d, pageNr)
+	src, cerr := pdfread.PageContent(ctx, d, pageNr)
 	if cerr == model.ErrNoContent {
 		return nil
 	}
@@ -310,7 +310,7 @@ func watermarkMarkersBefore(pdf []byte, byPage map[int][]Word) (map[int]int, err
 		}
 		// A page with no readable content draws no marker. If the stamp could not patch it either, the count
 		// after stamping disagrees with the words and `tagOCRPage` refuses.
-		if src, cerr := ctx.PageContent(d, p); cerr == nil {
+		if src, cerr := pdfread.PageContent(ctx, d, p); cerr == nil {
 			out[p] = len(watermarkArtifactSpans(src))
 		}
 	}

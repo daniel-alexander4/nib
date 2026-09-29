@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"nib/internal/contentstream"
+	"nib/internal/pdfread"
 	"nib/mdpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -198,7 +199,7 @@ func tagOnePage(ctx *model.Context, tree *structTree, pageNr int, roles []mdpdf.
 	if err != nil {
 		return err
 	}
-	src, cerr := ctx.PageContent(d, pageNr)
+	src, cerr := pdfread.PageContent(ctx, d, pageNr)
 	if cerr != nil {
 		return cerr
 	}

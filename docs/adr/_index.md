@@ -515,3 +515,8 @@ home today.
   One package is the door: the loop is refused between read and validation, the pass runs only when nib's estimate
   says it is bounded, and the accessibility checker refuses an unaffordable document rather than report from a
   reading it was not calibrated against. An AST census holds every other package off pdfcpu's validating reads.
+- **[ADR-056 — a page's content is its streams joined at token boundaries](056-a-page-s-content-is-its-streams-joined-at-token-boundaries.md)**
+  — `PLAN-text-reflow.md` P05.S01. pdfcpu joins a `/Contents` array with no separator, so `(A) Tj` + `ET` read as
+  `TjET` and a trailing comment swallowed the next stream's first line — in seventeen readers and seven writers.
+  One door, `pdfread.PageContent`, separates only where the join would fuse (0 of 77 real joins); the digest and
+  the checker are named exemptions, guarded by an AST census.
