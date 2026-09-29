@@ -14,7 +14,7 @@ for things it never looked at.
 | # | Command | What it verifies |
 |---|---------|------------------|
 | 0 | `go build ./...` | it compiles **for this host** — see the note below |
-| 1 | `go test ./...` | the Go side: server, PDF operations, vault, signing, CLI |
+| 1 | `go test -timeout 40m ./...` | the Go side: server, PDF operations, vault, signing, CLI |
 | 2 | `./build/jsdomtest.sh` | the front end's logic and DOM behaviour, in jsdom |
 | 3 | `./build/uirepro.sh` | the whole app: the real binary, in a real browser |
 | 4 | `./build/pairrepro.sh` | a ceremony between TWO real binaries, two vaults, two identities — over BOTH transports |
@@ -31,6 +31,13 @@ which is a `syscall.Handle` on Windows — so `GOOS=windows go build ./cmd/nib` 
 exists only for it. Every tier stayed green, because every tier builds for the host.
 `TestEveryPlatformCompiles` cross-compiles `./cmd/nib` for windows, darwin and linux and
 is part of tier 1; it skips under `-short`.
+
+**Tier 1 carries `-timeout 40m` because two packages outgrow `go test`'s default.** `go test`
+kills a test binary after 10 minutes, and `internal/pdfops` (622-637 s) and `internal/uacheck`
+(456-478 s) were measured at or near that under load on 2026-09-29 (/pending 746). A binary killed by
+the timeout reports `FAIL` with no failing test named, so a plain `go test ./...` can read as a red
+gate over code that is green. The slow tests are not split to get under the default: the ceiling is
+the gate's, and 40 minutes is the one the slice-close suite runs already use.
 
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
 ./internal/server/` after touching anything concurrent.
@@ -120,7 +127,7 @@ path handling, file dialogs, launch/hand-off, or packaging.
 They are not redundancy. Each one exists because the tier below it is blind to
 something, and each says so in its own file rather than only here.
 
-**Tier 1 — `go test ./...`**
+**Tier 1 — `go test -timeout 40m ./...`**
 Sees: every server route, the PDF pipeline, the vault, signing and verification,
 the CLI. This is the bulk of the suite and the fastest feedback.
 **Cannot see: the client at all.** The server never observes the browser's state,

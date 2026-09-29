@@ -171,7 +171,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 
 	// The two Go commands have no file to check, so only their presence in the
 	// contract can be asserted.
-	for _, cmd := range []string{"go build ./...", "go test ./..."} {
+	for _, cmd := range []string{"go build ./...", "go test -timeout 40m ./..."} {
 		if !strings.Contains(contract, cmd) {
 			t.Errorf("CONTRIBUTING.md does not name %q", cmd)
 		}
@@ -242,7 +242,11 @@ func TestVerifyContractIsTrue(t *testing.T) {
 	// during P07's plan-review (/pending 279).
 	for _, row := range []struct{ tier, cmd string }{
 		{"0", "`go build ./...`"},
-		{"1", "`go test ./...`"},
+		// The timeout is part of the command, not decoration (/pending 746): `internal/pdfops` and
+		// `internal/uacheck` outrun the default 10 minutes under load, and a binary killed by it
+		// reports FAIL with no failing test, so a row that dropped it would name a gate that goes red
+		// over green code.
+		{"1", "`go test -timeout 40m ./...`"},
 		{"2", "`./build/jsdomtest.sh`"},
 		{"3", "`./build/uirepro.sh`"},
 		{"4", "`./build/pairrepro.sh`"},
@@ -298,7 +302,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 489
+		const recorded = 506
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+

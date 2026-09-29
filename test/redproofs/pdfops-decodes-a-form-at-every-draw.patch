@@ -1,0 +1,12 @@
+diff --git a/internal/pdfops/walkbudget.go b/internal/pdfops/walkbudget.go
+--- a/internal/pdfops/walkbudget.go
++++ b/internal/pdfops/walkbudget.go
+@@ -92,7 +92,7 @@
+ 	nr := -1
+ 	if ir, ok := obj.(types.IndirectRef); ok {
+ 		nr = ir.ObjectNumber.Value()
+-		if src, hit := b.decoded[nr]; hit {
++		if src, hit := b.decoded[nr]; false && hit {
+ 			return src
+ 		}
+ 	}

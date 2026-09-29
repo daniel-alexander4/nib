@@ -1,0 +1,12 @@
+diff --git a/internal/p2p/transport.go b/internal/p2p/transport.go
+--- a/internal/p2p/transport.go
++++ b/internal/p2p/transport.go
+@@ -279,7 +279,7 @@
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+ 	now := timeNow()
+-	if c.leaf != nil && now.Sub(c.mintedAt) < transportRenew {
++	if c.leaf != nil {
+ 		return c.leaf, nil
+ 	}
+ 	leaf, err := mintTransportCert(c.idCert, c.idKey)

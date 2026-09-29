@@ -1,0 +1,14 @@
+diff --git a/internal/pdfops/textrun.go b/internal/pdfops/textrun.go
+--- a/internal/pdfops/textrun.go
++++ b/internal/pdfops/textrun.go
+@@ -1029,7 +1029,9 @@
+ 	case types.IndirectRef:
+ 		key = o.ObjectNumber.Value()
+ 	case types.Dict:
+-		key = reflect.ValueOf(o).Pointer()
++		_ = reflect.ValueOf(o)
++		w.fontLoads++
++		return loadRunFont(w.xt, obj)
+ 	default:
+ 		return nil // neither a reference nor a dictionary: loadRunFont would refuse it too
+ 	}

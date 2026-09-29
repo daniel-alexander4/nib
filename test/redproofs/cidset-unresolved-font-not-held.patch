@@ -1,0 +1,11 @@
+diff --git a/internal/uacheck/rules_fonts.go b/internal/uacheck/rules_fonts.go
+--- a/internal/uacheck/rules_fonts.go
++++ b/internal/uacheck/rules_fonts.go
+@@ -376,6 +376,7 @@
+ 	var held heldRefusal
+ 	for _, f := range fonts {
+ 		if f.unresolve {
++			continue
+ 			// **An unresolved font is held whatever the other fonts say** (/pending 722): it may be a CID font pdfcpu
+ 			// DROPPED (measured at P07.S04a: veraPDF judges one nib had called absent), and the refusal used to be reached
+ 			// only when no other CID font resolved — so one resolved font with an exact /CIDSet answered Pass over a font

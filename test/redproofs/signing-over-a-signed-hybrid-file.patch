@@ -1,0 +1,12 @@
+diff --git a/internal/sign/identity.go b/internal/sign/identity.go
+--- a/internal/sign/identity.go
++++ b/internal/sign/identity.go
+@@ -368,7 +368,7 @@
+ 	if !hybridReference(pdf) {
+ 		return pdf, nil
+ 	}
+-	if HasSignatureBlob(pdf) {
++	if false && HasSignatureBlob(pdf) {
+ 		return nil, ErrSignedHybridReference
+ 	}
+ 	conf := model.NewDefaultConfiguration()

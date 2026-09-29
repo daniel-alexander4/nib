@@ -1,0 +1,12 @@
+diff --git a/internal/rendezvous/contacts.go b/internal/rendezvous/contacts.go
+--- a/internal/rendezvous/contacts.go
++++ b/internal/rendezvous/contacts.go
+@@ -136,7 +136,7 @@
+ func (s *screened) WriteTo(p []byte, addr net.Addr) (int, error) {
+ 	if !isReply(p) {
+ 		ap, ok := udpAddrPort(addr)
+-		if !ok || !s.scope(ap) {
++		if !ok {
+ 			s.refusedSends.Add(1)
+ 			return 0, errRefusedSend
+ 		}

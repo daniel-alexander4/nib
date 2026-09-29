@@ -1,0 +1,11 @@
+diff --git a/internal/pdfops/splitout.go b/internal/pdfops/splitout.go
+--- a/internal/pdfops/splitout.go
++++ b/internal/pdfops/splitout.go
+@@ -150,6 +150,7 @@
+ // stat'ed once, so a batch of n inputs costs 2n stats and n² in-memory comparisons, not n² stats.
+ // An empty src, or one that does not stat, protects nothing — the same contract as above.
+ func OutputOverwritingAnotherSource(srcs, outs []string) (out, src string, ok bool) {
++	return "", "", false
+ 	sis := make([]os.FileInfo, len(srcs))
+ 	for j, s := range srcs {
+ 		if s == "" {
