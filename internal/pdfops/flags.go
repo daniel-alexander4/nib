@@ -35,8 +35,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"nib/internal/pdfread"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
@@ -61,10 +61,17 @@ var errFlagsRoundTrip = errors.New("flags did not round-trip after embedding")
 // carries none. A malformed value reads as none rather than an error, so a
 // hand-mangled property can never break opening a document.
 func FlagsJSON(pdf []byte) ([]byte, error) {
-	props, err := api.Properties(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	// `api.Properties` restated over the read door (pkg/api/property.go:29, v0.13.0: `LISTPROPERTIES`, then the
+	// context's properties), because the server runs this on every document it answers for: `pdfread.Reader`
+	// in front of the wrapper would parse each file twice (measured +30-85% here on 100 KB-6 MB producer
+	// files), where the door checks the `/UseCMap` loop on the read it already makes (`/pending 675`).
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.LISTPROPERTIES
+	ctx, err := pdfread.ReadOptimized(pdf, conf)
 	if err != nil {
 		return nil, err
 	}
+	props := ctx.Properties
 	enc, ok := props[flagsKey]
 	if !ok || enc == "" {
 		return nil, nil

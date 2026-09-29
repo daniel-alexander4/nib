@@ -1,6 +1,6 @@
 # ADR-052 — shown bytes are read through one door, and the checker reads CMaps as veraPDF does
 
-**Status:** accepted
+**Status:** accepted The guard's exemption list is extended by ADR-055 (`testpdf.cmap`, a writer of test fixtures).
 
 ## Context
 

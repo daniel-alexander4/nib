@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"nib/internal/contentstream"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -408,7 +409,7 @@ func completeOrHonest(carried, raw []byte) ([]byte, error) {
 // is one nothing downstream can parse either, and answering "complete" on a failed read would make
 // the gate report its own blindness as a pass — the vacuous-green shape this slice exists to remove.
 func carryIsComplete(pdf []byte) bool {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return false
 	}

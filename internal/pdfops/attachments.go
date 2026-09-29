@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"nib/internal/pdfread"
 	"strings"
+
+	"hash"
+	"sort"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-	"hash"
-	"sort"
 )
 
 // AttachmentInfo names one embedded file. Two carriers are listed: the document's
@@ -41,7 +43,7 @@ type AttachmentInfo struct {
 // (name + description, no data), so this is cheap. An empty result (neither
 // carrier present) is not an error.
 func Attachments(pdf []byte) ([]AttachmentInfo, error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +313,7 @@ type digestStats struct {
 
 func contentDigest(pdf []byte) (string, *digestStats, error) {
 	st := &digestStats{}
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return "", st, err
 	}
@@ -814,7 +816,7 @@ func RemoveAttachment(pdf []byte, name string) ([]byte, error) {
 // FileAttachment annotations (keyed by the same name pageFileAttachments lists).
 func ExtractAttachment(pdf []byte, name string) ([]byte, error) {
 	name = attachmentName(name)
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -875,7 +877,7 @@ type SignatureWidget struct {
 // it cannot see a block that is drawn in white on white, or one an /AP stream positions outside
 // its own BBox. The rendered half needs pdf.js and belongs at tier 3.
 func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

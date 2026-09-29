@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -53,7 +54,7 @@ type pageSource struct {
 // **Taken from the INPUT, before `api.NUp` runs**, because the output no longer contains the
 // original page objects — only their content, inside Form XObjects.
 func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, false
 	}
@@ -116,7 +117,7 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	if !ok || len(sources) == 0 {
 		return nil, false
 	}
-	ctx, err := readOptimized(composed, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(composed, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, false
 	}

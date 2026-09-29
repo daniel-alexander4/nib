@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"nib/internal/pdfread"
 	"strings"
 
 	"golang.org/x/text/encoding/ianaindex"
@@ -108,7 +109,11 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
 	if len(values) == 0 {
 		return nil, fmt.Errorf("the XFDF has no field values")
 	}
-	skeleton, err := api.ExportForm(bytes.NewReader(pdf), "nib", model.NewDefaultConfiguration())
+	rs, err := pdfread.Reader(pdf, nil)
+	if err != nil {
+		return nil, err
+	}
+	skeleton, err := api.ExportForm(rs, "nib", model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

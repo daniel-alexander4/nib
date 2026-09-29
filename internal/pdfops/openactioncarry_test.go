@@ -3,9 +3,10 @@ package pdfops
 import (
 	"testing"
 
+	"nib/internal/testpdf"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
-	"nib/internal/testpdf"
 )
 
 // openActionFixture is a three-page document whose `/OpenAction` is whatever `set` returns, built

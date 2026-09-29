@@ -3,6 +3,7 @@ package pdfops
 import (
 	"errors"
 	"math"
+	"nib/internal/pdfread"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -69,7 +70,7 @@ type viewElement struct {
 // readStructureView reads pdf's structure tree as reviewable values. A document with no tree is
 // errNoStructTree.
 func readStructureView(pdf []byte) (structureView, error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return structureView{}, err
 	}

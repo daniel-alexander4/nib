@@ -509,3 +509,9 @@ home today.
   loopback server the browser visited. The token alone, header on any method or `auth` query on a GET,
   through `requireSession` on every route but launch, instance and handoff; the page keeps it in
   per-origin `sessionStorage`. Guarded by a route census read from `server.go` and driven as a stranger.
+- **[ADR-055 — pdfcpu validates and optimizes only through `internal/pdfread`](055-pdfcpu-validates-and-optimizes-only-through-pdfread.md)**
+  — /pending 675, 714 (after 706). pdfcpu's validator recursed on a `/UseCMap` loop until the stack overflowed —
+  unrecoverable, so opening a 2.5 KB file killed nib — and its optimize pass is cubic/exponential on hostile forms.
+  One package is the door: the loop is refused between read and validation, the pass runs only when nib's estimate
+  says it is bounded, and the accessibility checker refuses an unaffordable document rather than report from a
+  reading it was not calibrated against. An AST census holds every other package off pdfcpu's validating reads.

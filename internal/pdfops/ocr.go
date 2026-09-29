@@ -3,6 +3,7 @@ package pdfops
 import (
 	"bytes"
 	"fmt"
+	"nib/internal/pdfread"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -103,7 +104,11 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 		return pdf, nil
 	}
 	var out bytes.Buffer
-	if err := api.AddWatermarksSliceMap(bytes.NewReader(pdf), &out, wms, model.NewDefaultConfiguration()); err != nil {
+	rs, err := pdfread.Reader(pdf, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := api.AddWatermarksSliceMap(rs, &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
 	// The text layer is drawn in a font nib supplied and pdfcpu embedded, so the same rule applies

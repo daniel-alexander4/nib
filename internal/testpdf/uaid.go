@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"nib/internal/pdfread"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -21,7 +22,7 @@ const uaNS = "http://www.aiim.org/pdfua/ns/id/"
 // DIRECTLY through pdfcpu — not through nib's own write path, which removes exactly this. pdf must already
 // carry a packet (a titled document does).
 func WithUAIdentification(pdf []byte) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +66,7 @@ func WithUAIdentification(pdf []byte) ([]byte, error) {
 // namespace — the claim. A PDF/A extension-schema block names the namespace as text and claims nothing,
 // so the string alone is not the question (measured on veraPDF's corpus).
 func ClaimsUA(pdf []byte) (bool, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return false, err
 	}

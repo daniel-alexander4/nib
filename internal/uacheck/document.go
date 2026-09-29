@@ -1,11 +1,10 @@
 package uacheck
 
 import (
-	"bytes"
 	"fmt"
 	"nib/internal/fontcode"
+	"nib/internal/pdfread"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -252,7 +251,10 @@ func open(pdf []byte) (*Document, error) {
 		return nil, fmt.Errorf("uacheck: no document to check")
 	}
 	conf := checkerConfig()
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
+	// Through nib's one read door (`/pending 675`: a /UseCMap loop is refused before pdfcpu's validator recurses
+	// on it and kills the process) and its optimize budget, refusing rather than skipping the pass
+	// (`/pending 714`: the rules were measured against the optimized reading — see ReadOptimizedOrRefuse).
+	ctx, err := pdfread.ReadOptimizedOrRefuse(pdf, conf)
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}

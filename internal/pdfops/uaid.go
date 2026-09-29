@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"nib/internal/pdfread"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -252,7 +253,7 @@ func withoutUAClaim(pdf []byte) ([]byte, error) {
 // document's pages, so its widgets come through with them and its form is consistent; it is a
 // composition that destroys pages while keeping the catalog that produces the orphan.
 func withoutUAClaimOrOrphanedForm(pdf []byte) ([]byte, error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +324,7 @@ func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 // It is the door for the paths that change a document without running an operation in this package:
 // bytes a browser edited and posted back, and a document about to be signed.
 func dropUAIdentificationBytes(pdf []byte) ([]byte, bool, error) {
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, false, err
 	}

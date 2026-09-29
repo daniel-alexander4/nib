@@ -2,11 +2,7 @@ package pdfops
 
 import (
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
+	"nib/internal/pdfread"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +12,7 @@ import (
 )
 
 // `/pending 706`: pdfcpu's optimize pass has no budget, and every page operation reads through it. These
-// fixtures are the three hostile shapes measured against it (see `optimizecost.go`); each must now finish
+// fixtures are the three hostile shapes measured against it (see `internal/pdfread/optimize.go`); each must now finish
 // promptly, keep every page's content, and still optimize an ordinary document.
 
 // finishesWithin fails when f has not returned after s seconds — from a deadline, not on return, because
@@ -100,7 +96,7 @@ func formsNamingTheirDictionary(n int) []byte {
 // formObjects counts the form XObjects a written document holds.
 func formObjects(t *testing.T, pdf []byte) int {
 	t.Helper()
-	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,39 +178,5 @@ func TestAnOrdinaryDocumentIsStillOptimized(t *testing.T) {
 	}
 }
 
-// TestEveryOptimizeRoutesThroughTheDoor — ADR-009: the budget holds only if nothing reaches pdfcpu's pass
-// around it.
-func TestEveryOptimizeRoutesThroughTheDoor(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	banned := map[string]bool{"ReadValidateAndOptimize": true, "OptimizeContext": true, "OptimizeXRefTable": true}
-	scanned := 0
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") || f == "optimizecost.go" {
-			continue
-		}
-		src, rerr := os.ReadFile(f)
-		if rerr != nil {
-			t.Fatal(rerr)
-		}
-		file, perr := parser.ParseFile(token.NewFileSet(), f, src, 0)
-		if perr != nil {
-			t.Fatal(perr)
-		}
-		scanned++
-		ast.Inspect(file, func(n ast.Node) bool {
-			if sel, ok := n.(*ast.SelectorExpr); ok && banned[sel.Sel.Name] {
-				if x, ok := sel.X.(*ast.Ident); ok && (x.Name == "api" || x.Name == "pdfcpu") {
-					t.Errorf("%s calls %s.%s directly — read through readOptimized, or optimize through "+
-						"optimizeContext, so the pass's budget applies", f, x.Name, sel.Sel.Name)
-				}
-			}
-			return true
-		})
-	}
-	if scanned < 50 {
-		t.Fatalf("scanned %d source files, want the whole package — the guard is not reading it", scanned)
-	}
-}
+// The routing guard that lived here — nothing reaches pdfcpu's pass around the budget — is module-wide now,
+// with the budget itself in `internal/pdfread` (`/pending 714`): `TestEveryValidatingReadRoutesThroughTheDoor`.

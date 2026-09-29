@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"nib/internal/pdfread"
 	"slices"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -29,7 +30,7 @@ import (
 func AssemblePacket(cover []byte, exhibits [][]byte) (packet []byte, skipped []int, err error) {
 	defer catchPanic(&err)
 
-	if _, err := api.ReadAndValidate(bytes.NewReader(cover), model.NewDefaultConfiguration()); err != nil {
+	if _, err := pdfread.Validated(cover, model.NewDefaultConfiguration()); err != nil {
 		return nil, nil, fmt.Errorf("mdpdf: invalid cover: %w", err)
 	}
 
@@ -104,7 +105,11 @@ func ImageToPDF(img []byte) (pdf []byte, err error) {
 func mergePDFs(parts [][]byte) ([]byte, error) {
 	rsc := make([]io.ReadSeeker, len(parts))
 	for i, p := range parts {
-		rsc[i] = bytes.NewReader(p)
+		rs, err := pdfread.Reader(p, nil)
+		if err != nil {
+			return nil, err
+		}
+		rsc[i] = rs
 	}
 	var out bytes.Buffer
 	if err := api.MergeRaw(rsc, &out, false, model.NewDefaultConfiguration()); err != nil {
@@ -147,11 +152,13 @@ func exhibitToPDF(b []byte) (pdf []byte, ok bool) {
 // rewrite), proving in isolation that it can survive the merge.
 func normalizePDF(pdf []byte) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
-	ctx, err := api.ReadAndValidate(bytes.NewReader(pdf), conf)
+	ctx, err := pdfread.Validated(pdf, conf)
 	if err != nil {
 		return nil, err
 	}
-	if err := api.OptimizeContext(ctx); err != nil {
+	// Refused, not skipped, past the budget: this round-trip exists to prove the exhibit survives the merge,
+	// and `api.MergeRaw` then runs pdfcpu's optimize pass with no budget of its own (ADR-055).
+	if err := pdfread.OptimizeOrRefuse(ctx); err != nil {
 		return nil, err
 	}
 	ctx.EnsureVersionForWriting()
