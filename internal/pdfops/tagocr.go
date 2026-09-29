@@ -1,13 +1,11 @@
 package pdfops
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
 
 	"nib/internal/contentstream"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -296,7 +294,7 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 // watermarkMarkersBefore counts the watermark-artifact markers each page with words already draws, before
 // the text layer is stamped — see `tagOCRPage`. One extra parse of the input on the OCR route.
 func watermarkMarkersBefore(pdf []byte, byPage map[int][]Word) (map[int]int, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

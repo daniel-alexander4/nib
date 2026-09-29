@@ -407,7 +407,7 @@ func readBool(xt *model.XRefTable, obj types.Object) bool {
 // derived artifact should also carry, and losing it silently drops the accessibility
 // property Nib ships.
 func carryLang(src, dst []byte) ([]byte, error) {
-	sctx, err := api.ReadValidateAndOptimize(bytes.NewReader(src), model.NewDefaultConfiguration())
+	sctx, err := readOptimized(src, model.NewDefaultConfiguration())
 	if err != nil {
 		return dst, nil // the source is what the operation already read; do not fail on it
 	}
@@ -881,7 +881,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
 	}
 
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1253,7 +1253,7 @@ func cropWindow(attrs *model.InheritedPageAttrs, frac [4]float64) (*types.Rectan
 // one page in display orientation, so the client's display-space coordinates map
 // onto it directly.
 func normalizePage(pdf []byte) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1282,7 +1282,7 @@ func cropToRect(normPage []byte, rect [4]float64, pageW, pageH float64) ([]byte,
 	if w > maxRegionPt || h > maxRegionPt {
 		return nil, fmt.Errorf("region too large")
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(normPage), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(normPage, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -1350,7 +1350,7 @@ func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s
 // content is the original page's content stream behind an offset MediaBox; the
 // shared wrapPageToBox re-crop maps the tile's whole MediaBox onto an s× page.
 func scaleTiles(tiles []byte, s float64) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(tiles), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(tiles, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
@@ -2358,8 +2358,9 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 func Optimize(pdf []byte) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.OPTIMIZE
-	// The optimization IS the read: `ReadValidateAndOptimize` is what `api.Optimize` does before it
-	// writes, so the operation needs no step of its own.
+	// The optimization IS the read: `readOptimized` runs the pass `api.Optimize` runs before it writes,
+	// so the operation needs no step of its own — and under `model.OPTIMIZE` a pass too costly to run is
+	// refused rather than skipped (`optimizeContext`, `/pending 706`).
 	return rewriteWithConf(pdf, conf, func(*model.Context) error { return nil })
 }
 
@@ -2374,7 +2375,7 @@ func Optimize(pdf []byte) ([]byte, error) {
 //
 // `page` is 1-based, as everywhere else in this package.
 func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}

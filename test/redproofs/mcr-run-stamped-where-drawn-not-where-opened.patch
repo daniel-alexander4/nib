@@ -1,16 +1,16 @@
 --- a/internal/pdfops/textrun.go
 +++ b/internal/pdfops/textrun.go
-@@ -385,12 +385,7 @@
- 		case v >= 0:
- 			// `seqOpen` is pushed and popped in lockstep with `mcStack`, so the same index is the
- 			// same sequence; the bound is belt-and-braces against an unbalanced stream desyncing them.
--			if i < len(w.seqOpen) {
--				if j := w.seqOpen[i]; j >= 0 && j < len(w.seqs) {
--					return w.seqs[j].stm
--				}
--			}
--			return 0
-+			return w.stm
- 		}
+@@ -439,12 +439,7 @@
  	}
- 	return 0
+ 	// `seqOpen` is pushed and popped in lockstep with `mcStack` (`push`), so the same index is the same
+ 	// sequence; the bound is belt-and-braces against an unbalanced stream desyncing them.
+-	if i < len(w.seqOpen) {
+-		if j := w.seqOpen[i]; j >= 0 && j < len(w.seqs) {
+-			return w.seqs[j].stm
+-		}
+-	}
+-	return 0
++	return w.stm
+ }
+ 
+ // markedContentID reads `/MCID` from a `BDC` property list, written inline or named in the resources'

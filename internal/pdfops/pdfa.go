@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/font"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -91,7 +90,7 @@ func PreparePDFA(pdf []byte) (data []byte, blockers []string, err error) {
 	// that's the encryption blocker. Validating fonts off the full XRefTable (not
 	// api.PDFInfo) is deliberate: PDFInfo only walks page resources, so it misses
 	// fonts referenced by AcroForm /DA and widget /AP streams, which veraPDF flags.
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		if isEncryptionErr(err) {
 			return nil, []string{pdfaEncryptedMsg}, nil

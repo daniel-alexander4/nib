@@ -53,7 +53,7 @@ type pageSource struct {
 // **Taken from the INPUT, before `api.NUp` runs**, because the output no longer contains the
 // original page objects — only their content, inside Form XObjects.
 func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, false
 	}
@@ -116,7 +116,7 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	if !ok || len(sources) == 0 {
 		return nil, false
 	}
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(composed), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(composed, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, false
 	}

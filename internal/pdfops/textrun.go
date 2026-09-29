@@ -106,12 +106,8 @@ func baselineTurns(m runMatrix) bool {
 
 // inArtifact reports whether an `/Artifact` sequence is open at this point of the walk.
 func (w *runWalker) inArtifact() bool {
-	for _, v := range w.mcStack {
-		if v == mcArtifact {
-			return true
-		}
-	}
-	return false
+	n := len(w.mcStack)
+	return n > 0 && w.mcStack[n-1].artifact
 }
 
 // pageRuns is a page read as text.
@@ -149,6 +145,11 @@ func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
 		}
 		w := newRunWalker(ctx.XRefTable)
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
+		// Runs from a walk that stopped are the runs of part of the page: every caller would read the rest
+		// as absent, so the page is an error (`formWalkBudget`).
+		if err := w.budget.err(); err != nil {
+			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text: %w", pageNr, err)
+		}
 		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs}, nil
 	})
 }
@@ -313,10 +314,11 @@ type runWalker struct {
 	xt    *model.XRefTable
 	fonts map[int]*runFont
 	runs  []textRun
-	// mcStack is the marked-content sequences open at this point of the walk, innermost last: an MCID,
-	// -1 for a sequence with none, or mcArtifact. Shared across a page and the forms it draws, because
-	// a `BDC` around a `Do` tags what the form draws.
-	mcStack []int
+	// mcStack is the marked-content sequences open at this point of the walk, innermost last. Shared
+	// across a page and the forms it draws, because a `BDC` around a `Do` tags what the form draws.
+	// Pushed only through `push`, which carries what the questions asked per show need, so none of them
+	// scans the stack (`/pending 664`: N nested sequences and N shows had cost N² — 80k of each, 8.2 s).
+	mcStack []mcFrame
 	// seqs are the MCID-carrying sequences seen so far; seqOpen parallels mcStack with each open
 	// sequence's index into seqs, or -1 for one that carries no MCID.
 	seqs    []markedSeq
@@ -325,6 +327,64 @@ type runWalker struct {
 	// saves and restores it around its recursion exactly as it does `visiting`, so it is always the
 	// stream the token under the cursor came from rather than the one the walk started in.
 	stm int
+	// budget bounds the forms the walk enters (`formWalkBudget`); past it the page is an error.
+	budget *formWalkBudget
+}
+
+// mcFrame is one open marked-content sequence, with the answers about the stack at and below it.
+type mcFrame struct {
+	v int // the sequence's MCID, -1 for one with none, or mcArtifact
+	// force is the index of the innermost frame at or below this one whose v is not -1 — the frame that
+	// decides the MCID and stream in force — or -1.
+	force int
+	// artifact is whether this frame or any below it is an `/Artifact` sequence.
+	artifact bool
+	// seqAt is the index of the innermost frame at or below this one that opened an entry in `seqs`, or
+	// -1; the frame below seqAt holds the next one out.
+	seqAt int
+}
+
+// push opens a sequence: v as `mcFrame.v`, and seq its index into `seqs` or -1. `mcStack` and `seqOpen`
+// move in lockstep, so this is the only place either grows.
+func (w *runWalker) push(v, seq int) {
+	f := mcFrame{v: v, force: -1, seqAt: -1}
+	i := len(w.mcStack)
+	if i > 0 {
+		below := w.mcStack[i-1]
+		f.force, f.artifact, f.seqAt = below.force, below.artifact, below.seqAt
+	}
+	if v != -1 {
+		f.force = i
+	}
+	if v == mcArtifact {
+		f.artifact = true
+	}
+	if seq >= 0 {
+		f.seqAt = i
+	}
+	w.mcStack = append(w.mcStack, f)
+	w.seqOpen = append(w.seqOpen, seq)
+}
+
+// markDrawsForm records that a form XObject is drawn inside every sequence open here. Walked outward from
+// the innermost and stopped at the first already marked: a sequence is marked only together with every
+// sequence enclosing it, so everything further out is marked already, and each sequence is marked once.
+func (w *runWalker) markDrawsForm() {
+	n := len(w.mcStack)
+	if n == 0 {
+		return
+	}
+	for i := w.mcStack[n-1].seqAt; i >= 0; {
+		j := w.seqOpen[i]
+		if w.seqs[j].drawsForm {
+			return
+		}
+		w.seqs[j].drawsForm = true
+		if i == 0 {
+			return
+		}
+		i = w.mcStack[i-1].seqAt
+	}
 }
 
 // markedSeq is one marked-content sequence that carries an MCID: the one reading of `BDC` the tree
@@ -348,15 +408,14 @@ const mcArtifact = -2
 
 // currentMCID is the innermost MCID in force, or -1.
 func (w *runWalker) currentMCID() int {
-	for i := len(w.mcStack) - 1; i >= 0; i-- {
-		switch v := w.mcStack[i]; {
-		case v == mcArtifact:
-			return -1
-		case v >= 0:
-			return v
-		}
+	n := len(w.mcStack)
+	if n == 0 || w.mcStack[n-1].force < 0 {
+		return -1
 	}
-	return -1
+	if v := w.mcStack[w.mcStack[n-1].force].v; v >= 0 {
+		return v
+	}
+	return -1 // an artifact is in force
 }
 
 // currentStm is the object number of the stream the innermost in-force sequence was OPENED in, or 0
@@ -370,19 +429,19 @@ func (w *runWalker) currentMCID() int {
 // a stream no `/Stm` will ever name. Caught in review before it shipped; `markedSeq.stm` was already
 // recording the right number and nothing was reading it.
 func (w *runWalker) currentStm() int {
-	for i := len(w.mcStack) - 1; i >= 0; i-- {
-		switch v := w.mcStack[i]; {
-		case v == mcArtifact:
-			return 0
-		case v >= 0:
-			// `seqOpen` is pushed and popped in lockstep with `mcStack`, so the same index is the
-			// same sequence; the bound is belt-and-braces against an unbalanced stream desyncing them.
-			if i < len(w.seqOpen) {
-				if j := w.seqOpen[i]; j >= 0 && j < len(w.seqs) {
-					return w.seqs[j].stm
-				}
-			}
-			return 0
+	n := len(w.mcStack)
+	if n == 0 {
+		return 0
+	}
+	i := w.mcStack[n-1].force
+	if i < 0 || w.mcStack[i].v < 0 {
+		return 0 // nothing in force, or an artifact
+	}
+	// `seqOpen` is pushed and popped in lockstep with `mcStack` (`push`), so the same index is the same
+	// sequence; the bound is belt-and-braces against an unbalanced stream desyncing them.
+	if i < len(w.seqOpen) {
+		if j := w.seqOpen[i]; j >= 0 && j < len(w.seqs) {
+			return w.seqs[j].stm
 		}
 	}
 	return 0
@@ -427,7 +486,7 @@ func (w *runWalker) markedContentID(o runOperand, res types.Dict, src []byte) in
 }
 
 func newRunWalker(xt *model.XRefTable) *runWalker {
-	return &runWalker{xt: xt, fonts: map[int]*runFont{}}
+	return &runWalker{xt: xt, fonts: map[int]*runFont{}, budget: newFormWalkBudget(1)}
 }
 
 // runOperand is one operand of an operator: a token, or a whole array.
@@ -652,8 +711,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 					entry = mcArtifact
 				}
 			}
-			w.mcStack = append(w.mcStack, entry)
-			w.seqOpen = append(w.seqOpen, -1)
+			w.push(entry, -1)
 		case "BDC":
 			entry, opener := -1, -1
 			if os := last(2); os != nil {
@@ -664,14 +722,13 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				}
 				opener = os[0].start
 			}
-			w.mcStack = append(w.mcStack, entry)
+			seq := -1
 			if entry >= 0 && opener >= 0 {
 				w.seqs = append(w.seqs, markedSeq{mcid: entry, opener: opSpan{opener, tok.End},
 					inForm: depth > 0, stm: w.stm})
-				w.seqOpen = append(w.seqOpen, len(w.seqs)-1)
-			} else {
-				w.seqOpen = append(w.seqOpen, -1)
+				seq = len(w.seqs) - 1
 			}
+			w.push(entry, seq)
 		case "EMC":
 			if n := len(w.mcStack); n > base {
 				w.mcStack = w.mcStack[:n-1]
@@ -685,11 +742,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "Do":
 			if os := last(1); os != nil {
 				if name, ok := os[0].name(src); ok && w.drawForm(res, name, gs, depth, visiting) {
-					for _, i := range w.seqOpen {
-						if i >= 0 {
-							w.seqs[i].drawsForm = true
-						}
-					}
+					w.markDrawsForm()
 				}
 			}
 		}
@@ -820,7 +873,7 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 		return true
 	}
 	body := streamContent(sd)
-	if body == nil {
+	if body == nil || !w.budget.enterForm(len(body)) {
 		return true
 	}
 	m := runIdentity

@@ -174,7 +174,7 @@ func (s tagState) partial() bool {
 // inspectTags parses a document and reports its tag state. **It parses; it never counts bytes.**
 func inspectTags(pdf []byte) tagState {
 	var s tagState
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return s // unreadable: not a claim we can judge, and readable=false says so
 	}
@@ -339,7 +339,7 @@ func honest(pdf []byte) ([]byte, error) {
 // phase review; `zerocaller_test.go` cannot police this, because the function is unexported and has
 // a caller either way.
 func dropTaggingClaim(pdf []byte) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}

@@ -144,7 +144,7 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		return nil, false, err
 	}
 	if conf.OptimizeBeforeWriting {
-		if err := api.OptimizeContext(dest); err != nil {
+		if err := optimizeContext(dest); err != nil {
 			return nil, false, err
 		}
 	}

@@ -63,7 +63,11 @@ func distinctForms(t *testing.T, pdf []byte) (forms, shared int) {
 		}
 		eachFormXObject(ctx, res, seen, 0, func(nr int, sd *types.StreamDict) { forms++ })
 	}
-	for _, d := range formDrawCounts(ctx) {
+	draws, derr := formDrawCounts(ctx)
+	if derr != nil {
+		t.Fatal(derr)
+	}
+	for _, d := range draws {
 		if d.count > 1 && d.mcid {
 			shared++
 		}

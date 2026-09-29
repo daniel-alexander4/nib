@@ -265,7 +265,10 @@ func TestAFormDrawnTwiceUnderMarkedContentIsADefect(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stimulus before response: the form really is painted twice and really carries MCIDs.
-	draws := formDrawCounts(ctx)
+	draws, derr := formDrawCounts(ctx)
+	if derr != nil {
+		t.Fatal(derr)
+	}
 	if len(draws) != 1 {
 		t.Fatalf("setup: %d form XObject(s) counted, want exactly 1 — the fixture is not driving "+
 			"the case", len(draws))

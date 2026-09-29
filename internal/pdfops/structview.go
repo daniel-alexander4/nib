@@ -1,12 +1,10 @@
 package pdfops
 
 import (
-	"bytes"
 	"errors"
 	"math"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -71,7 +69,7 @@ type viewElement struct {
 // readStructureView reads pdf's structure tree as reviewable values. A document with no tree is
 // errNoStructTree.
 func readStructureView(pdf []byte) (structureView, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	ctx, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return structureView{}, err
 	}

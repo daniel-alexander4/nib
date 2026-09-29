@@ -499,13 +499,14 @@ func clip(s string, max int) string {
 // gate after a strip: success means the surgical removal produced a valid
 // document; an error means the UI should recommend stepping down to flatten.
 func Validate(pdf []byte) error {
-	_, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	_, err := readOptimized(pdf, model.NewDefaultConfiguration())
 	return err
 }
 
 // writeMutated reads pdf into a validated, optimized context (so WriteContext
 // has the consolidated structures it expects and the attachment/annotation
-// caches are populated), applies fn, and writes the result back. It is the
+// caches are populated), applies fn, and writes the result back. The optimize
+// pass is skipped where it would be unbounded (`readOptimized`, `/pending 706`). It is the
 // shared read→mutate→write shape for the surgical removals.
 func writeMutated(pdf []byte, fn func(*model.Context) error) ([]byte, error) {
 	return rewriteContext(pdf, model.NewDefaultConfiguration(), fn)
@@ -522,7 +523,7 @@ func rewriteWithConf(pdf []byte, conf *model.Configuration, fn func(*model.Conte
 
 // rewriteContext is the one read-change-write both doors share.
 func rewriteContext(pdf []byte, conf *model.Configuration, fn func(*model.Context) error) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(pdf), conf)
+	ctx, err := readOptimized(pdf, conf)
 	if err != nil {
 		return nil, err
 	}
