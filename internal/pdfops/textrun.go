@@ -3,6 +3,7 @@ package pdfops
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/font"
@@ -100,6 +101,8 @@ type textRun struct {
 	// needs each glyph's code and advance, and no other reader does. `Σ(kern + advance) + kernAfter == width`.
 	glyphs    []runGlyph
 	kernAfter float64
+	// face is the font the run was drawn in, kept with the glyphs so reflow can ask it what it can draw (`codesFor`).
+	face *runFont
 }
 
 // runGlyph is one glyph of a run, as the show operator drew it.
@@ -240,6 +243,54 @@ type runFont struct {
 	widths     fontWidths
 	toUni      map[string]string
 	simple     func(byte) (rune, bool)
+	// drawing is textFor inverted — text to the codes that draw it — built on first use by `codesFor`.
+	drawing map[string][][]byte
+}
+
+// codesFor answers which codes of this font draw text — `PLAN-text-reflow.md` P06.S02, D8's trigger. It is `textFor`
+// run backwards over every code the font can express (the ToUnicode keys; every byte, for a simple font), so it can
+// never disagree with what the reader decodes: one rule, one door (law 4). Nil means the font draws no such text —
+// ABSENT, and reflow falls back naming it. More than one code is returned as more than one: two codes drawing the same
+// character is a fact about the font, and choosing between them is the caller's, never guessed here.
+//
+// A font this reader cannot split (a Type0 under a CMap it does not parse) draws nothing it can vouch for — `textFor`
+// refuses every code of one, so its inverse is empty.
+func (f *runFont) codesFor(text string) [][]byte {
+	if f == nil {
+		return nil
+	}
+	if f.drawing == nil {
+		f.drawing = map[string][][]byte{}
+		add := func(code []byte) {
+			if t, ok := f.textFor(code); ok && t != "" {
+				f.drawing[t] = append(f.drawing[t], code)
+			}
+		}
+		keys := make([]string, 0, len(f.toUni))
+		for k := range f.toUni {
+			keys = append(keys, k)
+		}
+		// Codes come back in code order, so the answer is a property of the font, not of map order.
+		sort.Strings(keys)
+		// A code is as long as `splitCodes` cuts it; a ToUnicode key of another length is never drawn.
+		want := 1
+		if f.twoByte {
+			want = 2
+		}
+		for _, k := range keys {
+			if len(k) == want {
+				add([]byte(k))
+			}
+		}
+		if !f.twoByte {
+			for b := 0; b < 256; b++ {
+				if _, mapped := f.toUni[string([]byte{byte(b)})]; !mapped {
+					add([]byte{byte(b)})
+				}
+			}
+		}
+	}
+	return f.drawing[text]
 }
 
 func loadRunFont(xt *model.XRefTable, obj types.Object) *runFont {
@@ -836,6 +887,7 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 	}
 	if w.keepGlyphs {
 		run.kernAfter = pendingKern * scale
+		run.face = gs.font
 	}
 	run.text = string(text)
 	run.width = advance * scale

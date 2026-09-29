@@ -557,11 +557,16 @@ existing reader pays nothing; `readPageGlyphRuns` is the asking door. T02 — th
 width), a kerned fixture, and a `none` fixture. **Grill assumption (rung 2)**: opt-in rather than always-on — retention on
 every tagging/grouping/checker read is memory nobody reads.
 
-#### P06.S02 — which characters a font can draw
+#### P06.S02 — which characters a font can draw *(done 2026-09-28, v1.167.11)*
 One door answers, for a run's font, the code that draws rune r — or `absent` with its cause — by inverting the decoding
 the reader already does (ToUnicode, or the simple font's encoding). Acceptance: every rune decoded from a corpus run maps
 back to the code it came from; a rune the font does not carry answers `absent` (D8's trigger); a code shared by two runes
 or unmapped is reported, never guessed.
+
+**Tasks** (slice grill, 2026-09-28): T01 — `runFont.codesFor`, `textFor` inverted over every code the font can express
+(ToUnicode keys of the font's code length; every byte of a simple font not already ToUnicode's), several codes returned as
+several; `textRun.face` kept with the glyphs. T02 — the corpus round trip and four hand-built answers. **Grill assumption
+(rung 2)**: built FROM `textFor` rather than beside it, so the inverse cannot disagree with the reader (law 4).
 
 #### P06.S03 — the line breaker takes a width function
 `mdpdf`'s greedy wrap is re-expressed over a width function (law 4 — the existing engine, not a second one), and the
