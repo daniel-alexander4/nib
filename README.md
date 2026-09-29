@@ -449,7 +449,9 @@ embedded files, optional-content layers, XMP metadata, and the document's
 identifying properties (author, title, creator…). Then remove it four
 ways, strongest fidelity-preserving first:
 - **Strip active content** — neutralises every auto-run hook, script and risky
-  action while keeping the page text and layout intact.
+  action while keeping the page text and layout intact. It re-scans its own result
+  and refuses — leaving the document untouched, and `nib sanitize` exiting non-zero
+  — if anything active would remain.
 - **Strip identifying metadata** — clears the document properties (author, title,
   creator, subject, keywords), deletes the XMP metadata, and regenerates the
   document's tracking identifier, leaving the visible content untouched. (pdfcpu
