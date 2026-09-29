@@ -356,7 +356,12 @@ func (d *Document) walkAppearances() {
 				if sd == nil {
 					continue
 				}
-				if derr := sd.Decode(); derr != nil {
+				apNr := 0
+				if ir, ok := so.(types.IndirectRef); ok {
+					apNr = ir.ObjectNumber.Value()
+				}
+				src, derr := d.decodedContent(sd, apNr)
+				if derr != nil {
 					d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s stream could not be decoded: %v", p, i, key, derr)
 					return
 				}
@@ -372,14 +377,10 @@ func (d *Document) walkAppearances() {
 				// a widget's `/AP /N` carrying `/Ref` fails 7.20 t1 on a document that draws nothing
 				// else. Recorded here rather than at the `Do` operator, because nothing draws it —
 				// the annotation is what puts it on the page.
-				apNr := 0
-				if ir, ok := so.(types.IndirectRef); ok {
-					apNr = ir.ObjectNumber.Value()
-				}
 				d.recordDrawnForm(sd.Dict, apNr, label, firstVisit)
 				w := walker{d: d, where: label, spKey: -1, appearance: true, stream: d.nextStream(),
 					repeat: d.retraversal(apNr, !firstVisit), form: apNr}
-				w.walk(sd.Content, res, nil, map[int]bool{}, 0)
+				w.walk(src, res, nil, map[int]bool{}, 0)
 			}
 		}
 	}
@@ -470,7 +471,38 @@ const (
 	// document meets none: each `/CharProcs` dictionary is enumerated once. Only procedures shared between fonts,
 	// or a font shown inside its own glyphs, spend it — and they spend it per procedure, not per operator.
 	maxCharProcAsks = 1 << 16
+	// maxContentBytes counts every byte walked, once per walk — so a form drawn N times is N times its size, the
+	// cost the walk actually pays. Whitespace and comments are no operator and spent nothing, and one 64 MiB form of
+	// spaces drawn 80 times ran 25.1 s (`/pending 721`, measured). 512 MiB is ADR-005's ceiling on a whole open
+	// document, and it sits above what `maxContentOperators` admits of real content (~10-20 bytes an operator), so
+	// it binds on padding, not on drawing.
+	maxContentBytes = 512 << 20
 )
+
+// decodedContent is the ONE door through which the content walk decodes a nested stream — a form XObject, an
+// appearance stream, a tiling pattern or a Type 3 glyph procedure — and it decodes each object once per check.
+//
+// **Cached here because pdfcpu does not**: `DereferenceStreamDict` hands back a fresh copy of the stream dictionary
+// at every call, so `Decode` on it inflated the same form again at every `Do` (`/pending 721`, 0.29 s a draw for a
+// 64 MiB form). Only the decoded BYTES are kept, never what a walk made of them: a form's reading depends on the
+// graphics state and marked-content stack it is drawn in, so every draw is still walked, and charged
+// (`maxContentBytes`). An inline stream (object number 0) has no key and is decoded where it is met.
+func (d *Document) decodedContent(sd *types.StreamDict, objNr int) ([]byte, error) {
+	if src, ok := d.decoded[objNr]; ok && objNr != 0 {
+		return src, nil
+	}
+	d.streamDecodes++
+	if err := sd.Decode(); err != nil {
+		return nil, err
+	}
+	if objNr != 0 {
+		if d.decoded == nil {
+			d.decoded = map[int][]byte{}
+		}
+		d.decoded[objNr] = sd.Content
+	}
+	return sd.Content, nil
+}
 
 // overBudget reports whether the content walk has spent its budget, recording why the first time.
 func (d *Document) overBudget() bool {
@@ -479,6 +511,9 @@ func (d *Document) overBudget() bool {
 	case d.contentOps > maxContentOperators:
 		why = fmt.Sprintf("the page content, with every form XObject it draws, runs more than %d operators; nib stops "+
 			"reading there, so what lies beyond was never read", maxContentOperators)
+	case d.contentBytes > maxContentBytes:
+		why = fmt.Sprintf("the page content, with every form XObject it draws, runs more than %d bytes of content "+
+			"(a form is counted at every draw); nib stops reading there, so what lies beyond was never read", maxContentBytes)
 	case d.formWalks > maxFormWalks:
 		why = fmt.Sprintf("the page content enters nested streams — form XObjects, and the tiling patterns and "+
 			"Type 3 glyph procedures read for their /Lang — more than %d times (a form drawn inside forms fans "+
@@ -515,6 +550,10 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 	// start is the text state the stream was entered with: a tiling pattern this stream selects inherits THAT, not
 	// the state at the `scn` (`GFPDTilingPattern` takes the invoking stream's inherited graphics state).
 	start := ts
+	// Charged BEFORE the tokenizer runs, since tokenizing is the cost: a stream of whitespace is no operator.
+	if w.d.contentBytes += len(src); w.d.overBudget() {
+		return
+	}
 	// **Not copied** (R3-2): the copy was O(depth) per nested stream, so a deep nesting that draws a form at every
 	// level paid for the whole stack each time. Pushes land above `inherited` and pops stop at it (the `EMC`
 	// guard), so the caller's frames are never touched — see `pushFrame`.
@@ -736,7 +775,8 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	if w.d.formWalks++; w.d.overBudget() {
 		return
 	}
-	if derr := sd.Decode(); derr != nil {
+	src, derr := w.d.decodedContent(sd, objNr)
+	if derr != nil {
 		w.d.contentErr = fmt.Sprintf("form XObject %s (object %d) could not be decoded: %v", name, objNr, derr)
 		return
 	}
@@ -753,7 +793,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 		inner.spKey = sp
 	}
 	next := withLink(chain, objNr)
-	inner.walkWithState(sd.Content, formRes, stack, next, depth+1, ts)
+	inner.walkWithState(src, formRes, stack, next, depth+1, ts)
 }
 
 // recordLang counts a BDC property list's string `/Lang` for 7.2 t29 (`checkLanguageIdentifiers`) and keeps the
@@ -1148,7 +1188,8 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	if w.d.formWalks++; w.d.overBudget() {
 		return
 	}
-	if err := sd.Decode(); err != nil {
+	src, err := w.d.decodedContent(sd, objNr)
+	if err != nil {
 		if w.d.contentErr == "" {
 			w.d.contentErr = fmt.Sprintf("%s could not be decoded, so its marked content was never read: %v", label, err)
 		}
@@ -1163,7 +1204,7 @@ func (w walker) enterLangOnly(sd *types.StreamDict, objNr int, res types.Dict, l
 	if streamRes == nil {
 		streamRes = res
 	}
-	inner.walkWithState(sd.Content, streamRes, nil, next, depth+1, ts)
+	inner.walkWithState(src, streamRes, nil, next, depth+1, ts)
 }
 
 // markedContent reads a `BMC`/`BDC`'s tag and property list the way veraPDF locates them.
