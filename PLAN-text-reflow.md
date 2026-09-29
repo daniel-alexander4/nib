@@ -580,12 +580,27 @@ glyph, a run gap wider than 0.15 em, or a line end; the paragraph's space is the
 `measureOf`, `rebreak`, and `readPageGlyphLayout`. **Measured**: 2,487 of 2,691 real-producer multi-line paragraphs already
 re-break in place under the greedy rule; the other 204 are P08's justified/hyphenated text.
 
-#### P06.S04 — the rewrite of one paragraph
+#### P06.S04 — the rewrite of one paragraph *(done 2026-09-28, v1.167.13)*
 Given a paragraph and replacement text, delete its show operators and emit the re-wrapped lines in its own font, size
 and colour, at its lines' baselines. Acceptance: the output's text for the page is the edited paragraph in place of the
 original, and the original words are ABSENT from the content (not covered); an unedited reflow round-trips its decoded
 content (law 1); a paragraph with a run in a form XObject, a rotated baseline, or a width `none` falls back with the
 cause named (law 3).
+
+**Tasks** (slice grill, 2026-09-28): T01 — each run keeps its text state (`runTextState`: text and line matrices, `Tf`
+size, Tc, Tw, Tz, rise, scale). T02 — `reflowParagraph`: the paragraph's show operators DELETED; the re-broken lines
+emitted in place of its last one, inside its own text object — spacing stated first, each line at its original line's
+text matrix plus its lead, words separated by the font's own space glyph, the TJ array closed around a font change — then
+`Tf`, `Tc`, `Tw` and the line matrix restored so later text lands unchanged. T03 — `contentAround`: only positioning and
+`Tf` between its shows; a following show must reposition first.
+**PIN (grill, rung 2)**: marked content BETWEEN a paragraph's lines is refused as `tagged` — moving text across per-line
+MCIDs would mis-tag it, and re-anchoring them is P07's "nothing anchored is silently orphaned". Replacement text
+(`/ActualText`, `/Alt`) around it is refused too, or the old words stay readable.
+**PIN (review, measured)**: each line has its OWN room (`BreakOps.LineWidth`): 1,152 real multi-line paragraphs have a
+first-line indent, and one measure for every line overflowed it.
+**Measured**: 76 real-producer paragraphs (a declared sample) rewritten and read back exactly — text and line breaks — and
+0 wrong; refused by cause: mixed-content 28, mixed-state 14, no-space-glyph 3, paragraph-grows 3, styled-word 2,
+inline-follower 1, no-widths 1, rotated 1. Review `code-reviews/v1.167.12-p06s04-2026-09-28.md`.
 
 #### P06.S05 — the route, the refusals, and the flags
 A committing route (`MUTATING` entry, `commitMutation` — undo is a feature for an edit, and the file itself no longer

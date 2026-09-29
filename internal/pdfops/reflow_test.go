@@ -51,7 +51,7 @@ func TestAnUneditedParagraphRebreaksWhereItWasBroken(t *testing.T) {
 				for _, ln := range lines {
 					words = append(words, ln...)
 				}
-				got := lineTexts(rebreak(words, measureOf(lines, space), space))
+				got := lineTexts(rebreak(words, lineMeasures(lines, space), space))
 				want := lineTexts(lines)
 				if len(want) > 1 {
 					multi++
@@ -103,7 +103,7 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 				for _, ln := range lines {
 					words = append(words, ln...)
 				}
-				if strings.Join(lineTexts(rebreak(words, measureOf(lines, space), space)), "\n") == strings.Join(lineTexts(lines), "\n") {
+				if strings.Join(lineTexts(rebreak(words, lineMeasures(lines, space), space)), "\n") == strings.Join(lineTexts(lines), "\n") {
 					same++
 				} else {
 					differ++
@@ -163,5 +163,32 @@ func TestAParagraphIsCutIntoWordsByItsOwnRules(t *testing.T) {
 	}
 	if space != 3 {
 		t.Errorf("the gaps are 2, 3 and 10, and the paragraph's space is their median, 3; got %v", space)
+	}
+}
+
+// TestAParagraphItCannotReadFaithfullyNamesWhy — paragraphWords' own refusals, each on a run built to reach it: text drawn
+// inside a form XObject (rewriting the page stream would describe the `Do`), a turned baseline, a width measured from
+// nothing (law 2), and a code that decoded to nothing.
+func TestAParagraphItCannotReadFaithfullyNamesWhy(t *testing.T) {
+	base := func() textRun { return glyphRun(0, glyphsOf("ab", 1, nil)) }
+	for _, c := range []struct {
+		want string
+		edit func(*textRun)
+	}{
+		{"text-in-form", func(r *textRun) { r.inForm = true }},
+		{"rotated", func(r *textRun) { r.rotated = true }},
+		{"no-widths", func(r *textRun) { r.widthSrc = widthNone }},
+		{"undecoded", func(r *textRun) { r.decoded = false }},
+		{"glyphs-not-kept", func(r *textRun) { r.glyphs = nil }},
+	} {
+		r := base()
+		c.edit(&r)
+		if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{r}}}}); cause != c.want {
+			t.Errorf("want %q, got %q", c.want, cause)
+		}
+	}
+	// And the control: the same run unedited is read, and a paragraph with no gap in it cannot say how wide its space is.
+	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base()}}}}); cause != "no-space-width" {
+		t.Errorf("a one-word paragraph has no space to measure; got %q", cause)
 	}
 }
