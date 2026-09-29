@@ -18,6 +18,10 @@ import (
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/sign"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+
+	"nib/internal/pdfread"
 )
 
 // Fingerprint returns the SHA-256 of the certificate's SubjectPublicKeyInfo —
@@ -183,17 +187,96 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 
 // runSign performs the digitorus incremental signing of pdfBytes with the given
 // signature data and returns the signed bytes.
+//
+// It is the one door every production signature passes — `Sign` (finalize), `SignApproval`
+// (every co-sign and ceremony contribution, through `p2p.Contribute`) and `SignExternal`
+// (finalize with an imported certificate, and `nib sign`) — so the hybrid-reference guard is
+// written once here and reaches all of them (ADR-009, /pending 740): a hybrid input is made
+// readable to the signing library, or refused by name when it is signed (`readableBySigner`).
 func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
-	rdr, err := dpdf.NewReader(bytes.NewReader(pdfBytes), int64(len(pdfBytes)))
+	in, err := readableBySigner(pdfBytes)
+	if err != nil {
+		return nil, err
+	}
+	rdr, err := dpdf.NewReader(bytes.NewReader(in), int64(len(in)))
 	if err != nil {
 		return nil, fmt.Errorf("read pdf: %w", err)
 	}
 	var out bytes.Buffer
-	if err := sign.Sign(bytes.NewReader(pdfBytes), &out, rdr, int64(len(pdfBytes)), data); err != nil {
+	if err := sign.Sign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
 		return nil, describeSignFailure(err, data.TSA.URL)
 	}
 	return out.Bytes(), nil
 }
+
+// ErrSignedHybridReference refuses to sign a document that already carries a signature and uses the
+// hybrid cross-reference form (/pending 740).
+var ErrSignedHybridReference = errors.New("this document is already signed and stores part of its " +
+	"structure in a hybrid cross-reference stream (/XRefStm) that nib's signer cannot read; making it " +
+	"readable means rewriting the file, which would destroy the signature it already carries, so " +
+	"nothing was signed — ask whoever sent it for a copy saved without the hybrid form (for example, " +
+	"re-exported before anyone signs it), or add this signature in the application that made the " +
+	"earlier one")
+
+// readableBySigner returns pdf in a form `digitorus/pdf` reads the way pdfcpu does.
+//
+// # Why (/pending 740)
+//
+// `digitorus/pdf` follows a trailer's `/Prev` and never a hybrid-reference trailer's `/XRefStm`
+// (ISO 32000-1 7.5.8.4), so every object that stream lists is invisible to it — and the signer
+// writes its incremental update over the document it saw. Measured on constructed files: an
+// unsigned hybrid with the catalog in the stream signed to a file pdfcpu could not read; with the
+// pages there it failed `page number 1 not found`; a SIGNED one co-signed to an `Invalid`, 0-signer
+// file, two of three shapes unreadable (`decodeObjectStream: missing entry for obj#6`).
+//
+// # What it does
+//
+//   - Not hybrid: returned unchanged.
+//   - Hybrid and unsigned (`HasSignatureBlob`, the /pending 733 door, which answers by byte scan for
+//     a hybrid file): rewritten through pdfcpu, which writes one cross-reference form, and the
+//     rewrite is what is signed. Nothing is lost that a signature protected, because there is none.
+//   - Hybrid and signed: refused, `ErrSignedHybridReference`. A rewrite destroys the signature.
+//
+// # Real producers write this form
+//
+// 2 of the 36 files in the real-producer corpus carry `/XRefStm` (InDesign, Acrobat). Both signed
+// valid BEFORE this door existed — their hybrid streams list nothing the signer needed — so for them
+// the rewrite is a cost, not a repair. It is paid anyway because "the stream lists nothing the
+// signer needs" is not something nib can know without a second reader.
+//
+// # PDF/UA (ADR-032)
+//
+// The rewrite is the same read-and-write the save path's `pdfops.DropUAIdentificationUnlessSigned`
+// performs, without its claim drop: this package does not import `pdfops`. Every production caller
+// that can reach it with an unsigned document has already been through that door (finalize, `nib
+// sign`) or through `p2p.PrepareDocument`'s rewrite (co-sign), and a document carrying a claim comes
+// out of either rewritten and no longer hybrid. A new caller that signs unsigned bytes directly
+// must drop the claim first, exactly as it would have to for the signature itself.
+func readableBySigner(pdf []byte) ([]byte, error) {
+	if !hybridReference(pdf) {
+		return pdf, nil
+	}
+	if HasSignatureBlob(pdf) {
+		return nil, ErrSignedHybridReference
+	}
+	conf := model.NewDefaultConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed // as pdfcpuCanRead: "can it be read", not "is it valid"
+	ctx, err := pdfread.ReadOptimized(pdf, conf)
+	if err != nil {
+		return nil, fmt.Errorf("read pdf: this document uses a hybrid cross-reference form nib must "+
+			"rewrite before signing, and the rewrite could not read it: %w", err)
+	}
+	var out bytes.Buffer
+	if err := api.WriteContext(ctx, &out); err != nil {
+		return nil, fmt.Errorf("rewrite hybrid cross-reference document before signing: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
+// hybridReference reports whether pdf names a hybrid-reference `/XRefStm` anywhere. A byte scan, as
+// `signatureBlobPresent` uses it: it over-reports (the token in a string) and that routes an
+// ordinary file to a rewrite or the byte scan, never past a stream the library cannot see.
+func hybridReference(pdf []byte) bool { return bytes.Contains(pdf, []byte("/XRefStm")) }
 
 // ErrTimestampAuthority reports that signing failed because the timestamp authority the
 // user named could not be used. Callers reprompt or offer to sign without one.
@@ -248,7 +331,10 @@ func mentionsTimestamp(err error) bool {
 // /DocMDP. (Top-level signature fields only — the conventional placement.)
 //
 // **Declared: it is blind to a certification signature nested under `/Kids`** (/pending 734), because
-// it walks `/Fields` rather than the revision sweep. It is a named exemption from the one-enumeration
+// it walks `/Fields` rather than the revision sweep. It is also blind to one reachable only through a
+// hybrid-reference `/XRefStm`, by the same reader — and that one cannot be co-signed over: runSign
+// refuses every SIGNED hybrid file (`readableBySigner`, /pending 740), certified or not, so the
+// blindness costs a less specific refusal, never a signature. It is a named exemption from the one-enumeration
 // guard (`TestEverySignatureEnumerationIsTheSweep`), not a second coverage walk: it reads `/Reference`,
 // never a `/ByteRange`.
 //

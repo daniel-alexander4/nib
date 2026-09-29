@@ -507,7 +507,7 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 	// field, the signature dictionary itself — while pdfcpu reads them all and admits the file to the
 	// library. A walk that then finds no field has not found no signature, so the answer is the byte
 	// scan's. An UNSIGNED hybrid file carries no `/ByteRange` and still answers false.
-	if bytes.Contains(pdf, []byte("/XRefStm")) {
+	if hybridReference(pdf) {
 		return scanForSignatureBlob(pdf)
 	}
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
