@@ -779,17 +779,29 @@ func truncateBytes(s string, max int) string {
 // UniqueName returns a collision-free base name for this batch: an empty name
 // becomes "bookmark-<index>", and a repeat (case-insensitively, for macOS/Windows
 // filesystems) gets a " (2)", " (3)" suffix.
+//
+// **A suffixed name is itself reserved** (/pending 594). This used to record only the base, so a
+// batch naming "A", "A (2)", "A" — or "A", "A", "A (2)" — returned "A (2)" twice and the later part
+// replaced the earlier one: a mail-merge zip or a split folder silently one file short. Every name
+// returned is now in seen, and a suffix already taken is skipped.
 func UniqueName(base string, index int, seen map[string]int) string {
 	if base == "" {
 		base = fmt.Sprintf("bookmark-%d", index)
 	}
 	key := strings.ToLower(base)
-	if c := seen[key]; c > 0 {
-		seen[key] = c + 1
-		return fmt.Sprintf("%s (%d)", base, c+1)
+	c := seen[key]
+	if c == 0 {
+		seen[key] = 1
+		return base
 	}
-	seen[key] = 1
-	return base
+	for n := c + 1; ; n++ {
+		name := fmt.Sprintf("%s (%d)", base, n)
+		if k := strings.ToLower(name); seen[k] == 0 {
+			seen[key] = n
+			seen[k] = 1
+			return name
+		}
+	}
 }
 
 // NUp places n source pages onto each output sheet (2-up, 4-up, …) in reading

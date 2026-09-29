@@ -129,3 +129,49 @@ func OutputOverwritingSource(src string, outs []string) (string, bool) {
 	}
 	return "", false
 }
+
+// OutputOverwritingAnotherSource is OutputOverwritingSource for a BATCH: srcs[i] is an input and
+// outs[i] the output derived from it, and it returns the first output that names the same FILE as
+// some input OTHER than its own — with that input, and whether there was one. An output that is
+// its own input is not a clash here; that decision belongs to the caller, which must name it
+// (`nib pagenum --continuous`'s SELF-OVERWRITE EXEMPT, where the output is a superset).
+//
+// # Why a batch has a second rule (/pending 663)
+//
+// A batch writer reads input i, writes output i, then moves on. If output 1's name is input 2's
+// file, input 2 is replaced before it is ever read: measured through `nib pagenum --continuous
+// x/a.pdf out/a.pdf --out-dir out`, the 3-page `out/a.pdf` vanished, both outputs held input 1's
+// one page, exit 0. Deduping the names within the run (`UniqueName`) cannot see this — the two
+// inputs live in different folders, and the output collides with a FILE, not with another output.
+// The same holds in the other direction: output 2 landing on an input already read still destroys
+// the user's original, because that input's stamped copy went somewhere else.
+//
+// Identity, not path strings, for every reason OutputOverwritingSource gives; and each path is
+// stat'ed once, so a batch of n inputs costs 2n stats and n² in-memory comparisons, not n² stats.
+// An empty src, or one that does not stat, protects nothing — the same contract as above.
+func OutputOverwritingAnotherSource(srcs, outs []string) (out, src string, ok bool) {
+	sis := make([]os.FileInfo, len(srcs))
+	for j, s := range srcs {
+		if s == "" {
+			continue
+		}
+		if fi, err := os.Stat(s); err == nil {
+			sis[j] = fi
+		}
+	}
+	for i, o := range outs {
+		oi, err := os.Stat(o)
+		if err != nil {
+			continue // nothing there yet: writing it cannot destroy anything
+		}
+		for j, si := range sis {
+			if j == i || si == nil {
+				continue
+			}
+			if os.SameFile(si, oi) {
+				return o, srcs[j], true
+			}
+		}
+	}
+	return "", "", false
+}
