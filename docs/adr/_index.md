@@ -544,3 +544,7 @@ home today.
   Zero counted signers is `Invalid` where a checkable blob exists; `addedAfter` keeps the library's count; a
   join error excludes nothing. `Status.Timestamps` names each stamp; a refusal is shown, and `nib verify` exits
   2, whether or not it set `AddedAfter`.
+- **[ADR-062 — a signature nib could not check says why, and a signature nib made is read back](062-a-signature-nib-could-not-check-says-why-and-a-signature-nib-made-is-read-back.md)**
+  — /pending 741, 747. `Status.Unchecked` names why a verdict rests on no checked signer (`hybrid-reference`,
+  `unread`, `unreadable`, with `could-not-check`); `runSign`'s `signedAsIntended` reads the new signature back via
+  the sweep and one PKCS#7 verify — +20–25% time and +50% memory at 100 MB, where a full `Verify` cost +230%.

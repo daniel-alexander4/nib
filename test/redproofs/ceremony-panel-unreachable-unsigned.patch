@@ -1,12 +1,12 @@
 diff --git a/web/app.js b/web/app.js
 --- a/web/app.js
 +++ b/web/app.js
-@@ -4891,7 +4891,7 @@
+@@ -4900,7 +4900,7 @@
    // Details only exist for a signed document (valid or modified) — OR for a document in a
    // ceremony, which has an obliged-signer count to report before anyone has signed at all —
    // OR for one carrying a signature Nib refused, which the panel names (P01.S02).
--  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length;
-+  els.sigDetailsBtn.hidden = !signers.length && !refused.length && !timestamps.length;
+-  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length && !sig?.unchecked;
++  els.sigDetailsBtn.hidden = !signers.length && !refused.length && !timestamps.length && !sig?.unchecked;
  }
  
  // addedAfterSuffix is the badge's words for `sign.Status.addedAfterCause`. A refused signature

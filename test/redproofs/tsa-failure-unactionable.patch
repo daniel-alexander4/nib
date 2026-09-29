@@ -1,12 +1,12 @@
 diff --git a/internal/sign/identity.go b/internal/sign/identity.go
 --- a/internal/sign/identity.go
 +++ b/internal/sign/identity.go
-@@ -204,7 +204,7 @@ func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
+@@ -209,7 +209,7 @@
  	}
  	var out bytes.Buffer
- 	if err := sign.Sign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
+ 	if err := librarySign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
 -		return nil, describeSignFailure(err, data.TSA.URL)
 +		return nil, fmt.Errorf("sign: %w", err)
  	}
- 	return out.Bytes(), nil
- }
+ 	if err := signedAsIntended(in, out.Bytes(), data.Certificate); err != nil {
+ 		return nil, err

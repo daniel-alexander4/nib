@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -18,9 +19,11 @@ import (
 
 	dpdf "github.com/digitorus/pdf"
 	"github.com/digitorus/pdfsign/sign"
+	"github.com/digitorus/pkcs7"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 
+	"nib/internal/fontcode"
 	"nib/internal/pdfread"
 )
 
@@ -192,7 +195,9 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 // (every co-sign and ceremony contribution, through `p2p.Contribute`) and `SignExternal`
 // (finalize with an imported certificate, and `nib sign`) — so the hybrid-reference guard is
 // written once here and reaches all of them (ADR-009, /pending 740): a hybrid input is made
-// readable to the signing library, or refused by name when it is signed (`readableBySigner`).
+// readable to the signing library, or refused by name when it is signed (`readableBySigner`). The
+// read-back check is here for the same reason (/pending 747): the output is handed back only if nib
+// reads it as the input plus exactly the signature asked for (`signedAsIntended`).
 func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
 	in, err := readableBySigner(pdfBytes)
 	if err != nil {
@@ -203,10 +208,117 @@ func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
 		return nil, fmt.Errorf("read pdf: %w", err)
 	}
 	var out bytes.Buffer
-	if err := sign.Sign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
+	if err := librarySign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
 		return nil, describeSignFailure(err, data.TSA.URL)
 	}
+	if err := signedAsIntended(in, out.Bytes(), data.Certificate); err != nil {
+		return nil, err
+	}
 	return out.Bytes(), nil
+}
+
+// librarySign is the one call into `digitorus/pdfsign/sign`, as a variable so a test can make the
+// library write something other than a signature and see `signedAsIntended` refuse it.
+var librarySign = sign.Sign
+
+// ErrSignedOutputUnreadable refuses a signature the library produced that nib cannot read back as
+// one new, well-formed, verifying signature on a readable document (/pending 747). Nothing is
+// returned and nothing is written: the caller has only its input.
+var ErrSignedOutputUnreadable = errors.New("the signed document failed nib's own read-back check, " +
+	"so it was NOT signed and nothing was written")
+
+// signedAsIntended is `runSign`'s post-condition (/pending 747): the library's output is a document
+// nib reads back with exactly the signature it was asked to add. Refused otherwise, whatever the
+// library returned.
+//
+// # Why
+//
+// The signer and the verifier read a PDF with different parsers, and where they disagree the signer
+// writes an incremental update over a document nib's verifier does not see. /pending 740 found one
+// such disagreement (`/XRefStm`) and closed it at the input; co-signing the hand-built `synthSigned`
+// fixture — no hybrid form — made the library write a file whose revision sweep fails
+// (`malformed hex string`), which `Verify` reads `Invalid` with no signer. Nothing refused it: the
+// user was handed a broken signed document as a success. This check does not know about either
+// cause, so any other divergence fails closed too.
+//
+// # What it checks, and why not `Verify`
+//
+//  1. pdfcpu reads the output (`pdfcpuCanRead`) — the gate `Verify` puts before every digitorus read
+//     (ADR-041), and it comes first here for the same reason: it is containment for the sweep that
+//     follows, not a detector (every output the tests build that it refuses, the sweep refuses too).
+//  2. The revision sweep (ADR-058) finishes on the output, and finds exactly ONE more record than on
+//     the input — so the library neither hid an earlier signature (the /pending 740 shape) nor
+//     wrote two.
+//  3. Exactly one record reaches the end of the output, and it is well-formed (the sweep's own
+//     eleven conjuncts), in the library's enumeration (`libPos`), not a document timestamp, and
+//     names the certificate it was asked to sign with.
+//  4. Its PKCS#7 verifies over its own `/ByteRange` — one hash of the output, of that signature only.
+//
+// **A full `Verify` of the output was built first and refused on cost** (/pending 747): it re-hashes
+// every earlier signature's revision, and at 100 MB it took signing from 0.33 s to 1.10 s and peak
+// heap from 400 to 841 MB. Earlier signatures are the input's, and signing did not touch their bytes
+// — an incremental update only appends — so what can have changed about them is whether nib still
+// SEES them, which (2) checks by count without hashing anything.
+//
+// # (4) is not a second verifier of the verify path
+//
+// `Verify`'s per-signature check is the library's, and the library exposes it only as a whole-document
+// call. (4) is the same primitive it ends in (`pkcs7.Verify` over the concatenated ranges,
+// `pdfsign verify/signature.go` `processByteRange` + `verifySignature`) over ranges the sweep has
+// already proved well-formed. It decides nothing any reader is shown — only whether nib hands its
+// own output back — so it cannot disagree with a verdict.
+func signedAsIntended(in, out []byte, cert *x509.Certificate) error {
+	fail := func(format string, a ...any) error {
+		return fmt.Errorf("%w (%s)", ErrSignedOutputUnreadable, fmt.Sprintf(format, a...))
+	}
+	if err := pdfcpuCanRead(out); err != nil {
+		return fail("the result is not a readable PDF: %v", err)
+	}
+	before, err := sweepRevisions(in)
+	if err != nil {
+		return fail("nib cannot read the signatures of the document it was given: %v", err)
+	}
+	after, err := sweepRevisions(out)
+	if err != nil {
+		return fail("nib cannot read the signatures of the result: %v", err)
+	}
+	if len(after) != len(before)+1 {
+		return fail("the result carries %d signature record(s) where %d were expected", len(after), len(before)+1)
+	}
+	// Exactly one can reach the end: every input record ends inside the input, and the count above
+	// leaves room for one new record.
+	var added *Revision
+	for i := range after {
+		if after[i].CoverageEnd == int64(len(out)) {
+			added = &after[i]
+		}
+	}
+	switch {
+	case added == nil:
+		return fail("no well-formed signature reaches the end of the result")
+	case added.libPos < 0 || added.Timestamp:
+		// Defence in depth, unreachable by any output the test hook can build: `/SigFlags` and the
+		// signature type are written inside the new signature's own coverage, so changing them
+		// breaks (4) first. It is kept because an output that trips it is one `Verify` would not
+		// count as a signer, whatever (4) says.
+		return fail("the new signature is not one nib's verifier would check")
+	case cert != nil && added.named != hex.EncodeToString(fingerprintOf(cert)):
+		return fail("the new signature does not name the certificate it was made with")
+	}
+	p7, err := pkcs7.Parse(fontcode.Hex(out[added.gapStart:added.gapEnd]))
+	if err != nil {
+		return fail("the new signature's contents do not parse: %v", err)
+	}
+	br := added.ByteRange
+	content := make([]byte, 0, len(out)-int(added.gapEnd-added.gapStart))
+	for i := 0; i+1 < len(br); i += 2 {
+		content = append(content, out[br[i]:br[i]+br[i+1]]...)
+	}
+	p7.Content = content
+	if err := p7.Verify(); err != nil {
+		return fail("the new signature does not verify: %v", err)
+	}
+	return nil
 }
 
 // ErrSignedHybridReference refuses to sign a document that already carries a signature and uses the
