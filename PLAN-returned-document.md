@@ -259,7 +259,22 @@ is misdated in its filename).** Premises the code has moved past, amended here; 
 **PIN 2026-09-28 (plan-review of the firmed P01, hand-off `plan-reviews/2026-09-28-p01-returned-document.md`)** — ten
 seats; every critical below is folded into the slice it concerns, marked **(plan-review pin: …)**.
 
-#### P01.S01 — `sign.Revisions`: the library's own sweep, with identity, coverage and structure
+#### P01.S01 — `sign.Revisions`: the library's own sweep, with identity, coverage and structure *(done 2026-09-29, v1.168.4)*
+**Ledger** (acceptance split, each with its evidence): `/Kids` seen — met (`TestAKidsNestedSignatureIsSeen`, red against
+a `/Fields`-only sweep); 6-element abutting → `Index(4)+Index(5)` — met; eleven conjuncts, each its own fixture asserting
+WHICH fired — met (16 cases); past-EOF refused, not sliced — met (record refused; a read past the file never reaches the
+library); both copied dictionaries refused — met (tests + **live, `nib verify`**: the old binary named the victim twice,
+the new one leaves the copy unnamed); 661 decoys named with causes — met; fingerprint oracle = the fixture's signing key
+incl. ADR-051's forged bag — met; parse-failing-before-valid — met; K-pair never reaches the library — met (**live**: a
+negative-length K=2,000 file 284 MB/0.41 s → 23 MB/0.04 s; an indirect K=4,000 file 9.65 s `valid` → 0.01 s `invalid`);
+hybrid yields no record naming /pending 733 — met; **cost < 5% at ≥ 10 MB — not measurable at this granularity by wall
+clock** (39 MB × 30, 36 alternated samples each: median +5.15%, fastest −5.46%, so the noise is ±5%) and **met by the
+finer instrument**: the added work is the sweep, 3.2 ms against the old walk's 2.9 ms inside a 2.4 s `Verify` (0.01%).
+Review `code-reviews/v1.168.3-p01s01-returned-document-2026-09-29.md`: three rounds, four criticals fixed — two of them
+PRE-EXISTING live defects (an indirect `/ByteRange` made `Verify` quadratic; a negative length made the library read the
+whole file per pair). The gate refuses exactly what over-reads; a shape that reads nothing is a refused record and the
+document keeps its signers (the S03 pin). Carried to S03's grill: a refused record the library FAILS still makes a
+document `Invalid` (`verify.go`); a planted token can refuse a genuine signature (/pending 736).
 Scope: extend `signerFingerprintsByBag`'s sweep into one record per signature-shaped dictionary — object number,
 `/Type`, `/Filter`, `/SubFilter`, the raw `/ByteRange`, a structural cause, the coverage end (D5), the leaf fingerprint,
 and whether the library's signer at that position verified. `signerFingerprintsByBag` is deleted; the record is the
@@ -327,6 +342,36 @@ Acceptance:
 - **Cost (plan-review pin: performance)**: `Verify` measured over signatures {1, 10, 30} × signed bytes {1, 10, 50 MB},
   before and after, time and `TotalAlloc`; P01 adds under 5% to whole-`Verify` at 10 MB and above — a threshold that can
   fail. The library's copy-per-signature cost is filed separately (/pending 735), not P01's.
+
+**Tasks** (slice grill 2026-09-28, `memory/grills/2026-09-28-p01s01-revisions.md`; conjunct (11) MEASURED on 7
+signatures in 5 files — Finalize's `Sign`, `SignExternal`, three stacked `SignApproval`s, `irs-f1040`, `irs-fw9` — the
+nearest header was the dictionary's own object every time, 199 B back on nib's output and 501 B on the IRS files; a
+verbatim copy under a new number found the victim's header and was refused; (7) held on all 7, padding included):
+T01 — `internal/sign/revisions.go`: the `Revision` record and `sweepRevisions` over `r.Xref()`, each record's library
+ordinal (none when `SigFlags` is null), `unsupported-filter` / `unparseable-contents`. T02 — `structureOf`: conjuncts
+(1)-(10), then (11) as `gapOwner`, a LINEAR backward keyword scan bounded below by the previous distinct gap's end (a
+regex over the window measured 3.2 ms per IRS signature; the linear scan 2-7.5 µs); no regex, no `bytes.Index` over the
+file. T03 — `revisions_test.go`: one fixture per conjunct, each asserting WHICH conjunct fired (the cause lumps nine);
+both copied dictionaries (xref-stream appends); both 661 decoys; `/Kids`; the 733 hybrid; a scan-budget fixture;
+per-source refusal counts. T04 — `Verify`: sweep and K-pair gate after `pdfcpuCanRead`, a `libraryVerify` seam proving
+the library is never called on the K = 10,000 fixture, allocation bounded. T05 — `joinLibrary`; `signerInfo` takes the
+record's fingerprint; a join error feeds `addedAfterVerdict`'s error arm; `signerFingerprintsByBag` and `recordSigner`
+deleted; `forgedbag_test` rewritten (`TestOneBagWithTwoSignersNamesNeither` becomes "names each"). T06 — ADR-058 +
+`_index.md`, the CLAUDE.md ADR line, stale comments. T07 — the cost matrix, `oldtree` of `16da8b58` vs the new tree,
+the slice failing at ≥ 5% over 10 MB. T08 — `corruptwalk_test.go` drives `sweepRevisions` too.
+**(grill pin: the join on a failed signature, 2026-09-28)** The library returns an EMPTY bag on every failure path
+(`signature.go:36-63`; filled only at `certificate.go:345`), so "both empty agrees only as both empty" would make every
+tampered document a join error and blank its valid co-signers. The rule is: an empty library bag requires
+`ValidSignature=false` at that position; a non-empty one must equal the record's. **Defaults (rung 2)**: a join error
+makes `AddedAfter` fail closed already in S01; the scan's lower bound is the previous gap's end; the cost matrix is a
+recorded probe, not a standing test; the conjunct field is unexported and read by tests only. **Accepted residual**:
+where a producer writes attacker-influenced `/Reason` or `/Name` BEFORE `/Contents` (the IRS files do; nib does not),
+header-shaped text there can move which object a gap is attributed to (/pending 736). **(diff-review correction,
+2026-09-28)** Coverage and identity cannot move; three things CAN: a planted hex token or header puts a victim's own
+signature below the scan floor, so it is REFUSED — after S03 that LOWERS the signer count, and after S02 it moves
+`maxEnd` (fail-closed, an `AddedAfter` warning); and a planted header naming a copy's object hands the copy the
+attribution, so its unsigned `/Reason`, `/M` and `/Name` are the ones reported. S03's grill owns the first; the second
+fails safe; the third is /pending 736.
 
 #### P01.S02 — one door: `AddedAfter` over verified, well-formed revisions
 Scope: delete the `/Fields` ByteRange walk; `maxEnd` over records that verified and are well-formed; a count or bag

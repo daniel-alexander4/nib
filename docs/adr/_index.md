@@ -523,3 +523,9 @@ home today.
 - **[ADR-057 — a read compared with pdfcpu's own output reads pdfcpu's join](057-a-read-compared-with-pdfcpus-output-reads-pdfcpus-join.md)**
   — supersedes ADR-056's exemption list in part. The n-up note and tag carries compare a page with the form pdfcpu's
   `NUp` wrote from its OWN join; through the door a divided page failed the match and lost its notes and tags.
+- **[ADR-058 — a signature is one record, and the library is joined to it by position](058-a-signature-is-one-record-and-the-library-is-joined-by-position.md)**
+  — `PLAN-returned-document.md` P01.S01, supersedes ADR-051's join key. `sign.Revision` is the one home of who
+  signed, how far and whether it is well-formed; the library's signers line up with the records by ordinal in
+  the library's own enumeration, the certificate bag survives only as the per-position cross-check (an empty
+  bag must mean not valid), and any disagreement blanks every fingerprint and sets `AddedAfter`. Two
+  signatures sharing a bag are now each named. The sweep and its byte-range gate run before the library.

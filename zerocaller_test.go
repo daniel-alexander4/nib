@@ -85,6 +85,10 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
+		"Revisions": "gated — PLAN-returned-document.md P02.S01." +
+			" `sign.Revisions` is P01.S01's record index, exposed through the same door `Verify` uses; `SignedRevisionFor` selects " +
+			"the user's own signature from it, and until then `Verify` reads the records internally.",
+
 		"WriteTokens": "test-support — the round-trip law's entry point. `Edit.Apply` with no " +
 			"edits returns the original slice WITHOUT touching tokens, so it cannot prove the " +
 			"tokenization is total and faithful; writing the tokens back is what does, and that " +

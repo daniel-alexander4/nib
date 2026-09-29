@@ -169,10 +169,6 @@ func TestVerifyUnparseableSignatureIsInvalid(t *testing.T) {
 	}
 }
 
-func isHexDigit(c byte) bool {
-	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-}
-
 // signerInfo must read time backing from token presence, not the library's
 // TimeSource field: an RFC3161 token wins (TSA), else a /M time is self-asserted,
 // else there is no time.
@@ -191,7 +187,7 @@ func TestSignerInfoTimeBacking(t *testing.T) {
 		{"tsa beats self-asserted", verify.Signer{ValidSignature: true, TimeStamp: &timestamp.Timestamp{Time: ts}, TimestampTrusted: true, SignatureTime: &ts}, TSA, true},
 	}
 	for _, tc := range tests {
-		got := signerInfo(&tc.in, nil)
+		got := signerInfo(&tc.in, "")
 		if got.TimeBacking != tc.want {
 			t.Errorf("%s: timeBacking = %q, want %q", tc.name, got.TimeBacking, tc.want)
 		}
@@ -347,9 +343,20 @@ func TestAnUnsignedDocumentNeverEntersTheThirdPartyParser(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(src)
-	body := code[strings.Index(code, "func Verify(data []byte) Status {"):]
+	// Verify's door is `verifyIndexed` (it is `Revisions`' door too), and the one call into the
+	// library is the `libraryVerify` seam.
+	door := strings.Index(code, "func verifyIndexed(data []byte)")
+	if door < 0 {
+		t.Fatal("verify.go has no `func verifyIndexed(data []byte)` — Verify's door moved, and this guard must follow it")
+	}
+	body := code[door:]
+	end := strings.Index(body, "\n}\n")
+	if end < 0 {
+		t.Fatal("verifyIndexed's body has no closing brace at column 0")
+	}
+	body = body[:end]
 	gate := strings.Index(body, "if !scanForSignatureBlob(data)")
-	parse := strings.Index(body, "verify.Verify(")
+	parse := strings.Index(body, "libraryVerify(")
 	if gate < 0 || parse < 0 {
 		t.Fatalf("Verify no longer has both the scan gate (%d) and the parser call (%d)", gate, parse)
 	}
@@ -384,5 +391,19 @@ func TestAnUnsignedDocumentNeverEntersTheThirdPartyParser(t *testing.T) {
 	if readable < gate {
 		t.Error("the readability gate runs before the signature-blob scan, so every unsigned " +
 			"document now pays for a full pdfcpu parse it has no reason to need")
+	}
+	// **The sweep and its K-pair gate sit between the readability gate and the library** (P01.S01,
+	// inventory X4): after pdfcpu, because the sweep is a digitorus parse and ADR-041's gate is what
+	// keeps an unreadable object stream away from it; before the library, because the K-pair gate
+	// exists to stop the library copying a byte range bigger than the file.
+	sweepAt := strings.Index(body, "sweepRevisions(data)")
+	overread := strings.Index(body, "libraryWouldOverread(")
+	if sweepAt < 0 || overread < 0 {
+		t.Fatalf("Verify no longer sweeps (%d) and gates the byte ranges (%d) before the library", sweepAt, overread)
+	}
+	if sweepAt < readable || overread > parse || sweepAt > overread {
+		t.Error("the sweep must run after pdfcpu's readability gate, and its byte-range gate before " +
+			"the library: the library copies every pair a /ByteRange names, and K pairs of the whole " +
+			"file is K times the file in memory")
 	}
 }

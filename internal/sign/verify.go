@@ -12,6 +12,7 @@ package sign
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	dpdf "github.com/digitorus/pdf"
@@ -66,8 +67,9 @@ type SignerInfo struct {
 	Reason      string      `json:"reason,omitempty"` // signature /Reason; for co-signing, carries the attestation
 	// Fingerprint is the hex SHA-256 SPKI of the certificate that SIGNED — the one this
 	// signature's SignerInfo names by issuer and serial, never whichever certificate happens to
-	// lead the bag (ADR-051). Empty means nib could not establish who signed; a consumer must
-	// treat that as unrecognised and never as a match.
+	// lead the bag (ADR-051) — read from the signature's `Revision` (ADR-058). Empty means nib
+	// could not establish who signed; a consumer must treat that as unrecognised and never as a
+	// match.
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
@@ -88,6 +90,19 @@ type Status struct {
 // signed-and-modified, with per-signer detail. It never returns an error for
 // the ordinary unsigned case — a PDF without signatures simply reports Unsigned.
 func Verify(data []byte) Status {
+	st, _, _ := verifyIndexed(data)
+	return st
+}
+
+// libraryVerify is the one call into `digitorus/pdfsign/verify` (signing goes through
+// `pdfsign/sign`, `identity.go`), as a variable so a test can prove a
+// document never reached it (the K-pair gate below).
+var libraryVerify = verify.Verify
+
+// verifyIndexed is Verify's door, and `Revisions`': the byte scan, the readability gate, the sweep,
+// the library and the join, in that order and in one place (ADR-009). The records it returns carry
+// the join's `Verified`; its error is anything that makes them untrustworthy.
+func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// **A document with no signature never reaches the third-party parser** (/pending 453(a)).
 	//
 	// `digitorus/pdf` has an unbounded read that no `recover` can contain: `readByte` returns `'\n'`
@@ -115,7 +130,7 @@ func Verify(data []byte) Status {
 	// **The second gate below closes that residue** (ADR-041). Read the two together: the byte scan
 	// keeps unsigned documents out of the parser, and `pdfcpuCanRead` keeps unreadable ones out.
 	if !scanForSignatureBlob(data) {
-		return Status{State: Unsigned}
+		return Status{State: Unsigned}, nil, nil
 	}
 	// **Nothing reaches `digitorus/pdfsign` that `pdfcpu` cannot read** (ADR-041).
 	//
@@ -129,9 +144,28 @@ func Verify(data []byte) Status {
 	// `p2p.ContributionProgress` already renders exactly that — "this document carries a signature
 	// that cannot be read".
 	if err := pdfcpuCanRead(data); err != nil {
-		return Status{State: Invalid}
+		return Status{State: Invalid}, nil, err
 	}
-	resp, err := verify.Verify(bytes.NewReader(data), int64(len(data)))
+	// **The sweep runs before the library, and so does the K-pair gate** (P01.S01). The library
+	// copies every pair a `/ByteRange` names into memory, so `[0 S 0 S … ×K]` allocates K×S and a
+	// Go out-of-memory is not recoverable; a document whose ranges would read more than it holds,
+	// name a negative length, or sit in an indirect array (re-parsed three times per pair) is
+	// `Invalid` without the library ever seeing it — on upload, install and undo alike. Shapes that
+	// read nothing are the structure rule's refused records, not this gate's (`libraryWouldOverread`).
+	//
+	// **A sweep that cannot finish is `Invalid` before the library too**, and it warns: the gate
+	// above has nothing to judge, and a library call on a document the sweep could not read copies
+	// whatever ranges it finds (measured: an indirect `/SubFilter` to a mis-headed object made the
+	// sweep fail and the library copy 25 MB). No honest producer's output errors here
+	// (`TestNoProducerSignatureIsRefused` asserts it per source).
+	revs, sweepErr := sweepRevisions(data)
+	if sweepErr != nil {
+		return Status{State: Invalid, AddedAfter: true}, nil, sweepErr
+	}
+	if libraryWouldOverread(revs, len(data)) {
+		return Status{State: Invalid, AddedAfter: true}, revs, errLibraryWouldOverread
+	}
+	resp, err := libraryVerify(bytes.NewReader(data), int64(len(data)))
 	if err != nil || resp == nil || len(resp.Signers) == 0 {
 		// Zero parseable signers covers two very different documents: one that is
 		// genuinely unsigned, and one whose signature blob is present but fails to
@@ -150,21 +184,37 @@ func Verify(data []byte) Status {
 		// `signatureBlobPresent` no longer panics and answers through a bounded scan when the parse
 		// fails, so it is safe to ask on the error path — which is the only path where the answer
 		// changes anything.
+		st := Status{State: Unsigned}
 		if signatureBlobPresent(data) {
-			return Status{State: Invalid}
+			st.State = Invalid
 		}
-		return Status{State: Unsigned}
+		// No library signer: every record is unverified, and a record the library should have
+		// reported makes the join disagree — which is what `Revisions` must say.
+		_, jerr := joinLibrary(revs, nil)
+		if jerr != nil {
+			// A signature the library should have reported and did not is one nobody checked: the
+			// document is `Invalid` and the warning is raised — fail-closed, as every other `errJoin`
+			// route is (P01.S01's claims pass found this branch returning the error with no warning).
+			st.State, st.AddedAfter = Invalid, true
+		}
+		return st, revs, jerr
 	}
 
 	// A document is untampered only if every signer's byte-range hash checks out.
 	//
 	// **Who signed is a separate question from whether the bytes are intact, and the library
-	// answers only the second** (ADR-051). `signerFingerprintsByBag` re-reads each signature's
-	// PKCS#7 to find the certificate its SignerInfo actually names; one walk serves every signer.
-	byBag := signerFingerprintsByBag(data)
+	// answers only the second** (ADR-051). The sweep re-read each signature's PKCS#7 for the
+	// certificate its SignerInfo names; the join lines the library's signers up with those records
+	// by position and cross-checks the bag (ADR-058). A join that disagrees names nobody, and the
+	// same disagreement makes `AddedAfter` warn below.
+	at, joinErr := joinLibrary(revs, resp.Signers)
 	st := Status{State: Valid}
 	for i := range resp.Signers {
-		si := signerInfo(&resp.Signers[i], byBag)
+		fp := ""
+		if joinErr == nil {
+			fp = revs[at[i]].Fingerprint
+		}
+		si := signerInfo(&resp.Signers[i], fp)
 		if !si.Valid {
 			st.State = Invalid
 		}
@@ -191,9 +241,13 @@ func Verify(data []byte) Status {
 	// AddedAfter=true, "I could not confirm the document ends at its signature", which for
 	// an integrity tool is the safe direction and which both the CLI (exit non-zero) and
 	// the web badge (warn) already render correctly.
+	//
+	// **A join that disagrees is a "could not confirm" too** (P01.S01): the records and the
+	// library then describe different documents, and nothing either says about coverage is known
+	// to be about this one.
 	trailing, sawSig, terr := trailingContentAfterLastSignature(data)
-	st.AddedAfter = addedAfterVerdict(trailing, sawSig, terr, len(st.Signers) > 0)
-	return st
+	st.AddedAfter = addedAfterVerdict(trailing, sawSig, errors.Join(terr, joinErr), len(st.Signers) > 0)
+	return st, revs, joinErr
 }
 
 // addedAfterVerdict combines the trailing-content check's result with its error under one
@@ -443,16 +497,17 @@ func trailingContentAfterLastSignature(pdf []byte) (trailing, sawSignature bool,
 // token with any date. `TimestampTrusted` is the library's answer to whether the token's authority
 // chains, as a timestamping certificate, to a system-trusted root (our options leave
 // `ValidateTimestampCertificates` on and `AllowUntrustedRoots` off); only that is TSA.
-func signerInfo(s *verify.Signer, byBag map[string]string) SignerInfo {
+func signerInfo(s *verify.Signer, fingerprint string) SignerInfo {
 	const layout = "2006-01-02 15:04 MST"
 	si := SignerInfo{Name: s.Name, Valid: s.ValidSignature, Reason: s.Reason}
 	// **The fingerprint comes from the certificate the SignerInfo NAMES, never from the bag's
-	// order** (ADR-051, /pending 613). This read `s.Certificates[0]` under a comment reasoning
-	// that "Nib identities are self-signed single certs, so element 0 is the signer" — true of
-	// documents nib produced, and a statement about nothing at all for a document that arrived
-	// from a peer, which is the only kind this question is asked about. An empty answer means
-	// nib could not establish who signed; every consumer treats that as unrecognised.
-	si.Fingerprint = byBag[bagKeyOfSigner(s)]
+	// order** (ADR-051, /pending 613), and it is the record's at this signer's position — the
+	// record is its one home (ADR-058). This read `s.Certificates[0]` once, under a comment
+	// reasoning that "Nib identities are self-signed single certs, so element 0 is the signer" —
+	// true of documents nib produced, and a statement about nothing at all for a document that
+	// arrived from a peer. An empty answer means nib could not establish who signed; every
+	// consumer treats that as unrecognised.
+	si.Fingerprint = fingerprint
 	switch {
 	case s.TimeStamp != nil && !s.TimeStamp.Time.IsZero():
 		si.TimeBacking = TSAUnverified
