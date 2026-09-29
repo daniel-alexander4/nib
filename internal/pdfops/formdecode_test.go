@@ -110,7 +110,9 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed := map[string]int{"walkbudget.go": 1, "textrun.go": 1}
+	// The door decodes through pdfread's capped decode (/pending 748), and no other pdfops file does.
+	allowed := map[string]int{"textrun.go": 1}
+	capped := map[string]int{"walkbudget.go": 1}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -122,6 +124,9 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 		n := strings.Count(string(src), "streamContent(") - strings.Count(string(src), "func streamContent(")
 		if n != allowed[f] {
 			t.Errorf("%s calls streamContent %d times, want %d — a form's bytes are read through formWalkBudget.formContent", f, n, allowed[f])
+		}
+		if n := strings.Count(string(src), "pdfread.DecodeWithin("); n != capped[f] {
+			t.Errorf("%s calls pdfread.DecodeWithin %d times, want %d — formWalkBudget.formContent is the door", f, n, capped[f])
 		}
 	}
 }

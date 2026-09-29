@@ -7,7 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/pdfcpu/pdfcpu/pkg/filter"
+	"nib/internal/pdfread"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
@@ -135,14 +136,11 @@ const maxXMPBytes = 16 << 20
 // cap and pdfcpu's is inflated once there and then refused here (the P07 phase-close re-review; read from pdfcpu's
 // source, unmeasured).
 func decodeWithin(sd *types.StreamDict, max int, what string) string {
-	if err := sd.DecodeWithLimit(int64(max)); err != nil {
-		if errors.Is(err, filter.ErrDecodeLimitExceeded) {
+	if err := pdfread.DecodeWithin(sd, int64(max)); err != nil {
+		if errors.Is(err, pdfread.ErrDecodeLimit) {
 			return fmt.Sprintf("%s exceeds %d bytes decoded, and nib stopped decoding it there", what, max)
 		}
 		return what + " could not be decoded: " + err.Error()
-	}
-	if len(sd.Content) > max {
-		return fmt.Sprintf("%s exceeds %d bytes decoded, and nib stopped decoding it there", what, max)
 	}
 	return ""
 }
