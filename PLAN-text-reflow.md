@@ -530,6 +530,58 @@ font, remove the original text.
 advances; the original text is genuinely gone rather than covered; a missing glyph falls back with
 its cause stated (D8, law 3); a signed document is refused at the server door (D11).
 
+**PIN 2026-09-28 (phase-open, read at the lines) — what exists, what does not, and one premise that is false.**
+- **Exists**: a paragraph reaches its runs (`grouping.go:48`, `textParagraph.lines[].runs`), and a run its show operator's
+  token span (`textrun.go:71` `span`, `:72` `inForm`) — `tagcommit.go:167-187` already keys runs by span to splice around
+  them; the splice (`contentstream.Edit`) and the page write door (`setPageContent`); per-code advances with a `none`
+  source (`fontwidth.go:162`); a signed-refusal door to copy (`tagwrite.ErrSigned`, `tagwrite.go:31`).
+- **Does not exist**: per-glyph codes and advances on a run (summed and discarded in `show()`, `textrun.go:755-801`); any
+  rune→code map ("does this font carry this character", D8's trigger — searched, none); a line breaker taking a width
+  function (`mdpdf/layout.go:351` `wrapWords` is bound to mdpdf's own faces); deletion of an operator
+  (`contentstream/write.go:61`, "Deletion is still not offered"); a committing text-edit route (today `/api/bake` returns
+  bytes and `/api/save` commits).
+- **D11's premise is false.** *"The UI already disables the tool in signing mode"* — `signLocked` is `docHadFlags`
+  (`web/app.js:3463`), a document carrying NibFlags, not a signature; nothing in the UI or on the server stops a text edit
+  on a SIGNED document today. D11's decision stands and is now the only guard, so its server door is built here and the
+  UI gate is keyed on signature state as well.
+
+#### P06.S01 — a run keeps its glyphs *(done 2026-09-28, v1.167.10)*
+Each positioned run carries, per glyph, its code bytes, its advance and that advance's width source, beside the sums it
+has today, read once in `show()`. Acceptance: the per-glyph advances sum to the run's width on every run of the generated
+and real-producer corpora; a glyph whose width is `none` is carried as `none`, never as 0 (law 2); `TJ` kerns sit
+between glyphs, not inside one.
+
+**Tasks** (slice grill, 2026-09-28): T01 — `runGlyph` (code, text, font advance and its source, user-space advance, the
+`TJ` kern before it) and `textRun.kernAfter`, recorded in `show()` only when the walker is asked (`keepGlyphs`), so every
+existing reader pays nothing; `readPageGlyphRuns` is the asking door. T02 — the corpus law (glyph advances + kerns = run
+width), a kerned fixture, and a `none` fixture. **Grill assumption (rung 2)**: opt-in rather than always-on — retention on
+every tagging/grouping/checker read is memory nobody reads.
+
+#### P06.S02 — which characters a font can draw
+One door answers, for a run's font, the code that draws rune r — or `absent` with its cause — by inverting the decoding
+the reader already does (ToUnicode, or the simple font's encoding). Acceptance: every rune decoded from a corpus run maps
+back to the code it came from; a rune the font does not carry answers `absent` (D8's trigger); a code shared by two runes
+or unmapped is reported, never guessed.
+
+#### P06.S03 — the line breaker takes a width function
+`mdpdf`'s greedy wrap is re-expressed over a width function (law 4 — the existing engine, not a second one), and the
+reflow path calls it with the document's own advances. Acceptance: mdpdf's output is byte-identical before and after on
+its own tests; a paragraph re-wrapped at its own measure with no edit reproduces its original line breaks on the
+hand-checked corpus.
+
+#### P06.S04 — the rewrite of one paragraph
+Given a paragraph and replacement text, delete its show operators and emit the re-wrapped lines in its own font, size
+and colour, at its lines' baselines. Acceptance: the output's text for the page is the edited paragraph in place of the
+original, and the original words are ABSENT from the content (not covered); an unedited reflow round-trips its decoded
+content (law 1); a paragraph with a run in a form XObject, a rotated baseline, or a width `none` falls back with the
+cause named (law 3).
+
+#### P06.S05 — the route, the refusals, and the flags
+A committing route (`MUTATING` entry, `commitMutation` — undo is a feature for an edit, and the file itself no longer
+holds the text), the signed-document refusal at the server door (D11, `tagwrite`'s shape), a UI gate keyed on signature
+state, one counter per fallback cause surfaced to the user (P5), and the NibFlags decision `/pending 457` waits on.
+Acceptance: each of P06's exit criteria, driven through the real binary.
+
 ### P07 — Several paragraphs, and flow across pages
 **Goal.** An edit that overflows its paragraph pushes the ones below it, and eventually onto the next
 page.

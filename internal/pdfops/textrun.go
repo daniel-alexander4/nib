@@ -95,6 +95,25 @@ type textRun struct {
 	// mirrored (`baselineTurns`). Grouping measures lines as horizontal baselines, so it reports a page
 	// carrying one rather than reading it as upright (`/pending 503`).
 	rotated bool
+	// glyphs are the run's glyphs in order, and kernAfter a `TJ` adjustment after the last of them, in user
+	// space — kept only when the walker is asked (`readPageGlyphRuns`, `PLAN-text-reflow.md` P06.S01): reflow
+	// needs each glyph's code and advance, and no other reader does. `Σ(kern + advance) + kernAfter == width`.
+	glyphs    []runGlyph
+	kernAfter float64
+}
+
+// runGlyph is one glyph of a run, as the show operator drew it.
+type runGlyph struct {
+	code    []byte // the character code's bytes, as the operand carried them
+	text    string // what the code decodes to; "" with decoded false when it decodes to nothing
+	decoded bool
+	// fontWidth is the font's own advance for the code, in glyph space (thousandths of an em), and widthSrc
+	// where it came from. A `none` source carries fontWidth 0 and says so — law 2: never 0 read as known.
+	fontWidth float64
+	widthSrc  widthSource
+	// kern is the `TJ` adjustment immediately before this glyph, and advance the glyph's own advance —
+	// character and word spacing and horizontal scaling included — both in user space.
+	kern, advance float64
 }
 
 // baselineTurns reports whether text drawn under m runs anywhere but rightward along +x: the text-space x
@@ -131,6 +150,15 @@ const maxFormDepth = 12
 
 // readPageRuns reads one page's positioned runs.
 func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
+	return readPageRunsKeeping(ctx, pageNr, false)
+}
+
+// readPageGlyphRuns is readPageRuns with each run's glyphs kept (`textRun.glyphs`) — reflow's reader.
+func readPageGlyphRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
+	return readPageRunsKeeping(ctx, pageNr, true)
+}
+
+func readPageRunsKeeping(ctx *model.Context, pageNr int, keepGlyphs bool) (pageRuns, error) {
 	return containRunRead(pageNr, func() (pageRuns, error) {
 		d, _, attrs, err := ctx.PageDict(pageNr, false)
 		if err != nil || d == nil {
@@ -145,6 +173,7 @@ func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
 			res = attrs.Resources
 		}
 		w := newRunWalker(ctx.XRefTable)
+		w.keepGlyphs = keepGlyphs
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
 		// Runs from a walk that stopped are the runs of part of the page: every caller would read the rest
 		// as absent, so the page is an error (`formWalkBudget`).
@@ -312,9 +341,11 @@ func decodeStandardPrintable(b byte) (rune, bool) {
 
 // runWalker accumulates runs across a page and the forms it draws.
 type runWalker struct {
-	xt    *model.XRefTable
-	fonts map[int]*runFont
-	runs  []textRun
+	xt *model.XRefTable
+	// keepGlyphs asks `show` to record each run's glyphs (P06.S01). Off for every reader but reflow's.
+	keepGlyphs bool
+	fonts      map[int]*runFont
+	runs       []textRun
 	// mcStack is the marked-content sequences open at this point of the walk, innermost last. Shared
 	// across a page and the forms it draws, because a `BDC` around a `Do` tags what the form draws.
 	// Pushed only through `push`, which carries what the questions asked per show need, so none of them
@@ -762,13 +793,15 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 	run.x, run.y = start.apply(0, gs.ts)
 	run.rotated = baselineTurns(start)
 	var text []byte
-	var advance float64
+	var advance, pendingKern float64
+	scale := math.Hypot(start[0], start[1]) // text space → user space along the baseline
 	weakest := widthSource("")
 	for _, p := range pieces {
 		if p.isAdjust {
 			tx := -p.adjust / 1000 * gs.size * gs.th
 			*tm = runTranslate(tx, 0).mul(*tm)
 			advance += tx
+			pendingKern += tx
 			continue
 		}
 		for _, code := range splitCodes(gs.font, p.codes) {
@@ -778,7 +811,8 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 				w0, src = gs.font.widths.advance(fontcode.Value(code))
 			}
 			weakest = weakerWidthSource(weakest, src)
-			if s, ok := gs.font.textFor(code); ok {
+			s, ok := gs.font.textFor(code)
+			if ok {
 				text = append(text, s...)
 			} else {
 				run.decoded = false
@@ -790,13 +824,21 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 			tx *= gs.th
 			*tm = runTranslate(tx, 0).mul(*tm)
 			advance += tx
+			if w.keepGlyphs {
+				run.glyphs = append(run.glyphs, runGlyph{code: code, text: string(s), decoded: ok, fontWidth: w0,
+					widthSrc: src, kern: pendingKern * scale, advance: tx * scale})
+			}
+			pendingKern = 0
 		}
 	}
 	if run.codes == 0 {
 		return
 	}
+	if w.keepGlyphs {
+		run.kernAfter = pendingKern * scale
+	}
 	run.text = string(text)
-	run.width = advance * math.Hypot(start[0], start[1])
+	run.width = advance * scale
 	run.widthSrc = weakest
 	w.runs = append(w.runs, run)
 }
