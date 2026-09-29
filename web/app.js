@@ -239,6 +239,8 @@ const els = {
   extractModal: $('extractModal'), extractPages: $('extractPages'),
   extractHint: $('extractHint'), extractCancel: $('extractCancel'), extractGo: $('extractGo'),
   pageNumBtn: $('pageNumBtn'), pageNumModal: $('pageNumModal'),
+  reflowBtn: $('reflowBtn'), reflowModal: $('reflowModal'), reflowPick: $('reflowPick'), reflowText: $('reflowText'),
+  reflowWhy: $('reflowWhy'), reflowCancel: $('reflowCancel'), reflowGo: $('reflowGo'),
   pnPosition: $('pnPosition'), pnStart: $('pnStart'), pnPad: $('pnPad'),
   pnPrefix: $('pnPrefix'), pnTotal: $('pnTotal'), pnPreview: $('pnPreview'),
   pnSize: $('pnSize'), pnColor: $('pnColor'),
@@ -2877,7 +2879,7 @@ function syncTabs() {
 const DOC_BOUND_MODALS = [
   'attachmentsModal', 'bookmarkSplitModal', 'cropModal', 'decryptModal', 'encryptModal',
   'extractModal', 'fieldNameModal', 'fillCsvModal', 'finalizeModal', 'importXfdfModal',
-  'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal',
+  'nupModal', 'outlineModal', 'pageLabelsModal', 'pageNumModal', 'pageSplitModal', 'reflowModal',
   'pdfaModal', 'redactTextModal', 'reduceModal', 'scanModal', 'sigDetailsModal', 'tagsModal', 'uaModal',
   'splitModal', 'timestampModal', 'tsVerifyModal',
 ];
@@ -6636,6 +6638,84 @@ async function pageNumGo() {
 }
 els.pageNumBtn.onclick = openPageNum;
 els.pnCancel.onclick = () => { els.pageNumModal.hidden = true; };
+
+// --- reflow a paragraph (PLAN-text-reflow.md P06) ------------------------------
+// The server reads the page's paragraphs and says which it cannot reflow and why; the edit goes back with the text the
+// user was shown, so the server refuses (409) a paragraph that changed meanwhile instead of rewriting whatever sits at
+// that index now. A signed document is refused by the server whatever this does (D11); the button is disabled for one
+// too, so the user is told before they type.
+const REFLOW_CAUSES = {
+  signed: 'This document is signed, and rewriting a page would change what its signatures cover.',
+  'missing-glyph': "The document's font has no glyph for a character you typed.",
+  'no-widths': "The document's font does not say how wide its letters are.",
+  'no-space-glyph': "The document's font has no space character.",
+  'paragraph-grows': 'The new text needs more lines than the paragraph has.',
+  'word-too-wide': 'A word is wider than the paragraph.',
+  tagged: "The paragraph's lines are tagged for accessibility one by one, and moving text between them would mis-tag it.",
+  'replacement-text': 'The paragraph carries replacement text for screen readers that would still read the old words.',
+  'styled-word': 'A word changes style part-way through.',
+  rotated: 'The text is drawn turned.',
+  'text-in-form': 'The text is drawn inside a stamp or overlay, not on the page itself.',
+};
+function reflowCauseSentence(cause) {
+  const why = REFLOW_CAUSES[cause] || 'It cannot be re-set exactly (' + cause + ').';
+  return why + ' Use Edit text to cover and replace it instead.';
+}
+let reflowParas = [];
+function reflowPicked() {
+  const p = reflowParas[Number(els.reflowPick.value)];
+  els.reflowText.value = p ? p.text : '';
+  els.reflowWhy.hidden = !(p && p.refusal);
+  els.reflowWhy.textContent = p && p.refusal ? reflowCauseSentence(p.refusal) : '';
+  els.reflowGo.disabled = !p || !!p.refusal;
+}
+async function reflowOpen() {
+  const owner = view;
+  if (!owner.pdfDocument) return;
+  // D11, told before the user types: the server refuses a signed document whatever this does.
+  if (isSigned()) return toast(reflowCauseSentence('signed'));
+  const page = owner.viewer.currentPageNumber;
+  const res = await apiFetch('/api/paragraphs?page=' + page, { docId: owner.docMeta && owner.docMeta.id });
+  if (!res.ok) return toast(await errText(res, 'could not read the page'));
+  reflowParas = (await res.json()).paragraphs || [];
+  if (!reflowParas.length) return toast('There is no text on this page to reflow');
+  els.reflowPick.replaceChildren(...reflowParas.map((p) => {
+    const o = document.createElement('option');
+    o.value = String(p.index);
+    o.textContent = (p.refusal ? '(cannot) ' : '') + (p.text.length > 70 ? p.text.slice(0, 70) + '…' : p.text);
+    return o;
+  }));
+  els.reflowModal.dataset.page = String(page);
+  els.reflowModal.dataset.doc = owner.docMeta ? owner.docMeta.id : '';
+  reflowPicked();
+  els.reflowModal.hidden = false;
+}
+els.reflowBtn.onclick = reflowOpen;
+els.reflowPick.onchange = reflowPicked;
+els.reflowCancel.onclick = () => { els.reflowModal.hidden = true; };
+async function reflowSubmit() {
+  const owner = view;
+  const p = reflowParas[Number(els.reflowPick.value)];
+  if (!p || !owner.docMeta || owner.docMeta.id !== els.reflowModal.dataset.doc) return;
+  const fd = new FormData();
+  fd.append('page', els.reflowModal.dataset.page);
+  fd.append('paragraph', String(p.index));
+  fd.append('original', p.text);
+  fd.append('text', els.reflowText.value);
+  const res = await apiFetch('/api/reflow', { method: 'POST', body: fd, docId: owner.docMeta.id });
+  if (res.status === 409) { els.reflowModal.hidden = true; return toast('That paragraph has changed — open Reflow again'); }
+  if (!res.ok) return toast(await errText(res, 'reflow failed'));
+  const out = await res.json();
+  if (!out.ok) {
+    els.reflowWhy.textContent = out.cause ? reflowCauseSentence(out.cause) : 'That is the paragraph as it already reads — nothing to change.';
+    els.reflowWhy.hidden = false;
+    return;
+  }
+  els.reflowModal.hidden = true;
+  await setDocumentFromServer(out, owner);
+  toast('Paragraph reflowed');
+}
+els.reflowGo.onclick = reflowSubmit;
 els.pnGo.onclick = pageNumGo;
 ['pnPosition', 'pnStart', 'pnPad', 'pnPrefix', 'pnTotal', 'pnSize', 'pnColor'].forEach((id) => els[id].addEventListener('input', pnPreview));
 
@@ -9387,7 +9467,7 @@ const EDITING_TOOLS = [
   // returned nothing, so these two lists are the only gates they have.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn', 'detectBtn',
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn', 'checkboxBtn',
-  'editTextBtn', 'removeOriginalsBtn', 'autofillBtn',
+  'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'autofillBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn',
 ];
 function setEditingEnabled(on) {
@@ -11278,7 +11358,7 @@ const DOC_REQUIRED = [
   // the toolbar's data-mode sweep below did not reach them as it reaches the first three.
   'textToolBtn', 'highlightToolBtn', 'drawToolBtn',
   'borderBtn', 'noteBtn', 'dropdownBtn', 'radioBtn', 'shapeBtn', 'checkboxBtn',
-  'detectBtn', 'editTextBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
+  'detectBtn', 'editTextBtn', 'reflowBtn', 'removeOriginalsBtn', 'ocrBtn', 'ocrLang', 'ocrQuality', 'autofillBtn', 'splitBtn',
   'splitBoxBtn', 'applyBoxSplitBtn', 'rotateLeftBtn', 'rotateRightBtn',
   'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',

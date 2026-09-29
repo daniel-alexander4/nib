@@ -3,6 +3,7 @@ package testpdf
 import (
 	"bytes"
 	"errors"
+	"fmt"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -89,4 +90,30 @@ func SplitContents(s string, shape JoinShape) (pdf, meant []byte, err error) {
 		return nil, nil, err
 	}
 	return out.Bytes(), content, nil
+}
+
+// WithContent is a one-page document drawing content, with the font resource /F1 given by fontDict — for tests that need
+// the exact operators on the page.
+func WithContent(content, fontDict string) []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.7\n")
+	objs := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		fontDict,
+	}
+	offs := make([]int, len(objs))
+	for i, o := range objs {
+		offs[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, o := range offs {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return b.Bytes()
 }

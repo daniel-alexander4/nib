@@ -354,6 +354,20 @@ original text stays underneath (it's a visual edit) until you press **Remove
 originals**, which flattens just the edited pages so the old text is gone for
 good — or until you flatten / finalize the whole document.
 
+### Reflow a paragraph
+**Mark Up → Reflow paragraph** lists the paragraphs on the current page. Pick one,
+change its words, and Nib re-sets it **in the document's own font and size**, on its
+own lines and margins — a changed word pushes the rest of the paragraph along, the
+way a word processor would. Unlike Edit text, the **old words are removed**, not
+covered: they are gone from the page, from copy-and-paste and from Find.
+
+It changes only what it can set exactly. The new text must fit in the lines the
+paragraph already has, and use only characters the document's font carries; a
+paragraph drawn in a way Nib cannot rewrite faithfully (text inside a stamp, turned
+text, lines tagged one by one for accessibility) is refused with the reason, and
+**Edit text** is there for those. A **signed** document is never reflowed — rewriting
+a page would change what its signatures cover. **Undo** restores the paragraph.
+
 ### OCR — make a scan searchable
 Got a scanned PDF that's just images? **Mark Up → OCR** reads the text on every page
 and adds an **invisible text layer** underneath the scan, so the page still looks

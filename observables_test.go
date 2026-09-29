@@ -285,6 +285,8 @@ var published = map[string][]string{
 	// carrier is not a reader, and naming one makes the shape read as better covered than it is.
 	"pdfops.AttachmentInfo": {"internal/cli/commands.go", "web/app.js"},
 	"pdfops.OutlineItem":    {"internal/cli/commands.go", "web/app.js"},
+	// text-reflow P06.S05: the reflow editor lists a page's paragraphs, reading index, text and refusal.
+	"pdfops.Paragraph": {"web/app.js"},
 	// `internal/server/scan.go` removed /pending 558, same carrier case: `scan.go:33` embeds it as
 	// `Residual pdfops.ScanReport` and reads none of its fields.
 	"pdfops.ScanReport": {"web/app.js"},

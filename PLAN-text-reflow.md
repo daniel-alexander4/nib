@@ -602,11 +602,19 @@ first-line indent, and one measure for every line overflowed it.
 0 wrong; refused by cause: mixed-content 28, mixed-state 14, no-space-glyph 3, paragraph-grows 3, styled-word 2,
 inline-follower 1, no-widths 1, rotated 1. Review `code-reviews/v1.167.12-p06s04-2026-09-28.md`.
 
-#### P06.S05 — the route, the refusals, and the flags
+#### P06.S05 — the route, the refusals, and the flags *(done 2026-09-28, v1.168.0)*
 A committing route (`MUTATING` entry, `commitMutation` — undo is a feature for an edit, and the file itself no longer
 holds the text), the signed-document refusal at the server door (D11, `tagwrite`'s shape), a UI gate keyed on signature
 state, one counter per fallback cause surfaced to the user (P5), and the NibFlags decision `/pending 457` waits on.
 Acceptance: each of P06's exit criteria, driven through the real binary.
+
+**Tasks** (slice grill, 2026-09-28): T01 — `pdfops.Paragraphs` / `pdfops.ReflowParagraph` (pinned by the text shown →
+`ErrReflowStale`; D11 by `sign.HasSignatureBlob`, tagwrite's door). T02 — `GET /api/paragraphs`, `POST /api/reflow` through
+`commitMutation`, MUTATING entry. T03 — the dialog (`#reflowModal`), `reflowBtn` in `EDITING_TOOLS`, the cause sentences.
+T04 — tier-3 `reflow.test.mjs`. **Decisions (rung 2)**: no separate per-cause counter — the response and the sentence are
+the readers, and an unread counter is what `observables_test.go` refuses; NibFlags: nothing drawn outside the paragraph's
+box, asserted, /pending 457 moved to P07. Ledger: clauses 1–3 met (2–3 through the binary), clause 4 met at the handler and
+not through the binary.
 
 ### P07 — Several paragraphs, and flow across pages
 **Goal.** An edit that overflows its paragraph pushes the ones below it, and eventually onto the next
