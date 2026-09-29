@@ -66,9 +66,9 @@ func referenceDigestBody(ctx *model.Context) (string, error) {
 		hashChunk(h, []byte("Annots"))
 		hashObject(ctx.XRefTable, d["Annots"], h, 0, nil)
 	}
-	if err := hashEmbeddedFiles(ctx, h); err != nil {
-		return "", err
-	}
+	// The embedded-files axis is shared with the real body, not copied: /pending 725 (v4)
+	// changed WHAT it hashes, and this function's job is the page walk and the memo, not it.
+	hashEmbeddedFiles(ctx, h, nil)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 

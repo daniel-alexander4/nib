@@ -212,7 +212,14 @@ func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // with version 3 meeting a record written under 2 therefore produced the exact accusation the
 // paragraph above says this constant prevents. `Record` now carries the digest version it was
 // written under, so the mismatch is reported as a skew (D32) rather than as tampering.
-const ContentDigestVersion = 3
+//
+// **Bumped to 4 (2026-09-29, /pending 725).** The axes are the same; what one of them MEASURES
+// changed, and that moves every hash exactly as a new axis does. v3 fetched each embedded file's
+// bytes by NAME, so two entries whose /UF collided hashed the first one's bytes twice, a /UF
+// carrying a path hashed a constant, and any entry naming itself `nib-ceremony.json` was skipped as
+// the record. v4 hashes each entry from its own filespec and excludes the record only in the exact
+// shape nib writes — see hashEmbeddedFiles and ceremonyRecordEntry.
+const ContentDigestVersion = 4
 
 // CeremonyRecordName is the one embedded file ContentDigest must NOT hash.
 //
@@ -226,6 +233,11 @@ const ContentDigestVersion = 3
 // would be a fixed point — the value would have to be known before it could be computed.
 // Measured stable both ways at the P07.S02 grill: embedding the record leaves the digest
 // byte-identical, before and after this slice widened the coverage.
+//
+// **The name alone does not exclude anything (v4, /pending 725).** Until then any entry whose
+// filespec called itself this dropped out of the digest. The exclusion is now the entry nib itself
+// writes — this key, with /F and /UF both this name, and only one such key — see
+// ceremonyRecordEntry.
 const CeremonyRecordName = "nib-ceremony.json"
 
 // ContentDigest is a SHA-256 over the page count and every page's content stream, in
@@ -244,7 +256,8 @@ const CeremonyRecordName = "nib-ceremony.json"
 //
 // **Covered:** page count; per page the content stream, MediaBox/CropBox/Rotate, the page
 // resources followed into font and XObject streams, and /Annots in full; and the catalog's
-// embedded-files name tree, minus the ceremony record (see CeremonyRecordName).
+// embedded-files name tree entry by entry — each key with its own filespec and streams —
+// minus the ceremony record (see CeremonyRecordName).
 //
 // **Not covered:** document metadata, and the AcroForm structure outside page /Annots.
 //
@@ -391,12 +404,12 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	// argument named. For a lease, the schedule IS the agreement, exactly as the form values
 	// are.
 	//
-	// Sorted by name so the digest is a property of the document rather than of pdfcpu's
-	// enumeration order; the name and the bytes are hashed as separate length-prefixed
-	// chunks, so a rename and an edit cannot be made to cancel out.
-	if err := hashEmbeddedFiles(ctx, h); err != nil {
-		return "", err
-	}
+	// Entry by entry, each from its own filespec, since v4 — v3 resolved each entry's bytes by
+	// NAME and a colliding /UF hashed one file twice (/pending 725; see hashEmbeddedFiles).
+	// Sorted so the digest is a property of the document rather than of the tree's layout;
+	// key and filespec are hashed as separate length-prefixed chunks, so a rename and an edit
+	// cannot be made to cancel out.
+	hashEmbeddedFiles(ctx, h, sc)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -443,55 +456,176 @@ func digestPageDicts(ctx *model.Context) []types.Dict {
 	return out
 }
 
-// hashEmbeddedFiles folds the catalog name tree into the digest, minus the ceremony record.
+// embeddedEntry is one key/value pair of the catalog's /Names /EmbeddedFiles tree, as the tree
+// holds it: the key, and the entry's own filespec object (usually an indirect reference).
+type embeddedEntry struct {
+	key string
+	fs  types.Object
+}
+
+// hashEmbeddedFiles folds the catalog name tree into the digest, ENTRY BY ENTRY, minus the
+// ceremony record.
+//
+// # Each entry is hashed from its own filespec, never resolved by name (v4, /pending 725)
+//
+// v3 enumerated the tree, took each entry's cleaned file NAME, and fetched the bytes back through
+// pdfcpu's `ExtractAttachment` — which resolves a name by tree key and then by the first filespec
+// whose /UF, /F or /Desc matches. So which entry's bytes were hashed was decided by strings the
+// document's author writes. Measured: keys `a.txt` and `b.txt` both carrying `/UF (a.txt)` hashed
+// a.txt's bytes twice, and b.txt could say anything; a /UF carrying a path cleaned to a basename
+// nothing resolved, so a constant marker was hashed; and any entry whose filespec named itself
+// `nib-ceremony.json` was skipped as the record. And `ListAttachments` fails the WHOLE tree on one
+// filespec it cannot name, which v3 then hashed as an empty tree.
+//
+// Now each entry contributes its key and `hashFileSpec` of its own filespec: /F, /UF, /Desc and
+// the /EF streams, decoded where the filter decodes (a stream that will not decode, or a reference
+// that will not resolve, hashes a marker — never nothing, so a broken filespec cannot hide an
+// edit). The per-entry sub-digests are sorted, by key and then by sub-digest, so the result
+// is a property of the document rather than of the tree's layout, and a malformed tree carrying one
+// key twice has both entries covered.
 //
 // Page-level /FileAttachment annotations are deliberately NOT walked here: they hang off
 // `/Annots`, which the per-page loop above already hashes. Hashing them twice would be
 // harmless but would state the coverage in two places.
-func hashEmbeddedFiles(ctx *model.Context, h hash.Hash) error {
-	aa, err := ctx.ListAttachments()
-	if err != nil {
-		// A document with no name tree is the ordinary case and is not an error; pdfcpu
-		// reports it as one on some inputs. Hash the count as zero and carry on, so an
-		// unreadable tree cannot silently look like an empty one.
-		hashChunk(h, []byte("embedded-files"))
-		hashUint(h, 0)
-		return nil
+func hashEmbeddedFiles(ctx *model.Context, h hash.Hash, sc *streamMemo) {
+	xt := ctx.XRefTable
+	hashChunk(h, []byte("embedded-files"))
+	if xt.Names["EmbeddedFiles"] == nil && !xt.Valid {
+		if err := xt.LocateNameTree("EmbeddedFiles", false); err != nil {
+			// A tree that is present and unreadable is a different document from one with no tree.
+			hashChunk(h, []byte("#unreadable-tree"))
+			return
+		}
 	}
-	names := make([]string, 0, len(aa))
-	for _, a := range aa {
-		name := a.FileName
-		if name == "" {
-			name = a.ID
-		}
-		if clean := attachmentName(name); clean != "" {
-			name = clean
-		}
-		if name == CeremonyRecordName {
+	var entries []embeddedEntry
+	if root := xt.Names["EmbeddedFiles"]; root != nil {
+		_ = root.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
+			entries = append(entries, embeddedEntry{key: k, fs: *v})
+			return nil
+		})
+	}
+	skip := ceremonyRecordEntry(xt, entries)
+	type summed struct {
+		key string
+		sum []byte
+	}
+	sums := make([]summed, 0, len(entries))
+	for i, e := range entries {
+		if i == skip {
 			continue // the self-reference; see CeremonyRecordName
 		}
-		names = append(names, name)
+		eh := sha256.New()
+		hashChunk(eh, []byte(e.key))
+		hashFileSpec(xt, e.fs, eh, sc)
+		sums = append(sums, summed{key: e.key, sum: eh.Sum(nil)})
 	}
-	sort.Strings(names)
-	hashChunk(h, []byte("embedded-files"))
-	hashUint(h, uint64(len(names)))
-	for _, name := range names {
-		hashChunk(h, []byte(name))
-		a, err := ctx.ExtractAttachment(model.Attachment{ID: name})
-		if err != nil || a == nil || a.Reader == nil {
-			// Named in the tree but unreadable. Hash a marker rather than skipping: a file
-			// that cannot be read is a different document from one that is not there, and
-			// silently skipping would let an attacker hide an edit behind a broken filespec.
-			hashChunk(h, []byte("unreadable"))
+	sort.Slice(sums, func(i, j int) bool {
+		if sums[i].key != sums[j].key {
+			return sums[i].key < sums[j].key
+		}
+		return bytes.Compare(sums[i].sum, sums[j].sum) < 0
+	})
+	hashUint(h, uint64(len(sums)))
+	for _, s := range sums {
+		hashChunk(h, []byte(s.key))
+		hashChunk(h, s.sum)
+	}
+}
+
+// hashFileSpec writes what an embedded-files entry SHOWS a reader: the filespec's /F, /UF and
+// /Desc, and the bodies of its /EF /F and /EF /UF streams — decoded where the filter decodes.
+//
+// **A projection, not `hashObject` of the whole filespec, and measured rather than chosen.** The
+// first cut hashed the dict entire, and the generated corpus's `attachment` row came out different
+// on every run: `AddAttachment` stamps the stream's `/Params /ModDate` with the wall clock. That is
+// stored once and so is stable within one document, but it moves the digest on every re-embed of
+// identical bytes — `CarryAttachments` re-adds each file — which reads as tampering over a copy
+// that changed nothing a party agreed to. The bytes and the names are the agreement.
+//
+// Each stream is reached through its OWN filespec: `/EF /F` and `/EF /UF` are both hashed because
+// the format lets them differ and a reader may show either. A filespec that is not a dict (the
+// string form) is hashed as an object behind a marker; a stream that will not resolve hashes
+// `#unreadable` — never nothing, so a broken filespec cannot hide an edit.
+func hashFileSpec(xt *model.XRefTable, o types.Object, h hash.Hash, sc *streamMemo) {
+	fs, err := xt.DereferenceDict(o)
+	if err != nil || fs == nil {
+		hashChunk(h, []byte("#filespec-object"))
+		hashObject(xt, o, h, 0, sc)
+		return
+	}
+	for _, k := range []string{"F", "UF", "Desc"} {
+		hashChunk(h, []byte(k))
+		hashObject(xt, fs[k], h, 0, sc)
+	}
+	hashChunk(h, []byte("EF"))
+	ef := derefDict(xt, fs["EF"])
+	if ef == nil {
+		hashChunk(h, []byte("#none"))
+		return
+	}
+	for _, k := range []string{"F", "UF"} {
+		hashChunk(h, []byte(k))
+		so, found := ef.Find(k)
+		if !found || so == nil {
+			hashChunk(h, []byte("#nil"))
 			continue
 		}
-		b, err := io.ReadAll(a.Reader)
-		if err != nil {
-			return fmt.Errorf("attachment %q: %w", name, err)
+		num := 0
+		if ir, ok := so.(types.IndirectRef); ok {
+			num = ir.ObjectNumber.Value()
 		}
-		hashChunk(h, b)
+		sd, _, err := xt.DereferenceStreamDict(so)
+		if err != nil || sd == nil {
+			hashChunk(h, []byte("#unreadable"))
+			continue
+		}
+		hashStreamBody(sd, h, sc, num)
 	}
-	return nil
+}
+
+// ceremonyRecordEntry returns the index of the one entry ContentDigest excludes as the ceremony
+// record, or -1 when none is.
+//
+// **The exclusion is the SHAPE nib writes, not a name an author can type.** `ceremony.Embed` goes
+// through `AddAttachment`, which keys the tree `nib-ceremony.json` and writes the filespec's /F and
+// /UF as that same string (pdfcpu's `NewFileSpecDict(id, id, …)`). An entry is the record only if
+// all three agree; an ordinary entry that merely CALLS itself the record — by its /UF, by its /F,
+// or by its key alone — is hashed like any other, so the name buys an attacker no hiding place.
+//
+// **And only when exactly one entry has the record's key.** pdfcpu refuses a duplicate key on Add
+// but its reader keeps every entry of a malformed tree, and `Extract` reads the FIRST. Excluding
+// either of two would leave the other unbound; excluding neither makes the digest cover a record,
+// so the document's DocHash cannot match and every gate that compares it refuses — which is the
+// right answer for a document carrying two ceremony records.
+func ceremonyRecordEntry(xt *model.XRefTable, entries []embeddedEntry) int {
+	found := -1
+	for i, e := range entries {
+		if e.key != CeremonyRecordName {
+			continue
+		}
+		if found >= 0 {
+			return -1
+		}
+		found = i
+	}
+	if found < 0 {
+		return -1
+	}
+	fs, err := xt.DereferenceDict(entries[found].fs)
+	if err != nil || fs == nil {
+		return -1
+	}
+	for _, k := range []string{"F", "UF"} {
+		o, ok := fs.Find(k)
+		if !ok {
+			return -1
+		}
+		s, err := xt.DereferenceStringOrHexLiteral(o, model.V10, nil)
+		if err != nil || s != CeremonyRecordName {
+			return -1
+		}
+	}
+	return found
 }
 
 // hashChunk writes a length-prefixed byte string, and hashUint a length-prefixed integer.
