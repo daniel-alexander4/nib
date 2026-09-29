@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
 	"nib/internal/pdfread"
 	"strings"
 
@@ -18,18 +18,29 @@ import (
 )
 
 // AttachmentInfo names one embedded file. Two carriers are listed: the document's
-// Names→EmbeddedFiles tree (the usual one, via pdfcpu's ListAttachments) and
-// page-level /FileAttachment annotations (rarer, but Scan flags them so the list
-// must too) — for the latter Desc records which page it hangs off.
+// Names→EmbeddedFiles tree (the usual one) and page-level /FileAttachment annotations (rarer, but
+// Scan flags them so the list must too) — for the latter Desc records which page it hangs off.
 type AttachmentInfo struct {
+	// ID is WHERE the file is, and it is what every extraction is addressed by (/pending 745).
+	//
+	// **Not the name, because a name does not pick one entry.** The name a reader shows is the
+	// filespec's /UF (or /F), which the document's author writes: two entries may share one, and an
+	// entry keyed `a.txt` may call itself `b.txt`. Addressed by name, a download returned the first
+	// match's bytes under the name the user clicked, and a page reorder rewrote one file's bytes
+	// under another's name. For a name-tree entry the ID is its tree KEY, unique in any tree pdfcpu
+	// will write; for a page-level annotation it is `page:<page>:<n>`, the n-th FileAttachment on
+	// that page. An ID more than one entry answers to is refused, never resolved to the first.
+	ID   string `json:"id"`
 	Name string `json:"name"`
 	Desc string `json:"desc"`
 	// Ceremony marks the one embedded file that is a signing ceremony's record (P06.S09, D29).
 	//
-	// **The test is the NAME, and it is made here rather than in the client.** `CeremonyRecordName`
-	// is this package's constant and the client would otherwise carry a second copy of it in
-	// another language, drifting the first time it changes — the shape ADR-009 refuses. The panel
-	// renders a label off this flag and never matches on the string.
+	// **The test is `ceremonyRecordEntry`, and it is made here rather than in the client.** It
+	// used to be the display NAME, so any entry calling itself `nib-ceremony.json` was labelled
+	// the record; now it is the entry ContentDigest leaves out and `CeremonyRecord` reads (/pending
+	// 745), so the label, the digest and the record agree on which entry that is. The client would
+	// otherwise carry a second copy of the rule in another language — the shape ADR-009 refuses.
+	// The panel renders a label off this flag and never matches on the string.
 	//
 	// It is a LABEL and not a permission: what stops the record being removed is `ceremonyFreeze`,
 	// which refuses every mutating route on a document carrying one, so `POST /api/sanitize` — the
@@ -38,44 +49,87 @@ type AttachmentInfo struct {
 	Ceremony bool `json:"ceremony,omitempty"`
 }
 
-// Attachments lists the document's embedded files: the catalog name tree plus any
-// page-level FileAttachment annotations. pdfcpu's ListAttachments returns stubs
-// (name + description, no data), so this is cheap. An empty result (neither
+// embeddedFile is one embedded file as this package reads it: what it is called and where it is
+// (info), and the filespec its bytes come from.
+type embeddedFile struct {
+	info AttachmentInfo
+	fs   types.Dict
+}
+
+// embeddedFiles lists both carriers, each file with its own filespec — the one door every reader
+// of an embedded file goes through (/pending 745, ADR-009; see treeEntries). A tree entry whose
+// filespec is not a dictionary is still listed, with a nil fs: it is in the document, and reading
+// it fails by name rather than the whole listing failing (pdfcpu's `ListAttachments` did).
+func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
+	xt := ctx.XRefTable
+	entries, err := treeEntries(xt)
+	if err != nil {
+		return nil, err
+	}
+	record, _ := ceremonyRecordEntry(xt, entries)
+	out := make([]embeddedFile, 0, len(entries))
+	for i := range entries {
+		e := entries[i]
+		fs, _ := xt.DereferenceDict(e.fs)
+		// The name a reader shows (/UF, then /F), cleaned like every other name path in this
+		// file: server/attachments.go puts it in a Content-Disposition filename, and it comes
+		// from an untrusted PDF — "any downstream disk write must never see a dot-path".
+		name := ""
+		if fs != nil {
+			name = fileSpecName(xt, fs)
+		}
+		if name == "" {
+			name = attachmentName(e.key)
+		}
+		if name == "" {
+			name = e.key
+		}
+		desc := ""
+		if fs != nil {
+			if o, ok := fs.Find("Desc"); ok {
+				desc, _ = xt.DereferenceStringOrHexLiteral(o, model.V10, nil)
+			}
+		}
+		out = append(out, embeddedFile{
+			info: AttachmentInfo{ID: e.key, Name: name, Desc: desc, Ceremony: i == record},
+			fs:   fs,
+		})
+	}
+	root, err := ctx.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	nth := map[int]int{}
+	for _, pa := range pageFileAttachments(xt, root) {
+		n := nth[pa.page]
+		nth[pa.page]++
+		out = append(out, embeddedFile{
+			info: AttachmentInfo{
+				ID:   fmt.Sprintf("page:%d:%d", pa.page, n),
+				Name: pageAttachmentName(pa),
+				Desc: fmt.Sprintf("Attached to page %d", pa.page),
+			},
+			fs: pa.fs,
+		})
+	}
+	return out, nil
+}
+
+// Attachments lists the document's embedded files: the catalog name tree plus any page-level
+// FileAttachment annotations. It reads no file's bytes, so it is cheap. An empty result (neither
 // carrier present) is not an error.
 func Attachments(pdf []byte) ([]AttachmentInfo, error) {
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
-	aa, err := ctx.ListAttachments()
+	files, err := embeddedFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]AttachmentInfo, 0, len(aa))
-	for _, a := range aa {
-		name := a.FileName
-		if name == "" {
-			name = a.ID // the add path keys the name tree on ID; FileName mirrors it
-		}
-		// Through attachmentName, like every other name path in this file. This one
-		// was raw, and it is the one the user sees and acts on: server/attachments.go
-		// hands the listed name to sendDownload, which puts it in a
-		// Content-Disposition filename — and the name comes from an untrusted PDF.
-		// attachmentName exists precisely because "any downstream disk write must
-		// never see a dot-path"; the guard was simply not applied here.
-		if clean := attachmentName(name); clean != "" {
-			name = clean
-		}
-		out = append(out, AttachmentInfo{Name: name, Desc: a.Desc, Ceremony: name == CeremonyRecordName})
-	}
-	// The same RVO context that populated the name tree exposes the page tree, so
-	// no second read is needed (the eachPage/derefDict helpers Scan uses work on it).
-	root, err := ctx.Catalog()
-	if err != nil {
-		return nil, err
-	}
-	for _, pa := range pageFileAttachments(ctx.XRefTable, root) {
-		out = append(out, AttachmentInfo{Name: pageAttachmentName(pa), Desc: fmt.Sprintf("Attached to page %d", pa.page)})
+	out := make([]AttachmentInfo, 0, len(files))
+	for _, f := range files {
+		out = append(out, f.info)
 	}
 	return out, nil
 }
@@ -490,21 +544,13 @@ type embeddedEntry struct {
 func hashEmbeddedFiles(ctx *model.Context, h hash.Hash, sc *streamMemo) {
 	xt := ctx.XRefTable
 	hashChunk(h, []byte("embedded-files"))
-	if xt.Names["EmbeddedFiles"] == nil && !xt.Valid {
-		if err := xt.LocateNameTree("EmbeddedFiles", false); err != nil {
-			// A tree that is present and unreadable is a different document from one with no tree.
-			hashChunk(h, []byte("#unreadable-tree"))
-			return
-		}
+	entries, err := treeEntries(xt)
+	if err != nil {
+		// A tree that is present and unreadable is a different document from one with no tree.
+		hashChunk(h, []byte("#unreadable-tree"))
+		return
 	}
-	var entries []embeddedEntry
-	if root := xt.Names["EmbeddedFiles"]; root != nil {
-		_ = root.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
-			entries = append(entries, embeddedEntry{key: k, fs: *v})
-			return nil
-		})
-	}
-	skip := ceremonyRecordEntry(xt, entries)
+	skip, _ := ceremonyRecordEntry(xt, entries)
 	type summed struct {
 		key string
 		sum []byte
@@ -597,35 +643,66 @@ func hashFileSpec(xt *model.XRefTable, o types.Object, h hash.Hash, sc *streamMe
 // either of two would leave the other unbound; excluding neither makes the digest cover a record,
 // so the document's DocHash cannot match and every gate that compares it refuses — which is the
 // right answer for a document carrying two ceremony records.
-func ceremonyRecordEntry(xt *model.XRefTable, entries []embeddedEntry) int {
+//
+// **It is the one answer to "which entry is the record", and not only the digest's** (/pending
+// 745). `CeremonyRecord` (what `ceremony.Extract` reads) and the `Ceremony` label `Attachments`
+// shows both ask it, so the entry the digest leaves out is exactly the entry read as the record and
+// labelled as one. `twice` reports the malformed tree with the record's key more than once, which
+// every caller refuses rather than choosing.
+func ceremonyRecordEntry(xt *model.XRefTable, entries []embeddedEntry) (idx int, twice bool) {
 	found := -1
 	for i, e := range entries {
 		if e.key != CeremonyRecordName {
 			continue
 		}
 		if found >= 0 {
-			return -1
+			return -1, true
 		}
 		found = i
 	}
 	if found < 0 {
-		return -1
+		return -1, false
 	}
 	fs, err := xt.DereferenceDict(entries[found].fs)
 	if err != nil || fs == nil {
-		return -1
+		return -1, false
 	}
 	for _, k := range []string{"F", "UF"} {
 		o, ok := fs.Find(k)
 		if !ok {
-			return -1
+			return -1, false
 		}
 		s, err := xt.DereferenceStringOrHexLiteral(o, model.V10, nil)
 		if err != nil || s != CeremonyRecordName {
-			return -1
+			return -1, false
 		}
 	}
-	return found
+	return found, false
+}
+
+// treeEntries walks the catalog's /Names /EmbeddedFiles tree and returns every key/value pair as
+// the tree holds it, in the tree's order — a malformed tree carrying one key twice yields both.
+// No tree is (nil, nil); a tree that is present and cannot be located is an error.
+//
+// **The one enumeration of the tree** (/pending 745, ADR-009). ContentDigest, the listing, every
+// extraction and `CarryAttachments` read entries through here, each entry from its OWN filespec.
+// pdfcpu's `ExtractAttachment` resolves a name by tree key and then by the first filespec whose
+// /UF, /F or /Desc matches, so which entry answered was chosen by strings a document's author
+// writes; nothing in this package may reach an embedded file that way again.
+func treeEntries(xt *model.XRefTable) ([]embeddedEntry, error) {
+	if xt.Names["EmbeddedFiles"] == nil && !xt.Valid {
+		if err := xt.LocateNameTree("EmbeddedFiles", false); err != nil {
+			return nil, err
+		}
+	}
+	var entries []embeddedEntry
+	if root := xt.Names["EmbeddedFiles"]; root != nil {
+		_ = root.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
+			entries = append(entries, embeddedEntry{key: k, fs: *v})
+			return nil
+		})
+	}
+	return entries, nil
 }
 
 // hashChunk writes a length-prefixed byte string, and hashUint a length-prefixed integer.
@@ -948,29 +1025,99 @@ func RemoveAttachment(pdf []byte, name string) ([]byte, error) {
 	})
 }
 
-// ExtractAttachment returns the decoded bytes of the embedded file named name.
-// It looks in the catalog name tree first, then falls back to page-level
-// FileAttachment annotations (keyed by the same name pageFileAttachments lists).
-func ExtractAttachment(pdf []byte, name string) ([]byte, error) {
-	name = attachmentName(name)
+// ExtractAttachment returns the decoded bytes of the one embedded file `ref` names — see
+// ReadAttachment, which it is.
+func ExtractAttachment(pdf []byte, ref string) ([]byte, error) {
+	_, data, err := ReadAttachment(pdf, ref)
+	return data, err
+}
+
+// ReadAttachment returns the one embedded file `ref` addresses, and its decoded bytes, read from
+// that entry's OWN filespec (/pending 745).
+//
+// `ref` is an `AttachmentInfo.ID` first: when exactly one file has that ID, it is the answer. Only
+// when none does is it taken as a displayed name — so a person typing the name the listing showed
+// still reaches the file — and then exactly one file may carry that name. Anything else is
+// refused, naming how many answered: a ref two entries answer to is the question "which one", and
+// the answer is never "the first", which is how a download served one file's bytes under another's
+// name.
+func ReadAttachment(pdf []byte, ref string) (AttachmentInfo, []byte, error) {
+	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		return AttachmentInfo{}, nil, err
+	}
+	files, err := embeddedFiles(ctx)
+	if err != nil {
+		return AttachmentInfo{}, nil, err
+	}
+	pick := func(match func(AttachmentInfo) bool) []embeddedFile {
+		var hit []embeddedFile
+		for _, f := range files {
+			if match(f.info) {
+				hit = append(hit, f)
+			}
+		}
+		return hit
+	}
+	hit := pick(func(a AttachmentInfo) bool { return a.ID == ref })
+	if len(hit) == 0 {
+		name := attachmentName(ref)
+		hit = pick(func(a AttachmentInfo) bool { return name != "" && a.Name == name })
+	}
+	switch len(hit) {
+	case 0:
+		return AttachmentInfo{}, nil, fmt.Errorf("no attachment named %q", ref)
+	case 1:
+	default:
+		return AttachmentInfo{}, nil, fmt.Errorf("%d attachments answer to %q, so which one is meant has "+
+			"no answer; name one by its id (`nib attachments --json` lists them)", len(hit), ref)
+	}
+	if hit[0].fs == nil {
+		return AttachmentInfo{}, nil, fmt.Errorf("attachment %q has no file specification", ref)
+	}
+	data, err := fileSpecBytes(ctx.XRefTable, hit[0].fs)
+	if err != nil {
+		return AttachmentInfo{}, nil, fmt.Errorf("attachment %q: %w", ref, err)
+	}
+	return hit[0].info, data, nil
+}
+
+// ErrTwoCeremonyRecords is CeremonyRecord's refusal of a tree carrying the record's key more than
+// once. pdfcpu will not write one; its reader keeps every entry of one someone else wrote.
+var ErrTwoCeremonyRecords = errors.New("the document carries two ceremony records, so which " +
+	"ceremony it belongs to has no answer")
+
+// CeremonyRecord returns the bytes of the ceremony record — the entry `ceremonyRecordEntry` names,
+// which is the entry ContentDigest leaves out, and no other (/pending 745). It is (nil, nil) when
+// there is none, and ErrTwoCeremonyRecords when the tree carries the record's key twice: the digest
+// excludes neither, and a reader choosing one would name a ceremony the document cannot match.
+//
+// **Not by name.** `ceremony.Extract` read the record through the name lookup, which took the tree
+// key and then the first filespec calling itself `nib-ceremony.json` — so "which entry is the
+// record" had one answer in the digest and another in the reader. An entry that merely CALLS itself
+// the record is an ordinary attachment to both now.
+func CeremonyRecord(pdf []byte) ([]byte, error) {
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
-	if a, err := ctx.ExtractAttachment(model.Attachment{ID: name}); err == nil && a != nil && a.Reader != nil {
-		return io.ReadAll(a.Reader)
-	}
-	// Not in the name tree — try page-level FileAttachment annotations.
-	root, err := ctx.Catalog()
+	xt := ctx.XRefTable
+	entries, err := treeEntries(xt)
 	if err != nil {
 		return nil, err
 	}
-	for _, pa := range pageFileAttachments(ctx.XRefTable, root) {
-		if pageAttachmentName(pa) == name {
-			return fileSpecBytes(ctx.XRefTable, pa.fs)
-		}
+	i, twice := ceremonyRecordEntry(xt, entries)
+	if twice {
+		return nil, ErrTwoCeremonyRecords
 	}
-	return nil, fmt.Errorf("no attachment named %q", name)
+	if i < 0 {
+		return nil, nil
+	}
+	fs, err := xt.DereferenceDict(entries[i].fs)
+	if err != nil || fs == nil {
+		return nil, fmt.Errorf("the ceremony record has no file specification")
+	}
+	return fileSpecBytes(xt, fs)
 }
 
 // attachmentName reduces a user-supplied name to a clean basename: any directory

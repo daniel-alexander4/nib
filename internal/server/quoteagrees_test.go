@@ -166,13 +166,13 @@ func TestTheResponderQuotePinsAndEchoesItsTime(t *testing.T) {
 	// answers for a pending request, not about how one comes to be pending.
 	srv.sess.mu.Lock()
 	srv.sess.pending = &pendingReq{
-		view: pendingView{Fingerprint: other}, resp: make(chan sessionDecision, 1),
+		view: pendingView{ID: "q1", Fingerprint: other}, resp: make(chan sessionDecision, 1),
 	}
 	srv.sess.mu.Unlock()
 
 	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/session/quote", strings.NewReader(`{"intent":"ok"}`))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/session/quote", strings.NewReader(`{"id":"q1","intent":"ok"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", srv.csrf)
 	resp, err := http.DefaultClient.Do(req)

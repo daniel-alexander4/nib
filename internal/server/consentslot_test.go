@@ -148,3 +148,116 @@ func TestAnAnswerReachesOnlyTheRequestItNames(t *testing.T) {
 		t.Error("the answer naming B did not reach B")
 	}
 }
+
+// /pending 744 (1): cancelling ONE arm releases the consent that arm parked, and only that one.
+// The gates used to release only when nothing was left armed, so with the delivery arm still up,
+// Cancel on the interactive arm left ceremony A's consent on screen and its goroutine waiting out
+// the whole timeout for a session that no longer existed.
+func TestCancellingOneArmReleasesOnlyTheConsentItParked(t *testing.T) {
+	se, cerA, _ := twoArmedCeremonies()
+	chA := make(chan sessionDecision, 1)
+	if err := se.setPending(consentAnchor{cer: cerA, kind: armInteractive},
+		&pendingReq{view: pendingView{Fingerprint: "AAAA"}, resp: chA}); err != nil {
+		t.Fatalf("setup: A could not park: %v", err)
+	}
+	se.disarmKind(armInteractive)
+	if se.arms[armDelivery] == nil {
+		t.Fatal("setup: the delivery arm went too, so this is the nothing-left-armed case the old rule already covered")
+	}
+	if fp := se.pendingFingerprint(); fp != "" {
+		t.Errorf("the interactive arm was cancelled and ITS consent (%q) is still parked, answerable, "+
+			"while the delivery arm beside it stays up", fp)
+	}
+	select {
+	case d := <-chA:
+		if d.accept || !d.torn {
+			t.Errorf("A's waiter was answered %+v, want a teardown refusal", d)
+		}
+	default:
+		t.Error("A's waiter was not woken — its goroutine sits on the channel until the consent timeout")
+	}
+
+	// The mirror: the arm that goes is NOT the one that parked, so the request stays.
+	se2, _, cerB := twoArmedCeremonies()
+	chB := make(chan sessionDecision, 1)
+	if err := se2.setPending(consentAnchor{cer: cerB, kind: armDelivery},
+		&pendingReq{view: pendingView{Fingerprint: "BBBB"}, resp: chB}); err != nil {
+		t.Fatalf("setup: B could not park: %v", err)
+	}
+	se2.disarmKind(armInteractive)
+	if fp := se2.pendingFingerprint(); fp != "BBBB" {
+		t.Errorf("cancelling the interactive arm dropped the delivery arm's consent (now %q) — "+
+			"a live session's request abandoned while the user reads it", fp)
+	}
+	if len(chB) != 0 {
+		t.Error("the delivery arm's waiter was answered by a teardown of the OTHER arm")
+	}
+}
+
+// /pending 744 (2): the preview and the quote name the request they are for. A cleared and B
+// parked between the page's poll and its fetch; the page, still showing A, must not be handed B's
+// document or B's roster.
+func TestThePreviewAndTheQuoteNameTheirRequest(t *testing.T) {
+	se, cerA, cerB := twoArmedCeremonies()
+	cerA.inv.Intent, cerB.inv.Intent = "ceremony A's recital", "ceremony B's recital"
+	pA := &pendingReq{view: pendingView{Fingerprint: "AAAA"}, doc: []byte("docA"), resp: make(chan sessionDecision, 1)}
+	if err := se.setPending(consentAnchor{cer: cerA, kind: armInteractive}, pA); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	idA := se.pendingIDForTest()
+	se.clearPendingIf(pA)
+	pB := &pendingReq{view: pendingView{Fingerprint: "BBBB"}, doc: []byte("docB"), resp: make(chan sessionDecision, 1)}
+	if err := se.setPending(consentAnchor{cer: cerB, kind: armDelivery}, pB); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	idB := se.pendingIDForTest()
+
+	// The roster is the PARKING arm's, not the first ceremony arm's — A's interactive slot comes first.
+	if _, roster, out := se.pendingNamed(idB); out != respondDelivered || roster.Intent != "ceremony B's recital" {
+		t.Errorf("B's request quoted with roster intent %q (outcome %v), want B's — the block would "+
+			"carry another ceremony's recital", roster.Intent, out)
+	}
+
+	srv := &Server{}
+	srv.sess.arms = se.arms
+	srv.sess.pending = se.pending
+	get := func(q string) (int, string) {
+		rr := httptest.NewRecorder()
+		srv.handleSessionPendingPDF(rr, httptest.NewRequest(http.MethodGet, "/api/session/pending-pdf"+q, nil))
+		return rr.Code, rr.Body.String()
+	}
+	if code, body := get("?id=" + idA); code != http.StatusConflict || strings.Contains(body, "docB") {
+		t.Errorf("the preview for A = %d %q, want 409 and not B's document", code, body)
+	}
+	if code, _ := get(""); code != http.StatusBadRequest {
+		t.Errorf("a preview naming no request = %d, want 400", code)
+	}
+	if code, body := get("?id=" + idB); code != http.StatusOK || body != "docB" {
+		t.Errorf("the preview for B = %d %q, want 200 docB", code, body)
+	}
+	quote := func(body string) int {
+		rr := httptest.NewRecorder()
+		srv.handleSessionQuote(rr, httptest.NewRequest(http.MethodPost, "/api/session/quote", strings.NewReader(body)))
+		return rr.Code
+	}
+	if code := quote(`{"id":"` + idA + `","intent":"x"}`); code != http.StatusConflict {
+		t.Errorf("a quote for A while B is parked = %d, want 409", code)
+	}
+	if code := quote(`{"intent":"x"}`); code != http.StatusBadRequest {
+		t.Errorf("a quote naming no request = %d, want 400", code)
+	}
+}
+
+// /pending 744 (4): a busy refusal crosses the wire BY NAME, so the dialler is told the machine is
+// busy rather than seeing its session fail like a network fault.
+func TestABusyConsentRefusalIsNamedForTheWire(t *testing.T) {
+	if !errors.Is(errConsentBusy, p2p.ErrConsentBusy) {
+		t.Fatal("errConsentBusy is not p2p.ErrConsentBusy to errors.Is, so refusalAck cannot name it")
+	}
+	if !p2p.IsContributionRefusal(errConsentBusy) {
+		t.Error("a busy refusal is not a named refusal — it reaches the dialler as a bare EOF, read as a network fault")
+	}
+	if strings.Contains(errConsentBusy.Error(), "other machine") {
+		t.Errorf("this machine's own sentence is written for the far end: %q", errConsentBusy)
+	}
+}

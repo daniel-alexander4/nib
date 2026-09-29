@@ -6293,3 +6293,21 @@ Each mutation applied alone to `internal/server/session.go`, run with
 | **`setPending` assigns over a busy slot** (the `se.pending != nil` refusal removed) | `ceremony B's resumed hop parked over ceremony A's consent while A was on screen (err=<nil>); the user's Accept, typed for A, would sign B` | `TestASecondArmCannotDisplaceTheConsentOnScreen` |
 | **`respond` answers whatever is parked** (the ID comparison removed) | `an answer naming A was 0 against B's request, want respondNotThatRequest` … `the Accept the user gave for ceremony A signed ceremony B` | `TestAnAnswerReachesOnlyTheRequestItNames` |
 | **`Confirm` marks the arm before winning the slot** (`sc.saw.mark()` moved back above `setPending`) | `a consent refused busy SPENT the arm — nothing was shown to the user for it` | `TestASecondArmCannotDisplaceTheConsentOnScreen` |
+
+## /pending 744 — the consent slot's residue (2026-09-29)
+
+Each mutation applied alone, run with the named test (`go test ./internal/server/ -run … -count=1`,
+`go test ./internal/p2p/ -run … -count=1`, `node --test test/jsdom/consentredraw.test.mjs`), then
+restored by `cp` from a scratch backup.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`disarmWhen` releases consent only when nothing is armed** (the old rule) | `the interactive arm was cancelled and ITS consent ("AAAA") is still parked, answerable, while the delivery arm beside it stays up` … `A's waiter was not woken` | `TestCancellingOneArmReleasesOnlyTheConsentItParked` |
+| **`disarmWhen` releases consent on ANY teardown** (the anchor check removed) | `cancelling the interactive arm dropped the delivery arm's consent (now "")` | `TestCancellingOneArmReleasesOnlyTheConsentItParked` |
+| **`pendingNamed` ignores the id** | `the preview for A = 200 "docB", want 409 and not B's document` · `a quote for A while B is parked = 400, want 409` | `TestThePreviewAndTheQuoteNameTheirRequest` (and `TestAnAnswerReachesOnlyTheRequestItNames`) |
+| **the two handlers read whatever is parked** (each passed the parked id instead of the caller's) | the same two lines | `TestThePreviewAndTheQuoteNameTheirRequest` |
+| **the quote's roster is the first ceremony arm's** (the old `pendingRoster`) | `B's request quoted with roster intent "ceremony A's recital"` | `TestThePreviewAndTheQuoteNameTheirRequest` |
+| **`refusalCode` has no case for `ErrConsentBusy`** | `the initiator was told receive co-signed document: EOF, want ErrConsentBusy` (both transports) · `a busy refusal is not a named refusal` | `TestABusyConsentGateReachesTheInitiatorByName`, `TestABusyConsentRefusalIsNamedForTheWire` |
+| **`pollRecv` never redraws a replaced request** | `a DIFFERENT request is parked and the page still shows the first` | `consentredraw.test.mjs` test 1 |
+| **`pollRecv` leaves a vanished request's screen up** | `the request went away and its consent screen is still up, answerable, over nothing` | `consentredraw.test.mjs` test 2 |
+| **the preview URL names no request** | `the preview did not name the request it is of: /api/session/pending-pdf?t=…&auth=test-csrf` | `consentredraw.test.mjs` test 1 |

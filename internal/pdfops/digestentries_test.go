@@ -163,8 +163,14 @@ func TestTheRecordExclusionIsNibsShapeAndOnlyOnce(t *testing.T) {
 		{"not a filespec at all", []embeddedEntry{{r, types.Integer(7)}}, -1},
 	}
 	for _, c := range cases {
-		if got := ceremonyRecordEntry(xt, c.entries); got != c.want {
+		got, twice := ceremonyRecordEntry(xt, c.entries)
+		if got != c.want {
 			t.Errorf("%s: excluded entry %d, want %d", c.name, got, c.want)
+		}
+		// /pending 745: the duplicate is REPORTED, so CeremonyRecord can refuse it by name
+		// rather than reading it as "no record".
+		if want := c.name == "two in the record's shape"; twice != want {
+			t.Errorf("%s: reported the record's key twice = %v, want %v", c.name, twice, want)
 		}
 	}
 }

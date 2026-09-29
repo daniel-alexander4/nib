@@ -63,7 +63,15 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAttachmentExtract streams one embedded file back to the browser as a
-// download. The attachment name rides in as the "name" field.
+// download. The attachment rides in as the "id" field — `AttachmentInfo.ID`, which
+// the listing hands the client — and the download is named with the name the listing
+// SHOWED for that entry, read back from the entry itself.
+//
+// **By id, not by name (/pending 745).** It took the name, fetched the first entry
+// answering to it, and named the download with what the client sent: two entries
+// sharing a /UF downloaded the first one's bytes whichever row the user clicked. Only
+// the id is read — every client sends it — and `pdfops.ReadAttachment` refuses a ref
+// more than one entry answers to.
 func (s *Server) handleAttachmentExtract(w http.ResponseWriter, r *http.Request) {
 	doc, ok := s.resolveDoc(w, r)
 	if !ok {
@@ -79,11 +87,11 @@ func (s *Server) handleAttachmentExtract(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer cleanup()
-	name := r.FormValue("name")
-	data, err := pdfops.ExtractAttachment(s.docBytes(doc), name)
+	ref := r.FormValue("id")
+	info, data, err := pdfops.ReadAttachment(s.docBytes(doc), ref)
 	if err != nil {
 		httpError(w, http.StatusNotFound, "could not extract attachment: "+err.Error())
 		return
 	}
-	sendDownload(w, name, "application/octet-stream", data)
+	sendDownload(w, info.Name, "application/octet-stream", data)
 }

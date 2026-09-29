@@ -264,6 +264,7 @@ var tagFates = map[string]tagFate{
 	// ── UNTOUCHED. These return a report, an archive or an attachment — not a document — so there is
 	// no output that could carry a claim.
 	"ExtractAttachment":  {verdict: "untouched", why: "returns the attachment's bytes, not a document"},
+	"CeremonyRecord":     {verdict: "untouched", why: "returns the ceremony record's bytes, not a document"},
 	"ExportFormJSON":     {verdict: "untouched", why: "returns a report, not a document"},
 	"ExportFormCSV":      {verdict: "untouched", why: "returns a report, not a document"},
 	"ExportFormXFDF":     {verdict: "untouched", why: "returns a report, not a document"},

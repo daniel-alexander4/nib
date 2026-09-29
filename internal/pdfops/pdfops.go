@@ -457,29 +457,105 @@ func carryLang(src, dst []byte) ([]byte, error) {
 // caller knows which one it is doing.
 //
 // It reports how many it could not carry rather than returning silently, because the record
-// this exists to preserve is exactly what a silent drop loses. `Attachments` sanitises names
-// (stripping any path component) while `ExtractAttachment` matches the raw id, so a name-tree
-// key of `docs/report.pdf` is listed as `report.pdf` and cannot be extracted — a real miss,
-// not a hypothetical one.
+// this exists to preserve is exactly what a silent drop loses.
+//
+// # Entry by entry, each from its own filespec (/pending 745)
+//
+// It used to list the files by displayed NAME and fetch each back by that name, then add it
+// under the name. The name is the filespec's /UF, which the author writes, and the fetch took the
+// tree key first: an entry keyed `a.txt` calling itself `b.txt`, beside one keyed `b.txt` calling
+// itself `a.txt`, came out of a page reorder with each file's bytes under the other's name — a
+// silent substitution, in the same document, on an operation that only moved pages. Now each
+// name-tree entry is copied from its own filespec: its KEY, its /F, /UF and /Desc as it wrote them
+// (so the ceremony record keeps the exact shape ContentDigest excludes), and its own bytes.
+//
+// **Only the name tree.** A page-level /FileAttachment annotation travels with its page. The old
+// carry re-added those to the tree as well, which duplicated a kept page's file and resurrected a
+// deleted page's.
 func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
-	names, err := Attachments(src)
-	if err != nil || len(names) == 0 {
+	sctx, err := pdfread.ReadOptimized(src, model.NewDefaultConfiguration())
+	if err != nil {
 		return dst, 0, nil
 	}
-	for _, a := range names {
-		data, xerr := ExtractAttachment(src, a.Name)
+	sxt := sctx.XRefTable
+	entries, err := treeEntries(sxt)
+	if err != nil || len(entries) == 0 {
+		return dst, 0, nil
+	}
+	type carried struct {
+		key     string
+		strings map[string]types.Object // /F, /UF, /Desc as the source wrote them; absent stays absent
+		data    []byte
+	}
+	var files []carried
+	for _, e := range entries {
+		fs, derr := sxt.DereferenceDict(e.fs)
+		if derr != nil || fs == nil {
+			dropped++
+			continue
+		}
+		data, xerr := fileSpecBytes(sxt, fs)
 		if xerr != nil {
 			dropped++
 			continue
 		}
-		next, aerr := AddAttachment(dst, a.Name, data)
-		if aerr != nil {
-			dropped++
-			continue
+		c := carried{key: e.key, strings: map[string]types.Object{}, data: data}
+		for _, k := range []string{"F", "UF", "Desc"} {
+			o, derr := sxt.Dereference(fs[k])
+			if derr != nil {
+				continue
+			}
+			switch o.(type) {
+			case types.StringLiteral, types.HexLiteral:
+				c.strings[k] = o
+			}
 		}
-		dst = next
+		files = append(files, c)
 	}
-	return dst, dropped, nil
+	if len(files) == 0 {
+		return dst, dropped, nil
+	}
+	next, werr := writeMutated(dst, func(ctx *model.Context) error {
+		existing, lerr := treeEntries(ctx.XRefTable)
+		if lerr != nil {
+			return lerr
+		}
+		taken := map[string]bool{}
+		for _, e := range existing {
+			taken[e.key] = true
+		}
+		for _, f := range files {
+			if taken[f.key] {
+				dropped++ // pdfcpu refuses a duplicate key, and a second entry under one key is unaddressable
+				continue
+			}
+			if aerr := ctx.AddAttachment(model.Attachment{Reader: bytes.NewReader(f.data), ID: f.key}, false); aerr != nil {
+				dropped++
+				continue
+			}
+			taken[f.key] = true
+			v, ok := ctx.Names["EmbeddedFiles"].Value(f.key)
+			if !ok {
+				return fmt.Errorf("attachment %q: added and not found", f.key)
+			}
+			fs, derr := ctx.DereferenceDict(v)
+			if derr != nil || fs == nil {
+				return fmt.Errorf("attachment %q: added with no file specification", f.key)
+			}
+			for _, k := range []string{"F", "UF", "Desc"} {
+				if o, ok := f.strings[k]; ok {
+					fs[k] = o
+				} else {
+					delete(fs, k)
+				}
+			}
+		}
+		return nil
+	})
+	if werr != nil {
+		return dst, len(entries), nil
+	}
+	return next, dropped, nil
 }
 
 // InsertBlank inserts a blank page immediately before or after the given page (1-based)

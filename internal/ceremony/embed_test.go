@@ -125,3 +125,22 @@ func TestAStoredMirrorUnderAnotherDigestRuleIsASkewNotDamage(t *testing.T) {
 		t.Fatalf("a mirror written under another digest rule reported %v — want ErrDigestVersion", err)
 	}
 }
+
+// TestExtractReadsTheEntryTheDigestExcludes — /pending 745 (a). Extract read the record by name,
+// and the name lookup falls back to the first filespec CALLING itself nib-ceremony.json; the
+// digest's rule is nib's exact shape, once. Extract must answer with the digest's rule: a lookalike
+// is no record, and two records are refused by name.
+func TestExtractReadsTheEntryTheDigestExcludes(t *testing.T) {
+	r := AttachmentName
+	lookalike := testpdf.WithEmbedded(testpdf.Embedded{Key: "Schedule-A.txt", F: r, UF: r, Data: "not a record"})
+	if _, err := Extract(lookalike); !errors.Is(err, ErrNoRecord) {
+		t.Errorf("an entry that only calls itself %s was read as the record: %v — want ErrNoRecord", r, err)
+	}
+	two := testpdf.WithEmbedded(
+		testpdf.Embedded{Key: r, F: r, UF: r, Data: "one"},
+		testpdf.Embedded{Key: r, F: r, UF: r, Data: "two"},
+	)
+	if _, err := Extract(two); !errors.Is(err, ErrTwoRecords) {
+		t.Errorf("a document carrying the record's key twice: %v — want ErrTwoRecords", err)
+	}
+}

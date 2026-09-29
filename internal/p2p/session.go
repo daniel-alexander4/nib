@@ -535,6 +535,15 @@ const (
 	// bare EOF — the class this repo has now found at four sentinels — and a version skew would
 	// then read as a dropped network rather than as "not that kind of connection".
 	refuseWrongRole = 16
+
+	// 17 is a consent gate that is already occupied (/pending 744). The receiving machine has
+	// another request in front of its user and refused this one rather than displace it
+	// (/pending 660). It reached the dialler as a bare EOF — "that machine is busy" and a network
+	// failure read the same, and only one of them is fixed by waiting a minute. Raised after the
+	// spoken check has passed, so unlike the two verification sentinels it tells a verified peer
+	// nothing about whether a human noticed anything; an older build decodes it as
+	// `ErrRefusedUnknown`, which is D32's sentence, not a verdict.
+	refuseConsentBusy = 17
 )
 
 // ErrCeremonyEnded reports that the proceeding this document belongs to is over — its deadline has
@@ -573,6 +582,12 @@ var ErrDocumentSubstituted = errors.New("this document does not match the ceremo
 // No wire code: a local-storage fault, not a protocol refusal — see above.
 var ErrCannotReadOwnRecord = errors.New("this machine could not read its own record of this " +
 	"ceremony, so it cannot tell whether it has already signed this document")
+
+// ErrConsentBusy reports that the receiving machine was already asking its user about another
+// request, so it refused this one rather than displace it (/pending 744). Nothing was signed, and
+// unlike every other refusal on this list it is worth trying again — once they have answered.
+var ErrConsentBusy = errors.New("the other machine is already asking its user about another " +
+	"co-signing request, so nothing was signed — try again once they have answered it")
 
 // ErrDeclined reports that the receiving user declined a one-way document transfer.
 var ErrDeclined = errors.New("document transfer declined")
@@ -687,6 +702,8 @@ func refusalCode(err error) byte {
 		return refuseDocumentSubstituted
 	case errors.Is(err, ErrRoleRefused):
 		return refuseWrongRole
+	case errors.Is(err, ErrConsentBusy):
+		return refuseConsentBusy
 	}
 	return 0
 }
@@ -726,6 +743,8 @@ func errorForCode(code byte) error {
 		return ErrDocumentSubstituted
 	case refuseWrongRole:
 		return ErrRoleRefused
+	case refuseConsentBusy:
+		return ErrConsentBusy
 	}
 	return fmt.Errorf("%w (code %d)", ErrRefusedUnknown, code)
 }

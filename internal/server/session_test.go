@@ -357,7 +357,8 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 
 	// While parked: the received doc is served from pending-pdf (Alice's one
 	// signature), and the open doc is still Bob's untouched, unsigned PDF.
-	if n := attCount(t, c, ts.URL+"/api/session/pending-pdf"); n != 1 {
+	parkedID := pendingIDAt(t, c, ts.URL)
+	if n := attCount(t, c, ts.URL+"/api/session/pending-pdf?id="+parkedID); n != 1 {
 		t.Errorf("pending-pdf has %d signers, want 1", n)
 	}
 	if n := attCount(t, c, ts.URL+"/api/pdf"); n != 0 {
@@ -379,7 +380,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 	if n := attCount(t, c, ts.URL+"/api/pdf"); n != 0 {
 		t.Errorf("open document changed after decline: %d signers, want 0", n)
 	}
-	pr := write(t, c, csrf, http.MethodGet, ts.URL+"/api/session/pending-pdf", "", nil)
+	pr := write(t, c, csrf, http.MethodGet, ts.URL+"/api/session/pending-pdf?id="+parkedID, "", nil)
 	pr.Body.Close()
 	if pr.StatusCode != http.StatusNotFound {
 		t.Errorf("pending-pdf after decline = %d, want 404", pr.StatusCode)
@@ -419,7 +420,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 
 	// Nothing pending (and no document open) -> conflict, not a crash.
 	nq := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/quote", "application/json",
-		jsonBody(map[string]any{"intent": "x"}))
+		jsonBody(map[string]any{"id": "nothing-is-parked", "intent": "x"}))
 	if nq.StatusCode != http.StatusConflict {
 		t.Errorf("quote with nothing pending = %d, want 409", nq.StatusCode)
 	}
@@ -488,7 +489,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 
 	var q cosignQuote
 	sessDecode(t, write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/quote", "application/json",
-		jsonBody(map[string]any{"intent": "I consent here"})), &q)
+		jsonBody(map[string]any{"id": pendingIDAt(t, c, ts.URL), "intent": "I consent here"})), &q)
 	joined := strings.Join(q.Lines, "\n")
 	if !strings.Contains(joined, "Nib co-signing attestation") {
 		t.Errorf("quote lines missing header: %q", q.Lines)

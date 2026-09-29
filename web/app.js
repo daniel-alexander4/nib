@@ -1795,9 +1795,26 @@ async function pollRecv(token, fails = 0) {
   } else if (!els.verifyModal.hidden) {
     els.verifyModal.hidden = true; // the server moved on (answered elsewhere, or timed out)
   }
+  // **The screen follows the request the server holds, not the one it last drew (/pending 744).**
+  // This used to promote wait → consent once and never look again, so a request that went away —
+  // timed out, its peer gone, its arm cancelled — left its consent screen up, and a DIFFERENT one
+  // parked in its place was answered from a screen describing the first. The server refuses that
+  // answer (the id check), but the user got the 409 sentence where they should have been shown
+  // what is actually being asked. Not while an answer is in flight: both buttons are disabled for
+  // exactly that span, the answer names the request it captured, and its own outcome — success,
+  // or the server's refusal re-enabling them — decides what is shown next.
+  const answering = els.srvAccept.disabled;
   if (st.pending && recvStage === 'wait') {
     recvStage = 'consent';
     showConsent(st.pending);
+  } else if (recvStage === 'consent' && !answering && st.pending && (st.pending.id || '') !== recvPendingId) {
+    toast('The request you were reading went away and a different one is waiting — nothing was signed; read this one before you answer');
+    showConsent(st.pending);
+  } else if (recvStage === 'consent' && !answering && st.armed && !st.pending) {
+    recvStage = 'wait';
+    recvPendingId = '';
+    showRecvView('srvWait');
+    toast('The request you were reading went away — nothing was signed');
   } else if (!st.armed) {
     if (recvStage === 'applying' && recvMode === 'receive') {
       // `peer` is who it came from — published for exactly this and never read until
@@ -1853,7 +1870,7 @@ function showConsent(pending) {
   setPermanence(document.getElementById('srvPermanence'), !!pending.recital);
   renderConsentSigners(pending.signers || []);
   showRecvView('srvConsent');
-  loadPendingPreview(recvPoll, pending.block || null);
+  loadPendingPreview(recvPoll, pending.block || null, recvPendingId);
 }
 
 // renderConsentSigners lists everyone already on the document the user is being asked to join
@@ -1941,11 +1958,15 @@ function markBlock(wrap, vp, rect, scale) {
 // loadPendingPreview renders the received document in its own pdf.js instance,
 // entirely apart from the main viewer, so reviewing (and declining) a peer's
 // document never disturbs the open document or its unsaved edits.
-async function loadPendingPreview(token, block) {
+//
+// `id` names the request the preview is of (/pending 744). pdf.js makes this fetch itself, so the id
+// rides in the query beside `auth` — `/api/pdf`'s reason under ADR-004 — and a request that has
+// been replaced answers 409 rather than rendering the newcomer's document under this one's screen.
+async function loadPendingPreview(token, block, id) {
   els.srvPreview.innerHTML = '';
   const loading = emptyNote(els.srvPreview, 'Loading the document…');
   let doc;
-  try { doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: withAuth('/api/session/pending-pdf?t=' + Date.now()) }).promise; }
+  try { doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, url: withAuth('/api/session/pending-pdf?id=' + encodeURIComponent(id || '') + '&t=' + Date.now()) }).promise; }
   catch { checkSession(); if (token === recvPoll) els.srvPreview.textContent = 'could not render the document'; return; }
   // This function is the doc's sole holder, so it destroys it on every exit —
   // otherwise each consent preview leaks a worker-side document.
@@ -1995,11 +2016,14 @@ async function loadPendingPreview(token, block) {
 
 async function acceptRecv() {
   els.srvAccept.disabled = true; els.srvDecline.disabled = true;
+  // Captured before the first await, ADR-001's shape: the quote and the answer are for the request
+  // the user pressed Accept on, whatever the poller draws while they are in flight (/pending 744).
+  const id = recvPendingId;
   // A one-way transfer is just consent to keep the file — no signing, no appearance.
   if (recvMode === 'receive') {
     const res = await apiFetch('/api/session/respond', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: recvPendingId, accept: true }),
+      body: JSON.stringify({ id, accept: true }),
     });
     if (!res.ok) {
       els.srvAccept.disabled = false; els.srvDecline.disabled = false;
@@ -2023,7 +2047,7 @@ async function acceptRecv() {
   let appearance = '';
   const qr = await apiFetch('/api/session/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ intent }),
+    body: JSON.stringify({ id, intent }),
   });
   if (!qr.ok) {
     // Proceeding would co-sign without the visible attestation block; abort so
@@ -2039,7 +2063,7 @@ async function acceptRecv() {
     // `when` is the quote's pinned time, echoed so the signature carries the block the party
     // actually consented to. The server bounds it by the same `maxWhenSkew` the initiating side
     // has always applied, and drops it out of range rather than refusing.
-    body: JSON.stringify({ id: recvPendingId, accept: true, intent, appearance, when: q.when }),
+    body: JSON.stringify({ id, accept: true, intent, appearance, when: q.when }),
   });
   if (!res.ok) {
     els.srvAccept.disabled = false; els.srvDecline.disabled = false;
@@ -6136,14 +6160,16 @@ function renderAttachments(items) {
     }
     const btn = document.createElement('button');
     btn.textContent = 'Extract';
-    btn.onclick = () => extractAttachment(a.name);
+    // By the server's id, never the name: two entries may SHOW one name, and the name picked
+    // whichever came first (/pending 745). The name is only what the save dialog offers.
+    btn.onclick = () => extractAttachment(a.id, a.name);
     row.append(meta, btn);
     body.appendChild(row);
   }
 }
-async function extractAttachment(name) {
+async function extractAttachment(id, name) {
   const form = new FormData();
-  form.append('name', name);
+  form.append('id', id);
   const res = await apiFetch('/api/attachments/extract', { method: 'POST', body: form });
   if (!res.ok) return toast('extract failed');
   openSaveAs(await res.blob(), name, 'Save attachment');

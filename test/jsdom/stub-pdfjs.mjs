@@ -104,7 +104,11 @@ export function setNextDocument(opts) {
   nextDocument = opts === null ? null : { numPages: 3, outline: null, ...opts };
 }
 
-export function getDocument() {
+// The URL the last getDocument() was asked for, so a test can read which request a preview named.
+export let lastGetDocumentUrl = null;
+
+export function getDocument(opts) {
+  lastGetDocumentUrl = (opts && opts.url) || null;
   const cfg = nextDocument;
   const task = { destroy: async () => {} };
   if (cfg === null) {

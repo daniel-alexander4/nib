@@ -37,6 +37,14 @@ const AttachmentName = pdfops.CeremonyRecordName
 // that has one which will not parse is a broken ceremony.
 var ErrNoRecord = errors.New("document carries no ceremony record")
 
+// ErrTwoRecords is Extract's refusal of a document carrying the record's key twice (/pending 745).
+// Neither is excluded from its digest, so the document can match neither record's DocHash; and a
+// reader choosing one would be naming a ceremony by the order someone else wrote a tree in. It is
+// deliberately NOT ErrNoRecord: every gate treats that as "an ordinary PDF", and convening one
+// would embed a third.
+var ErrTwoRecords = errors.New("document carries two ceremony records, so which ceremony it " +
+	"belongs to has no answer")
+
 // ErrDigestVersion reports a record whose DocHash was computed under a different
 // content-digest rule than this build uses.
 //
@@ -154,8 +162,16 @@ func ProceedingOf(pdf []byte, now time.Time) p2p.Proceeding {
 }
 
 // Extract reads the record out of a document.
+//
+// **Through `pdfops.CeremonyRecord`, the entry ContentDigest excludes, and no other** (/pending
+// 745). It read the record by name, and pdfcpu resolves a name by tree key and then by the first
+// filespec CALLING itself `nib-ceremony.json` — so which entry was the record had one answer here
+// and another in the digest. A document with two is ErrTwoRecords, by name.
 func Extract(pdf []byte) (Record, error) {
-	b, err := pdfops.ExtractAttachment(pdf, AttachmentName)
+	b, err := pdfops.CeremonyRecord(pdf)
+	if errors.Is(err, pdfops.ErrTwoCeremonyRecords) {
+		return Record{}, ErrTwoRecords
+	}
 	if err != nil || len(b) == 0 {
 		return Record{}, ErrNoRecord
 	}

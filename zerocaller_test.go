@@ -89,6 +89,9 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			" `sign.Revisions` is P01.S01's record index, exposed through the same door `Verify` uses; `SignedRevisionFor` selects " +
 			"the user's own signature from it, and until then `Verify` reads the records internally.",
 
+		"WithEmbedded": "test-support — a testpdf fixture builder that hand-writes the /EmbeddedFiles " +
+			"tree shapes pdfcpu refuses to create (a shared /UF, a duplicated key), for /pending 745's " +
+			"tests in pdfops, ceremony and server.",
 		"OpenAdmittingLoopback": "test-support — `rendezvous.Open` with the node-cache rule widened by " +
 			"loopback, for the server's rendezvous-switch sink tests (/pending 707 made production's " +
 			"rule refuse loopback). A production caller would reopen 707; " +

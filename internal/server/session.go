@@ -221,6 +221,10 @@ type pendingReq struct {
 	view pendingView
 	doc  []byte // the received document, served for review via /api/session/pending-pdf
 	resp chan sessionDecision
+	// anchor is the arm that parked this request, stamped by `setPending` (/pending 744). A
+	// teardown releases the request exactly when the arm it names goes — see `disarmWhen` — and
+	// the quote reads that arm's roster, not whichever ceremony arm happens to be first.
+	anchor consentAnchor
 }
 
 // receivedInfo reports where an accepted one-way transfer was saved, so the poller
@@ -834,17 +838,23 @@ func (se *session) disarmWhen(ok func(*arm) bool) int {
 		se.mu.Unlock()
 		return 0 // a later session is armed; this one is already over
 	}
-	// **The two gates are machine-wide, so they are released only when NOTHING is left armed.**
-	// One user, one screen, one gate — but a parked gate belongs to whichever arm put it there,
-	// and with a slot still occupied this teardown cannot know it is not that one's. Declining it
-	// would abandon a live session's consent while the user is looking at it, which is the exact
-	// hazard `clearPendingIf`'s identity guard exists for. With one arm this is unchanged: the
-	// teardown always empties the session, so the gates always release.
+	// **The consent gate goes with the ARM THAT PARKED IT (/pending 744).** It used to be released
+	// only when nothing was left armed, because the teardown could not tell whose it was — so
+	// cancelling the interactive arm while the delivery arm stayed up left A's consent on screen,
+	// answerable, for a session that no longer existed, and its goroutine waiting out the full
+	// timeout. The request now carries its anchor, and the question is the one `setPending` asks:
+	// does that anchor still name an armed session? If not, it is released; another arm's request
+	// is left alone, which is what the old rule was protecting.
+	//
+	// **The spoken check keeps the old rule**, because it carries no anchor: `setVerify` runs on
+	// the DIALING side too, which holds no arm at all, so there is nothing for it to name.
 	var p *pendingReq
 	var pv *pendingVerify
+	if se.pending != nil && !se.pending.anchor.current(se) {
+		p, se.pending = se.pending, nil
+	}
 	if !se.armedLocked() {
-		p, pv = se.pending, se.verify
-		se.pending, se.verify = nil, nil
+		pv, se.verify = se.verify, nil
 	}
 	se.mu.Unlock()
 	for _, hit := range hits {
@@ -902,21 +912,27 @@ type consentAnchor struct {
 // se.ln) is the NEW operation, so an anchor naming the old one is refused — which is the whole
 // point of the check (see setPending).
 func (a consentAnchor) current(se *session) bool {
+	return a.armIn(se) != nil
+}
+
+// armIn is the armed slot this anchor names, or nil. Called under se.mu. The one reading of
+// "which arm is this" — `current`, `disarmWhen`'s release and the quote's roster all ask it.
+func (a consentAnchor) armIn(se *session) *arm {
 	for _, s := range se.arms {
 		if s == nil {
 			continue
 		}
 		if a.cer != nil {
 			if s.cer == a.cer {
-				return true
+				return s
 			}
 			continue
 		}
 		if s.ln != nil && s.ln == a.ln {
-			return true
+			return s
 		}
 	}
-	return false
+	return nil
 }
 
 // setPending parks a consent request, and refuses if its anchor no longer names the armed session.
@@ -947,8 +963,10 @@ func (a consentAnchor) current(se *session) bool {
 // was on screen REPLACED A, and the user's Accept — with the intent and signature image typed for
 // A — signed B, while A's goroutine sat on a channel nobody would write to until its timeout. The
 // incumbent wins for `setVerify`'s reason: the user may be reading it and about to answer. The
-// newcomer is refused with `errConsentBusy`, which reaches its peer the way `errVerifyBusy` does
-// (no wire code, so the dialer sees the session fail), and a delivery arm that refused stays
+// newcomer is refused with `errConsentBusy`, which on a co-signature reaches its peer BY NAME
+// (refusal code 17, `p2p.ErrConsentBusy`, /pending 744 — it used to cross as a bare EOF, like
+// `errVerifyBusy` still does; a one-way transfer's one-byte receipt still has no room for it), and a
+// delivery arm that refused stays
 // armed — its accept loop `continue`s after a served hop — so B can be served once A is answered.
 //
 // **Each request gets its ID here, the one door both consent bridges park through**, and
@@ -966,6 +984,7 @@ func (se *session) setPending(a consentAnchor, p *pendingReq) error {
 		return errConsentBusy
 	}
 	p.view.ID = newToken()
+	p.anchor = a
 	se.pending = p
 	return nil
 }
@@ -974,7 +993,18 @@ func (se *session) setPending(a consentAnchor, p *pendingReq) error {
 var errConsentNotArmed = errors.New("session not armed")
 
 // errConsentBusy is returned when another request is already waiting for the user's consent.
-var errConsentBusy = errors.New("another co-signing session is already waiting for consent — finish or cancel that one first")
+//
+// It IS `p2p.ErrConsentBusy` to `errors.Is`, so the refusal crosses the wire BY NAME (/pending 744)
+// and the dialler is told this machine is busy rather than seeing its session fail like a dropped
+// network. Its own sentence is this machine's, because the p2p one is written for the far end.
+var errConsentBusy error = consentBusy{}
+
+type consentBusy struct{}
+
+func (consentBusy) Error() string {
+	return "another co-signing session is already waiting for consent — finish or cancel that one first"
+}
+func (consentBusy) Unwrap() error { return p2p.ErrConsentBusy }
 
 // clearPendingIf drops the pending consent only if `p` is still the pending one.
 //
@@ -1013,23 +1043,35 @@ func (se *session) pendingFingerprint() string {
 	return se.pending.view.Fingerprint
 }
 
-// pendingRoster is the ceremony roster of the arm holding the pending consent request.
+// pendingNamed is the parked request if and only if it is the one named `id`, with the roster of
+// the arm that parked it — read under one acquisition, so the two cannot describe different
+// requests (/pending 744).
 //
-// **The arm already knows, and nothing else does.** `handleSessionQuote` answers for the party
-// being asked to sign, and the roster that will stamp their attestation is the one their arm was
-// built from — the same `cer.l3Roster()` `p2p.Receive` was handed. Deriving it any other way would
-// be a second answer to a question the arm has already settled.
+// **Every route that acts on a parked request names it**: `/api/session/respond`,
+// `/api/session/quote` and `/api/session/pending-pdf`. Reading "whatever is parked" let the
+// preview and the signature block briefly show B's document and B's roster under A's consent
+// screen, when A cleared and B parked between the page's poll and its fetch. The id check on the
+// answer stopped a wrong SIGNATURE; this stops the user being shown the wrong thing to sign.
 //
-// The zero Roster for a manual co-sign, which has no ceremony, and for no pending request at all.
-func (se *session) pendingRoster() p2p.Roster {
+// **The roster is the pending arm's (P06.S06, /pending 317)**, found through the request's own
+// anchor. It used to be the first armed slot holding a ceremony, which with a delivery arm beside
+// an interactive one is not necessarily the arm that parked the request. The zero Roster for a
+// manual co-sign, which has no ceremony.
+func (se *session) pendingNamed(id string) (*pendingReq, p2p.Roster, respondOutcome) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	for _, a := range se.arms {
-		if a != nil && a.cer != nil {
-			return a.cer.l3Roster()
-		}
+	p := se.pending
+	if p == nil {
+		return nil, p2p.Roster{}, respondNothingPending
 	}
-	return p2p.Roster{}
+	if id == "" || id != p.view.ID {
+		return nil, p2p.Roster{}, respondNotThatRequest
+	}
+	var roster p2p.Roster
+	if a := p.anchor.armIn(se); a != nil && a.cer != nil {
+		roster = a.cer.l3Roster()
+	}
+	return p, roster, respondDelivered
 }
 
 // respondVerify resolves the spoken check. Returns false when nothing is waiting, so a
@@ -1065,14 +1107,9 @@ const (
 // request. Without it this delivered to whatever was parked when the POST landed, which is not
 // necessarily what the user read.
 func (se *session) respond(id string, d sessionDecision) respondOutcome {
-	se.mu.Lock()
-	p := se.pending
-	se.mu.Unlock()
-	if p == nil {
-		return respondNothingPending
-	}
-	if id == "" || id != p.view.ID {
-		return respondNotThatRequest
+	p, _, out := se.pendingNamed(id)
+	if out != respondDelivered {
+		return out
 	}
 	select {
 	case p.resp <- d:
@@ -2755,15 +2792,43 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 // handleSessionPendingPDF streams the received document awaiting consent so the UI
 // can render it for review — separate from /api/pdf (the open document), which a
 // received request never touches until the user accepts.
+//
+// **It names the request it is for (/pending 744)**, as `id` in the QUERY: pdf.js issues this
+// fetch itself, so no header or body can ride on it — `/api/pdf`'s reason under ADR-004, and a GET
+// query is where ADR-054 already lets the page put `auth`. No request is 404, as it always was;
+// a DIFFERENT request is 409, the same answer `/api/session/respond` gives, because the preview
+// would otherwise render B's document under A's consent screen.
 func (s *Server) handleSessionPendingPDF(w http.ResponseWriter, r *http.Request) {
-	doc := s.sess.pendingPDF()
-	if doc == nil {
-		httpError(w, http.StatusNotFound, "no pending session request")
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		httpError(w, http.StatusBadRequest, "the preview does not name the request it is for")
+		return
+	}
+	p, _, out := s.sess.pendingNamed(id)
+	if !writePendingRefusal(w, out, http.StatusNotFound) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(doc)
+	_, _ = w.Write(p.doc)
+}
+
+// writePendingRefusal answers a route that named a parked request which is not the one there, and
+// reports whether the caller may proceed. One door for the three routes that name a request, so
+// the page reads the same two facts the same way from each. `none` is the status for "nothing is
+// parked", which each route has always answered in its own way (404 here, 409 on the two POSTs)
+// and which is not what this change is about.
+func writePendingRefusal(w http.ResponseWriter, out respondOutcome, none int) bool {
+	switch out {
+	case respondNothingPending:
+		httpError(w, none, "no pending session request")
+		return false
+	case respondNotThatRequest:
+		httpError(w, http.StatusConflict, "the request you answered is no longer the one waiting — "+
+			"nothing was signed; look again at what is being asked")
+		return false
+	}
+	return true
 }
 
 // handleSessionVerify records the user's answer to the spoken check (D4, L2).
@@ -2830,15 +2895,9 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "the answer does not name the request it is for")
 		return
 	}
-	switch s.sess.respond(req.ID, sessionDecision{
+	if !writePendingRefusal(w, s.sess.respond(req.ID, sessionDecision{
 		accept: req.Accept, intent: req.Intent, appearance: appearance, when: when,
-	}) {
-	case respondNothingPending:
-		httpError(w, http.StatusConflict, "no pending session request")
-		return
-	case respondNotThatRequest:
-		httpError(w, http.StatusConflict, "the request you answered is no longer the one waiting — "+
-			"nothing was signed; look again at what is being asked")
+	}), http.StatusConflict) {
 		return
 	}
 	writeJSON(w, s.sess.status())
@@ -2854,17 +2913,25 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 	v := vaultFrom(r)
 	var req struct {
+		// ID names the pending request this block is for (/pending 744) — `pendingView.ID`, as
+		// `/api/session/respond` takes it. The fingerprint and the roster below are that
+		// request's, read together, never whatever happens to be parked when this lands.
+		ID     string `json:"id"`
 		Intent string `json:"intent"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	fp := s.sess.pendingFingerprint()
-	if fp == "" {
-		httpError(w, http.StatusConflict, "no pending session request")
+	if req.ID == "" {
+		httpError(w, http.StatusBadRequest, "the quote does not name the request it is for")
 		return
 	}
+	p, roster, out := s.sess.pendingNamed(req.ID)
+	if !writePendingRefusal(w, out, http.StatusConflict) {
+		return
+	}
+	fp := p.view.Fingerprint
 	// The pending peer is the one the listener was armed for, so it is pinned;
 	// cosignAttestation re-checks that and names "Nib User" as the signer, exactly
 	// as coSignExchange does on accept. The nominal rect comes from p2p's one door
@@ -2881,7 +2948,7 @@ func (s *Server) handleSessionQuote(w http.ResponseWriter, r *http.Request) {
 	when := time.Now().UTC()
 	att, ok := s.cosignAttestation(w, v,
 		cosignParams{Fingerprint: fp, Intent: req.Intent, When: when.Format(time.RFC3339)},
-		s.sess.pendingRoster())
+		roster)
 	if !ok {
 		return
 	}
