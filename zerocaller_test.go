@@ -156,7 +156,6 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 
 		"(*Server).IdleExitCancels": "test-only — D4's two counters, kept apart deliberately. A seam instrument whose declared reader is tier 1.",
 		"(*Server).Ping":            "test-only — a rendezvous liveness probe used by the DHT tests. The one non-test mention of it is a comment in its own file.",
-		"RemoveAttachment":          "test-only — the inverse of Embed, for tests asking what a document looks like without the record. Its own doc addresses that caller.",
 		"WrapMulti":                 "test-only — multi-recipient SSH sealing. The vault seals to one recipient today, so nothing on a running path asks for several.",
 	}
 

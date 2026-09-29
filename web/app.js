@@ -1586,6 +1586,8 @@ let recvPeerFp = ''; // the connecting peer's verified fingerprint, for the Copy
 // The ID of the consent request this screen is showing, echoed on every answer so the server can
 // refuse one that would land on a DIFFERENT request than the user read (/pending 660).
 let recvPendingId = '';
+// recvAnsweredId is the request this page ACCEPTED, which the applying stage waits on (/pending 750).
+let recvAnsweredId = '';
 
 function showRecvView(which) {
   els.srvArm.hidden = which !== 'srvArm';
@@ -1638,6 +1640,7 @@ async function openSessionRecv(mode) {
   els.srvArmGo.disabled = none;
   els.srvIntent.value = 'I agree to sign this document.';
   recvStage = 'arm';
+  recvAnsweredId = '';
   showRecvView('srvArm');
   els.sessionRecvModal.hidden = false;
 }
@@ -1815,7 +1818,12 @@ async function pollRecv(token, fails = 0) {
     recvPendingId = '';
     showRecvView('srvWait');
     toast('The request you were reading went away — nothing was signed');
-  } else if (!st.armed) {
+  } else if (!st.armed || (recvStage === 'applying' && recvAnsweredId && st.settled === recvAnsweredId)) {
+    // **The applying stage ends when the server is finished with the request it accepted
+    // (/pending 750)** — `settled` names it, set after the save or after the arrival opened. It used
+    // to end only on `!st.armed`, which is the MACHINE's answer: a delivery arm beside the
+    // interactive one keeps it true for days, and the page sat on "Saving…" all that time. The
+    // disarm stays as the other way out, for the stages that are waiting on nothing but the arm.
     if (recvStage === 'applying' && recvMode === 'receive') {
       // `peer` is who it came from — published for exactly this and never read until
       // the shape scan asked. "Saved <path>" alone is the one fact the user can already
@@ -1840,6 +1848,7 @@ async function pollRecv(token, fails = 0) {
     else if (recvStage === 'wait') toast('Session ended — no peer connected');
     else if (recvStage === 'consent') toast('Session timed out');
     endRecv();
+    reflectArmed(!!st.armed); // the receive flow is over; another arm may still hold the machine
     return;
   }
   setTimeout(() => pollRecv(token), 1500);
@@ -2019,6 +2028,7 @@ async function acceptRecv() {
   // Captured before the first await, ADR-001's shape: the quote and the answer are for the request
   // the user pressed Accept on, whatever the poller draws while they are in flight (/pending 744).
   const id = recvPendingId;
+  recvAnsweredId = '';
   // A one-way transfer is just consent to keep the file — no signing, no appearance.
   if (recvMode === 'receive') {
     const res = await apiFetch('/api/session/respond', {
@@ -2031,8 +2041,9 @@ async function acceptRecv() {
       return;
     }
     recvStage = 'applying';
+    recvAnsweredId = id;
     toast('Saving…');
-    return; // pollRecv detects the disarm and reports where it landed
+    return; // pollRecv sees the request settle (or the disarm) and reports where it landed
   }
   const intent = els.srvIntent.value;
   // The responder's visible block is placed server-side; the quote gives only the canonical lines.
@@ -2071,8 +2082,9 @@ async function acceptRecv() {
     return;
   }
   recvStage = 'applying';
+  recvAnsweredId = id;
   toast('Signing…');
-  // pollRecv detects the session disarming, then reloads the co-signed document.
+  // pollRecv sees the request settle (or the session disarm), then reloads the co-signed document.
 }
 
 async function declineRecv() {
@@ -2175,6 +2187,7 @@ async function openInNewView(meta) {
 function endRecv() {
   recvPoll++; // invalidate any in-flight poll / preview render
   recvStage = 'arm';
+  recvAnsweredId = '';
   reflectArmed(false);
   els.srvPreview.innerHTML = '';
   els.srvAccept.disabled = false; els.srvDecline.disabled = false;

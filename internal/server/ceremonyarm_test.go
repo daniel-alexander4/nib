@@ -431,7 +431,7 @@ func TestAPolicyArmWithSomethingOnScreenIsNotDisplaced(t *testing.T) {
 	// Something on screen: the spoken check. Parked directly, because reaching it through a real
 	// session needs a peer mid-handshake and this is the state under test, not the route to it.
 	pv := &pendingVerify{words: "one two three four", resp: make(chan bool, 1)}
-	if !srv.sess.setVerify(pv) {
+	if srv.sess.setVerify(pv) != nil {
 		t.Fatal("setup: the spoken check would not park, so nothing is in flight to protect")
 	}
 	defer srv.sess.clearVerifyIf(pv)

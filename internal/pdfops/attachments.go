@@ -205,6 +205,12 @@ func fileSpecBytes(xt *model.XRefTable, fs types.Dict) ([]byte, error) {
 	if !found || o == nil {
 		return nil, fmt.Errorf("attachment has no embedded file stream")
 	}
+	return embeddedStreamBytes(xt, o)
+}
+
+// embeddedStreamBytes is the decoded content of one /EF value — the stream `fileSpecBytes` picks,
+// or, for `CarryAttachments`, each of /F and /UF in turn (/pending 750).
+func embeddedStreamBytes(xt *model.XRefTable, o types.Object) ([]byte, error) {
 	sd, _, err := xt.DereferenceStreamDict(o)
 	if err != nil {
 		return nil, err
@@ -993,36 +999,6 @@ func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash, sc *st
 			hashObject(xt, sub[name], h, 0, sc)
 		}
 	}
-}
-
-// RemoveAttachment returns the document without the named attachment, leaving it
-// unchanged when there is nothing by that name.
-//
-// It exists so a value can be computed over "the document apart from this attachment" —
-// the Ceremony Record's docHash, which cannot include the record that contains it. A
-// caller hashing the whole file would produce a number no later party could reproduce,
-// because by then the record is inside.
-//
-// Absent is not an error: the callers that want this are asking "what does this document
-// look like without X", and a document that never had X already looks like that.
-func RemoveAttachment(pdf []byte, name string) ([]byte, error) {
-	name = attachmentName(name)
-	if name == "" {
-		return nil, fmt.Errorf("attachment needs a file name")
-	}
-	return writeMutated(pdf, func(ctx *model.Context) error {
-		existing, err := ctx.ListAttachments()
-		if err != nil {
-			return err
-		}
-		for _, a := range existing {
-			if a.FileName == name || a.ID == name {
-				_, err := ctx.RemoveAttachments([]string{name})
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 // ExtractAttachment returns the decoded bytes of the one embedded file `ref` names — see

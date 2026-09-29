@@ -111,6 +111,11 @@ type session struct {
 	pending  *pendingReq    // set while a received request awaits the user's consent
 	verify   *pendingVerify // set while the spoken check awaits the user's confirmation
 	received *receivedInfo  // last accepted transfer, read by the poller after disarm
+	// settled is the id of the last request the user ACCEPTED whose session has finished with it —
+	// saved, co-signed and opened, or failed with a notice (/pending 750). It is what the page's
+	// applying stage waits for: it used to wait for the machine to disarm, which a delivery arm
+	// beside the interactive one keeps from ever happening.
+	settled string
 	// receivedBy and noticeBy name the arm that produced the two sticky fields, so an arm door
 	// clears only what ITS OWN slot last left behind (P08.S05c).
 	//
@@ -213,6 +218,11 @@ type arm struct {
 type pendingVerify struct {
 	words string
 	resp  chan bool
+	// anchor is the arm this check belongs to, or nil on the DIALLING side, which holds no arm
+	// (/pending 750). On the receiving side the check is as much the arm's as the consent after
+	// it, so it is anchored the same way and released by `disarmWhen` when THAT arm goes; the
+	// dialler's keeps the old rule — released only when nothing is left armed.
+	anchor *consentAnchor
 }
 
 // pendingReq is a received request (a co-sign or a plain transfer) blocked on the
@@ -846,15 +856,19 @@ func (se *session) disarmWhen(ok func(*arm) bool) int {
 	// does that anchor still name an armed session? If not, it is released; another arm's request
 	// is left alone, which is what the old rule was protecting.
 	//
-	// **The spoken check keeps the old rule**, because it carries no anchor: `setVerify` runs on
-	// the DIALING side too, which holds no arm at all, so there is nothing for it to name.
+	// **The spoken check follows the same rule where it has an arm (/pending 750).** On the
+	// receiving side it is parked by an armed session and carries that anchor, so it goes with its
+	// own arm and survives another's teardown. On the DIALLING side it holds no arm at all, so it
+	// keeps the old rule: released only once nothing is left armed.
 	var p *pendingReq
 	var pv *pendingVerify
 	if se.pending != nil && !se.pending.anchor.current(se) {
 		p, se.pending = se.pending, nil
 	}
-	if !se.armedLocked() {
-		pv, se.verify = se.verify, nil
+	if v := se.verify; v != nil {
+		if (v.anchor != nil && !v.anchor.current(se)) || (v.anchor == nil && !se.armedLocked()) {
+			pv, se.verify = v, nil
+		}
 	}
 	se.mu.Unlock()
 	for _, hit := range hits {
@@ -1134,7 +1148,7 @@ func (se *session) status() sessionStatus {
 	if shown == nil {
 		shown = se.arms[armDelivery]
 	}
-	st := sessionStatus{Armed: se.armedLocked(), Received: se.received}
+	st := sessionStatus{Armed: se.armedLocked(), Received: se.received, Settled: se.settled}
 	if shown != nil {
 		st.Address = shown.addr
 		if !shown.until.IsZero() {
@@ -1182,7 +1196,39 @@ func (se *session) status() sessionStatus {
 
 // reached records that a connection put something in front of the local user. It is what
 // decides whether that connection SPENT the arm — see serveOneSession.
-type reached struct{ v atomic.Bool }
+type reached struct {
+	v atomic.Bool
+	// answered is the id of the request the user accepted on this connection, or "" — returned by
+	// `serveOneSession` so its caller can settle it once the arrival is opened (/pending 750).
+	answered atomic.Pointer[string]
+}
+
+// accepted records that the user said yes to request `id` on this connection. Nil-safe, as mark.
+func (r *reached) accepted(id string) {
+	if r != nil {
+		r.answered.Store(&id)
+	}
+}
+
+// answeredID is the id `accepted` recorded, or "".
+func (r *reached) answeredID() string {
+	if p := r.answered.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// settle records that the session is finished with accepted request `id` (/pending 750). The
+// callers of `serveOneSession` call it AFTER `openArrival`, so a page that sees it and asks what
+// is active is shown the arrival. "" — nothing was accepted — changes nothing.
+func (se *session) settle(id string) {
+	if id == "" {
+		return
+	}
+	se.mu.Lock()
+	se.settled = id
+	se.mu.Unlock()
+}
 
 // mark is nil-safe on purpose: the DIALING side (`/api/session/initiate`,
 // `/api/session/send`) passes nil because it holds no arm to spend — it is the party that
@@ -1314,6 +1360,9 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 		if d.torn {
 			return false, "", nil, time.Time{}, p2p.ErrConsentTimedOut
 		}
+		if d.accept {
+			sc.saw.accepted(req.view.ID)
+		}
 		if !d.accept {
 			// **A decline ends this party's part in the ceremony, so its pins go (D29, P07.S02b).**
 			//
@@ -1414,8 +1463,11 @@ func (s *Server) armInvitation(v *vault.Vault, req armRequest) (string, error) {
 // at the machine" stays distinguishable from "the words did not match" — which are the
 // same outcome for the session and completely different facts about what happened.
 type sessionVerifier struct {
-	s   *Server
-	saw *reached
+	// anchor is the arm serving this session on the RECEIVING side, nil on the dialling side
+	// (/pending 750) — see `pendingVerify.anchor`.
+	anchor *consentAnchor
+	s      *Server
+	saw    *reached
 	// cer is the ceremony this check belongs to, or nil outside one. It is what lets the outcome
 	// be recorded against a proceeding (D5, P02.S04); a manual co-sign has none and records
 	// nothing, which is correct rather than a gap — there is no ceremony for a later reader to ask
@@ -1451,8 +1503,8 @@ var errVerifyBusy = errors.New("another co-signing session is already waiting fo
 
 func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 	ch := make(chan bool, 1)
-	pv := &pendingVerify{words: words, resp: ch}
-	if !sv.s.sess.setVerify(pv) {
+	pv := &pendingVerify{words: words, resp: ch, anchor: sv.anchor}
+	if err := sv.s.sess.setVerify(pv); err != nil {
 		// A gate is already on screen for another session. Declining is the fail-closed
 		// answer: silently displacing it would route this user's answer to words they
 		// never saw, and waiting would hang until a five-minute timeout with nothing shown.
@@ -1461,7 +1513,7 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 		// screen; here `setVerify` refused the slot and `sv.saw.mark()` below has not run, which
 		// its own comment states in as many words: *"Nothing was put in front of anyone."*
 		sv.noteVerification(false, false)
-		return false, errVerifyBusy
+		return false, err
 	}
 	// **`mark` goes AFTER the slot is won, and the order is the whole of it (P08.S05c).** It used
 	// to be this function's first statement, so a gate refused with `errVerifyBusy` had already
@@ -1541,14 +1593,24 @@ func (sv sessionVerifier) ConfirmVerification(words string) (bool, error) {
 // The incumbent wins because they may already be reading its words and about to answer.
 // The newcomer is refused, which fails closed: its ConfirmVerification declines, and that
 // session ends with a reason instead of hanging until a timeout.
-func (se *session) setVerify(pv *pendingVerify) bool {
+//
+// # An anchored check is refused once its arm is gone (/pending 750)
+//
+// Where the check carries an anchor (the receiving side), it is refused with `errConsentNotArmed`
+// when that anchor no longer names an armed session — `setPending`'s stale-goroutine guard, and
+// the half that makes `disarmWhen`'s release complete: a check parked AFTER its arm's teardown
+// would otherwise wait out the whole timeout, because the release has already run.
+func (se *session) setVerify(pv *pendingVerify) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
+	if pv.anchor != nil && !pv.anchor.current(se) {
+		return errConsentNotArmed
+	}
 	if se.verify != nil {
-		return false
+		return errVerifyBusy
 	}
 	se.verify = pv
-	return true
+	return nil
 }
 
 // currentVerify reports which gate is parked, for tests that must distinguish the
@@ -1596,6 +1658,7 @@ func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
 		if !d.accept {
 			return false, nil
 		}
+		sa.saw.accepted(req.view.ID) // settled whether or not the save succeeds: either is final
 		// **The durable write happens HERE, before the acknowledgement (P08.S05a, C10).**
 		//
 		// `ReceiveDocument` writes `ackOK` after this returns, so a write performed here is a
@@ -1804,11 +1867,12 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			conn.Close()
 			continue // an unreadable role is a peer this build cannot serve; the arm is not spent
 		}
-		served, final, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
+		served, final, answered, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
 		if final != nil && !opened {
 			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
 		}
+		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
 		if served {
 			// ── The post-signing RE-DELIVERY window, on the TCP ceremony path (/pending 289) ──
 			//
@@ -1896,7 +1960,7 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 // `consentAnchor.current` PREFERS `cer` when it is non-nil, so that path's stale-goroutine test
 // would silently switch from listener-identity to ceremony-identity — a change to what
 // `stale-consent-on-new-session` guards, smuggled in under another slice's name.
-func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte, role p2p.Role, roleAcknowledged bool) (served bool, coSigned []byte, err error) {
+func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2p.Conn, cert, key []byte, label, mode string, myFP []byte, role p2p.Role, roleAcknowledged bool) (served bool, coSigned []byte, answered string, err error) {
 	// **Deferred here rather than closed by the caller**, so the connection is released
 	// even if this function panics. `runSession`'s `safe.Recover` catches such a panic and
 	// keeps the desktop process alive, which is exactly the case where a caller-side
@@ -1930,6 +1994,8 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// safe direction; only the narrow, positively-identified never-reached-anyone case
 	// is loosened, which is the whole of what this slice needs.
 	var saw reached
+	// The accepted request's id, for the caller to settle after it opens the arrival (/pending 750).
+	defer func() { answered = saw.answeredID() }()
 	ch := conn.Channel
 	// ── The arm's POLICY, checked against the dial's declared role (/pending 385, ADR-028) ──
 	//
@@ -1942,7 +2008,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// as a bare EOF — the `/pending 315` class found at four sentinels — and a peer dialling the
 	// wrong arm would be told its network failed.
 	if !armServesRole(mode, role) {
-		return saw.v.Load(), nil, p2p.RefuseRole(ch)
+		return saw.v.Load(), nil, "", p2p.RefuseRole(ch)
 	}
 	// **Acknowledged by whoever READ the role, and exactly once.** The delivery arm reads and
 	// acknowledges before it dispatches here — it has to, because it chooses between two gate
@@ -1951,7 +2017,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// than a re-read, because the frame is gone by then.
 	if !roleAcknowledged {
 		if err := p2p.AcceptRole(ch); err != nil {
-			return saw.v.Load(), nil, err
+			return saw.v.Load(), nil, "", err
 		}
 	}
 	if role == p2p.RoleTransfer {
@@ -1960,10 +2026,10 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// receipt meant "a human clicked accept" and never "the bytes are on disk". It now runs
 		// inside `sessionAccepter.Accept`, the last thing before the frame — see that method, and
 		// `TestTheReceivedWriteHasOneDoor` for the guard that keeps it the only site.
-		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer}); derr != nil {
-			return saw.v.Load(), nil, derr
+		if _, derr := p2p.ReceiveDocument(ch, sessionAccepter{s: s, label: label, saw: &saw, anchor: anchor}, myFP, sessionVerifier{s: s, saw: &saw, cer: cer, anchor: &anchor}); derr != nil {
+			return saw.v.Load(), nil, "", derr
 		}
-		return true, nil, nil // a transfer saves itself; no co-signed document to open
+		return true, nil, "", nil // a transfer saves itself; no co-signed document to open
 	}
 	var rd p2p.ReDeliverer
 	if cer != nil {
@@ -1976,7 +2042,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		// different block.
 		rd = cer
 	}
-	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer, me: myFP}, sessionVerifier{s: s, saw: &saw, cer: cer}, rd, cer.l3Roster())
+	final, rerr := p2p.Receive(ch, cert, key, label, sessionConfirmer{s: s, saw: &saw, anchor: anchor, cer: cer, me: myFP}, sessionVerifier{s: s, saw: &saw, cer: cer, anchor: &anchor}, rd, cer.l3Roster())
 	// **"Signed but not saved" is an outcome with a document, not a failure (P08.S02, D24 as
 	// amended).** The peer has the signature; this machine could not keep a copy. So the error is
 	// reported to the user and the document is still returned, opened and treated as arrived —
@@ -1994,7 +2060,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 		rerr = nil
 	}
 	if rerr != nil {
-		return saw.v.Load(), nil, rerr
+		return saw.v.Load(), nil, "", rerr
 	}
 	// The co-signed document is RETURNED, not opened here: under P05.S10's re-delivery loop this
 	// function runs again on every reconnect, and opening on each would stack duplicate tabs of one
@@ -2010,7 +2076,7 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	// the convener raced candidates to `connectDeadline` per party — which is what the tier-4 run
 	// measured, twice, before this call existed in the right place.
 	s.armDeliveryAfterHop(final)
-	return true, final, nil
+	return true, final, "", nil
 }
 
 // openArrival opens a co-signed document alongside whatever the user already had (D10) — an arrival
@@ -2252,6 +2318,9 @@ type sessionStatus struct {
 	Verify   *verifyView   `json:"verify,omitempty"`
 	Pending  *pendingView  `json:"pending,omitempty"`
 	Received *receivedInfo `json:"received,omitempty"`
+	// Settled names the last accepted request whose session is finished with it (/pending 750) —
+	// see session.settled. The page ends its applying stage on it, never on `armed`.
+	Settled string `json:"settled,omitempty"`
 	// Diagnosis is the live D19 diagnosis for a ceremony arm that is still WAITING — most usefully
 	// "the other side hasn't started" (cause 1) — so the polling UI shows why nothing has connected
 	// yet, rather than a blank wait (P05.S11). Computed lazily from safe signals; nil for a manual
@@ -2715,11 +2784,12 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 			conn.Close()
 			continue // see runSession: an unreadable role does not spend the arm
 		}
-		_, final, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
+		_, final, answered, xerr := s.serveOneSession(consentAnchor{cer: cer, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
 		if final != nil && !opened {
 			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
 			opened = true
 		}
+		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
 		if postSignDeadline.IsZero() && cer.hasSigned() {
 			postSignDeadline = time.Now().Add(connectDeadline) // first signature arms the re-delivery window
 			// **And STOP ANNOUNCING, because the window needs the listener and not the

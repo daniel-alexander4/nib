@@ -843,10 +843,7 @@ func TestContentDigestCoversAttachedExhibits(t *testing.T) {
 	}
 
 	t.Run("the contents move it", func(t *testing.T) {
-		stripped, err := RemoveAttachment(withEx, "Schedule-A.txt")
-		if err != nil {
-			t.Fatal(err)
-		}
+		stripped := base // the document as it was before the exhibit went in
 		swapped, err := AddAttachment(stripped, "Schedule-A.txt", []byte("rent is 100000/mo"))
 		if err != nil {
 			t.Fatal(err)
@@ -863,10 +860,7 @@ func TestContentDigestCoversAttachedExhibits(t *testing.T) {
 	})
 
 	t.Run("the name moves it", func(t *testing.T) {
-		stripped, err := RemoveAttachment(withEx, "Schedule-A.txt")
-		if err != nil {
-			t.Fatal(err)
-		}
+		stripped := base // the document as it was before the exhibit went in
 		renamed, err := AddAttachment(stripped, "Schedule-B.txt", []byte("rent is 1000/mo"))
 		if err != nil {
 			t.Fatal(err)
@@ -883,10 +877,7 @@ func TestContentDigestCoversAttachedExhibits(t *testing.T) {
 	})
 
 	t.Run("removing it moves it", func(t *testing.T) {
-		stripped, err := RemoveAttachment(withEx, "Schedule-A.txt")
-		if err != nil {
-			t.Fatal(err)
-		}
+		stripped := base // the document as it was before the exhibit went in
 		after, err := ContentDigest(stripped)
 		if err != nil {
 			t.Fatal(err)

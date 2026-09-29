@@ -1275,7 +1275,7 @@ func TestASecondSpokenCheckCannotDisplaceTheOneOnScreen(t *testing.T) {
 	_, s := startServerWith(t)
 
 	first := &pendingVerify{words: "one two three four", resp: make(chan bool, 1)}
-	if !s.sess.setVerify(first) {
+	if s.sess.setVerify(first) != nil {
 		t.Fatal("setup: the first gate was refused with nothing pending")
 	}
 	// STIMULUS: the first gate is really the one parked. Without this the refusal below
@@ -1285,7 +1285,7 @@ func TestASecondSpokenCheckCannotDisplaceTheOneOnScreen(t *testing.T) {
 	}
 
 	second := &pendingVerify{words: "five six seven eight", resp: make(chan bool, 1)}
-	if s.sess.setVerify(second) {
+	if s.sess.setVerify(second) == nil {
 		t.Error("a second session's spoken check displaced the one already on screen — the " +
 			"user's answer then belongs to words they never saw, and the first session " +
 			"hangs on a channel nobody will write to")
@@ -1297,7 +1297,7 @@ func TestASecondSpokenCheckCannotDisplaceTheOneOnScreen(t *testing.T) {
 	// And the seat frees up properly: after the incumbent clears, the next one is admitted.
 	// A refusal that never lifts would make the gate a one-shot for the process.
 	s.sess.clearVerifyIf(first)
-	if !s.sess.setVerify(second) {
+	if s.sess.setVerify(second) != nil {
 		t.Error("the verification seat did not free after the incumbent cleared")
 	}
 	s.sess.clearVerifyIf(second)
@@ -1325,7 +1325,7 @@ func TestARefusedSpokenCheckDoesNotSpendTheArm(t *testing.T) {
 	// The incumbent holds the seat. Parked directly rather than through a session, because the
 	// subject is what the SECOND caller does when the seat is taken.
 	first := &pendingVerify{words: "one two three four", resp: make(chan bool, 1)}
-	if !s.sess.setVerify(first) {
+	if s.sess.setVerify(first) != nil {
 		t.Fatal("setup: the first gate was refused with nothing pending")
 	}
 	t.Cleanup(func() { s.sess.clearVerifyIf(first) })
