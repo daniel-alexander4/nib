@@ -138,6 +138,10 @@ func TestACacheOfOutOfScopeNodesIsAColdStart(t *testing.T) {
 	}
 }
 
+// allAnswered is a run in which every node was queried and answered — the scope and merge rules
+// alone, with the quality signal (contacts.go) held out of the way.
+func allAnswered(netip.AddrPort) contact { return contactAnswered }
+
 // TestTheCacheSaveMergesAndCaps pins cacheSet directly: a public stranger in the table is kept
 // (it may be a real node, and it is in scope) but removes nothing; out-of-scope entries on EITHER
 // side are dropped; duplicates collapse; the cap holds; and a table with nothing in scope reports
@@ -150,7 +154,7 @@ func TestTheCacheSaveMergesAndCaps(t *testing.T) {
 	var loop krpc.NodeInfo
 	loop.Addr = krpc.NodeAddr{IP: net.IPv4(127, 0, 0, 1), Port: 39340}
 
-	out, fresh := cacheSet([]krpc.NodeInfo{stranger, loop, prev[0]}, append(prev, loop), addrscope.Seed)
+	out, fresh := cacheSet([]krpc.NodeInfo{stranger, loop, prev[0]}, append(prev, loop), addrscope.Seed, allAnswered)
 	if fresh != 2 {
 		t.Errorf("fresh = %d, want 2 (the public stranger and prev[0]; the loopback node is out of scope)", fresh)
 	}
@@ -163,11 +167,11 @@ func TestTheCacheSaveMergesAndCaps(t *testing.T) {
 		}
 	}
 
-	if _, fresh := cacheSet([]krpc.NodeInfo{loop}, prev, addrscope.Seed); fresh != 0 {
+	if _, fresh := cacheSet([]krpc.NodeInfo{loop}, prev, addrscope.Seed, allAnswered); fresh != 0 {
 		t.Errorf("a table holding only a loopback node reported fresh = %d — the save would rewrite the cache for nothing it may keep", fresh)
 	}
 
-	big, _ := cacheSet(goodCache(300), goodCache(600), addrscope.Seed)
+	big, _ := cacheSet(goodCache(300), goodCache(600), addrscope.Seed, allAnswered)
 	if len(big) != maxCachedNodes {
 		t.Errorf("merged cache holds %d nodes, want the cap %d", len(big), maxCachedNodes)
 	}

@@ -210,6 +210,7 @@ func runRendezvous(out, errw io.Writer, budget time.Duration, selfTest bool) int
 	fmt.Fprintf(out, "  datagrams that would have crashed us   %d\n", st.Screened)
 	fmt.Fprintf(out, "  queries with no arguments              %d\n", st.RefusedQueries)
 	fmt.Fprintf(out, "  replies shaped to crash the fetch      %d\n", st.RefusedResponses)
+	fmt.Fprintf(out, "  lookups aimed at local or low ports    %d\n", st.RefusedSends)
 	fmt.Fprintf(out, "  requests to store other people's data  %d  (always refused)\n", st.RefusedStores)
 
 	// The shared socket's own routing, which nothing printed and nothing read.
