@@ -544,6 +544,11 @@ home today.
   Zero counted signers is `Invalid` where a checkable blob exists; `addedAfter` keeps the library's count; a
   join error excludes nothing. `Status.Timestamps` names each stamp; a refusal is shown, and `nib verify` exits
   2, whether or not it set `AddedAfter`.
+- **[ADR-061 — the DHT keeps, and queries, only what the node-cache rule admits](061-the-dht-keeps-and-queries-only-what-the-cache-rule-admits.md)**
+  — /pending 707, 743. One rule, `Server.scope` (`addrscope.Seed` in production), governs cache load, cache save
+  and outgoing queries: the cache is merged not overwritten and keeps only nodes that answered nib's own queries,
+  and nib's socket refuses a query aimed out of scope (a reply always goes). `OpenAdmittingLoopback` is the
+  test-only widening, held by a census.
 - **[ADR-062 — a signature nib could not check says why, and a signature nib made is read back](062-a-signature-nib-could-not-check-says-why-and-a-signature-nib-made-is-read-back.md)**
   — /pending 741, 747. `Status.Unchecked` names why a verdict rests on no checked signer (`hybrid-reference`,
   `unread`, `unreadable`, with `could-not-check`); `runSign`'s `signedAsIntended` reads the new signature back via

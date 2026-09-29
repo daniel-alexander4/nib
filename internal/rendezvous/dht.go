@@ -125,6 +125,11 @@ type Stats struct {
 	// separate from each other: three doors, three keys, and which one someone knocked
 	// on says something different about who they are.
 	RefusedResponses uint64
+	// RefusedSends is OUTBOUND queries the node-cache rule refused (contacts.go): an address a
+	// traversal learned — from a stranger's `nodes` list — that is loopback, private,
+	// link-local, reserved or below the port floor. **Non-zero means some node told us to
+	// query the user's own network or a low service port**, and we did not (/pending 743).
+	RefusedSends uint64
 	// RefusedStores is inbound `put` / `announce_peer` queries refused because Nib is a
 	// DHT client and does not store other people's data. **A steady non-zero is
 	// ordinary** — it is the DHT asking, and Nib declining — so unlike the other two
@@ -255,7 +260,11 @@ type Server struct {
 	refusedQueries   atomic.Uint64
 	refusedResponses atomic.Uint64
 	refusedStores    atomic.Uint64
+	refusedSends     atomic.Uint64
 	responses        atomic.Uint64
+	// contacts is whom this run queried and who answered — the save's quality signal. See
+	// contacts.go.
+	contacts *contacts
 
 	publishAttempts   atomic.Uint64
 	published         atomic.Uint64
@@ -331,12 +340,15 @@ func open(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool) (*Se
 		return nil, errors.New("rendezvous: no connection — the DHT must share the " +
 			"session's socket (caveat 7), never open one of its own")
 	}
-	s := &Server{dir: dir, scope: scope}
+	s := &Server{dir: dir, scope: scope, contacts: newContacts()}
 	s.live, s.stopLive = context.WithCancel(context.Background())
 
 	// Nothing reaches the library's decoder unscreened. See screen.go: 21 bytes of
 	// UDP from any host kill the process otherwise, on a goroutine nothing here owns.
-	conn = &screened{PacketConn: conn, dropped: &s.screened, refusedResponses: &s.refusedResponses, responses: &s.responses}
+	// The same wrapper is the outbound door: no query leaves for an address s.scope refuses,
+	// and whom we queried and who answered is recorded for the cache save (contacts.go).
+	conn = &screened{PacketConn: conn, dropped: &s.screened, refusedResponses: &s.refusedResponses, responses: &s.responses,
+		scope: scope, refusedSends: &s.refusedSends, contacts: s.contacts}
 
 	nodes, err := s.loadNodes()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -498,6 +510,7 @@ func (s *Server) Stats() Stats {
 		Screened:               s.screened.Load(),
 		RefusedQueries:         s.refusedQueries.Load(),
 		RefusedResponses:       s.refusedResponses.Load(),
+		RefusedSends:           s.refusedSends.Load(),
 		Responses:              s.responses.Load(),
 		RefusedStores:          s.refusedStores.Load(),
 		PublishAttempts:        s.publishAttempts.Load(),
@@ -941,10 +954,15 @@ func (s *Server) saveNodes() error {
 	// ordinary shape of a run is Open, one inbound query, Close. Written over, that replaced a
 	// 200-node cache with the one stranger who pinged us (measured: 200 loaded, 1 persisted,
 	// `127.0.0.1:39340`), and every later run started from that address with `Seeds` 0. So the
-	// save is the in-scope table first and the previous cache after it, capped: a stranger can
-	// add itself, and cannot remove anything.
+	// save is the in-scope table first and the previous cache after it, capped: a stranger
+	// cannot remove anything.
+	//
+	// **And a stranger cannot add itself either** (/pending 743): from the table only the nodes
+	// that answered a query of OURS are kept (contacts.go), so a node that merely queried us —
+	// in scope or not — is never written down. Previous-cache nodes this run queried and heard
+	// nothing from go last, so the cap pushes out the dead before the unknown.
 	prev, _ := s.loadNodes() // unreadable or absent: nothing to keep, which is a cold start's own state
-	nodes, fresh := cacheSet(s.dht.Nodes(), prev, s.scope)
+	nodes, fresh := cacheSet(s.dht.Nodes(), prev, s.scope, s.contacts.state)
 	if fresh == 0 {
 		// Nothing learned that may be kept. Leave the file exactly as it was.
 		return nil
@@ -987,19 +1005,24 @@ func inScope(nodes []krpc.NodeInfo, keep func(netip.AddrPort) bool) []krpc.NodeI
 }
 
 // cacheSet is the save's rule, pure for the reason `writeNodes` is split from the table: the
-// in-scope table first, then every in-scope node of the previous cache not already present (by
-// address), capped at maxCachedNodes. fresh is how many came from the table — zero means
-// this run learned nothing worth keeping, and the caller leaves the file alone.
-func cacheSet(table, prev []krpc.NodeInfo, keep func(netip.AddrPort) bool) (out []krpc.NodeInfo, fresh int) {
+// in-scope table nodes that ANSWERED us, then every in-scope node of the previous cache not
+// already present (by address) that this run did not find silent, then the silent ones, capped
+// at maxCachedNodes. fresh is how many came from the table — zero means this run learned
+// nothing worth keeping, and the caller leaves the file alone.
+//
+// Silent previous nodes are demoted, never dropped: one run on a flaky or captive network
+// hears from nobody, and dropping on that would empty a good cache. Past the cap they fall
+// off first, which is the whole of the rotation (/pending 743 part 3).
+func cacheSet(table, prev []krpc.NodeInfo, keep func(netip.AddrPort) bool, heard func(netip.AddrPort) contact) (out []krpc.NodeInfo, fresh int) {
 	seen := make(map[netip.AddrPort]bool)
-	add := func(nodes []krpc.NodeInfo) int {
+	add := func(nodes []krpc.NodeInfo, take func(contact) bool) int {
 		added := 0
 		for _, ni := range inScope(nodes, keep) {
 			if len(out) >= maxCachedNodes {
 				break
 			}
 			ap, _ := nodeAddrPort(ni)
-			if seen[ap] {
+			if seen[ap] || !take(heard(ap)) {
 				continue
 			}
 			seen[ap] = true
@@ -1008,8 +1031,9 @@ func cacheSet(table, prev []krpc.NodeInfo, keep func(netip.AddrPort) bool) (out 
 		}
 		return added
 	}
-	fresh = add(table)
-	add(prev)
+	fresh = add(table, func(c contact) bool { return c == contactAnswered })
+	add(prev, func(c contact) bool { return c != contactSilent })
+	add(prev, func(c contact) bool { return c == contactSilent })
 	return out, fresh
 }
 

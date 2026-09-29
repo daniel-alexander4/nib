@@ -3,6 +3,7 @@ package rendezvous
 import (
 	"bytes"
 	"net"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 
@@ -59,7 +60,8 @@ import (
 // this" without handling it. See gateQuery.
 // It wraps as a net.PacketConn and nothing more. anacrolix/dht touches only LocalAddr,
 // ReadFrom, WriteTo and Close (server.go:158, :347, :818, :1185) — no type assertion, no
-// SetReadBuffer — so the embedding loses nothing today. A library that started asserting
+// SetReadBuffer — so the embedding loses nothing today. WriteTo is overridden too: it is the
+// outbound door (contacts.go). A library that started asserting
 // for *net.UDPConn or for a buffer-sizing method would get the wrapper instead and fail
 // silently, which is the cost of every shim and is worth knowing about rather than
 // discovering.
@@ -68,6 +70,13 @@ type screened struct {
 	dropped          *atomic.Uint64
 	refusedResponses *atomic.Uint64
 	responses        *atomic.Uint64
+
+	// scope, refusedSends and contacts are the outbound door's (contacts.go): the rule a
+	// query's destination must pass, the count of queries it refused, and the record of whom
+	// we queried and who answered.
+	scope        func(netip.AddrPort) bool
+	refusedSends *atomic.Uint64
+	contacts     *contacts
 }
 
 // ReadFrom skips what would kill the process and hands the rest through untouched.
@@ -103,6 +112,11 @@ func (s *screened) ReadFrom(p []byte) (int, net.Addr, error) {
 			// which is a different fact from "replies arrive and we drop them" (see
 			// RefusedResponses) and wants different advice.
 			s.responses.Add(1)
+			// Credited only where a query of ours went (contacts.answered ignores anyone
+			// else), so this is "answered US", the signal the cache save keeps by.
+			if ap, ok := udpAddrPort(addr); ok {
+				s.contacts.answered(ap)
+			}
 		}
 		return n, addr, nil
 	}
