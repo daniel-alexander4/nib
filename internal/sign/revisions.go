@@ -75,9 +75,12 @@ type Revision struct {
 	// Verified is the library's `ValidSignature` for this record's position in its enumeration.
 	// A record outside that enumeration is false by definition, never by index.
 	Verified bool
-	// Timestamp marks a document timestamp: `/Type /DocTimeStamp` or `/SubFilter /ETSI.RFC3161`.
+	// Timestamp marks a document timestamp: LABELLED one (`/Type /DocTimeStamp` or `/SubFilter
+	// /ETSI.RFC3161`) AND, where `/Contents` parses, ENCAPSULATING content, as an RFC 3161 token
+	// carries its TSTInfo. A labelled record whose blob encapsulates nothing is a detached signature
+	// with a rewritten label, and is a signer — so its failure sets `Invalid` (ADR-060).
 	// It names no signer, and anyone can obtain one over any bytes, so it NEVER bounds coverage
-	// (ADR-059). Its `messageImprint` is not read here: the verdict path never pays for it.
+	// (ADR-059) and is never a signer (ADR-060). Its `messageImprint` is not read here: the verdict path never pays for it.
 	Timestamp bool
 
 	// hasContents is a non-empty `/Contents` — the rule `signatureBlobPresent` uses to tell a real
@@ -218,6 +221,14 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 			revs = append(revs, rev)
 			continue
 		}
+		// A label is text inside the signer's own coverage, so it cannot by itself make a record a
+		// timestamp: relabelling a FAILED signature `/ETSI.RFC3161` would take it out of the signers
+		// and hide its failure (ADR-060). An RFC 3161 token encapsulates its TSTInfo; a detached
+		// signature encapsulates nothing. The library does not expose eContentType, so the test is
+		// that `Content` is non-empty.
+		if rev.Timestamp && len(p7.Content) == 0 {
+			rev.Timestamp = false
+		}
 		if sigFlags {
 			rev.libPos = lib
 			lib++
@@ -253,10 +264,19 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 	return revs, st, nil
 }
 
+// countsAsSigner is the one answer to "is this record a signer" (ADR-060): it is well-formed and
+// it is not a document timestamp. A refused record may verify as the victim it copied (/pending
+// 687) and a timestamp names nobody (/pending 737), so neither is in `Status.Signers` nor votes on
+// `State` — each is reported by what it is, in `Status.Refused` or `Status.Timestamps`. Whether the
+// library verified the record is NOT part of it: a well-formed signature whose hash fails is a
+// signer, and the one that makes the document `Invalid`.
+func (r *Revision) countsAsSigner() bool { return r.Cause == "" && !r.Timestamp }
+
 // bounds reports whether this record's `CoverageEnd` counts towards `AddedAfter`: the library
-// verified it, it is well-formed, and it is a signature rather than a document timestamp. Nothing
-// else measures coverage (P01.S02, ADR-059).
-func (r *Revision) bounds() bool { return r.Verified && r.Cause == "" && !r.Timestamp }
+// verified it and it counts as a signer — well-formed, and a signature rather than a document
+// timestamp. Nothing else measures coverage (P01.S02, ADR-059), and nothing else decides who is a
+// signer (ADR-060, ADR-009).
+func (r *Revision) bounds() bool { return r.Verified && r.countsAsSigner() }
 
 // byteRangeOf reads the array exactly as the library does, and says whether every element was an
 // integer — conjunct (1) needs to know, and the library does not ask.

@@ -4835,6 +4835,14 @@ function updateBadge(sig, inCeremony, unverified) {
     unsigned: ['badge-unsigned', 'Unsigned'],
   };
   let [cls, label] = map[sig?.state] || ['badge-none', 'no document'];
+  const refused = sig?.refused || [];
+  const timestamps = sig?.timestamps || [];
+  // **Invalid with no signer is not "modified since signing"** (P01.S03, ADR-060): a refused record
+  // and a document timestamp are not signers, so a document carrying only those has no signature Nib
+  // could check — and "modified since signing" would claim one it never found.
+  if (sig?.state === 'invalid' && !signers.length && (refused.length || timestamps.length)) {
+    label = '⚠ No signature Nib could check';
+  }
   // **`Untampered` is reserved for the case it is true of (/pending 390).**
   //
   // The defect, reproduced: a stranger appends changed content plus their OWN self-signed
@@ -4868,6 +4876,14 @@ function updateBadge(sig, inCeremony, unverified) {
   // set the warning (ADR-059): an append, a signature Nib refused, or a check it could not
   // complete — and none of them is "unchanged since you signed".
   if (sig?.state === 'valid' && sig?.addedAfter) { cls = 'badge-warn'; label += addedAfterSuffix(sig.addedAfterCause); }
+  // **A refusal is shown whenever there is one, whatever `addedAfter` says** (P01.S03). A refused
+  // record is not a signer, so a copy placed before a later signer that covers it (/pending 736)
+  // sets no append and leaves the document valid — and until S03 the badge then said nothing. The
+  // facts compose: beside "could not confirm" it is said too; the refused cause already says it.
+  if (refused.length && !(sig?.addedAfter && sig?.addedAfterCause === 'refused-signature-present')) {
+    if (sig?.state === 'valid') cls = 'badge-warn';
+    label += ' · a signature Nib refused is present';
+  }
 
   b.className = 'badge ' + cls;
   b.textContent = label;
@@ -4875,7 +4891,7 @@ function updateBadge(sig, inCeremony, unverified) {
   // Details only exist for a signed document (valid or modified) — OR for a document in a
   // ceremony, which has an obliged-signer count to report before anyone has signed at all —
   // OR for one carrying a signature Nib refused, which the panel names (P01.S02).
-  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !(sig?.refused?.length);
+  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length;
 }
 
 // addedAfterSuffix is the badge's words for `sign.Status.addedAfterCause`. A refused signature
@@ -4915,11 +4931,12 @@ function timeLabel(s) {
 async function openSigDetails() {
   const signers = view.lastSig?.signers || [];
   const refused = view.lastSig?.refused || [];
+  const timestamps = view.lastSig?.timestamps || [];
   // A ceremony document with NO signatures still has something to say: how many parties are
   // obliged, and that none of them has signed. That is C18's extreme case, and until P07.S05a
   // it was unreachable — this returned early and the button was hidden besides. So does a
-  // document carrying a signature Nib refused (P01.S02).
-  if (!signers.length && !view.inCeremony && !refused.length) return;
+  // document carrying a signature Nib refused (P01.S02), or a document timestamp (P01.S03).
+  if (!signers.length && !view.inCeremony && !refused.length && !timestamps.length) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
   const rows = signers.map((s) => {
@@ -4971,6 +4988,14 @@ async function openSigDetails() {
     const line = document.createElement('div');
     line.className = 'signote sig-refused';
     line.textContent = '⚠ A signature Nib refused is present — ' + refusedLine(r);
+    body.appendChild(line);
+  }
+  // Every document timestamp, by object number. It names no signer and Nib does not check it
+  // (ADR-059, ADR-060), so it is neither a signer row nor a refusal: it is said to be there.
+  for (const obj of timestamps) {
+    const line = document.createElement('div');
+    line.className = 'signote sig-timestamp';
+    line.textContent = 'A document timestamp is present — Object ' + obj + '. Nib does not check timestamps; it names no signer.';
     body.appendChild(line);
   }
   els.sigDetailsModal.hidden = false;

@@ -78,7 +78,16 @@ type SignerInfo struct {
 
 // Status is the verification result surfaced to the UI.
 type Status struct {
-	State   State        `json:"state"`
+	// State is the verdict over Signers: `Valid` when every one verifies, `Invalid` when any fails
+	// or when there is none and a signature blob is present (ADR-060).
+	State State `json:"state"`
+	// Signers are the records that count as signers (ADR-060): well-formed and not a document
+	// timestamp. A refused copy of a real signature and a document timestamp are never here —
+	// they are in Refused and Timestamps — so, WHEN THE JOIN SUCCEEDS, `len(Signers)` counts people
+	// who signed, and a reader that places the next signature or matches a roster by position may
+	// rely on it. Under a join error it does not hold: nothing is excluded (a refused copy or a
+	// timestamp may be listed as a signer), no signer has a fingerprint, and `AddedAfter` warns
+	// `could-not-check` — a reader that needs the count must not trust it without that warning clear.
 	Signers []SignerInfo `json:"signers,omitempty"`
 	// AddedAfter is true when the document carries content past the coverage of
 	// its last VALID, well-formed signature — added after signing, covered by no
@@ -99,6 +108,12 @@ type Status struct {
 	// placeholder, not a claim, and is never listed. Its /Filter is the document's
 	// own text, capped at 64 bytes.
 	Refused []RefusedSignature `json:"refused,omitempty"`
+	// Timestamps lists the object numbers of the document timestamps the document carries
+	// (`/Type /DocTimeStamp` or `/SubFilter /ETSI.RFC3161`, non-empty `/Contents`, not refused).
+	// Nib does not check a timestamp: it names no signer, anyone can obtain one over any bytes, and
+	// it is neither a signer nor coverage (ADR-059, ADR-060). It is listed so a reader can say the
+	// document carries one rather than say nothing about an object it saw.
+	Timestamps []uint32 `json:"timestamps,omitempty"`
 }
 
 // AddedAfterCause names which fact set `Status.AddedAfter` (ADR-059).
@@ -144,6 +159,18 @@ func refusedOf(revs []Revision) []RefusedSignature {
 			f = f[:maxRefusedFilter]
 		}
 		out = append(out, RefusedSignature{Obj: revs[i].Obj, Filter: f, Cause: revs[i].Cause})
+	}
+	return out
+}
+
+// timestampsOf is the reader's view of every document timestamp, in xref order: the records that
+// are timestamps and are not refused (a refused one is in `refusedOf`), and not placeholders.
+func timestampsOf(revs []Revision) []uint32 {
+	var out []uint32
+	for i := range revs {
+		if revs[i].Timestamp && revs[i].Cause == "" && revs[i].hasContents {
+			out = append(out, revs[i].Obj)
+		}
 	}
 	return out
 }
@@ -225,7 +252,7 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck}, nil, sweepErr
 	}
 	if libraryWouldOverread(revs, len(data)) {
-		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Refused: refusedOf(revs)}, revs, errLibraryWouldOverread
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Refused: refusedOf(revs), Timestamps: timestampsOf(revs)}, revs, errLibraryWouldOverread
 	}
 	resp, err := libraryVerify(bytes.NewReader(data), int64(len(data)))
 	if err != nil || resp == nil || len(resp.Signers) == 0 {
@@ -256,7 +283,7 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 		// or one the sweep refused (`checkableBlob`): a Reader-extended form's intact `/Perms /UR3`
 		// signature with no `/SigFlags` is a blob the library never looks at, and it read `Unsigned`
 		// before this rule — counting it made such a form `Invalid` with nothing to show why.
-		st := Status{State: Unsigned, Refused: refusedOf(revs)}
+		st := Status{State: Unsigned, Refused: refusedOf(revs), Timestamps: timestampsOf(revs)}
 		if signatureBlobPresent(data) || anyCheckableBlob(revs) {
 			st.State = Invalid
 		}
@@ -280,11 +307,26 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// certificate its SignerInfo names; the join lines the library's signers up with those records
 	// by position and cross-checks the bag (ADR-058). A join that disagrees names nobody, and the
 	// same disagreement makes `AddedAfter` warn below.
+	//
+	// **A library signer is reported only if its record counts as a signer** (ADR-060, P01.S03). The
+	// library enumerates a refused copy of the victim's dictionary as a second valid signer under the
+	// victim's name (/pending 687) and a document timestamp as a failed one (/pending 737), so taking
+	// its list as the signers let a copy halt a ceremony, move the next signature's placement, and a
+	// B-LTA document read `Invalid`. A refused record's failed verdict does not set `State` either:
+	// every byte inside a counted signer's coverage is hash-bound, so what a refused record can hide
+	// is a change past the last counted signer — which is exactly what `AddedAfter` reports.
+	//
+	// **Under a join error nothing is excluded** (declared): the positions are not known to line up,
+	// so which record a library signer is cannot be said. Every library signer is listed with no
+	// fingerprint, as before, and `AddedAfter` warns `could-not-check`.
 	at, joinErr := joinLibrary(revs, resp.Signers)
-	st := Status{State: Valid, Refused: refusedOf(revs)}
+	st := Status{State: Valid, Refused: refusedOf(revs), Timestamps: timestampsOf(revs)}
 	for i := range resp.Signers {
 		fp := ""
 		if joinErr == nil {
+			if !revs[at[i]].countsAsSigner() {
+				continue
+			}
 			fp = revs[at[i]].Fingerprint
 		}
 		si := signerInfo(&resp.Signers[i], fp)
@@ -292,6 +334,16 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 			st.State = Invalid
 		}
 		st.Signers = append(st.Signers, si)
+	}
+	// **No counted signer is not `Valid`** — nothing verified — and it is not `Unsigned` while a
+	// signature blob is present (ADR-060): a timestamp-only document, and a lone signature refused
+	// or relabelled `/SubFilter /ETSI.RFC3161` in place (its own tamper), must not read "never
+	// signed". The same door the zero-library-signer path asks.
+	if len(st.Signers) == 0 {
+		st.State = Unsigned
+		if anyCheckableBlob(revs) {
+			st.State = Invalid
+		}
 	}
 	// Flag content appended after the most-recent VALID signature, read from the records the join
 	// just marked (P01.S02 deleted the `/Fields` ByteRange walk that did this on its own, and with
@@ -304,7 +356,12 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// **A join that disagrees is a "could not confirm"** (P01.S01): the records and the library then
 	// describe different documents, and nothing either says about coverage is known to be about this
 	// one. Fail-closed — `AddedAfter` warns, and the cause says it could not check.
-	st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), joinErr, len(st.Signers) > 0)
+	//
+	// **The fourth argument is the LIBRARY's count, never `len(st.Signers)`** (P01.S03): the rule it
+	// feeds is "the library saw a signature and none bounds", and after ADR-060 a timestamp-only or
+	// refused-only document has library signers and no counted one — following the new count would
+	// read it "nothing added" about bytes no valid signature covers.
+	st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), joinErr, len(resp.Signers) > 0)
 	return st, revs, joinErr
 }
 

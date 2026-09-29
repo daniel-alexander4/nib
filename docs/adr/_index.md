@@ -537,3 +537,10 @@ home today.
   the library would have processed or the sweep refused. A stamp's imprint is never checked on the verdict path
   (the dispute surface's, on demand). One enumeration in `internal/sign`, two marked exemptions, guarded by an
   AST census whose bypasses are each driven red.
+- **[ADR-060 — a signer is a well-formed record that is not a timestamp, and `State` is theirs](060-a-signer-is-a-well-formed-record-that-is-not-a-timestamp.md)**
+  — `PLAN-returned-document.md` P01.S03, /pending 687, 737. `Revision.countsAsSigner` is the one predicate and
+  `bounds` is built on it: a refused copy and a document timestamp are not in `Signers` and do not vote on
+  `State`, so a copy no longer halts a ceremony or moves the next signature and a B-LTA document reads valid.
+  Zero counted signers is `Invalid` where a checkable blob exists; `addedAfter` keeps the library's count; a
+  join error excludes nothing. `Status.Timestamps` names each stamp; a refusal is shown, and `nib verify` exits
+  2, whether or not it set `AddedAfter`.

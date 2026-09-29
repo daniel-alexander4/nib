@@ -123,31 +123,14 @@ func appendListedDecoy(t *testing.T, signed []byte, filterClause string) (doc []
 	return appendRevision(t, signed, objs), decoy
 }
 
-// appendCopiedDictionary is /pending 687: a NEW object carrying the victim's signature dictionary,
-// its `/ByteRange` rewritten by br (nil keeps it). The library alone verifies it as a second signer.
-func appendCopiedDictionary(t *testing.T, signed []byte, br func(string) string) (doc []byte, obj int) {
+// copied is testpdf.CopiedSignatureDictionary, failing the test on a fixture error.
+func copied(t *testing.T, signed []byte, v testpdf.CopyVariant) ([]byte, int) {
 	t.Helper()
-	vi := bytes.Index(signed, []byte("/Adobe.PPKLite"))
-	if vi < 0 {
-		t.Fatal("no PPKLite dictionary")
-	}
-	hs := bytes.LastIndex(signed[:vi], []byte(" 0 obj"))
-	oe := hs + bytes.Index(signed[hs:], []byte("endobj"))
-	body := strings.TrimSpace(string(signed[hs+len(" 0 obj") : oe]))
-	if br != nil {
-		re := regexp.MustCompile(`/ByteRange\s*\[([^\]]*)\]`)
-		m := re.FindStringSubmatch(body)
-		if m == nil {
-			t.Fatal("victim has no /ByteRange")
-		}
-		body = re.ReplaceAllString(body, "/ByteRange ["+br(m[1])+"]")
-	}
-	r, err := dpdf.NewReader(bytes.NewReader(signed), int64(len(signed)))
+	doc, obj, err := testpdf.CopiedSignatureDictionary(signed, v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	obj = int(r.Trailer().Key("Size").Int64())
-	return appendRevision(t, signed, map[int]string{obj: body}), obj
+	return doc, obj
 }
 
 // TestVerifyPrintsEachRefusedSignature — P01.S02's CLI reader. A refused decoy makes `nib verify`
@@ -215,18 +198,17 @@ func TestVerifyRefusesEveryDecoyAndCopy(t *testing.T) {
 	for _, tc := range []fixture{
 		{"listed decoy, no /Filter", func() ([]byte, int) { return appendListedDecoy(t, signed, "") }, "", sign.CauseUnsupportedFilter, 1},
 		{"listed decoy, PPKLite", func() ([]byte, int) { return appendListedDecoy(t, signed, "/Filter/Adobe.PPKLite") }, "Adobe.PPKLite", sign.CauseUnparseableContents, 1},
-		{"copied dictionary, victim's four plus 999999999 0", func() ([]byte, int) {
-			return appendCopiedDictionary(t, signed, func(br string) string { return br + " 999999999 0" })
-		}, "Adobe.PPKLite", sign.CauseMalformedByteRange, 2},
-		{"copied dictionary under a new number", func() ([]byte, int) { return appendCopiedDictionary(t, signed, nil) }, "Adobe.PPKLite", sign.CauseContentsElsewhere, 2},
+		{"copied dictionary, victim's four plus 999999999 0", func() ([]byte, int) { return copied(t, signed, testpdf.CopyPastEOF) }, "Adobe.PPKLite", sign.CauseMalformedByteRange, 1},
+		{"copied dictionary under a new number", func() ([]byte, int) { return copied(t, signed, testpdf.CopyExact) }, "Adobe.PPKLite", sign.CauseContentsElsewhere, 1},
 	} {
 		doc, obj := tc.build()
 		path := filepath.Join(t.TempDir(), "doc.pdf")
 		if err := os.WriteFile(path, doc, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		// STIMULUS: the real signature still verifies (and a copy verifies beside it), so the
-		// document is Valid and only the coverage rule can make the command exit 2.
+		// STIMULUS: the real signature still verifies, so the document is Valid and only the
+		// refusal can make the command exit 2. A copy is not a signer (P01.S03, ADR-060), so every
+		// fixture here has exactly the one real signer.
 		st := sign.Verify(doc)
 		if st.State != sign.Valid || len(st.Signers) != tc.signers {
 			t.Fatalf("%s: STIMULUS: state %s signers %d, want valid/%d", tc.name, st.State, len(st.Signers), tc.signers)

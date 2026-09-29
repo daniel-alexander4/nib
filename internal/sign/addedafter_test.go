@@ -2,21 +2,12 @@ package sign
 
 import (
 	"bytes"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/hex"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io"
-	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	psign "github.com/digitorus/pdfsign/sign"
 	"github.com/digitorus/pdfsign/verify"
 	"github.com/digitorus/timestamp"
 
@@ -36,54 +26,12 @@ import (
 // P01.S02 — `AddedAfter` over verified, well-formed revisions (ADR-059).
 // ---------------------------------------------------------------------------------------------
 
-// localTSA is an RFC 3161 authority on loopback that stamps whatever hash it is sent — which is
-// what every public authority does, and why a document timestamp names nobody.
-func localTSA(t *testing.T) string {
+// withDocTimeStamp is testpdf.DocTimeStamped, failing the test on a fixture error.
+func withDocTimeStamp(t *testing.T, pdf []byte) []byte {
 	t.Helper()
-	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	out, err := testpdf.DocTimeStamped(pdf)
 	if err != nil {
 		t.Fatal(err)
-	}
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: "Loopback TSA"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping}, KeyUsage: x509.KeyUsageDigitalSignature}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		req, err := timestamp.ParseRequest(b)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		ts := timestamp.Timestamp{HashAlgorithm: req.HashAlgorithm, HashedMessage: req.HashedMessage,
-			Time: time.Now(), Nonce: req.Nonce, Policy: []int{1, 2, 3}, AddTSACertificate: true}
-		resp, err := ts.CreateResponseWithOpts(cert, k, crypto.SHA256)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/timestamp-reply")
-		_, _ = w.Write(resp)
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
-// withDocTimeStamp appends a PAdES document timestamp (`/Type /DocTimeStamp`, `/SubFilter
-// /ETSI.RFC3161`) over pdf, the B-LTA shape.
-func withDocTimeStamp(t *testing.T, pdf []byte, tsaURL string) []byte {
-	t.Helper()
-	out, err := runSign(pdf, psign.SignData{Signature: psign.SignDataSignature{CertType: psign.TimeStampSignature},
-		DigestAlgorithm: crypto.SHA256, TSA: psign.TSA{URL: tsaURL}})
-	if err != nil {
-		t.Fatalf("document timestamp: %v", err)
 	}
 	return out
 }
@@ -100,7 +48,7 @@ func approvalPlusDocTimeStamp(t *testing.T) (doc []byte, alice identity) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return withDocTimeStamp(t, signed, localTSA(t)), alice
+	return withDocTimeStamp(t, signed), alice
 }
 
 // imprintMatches is the test's own oracle for a stamp's imprint — production never reads it on the
@@ -473,26 +421,45 @@ func TestASoleFailedSignatureCannotBeChecked(t *testing.T) {
 	}
 }
 
-// TestEitherMarkMakesADocumentTimestamp — `/Type /DocTimeStamp` OR `/SubFilter /ETSI.RFC3161`: each
-// alone makes the record a timestamp, which bounds nothing even verified, and is not refused for a
-// token that is not an RFC 3161 one (ADR-059: the verdict path never reads the token).
+// TestEitherMarkMakesADocumentTimestamp — a record is a timestamp when it is MARKED (`/Type
+// /DocTimeStamp` OR `/SubFilter /ETSI.RFC3161`) AND its blob ENCAPSULATES content: then it bounds
+// nothing even verified, and is not refused for a token that is not an RFC 3161 one (ADR-059: the
+// verdict path never reads the token). A mark over a DETACHED blob is a label and nothing more, and
+// an encapsulating blob with no mark is an ordinary signature (ADR-060) — each is a signer, and
+// bounds when verified.
 func TestEitherMarkMakesADocumentTimestamp(t *testing.T) {
 	a := newIdentity(t, "Alice")
-	for _, tc := range []struct{ name, typ, sub string }{
-		{"type only", "DocTimeStamp", "adbe.pkcs7.detached"},
-		{"subfilter only", "Sig", "ETSI.RFC3161"},
+	for _, tc := range []struct {
+		name, typ, sub string
+		marked         bool
+	}{
+		{"type only", "DocTimeStamp", "adbe.pkcs7.detached", true},
+		{"subfilter only", "Sig", "ETSI.RFC3161", true},
+		{"neither", "Sig", "adbe.pkcs7.detached", false},
 	} {
-		dict := "<</Type/" + tc.typ + "/Filter/Adobe.PPKLite/SubFilter/" + tc.sub + "/ByteRange[" + brSlot("1", 64) +
-			"]/Contents" + contentsSlot("1") + ">>"
-		doc := fillSig(t, synthRevision(t, nil, baseObjs(dict), 1), "1", nil, detached(t, a))
-		rec := recordFor(t, mustSweep(t, doc), 5)
-		// STIMULUS: the record is well-formed, and exactly one of the two marks is present.
-		if rec.conjunct != 0 || (rec.Type == "DocTimeStamp") == (rec.SubFilter == "ETSI.RFC3161") {
-			t.Fatalf("%s: STIMULUS: conjunct %d type %q subfilter %q", tc.name, rec.conjunct, rec.Type, rec.SubFilter)
-		}
-		rec.Verified = true
-		if !rec.Timestamp || rec.Cause != "" || rec.bounds() {
-			t.Errorf("%s: timestamp %v cause %q bounds-when-verified %v, want an unrefused document timestamp that bounds nothing", tc.name, rec.Timestamp, rec.Cause, rec.bounds())
+		for _, blob := range []struct {
+			name        string
+			sign        func([]byte) []byte
+			encapsulate bool
+		}{
+			{"encapsulating", encapsulating(t, a), true},
+			{"detached", detached(t, a), false},
+		} {
+			dict := "<</Type/" + tc.typ + "/Filter/Adobe.PPKLite/SubFilter/" + tc.sub + "/ByteRange[" + brSlot("1", 64) +
+				"]/Contents" + contentsSlot("1") + ">>"
+			doc := fillSig(t, synthRevision(t, nil, baseObjs(dict), 1), "1", nil, blob.sign)
+			rec := recordFor(t, mustSweep(t, doc), 5)
+			// STIMULUS: the record is well-formed, and carries exactly one mark or none as the row says.
+			typ, sub := rec.Type == "DocTimeStamp", rec.SubFilter == "ETSI.RFC3161"
+			if rec.conjunct != 0 || (tc.marked && typ == sub) || (!tc.marked && (typ || sub)) {
+				t.Fatalf("%s/%s: STIMULUS: conjunct %d type %q subfilter %q", tc.name, blob.name, rec.conjunct, rec.Type, rec.SubFilter)
+			}
+			stamp := tc.marked && blob.encapsulate
+			rec.Verified = true
+			if rec.Timestamp != stamp || rec.Cause != "" || rec.bounds() == stamp {
+				t.Errorf("%s/%s: timestamp %v cause %q bounds-when-verified %v, want timestamp %v, unrefused, bounding %v",
+					tc.name, blob.name, rec.Timestamp, rec.Cause, rec.bounds(), stamp, !stamp)
+			}
 		}
 	}
 }

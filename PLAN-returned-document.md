@@ -447,7 +447,19 @@ from `Unsigned` into `Invalid`. It overlaps S01's join branch and does not confl
 `.Key("ByteRange")`, so the planned allow-list excuses nothing; the guard looks for the three calls with a marker per site.
 **Defaults (rung 2)**: three causes, the note reworded rather than a fourth; the readers land in S02; minor bump.
 
-#### P01.S03 — a refused signature is reported, and is not a signer
+#### P01.S03 — a refused signature is reported, and is not a signer *(done 2026-09-29, v1.169.1)*
+**Ledger**: both copied-dictionary fixtures verify with ONE signer and one `Refused` entry, `State` as for the untouched
+file — met (Go + **live**, `nib verify`: `valid (1 signer(s))`, the copy named `contents-elsewhere`; before S03 the binary
+said 2 signers); the tier-1 table tests — `NextPlacement` [40 136 320 220] (was 232), `ContributionProgress` done=1 (was
+`ErrPrefixMismatch` — **a copied dictionary halted a ceremony**), `ReadAttestations` 1 (was 2), `Completeness` and
+`confirmCoSigned` unchanged, `unverifiedSigners` 0, `signersSoFar` 1 row — each EQUAL to the untouched file (`internal/p2p`,
+`internal/server`); badge and `nib verify` show the refused line (jsdom + CLI); B-LTA: `invalid, 2 signers` → `valid, 1
+signer`, timestamp named (/pending 737's `State` half); precondition: zero structural refusals per source (measured at the
+grill), and the two real signed producers still exit 0; tiers 4 (+ `-n 4`) and 6 at the slice gate. Review
+`code-reviews/v1.169.0-p01s03-returned-document-2026-09-29.md`: **(review pin)** a record is a TIMESTAMP only when labelled
+one AND its PKCS#7 encapsulates content — relabelling a failed genuine signature (13 bytes in its own coverage) had turned
+`invalid` into `valid` with "a document timestamp is present"; now it stays a failed signer. `digitorus/pkcs7` does not
+expose the eContentType OID (ADR-060 says why the weaker test suffices).
 Scope: `Verify` does not count a refused record as a signer. **(plan-review pin: SRE + forensic + data + architect)** A
 structural refusal is NOT expressed as `SignerInfo.Valid=false` — that would turn the whole document `Invalid`
 (`verify.go:165-170`), read as "the victim's signature was tampered with", and halt a ceremony (`l3.go:287`,
@@ -468,6 +480,31 @@ Acceptance:
   cannot see this, so they are the regression backstop, not the acceptance.
 - The badge and `nib verify` show the refused line on the fixture (jsdom + CLI test).
 - Tiers 4 and 6 green.
+
+**Tasks** (slice grill 2026-09-29, `memory/grills/2026-09-29-p01s03-refused-not-signer.md` — verdict AMENDED: a signer is
+a record that is well-formed AND NOT A TIMESTAMP, or /pending 737 stays open — no DocTimeStamp is ever refused). Measured on
+`939c7986`: the copied dictionary reads `valid, 2 signers` and **halts a ceremony today** (`ContributionProgress` →
+`ErrPrefixMismatch`), moves `NextPlacement` (136 → 232), adds an `unverifiedSigners` row and a victim-named `signersSoFar`
+row; approval + DocTimeStamp reads `invalid, 2 signers`. **Precondition measured: zero structural refusals** — Finalize 1/1,
+`SignExternal` 1/1, the co-sign / ceremony hop 3/3, `irs-f1040` 1/1, `irs-fw9` 1/1; 2 of the 36 real-producer files carry
+signatures, 0 refused. T01 — one `countsAsSigner()` predicate (`Cause == "" && !Timestamp`), `bounds()` built on it; a
+library signer whose joined record does not count is skipped. T02 — zero counted signers: `Invalid` if `anyCheckableBlob`,
+else `Unsigned` (a lone signer relabelled `ETSI.RFC3161` must not read unsigned). T03 — on a join error nothing is excluded
+(declared). T04 — `addedAfter`'s fourth argument stays `len(resp.Signers) > 0`, never `len(st.Signers)` (red-proved). T05 —
+`Status.Timestamps []uint32`, on the CLI and in the details modal, in both censuses. T06 — the badge shows a refusal whenever
+there is one, whatever `AddedAfter` says; Invalid with no signer says "no signature Nib could check". T07 — `nib verify`
+lines; exit 2 whenever a signature is refused. T08 — `testpdf.CopiedSignatureDictionary` (byte surgery; `testpdf` must not
+import `sign`). T09 — table test in `internal/p2p`: `NextPlacement`, `Progress`, `Completeness`, `confirmCoSigned`,
+`ReadAttestations`, each EQUAL to the untouched file. T10 — `internal/server`: `unverifiedSigners`, `signersSoFar`. T11 —
+sign-level cases (`revisions_test.go`'s `len(st.Signers) != 2` becomes 1). T12 — jsdom + CLI tests. T13 — ADR-060: a
+signer is a well-formed record that is not a timestamp. T14 — tiers 4 (`-n 4`) and 6 at slice close.
+**Carries settled (rung 2)**: a refused record's failed library verdict does not set `State` — every byte inside a counted
+signer's coverage is hash-bound, so a refused record can hide only a change past the last counted signer, which
+`AddedAfter` reports. /pending 736 accepted: a refusal can REMOVE a signer, never add or rename one, and a removed signer
+fails closed at `Completeness`, `confirmCoSigned` and `Progress`; counting a refused record whose fingerprint matches the
+roster is rejected — that is exactly how the copy would count. **Defaults**: a timestamp-only document stays `Invalid` with
+the stamp named; `nib verify` exits 2 whenever a signature is refused; B-LTA reads valid + "content added after signing" +
+the timestamp line (a smarter cause is 737's residue); a join error keeps today's counting.
 
 #### P01.S04 — the red proofs
 Scope: a proof per new refusal and per gap-down, registered in `docs/red-proofs.md` — one per structural conjunct (the
