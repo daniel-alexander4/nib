@@ -20,7 +20,6 @@ import (
 func TestEveryPageContentReadRoutesThroughTheDoor(t *testing.T) {
 	exempt := map[string]string{
 		"ContentDigest": "internal/pdfops/attachments.go", // ADR-013: the digest's coverage is a format
-		"uacheck":       "internal/uacheck/content.go",    // ADR-052: veraPDF's join is unmeasured (/pending 719)
 		// Both compare with the form `api.NUp` wrote from pdfcpu's own join, so they must read that join.
 		"annotcarry-nup": "internal/pdfops/annotcarry.go",
 		"tagcarry-nup":   "internal/pdfops/tagcarry.go",

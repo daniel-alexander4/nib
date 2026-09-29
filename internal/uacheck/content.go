@@ -7,6 +7,7 @@ import (
 
 	"nib/internal/contentstream"
 	"nib/internal/fontcode"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -261,10 +262,11 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		if ir, e := d.Ctx.PageDictIndRef(p); e == nil && ir != nil {
 			objNr = ir.ObjectNumber.Value()
 		}
-		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** The checker reads as veraPDF does (ADR-052), and
+		// **pdfcpu's join, not `pdfread.PageContent`'s (ADR-056).** The checker reads as veraPDF does (ADR-052), and
 		// how veraPDF joins a divided `/Contents` is unmeasured; a join nib chose here could make it disagree with the
-		// oracle it is scored against. /pending 719.
-		src, cerr := d.Ctx.PageContent(page, p) //pagecontent:exempt uacheck
+		// oracle it is scored against. /pending 719. It is still read through pdfread's door, which bounds the join
+		// at `maxContentBytes` (`/pending 748`: one stream named six times ran this check 13.7 s at 3.2 GiB).
+		src, cerr := pdfread.PageContentAsPdfcpu(d.Ctx, page, p)
 		if cerr == model.ErrNoContent || len(src) == 0 {
 			continue
 		}
@@ -476,7 +478,7 @@ const (
 	// spaces drawn 80 times ran 25.1 s (`/pending 721`, measured). 512 MiB is ADR-005's ceiling on a whole open
 	// document, and it sits above what `maxContentOperators` admits of real content (~10-20 bytes an operator), so
 	// it binds on padding, not on drawing.
-	maxContentBytes = 512 << 20
+	maxContentBytes = pdfread.MaxPageContentBytes
 )
 
 // decodedContent is the ONE door through which the content walk decodes a nested stream — a form XObject, an
@@ -492,7 +494,10 @@ func (d *Document) decodedContent(sd *types.StreamDict, objNr int) ([]byte, erro
 		return src, nil
 	}
 	d.streamDecodes++
-	if err := sd.Decode(); err != nil {
+	// Decoded only as far as the byte budget has left (`/pending 748`): the first walk charges the whole stream,
+	// so a stream past what is left can never be walked, and inflating it first was the cost — one 400 KB form
+	// inflated to 400 MiB before anything could refuse it.
+	if err := pdfread.DecodeWithin(sd, int64(maxContentBytes-d.contentBytes)); err != nil {
 		return nil, err
 	}
 	if objNr != 0 {

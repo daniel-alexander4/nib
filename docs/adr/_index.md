@@ -556,3 +556,7 @@ home today.
 - **[ADR-063 — a signature only one reader can see makes the verdict `Invalid`](063-a-signature-only-one-reader-sees-invalidates-the-verdict.md)**
   — /pending 749; supersedes ADR-062 in part. pdfcpu's population (it follows `/XRefStm`) is compared with the
   sweep's; a signature only pdfcpu holds makes `State=Invalid` with `Unchecked` named, on the signer path too.
+- **[ADR-064 — a stream is decoded within what is left of its budget, at one door, and page content is bounded where pdfcpu decodes it](064-a-stream-is-decoded-within-what-is-left-of-its-budget.md)**
+  — /pending 748. `pdfread.DecodeWithin` caps every budgeted decode during the decode; both page-content joins stop
+  at 512 MiB; pdfcpu's optimize pass is estimated only where it decodes page content (`passDecodesPageContent`) and
+  only when a stream is named twice, then decodes once. Declared gap: distinct streams, bounded by file size.

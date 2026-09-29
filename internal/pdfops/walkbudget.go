@@ -1,7 +1,10 @@
 package pdfops
 
 import (
+	"errors"
 	"fmt"
+
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -85,6 +88,13 @@ func (b *formWalkBudget) enterForm(n int) bool {
 // Once the budget has refused nothing is decoded at all: the walk is already an error, and a decode it can
 // never use is the cost that ran on past the refusal. nil means "not read" — undecodable, or over budget.
 // A direct stream (no object number) is decoded where it is met.
+//
+// **And a form is decoded only as far as the budget has left** (`pdfread.DecodeWithin`, `/pending 748`): the
+// first walk of a form charges its whole size, so a form larger than what is left can never be walked, and
+// inflating it first was the cost. Measured on the old code: one 400 KB page drawing a 400 MiB flate form
+// once ran `readPageRuns` 0.99 s at a 898 MiB peak heap to refuse against a 20 MiB budget; a form past
+// pdfcpu's own 512 MiB ceiling came back undecodable and was skipped with NO error (1.8 GiB peak), so the
+// run list described a page nib had not read. A form the budget refuses now refuses the walk.
 func (b *formWalkBudget) formContent(sd *types.StreamDict, obj types.Object) []byte {
 	if b.over != "" {
 		return nil
@@ -97,7 +107,16 @@ func (b *formWalkBudget) formContent(sd *types.StreamDict, obj types.Object) []b
 		}
 	}
 	b.decodes++
-	src := streamContent(sd)
+	var src []byte
+	switch err := pdfread.DecodeWithin(sd, int64(b.maxBytes-b.bytes)); {
+	case errors.Is(err, pdfread.ErrDecodeLimit):
+		b.over = fmt.Sprintf("the content reads more than %d bytes of form XObjects, counting a form again each "+
+			"time it is drawn (a form decodes past what is left); nib stops reading there, so what lies beyond was "+
+			"never read", b.maxBytes)
+		return nil
+	case err == nil:
+		src = sd.Content
+	}
 	if nr >= 0 {
 		if b.decoded == nil {
 			b.decoded = map[int][]byte{}

@@ -32,7 +32,26 @@ import (
 //
 // **What it does not repair**: a split inside a token — a string, a dictionary, an inline image — which the
 // spec forbids and which no separator could mend.
+//
+// **Bounded at `MaxPageContentBytes` over the whole page** (`/pending 748`). pdfcpu caps each stream's decode at
+// 512 MiB and nothing caps the join, and an array may name one stream any number of times: measured, a 199 KB
+// file whose `/Contents` named one 200 MiB stream six times read as 1.2 GiB here (3.6 GiB peak heap) and the
+// checker ran 13.7 s over it, linear in the count. Past the bound the page is refused (ErrDecodeLimit), never
+// read short. Each element is still pdfcpu's own decode, so the work done before the refusal is at most the
+// bound plus one stream's 512 MiB.
 func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error) {
+	return pageContent(ctx, page, pageNr, true)
+}
+
+// PageContentAsPdfcpu is `PageContent` joined as pdfcpu joins — the streams of a `/Contents` array appended
+// with nothing between them — and bounded as `PageContent` is. It is for the named exemptions from ADR-056's
+// join that must read pdfcpu's bytes (the checker, ADR-052: how veraPDF joins is unmeasured, /pending 719), so
+// that keeping pdfcpu's join does not also mean keeping its unbounded one.
+func PageContentAsPdfcpu(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error) {
+	return pageContent(ctx, page, pageNr, false)
+}
+
+func pageContent(ctx *model.Context, page types.Dict, pageNr int, separate bool) ([]byte, error) {
 	o, _ := page.Find("Contents")
 	if o == nil {
 		return nil, model.ErrNoContent
@@ -43,7 +62,11 @@ func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error
 	}
 	arr, isArray := resolved.(types.Array)
 	if !isArray {
-		return ctx.PageContent(page, pageNr) //pagecontent:door
+		b, err := ctx.PageContent(page, pageNr) //pagecontent:door
+		if err == nil && len(b) > MaxPageContentBytes {
+			return nil, pageTooLarge(pageNr)
+		}
+		return b, err
 	}
 	var out, prev []byte
 	for _, e := range arr {
@@ -69,7 +92,11 @@ func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error
 		// **The previous STREAM, never the join so far.** A stream begins on a token boundary, so its own
 		// tokenization is the one that matters at its end; handing the accumulated join instead re-tokenized the
 		// whole page at every join — quadratic, measured at 13.8 s for 1,000 streams against pdfcpu's 10 ms.
-		if needsSeparator(prev, b) {
+		sep := separate && needsSeparator(prev, b)
+		if n := len(out) + len(b); n > MaxPageContentBytes || sep && n+1 > MaxPageContentBytes {
+			return nil, pageTooLarge(pageNr)
+		}
+		if sep {
 			out = append(out, '\n')
 		}
 		out = append(out, b...)
@@ -79,6 +106,12 @@ func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error
 		return nil, model.ErrNoContent
 	}
 	return out, nil
+}
+
+// pageTooLarge is the refusal of a page whose content decodes past MaxPageContentBytes.
+func pageTooLarge(pageNr int) error {
+	return fmt.Errorf("page %d content: %w: its /Contents decode past %d bytes together, and nib stopped reading "+
+		"there", pageNr, ErrDecodeLimit, MaxPageContentBytes)
 }
 
 // needsSeparator reports whether appending next to prev would change how either is tokenized.

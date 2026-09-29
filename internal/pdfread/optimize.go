@@ -141,7 +141,8 @@ var ErrUnaffordable = errors.New("nib cannot read this document the way its chec
 // Unaffordable says why pdfcpu's optimize pass over ctx would exceed a budget, or "" when it would not.
 func Unaffordable(ctx *model.Context) string {
 	e := optimizeEstimate{ctx: ctx, forms: map[int]*types.StreamDict{}, memo: map[int]objShape{}}
-	for _, res := range pageResources(ctx) {
+	pages := pageDicts(ctx)
+	for _, res := range pageResources(ctx, pages) {
 		if !e.walk(res, nil) {
 			return fmt.Sprintf("its resources reach form XObjects along more than %d paths, and the optimizer "+
 				"walks every one", maxOptimizeWalk)
@@ -151,7 +152,7 @@ func Unaffordable(ctx *model.Context) string {
 		return fmt.Sprintf("comparing its form XObjects for duplicates would take more than %d steps "+
 			"(forms of one length that differ deep inside their resources)", maxOptimizeCompare)
 	}
-	return ""
+	return contentUnaffordable(ctx, pages)
 }
 
 // optimizeEstimate is the state of one estimate.
@@ -392,15 +393,25 @@ func satMul(a, b int) int {
 // pageResources is each page's own `/Resources`, uninherited, in page order — what `pdfops.scanPages` gives the
 // estimate there, restated because this package sits below `pdfops`. pdfcpu's pass starts from the same
 // dictionaries (optimize.go's `optimizeResources` over each page's `Resources`).
-func pageResources(ctx *model.Context) []types.Dict {
-	out := make([]types.Dict, 0, ctx.PageCount)
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
-		if err != nil || d == nil {
-			continue
-		}
+func pageResources(ctx *model.Context, pages []types.Dict) []types.Dict {
+	out := make([]types.Dict, 0, len(pages))
+	for _, d := range pages {
 		if res, e := ctx.DereferenceDict(d["Resources"]); e == nil && res != nil {
 			out = append(out, res)
+		}
+	}
+	return out
+}
+
+// pageDicts is every page's dictionary that resolves, in page order, gathered ONCE per estimate and handed to each
+// reader of it (`pageResources`, `contentNamings`). pdfcpu's `PageDict` walks the page tree from the root at every
+// call, so each pass over the pages is quadratic in their count: a second pass cost 11.2 s and 2.3 GiB on a
+// 7,059-page document (/pending 748). The one pass that remains is /pending 753's.
+func pageDicts(ctx *model.Context) []types.Dict {
+	out := make([]types.Dict, 0, ctx.PageCount)
+	for p := 1; p <= ctx.PageCount; p++ {
+		if d, _, _, err := ctx.PageDict(p, false); err == nil && d != nil {
+			out = append(out, d)
 		}
 	}
 	return out
