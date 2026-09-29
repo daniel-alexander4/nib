@@ -1,13 +1,12 @@
 diff --git a/internal/server/session.go b/internal/server/session.go
-index 46b29f2..83567ed 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -272,7 +272,7 @@ func (a consentAnchor) current(se *session) bool {
- func (se *session) setPending(a consentAnchor, p *pendingReq) bool {
+@@ -959,7 +959,7 @@
+ func (se *session) setPending(a consentAnchor, p *pendingReq) error {
  	se.mu.Lock()
  	defer se.mu.Unlock()
 -	if !a.current(se) {
-+	if se.ln == nil && se.cer == nil {
- 		return false
++	if len(se.arms) == 0 {
+ 		return errConsentNotArmed
  	}
- 	se.pending = p
+ 	if se.pending != nil {

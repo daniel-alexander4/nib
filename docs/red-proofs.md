@@ -6282,3 +6282,14 @@ restored by `cp` from a scratch backup with `cmp` confirming the file; every row
 signer always fails the join, which already makes the document `Invalid`); and the cause's `err != nil` arm
 (`joinLibrary` marks `Verified` only after every check passes, so an error leaves no record bounding and `!saw`
 answers the same). Both are kept as the stated rule, not as tested behaviour.
+
+## /pending 660 — one consent slot, two arms (2026-09-29)
+
+Each mutation applied alone to `internal/server/session.go`, run with
+`go test ./internal/server/ -run 'TestASecondArmCannotDisplace|TestAnAnswerReachesOnly' -count=1`, then restored.
+
+| Defect reintroduced | What it said | Check that fired |
+| --- | --- | --- |
+| **`setPending` assigns over a busy slot** (the `se.pending != nil` refusal removed) | `ceremony B's resumed hop parked over ceremony A's consent while A was on screen (err=<nil>); the user's Accept, typed for A, would sign B` | `TestASecondArmCannotDisplaceTheConsentOnScreen` |
+| **`respond` answers whatever is parked** (the ID comparison removed) | `an answer naming A was 0 against B's request, want respondNotThatRequest` … `the Accept the user gave for ceremony A signed ceremony B` | `TestAnAnswerReachesOnlyTheRequestItNames` |
+| **`Confirm` marks the arm before winning the slot** (`sc.saw.mark()` moved back above `setPending`) | `a consent refused busy SPENT the arm — nothing was shown to the user for it` | `TestASecondArmCannotDisplaceTheConsentOnScreen` |

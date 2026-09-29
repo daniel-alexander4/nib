@@ -449,10 +449,12 @@ transfer_leg() { # $1 = transport
 
   # B's consent gate, then accept.
   for i in $(seq 1 200); do
-    get B /api/session/status | grep -q '"pending"' && break
+    pid=$(get B /api/session/status | python3 -c "import json,sys;print((json.load(sys.stdin).get('pending') or {}).get('id',''))" 2>/dev/null)
+    [ -n "$pid" ] && break
     sleep 0.1
   done
-  post B /api/session/respond '{"accept":true}' >/dev/null
+  # `id` names the request answered; /api/session/respond requires it (/pending 660).
+  post B /api/session/respond "{\"id\":\"$pid\",\"accept\":true}" >/dev/null
   wait $send_pid 2>/dev/null
   code=$(cat "$SP/send.$tr.code" 2>/dev/null)
   # Disarm regardless of outcome: a leg that failed with B still armed makes the NEXT leg's arm
@@ -747,10 +749,11 @@ print(next(i['invitation'] for i in d['invites'] if i['fingerprint'].lower()=='$
           post B /api/session/verify '{"confirmed":true}' >/dev/null 2>&1 || true
           # B's consent gate for the document itself.
           for i in $(seq 1 300); do
-            get B /api/session/status | grep -q '"pending"' && break
+            pid=$(get B /api/session/status | python3 -c "import json,sys;print((json.load(sys.stdin).get('pending') or {}).get('id',''))" 2>/dev/null)
+            [ -n "$pid" ] && break
             sleep 0.1
           done
-          post B /api/session/respond '{"accept":true}' >/dev/null 2>&1 || true
+          post B /api/session/respond "{\"id\":\"$pid\",\"accept\":true}" >/dev/null 2>&1 || true
         ) &
         answerer=$!
         # **The dial ADDRESS is passed and the invitation is not, and that distinction is the

@@ -1,6 +1,7 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -840,16 +840,6 @@
+@@ -1232,16 +1232,6 @@
  	// stays correct if a path ever reaches `Confirm` without a spoken check first: a document the
  	// gate refused was shown to nobody, and nothing that shows nobody anything should spend an
  	// arm. The load-bearing half is the ordering against `setPending` above.
@@ -14,6 +15,6 @@
 -			return false, "", nil, time.Time{}, err
 -		}
 -	}
- 	sc.saw.mark() // the consent request is about to go on screen
  	// Park the received document for review (served via /api/session/pending-pdf)
  	// rather than replacing the open document — that only changes on accept, in
+ 	// runSession. A declined or timed-out request leaves the open doc untouched.

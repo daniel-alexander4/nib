@@ -168,7 +168,7 @@ func TestARefusedArrivalTellsTheLocalUser(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			if okServer.sess.pendingPDF() != nil {
-				okServer.sess.respond(sessionDecision{accept: false})
+				okServer.sess.respond(okServer.sess.pendingIDForTest(), sessionDecision{accept: false})
 				return
 			}
 			time.Sleep(2 * time.Millisecond)

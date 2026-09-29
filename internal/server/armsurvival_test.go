@@ -513,6 +513,9 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 			}
 			var st sessionStatus
 			sessGet(t, c, ts.URL+"/api/session/status", &st)
+			if step.field == "Pending" && st.Pending != nil {
+				step.body["id"] = st.Pending.ID // the answer names the request (/pending 660)
+			}
 			if (step.field == "Verify" && st.Verify != nil) || (step.field == "Pending" && st.Pending != nil) {
 				break
 			}

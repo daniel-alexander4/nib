@@ -184,7 +184,7 @@ func TestSessionArmReceiveSign(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
-		jsonBody(map[string]any{"accept": true, "intent": "I accept"}))
+		jsonBody(map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": true, "intent": "I accept"}))
 	if rr.StatusCode != http.StatusOK {
 		t.Fatalf("respond status = %d", rr.StatusCode)
 	}
@@ -366,7 +366,7 @@ func TestSessionDeclineLeavesOpenDoc(t *testing.T) {
 
 	// Bob declines.
 	rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
-		jsonBody(map[string]any{"accept": false}))
+		jsonBody(map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": false}))
 	if rr.StatusCode != http.StatusOK {
 		t.Fatalf("respond status = %d", rr.StatusCode)
 	}
@@ -509,7 +509,7 @@ func TestSessionQuoteForPendingPeer(t *testing.T) {
 
 	// Clean up: decline, and let the initiator goroutine finish.
 	write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
-		jsonBody(map[string]any{"accept": false})).Body.Close()
+		jsonBody(map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": false})).Body.Close()
 	<-errc
 }
 
@@ -584,7 +584,7 @@ func TestSessionReceiveTransfer(t *testing.T) {
 
 	waitPending(t, c, ts.URL, aFP)
 	rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
-		jsonBody(map[string]any{"accept": true}))
+		jsonBody(map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": true}))
 	if rr.StatusCode != http.StatusOK {
 		t.Fatalf("respond = %d", rr.StatusCode)
 	}
@@ -660,7 +660,7 @@ func TestSessionReceiveTransferDecline(t *testing.T) {
 
 	waitPending(t, c, ts.URL, aFP)
 	write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
-		jsonBody(map[string]any{"accept": false})).Body.Close()
+		jsonBody(map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": false})).Body.Close()
 
 	if e := <-errc; !errors.Is(e, p2p.ErrDeclined) {
 		t.Fatalf("sender got %v, want ErrDeclined", e)
@@ -1005,11 +1005,14 @@ func TestClearPendingDoesNotDropALaterSessionsConsent(t *testing.T) {
 	}
 
 	old := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if !se.setPending(consentAnchor{ln: ln}, old) {
+	if se.setPending(consentAnchor{ln: ln}, old) != nil {
 		t.Fatal("setup: could not set the first pending request")
 	}
+	// The first confirmer finishes and clears; a second request parks (the seat is free now —
+	// setPending refuses a busy one, /pending 660).
+	se.clearPendingIf(old)
 	current := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if !se.setPending(consentAnchor{ln: ln}, current) {
+	if se.setPending(consentAnchor{ln: ln}, current) != nil {
 		t.Fatal("setup: could not set the second pending request")
 	}
 
@@ -1401,7 +1404,7 @@ func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T
 	// SETUP: the old listener's goroutine CAN park while it is the armed one. Without this
 	// the refusal below is equally true of a setPending that refuses everything, which would
 	// break every consent in the product.
-	if !se.setPending(consentAnchor{ln: oldLn}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if se.setPending(consentAnchor{ln: oldLn}, &pendingReq{resp: make(chan sessionDecision, 1)}) != nil {
 		t.Fatal("setup: the armed listener could not park a consent request, so the refusal " +
 			"below cannot distinguish an identity guard from a blanket refusal")
 	}
@@ -1415,7 +1418,7 @@ func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T
 	}
 
 	stale := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if se.setPending(consentAnchor{ln: oldLn}, stale) {
+	if se.setPending(consentAnchor{ln: oldLn}, stale) == nil {
 		t.Error("a goroutine belonging to the CANCELLED session parked its consent request " +
 			"on the session that replaced it. The user is shown a document from the " +
 			"connection they just cancelled, attributed to the peer they have just armed for.")
@@ -1428,7 +1431,7 @@ func TestAStaleGoroutineCannotParkConsentOnTheSessionThatReplacedIt(t *testing.T
 	}
 
 	// And the new listener can still park, or the guard has simply broken consent.
-	if !se.setPending(consentAnchor{ln: newLn}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if se.setPending(consentAnchor{ln: newLn}, &pendingReq{resp: make(chan sessionDecision, 1)}) != nil {
 		t.Error("the currently-armed listener could not park a consent request")
 	}
 }
@@ -1450,7 +1453,7 @@ func TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener(t *testing.T) {
 	// THE FIX: a consent naming the CEREMONY parks, though it names no listener at all — the
 	// dial-won receive role's only door. Before S09 this required se.ln == ln, which a dialer
 	// cannot satisfy.
-	if !se.setPending(consentAnchor{cer: cerX}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if se.setPending(consentAnchor{cer: cerX}, &pendingReq{resp: make(chan sessionDecision, 1)}) != nil {
 		t.Fatal("a ceremony-anchored consent could not park while its ceremony is armed — the " +
 			"dial-won receive role would hang here")
 	}
@@ -1458,7 +1461,7 @@ func TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener(t *testing.T) {
 	// NOT a blanket accept: an anchor naming a DIFFERENT ceremony is refused even while armed, so
 	// the pass above is the identity matching, not the guard being absent.
 	cerOther := &ceremonyID{}
-	if se.setPending(consentAnchor{cer: cerOther}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if se.setPending(consentAnchor{cer: cerOther}, &pendingReq{resp: make(chan sessionDecision, 1)}) == nil {
 		t.Error("a consent naming an unrelated ceremony parked on this armed session")
 	}
 
@@ -1471,7 +1474,7 @@ func TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener(t *testing.T) {
 		t.Fatal("setup: could not re-arm")
 	}
 	stale := &pendingReq{resp: make(chan sessionDecision, 1)}
-	if se.setPending(consentAnchor{cer: cerX}, stale) {
+	if se.setPending(consentAnchor{cer: cerX}, stale) == nil {
 		t.Error("a goroutine belonging to the CANCELLED ceremony parked its consent on the " +
 			"ceremony that replaced it — the exact cross-session leak the listener anchor prevents")
 	}
@@ -1482,7 +1485,7 @@ func TestACeremonyHopConsentAnchorsOnTheCeremonyNotAListener(t *testing.T) {
 		t.Error("the new ceremony's pending consent IS the stale one")
 	}
 	// The current ceremony can still park, or the guard has simply broken consent.
-	if !se.setPending(consentAnchor{cer: cerY}, &pendingReq{resp: make(chan sessionDecision, 1)}) {
+	if se.setPending(consentAnchor{cer: cerY}, &pendingReq{resp: make(chan sessionDecision, 1)}) != nil {
 		t.Error("the currently-armed ceremony could not park a consent request")
 	}
 }
@@ -1589,7 +1592,7 @@ func TestCeremonyReceiverDialsAndCoSigns(t *testing.T) {
 	}
 	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
 	waitForPending(t, c, ts.URL, aFP, errc)
-	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"accept": true, "intent": "I accept"})
+	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": true, "intent": "I accept"})
 
 	select {
 	case <-accepted:
@@ -1784,7 +1787,7 @@ func redeliveryAfterReconnect(t *testing.T, transport string) {
 	_ = waitForVerify(t, c, ts.URL, e1)
 	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
 	waitForPending(t, c, ts.URL, aFP, e1)
-	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"accept": true, "intent": "I accept"})
+	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": true, "intent": "I accept"})
 	var final1 []byte
 	select {
 	case final1 = <-r1:
@@ -1946,7 +1949,7 @@ func TestCeremonyReRacesAfterEarlyChannelLoss(t *testing.T) {
 	_ = waitForVerify(t, c, ts.URL, e2)
 	postJSON(t, c, csrf, ts.URL+"/api/session/verify", map[string]any{"confirmed": true})
 	waitForPending(t, c, ts.URL, aFP, e2)
-	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"accept": true, "intent": "I accept"})
+	postJSON(t, c, csrf, ts.URL+"/api/session/respond", map[string]any{"id": pendingIDAt(t, c, ts.URL), "accept": true, "intent": "I accept"})
 	select {
 	case final := <-r2:
 		if n := len(p2p.ReadAttestations(final)); n != 2 {

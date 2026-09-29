@@ -1112,14 +1112,16 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
         curl -fsS -X POST "$B/api/session/quote" -H 'Content-Type: application/json' \
           -H "X-CSRF-Token: $CSRF_B" -d '{"intent":"I accept"}' \
           -o "$WORK/quote.$transport.json" 2>/dev/null
+        # `id` names the request answered, which `/api/session/respond` requires (/pending 660).
+        pid="$(jget pending.id < "$WORK/pending.$transport.json" 2>/dev/null)"
         answer="$(python3 -c "
 import json,sys
 try:
     q=json.load(open('$WORK/quote.$transport.json'))
 except Exception:
     q={}
-print(json.dumps({'accept':True,'intent':'I accept','when':q.get('when','')}))" 2>/dev/null)"
-        [ -n "$answer" ] || answer="$CONSENT_ANSWER"
+print(json.dumps({'id':'$pid','accept':True,'intent':'I accept','when':q.get('when','')}))" 2>/dev/null)"
+        [ -n "$answer" ] || answer="{\"id\":\"$pid\",${CONSENT_ANSWER#\{}"
         curl -fsS -X POST "$B/api/session/respond" -H 'Content-Type: application/json' \
           -H "X-CSRF-Token: $CSRF_B" -d "$answer" >/dev/null 2>&1
         exit 0
@@ -1756,10 +1758,11 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   watch_verify "${URLS[1]}" "${CSRFS[1]}" "$WORK/int.words_b" &
   local w2=$!
   ( for _ in $(seq 1 480); do
-      if [ -n "$(curl -fsS "${URLS[1]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+      pid="$(curl -fsS "${URLS[1]}/api/session/status" 2>/dev/null | jget pending.id)"
+      if [ -n "$pid" ]; then
         : > "$WORK/int.gate1"
         curl -fsS -X POST "${URLS[1]}/api/session/respond" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: ${CSRFS[1]}" -d '{"accept":true,"intent":"I accept"}' >/dev/null 2>&1
+          -H "X-CSRF-Token: ${CSRFS[1]}" -d "{\"id\":\"$pid\",\"accept\":true,\"intent\":\"I accept\"}" >/dev/null 2>&1
         exit 0
       fi
       sleep 0.25
@@ -2047,9 +2050,10 @@ print(next(x['invitation'] for x in d['invites'] if x['fingerprint'].lower()=='$
   local dv4=$!
   (
     for _ in $(seq 1 240); do
-      if [ -n "$(curl -fsS "${URLS[3]}/api/session/status" 2>/dev/null | jget pending.fingerprint)" ]; then
+      pid="$(curl -fsS "${URLS[3]}/api/session/status" 2>/dev/null | jget pending.id)"
+      if [ -n "$pid" ]; then
         curl -fsS -X POST "${URLS[3]}/api/session/respond" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: ${CSRFS[3]}" -d '{"accept":false}' >/dev/null 2>&1
+          -H "X-CSRF-Token: ${CSRFS[3]}" -d "{\"id\":\"$pid\",\"accept\":false}" >/dev/null 2>&1
         exit 0
       fi
       sleep 0.25
