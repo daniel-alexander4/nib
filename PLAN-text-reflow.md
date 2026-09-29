@@ -568,11 +568,17 @@ or unmapped is reported, never guessed.
 several; `textRun.face` kept with the glyphs. T02 — the corpus round trip and four hand-built answers. **Grill assumption
 (rung 2)**: built FROM `textFor` rather than beside it, so the inverse cannot disagree with the reader (law 4).
 
-#### P06.S03 — the line breaker takes a width function
+#### P06.S03 — the line breaker takes a width function *(done 2026-09-28, v1.167.12)*
 `mdpdf`'s greedy wrap is re-expressed over a width function (law 4 — the existing engine, not a second one), and the
 reflow path calls it with the document's own advances. Acceptance: mdpdf's output is byte-identical before and after on
 its own tests; a paragraph re-wrapped at its own measure with no edit reproduces its original line breaks on the
 hand-checked corpus.
+
+**Tasks** (slice grill, 2026-09-28): T01 — `mdpdf.BreakGreedy[T]` with `BreakOps` (width, space, forced break, split);
+`wrapWords` becomes one call of it, byte-identical. T02 — `pdfops/reflow.go`: `paragraphWords` (a word ends at a space
+glyph, a run gap wider than 0.15 em, or a line end; the paragraph's space is the MEDIAN gap it draws; each refusal named),
+`measureOf`, `rebreak`, and `readPageGlyphLayout`. **Measured**: 2,487 of 2,691 real-producer multi-line paragraphs already
+re-break in place under the greedy rule; the other 204 are P08's justified/hyphenated text.
 
 #### P06.S04 — the rewrite of one paragraph
 Given a paragraph and replacement text, delete its show operators and emit the re-wrapped lines in its own font, size

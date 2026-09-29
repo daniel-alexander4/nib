@@ -81,6 +81,19 @@ func readPageLayout(ctx *model.Context, pageNr int) (pageLayout, error) {
 	return groupRuns(pr.runs), nil
 }
 
+// readPageGlyphLayout is readPageLayout over runs that keep their glyphs (`readPageGlyphRuns`) — reflow's reader. The
+// grouping is the same door; only what each run carries differs.
+func readPageGlyphLayout(ctx *model.Context, pageNr int) (pageLayout, error) {
+	pr, err := readPageGlyphRuns(ctx, pageNr)
+	if err != nil {
+		return pageLayout{}, err
+	}
+	if pr.noText {
+		return pageLayout{noText: true}, nil
+	}
+	return groupRuns(pr.runs), nil
+}
+
 // joinGapEm is the widest horizontal gap, in ems of the larger run, that still joins two runs on a
 // baseline into one line.
 const joinGapEm = 1.5
