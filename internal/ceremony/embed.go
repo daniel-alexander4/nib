@@ -243,11 +243,23 @@ func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 	// A zero means a record written before the field existed. There are none in the field —
 	// P07.S02 is the first code that ever constructs a Record — so this is treated as the
 	// skew it is rather than defaulted, which would silently compare across digest rules.
-	if r.DigestVersion != pdfops.ContentDigestVersion {
-		return r, fmt.Errorf("%w: this ceremony's document hash was computed under Nib's "+
-			"content-digest rule %d and this build uses rule %d, so the two numbers are not "+
-			"comparable — update Nib rather than treating this as a changed document",
-			ErrDigestVersion, r.DigestVersion, pdfops.ContentDigestVersion)
+	if err := digestRuleSkew(r); err != nil {
+		return r, err
 	}
 	return r, nil
+}
+
+// digestRuleSkew is the one door for D32's digest-rule skew: nil when r's DocHash was computed
+// under this build's `pdfops.ContentDigestVersion`, else an ErrDigestVersion naming both rules.
+// Every site that compares a DocHash asks it FIRST (CheckRecord above, ReadMirror), because a
+// comparison across rules produces a tampering sentence for a version difference — /pending 725's
+// bump to rule 4 would otherwise have reported every stored unsigned mirror as damaged.
+func digestRuleSkew(r Record) error {
+	if r.DigestVersion == pdfops.ContentDigestVersion {
+		return nil
+	}
+	return fmt.Errorf("%w: this ceremony's document hash was computed under Nib's "+
+		"content-digest rule %d and this build uses rule %d, so the two numbers are not "+
+		"comparable — update Nib rather than treating this as a changed document",
+		ErrDigestVersion, r.DigestVersion, pdfops.ContentDigestVersion)
 }

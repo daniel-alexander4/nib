@@ -91,3 +91,37 @@ func TestADigestVersionSkewSaysSoRatherThanAccusing(t *testing.T) {
 		t.Errorf("the skew produced the TAMPERING sentence: %s", msg)
 	}
 }
+
+// TestAStoredMirrorUnderAnotherDigestRuleIsASkewNotDamage — /pending 725 bumped
+// ContentDigestVersion, and ReadMirror compared an unsigned stored document's DocHash without
+// asking which rule computed it, so every mirror written before the bump read "damaged or
+// incomplete". It must say what CheckRecord says: a version skew, naming both rules.
+func TestAStoredMirrorUnderAnotherDigestRuleIsASkewNotDamage(t *testing.T) {
+	cert, key, cfp := identity(t, "Convener")
+	_, _, afp := identity(t, "A")
+	doc, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := draft(t, cfp, afp)
+	r.DocHash = "0000000000000000000000000000000000000000000000000000000000000000" // a rule-3 number: not this build's
+	r.DigestVersion = pdfops.ContentDigestVersion - 1
+	if err := r.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	if r.DigestVersion == pdfops.ContentDigestVersion {
+		t.Fatal("Sign overwrote the skewed DigestVersion — this test cannot construct its own stimulus")
+	}
+	root := t.TempDir()
+	if _, err := WriteMirror(root, r, doc); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = ReadMirror(root, r.ID, time.Now())
+	if errors.Is(err, ErrMirrorDamaged) {
+		t.Fatalf("a mirror written under digest rule %d reads as damaged: %v — want ErrDigestVersion",
+			r.DigestVersion, err)
+	}
+	if !errors.Is(err, ErrDigestVersion) {
+		t.Fatalf("a mirror written under another digest rule reported %v — want ErrDigestVersion", err)
+	}
+}

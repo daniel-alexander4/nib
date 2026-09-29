@@ -1,13 +1,12 @@
 diff --git a/internal/ceremony/embed.go b/internal/ceremony/embed.go
-index c731553..0cbc4ff 100644
 --- a/internal/ceremony/embed.go
 +++ b/internal/ceremony/embed.go
-@@ -147,7 +147,7 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
+@@ -243,7 +243,7 @@
  	// A zero means a record written before the field existed. There are none in the field —
  	// P07.S02 is the first code that ever constructs a Record — so this is treated as the
  	// skew it is rather than defaulted, which would silently compare across digest rules.
--	if r.DigestVersion != pdfops.ContentDigestVersion {
-+	if false {
- 		return r, fmt.Errorf("%w: this ceremony's document hash was computed under Nib's "+
- 			"content-digest rule %d and this build uses rule %d, so the two numbers are not "+
- 			"comparable — update Nib rather than treating this as a changed document",
+-	if err := digestRuleSkew(r); err != nil {
++	if err := digestRuleSkew(r); false && err != nil {
+ 		return r, err
+ 	}
+ 	return r, nil

@@ -410,6 +410,11 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	// disagreements. The disagreement 456 was filed for was 453's defect; what was left was two
 	// spellings of one rule with nothing keeping them equal.
 	if len(pdf) > 0 && !sign.HasSignatureBlob(pdf) {
+		// The rule before the number (D32, /pending 725): a record written under another
+		// content-digest rule is a version skew, never a damaged copy.
+		if err := digestRuleSkew(r); err != nil {
+			return r, nil, err
+		}
 		got, herr := DocumentHash(pdf)
 		if herr != nil {
 			return r, nil, fmt.Errorf("%w: its document will not parse: %v", ErrMirrorDamaged, herr)
