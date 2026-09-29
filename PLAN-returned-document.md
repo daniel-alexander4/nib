@@ -154,10 +154,14 @@ the walk sees it. **The fail-closed arm stays** — fixing the walk must not rem
 covered for it, which is exactly the "a warning goes quiet independently of the verdict" trap
 `verify.go:98-120` was written against.
 
-### D7 — Five named refusal causes, not one error *(settled 2026-09-08 via /grill)*
-`no-signature` / `kids-hidden` / `resaved` / `not-your-signature` / `prefix-failed-reverify`. A
+### D7 — ~~Five~~ Four named refusal causes, not one error *(settled 2026-09-08 via /grill; `kids-hidden` RETIRED 2026-09-29 by Dan — option A)*
+`no-signature` / ~~`kids-hidden`~~ / `resaved` / `not-your-signature` / `prefix-failed-reverify`. A
 lumped refusal reads backwards exactly when it matters, and each cause is a different sentence to
 the user. Attribution beats aggregation.
+**(superseded in part, 2026-09-29 — Dan, option A)** `kids-hidden` is retired: P01's revision index is an xref sweep, which
+sees a `/Kids`-nested signature by construction, so the cause can never fire. The four remaining causes are the route's
+vocabulary; P01's record causes (`malformed-byterange`, `byterange-outside-file`, `contents-elsewhere`,
+`unsupported-filter`, `unparseable-contents`) are internal and each maps to exactly one of them at P02's route.
 
 ### D8 — Three terminal states, rendered honestly, never degraded *(settled 2026-09-08 via /grill — forensic-examiner seat)*
 Append-only → the full diff. Re-saved wholesale → **"the version you signed is not inside this
@@ -516,11 +520,11 @@ Acceptance: every conjunct and G1–G3 have a proof that goes red for its own as
 the pre-S01 walk (taken before S02).
 
 ### P02 — The route
-**Goal.** The bytes of the version you signed, over the wire, or a refusal that says which of five
+**Goal.** The bytes of the version you signed, over the wire, or a refusal that says which of four (D7 as amended 2026-09-29)
 things went wrong.
 
 **Exit criteria.** `GET /api/document/revision` returns a prefix that parses and re-verifies for the
-requested signer, or one of five named refusals; nothing calls it on document open.
+requested signer, or one of four named refusals; nothing calls it on document open.
 
 **(plan-review pin: the user's signature can be absent from the latest xref, architect — 2026-09-28)** Both sweeps
 see only the newest definition of each object number, so a later revision that reuses the object number of the user's
@@ -529,9 +533,8 @@ that as "not inside this file". `SignedRevisionFor` therefore re-runs `Revisions
 (each `startxref`/`%%EOF` boundary) when the latest has no record for the fingerprint, reusing the one door; a fixture
 has a later revision redefine the user's dictionary's number. Remedy unverified until P02.S01.
 **(plan-review pin: the causes the route can return, consistency + architect — 2026-09-28)** The record causes are
-internal; each maps to exactly one D7 cause at this route. D7's `kids-hidden` is unreachable under the xref sweep — **a
-decision question parked for Dan** (retire it, or redefine it), recorded in the closing batch; P02's "each of the five
-causes is reachable" is restated after his answer. A hybrid-reference file must not be told "unsigned" by P02/P03 while
+internal; each maps to exactly one D7 cause at this route. D7's `kids-hidden` is unreachable under the xref sweep — **ANSWERED
+2026-09-29 by Dan: retired (option A)**; P02's acceptance now counts four causes. A hybrid-reference file must not be told "unsigned" by P02/P03 while
 /pending 733 is open. The record type stays unexported; P02 exports a narrow projection (signers in coverage order, each
 with fingerprint, coverage end, verified).
 
@@ -545,7 +548,7 @@ prefix for the user's fingerprint; a prefix that fails standalone re-verificatio
 Scope: `GET /api/document/revision?signer=<fp>` through the existing mux block and `docFor`, served
 with `sendDownload`'s discipline, reached from the client only via `apiFetch` (so `X-Nib-Doc` is
 carried per ADR-004). Refs: D7, D10.
-Acceptance: each of the five causes is reachable and distinguishable at the client; the route is
+Acceptance: each of the four causes is reachable and distinguishable at the client; the route is
 called from no boot or open path.
 
 ### P03 — The surface
