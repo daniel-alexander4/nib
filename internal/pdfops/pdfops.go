@@ -1326,11 +1326,11 @@ func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		for nr := 1; nr <= ctx.PageCount; nr++ {
-			if !targets[nr] {
+		for _, pa := range pdfread.Pages(ctx) {
+			if !targets[pa.Nr] {
 				continue
 			}
-			d, _, attrs, err := ctx.PageDict(nr, false)
+			d, attrs, err := pa.Dict, pa.Attrs, pa.Err
 			if err != nil {
 				return err
 			}
@@ -1512,8 +1512,8 @@ func scaleTiles(tiles []byte, s float64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := 1; i <= ctx.PageCount; i++ {
-		d, _, attrs, err := ctx.PageDict(i, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		i, d, attrs, err := pa.Nr, pa.Dict, pa.Attrs, pa.Err
 		if err != nil {
 			return nil, err
 		}

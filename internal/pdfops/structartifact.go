@@ -57,9 +57,9 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 	}
 
 	pageNr := map[int]int{}
-	for pg := 1; pg <= ctx.PageCount; pg++ {
-		if ir, err := ctx.PageDictIndRef(pg); err == nil && ir != nil {
-			pageNr[ir.ObjectNumber.Value()] = pg
+	for _, pa := range pdfread.Pages(ctx) {
+		if pa.Err == nil && pa.Ref != nil {
+			pageNr[pa.Ref.ObjectNumber.Value()] = pa.Nr
 		}
 	}
 	owned := map[int]map[int]bool{} // page -> MCIDs the subtree owns there

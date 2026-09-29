@@ -107,3 +107,6 @@ func FormChain(depth int) []byte {
 	objs[100+depth] = form("")
 	return assemble(objs)
 }
+
+// Assemble writes objs — object number to body — as a classic-xref PDF whose catalog is object 1.
+func Assemble(objs map[int]string) []byte { return assemble(objs) }

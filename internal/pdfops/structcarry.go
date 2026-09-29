@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"nib/internal/pdfread"
 	"sort"
 	"strings"
 	"time"
@@ -423,8 +424,8 @@ func eachParentTreeClaim(ctx *model.Context, fn func(key int, set func(int))) {
 	// fixture sharing one form: the walk offered keys `[0 4 1 101]` — four offers for three
 	// objects, the last being the value the second call had written a moment earlier.
 	seen := map[int]bool{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		d, err := pa.Dict, pa.Err
 		if err != nil || d == nil {
 			continue
 		}

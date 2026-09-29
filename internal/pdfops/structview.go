@@ -75,10 +75,10 @@ func readStructureView(pdf []byte) (structureView, error) {
 		return structureView{}, err
 	}
 	live, pageNr := map[int]bool{}, map[int]int{}
-	for pg := 1; pg <= ctx.PageCount; pg++ {
-		if ir, e := ctx.PageDictIndRef(pg); e == nil && ir != nil {
-			live[ir.ObjectNumber.Value()] = true
-			pageNr[ir.ObjectNumber.Value()] = pg
+	for _, pa := range pdfread.Pages(ctx) {
+		if pa.Err == nil && pa.Ref != nil {
+			live[pa.Ref.ObjectNumber.Value()] = true
+			pageNr[pa.Ref.ObjectNumber.Value()] = pa.Nr
 		}
 	}
 	tree, err := readStructTree(ctx, live)

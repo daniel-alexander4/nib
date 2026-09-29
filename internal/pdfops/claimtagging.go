@@ -346,8 +346,8 @@ func uncoveredDrawings(pdf []byte) (int, error) {
 	}
 	n := 0
 	budget := newFormWalkBudget(ctx.PageCount)
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, attrs, derr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		p, d, attrs, derr := pa.Nr, pa.Dict, pa.Attrs, pa.Err
 		if derr != nil || d == nil {
 			return 0, fmt.Errorf("pdfops: page %d does not resolve: %w", p, derr)
 		}

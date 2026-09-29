@@ -560,3 +560,6 @@ home today.
   — /pending 748. `pdfread.DecodeWithin` caps every budgeted decode during the decode; both page-content joins stop
   at 512 MiB; pdfcpu's optimize pass is estimated only where it decodes page content (`passDecodesPageContent`) and
   only when a stream is named twice, then decodes once. Declared gap: distinct streams, bounded by file size.
+- **[ADR-065 — a per-page loop reads the pages from one walk of the tree](065-a-per-page-loop-reads-the-pages-from-one-walk.md)**
+  — /pending 753. `pdfread.Pages` answers what `PageDict` answers for every page from one walk, and falls back to
+  `PageDict` per page wherever one walk cannot reproduce pdfcpu. Prepare on 7,059 pages: 50 s → 12 s.

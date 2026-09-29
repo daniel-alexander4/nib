@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"nib/internal/pdfread"
 	"strconv"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/create"
@@ -182,8 +183,8 @@ func authorFormIn(pdf []byte, fields []FormField, face string) ([]byte, error) {
 // the rewrite it already pays for (ADR-009). `S` is the only value that means structure order; `R` and `C`
 // are geometric and say nothing about reading order.
 func setStructureTabOrder(ctx *model.Context) {
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, derr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		d, derr := pa.Dict, pa.Err
 		if derr != nil || d == nil {
 			continue
 		}

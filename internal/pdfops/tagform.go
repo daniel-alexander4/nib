@@ -54,12 +54,7 @@ func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, 
 		return nil, false, err
 	}
 	described, terr := writeMutated(authored, func(ctx *model.Context) error {
-		live := map[int]bool{}
-		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
+		live := livePageObjects(ctx)
 		tree, err := ensureStructTree(ctx, live)
 		if err != nil {
 			return err

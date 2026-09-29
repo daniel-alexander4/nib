@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"fmt"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -154,8 +155,8 @@ func (d *Document) mediaClips() ([]mediaClip, string) {
 	}
 
 	// Every page's `/AA`.
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, _, err := d.Ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(d.Ctx) {
+		p, page, err := pa.Nr, pa.Dict, pa.Err
 		if err != nil || page == nil {
 			if d.clipsErr == "" {
 				d.clipsErr = fmt.Sprintf("page %d does not resolve", p)

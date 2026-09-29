@@ -183,15 +183,15 @@ func inspectTags(pdf []byte) tagState {
 	s.pages = ctx.PageCount
 	live := map[int]bool{}       // object number of every page in the page tree
 	hasContent := map[int]bool{} // ... of every page carrying a non-empty content stream
-	for p := 1; p <= s.pages; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		p, d, perr := pa.Nr, pa.Dict, pa.Err
 		if perr != nil || d == nil {
 			continue
 		}
 		if _, ok := d["StructParents"]; ok {
 			s.pagesSP++
 		}
-		ir, e := ctx.PageDictIndRef(p)
+		ir, e := pa.Ref, pa.Err
 		if e != nil || ir == nil {
 			continue
 		}

@@ -138,12 +138,7 @@ func applyStructEdits(pdf []byte, edits []structEdit) ([]byte, error) {
 		return nil, fmt.Errorf("%w: there is no edit to apply", ErrTagsReview)
 	}
 	return writeMutated(pdf, func(ctx *model.Context) error {
-		live := map[int]bool{}
-		for pg := 1; pg <= ctx.PageCount; pg++ {
-			if ir, e := ctx.PageDictIndRef(pg); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
+		live := livePageObjects(ctx)
 		tree, err := readStructTree(ctx, live)
 		if err != nil {
 			return err
