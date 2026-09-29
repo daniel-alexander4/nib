@@ -10,6 +10,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/contentstream"
+	"nib/internal/pdfread"
 )
 
 // The commit writer — `PLAN-accessibility.md` P08.S06a.
@@ -136,7 +137,7 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			if derr != nil {
 				return derr
 			}
-			src, cerr := ctx.PageContent(d, pg)
+			src, cerr := pdfread.PageContent(ctx, d, pg)
 			if cerr != nil {
 				return cerr
 			}

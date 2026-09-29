@@ -8,6 +8,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/contentstream"
+	"nib/internal/pdfread"
 )
 
 // The artifact edit — `PLAN-accessibility.md` P09.S03.
@@ -112,7 +113,7 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 		if derr != nil {
 			return derr
 		}
-		src, cerr := ctx.PageContent(d, pg)
+		src, cerr := pdfread.PageContent(ctx, d, pg)
 		if cerr != nil {
 			return cerr
 		}

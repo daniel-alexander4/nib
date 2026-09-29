@@ -21,6 +21,9 @@
 //     between their read and their validation, so it reads once more, unvalidated, and hands the reader over
 //     only when that read shows no cycle.
 //
+// It is also the one door to a page's decoded content (`PageContent`, `pagecontent.go`, ADR-056): pdfcpu joins a
+// `/Contents` array with no separator, which fuses tokens across a legal division.
+//
 // `TestEveryValidatingReadRoutesThroughTheDoor` (in this package) is the guard: outside this package no
 // source file may call pdfcpu's validating reads or its optimize pass, or hand a reader it built itself to a
 // pdfcpu `api` call, except at the named not-a-PDF sites.

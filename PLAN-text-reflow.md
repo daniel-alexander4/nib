@@ -423,6 +423,73 @@ cost of a walk is **measured** on a real page, not estimated.
 **Note.** This is the same surface `PLAN-accessibility` P05 needs in order to wrap content in
 BDC/EMC. Whichever plan reaches it first builds it; the other extends it.
 
+**PIN 2026-09-28 (phase-open) — the walker exists; this phase owes its EVIDENCE, not its code.**
+`PLAN-accessibility.md` P05 built `internal/contentstream` (tokenizer `tokenize.go:23`, writer
+`write.go:29`, splice `write.go:63-109`) and `setPageContent` (`internal/pdfops/tagemit.go:79`) as the
+page write door; `textrun.go:543` already walks into form XObjects through `Do` and records each
+show operator's token span. What is missing is measured at phase-open: the byte-identity test covers
+~30 **hand-written strings** (`tokenize_test.go:58`) and no real document; nothing measures a
+walk's cost (no `Benchmark`, no timing, in the package or its callers).
+
+**PIN 2026-09-28 — "byte-identically" means the DECODED content stream, never the file.** Law 1 as
+written would fail on its first run through pdfcpu's writer: the 2026-09-09 deepdive measured a
+no-op re-encode at `bytes_equal=false, digest_equal=true` (checklist item 7). So law 1 is two
+assertions at two levels — the decoded stream round-trips byte-identically through the walker, and
+the document written back through the page write door keeps its `ContentDigest`.
+
+**"Across the corpus" names three populations**, since D12's 18-PDF corpus is not on disk (see the
+P02–P04 note above): the generated corpus the P08 slices used, the real-producer corpus
+(`$NIB_UA_PRODUCERS`, else `~/nib/producers` — 36 files, 9 producers on this machine), and veraPDF's
+PDF/UA-1 corpus (`$NIB_DIGEST_CORPUS`, else `~/nib/verapdfs` — 297 files). An absent external corpus
+is a SKIP that says so, never a pass.
+
+#### P05.S01 — law 1 over real documents *(done 2026-09-28, v1.167.7)*
+Every page content stream **and every form XObject stream a page reaches through `Do`** in the three
+corpora tokenizes with complete, non-overlapping coverage and writes back byte-identically.
+Acceptance:
+1. The round trip holds on every stream of every document in each present corpus; a failure names
+   the document, page, stream and first differing offset.
+2. A construct census asserts each construct the exit criterion names was **seen** at least once —
+   inline image, literal string, hex string, dict operand, marked content (`BMC`/`BDC`/`EMC`), and a
+   `Do` into a form XObject — so a green round trip over a corpus lacking one cannot read as
+   coverage of it.
+3. ~~A page whose `/Contents` is an array is walked as the concatenation pdfcpu returns, and the test
+   says how many such pages it saw.~~ **Amended 2026-09-28 at the slice grill** — pdfcpu's
+   `PageContent` (`model/xreftable.go:1882`, v0.13.0) joins an array's streams with NO separator, and
+   the spec lets a stream end on any token boundary, so `…(A) Tj` + `ET …` reads as the operator
+   `TjET` and a stream ending in a comment swallows the next one's first line. Seventeen nib readers
+   call it and seven writers (`setPageContent`'s six call sites, `wrapPageToBox`) write the join back as one stream. Measured over both
+   real corpora: **0 fused joins of 77** (69 array pages) — spec-legal, not seen. So: a page whose
+   `/Contents` is an array is read through ONE door that joins at token boundaries, the test says how
+   many array pages and joins it saw, and a fixture of each fused shape is read correctly.
+
+**Tasks** (from the slice grill, 2026-09-28):
+- T01 — `pdfread.PageContent`: pdfcpu's per-stream decode, joined with `\n` only where two regular
+  bytes meet or the earlier stream ends inside a comment; byte-identical to pdfcpu everywhere else.
+- T02 — route every `internal/pdfops` reader through it; `ContentDigest` (ADR-013: its coverage is a
+  format) and `internal/uacheck` (veraPDF's join unmeasured) are named exemptions at their sites.
+- T03 — an AST census: nothing outside `pdfread` calls pdfcpu's `PageContent` but the named sites.
+- T04 — the corpus round trip: every page stream and every form stream reachable from a page's
+  resources, three corpora, with the construct census and the array-page count.
+- T05 — ADR-056, and the seam inventory's P05.S01 rows.
+
+**Closed 2026-09-28 — what the code did that the text above does not say.** Forms are walked from each page's
+RESOURCES, recursively, not from its `Do` operators: a superset, since every form a `Do` can draw is in them. The
+diff review added three things to T01/T04 (`code-reviews/v1.167.6-p05s01-2026-09-28.md`): the join decides each
+separator from the previous STREAM (it had re-tokenized the whole join — 13.8 s for 1,000 streams), an element that
+is not a stream fails the read as pdfcpu's does, and law 1 now asserts ISO 32000-1 Table A.1's operator vocabulary,
+because a span-copying round trip cannot see a mis-scan. The empty name `/` at a stream's end is a third fusing shape,
+found by executing the "two ways, and only two" claim. Ledger: 9 clauses, 9 met.
+
+#### P05.S02 — the write-back, and what a walk costs
+A no-op walk written back through `setPageContent` and pdfcpu's writer leaves `ContentDigest`
+unchanged, and the cost of a walk is measured on real pages.
+Acceptance:
+1. `ContentDigest` is unchanged after a tokenize → write → `setPageContent` → write-context round trip
+   on every page of the generated and real-producer corpora.
+2. A benchmark measures tokenize + write per page; the figure for the largest real page stream is
+   recorded here with its population, machine and date.
+
 ### P06 — Reflow one paragraph on one page
 **Goal.** The feature, at its smallest honest scope: edit a word, re-wrap the paragraph in its own
 font, remove the original text.

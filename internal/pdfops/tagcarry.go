@@ -80,7 +80,7 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		if e != nil || ir == nil {
 			return nil, false
 		}
-		b, cerr := ctx.PageContent(d, p)
+		b, cerr := pdfread.PageContent(ctx, d, p)
 		if cerr != nil || len(b) == 0 {
 			continue // an empty page has no marked content to re-anchor
 		}

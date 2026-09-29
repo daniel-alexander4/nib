@@ -224,7 +224,7 @@ func captureNoteAnnots(pdf []byte) (map[int]*noteSource, int, bool) {
 			// pdfcpu answers with an error) would otherwise abandon the carry for every OTHER page's
 			// notes over a page this door was never going to touch. The page is still recorded, for
 			// its residue count.
-			b, cerr := ctx.PageContent(d, p)
+			b, cerr := pdfread.PageContent(ctx, d, p)
 			if cerr != nil {
 				return nil, 0, false
 			}
@@ -331,7 +331,7 @@ func readPlacements(ctx *model.Context) ([]sheetPlacement, error) {
 		if err != nil || d == nil {
 			return nil, fmt.Errorf("pdfops: sheet %d does not resolve: %w", p, err)
 		}
-		b, cerr := ctx.PageContent(d, p)
+		b, cerr := pdfread.PageContent(ctx, d, p)
 		if cerr != nil {
 			// A sheet with no content stream draws nothing, which is the all-padding case.
 			continue

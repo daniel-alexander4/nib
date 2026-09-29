@@ -1340,7 +1340,7 @@ func cropToRect(normPage []byte, rect [4]float64, pageW, pageH float64) ([]byte,
 // differently-sized regions share one standardized page size. (x0,y0,w,h) are in
 // the page's own content coordinates.
 func wrapPageToBox(ctx *model.Context, d types.Dict, pageNr int, x0, y0, w, h, s, pageW, pageH, dx, dy float64) error {
-	content, err := ctx.PageContent(d, pageNr)
+	content, err := pdfread.PageContent(ctx, d, pageNr)
 	if err != nil && err != model.ErrNoContent {
 		return err
 	}
