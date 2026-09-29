@@ -272,6 +272,27 @@ func newIdentity(t *testing.T, cn string) identity {
 }
 
 // detached signs content as a detached PKCS#7 by id, carrying extra certificates after its own.
+// encapsulating is `detached` without the `Detach`: the SignedData carries the signed bytes as its
+// content, the shape an RFC 3161 token has (its TSTInfo) and a detached PDF signature does not.
+func encapsulating(t *testing.T, id identity) func([]byte) []byte {
+	return func(content []byte) []byte {
+		t.Helper()
+		sd, err := pkcs7.NewSignedData(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sd.SetDigestAlgorithm(pkcs7.OIDDigestAlgorithmSHA256)
+		if err := sd.AddSigner(id.cert, id.signer, pkcs7.SignerInfoConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		der, err := sd.Finish()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return der
+	}
+}
+
 func detached(t *testing.T, id identity, extra ...*x509.Certificate) func([]byte) []byte {
 	return func(content []byte) []byte {
 		t.Helper()
@@ -685,8 +706,10 @@ func TestACopiedSignatureDictionaryIsRefused(t *testing.T) {
 		if !c.Verified || c.Fingerprint != "" {
 			t.Errorf("%s: the refused copy's record: verified %v fingerprint %q, want verified and NO fingerprint", tc.name, c.Verified, c.Fingerprint)
 		}
-		if len(st.Signers) != 2 || st.Signers[1].Fingerprint != "" {
-			t.Errorf("%s: Verify reports the copy's signer as %+v, want no fingerprint", tc.name, st.Signers)
+		// P01.S03 (ADR-060): the copy is not a signer. The library's two signers become ONE, and it
+		// is the victim, with her fingerprint — never a second row wearing her name.
+		if len(st.Signers) != 1 || st.Signers[0].Fingerprint != a.fp || !st.Signers[0].Valid {
+			t.Errorf("%s: Verify reports signers %+v, want exactly the victim, valid, with %q", tc.name, st.Signers, a.fp)
 		}
 		// P01.S02: the copy's revision is covered by no valid, well-formed signature, and the reason
 		// a reader is given is the refusal, naming the copy.

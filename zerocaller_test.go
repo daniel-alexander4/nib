@@ -127,6 +127,10 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"SplitContents": "test-support — ADR-056's divided-page fixtures (a fused `Tj`+`ET`, an unterminated " +
 			"comment, a white-space control), shared by the pdfread and pdfops tests so the door and a reader " +
 			"above it are tested against the same documents.",
+		"CopiedSignatureDictionary": "test-support — /pending 687's copied signature dictionary in three variants, " +
+			"built by byte surgery so the p2p, server, cli and sign tests measure one fixture (P01.S03, ADR-060).",
+		"DocTimeStamped": "test-support — a real PAdES document timestamp from a loopback TSA, shared by the sign " +
+			"and cli tests so a timestamp is measured on one fixture whose token encapsulates a TSTInfo (ADR-060).",
 		"FormChain": "test-support — /pending 706's 400-form comparison shape, the unaffordable-optimize fixture mdpdf's exhibit test takes (ADR-055)",
 
 		"(*cidGen).ConnectionIDLen":      "interface — quic-go's ConnectionIDGenerator, dispatched by the library.",

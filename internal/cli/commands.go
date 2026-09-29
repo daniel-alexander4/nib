@@ -1200,7 +1200,7 @@ func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("nib verify", flag.ContinueOnError)
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "emit one JSON object per file instead of a text report")
-	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, or belongs to a ceremony some obliged party has not signed.")
+	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, carries a signature Nib refused, or belongs to a ceremony some\nobliged party has not signed.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -1230,6 +1230,9 @@ func cmdVerify(args []string) int {
 			for _, line := range refusedLines(st) {
 				fmt.Printf("  %s\n", line)
 			}
+			for _, line := range timestampLines(st) {
+				fmt.Printf("  %s\n", line)
+			}
 			for _, line := range cer.lines() {
 				fmt.Printf("  %s\n", line)
 			}
@@ -1250,7 +1253,11 @@ func cmdVerify(args []string) int {
 		// ceremonies, and one carrying a signature from outside the roster, each printed exactly
 		// that in the text output and exited 0 — under the README's own
 		// `nib verify contract.pdf && echo "signature intact"` idiom. One door, three predicates.
-		if st.State != sign.Valid || st.AddedAfter || cer.refuses() {
+		// **And a refused signature exits non-zero whatever `AddedAfter` says** (P01.S03, ADR-060).
+		// A refused record is not a signer, so a copy placed BEFORE a later, covering signer (the
+		// /pending 736 shape) leaves `AddedAfter` false and `State` valid — and a document carrying
+		// a signature-shaped object nib would not take is not one a script should wave through.
+		if st.State != sign.Valid || st.AddedAfter || len(st.Refused) > 0 || cer.refuses() {
 			// AddedAfter too, and it is the case that mattered.
 			//
 			// `sign.Verify` reports State=Valid with AddedAfter=true for a document
@@ -1275,22 +1282,35 @@ func cmdVerify(args []string) int {
 // (ADR-059), because "content added after the last signature" is false of the two causes that are
 // not an append: a refused signature-shaped dictionary claiming to cover it, or a check nib could
 // not complete. None of them is "unchanged since you signed".
+//
+// A refusal is said whenever there is one (P01.S03): a refused record is not a signer, so it can be
+// present with `AddedAfter` false, and the facts compose rather than one replacing another.
 func describeStatus(st sign.Status) string {
 	switch st.State {
 	case sign.Valid:
 		s := fmt.Sprintf("valid (%d signer(s))", len(st.Signers))
+		refusalSaid := false
 		if st.AddedAfter {
 			switch st.AddedAfterCause {
 			case sign.AddedAfterRefusedSignature:
 				s += "; content added after the last signature — and a signature Nib refused is present"
+				refusalSaid = true
 			case sign.AddedAfterCouldNotCheck:
 				s += "; content added after the last signature could not be ruled out"
 			default:
 				s += "; content added after the last signature"
 			}
 		}
+		if len(st.Refused) > 0 && !refusalSaid {
+			s += "; a signature Nib refused is present"
+		}
 		return s
 	case sign.Invalid:
+		// No signer at all, and something signature-shaped that is not one: "modified since
+		// signing" would claim a signature that nib never found to check. The lines below name it.
+		if len(st.Signers) == 0 && (len(st.Refused) > 0 || len(st.Timestamps) > 0) {
+			return "INVALID — no signature Nib could check (see below)"
+		}
 		return "INVALID — modified since signing"
 	default:
 		return "unsigned"
@@ -1304,6 +1324,16 @@ func refusedLines(st sign.Status) []string {
 	var out []string
 	for _, r := range st.Refused {
 		out = append(out, fmt.Sprintf("refused: object %d (filter %q): %s", r.Obj, r.Filter, r.Cause))
+	}
+	return out
+}
+
+// timestampLines is one line per document timestamp. A timestamp names no signer and Nib does not
+// check it (ADR-059, ADR-060), so the line says it is there and nothing about what it proves.
+func timestampLines(st sign.Status) []string {
+	var out []string
+	for _, obj := range st.Timestamps {
+		out = append(out, fmt.Sprintf("timestamp: object %d — a document timestamp; Nib does not check timestamps", obj))
 	}
 	return out
 }
