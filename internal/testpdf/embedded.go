@@ -8,9 +8,13 @@ import (
 
 // Embedded is one entry of the catalog's /Names /EmbeddedFiles tree as WithEmbedded writes it: the
 // tree KEY, the filespec's /F and /UF (an empty one is left out), and the file's bytes.
+//
+// UFData, when set, is a SECOND embedded stream for /EF /UF, distinct from /EF /F's Data — a shape
+// pdfcpu never writes (it points both keys at one stream) and any author may (/pending 750).
 type Embedded struct {
 	Key, F, UF string
 	Data       string
+	UFData     string
 }
 
 // WithEmbedded is a one-page document whose embedded-files tree holds exactly the given entries, in
@@ -41,7 +45,12 @@ func WithEmbedded(entries ...Embedded) []byte {
 		if e.UF != "" {
 			fs += " /UF " + lit(e.UF)
 		}
-		fs += fmt.Sprintf(" /EF << /F %d 0 R /UF %d 0 R >> >>", stream, stream)
+		ufStream := stream
+		if e.UFData != "" {
+			objs = append(objs, fmt.Sprintf("<< /Type /EmbeddedFile /Length %d >>\nstream\n%s\nendstream", len(e.UFData), e.UFData))
+			ufStream = len(objs)
+		}
+		fs += fmt.Sprintf(" /EF << /F %d 0 R /UF %d 0 R >> >>", stream, ufStream)
 		objs = append(objs, fs)
 		fmt.Fprintf(&names, " %s %d 0 R", lit(e.Key), len(objs))
 	}

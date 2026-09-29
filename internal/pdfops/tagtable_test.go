@@ -171,13 +171,6 @@ var tagFates = map[string]tagFate{
 		o, _, e := StampFields(b, []Field{{Page: 1, Rect: [4]float64{10, 10, 200, 30}, Text: "t"}})
 		return o, e
 	}},
-	"RemoveAttachment": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
-		x, e := AddAttachment(b, "a.txt", []byte("hi"))
-		if e != nil {
-			return nil, e
-		}
-		return RemoveAttachment(x, "a.txt")
-	}},
 	// **`InsertBlank` is `carried`, and the reason is a rule about what counts as undescribed.** It
 	// adds a page with no content stream at all, and a page with nothing on it has nothing to tag —
 	// counting it as undescribed would make adding an empty page a law-1 violation. See

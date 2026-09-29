@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"nib/internal/pdfread"
@@ -486,6 +487,7 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 		key     string
 		strings map[string]types.Object // /F, /UF, /Desc as the source wrote them; absent stays absent
 		data    []byte
+		ef      map[string][]byte // the /EF dict's /F and /UF streams, each its own; absent stays absent
 	}
 	var files []carried
 	for _, e := range entries {
@@ -499,7 +501,27 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 			dropped++
 			continue
 		}
-		c := carried{key: e.key, strings: map[string]types.Object{}, data: data}
+		c := carried{key: e.key, strings: map[string]types.Object{}, data: data, ef: map[string][]byte{}}
+		// **Both streams, each as the source wrote it (/pending 750).** /EF may hold a /F stream and
+		// a /UF stream that differ — a reader picks one by its own rule (`fileSpecBytes` takes /F) —
+		// and the carry used to re-add /F's bytes under both, so the /UF file was silently gone.
+		// An unreadable one fails the entry, as an unreadable /F always did.
+		efd := derefDict(sxt, fs["EF"])
+		bad := false
+		for _, k := range []string{"F", "UF"} {
+			if o, ok := efd.Find(k); ok && o != nil {
+				b, berr := embeddedStreamBytes(sxt, o)
+				if berr != nil {
+					bad = true
+					break
+				}
+				c.ef[k] = b
+			}
+		}
+		if bad {
+			dropped++
+			continue
+		}
 		for _, k := range []string{"F", "UF", "Desc"} {
 			o, derr := sxt.Dereference(fs[k])
 			if derr != nil {
@@ -547,6 +569,26 @@ func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
 					fs[k] = o
 				} else {
 					delete(fs, k)
+				}
+			}
+			// pdfcpu wrote ONE stream (f.data) under both /EF keys. Keep it for a key whose bytes
+			// are those; give a key whose bytes differ a stream of its own; drop a key the source
+			// did not have.
+			ef := derefDict(ctx.XRefTable, fs["EF"])
+			if ef == nil {
+				return fmt.Errorf("attachment %q: added with no /EF", f.key)
+			}
+			for _, k := range []string{"F", "UF"} {
+				b, had := f.ef[k]
+				switch {
+				case !had:
+					delete(ef, k)
+				case !bytes.Equal(b, f.data):
+					ir, serr := ctx.NewEmbeddedStreamDict(bytes.NewReader(b), time.Now())
+					if serr != nil {
+						return fmt.Errorf("attachment %q: /EF /%s: %w", f.key, k, serr)
+					}
+					ef[k] = *ir
 				}
 			}
 		}

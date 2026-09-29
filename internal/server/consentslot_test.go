@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"nib/internal/p2p"
 )
@@ -259,5 +261,170 @@ func TestABusyConsentRefusalIsNamedForTheWire(t *testing.T) {
 	}
 	if strings.Contains(errConsentBusy.Error(), "other machine") {
 		t.Errorf("this machine's own sentence is written for the far end: %q", errConsentBusy)
+	}
+}
+
+// /pending 750 (1): the spoken check goes with the arm that parked it, the way the consent after
+// it does (/pending 744). Cancelling the interactive arm while the delivery arm stays up used to
+// leave the interactive session's words on screen, answerable, with its goroutine waiting out the
+// timeout — the check carried no anchor. The dialling side still has none and keeps the old rule.
+func TestCancellingOneArmReleasesOnlyTheSpokenCheckItParked(t *testing.T) {
+	se, cerA, _ := twoArmedCeremonies()
+	chA := make(chan bool, 1)
+	if err := se.setVerify(&pendingVerify{words: "a b c d", resp: chA,
+		anchor: &consentAnchor{cer: cerA, kind: armInteractive}}); err != nil {
+		t.Fatalf("setup: A could not park its check: %v", err)
+	}
+	se.disarmKind(armInteractive)
+	if se.arms[armDelivery] == nil {
+		t.Fatal("setup: the delivery arm went too, so this is the nothing-left-armed case")
+	}
+	if pv := se.currentVerify(); pv != nil {
+		t.Errorf("the interactive arm was cancelled and ITS spoken check (%q) is still parked, "+
+			"answerable, while the delivery arm beside it stays up", pv.words)
+	}
+	select {
+	case ok := <-chA:
+		if ok {
+			t.Error("A's check was answered as a match by a teardown")
+		}
+	default:
+		t.Error("A's waiter was not woken — its goroutine sits on the channel until the timeout")
+	}
+
+	// The mirror: the arm that goes is NOT the one that parked, so the check stays.
+	se2, _, cerB := twoArmedCeremonies()
+	chB := make(chan bool, 1)
+	pvB := &pendingVerify{words: "e f g h", resp: chB, anchor: &consentAnchor{cer: cerB, kind: armDelivery}}
+	if err := se2.setVerify(pvB); err != nil {
+		t.Fatalf("setup: B could not park: %v", err)
+	}
+	se2.disarmKind(armInteractive)
+	if se2.currentVerify() != pvB || len(chB) != 0 {
+		t.Error("cancelling the interactive arm released the delivery arm's spoken check")
+	}
+
+	// The dialler's check has no arm: another arm's teardown leaves it while anything is armed.
+	se3, _, _ := twoArmedCeremonies()
+	pvD := &pendingVerify{words: "i j k l", resp: make(chan bool, 1)}
+	if err := se3.setVerify(pvD); err != nil {
+		t.Fatalf("setup: the dialler could not park: %v", err)
+	}
+	se3.disarmKind(armInteractive)
+	if se3.currentVerify() != pvD {
+		t.Error("the dialler's check, which names no arm, was released while an arm is still up")
+	}
+	se3.disarmKind(armDelivery)
+	if se3.currentVerify() != nil {
+		t.Error("the dialler's check survived the last arm going — the old rule is lost")
+	}
+
+	// And a check parked after its arm is gone is refused, or the release above has already run
+	// and it waits out the whole timeout.
+	se4, cerA4, _ := twoArmedCeremonies()
+	se4.disarmKind(armInteractive)
+	if err := se4.setVerify(&pendingVerify{words: "m n o p", resp: make(chan bool, 1),
+		anchor: &consentAnchor{cer: cerA4, kind: armInteractive}}); !errors.Is(err, errConsentNotArmed) {
+		t.Errorf("a check for a torn-down arm parked with %v, want errConsentNotArmed", err)
+	}
+}
+
+// /pending 750 (2): an accepted request is SETTLED once its session is finished with it, and the
+// page's applying stage ends on that rather than on the machine disarming — which a delivery arm
+// beside the interactive one keeps from ever happening. Two halves: the door records the id of the
+// request the user said yes to (and nothing for a no), and every `serveOneSession` caller settles
+// it after its `openArrival`, so a page that sees it and asks what is active is shown the arrival.
+func TestAnAcceptedRequestIsSettledAfterItsSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, accept := range []bool{true, false} {
+		s := &Server{}
+		ln := &stubListener{}
+		if !s.sess.arm(ln, nil) {
+			t.Fatal("setup: the session refused to arm")
+		}
+		answerWhenParked := func() chan string {
+			idc := make(chan string, 1)
+			go func() {
+				for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+					if id := s.sess.pendingIDForTest(); id != "" {
+						idc <- id
+						s.sess.respond(id, sessionDecision{accept: accept})
+						return
+					}
+				}
+				idc <- ""
+			}()
+			return idc
+		}
+		check := func(door string, saw *reached, id string) {
+			t.Helper()
+			if id == "" {
+				t.Fatalf("setup: %s: the request never parked", door)
+			}
+			s.sess.settled = "" // each door judged on its own
+			s.sess.settle(saw.answeredID())
+			got := s.sess.status()
+			switch {
+			case accept && got.Settled != id:
+				t.Errorf("%s: an accepted request settled %q, want its own id %q — the page waits on it "+
+					"and stays on \"Saving…\" while another arm keeps the machine armed", door, got.Settled, id)
+			case !accept && got.Settled != "":
+				t.Errorf("%s: a DECLINED request settled %q; nothing was accepted, so nothing is applying", door, got.Settled)
+			}
+			if !got.Armed {
+				t.Fatalf("setup: %s: the arm went, so this is the case a disarm already ended", door)
+			}
+		}
+
+		var saw reached
+		sa := sessionAccepter{s: s, label: "Bob", saw: &saw, anchor: consentAnchor{ln: ln}}
+		idc := answerWhenParked()
+		if _, err := sa.Accept([]byte("peer-fingerprint-bytes-0123456789"), []byte("%PDF-1.4\nx")); err != nil {
+			t.Fatalf("accept=%t: %v", accept, err)
+		}
+		check("transfer", &saw, <-idc)
+
+		var sawC reached
+		sc := sessionConfirmer{s: s, saw: &sawC, anchor: consentAnchor{ln: ln}}
+		idc = answerWhenParked()
+		if _, _, _, _, err := sc.Confirm(p2p.SignerAttestation{}, []byte("not a pdf")); err != nil {
+			t.Fatalf("co-sign accept=%t: %v", accept, err)
+		}
+		check("co-sign", &sawC, <-idc)
+		s.sess.disarm()
+	}
+
+	src, err := os.ReadFile("session.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dsrc, err := os.ReadFile("delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites := 0
+	for _, code := range []string{stripLineComments(string(src)), stripLineComments(string(dsrc))} {
+		for rest := code; ; {
+			i := strings.Index(rest, "s.serveOneSession(")
+			if i < 0 {
+				break
+			}
+			sites++
+			after := rest[i:]
+			if j := strings.Index(after, "s.sess.settle(answered)"); j < 0 || j > 700 {
+				t.Errorf("a serveOneSession call site does not settle the request it accepted: %.120q", after)
+			}
+			rest = after[1:]
+		}
+	}
+	// And serveOneSession hands its callers the id on EVERY return, not only the ones that remembered.
+	code := stripLineComments(string(src))
+	body := funcBodyFrom(code, strings.Index(code, "func (s *Server) serveOneSession("))
+	if !strings.Contains(body, "defer func() { answered = saw.answeredID() }()") {
+		t.Error("serveOneSession no longer returns the accepted id from a deferred read of its `reached`, " +
+			"so some return path hands its caller \"\" and the page never leaves its applying stage")
+	}
+	if sites != 3 {
+		t.Errorf("found %d serveOneSession call sites, want 3 — a new one must settle what it accepts", sites)
 	}
 }

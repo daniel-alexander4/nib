@@ -584,7 +584,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 				// `TestTheUnattendedGatesHaveOneDoor` keeps that honest structurally: routing
 				// here goes through `serveOneSession`, which is `p2p.Receive`'s one call site
 				// and constructs the real Confirmer and Verifier.
-				_, final, _ := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
+				_, final, answered, _ := s.serveOneSession(consentAnchor{cer: cer, kind: armDelivery},
 					cer, conn, cert, key, convenerLabel, sessionModeDelivery, myFP, role, true)
 				// Opened ONCE: the convener re-delivers the same hop after a lost channel, and this
 				// arm now stays up to receive the copy, so a second serve must not stack a tab.
@@ -592,6 +592,7 @@ func (s *Server) armForDelivery(ctx context.Context, inv ceremony.Invitation, ce
 					openedHop = true
 					s.openArrival(convenerLabel, cer, final)
 				}
+				s.sess.settle(answered) // after the arrival opened (/pending 750)
 				// **A served hop does NOT spend the arm, and it used to (/pending 500).** This party
 				// has just signed and is now waiting for its copy of the finished document — which is
 				// exactly what a delivery arm is for. Returning here disarmed it the moment the hop
