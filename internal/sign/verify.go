@@ -501,11 +501,27 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 			present = scanForSignatureBlob(pdf)
 		}
 	}()
+	// **A file the library cannot read the way it is meant is not read** (/pending 733). digitorus/pdf
+	// never follows a hybrid-reference trailer's `/XRefStm` (ISO 32000-1 7.5.8.4; its `readXrefTable`
+	// follows `/Prev` only), so every object that stream lists is invisible to it — the catalog, a
+	// field, the signature dictionary itself — while pdfcpu reads them all and admits the file to the
+	// library. A walk that then finds no field has not found no signature, so the answer is the byte
+	// scan's. An UNSIGNED hybrid file carries no `/ByteRange` and still answers false.
+	if bytes.Contains(pdf, []byte("/XRefStm")) {
+		return scanForSignatureBlob(pdf)
+	}
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
 		return scanForSignatureBlob(pdf)
 	}
-	acro := r.Trailer().Key("Root").Key("AcroForm")
+	// **A parse that found no catalog is not a parse that found no signatures** (/pending 733): a
+	// trailer `/Root` the library resolves to null, or to something that is neither typed `/Catalog`
+	// nor carries the catalog's required `/Pages`, is a document it did not read.
+	root := r.Trailer().Key("Root")
+	if root.Key("Type").Name() != "Catalog" && root.Key("Pages").IsNull() {
+		return scanForSignatureBlob(pdf)
+	}
+	acro := root.Key("AcroForm")
 	if acro.IsNull() {
 		return false
 	}

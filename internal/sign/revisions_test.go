@@ -927,9 +927,11 @@ func hybrid() []byte {
 	return b.Bytes()
 }
 
-// TestAHybridReferenceFileYieldsNoRecord pins today's blindness so fixing /pending 733 flips it on
-// purpose: digitorus/pdf never reads `/XRefStm`, so an object reachable only through it is invisible
-// to the sweep and to the library alike.
+// TestAHybridReferenceFileYieldsNoRecord pins today's blindness so a reader that follows `/XRefStm`
+// flips it on purpose: digitorus/pdf never reads `/XRefStm`, so an object reachable only through it
+// is invisible to the sweep and to the library alike. /pending 733 closed the `State` half without
+// curing that — such a file with a `/ByteRange` is `Invalid`, never `Unsigned`
+// (`TestASignedHybridReferenceFileIsNeverUnsigned`) — so the record half is still this pin.
 func TestAHybridReferenceFileYieldsNoRecord(t *testing.T) {
 	h := hybrid()
 	// STIMULUS: the catalog carrying /SigFlags exists, and pdfcpu reads it.
@@ -941,8 +943,8 @@ func TestAHybridReferenceFileYieldsNoRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(revs) != 0 {
-		t.Errorf("the hybrid-reference file yields %d records — /pending 733 (digitorus reads /XRefStm) "+
-			"may have been fixed; if so this assertion flips on purpose", len(revs))
+		t.Errorf("the hybrid-reference file yields %d records — the reader may now follow /XRefStm "+
+			"(/pending 733's record half); if so this assertion flips on purpose", len(revs))
 	}
 }
 
