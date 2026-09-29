@@ -117,7 +117,7 @@ func nodeSeeded(t *testing.T, peers ...*fakeNode) *node {
 		t.Fatal(err)
 	}
 	m := udpmux.New(pc)
-	rz, err := Open(m.DHT(), dir)
+	rz, err := open(m.DHT(), dir, hermeticScope)
 	if err != nil {
 		m.Close()
 		t.Fatal(err)

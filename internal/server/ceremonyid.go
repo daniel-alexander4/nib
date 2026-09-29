@@ -630,7 +630,7 @@ func (c *ceremonyID) setupSharedEndpoint(bind, configDir string) error {
 	if err != nil {
 		return err
 	}
-	rz, err := rendezvous.Open(end.DHT(), nodeCacheDir(configDir))
+	rz, err := openRendezvous(end.DHT(), nodeCacheDir(configDir))
 	if err != nil {
 		end.Close()
 		return err
@@ -1205,7 +1205,7 @@ func openSharedRendezvous(bind, configDir string) (*sharedRendezvous, func(), er
 	if err != nil {
 		return nil, nil, err
 	}
-	rz, err := rendezvous.Open(end.DHT(), nodeCacheDir(configDir))
+	rz, err := openRendezvous(end.DHT(), nodeCacheDir(configDir))
 	if err != nil {
 		end.Close()
 		return nil, nil, err
