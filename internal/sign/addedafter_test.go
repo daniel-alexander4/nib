@@ -548,8 +548,10 @@ func TestEveryRefusalCauseIsSaidToTheUser(t *testing.T) {
 
 // TestEverySignatureEnumerationIsTheSweep — D2 under ADR-009, in the guard's grilled form. An
 // enumeration of a document's signatures in `internal/sign` is a use of `.Xref` (called, or taken as
-// a method value), or `.Key` with the argument "ByteRange" or "Fields" (a literal, or a constant
-// naming one); each must be inside `sweep`, or on a line marked `//sigwalk:exempt <name>` whose name
+// a method value), a use of pdfcpu's object table `.Table`, any method call given the argument
+// "ByteRange" or "Fields" (a literal, or a constant naming one — digitorus's `.Key`, pdfcpu's `Find`,
+// `ArrayEntry`…), or an index expression with that key (pdfcpu's `types.Dict` is a map, so
+// `d["ByteRange"]` is the same read, /pending 752); each must be inside `sweep`, or on a line marked `//sigwalk:exempt <name>` whose name
 // is declared here for that file, each exemption matching exactly one use. A second ByteRange walk —
 // the `/Fields` walk P01.S02 deleted, which let /pending 661's listed decoy lend coverage no signature
 // vouched for — fails here. `revisions.go` also reads file bytes by offset only: no `regexp`, and no
@@ -571,6 +573,12 @@ var sigwalkExempt = map[string]string{
 	"signatureBlobPresent": "verify.go",
 	// Reads /Reference for DocMDP; its /Kids blindness is declared at the site (/pending 734).
 	"hasCertificationSignature": "identity.go",
+	// /pending 749's population cross-check: pdfcpu's table, and the one shape test on each entry. It
+	// records nothing and can only route a verdict to could-not-check (ADR-063).
+	"unseenSignatures":       "verify.go",
+	"unseenSignatures-shape": "verify.go",
+	// /pending 751: walks the xref for what resolving it would cost, and resolves no member.
+	"libraryLookupCost": "objstm.go",
 }
 
 // sigwalkCensus is the guard over the non-test Go files of dir, returning each violation.
@@ -680,15 +688,29 @@ func sigwalkCensus(t *testing.T, dir string) (problems []string) {
 					}
 				case *ast.CallExpr:
 					called[x.Fun] = true
-					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Key" && len(x.Args) == 1 {
-						if v := stringOf(x.Args[0]); v == "ByteRange" || v == "Fields" {
-							enumeration(x, `.Key("`+v+`")`)
+					// Any method given a signature key, not only digitorus's `.Key`: pdfcpu's
+					// `Find`, `ArrayEntry`, `IndirectRefEntry`… take the same argument (/pending 752).
+					if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+						for _, a := range x.Args {
+							if v := stringOf(a); v == "ByteRange" || v == "Fields" {
+								enumeration(x, "."+sel.Sel.Name+`("`+v+`")`)
+							}
 						}
+					}
+				case *ast.IndexExpr:
+					// pdfcpu's `types.Dict` is a map: `d["ByteRange"]` is the same read as `.Key`,
+					// and a walk written against pdfcpu reads the key this way (/pending 752).
+					if v := stringOf(x.Index); v == "ByteRange" || v == "Fields" {
+						enumeration(x, `["`+v+`"]`)
 					}
 				case *ast.SelectorExpr:
 					switch {
 					case x.Sel.Name == "Xref":
 						enumeration(x, ".Xref")
+					case x.Sel.Name == "Table":
+						// pdfcpu's object table (`ctx.XRefTable.Table`, or `ctx.Table` through the
+						// embedding): pdfcpu's own enumeration of every object (/pending 752).
+						enumeration(x, ".Table")
 					case x.Sel.Name == "Key" && !called[x]:
 						problems = append(problems, fmt.Sprintf("%s:%d (%s) takes .Key as a method value, which hides its argument from this guard", path, fset.Position(x.Pos()).Line, encl))
 					}
@@ -771,6 +793,12 @@ func TestTheSigwalkGuardSeesEveryBypass(t *testing.T) {
 		{"bytes.Cut in revisions.go", "", "", "\nfunc zzJ(b []byte) { _, _, _ = bytes.Cut(b, nil) }\n", "bytes.Cut"},
 		{"bytes.Count in revisions.go", "", "", "\nfunc zzK(b []byte) int { return bytes.Count(b, nil) }\n", "bytes.Count"},
 		{"a method value of bytes.Index", "", "", "\nvar zzL = bytes.Index\n", "bytes.Index"},
+		// /pending 752: a second enumeration written against pdfcpu.
+		{"pdfcpu dictionary indexing", "zz.go", "func zzM(d types.Dict) bool { return d[\"ByteRange\"] != nil }", "", `["ByteRange"] outside`},
+		{"pdfcpu dictionary indexing by constant", "zz.go", "const zzN = \"Fields\"\nfunc zzN2(d types.Dict) bool { return d[zzN] != nil }", "", `["Fields"] outside`},
+		{"a pdfcpu Dict method", "zz.go", "func zzO(d types.Dict) bool { _, ok := d.Find(\"ByteRange\"); return ok }", "", `.Find("ByteRange") outside`},
+		{"pdfcpu's object table", "zz.go", "func zzP(ctx *model.Context) int { return len(ctx.XRefTable.Table) }", "", ".Table outside"},
+		{"pdfcpu's object table through the embedding", "zz.go", "func zzQ(ctx *model.Context) int { return len(ctx.Table) }", "", ".Table outside"},
 	} {
 		got := strings.Join(sigwalkCensus(t, copyPkg(tc.file, tc.code, tc.rev)), "\n")
 		if !strings.Contains(got, tc.want) {
