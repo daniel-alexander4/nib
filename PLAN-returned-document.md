@@ -373,7 +373,22 @@ signature below the scan floor, so it is REFUSED — after S03 that LOWERS the s
 attribution, so its unsigned `/Reason`, `/M` and `/Name` are the ones reported. S03's grill owns the first; the second
 fails safe; the third is /pending 736.
 
-#### P01.S02 — one door: `AddedAfter` over verified, well-formed revisions
+#### P01.S02 — one door: `AddedAfter` over verified, well-formed revisions *(done 2026-09-29, v1.169.0)*
+**Ledger**: `trailing_test.go` green and unchanged (its prose corrected) — met; `TestAddedAfterFailsClosed` red with the
+error arm cut — met; both 661 decoys (LISTED in `/Fields`, the shape that fooled the old walk) and both copied dictionaries
+read `addedAfter=true` with cause `refused-signature-present` — met in Go and through `cmdVerify` (exit 2, the refused line);
+**live**, the built `nib verify`: honest exit 0, copied exit 2 naming `object 22 … contents-elsewhere`, both hostile K-pair
+files exit 2 with their refused line; the guard fails on a second walk — met, and on 14 bypass shapes the first cut missed
+(`TestTheSigwalkGuardSeesEveryBypass`); the pre-S02 red proof — TAKEN on `11490690` before the walk was deleted
+(`docs/red-proofs.md`). Review `code-reviews/v1.168.4-p01s02-returned-document-2026-09-29.md`, three rounds.
+**(review pins, 2026-09-29 — supersede the T03 order and the zero-signer grill pin above)** Cause order: error or NO
+bounding record → `could-not-check` first (a refusal must not claim an append nobody measured); then any refused →
+`refused-signature-present`; else `appended`; the badge names both facts. The zero-signer rule exempts ONLY a well-formed
+signature the catalog's `/Perms` names that the library never enumerated (a `/Perms /UR3` form without `/SigFlags`) —
+exempting everything outside the library's enumeration let an appended revision strip `/SigFlags` and UNSIGN a signed
+document. The DocTimeStamp imprint check is OFF the verdict path entirely (11% of `Verify` at 10 MB per stamp; an honest
+RSASSA-PSS token is refused by `timestamp.Parse`): on demand in P02/P03 (D10). Placeholders (empty `/Contents`) are never
+listed as refused. ADR-059.
 Scope: delete the `/Fields` ByteRange walk; `maxEnd` over records that verified and are well-formed; a count or bag
 disagreement is an error (fail-closed). Guards: `Key("ByteRange")` / `Xref()` in exactly one non-test function of
 `internal/sign` plus a named allow-list checked at site markers (ADR-009 shape: `signatureBlobPresent` — re-expressing it
@@ -402,6 +417,35 @@ Acceptance:
 - The guard fails if a second ByteRange walk is introduced, and if `bytes.Index` reads file bytes in `Revisions`.
 - **The pre-S02 red proof is TAKEN INSIDE THIS SLICE (plan-review pin: QA)**, before the walk is deleted, or against
   `oldtree` of the pre-S02 commit: the 661 fixtures defeat the `/Fields` walk.
+
+**Tasks** (slice grill 2026-09-29, `memory/grills/2026-09-29-p01s02-addedafter.md` — verdict AMENDED): T01 — a
+LISTED-decoy fixture and the recorded pre-S02 red proof (S01's `appendDecoy661` never lists the decoy in `/Fields`, so on
+HEAD it already warns and a proof built on it is vacuous; the listed variant reads `valid, addedAfter=false` on HEAD for
+both filters — that is the proof). T02 — `Revision.hasContents`, `Timestamp`, the imprint check. T03 — delete the
+`/Fields` walk; `coverage` and an `addedAfter` wrapper as `addedAfterVerdict`'s one caller (its body untouched for the
+replay script); cause order: error/join → `could-not-check`, any refused → `refused-signature-present`, no valid signer →
+`could-not-check`, else `appended`; the zero-signer rule; the `Status` fields. T04 — tests (incl. `TestTheJoinTolerates…`
+now asserting cause ≠ `could-not-check`, and the two tests that called the deleted walk). T05 — the guard: `.Xref()`,
+`.Key("ByteRange")`, `.Key("Fields")` only in `sweep`, a `//sigwalk:exempt <name>` marker per other site each matching
+exactly one call (the shape of `pdfread/pagecontent_guard_test.go`); no `regexp`/`bytes.Index*`/`Contains*` in
+`revisions.go`. T06 — the readers: `describeStatus` and the CLI line per refused record (`/Filter` printed `%q`, capped
+at 64 bytes — attacker-typed), the badge suffix by cause, the details modal listing refused records, `app.js`'s "not
+covered by any signature" note → "by any VALID signature"; jsdom tests; `observables_test.go` and `published.test.mjs`
+learn the new fields. T07 — the imprint cost at 10 MB. T08 — ADR-059, stale comments, minor version bump (refused
+signatures are a new thing a user is shown).
+**(grill pin: DocTimeStamp, 2026-09-29 — AMENDS the plan-review pin above)** A DocTimeStamp NEVER bounds coverage: it names
+no signer, a public TSA stamps any hash (/pending 708 showed a self-minted one), so "imprint matches → bounds" would let
+anyone hide appended content behind a timestamp. The imprint only decides whether the record is refused
+(`timestamp-unverified`) or not. Measured: the library reads a DocTimeStamp `ValidSignature=false`; the imprint check
+works (`timestamp.Parse` + a hash over the ranges → MATCH). An honest B-LTA document therefore reads `AddedAfter=true,
+appended` — accurate: the stamp's revision was added after the last signature. **Found live**: every B-LTA document
+reads `Invalid` TODAY, the stamp counted as a failed signer (/pending 737, carried to S03).
+**(grill pin: zero-signer rule)** `Invalid` when any record has non-empty `/Contents` (the rule `signatureBlobPresent`
+uses) — not `len(records) > 0`, which would turn a prepare-for-signing placeholder (`/Type /Sig`, empty `/Contents`)
+from `Unsigned` into `Invalid`. It overlaps S01's join branch and does not conflict.
+**(grill pin: the guard)** After S02 neither `signatureBlobPresent` nor `hasCertificationSignature` calls `.Xref()` or
+`.Key("ByteRange")`, so the planned allow-list excuses nothing; the guard looks for the three calls with a marker per site.
+**Defaults (rung 2)**: three causes, the note reworded rather than a fourth; the readers land in S02; minor bump.
 
 #### P01.S03 — a refused signature is reported, and is not a signer
 Scope: `Verify` does not count a refused record as a signer. **(plan-review pin: SRE + forensic + data + architect)** A

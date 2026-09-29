@@ -3,7 +3,11 @@
 // untampered / modified / unsigned badge plus per-signer detail.
 //
 // Tamper-evidence is purely cryptographic: pdfsign's verifier recomputes the
-// signed byte-range hash. Any edit by any tool flips ValidSignature to false.
+// signed byte-range hash, and an edit inside a signature's ranges flips that
+// signature's ValidSignature to false. An edit in a revision APPENDED after it
+// leaves the signature valid — its ranges never covered those bytes — and is what
+// `Status.AddedAfter` reports, measured over the verified, well-formed records of
+// the one revision sweep (`revisions.go`, ADR-058/059).
 // Whether the signer's certificate chains to a trusted CA (TrustedIssuer) is a
 // separate identity question we deliberately ignore here — Nib cares about
 // integrity, not third-party trust. We report every signer, not just the
@@ -12,7 +16,6 @@ package sign
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 
 	dpdf "github.com/digitorus/pdf"
@@ -77,13 +80,72 @@ type SignerInfo struct {
 type Status struct {
 	State   State        `json:"state"`
 	Signers []SignerInfo `json:"signers,omitempty"`
-	// AddedAfter is true when the document carries content in a revision later
-	// than its most-recent signature — added after signing, covered by no
-	// signature. It does NOT make the existing signatures invalid (each still
-	// proves its own content intact); it warns that the final document is not
-	// wholly signed. In multi-party signing only content after the LAST
-	// signature is flagged — content added between signatures is expected.
+	// AddedAfter is true when the document carries content past the coverage of
+	// its last VALID, well-formed signature — added after signing, covered by no
+	// valid signature — or when nib could not confirm it does not. It does NOT make
+	// the existing signatures invalid (each still proves its own content intact);
+	// it warns that the final document is not wholly signed. In multi-party
+	// signing only content after the LAST signature is flagged — content added
+	// between signatures is expected. A document timestamp never counts as
+	// coverage (ADR-059), and **this is never "unchanged since you signed"** —
+	// that answer is a fingerprint-selected prefix, not this bit.
 	AddedAfter bool `json:"addedAfter,omitempty"`
+	// AddedAfterCause says which fact set AddedAfter, and is empty when it is
+	// false: `appended`, `refused-signature-present` or `could-not-check`.
+	AddedAfterCause AddedAfterCause `json:"addedAfterCause,omitempty"`
+	// Refused lists every signature-shaped dictionary nib refused that carries a
+	// non-empty /Contents, by object number, so a reader can say "object 31 claims
+	// to be a signature and is not one". An empty /Contents is a prepare-for-signing
+	// placeholder, not a claim, and is never listed. Its /Filter is the document's
+	// own text, capped at 64 bytes.
+	Refused []RefusedSignature `json:"refused,omitempty"`
+}
+
+// AddedAfterCause names which fact set `Status.AddedAfter` (ADR-059).
+type AddedAfterCause string
+
+const (
+	// AddedAfterAppended: every signature-shaped dictionary is well-formed, and bytes follow the
+	// coverage of the last valid signature.
+	AddedAfterAppended AddedAfterCause = "appended"
+	// AddedAfterRefusedSignature: at least one valid signature bounds coverage, bytes follow it —
+	// measured — AND the document carries a signature-shaped dictionary nib refused
+	// (`Status.Refused`). Both facts, so every reader names both. The refused one may claim to reach
+	// the end — /pending 661's decoys did — and a refusal is exactly a claim nib will not take.
+	AddedAfterRefusedSignature AddedAfterCause = "refused-signature-present"
+	// AddedAfterCouldNotCheck: the sweep or the join could not be trusted, or no valid, well-formed
+	// record bounds coverage — nothing was measured, whatever else is refused.
+	AddedAfterCouldNotCheck AddedAfterCause = "could-not-check"
+)
+
+// RefusedSignature is one refused record as a reader is shown it.
+type RefusedSignature struct {
+	Obj uint32 `json:"obj"`
+	// Filter is the dictionary's `/Filter`, attacker-typed and capped at maxRefusedFilter bytes;
+	// every reader escapes it (the CLI prints it `%q`, the page sets textContent).
+	Filter string       `json:"filter,omitempty"`
+	Cause  RefusalCause `json:"cause"`
+}
+
+// maxRefusedFilter caps the attacker-typed `/Filter` a refused record carries to a reader.
+const maxRefusedFilter = 64
+
+// refusedOf is the reader's view of every refused record, in xref order.
+func refusedOf(revs []Revision) []RefusedSignature {
+	var out []RefusedSignature
+	for i := range revs {
+		// A placeholder (empty `/Contents`) claims nothing, so it is not published as refused: it
+		// would unhide the details button on an unsigned document to say nothing true.
+		if revs[i].Cause == "" || !revs[i].hasContents {
+			continue
+		}
+		f := revs[i].Filter
+		if len(f) > maxRefusedFilter {
+			f = f[:maxRefusedFilter]
+		}
+		out = append(out, RefusedSignature{Obj: revs[i].Obj, Filter: f, Cause: revs[i].Cause})
+	}
+	return out
 }
 
 // Verify reports whether data is unsigned, signed-and-untampered, or
@@ -160,10 +222,10 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// (`TestNoProducerSignatureIsRefused` asserts it per source).
 	revs, sweepErr := sweepRevisions(data)
 	if sweepErr != nil {
-		return Status{State: Invalid, AddedAfter: true}, nil, sweepErr
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck}, nil, sweepErr
 	}
 	if libraryWouldOverread(revs, len(data)) {
-		return Status{State: Invalid, AddedAfter: true}, revs, errLibraryWouldOverread
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Refused: refusedOf(revs)}, revs, errLibraryWouldOverread
 	}
 	resp, err := libraryVerify(bytes.NewReader(data), int64(len(data)))
 	if err != nil || resp == nil || len(resp.Signers) == 0 {
@@ -184,8 +246,18 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 		// `signatureBlobPresent` no longer panics and answers through a bounded scan when the parse
 		// fails, so it is safe to ask on the error path — which is the only path where the answer
 		// changes anything.
-		st := Status{State: Unsigned}
-		if signatureBlobPresent(data) {
+		//
+		// **And the sweep answers the same question where `/Fields` cannot see** (P01.S02): a record
+		// with a non-empty `/Contents` is a signature blob wherever it sits — under `/Kids`, or listed
+		// nowhere — so a nested signature whose PKCS#7 fails no longer reads `Unsigned` while
+		// `Revisions` holds its record. Non-empty, never "any record": a prepare-for-signing
+		// placeholder (`/Type /Sig`, empty `/Contents`) is a record and stays `Unsigned`, which is
+		// `signatureBlobPresent`'s own contract. And only a record the library would have processed,
+		// or one the sweep refused (`checkableBlob`): a Reader-extended form's intact `/Perms /UR3`
+		// signature with no `/SigFlags` is a blob the library never looks at, and it read `Unsigned`
+		// before this rule — counting it made such a form `Invalid` with nothing to show why.
+		st := Status{State: Unsigned, Refused: refusedOf(revs)}
+		if signatureBlobPresent(data) || anyCheckableBlob(revs) {
 			st.State = Invalid
 		}
 		// No library signer: every record is unverified, and a record the library should have
@@ -195,8 +267,9 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 			// A signature the library should have reported and did not is one nobody checked: the
 			// document is `Invalid` and the warning is raised — fail-closed, as every other `errJoin`
 			// route is (P01.S01's claims pass found this branch returning the error with no warning).
-			st.State, st.AddedAfter = Invalid, true
+			st.State = Invalid
 		}
+		st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), jerr, false)
 		return st, revs, jerr
 	}
 
@@ -208,7 +281,7 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// by position and cross-checks the bag (ADR-058). A join that disagrees names nobody, and the
 	// same disagreement makes `AddedAfter` warn below.
 	at, joinErr := joinLibrary(revs, resp.Signers)
-	st := Status{State: Valid}
+	st := Status{State: Valid, Refused: refusedOf(revs)}
 	for i := range resp.Signers {
 		fp := ""
 		if joinErr == nil {
@@ -220,54 +293,95 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 		}
 		st.Signers = append(st.Signers, si)
 	}
-	// Flag content appended after the most-recent signature. Two rules, and the
-	// second is the one the "two enumerations" review asked for.
+	// Flag content appended after the most-recent VALID signature, read from the records the join
+	// just marked (P01.S02 deleted the `/Fields` ByteRange walk that did this on its own, and with
+	// it the "two enumerations" the old comment here worried over: /pending 661's decoy, listed in
+	// `/Fields`, lent that walk a coverage end no signature vouched for).
 	//
-	// **A parse failure here must not change the integrity VERDICT** — a signature that
-	// hashed correctly is still valid over its own byte range whatever the trailing check
-	// does, so `State` is untouched. That was always the intent.
+	// **This must not change the integrity VERDICT** — a signature that hashed correctly is still
+	// valid over its own byte range whatever coverage says, so `State` is untouched.
 	//
-	// **But a parse failure must not be reported as "no trailing content" either.** This
-	// check and `verify.Verify` are two different enumerations of the same document — one
-	// walks the xref for signature blobs, this one walks AcroForm/Fields for byte ranges —
-	// and the whole worry the review raised is that the warning could go quiet
-	// independently of the verdict. Discarding the error did exactly that: on a document
-	// this call cannot read, `AddedAfter` silently became false and a Valid-looking result
-	// claimed the document was wholly signed. It is unreachable on a Valid document *today*
-	// (both calls use dpdf on the same bytes, so one cannot parse when the other cannot),
-	// which is precisely why a silent discard is a trap rather than a bug: the day this
-	// check grows an error path the other does not share, "clean" becomes a lie with no
-	// test failing. Fail-closed — an unreadable trailing check on a signed document reports
-	// AddedAfter=true, "I could not confirm the document ends at its signature", which for
-	// an integrity tool is the safe direction and which both the CLI (exit non-zero) and
-	// the web badge (warn) already render correctly.
-	//
-	// **A join that disagrees is a "could not confirm" too** (P01.S01): the records and the
-	// library then describe different documents, and nothing either says about coverage is known
-	// to be about this one.
-	trailing, sawSig, terr := trailingContentAfterLastSignature(data)
-	st.AddedAfter = addedAfterVerdict(trailing, sawSig, errors.Join(terr, joinErr), len(st.Signers) > 0)
+	// **A join that disagrees is a "could not confirm"** (P01.S01): the records and the library then
+	// describe different documents, and nothing either says about coverage is known to be about this
+	// one. Fail-closed — `AddedAfter` warns, and the cause says it could not check.
+	st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), joinErr, len(st.Signers) > 0)
 	return st, revs, joinErr
 }
 
-// addedAfterVerdict combines the trailing-content check's result with its error under one
-// rule: content found OR the check could not run means "warn". It is a named function and
-// not an inline `a || err != nil` because the fail-closed direction is the whole point of
-// it — an inline expression is one careless refactor away from `a` alone, which is the
-// silent-clean behaviour this replaced, and nothing would fail. This is what the test binds.
+// anyCheckableBlob reports whether any record carries a non-empty `/Contents` — a signature blob seen
+// by the xref sweep, which `signatureBlobPresent`'s `/Fields` walk cannot see under `/Kids` — EXCEPT
+// a well-formed one the catalog's `/Perms` names and the library never enumerated: a `/Perms /UR3`
+// usage-rights signature on a form with no `/SigFlags`, which the zero-signer path would otherwise
+// call `Invalid` with no signer and no refusal to name.
+//
+// **The exemption is `/Perms`, never "the library did not enumerate it"** (the P01.S02 re-review):
+// `/SigFlags` is a catalog key an appended revision can drop, so exempting every record outside the
+// library's enumeration let anyone strip it and turn a signed document `Unsigned` — hiding that it was
+// ever signed. Measured on four shapes before this rule; each now reads `Invalid`.
+func anyCheckableBlob(revs []Revision) bool {
+	for i := range revs {
+		exempt := revs[i].underPerms && revs[i].Cause == "" && revs[i].libPos < 0
+		if revs[i].hasContents && !exempt {
+			return true
+		}
+	}
+	return false
+}
+
+// coverage is the one measurement of "how far": the largest `CoverageEnd` over the records that
+// `bounds` — verified by the library, well-formed, and not a document timestamp — against the
+// file's length. `sawSignature` is false when no record bounds at all, which is not the same fact as
+// "nothing was appended", and `addedAfterVerdict` needs both.
+func coverage(revs []Revision, size int) (trailing, sawSignature bool) {
+	var maxEnd int64
+	for i := range revs {
+		if !revs[i].bounds() {
+			continue
+		}
+		sawSignature = true
+		maxEnd = max(maxEnd, revs[i].CoverageEnd)
+	}
+	return sawSignature && int64(size) > maxEnd, sawSignature
+}
+
+// addedAfter is `addedAfterVerdict`'s one caller (the guard counts it): it measures coverage over
+// the records, asks the verdict, and names the cause. The verdict's body is kept as it was so its
+// replayed red proof (`added-after-fails-closed`) still mutates the rule it was written for.
+//
+// Cause precedence, first match wins: an error (sweep or join) → `could-not-check`; no record
+// bounds at all → `could-not-check`, even with a refused record present, because nothing measured
+// an append and `refused-signature-present` is read as one; any refused record →
+// `refused-signature-present`; otherwise `appended`. (The slice grill's order put the refusal
+// before the bounding check; the P01.S02 review found it then claimed an append nobody measured.)
+// A refused record present with the valid signatures reaching EOF does not warn — the bit is a
+// coverage fact, and `Refused` reports the record either way.
+func addedAfter(revs []Revision, size int, err error, librarySawSigners bool) (bool, AddedAfterCause) {
+	trailing, saw := coverage(revs, size)
+	if !addedAfterVerdict(trailing, saw, err, librarySawSigners) {
+		return false, ""
+	}
+	switch {
+	case err != nil, !saw:
+		return true, AddedAfterCouldNotCheck
+	case len(refusedOf(revs)) > 0:
+		return true, AddedAfterRefusedSignature
+	}
+	return true, AddedAfterAppended
+}
+
+// addedAfterVerdict combines the coverage measurement with its error under one rule: content
+// found OR the check could not run means "warn". It is a named function and not an inline
+// `a || err != nil` because the fail-closed direction is the whole point of it — an inline
+// expression is one careless refactor away from `a` alone, which is the silent-clean behaviour
+// this replaced, and nothing would fail. This is what the test binds; `addedAfter` is its one
+// caller.
 func addedAfterVerdict(trailing, sawSignature bool, err error, librarySawSigners bool) bool {
-	// **The two enumerations disagreeing is itself a "could not confirm".** The library walks
-	// `rdr.Xref()` for `Adobe.PPKLite` objects; this check walks AcroForm/Fields for `FT /Sig`
-	// byte ranges. They are genuinely different walks over the same parsed document, so a
-	// document whose AcroForm carries `/SigFlags` (which the library requires) but whose
-	// `/Fields` does not list the signature satisfies one and not the other — no parse failure
-	// anywhere. This check then returns "nothing trailing" because it found nothing to measure
-	// against, and a Valid document is reported as wholly signed while the bytes after its
-	// signature are covered by nothing.
-	//
-	// The old signature could not express this: it returned `(false, nil)` for "no signature
-	// fields here" and for "the signatures cover everything" alike, so the caller could not tell
-	// an agreement from an absence (/pending 270).
+	// **The library reporting a signer that no valid, well-formed record stands for is itself a
+	// "could not confirm".** Until P01.S02 this rule caught the library's xref walk and a
+	// `/Fields` walk disagreeing (/pending 270); the `/Fields` walk is gone, and what reaches here
+	// now is a document whose every library signer failed, or was refused, or is a document
+	// timestamp — there is then no coverage end to measure against, and "nothing trailing" would
+	// report a document as wholly signed that no valid signature covers at all.
 	if librarySawSigners && !sawSignature {
 		return true
 	}
@@ -278,10 +392,11 @@ func addedAfterVerdict(trailing, sawSignature bool, err error, librarySawSigners
 // of whether any library can PARSE those contents.
 //
 // **Exported because `Verify`'s `Unsigned` is not the same question, and a caller that needs the
-// stricter one was silently getting the looser (P08.S03).** `Verify` downgrades to `Unsigned`
-// whenever `verify.Verify` returns an error — the cross-check below is reached only on the
-// `err == nil` path — so a document whose signature blob is present but which that library cannot
-// parse reads as unsigned. That is the right answer for "is there a valid signature"; it is the
+// stricter one was silently getting the looser (P08.S03).** When this was written `Verify`
+// downgraded to `Unsigned` whenever `verify.Verify` returned an error — the cross-check was reached
+// only on the `err == nil` path (closed by /pending 453, and widened over the revision sweep by
+// P01.S02) — so a document whose signature blob was present but which that library could not
+// parse read as unsigned. That was the right answer for "is there a valid signature"; it is the
 // WRONG answer for "may I compare this document's content digest against a convene-time hash",
 // where treating a signed document as unsigned produces a tampering accusation for a library
 // divergence.
@@ -315,6 +430,12 @@ func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
 // grow. A document that will not parse but contains `/ByteRange` is reported as carrying a blob,
 // which routes it to `Invalid` — "something is wrong with a signed document" — rather than to a
 // claim that it was never signed.
+//
+// **A named exemption from the one-enumeration guard** (`TestEverySignatureEnumerationIsTheSweep`,
+// P01.S02): it walks `/Fields`, and re-expressing it over the sweep would NARROW it — the sweep keeps
+// only signature-shaped dictionaries, and this answers for any `FT /Sig` field with contents — which
+// moves a document towards `Unsigned`, the unsafe direction. `verifyIndexed` asks the sweep the same
+// question beside it (`anyCheckableBlob`), so a `/Kids`-nested blob this walk cannot see is still seen.
 func signatureBlobPresent(pdf []byte) (present bool) {
 	// The recover is positional: it must cover the whole parse below, including the lazy
 	// dereferences inside the Key/Index walk, which is where most of the 115 panics landed.
@@ -331,7 +452,7 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 	if acro.IsNull() {
 		return false
 	}
-	fields := acro.Key("Fields")
+	fields := acro.Key("Fields") //sigwalk:exempt signatureBlobPresent
 	for i := 0; i < fields.Len(); i++ {
 		f := fields.Index(i)
 		if f.Key("FT").Name() != "Sig" {
@@ -426,62 +547,6 @@ func pdfcpuCanRead(pdf []byte) (err error) {
 // thing they were relying on.
 func scanForSignatureBlob(pdf []byte) bool {
 	return bytes.Contains(pdf, []byte("/ByteRange"))
-}
-
-// trailingContentAfterLastSignature reports whether pdf has content beyond the
-// coverage of its most-recent signature — a revision appended after the last
-// signature, covered by none. Each signature's /ByteRange is
-// [start1 len1 start2 len2]; the signed content ends at start2+len2, and a
-// later (incremental) signature covers more, so the most-recent signature has
-// the largest coverage end. If the file is larger than every signature's
-// coverage, content was added after the last one. Unsigned docs report false.
-//
-// `sawSignature` reports whether THIS walk found a signature field at all, and it exists
-// because "no signature here" and "the signatures cover everything" were the same return
-// value — which is what let a disagreement between the two enumerations read as clean.
-//
-// **A panic in the walk is an error, not a crash** (/pending 502). `digitorus/pdf` panics from its
-// lazy Key/Index dereferences on ordinary corruption — 1,047 of 2,482 single-bit flips of a signed
-// fixture — and `Verify` reaches this walk on the p2p arm, where no per-request recover applies.
-// An error here routes through `addedAfterVerdict`, which is fail-closed.
-func trailingContentAfterLastSignature(pdf []byte) (trailing, sawSignature bool, err error) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			trailing, sawSignature, err = false, false, fmt.Errorf("read pdf: %v", rec)
-		}
-	}()
-	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
-	if err != nil {
-		return false, false, err
-	}
-	acro := r.Trailer().Key("Root").Key("AcroForm")
-	if acro.IsNull() {
-		return false, false, nil
-	}
-	fields := acro.Key("Fields")
-	var maxEnd int64
-	signed := false
-	for i := 0; i < fields.Len(); i++ {
-		f := fields.Index(i)
-		if f.Key("FT").Name() != "Sig" {
-			continue
-		}
-		br := f.Key("V").Key("ByteRange")
-		if br.Len() < 4 {
-			continue
-		}
-		signed = true
-		if end := br.Index(2).Int64() + br.Index(3).Int64(); end > maxEnd {
-			maxEnd = end
-		}
-	}
-	if !signed {
-		// **Not the same fact as "nothing was appended", and the caller needs both.** This
-		// walk found no signature to measure against; whether one exists is the other
-		// enumeration's answer.
-		return false, false, nil
-	}
-	return int64(len(pdf)) > maxEnd, true, nil
 }
 
 // signerInfo projects a pdfsign verify.Signer onto the integrity-focused subset

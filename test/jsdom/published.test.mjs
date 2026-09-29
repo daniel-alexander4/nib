@@ -535,9 +535,11 @@ function lineAt(starts, idx) {
 function evidenceFor(src, starts, rel, field) {
   const out = new Set();
   const pats = [
-    new RegExp(`\\.${field}(?![\\w$])`, 'g'),
+    // `(?![\w$(])`: a field is never CALLED, and without the `(` a data field named like an
+    // Array method (`RefusedSignature.filter`) was "read" by every `.filter(` in the reader.
+    new RegExp(`\\.${field}(?![\\w$(])`, 'g'),
     new RegExp(`\\{[^{}]*\\b${field}\\b[^{}]*\\}\\s*=`, 'g'),
-    new RegExp(`\\.${field[0].toUpperCase()}${field.slice(1)}(?![\\w$])`, 'g'),
+    new RegExp(`\\.${field[0].toUpperCase()}${field.slice(1)}(?![\\w$(])`, 'g'),
     // **Bracket and .get() access, because a non-JS reader was invisible to the three above.**
     // The table has always said a reader need not be `web/app.js`, and two of them are Go — but
     // `/api/lan/heard`'s reader is a shell harness driving Python, which reaches every field as

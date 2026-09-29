@@ -247,6 +247,11 @@ func mentionsTimestamp(err error) bool {
 // an AcroForm signature field whose /V has a /Reference with /TransformMethod
 // /DocMDP. (Top-level signature fields only — the conventional placement.)
 //
+// **Declared: it is blind to a certification signature nested under `/Kids`** (/pending 734), because
+// it walks `/Fields` rather than the revision sweep. It is a named exemption from the one-enumeration
+// guard (`TestEverySignatureEnumerationIsTheSweep`), not a second coverage walk: it reads `/Reference`,
+// never a `/ByteRange`.
+//
 // A panic in the walk is returned as an error (/pending 502): the same lazy dereferences that needed
 // a recover in signatureBlobPresent panic here on corrupt input, and an unreadable document is one
 // SignApproval must refuse rather than one that takes the process.
@@ -264,7 +269,7 @@ func hasCertificationSignature(pdf []byte) (certified bool, err error) {
 	if acro.IsNull() {
 		return false, nil
 	}
-	fields := acro.Key("Fields")
+	fields := acro.Key("Fields") //sigwalk:exempt hasCertificationSignature
 	for i := 0; i < fields.Len(); i++ {
 		f := fields.Index(i)
 		if f.Key("FT").Name() != "Sig" {

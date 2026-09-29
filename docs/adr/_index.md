@@ -529,3 +529,11 @@ home today.
   the library's own enumeration, the certificate bag survives only as the per-position cross-check (an empty
   bag must mean not valid), and any disagreement blanks every fingerprint and sets `AddedAfter`. Two
   signatures sharing a bag are now each named. The sweep and its byte-range gate run before the library.
+- **[ADR-059 — a document timestamp never bounds `AddedAfter`, and the refusal is the published answer](059-a-document-timestamp-never-bounds-addedafter.md)**
+  — `PLAN-returned-document.md` P01.S02, /pending 661. The `/Fields` ByteRange walk is deleted: `AddedAfter` is
+  measured over records that verified, are well-formed and are not document timestamps, because a stamp names
+  nobody and anyone can obtain one over any bytes. `Status.Refused` names every refused record and
+  `AddedAfterCause` says which fact set the bit; the zero-signer path is `Invalid` on a non-empty `/Contents`
+  the library would have processed or the sweep refused. A stamp's imprint is never checked on the verdict path
+  (the dispute surface's, on demand). One enumeration in `internal/sign`, two marked exemptions, guarded by an
+  AST census whose bypasses are each driven red.

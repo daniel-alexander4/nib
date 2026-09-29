@@ -800,8 +800,10 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	// mismatch, which is the more specific-sounding and less actionable of the two.
 	//
 	// **Gated on `HasSignatureBlob` and not on `Verify(...).State == Unsigned`**, which is a
-	// different question. `Verify` downgrades to `Unsigned` on any parse error from its library,
-	// so a signed document that library cannot read would take this branch and be refused as
+	// different question. `Verify` once downgraded to `Unsigned` on any parse error from its
+	// library (/pending 453 closed that, and P01.S02's sweep made a `/Kids`-nested blob `Invalid`
+	// too), but `Unsigned` remains a verdict about signatures, not about bytes: a document whose
+	// signature `Verify` judges some other way must not take this branch and be refused as
 	// tampered — a false accusation for a library divergence. What this needs is "no signature at
 	// all", which is what the blob check answers.
 	//

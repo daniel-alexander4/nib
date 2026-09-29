@@ -581,9 +581,11 @@ func TestAKidsNestedSignatureIsSeen(t *testing.T) {
 	objs[3] = sobj{num: 4, body: "<</T(parent)/Kids[6 0 R]>>"}
 	objs = append(objs, sobj{num: 6, body: "<</FT/Sig/T(child)/Parent 4 0 R/V 5 0 R>>"})
 	doc := fillSig(t, synthRevision(t, nil, objs, 1), "1", nil, detached(t, a))
-	// STIMULUS: today's /Fields walks find no signature in it.
-	if _, saw, err := trailingContentAfterLastSignature(doc); saw || err != nil {
-		t.Fatalf("STIMULUS: the /Fields ByteRange walk saw=%v err=%v; the signature is not nested out of its reach", saw, err)
+	// STIMULUS: /Fields does not list the signature's field, and the remaining /Fields walk finds
+	// no signature in it. (Before P01.S02 this also asserted the deleted /Fields ByteRange walk
+	// returned saw=false — green at 11490690, the pre-S01 proof S04 records.)
+	if listedInFields(t, doc, 5) {
+		t.Fatal("STIMULUS: /Fields lists the nested signature directly")
 	}
 	if signatureBlobPresent(doc) {
 		t.Fatal("STIMULUS: the /Fields blob walk found the nested signature")
@@ -686,6 +688,14 @@ func TestACopiedSignatureDictionaryIsRefused(t *testing.T) {
 		if len(st.Signers) != 2 || st.Signers[1].Fingerprint != "" {
 			t.Errorf("%s: Verify reports the copy's signer as %+v, want no fingerprint", tc.name, st.Signers)
 		}
+		// P01.S02: the copy's revision is covered by no valid, well-formed signature, and the reason
+		// a reader is given is the refusal, naming the copy.
+		if !st.AddedAfter || st.AddedAfterCause != AddedAfterRefusedSignature {
+			t.Errorf("%s: addedAfter %v cause %q, want true %q", tc.name, st.AddedAfter, st.AddedAfterCause, AddedAfterRefusedSignature)
+		}
+		if len(st.Refused) != 1 || st.Refused[0].Obj != uint32(copyNum) || st.Refused[0].Cause != tc.cause || st.Refused[0].Filter != ppkLite {
+			t.Errorf("%s: refused %+v, want exactly object %d, filter %q, cause %q", tc.name, st.Refused, copyNum, ppkLite, tc.cause)
+		}
 		v := recordFor(t, revs, uint32(vnum))
 		if v.Cause != "" || !v.Verified || v.Fingerprint != a.fp {
 			t.Errorf("%s: the victim's own record: cause %q verified %v fp %q, want well-formed, verified, %q", tc.name, v.Cause, v.Verified, v.Fingerprint, a.fp)
@@ -694,7 +704,10 @@ func TestACopiedSignatureDictionaryIsRefused(t *testing.T) {
 }
 
 // appendDecoy661 appends /pending 661's decoy — a signature-shaped dictionary claiming coverage to
-// 999,999,999 — listed in /Fields, as the reproduction built it.
+// 999,999,999 — and a field pointing at it. **The field is NOT listed in `/Fields`**: the catalog's
+// AcroForm is not rewritten, so the `/Fields` walk never saw this decoy and a document built here
+// warned even before P01.S02 (the S02 grill measured it). `appendListedDecoy661` is the shape that
+// defeated the walk.
 func appendDecoy661(t *testing.T, signed []byte, filter string) (doc []byte, decoy int) {
 	t.Helper()
 	r, err := dpdf.NewReader(bytes.NewReader(signed), int64(len(signed)))
@@ -739,6 +752,100 @@ func TestThe661DecoysAreRecordsWithCauses(t *testing.T) {
 		if st := Verify(doc); st.State != Valid || len(st.Signers) != 1 {
 			t.Errorf("decoy %q: Verify state %s signers %d, want valid/1 — the gate must not refuse a record the library never reads",
 				tc.filter, st.State, len(st.Signers))
+		}
+	}
+}
+
+// appendListedDecoy661 is /pending 661's decoy as the reproduction built it: the appended revision
+// also rewrites the AcroForm holder — inline in the catalog, or its own object — so `/Fields` lists
+// the decoy field beside the real ones, with `/SigFlags 3`. This is the shape the pre-S02 `/Fields`
+// ByteRange walk measured coverage from, and so the one whose red proof is not vacuous.
+func appendListedDecoy661(t *testing.T, signed []byte, filter string) (doc []byte, decoy int) {
+	t.Helper()
+	r, err := dpdf.NewReader(bytes.NewReader(signed), int64(len(signed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := int(r.Trailer().Key("Size").Int64())
+	rootV := r.Trailer().Key("Root")
+	rp := rootV.GetPtr()
+	root := int(rp.GetID())
+	acro := rootV.Key("AcroForm")
+	ap := acro.GetPtr()
+	var refs []string
+	for i := 0; i < acro.Key("Fields").Len(); i++ {
+		fp := acro.Key("Fields").Index(i).GetPtr()
+		refs = append(refs, fmt.Sprintf("%d 0 R", fp.GetID()))
+	}
+	decoy = size
+	refs = append(refs, fmt.Sprintf("%d 0 R", decoy+1))
+	acroBody := fmt.Sprintf("<</Fields[%s]/SigFlags 3>>", strings.Join(refs, " "))
+	objs := []sobj{
+		{num: decoy, body: fmt.Sprintf("<</Type/Sig %s/ByteRange[0 10 20 999999999]/Contents<0001020304>>>", filter)},
+		{num: decoy + 1, body: fmt.Sprintf("<</FT/Sig/T(decoy)/V %d 0 R>>", decoy)},
+	}
+	if ap.GetID() != 0 && int(ap.GetID()) != root {
+		objs = append(objs, sobj{num: int(ap.GetID()), body: acroBody})
+	} else {
+		pp := rootV.Key("Pages").GetPtr()
+		objs = append(objs, sobj{num: root, body: fmt.Sprintf("<</Type/Catalog/Pages %d 0 R/AcroForm%s>>", pp.GetID(), acroBody)})
+	}
+	return synthRevision(t, signed, objs, root), decoy
+}
+
+// listedInFields reports whether `/Fields` lists a field whose `/V` is object obj.
+func listedInFields(t *testing.T, doc []byte, obj int) bool {
+	t.Helper()
+	r, err := dpdf.NewReader(bytes.NewReader(doc), int64(len(doc)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := r.Trailer().Key("Root").Key("AcroForm").Key("Fields")
+	for i := 0; i < fields.Len(); i++ {
+		if p := fields.Index(i).Key("V").GetPtr(); int(p.GetID()) == obj {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTheListedDecoysWarn — /pending 661, the S02 acceptance. Each decoy claims coverage past an
+// appended revision and is LISTED in `/Fields`, which is what the deleted `/Fields` ByteRange walk
+// took coverage from: on the pre-S02 tree (`11490690`) both read `valid, addedAfter=false` — the red
+// proof, recorded in `docs/red-proofs.md`. `AddedAfter` now measures only verified, well-formed
+// records, so each warns, names the refused decoy, and says why.
+func TestTheListedDecoysWarn(t *testing.T) {
+	a := newIdentity(t, "Alice")
+	signed := synthSigned(t, a)
+	for _, tc := range []struct {
+		filter string
+		cause  RefusalCause
+	}{
+		{"", CauseUnsupportedFilter},
+		{"/Filter/Adobe.PPKLite", CauseUnparseableContents},
+	} {
+		doc, decoy := appendListedDecoy661(t, signed, tc.filter)
+		// STIMULUS: the decoy is listed in /Fields, claims coverage past the file, and the real
+		// signature still verifies — so only the coverage rule can make this warn.
+		if !listedInFields(t, doc, decoy) {
+			t.Fatalf("decoy %q: STIMULUS: /Fields does not list the decoy", tc.filter)
+		}
+		d := recordFor(t, mustSweep(t, doc), uint32(decoy))
+		if len(d.ByteRange) != 4 || d.ByteRange[2]+d.ByteRange[3] <= int64(len(doc)) {
+			t.Fatalf("decoy %q: STIMULUS: byte range %v does not claim the appended revision", tc.filter, d.ByteRange)
+		}
+		st := Verify(doc)
+		if st.State != Valid || len(st.Signers) != 1 || st.Signers[0].Fingerprint != a.fp {
+			t.Fatalf("decoy %q: STIMULUS: state %s signers %d, want valid/1 naming Alice", tc.filter, st.State, len(st.Signers))
+		}
+		if !st.AddedAfter {
+			t.Errorf("decoy %q: addedAfter=false — a decoy /Fields lists hid the appended revision (/pending 661)", tc.filter)
+		}
+		if st.AddedAfterCause != AddedAfterRefusedSignature {
+			t.Errorf("decoy %q: cause %q, want %q", tc.filter, st.AddedAfterCause, AddedAfterRefusedSignature)
+		}
+		if len(st.Refused) != 1 || st.Refused[0].Obj != uint32(decoy) || st.Refused[0].Cause != tc.cause {
+			t.Errorf("decoy %q: refused %+v, want exactly object %d with cause %q", tc.filter, st.Refused, decoy, tc.cause)
 		}
 	}
 }
@@ -1422,8 +1529,11 @@ func TestTheJoinToleratesAFailedSignatureAndNamesTheValidOne(t *testing.T) {
 	if st.Signers[1].Fingerprint != "" {
 		t.Errorf("Bob's FAILED signature reports fingerprint %q — nothing established it", st.Signers[1].Fingerprint)
 	}
-	if st.AddedAfter {
-		t.Error("AddedAfter is set: the join reported a disagreement on an ordinary tampered document")
+	// Bob's failed revision is covered by no VALID signature, so AddedAfter warns (P01.S02) — and it
+	// must say it was APPENDED, never that it could not check: the join did not disagree.
+	if !st.AddedAfter || st.AddedAfterCause != AddedAfterAppended {
+		t.Errorf("addedAfter %v cause %q, want true %q: the join reported a disagreement on an ordinary tampered document, or Bob's failed signature bounded coverage",
+			st.AddedAfter, st.AddedAfterCause, AddedAfterAppended)
 	}
 }
 
@@ -1484,8 +1594,9 @@ func TestAJoinErrorNamesNobodyAndWarns(t *testing.T) {
 			t.Errorf("signer %d reports %q after the join disagreed", i, s.Fingerprint)
 		}
 	}
-	if !st.AddedAfter {
-		t.Error("AddedAfter is false after the join disagreed — the warning went quiet independently of the verdict")
+	if !st.AddedAfter || st.AddedAfterCause != AddedAfterCouldNotCheck {
+		t.Errorf("addedAfter %v cause %q after the join disagreed, want true %q — the warning went quiet independently of the verdict",
+			st.AddedAfter, st.AddedAfterCause, AddedAfterCouldNotCheck)
 	}
 }
 
@@ -1509,8 +1620,9 @@ func TestALibraryThatReportsNothingForARealSignatureWarns(t *testing.T) {
 	if st.State != Invalid {
 		t.Errorf("state %v, want Invalid: a signature nobody checked is not an unsigned document", st.State)
 	}
-	if !st.AddedAfter {
-		t.Error("AddedAfter is false after the library dropped a signature the sweep found — the warning went quiet")
+	if !st.AddedAfter || st.AddedAfterCause != AddedAfterCouldNotCheck {
+		t.Errorf("addedAfter %v cause %q after the library dropped a signature the sweep found, want true %q — the warning went quiet",
+			st.AddedAfter, st.AddedAfterCause, AddedAfterCouldNotCheck)
 	}
 	if len(st.Signers) != 0 {
 		t.Errorf("%d signers named after the library reported none", len(st.Signers))
