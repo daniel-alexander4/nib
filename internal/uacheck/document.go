@@ -81,6 +81,13 @@ type Document struct {
 	formWalks   int
 	contentOps  int
 	contentOver bool
+	// contentBytes is every byte the content walk has walked, counted at each walk and so once per DRAW — what
+	// `maxContentBytes` bounds, because a stream of whitespace spends no operator (`/pending 721`).
+	contentBytes int
+	// decoded is each form XObject's and appearance stream's decoded content by object number, so a form drawn N
+	// times is decoded once (`decodedContent`); streamDecodes counts the decodes that door performed.
+	decoded       map[int][]byte
+	streamDecodes int
 	// glyphs is every distinct (font, code) a text-showing operator draws — veraPDF's `Glyph` (`glyphs.go`) —
 	// gathered by the same walk; glyphSeen dedupes it, glyphFonts reads each font once, and glyphCodes counts
 	// the codes read against `maxGlyphCodes`.
