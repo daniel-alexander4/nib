@@ -375,13 +375,26 @@ func checkCIDSetsComplete(d *Document) Result {
 	// whose next font plainly fails.
 	var held heldRefusal
 	for _, f := range fonts {
-		if f.unresolve || d.name(f.dict["Subtype"]) != "Type0" {
+		if f.unresolve {
+			// **An unresolved font is held whatever the other fonts say** (/pending 722): it may be a CID font pdfcpu
+			// DROPPED (measured at P07.S04a: veraPDF judges one nib had called absent), and the refusal used to be reached
+			// only when no other CID font resolved — so one resolved font with an exact /CIDSet answered Pass over a font
+			// nib never read. Every sibling font door (`checkFontsEmbedded`, `type0Fonts`, `trueTypeFonts`) refuses.
+			held.hold(fmt.Sprintf("text selects font %s, which does not resolve in nib's reading of its resources, so "+
+				"whether it is an embedded CID font was never read", fontLabel(f.name)), f.where)
+			continue
+		}
+		if d.name(f.dict["Subtype"]) != "Type0" {
+			continue
+		}
+		// **The subject is the DESCENDANT, and a missing descriptor does not remove it** — measured on veraPDF for
+		// /pending 722: a Type 0 font with no /DescendantFonts has no 7.21.4.2 t2 check (0/0), and one whose CIDFont has
+		// no /FontDescriptor has one that PASSES (1/0, `containsFontFile` false), which `cidSetResult` answers since a
+		// nil descriptor holds no /CIDSet. pdfcpu's validator drops both shapes today, so both reach here as unresolved.
+		if d.descendantOf(f.dict) == nil {
 			continue
 		}
 		fd := d.descriptorOf(f.dict)
-		if fd == nil {
-			continue
-		}
 		// **A NON-embedded CID font is a subject too, and passes** (measured at P07.S01, on six documents), and so is
 		// one with no /CIDSet (law 5 at S05): the conditions are inside the check, not a filter on its population.
 		withSet++
@@ -396,14 +409,6 @@ func checkCIDSetsComplete(d *Document) Result {
 		return r
 	}
 	if withSet == 0 {
-		// A font that did not resolve may be the CID font veraPDF judges — pdfcpu drops a CIDFont it finds malformed
-		// (measured at P07.S04a: veraPDF passes one nib had called absent).
-		for _, f := range fonts {
-			if f.unresolve {
-				return Result{Verdict: CannotCheck, Where: f.where, Why: fmt.Sprintf("text selects font %s, which does not "+
-					"resolve in nib's reading of its resources, so whether it is an embedded CID font was never read", fontLabel(f.name))}
-			}
-		}
 		return Result{Verdict: NotApplicable, Why: "no embedded CID font is used by text"}
 	}
 	return Result{Verdict: Pass}
