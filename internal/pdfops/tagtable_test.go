@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -104,8 +105,27 @@ var tagFates = map[string]tagFate{
 		}}, "eng")
 		return out, err
 	}},
-	"TitleFromName":       {verdict: "carried", drive: func(b []byte) ([]byte, error) { return TitleFromName(b, "report.pdf") }},
-	"StripMetadata":       {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
+	"TitleFromName": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return TitleFromName(b, "report.pdf") }},
+	"StripMetadata": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
+	// text-reflow P06.S05: a reflow rewrites a paragraph INSIDE the sequence that encloses it, or refuses (`tagged`) when
+	// marked content sits between its lines — so the tree it leaves describes what it described. Driven with the corpus
+	// test's edit, the first two words swapped.
+	"ReflowParagraph": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		ps, err := Paragraphs(b, 1)
+		if err != nil || len(ps) == 0 {
+			return nil, fmt.Errorf("no paragraph on page 1 (%v)", err)
+		}
+		f := strings.Fields(ps[0].Text)
+		if len(f) < 2 {
+			return nil, fmt.Errorf("a one-word paragraph has nothing to swap")
+		}
+		f[0], f[1] = f[1], f[0]
+		out, cause, err := ReflowParagraph(b, 1, 0, ps[0].Text, strings.Join(f, " "))
+		if out == nil {
+			return nil, fmt.Errorf("refused: %q (%v)", cause, err)
+		}
+		return out, nil
+	}},
 	"StripActive":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripActive(b) }},
 	"RemoveFilesAndMedia": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemoveFilesAndMedia(b) }},
 	"ClearFlags":          {verdict: "carried", drive: func(b []byte) ([]byte, error) { return ClearFlags(b) }},

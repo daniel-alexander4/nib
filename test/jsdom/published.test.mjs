@@ -71,6 +71,9 @@ const PUBLISHED = [
   // has a reader that does something, not merely one that mentions it.
   { type: 'advancedStatus', readers: ['web/app.js'] },
   { type: 'outlineResponse', readers: ['web/app.js'] },
+  // text-reflow P06.S05: the reflow editor's paragraph list, and the reflow's outcome and cause.
+  { type: 'paragraphsResponse', readers: ['web/app.js'] },
+  { type: 'reflowResponse', readers: ['web/app.js'] },
   { type: 'attachmentsResponse', readers: ['web/app.js'] },
   { type: 'attestationsResponse', readers: ['web/app.js'] },
   { type: 'attestationView', readers: ['web/app.js'] },

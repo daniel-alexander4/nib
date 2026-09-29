@@ -269,7 +269,9 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # detected field on a rendered page before the naming dialog exists at all.
 # 39 since P02.S05 (crop.test.mjs): a crop is now a MediaBox move, and only a rendered page can show
 # that the client's display-space fractions and the new server shape agree about what was drawn.
-expect_files=39
+# 40 since text-reflow P06.S05 (reflow.test.mjs): the old word's absence is read from pdf.js's text layer of the
+# re-rendered page — a second reader — which only a real browser renders.
+expect_files=40
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

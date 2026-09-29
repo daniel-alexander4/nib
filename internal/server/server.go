@@ -485,6 +485,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tags/edit", s.requireUnlocked(s.handleTagsEdit))
 	mux.HandleFunc("GET /api/tags/tree", s.requireUnlocked(s.handleTagsTree))
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
+	mux.HandleFunc("GET /api/paragraphs", s.requireUnlocked(s.handleParagraphs))
+	mux.HandleFunc("POST /api/reflow", s.requireUnlocked(s.handleReflow))
 	mux.HandleFunc("POST /api/encrypt", s.requireUnlocked(s.handleEncrypt))
 	mux.HandleFunc("POST /api/decrypt", s.requireUnlocked(s.handleDecrypt))
 	mux.HandleFunc("GET /api/attachments", s.requireUnlocked(s.handleAttachmentsList))

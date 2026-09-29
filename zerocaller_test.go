@@ -118,6 +118,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"uacheck tests so every read door is tested against the same documents.",
 		"UseCMapChain": "test-support — /pending 675's legitimate /UseCMap chain, the no-false-refusal half of " +
 			"those same tests.",
+		"WithContent": "test-support — a one-page document drawing exactly the operators a test names, for the reflow " +
+			"server tests (text-reflow P06.S05) that must control what the page's content stream holds.",
 		"SplitContents": "test-support — ADR-056's divided-page fixtures (a fused `Tj`+`ET`, an unterminated " +
 			"comment, a white-space control), shared by the pdfread and pdfops tests so the door and a reader " +
 			"above it are tested against the same documents.",

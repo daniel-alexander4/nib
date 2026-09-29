@@ -53,6 +53,8 @@ const MUTATING = [
   '/api/save', '/api/pages', '/api/redact', '/api/outline', '/api/ocr',
   '/api/sanitize', '/api/decrypt', '/api/attachments/add', '/api/undo', '/api/redo',
   '/api/close-view', '/api/assemble',
+  // text-reflow P06.S05: re-sets a paragraph and commits it through commitMutation.
+  '/api/reflow',
   // P07.S02a (v1.117.155). Convene commits new bytes into the open document — a readme,
   // N signature pages, a ceremony page and the embedded record — so it is a mutating route
   // like any other and must be driven by the misaddressed-document guard below.

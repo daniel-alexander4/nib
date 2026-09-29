@@ -346,6 +346,7 @@
             </div>
       <div class="tbgroup" data-label="Edit Page Text" data-fold="5">
 <button id="editTextBtn" title="Drag a box over text to cover and replace it">Edit text</button>
+      <button id="reflowBtn" title="Change the words of a paragraph and let it re-wrap in the document's own font">Reflow paragraph</button>
       <button id="removeOriginalsBtn" title="Flatten edited pages so the original text is removed for good">Remove originals</button>
             </div>
       <div class="tbgroup" data-label="Recognize Text (OCR)" data-fold="1">
@@ -1535,6 +1536,25 @@
         <button id="dlCancel">Cancel</button>
         <button id="dlReveal" hidden>Show in folder</button>
         <button id="dlGo" class="primary">Download</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reflow a paragraph (PLAN-text-reflow.md P06). The house modal pattern, like #pageNumModal. The paragraph list and
+       the reason one cannot be reflowed come from the server's own reading of the page; the new words are sent with the
+       text the user was shown, so a paragraph that changed meanwhile is refused rather than overwritten. -->
+  <div id="reflowModal" hidden>
+    <div class="sigcard">
+      <h3>Reflow a paragraph</h3>
+      <p class="libhint">Pick a paragraph on this page and change its words. It re-wraps in the document's own font and the
+        old words are removed, not covered. Use Edit text for anything it cannot do.</p>
+      <label>Paragraph <select id="reflowPick"></select></label>
+      <label>New text <textarea id="reflowText" rows="6"></textarea></label>
+      <p id="reflowWhy" class="cererror" role="status" hidden></p>
+      <div class="rowend">
+        <span class="grow"></span>
+        <button id="reflowCancel">Cancel</button>
+        <button id="reflowGo" class="primary">Reflow</button>
       </div>
     </div>
   </div>

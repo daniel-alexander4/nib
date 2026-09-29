@@ -127,8 +127,11 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// posted body. Nothing else here needs a path, and that is exactly why the split could write
 	// over the user's own file for as long as it did: the one fact that would have stopped it was
 	// the one fact these routes had never asked for.
-	if resolveSites != 32 {
-		t.Errorf("expected 32 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 34, not 32: `handleParagraphs` and `handleReflow` (PLAN-text-reflow.md P06.S05). Paragraphs reads the open document
+	// read-only like `handleTagsTree`; reflow rewrites it through commitMutation like `handleTagsCommit`, and pins the
+	// paragraph by the text it read as well as by the document.
+	if resolveSites != 34 {
+		t.Errorf("expected 34 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and
