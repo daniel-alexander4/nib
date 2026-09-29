@@ -1109,11 +1109,12 @@ ceremony() { # transport port outfile from to [indoc] [want_sigs] [want_proceedi
       # the hop, beside the mirror. A second status fetch would race the responder's own answer.
       curl -fsS "$B/api/session/status" -o "$WORK/pending.$transport.json" 2>/dev/null
       if [ -n "$(jget pending.fingerprint < "$WORK/pending.$transport.json" 2>/dev/null)" ]; then
-        curl -fsS -X POST "$B/api/session/quote" -H 'Content-Type: application/json' \
-          -H "X-CSRF-Token: $CSRF_B" -d '{"intent":"I accept"}' \
-          -o "$WORK/quote.$transport.json" 2>/dev/null
-        # `id` names the request answered, which `/api/session/respond` requires (/pending 660).
+        # `id` names the request answered, which `/api/session/respond` requires (/pending 660),
+        # and the request the block is quoted for, which `/api/session/quote` requires (/pending 744).
         pid="$(jget pending.id < "$WORK/pending.$transport.json" 2>/dev/null)"
+        curl -fsS -X POST "$B/api/session/quote" -H 'Content-Type: application/json' \
+          -H "X-CSRF-Token: $CSRF_B" -d "{\"id\":\"$pid\",\"intent\":\"I accept\"}" \
+          -o "$WORK/quote.$transport.json" 2>/dev/null
         answer="$(python3 -c "
 import json,sys
 try:

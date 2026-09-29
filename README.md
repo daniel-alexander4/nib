@@ -1330,7 +1330,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib pagelabels IN -o OUT` | Set logical page labels — one `--range PAGE:STYLE[:START[:PREFIX]]` per section (STYLE = `decimal`/`roman-lower`/`roman-upper`/`alpha-lower`/`alpha-upper`/`none`), e.g. `--range 1:roman-lower --range 5:decimal`. |
 | `nib fill IN --data D` | Fill a form: a JSON or **XFDF** record (`--data x.json\|.xfdf -o OUT`, the inverse of *Export form data*) or a **CSV mail-merge** (`--data rows.csv --out-dir DIR` — header row = field names, one filled PDF per row; `--name-col COL` names each output). Filling removes any existing signature. |
 | `nib export-xfdf IN -o OUT` | Export a form's field data as **XFDF** — the XML interchange format Acrobat and Foxit read and write (the inverse of `nib fill --data x.xfdf`). |
-| `nib attachments IN [--json]` | List embedded files; `--extract NAME -o OUT` pulls one out, `--add FILE -o OUT` embeds one. |
+| `nib attachments IN [--json]` | List embedded files; `--extract ID -o OUT` pulls one out (the id `--json` lists, or a name only one file carries), `--add FILE -o OUT` embeds one. |
 | `nib outline IN [--json]` | List the document's bookmark outline (indented by level, or JSON). |
 | `nib register` / `nib unregister` | **Windows only.** Add or remove Nib from Explorer's "Open with" menu for PDFs (per-user, no admin). Windows reserves the *default* handler for the user to pick. |
 | `nib watch DIR --do OP` | Run `timestamp`/`optimize`/`sanitize`/`ua` on each PDF added to `DIR`, until interrupted. |

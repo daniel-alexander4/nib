@@ -57,7 +57,7 @@ func TestAttachmentsWiring(t *testing.T) {
 	// Extract returns the original bytes.
 	var eb bytes.Buffer
 	emw := multipart.NewWriter(&eb)
-	emw.WriteField("name", "note.txt")
+	emw.WriteField("id", list.Attachments[0].ID) // the listing's id, as the page sends (/pending 745)
 	emw.Close()
 	resp = write(t, c, csrf, http.MethodPost, ts.URL+"/api/attachments/extract", emw.FormDataContentType(), &eb)
 	if resp.StatusCode != http.StatusOK {

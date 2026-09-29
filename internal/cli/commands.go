@@ -985,10 +985,10 @@ func cmdAttachments(args []string) int {
 	var asJSON bool
 	outFlag(fs, &out)
 	fs.BoolVar(&asJSON, "json", false, "emit the listing as JSON (list mode only)")
-	fs.StringVar(&extract, "extract", "", "extract the embedded file named `NAME` to -o")
+	fs.StringVar(&extract, "extract", "", "extract the embedded file with id or name `NAME` to -o (an id is exact; a name must be one file's)")
 	fs.StringVar(&add, "add", "", "embed `FILE` as an attachment, writing a new PDF to -o")
 	fs.StringVar(&name, "name", "", "attachment name for --add (default: the file's basename)")
-	fs.Usage = usageFunc(fs, "nib attachments IN [--json]  |  --extract NAME -o OUT  |  --add FILE [--name N] -o OUT", "List, extract, or add embedded file attachments.")
+	fs.Usage = usageFunc(fs, "nib attachments IN [--json]  |  --extract ID|NAME -o OUT  |  --add FILE [--name N] -o OUT", "List, extract, or add embedded file attachments.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
@@ -1056,11 +1056,16 @@ func cmdAttachments(args []string) int {
 			return 0
 		}
 		for _, a := range aa {
-			if a.Desc != "" {
-				fmt.Printf("%s — %s\n", a.Name, a.Desc)
-			} else {
-				fmt.Println(a.Name)
+			// The id where it is not the name (/pending 745): two files may SHOW one name,
+			// and --extract reaches each by its id.
+			line := a.Name
+			if a.ID != a.Name {
+				line += " [id: " + a.ID + "]"
 			}
+			if a.Desc != "" {
+				line += " — " + a.Desc
+			}
+			fmt.Println(line)
 		}
 		return 0
 	}

@@ -595,6 +595,15 @@ var ErrCeremonyFrozen = errors.New("this document is part of a signing ceremony"
 // edits once the clock runs out would break their copies rather than this user's.
 func ceremonyFreeze(docBytes []byte) error {
 	rec, err := ceremony.Extract(docBytes)
+	if errors.Is(err, ceremony.ErrTwoRecords) {
+		// **Two records is not "no ceremony"** (/pending 745). Extract refuses to pick one, and
+		// D34's self-healing reason does not apply: the document is demonstrably under a ceremony
+		// — possibly two — so an edit would still break the copies its parties were invited to
+		// sign. Refused, and the sentence says why no deadline or party can be named.
+		return fmt.Errorf("%w: it carries two ceremony records, so Nib cannot tell which ceremony "+
+			"it belongs to — and it will not write different bytes over a document any party may have "+
+			"been invited to sign (%w)", ErrCeremonyFrozen, err)
+	}
 	if err != nil {
 		// No record, or one that will not parse. A document whose record is unreadable is
 		// not demonstrably under a ceremony, and refusing every edit on an unparseable

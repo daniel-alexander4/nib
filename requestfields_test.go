@@ -15,7 +15,7 @@ import (
 // requestField is one exemption row: a form, query or JSON field a handler reads that no client
 // sends.
 type requestField struct {
-	category string // harnessOnly | cliOnly | productGap
+	category string // harnessOnly | cliOnly | productGap | sharedHelper | pdfjsFetch
 	reason   string
 }
 
@@ -32,6 +32,10 @@ const (
 	// left uncapped: the cap's job is to stop `product-gap` growing quietly, and a shared read is
 	// not a gap in the product.
 	sharedHelper = "shared-helper"
+	// pdfjsFetch is a field the page sends in a URL pdf.js fetches itself — `pdfjsLib.getDocument
+	// ({url})`, not `apiFetch` or a FormData — which this scan does not read (ADR-004's `/api/pdf`
+	// exception is the same shape). Its reason must quote the app.js call that sends it.
+	pdfjsFetch = "pdfjs-fetch"
 )
 
 // productGapCap is what stops this class growing quietly, and it is the whole reason the rows carry
@@ -128,6 +132,10 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 			"read by `runHopDial`, which serves this route AND /api/session/initiate. The harness " +
 				"passes it on that sibling and deliberately not here — build/ceremonyrepro.sh says " +
 				"so in its own words: 'NO INVITATION and no transport in the request'."},
+		"/api/session/pending-pdf id": {pdfjsFetch,
+			"web/app.js's consent preview: `pdfjsLib.getDocument({ ...PDFJS_OPTS, url: " +
+				"withAuth('/api/session/pending-pdf?id=' + encodeURIComponent(id || '') + ...) })` — " +
+				"the preview names the request it is of (/pending 744)."},
 		"/api/form/fill-csv nameCol": {productGap,
 			"internal/server/form.go says so at the line: `nameCol \"\" → FillFormCSV names each " +
 				"output row-NNN; a column picker can set it later`. No control offers one yet."},
@@ -266,9 +274,16 @@ func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 			}
 		case productGap:
 			gaps++
+		case pdfjsFetch:
+			// The reason has to quote the pdf.js call that sends it, or the category is a way of
+			// saying "pdf.js probably sends it" with nothing behind it.
+			if !strings.Contains(row.reason, "getDocument") {
+				t.Errorf("%s is categorised %q and its reason quotes no pdfjsLib.getDocument call",
+					pair, pdfjsFetch)
+			}
 		default:
-			t.Errorf("%s carries category %q, which is not one of %q, %q, %q, %q",
-				pair, row.category, harnessOnly, cliOnly, productGap, sharedHelper)
+			t.Errorf("%s carries category %q, which is not one of %q, %q, %q, %q, %q",
+				pair, row.category, harnessOnly, cliOnly, productGap, sharedHelper, pdfjsFetch)
 		}
 		if len(strings.TrimSpace(row.reason)) < 40 {
 			unreasoned = append(unreasoned, pair)

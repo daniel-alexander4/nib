@@ -68,6 +68,7 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		"refuseRosterMismatch":      refuseRosterMismatch,
 		"refuseDocumentSubstituted": refuseDocumentSubstituted,
 		"refuseWrongRole":           refuseWrongRole,
+		"refuseConsentBusy":         refuseConsentBusy,
 	}
 	// And the values they are pinned TO, written out separately from the identifiers above. The
 	// two halves are compared below: the map above proves the names still exist, this one proves
@@ -93,6 +94,9 @@ func TestTheRefusalEnumerationIsDerivedFromSource(t *testing.T) {
 		// and a codeless refusal there is the bare EOF that reads as a dead network and invites the
 		// retry a decision must not.
 		"refuseWrongRole": 16,
+		// Frozen 2026-09-29 (/pending 744). A consent gate already occupied by another request: the
+		// refusal /pending 660 introduced, which crossed as a bare EOF and so read as a network fault.
+		"refuseConsentBusy": 17,
 	}
 
 	fset := token.NewFileSet()

@@ -596,6 +596,32 @@ func TestAttachments(t *testing.T) {
 	}
 }
 
+// TestExtractReachesEachFileByItsID — /pending 745 (d). `--extract NAME` returned the first entry
+// answering to the name; with two entries showing one name, each must be reachable by its id, and
+// the shared name must be refused rather than resolved to the first.
+func TestExtractReachesEachFileByItsID(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "shared.pdf")
+	mustWrite(t, in, testpdf.WithEmbedded(
+		testpdf.Embedded{Key: "k1", F: "a.txt", UF: "a.txt", Data: "rent is 1000/mo"},
+		testpdf.Embedded{Key: "k2", F: "a.txt", UF: "a.txt", Data: "rent is 100000/mo"},
+	))
+	out := filepath.Join(dir, "out.txt")
+	if code := cmdAttachments([]string{in, "--extract", "k2", "-o", out}); code != 0 {
+		t.Fatalf("--extract k2 exit = %d, want 0", code)
+	}
+	if got := readPDF(t, out); string(got) != "rent is 100000/mo" {
+		t.Errorf("--extract k2 wrote %q — another entry's bytes", got)
+	}
+	if code := cmdAttachments([]string{in, "--extract", "a.txt", "-o", out}); code != 1 {
+		t.Errorf("--extract of a name two files show exit = %d, want 1 (refused, not the first)", code)
+	}
+	if listing, code := captureStdout(t, func() int { return cmdAttachments([]string{in}) }); code != 0 ||
+		!strings.Contains(listing, "[id: k2]") {
+		t.Errorf("the listing does not show the id --extract needs: %q", listing)
+	}
+}
+
 func TestOutline(t *testing.T) {
 	dir := t.TempDir()
 	base := readPDF(t, writePDF(t, dir, "base.pdf", "a", "b", "c"))

@@ -1,15 +1,16 @@
+diff --git a/internal/server/session.go b/internal/server/session.go
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -557,12 +557,6 @@
+@@ -922,12 +922,6 @@
  		if s == nil {
  			continue
  		}
 -		if a.cer != nil {
 -			if s.cer == a.cer {
--				return true
+-				return s
 -			}
 -			continue
 -		}
  		if s.ln != nil && s.ln == a.ln {
- 			return true
+ 			return s
  		}

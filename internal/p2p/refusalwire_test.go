@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestEveryRefusalCodeRoundTripsToItsOwnSentinel(t *testing.T) {
 	all := []error{
 		ErrNotYourTurn, ErrNotInRoster, ErrPrefixMismatch, ErrPrefixUnproven,
 		ErrProceedingMismatch, ErrCeremonyComplete, ErrNotTheConnectedPeer,
-		ErrPeerDoesNotAcceptYou, ErrWrongPriorSignerCount,
+		ErrPeerDoesNotAcceptYou, ErrWrongPriorSignerCount, ErrConsentBusy,
 	}
 	seen := map[byte]error{}
 	for _, want := range all {
@@ -857,4 +858,56 @@ type recordingConfirmer struct{ seen SignerAttestation }
 func (c *recordingConfirmer) Confirm(peer SignerAttestation, _ []byte) (bool, string, []byte, time.Time, error) {
 	c.seen = peer
 	return true, "I accept", nil, time.Time{}, nil
+}
+
+// busyConfirmer is a consent gate already occupied by another request (/pending 744).
+type busyConfirmer struct{}
+
+func (busyConfirmer) Confirm(SignerAttestation, []byte) (bool, string, []byte, time.Time, error) {
+	return false, "", nil, time.Time{}, fmt.Errorf("local sentence: %w", ErrConsentBusy)
+}
+
+// TestABusyConsentGateReachesTheInitiatorByName — /pending 744 (4). The receiving machine refused
+// because its user was already looking at another request (/pending 660). With no code that
+// reached the dialler as a bare EOF, so "that machine is busy" and a dropped network read the same
+// and only one of them is fixed by trying again once the other party has answered.
+func TestABusyConsentGateReachesTheInitiatorByName(t *testing.T) {
+	eachTransport(t, func(t *testing.T, tr transport) {
+		aCert, aKey := newIdentity(t)
+		bCert, bKey := newIdentity(t)
+		aFP, bFP := fingerprint(t, aCert), fingerprint(t, bCert)
+		aSigned := signAsInitiator(t, aCert, aKey, bFP)
+		ln, err := tr.listen("127.0.0.1:0", bCert, bKey, aFP)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+		recvErr := make(chan error, 1)
+		go func() {
+			conn, e := ln.Accept()
+			if e != nil {
+				recvErr <- e
+				return
+			}
+			defer conn.Close()
+			_, e = Receive(conn.Channel, bCert, bKey, "Alice", busyConfirmer{}, okVerifier{}, nil, Roster{})
+			recvErr <- e
+		}()
+		conn, err := tr.dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if !conn.Channel.SpeaksNamedRefusals() {
+			t.Fatalf("setup: the dialing side negotiated %q, not the named-refusal protocol", conn.Channel.Proto)
+		}
+		_, err = Initiate(conn.Channel, aSigned, aFP, okVerifier{}, Roster{})
+		if !errors.Is(err, ErrConsentBusy) {
+			t.Errorf("the initiator was told %v, want ErrConsentBusy — a busy machine and a network "+
+				"failure read the same, and only one of them is worth trying again", err)
+		}
+		if e := <-recvErr; !errors.Is(e, ErrConsentBusy) {
+			t.Errorf("the receiver's own error is %v, want ErrConsentBusy", e)
+		}
+	})
 }
