@@ -195,7 +195,7 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 		filter := v.Key("Filter").Name()
 		typ := v.Key("Type").Name()
 		br := v.Key("ByteRange")
-		if filter != ppkLite && br.Kind() == dpdf.Null && typ != "Sig" && typ != "DocTimeStamp" {
+		if !signatureShaped(filter, typ, br.Kind() != dpdf.Null) {
 			continue
 		}
 		stream := x.Stream()
@@ -262,6 +262,15 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 		}
 	}
 	return revs, st, nil
+}
+
+// signatureShaped is the one answer to "does this dictionary claim to be a signature": `/Filter
+// /Adobe.PPKLite` (the library's own test), a `/ByteRange`, or `/Type /Sig` or `/DocTimeStamp`. The
+// sweep makes a record of every such object, and `unseenSignatures` asks it of pdfcpu's reading of
+// the same file, so the two can only disagree about which objects exist — never about which of
+// them count (/pending 749).
+func signatureShaped(filter, typ string, hasByteRange bool) bool {
+	return filter == ppkLite || hasByteRange || typ == "Sig" || typ == "DocTimeStamp"
 }
 
 // countsAsSigner is the one answer to "is this record a signer" (ADR-060): it is well-formed and

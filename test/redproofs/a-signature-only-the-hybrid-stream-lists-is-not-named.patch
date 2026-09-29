@@ -1,0 +1,11 @@
+--- a/internal/sign/verify.go
++++ b/internal/sign/verify.go
+@@ -287,7 +287,7 @@
+ 	// has just read every object (it follows `/XRefStm`), so asking it costs a walk over objects
+ 	// already in memory, and it names the gap only where one exists: an unsigned hybrid file, or a
+ 	// signed one whose stream holds no signature, reads as before.
+-	unseen := unseenSignatures(ctx, revs)
++	unseen, _ := false, ctx
+ 	if libraryWouldOverread(revs, len(data)) {
+ 		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Refused: refusedOf(revs), Timestamps: timestampsOf(revs)}, revs, errLibraryWouldOverread
+ 	}

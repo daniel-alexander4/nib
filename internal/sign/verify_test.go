@@ -374,7 +374,7 @@ func TestAnUnsignedDocumentNeverEntersTheThirdPartyParser(t *testing.T) {
 	// receive path, in a forked process, by `p2p`'s
 	// TestADamagedDocumentFromARemotePartyIsRefusedRatherThanFatal — because the failure takes the
 	// process and would take this binary with it.
-	readable := strings.Index(body, "pdfcpuCanRead(data)")
+	readable := strings.Index(body, "pdfcpuRead(data)")
 	if readable < 0 {
 		t.Fatal("Verify no longer asks whether nib's own parser can read the document before " +
 			"handing it to digitorus/pdfsign. Without that, a damaged object stream takes the " +

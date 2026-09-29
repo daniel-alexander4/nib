@@ -1332,14 +1332,17 @@ func describeStatus(st sign.Status) string {
 		}
 		return s
 	case sign.Invalid:
+		// A signature nib did not check (/pending 741): say which reading could not be made. First,
+		// and whatever else is listed — since /pending 749 it is also set beside signers that WERE
+		// checked, when the file carries one more that nib's signature reader never reached, and
+		// "modified since signing" would then claim a check of bytes nobody hashed.
+		if w, ok := uncheckedWords[st.Unchecked]; ok {
+			return "INVALID — a signature is present that Nib could not check: " + w
+		}
 		// No signer at all, and something signature-shaped that is not one: "modified since
 		// signing" would claim a signature that nib never found to check. The lines below name it.
 		if len(st.Signers) == 0 && (len(st.Refused) > 0 || len(st.Timestamps) > 0) {
 			return "INVALID — no signature Nib could check (see below)"
-		}
-		// Nothing refused and nothing checked (/pending 741): say which reading could not be made.
-		if w, ok := uncheckedWords[st.Unchecked]; ok && len(st.Signers) == 0 {
-			return "INVALID — a signature is present that Nib could not check: " + w
 		}
 		return "INVALID — modified since signing"
 	default:
