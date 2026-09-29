@@ -1332,10 +1332,22 @@ func describeStatus(st sign.Status) string {
 		if len(st.Signers) == 0 && (len(st.Refused) > 0 || len(st.Timestamps) > 0) {
 			return "INVALID — no signature Nib could check (see below)"
 		}
+		// Nothing refused and nothing checked (/pending 741): say which reading could not be made.
+		if w, ok := uncheckedWords[st.Unchecked]; ok && len(st.Signers) == 0 {
+			return "INVALID — a signature is present that Nib could not check: " + w
+		}
 		return "INVALID — modified since signing"
 	default:
 		return "unsigned"
 	}
+}
+
+// uncheckedWords is the CLI's sentence for each `sign.UncheckedCause` (/pending 741); `web/app.js`'s
+// UNCHECKED_WORDS says the same, and both are held to the constants (`TestEveryUncheckedCauseIsSaid`).
+var uncheckedWords = map[sign.UncheckedCause]string{
+	sign.UncheckedHybridReference: "this file stores part of its structure in a hybrid cross-reference stream (/XRefStm), which Nib's signature reader does not follow",
+	sign.UncheckedUnread:          "Nib's signature reader did not reach it",
+	sign.UncheckedUnreadable:      "Nib cannot read this file as a PDF",
 }
 
 // refusedLines is one line per signature-shaped dictionary Nib refused, whatever the verdict. The

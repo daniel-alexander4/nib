@@ -1,12 +1,12 @@
 diff --git a/web/app.js b/web/app.js
 --- a/web/app.js
 +++ b/web/app.js
-@@ -4936,7 +4936,7 @@
-   // obliged, and that none of them has signed. That is C18's extreme case, and until P07.S05a
+@@ -4954,7 +4954,7 @@
    // it was unreachable — this returned early and the button was hidden besides. So does a
    // document carrying a signature Nib refused (P01.S02), or a document timestamp (P01.S03).
--  if (!signers.length && !view.inCeremony && !refused.length && !timestamps.length) return;
-+  if (!signers.length && !refused.length && !timestamps.length) return;
+   const unchecked = view.lastSig?.unchecked || '';
+-  if (!signers.length && !view.inCeremony && !refused.length && !timestamps.length && !unchecked) return;
++  if (!signers.length && !refused.length && !timestamps.length && !unchecked) return;
    const body = els.sigDetailsBody;
    body.innerHTML = '';
    const rows = signers.map((s) => {

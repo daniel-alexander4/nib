@@ -114,7 +114,28 @@ type Status struct {
 	// it is neither a signer nor coverage (ADR-059, ADR-060). It is listed so a reader can say the
 	// document carries one rather than say nothing about an object it saw.
 	Timestamps []uint32 `json:"timestamps,omitempty"`
+	// Unchecked says why a document that carries a signature has no signer Nib checked and nothing
+	// else to name for it — no refused record, no timestamp — so a reader can say which fact made
+	// it `Invalid` (/pending 741). Empty everywhere else. Set only with `AddedAfterCause`
+	// `could-not-check`: nothing measured the coverage either.
+	Unchecked UncheckedCause `json:"unchecked,omitempty"`
 }
+
+// UncheckedCause names why a signature Nib can see evidence of was never checked (/pending 741).
+type UncheckedCause string
+
+const (
+	// UncheckedHybridReference: the file stores part of its structure in a hybrid cross-reference
+	// stream (`/XRefStm`, ISO 32000-1 7.5.8.4), which the signature library's reader never follows,
+	// so whatever that stream lists — the catalog, the field, the signature — it never saw.
+	UncheckedHybridReference UncheckedCause = "hybrid-reference"
+	// UncheckedUnread: a signature is present and the signature library did not reach it — a
+	// catalog it could not find, or a signature outside what its enumeration covers.
+	UncheckedUnread UncheckedCause = "unread"
+	// UncheckedUnreadable: nib cannot read the file as a PDF at all (ADR-041's gate refused it), so
+	// the signature it carries was never handed to the signature library.
+	UncheckedUnreadable UncheckedCause = "unreadable"
+)
 
 // AddedAfterCause names which fact set `Status.AddedAfter` (ADR-059).
 type AddedAfterCause string
@@ -233,7 +254,8 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// `p2p.ContributionProgress` already renders exactly that — "this document carries a signature
 	// that cannot be read".
 	if err := pdfcpuCanRead(data); err != nil {
-		return Status{State: Invalid}, nil, err
+		// Said, not only badged (/pending 741): nothing was checked, so the cause is could-not-check.
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Unchecked: UncheckedUnreadable}, nil, err
 	}
 	// **The sweep runs before the library, and so does the K-pair gate** (P01.S01). The library
 	// copies every pair a `/ByteRange` names into memory, so `[0 S 0 S … ×K]` allocates K×S and a
@@ -297,6 +319,10 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 			st.State = Invalid
 		}
 		st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), jerr, false)
+		st.Unchecked = uncheckedOf(st, data)
+		if st.Unchecked != "" {
+			st.AddedAfter, st.AddedAfterCause = true, AddedAfterCouldNotCheck
+		}
 		return st, revs, jerr
 	}
 
@@ -363,6 +389,25 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// read it "nothing added" about bytes no valid signature covers.
 	st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), joinErr, len(resp.Signers) > 0)
 	return st, revs, joinErr
+}
+
+// uncheckedOf names why a zero-signer `Invalid` verdict checked nothing, when nothing else in it
+// does (/pending 741). A signed hybrid-reference file reaches here since /pending 733 routed it to
+// the byte scan: `Invalid` — the safe direction — with no signer, no refused record, no timestamp
+// and no `AddedAfter`, so every reader was told "invalid" and nothing about why, and the CLI said
+// "modified since signing" of a document nobody had checked at all. The true fact is ADR-059's
+// `could-not-check`, and this says which reading could not be made.
+//
+// A refused record or a timestamp is its own answer and is left alone: `Refused` and `Timestamps`
+// already name it, and the readers already say "no signature Nib could check" beside them.
+func uncheckedOf(st Status, data []byte) UncheckedCause {
+	if st.State != Invalid || len(st.Signers) > 0 || len(st.Refused) > 0 || len(st.Timestamps) > 0 || st.AddedAfter {
+		return ""
+	}
+	if hybridReference(data) {
+		return UncheckedHybridReference
+	}
+	return UncheckedUnread
 }
 
 // anyCheckableBlob reports whether any record carries a non-empty `/Contents` — a signature blob seen

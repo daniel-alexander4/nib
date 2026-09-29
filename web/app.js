@@ -4847,6 +4847,11 @@ function updateBadge(sig, inCeremony, unverified) {
   if (sig?.state === 'invalid' && !signers.length && (refused.length || timestamps.length)) {
     label = '⚠ No signature Nib could check';
   }
+  // Nothing refused and nothing checked (/pending 741): a signed hybrid-reference file, say. The
+  // details panel says which reading could not be made (UNCHECKED_WORDS).
+  if (sig?.state === 'invalid' && !signers.length && sig?.unchecked) {
+    label = '⚠ A signature Nib could not check';
+  }
   // **`Untampered` is reserved for the case it is true of (/pending 390).**
   //
   // The defect, reproduced: a stranger appends changed content plus their OWN self-signed
@@ -4895,7 +4900,7 @@ function updateBadge(sig, inCeremony, unverified) {
   // Details only exist for a signed document (valid or modified) — OR for a document in a
   // ceremony, which has an obliged-signer count to report before anyone has signed at all —
   // OR for one carrying a signature Nib refused, which the panel names (P01.S02).
-  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length;
+  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length && !sig?.unchecked;
 }
 
 // addedAfterSuffix is the badge's words for `sign.Status.addedAfterCause`. A refused signature
@@ -4913,6 +4918,14 @@ const REFUSAL_WORDS = {
   'contents-elsewhere': 'its byte range surrounds another object\'s signature',
   'unsupported-filter': 'it is not a kind of signature Nib can check',
   'unparseable-contents': 'its signature data cannot be read',
+};
+
+// UNCHECKED_WORDS is the details panel's plain English for each `sign.UncheckedCause` (/pending 741):
+// why a document carrying a signature had none Nib checked, where nothing refused names it.
+const UNCHECKED_WORDS = {
+  'hybrid-reference': 'this file stores part of its structure in a hybrid cross-reference stream (/XRefStm), which Nib\'s signature reader does not follow',
+  'unread': 'Nib\'s signature reader did not reach it',
+  'unreadable': 'Nib cannot read this file as a PDF',
 };
 
 // refusedLine is one refused record in the details panel. Its filter is the document's own
@@ -4940,7 +4953,8 @@ async function openSigDetails() {
   // obliged, and that none of them has signed. That is C18's extreme case, and until P07.S05a
   // it was unreachable — this returned early and the button was hidden besides. So does a
   // document carrying a signature Nib refused (P01.S02), or a document timestamp (P01.S03).
-  if (!signers.length && !view.inCeremony && !refused.length && !timestamps.length) return;
+  const unchecked = view.lastSig?.unchecked || '';
+  if (!signers.length && !view.inCeremony && !refused.length && !timestamps.length && !unchecked) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
   const rows = signers.map((s) => {
@@ -4985,6 +4999,12 @@ async function openSigDetails() {
       ? '⚠ Nib could not confirm that any valid signature covers this document to its end — treat what no valid signature covers as unsigned.'
       : '⚠ Content was added after the last valid signature — it is not covered by any valid signature.';
     body.appendChild(note);
+  }
+  if (unchecked) {
+    const line = document.createElement('div');
+    line.className = 'signote sig-unchecked';
+    line.textContent = '⚠ A signature is present that Nib could not check — ' + (UNCHECKED_WORDS[unchecked] || unchecked) + '.';
+    body.appendChild(line);
   }
   // Every signature-shaped object Nib refused, by object number and why — a refused one names
   // nobody and bounds nothing, whatever it claims.
