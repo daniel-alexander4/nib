@@ -197,3 +197,74 @@ func TestAFileReplacedInPlaceIsNotTreatedAsNew(t *testing.T) {
 			"time(s), want 1 — the scanner is not acting at all, so the refusal above proves nothing", acted)
 	}
 }
+
+// TestTheWatchRewriteReplacesTheEntryRatherThanWritingThroughALink — `/pending 639`, the write half
+// of TestTheWatchRefusesToReadThroughASymlink.
+//
+// readNoFollow refuses a link at the OPEN, but the transform runs between that open and the write,
+// and whoever can drop a file into the watched directory can swap the entry for a symlink inside that
+// window. `watchTransform` then wrote through `writeAtomic` → `ReplaceDurable`, which resolves the link
+// and renames over its TARGET — a document outside the watched directory, rewritten unrequested
+// (`--do sanitize` strips its metadata irreversibly). The swap is done from inside the transform, so
+// the race is won deterministically rather than by timing.
+func TestTheWatchRewriteReplacesTheEntryRatherThanWritingThroughALink(t *testing.T) {
+	outside := t.TempDir()
+	watched := t.TempDir()
+	victim := filepath.Join(outside, "private.pdf")
+	victimBytes := []byte("%PDF-1.7\n% the user's own document, outside the watch\n")
+	if err := os.WriteFile(victim, victimBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(watched, "x.pdf")
+	if err := os.WriteFile(entry, []byte("%PDF-1.7\n% dropped in\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(entry, 0o640); err != nil { // past the umask, and neither 0600 nor 0644
+		t.Fatal(err)
+	}
+	result := []byte("%PDF-1.7\n% the transform's output\n")
+	swapped := false
+	fn := func(in []byte) ([]byte, error) {
+		// The attacker's move, mid-transform: the settled regular file becomes a link out.
+		if err := os.Remove(entry); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(victim, entry); err != nil {
+			t.Skipf("symlinks unavailable here: %v", err)
+		}
+		swapped = true
+		return result, nil
+	}
+	if _, err := watchTransform(entry, fn, "done"); err != nil {
+		t.Fatalf("watchTransform: %v", err)
+	}
+	// STIMULUS: the swap really happened inside the window, so the assertions below are about a
+	// write that had a link to follow.
+	if !swapped {
+		t.Fatal("setup: the transform never ran, so no link was ever planted")
+	}
+
+	after, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, victimBytes) {
+		t.Errorf("the rewrite followed a symlink planted in the watched directory and replaced a file "+
+			"OUTSIDE it (%q)", after)
+	}
+	fi, err := os.Lstat(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.Mode().IsRegular() {
+		t.Errorf("the entry is still %v: the rewrite went through the link instead of replacing it", fi.Mode())
+	}
+	if got, _ := os.ReadFile(entry); !bytes.Equal(got, result) {
+		t.Errorf("the entry does not hold the transform's output: %q", got)
+	}
+	// And the document keeps the mode the READ saw — what ReplaceDurable gave it before — so the fix
+	// does not trade the traversal for a silently changed permission.
+	if perm := fi.Mode().Perm(); perm != 0o640 {
+		t.Errorf("the rewritten document is %04o, want the original's 0640", perm)
+	}
+}
