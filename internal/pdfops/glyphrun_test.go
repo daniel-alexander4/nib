@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -150,4 +151,141 @@ func TestAGlyphWithNoWidthIsCarriedAsNone(t *testing.T) {
 	if g := runs[0].glyphs[0]; g.widthSrc != widthNone || g.fontWidth != 0 {
 		t.Errorf("a glyph with no width anywhere came back as %v from %q", g.fontWidth, g.widthSrc)
 	}
+}
+
+// TestEveryDecodedGlyphIsDrawableByItsOwnCode — `PLAN-text-reflow.md` P06.S02: the inverse answers every character the
+// reader decoded with, among its codes, the code the glyph was drawn with. Over the generated and real-producer corpora,
+// for simple and two-byte fonts both — each asserted present, so the two arms of the inverse were both reached.
+func TestEveryDecodedGlyphIsDrawableByItsOwnCode(t *testing.T) {
+	corpora := []lawOneCorpus{
+		{name: "generated", docs: runCorpus(t)},
+		externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers")),
+	}
+	checked := map[bool]int{} // by twoByte
+	for _, corp := range corpora {
+		if corp.absent != "" {
+			t.Logf("NOTE (a narrower population, not a pass over it): %s: %s", corp.name, corp.absent)
+			continue
+		}
+		for _, doc := range corp.docs {
+			ctx, err := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
+			if err != nil {
+				continue
+			}
+			for p := 1; p <= ctx.PageCount; p++ {
+				pr, err := readPageGlyphRuns(ctx, p)
+				if err != nil {
+					continue
+				}
+				for _, r := range pr.runs {
+					if r.face == nil || !r.face.splittable {
+						continue
+					}
+					want := 1
+					if r.face.twoByte {
+						want = 2
+					}
+					for _, g := range r.glyphs {
+						if !g.decoded || g.text == "" || len(g.code) != want {
+							continue
+						}
+						checked[r.face.twoByte]++
+						found, seen := false, map[string]bool{}
+						for _, c := range r.face.codesFor(g.text) {
+							found = found || bytes.Equal(c, g.code)
+							if seen[string(c)] {
+								t.Fatalf("%s / %s p%d: the inverse offers %x twice for %q — one code, counted as two",
+									corp.name, doc.name, p, c, g.text)
+							}
+							seen[string(c)] = true
+						}
+						if !found {
+							t.Fatalf("%s / %s p%d: %q decodes from %x, and the inverse offers %x", corp.name, doc.name, p,
+								g.text, g.code, r.face.codesFor(g.text))
+						}
+					}
+				}
+			}
+		}
+	}
+	if checked[false] == 0 || checked[true] == 0 {
+		t.Errorf("simple-font glyphs checked %d, two-byte %d — both arms of the inverse must be reached", checked[false], checked[true])
+	}
+	t.Logf("glyphs checked: %d simple-font, %d two-byte", checked[false], checked[true])
+}
+
+// codesOfOnlyRun reads fixture pdf's single run and answers codesFor for each text.
+func codesOfOnlyRun(t *testing.T, pdf []byte) *runFont {
+	t.Helper()
+	runs := glyphRunsOf(t, pdf, 1)
+	if len(runs) != 1 || runs[0].face == nil {
+		t.Fatalf("want one run with its font, got %+v", runs)
+	}
+	return runs[0].face
+}
+
+// TestAFontAnswersWhatItCanDraw — the three answers D8 needs, on hand-built fonts: a code, several codes, or none.
+func TestAFontAnswersWhatItCanDraw(t *testing.T) {
+	t.Run("a core font draws what its encoding names and nothing else", func(t *testing.T) {
+		f := codesOfOnlyRun(t, onePageFixture("BT /F1 10 Tf 72 700 Td (A) Tj ET",
+			"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"))
+		if got := f.codesFor("A"); len(got) != 1 || string(got[0]) != "A" {
+			t.Errorf("Helvetica/WinAnsi draws A with %x", got)
+		}
+		if got := f.codesFor("é"); len(got) != 1 || got[0][0] != 0xE9 {
+			t.Errorf("WinAnsi's é is 0xE9; the inverse offers %x", got)
+		}
+		if got := f.codesFor("Ω"); got != nil {
+			t.Errorf("WinAnsi has no Ω, and the inverse offers %x — D8's trigger would never fire", got)
+		}
+	})
+	t.Run("a subset draws only what its ToUnicode names, and two codes for one character are both returned", func(t *testing.T) {
+		cmap := "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n" +
+			"3 beginbfchar <0001> <0061> <0002> <0061> <0003> <0062> endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end"
+		show := "BT /F1 10 Tf 72 700 Td <00010003> Tj ET"
+		pdf := assembleFixture(map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R >>",
+			2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+			4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(show), show),
+			5: "<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Sub /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 7 0 R >>",
+			6: "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /ABCDEF+Sub /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 8 0 R /CIDToGIDMap /Identity /DW 500 >>",
+			8: "<< /Type /FontDescriptor /FontName /ABCDEF+Sub /Flags 4 /FontBBox [0 -200 1000 800] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>",
+			7: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(cmap), cmap),
+		})
+		f := codesOfOnlyRun(t, pdf)
+		if got := f.codesFor("a"); len(got) != 2 || string(got[0]) != "\x00\x01" || string(got[1]) != "\x00\x02" {
+			t.Errorf("a is drawn by <0001> and <0002>; the inverse offers %x", got)
+		}
+		if got := f.codesFor("b"); len(got) != 1 || string(got[0]) != "\x00\x03" {
+			t.Errorf("b is <0003>; the inverse offers %x", got)
+		}
+		if got := f.codesFor("z"); got != nil {
+			t.Errorf("the subset has no z, and the inverse offers %x", got)
+		}
+	})
+	t.Run("a ToUnicode key longer than the font's codes is never offered", func(t *testing.T) {
+		cmap := "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <00> <FF> endcodespacerange\n" +
+			"2 beginbfchar <42> <0042> <0041> <03A9> endbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end"
+		show := "BT /F1 10 Tf 72 700 Td (B) Tj ET"
+		f := codesOfOnlyRun(t, assembleFixture(map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R >>",
+			2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+			4: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(show), show),
+			5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 7 0 R >>",
+			7: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(cmap), cmap),
+		}))
+		if got := f.codesFor("B"); len(got) != 1 || string(got[0]) != "B" {
+			t.Fatalf("the stimulus: the font's one-byte ToUnicode entry must be read — B offers %x", got)
+		}
+		if got := f.codesFor("Ω"); got != nil {
+			t.Errorf("Ω is mapped only from the two-byte key <0041>, which a one-byte font never draws (and WinAnsi has no Ω); the inverse offers %x", got)
+		}
+	})
+	t.Run("a font the reader cannot split draws nothing it can vouch for", func(t *testing.T) {
+		if got := (&runFont{splittable: false, toUni: map[string]string{"A": "A"}}).codesFor("A"); got != nil {
+			t.Errorf("an unsplittable font offered %x", got)
+		}
+	})
 }
