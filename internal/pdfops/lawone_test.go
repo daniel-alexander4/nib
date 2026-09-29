@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
@@ -342,4 +343,271 @@ func TestLawOneHoldsOverRealDocuments(t *testing.T) {
 func homeDir() string {
 	h, _ := os.UserHomeDir()
 	return h
+}
+
+// noOpRewrite reads pdf, writes every page's content back through the walker and `setPageContent` unchanged, and
+// returns the written document with the number of pages rewritten and of those whose door join pdfcpu's differs from.
+func noOpRewrite(t *testing.T, pdf []byte) (out []byte, rewritten, separated int, err error) {
+	t.Helper()
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	for p := 1; p <= ctx.PageCount; p++ {
+		d, _, _, derr := ctx.PageDict(p, false)
+		if derr != nil || d == nil {
+			continue
+		}
+		src, cerr := pdfread.PageContent(ctx, d, p)
+		if cerr != nil {
+			continue
+		}
+		raw, rerr := ctx.PageContent(d, p) //pagecontent:exempt test — the join ContentDigest hashes
+		if rerr == nil && !bytes.Equal(raw, src) {
+			separated++
+		}
+		walked, werr := contentstream.WriteTokens(src, contentstream.Tokenize(src))
+		if werr != nil {
+			t.Fatalf("page %d: %v", p, werr)
+		}
+		if err := setPageContent(ctx, d, walked); err != nil {
+			t.Fatalf("page %d: %v", p, err)
+		}
+		rewritten++
+	}
+	var buf bytes.Buffer
+	if err := api.WriteContext(ctx, &buf); err != nil {
+		return nil, 0, 0, err
+	}
+	return buf.Bytes(), rewritten, separated, nil
+}
+
+// annotsReachAPage reports whether anything reachable from a page's `/Annots` — an annotation's `/P`, a link's
+// `/Dest`, an action's `/D` — references a page object. `ContentDigest` hashes `/Annots` by following references and
+// hashes a stream's DICTIONARY with its body, so such a document's digest covers its pages' content-stream encoding
+// (`/Length`, `/Filter`) as well as their content (/pending 720).
+func annotsReachAPage(ctx *model.Context) bool {
+	pages := map[int]bool{}
+	for i := 1; i <= ctx.PageCount; i++ {
+		if ir, err := ctx.PageDictIndRef(i); err == nil && ir != nil {
+			pages[ir.ObjectNumber.Value()] = true
+		}
+	}
+	seen := map[int]bool{}
+	var reach func(o types.Object, depth int) bool
+	reach = func(o types.Object, depth int) bool {
+		if depth > 16 {
+			return false
+		}
+		if ir, ok := o.(types.IndirectRef); ok {
+			n := ir.ObjectNumber.Value()
+			if pages[n] {
+				return true
+			}
+			if seen[n] {
+				return false
+			}
+			seen[n] = true
+			o, _ = ctx.Dereference(ir)
+		}
+		switch v := o.(type) {
+		case types.Dict:
+			for _, e := range v {
+				if reach(e, depth+1) {
+					return true
+				}
+			}
+		case types.StreamDict:
+			for _, e := range v.Dict {
+				if reach(e, depth+1) {
+					return true
+				}
+			}
+		case types.Array:
+			for _, e := range v {
+				if reach(e, depth+1) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i := 1; i <= ctx.PageCount; i++ {
+		if d, _, _, err := ctx.PageDict(i, false); err == nil && d != nil && reach(d["Annots"], 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestANoOpWalkKeepsTheDigest — `PLAN-text-reflow.md` P05.S02, law 1 at the DOCUMENT level: a walk that changes
+// nothing, written back through the page write door (`setPageContent`) and pdfcpu's writer, leaves `ContentDigest`
+// unchanged. The file's bytes cannot be kept — pdfcpu re-encodes, and the deepdive measured a no-op write at
+// `bytes_equal=false, digest_equal=true` — so the digest is the identity the document keeps.
+//
+// **The stimulus is asserted first**: every document must have had pages rewritten AND its bytes must have moved,
+// or "the digest held" is a statement about a write that never happened.
+//
+// **And the digest is not only content** (/pending 720): where anything under `/Annots` references a page, the digest
+// reaches that page's content-stream DICTIONARY, whose `/Length` a re-encode moves. Measured at the slice: 21 of 35
+// real-producer documents, exactly those whose annotations reach a page. So the law is asserted where it lives — each
+// page's decoded content, re-read from the written document, is the bytes the walk wrote — and the digest is required
+// to hold on every document whose annotations reach no page and to MOVE on every one whose do, pinning 720's partition
+// so that closing it turns this red on purpose.
+//
+// **A page the door had to separate is the other expected difference**: the digest hashes pdfcpu's bare join
+// (ADR-056's named exemption, /pending 718), so a fused page's digest moves when the repaired join is written back.
+// The generated corpus carries two such pages and the test requires their digests to MOVE — the exemption's cost,
+// pinned so that closing 718 turns this red on purpose.
+func TestANoOpWalkKeepsTheDigest(t *testing.T) {
+	gen := lawOneCorpus{name: "generated", docs: runCorpus(t)}
+	for _, s := range []testpdf.JoinShape{testpdf.JoinRegular, testpdf.JoinComment, testpdf.JoinSafe} {
+		pdf, _, err := testpdf.SplitContents("a divided page", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gen.docs = append(gen.docs, runCorpusDoc{fmt.Sprintf("divided page, shape %d", s), pdf})
+	}
+	corpora := []lawOneCorpus{
+		gen,
+		externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers")),
+	}
+	var absent []string
+	for _, corp := range corpora {
+		if corp.absent != "" {
+			absent = append(absent, corp.name+": "+corp.absent)
+			continue
+		}
+		docs, pages, moved, held, encoding := 0, 0, 0, 0, 0
+		for _, doc := range corp.docs {
+			before, err := ContentDigest(doc.pdf)
+			if err != nil {
+				t.Logf("%s / %s: no digest (%v)", corp.name, doc.name, err)
+				continue
+			}
+			out, rewritten, separated, err := noOpRewrite(t, doc.pdf)
+			if err != nil {
+				t.Logf("%s / %s: not rewritten (%v)", corp.name, doc.name, err)
+				continue
+			}
+			bctx, berr := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
+			actx, aerr := pdfread.Validated(out, model.NewDefaultConfiguration())
+			if berr != nil || aerr != nil {
+				t.Fatalf("%s / %s: re-read failed: %v / %v", corp.name, doc.name, berr, aerr)
+			}
+			reaches := annotsReachAPage(bctx)
+			for p := 1; p <= bctx.PageCount; p++ {
+				bd, _, _, _ := bctx.PageDict(p, false)
+				ad, _, _, _ := actx.PageDict(p, false)
+				if bd == nil || ad == nil {
+					continue
+				}
+				bsrc, berr := pdfread.PageContent(bctx, bd, p)
+				asrc, aerr := pdfread.PageContent(actx, ad, p)
+				if (berr == nil) != (aerr == nil) || !bytes.Equal(bsrc, asrc) {
+					t.Errorf("%s / %s page %d: the written page's content is not the content walked (%d → %d bytes)",
+						corp.name, doc.name, p, len(bsrc), len(asrc))
+				}
+			}
+			if rewritten == 0 {
+				continue // a document with no page content has nothing to rewrite
+			}
+			if bytes.Equal(out, doc.pdf) {
+				t.Errorf("%s / %s: %d page(s) rewritten and the file is byte-identical — the write did not happen",
+					corp.name, doc.name, rewritten)
+				continue
+			}
+			after, err := ContentDigest(out)
+			if err != nil {
+				t.Errorf("%s / %s: the rewritten document has no digest: %v", corp.name, doc.name, err)
+				continue
+			}
+			docs++
+			pages += rewritten
+			switch {
+			case separated > 0 && after == before:
+				t.Errorf("%s / %s: %d fused page(s) were repaired and the digest did not move — /pending 718's "+
+					"premise is gone; close it and drop this arm", corp.name, doc.name, separated)
+			case separated > 0:
+				moved++
+			case reaches && after == before:
+				t.Errorf("%s / %s: its annotations reach a page and the digest held — /pending 720's premise is "+
+					"gone; close it and drop this arm", corp.name, doc.name)
+			case reaches:
+				encoding++
+			case after != before:
+				t.Errorf("%s / %s: a no-op walk of %d page(s) moved ContentDigest %s → %s, and no annotation reaches "+
+					"a page", corp.name, doc.name, rewritten, before, after)
+			default:
+				held++
+			}
+		}
+		if docs == 0 {
+			t.Errorf("%s: not one document was rewritten and digested — the corpus exercised nothing", corp.name)
+		}
+		if corp.name == gen.name && moved != 2 {
+			t.Errorf("generated: %d document(s) with a repaired join moved their digest, want the 2 fused fixtures", moved)
+		}
+		if held == 0 {
+			t.Errorf("%s: no document held its digest — the half of the law the digest can see was never asserted", corp.name)
+		}
+		t.Logf("%s: %d documents, %d pages rewritten through setPageContent; digest held on %d, moved on %d whose "+
+			"annotations reach a page (/pending 720), on %d with a repaired join (/pending 718)",
+			corp.name, docs, pages, held, encoding, moved)
+	}
+	if len(absent) > 0 {
+		t.Logf("NOTE (a narrower population, not a pass over it): %s", strings.Join(absent, "; "))
+	}
+}
+
+// largestRealPage is the largest decoded page content in the real-producer corpus, or nil when it is absent.
+func largestRealPage(tb testing.TB) (name string, src []byte) {
+	root := os.Getenv("NIB_UA_PRODUCERS")
+	if root == "" {
+		root = filepath.Join(homeDir(), "nib", "producers")
+	}
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.EqualFold(filepath.Ext(p), ".pdf") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		ctx, verr := pdfread.Validated(b, model.NewDefaultConfiguration())
+		if verr != nil {
+			return nil
+		}
+		for i := 1; i <= ctx.PageCount; i++ {
+			pd, _, _, perr := ctx.PageDict(i, false)
+			if perr != nil || pd == nil {
+				continue
+			}
+			if c, cerr := pdfread.PageContent(ctx, pd, i); cerr == nil && len(c) > len(src) {
+				rel, _ := filepath.Rel(root, p)
+				name, src = fmt.Sprintf("%s p%d", filepath.ToSlash(rel), i), c
+			}
+		}
+		return nil
+	})
+	return name, src
+}
+
+// BenchmarkAWalkOfTheLargestRealPage — `PLAN-text-reflow.md` P05.S02: the cost of a walk, measured on a real page
+// rather than estimated. Tokenize + write back, the whole of what a no-op walk does to a page's content. The figure
+// is recorded in the plan with its population, machine and date. Absent the corpus it skips and says why.
+func BenchmarkAWalkOfTheLargestRealPage(b *testing.B) {
+	name, src := largestRealPage(b)
+	if src == nil {
+		b.Skip("SKIP (not a measurement): the real-producer corpus is absent; set NIB_UA_PRODUCERS")
+	}
+	b.Logf("%s: %d bytes decoded", name, len(src))
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := contentstream.WriteTokens(src, contentstream.Tokenize(src))
+		if err != nil || len(out) != len(src) {
+			b.Fatalf("the walk did not round-trip: %v", err)
+		}
+	}
 }

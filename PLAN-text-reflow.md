@@ -481,7 +481,7 @@ is not a stream fails the read as pdfcpu's does, and law 1 now asserts ISO 32000
 because a span-copying round trip cannot see a mis-scan. The empty name `/` at a stream's end is a third fusing shape,
 found by executing the "two ways, and only two" claim. Ledger: 9 clauses, 9 met.
 
-#### P05.S02 — the write-back, and what a walk costs
+#### P05.S02 — the write-back, and what a walk costs *(done 2026-09-28, v1.167.8)*
 A no-op walk written back through `setPageContent` and pdfcpu's writer leaves `ContentDigest`
 unchanged, and the cost of a walk is measured on real pages.
 Acceptance:
@@ -489,6 +489,26 @@ Acceptance:
    on every page of the generated and real-producer corpora.
 2. A benchmark measures tokenize + write per page; the figure for the largest real page stream is
    recorded here with its population, machine and date.
+
+**PIN 2026-09-28 (slice grill, measured) — clause 1 is FALSE of `ContentDigest`, and not because of the walk.** A
+no-op walk written back keeps every page's decoded content byte-identical (356 pages, 35 real-producer documents) yet
+moved the digest on **21 of 35** — exactly the documents whose `/Annots` graph references a page object. The digest
+hashes a stream's dictionary with its body and follows `/P`, `/Dest` and `/D` back to the page, so it covers the page's
+content-stream ENCODING there (`/pending 720`, `attachments.go:575-615`). The deepdive's `digest_equal=true` was a
+document with no such annotation. So the clause is asserted as two: **each page's decoded content, re-read from the
+written document, is the content walked** (the law, where it lives); and **the digest holds on every document whose
+annotations reach no page, and moves on every one whose do** — 720's partition, pinned so closing it goes red on
+purpose. The two fused fixtures move it too, by ADR-056's named exemption (`/pending 718`).
+
+**Tasks** (slice grill, 2026-09-28):
+- T01 — `TestANoOpWalkKeepsTheDigest`: tokenize → write → `setPageContent` → `api.WriteContext` over the generated and
+  real-producer corpora; decoded content re-read per page; the digest partition by `annotsReachAPage`.
+- T02 — `BenchmarkAWalkOfTheLargestRealPage`, and the figure below.
+
+**Measured 2026-09-28** (i5-1155G7, Go 1.25, `-count=3`): the largest decoded page in the real-producer corpus
+(`indesign/census-p60-280.pdf` p30, 134,220 bytes) walks — tokenize + write back — in **4.29–4.60 ms**
+(29–31 MB/s), allocating 7.0 MB in 27 allocations. A real page's walk is milliseconds; it is not the cost that
+decides whether reflow can sit on a request path.
 
 ### P06 — Reflow one paragraph on one page
 **Goal.** The feature, at its smallest honest scope: edit a word, re-wrap the paragraph in its own
