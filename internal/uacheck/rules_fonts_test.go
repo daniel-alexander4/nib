@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfops"
@@ -373,5 +374,69 @@ func pageWithFont(fontDict, content string) []byte {
 		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
 		4: "<< /Length " + fmtInt(len(content)) + " >>\nstream\n" + content + "\nendstream",
 		5: fontDict,
+	})
+}
+
+// TestAnUnresolvedFontRefusesTheCIDSetClauseBesideOneThatResolved — /pending 722. The refusal for a font that does not
+// resolve was reached only when NO CID font had, so once one Type 0 font resolved with an exact /CIDSet, a second font
+// nib never read — possibly a CID font pdfcpu dropped, whose /CIDSet veraPDF does judge — was ignored and 7.21.4.2 t2
+// answered Pass. Every sibling font door refuses instead.
+func TestAnUnresolvedFontRefusesTheCIDSetClauseBesideOneThatResolved(t *testing.T) {
+	md, err := pdfops.ConvertDocToPDF([]byte("# Heading\n\nSome prose.\n"), ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact := withCIDSet(t, md, cidExact)
+	if got := verdictOf(t, exact, "7.21.4.2 t2"); got.Verdict != Pass {
+		t.Fatalf("control: an exact /CIDSet on every resolved CID font reports %v (%s), want Pass", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, withTextRunInFont(t, exact, "F722"), "7.21.4.2 t2")
+	if got.Verdict != CannotCheck {
+		t.Errorf("beside a resolved CID font with an exact /CIDSet, text in a font that does not resolve reports %v (%s), "+
+			"want CannotCheck — the unread font may be a CID font whose /CIDSet fails", got.Verdict, got.Why)
+	} else if !strings.Contains(got.Why, "F722") {
+		t.Errorf("the refusal %q does not name the font that did not resolve", got.Why)
+	}
+	// A definite failure among the fonts that DID resolve still outranks the refusal, as it does in the siblings.
+	partial := withTextRunInFont(t, withCIDSet(t, md, cidPartial), "F722")
+	if got := verdictOf(t, partial, "7.21.4.2 t2"); got.Verdict != Fail {
+		t.Errorf("an under-claiming /CIDSet beside an unresolved font reports %v (%s), want Fail", got.Verdict, got.Why)
+	}
+}
+
+// withTextRunInFont appends a content stream to page 1 that draws text in font resource `name`, which the page's
+// resources do not hold — at nib's reading, the same thing as a font pdfcpu's validator dropped.
+func withTextRunInFont(t *testing.T, pdf []byte, name string) []byte {
+	t.Helper()
+	return mutate(t, pdf, func(ctx *model.Context) error {
+		page, _, _, err := ctx.PageDict(1, false)
+		if err != nil {
+			return err
+		}
+		sd, err := ctx.NewStreamDictForBuf([]byte("BT /" + name + " 12 Tf 72 72 Td (x) Tj ET"))
+		if err != nil {
+			return err
+		}
+		if err := sd.Encode(); err != nil {
+			return err
+		}
+		ref, err := ctx.IndRefForNewObject(*sd)
+		if err != nil {
+			return err
+		}
+		var kids types.Array
+		switch c := page["Contents"].(type) {
+		case nil:
+		case types.Array:
+			kids = append(kids, c...)
+		default:
+			if arr, derr := ctx.DereferenceArray(c); derr == nil && arr != nil {
+				kids = append(kids, arr...)
+			} else {
+				kids = append(kids, c)
+			}
+		}
+		page["Contents"] = append(kids, *ref)
+		return nil
 	})
 }
