@@ -1,0 +1,12 @@
+diff --git a/internal/sign/verify.go b/internal/sign/verify.go
+--- a/internal/sign/verify.go
++++ b/internal/sign/verify.go
+@@ -319,7 +319,7 @@
+ 			st.State = Invalid
+ 		}
+ 		st.AddedAfter, st.AddedAfterCause = addedAfter(revs, len(data), jerr, false)
+-		st.Unchecked = uncheckedOf(st, data)
++		_ = uncheckedOf
+ 		if st.Unchecked != "" {
+ 			st.AddedAfter, st.AddedAfterCause = true, AddedAfterCouldNotCheck
+ 		}

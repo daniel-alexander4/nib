@@ -1,0 +1,12 @@
+diff --git a/internal/uacheck/content.go b/internal/uacheck/content.go
+--- a/internal/uacheck/content.go
++++ b/internal/uacheck/content.go
+@@ -488,7 +488,7 @@
+ // graphics state and marked-content stack it is drawn in, so every draw is still walked, and charged
+ // (`maxContentBytes`). An inline stream (object number 0) has no key and is decoded where it is met.
+ func (d *Document) decodedContent(sd *types.StreamDict, objNr int) ([]byte, error) {
+-	if src, ok := d.decoded[objNr]; ok && objNr != 0 {
++	if src, ok := d.decoded[objNr]; false && ok && objNr != 0 {
+ 		return src, nil
+ 	}
+ 	d.streamDecodes++

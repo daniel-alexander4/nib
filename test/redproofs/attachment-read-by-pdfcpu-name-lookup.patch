@@ -1,0 +1,17 @@
+diff --git a/internal/pdfops/attachments.go b/internal/pdfops/attachments.go
+--- a/internal/pdfops/attachments.go
++++ b/internal/pdfops/attachments.go
+@@ -1075,7 +1075,12 @@
+ 	if hit[0].fs == nil {
+ 		return AttachmentInfo{}, nil, fmt.Errorf("attachment %q has no file specification", ref)
+ 	}
+-	data, err := fileSpecBytes(ctx.XRefTable, hit[0].fs)
++	var buf bytes.Buffer
++	a, err := ctx.ExtractAttachment(model.Attachment{ID: hit[0].info.Name})
++	if err == nil && a != nil {
++		_, err = buf.ReadFrom(a.Reader)
++	}
++	data := buf.Bytes()
+ 	if err != nil {
+ 		return AttachmentInfo{}, nil, fmt.Errorf("attachment %q: %w", ref, err)
+ 	}

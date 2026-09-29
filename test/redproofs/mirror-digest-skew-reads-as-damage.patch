@@ -1,0 +1,12 @@
+diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
+--- a/internal/ceremony/mirror.go
++++ b/internal/ceremony/mirror.go
+@@ -412,7 +412,7 @@
+ 	if len(pdf) > 0 && !sign.HasSignatureBlob(pdf) {
+ 		// The rule before the number (D32, /pending 725): a record written under another
+ 		// content-digest rule is a version skew, never a damaged copy.
+-		if err := digestRuleSkew(r); err != nil {
++		if err := digestRuleSkew(r); false && err != nil {
+ 			return r, nil, err
+ 		}
+ 		got, herr := DocumentHash(pdf)

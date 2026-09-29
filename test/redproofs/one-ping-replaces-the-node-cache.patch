@@ -1,0 +1,11 @@
+diff --git a/internal/rendezvous/dht.go b/internal/rendezvous/dht.go
+--- a/internal/rendezvous/dht.go
++++ b/internal/rendezvous/dht.go
+@@ -1014,6 +1014,7 @@
+ // hears from nobody, and dropping on that would empty a good cache. Past the cap they fall
+ // off first, which is the whole of the rotation (/pending 743 part 3).
+ func cacheSet(table, prev []krpc.NodeInfo, keep func(netip.AddrPort) bool, heard func(netip.AddrPort) contact) (out []krpc.NodeInfo, fresh int) {
++	return table, len(table)
+ 	seen := make(map[netip.AddrPort]bool)
+ 	add := func(nodes []krpc.NodeInfo, take func(contact) bool) int {
+ 		added := 0

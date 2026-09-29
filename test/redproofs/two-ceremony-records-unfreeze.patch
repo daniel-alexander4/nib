@@ -1,0 +1,12 @@
+diff --git a/internal/server/undo.go b/internal/server/undo.go
+--- a/internal/server/undo.go
++++ b/internal/server/undo.go
+@@ -595,7 +595,7 @@
+ // edits once the clock runs out would break their copies rather than this user's.
+ func ceremonyFreeze(docBytes []byte) error {
+ 	rec, err := ceremony.Extract(docBytes)
+-	if errors.Is(err, ceremony.ErrTwoRecords) {
++	if false && errors.Is(err, ceremony.ErrTwoRecords) {
+ 		// **Two records is not "no ceremony"** (/pending 745). Extract refuses to pick one, and
+ 		// D34's self-healing reason does not apply: the document is demonstrably under a ceremony
+ 		// — possibly two — so an edit would still break the copies its parties were invited to

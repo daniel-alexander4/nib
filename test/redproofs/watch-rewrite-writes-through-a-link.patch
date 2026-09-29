@@ -1,0 +1,13 @@
+diff --git a/internal/cli/watch.go b/internal/cli/watch.go
+--- a/internal/cli/watch.go
++++ b/internal/cli/watch.go
+@@ -352,7 +352,8 @@
+ 	// The mode is the one the READ handle saw, so a rewrite keeps the document's own bits — what
+ 	// `ReplaceDurable` would have given it — without asking the entry, which by now may name something
+ 	// else. Durable for `writeNamedMode`'s reason: this rename lands over the user's only copy.
+-	if err := atomicfile.WriteDurable(path, res, perm); err != nil {
++	_ = perm
++	if err := writeAtomic(path, res); err != nil {
+ 		return "", err
+ 	}
+ 	return done, nil
