@@ -453,7 +453,7 @@ func unseenSignatures(ctx *model.Context, revs []Revision) bool {
 		}
 		return ""
 	}
-	for n, e := range ctx.XRefTable.Table {
+	for n, e := range ctx.XRefTable.Table { //sigwalk:exempt unseenSignatures
 		if e == nil || e.Free || seen[n] {
 			continue
 		}
@@ -461,10 +461,16 @@ func unseenSignatures(ctx *model.Context, revs []Revision) bool {
 		// pdfcpu leaves an object-stream member undecoded; its bytes are in memory, so a member that
 		// names none of the signature keys is skipped without a parse. `#` is in the filter because a
 		// name may spell its letters as escapes (`/#53ig`).
+		//
+		// **A member this cannot read is one it cannot say is not a signature** (/pending 752), so it
+		// fails CLOSED: raw bytes pdfcpu cannot hand over, or a member that passes the filter and does
+		// not decode, is counted as unseen. Skipping it made the cross-check vouch for an object it
+		// never looked at. Measured before the change: no file of the 36 in `~/nib/producers` reaches
+		// either arm (`TestNoProducerMemberFailsTheCensusDecode`).
 		if l, ok := obj.(types.LazyObjectStreamObject); ok {
 			raw, err := l.GetData()
 			if err != nil {
-				continue
+				return true
 			}
 			if !bytes.Contains(raw, []byte("ByteRange")) && !bytes.Contains(raw, []byte("Sig")) &&
 				!bytes.Contains(raw, []byte(ppkLite)) && !bytes.Contains(raw, []byte("DocTimeStamp")) &&
@@ -472,7 +478,7 @@ func unseenSignatures(ctx *model.Context, revs []Revision) bool {
 				continue
 			}
 			if obj, err = l.DecodedObject(context.Background()); err != nil {
-				continue
+				return true
 			}
 		}
 		var d types.Dict
@@ -484,7 +490,7 @@ func unseenSignatures(ctx *model.Context, revs []Revision) bool {
 		default:
 			continue
 		}
-		if !signatureShaped(name(d, "Filter"), name(d, "Type"), d["ByteRange"] != nil) {
+		if !signatureShaped(name(d, "Filter"), name(d, "Type"), d["ByteRange"] != nil) { //sigwalk:exempt unseenSignatures-shape
 			continue
 		}
 		switch c := d["Contents"].(type) {
