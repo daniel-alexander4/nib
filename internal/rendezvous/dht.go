@@ -58,7 +58,8 @@ const bootstrapFile = "dht-nodes"
 type Stats struct {
 	// Nodes is the routing table's size right now.
 	Nodes int
-	// Loaded is how many nodes came from the cache at startup. **Zero on a first
+	// Loaded is how many nodes came from the cache at startup — counting only those the
+	// cache's address rule admits, so a file of loopback or private entries loads 0. **Zero on a first
 	// ever run is correct**; zero on a later run means the cache did not survive,
 	// which is the difference between "new here" and "broken".
 	Loaded int
@@ -68,8 +69,8 @@ type Stats struct {
 	// run continues as a cold start, so without this field the two are
 	// indistinguishable — and they want different advice.
 	CacheRejected bool
-	// Seeds is how many shipped seed addresses were used because the cache was
-	// empty. Non-zero means this was a cold start.
+	// Seeds is how many shipped seed addresses were used because the cache held no
+	// usable node. Non-zero means this was a cold start.
 	Seeds int
 	// InvitationSeeds is how many bootstrap addresses a caller supplied out of band, and
 	// InvitationSeedsUsed says whether they were actually consulted.
@@ -214,6 +215,11 @@ type Server struct {
 	dht  *dht.Server
 	dir  string
 	once sync.Once
+	// scope is which cached node addresses this Server will read from or write to its node
+	// cache. `Open` sets it to `addrscope.Seed` and nothing in production sets it to anything
+	// else; it is a field only so this package's hermetic tests — whose whole DHT is loopback,
+	// which the rule correctly refuses — can open a Server that still persists (/pending 707).
+	scope func(netip.AddrPort) bool
 
 	// live is cancelled by Close, and inFlight counts the calls that must finish before Close
 	// returns — every verb that reaches the network: Publish, Fetch, Bootstrap, Ping, ProbeSelf.
@@ -295,6 +301,27 @@ type Server struct {
 // Server closes the DHT but never the socket, because the session on the other view
 // is still using it.
 func Open(conn net.PacketConn, dir string) (*Server, error) {
+	return open(conn, dir, addrscope.Seed)
+}
+
+// OpenAdmittingLoopback is Open with a node-cache rule widened by loopback, and nothing else.
+//
+// **For tests only.** A test whose whole DHT is one loopback socket — the server package's
+// rendezvous-switch sink — needs its cache to count, and production's rule (`addrscope.Seed`)
+// correctly refuses loopback (/pending 707), which would send that test to the shipped seeds on
+// the public internet. `TestOnlyTestsOpenAdmittingLoopback` holds that no non-test file calls it.
+func OpenAdmittingLoopback(conn net.PacketConn, dir string) (*Server, error) {
+	return open(conn, dir, seedOrLoopback)
+}
+
+// seedOrLoopback is addrscope.Seed widened by loopback at any port: private, link-local and
+// reserved space stay refused.
+func seedOrLoopback(ap netip.AddrPort) bool {
+	return ap.Addr().Unmap().IsLoopback() || addrscope.Seed(ap)
+}
+
+// open is Open with the cache's address rule named. See Server.scope.
+func open(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool) (*Server, error) {
 	// Refused explicitly, because the failure is silent otherwise: dht.NewServer
 	// opens its OWN socket when Conn is nil (server.go:1046). That DHT would work
 	// perfectly — and its self-address probe would measure a NAT mapping belonging
@@ -304,7 +331,7 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 		return nil, errors.New("rendezvous: no connection — the DHT must share the " +
 			"session's socket (caveat 7), never open one of its own")
 	}
-	s := &Server{dir: dir}
+	s := &Server{dir: dir, scope: scope}
 	s.live, s.stopLive = context.WithCancel(context.Background())
 
 	// Nothing reaches the library's decoder unscreened. See screen.go: 21 bytes of
@@ -323,11 +350,16 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 		s.cacheRejected = true
 		nodes = nil
 	}
+	// Only the nodes a bootstrap may start from count as the cache (/pending 707). A cache
+	// holding nothing but loopback, private or low-port entries is an empty cache, and it
+	// must read as one — otherwise `Seeds` stays 0 and the shipped list, and its rot alarm,
+	// are never reached from a file a single on-link datagram wrote.
+	nodes = inScope(nodes, s.scope)
 	s.loaded = len(nodes)
 
 	// A genuinely cold machine has nowhere to start, which is what D6's 2026-08-19
-	// amendment exists to fix. Seeds are consulted ONLY when the cache is empty, so a
-	// machine that has ever spoken to the DHT never touches them again.
+	// amendment exists to fix. Seeds are consulted ONLY when the cache holds no usable node,
+	// so a machine that has ever spoken to the DHT never touches them again.
 	var seeds []*net.UDPAddr
 	if len(nodes) == 0 {
 		seeds = seedNodes()
@@ -704,11 +736,10 @@ func sampleSeeds(nodes []krpc.NodeInfo, self netip.AddrPort, n int) []netip.Addr
 	}
 	var usable []netip.AddrPort
 	for _, ni := range nodes {
-		a, ok := netip.AddrFromSlice(ni.Addr.IP)
-		if !ok || ni.Addr.Port <= 0 || ni.Addr.Port > 0xffff {
+		ap, ok := nodeAddrPort(ni)
+		if !ok {
 			continue
 		}
-		ap := netip.AddrPortFrom(a.Unmap(), uint16(ni.Addr.Port))
 		// Never our own endpoint — ENFORCED, not asserted.
 		//
 		// The doc used to rest this on the library refusing to store its own node in the
@@ -878,7 +909,7 @@ func (s *Server) loadNodes() ([]krpc.NodeInfo, error) {
 	return out, nil
 }
 
-// saveNodes writes the routing table back.
+// saveNodes merges the routing table into the cache. See cacheSet.
 func (s *Server) saveNodes() error {
 	// A table built from somebody else's addresses is NOT written down.
 	//
@@ -903,12 +934,83 @@ func (s *Server) saveNodes() error {
 	if fromStranger {
 		return nil
 	}
-	n, err := writeNodes(s.dir, s.dht.Nodes())
+	// **The table is merged INTO the cache, never written OVER it** (/pending 707).
+	//
+	// anacrolix adds any node that sends US a query (server.go:492, `updateNode(..., !m.ReadOnly)`),
+	// and under ADR-011's lazy bootstrap a ceremony the link answers never traverses — so the
+	// ordinary shape of a run is Open, one inbound query, Close. Written over, that replaced a
+	// 200-node cache with the one stranger who pinged us (measured: 200 loaded, 1 persisted,
+	// `127.0.0.1:39340`), and every later run started from that address with `Seeds` 0. So the
+	// save is the in-scope table first and the previous cache after it, capped: a stranger can
+	// add itself, and cannot remove anything.
+	prev, _ := s.loadNodes() // unreadable or absent: nothing to keep, which is a cold start's own state
+	nodes, fresh := cacheSet(s.dht.Nodes(), prev, s.scope)
+	if fresh == 0 {
+		// Nothing learned that may be kept. Leave the file exactly as it was.
+		return nil
+	}
+	n, err := writeNodes(s.dir, nodes)
 	if err != nil {
 		return err
 	}
 	s.saved.Store(n)
 	return nil
+}
+
+// maxCachedNodes bounds the merged cache. Past anacrolix's realistic table size (a few hundred
+// nodes over k=8 buckets), so an ordinary save keeps the whole table and a tail of the previous
+// cache; 512 records is under 20 KB on disk.
+const maxCachedNodes = 512
+
+// nodeAddrPort is a cached or tabled node's address as the rule reads it — the one conversion
+// `sampleSeeds`, `inScope` and `cacheSet` share, so the three cannot disagree about what a
+// node's address is.
+func nodeAddrPort(ni krpc.NodeInfo) (netip.AddrPort, bool) {
+	a, ok := netip.AddrFromSlice(ni.Addr.IP)
+	if !ok || ni.Addr.Port <= 0 || ni.Addr.Port > 0xffff {
+		return netip.AddrPort{}, false
+	}
+	return netip.AddrPortFrom(a.Unmap(), uint16(ni.Addr.Port)), true
+}
+
+// inScope keeps the nodes whose address the cache rule admits. The rule is the caller's —
+// `addrscope.Seed` in production, the same predicate `sampleSeeds` and the invitation's
+// `validateSeeds` apply to a bootstrap address — so the cache is not a way around it.
+func inScope(nodes []krpc.NodeInfo, keep func(netip.AddrPort) bool) []krpc.NodeInfo {
+	var out []krpc.NodeInfo
+	for _, ni := range nodes {
+		if ap, ok := nodeAddrPort(ni); ok && keep(ap) {
+			out = append(out, ni)
+		}
+	}
+	return out
+}
+
+// cacheSet is the save's rule, pure for the reason `writeNodes` is split from the table: the
+// in-scope table first, then every in-scope node of the previous cache not already present (by
+// address), capped at maxCachedNodes. fresh is how many came from the table — zero means
+// this run learned nothing worth keeping, and the caller leaves the file alone.
+func cacheSet(table, prev []krpc.NodeInfo, keep func(netip.AddrPort) bool) (out []krpc.NodeInfo, fresh int) {
+	seen := make(map[netip.AddrPort]bool)
+	add := func(nodes []krpc.NodeInfo) int {
+		added := 0
+		for _, ni := range inScope(nodes, keep) {
+			if len(out) >= maxCachedNodes {
+				break
+			}
+			ap, _ := nodeAddrPort(ni)
+			if seen[ap] {
+				continue
+			}
+			seen[ap] = true
+			out = append(out, ni)
+			added++
+		}
+		return added
+	}
+	fresh = add(table)
+	add(prev)
+	return out, fresh
 }
 
 // writeNodes is the write, split from the query that feeds it.

@@ -3,6 +3,7 @@ package rendezvous
 import (
 	"context"
 	"net"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
@@ -27,6 +28,16 @@ type node struct {
 	addr *net.UDPAddr
 }
 
+// hermeticScope is the node cache's address rule for a test whose whole DHT is loopback.
+//
+// Production's rule is `addrscope.Seed`, which refuses loopback — correctly, and that is
+// /pending 707's fix — so a helper that means to exercise persistence between two loopback
+// Servers opens with this instead. It widens the rule by loopback (at any port — `deadCache` sits on port 1) and nothing else, so a test
+// through it still sees private, link-local and reserved space refused. Every helper that uses
+// it is a Server whose cache rule is not production's; the 707 regression test opens through
+// `Open`, not through one of these.
+func hermeticScope(ap netip.AddrPort) bool { return seedOrLoopback(ap) }
+
 func newNode(t *testing.T) *node {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -35,7 +46,7 @@ func newNode(t *testing.T) *node {
 	}
 	m := udpmux.New(pc)
 	dir := t.TempDir()
-	rz, err := Open(m.DHT(), dir)
+	rz, err := open(m.DHT(), dir, hermeticScope)
 	if err != nil {
 		m.Close()
 		t.Fatalf("open rendezvous: %v", err)
@@ -91,7 +102,7 @@ func TestTheNodeCacheSurvivesARestart(t *testing.T) {
 	}
 	m2 := udpmux.New(pc)
 	defer m2.Close()
-	again, err := Open(m2.DHT(), a.dir)
+	again, err := open(m2.DHT(), a.dir, hermeticScope)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

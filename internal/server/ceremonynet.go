@@ -637,6 +637,13 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 	return in, &wg
 }
 
+// openRendezvous is the one opener the server's three rendezvous sites call (here,
+// `setupSharedEndpoint` and `openSharedRendezvous`). It is `rendezvous.Open` in every build; it is
+// a variable only so the rendezvous-switch sink tests can open through
+// `rendezvous.OpenAdmittingLoopback`, whose cache counts a loopback node (/pending 707 made
+// production's refuse one).
+var openRendezvous = rendezvous.Open
+
 // dialerCeremony gives the DIALING side a ceremony identity and a DHT to fetch from.
 //
 // It opens a socket of its own rather than sharing with a listener, because at this slice the
@@ -654,7 +661,7 @@ func (s *Server) dialerCeremony(text string, cert, key, peerFP []byte) (*ceremon
 	if err != nil {
 		return nil, err
 	}
-	rz, err := rendezvous.Open(end.DHT(), nodeCacheDir(s.configDir))
+	rz, err := openRendezvous(end.DHT(), nodeCacheDir(s.configDir))
 	if err != nil {
 		end.Close()
 		return nil, err
