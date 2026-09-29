@@ -406,8 +406,12 @@ func rootKids(xt *model.XRefTable, root types.Dict) types.Array {
 func placeInserted(ctx *model.Context, host *hostTree, insertAfter, hostPages int) error {
 	xt := ctx.XRefTable
 	pageNr := map[int]int{}
+	pages := pdfread.Pages(ctx)
 	for p := 1; p <= hostPages; p++ {
-		ir, err := ctx.PageDictIndRef(p)
+		if p > len(pages) {
+			return fmt.Errorf("%w: page %d has no page object", errUnplaced, p) // PageDictIndRef's answer past the end
+		}
+		ir, err := pages[p-1].Ref, pages[p-1].Err
 		if err != nil {
 			return fmt.Errorf("%w: page %d: %v", errUnplaced, p, err)
 		}

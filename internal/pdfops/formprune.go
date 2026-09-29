@@ -3,6 +3,7 @@ package pdfops
 import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"nib/internal/pdfread"
 )
 
 // pruneOrphanedAcroForm removes `/AcroForm` fields whose widgets are no longer on any page of this
@@ -56,8 +57,8 @@ func pruneOrphanedAcroForm(ctx *model.Context) (bool, error) {
 	}
 
 	live := map[int]bool{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		d, perr := pa.Dict, pa.Err
 		if perr != nil || d == nil {
 			continue
 		}

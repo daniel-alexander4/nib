@@ -252,14 +252,14 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		return d.content, d.contentErr
 	}
 	d.contentDone = true
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, _, err := d.Ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(d.Ctx) {
+		p, page, err := pa.Nr, pa.Dict, pa.Err
 		if err != nil || page == nil {
 			d.contentErr = fmt.Sprintf("page %d does not resolve", p)
 			return d.content, d.contentErr
 		}
 		objNr := 0
-		if ir, e := d.Ctx.PageDictIndRef(p); e == nil && ir != nil {
+		if ir, e := pa.Ref, pa.Err; e == nil && ir != nil {
 			objNr = ir.ObjectNumber.Value()
 		}
 		// **pdfcpu's join, not `pdfread.PageContent`'s (ADR-056).** The checker reads as veraPDF does (ADR-052), and

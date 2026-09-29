@@ -249,12 +249,7 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 		return stamped, false, nil
 	}
 	tree, terr := writeMutated(stamped, func(ctx *model.Context) error {
-		live := map[int]bool{}
-		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
+		live := livePageObjects(ctx)
 		st, err := ensureStructTree(ctx, live)
 		if err != nil {
 			return err
@@ -300,11 +295,12 @@ func watermarkMarkersBefore(pdf []byte, byPage map[int][]Word) (map[int]int, err
 		return nil, err
 	}
 	out := map[int]int{}
+	pages := pdfread.Pages(ctx) // one walk, not one per page (/pending 753)
 	for p := range byPage {
 		if p < 1 || p > ctx.PageCount {
 			continue
 		}
-		d, _, _, derr := ctx.PageDict(p, false)
+		d, derr := pages[p-1].Dict, pages[p-1].Err
 		if derr != nil || d == nil {
 			return nil, fmt.Errorf("pdfops: page %d does not resolve: %v", p, derr)
 		}

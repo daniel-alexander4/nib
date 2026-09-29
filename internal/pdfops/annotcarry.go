@@ -182,8 +182,8 @@ func captureNoteAnnots(pdf []byte) (map[int]*noteSource, int, bool) {
 	}
 	out := map[int]*noteSource{}
 	total := 0
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		p, d, perr := pa.Nr, pa.Dict, pa.Err
 		if perr != nil || d == nil {
 			return nil, 0, false
 		}
@@ -331,8 +331,8 @@ type sheetPlacement struct {
 // carry instead of moving a note to the wrong page.
 func readPlacements(ctx *model.Context) ([]sheetPlacement, error) {
 	var out []sheetPlacement
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		p, d, err := pa.Nr, pa.Dict, pa.Err
 		if err != nil || d == nil {
 			return nil, fmt.Errorf("pdfops: sheet %d does not resolve: %w", p, err)
 		}

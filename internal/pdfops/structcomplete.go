@@ -422,14 +422,7 @@ func carryIsComplete(pdf []byte) bool {
 	if err != nil {
 		return false
 	}
-	live := map[int]bool{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		ir, e := ctx.PageDictIndRef(p)
-		if e != nil || ir == nil {
-			continue
-		}
-		live[ir.ObjectNumber.Value()] = true
-	}
+	live := livePageObjects(ctx)
 	tree, terr := readStructTree(ctx, live)
 	if terr != nil {
 		return false

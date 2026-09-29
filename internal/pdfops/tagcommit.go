@@ -122,12 +122,7 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			order = append(order, el.page)
 		}
 
-		live := map[int]bool{}
-		for pg := 1; pg <= ctx.PageCount; pg++ {
-			if ir, e := ctx.PageDictIndRef(pg); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
+		live := livePageObjects(ctx)
 		tree, terr := ensureStructTree(ctx, live)
 		if terr != nil {
 			return terr

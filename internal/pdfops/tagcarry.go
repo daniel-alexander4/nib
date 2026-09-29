@@ -59,8 +59,8 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		return nil, false
 	}
 	out := map[int]pageSource{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		p, d, perr := pa.Nr, pa.Dict, pa.Err
 		if perr != nil || d == nil {
 			return nil, false
 		}
@@ -76,7 +76,7 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		if !isInt {
 			return nil, false
 		}
-		ir, e := ctx.PageDictIndRef(p)
+		ir, e := pa.Ref, pa.Err
 		if e != nil || ir == nil {
 			return nil, false
 		}
@@ -142,12 +142,12 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	// silently dropping an element set.
 	var places []placement
 	claimed := map[int]bool{}
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, perr := ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(ctx) {
+		d, perr := pa.Dict, pa.Err
 		if perr != nil || d == nil {
 			return nil, false
 		}
-		pageRef, e := ctx.PageDictIndRef(p)
+		pageRef, e := pa.Ref, pa.Err
 		if e != nil || pageRef == nil {
 			return nil, false
 		}

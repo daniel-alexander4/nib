@@ -154,12 +154,7 @@ func tagFromRoles(pdf []byte, pages [][]mdpdf.Role, door string) ([]byte, error)
 		if len(pages) != ctx.PageCount {
 			return fmt.Errorf("pdfops: %s was given roles for %d pages of a %d-page document", door, len(pages), ctx.PageCount)
 		}
-		live := map[int]bool{}
-		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
+		live := livePageObjects(ctx)
 		tree, terr := ensureStructTree(ctx, live)
 		if terr != nil {
 			return terr

@@ -1,6 +1,8 @@
 package pdfops
 
 import (
+	"nib/internal/pdfread"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -39,23 +41,35 @@ type pageRecord struct {
 //
 // A page whose dictionary or reference cannot be read is SKIPPED, which is what all three sweeps did
 // individually (`if err != nil || d == nil { continue }`) — the fold inherits the behaviour rather
-// than deciding a new one. `ref` may be nil where only `checkStructConsistency` wanted it and the
-// lookup failed; that caller already had a `continue` for exactly that.
+// than deciding a new one. `ref` is what `ctx.PageDictIndRef(p)` answers, which is the same walk as
+// `PageDict`'s and so the same reference.
+//
+// Since /pending 753 the pages come from `pdfread.Pages`, which answers `PageDict(p, false)` for every
+// page from ONE walk of the tree: this function's own fold was 4p walks down to p, and p walks of a flat
+// tree is still quadratic — 65 s of a profiled ceremony preparation on a 7,059-page document.
 func scanPages(ctx *model.Context) []pageRecord {
 	out := make([]pageRecord, 0, ctx.PageCount)
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, _, _, err := ctx.PageDict(p, false)
-		if err != nil || d == nil {
+	for _, pg := range pdfread.Pages(ctx) {
+		if pg.Err != nil || pg.Dict == nil {
 			continue
 		}
-		rec := pageRecord{nr: p, dict: d}
-		if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-			rec.ref = ir
-		}
-		if res, e := ctx.DereferenceDict(d["Resources"]); e == nil && res != nil {
+		rec := pageRecord{nr: pg.Nr, dict: pg.Dict, ref: pg.Ref}
+		if res, e := ctx.DereferenceDict(pg.Dict["Resources"]); e == nil && res != nil {
 			rec.res = res
 		}
 		out = append(out, rec)
 	}
 	return out
+}
+
+// livePageObjects is the object number of every page in the page tree — the set the structure-tree readers
+// take as `live`, and which seven doors each built with a `PageDictIndRef` loop (/pending 753).
+func livePageObjects(ctx *model.Context) map[int]bool {
+	live := map[int]bool{}
+	for _, pg := range pdfread.Pages(ctx) {
+		if pg.Err == nil && pg.Ref != nil {
+			live[pg.Ref.ObjectNumber.Value()] = true
+		}
+	}
+	return live
 }

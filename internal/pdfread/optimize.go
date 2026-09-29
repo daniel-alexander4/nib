@@ -406,12 +406,13 @@ func pageResources(ctx *model.Context, pages []types.Dict) []types.Dict {
 // pageDicts is every page's dictionary that resolves, in page order, gathered ONCE per estimate and handed to each
 // reader of it (`pageResources`, `contentNamings`). pdfcpu's `PageDict` walks the page tree from the root at every
 // call, so each pass over the pages is quadratic in their count: a second pass cost 11.2 s and 2.3 GiB on a
-// 7,059-page document (/pending 748). The one pass that remains is /pending 753's.
+// 7,059-page document (/pending 748). And the one pass that remained was itself quadratic on a flat tree, 12 s of
+// the same document, so it goes through `Pages`, which answers every page from one walk (/pending 753).
 func pageDicts(ctx *model.Context) []types.Dict {
 	out := make([]types.Dict, 0, ctx.PageCount)
-	for p := 1; p <= ctx.PageCount; p++ {
-		if d, _, _, err := ctx.PageDict(p, false); err == nil && d != nil {
-			out = append(out, d)
+	for _, pg := range Pages(ctx) {
+		if pg.Err == nil && pg.Dict != nil {
+			out = append(out, pg.Dict)
 		}
 	}
 	return out

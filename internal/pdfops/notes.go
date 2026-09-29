@@ -80,12 +80,7 @@ func describeNotes(pdf []byte) []byte {
 		if _, tagged := root["StructTreeRoot"]; !tagged {
 			return errNoStructTree
 		}
-		live := map[int]bool{}
-		for p := 1; p <= ctx.PageCount; p++ {
-			if ir, e := ctx.PageDictIndRef(p); e == nil && ir != nil {
-				live[ir.ObjectNumber.Value()] = true
-			}
-		}
+		live := livePageObjects(ctx)
 		tree, terr := ensureStructTree(ctx, live)
 		if terr != nil {
 			return terr

@@ -2,6 +2,7 @@ package uacheck
 
 import (
 	"fmt"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -79,8 +80,8 @@ func (d *Document) annots() ([]annotSubject, string) {
 		return d.annotList, d.annotsErr
 	}
 	d.annotsDone = true
-	for p := 1; p <= d.Ctx.PageCount; p++ {
-		page, _, inh, err := d.Ctx.PageDict(p, false)
+	for _, pa := range pdfread.Pages(d.Ctx) {
+		p, page, inh, err := pa.Nr, pa.Dict, pa.Attrs, pa.Err
 		if err != nil || page == nil {
 			d.annotsErr = fmt.Sprintf("page %d does not resolve", p)
 			return d.annotList, d.annotsErr

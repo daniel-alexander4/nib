@@ -57,8 +57,8 @@ func declareContentLang(pdf []byte, lang string) (out []byte, bracketed int, err
 		return nil, 0, fmt.Errorf("pdfops: a content language declaration needs a language")
 	}
 	out, err = writeMutated(pdf, func(ctx *model.Context) error {
-		for p := 1; p <= ctx.PageCount; p++ {
-			d, _, _, derr := ctx.PageDict(p, false)
+		for _, pa := range pdfread.Pages(ctx) {
+			p, d, derr := pa.Nr, pa.Dict, pa.Err
 			if derr != nil || d == nil {
 				continue
 			}

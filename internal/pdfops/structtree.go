@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"fmt"
+	"nib/internal/pdfread"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -114,6 +115,9 @@ type structTree struct {
 	byObj map[int]*structElem
 	// pages caches the page dictionaries the writers have resolved, by page number. See `page`.
 	pages map[int]treePage
+	// walked is every page as `pdfread.Pages` answers it, taken on the first miss (/pending 753): the writers
+	// ask for page after page, and one `PageDict` per page is itself a walk from the root.
+	walked []pdfread.Page
 	// keyFloor is the lowest `/ParentTree` key nothing has claimed, once `allocParentTreeKey` has
 	// worked it out; keyFloorKnown says whether it has. Every new entry raises it (`claimParentTreeKey`),
 	// so the walk that finds it runs once per tree rather than once per annotation.
@@ -139,12 +143,23 @@ func (t *structTree) page(ctx *model.Context, pageNr int) (types.Dict, *types.In
 	if p, ok := t.pages[pageNr]; ok {
 		return p.dict, p.ref, nil
 	}
-	d, _, _, err := ctx.PageDict(pageNr, false)
+	if t.walked == nil {
+		t.walked = pdfread.Pages(ctx)
+	}
+	var (
+		d   types.Dict
+		ref *types.IndirectRef
+		err error
+	)
+	if pageNr >= 1 && pageNr <= len(t.walked) {
+		d, ref, err = t.walked[pageNr-1].Dict, t.walked[pageNr-1].Ref, t.walked[pageNr-1].Err
+	} else {
+		d, ref, _, err = ctx.PageDict(pageNr, false) // out of range: pdfcpu's own refusal
+	}
 	if err != nil || d == nil {
 		return nil, nil, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 	}
-	ref, err := ctx.PageDictIndRef(pageNr)
-	if err != nil || ref == nil {
+	if ref == nil {
 		return nil, nil, fmt.Errorf("pdfops: page %d has no indirect reference: %w", pageNr, err)
 	}
 	if t.pages == nil {
