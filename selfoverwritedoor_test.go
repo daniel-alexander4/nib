@@ -53,6 +53,12 @@ import (
 // real doors and were red against the tree before this.
 func TestEveryFolderFillingWriterAsksWhetherItIsAboutToWriteItsOwnSource(t *testing.T) {
 	const door = "OutputOverwritingSource"
+	// The batch form of the same rule (/pending 663): a writer with many inputs asks whether an
+	// output is some OTHER input's file. It counts as routing because it is the same question —
+	// "is this output a document I am reading?" — asked before the first write. `pagenum
+	// --continuous` calls it and keeps its SELF-OVERWRITE EXEMPT for its own-input half; it is
+	// tallied as routed, so dropping the call moves it to `exempted` and the `routed` floor fails.
+	const batchDoor = "OutputOverwritingAnotherSource"
 	const exempt = "SELF-OVERWRITE EXEMPT:"
 
 	type site struct{ pkg, fn, where string }
@@ -91,7 +97,7 @@ func TestEveryFolderFillingWriterAsksWhetherItIsAboutToWriteItsOwnSource(t *test
 						return true
 					}
 					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if sel.Sel.Name == door {
+						if sel.Sel.Name == door || sel.Sel.Name == batchDoor {
 							calls = true
 						}
 						// os.MkdirAll(dir, …) where dir is a plain identifier: the
@@ -173,13 +179,14 @@ func TestEveryFolderFillingWriterAsksWhetherItIsAboutToWriteItsOwnSource(t *test
 			"the `os.MkdirAll(<ident>, …)` predicate has stopped matching what it is about",
 			population)
 	}
-	if routed < 2 {
-		t.Errorf("%d writer(s) route through pdfops.%s; the two splits both must. A writer that "+
-			"stops calling the door reads here as one that never filled a folder",
-			routed, door)
+	if routed < 3 {
+		t.Errorf("%d writer(s) route through pdfops.%s or pdfops.%s; the two splits and "+
+			"pagenum --continuous all must. A writer that stops calling the door reads here as "+
+			"one that never filled a folder", routed, door, batchDoor)
 	}
-	if exempted < 3 {
-		t.Errorf("%d writer(s) carry a named exemption, want at least 3 — an exemption that "+
+	if exempted < 2 {
+		t.Errorf("%d writer(s) carry a named exemption and no door call, want at least 2 (save "+
+			"as, the release download) — an exemption that "+
 			"disappears means either the site started routing (raise this) or the comment was "+
 			"reworded, which turns the marker into a check nobody is running", exempted)
 	}

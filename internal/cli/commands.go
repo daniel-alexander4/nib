@@ -739,10 +739,19 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 	// command also spells `-w`, durably, through the same door. Refusing it would break a workflow
 	// that loses nothing, to prevent a loss that cannot happen here.
 	//
-	// Nor can one input's output land on another's: the names are deduped by `UniqueName` within
-	// the run, so two inputs sharing a base name produce `a.pdf` and `a-2.pdf`, never one file
-	// twice. Named here rather than left silent because ADR-009 asks for the exemption at the site,
+	// Named here rather than left silent because ADR-009 asks for the exemption at the site,
 	// and because the next reader will otherwise re-find this and re-fix it.
+	//
+	// **The exemption is for an input's OWN output only — never another input's** (/pending 663).
+	// This used to say *"nor can one input's output land on another's: the names are deduped by
+	// `UniqueName`"*, and that was false: `UniqueName` dedupes outputs against OUTPUTS, while the
+	// collision that loses data is an output against an INPUT in another folder. `nib pagenum
+	// --continuous x/a.pdf out/a.pdf --out-dir out` wrote input 1's output over `out/a.pdf` before
+	// input 2 was read — its three pages vanished, both outputs held one page, exit 0. So every
+	// output path is built BEFORE the first write (a check inside the loop would refuse with the
+	// earlier files already on disk — /pending 569's reasoning) and the batch door refuses any
+	// output that is some other input's file.
+	var outs []string
 	if !inPlace {
 		dir := filepath.Clean(outDir)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -750,8 +759,23 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 			return 1
 		}
 		outDir = dir
+		seen := map[string]int{}
+		outs = make([]string, len(files))
+		for i, f := range files {
+			base := pdfops.SanitizeFilename(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
+			full := filepath.Join(outDir, pdfops.UniqueName(base, i+1, seen)+".pdf")
+			if filepath.Dir(full) != outDir { // containment: the name is input-derived
+				errf("unsafe file name %q", base)
+				return 1
+			}
+			outs[i] = full
+		}
+		if clash, src, ok := pdfops.OutputOverwritingAnotherSource(files, outs); ok {
+			errf("%s is %s, another input of this run: writing it would replace that document "+
+				"before it is read. Choose a different --out-dir.", clash, src)
+			return 1
+		}
 	}
-	seen := map[string]int{}
 	offset := st.Start
 	for i, f := range files {
 		b, err := os.ReadFile(f)
@@ -786,17 +810,11 @@ func runContinuousPagenum(files []string, st pdfops.PageNumberStyle, inPlace boo
 			fmt.Printf("%s: rewritten\n", f)
 			continue
 		}
-		base := pdfops.SanitizeFilename(strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
-		full := filepath.Join(outDir, pdfops.UniqueName(base, i+1, seen)+".pdf")
-		if filepath.Dir(full) != outDir { // containment: the name is input-derived
-			errf("unsafe file name %q", base)
-			return 1
-		}
-		if err := writeNamed(full, res); err != nil {
+		if err := writeNamed(outs[i], res); err != nil {
 			errf("%v", err)
 			return 1
 		}
-		fmt.Println(full)
+		fmt.Println(outs[i])
 	}
 	if !inPlace {
 		fmt.Printf("%d file(s) written to %s\n", len(files), outDir)
