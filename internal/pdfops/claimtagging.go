@@ -413,7 +413,7 @@ func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, vi
 			}
 			visiting[key] = true
 		}
-		body := streamContent(sd)
+		body := budget.formContent(sd, o)
 		if body != nil {
 			if !budget.enterForm(len(body)) {
 				return n

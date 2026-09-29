@@ -358,10 +358,15 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 		return // a direct form cannot be shared: it is reachable from exactly one place
 	}
 	nr := ir.ObjectNumber.Value()
-	body := streamContent(sd)
+	// Whether a form carries an MCID is a fact about its bytes, so it is read at its FIRST draw and never
+	// again: read at every draw it was the whole body re-tokenized per `Do`, and the draws that are counted
+	// but not followed (a form drawing itself) are charged nothing — one 140 KB form of 20,000 `/Fm Do`
+	// drawing itself took 92 s here and returned no error (`/pending 742`, measured).
 	d := counts[nr]
+	if d.count == 0 {
+		d.mcid = carriesMCID(budget.formContent(sd, obj))
+	}
 	d.count++
-	d.mcid = d.mcid || carriesMCID(body)
 	counts[nr] = d
 
 	if chain[nr] {
@@ -371,7 +376,11 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 	if ierr != nil || inner == nil {
 		inner = res // a form with no resources of its own inherits the invoking stream's
 	}
-	if depth+1 > maxFormDrawDepth || !budget.enterForm(len(body)) {
+	if depth+1 > maxFormDrawDepth {
+		return
+	}
+	body := budget.formContent(sd, obj)
+	if body == nil || !budget.enterForm(len(body)) {
 		return
 	}
 	chain[nr] = true

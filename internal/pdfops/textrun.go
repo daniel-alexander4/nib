@@ -1073,7 +1073,7 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	if depth >= maxFormDepth {
 		return true
 	}
-	body := streamContent(sd)
+	body := w.budget.formContent(sd, obj)
 	if body == nil || !w.budget.enterForm(len(body)) {
 		return true
 	}

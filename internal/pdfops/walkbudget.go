@@ -1,6 +1,10 @@
 package pdfops
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+)
 
 // formWalkBudget bounds a content walk that follows form XObjects — `/pending 664`.
 //
@@ -9,7 +13,8 @@ import "fmt"
 // 0.9 s (`uncoveredDrawings`) and 1.2 s with 100,000 runs built (`readPageRuns`) at five levels, each ×10
 // per level. `internal/uacheck` bounds its own walk the same way (`maxFormWalks`, `overBudget`); this is
 // pdfops' one door for its three walkers, so a walker added later charges the same budget rather than
-// inventing a fourth depth-only bound.
+// inventing a fourth depth-only bound. It is also the walk's one DECODE door (`formContent`), so a form
+// drawn N times is decoded once and nothing is decoded past the refusal (`/pending 742`).
 //
 // **Reaching it is an error, never a silent stop.** The forms past it were never read, so a count or a
 // run list built from what was read would describe a page nib did not finish: each caller turns the error
@@ -22,6 +27,10 @@ type formWalkBudget struct {
 	walks, maxWalks int // form streams entered
 	bytes, maxBytes int // form content bytes read, counted again every time a form is walked again
 	over            string
+
+	// decoded holds each form's decoded bytes by object number for the walk's life — `formContent`.
+	decoded map[int][]byte
+	decodes int // streams actually decoded, for the test that pins decode-once
 }
 
 const (
@@ -60,6 +69,42 @@ func (b *formWalkBudget) enterForm(n int) bool {
 			"time it is drawn; nib stops reading there, so what lies beyond was never read", b.maxBytes)
 	}
 	return b.over == ""
+}
+
+// formContent is the ONE door through which pdfops' form walkers read a form XObject's decoded bytes, and it
+// decodes each object once per walk — `/pending 742`, the twin of uacheck's `decodedContent` (/pending 721).
+//
+// **Cached here because pdfcpu does not**: `DereferenceStreamDict` hands back a fresh copy of the stream
+// dictionary at every call, so decoding it inflated the same form again at every `Do`. And the budget above
+// is charged with the DECODED size, so the decode ran before any refusal and went on running after it:
+// measured on one page drawing a 64 MiB flate form of spaces 80 times (a 66 KB file), `readPageRuns` took
+// 6.6 s and `formDrawCounts` 13.4 s to refuse. Only the bytes are kept, never what a walk made of them — a
+// form reads differently in each graphics state and marked-content stack it is drawn in, so every draw is
+// still walked and still charged (`enterForm`).
+//
+// Once the budget has refused nothing is decoded at all: the walk is already an error, and a decode it can
+// never use is the cost that ran on past the refusal. nil means "not read" — undecodable, or over budget.
+// A direct stream (no object number) is decoded where it is met.
+func (b *formWalkBudget) formContent(sd *types.StreamDict, obj types.Object) []byte {
+	if b.over != "" {
+		return nil
+	}
+	nr := -1
+	if ir, ok := obj.(types.IndirectRef); ok {
+		nr = ir.ObjectNumber.Value()
+		if src, hit := b.decoded[nr]; hit {
+			return src
+		}
+	}
+	b.decodes++
+	src := streamContent(sd)
+	if nr >= 0 {
+		if b.decoded == nil {
+			b.decoded = map[int][]byte{}
+		}
+		b.decoded[nr] = src
+	}
+	return src
 }
 
 // err is the budget's verdict: nil, or why the walk stopped.
