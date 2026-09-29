@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +44,17 @@ const (
 	// a co-signing session across reasonable clock skew, short enough to bound the
 	// replay window of the per-session ephemeral key if it ever leaked.
 	transportTTL = 15 * time.Minute
+	// transportRenew is the most a presented leaf has aged: a handshake that finds the
+	// cached leaf this old mints a fresh one first (/pending 662). The leaf used to be
+	// minted ONCE per SessionTLS, and a listener outlives transportTTL — delivery and hop
+	// arms stay open for hours — so every peer dialling in after 15 minutes was refused
+	// with a sentence blaming its clock. A minute keeps the forward tolerance within a
+	// minute of transportTTL (what D35's asymmetry note states), and costs one mint
+	// (~185µs measured) per minute of a listener that is actually handshaking. Minting on
+	// EVERY handshake was refused: GetCertificate runs on a stranger's ClientHello, before
+	// any pinning, so that would hand an unauthenticated caller one identity-key signature
+	// per packet flight.
+	transportRenew = 1 * time.Minute
 )
 
 // SessionTLS builds the mTLS config for one co-signing session. It presents an
@@ -63,12 +75,22 @@ func SessionTLS(identityCertPEM, identityKeyPEM, pinnedSPKI []byte, server bool)
 	if err != nil {
 		return nil, err
 	}
-	leaf, err := mintTransportCert(idCert, idKey)
+	leaf, err := newLeafCache(idCert, idKey)
 	if err != nil {
 		return nil, err
 	}
 	cfg := &tls.Config{
-		Certificates: []tls.Certificate{leaf},
+		// **Per handshake, not per config (/pending 662).** Both callbacks, so a config held
+		// for longer than transportTTL presents a fresh leaf whichever role it plays; quic-go
+		// hands this config to crypto/tls's QUIC API, so the same callbacks serve QUIC.
+		// `Certificates` is left empty on purpose: a static leaf there is exactly the one
+		// that expires under a long arm.
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return leaf.current()
+		},
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return leaf.current()
+		},
 		// **ALPN on the TCP path too (P07.S03a).** It had none at all, so this transport could
 		// not tell an old peer from a new one and the refusal negotiation would have been
 		// QUIC-only — a rule reaching one of two transports, which is the ADR-009 shape. Adding
@@ -192,7 +214,8 @@ type ClockSkewError struct {
 	Behind bool
 	// By is how far outside the window we are, which is a LOWER BOUND on the skew: the
 	// window has its own width, so a clock can be wrong by up to transportSkew (behind)
-	// or transportTTL (ahead) without tripping anything at all.
+	// or transportTTL (ahead) without tripping anything at all. The presented leaf's age
+	// (under transportRenew, per leafCache) widens the first and narrows the second.
 	By time.Duration
 }
 
@@ -222,6 +245,49 @@ func roughly(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%.1f day(s)", d.Hours()/24)
 	}
+}
+
+// leafCache holds one config's current transport leaf and renews it once it has aged
+// transportRenew, on the clock the verifier reads (timeNow). The identity is held so the
+// renewal needs nothing but the cache; that is no wider than before, because the config's
+// holder already held the parsed identity key to mint the first leaf.
+type leafCache struct {
+	idCert *x509.Certificate
+	idKey  crypto.Signer
+
+	mu       sync.Mutex
+	leaf     *tls.Certificate
+	mintedAt time.Time
+}
+
+// newLeafCache mints the first leaf eagerly, so a bad identity still fails at SessionTLS
+// rather than inside a handshake, and so a listener's first leaf carries its arm time.
+func newLeafCache(idCert *x509.Certificate, idKey crypto.Signer) (*leafCache, error) {
+	c := &leafCache{idCert: idCert, idKey: idKey}
+	if _, err := c.current(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// current returns the leaf to present, minting a fresh one when there is none or the held
+// one has aged transportRenew. A clock that has stepped BACKWARDS does not re-mint: the
+// held leaf is still valid for a peer whose clock is right, and re-minting on our wrong
+// clock would make it invalid for them — the backwards case is D19's cause 5, and it is
+// reported by the peer's check, not papered over here.
+func (c *leafCache) current() (*tls.Certificate, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := timeNow()
+	if c.leaf != nil && now.Sub(c.mintedAt) < transportRenew {
+		return c.leaf, nil
+	}
+	leaf, err := mintTransportCert(c.idCert, c.idKey)
+	if err != nil {
+		return nil, err
+	}
+	c.leaf, c.mintedAt = &leaf, now
+	return c.leaf, nil
 }
 
 // mintTransportCert generates a fresh ephemeral ECDSA key and a short-lived leaf

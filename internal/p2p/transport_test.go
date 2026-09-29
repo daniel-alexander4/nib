@@ -524,3 +524,87 @@ func TestATerminalAcceptErrorStillReportsNetErrClosed(t *testing.T) {
 		t.Error("a second Accept blocked forever")
 	}
 }
+
+// /pending 662: an armed listener outlives transportTTL — delivery and hop arms stay open
+// for hours — and its leaf used to be minted ONCE at arm time, so a peer dialling in 16
+// minutes later, clocks agreeing, was refused with a sentence blaming its clock. Both
+// transports, because QUIC hands the config to crypto/tls through quic-go and either could
+// have ignored the per-handshake callback.
+//
+// The clock is the one both sides read, moved forward AFTER the listener armed: that is the
+// passage of time, not skew, so the only correct outcome is a handshake that succeeds.
+func TestAnArmedListenerOutlivesItsFirstTransportLeaf(t *testing.T) {
+	realNow := time.Now
+	aCert, aKey := newIdentity(t)
+	bCert, bKey := newIdentity(t)
+	aFP := fingerprint(t, aCert)
+	bFP := fingerprint(t, bCert)
+	for _, tr := range []string{TransportTCP, TransportQUIC} {
+		t.Run(tr, func(t *testing.T) {
+			var ln Listener
+			var err error
+			if tr == TransportTCP {
+				ln, err = Listen("127.0.0.1:0", bCert, bKey, aFP)
+			} else {
+				ln, err = QUICListen("127.0.0.1:0", bCert, bKey, aFP)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go func() {
+				for {
+					c, e := ln.Accept()
+					if e != nil {
+						return
+					}
+					go c.Close()
+				}
+			}()
+			later := transportTTL + time.Minute
+			defer setClock(func() time.Time { return realNow().Add(later) })()
+			var c *Conn
+			if tr == TransportTCP {
+				c, err = Dial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 6*time.Second)
+			} else {
+				c, err = QUICDial(context.Background(), ln.Addr().String(), aCert, aKey, bFP, 6*time.Second)
+			}
+			if err != nil {
+				var skew *ClockSkewError
+				t.Fatalf("a peer dialling %s after the listener armed was refused (clock-skew cause: %v): %v",
+					later, errors.As(err, &skew), err)
+			}
+			c.Close()
+		})
+	}
+}
+
+// The same property on a config held by either role, read at the callback crypto/tls calls:
+// the dial side builds a config per dial today, but nothing stops a caller holding one, and
+// a held config must not present a leaf older than transportRenew.
+func TestAHeldSessionConfigPresentsAFreshLeaf(t *testing.T) {
+	realNow := time.Now
+	aCert, aKey := newIdentity(t)
+	aFP := fingerprint(t, aCert)
+	for _, server := range []bool{true, false} {
+		cfg, err := SessionTLS(aCert, aKey, aFP, server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		later := realNow().Add(transportTTL + time.Minute)
+		restore := setClock(func() time.Time { return later })
+		var leaf *tls.Certificate
+		if server {
+			leaf, err = cfg.GetCertificate(&tls.ClientHelloInfo{})
+		} else {
+			leaf, err = cfg.GetClientCertificate(&tls.CertificateRequestInfo{})
+		}
+		restore()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifyPinnedPeer(leaf.Certificate, aFP, later); err != nil {
+			t.Errorf("server=%v: a config held past transportTTL presented a leaf its peer refuses: %v", server, err)
+		}
+	}
+}
