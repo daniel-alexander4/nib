@@ -1583,6 +1583,9 @@ let recvStage = 'arm'; // arm | wait | consent | applying | declining
 let recvMode = 'cosign'; // cosign | receive — receive saves a one-way transfer, no signing
 let recvArmedLabel = ''; // the pinned label of the peer we armed for
 let recvPeerFp = ''; // the connecting peer's verified fingerprint, for the Copy button
+// The ID of the consent request this screen is showing, echoed on every answer so the server can
+// refuse one that would land on a DIFFERENT request than the user read (/pending 660).
+let recvPendingId = '';
 
 function showRecvView(which) {
   els.srvArm.hidden = which !== 'srvArm';
@@ -1827,6 +1830,7 @@ async function pollRecv(token, fails = 0) {
 
 function showConsent(pending) {
   recvPeerFp = pending.fingerprint || '';
+  recvPendingId = pending.id || '';
   // `pending.signer` is who the SERVER saw connect; recvArmedLabel is the label this
   // client remembers arming for. They are usually the same and the difference matters
   // when they are not — the consent dialog is the one place the user decides based on
@@ -1995,7 +1999,7 @@ async function acceptRecv() {
   if (recvMode === 'receive') {
     const res = await apiFetch('/api/session/respond', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accept: true }),
+      body: JSON.stringify({ id: recvPendingId, accept: true }),
     });
     if (!res.ok) {
       els.srvAccept.disabled = false; els.srvDecline.disabled = false;
@@ -2035,7 +2039,7 @@ async function acceptRecv() {
     // `when` is the quote's pinned time, echoed so the signature carries the block the party
     // actually consented to. The server bounds it by the same `maxWhenSkew` the initiating side
     // has always applied, and drops it out of range rather than refusing.
-    body: JSON.stringify({ accept: true, intent, appearance, when: q.when }),
+    body: JSON.stringify({ id: recvPendingId, accept: true, intent, appearance, when: q.when }),
   });
   if (!res.ok) {
     els.srvAccept.disabled = false; els.srvDecline.disabled = false;
@@ -2053,7 +2057,7 @@ async function declineRecv() {
   try {
     await apiFetch('/api/session/respond', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accept: false }),
+      body: JSON.stringify({ id: recvPendingId, accept: false }),
     });
   } catch { /* the session tears down regardless */ }
   toast('Declined — your document is unchanged');

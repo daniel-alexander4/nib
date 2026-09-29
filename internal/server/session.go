@@ -937,15 +937,44 @@ func (a consentAnchor) current(se *session) bool {
 //
 // Identity rather than a generation counter, for `disarmIf`'s reason: the listener (or ceremony)
 // IS the thing being armed, and the goroutine already holds it.
-func (se *session) setPending(a consentAnchor, p *pendingReq) bool {
+//
+// # It will not displace a live request, and the INCUMBENT wins (/pending 660)
+//
+// This used to assign over whatever was parked, while `setVerify` below refuses a busy seat — the
+// same two halves of one invariant disagreeing that `setVerify`'s own doc records fixing. Two arms
+// can each reach here at once: the interactive arm and the delivery arm, which serves a resumed
+// HOP with the real `sessionConfirmer`. So ceremony B's hop arriving while ceremony A's consent
+// was on screen REPLACED A, and the user's Accept — with the intent and signature image typed for
+// A — signed B, while A's goroutine sat on a channel nobody would write to until its timeout. The
+// incumbent wins for `setVerify`'s reason: the user may be reading it and about to answer. The
+// newcomer is refused with `errConsentBusy`, which reaches its peer the way `errVerifyBusy` does
+// (no wire code, so the dialer sees the session fail), and a delivery arm that refused stays
+// armed — its accept loop `continue`s after a served hop — so B can be served once A is answered.
+//
+// **Each request gets its ID here, the one door both consent bridges park through**, and
+// `respond` refuses an answer that does not name it. The busy refusal alone does not make an
+// answer the user's: A can clear and B park between the page's last poll and the click, and a page
+// still showing A would then answer B. Random rather than a counter, because a counter restarts
+// with the process and a page left open across a restart could name a live request by accident.
+func (se *session) setPending(a consentAnchor, p *pendingReq) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	if !a.current(se) {
-		return false
+		return errConsentNotArmed
 	}
+	if se.pending != nil {
+		return errConsentBusy
+	}
+	p.view.ID = newToken()
 	se.pending = p
-	return true
+	return nil
 }
+
+// errConsentNotArmed: the anchor no longer names an armed session (see setPending).
+var errConsentNotArmed = errors.New("session not armed")
+
+// errConsentBusy is returned when another request is already waiting for the user's consent.
+var errConsentBusy = errors.New("another co-signing session is already waiting for consent — finish or cancel that one first")
 
 // clearPendingIf drops the pending consent only if `p` is still the pending one.
 //
@@ -1020,18 +1049,36 @@ func (se *session) respondVerify(ok bool) bool {
 	}
 }
 
-func (se *session) respond(d sessionDecision) bool {
+// respondOutcome says why an answer was or was not delivered, because the two refusals are
+// different facts to the page: nothing is waiting, or something ELSE is waiting.
+type respondOutcome int
+
+const (
+	respondDelivered respondOutcome = iota
+	respondNothingPending
+	respondNotThatRequest
+)
+
+// respond delivers the user's answer to the request named `id`, and only to it (/pending 660).
+//
+// The ID is what the page was shown (`pendingView.ID`), so an answer is the answer to THAT
+// request. Without it this delivered to whatever was parked when the POST landed, which is not
+// necessarily what the user read.
+func (se *session) respond(id string, d sessionDecision) respondOutcome {
 	se.mu.Lock()
 	p := se.pending
 	se.mu.Unlock()
 	if p == nil {
-		return false
+		return respondNothingPending
+	}
+	if id == "" || id != p.view.ID {
+		return respondNotThatRequest
 	}
 	select {
 	case p.resp <- d:
-		return true
+		return respondDelivered
 	default:
-		return false
+		return respondNothingPending
 	}
 }
 
@@ -1195,7 +1242,6 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 			return false, "", nil, time.Time{}, err
 		}
 	}
-	sc.saw.mark() // the consent request is about to go on screen
 	// Park the received document for review (served via /api/session/pending-pdf)
 	// rather than replacing the open document — that only changes on accept, in
 	// runSession. A declined or timed-out request leaves the open doc untouched.
@@ -1215,9 +1261,12 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	// The request is held so the defer can name it: an unconditional clear drops whatever
 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
 	req := &pendingReq{view: view, doc: doc, resp: ch}
-	if !sc.s.sess.setPending(sc.anchor, req) {
-		return false, "", nil, time.Time{}, errors.New("session not armed")
+	if err := sc.s.sess.setPending(sc.anchor, req); err != nil {
+		return false, "", nil, time.Time{}, err
 	}
+	// **After the slot is won, for `ConfirmVerification`'s reason (P08.S05c):** a request refused
+	// with `errConsentBusy` was put in front of nobody, so it must not spend the arm.
+	sc.saw.mark() // the consent request is on screen
 	defer sc.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
@@ -1497,13 +1546,13 @@ type sessionAccepter struct {
 }
 
 func (sa sessionAccepter) Accept(peerFP, doc []byte) (bool, error) {
-	sa.saw.mark() // the transfer consent is about to go on screen
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{Signer: sa.label, Fingerprint: hex.EncodeToString(peerFP), Reason: transferReason(doc)}
 	req := &pendingReq{view: view, doc: doc, resp: ch}
-	if !sa.s.sess.setPending(sa.anchor, req) {
-		return false, errors.New("session not armed")
+	if err := sa.s.sess.setPending(sa.anchor, req); err != nil {
+		return false, err
 	}
+	sa.saw.mark() // the transfer consent is on screen — after the slot is won, see Confirm
 	defer sa.s.sess.clearPendingIf(req)
 	select {
 	case d := <-ch:
@@ -2225,6 +2274,9 @@ type verifyView struct {
 //
 // `TestTheConsentViewPublishesNoUnreadPeerFields` is what keeps them gone.
 type pendingView struct {
+	// ID names this request, minted by `setPending`; the page echoes it to `/api/session/respond`,
+	// which refuses an answer naming any other (/pending 660).
+	ID          string `json:"id"`
 	Signer      string `json:"signer"`
 	Fingerprint string `json:"fingerprint"`
 	Reason      string `json:"reason"`
@@ -2736,6 +2788,8 @@ func (s *Server) handleSessionVerify(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		// ID names the pending request this answers — `pendingView.ID`, as the page received it.
+		ID         string `json:"id"`
 		Accept     bool   `json:"accept"`
 		Intent     string `json:"intent"`
 		Appearance string `json:"appearance"` // base64 PNG, optional
@@ -2770,10 +2824,21 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !s.sess.respond(sessionDecision{
+	// **The ID of the request the page was shown, and it is required (/pending 660).** An answer
+	// that names no request is an answer to whatever happens to be parked, which is the defect.
+	if req.ID == "" {
+		httpError(w, http.StatusBadRequest, "the answer does not name the request it is for")
+		return
+	}
+	switch s.sess.respond(req.ID, sessionDecision{
 		accept: req.Accept, intent: req.Intent, appearance: appearance, when: when,
 	}) {
+	case respondNothingPending:
 		httpError(w, http.StatusConflict, "no pending session request")
+		return
+	case respondNotThatRequest:
+		httpError(w, http.StatusConflict, "the request you answered is no longer the one waiting — "+
+			"nothing was signed; look again at what is being asked")
 		return
 	}
 	writeJSON(w, s.sess.status())

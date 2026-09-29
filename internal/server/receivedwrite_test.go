@@ -36,7 +36,7 @@ func acceptAt(t *testing.T, s *Server, doc []byte) (bool, error) {
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			if s.sess.pendingPDF() != nil {
-				s.sess.respond(sessionDecision{accept: true})
+				s.sess.respond(s.sess.pendingIDForTest(), sessionDecision{accept: true})
 				return
 			}
 			time.Sleep(2 * time.Millisecond)
