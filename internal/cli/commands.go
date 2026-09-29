@@ -271,7 +271,10 @@ func cmdOffice(args []string) int {
 }
 
 // sanitize runs both scrubs the GUI's Secure tab offers: active content first,
-// then identifying metadata.
+// then identifying metadata. StripActive verifies its own output and refuses with
+// pdfops.ErrActiveContentRemains when anything active is left (`/pending 729`), so
+// every caller here — `-o`, `-w`, `nib watch --do sanitize` — exits non-zero and
+// writes nothing rather than report a residue as sanitized.
 func sanitize(pdf []byte) ([]byte, error) {
 	out, err := pdfops.StripActive(pdf)
 	if err != nil {

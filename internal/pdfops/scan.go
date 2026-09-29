@@ -291,8 +291,11 @@ func eachFormField(xt *model.XRefTable, af types.Dict, fn func(o types.Object, f
 // the raw getDocument API), though an XFA-capable external viewer would collapse
 // a stripped dynamic form. Because it rewrites the file, any existing signature
 // is invalidated — the result is a new, unsigned PDF.
+//
+// **It verifies its own claim** (`/pending 729`): the output is re-scanned and anything active left in
+// it is an error (ErrActiveContentRemains), never a success the caller reports. See verifyStripped.
 func StripActive(pdf []byte) ([]byte, error) {
-	return writeMutated(pdf, func(ctx *model.Context) error {
+	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		xt := ctx.XRefTable
 		root, err := xt.Catalog()
 		if err != nil {
@@ -306,23 +309,28 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// `/S /GoTo` to its destination the way `carriedOpenAction` does would be the symmetric
 		// answer; it is deliberately not taken here, because it turns a delete into a rewrite at the
 		// one door whose whole value is that it only ever takes things away.
-		_ = xt.DeleteDictEntry(root, "OpenAction")
-		_ = xt.DeleteDictEntry(root, "AA")
-		_ = xt.DeleteDictEntry(root, "OCProperties")
+		dropKey(xt, root, "OpenAction")
+		dropKey(xt, root, "AA")
+		dropKey(xt, root, "OCProperties")
 		if names := derefDict(xt, root["Names"]); names != nil {
-			_ = xt.DeleteDictEntry(names, "JavaScript")
+			dropKey(xt, names, "JavaScript")
 		}
+		// **And pdfcpu's parsed copy of the tree**, which its writer binds back into `/Names` on every
+		// write (`ctx.BindNameTrees`, write.go:340-344) — so deleting the key alone restored it, and every
+		// non-empty document-level JavaScript tree survived StripActive (`/pending 729`: found by the
+		// verifier below the first time it ran; craftActivePDF's tree was empty, which is never parsed).
+		delete(xt.Names, "JavaScript")
 		if af := derefDict(xt, root["AcroForm"]); af != nil {
-			_ = xt.DeleteDictEntry(af, "XFA")
+			dropKey(xt, af, "XFA")
 			// The field tree and the calculation order, for the reason Scan now walks
 			// them: /AA on a PARENT field dict is not on any annotation, so the page walk
 			// never saw it. Deleting /CO alone would leave the scripts and only remove the
 			// order they run in.
 			eachFormField(xt, af, func(_ types.Object, f types.Dict) {
-				_ = xt.DeleteDictEntry(f, "AA")
-				_ = xt.DeleteDictEntry(f, "A")
+				dropKey(xt, f, "AA")
+				dropKey(xt, f, "A")
 			})
-			_ = xt.DeleteDictEntry(af, "CO")
+			dropKey(xt, af, "CO")
 		}
 		// The media annotations RemoveFilesAndMedia takes out. StripActive is the STRONGER
 		// tier and used to leave them: a Screen or Movie annotation survived the strip
@@ -333,13 +341,13 @@ func StripActive(pdf []byte) ([]byte, error) {
 			return err
 		}
 		eachPage(xt, root, func(page types.Dict, _ int) {
-			_ = xt.DeleteDictEntry(page, "AA")
+			dropKey(xt, page, "AA")
 			for _, a := range derefArray(xt, page["Annots"]) {
 				annot := derefDict(xt, a)
 				if annot == nil {
 					continue
 				}
-				_ = xt.DeleteDictEntry(annot, "AA")
+				dropKey(xt, annot, "AA")
 				if act := derefDict(xt, annot["A"]); act != nil {
 					risky := false
 					// The whole chain, not the head: a benign /GoTo whose /Next runs
@@ -353,13 +361,20 @@ func StripActive(pdf []byte) ([]byte, error) {
 						}
 					})
 					if risky {
-						_ = xt.DeleteDictEntry(annot, "A")
+						dropKey(xt, annot, "A")
 					}
 				}
 			}
 		})
 		return removeAllAttachments(ctx)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyStripped(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // RemoveFilesAndMedia removes embedded files and dangerous media annotations
@@ -397,9 +412,9 @@ func StripMetadata(pdf []byte) ([]byte, error) {
 		}
 		ctx.Info = nil // ensureInfoDict re-adds only Producer/dates for <PDF2.0; nothing reads the cleared fields
 		ctx.ID = nil   // nil forces a fresh pair; otherwise /ID[0] is preserved as a permanent tracker
-		_ = xt.DeleteDictEntry(root, "Metadata")
+		dropKey(xt, root, "Metadata")
 		eachPage(xt, root, func(page types.Dict, _ int) {
-			_ = xt.DeleteDictEntry(page, "Metadata") // page-level XMP duplicates dc:title/creator too
+			dropKey(xt, page, "Metadata") // page-level XMP duplicates dc:title/creator too
 		})
 		return nil
 	})
@@ -510,6 +525,59 @@ func clip(s string, max int) string {
 func Validate(pdf []byte) error {
 	_, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	return err
+}
+
+// dropKey removes key from d, and it removes the KEY whatever pdfcpu says about the object behind it
+// (`/pending 729`, ADR-009: every key a scrub removes goes through here).
+//
+// pdfcpu's `DeleteDictEntry` deletes the key only AFTER `DeleteObject` has freed the whole object graph
+// beneath it, and returns early on any error there — a single reference with no xref entry (`/Foo 99 0 R`
+// inside an action) is enough. Every scrub discarded that error, so a hostile action kept its key, the
+// scrub reported success and `nib sanitize` wrote the file and exited 0. The key is what a viewer follows:
+// an object nothing names is unreachable, so freeing the graph is hygiene and is best-effort here, while
+// the key's removal is the security property and is unconditional. Objects already freed when the graph
+// walk failed were reachable only through this key, which is gone.
+func dropKey(xt *model.XRefTable, d types.Dict, key string) {
+	o, found := d.Find(key)
+	if !found {
+		return
+	}
+	_ = xt.DeleteObject(o) // best-effort: see above; the key goes regardless
+	d.Delete(key)
+}
+
+// ErrActiveContentRemains is StripActive's refusal: its own output still scans as carrying active content,
+// so the claim "all active content removed" would be false. Nothing is written by a caller that gets it.
+var ErrActiveContentRemains = errors.New("active content remains after stripping")
+
+// strippedExempt is what StripActive deliberately leaves: identifying metadata, which is StripMetadata's
+// remit and not active. **An exempt set, not a remit list**: a Scan kind added later that StripActive does
+// not yet remove then refuses rather than passing unverified.
+var strippedExempt = map[string]bool{"metadata": true, "info": true}
+
+// verifyStripped re-scans StripActive's output with Scan — which reads through `api.ReadContext`, not the
+// rewrite's `ReadOptimized`, so it is a second reader rather than the writer checking itself — and refuses
+// any finding outside strippedExempt. A scan that fails is a refusal too: an unverified claim is not made.
+func verifyStripped(out []byte) error {
+	rep, err := Scan(out)
+	if err != nil {
+		return fmt.Errorf("%w: the result could not be re-scanned: %v", ErrActiveContentRemains, err)
+	}
+	return activeResidue(rep)
+}
+
+// activeResidue is verifyStripped's judgment over a report, apart from the scan that produced it.
+func activeResidue(rep ScanReport) error {
+	var left []string
+	for _, f := range rep.Findings {
+		if !strippedExempt[f.Kind] {
+			left = append(left, f.Kind+" ("+f.Detail+")")
+		}
+	}
+	if len(left) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrActiveContentRemains, strings.Join(left, "; "))
 }
 
 // writeMutated reads pdf into a validated, optimized context (so WriteContext
