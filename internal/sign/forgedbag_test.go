@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/digitorus/pdfsign/sign"
+	"github.com/digitorus/pdfsign/verify"
 	"github.com/digitorus/pkcs7"
 
 	"nib/internal/testpdf"
@@ -306,12 +307,13 @@ func blankFieldsArray(t *testing.T, pdf []byte) []byte {
 // two orders of magnitude cheaper, on the reasoning that a signature the cheap walk misses simply
 // gets no fingerprint — fail-closed.
 //
-// **That reasoning was wrong, and this is the shape that shows it.** The bag is the join key and it
-// sits in the unsigned `/Contents` hole, so an attacker writes both sides of it: a real signature
-// reachable only through the xref, plus a decoy `/Fields` entry carrying the same certificate bag
-// and a `SignerInfo` naming the victim. A gap in the walk does not mean no object supplies the key
-// — it means a DIFFERENT object does. One enumeration is what forces such a pair into the same map,
-// where the same bag with two signers is blanked instead of believed.
+// **That reasoning was wrong, and this is the shape that shows it.** Under ADR-051 the bag was the
+// join key, and it sits in the unsigned `/Contents` hole, so an attacker wrote both sides of it: a
+// real signature reachable only through the xref, plus a decoy `/Fields` entry carrying the same
+// certificate bag and a `SignerInfo` naming the victim. A gap in the walk does not mean no object
+// supplies the identity — it means a DIFFERENT object does. Under ADR-058 the join is positional
+// over the library's own enumeration, so a record set built from any other walk misaligns the
+// positions instead; `sign.sweep` walking the xref, as the library does, is what this pins.
 //
 // **It asserts on the walk rather than through `Verify`, and that is forced by the library.**
 // `processSignature` returns as soon as verification fails and never reaches
@@ -353,50 +355,93 @@ func TestASignatureAbsentFromFieldsIsStillAttributed(t *testing.T) {
 		t.Fatal("setup: the signature blob is gone entirely, not just delisted")
 	}
 
-	byBag := signerFingerprintsByBag(emptied)
-	if len(byBag) != 1 {
+	// The sweep is the walk the library performs; a signature it cannot reach is a signature the
+	// attacker could have supplied the identity for from a decoy. The record's `named` fingerprint
+	// is asserted rather than `Fingerprint`, because emptying `/Fields` lands inside the signed
+	// range and the signature no longer verifies — `Fingerprint` is set only where it did.
+	revs, err := sweepRevisions(emptied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []Revision
+	for _, r := range revs {
+		if r.libPos >= 0 {
+			found = append(found, r)
+		}
+	}
+	if len(found) != 1 {
 		t.Fatalf("the walk found %d signature(s) in a document whose /Fields lists none, want 1 — "+
 			"a walk the attacker can empty is a walk the attacker chooses the identity from",
-			len(byBag))
+			len(found))
 	}
-	for _, got := range byBag {
-		if got != want {
-			t.Errorf("fingerprint = %q, want %q", got, want)
-		}
+	if found[0].named != want {
+		t.Errorf("fingerprint = %q, want %q", found[0].named, want)
 	}
 }
 
-// TestOneBagWithTwoSignersNamesNeither drives ADR-051's ambiguity rule at its own door.
-//
-// The certificate bag is the join key between what the library reported and what nib re-parsed,
-// and it is unsigned attacker-supplied bytes. Nothing stops one document carrying two signature
-// blobs with byte-identical certificate lists whose `SignerInfo`s name different certificates in
-// them — at which point the key identifies two signers and therefore identifies nobody.
-//
-// It is tested here rather than through a crafted PDF because pdfsign will not PRODUCE that
-// document: `AddSignerChain` refuses a chain whose parent did not issue the leaf, so a fixture
-// would have to hand-assemble a second `SignedData`. The rule is about a sequence of writes into
-// the map, which is exactly what this door takes, and the walk has no other way to write one.
-func TestOneBagWithTwoSignersNamesNeither(t *testing.T) {
-	const a, b = "aaaa", "bbbb"
-	for _, tc := range []struct {
-		name  string
-		write []string
-		want  string
-	}{
-		{"one signature", []string{a}, a},
-		{"two signatures agreeing", []string{a, a}, a},
-		{"two signatures disagreeing", []string{a, b}, ""},
-		{"a disagreement is not undone by a later write", []string{a, b, a}, ""},
-		{"an unidentifiable signer disagrees with an identified one", []string{a, ""}, ""},
-		{"two unidentifiable signers agree on nothing, and say so", []string{"", ""}, ""},
-	} {
-		out := map[string]string{}
-		for _, fp := range tc.write {
-			recordSigner(out, "bag", fp)
+// reorderBag rewrites a PKCS#7 blob so that first leads its certificate bag, length-preserving —
+// the bag is a SET outside what the SignerInfo signs, so the signature still verifies.
+func reorderBag(t *testing.T, blob, first []byte) []byte {
+	t.Helper()
+	p7, err := pkcs7.Parse(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before, after []byte
+	for _, c := range p7.Certificates {
+		before = append(before, c.Raw...)
+	}
+	after = append(after, first...)
+	for _, c := range p7.Certificates {
+		if !bytes.Equal(c.Raw, first) {
+			after = append(after, c.Raw...)
 		}
-		if got := out["bag"]; got != tc.want {
-			t.Errorf("%s: bag reports %q, want %q", tc.name, got, tc.want)
-		}
+	}
+	at := bytes.Index(blob, before)
+	if at < 0 || len(before) != len(after) {
+		t.Fatal("the bag's certificates are not contiguous in the blob")
+	}
+	out := append([]byte(nil), blob...)
+	copy(out[at:], after)
+	return out
+}
+
+// TestOneBagWithTwoSignersNamesEach — under ADR-051 the certificate bag was the join key, so two
+// signatures carrying byte-identical bags but made by different keys made the key ambiguous, and
+// both were blanked. ADR-058 joins by POSITION in the library's own enumeration and keeps the bag
+// only as a cross-check, so the ambiguity was an artefact of the map: each signature is now named
+// by the key that made it.
+//
+// pdfsign will not produce this document (`AddSignerChain` refuses a chain whose parent did not
+// issue the leaf), so it is built by hand: Alice signs carrying Bob's certificate after her own,
+// Bob co-signs carrying Alice's, and Bob's bag is re-ordered to Alice's order. The oracle is the
+// test's own certificates, never what `Verify` reports.
+func TestOneBagWithTwoSignersNamesEach(t *testing.T) {
+	a, b := newIdentity(t, "Alice"), newIdentity(t, "Bob")
+	rev1 := fillSig(t, synthRevision(t, nil, baseObjs(sigDict("1", "")), 1), "1", nil, detached(t, a, b.cert))
+	rev2 := synthRevision(t, rev1, []sobj{
+		{num: 1, body: "<</Type/Catalog/Pages 2 0 R/AcroForm<</SigFlags 3/Fields[4 0 R 7 0 R]>>>>"},
+		{num: 7, body: "<</FT/Sig/T(Signature2)/V 8 0 R>>"},
+		{num: 8, body: sigDict("2", "")},
+	}, 1)
+	bobs := detached(t, b, a.cert)
+	doc := fillSig(t, rev2, "2", nil, func(content []byte) []byte { return reorderBag(t, bobs(content), a.cert.Raw) })
+
+	resp, err := verify.Verify(bytes.NewReader(doc), int64(len(doc)))
+	if err != nil || len(resp.Signers) != 2 {
+		t.Fatalf("library: %v", err)
+	}
+	// STIMULUS: two valid signatures whose bags are byte-identical — the ambiguous key.
+	if !resp.Signers[0].ValidSignature || !resp.Signers[1].ValidSignature ||
+		bagKeyOfSigner(&resp.Signers[0]) != bagKeyOfSigner(&resp.Signers[1]) {
+		t.Fatal("STIMULUS: the two signatures are not both valid with one shared bag")
+	}
+	st := Verify(doc)
+	if len(st.Signers) != 2 {
+		t.Fatalf("%d signers, want 2", len(st.Signers))
+	}
+	if st.Signers[0].Fingerprint != a.fp || st.Signers[1].Fingerprint != b.fp {
+		t.Errorf("fingerprints = [%.12s… %.12s…], want Alice's %.12s… then Bob's %.12s…",
+			st.Signers[0].Fingerprint, st.Signers[1].Fingerprint, a.fp, b.fp)
 	}
 }

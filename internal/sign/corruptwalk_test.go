@@ -1,6 +1,7 @@
 package sign
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ import (
 // not: a `fatal error: out of memory` takes the test binary.
 func TestTheSignatureWalksDoNotPanicOnCorruptInput(t *testing.T) {
 	base := signedFixture(t)
-	var flips, trailErrs, certErrs int
+	var flips, trailErrs, certErrs, sweepErrs, sweepPanics, gated int
 	for off := 0; off < len(base); off += 3 {
 		for _, bit := range []byte{0x01, 0x80} {
 			doc := append([]byte(nil), base...)
@@ -46,14 +47,46 @@ func TestTheSignatureWalksDoNotPanicOnCorruptInput(t *testing.T) {
 					certErrs++
 				}
 			}()
+			// The revision sweep (P01.S01, T08) walks the same lazy dereferences over every xref
+			// object, and `Verify` reaches it on the p2p arm too. A panic must come back as an error,
+			// and an error must not be silent: a corrupt document that yields a clean empty sweep
+			// would read as "no signature here". It is driven only behind ADR-041's readability
+			// gate, exactly as `Verify` runs it: ungated, a damaged object stream reaches the
+			// lexer that spins at EOF (`readHexString`) — measured here, the sweep hung — which
+			// is the residue that gate exists to keep away from every digitorus parse.
+			if pdfcpuCanRead(doc) != nil {
+				continue
+			}
+			gated++
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("sweepRevisions panicked on a flip at %d^%#x: %v", off, bit, r)
+					}
+				}()
+				if _, err := sweepRevisions(doc); err != nil {
+					sweepErrs++
+					if strings.HasPrefix(err.Error(), "read pdf: ") {
+						sweepPanics++
+					}
+				}
+			}()
 		}
 	}
 	// STIMULUS: the flips really reached corrupt input the walks cannot read. Without this a
 	// fixture the parser shrugged off entirely would pass for the wrong reason.
-	if trailErrs == 0 || certErrs == 0 {
-		t.Fatalf("over %d flips the walks reported %d and %d errors — the corruption never reached them", flips, trailErrs, certErrs)
+	// And the sweep's CONTAINED panics were reported, not merely its reader's parse errors: a
+	// recover that swallowed the panic into a clean result would still leave the parse errors
+	// counted above.
+	if sweepPanics == 0 {
+		t.Fatalf("over %d readable flips the sweep reported no contained panic — a recover that returns a "+
+			"clean empty sweep would read as \"no signature here\"", gated)
 	}
-	t.Logf("flips=%d trailingErrors=%d certificationErrors=%d", flips, trailErrs, certErrs)
+	if trailErrs == 0 || certErrs == 0 || sweepErrs == 0 {
+		t.Fatalf("over %d flips the walks reported %d, %d and %d errors — the corruption never reached them",
+			flips, trailErrs, certErrs, sweepErrs)
+	}
+	t.Logf("flips=%d trailingErrors=%d certificationErrors=%d readable=%d sweepErrors=%d sweepPanics=%d", flips, trailErrs, certErrs, gated, sweepErrs, sweepPanics)
 }
 
 // TestVerifyDigestRefusesADigestOfTheWrongLength — /pending 502 (info). VerifyDigestSPKI checked

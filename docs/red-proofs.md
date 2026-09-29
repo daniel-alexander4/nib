@@ -6172,11 +6172,14 @@ fix. The safety argument that licensed it ("a gap is fail-closed, because the ma
 issues no all-clear") is false in one step: a gap means a *different* object supplies the key, not
 that none does.
 
-**A fourth mutation is deliberately not a row.** Deleting the blanking in `recordSigner` goes red
-against `TestOneBagWithTwoSignersNamesNeither`, but that test drives the door directly rather than a
-document, so the row would replay a unit test with no defect a PDF could express — pdfsign will not
-produce two blobs sharing a bag, because `AddSignerChain` refuses a chain whose parent did not issue
-the leaf.
+**Both rows now mutate `internal/sign/revisions.go` (ADR-058, P01.S01).** The bag map and its
+ambiguity blanking are gone: `sign.sweep` makes one `Revision` per signature-shaped dictionary over
+the library's own xref enumeration, and `joinLibrary` lines the library's signers up with those
+records by POSITION, the bag surviving only as a per-position cross-check. The first row's mutation
+is element 0 in place of `GetOnlySigner` when a record's `named` fingerprint is read; the second's is
+`sweep` skipping every object `/Fields` does not list. The fourth mutation this section used to
+describe — deleting the map's blanking of a bag two signers shared — has no code left to mutate: two
+signatures sharing a bag are now each named (`TestOneBagWithTwoSignersNamesEach`).
 
 `recorded` 485 → 487.
 
