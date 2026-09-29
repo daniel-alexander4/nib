@@ -41,6 +41,9 @@ func (s *Server) handleParagraphs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, paragraphsResponse{Paragraphs: paras})
 }
 
+// maxReflowFormBytes bounds a reflow request: four short fields, the longest a paragraph's text twice over.
+const maxReflowFormBytes = 1 << 20
+
 type reflowResponse struct {
 	docResponse
 	// Ok is whether the paragraph was re-set. When it was not, Cause names why (law 3) — "" means the text was the
@@ -58,6 +61,11 @@ func (s *Server) handleReflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	cleanup, ok := parseMultipart(w, r, maxReflowFormBytes)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	page, perr := strconv.Atoi(r.FormValue("page"))
 	index, ierr := strconv.Atoi(r.FormValue("paragraph"))
 	if perr != nil || ierr != nil {
@@ -84,7 +92,7 @@ func (s *Server) handleReflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pdfops.Validate(result) != nil {
-		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Cause: "invalid-output"})
+		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Cause: pdfops.ReflowCauseInvalidOutput})
 		return
 	}
 	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {

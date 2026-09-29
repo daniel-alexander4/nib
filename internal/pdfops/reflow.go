@@ -1,14 +1,15 @@
 package pdfops
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/contentstream"
 	"nib/internal/fontcode"
@@ -42,9 +43,14 @@ func (w reflowWord) text() string {
 	return s
 }
 
-// wordGapEm is the smallest gap between two runs on a line, in ems of the later run, that separates two words. Below it
-// the runs are one word drawn in pieces (a kerned producer, a change of style inside a word).
+// wordGapEm is the smallest gap between two runs on a line, in ems of the larger of the line so far and the later run,
+// that separates two words. Below it the runs are one word drawn in pieces (a kerned producer, a change of style inside a
+// word). Grouping reads a paragraph's text by the same rule (`separatesWords`), so the text the user edits and the
+// words reflow keeps are cut in the same places.
 const wordGapEm = 0.15
+
+// separatesWords is the one rule for "this gap between two runs on a line is a space": wider than wordGapEm of em.
+func separatesWords(gap, em float64) bool { return gap > wordGapEm*em }
 
 // paragraphWords cuts a paragraph read with its glyphs into its words, line by line, and measures the paragraph's space.
 //
@@ -59,6 +65,7 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 	for _, l := range p.lines {
 		var line []reflowWord
 		var cur *reflowWord
+		lineEm := 0.0 // the largest run so far on the line, as grouping measures it
 		end := func() {
 			if cur != nil && len(cur.glyphs) > 0 {
 				line = append(line, *cur)
@@ -68,22 +75,30 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 		for ri, r := range l.runs {
 			switch {
 			case r.inForm:
-				return nil, 0, "text-in-form"
+				return nil, 0, causeTextInForm
 			case r.rotated:
-				return nil, 0, "rotated"
+				return nil, 0, causeRotated
 			case r.widthSrc == widthNone:
-				return nil, 0, "no-widths"
+				return nil, 0, causeNoWidths
 			case !r.decoded:
-				return nil, 0, "undecoded"
+				return nil, 0, causeUndecoded
 			case len(r.glyphs) != r.codes:
-				return nil, 0, "glyphs-not-kept"
+				return nil, 0, causeGlyphsNotKept
+			case r.face != nil && r.face.vertical:
+				return nil, 0, causeVertical
+			case r.replaced:
+				return nil, 0, causeReplacementText
+			case r.state.tr == 3 || r.state.tr == 7:
+				return nil, 0, causeInvisible
 			}
 			joinGap := 0.0
+			em := math.Max(lineEm, r.size)
+			lineEm = em
 			if ri > 0 {
 				prev := l.runs[ri-1]
 				gap := r.x - (prev.x + prev.width)
 				switch {
-				case gap > wordGapEm*r.size:
+				case separatesWords(gap, em):
 					if cur != nil || len(line) > 0 {
 						end()
 						gaps = append(gaps, gap)
@@ -91,7 +106,7 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 				case cur != nil && len(r.glyphs) > 0 && r.glyphs[0].text != " " && (r.font != cur.font || r.state.tfSize != cur.tfSize):
 					// Only a run that CONTINUES the word: one opening with a space ends the word, and a change of font
 					// at a word boundary is an ordinary bold or italic word.
-					return nil, 0, "styled-word"
+					return nil, 0, causeStyledWord
 				default:
 					joinGap = gap
 				}
@@ -123,12 +138,12 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 		}
 		end()
 		if len(line) == 0 {
-			return nil, 0, "empty-line"
+			return nil, 0, causeEmptyLine
 		}
 		lines = append(lines, line)
 	}
 	if len(gaps) == 0 {
-		return lines, 0, "no-space-width"
+		return lines, 0, causeNoSpaceWidth
 	}
 	sort.Float64s(gaps)
 	return lines, gaps[len(gaps)/2], ""
@@ -174,26 +189,6 @@ func breakAt[T any](items []T, measures []float64, width func(T) float64, space 
 	})
 }
 
-// rebreak breaks words at the paragraph's line measures with space between them, through the one line breaker. It does
-// not split a word wider than its line; the caller finds it alone there.
-func rebreak(words []reflowWord, measures []float64, space float64) [][]reflowWord {
-	return breakAt(words, measures, func(w reflowWord) float64 { return w.width }, space)
-}
-
-// lineTexts renders broken lines as their words joined by a space — what a reader of the broken paragraph sees.
-func lineTexts(lines [][]reflowWord) []string {
-	out := make([]string, len(lines))
-	for i, l := range lines {
-		for j, w := range l {
-			if j > 0 {
-				out[i] += " "
-			}
-			out[i] += w.text()
-		}
-	}
-	return out
-}
-
 // reflowWord's emission needs the run a word came from: its font resource name and text state. New words take the
 // paragraph's first run's.
 
@@ -210,7 +205,146 @@ const (
 	causeGrows           = "paragraph-grows"  // it needs more lines than it had — P07's flow
 	causeWordTooWide     = "word-too-wide"    // a word is wider than the paragraph's measure
 	causeNoParagraph     = "no-such-paragraph"
+	causeEmpty           = "empty-text"       // the new text has no words: deleting a paragraph is not a reflow
+	causeAmbiguousStyle  = "ambiguous-style"  // a word of the new text is drawn in two styles in the paragraph
+	causeVertical        = "vertical"         // the font writes vertically (Identity-V); lines are measured across
+	causeInvisible       = "invisible-text"   // drawn invisibly (Tr 3 or 7): a search layer, whose words the page does not show
+	causeTextInForm      = "text-in-form"     // drawn inside a form XObject, not in the page's own content
+	causeRotated         = "rotated"          // the baseline is turned
+	causeNoWidths        = "no-widths"        // a glyph's width has no source (law 2)
+	causeUndecoded       = "undecoded"        // a code decodes to no text, so the words cannot be read
+	causeGlyphsNotKept   = "glyphs-not-kept"  // the run's glyphs could not be read one by one
+	causeStyledWord      = "styled-word"      // a word changes font or size part-way through (P08)
+	causeEmptyLine       = "empty-line"       // a line of the paragraph draws no word
+	causeNoSpaceWidth    = "no-space-width"   // the paragraph draws no space between words to measure one by
+	causeDegenerate      = "degenerate-state" // a zero or infinite scale, size or coordinate
 )
+
+// ReflowCauses is every cause a reflow can fall back on, the server's included — the list the editor must have a
+// sentence for. `TestEveryReflowCauseIsSaidToTheUser` holds `web/app.js`'s REFLOW_CAUSES to it.
+var ReflowCauses = []string{
+	causeMissingGlyph, causeMixedState, causeMixedContent, causeInlineFollower, causeTagged, causeReplacementText,
+	causeNoSpaceGlyph, causeGrows, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
+	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
+	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, ReflowCauseSigned, ReflowCauseInvalidOutput,
+}
+
+// editWords cuts text as a user typed it into words: at white space, but never at a no-break space, which is part of
+// the word it sits in — exactly as `paragraphWords` ends a word only at a space glyph.
+func editWords(text string) []string {
+	return strings.FieldsFunc(text, func(r rune) bool {
+		return unicode.IsSpace(r) && r != '\u00a0' && r != '\u2007' && r != '\u202f'
+	})
+}
+
+// normalizedText is text as a word sequence — the one comparison both the staleness check and "nothing changed" make.
+func normalizedText(s string) string { return strings.Join(editWords(s), " ") }
+
+// isSubset reports a subset font by its tag (ISO 32000-1 §9.6.4: six upper-case letters and a plus sign). A subset
+// embeds only the glyphs its document drew, so a code its encoding names is no promise the glyph is there.
+func isSubset(baseFont string) bool {
+	if len(baseFont) < 8 || baseFont[6] != '+' {
+		return false
+	}
+	for i := 0; i < 6; i++ {
+		if baseFont[i] < 'A' || baseFont[i] > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// finite reports whether every value is a real number: an operand of 300 digits parses finite and can multiply to
+// infinity, and a content stream has no spelling for either.
+func finite(vs ...float64) bool {
+	for _, v := range vs {
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// paragraphRefusal is the one door for "why this paragraph cannot be reflowed" before any text is typed: what its
+// words say (`paragraphWords`), then replacement text on the structure element its marked content belongs to. Both
+// routes ask it, so the dialog refuses up front exactly what the rewrite would.
+func paragraphRefusal(ctx *model.Context, pageNr int, p textParagraph) string {
+	if _, _, cause := paragraphWords(p); cause != "" {
+		return cause
+	}
+	if structReplacesText(ctx, pageNr, p) {
+		return causeReplacementText
+	}
+	return ""
+}
+
+// structReplacesText reports whether any of the paragraph's marked content belongs to a structure element — or an
+// ancestor of one — carrying `/ActualText`, `/Alt` or `/E`: the tree then reports that text for these glyphs, and
+// rewriting the glyphs would leave the old words there. Only the page's own stream is asked (a run in a form is
+// refused before this), through the page's `/StructParents` row of the `/ParentTree`.
+func structReplacesText(ctx *model.Context, pageNr int, p textParagraph) bool {
+	var mcids []int
+	seen := map[int]bool{}
+	for _, l := range p.lines {
+		for _, r := range l.runs {
+			if r.mcid >= 0 && r.stm == 0 && !seen[r.mcid] {
+				seen[r.mcid] = true
+				mcids = append(mcids, r.mcid)
+			}
+		}
+	}
+	if len(mcids) == 0 {
+		return false
+	}
+	xt := ctx.XRefTable
+	pd, _, _, err := ctx.PageDict(pageNr, false)
+	if err != nil || pd == nil {
+		return false
+	}
+	key, ok := pdfNumber(xt, pd["StructParents"])
+	if !ok || key < 0 {
+		return false
+	}
+	cat, err := xt.Catalog()
+	if err != nil {
+		return false
+	}
+	root := derefDict(xt, cat["StructTreeRoot"])
+	if root == nil {
+		return false
+	}
+	row, _, found := rowFor(ctx, &structTree{root: root}, int(key))
+	if !found {
+		return false
+	}
+	replaces := func(d types.Dict) bool {
+		_, a := d["ActualText"]
+		_, b := d["Alt"]
+		_, e := d["E"]
+		return a || b || e
+	}
+	for _, m := range mcids {
+		if m >= len(row) {
+			continue
+		}
+		// Up the /P chain to the root, bounded: a cycle in a hostile tree must not hang the request.
+		o := row[m]
+		for depth := 0; depth < 256; depth++ {
+			d := derefDict(xt, o)
+			if d == nil {
+				break
+			}
+			if t := d.NameEntry("Type"); t != nil && *t == "StructTreeRoot" {
+				break
+			}
+			if replaces(d) {
+				return true
+			}
+			o = d["P"]
+		}
+	}
+	return false
+}
 
 // reflowOutcome is what a reflow did: the rewritten page's content, or the cause it fell back on.
 type reflowOutcome struct {
@@ -233,24 +367,32 @@ type emitWord struct {
 // DELETED, so the original words are gone from the content rather than covered. Anything the rewrite cannot do exactly
 // is a named cause and no content (law 3).
 func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOutcome, error) {
-	d, _, _, err := ctx.PageDict(pageNr, false)
-	if err != nil || d == nil {
-		return reflowOutcome{}, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
-	}
 	layout, err := readPageGlyphLayout(ctx, pageNr)
 	if err != nil {
 		return reflowOutcome{}, err
+	}
+	return reflowParagraphIn(ctx, layout, pageNr, pi, text)
+}
+
+// reflowParagraphIn is reflowParagraph over a layout the caller already read — the door reads one to check staleness.
+func reflowParagraphIn(ctx *model.Context, layout pageLayout, pageNr, pi int, text string) (reflowOutcome, error) {
+	d, _, _, err := ctx.PageDict(pageNr, false)
+	if err != nil || d == nil {
+		return reflowOutcome{}, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 	}
 	if pi < 0 || pi >= len(layout.paragraphs) {
 		return reflowOutcome{cause: causeNoParagraph}, nil
 	}
 	para := layout.paragraphs[pi]
-	lines, space, cause := paragraphWords(para)
-	if cause != "" {
+	if cause := paragraphRefusal(ctx, pageNr, para); cause != "" {
 		return reflowOutcome{cause: cause}, nil
 	}
-	if strings.Join(strings.Fields(text), " ") == strings.Join(strings.Fields(para.text()), " ") {
+	lines, space, _ := paragraphWords(para)
+	if normalizedText(text) == normalizedText(para.text()) {
 		return reflowOutcome{cause: reflowNoChange}, nil
+	}
+	if len(editWords(text)) == 0 {
+		return reflowOutcome{cause: causeEmpty}, nil
 	}
 	var runs []textRun
 	for _, l := range para.lines {
@@ -259,13 +401,15 @@ func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOut
 	first := runs[0]
 	for _, r := range runs[1:] {
 		a, b := r.state, first.state
-		if a.tc != b.tc || a.tw != b.tw || a.th != b.th || a.ts != b.ts || math.Abs(a.scale-b.scale) > 1e-9 {
+		if a.tc != b.tc || a.tw != b.tw || a.th != b.th || a.ts != b.ts || a.tr != b.tr || math.Abs(a.scale-b.scale) > 1e-9 {
 			return reflowOutcome{cause: causeMixedState}, nil
 		}
 	}
 	// The words the paragraph already draws keep their own codes, kerns and font; a new word is spelled in the first
-	// run's font from the codes it carries, preferring a code the paragraph already draws.
+	// run's font from the codes it carries, preferring a code the paragraph already draws. A word drawn in two styles
+	// has no one identity to keep, so the new text may not use it (law 3 — never guess which was meant).
 	known := map[string]emitWord{}
+	ambiguous := map[string]bool{}
 	used := map[string]bool{}
 	for _, l := range lines {
 		for _, w := range l {
@@ -277,33 +421,77 @@ func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOut
 				}
 				used[string(g.code)] = true
 			}
-			if _, dup := known[w.text()]; !dup {
+			if prev, dup := known[w.text()]; !dup {
 				known[w.text()] = ew
+			} else if prev.font != ew.font || prev.tfSize != ew.tfSize {
+				ambiguous[w.text()] = true
 			}
 		}
 	}
+	// drawn is every code the page's paragraphs show in each face: a subset font embeds only the glyphs its document
+	// drew, so a code it names in its encoding but never draws may have no glyph behind it (D8). Conservative by
+	// construction: a glyph drawn only in an artifact, a blank run or on another page is not counted, and reads as
+	// missing — a refusal, never a wrong glyph.
+	drawn := map[*runFont]map[string]bool{}
+	for _, p := range layout.paragraphs {
+		for _, l := range p.lines {
+			for _, r := range l.runs {
+				if drawn[r.face] == nil {
+					drawn[r.face] = map[string]bool{}
+				}
+				for _, g := range r.glyphs {
+					drawn[r.face][string(g.code)] = true
+				}
+			}
+		}
+	}
+	// pick chooses the code a new character is drawn with — one the paragraph already draws, else the first the font
+	// offers — or reports it has none it can vouch for: no code, no width, a zero width (a subset producer's mark for
+	// a glyph it left out), or a subset that never draws it.
+	pick := func(f *runFont, text string, allowZero bool) (code []byte, w0 float64, cause string) {
+		codes := f.codesFor(text)
+		if len(codes) == 0 {
+			return nil, 0, causeMissingGlyph
+		}
+		// A code the paragraph draws, else one the page draws in this face, else the font's first.
+		code = codes[0]
+		for _, c := range codes {
+			if drawn[f][string(c)] {
+				code = c
+				break
+			}
+		}
+		for _, c := range codes {
+			if used[string(c)] {
+				code = c
+				break
+			}
+		}
+		w0, src := f.widths.advance(fontcode.Value(code))
+		switch {
+		case src == widthNone:
+			return nil, 0, causeNoWidths
+		case w0 <= 0 && !allowZero:
+			return nil, 0, causeMissingGlyph
+		case isSubset(f.baseFont) && !drawn[f][string(code)]:
+			return nil, 0, causeMissingGlyph
+		}
+		return code, w0, ""
+	}
 	var words []emitWord
-	for _, t := range strings.Fields(text) {
+	for _, t := range editWords(text) {
+		if ambiguous[t] {
+			return reflowOutcome{cause: causeAmbiguousStyle}, nil
+		}
 		if ew, ok := known[t]; ok {
 			words = append(words, ew)
 			continue
 		}
 		ew := emitWord{font: first.font, tfSize: first.state.tfSize, face: first.face}
 		for ri, r := range t {
-			codes := first.face.codesFor(string(r))
-			if len(codes) == 0 {
-				return reflowOutcome{cause: causeMissingGlyph}, nil
-			}
-			code := codes[0]
-			for _, c := range codes {
-				if used[string(c)] {
-					code = c
-					break
-				}
-			}
-			w0, src := first.face.widths.advance(fontcode.Value(code))
-			if src == widthNone {
-				return reflowOutcome{cause: "no-widths"}, nil
+			code, w0, why := pick(first.face, string(r), false)
+			if why != "" {
+				return reflowOutcome{cause: why}, nil
 			}
 			st := first.state
 			ew.width += (w0/1000*st.tfSize + st.tc) * st.th * st.scale
@@ -349,46 +537,49 @@ func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOut
 		code []byte
 		adv  float64
 	}
-	spaces := map[*runFont]spaceGlyph{}
+	// Keyed by face AND size: the space's advance scales with the `Tf` size it is drawn at.
+	type spaceKey struct {
+		face *runFont
+		size float64
+	}
+	spaces := map[spaceKey]spaceGlyph{}
 	for _, l := range broken {
 		for wi, w := range l {
 			if wi == len(l)-1 {
 				continue
 			}
-			if _, ok := spaces[w.face]; ok {
+			k := spaceKey{w.face, w.tfSize}
+			if _, ok := spaces[k]; ok {
 				continue
 			}
-			codes := w.face.codesFor(" ")
-			if len(codes) == 0 {
+			code, w0, why := pick(w.face, " ", true)
+			switch why {
+			case "":
+			case causeMissingGlyph:
 				return reflowOutcome{cause: causeNoSpaceGlyph}, nil
-			}
-			code := codes[0]
-			for _, c := range codes {
-				if used[string(c)] {
-					code = c
-					break
-				}
-			}
-			w0, src := w.face.widths.advance(fontcode.Value(code))
-			if src == widthNone {
-				return reflowOutcome{cause: "no-widths"}, nil
+			default:
+				return reflowOutcome{cause: why}, nil
 			}
 			st := first.state
 			tx := w0/1000*w.tfSize + st.tc
 			if len(code) == 1 && code[0] == ' ' {
 				tx += st.tw
 			}
-			spaces[w.face] = spaceGlyph{code: code, adv: tx * st.th * st.scale}
+			spaces[k] = spaceGlyph{code: code, adv: tx * st.th * st.scale}
 		}
 	}
 	st0 := first.state
-	if !(st0.scale > 0) || st0.th == 0 {
-		return reflowOutcome{cause: "degenerate-state"}, nil
+	if !(st0.scale > 0) || st0.th == 0 || !finite(st0.scale, st0.th, st0.tc, st0.tw, space) {
+		return reflowOutcome{cause: causeDegenerate}, nil
 	}
-	for _, l := range broken {
+	for i, l := range broken {
+		tm := para.lines[i].runs[0].state.tm
+		if !finite(tm[:]...) || !finite(last.state.tlm[:]...) {
+			return reflowOutcome{cause: causeDegenerate}, nil
+		}
 		for _, w := range l {
-			if w.tfSize == 0 {
-				return reflowOutcome{cause: "degenerate-state"}, nil
+			if w.tfSize == 0 || !finite(w.tfSize, w.width) {
+				return reflowOutcome{cause: causeDegenerate}, nil
 			}
 		}
 	}
@@ -410,7 +601,7 @@ func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOut
 			if wi > 0 {
 				// The space is drawn in the font of the word before it, and only then does the font change: an
 				// operator cannot sit inside a TJ array, so a change of font closes the array and opens another.
-				sp := spaces[l[wi-1].face]
+				sp := spaces[spaceKey{l[wi-1].face, l[wi-1].tfSize}]
 				fmt.Fprintf(&buf, "<%X>", sp.code)
 				if extra := space - sp.adv; math.Abs(extra) > 1e-9 {
 					fmt.Fprintf(&buf, " %s ", adj(extra, size))
@@ -453,47 +644,17 @@ func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOut
 // the paragraph's own shows — marked content there is `tagged`, anything else `mixed-content` — and that what follows it
 // repositions before it draws: the rewrite restores the line matrix, and a show relying on the text matrix the last
 // deleted show left would land at the line's start instead. It returns the cause, or "".
+//
+// Replacement text around the paragraph is not asked here: the walker records it per run (`textRun.replaced`, inline
+// and named property lists alike), and `paragraphWords` refuses it — one reader of a property list, not two.
 func contentAround(src []byte, spans []opSpan) string {
 	toks := contentstream.Tokenize(src)
+	// spans are sorted and disjoint: the last span starting at or before at is the only one that can hold it.
 	inSpan := func(at int) bool {
-		for _, s := range spans {
-			if at >= s.start && at < s.end {
-				return true
-			}
-		}
-		return false
+		i := sort.Search(len(spans), func(i int) bool { return spans[i].start > at }) - 1
+		return i >= 0 && at < spans[i].end
 	}
 	lo, hi := spans[0].start, spans[len(spans)-1].end
-	// Replacement text around the paragraph: a sequence opened before it whose properties carry /ActualText or /Alt
-	// is what extractors and screen readers report INSTEAD of the glyphs, so rewriting the glyphs under it would leave
-	// the old words readable — the original words must be gone, not just undrawn.
-	var open []bool
-	opEnd := 0
-	for _, tk := range toks {
-		if tk.Start >= lo {
-			break
-		}
-		if tk.Kind != contentstream.Operator {
-			continue
-		}
-		switch string(tk.Bytes(src)) {
-		case "BDC":
-			props := src[opEnd:tk.Start]
-			open = append(open, bytes.Contains(props, []byte("/ActualText")) || bytes.Contains(props, []byte("/Alt")))
-		case "BMC":
-			open = append(open, false)
-		case "EMC":
-			if len(open) > 0 {
-				open = open[:len(open)-1]
-			}
-		}
-		opEnd = tk.End
-	}
-	for _, replaced := range open {
-		if replaced {
-			return causeReplacementText
-		}
-	}
 	for _, tk := range toks {
 		if tk.Kind != contentstream.Operator || tk.End <= lo {
 			continue

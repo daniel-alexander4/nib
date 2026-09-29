@@ -92,6 +92,9 @@ type textRun struct {
 	// itself says is not content, a watermark or a running header. Grouping skips it, so an artifact
 	// is never proposed as a paragraph (P08.S06a's watermark finding).
 	artifact bool
+	// replaced is whether the run was drawn inside a sequence carrying replacement text (`mcFrame.replaced`):
+	// readers report that text instead of these glyphs, so rewriting the glyphs alone leaves the old words readable.
+	replaced bool
 	// rotated is whether the run's baseline is not upright left-to-right in user space — turned, vertical or
 	// mirrored (`baselineTurns`). Grouping measures lines as horizontal baselines, so it reports a page
 	// carrying one rather than reading it as upright (`/pending 503`).
@@ -115,6 +118,7 @@ type runTextState struct {
 	tm, tlm        runMatrix
 	tfSize, tc, tw float64
 	th, ts, scale  float64
+	tr             int // the text rendering mode: 3 draws nothing, 7 only clips
 }
 
 // runGlyph is one glyph of a run, as the show operator drew it.
@@ -137,6 +141,12 @@ type runGlyph struct {
 // in unrotated space reads consistently.
 func baselineTurns(m runMatrix) bool {
 	return math.Abs(math.Atan2(m[1], m[0])) > math.Pi/180
+}
+
+// inReplacement reports whether a sequence carrying replacement text is open at this point of the walk.
+func (w *runWalker) inReplacement() bool {
+	n := len(w.mcStack)
+	return n > 0 && w.mcStack[n-1].replaced
 }
 
 // inArtifact reports whether an `/Artifact` sequence is open at this point of the walk.
@@ -241,6 +251,7 @@ type runGState struct {
 	tc, tw   float64
 	th       float64 // Tz / 100
 	tl, ts   float64
+	tr       int // `Tr`, the text rendering mode
 }
 
 func newRunGState() runGState { return runGState{ctm: runIdentity, th: 1} }
@@ -249,6 +260,8 @@ func newRunGState() runGState { return runGState{ctm: runIdentity, th: 1} }
 type runFont struct {
 	baseFont string
 	twoByte  bool // Identity-H or Identity-V: codes are two bytes and CID == code
+	// vertical is Identity-V: glyphs advance DOWN the page, and a reader measuring them along the baseline is wrong.
+	vertical bool
 	// splittable is false for a Type0 font under a CMap this reader does not parse: its code lengths
 	// are unknown, so neither its text nor its widths can be read without guessing.
 	splittable bool
@@ -317,6 +330,7 @@ func loadRunFont(xt *model.XRefTable, obj types.Object) *runFont {
 	if st := d.NameEntry("Subtype"); st != nil && *st == "Type0" {
 		if enc := d.NameEntry("Encoding"); enc != nil && (*enc == "Identity-H" || *enc == "Identity-V") {
 			f.twoByte = true
+			f.vertical = *enc == "Identity-V"
 		} else {
 			f.splittable = false
 		}
@@ -437,16 +451,20 @@ type mcFrame struct {
 	// seqAt is the index of the innermost frame at or below this one that opened an entry in `seqs`, or
 	// -1; the frame below seqAt holds the next one out.
 	seqAt int
+	// replaced is whether this frame or any below it carries replacement text — `/ActualText`, `/Alt` or `/E` in
+	// its property list, written inline or named in `/Properties` — which readers report INSTEAD of the glyphs.
+	replaced bool
 }
 
 // push opens a sequence: v as `mcFrame.v`, and seq its index into `seqs` or -1. `mcStack` and `seqOpen`
 // move in lockstep, so this is the only place either grows.
-func (w *runWalker) push(v, seq int) {
-	f := mcFrame{v: v, force: -1, seqAt: -1}
+func (w *runWalker) push(v, seq int, replaced bool) {
+	f := mcFrame{v: v, force: -1, seqAt: -1, replaced: replaced}
 	i := len(w.mcStack)
 	if i > 0 {
 		below := w.mcStack[i-1]
 		f.force, f.artifact, f.seqAt = below.force, below.artifact, below.seqAt
+		f.replaced = f.replaced || below.replaced
 	}
 	if v != -1 {
 		f.force = i
@@ -578,6 +596,59 @@ func (w *runWalker) markedContentID(o runOperand, res types.Dict, src []byte) in
 		return *n
 	}
 	return -1
+}
+
+// carriesReplacementText reports whether a `BDC` property list — inline, or named in the resources' `/Properties` —
+// carries `/ActualText`, `/Alt` or `/E`: text a reader reports in place of the glyphs the sequence draws (ISO 32000-1
+// §14.9.3–14.9.5). The same two spellings `markedContentID` reads, so the two answers are about one list.
+func (w *runWalker) carriesReplacementText(o runOperand, res types.Dict, src []byte) bool {
+	isKey := func(k string) bool { return k == "ActualText" || k == "Alt" || k == "E" }
+	if o.opaque {
+		// Keys and values alternate at depth 0; only a name in KEY position is a key — `/Foo /Alt` is a value.
+		depth, atKey := 0, true
+		for _, t := range o.dict {
+			switch t.Kind {
+			case contentstream.Whitespace:
+				continue
+			case contentstream.DictOpen, contentstream.ArrayOpen:
+				depth++
+				continue
+			case contentstream.DictClose, contentstream.ArrayClose:
+				if depth--; depth == 0 {
+					atKey = true // a composite value just closed
+				}
+				continue
+			}
+			if depth != 0 {
+				continue
+			}
+			if atKey {
+				if b := t.Bytes(src); len(b) > 1 && b[0] == '/' && isKey(fontcode.Name(b[1:])) {
+					return true
+				}
+			}
+			atKey = !atKey
+		}
+		return false
+	}
+	name, ok := o.name(src)
+	if !ok || res == nil {
+		return false
+	}
+	props, err := w.xt.DereferenceDict(res["Properties"])
+	if err != nil || props == nil {
+		return false
+	}
+	d, derr := w.xt.DereferenceDict(props[name])
+	if derr != nil || d == nil {
+		return false
+	}
+	for k := range d {
+		if isKey(k) {
+			return true
+		}
+	}
+	return false
 }
 
 func newRunWalker(xt *model.XRefTable) *runWalker {
@@ -754,6 +825,10 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			if v, ok := numbers(1); ok {
 				gs.ts = v[0]
 			}
+		case "Tr":
+			if v, ok := numbers(1); ok {
+				gs.tr = int(v[0])
+			}
 		case "Td", "TD":
 			if v, ok := numbers(2); ok {
 				if string(tok.Bytes(src)) == "TD" {
@@ -806,15 +881,16 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 					entry = mcArtifact
 				}
 			}
-			w.push(entry, -1)
+			w.push(entry, -1, false)
 		case "BDC":
-			entry, opener := -1, -1
+			entry, opener, replaced := -1, -1, false
 			if os := last(2); os != nil {
 				if tag, ok := os[0].name(src); ok && tag == "Artifact" {
 					entry = mcArtifact
 				} else {
 					entry = w.markedContentID(os[1], res, src)
 				}
+				replaced = w.carriesReplacementText(os[1], res, src)
 				opener = os[0].start
 			}
 			seq := -1
@@ -823,7 +899,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 					inForm: depth > 0, stm: w.stm})
 				seq = len(w.seqs) - 1
 			}
-			w.push(entry, seq)
+			w.push(entry, seq, replaced)
 		case "EMC":
 			if n := len(w.mcStack); n > base {
 				w.mcStack = w.mcStack[:n-1]
@@ -850,7 +926,8 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	textAt := *tm
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
-		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact()}
+		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact(),
+		replaced: w.inReplacement()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}
@@ -901,7 +978,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	if w.keepGlyphs {
 		run.kernAfter = pendingKern * scale
 		run.face = gs.font
-		run.state = runTextState{tm: textAt, tlm: tlm, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale}
+		run.state = runTextState{tm: textAt, tlm: tlm, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
 	}
 	run.text = string(text)
 	run.width = advance * scale

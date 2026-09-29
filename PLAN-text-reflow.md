@@ -522,13 +522,23 @@ plus `wrapPageToBox`'s `Q` after a trailing comment. Out of phase: 23 already fi
 fire** — no slice touched `internal/server`'s session, ceremony, delivery or discovery paths, `internal/p2p` or
 `internal/rendezvous`.
 
-### P06 — Reflow one paragraph on one page
+### P06 — Reflow one paragraph on one page *(done 2026-09-28, v1.168.1)*
 **Goal.** The feature, at its smallest honest scope: edit a word, re-wrap the paragraph in its own
 font, remove the original text.
 
 **Exit criteria.** The reflowed paragraph's line breaks match a re-layout using the document's own
 advances; the original text is genuinely gone rather than covered; a missing glyph falls back with
 its cause stated (D8, law 3); a signed document is refused at the server door (D11).
+
+**Phase close 2026-09-28 (v1.168.1), the four clauses checked:** ✅ line breaks match a re-layout in the document's own
+advances — 76 real paragraphs and 29 with a NEW word, re-broken exactly as the breaker sets them (tier 1; the binary reads
+the text back at tier 3); ✅ the original text gone, not covered — through the binary (pdf.js text layer); ✅ a missing glyph
+falls back with its cause — through the binary, and now for SUBSET fonts too (the review's first critical: a subset's zero
+width or undrawn code had been accepted); ✅ a signed document refused at the server door — **through the binary** (Dan's
+/discuss decision): signed by Finalize, reopened, the Reflow click names the cause and sends nothing, and a direct POST is
+refused `signed`. Review `code-reviews/v1.168.0-p06-phase-close-…`: 2 critical + 13 warnings in P06's code fixed (the second
+critical: replacement text in a NAMED property list, and — found by the fix pass's re-review — in a nested `/ParentTree`),
+out-of-phase filed /pending 729-732. Graduation: 25 keep-live, 1 gated, 0 deleted. Gates: tiers 0-3; tiers 4/6 do not fire.
 
 **PIN 2026-09-28 (phase-open, read at the lines) — what exists, what does not, and one premise that is false.**
 - **Exists**: a paragraph reaches its runs (`grouping.go:48`, `textParagraph.lines[].runs`), and a run its show operator's

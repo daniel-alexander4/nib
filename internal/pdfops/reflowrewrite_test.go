@@ -196,8 +196,8 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 		{name: "generated", docs: runCorpus(t)},
 		externalPDFs(t, "real producers", "NIB_UA_PRODUCERS", filepath.Join(homeDir(), "nib", "producers")),
 	}
-	rewritten := 0
-	causes := map[string]int{}
+	rewritten, respelled := 0, 0
+	causes, respellRefused := map[string]int{}, map[string]int{}
 	for _, corp := range corpora {
 		if corp.absent != "" {
 			t.Logf("NOTE (a narrower population, not a pass over it): %s: %s", corp.name, corp.absent)
@@ -223,51 +223,88 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 						continue
 					}
 					tried++
-					f[0], f[1] = f[1], f[0]
-					edit := strings.Join(f, " ")
-					c2, _ := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
-					out, err := reflowParagraph(c2, p, pi, edit)
-					if err != nil {
-						t.Fatalf("%s / %s p%d ¶%d: %v", corp.name, doc.name, p, pi, err)
-					}
-					if out.content == nil {
-						causes[out.cause]++
-						continue
-					}
-					d, _, _, _ := c2.PageDict(p, false)
-					if err := setPageContent(c2, d, out.content); err != nil {
-						t.Fatal(err)
-					}
-					var buf bytes.Buffer
-					if err := api.WriteContext(c2, &buf); err != nil {
-						t.Fatal(err)
-					}
-					c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())
-					if err != nil {
-						t.Fatalf("%s / %s p%d ¶%d: the rewritten document does not read: %v", corp.name, doc.name, p, pi, err)
-					}
-					l3, err := readPageGlyphLayout(c3, p)
-					if err != nil || pi >= len(l3.paragraphs) {
-						t.Errorf("%s / %s p%d ¶%d: the rewritten page lost the paragraph (%v)", corp.name, doc.name, p, pi, err)
-						continue
-					}
-					got := l3.paragraphs[pi]
-					if got.text() != edit {
-						t.Errorf("%s / %s p%d ¶%d: wrote %q, reads back %q", corp.name, doc.name, p, pi, edit, got.text())
-						continue
-					}
-					origLines, space, _ := paragraphWords(para)
-					newLines, _, cause := paragraphWords(got)
-					if cause == "" {
-						var words []reflowWord
-						for _, ln := range newLines {
-							words = append(words, ln...)
+					// try rewrites paragraph pi as edit and checks what the written document reads: the paragraph as the
+					// edit, re-broken as the breaker sets it, and EVERY OTHER paragraph on the page exactly as it was — a
+					// rewrite that deleted a later paragraph's shows must not pass because the edited one reads right.
+					try := func(edit string) (accepted bool, cause string) {
+						c2, _ := pdfread.Validated(doc.pdf, model.NewDefaultConfiguration())
+						out, err := reflowParagraph(c2, p, pi, edit)
+						if err != nil {
+							t.Fatalf("%s / %s p%d ¶%d: %v", corp.name, doc.name, p, pi, err)
 						}
-						if a, b := lineTexts(rebreak(words, lineMeasures(origLines, space), space)), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
-							t.Errorf("%s / %s p%d ¶%d: written as %q, the breaker sets %q", corp.name, doc.name, p, pi, b, a)
+						if out.content == nil {
+							return false, out.cause
 						}
+						d, _, _, _ := c2.PageDict(p, false)
+						if err := setPageContent(c2, d, out.content); err != nil {
+							t.Fatal(err)
+						}
+						var buf bytes.Buffer
+						if err := api.WriteContext(c2, &buf); err != nil {
+							t.Fatal(err)
+						}
+						c3, err := pdfread.Validated(buf.Bytes(), model.NewDefaultConfiguration())
+						if err != nil {
+							t.Fatalf("%s / %s p%d ¶%d: the rewritten document does not read: %v", corp.name, doc.name, p, pi, err)
+						}
+						l3, err := readPageGlyphLayout(c3, p)
+						if err != nil || pi >= len(l3.paragraphs) {
+							t.Errorf("%s / %s p%d ¶%d: the rewritten page lost the paragraph (%v)", corp.name, doc.name, p, pi, err)
+							return true, ""
+						}
+						got := l3.paragraphs[pi]
+						if got.text() != edit {
+							t.Errorf("%s / %s p%d ¶%d: wrote %q, reads back %q", corp.name, doc.name, p, pi, edit, got.text())
+							return true, ""
+						}
+						others := func(l pageLayout) []string {
+							var o []string
+							for j, q := range l.paragraphs {
+								if j != pi {
+									o = append(o, q.text())
+								}
+							}
+							return o
+						}
+						// Compared as TEXT, not as paragraphs: grouping reads the whole page, so new line widths in one
+						// paragraph can move a boundary between two others (measured: fda-83122 p1, where "These are also"
+						// and "explained in this paper." join) with every glyph still drawn where it was.
+						if a, b := normalizedText(strings.Join(others(l), " ")), normalizedText(strings.Join(others(l3), " ")); a != b {
+							t.Errorf("%s / %s p%d ¶%d: the page's other paragraphs changed:\n was %q\n now %q", corp.name, doc.name, p, pi, a, b)
+						}
+						origLines, space, _ := paragraphWords(para)
+						newLines, _, cause := paragraphWords(got)
+						if cause == "" {
+							var words []reflowWord
+							for _, ln := range newLines {
+								words = append(words, ln...)
+							}
+							if a, b := lineTexts(rebreak(words, lineMeasures(origLines, space), space)), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
+								t.Errorf("%s / %s p%d ¶%d: written as %q, the breaker sets %q", corp.name, doc.name, p, pi, b, a)
+							}
+						}
+						return true, ""
+					}
+					swapped := append([]string(nil), f...)
+					swapped[0], swapped[1] = swapped[1], swapped[0]
+					if ok, cause := try(strings.Join(swapped, " ")); !ok {
+						causes[cause]++
+						continue
 					}
 					rewritten++
+					// A NEW word — the first word spelled backwards, which the paragraph does not already draw — reaches
+					// the path the swap never can: each character's code chosen by `codesFor`, its width by the font.
+					rs := []rune(f[0])
+					for a, b := 0, len(rs)-1; a < b; a, b = a+1, b-1 {
+						rs[a], rs[b] = rs[b], rs[a]
+					}
+					if rev := string(rs); len(rs) > 2 && rev != f[0] && !strings.Contains(" "+para.text()+" ", " "+rev+" ") {
+						if ok, cause := try(rev + " " + strings.Join(f[1:], " ")); ok {
+							respelled++
+						} else {
+							respellRefused[cause]++
+						}
+					}
 				}
 			}
 		}
@@ -275,7 +312,11 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 	if rewritten == 0 {
 		t.Errorf("no paragraph was rewritten (refusals %v) — the rewrite was never exercised", causes)
 	}
+	if respelled == 0 {
+		t.Errorf("no new word was spelled and read back (refusals %v) — codesFor's path was never exercised", respellRefused)
+	}
 	t.Logf("%d paragraphs rewritten and read back; refused by cause %v", rewritten, causes)
+	t.Logf("%d new words spelled from the font and read back; refused by cause %v", respelled, respellRefused)
 }
 
 // TestANewWordReusesTheCodeTheParagraphAlreadyDraws — when a font draws a character with two codes, a new word is spelled

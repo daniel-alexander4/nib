@@ -361,6 +361,10 @@ func wrapWords(words []word, maxW float64) [][]word {
 // is a forced break, and how to split one wider than a line. A nil Split leaves an over-wide item alone on its line, for
 // the caller to find. LineWidth, when set, gives each line its own measure by index — a paragraph whose first line is
 // indented has less room on it — and maxW is used where it is nil.
+//
+// Split and LineWidth are not used together by any caller, and together they are not exact: a split item's pieces are
+// all cut to the width of the line the split BEGAN on, not each to its own line's. mdpdf splits and passes no LineWidth;
+// reflow passes LineWidth and never splits (a word wider than its line is refused). A caller wanting both must fix this.
 type BreakOps[T any] struct {
 	Width     func(T) float64
 	Space     func(prev T) float64

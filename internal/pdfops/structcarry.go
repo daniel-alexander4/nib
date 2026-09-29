@@ -710,28 +710,46 @@ func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage, placed map
 	return c.attach(ctx, tree)
 }
 
-// rowFor returns the `/ParentTree` entry for one key, in whichever of the two shapes it has.
+// rowFor returns the `/ParentTree` entry for one key, in whichever of the two shapes it has. The parent tree is a NUMBER
+// TREE (ISO 32000-1 §7.9.7): a producer may put `/Nums` on the root or nest it under `/Kids`, as multi-page Word and
+// Acrobat output does, so both are walked — depth-bounded as `parentTreeKey` is. It read only a root `/Nums` until the
+// P06 phase-close review, which is how a nested tree hid a structure element's `/ActualText` from reflow.
 func rowFor(ctx *model.Context, tree *structTree, key int) (arr types.Array, single *types.IndirectRef, found bool) {
 	xt := ctx.XRefTable
-	pt := derefDict(xt, tree.root["ParentTree"])
-	if pt == nil {
-		return nil, nil, false
+	var walk func(o types.Object, depth int) bool
+	walk = func(o types.Object, depth int) bool {
+		if depth > maxStructDepth {
+			return false
+		}
+		d := derefDict(xt, o)
+		if d == nil {
+			return false
+		}
+		nums := derefArray(xt, d["Nums"])
+		for i := 0; i+1 < len(nums); i += 2 {
+			n, isInt := nums[i].(types.Integer)
+			if !isInt || n.Value() != key {
+				continue
+			}
+			if a := derefArray(xt, nums[i+1]); a != nil {
+				arr, found = a, true
+				return true
+			}
+			if ir, isRef := nums[i+1].(types.IndirectRef); isRef {
+				single, found = &ir, true
+				return true
+			}
+			return true // the key is here and names nothing usable: stop, found stays false
+		}
+		for _, k := range derefArray(xt, d["Kids"]) {
+			if walk(k, depth+1) {
+				return true
+			}
+		}
+		return false
 	}
-	nums := derefArray(xt, pt["Nums"])
-	for i := 0; i+1 < len(nums); i += 2 {
-		n, isInt := nums[i].(types.Integer)
-		if !isInt || n.Value() != key {
-			continue
-		}
-		if a := derefArray(xt, nums[i+1]); a != nil {
-			return a, nil, true
-		}
-		if ir, isRef := nums[i+1].(types.IndirectRef); isRef {
-			return nil, &ir, true
-		}
-		return nil, nil, false
-	}
-	return nil, nil, false
+	walk(tree.root["ParentTree"], 0)
+	return arr, single, found
 }
 
 // subtreeClone copies structure elements onto a duplicated page.
