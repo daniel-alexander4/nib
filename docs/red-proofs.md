@@ -1152,7 +1152,7 @@ them for a vacuous green in a guard written the same hour.
 | --- | --- | --- |
 | **The whole-file residue scanner resumes at `endstream`'s `stream`** *(replayable: `redaction-residue-whole-file`)* | `the whole-file scan did NOT find a flate stream carrying the secret that was appended to the file` | `TestTheTwoResidueChecksDifferAndTheDifferenceIsThePoint` — the discriminating test, which appends a stream no page references so the page-content and whole-file checks must diverge |
 | **`describeSignFailure` bypassed, runSign returns the raw library error** *(replayable: `tsa-failure-unactionable`)* | `the failure is not identifiable as a timestamp problem: sign: failed to replace signature: … get timestamp: non success response (0)` | `TestAnUnreachableTimestampAuthoritySaysSoAndSignsNothing`, whose setup asserts the same call signs fine with no TSA so the failure is attributable to the timestamp |
-| **`addedAfterVerdict` drops the error** *(replayable: `added-after-fails-closed`)* | `unreadable is a warning, not clean: addedAfterVerdict(false, malformed PDF) = false, want true` | `TestAddedAfterFailsClosed`, binding the combine directly because the error path is unreachable through Verify (both calls share dpdf on the same bytes) |
+| **`addedAfterVerdict` drops the error** *(replayable: `added-after-fails-closed`)* | `unreadable is a warning, not clean: addedAfterVerdict(false, malformed PDF) = false, want true` | `TestAddedAfterFailsClosed`, binding the combine directly because the error path is unreachable through Verify (both calls share dpdf on the same bytes) — true when recorded, and no longer: since P01.S01 a join disagreement reaches it through `Verify` (`TestAJoinErrorNamesNobodyAndWarns`), and P01.S02 deleted the `/Fields` walk whose error it was |
 
 **The residue-scanner row is the one to carry.** Its defect and its guard were written in the
 same hour, and the guard's first form was itself vacuous — the whole-file check passed because
@@ -6217,3 +6217,68 @@ trading; a windowless hand-off answering 400 or returning no key; the key TTL ig
 traded one, the `no session` 403 not raising the overlay (`test/jsdom/launch*.test.mjs`). /pending 704's
 census (`TestEveryRouteIsBehindTheSessionOrNamed`) and query-form tests are probed in its ledger in
 `completed.md`.
+
+## P01.S02 of `PLAN-returned-document.md` — `AddedAfter` over verified, well-formed revisions (ADR-059, /pending 661)
+
+**The pre-S02 red proof, TAKEN before the `/Fields` ByteRange walk was deleted** (the plan-review's QA pin). Not
+replayable: the defect is the deleted walk itself, so a patch would have to reinstate it whole. S01's
+`appendDecoy661` never listed its decoy in `/Fields`, so on the pre-S02 tree it already warned and a proof built on
+it is green on both trees (the S02 grill measured it); the LISTED variant, `appendListedDecoy661`, is the shape the
+walk measured coverage from.
+
+| Tree | Check | What it said |
+|---|---|---|
+| `11490690` (pre-S02), the grill's probe `red661listed_probe_test.go` | both decoy shapes, listed in `/Fields` | `LISTED decoy "": state=valid signers=1 addedAfter=false \| fieldsWalk trailing=false saw=true \| records [5: 7:unsupported-filter]`; `"/Filter/Adobe.PPKLite"` → the same, `7:unparseable-contents` |
+| `11490690` + `TestTheListedDecoysWarn` (its cause and `Refused` assertions cut, since those fields did not exist), tier 1 | `TestTheListedDecoysWarn` | `decoy "": addedAfter=false — a decoy /Fields lists hid the appended revision (/pending 661)`, and the same for `"/Filter/Adobe.PPKLite"`; its stimulus (listed, valid, one signer naming Alice) held |
+| after S02 | the same test, whole | green: `addedAfter=true`, cause `refused-signature-present`, `Refused` = the decoy with its cause |
+
+**Mutations, each applied alone to the S02 tree and each red for its own assertion** (no register rows; the probes
+are `cp`-and-restore, `cmp`-confirmed): `bounds` without `!Timestamp` (`TestAVerifiedDocTimeStampStillBoundsNothing`),
+without `Verified` (`TestTheJoinToleratesAFailedSignatureAndNamesTheValidOne`, `TestASoleFailedSignatureCannotBeChecked`),
+without `Cause == ""` (`TestARefusedRecordNeverBounds`); `coverage` without its `sawSignature` conjunct, and taking
+the first end rather than the largest; each of the four cause arms, and a cause reported with the bit false
+(`TestARefusedRecordTheSignaturesCoverDoesNotWarn`); the zero-signer rule narrowed to `signatureBlobPresent` and
+widened to "any record", and `hasContents` forced true; `Refused` dropped on either path; each `Timestamp` disjunct
+alone, and never set; the imprint check (since removed — below) forced to pass, forced to fail, and hashing the first pair only; the 64-byte
+cap and the well-formed filter in `refusedOf`; five guard shapes (a second `Key("ByteRange")`, `bytes.Index` and a
+`regexp` import in `revisions.go`, a second `addedAfterVerdict` caller, a marker removed, a marker naming the wrong
+exemption); `addedAfterVerdict`'s error arm (`TestAddedAfterFailsClosed`, the `added-after-fails-closed` row, whose
+patch still applies); the CLI's `%q`, its refused lines and its cause suffix; and eleven in `web/app.js`
+(`refusedsig.test.mjs`). **Three first-pass survivors, fixed rather than declared:** a cause reported with the bit
+false (no test asserted an empty cause), and two tests whose STIMULUS asserted the unit under test — the imprint
+oracle is now the test's own hash, and the placeholder's emptiness is read from its bytes.
+
+**Declared at the time, both since closed by the review fix pass below:** the `Available()` guard in
+`timestampImprintOK` was equivalent on every fixture (the function is gone); and the jsdom census read
+`sign.RefusedSignature.filter` through `Array.prototype.filter`.
+
+### P01.S02 review fix pass
+
+Seven findings applied. The DocTimeStamp imprint check is **removed from the verdict path** (11% of `Verify` at
+10 MB for one stamp; 1.98 s against 53 ms for 400 stamp records on 5.9 MB; `timestamp.Parse` refuses an honest
+RSASSA-PSS token), with `timestamp-unverified` and its sentence. Each mutation below was applied alone, run, and
+restored by `cp` from a scratch backup with `cmp` confirming the file; every row is red for its own assertion.
+
+| Mutation | Red test |
+|---|---|
+| the zero-signer blob rule counts every non-empty `/Contents` | `TestAUsageRightsSignatureWithoutSigFlagsStaysUnsigned` |
+| … without the refused disjunct | `TestANestedSignatureThatFailsIsNotUnsigned` |
+| … without the `hasContents` conjunct | `TestAPlaceholderSignatureStaysUnsigned` |
+| `refusedOf` publishes empty-`/Contents` records | `TestAPlaceholderSignatureStaysUnsigned`, `TestARefusedFilterIsCappedForItsReaders` |
+| cause: the `!saw` arm dropped | `TestNoBoundingSignatureOutranksARefusal`, `TestASoleFailedSignatureCannotBeChecked` |
+| cause: the grill's order (refusal before `!saw`) | `TestNoBoundingSignatureOutranksARefusal` |
+| cause: the refusal arm dropped | `TestAJoinErrorOutranksARefusal`, `TestACopiedSignatureDictionaryIsRefused`, `TestTheListedDecoysWarn`; CLI `TestVerifyRefusesEveryDecoyAndCopy` |
+| `bounds` counts stamps | `TestAVerifiedDocTimeStampStillBoundsNothing`, `TestEitherMarkMakesADocumentTimestamp` |
+| `Timestamp` without the `/Type` disjunct; without the `/SubFilter` disjunct | `TestEitherMarkMakesADocumentTimestamp` (each) |
+| a well-formed stamp refused again | `TestADocTimeStampIsNeverRefusedForItsImprint` and three others |
+| CLI suffix names only the refusal; refused lines not printed | `TestVerifyRefusesEveryDecoyAndCopy` (each) |
+| `REFUSAL_WORDS` gains a stale key; loses a cause | `TestEveryRefusalCauseIsSaidToTheUser` (each) |
+| badge suffix drops the measured append | `refusedsig.test.mjs` test 1 |
+| the census walks `FuncDecl` bodies only; counts `.Xref` only when called; ignores package constants; ignores local constants; bans no `Cut`/`Count`; bans no `strings.*`; counts verdict references only inside functions; allows `.Key` as a method value | `TestTheSigwalkGuardSeesEveryBypass` (each) |
+| a second `Key("ByteRange")` inside `sweep` | `TestEverySignatureEnumerationIsTheSweep` (its stimulus count) |
+| `refusedLine` reads `r.filtr` (the real reader renamed) | `published.test.mjs`: `sign.RefusedSignature.filter` unread |
+
+**Equivalent, declared:** the blob rule's `libPos >= 0` disjunct (a library-enumerated record with no library
+signer always fails the join, which already makes the document `Invalid`); and the cause's `err != nil` arm
+(`joinLibrary` marks `Verified` only after every check passes, so an error leaves no record bounding and `!saw`
+answers the same). Both are kept as the stated rule, not as tested behaviour.

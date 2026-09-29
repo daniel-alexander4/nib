@@ -70,18 +70,20 @@ func TestUnsignedHasNoTrailingFlag(t *testing.T) {
 // TestAddedAfterFailsClosed — an unreadable trailing-content check reports "warn", never
 // "clean".
 //
-// The two enumerations behind a verify — the xref walk that finds signatures and the
-// AcroForm/Fields walk that reads their byte ranges — can in principle disagree, and the
-// "two enumerations" review's worry was that the added-after-signing warning could go quiet
+// Until P01.S02 two enumerations stood behind a verify — the library's xref walk that finds
+// signatures and a separate AcroForm/Fields walk that read their byte ranges — and the "two
+// enumerations" review's worry was that the added-after-signing warning could go quiet
 // independently of the Valid verdict. It used to: `st.AddedAfter, _ = trailingContent…`
 // discarded the error, so a document the check could not read reported AddedAfter=false and
 // looked wholly signed.
 //
-// It is unreachable through Verify TODAY — both calls run dpdf over the same bytes, so one
-// cannot fail to parse while the other succeeds — which is exactly why the discard was a trap
-// and not a caught bug: the day the trailing check grows an error path the signature walk
-// does not share, "clean" becomes a lie with nothing failing. So the rule is tested where it
-// is decidable: the combine itself, which is why it is a named function.
+// P01.S02 deleted the `/Fields` walk (ADR-059): coverage is now measured over the sweep's
+// records (`coverage`), and the error reaching the verdict is the sweep's or the join's
+// (`errJoin`, ADR-058) — reachable through Verify, and each named route is tested in
+// `addedafter_test.go` and `revisions_test.go`. The discard was a trap for the same reason it
+// always was: a verdict that ignores its error reports "clean" with nothing failing. So the rule
+// is tested where it is decidable — the combine itself, which is why it is a named function with
+// one caller, `addedAfter`.
 func TestAddedAfterFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -122,21 +124,22 @@ func TestAddedAfterFailsClosed(t *testing.T) {
 // TestTheTwoEnumerationsDisagreeingIsAWarning — /pending 270, and it is the case the "two
 // enumerations" review was actually about.
 //
-// The library gates on `Root/AcroForm/SigFlags` and then walks `rdr.Xref()` for objects whose
-// `/Filter` is `Adobe.PPKLite`. This check walks `AcroForm/Fields` for `FT /Sig` byte ranges.
-// Those are genuinely different walks over the same PARSED document — no malformed file
-// required — so a document carrying `/SigFlags` whose `/Fields` does not list the signature
-// satisfies one and not the other.
+// It was written when `AddedAfter` read coverage from its own `AcroForm/Fields` walk while the
+// library walked `rdr.Xref()` — two walks that a document with `/SigFlags` and an unlisted
+// signature satisfied one of and not the other. P01.S02 deleted that walk (ADR-059), and the rule
+// survives with its meaning moved: `sawSignature` is now "some record BOUNDS coverage" (verified,
+// well-formed, not a document timestamp), so the library reporting a signer that no such record
+// stands for — every signer failed, was refused, or is a stamp — still cannot be reported as a
+// wholly signed document. The name is kept for the replayed red proof.
 //
-// The old shape could not even express that: `trailingContentAfterLastSignature` returned
+// The old shape could not express that: `trailingContentAfterLastSignature` returned
 // `(false, nil)` for "no signature fields here" AND for "the signatures cover everything", so
 // the caller could not tell an agreement from an absence — and a Valid document whose bytes
 // after the signature are covered by nothing reported clean.
 //
-// **What this does not cover, stated rather than implied:** the end-to-end case still wants a
-// crafted document, and building one means hand-rolling an xref-STREAM incremental update,
-// because that is what the signing library writes. The composition rule is where the defect
-// lives and where it is decidable, which is why it is a named function.
+// The end-to-end cases are now built (`TestASoleFailedSignatureCannotBeChecked`,
+// `TestNoBoundingSignatureOutranksARefusal`); this row stays because the composition rule is
+// where the defect lives, which is why it is a named function.
 func TestTheTwoEnumerationsDisagreeingIsAWarning(t *testing.T) {
 	// The library found a signature; this walk found no signature field to measure against.
 	if !addedAfterVerdict(false, false, nil, true) {

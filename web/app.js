@@ -4864,15 +4864,42 @@ function updateBadge(sig, inCeremony, unverified) {
   if (sig?.state === 'valid' && vouched && signers.length > 1) label += ' · ' + signers.length + ' signers';
   // Valid signatures, but content rides after the last one, uncovered: the bare
   // "Untampered" overstates it, so tone the badge to caution. (Invalid already
-  // dominates; the full explanation is in the details modal.)
-  if (sig?.state === 'valid' && sig?.addedAfter) { cls = 'badge-warn'; label += ' · content added after signing'; }
+  // dominates; the full explanation is in the details modal.) The suffix says WHICH fact
+  // set the warning (ADR-059): an append, a signature Nib refused, or a check it could not
+  // complete — and none of them is "unchanged since you signed".
+  if (sig?.state === 'valid' && sig?.addedAfter) { cls = 'badge-warn'; label += addedAfterSuffix(sig.addedAfterCause); }
 
   b.className = 'badge ' + cls;
   b.textContent = label;
   b.title = label;
   // Details only exist for a signed document (valid or modified) — OR for a document in a
-  // ceremony, which has an obliged-signer count to report before anyone has signed at all.
-  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony;
+  // ceremony, which has an obliged-signer count to report before anyone has signed at all —
+  // OR for one carrying a signature Nib refused, which the panel names (P01.S02).
+  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !(sig?.refused?.length);
+}
+
+// addedAfterSuffix is the badge's words for `sign.Status.addedAfterCause`. A refused signature
+// is the cause only where an append WAS measured, so that suffix names both facts.
+function addedAfterSuffix(cause) {
+  if (cause === 'refused-signature-present') return ' · content added after signing, and a signature Nib refused is present';
+  if (cause === 'could-not-check') return ' · could not confirm nothing was added after signing';
+  return ' · content added after signing';
+}
+
+// REFUSAL_WORDS is the details panel's plain English for each `sign.RefusalCause`.
+const REFUSAL_WORDS = {
+  'malformed-byterange': 'its byte range does not cover the whole revision around its own signature',
+  'byterange-outside-file': 'its byte range runs past the end of the file',
+  'contents-elsewhere': 'its byte range surrounds another object\'s signature',
+  'unsupported-filter': 'it is not a kind of signature Nib can check',
+  'unparseable-contents': 'its signature data cannot be read',
+};
+
+// refusedLine is one refused record in the details panel. Its filter is the document's own
+// text, so it is only ever set as textContent.
+function refusedLine(r) {
+  const why = REFUSAL_WORDS[r.cause] || r.cause;
+  return 'Object ' + r.obj + (r.filter ? ' (' + r.filter + ')' : '') + ': ' + why;
 }
 
 // timeLabel turns a signer's time backing into honest plain English.
@@ -4887,10 +4914,12 @@ function timeLabel(s) {
 
 async function openSigDetails() {
   const signers = view.lastSig?.signers || [];
+  const refused = view.lastSig?.refused || [];
   // A ceremony document with NO signatures still has something to say: how many parties are
   // obliged, and that none of them has signed. That is C18's extreme case, and until P07.S05a
-  // it was unreachable — this returned early and the button was hidden besides.
-  if (!signers.length && !view.inCeremony) return;
+  // it was unreachable — this returned early and the button was hidden besides. So does a
+  // document carrying a signature Nib refused (P01.S02).
+  if (!signers.length && !view.inCeremony && !refused.length) return;
   const body = els.sigDetailsBody;
   body.innerHTML = '';
   const rows = signers.map((s) => {
@@ -4921,14 +4950,28 @@ async function openSigDetails() {
     body.appendChild(row);
     return row;
   });
-  // Document-level caution: content in a revision after the last signature is
-  // covered by none. Shown whatever the per-signer verdicts (it's about the
-  // whole file, not one signer); the signatures themselves stay valid.
+  // Document-level caution: content past the last VALID signature's coverage. Shown whatever
+  // the per-signer verdicts (it's about the whole file, not one signer); the signatures
+  // themselves stay valid. **"Any VALID signature", not "any signature"** (P01.S02): coverage is
+  // now measured over verified, well-formed signatures only, so the uncovered bytes may sit under
+  // a failed signature, a refused one, or a document timestamp — "covered by no signature" would
+  // be false of exactly those documents. Never "unchanged since you signed": that is a different
+  // question, answered for one signer, not by this bit.
   if (view.lastSig?.addedAfter) {
     const note = document.createElement('div');
     note.className = 'signote';
-    note.textContent = '⚠ Content was added after the last signature — it is not covered by any signature.';
+    note.textContent = view.lastSig.addedAfterCause === 'could-not-check'
+      ? '⚠ Nib could not confirm that any valid signature covers this document to its end — treat what no valid signature covers as unsigned.'
+      : '⚠ Content was added after the last valid signature — it is not covered by any valid signature.';
     body.appendChild(note);
+  }
+  // Every signature-shaped object Nib refused, by object number and why — a refused one names
+  // nobody and bounds nothing, whatever it claims.
+  for (const r of refused) {
+    const line = document.createElement('div');
+    line.className = 'signote sig-refused';
+    line.textContent = '⚠ A signature Nib refused is present — ' + refusedLine(r);
+    body.appendChild(line);
   }
   els.sigDetailsModal.hidden = false;
   augmentSigDetails(rows, view, ++sigDetailsSeq);

@@ -1,11 +1,10 @@
 diff --git a/internal/cli/commands.go b/internal/cli/commands.go
-index 3a66ed6..4a1093e 100644
 --- a/internal/cli/commands.go
 +++ b/internal/cli/commands.go
-@@ -982,9 +982,7 @@ func cmdVerify(args []string) int {
- 			fmt.Println(string(b))
- 		} else {
- 			fmt.Printf("%s: %s\n", p, describeStatus(st))
+@@ -1230,9 +1230,7 @@
+ 			for _, line := range refusedLines(st) {
+ 				fmt.Printf("  %s\n", line)
+ 			}
 -			for _, line := range cer.lines() {
 -				fmt.Printf("  %s\n", line)
 -			}

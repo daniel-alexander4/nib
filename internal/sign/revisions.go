@@ -16,7 +16,9 @@ import (
 
 // RefusalCause names why a signature-shaped dictionary is not a well-formed signature. The empty
 // cause is a well-formed one. Five causes and no more: each is a different sentence to a reader,
-// and a lumped refusal reads backwards exactly when it matters (PLAN-returned-document D7).
+// and a lumped refusal reads backwards exactly when it matters (PLAN-returned-document D7). A
+// document timestamp is never refused on account of its imprint (ADR-059): that check is the
+// dispute surface's, on demand, never the verdict path's.
 type RefusalCause string
 
 const (
@@ -47,9 +49,8 @@ const gapScanWindow = 64 << 10
 // Revision is one signature-shaped dictionary in the document: who signed it, how far the
 // signature reaches, and whether it is well-formed. It is the one home of "who signed" and
 // "well-formed" (ADR-058) — `SignerInfo.Fingerprint` is read from here, and nothing else computes
-// it. **"How far" still has a second home until P01.S02**: `trailingContentAfterLastSignature`'s
-// `/Fields` walk computes coverage for `AddedAfter` on its own, and S02 deletes it in favour of
-// `CoverageEnd`.
+// it — and of "how far" (P01.S02 deleted the `/Fields` ByteRange walk that was its second home):
+// `AddedAfter` reads `CoverageEnd` from the records that `bounds`.
 //
 // The revision a signature covers is `[0, CoverageEnd)`: every signature but the last
 // legitimately ends before EOF.
@@ -74,6 +75,19 @@ type Revision struct {
 	// Verified is the library's `ValidSignature` for this record's position in its enumeration.
 	// A record outside that enumeration is false by definition, never by index.
 	Verified bool
+	// Timestamp marks a document timestamp: `/Type /DocTimeStamp` or `/SubFilter /ETSI.RFC3161`.
+	// It names no signer, and anyone can obtain one over any bytes, so it NEVER bounds coverage
+	// (ADR-059). Its `messageImprint` is not read here: the verdict path never pays for it.
+	Timestamp bool
+
+	// hasContents is a non-empty `/Contents` — the rule `signatureBlobPresent` uses to tell a real
+	// signature from a prepare-for-signing placeholder, read here over the xref sweep so a
+	// `/Kids`-nested blob is seen (the zero-signer path in `verifyIndexed`). A record without one is
+	// never published as refused (`refusedOf`).
+	hasContents bool
+	// underPerms is whether the catalog's `/Perms` names this dictionary — a usage-rights or DocMDP
+	// signature, which lives outside the form and may lawfully have no `/SigFlags` beside it.
+	underPerms bool
 
 	// conjunct is which of the eleven structure conjuncts refused the record (0 = none). The
 	// public vocabulary is Cause; `malformed-byterange` lumps nine conjuncts, so a fixture built
@@ -161,6 +175,15 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 	// The library's own gate: without `/SigFlags` it reports no signer at all, so no record is at
 	// any position in its enumeration.
 	sigFlags := !r.Trailer().Key("Root").Key("AcroForm").Key("SigFlags").IsNull()
+	// The signatures the catalog's `/Perms` names (`/UR3` usage rights, `/DocMDP`): the one class of
+	// signature a document carries OUTSIDE its form, legitimately without `/SigFlags`.
+	perms := map[uint32]bool{}
+	pd := r.Trailer().Key("Root").Key("Perms")
+	for _, k := range pd.Keys() {
+		if p := pd.Key(k).GetPtr(); p.GetID() != 0 {
+			perms[p.GetID()] = true
+		}
+	}
 	lib := 0
 	memo := &gapMemo{at: map[int64]*gapToken{}}
 	for _, x := range r.Xref() {
@@ -176,8 +199,11 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 		rev := Revision{
 			Obj: ptr.GetID(), Gen: ptr.GetGen(),
 			Type: typ, Filter: filter, SubFilter: v.Key("SubFilter").Name(),
-			libPos: -1,
+			libPos:      -1,
+			hasContents: len(v.Key("Contents").RawString()) > 0,
+			underPerms:  perms[ptr.GetID()],
 		}
+		rev.Timestamp = rev.Type == "DocTimeStamp" || rev.SubFilter == "ETSI.RFC3161"
 		var allInts bool
 		rev.ByteRange, allInts = byteRangeOf(br)
 		rev.brIndirect = br.Kind() == dpdf.Array && br.GetPtr() != v.GetPtr()
@@ -226,6 +252,11 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 	}
 	return revs, st, nil
 }
+
+// bounds reports whether this record's `CoverageEnd` counts towards `AddedAfter`: the library
+// verified it, it is well-formed, and it is a signature rather than a document timestamp. Nothing
+// else measures coverage (P01.S02, ADR-059).
+func (r *Revision) bounds() bool { return r.Verified && r.Cause == "" && !r.Timestamp }
 
 // byteRangeOf reads the array exactly as the library does, and says whether every element was an
 // integer — conjunct (1) needs to know, and the library does not ask.

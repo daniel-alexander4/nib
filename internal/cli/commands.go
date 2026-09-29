@@ -1227,6 +1227,9 @@ func cmdVerify(args []string) int {
 			fmt.Println(string(b))
 		} else {
 			fmt.Printf("%s: %s\n", p, describeStatus(st))
+			for _, line := range refusedLines(st) {
+				fmt.Printf("  %s\n", line)
+			}
 			for _, line := range cer.lines() {
 				fmt.Printf("  %s\n", line)
 			}
@@ -1268,12 +1271,23 @@ func cmdVerify(args []string) int {
 	return worst
 }
 
+// describeStatus is the one text line per file. The added-after suffix says WHICH fact set it
+// (ADR-059), because "content added after the last signature" is false of the two causes that are
+// not an append: a refused signature-shaped dictionary claiming to cover it, or a check nib could
+// not complete. None of them is "unchanged since you signed".
 func describeStatus(st sign.Status) string {
 	switch st.State {
 	case sign.Valid:
 		s := fmt.Sprintf("valid (%d signer(s))", len(st.Signers))
 		if st.AddedAfter {
-			s += "; content added after the last signature"
+			switch st.AddedAfterCause {
+			case sign.AddedAfterRefusedSignature:
+				s += "; content added after the last signature — and a signature Nib refused is present"
+			case sign.AddedAfterCouldNotCheck:
+				s += "; content added after the last signature could not be ruled out"
+			default:
+				s += "; content added after the last signature"
+			}
 		}
 		return s
 	case sign.Invalid:
@@ -1281,6 +1295,17 @@ func describeStatus(st sign.Status) string {
 	default:
 		return "unsigned"
 	}
+}
+
+// refusedLines is one line per signature-shaped dictionary Nib refused, whatever the verdict. The
+// `/Filter` is the document's own text — a PDF name decodes `#1B` to an escape byte — so it is
+// printed `%q` and never reaches a terminal raw (it is already capped at 64 bytes by `sign`).
+func refusedLines(st sign.Status) []string {
+	var out []string
+	for _, r := range st.Refused {
+		out = append(out, fmt.Sprintf("refused: object %d (filter %q): %s", r.Obj, r.Filter, r.Cause))
+	}
+	return out
 }
 
 // --- timestamp: create / verify OpenTimestamps proofs -------------------------

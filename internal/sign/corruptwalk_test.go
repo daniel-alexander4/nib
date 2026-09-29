@@ -8,9 +8,10 @@ import (
 // TestTheSignatureWalksDoNotPanicOnCorruptInput — /pending 502.
 //
 // trailingContentAfterLastSignature (reached from Verify) and hasCertificationSignature (reached
-// from SignApproval) walk digitorus/pdf's Key/Index with no recover, while signatureBlobPresent
+// from SignApproval) walked digitorus/pdf's Key/Index with no recover, while signatureBlobPresent
 // needed one for the same walk (/pending 453). Measured before the fix: 1,047 of 2,482 single-bit
-// flips of a signed fixture panicked out of each.
+// flips of a signed fixture panicked out of each. **The first walk is gone** (P01.S02): coverage is
+// read from the revision sweep's records, and the sweep is the walk driven below in its place.
 //
 // **Verify itself is still not driven here, and the count this comment used to give was a sample.**
 // It said "4 of the same 2,482", which is what the `off += 3` stride below can see; sweeping EVERY
@@ -21,22 +22,12 @@ import (
 // not: a `fatal error: out of memory` takes the test binary.
 func TestTheSignatureWalksDoNotPanicOnCorruptInput(t *testing.T) {
 	base := signedFixture(t)
-	var flips, trailErrs, certErrs, sweepErrs, sweepPanics, gated int
+	var flips, certErrs, sweepErrs, sweepPanics, gated int
 	for off := 0; off < len(base); off += 3 {
 		for _, bit := range []byte{0x01, 0x80} {
 			doc := append([]byte(nil), base...)
 			doc[off] ^= bit
 			flips++
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						t.Fatalf("trailingContentAfterLastSignature panicked on a flip at %d^%#x: %v", off, bit, r)
-					}
-				}()
-				if _, _, err := trailingContentAfterLastSignature(doc); err != nil {
-					trailErrs++
-				}
-			}()
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -82,11 +73,11 @@ func TestTheSignatureWalksDoNotPanicOnCorruptInput(t *testing.T) {
 		t.Fatalf("over %d readable flips the sweep reported no contained panic — a recover that returns a "+
 			"clean empty sweep would read as \"no signature here\"", gated)
 	}
-	if trailErrs == 0 || certErrs == 0 || sweepErrs == 0 {
-		t.Fatalf("over %d flips the walks reported %d, %d and %d errors — the corruption never reached them",
-			flips, trailErrs, certErrs, sweepErrs)
+	if certErrs == 0 || sweepErrs == 0 {
+		t.Fatalf("over %d flips the walks reported %d and %d errors — the corruption never reached them",
+			flips, certErrs, sweepErrs)
 	}
-	t.Logf("flips=%d trailingErrors=%d certificationErrors=%d readable=%d sweepErrors=%d sweepPanics=%d", flips, trailErrs, certErrs, gated, sweepErrs, sweepPanics)
+	t.Logf("flips=%d certificationErrors=%d readable=%d sweepErrors=%d sweepPanics=%d", flips, certErrs, gated, sweepErrs, sweepPanics)
 }
 
 // TestVerifyDigestRefusesADigestOfTheWrongLength — /pending 502 (info). VerifyDigestSPKI checked
