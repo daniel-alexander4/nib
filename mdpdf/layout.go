@@ -359,12 +359,14 @@ func wrapWords(words []word, maxW float64) [][]word {
 
 // BreakOps is what BreakGreedy needs to know about an item: how wide it is, how wide the space after it is, whether it
 // is a forced break, and how to split one wider than a line. A nil Split leaves an over-wide item alone on its line, for
-// the caller to find.
+// the caller to find. LineWidth, when set, gives each line its own measure by index — a paragraph whose first line is
+// indented has less room on it — and maxW is used where it is nil.
 type BreakOps[T any] struct {
-	Width   func(T) float64
-	Space   func(prev T) float64
-	IsBreak func(T) bool
-	Split   func(T, float64) []T
+	Width     func(T) float64
+	Space     func(prev T) float64
+	IsBreak   func(T) bool
+	Split     func(T, float64) []T
+	LineWidth func(line int) float64
 }
 
 // BreakGreedy is the line breaker — THE one: mdpdf's layout and `pdfops`' reflow both call it (`PLAN-text-reflow.md`
@@ -380,6 +382,12 @@ func BreakGreedy[T any](items []T, maxW float64, ops BreakOps[T]) [][]T {
 			cur, curW = nil, 0
 		}
 	}
+	width := func() float64 {
+		if ops.LineWidth != nil {
+			return ops.LineWidth(len(lines))
+		}
+		return maxW
+	}
 	for _, w := range items {
 		if ops.IsBreak != nil && ops.IsBreak(w) {
 			flush()
@@ -388,7 +396,7 @@ func BreakGreedy[T any](items []T, maxW float64, ops BreakOps[T]) [][]T {
 		ww := ops.Width(w)
 		if len(cur) > 0 {
 			sp := ops.Space(cur[len(cur)-1])
-			if curW+sp+ww > maxW {
+			if curW+sp+ww > width() {
 				flush()
 			} else {
 				cur = append(cur, w)
@@ -396,8 +404,8 @@ func BreakGreedy[T any](items []T, maxW float64, ops BreakOps[T]) [][]T {
 				continue
 			}
 		}
-		if ww > maxW && ops.Split != nil {
-			parts := ops.Split(w, maxW)
+		if ww > width() && ops.Split != nil {
+			parts := ops.Split(w, width())
 			for _, p := range parts[:len(parts)-1] {
 				lines = append(lines, []T{p})
 			}

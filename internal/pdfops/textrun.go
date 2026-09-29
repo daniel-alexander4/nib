@@ -103,6 +103,18 @@ type textRun struct {
 	kernAfter float64
 	// face is the font the run was drawn in, kept with the glyphs so reflow can ask it what it can draw (`codesFor`).
 	face *runFont
+	// state is the text state the run was shown under — kept with the glyphs, for reflow to re-emit text where the run
+	// was and to restore what it leaves behind (P06.S04).
+	state runTextState
+}
+
+// runTextState is the text state at a show operator: the text and line matrices as the operator began (text space,
+// before the CTM), the `Tf` size, character and word spacing, horizontal scaling, rise, and the scale from text space
+// to user space along the baseline.
+type runTextState struct {
+	tm, tlm        runMatrix
+	tfSize, tc, tw float64
+	th, ts, scale  float64
 }
 
 // runGlyph is one glyph of a run, as the show operator drew it.
@@ -676,7 +688,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			return
 		}
 		if s, ok := os[arity-1].str(src); ok {
-			w.show(&tm, gs, []tjPiece{{codes: s}}, opSpan{os[0].start, end}, depth > 0)
+			w.show(&tm, tlm, gs, []tjPiece{{codes: s}}, opSpan{os[0].start, end}, depth > 0)
 		}
 	}
 
@@ -785,7 +797,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 						}
 					}
 				}
-				w.show(&tm, gs, pieces, opSpan{os[0].start, tok.End}, depth > 0)
+				w.show(&tm, tlm, gs, pieces, opSpan{os[0].start, tok.End}, depth > 0)
 			}
 		case "BMC":
 			entry := -1
@@ -834,7 +846,8 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 }
 
 // show advances the text matrix across one show operator's glyphs and records the run.
-func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opSpan, inForm bool) {
+func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tjPiece, span opSpan, inForm bool) {
+	textAt := *tm
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
 		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact()}
@@ -888,6 +901,7 @@ func (w *runWalker) show(tm *runMatrix, gs runGState, pieces []tjPiece, span opS
 	if w.keepGlyphs {
 		run.kernAfter = pendingKern * scale
 		run.face = gs.font
+		run.state = runTextState{tm: textAt, tlm: tlm, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale}
 	}
 	run.text = string(text)
 	run.width = advance * scale
