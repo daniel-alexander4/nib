@@ -361,7 +361,7 @@ func TestARunKnowsWhichStreamItWasReadFrom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	pr, perr := readPageRuns(ctx, 1)
+	pr, perr := readPageRuns(ctx, pageAt(ctx, nil, 1))
 	if perr != nil {
 		t.Fatalf("readPageRuns: %v", perr)
 	}
@@ -417,7 +417,7 @@ func TestASequenceOpenedOnThePageKeepsThePagesStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	pr, perr := readPageRuns(ctx, 1)
+	pr, perr := readPageRuns(ctx, pageAt(ctx, nil, 1))
 	if perr != nil {
 		t.Fatalf("readPageRuns: %v", perr)
 	}
@@ -760,7 +760,7 @@ func TestAKidNamingAnUnreachedStreamFallsBackToThePage(t *testing.T) {
 	if cerr != nil {
 		t.Fatalf("read: %v", cerr)
 	}
-	pr, rerr := readPageRuns(ctx, 1)
+	pr, rerr := readPageRuns(ctx, pageAt(ctx, nil, 1))
 	if rerr != nil {
 		t.Fatalf("readPageRuns: %v", rerr)
 	}

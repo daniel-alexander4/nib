@@ -131,6 +131,15 @@ type treePage struct {
 	ref  *types.IndirectRef
 }
 
+// walkedPage is page pageNr from the tree's one walk of the pages (`pageAt`), taken on first use — for a writer
+// that wants what `page` does not keep (the inherited attributes) or an unreadable page's error as it stands.
+func (t *structTree) walkedPage(ctx *model.Context, pageNr int) pdfread.Page {
+	if t.walked == nil {
+		t.walked = pdfread.Pages(ctx)
+	}
+	return pageAt(ctx, t.walked, pageNr)
+}
+
 // page resolves a page for the structure writers, once per page per tree.
 //
 // **pdfcpu's `PageDict` walks the page tree from the root on every call**, and the writers ask for
@@ -143,19 +152,8 @@ func (t *structTree) page(ctx *model.Context, pageNr int) (types.Dict, *types.In
 	if p, ok := t.pages[pageNr]; ok {
 		return p.dict, p.ref, nil
 	}
-	if t.walked == nil {
-		t.walked = pdfread.Pages(ctx)
-	}
-	var (
-		d   types.Dict
-		ref *types.IndirectRef
-		err error
-	)
-	if pageNr >= 1 && pageNr <= len(t.walked) {
-		d, ref, err = t.walked[pageNr-1].Dict, t.walked[pageNr-1].Ref, t.walked[pageNr-1].Err
-	} else {
-		d, ref, _, err = ctx.PageDict(pageNr, false) // out of range: pdfcpu's own refusal
-	}
+	pg := t.walkedPage(ctx, pageNr)
+	d, ref, err := pg.Dict, pg.Ref, pg.Err
 	if err != nil || d == nil {
 		return nil, nil, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 	}

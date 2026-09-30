@@ -451,17 +451,22 @@ func carryNoteAnnots(src, composed []byte) ([]byte, noteCarry) {
 		// abandons the WHOLE carry: a page holding nothing but a widget has no note to misplace, so
 		// letting it fail the identity check would lose another page's notes over a page whose
 		// annotations this door was never going to touch.
+		//
+		// The sheets are resolved from ONE walk of the composed tree (/pending 756): a `PageDict` per placement
+		// was a walk from the root each, and an n-up of a long document places every one of its pages.
+		sheets := pdfread.Pages(ctx)
 		for i, pl := range places {
 			srcPage := i + 1
 			s, has := sources[srcPage]
 			if !has || len(s.notes) == 0 {
 				continue
 			}
-			m, merr := placementMatrix(ctx, pl, s.content)
+			sheet := pageAt(ctx, sheets, pl.sheet)
+			m, merr := placementMatrix(ctx, pl, sheet, s.content)
 			if merr != nil {
 				return merr
 			}
-			if aerr := attachNotes(ctx, pl.sheet, s.notes, m, moved, &placed); aerr != nil {
+			if aerr := attachNotes(ctx, sheet, s.notes, m, moved, &placed); aerr != nil {
 				return aerr
 			}
 		}
@@ -478,8 +483,9 @@ func carryNoteAnnots(src, composed []byte) ([]byte, noteCarry) {
 
 // placementMatrix returns the transform from one source page's own coordinate space to the sheet,
 // having first verified that this placement really is that page's content.
-func placementMatrix(ctx *model.Context, pl sheetPlacement, pageContent []byte) (matrix, error) {
-	d, _, _, err := ctx.PageDict(pl.sheet, false)
+// sheetPage is pl.sheet, resolved by the caller (`pageAt`).
+func placementMatrix(ctx *model.Context, pl sheetPlacement, sheetPage pdfread.Page, pageContent []byte) (matrix, error) {
+	d, err := sheetPage.Dict, sheetPage.Err
 	if err != nil || d == nil {
 		return identityMatrix, fmt.Errorf("%w: sheet %d does not resolve", errNoteCarry, pl.sheet)
 	}
@@ -573,16 +579,18 @@ func matrixFrom(ctx *model.Context, o types.Object) (matrix, bool) {
 }
 
 // attachNotes writes one source page's notes onto its sheet, recording where each one went.
-func attachNotes(ctx *model.Context, sheet int, notes []capturedNote, m matrix, moved map[int]types.IndirectRef, placed *int) error {
+// The sheet is resolved by the caller (`pageAt`).
+func attachNotes(ctx *model.Context, sheetPage pdfread.Page, notes []capturedNote, m matrix, moved map[int]types.IndirectRef, placed *int) error {
 	if len(notes) == 0 {
 		return nil
 	}
-	d, _, _, err := ctx.PageDict(sheet, false)
+	sheet := sheetPage.Nr
+	d, err := sheetPage.Dict, sheetPage.Err
 	if err != nil || d == nil {
 		return fmt.Errorf("%w: sheet %d does not resolve", errNoteCarry, sheet)
 	}
-	pageRef, perr := ctx.PageDictIndRef(sheet)
-	if perr != nil || pageRef == nil {
+	pageRef := sheetPage.Ref
+	if pageRef == nil {
 		return fmt.Errorf("%w: sheet %d has no indirect reference", errNoteCarry, sheet)
 	}
 	annots, aerr := ctx.DereferenceArray(d["Annots"])

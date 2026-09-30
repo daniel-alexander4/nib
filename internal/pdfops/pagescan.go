@@ -73,3 +73,18 @@ func livePageObjects(ctx *model.Context) map[int]bool {
 	}
 	return live
 }
+
+// pageAt is page n as `ctx.PageDict(n, false)` answers it, taken from pages — a `pdfread.Pages(ctx)` walk the
+// caller made once for its loop — and asked of pdfcpu only when n lies outside it (/pending 756). It is the one
+// door every per-page helper resolves its page through, so a loop over the pages walks the tree once instead of
+// once per page. A single-page operation passes nil pages: one `PageDict` call reaches a page no slower than the
+// walk that would precede it, and a walk of every page to answer for one is the slower of the two.
+//
+// Out of range (a `/Pg` that names no page, page 0) is pdfcpu's own refusal, exactly as before.
+func pageAt(ctx *model.Context, pages []pdfread.Page, n int) pdfread.Page {
+	if n >= 1 && n <= len(pages) {
+		return pages[n-1]
+	}
+	d, ref, attrs, err := ctx.PageDict(n, false)
+	return pdfread.Page{Nr: n, Dict: d, Ref: ref, Attrs: attrs, Err: err}
+}

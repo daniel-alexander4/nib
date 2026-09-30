@@ -140,7 +140,7 @@ func TestArtifactingAnElementTakesItOutOfTheTreeAndLeavesItsContent(t *testing.T
 	}
 
 	ctx := parsed(t, out)
-	pr, err := readPageRuns(ctx, 1)
+	pr, err := readPageRuns(ctx, pageAt(ctx, nil, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,8 @@ func TestArtifactingAFigureNeedsNoText(t *testing.T) {
 			t.Error("the figure is still in the tree")
 		}
 	}
-	pr, err := readPageRuns(parsed(t, out), 1)
+	pctx := parsed(t, out)
+	pr, err := readPageRuns(pctx, pageAt(pctx, nil, 1))
 	if err != nil {
 		t.Fatal(err)
 	}

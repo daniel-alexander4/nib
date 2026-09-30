@@ -75,7 +75,8 @@ func readStructureView(pdf []byte) (structureView, error) {
 		return structureView{}, err
 	}
 	live, pageNr := map[int]bool{}, map[int]int{}
-	for _, pa := range pdfread.Pages(ctx) {
+	walked := pdfread.Pages(ctx) // every per-page read below resolves through this one walk (/pending 756)
+	for _, pa := range walked {
 		if pa.Err == nil && pa.Ref != nil {
 			live[pa.Ref.ObjectNumber.Value()] = true
 			pageNr[pa.Ref.ObjectNumber.Value()] = pa.Nr
@@ -113,7 +114,7 @@ func readStructureView(pdf []byte) (structureView, error) {
 		return b
 	}
 	for pg := 1; pg <= ctx.PageCount; pg++ {
-		pr, perr := readPageRuns(ctx, pg)
+		pr, perr := readPageRuns(ctx, pageAt(ctx, walked, pg))
 		if perr != nil {
 			return structureView{}, perr
 		}
@@ -145,7 +146,7 @@ func readStructureView(pdf []byte) (structureView, error) {
 		if b, ok := pageBoxes[pg]; ok {
 			return b
 		}
-		b := mediaBoxOf(ctx, pg)
+		b := mediaBoxOf(pageAt(ctx, walked, pg))
 		pageBoxes[pg] = b
 		return b
 	}

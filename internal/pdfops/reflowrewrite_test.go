@@ -54,11 +54,11 @@ func layoutOf(t *testing.T, pdf []byte) (pageLayout, []textRun) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := readPageGlyphLayout(ctx, 1)
+	l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, err := readPageGlyphRuns(ctx, 1)
+	pr, err := readPageGlyphRuns(ctx, pageAt(ctx, nil, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 			}
 			tried := 0
 			for p := 1; p <= ctx.PageCount && p <= 2; p++ {
-				l, err := readPageGlyphLayout(ctx, p)
+				l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
 				if err != nil {
 					continue
 				}
@@ -247,7 +247,7 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 						if err != nil {
 							t.Fatalf("%s / %s p%d ¶%d: the rewritten document does not read: %v", corp.name, doc.name, p, pi, err)
 						}
-						l3, err := readPageGlyphLayout(c3, p)
+						l3, err := readPageGlyphLayout(c3, pageAt(c3, nil, p))
 						if err != nil || pi >= len(l3.paragraphs) {
 							t.Errorf("%s / %s p%d ¶%d: the rewritten page lost the paragraph (%v)", corp.name, doc.name, p, pi, err)
 							return true, ""
@@ -341,7 +341,7 @@ func TestANewWordReusesTheCodeTheParagraphAlreadyDraws(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := readPageGlyphLayout(ctx, 1)
+	l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, 1))
 	if err != nil || len(l.paragraphs) != 1 || l.paragraphs[0].text() != "a b b" {
 		t.Fatalf("the fixture reads as %q (%v)", paragraphTexts(l), err)
 	}

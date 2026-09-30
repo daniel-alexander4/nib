@@ -126,7 +126,7 @@ func TestInsertBlankGoesOnTheSideAsked(t *testing.T) {
 			t.Fatalf("%s: count = %d, want %d", tc.name, ctx.PageCount, len(tc.want))
 		}
 		for pg := 1; pg <= ctx.PageCount; pg++ {
-			pr, err := readPageRuns(ctx, pg)
+			pr, err := readPageRuns(ctx, pageAt(ctx, nil, pg))
 			if err != nil {
 				t.Fatal(err)
 			}

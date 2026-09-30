@@ -57,7 +57,7 @@ func TestAnUneditedParagraphRebreaksWhereItWasBroken(t *testing.T) {
 			t.Fatal(err)
 		}
 		for p := 1; p <= ctx.PageCount; p++ {
-			l, err := readPageGlyphLayout(ctx, p)
+			l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,7 +105,7 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 			continue
 		}
 		for p := 1; p <= ctx.PageCount; p++ {
-			l, err := readPageGlyphLayout(ctx, p)
+			l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
 			if err != nil {
 				causes["unreadable page"]++
 				continue

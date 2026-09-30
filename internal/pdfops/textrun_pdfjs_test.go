@@ -91,7 +91,7 @@ func TestRunTextAndBaselinesAgreeWithPdfjs(t *testing.T) {
 			continue
 		}
 		for _, pg := range js.Pages {
-			pr, perr := readPageRuns(ctx, pg.Page)
+			pr, perr := readPageRuns(ctx, pageAt(ctx, nil, pg.Page))
 			if perr != nil {
 				t.Fatalf("%s page %d: %v", doc.name, pg.Page, perr)
 			}

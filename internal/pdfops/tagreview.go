@@ -83,10 +83,14 @@ func ProposeTags(pdf []byte) (TagProposal, error) {
 	}
 	out := TagProposal{Elements: []TagElement{}, Unsupported: []TagPageNote{}, NoText: append([]int{}, p.noText...)}
 	boxes := map[int][4]float64{}
+	var walked []pdfread.Page
+	if len(p.elements) > 0 {
+		walked = pdfread.Pages(ctx)
+	}
 	for i, el := range p.elements {
 		box, ok := boxes[el.page]
 		if !ok {
-			box = mediaBoxOf(ctx, el.page)
+			box = mediaBoxOf(pageAt(ctx, walked, el.page))
 			boxes[el.page] = box
 		}
 		out.Elements = append(out.Elements, TagElement{
@@ -160,9 +164,11 @@ func CommitTags(pdf []byte, reviewed []TagReview) ([]byte, error) {
 	return commitProposal(pdf, ordered, ignoredPages...)
 }
 
-func mediaBoxOf(ctx *model.Context, pageNr int) [4]float64 {
-	_, _, attrs, err := ctx.PageDict(pageNr, false)
-	if err != nil || attrs == nil || attrs.MediaBox == nil {
+// mediaBoxOf is the page's inherited /MediaBox, or zeros. The caller resolves the page (`pageAt`) — both callers
+// ask it once per page of the document (/pending 756).
+func mediaBoxOf(pg pdfread.Page) [4]float64 {
+	attrs := pg.Attrs
+	if pg.Err != nil || attrs == nil || attrs.MediaBox == nil {
 		return [4]float64{}
 	}
 	mb := attrs.MediaBox

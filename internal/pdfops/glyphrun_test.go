@@ -29,7 +29,7 @@ func glyphRunsOf(t *testing.T, pdf []byte, page int) []textRun {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, err := readPageGlyphRuns(ctx, page)
+	pr, err := readPageGlyphRuns(ctx, pageAt(ctx, nil, page))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +60,8 @@ func TestARunsGlyphsSumToItsWidth(t *testing.T) {
 				continue
 			}
 			for p := 1; p <= ctx.PageCount; p++ {
-				plain, perr := readPageRuns(ctx, p)
-				kept, kerr := readPageGlyphRuns(ctx, p)
+				plain, perr := readPageRuns(ctx, pageAt(ctx, nil, p))
+				kept, kerr := readPageGlyphRuns(ctx, pageAt(ctx, nil, p))
 				if (perr == nil) != (kerr == nil) {
 					t.Errorf("%s / %s p%d: with glyphs the read is %v, without %v", corp.name, doc.name, p, kerr, perr)
 					continue
@@ -173,7 +173,7 @@ func TestEveryDecodedGlyphIsDrawableByItsOwnCode(t *testing.T) {
 				continue
 			}
 			for p := 1; p <= ctx.PageCount; p++ {
-				pr, err := readPageGlyphRuns(ctx, p)
+				pr, err := readPageGlyphRuns(ctx, pageAt(ctx, nil, p))
 				if err != nil {
 					continue
 				}

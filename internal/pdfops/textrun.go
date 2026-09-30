@@ -174,19 +174,21 @@ type pageRuns struct {
 // documents do it anyway.
 const maxFormDepth = 12
 
-// readPageRuns reads one page's positioned runs.
-func readPageRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
-	return readPageRunsKeeping(ctx, pageNr, false)
+// readPageRuns reads one page's positioned runs. The caller resolves the page (`pageAt`), so a loop over the
+// pages walks the page tree once rather than once per page (/pending 756).
+func readPageRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
+	return readPageRunsKeeping(ctx, pg, false)
 }
 
 // readPageGlyphRuns is readPageRuns with each run's glyphs kept (`textRun.glyphs`) — reflow's reader.
-func readPageGlyphRuns(ctx *model.Context, pageNr int) (pageRuns, error) {
-	return readPageRunsKeeping(ctx, pageNr, true)
+func readPageGlyphRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
+	return readPageRunsKeeping(ctx, pg, true)
 }
 
-func readPageRunsKeeping(ctx *model.Context, pageNr int, keepGlyphs bool) (pageRuns, error) {
+func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keepGlyphs bool) (pageRuns, error) {
+	pageNr := pg.Nr
 	return containRunRead(pageNr, func() (pageRuns, error) {
-		d, _, attrs, err := ctx.PageDict(pageNr, false)
+		d, attrs, err := pg.Dict, pg.Attrs, pg.Err
 		if err != nil || d == nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 		}

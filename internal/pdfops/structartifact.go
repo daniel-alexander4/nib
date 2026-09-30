@@ -105,7 +105,7 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 	for _, pg := range pages {
 		mine := owned[pg]
 		// ADR-009 exemption (grouping_test.go): this reads the page's marked-content sequences and groups nothing.
-		pr, err := readPageRuns(ctx, pg)
+		pr, err := readPageRuns(ctx, tree.walkedPage(ctx, pg))
 		if err != nil {
 			return err
 		}

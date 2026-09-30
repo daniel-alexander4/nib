@@ -42,14 +42,16 @@ func Paragraphs(pdf []byte, page int) ([]Paragraph, error) {
 	if page < 1 || page > ctx.PageCount {
 		return nil, fmt.Errorf("pdfops: there is no page %d", page)
 	}
-	l, err := readPageGlyphLayout(ctx, page)
+	// The page is resolved once for the layout and every paragraph's refusal, not once per paragraph (/pending 756).
+	pg := pageAt(ctx, nil, page)
+	l, err := readPageGlyphLayout(ctx, pg)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Paragraph, 0, len(l.paragraphs))
 	for i, p := range l.paragraphs {
 		para := Paragraph{Index: i, Text: p.text()}
-		para.Refusal = paragraphRefusal(ctx, page, p)
+		para.Refusal = paragraphRefusal(ctx, pg, p)
 		out = append(out, para)
 	}
 	return out, nil
@@ -68,14 +70,15 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 		if page < 1 || page > ctx.PageCount {
 			return fmt.Errorf("pdfops: there is no page %d", page)
 		}
-		l, err := readPageGlyphLayout(ctx, page)
+		pg := pageAt(ctx, nil, page) // once, for the read, the rewrite and the write (/pending 756)
+		l, err := readPageGlyphLayout(ctx, pg)
 		if err != nil {
 			return err
 		}
 		if index < 0 || index >= len(l.paragraphs) || normalizedText(l.paragraphs[index].text()) != normalizedText(original) {
 			return ErrReflowStale
 		}
-		o, err := reflowParagraphIn(ctx, l, page, index, text)
+		o, err := reflowParagraphIn(ctx, l, pg, index, text)
 		if err != nil {
 			return err
 		}
@@ -83,7 +86,7 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 			cause = o.cause
 			return errNothingToWrite
 		}
-		d, _, _, err := ctx.PageDict(page, false)
+		d, err := pg.Dict, pg.Err
 		if err != nil || d == nil {
 			return fmt.Errorf("pdfops: page %d does not resolve: %w", page, err)
 		}

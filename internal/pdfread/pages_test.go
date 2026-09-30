@@ -208,9 +208,11 @@ func TestPagesIsLinearInThePageCount(t *testing.T) {
 		}
 		return b
 	}
-	small, large := best(3000), best(6000)
-	t.Logf("3,000 pages %v, 6,000 pages %v (×%.2f)", small, large, float64(large)/float64(small))
-	if large > 3*small {
-		t.Fatalf("doubling the pages cost ×%.2f (%v → %v): the walk is not linear", float64(large)/float64(small), small, large)
+	// 4× the pages: linear is ×4, the per-page root walk ×16; ×8 is the midpoint on a log scale. (It was 2×
+	// against ×3 — alone ×2.1, but millisecond timings tipped ×3.66 once under a loaded full suite.)
+	small, large := best(3000), best(12000)
+	t.Logf("3,000 pages %v, 12,000 pages %v (×%.2f)", small, large, float64(large)/float64(small))
+	if large > 8*small {
+		t.Fatalf("4x the pages cost ×%.2f (%v → %v): the walk is not linear", float64(large)/float64(small), small, large)
 	}
 }

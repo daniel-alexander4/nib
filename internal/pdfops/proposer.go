@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 
+	"nib/internal/pdfread"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -70,7 +72,7 @@ const maxHeadingLines = 3
 // document. It reads; it never writes.
 func proposeStructure(ctx *model.Context) (proposal, error) {
 	layouts := make([]pageLayout, 0, ctx.PageCount)
-	for pg := 1; pg <= ctx.PageCount; pg++ {
+	for _, pg := range pdfread.Pages(ctx) {
 		l, err := readPageLayout(ctx, pg)
 		if err != nil {
 			return proposal{}, err
