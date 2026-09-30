@@ -4,7 +4,6 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/xml"
-	"nib/internal/pdfread"
 	"sort"
 	"strings"
 
@@ -91,7 +90,7 @@ func PreparePDFA(pdf []byte) (data []byte, blockers []string, err error) {
 	// that's the encryption blocker. Validating fonts off the full XRefTable (not
 	// api.PDFInfo) is deliberate: PDFInfo only walks page resources, so it misses
 	// fonts referenced by AcroForm /DA and widget /AP streams, which veraPDF flags.
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		if isEncryptionErr(err) {
 			return nil, []string{pdfaEncryptedMsg}, nil

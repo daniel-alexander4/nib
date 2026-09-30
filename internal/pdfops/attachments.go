@@ -1085,7 +1085,7 @@ func ExtractAttachment(pdf []byte, ref string) ([]byte, error) {
 // the answer is never "the first", which is how a download served one file's bytes under another's
 // name.
 func ReadAttachment(pdf []byte, ref string) (AttachmentInfo, []byte, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return AttachmentInfo{}, nil, err
 	}
@@ -1140,7 +1140,7 @@ var ErrTwoCeremonyRecords = errors.New("the document carries two ceremony record
 // record" had one answer in the digest and another in the reader. An entry that merely CALLS itself
 // the record is an ordinary attachment to both now.
 func CeremonyRecord(pdf []byte) ([]byte, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return nil, err
 	}
@@ -1204,7 +1204,7 @@ type SignatureWidget struct {
 // it cannot see a block that is drawn in white on white, or one an /AP stream positions outside
 // its own BBox. The rendered half needs pdf.js and belongs at tier 3.
 func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return nil, err
 	}

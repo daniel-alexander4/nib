@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -37,6 +38,72 @@ var inspectionSites = map[string]func(pdf []byte) any{
 	"Attachments":     func(pdf []byte) any { l, err := Attachments(pdf); return []any{l, failed(err)} },
 	"StructureSource": func(pdf []byte) any { s, ok := StructureSource(pdf); return []any{s, ok} },
 	"carryIsComplete": func(pdf []byte) any { return carryIsComplete(pdf) },
+	"ReadAttachment": func(pdf []byte) any {
+		l, _ := Attachments(pdf)
+		var out []any
+		for _, a := range l {
+			info, b, err := ReadAttachment(pdf, a.ID)
+			out = append(out, info, b, failed(err))
+		}
+		return out
+	},
+	"CeremonyRecord":   func(pdf []byte) any { b, err := CeremonyRecord(pdf); return []any{b, failed(err)} },
+	"SignatureWidgets": func(pdf []byte) any { w, err := SignatureWidgets(pdf); return []any{w, failed(err)} },
+	"capturePageSources": func(pdf []byte) any {
+		m, ok := capturePageSources(pdf)
+		return []any{m, ok}
+	},
+	"watermarkMarkersBefore": func(pdf []byte) any {
+		n, err := PageCount(pdf)
+		if err != nil {
+			return nil
+		}
+		byPage := map[int][]Word{}
+		for p := 1; p <= n; p++ {
+			byPage[p] = nil
+		}
+		m, err := watermarkMarkersBefore(pdf, byPage)
+		return []any{m, failed(err)}
+	},
+	// Its read decides the blockers; the bytes it writes come from `StripActive` over the input, not from that read
+	// (and carry fresh XMP identifiers each write), so whether it wrote is compared, not what.
+	"PreparePDFA": func(pdf []byte) any {
+		data, blockers, err := PreparePDFA(pdf)
+		return []any{data != nil, blockers, failed(err)}
+	},
+	"readStructureView": func(pdf []byte) any { v, err := readStructureView(pdf); return []any{v, failed(err)} },
+	"UnmarkedTextRuns":  func(pdf []byte) any { n, err := UnmarkedTextRuns(pdf); return []any{n, failed(err)} },
+	"uncoveredDrawings": func(pdf []byte) any { n, err := uncoveredDrawings(pdf); return []any{n, failed(err)} },
+	"ProposeTags":       func(pdf []byte) any { p, err := ProposeTags(pdf); return []any{p, failed(err)} },
+	// Reviewed as proposed: every element kept in the role it was offered.
+	"CommitTags": func(pdf []byte) any {
+		p, err := ProposeTags(pdf)
+		if err != nil || len(p.Elements) == 0 {
+			return nil
+		}
+		reviewed := make([]TagReview, len(p.Elements))
+		for i, el := range p.Elements {
+			reviewed[i] = TagReview{ID: el.ID, Role: el.Role, Text: el.Text}
+		}
+		// Compared by the structure it committed, not its bytes: the write is not byte-stable across two runs of the
+		// same reading (measured on nine producer files), and what the read decides is the proposal committed.
+		out, err := CommitTags(pdf, reviewed)
+		if err != nil {
+			return true
+		}
+		v, verr := readStructureView(out)
+		return []any{v, failed(verr)}
+	},
+	// The probe decides only whether there is a claim — returned untouched, or rewritten by the full read it has
+	// always used — and the rewrite is not byte-stable across two runs of that read (measured on the veraPDF corpus).
+	"dropUAIdentificationBytes": func(pdf []byte) any {
+		out, had, err := dropUAIdentificationBytes(pdf)
+		return []any{bytes.Equal(out, pdf), had, failed(err)}
+	},
+	"PageBox": func(pdf []byte) any {
+		a, b, c, d, err := PageBox(pdf, 1)
+		return []any{a, b, c, d, failed(err)}
+	},
 }
 
 // fileID is the trailer's /ID and writeDate a date string: pdfcpu derives the /ID from the clock on every write

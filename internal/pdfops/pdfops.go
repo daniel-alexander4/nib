@@ -2574,7 +2574,7 @@ func Optimize(pdf []byte) ([]byte, error) {
 //
 // `page` is 1-based, as everywhere else in this package.
 func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}

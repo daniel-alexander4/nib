@@ -54,7 +54,7 @@ type pageSource struct {
 // **Taken from the INPUT, before `api.NUp` runs**, because the output no longer contains the
 // original page objects — only their content, inside Form XObjects.
 func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return nil, false
 	}
