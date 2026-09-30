@@ -257,7 +257,7 @@ var ReflowCauses = []string{
 	causeMissingGlyph, causeMixedState, causeMixedContent, causeInlineFollower, causeTagged, causeReplacementText,
 	causeNoSpaceGlyph, causePageFull, causeNoPitch, causeAnchored, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
 	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
-	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, ReflowCauseSigned, ReflowCauseInvalidOutput,
+	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
 }
 
 // editWords cuts text as a user typed it into words: at white space, but never at a no-break space, which is part of

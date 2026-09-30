@@ -761,11 +761,31 @@ paragraph — all 132 `anchored` refusals are a link over the edited paragraph's
 hand-built fixtures (every kind moved and read back, a shared destination moved once). Review
 `code-reviews/v1.170.0-p07s04-2026-09-30.md`.
 
-#### P07.S05 — a paragraph set on another page
+#### P07.S05 — a paragraph set on another page *(done 2026-09-30, v1.171.1)*
 A paragraph re-set onto a DIFFERENT page, as its own text object: its fonts carried into that page's resources (a name
 collision renamed, never overwritten), with the colour, render mode and graphics state it was drawn under. Acceptance:
 the paragraph reads back on the target page with its text, font and size; the source page no longer draws it; a state
 the walker cannot carry refuses by name.
+
+**PIN 2026-09-30 (slice grill, read at the lines).** The walker tracks NO colour, no ExtGState and no clip, and nothing in
+`pdfops` merges resources between pages. **Deleting from the source needs no restore**: each show is replaced by what it
+does besides drawing — `Tj`/`TJ` by nothing, `'` by `T*`, `"` by `aw Tw ac Tc T*` — so every later state is exact, and only
+a show relying on the text matrix refuses (as a move's does). **Rung 2, recorded**: colour is carried in DEVICE spaces only
+(`g`/`rg`/`k`, `cs /Device…` + `sc`), anything else — an ExtGState, a colour space, a pattern — refuses `state-not-carried`;
+a clip is not carried, and a run its clip would cut refuses the same way; a paragraph with marked content bound to its
+page's structure refuses `tagged-across-pages`.
+
+**Tasks** (slice grill, 2026-09-30): T01 — the walker records per run its fill and stroke as re-emittable device-colour
+operators, whether any `gs` or non-device colour is in force, and its clip box. T02 — `deleteRuns`. T03 — `setRunsOn`: the
+target's content wrapped `q … Q`, then `q <fill> <stroke> BT`, each run's `Tf`/`Tc`/`Tw`/`Tz`/`Ts`/`Tr` and its matrix in
+user space translated with its own show, `ET Q`; fonts under the target's existing name for the same object, else a fresh
+one — never overwritten. T04 — `state-not-carried`, `tagged-across-pages`, sentences. T05 — a two-page read-back (text,
+font, size, colour, position), the source no longer drawing it, each refusal, a font-name collision.
+**Closed 2026-09-30.** Deleting from the source, carrying to the target (the target's own unbalanced state closed first),
+five named refusals. **Measured, and parked**: every multi-page real-producer document is tagged (14/14), so the carry
+refuses all 641 of their page-1 paragraphs `tagged-across-pages` and reaches only untagged documents — `/pending 779` asks
+Dan whether P07 carries the structure tree (recommended) or ships with the refusal. Review
+`code-reviews/v1.171.0-p07s05-2026-09-30.md`.
 
 #### P07.S06 — flow across pages
 When the room is not enough, the region's last paragraphs move to the top of the next page's region, which moves down in

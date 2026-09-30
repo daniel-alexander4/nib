@@ -249,6 +249,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"flowmove.go": {
 			"textRun": "a move re-draws the runs of a paragraph the grouping door already made, each at its own text matrix shifted; it groups nothing (text-reflow P07.S02)",
 		},
+		"flowpage.go": {
+			"textRun": "a carry deletes a paragraph's runs from one page and draws them on another, each by its own show; it groups nothing (text-reflow P07.S05)",
+		},
 		"flowregion.go": {
 			"textRun": "the flow region boxes the runs the grouping door set aside (pageLayout.loose) as obstacles to moving text; it groups nothing (text-reflow P07.S01)",
 		},
