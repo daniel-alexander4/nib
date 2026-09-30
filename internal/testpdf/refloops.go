@@ -253,3 +253,13 @@ func SharedNameTree(depth int) []byte {
 	}
 	return onePage("", "", "/Names << /JavaScript 10 0 R >>", objs)
 }
+
+// SelfSeparationImage is /pending 614's reported shape: an image whose /ColorSpace is a Separation naming itself
+// as its alternate, with a tint transform that is not a function — found killing the process through PreparePDFA
+// and through the ceremony arrival gate's record read.
+func SelfSeparationImage() []byte {
+	return onePage("/XObject << /Im 11 0 R >>", "", "", map[int]string{
+		10: "[/Separation /X 10 0 R 0]",
+		11: "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace 10 0 R /BitsPerComponent 8 /Length 1 >>\nstream\n\x00\nendstream",
+	})
+}
