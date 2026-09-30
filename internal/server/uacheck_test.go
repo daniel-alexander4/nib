@@ -43,7 +43,7 @@ func TestTheUAReportRouteReachesTheDoorAndPublishesEveryVerdictAsAWord(t *testin
 		}
 	}
 	// The fixture fails clauses nib checks (it has no structure tree), so the door must refuse, and say why.
-	if rep.Conformant {
+	if rep.AllCheckedPass {
 		t.Error("the report says a fixture with no structure tree is conformant")
 	}
 	if len(rep.Refusals) == 0 {

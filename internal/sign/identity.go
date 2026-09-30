@@ -518,10 +518,12 @@ func refuseCertified(r *dpdf.Reader) error {
 // libraryReader is the one way the signing paths open `digitorus/pdf`'s reader, and it is ADR-041's
 // rule applied to them: **nothing enters the library that pdfcpu cannot read** (/pending 712 R6-2,
 // /pending 761). `Verify` had the gate and the signer did not — `runSign` and the certification walk
-// each called `dpdf.NewReader` on the bytes they were handed, so a document whose object stream
-// spins or exhausts memory in the library's lexer (an unterminated `[`, `<` or `(` at the stream's
-// clean end, which pdfcpu refuses) reached it on the co-sign path, where no `recover` contains an
-// out-of-memory. The lookup-cost ceiling (`libraryLookupCost`, /pending 751) follows for the reason
+// each called `dpdf.NewReader` on the bytes they were handed. What the gate keeps out is what pdfcpu
+// cannot READ — a damaged object-stream `/Filter` (ADR-041), and a stream dictionary whose `/N` or
+// `/First` is a reference, which compounds per level in the library and which the reader does not
+// charge (ADR-067). It does NOT keep out the library's endless loops: an unterminated `[`, `<` or `(`
+// at an object stream's clean end, and `endobj` inside an array, are documents pdfcpu reads, and the
+// patched reader bounds those itself (ADR-068). The lookup-cost ceiling (`libraryLookupCost`, /pending 751) follows for the reason
 // the sweep runs it: the library would pay that cost too.
 //
 // The sweep opens its own reader and is not routed here, because both of its callers run the gate

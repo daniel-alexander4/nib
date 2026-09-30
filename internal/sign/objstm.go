@@ -66,7 +66,8 @@ import (
 // — only the dictionary's own text is. An indirect `/Type`, `/N` or `/First` compounds per level (three
 // references a level into the next stream is 3^d reads a lookup; d = 8 is 27 s a pass), and pdfcpu
 // refuses every such stream ("obj stream dict missing entry First", "corrupt object stream"), so
-// `Verify`'s readability gate keeps it from the sweep; a path to the reader that skips that gate does not.
+// `Verify`'s readability gate keeps it from the sweep; a path to the reader that skips that gate does not
+// (`signatureBlobPresent` is one, deliberately — see its doc, /pending 712).
 const (
 	lookupPairWeight     = 200
 	lookupByteWeight     = 100

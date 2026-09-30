@@ -679,6 +679,15 @@ func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
 // only signature-shaped dictionaries, and this answers for any `FT /Sig` field with contents — which
 // moves a document towards `Unsigned`, the unsafe direction. `verifyIndexed` asks the sweep the same
 // question beside it (`anyCheckableBlob`), so a `/Kids`-nested blob this walk cannot see is still seen.
+//
+// **Not behind ADR-041's gate, deliberately** (/pending 712 R6-2, decided 2026-09-30). The gate would
+// cost a pdfcpu read — +20-40 ms, as recorded when it was parked — on every save, undo, reflow and tag
+// write, and it would not buy what it was parked for: the library's endless loops
+// are bounded in the patched reader (ADR-068), and pdfcpu reads those documents anyway. What the gate
+// alone still keeps out is ADR-067's declared shape — a stream dictionary referencing objects, which
+// compounds per level — so an ungated caller is exposed to that cost on bytes pdfcpu has not read.
+// The one peer-facing caller, the ceremony arrival gate, reaches this only after `CheckRecord` has
+// read the document through pdfcpu (`pdfops.CeremonyRecord`) and returned on any refusal.
 func signatureBlobPresent(pdf []byte) (present bool) {
 	// The recover is positional: it must cover the whole parse below, including the lazy
 	// dereferences inside the Key/Index walk, which is where most of the 115 panics landed.

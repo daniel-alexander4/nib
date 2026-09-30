@@ -5389,7 +5389,7 @@ function renderUAReport(rep) {
   const count = (v) => results.filter((r) => r.verdict === v).length;
   const fails = count('fail');
   const unchecked = count('cannot check') + count('not run');
-  if (rep.conformant) {
+  if (rep.allCheckedPass) {
     els.uaSummary.textContent = 'Every clause Nib checks passes — Nib checks only part of PDF/UA, so this is not a conformance certificate.';
   } else {
     const parts = [];
