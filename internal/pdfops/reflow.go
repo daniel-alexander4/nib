@@ -218,6 +218,7 @@ const (
 	causeEmptyLine       = "empty-line"       // a line of the paragraph draws no word
 	causeNoSpaceWidth    = "no-space-width"   // the paragraph draws no space between words to measure one by
 	causeDegenerate      = "degenerate-state" // a zero or infinite scale, size or coordinate
+	causeClips           = "text-clips"       // a run to be moved is drawn in a clipping mode (Tr 4-7): moving it moves the clip
 )
 
 // ReflowCauses is every cause a reflow can fall back on, the server's included — the list the editor must have a
@@ -226,7 +227,7 @@ var ReflowCauses = []string{
 	causeMissingGlyph, causeMixedState, causeMixedContent, causeInlineFollower, causeTagged, causeReplacementText,
 	causeNoSpaceGlyph, causeGrows, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
 	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
-	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, ReflowCauseSigned, ReflowCauseInvalidOutput,
+	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, ReflowCauseSigned, ReflowCauseInvalidOutput,
 }
 
 // editWords cuts text as a user typed it into words: at white space, but never at a no-break space, which is part of

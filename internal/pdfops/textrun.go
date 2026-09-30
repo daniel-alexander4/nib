@@ -117,6 +117,7 @@ type textRun struct {
 // to user space along the baseline.
 type runTextState struct {
 	tm, tlm        runMatrix
+	ctm            runMatrix // the CTM the run was drawn under: text space reaches user space through tm·ctm (P07.S02)
 	tfSize, tc, tw float64
 	th, ts, scale  float64
 	tr             int // the text rendering mode: 3 draws nothing, 7 only clips
@@ -1053,7 +1054,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	if w.keepGlyphs {
 		run.kernAfter = pendingKern * scale
 		run.face = gs.font
-		run.state = runTextState{tm: textAt, tlm: tlm, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
+		run.state = runTextState{tm: textAt, tlm: tlm, ctm: gs.ctm, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
 	}
 	run.text = string(text)
 	run.width = advance * scale
