@@ -82,7 +82,7 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 				return err
 			}
 			if emb {
-				dropCIDSetsOf(ctx, faces)
+				ownFacesOf(ctx, faces)
 				repairToUnicodeOf(ctx, faces)
 			}
 			// A stamp whose configuration could not be corrected is still a stamp.

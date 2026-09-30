@@ -147,7 +147,7 @@ func embeddedFontsAreHonest(pdf []byte) []byte {
 // was not, one rule applied two ways (ADR-009).
 func embeddedFacesAreHonest(pdf []byte, faces []string) []byte {
 	return rewriteOrDropClaim(pdf, func(ctx *model.Context) error {
-		dropCIDSetsOf(ctx, faces)
+		ownFacesOf(ctx, faces)
 		return nil
 	})
 }

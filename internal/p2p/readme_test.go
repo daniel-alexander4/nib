@@ -176,6 +176,44 @@ func TestRenderReadmeRefusesAnOverflowingBody(t *testing.T) {
 	}
 }
 
+// TestAPreparedDocumentIsAFunctionOfItsInputs — /pending 757. The readme has no inputs and a ceremony
+// document's inputs are the user's bytes, the id, the convener and the count, so rendering either twice
+// must give one ContentDigest: that digest is the ceremony record's DocHash, and a DocHash nobody can
+// recompute from the inputs is not evidence about them. On base every call differed, because pdfcpu
+// draws each embedded face's subset tag from the clock and ContentDigest reads the font dictionaries
+// (`pdfops.retagSubsetsOf`).
+func TestAPreparedDocumentIsAFunctionOfItsInputs(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		make func() ([]byte, error)
+	}{
+		{"RenderReadme", RenderReadme},
+		{"PrepareDocument", func() ([]byte, error) { return PrepareDocument(base) }},
+		{"PrepareCeremonyDocument", func() ([]byte, error) {
+			return PrepareCeremonyDocument(base, CeremonyID{1, 2, 3}, []byte("convener"), 3)
+		}},
+	} {
+		var d [2]string
+		for i := range d {
+			out, err := c.make()
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if d[i], err = pdfops.ContentDigest(out); err != nil {
+				t.Fatalf("%s: digest: %v", c.name, err)
+			}
+		}
+		if d[0] != d[1] {
+			t.Errorf("%s: two renders of the same inputs have different ContentDigests (%.12s… and %.12s…) — "+
+				"the prepared document's DocHash cannot be reproduced from what went into it", c.name, d[0], d[1])
+		}
+	}
+}
+
 // Every rendered line must fit the text column.
 //
 // **What this catches, and what it deliberately cannot.** It measures with the same
