@@ -883,6 +883,15 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 				if strm.Kind() != Stream {
 					panic("not a stream")
 				}
+				// nib (/pending 768, NOTICE.nib divergence 5): these three are read on EVERY lookup, so one
+				// that is a reference resolves another object per lookup — and when that object sits in an
+				// object stream whose dictionary does the same, the cost compounds per level (3^d reads a
+				// lookup). A reference here is refused; pdfcpu refuses such streams too.
+				for _, k := range []name{"Type", "N", "First"} {
+					if _, ref := strm.data.(stream).hdr[k].(objptr); ref {
+						panic(ErrObjStmIndirectKey)
+					}
+				}
 				if strm.Key("Type").Name() != "ObjStm" {
 					panic("not an object stream")
 				}
@@ -1276,6 +1285,10 @@ type objStmCache struct {
 	spent   int64 // member bytes the lookups have consumed, over every lookup (/pending 760)
 	lookups int64 // member reads
 }
+
+// ErrObjStmIndirectKey is raised (as a panic) when an object stream's /Type, /N or /First is a reference,
+// which the lookup would resolve afresh every time (nib, /pending 768; NOTICE.nib divergence 5).
+var ErrObjStmIndirectKey = errors.New("malformed PDF: an object stream's /Type, /N or /First is a reference")
 
 // ErrObjStmTooCostly is raised (as a panic, as every malformation here is) when an object stream's
 // member reads cost more than the stream can honestly account for (nib, /pending 760; NOTICE.nib).
