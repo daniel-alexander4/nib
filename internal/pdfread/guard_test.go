@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestEveryValidatingReadRoutesThroughTheDoor — ADR-009: the `/UseCMap` refusal (`/pending 675`) and the optimize
+// TestEveryValidatingReadRoutesThroughTheDoor — ADR-009: the reference door (`/pending 675`, `/pending 764`) and the optimize
 // budget (`/pending 706`, `/pending 714`) hold only if nothing reaches pdfcpu's validator or its optimize pass
 // around this package. It checks ROUTING, over every non-test Go file in the module outside this package:
 //
@@ -19,7 +19,7 @@ import (
 //     `api.ValidateContext`, `api.OptimizeContext`, `pdfcpu.OptimizeXRefTable`), and no import of pdfcpu's
 //     `validate` package — read through `Validated`/`ReadOptimized`, optimize through `Optimize`.
 //  2. In any function that calls pdfcpu's `api`, no `bytes.NewReader` except as the direct argument of a
-//     call that is not pdfcpu's (a CSV or image decoder), of `api.ReadContext` (the unvalidated read, which does not follow `/UseCMap`) or at a named not-a-PDF
+//     call that is not pdfcpu's (a CSV or image decoder), of `api.ReadContext` (the unvalidated read, which follows no reference chain) or at a named not-a-PDF
 //     position — `api.Create`'s JSON spec, `api.ImportImages`' images, `api.ImageWatermarkForReader`'s image.
 //     Every other reader handed to pdfcpu comes from `Reader`.
 //
@@ -176,7 +176,7 @@ func TestEveryValidatingReadRoutesThroughTheDoor(t *testing.T) {
 			for _, r := range readers {
 				if !allowed[r] {
 					t.Errorf("%s:%d: %s hands pdfcpu a reader it built itself — take it from pdfread.Reader, so "+
-						"the /UseCMap loop is refused before pdfcpu validates", rel, fset.Position(r.Pos()).Line, fn.Name.Name)
+						"the reference door runs before pdfcpu validates", rel, fset.Position(r.Pos()).Line, fn.Name.Name)
 				}
 			}
 		}

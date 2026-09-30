@@ -58,8 +58,8 @@ const (
 	maxPairDepth = 1 << 12
 )
 
-// ReadOptimized is nib's one `ReadValidateAndOptimize`: it reads and validates through `Validated` (so a `/UseCMap`
-// cycle is refused before pdfcpu's validator can recurse on it), exactly as pdfcpu does, then optimizes only
+// ReadOptimized is nib's one `ReadValidateAndOptimize`: it reads and validates through `Validated` (so the reference door
+// runs before pdfcpu's validator can recurse), exactly as pdfcpu does, then optimizes only
 // when `Unaffordable` says the pass is bounded.
 func ReadOptimized(pdf []byte, conf *model.Configuration) (*model.Context, error) {
 	return readOptimized(pdf, conf, false)

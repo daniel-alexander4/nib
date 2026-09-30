@@ -134,6 +134,12 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"uacheck tests so every read door is tested against the same documents.",
 		"UseCMapChain": "test-support — /pending 675's legitimate /UseCMap chain, the no-false-refusal half of " +
 			"those same tests.",
+		"RefLoops": "test-support — /pending 764's loop per unguarded edge of the reference door, each paired with " +
+			"the same document ending, for the pdfread tests.",
+		"SharedPatterns":  "test-support — /pending 764's shared-pattern documents, the path-budget half of those tests.",
+		"SharedNameTree":  "test-support — /pending 764's shared name tree, the path budget over a tree pdfcpu caps only in depth.",
+		"ChainedPatterns": "test-support — /pending 764's chained-pattern documents, the depth half of those tests.",
+		"FanIn":           "test-support — /pending 764's pages sharing one function, the per-page half of the path budget.",
 		"WithContent": "test-support — a one-page document drawing exactly the operators a test names, for the reflow " +
 			"server tests (text-reflow P06.S05) that must control what the page's content stream holds.",
 		"SplitContents": "test-support — ADR-056's divided-page fixtures (a fused `Tj`+`ET`, an unterminated " +

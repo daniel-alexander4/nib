@@ -64,7 +64,7 @@ func FlagsJSON(pdf []byte) ([]byte, error) {
 	// `api.Properties` restated over the read door (pkg/api/property.go:29, v0.13.0: `LISTPROPERTIES`, then the
 	// context's properties), because the server runs this on every document it answers for: `pdfread.Reader`
 	// in front of the wrapper would parse each file twice (measured +30-85% here on 100 KB-6 MB producer
-	// files), where the door checks the `/UseCMap` loop on the read it already makes (`/pending 675`).
+	// files), where the door checks for reference loops on the read it already makes (`/pending 675`, `/pending 764`).
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.LISTPROPERTIES
 	ctx, err := pdfread.ReadOptimized(pdf, conf)

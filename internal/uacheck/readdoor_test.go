@@ -35,7 +35,7 @@ func TestTheCheckerRefusesAUseCMapLoop(t *testing.T) {
 		if len(c.Loop) < 2 {
 			t.Fatalf("setup: %s carries no loop", name)
 		}
-		if err := checkWithin(t, 20, name, c.PDF); !errors.Is(err, pdfread.ErrUseCMapCycle) {
+		if err := checkWithin(t, 20, name, c.PDF); !errors.Is(err, pdfread.ErrReferenceCycle) {
 			t.Errorf("Check over %s returned %v, want the /UseCMap loop refused", name, err)
 		}
 	}
