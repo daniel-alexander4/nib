@@ -164,6 +164,8 @@ type pageRuns struct {
 	// slice; a reader failure is an error, never this. A show operator with an empty string draws
 	// nothing and counts as nothing: counting operators instead was a distinction no caller reads.
 	noText bool
+	// marks are the page's non-text marks, boxed — kept only by reflow's reader (`PLAN-text-reflow.md` P07.S01).
+	marks []pageMark
 	// sequences are the page's marked-content sequences that carry an MCID, in the order they open —
 	// those inside the forms it draws included — so a writer can find an element's content whether or
 	// not it is text (P09.S03).
@@ -194,12 +196,13 @@ func pageBudget(shared []*formWalkBudget) *formWalkBudget {
 	return newFormWalkBudget(1)
 }
 
-// readPageGlyphRuns is readPageRuns with each run's glyphs kept (`textRun.glyphs`) — reflow's reader.
+// readPageGlyphRuns is readPageRuns with each run's glyphs kept (`textRun.glyphs`), and the page's non-text marks
+// (`pageRuns.marks`) — reflow's reader.
 func readPageGlyphRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
 	return readPageRunsKeeping(ctx, pg, true, newFormWalkBudget(1))
 }
 
-func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keepGlyphs bool, budget *formWalkBudget) (pageRuns, error) {
+func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keep bool, budget *formWalkBudget) (pageRuns, error) {
 	pageNr := pg.Nr
 	return containRunRead(pageNr, func() (pageRuns, error) {
 		d, attrs, err := pg.Dict, pg.Attrs, pg.Err
@@ -217,14 +220,14 @@ func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keepGlyphs bool, b
 		w := newRunWalker(ctx.XRefTable)
 		budget.nextPage()
 		w.budget = budget
-		w.keepGlyphs = keepGlyphs
+		w.keepGlyphs, w.keepMarks = keep, keep
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
 		// Runs from a walk that stopped are the runs of part of the page: every caller would read the rest
 		// as absent, so the page is an error (`formWalkBudget`).
 		if err := w.budget.err(); err != nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text: %w", pageNr, err)
 		}
-		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs}, nil
+		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks}, nil
 	})
 }
 
@@ -270,10 +273,11 @@ type runGState struct {
 	tc, tw   float64
 	th       float64 // Tz / 100
 	tl, ts   float64
-	tr       int // `Tr`, the text rendering mode
+	tr       int     // `Tr`, the text rendering mode
+	lw       float64 // `w`, the line width a stroke is drawn at — read only for a mark's box (P07.S01)
 }
 
-func newRunGState() runGState { return runGState{ctm: runIdentity, th: 1} }
+func newRunGState() runGState { return runGState{ctm: runIdentity, th: 1, lw: 1} }
 
 // runFont is what the walk needs from a font dictionary.
 type runFont struct {
@@ -440,6 +444,10 @@ type runWalker struct {
 	xt *model.XRefTable
 	// keepGlyphs asks `show` to record each run's glyphs (P06.S01). Off for every reader but reflow's.
 	keepGlyphs bool
+	// keepMarks asks the walk to record every non-text mark with its box (`pageMark`, P07.S01). Off for every reader but
+	// reflow's.
+	keepMarks bool
+	marks     []pageMark
 	// fonts holds every font the walk has loaded, keyed by its object number when the resource names an
 	// indirect font and by the dictionary's identity when it is a direct one (`/pending 723`): a direct
 	// font reloaded at every `Tf` re-parsed its `/ToUnicode` each time, 17.7 s for 14.4 KB of content.
@@ -737,6 +745,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	tm, tlm := runIdentity, runIdentity
 	var ops []runOperand
 	toks := contentstream.Tokenize(src)
+	// path is the box of the path under construction, in user space; a painting operator records it and every path
+	// operator that ends one (`n` included) clears it.
+	var path markBox
 	// A stream's sequences end with the stream: an unbalanced `EMC` inside a form cannot close the page's
 	// sequence, and a form that leaves one open cannot tag what the page draws after it.
 	base, seqBase := len(w.mcStack), len(w.seqOpen)
@@ -792,7 +803,10 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	for i := 0; i < len(toks); i++ {
 		tok := toks[i]
 		switch tok.Kind {
-		case contentstream.Whitespace, contentstream.InlineImage:
+		case contentstream.InlineImage:
+			w.markImage(markInlineImage, gs)
+			continue
+		case contentstream.Whitespace:
 			continue
 		case contentstream.ArrayOpen:
 			end := fontcode.MatchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
@@ -821,6 +835,37 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			if v, ok := numbers(6); ok {
 				gs.ctm = runMatrix{v[0], v[1], v[2], v[3], v[4], v[5]}.mul(gs.ctm)
 			}
+		case "w":
+			if v, ok := numbers(1); ok {
+				gs.lw = v[0]
+			}
+		case "m", "l":
+			if v, ok := numbers(2); ok {
+				path.add(gs.ctm, v...)
+			}
+		case "c":
+			// A Bézier curve lies inside its control polygon's hull, so the control points bound it.
+			if v, ok := numbers(6); ok {
+				path.add(gs.ctm, v...)
+			}
+		case "v", "y":
+			if v, ok := numbers(4); ok {
+				path.add(gs.ctm, v...)
+			}
+		case "re":
+			if v, ok := numbers(4); ok {
+				path.add(gs.ctm, v[0], v[1], v[0]+v[2], v[1], v[0], v[1]+v[3], v[0]+v[2], v[1]+v[3])
+			}
+		case "S", "s", "B", "B*", "b", "b*":
+			w.markPath(path, gs, true)
+			path = markBox{}
+		case "f", "F", "f*":
+			w.markPath(path, gs, false)
+			path = markBox{}
+		case "n":
+			path = markBox{}
+		case "sh":
+			w.markShading()
 		case "BT":
 			tm, tlm = runIdentity, runIdentity
 		case "Tf":
@@ -938,8 +983,12 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 		case "Do":
 			if os := last(1); os != nil {
-				if name, ok := os[0].name(src); ok && w.drawForm(res, name, gs, depth, visiting) {
-					w.markDrawsForm()
+				if name, ok := os[0].name(src); ok {
+					if w.drawForm(res, name, gs, depth, visiting) {
+						w.markDrawsForm()
+					} else if w.drawsImage(res, name) {
+						w.markImage(markImage, gs)
+					}
 				}
 			}
 		}
@@ -1085,14 +1134,17 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 	if ir, isRef := obj.(types.IndirectRef); isRef {
 		key = ir.ObjectNumber.Value()
 		if visiting[key] {
+			w.markForm(sd, gs)
 			return true
 		}
 	}
 	if !w.budget.deeper(depth, maxFormDepth) {
+		w.markForm(sd, gs)
 		return true
 	}
 	body := w.budget.formContent(sd, obj)
 	if body == nil || !w.budget.enterForm(len(body)) {
+		w.markForm(sd, gs)
 		return true
 	}
 	m := runIdentity

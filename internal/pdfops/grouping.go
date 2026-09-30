@@ -69,6 +69,10 @@ type pageLayout struct {
 	// mis-ordered.
 	unsupported string
 	noText      bool
+	// loose are the runs no line holds (`joinsALine`) and marks the page's non-text marks — kept only by reflow's reader
+	// (`readPageGlyphLayout`), which must know what else is drawn where text will move (P07.S01).
+	loose []textRun
+	marks []pageMark
 }
 
 // readPageLayout is the door consumers call: a page's runs, grouped.
@@ -92,9 +96,16 @@ func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error
 		return pageLayout{}, err
 	}
 	if pr.noText {
-		return pageLayout{noText: true}, nil
+		return pageLayout{noText: true, marks: pr.marks}, nil
 	}
-	return groupRuns(pr.runs), nil
+	l := groupRuns(pr.runs)
+	for _, r := range pr.runs {
+		if !joinsALine(r) {
+			l.loose = append(l.loose, r)
+		}
+	}
+	l.marks = pr.marks
+	return l, nil
 }
 
 // joinGapEm is the widest horizontal gap, in ems of the larger run, that still joins two runs on a
@@ -156,9 +167,7 @@ func rotatedRuns(runs []textRun) int {
 func lineSegments(runs []textRun) []textLine {
 	var rs []textRun
 	for _, r := range runs {
-		// An artifact is text the document says is not content — a watermark, a running header — so it
-		// joins no line and starts no paragraph.
-		if !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != "" {
+		if joinsALine(r) {
 			rs = append(rs, r)
 		}
 	}
@@ -190,6 +199,12 @@ func lineSegments(runs []textRun) []textLine {
 		out[i].text = strings.TrimSpace(out[i].text)
 	}
 	return out
+}
+
+// joinsALine says whether a run belongs in a line. An artifact is text the document says is not content — a watermark, a
+// running header — so it joins no line and starts no paragraph; nor does a run that draws only white space.
+func joinsALine(r textRun) bool {
+	return !r.artifact && strings.TrimFunc(r.text, unicode.IsSpace) != ""
 }
 
 func approxBaseline(a, b textRun) bool {

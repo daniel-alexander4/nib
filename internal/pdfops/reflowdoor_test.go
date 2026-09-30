@@ -2,23 +2,8 @@ package pdfops
 
 import (
 	"errors"
-	"math"
 	"testing"
 )
-
-// paragraphBox is the box a paragraph's lines occupy: their extent across, and from the lowest descender to the highest
-// ascender, taken as the size below and above each baseline — the glyph boxes are not read, so this is the lines' reach,
-// not their ink. A test instrument: it is what `TestTheReflowDoor` holds the rewrite inside.
-func paragraphBox(p textParagraph) [4]float64 {
-	b := [4]float64{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}
-	for _, l := range p.lines {
-		b[0] = math.Min(b[0], l.x0)
-		b[2] = math.Max(b[2], l.x1)
-		b[1] = math.Min(b[1], l.y-0.25*l.size)
-		b[3] = math.Max(b[3], l.y+l.size)
-	}
-	return b
-}
 
 func firstParagraphBox(t *testing.T, pdf []byte) [4]float64 {
 	t.Helper()
