@@ -37,3 +37,29 @@ func TestAUseCMapLoopIsRefusedAtEveryDoor(t *testing.T) {
 		t.Errorf("FlagsJSON refused a /UseCMap chain with no loop: %v", err)
 	}
 }
+
+// TestAReferenceLoopIsRefusedAtEveryDoor — `/pending 764` (ADR-069) and `/pending 614`: every loop pdfread's door
+// refuses is refused through each pdfops entry that validates, including PreparePDFA and CeremonyRecord (the
+// arrival gate's record read), which /pending 614 found killing the process on a Separation colour space naming
+// itself. pdfread's own test finds each loop on the unvalidated read first; here a door that bypassed pdfread
+// would not fail, it would kill the test binary.
+func TestAReferenceLoopIsRefusedAtEveryDoor(t *testing.T) {
+	doors := map[string]func([]byte) error{
+		"FlagsJSON (the server's Open)": func(b []byte) error { _, err := FlagsJSON(b); return err },
+		"PageCount (validated door)":    func(b []byte) error { _, err := PageCount(b); return err },
+		"PreparePDFA":                   func(b []byte) error { _, _, err := PreparePDFA(b); return err },
+		"CeremonyRecord (arrival gate)": func(b []byte) error { _, err := CeremonyRecord(b); return err },
+		"Inspect (undo)":                func(b []byte) error { _, err := inspectionRead(b); return err },
+	}
+	cases := map[string][]byte{"/pending 614's self-naming Separation": testpdf.SelfSeparationImage()}
+	for _, c := range testpdf.RefLoops() {
+		cases[c.Edge] = c.Loop
+	}
+	for name, pdf := range cases {
+		for door, f := range doors {
+			if err := f(pdf); !errors.Is(err, pdfread.ErrReferenceCycle) {
+				t.Errorf("%s over %s returned %v, want the loop refused", door, name, err)
+			}
+		}
+	}
+}
