@@ -69,8 +69,11 @@ func pruneOrphanedAcroForm(ctx *model.Context) (bool, error) {
 		}
 	}
 
-	kept := keepFields(xt, fields, func(nr int, _ types.Dict) bool { return live[nr] }, 0)
-	if len(kept) == len(fields) {
+	// "Changed" is asked of the whole rebuild, never of the top-level count: `keepFields` rewrites a
+	// surviving field's /Kids in place, so a parent that lost one of two widgets keeps the count equal
+	// while its tree changed (`/pending 709` R2-5).
+	kept, changed := keepFieldsChanged(xt, fields, func(nr int, _ types.Dict) bool { return live[nr] }, 0)
+	if !changed {
 		return false, nil // every field still has its widget: an ordinary document, untouched
 	}
 	if len(kept) == 0 {

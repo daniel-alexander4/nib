@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"io"
 	"nib/internal/pdfread"
 	"strings"
 
@@ -89,12 +90,22 @@ func ClaimsUA(pdf []byte) (bool, error) {
 }
 
 // PacketClaimsUA is ClaimsUA over a packet already in hand.
+//
+// **It fails CLOSED** (`/pending 709` R2-11). It is the oracle for "nothing carries an identification
+// it did not verify", so a packet the decoder rejects part-way — an undeclared entity, a stray `&` —
+// must not read as "no claim": a reader more lenient than Go's decoder still sees the identification
+// after the point this one stopped. On a decode error the answer falls back to whether the namespace
+// is named at all, which over-reports (a PDF/A extension schema names it and claims nothing) and so can
+// fail a test, never pass one.
 func PacketClaimsUA(packet string) bool {
 	dec := xml.NewDecoder(strings.NewReader(packet))
 	for {
 		tok, err := dec.Token()
-		if err != nil {
+		if err == io.EOF {
 			return false
+		}
+		if err != nil {
+			return strings.Contains(packet, uaNS)
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {

@@ -681,7 +681,7 @@ func dropSignature(xt *model.XRefTable, root types.Dict, pages []types.Dict) {
 			if !ok {
 				continue
 			}
-			if ad := derefDict(xt, ar); ad != nil && nameVal(ad, "FT") == "Sig" {
+			if ad := derefDict(xt, ar); ad != nil && inheritedFieldType(xt, ad) == "Sig" {
 				mark(ar, 0)
 			}
 		}
@@ -704,6 +704,32 @@ func dropSignature(xt *model.XRefTable, root types.Dict, pages []types.Dict) {
 	delete(form, "SigFlags")
 	delete(form, "XFA")
 	pruneFieldRefs(xt, form, "CO", doomed)
+}
+
+// maxFieldAncestry bounds the /Parent climb `inheritedFieldType` makes. The field walk's own depth
+// bound is 50 (`keepFieldsMemo`), and a field deeper than it has already been dropped from the form.
+const maxFieldAncestry = 50
+
+// inheritedFieldType is a field or widget's `/FT`, read from the nearest dictionary on its `/Parent`
+// chain that carries one — the key is inheritable from any ancestor (ISO 32000-1 Table 220), so a
+// reading of the widget and its direct parent only calls a widget two levels under a `/FT /Sig` field
+// "not a signature" (`/pending 709` R2-13). The one reading for every site that asks of a single
+// dictionary; `eachFormField` callers read `/FT` on the node itself because the walk visits every
+// ancestor anyway. A cycle or a chain past the bound answers "".
+func inheritedFieldType(xt *model.XRefTable, d types.Dict) string {
+	seen := map[int]bool{}
+	for i := 0; d != nil && i <= maxFieldAncestry; i++ {
+		if ft := nameVal(d, "FT"); ft != "" {
+			return ft
+		}
+		ref, ok := d["Parent"].(types.IndirectRef)
+		if !ok || seen[ref.ObjectNumber.Value()] {
+			return ""
+		}
+		seen[ref.ObjectNumber.Value()] = true
+		d = derefDict(xt, ref)
+	}
+	return ""
 }
 
 // stripAnnots removes the named annotations from a page, deleting /Annots when it empties.
@@ -743,11 +769,23 @@ func stripAnnots(xt *model.XRefTable, page types.Dict, doomed map[int]bool) {
 // answered "not kept": the back edge is dropped from the rebuilt /Kids, and its first visit still
 // decides the field on its own merits.
 func keepFields(xt *model.XRefTable, fields types.Array, keep func(nr int, d types.Dict) bool, depth int) types.Array {
-	return keepFieldsMemo(xt, fields, keep, depth, map[int]bool{})
+	out, _ := keepFieldsChanged(xt, fields, keep, depth)
+	return out
 }
 
-func keepFieldsMemo(xt *model.XRefTable, fields types.Array, keep func(nr int, d types.Dict) bool, depth int, decided map[int]bool) types.Array {
+// keepFieldsChanged is keepFields that also reports whether the rebuild changed anything — a field
+// dropped at ANY depth, not only at the top (`/pending 709` R2-5). The rebuild rewrites a surviving
+// field's /Kids in place, so comparing the top-level lengths cannot see a nested widget that went: the
+// caller that did so skipped its write and the orphaned kid stayed in the bytes.
+func keepFieldsChanged(xt *model.XRefTable, fields types.Array, keep func(nr int, d types.Dict) bool, depth int) (types.Array, bool) {
+	changed := false
+	out := keepFieldsMemo(xt, fields, keep, depth, map[int]bool{}, &changed)
+	return out, changed || len(out) != len(fields)
+}
+
+func keepFieldsMemo(xt *model.XRefTable, fields types.Array, keep func(nr int, d types.Dict) bool, depth int, decided map[int]bool, changed *bool) types.Array {
 	if depth > 50 {
+		*changed = *changed || len(fields) > 0
 		return nil
 	}
 	out := make(types.Array, 0, len(fields))
@@ -770,9 +808,13 @@ func keepFieldsMemo(xt *model.XRefTable, fields types.Array, keep func(nr int, d
 		decided[nr] = false // in progress: a cycle back to here reads "not kept"
 		kids := derefArray(xt, d["Kids"])
 		if len(kids) > 0 {
-			live := keepFieldsMemo(xt, kids, keep, depth+1, decided)
+			live := keepFieldsMemo(xt, kids, keep, depth+1, decided, changed)
 			if len(live) == 0 {
+				*changed = true
 				continue
+			}
+			if len(live) != len(kids) {
+				*changed = true
 			}
 			d["Kids"] = live
 			decided[nr] = true
@@ -909,6 +951,16 @@ func derefString(xt *model.XRefTable, o types.Object) (string, bool) {
 // which would put the removed page's /Contents back into the output. pdfcpu's own migration does
 // not solve this either: it patches the reference through a lookup the dropped page is absent from,
 // which yields `0 0 R`.
+//
+// **The question is `destReachesAKeptPage`'s, never a narrower one** (ADR-009, `/pending 709` R2-4).
+// This used to ask `destNamesAKeptPage`, which cannot resolve a NAMED destination — so every link
+// written as `/Dest (name)`, `/Dest /name` or `/A << /S /GoTo /D (name) >>`, which is how Word and
+// LaTeX's hyperref write internal links, lost its target even when the page it named was kept, while
+// the outline carry answered the same question correctly one file over. It runs after `pruneNames`,
+// so a name still in the tree names a kept page, and a name that went resolves to nothing.
+//
+// A name is also the one shape that cannot re-anchor a dropped page on its own: it is a string, and
+// the page is reached only through the tree `pruneNames` has already cut.
 func unlinkDestinations(xt *model.XRefTable, keptPages []types.Dict, kept map[int]bool) {
 	for _, page := range keptPages {
 		for _, a := range derefArray(xt, page["Annots"]) {
@@ -916,15 +968,60 @@ func unlinkDestinations(xt *model.XRefTable, keptPages []types.Dict, kept map[in
 			if ad == nil {
 				continue
 			}
-			if _, has := ad["Dest"]; has && !destNamesAKeptPage(xt, ad["Dest"], kept) {
+			if _, has := ad["Dest"]; has && !destReachesAKeptPage(xt, ad["Dest"], kept) {
 				delete(ad, "Dest")
 			}
 			action := derefDict(xt, ad["A"])
 			if action == nil {
 				continue
 			}
-			if _, has := action["D"]; has && !destNamesAKeptPage(xt, action["D"], kept) {
+			if _, has := action["D"]; has && !destReachesAKeptPage(xt, action["D"], kept) {
 				delete(ad, "A")
+			}
+		}
+	}
+	unlinkAnnotationThreads(xt, keptPages)
+}
+
+// unlinkAnnotationThreads cuts a kept annotation's reference to an annotation that is not on a kept
+// page (`/pending 709` R2-3).
+//
+// Three keys name another annotation: `/IRT` (the reply's parent), `/Popup` (the markup's popup) and a
+// popup's `/Parent` (its markup). The annotation they name carries its own `/P`, and when that
+// annotation sat on a dropped page its `/P` is the dropped page's dictionary — pdfcpu writes by
+// reachability, so a reply on page 2 to a comment on page 1 put page 1's `/Contents` back into
+// `RemovePages(1)`'s output. It is the header's hazard reached through a reply thread.
+//
+// Kept means "in a kept page's `/Annots`", by object number, so the answer does not depend on the
+// target's `/P` being present or truthful. A reference that is not indirect is cut too: it cannot be
+// on any page, and a direct dictionary is free to carry a `/P` of its own.
+func unlinkAnnotationThreads(xt *model.XRefTable, keptPages []types.Dict) {
+	onKept := map[int]bool{}
+	for _, page := range keptPages {
+		for _, a := range derefArray(xt, page["Annots"]) {
+			if ar, ok := a.(types.IndirectRef); ok {
+				onKept[ar.ObjectNumber.Value()] = true
+			}
+		}
+	}
+	for _, page := range keptPages {
+		for _, a := range derefArray(xt, page["Annots"]) {
+			ad := derefDict(xt, a)
+			if ad == nil {
+				continue
+			}
+			keys := []string{"IRT", "Popup"}
+			if nameVal(ad, "Subtype") == "Popup" {
+				keys = append(keys, "Parent")
+			}
+			for _, k := range keys {
+				o, has := ad[k]
+				if !has {
+					continue
+				}
+				if r, ok := o.(types.IndirectRef); !ok || !onKept[r.ObjectNumber.Value()] {
+					delete(ad, k)
+				}
 			}
 		}
 	}

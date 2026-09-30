@@ -347,8 +347,9 @@ func outlineDestination(xt *model.XRefTable, d types.Dict, keptPages map[int]boo
 	return dest
 }
 
-// destReachesAKeptPage is `destNamesAKeptPage` extended with the one shape an outline uses that an
-// annotation's /Dest does not: a NAME, resolved through the /Dests name tree.
+// destReachesAKeptPage is `destNamesAKeptPage` extended with a NAME, resolved through the /Dests name
+// tree — the shape outline items, open actions and link annotations (Word, hyperref) all use. It is
+// the one answer to "does this destination reach a kept page" for all three (`/pending 709` R2-4).
 //
 // It resolves the name to the very object `pruneNames` tests and then asks the same question of it,
 // so the two cannot disagree about a destination — which is the failure this indirection invites:
