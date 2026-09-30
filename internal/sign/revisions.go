@@ -175,10 +175,11 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 	if err != nil {
 		return nil, st, err
 	}
-	// Before anything is resolved: the reader re-reads an object stream per member, so a document
-	// whose streams would cost it more than the ceilings is refused here, before this sweep or the
-	// library pays it (/pending 751, `libraryLookupCost`).
-	if _, _, err := libraryLookupCost(r); err != nil {
+	// Before anything is resolved: a document whose object streams would cost the reader more than
+	// the ceilings — header pairs and decoded bytes once per stream, a dictionary re-read per stream a
+	// lookup visits — is refused here, before this sweep or the library pays it (/pending 751,
+	// /pending 758, `libraryLookupCost`).
+	if _, err := libraryLookupCost(r); err != nil {
 		return nil, st, err
 	}
 	// The library's own gate: without `/SigFlags` it reports no signer at all, so no record is at
