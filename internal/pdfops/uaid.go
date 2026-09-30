@@ -323,7 +323,19 @@ func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 //
 // It is the door for the paths that change a document without running an operation in this package:
 // bytes a browser edited and posted back, and a document about to be signed.
+//
+// It asks first through `inspectionRead` — this runs on every save, Save As and finalize, and the full pass's
+// per-page resource step is quadratic on a flat page tree (`/pending 763`) — and pays the full read only for the
+// document that has a claim to drop, because that read is the one it writes back out. The probe's own context is
+// edited by the asking and then discarded.
 func dropUAIdentificationBytes(pdf []byte) ([]byte, bool, error) {
+	probe, err := inspectionRead(pdf)
+	if err != nil {
+		return nil, false, err
+	}
+	if had, err := dropUAIdentification(probe); err != nil || !had {
+		return pdf, had, err
+	}
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, false, err

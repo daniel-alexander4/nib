@@ -135,7 +135,7 @@ func claimTagging(given, pdf []byte, tier tagSource) (out []byte, ok bool, err e
 // marked here is what they mark. A page that cannot be read is an error: a claim over content nobody
 // could read is not one this door can verify.
 func UnmarkedTextRuns(pdf []byte) (int, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return 0, err
 	}
@@ -341,7 +341,7 @@ func imageXObjectNames(ctx *model.Context, res types.Dict) map[string]bool {
 //
 // A page that cannot be read is an error, for the reason `UnmarkedTextRuns` gives.
 func uncoveredDrawings(pdf []byte) (int, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return 0, err
 	}

@@ -70,7 +70,7 @@ type viewElement struct {
 // readStructureView reads pdf's structure tree as reviewable values. A document with no tree is
 // errNoStructTree.
 func readStructureView(pdf []byte) (structureView, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return structureView{}, err
 	}
