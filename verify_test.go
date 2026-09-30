@@ -614,6 +614,14 @@ func TestSourceIsFormatted(t *testing.T) {
 		if line == "" {
 			continue
 		}
+		// An upstream copy kept byte-identical for comparison (a `testdata/` directory carrying a
+		// NOTICE.nib, e.g. /pending 759's original digitorus reader) is not nib's code to format;
+		// the go tool never builds testdata, and TestTheOriginalReaderCopyIsUpstreamUnchanged owns it.
+		if strings.Contains(line, "/testdata/") {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(line), "NOTICE.nib")); err == nil {
+				continue
+			}
+		}
 		bad = append(bad, line)
 	}
 	if len(bad) > 0 {

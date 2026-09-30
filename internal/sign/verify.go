@@ -141,6 +141,10 @@ const (
 	// UncheckedUnreadable: nib cannot read the file as a PDF at all (ADR-041's gate refused it), so
 	// the signature it carries was never handed to the signature library.
 	UncheckedUnreadable UncheckedCause = "unreadable"
+	// UncheckedLookupCost: the file's object streams would cost the signature reader more than nib
+	// lets one document cost it (`libraryLookupCost`, /pending 751, 758, 760), so it was refused
+	// before the signature reader read anything and the signature it carries was never checked.
+	UncheckedLookupCost UncheckedCause = "lookup-cost"
 )
 
 // AddedAfterCause names which fact set `Status.AddedAfter` (ADR-059).
@@ -278,7 +282,7 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// (`TestNoProducerSignatureIsRefused` asserts it per source).
 	revs, sweepErr := sweepRevisions(data)
 	if sweepErr != nil {
-		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck}, nil, sweepErr
+		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Unchecked: sweepUnchecked(sweepErr)}, nil, sweepErr
 	}
 	// **The population the verdict is over is checked against the one pdfcpu read** (/pending 749).
 	// The sweep enumerates as the library does, so a signature the library's reader never reaches
@@ -528,6 +532,17 @@ func uncheckedOf(st Status, data []byte, unseen bool) UncheckedCause {
 		return UncheckedHybridReference
 	}
 	return UncheckedUnread
+}
+
+// sweepUnchecked names why a sweep that could not finish checked nothing, where the error says: the
+// lookup-cost ceiling refuses the document on purpose, before anything is read, and a verdict that
+// said only `Invalid` would read as "modified since signing" of a document nobody checked (/pending
+// 760). Any other sweep error — a panic on corruption — is left unnamed, as it was.
+func sweepUnchecked(err error) UncheckedCause {
+	if errors.Is(err, errLookupCostCeiling) {
+		return UncheckedLookupCost
+	}
+	return ""
 }
 
 // anyCheckableBlob reports whether any record carries a non-empty `/Contents` — a signature blob seen

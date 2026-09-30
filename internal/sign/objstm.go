@@ -35,7 +35,8 @@ import (
 //
 // Past the ceiling the document is refused before the sweep resolves anything and before the library
 // is called: `errLookupCostCeiling`, which `Verify` routes to `Invalid` with `could-not-check`, as it
-// does every sweep that cannot finish.
+// does every sweep that cannot finish — and, this refusal alone, names as `Unchecked` `lookup-cost`
+// (/pending 760), so no reader calls it "modified since signing".
 //
 // **The figure is an upper bound on the reader's work, never an estimate below it.** A header this
 // parser cannot read as plain `int int` pairs, a member the header does not list, and a `/First` past
@@ -55,9 +56,17 @@ import (
 // `maxLookupWork` is kept as the backstop it was, and a 1,000-stream chain under 1,000 members (6.2 s a
 // pass) is past it. `TestNoProducerDocumentReachesTheLookupCeiling` holds the corpus under it.
 //
-// Declared: a member's own extent is not charged (a lookup reads the member, however large, and so
-// did upstream); nor is anything a dictionary key REFERS to (`/Type 7 0 R` re-reads object 7 per
-// lookup) — only the dictionary's own text is.
+// A member's own extent is not charged here, and need not be (/pending 760): honest members do not
+// overlap, so a stream's lookups together read about what it decodes to, which the byte term charges.
+// The shapes that read more — many header ids naming one offset, offsets overlapping into one nested
+// member — are refused by the patched reader itself as it reads (`dpdf.ErrObjStmTooCostly`, past four
+// times what the stream has decoded), which `readPanicErr` routes to this ceiling's error.
+//
+// Declared: nothing a dictionary key REFERS to is charged (`/Type 7 0 R` re-reads object 7 per lookup)
+// — only the dictionary's own text is. An indirect `/Type`, `/N` or `/First` compounds per level (three
+// references a level into the next stream is 3^d reads a lookup; d = 8 is 27 s a pass), and pdfcpu
+// refuses every such stream ("obj stream dict missing entry First", "corrupt object stream"), so
+// `Verify`'s readability gate keeps it from the sweep; a path to the reader that skips that gate does not.
 const (
 	lookupPairWeight     = 200
 	lookupByteWeight     = 100
@@ -72,6 +81,17 @@ const (
 // errLookupCostCeiling refuses a document whose object streams would cost the signature reader more
 // than `maxLookupWork`, or hold more than `maxDecodedObjStmBytes` decoded.
 var errLookupCostCeiling = errors.New("the document's object streams are too costly for the signature reader to read")
+
+// readPanicErr is the sweep's error for a panic out of the signature reader: the patched reader's own
+// cost refusal (`dpdf.ErrObjStmTooCostly`, /pending 760 — member reads that overlap, which this model
+// cannot see without paying for them) is `errLookupCostCeiling`, so `Verify` names it `lookup-cost` as
+// it names this model's refusal; any other panic is corruption, said as it always was.
+func readPanicErr(rec any) error {
+	if e, ok := rec.(error); ok && errors.Is(e, dpdf.ErrObjStmTooCostly) {
+		return fmt.Errorf("%w: %v", errLookupCostCeiling, e)
+	}
+	return fmt.Errorf("read pdf: %v", rec)
+}
 
 // lookupCost is what one pass over the xref costs the patched reader.
 type lookupCost struct {

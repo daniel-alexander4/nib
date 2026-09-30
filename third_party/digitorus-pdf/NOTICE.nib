@@ -38,13 +38,25 @@ keys on), its data offset, and its raw /Length, /Filter and /DecodeParms.
 No mutex: every Reader is used by one call on one goroutine (nib's internal/sign and pdfsign's
 sign and verify each open a Reader, use it and drop it).
 
-The one declared divergence
----------------------------
+The declared divergences
+------------------------
 
-Upstream read the member by seeking the HEADER'S OWN buffer. A /First pointing behind that buffer's
+1. Upstream read the member by seeking the HEADER'S OWN buffer. A /First pointing behind that buffer's
 current 4 KB chunk is a backward seek, which set a negative buffer index and panicked. The patched
 reader reads the member from its offset and resolves it. No real producer writes such a /First (the
 header precedes the members); a member at a NEGATIVE offset still panics.
+
+2. (/pending 760) The patched reader refuses, with a panic carrying ErrObjStmTooCostly, (a) member
+reads of one stream that together consume more than four times what the stream has decoded (plus 4 KB
+a stream and 64 bytes a lookup), and (b) decoding more than 64 MiB of one stream. Honest members do not
+overlap, so their reads together consume about what the stream decodes to; the shapes this refuses —
+many header ids naming one offset, offsets overlapping into one nested member, one member running past
+64 MiB — upstream would read, at 44 s a pass for 400 ids at one 1 MB member and 30 s for 8,000 offsets
+into one nested array. nib's cost model cannot see a member's extent without paying for it.
+
+internal/sign's FuzzThePatchedObjectStreamReaderMatchesTheOriginal (/pending 759) resolves random object
+streams through this reader and through v0.1.2 itself (a test-only copy under internal/sign/testdata)
+and allows exactly these two classes of difference.
 
 Maintenance
 -----------

@@ -67,7 +67,6 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rc4"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -88,10 +87,6 @@ type Reader struct {
 	useAES          bool
 	XrefInformation ReaderXrefInformation
 	PDFVersion      string
-
-	// objStms caches each object stream's decoding and header between lookups (nib, /pending 758;
-	// see NOTICE.nib and objStmCache).
-	objStms map[string]*objStmCache
 }
 
 type ReaderXrefInformation struct {
@@ -891,14 +886,16 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 				if first == 0 {
 					panic("missing First")
 				}
-				// nib (/pending 758): the stream is decoded and its header lexed once per Reader, each
-				// only as far as a lookup has needed, and the member is read from its own offset.
-				// Upstream re-decoded the stream from its start and re-lexed the header for every
-				// member, so a stream of N members cost N²/2 pairs per pass over the xref.
-				c := r.objStm(strm)
-				if off, ok := c.find(ptr.id, n); ok {
-					x = c.readMember(first + off)
-					break Search
+				b := newBuffer(strm.Reader(), 0)
+				b.allowEOF = true
+				for i := 0; i < n; i++ {
+					id, _ := b.readToken().(int64)
+					off, _ := b.readToken().(int64)
+					if uint32(id) == ptr.id {
+						b.seekForward(first + off)
+						x = b.readObject()
+						break Search
+					}
 				}
 				ext := strm.Key("Extends")
 				if ext.Kind() != Stream {
@@ -1235,224 +1232,5 @@ func (r *cbcReader) Read(b []byte) (n int, err error) {
 	}
 	n = copy(b, r.pend)
 	r.pend = r.pend[n:]
-	return n, nil
-}
-
-// nib (/pending 758, ADR-066): an object stream's decoding and header, kept between lookups.
-//
-// Upstream's resolve decoded an object stream from its start and lexed its `id offset` pairs until
-// the wanted id, then read forward to the member — for every member, caching nothing, so resolving
-// every xref entry (which pdfsign's verify and nib's revision sweep both do) cost N²/2 header pairs
-// and N²/2 decoded bytes per stream of N members.
-//
-// The cache is LAZY in both halves, so it reaches exactly what upstream's lookup reached and nothing
-// past it: the decoder is kept open and extended only as far as a read needs, and the header is lexed
-// only as far as the wanted id. A stream whose zlib tail is corrupt, or whose /Length is short, after
-// the wanted member still yields the member; an /N claiming more pairs than exist, with a bad token
-// later, still yields the members listed before it. A panic raised part-way (by the lexer or the
-// decoder) is kept and raised again by any later lookup that needs to go past it, as upstream's
-// fresh decode would reach the same point and raise it again.
-//
-// Two divergences, declared in NOTICE.nib: upstream read the member by seeking the header's own buffer
-// forward, and a /First pointing BEHIND the lexer's current 4 KB chunk seeks backward, which panicked
-// (a negative buffer index) — the member is now read from its own offset, so it resolves; and member
-// reads that cost more than the stream holds are refused (ErrObjStmTooCostly, /pending 760).
-//
-// No mutex: every Reader is used by one call on one goroutine — nib's internal/sign (revisions.go:174,
-// verify.go:678, identity.go:206 and :462) and pdfsign (verify/verify.go:63, sign/sign.go:40) each
-// open a Reader, use it, and drop it.
-type objStmCache struct {
-	dec    io.Reader   // the stream's decoder, kept open
-	data   []byte      // the decoded bytes read so far
-	err    error       // the (0, err) read that ended the decoding: io.EOF or a real error
-	poison interface{} // a panic the decoder raised, raised again
-
-	hdr      *buffer               // the header lexer, positioned after the pairs lexed so far
-	lexed    int                   // pairs lexed
-	hdrEOF   bool                  // the lexer reached the end: every later token is io.EOF
-	hdrPanic interface{}           // a panic the lexer raised, raised again
-	at       map[uint32]objStmPair // the FIRST listing of each id, as upstream's loop takes it
-
-	spent   int64 // member bytes the lookups have consumed, over every lookup (/pending 760)
-	lookups int64 // member reads
-}
-
-// ErrObjStmTooCostly is raised (as a panic, as every malformation here is) when an object stream's
-// member reads cost more than the stream can honestly account for (nib, /pending 760; NOTICE.nib).
-//
-// Honest members do not overlap, so every lookup of a stream together consumes about what the stream
-// decodes to. Two shapes consume far more, and the caller's cost model cannot see either without paying
-// it: many header ids naming ONE offset (400 ids at one 1 MB member: 44 s a pass), and offsets that
-// overlap into one nested member (8,000 offsets into `[[[…]]]`: 30 s a pass, quadratic). The reader
-// refuses a stream once its members' consumed bytes pass objStmSpendFactor times what it has decoded
-// (plus a slack per lookup and per stream), and refuses to decode past objStmMaxDecoded at all.
-var ErrObjStmTooCostly = errors.New("malformed PDF: an object stream's members cost more to read than the stream holds")
-
-const (
-	objStmSpendFactor = 4
-	objStmSpendSlack  = 4096 + 64 // per stream: one read-ahead chunk; per lookup: the reference look-ahead
-	objStmMaxDecoded  = 64 << 20
-)
-
-// allowance is what the stream's member reads may consume in all.
-func (c *objStmCache) allowance() int64 {
-	return objStmSpendFactor*int64(len(c.data)) + 64*c.lookups + objStmSpendSlack
-}
-
-type objStmPair struct {
-	idx int
-	off int64
-}
-
-// objStm returns strm's cache, creating it (and its decoder) on first use. The key is every input the
-// decoded bytes depend on — the stream's own objptr (which decryption keys on), its offset, and its
-// Length, Filter and DecodeParms — so two streams share an entry only where they decode identically.
-func (r *Reader) objStm(strm Value) *objStmCache {
-	s := strm.data.(stream)
-	key := fmt.Sprintf("%d %d@%d %s|%s|%s", s.ptr.id, s.ptr.gen, s.offset,
-		objfmt(s.hdr["Length"]), objfmt(s.hdr["Filter"]), objfmt(s.hdr["DecodeParms"]))
-	if c, ok := r.objStms[key]; ok {
-		return c
-	}
-	c := &objStmCache{dec: strm.Reader(), at: map[uint32]objStmPair{}}
-	c.hdr = newBuffer(&objStmView{c: c}, 0)
-	c.hdr.allowEOF = true
-	if r.objStms == nil {
-		r.objStms = map[string]*objStmCache{}
-	}
-	r.objStms[key] = c
-	return c
-}
-
-// find returns the offset the first of the header's first n pairs listing id gives it, lexing no
-// further than that pair.
-func (c *objStmCache) find(id uint32, n int) (int64, bool) {
-	if p, ok := c.at[id]; ok && p.idx < n {
-		return p.off, true
-	}
-	for c.lexed < n && !c.hdrEOF {
-		if c.hdrPanic != nil {
-			panic(c.hdrPanic)
-		}
-		got, off := c.lexPair()
-		i := c.lexed
-		c.lexed++
-		if _, dup := c.at[got]; !dup {
-			c.at[got] = objStmPair{i, off}
-		}
-		if c.hdr.eof {
-			// Every later token is io.EOF, which upstream's loop reads as the pair (0, 0).
-			c.hdrEOF = true
-			if _, dup := c.at[0]; !dup {
-				c.at[0] = objStmPair{c.lexed, 0}
-			}
-		}
-		if got == id {
-			return off, true
-		}
-	}
-	if p, ok := c.at[id]; ok && p.idx < n {
-		return p.off, true
-	}
-	return 0, false
-}
-
-func (c *objStmCache) lexPair() (id uint32, off int64) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			c.hdrPanic = rec
-			panic(rec)
-		}
-	}()
-	i, _ := c.hdr.readToken().(int64)
-	o, _ := c.hdr.readToken().(int64)
-	return uint32(i), o
-}
-
-// readMember reads the object at decoded offset at, as upstream read it after seeking there.
-func (c *objStmCache) readMember(at int64) object {
-	if at < 0 {
-		panic(fmt.Errorf("malformed PDF: object stream member at offset %d", at))
-	}
-	// A member past where the decoding failed: upstream's seek forward hit the failure first and said
-	// so at the offset it had decoded to, not at the member's (/pending 759's fuzz found the difference).
-	for int64(len(c.data)) < at && c.extend() {
-	}
-	if int64(len(c.data)) < at && c.err != nil && c.err != io.EOF {
-		panic(fmt.Errorf("malformed PDF: reading at offset %d: %v", len(c.data), c.err))
-	}
-	c.lookups++
-	b := newBuffer(&objStmView{c: c, pos: at, member: true, start: at}, at)
-	b.allowEOF = true
-	x := b.readObject()
-	c.spent += b.readOffset() - at
-	return x
-}
-
-// extend decodes more of the stream, reporting false at its end. A read returning bytes and an error
-// keeps the bytes and drops the error, as buffer.reload does; only a read of nothing ends it.
-func (c *objStmCache) extend() bool {
-	if c.poison != nil {
-		panic(c.poison)
-	}
-	if c.err != nil {
-		return false
-	}
-	if len(c.data) >= objStmMaxDecoded {
-		panic(ErrObjStmTooCostly)
-	}
-	if cap(c.data)-len(c.data) < 4096 {
-		grown := make([]byte, len(c.data), 2*cap(c.data)+8192)
-		copy(grown, c.data)
-		c.data = grown
-	}
-	for tries := 0; ; tries++ {
-		n, err := c.read(c.data[len(c.data):cap(c.data)])
-		if n > 0 {
-			c.data = c.data[:len(c.data)+n]
-			return true
-		}
-		if err != nil {
-			c.err = err
-			return false
-		}
-		if tries == 100 {
-			c.err = io.ErrNoProgress
-			return false
-		}
-	}
-}
-
-func (c *objStmCache) read(p []byte) (n int, err error) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			c.poison = rec
-			panic(rec)
-		}
-	}()
-	return c.dec.Read(p)
-}
-
-// objStmView reads the cached decoding from pos, extending it as the read needs.
-// A member's view charges what it delivers against the stream's allowance as it goes, so one parse
-// that would overrun it stops there rather than at its end.
-type objStmView struct {
-	c      *objStmCache
-	pos    int64
-	member bool  // a member read, charged; the header lexer's view is not
-	start  int64 // where the member read began
-}
-
-func (v *objStmView) Read(p []byte) (int, error) {
-	for v.pos >= int64(len(v.c.data)) {
-		if !v.c.extend() {
-			return 0, v.c.err
-		}
-	}
-	n := copy(p, v.c.data[v.pos:])
-	v.pos += int64(n)
-	if v.member && v.c.spent+(v.pos-v.start) > v.c.allowance() {
-		panic(ErrObjStmTooCostly)
-	}
 	return n, nil
 }

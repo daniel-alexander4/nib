@@ -168,7 +168,7 @@ func sweepRevisions(pdf []byte) ([]Revision, error) {
 func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			revs, err = nil, fmt.Errorf("read pdf: %v", rec)
+			revs, err = nil, readPanicErr(rec)
 		}
 	}()
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
