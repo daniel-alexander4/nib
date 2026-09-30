@@ -310,13 +310,20 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 	r.room = math.Max(0, r.bottom-r.floor)
 	// The band: the column's extent, from pi's bottom down to the floor. A mark meeting it is drawn where the region
 	// will be, and moves with nothing.
-	band := [4]float64{r.x0, math.Min(r.floor, r.bottom), r.x1, p.bottom()}
+	// On a page of one column the band is the page's width: a drawing beside the region — a change bar, a margin rule —
+	// is at the height that moves, and nothing moves it (P07.S04).
+	bx0, bx1 := r.x0, r.x1
+	if l.columns == 1 && page[2] > page[0] {
+		bx0, bx1 = page[0], page[2]
+	}
+	band := [4]float64{bx0, math.Min(r.floor, r.bottom), bx1, p.bottom()}
+	colBand := [4]float64{r.x0, band[1], r.x1, band[3]}
 	r.band = band
 	for _, o := range obstacles {
 		// A mark covering the whole band is the text's BACKDROP — a page or cell fill — and the text stays over it
 		// wherever in the band it moves, so it blocks nothing. Not a shading: its box is unbounded because its clip is
-		// unknown, not because it covers everything.
-		if meets(o.box, band) && (o.kind == markShading || !covers(o.box, band)) {
+		// unknown, not because it covers everything. Covering the COLUMN's band is enough: the text never leaves it.
+		if meets(o.box, band) && (o.kind == markShading || !covers(o.box, colBand)) {
 			r.marks = append(r.marks, o)
 		}
 	}

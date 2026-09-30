@@ -144,6 +144,40 @@ const maxOutlineItems = 100000
 // outline, the open action, every link annotation on every page, and the named destinations — which a URL's `#name` can
 // reach from outside the document, so they count whether or not anything inside it points at them.
 func destinationAnchors(ctx *model.Context, page int) []pageAnchor {
+	var out []pageAnchor
+	for _, arr := range destinationArrays(ctx, page) {
+		if box, ok := destinationBox(ctx.XRefTable, arr, page); ok {
+			out = append(out, pageAnchor{anchorDestination, box})
+		}
+	}
+	return out
+}
+
+// destinationArrays is every destination array that names page, each ONCE: one array shared by a link, a bookmark and a
+// name is one destination, and a mover that visited it three times would move it three times.
+func destinationArrays(ctx *model.Context, page int) []types.Array {
+	var out []types.Array
+	seen := map[*types.Object]bool{}
+	for _, d := range destinationObjects(ctx) {
+		arr, ok := destinationArray(ctx.XRefTable, d)
+		if !ok || len(arr) < 2 {
+			continue
+		}
+		if ref, isRef := arr[0].(types.IndirectRef); !isRef || ref.ObjectNumber.Value() != page {
+			continue
+		}
+		if seen[&arr[0]] {
+			continue
+		}
+		seen[&arr[0]] = true
+		out = append(out, arr)
+	}
+	return out
+}
+
+// destinationObjects collects every destination the document holds, unresolved: the open action, the outline, the old
+// catalog /Dests, the /Dests name tree, and every link annotation on every page.
+func destinationObjects(ctx *model.Context) []types.Object {
 	xt := ctx.XRefTable
 	var dests []types.Object
 	fromAction := func(a types.Object) {
@@ -218,48 +252,52 @@ func destinationAnchors(ctx *model.Context, page int) []pageAnchor {
 			}
 		}
 	}
-	var out []pageAnchor
-	for _, d := range dests {
-		if box, ok := destinationBox(xt, d, page); ok {
-			out = append(out, pageAnchor{anchorDestination, box})
-		}
+	return dests
+}
+
+// destinationArray resolves a destination to its array: the array itself, a dictionary carrying one under /D, or a name
+// or string keying the /Dests name tree.
+func destinationArray(xt *model.XRefTable, o types.Object) (types.Array, bool) {
+	r, err := xt.Dereference(o)
+	if err != nil || r == nil {
+		return nil, false
 	}
-	return out
+	switch v := r.(type) {
+	case types.Array:
+		return v, true
+	case types.Dict:
+		arr := derefArray(xt, v["D"])
+		return arr, arr != nil
+	}
+	key, err := xt.DestName(o)
+	if err != nil || key == "" || xt.Names["Dests"] == nil {
+		return nil, false
+	}
+	v, ok := xt.Names["Dests"].Value(key)
+	if !ok {
+		return nil, false
+	}
+	r, err = xt.Dereference(v)
+	if err != nil {
+		return nil, false
+	}
+	switch w := r.(type) {
+	case types.Array:
+		return w, true
+	case types.Dict:
+		arr := derefArray(xt, w["D"])
+		return arr, arr != nil
+	}
+	return nil, false
 }
 
 // destinationBox resolves a destination — an array, a dictionary carrying one under /D, or a name keying the /Dests name
 // tree — and, when it scrolls to a position on page, returns that position. A destination that shows the whole page
 // (`/Fit`, `/FitB`) or only fixes its left edge (`/FitV`, `/FitBV`), or an `/XYZ` with a null top, names no line to lose.
 func destinationBox(xt *model.XRefTable, o types.Object, page int) ([4]float64, bool) {
-	r, err := xt.Dereference(o)
-	if err != nil || r == nil {
+	arr, ok := destinationArray(xt, o)
+	if !ok {
 		return [4]float64{}, false
-	}
-	var arr types.Array
-	switch v := r.(type) {
-	case types.Array:
-		arr = v
-	case types.Dict:
-		arr = derefArray(xt, v["D"])
-	default:
-		key, err := xt.DestName(o)
-		if err != nil || key == "" || xt.Names["Dests"] == nil {
-			return [4]float64{}, false
-		}
-		v, ok := xt.Names["Dests"].Value(key)
-		if !ok {
-			return [4]float64{}, false
-		}
-		r, err := xt.Dereference(v)
-		if err != nil {
-			return [4]float64{}, false
-		}
-		switch w := r.(type) {
-		case types.Array:
-			arr = w
-		case types.Dict:
-			arr = derefArray(xt, w["D"])
-		}
 	}
 	if len(arr) < 2 {
 		return [4]float64{}, false

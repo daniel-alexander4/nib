@@ -384,6 +384,8 @@ type reflowOutcome struct {
 	// below is the text of the paragraph below that refused to move, when the refusal is its — so the user is told WHICH
 	// paragraph stands in the way, not only why (P07.S03).
 	below string
+	// shift is what else a grown paragraph moves — its anchored objects (P07.S04) — applied to the document by the door.
+	shift *anchorShift
 }
 
 // emitWord is a word as it will be drawn: its codes, the kern before each after the first (user space), its font.
@@ -563,9 +565,14 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	if annotatedOver(ctx, pg, para) {
 		return reflowOutcome{cause: causeAnchored}, nil
 	}
+	// Everything anchored inside the zone that moves goes with it (P07.S04); anything at that height that is not inside it
+	// — straddling its edge, in the free room the text moves into, or in another column — refuses.
+	var zone [4]float64
 	if extra > 0 {
+		zone = anchorZone(layout, region, para)
+		reach := [4]float64{math.Inf(-1), region.band[1], math.Inf(1), region.band[3]}
 		for _, a := range pageAnchors(ctx, pg, true) {
-			if touches(a.box, region.band) {
+			if touches(a.box, reach) && !covers(zone, a.box) {
 				return reflowOutcome{cause: causeAnchored}, nil
 			}
 		}
@@ -719,7 +726,28 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	if err != nil {
 		return reflowOutcome{}, err
 	}
-	return reflowOutcome{content: out}, nil
+	o := reflowOutcome{content: out}
+	if extra > 0 {
+		o.shift = &anchorShift{zone: zone, dy: float64(extra) * pitch}
+	}
+	return o, nil
+}
+
+// anchorShift is what a grown paragraph moves besides its text: everything anchored inside zone, down by dy.
+type anchorShift struct {
+	zone [4]float64
+	dy   float64
+}
+
+// anchorZone is the part of the page that moves when paragraph p grows over region: from the region's bottom up to p's
+// own, across the column — or across the whole page when the page has one column, so a margin note or a signing flag
+// beside a moved paragraph moves with it rather than staying behind.
+func anchorZone(l pageLayout, region flowRegion, p textParagraph) [4]float64 {
+	x0, x1 := region.x0, region.x1
+	if l.columns == 1 {
+		x0, x1 = math.Inf(-1), math.Inf(1)
+	}
+	return [4]float64{x0, region.bottom, x1, p.bottom()}
 }
 
 // contentAround checks the stretch between a paragraph's first and last show operator holds only positioning, `Tf` and

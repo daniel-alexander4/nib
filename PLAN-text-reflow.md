@@ -735,11 +735,31 @@ measure, so it is set to its COLUMN's — and stops an em short of anything draw
 regroup the page. **Census**: 10 real paragraphs grew, 8 pushing a region; refused no-pitch 209, anchored 132, page-full
 16. Tier 3 drives a growth through the binary. Review `code-reviews/v1.169.50-p07s03-2026-09-30.md`.
 
-#### P07.S04 — what is anchored moves with the text
+#### P07.S04 — what is anchored moves with the text *(done 2026-09-30, v1.171.0)*
 Annotations (`/Rect` and every coordinate key its subtype carries), widgets, link and outline destinations naming a
 position in the band, and NibFlags (`/pending 457`) move by the same `dy`; a non-text mark in the band still refuses, and
 so does an object straddling the band's edge. Acceptance: each anchored kind is moved and read back at `dy`; each
 straddling or unmovable kind refuses by name; the census from S01 is re-run and states what S04 unlocked.
+
+**PIN 2026-09-30 (slice grill) — "in the band" is too narrow on a one-column page.** The band is the column's extent, so a
+margin note, a signing flag or a change bar BESIDE a moved paragraph lies outside it and would stay behind — orphaned
+silently, which is the exit criterion's own failure. The ZONE that moves is the region's own height, from the region's
+bottom to the edited paragraph's, **page-wide on a one-column page** (nothing else can sit at that height there) and
+column-wide on several; anything anchored inside it moves, and anything touching that height's full width without lying
+inside the zone — straddling its edge, in the free room, in another column — refuses (rung 2: an object whose column is
+ambiguous is refused, not guessed). The region's drawings are judged across the same page-wide band.
+
+**Tasks** (slice grill, 2026-09-30): T01 — `anchorZone`. T02 — classify: inside moves, touching-not-inside refuses. T03 —
+`shiftAnchors`: `/Rect` and `/QuadPoints` `/L` `/Vertices` `/CL` `/InkList`; destinations shifted IN PLACE and deduplicated
+by array identity (one array shared by a link, a bookmark and a name moves once); NibFlags re-encoded with every other
+field kept, `ctx.Properties` in step. T04 — drawings judged page-wide on a one-column page. T05 — each kind moved and read
+back, each refusal, a shared destination moved once, the S01 census re-run.
+**Closed 2026-09-30.** The review found the page-wide band made a COLUMN's fill stop reading as a backdrop; the backdrop is
+judged on the column's band and the obstacle on the page's. **Census re-run, measured**: S04 unlocks **no** real-producer
+paragraph — all 132 `anchored` refusals are a link over the edited paragraph's own words (25) or a drawing in the band
+(107); none of the corpus's growable paragraphs has a note, flag or destination in its zone. S04's evidence is the
+hand-built fixtures (every kind moved and read back, a shared destination moved once). Review
+`code-reviews/v1.170.0-p07s04-2026-09-30.md`.
 
 #### P07.S05 — a paragraph set on another page
 A paragraph re-set onto a DIFFERENT page, as its own text object: its fonts carried into that page's resources (a name

@@ -102,7 +102,13 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 		if err != nil || d == nil {
 			return fmt.Errorf("pdfops: page %d does not resolve: %w", page, err)
 		}
-		return setPageContent(ctx, d, o.content)
+		if err := setPageContent(ctx, d, o.content); err != nil {
+			return err
+		}
+		if o.shift != nil {
+			return shiftAnchors(ctx, pg, o.shift.zone, o.shift.dy)
+		}
+		return nil
 	})
 	if errors.Is(err, errNothingToWrite) {
 		return nil, refusal, nil
