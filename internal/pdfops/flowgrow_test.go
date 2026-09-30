@@ -57,11 +57,15 @@ func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float
 	if extra <= 0 {
 		return fmt.Sprintf("the paragraph did not grow: %d lines", len(got))
 	}
+	region := regionOf(before, pi, page)
 	moved := map[int]bool{}
-	for _, q := range regionOf(before, pi, page).paragraphs {
+	for _, q := range region.paragraphs {
 		moved[q] = true
 	}
 	dy := float64(extra) * pitch
+	// A region paragraph pushed below the floor LEAVES for the next page (P07.S06's `pushDown`), so it is asserted gone
+	// from this page rather than lower on it — reached by the real corpus only once tagged text could leave (P07.S07).
+	leaves := func(i int) bool { return moved[i] && before.paragraphs[i].bottom()-dy < region.floor-measureSlack }
 	after3 := linesOf(after, -1)
 	for i, q := range before.paragraphs {
 		if i == pi {
@@ -72,12 +76,21 @@ func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float
 			if moved[i] {
 				want -= dy
 			}
-			found := false
+			found, anywhere := false, false
 			for _, a := range after3 {
-				if a.text == ln.text && math.Abs(a.x-ln.x0) < 1e-6 && math.Abs(a.y-want) < 1e-6 {
-					found = true
-					break
+				if a.text == ln.text && math.Abs(a.x-ln.x0) < 1e-6 {
+					anywhere = anywhere || math.Abs(a.y-ln.y) < 1e-6 || math.Abs(a.y-want) < 1e-6
+					if math.Abs(a.y-want) < 1e-6 {
+						found = true
+						break
+					}
 				}
+			}
+			if leaves(i) {
+				if anywhere {
+					return fmt.Sprintf("line %q should have left for the next page and is still on this one", ln.text)
+				}
+				continue
 			}
 			if !found {
 				return fmt.Sprintf("line %q (region: %v) is not at y %v", ln.text, moved[i], want)

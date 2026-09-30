@@ -23,11 +23,12 @@ import (
 //
 // What cannot be carried exactly is refused (law 3): a graphics state dictionary or a colour outside the device spaces
 // (`state-not-carried`), a run its source page's clip would cut (the clip is not carried: same cause), marked content
-// bound to the source page's structure (`tagged-across-pages`), replacement text, and a clipping render mode.
+// that cannot go to the other page with its structure (`tagged-across-pages`, P07.S07's `planTagCarry`), replacement
+// text, and a clipping render mode.
 
 const (
 	causeStateNotCarried = "state-not-carried"   // drawn in a state another page cannot be given: alpha, a colour space, a clip that cuts it
-	causeTaggedAcross    = "tagged-across-pages" // its marked content belongs to its page's structure tree
+	causeTaggedAcross    = "tagged-across-pages" // its marked content cannot go to another page with its structure
 )
 
 // deleteRuns plans the removal of runs from src: each show replaced by its effect without its glyphs.
@@ -91,8 +92,6 @@ func carryRefusal(r textRun) string {
 	switch {
 	case r.inForm:
 		return causeTextInForm
-	case r.mcid >= 0:
-		return causeTaggedAcross
 	case r.replaced:
 		return causeReplacementText
 	case st.tr >= 4:
@@ -157,26 +156,53 @@ func fontNameOn(fonts types.Dict, want string, font types.Object) string {
 
 // setRunsOn plans runs, read from src — the content of the page whose resources are srcRes — as a text object appended
 // to old, dst's content (with any edit of its own already made), each dx right and dy DOWN in user space, and adds the
-// fonts it needs to dst. It returns dst's new content, or the cause.
-func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun, dst pdfread.Page, old []byte, dx, dy float64) ([]byte, string, error) {
+// fonts it needs to dst. tags is the structure the runs take with them (`planTagCarry`) and dstSeqs the marked-content
+// sequences dst's own stream draws: each carried sequence is drawn under its own tag and property list at an MCID free
+// on dst, and the tree is written to say so (P07.S07). It returns dst's new content, or the cause.
+func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun, dst pdfread.Page, old []byte, dx, dy float64,
+	tags *tagCarry, dstSeqs []markedSeq) ([]byte, string, error) {
 	for _, r := range runs {
 		if c := carryRefusal(r); c != "" {
 			return nil, c, nil
+		}
+		if r.mcid >= 0 && (tags == nil || tags.byMCID[r.mcid] == nil) {
+			return nil, causeTaggedAcross, nil
 		}
 		if _, ok := shiftedTm(r.state, 0); !ok || !finite(dx, dy) {
 			return nil, causeDegenerate, nil
 		}
 	}
+	// Each sequence's runs drawn together, in the order the runs first name it: a sequence is opened once. Runs are placed
+	// by their own matrices, so the order they are drawn in moves nothing.
+	runs = groupedByMCID(runs)
 	srcFonts := derefDict(ctx.XRefTable, srcRes["Font"])
 	_, dstFonts := pageResources(ctx, dst)
 	var b strings.Builder
 	b.WriteString("q\n")
 	b.Write(old)
 	b.WriteString("\n" + closeOpen(old) + "Q\n")
+	if tags != nil {
+		if c := targetRefusal(ctx, dst); c != "" {
+			return nil, c, nil
+		}
+		if err := tags.land(ctx, dst, dstSeqs); err != nil {
+			return nil, "", err
+		}
+	}
 	fill, stroke := "", ""
 	b.WriteString("q BT\n")
+	open := -1
 	for _, r := range runs {
 		st := r.state
+		if r.mcid != open {
+			if open >= 0 {
+				b.WriteString("EMC\n")
+			}
+			if r.mcid >= 0 {
+				b.WriteString(tags.byMCID[r.mcid].opener() + "\n")
+			}
+			open = r.mcid
+		}
 		font, ok := srcFonts[r.font]
 		if !ok {
 			return nil, causeNoWidths, nil // a font the page does not name cannot be carried; it had no widths either
@@ -197,8 +223,29 @@ func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun
 		fmt.Fprintf(&b, "%s %s Tf %s Tc %s Tw %s Tz %s Ts %d Tr %s Tm %s\n", pdfName(name), num(st.tfSize), num(st.tc), num(st.tw),
 			num(st.th*100), num(st.ts), st.tr, matrixOperands(tm), show)
 	}
+	if open >= 0 {
+		b.WriteString("EMC\n")
+	}
 	b.WriteString("ET Q\n")
 	return []byte(b.String()), "", nil
+}
+
+// groupedByMCID is runs with each MCID's runs together, in the order the runs first name each; runs with none keep their
+// place among the groups as one of their own.
+func groupedByMCID(runs []textRun) []textRun {
+	var order []int
+	groups := map[int][]textRun{}
+	for _, r := range runs {
+		if _, ok := groups[r.mcid]; !ok {
+			order = append(order, r.mcid)
+		}
+		groups[r.mcid] = append(groups[r.mcid], r)
+	}
+	out := make([]textRun, 0, len(runs))
+	for _, m := range order {
+		out = append(out, groups[m]...)
+	}
+	return out
 }
 
 // setParagraphOn moves paragraph pi of page srcPg onto page dst, dx right and dy down in user space: the source page stops
@@ -223,13 +270,22 @@ func setParagraphOn(ctx *model.Context, layout pageLayout, srcPg pdfread.Page, p
 	if err != nil && err != model.ErrNoContent {
 		return "", err
 	}
-	dstContent, cause, err := setRunsOn(ctx, src, srcRes, runs, dst, old, dx, dy)
-	if err != nil || cause != "" {
-		return cause, err
-	}
 	dels, cause := deleteRuns(src, runs)
 	if cause != "" {
 		return cause, nil
+	}
+	tags, brackets, cause := planTagCarry(ctx, srcPg, src, srcRes, layout.sequences, runs)
+	if cause != "" {
+		return cause, nil
+	}
+	dels = append(dels, brackets...)
+	dl, err := readPageGlyphLayout(ctx, dst)
+	if err != nil {
+		return "", err
+	}
+	dstContent, cause, err := setRunsOn(ctx, src, srcRes, runs, dst, old, dx, dy, tags, dl.sequences)
+	if err != nil || cause != "" {
+		return cause, err
 	}
 	e := contentstream.NewEdit(src)
 	for _, d := range dels {
@@ -245,31 +301,42 @@ func setParagraphOn(ctx *model.Context, layout pageLayout, srcPg pdfread.Page, p
 	return "", setPageContent(ctx, dst.Dict, dstContent)
 }
 
-// closeOpen is what closes whatever content leaves open — an `ET` for a text object still open at its end, and a `Q` for
-// every `q` it did not restore — so the `Q` wrapped around it pops the state wrapped around it, and what follows draws
-// under the page's default state, not under a CTM or a text object the content forgot to close.
+// closeOpen is what closes whatever content leaves open — an `ET` for a text object still open at its end, an `EMC` for a
+// marked-content sequence (P07.S07: a carried sequence would otherwise be read as nested in it), and a `Q` for every `q`
+// it did not restore — innermost first, so the `Q` wrapped around it pops the state wrapped around it, and what follows
+// draws under the page's default state, not under a CTM, a text object or a sequence the content forgot to close.
 func closeOpen(content []byte) string {
-	depth, inText := 0, false
+	var open []string
+	pop := func(closer string) {
+		for i := len(open) - 1; i >= 0; i-- {
+			if open[i] == closer {
+				open = append(open[:i], open[i+1:]...)
+				return
+			}
+		}
+	}
 	for _, tk := range contentstream.Tokenize(content) {
 		if tk.Kind != contentstream.Operator {
 			continue
 		}
 		switch string(tk.Bytes(content)) {
 		case "q":
-			depth++
+			open = append(open, "Q")
 		case "Q":
-			if depth > 0 {
-				depth--
-			}
+			pop("Q")
 		case "BT":
-			inText = true
+			open = append(open, "ET")
 		case "ET":
-			inText = false
+			pop("ET")
+		case "BMC", "BDC":
+			open = append(open, "EMC")
+		case "EMC":
+			pop("EMC")
 		}
 	}
 	out := ""
-	if inText {
-		out += "ET\n"
+	for i := len(open) - 1; i >= 0; i-- {
+		out += open[i] + "\n"
 	}
-	return out + strings.Repeat("Q\n", depth)
+	return out
 }

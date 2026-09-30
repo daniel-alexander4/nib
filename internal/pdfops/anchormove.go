@@ -117,6 +117,7 @@ func carryAnchors(ctx *model.Context, from, to pdfread.Page, zone [4]float64, dy
 			if d := derefDict(xt, o); d != nil {
 				shiftAnnot(ctx, d, dy)
 				d["P"] = *to.Ref
+				repointOBJR(ctx, d, o, *from.Ref, *to.Ref)
 			}
 			dst = append(dst, o)
 		}
@@ -228,4 +229,39 @@ func carryFlags(ctx *model.Context, from, to pdfread.Page, zone [4]float64, dy f
 		ctx.Properties[flagsKey] = v
 	}
 	return nil
+}
+
+// repointOBJR re-points the structure tree's reference to annotation annot — object o — at page to: the element its
+// `/StructParent` names, and the OBJR kid of it whose `/Obj` is o, gains `/Pg` to — and the element follows it when nothing
+// of it is left on from (`followsItsContent`, P07.S07). An OBJR's `/Pg` says which
+// page the object is on, and an annotation that changed page and kept its OBJR on the old one is placed in reading order
+// on a page it is not on — which no check sees, because that page is still live. An annotation the tree does not
+// reference has nothing to re-point.
+func repointOBJR(ctx *model.Context, annot types.Dict, o types.Object, from, to types.IndirectRef) {
+	xt := ctx.XRefTable
+	key, ok := pdfNumber(xt, annot["StructParent"])
+	cat, err := xt.Catalog()
+	if !ok || err != nil {
+		return
+	}
+	root := derefDict(xt, cat["StructTreeRoot"])
+	if root == nil {
+		return
+	}
+	_, elem, found := rowFor(ctx, &structTree{root: root}, int(key))
+	if !found || elem == nil {
+		return
+	}
+	d := derefDict(xt, *elem)
+	if d == nil {
+		return
+	}
+	kids, _ := kidsArray(ctx, d)
+	for _, k := range kids {
+		objr := derefDict(xt, k)
+		if t := objr.NameEntry("Type"); objr != nil && t != nil && *t == "OBJR" && sameObject(objr["Obj"], o) {
+			objr["Pg"] = to
+		}
+	}
+	followsItsContent(ctx, *elem, kids, from, to)
 }

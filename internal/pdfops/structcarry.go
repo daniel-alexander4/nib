@@ -103,8 +103,9 @@ func carryStructure(ctx *model.Context, root types.Dict, kept []keptPage) (bool,
 		return false, nil
 	}
 	if _, nested := pt["Kids"]; nested {
-		// A nested number tree is refused rather than rebalanced, the same refusal the write half
-		// already makes and for the same reason (`parentTreeDict`). Measured: **0 of 294** tagged
+		// A nested number tree is refused here. The write half has written one since P07.S07 (`parentTreeDict`),
+		// but this carry was built and measured over flat trees only, so it keeps its own refusal until a nested
+		// source is driven through it (`/pending 528`). Measured: **0 of 294** tagged
 		// files in veraPDF's own corpus and neither LibreOffice conversion nests one — LibreOffice
 		// keeps 682 flat `/Nums` entries across 142 pages — so the refusal costs nothing measurable.
 		// Flattening it instead is `/pending 528`.
