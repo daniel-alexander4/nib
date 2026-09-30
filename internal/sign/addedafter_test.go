@@ -572,7 +572,7 @@ var sigwalkExempt = map[string]string{
 	// Re-expressed over the sweep it would NARROW towards `Unsigned` (it answers for any FT /Sig).
 	"signatureBlobPresent": "verify.go",
 	// Reads /Reference for DocMDP; its /Kids blindness is declared at the site (/pending 734).
-	"hasCertificationSignature": "identity.go",
+	"certifiedIn": "identity.go",
 	// /pending 749's population cross-check: pdfcpu's table, and the one shape test on each entry. It
 	// records nothing and can only route a verdict to could-not-check (ADR-063).
 	"unseenSignatures":       "verify.go",

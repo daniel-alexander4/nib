@@ -173,15 +173,57 @@ func Generate(privPath string) (pubLine string, err error) {
 	return pubLine, nil
 }
 
-// PublicKeyLine returns the authorized_keys line for the private key at keyPath,
-// preferring a sibling ".pub" file and otherwise deriving it from the key.
+// PublicKeyLine returns the authorized_keys line for the private key at keyPath.
+//
+// **The private key is the authority, and a sibling ".pub" is only a convenience** (/pending 712
+// R6-3). This used to return the ".pub" whenever one existed, never asking whether it belonged to
+// the key beside it — and every caller seals to the answer: `vault.Migrate` seals the whole vault
+// (the signing identity included) to it and overwrites the old one, enrol does the same, and
+// `AddKey` adds a slot. A stale or mismatched `~/.ssh/id_*.pub` therefore produced a vault that
+// opens for no key the user holds, with the only good copy gone.
+//
+// So the public half is derived from the key wherever the key yields it — a plain key, or an
+// encrypted OpenSSH-format one, which carries its public half in cleartext — and a ".pub" is used:
+//
+//   - when it IS that key's public half: its line is returned, keeping the comment the user gave it;
+//   - when the key cannot yield one (legacy PEM encryption, a key type ssh cannot parse, an
+//     unreadable key file): as before, because it is then the only answer there is. That residue is
+//     declared, not closed: nothing on this machine can check the pair without the passphrase.
+//
+// A ".pub" that names a DIFFERENT key is refused by name rather than silently overridden, so the
+// user learns their files disagree before anything is sealed.
 func PublicKeyLine(keyPath string) (string, error) {
-	if b, err := os.ReadFile(keyPath + ".pub"); err == nil {
-		return strings.TrimSpace(string(b)), nil
+	pubFile, pubErr := os.ReadFile(keyPath + ".pub")
+	derived, derr := derivePublicKey(keyPath)
+	if derr != nil {
+		if pubErr == nil {
+			return strings.TrimSpace(string(pubFile)), nil
+		}
+		return "", derr
 	}
+	if pubErr != nil {
+		return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(derived))), nil
+	}
+	pk, _, _, _, perr := ssh.ParseAuthorizedKey(pubFile)
+	if perr != nil || !bytes.Equal(pk.Marshal(), derived.Marshal()) {
+		return "", ErrPublicKeyMismatch{KeyPath: keyPath}
+	}
+	return strings.TrimSpace(string(pubFile)), nil
+}
+
+// ErrPublicKeyMismatch refuses a ".pub" that is not the public half of the private key beside it.
+type ErrPublicKeyMismatch struct{ KeyPath string }
+
+func (e ErrPublicKeyMismatch) Error() string {
+	return e.KeyPath + ".pub is not the public half of " + e.KeyPath + ", so nothing was sealed to " +
+		"it; run 'ssh-keygen -y -f " + e.KeyPath + " > " + e.KeyPath + ".pub' to rewrite it from the key"
+}
+
+// derivePublicKey reads the public half out of the private key file itself.
+func derivePublicKey(keyPath string) (ssh.PublicKey, error) {
 	b, err := os.ReadFile(keyPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	raw, err := ssh.ParseRawPrivateKey(b)
 	if err != nil {
@@ -192,17 +234,17 @@ func PublicKeyLine(keyPath string) (string, error) {
 		var miss *ssh.PassphraseMissingError
 		if errors.As(err, &miss) {
 			if miss.PublicKey != nil {
-				return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(miss.PublicKey))), nil
+				return miss.PublicKey, nil
 			}
-			return "", errors.New("key is passphrase-protected and has no public (.pub) file; run 'ssh-keygen -y -f " + keyPath + "' to create one")
+			return nil, errors.New("key is passphrase-protected and has no public (.pub) file; run 'ssh-keygen -y -f " + keyPath + "' to create one")
 		}
-		return "", err
+		return nil, err
 	}
 	signer, err := ssh.NewSignerFromKey(raw)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), nil
+	return signer.PublicKey(), nil
 }
 
 // Candidates lists existing default private keys under ~/.ssh.

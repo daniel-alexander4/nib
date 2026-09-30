@@ -3,8 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -288,6 +286,8 @@ func (c ceremonyReport) lines() []string {
 			"  ("+c.endSource+")",
 			"  The document itself does not record how its proceeding ended; a Nib PDF proves",
 			"  only that its signatures are intact and who among the roster has signed.")
+	} else if c.endSource != "" {
+		out = append(out, "", "how this ceremony ended: "+c.endSource)
 	}
 	return out
 }
@@ -331,22 +331,6 @@ func short12(s string) string {
 
 // ── The end state, which the DOCUMENT does not carry (P08.S09, D28) ──────────────────────────
 
-// nibDir is where this machine keeps its ceremony records.
-//
-// The CLI's own copy of `internal/server`'s `defaultOutputDir`, and it is a copy because
-// `internal/cli` does not import `internal/server` and should not start for one path join.
-// **Unlike the server's, it returns an error rather than a relative fallback**: the server's
-// callers mostly write a document and a wrong directory is a misplaced file, while every use here
-// is a read whose failure must be reported as "this machine has no record" and never as an end
-// state.
-func nibDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, "nib"), nil
-}
-
 // localEnd is what THIS MACHINE knows about how a ceremony ended.
 //
 // **The document does not carry this and never will.** D25 forbids a structural write after a
@@ -367,10 +351,15 @@ func nibDir() (string, error) {
 // this machine's own unattested note, and it is the only artifact that can carry `expired` or
 // `abandoned`. Both are absent on a machine that was not party to the ceremony, which is the
 // ordinary case and reports nothing.
+//
+// The folder is `ceremony.StoreRoot`'s, the one door the server writes through too (/pending 712
+// R6-5). **Where there is no home directory the answer is "not looked up", said, never silence**:
+// the server then writes under a relative `nib`, so an empty answer here would read as "this
+// machine has no record" on the one machine whose records went somewhere else.
 func localEnd(rec ceremony.Record) (state, source string) {
-	root, err := nibDir()
+	root, err := ceremony.StoreRoot()
 	if err != nil {
-		return "", ""
+		return "", "this machine's records were not looked up: " + err.Error()
 	}
 	if t, terr := ceremony.ReadTermination(root, rec); terr == nil {
 		return t.State, "signed by the convener and checked against this document's own record"

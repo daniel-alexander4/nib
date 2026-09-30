@@ -30,8 +30,9 @@ import (
 //
 // # What it asserts, and the two doors
 //
-// A goroutine is detached through `go` **or** through `time.AfterFunc`, whose callback runs on
-// its own goroutine with no caller to unwind into. A guard that walked only `go` statements
+// A goroutine is detached through `go`, through `time.AfterFunc`, **or** through
+// `context.AfterFunc` (/pending 712 R6-7), each of whose callbacks runs on its own goroutine with
+// no caller to unwind into. A guard that walked only `go` statements
 // would have reported full coverage over a tree where two `AfterFunc` callbacks — one of them
 // closing a channel on the untrusted-datagram path — had no recover at all. Both doors are
 // walked here.
@@ -94,7 +95,14 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 		t.Fatalf("setup: only %d source directories parsed — this guard is not walking the repo", len(byDir))
 	}
 
-	var goStmts, viaCallee, viaLiteral, afterFuncs int
+	// **A callback that cannot panic, declared by site** (/pending 712 R6-7): `file|callback`. A
+	// source scan cannot see a type, so a `context.CancelFunc` handed to `context.AfterFunc` reads
+	// as a bare name with no recover — and the stdlib's cancel cannot panic, so wrapping it would
+	// be noise. Anything else handed over by name must recover itself.
+	cannotPanic := map[string]string{
+		filepath.Join("internal", "rendezvous", "dht.go") + "|cancel": "the context.CancelFunc from context.WithCancel",
+	}
+	var goStmts, viaCallee, viaLiteral, afterFuncs, contextAfterFuncs int
 	for dir, files := range byDir {
 		// Which functions in THIS package recover themselves, so a bare `go f()` can be
 		// resolved one hop. A bare call has nowhere to hang a defer, so either the callee
@@ -151,17 +159,25 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 					}
 					viaLiteral++
 				case *ast.CallExpr:
-					if !isTimeAfterFunc(node) || len(node.Args) < 2 {
+					door := afterFuncDoor(node)
+					if door == "" || len(node.Args) < 2 {
 						return true
 					}
-					afterFuncs++
+					if door == "context" {
+						contextAfterFuncs++
+					} else {
+						afterFuncs++
+					}
 					pos := fset.Position(node.Pos())
 					lit, ok := node.Args[1].(*ast.FuncLit)
 					if !ok {
 						if calleeRecoversIn(node.Args[1], recovers) {
 							return true
 						}
-						t.Errorf("%s:%d hands time.AfterFunc a callback that does not defer "+
+						if _, ok := cannotPanic[pos.Filename+"|"+types.ExprString(node.Args[1])]; ok {
+							return true
+						}
+						t.Errorf("%s:%d hands an AfterFunc (time or context) a callback that does not defer "+
 							"safe.Recover first. AfterFunc runs it on its own goroutine, so a "+
 							"panic there has no caller to unwind into either.",
 							pos.Filename, pos.Line)
@@ -172,7 +188,7 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 					}
 					first, ok := lit.Body.List[0].(*ast.DeferStmt)
 					if !ok || !isSafeRecoverCall(first.Call) {
-						t.Errorf("%s:%d hands time.AfterFunc a callback whose first statement "+
+						t.Errorf("%s:%d hands an AfterFunc (time or context) a callback whose first statement "+
 							"is not `defer safe.Recover(...)`. It runs on its own goroutine: "+
 							"the same law as `go`, through the other door.",
 							pos.Filename, pos.Line)
@@ -203,6 +219,11 @@ func TestEveryDetachedGoroutineIsRecovered(t *testing.T) {
 	if viaLiteral == 0 {
 		t.Error("no `go func(){...}()` was checked, so the literal arm ran against nothing.")
 	}
+	if contextAfterFuncs < 1 {
+		t.Errorf("found %d context.AfterFunc call sites; the census at /pending 712 was 1 "+
+			"(internal/rendezvous/dht.go). If it was deliberately removed, delete this door and its "+
+			"declared exemption rather than leaving them unexercised", contextAfterFuncs)
+	}
 }
 
 // calleeRecoversIn reports whether a bare `go f()` / `go x.f()` names something in the same
@@ -229,12 +250,16 @@ func isSafeRecoverCall(call *ast.CallExpr) bool {
 	return ok && id.Name == "safe"
 }
 
-// isTimeAfterFunc reports whether a call is `time.AfterFunc(...)`.
-func isTimeAfterFunc(call *ast.CallExpr) bool {
+// afterFuncDoor names the package of an `AfterFunc(...)` call that runs its callback (argument 1
+// in both) on a fresh goroutine — "time" or "context" — and "" for anything else.
+func afterFuncDoor(call *ast.CallExpr) string {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "AfterFunc" {
-		return false
+		return ""
 	}
 	id, ok := sel.X.(*ast.Ident)
-	return ok && id.Name == "time"
+	if !ok || (id.Name != "time" && id.Name != "context") {
+		return ""
+	}
+	return id.Name
 }

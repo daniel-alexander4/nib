@@ -4,14 +4,22 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"fmt"
 
 	"github.com/digitorus/pdfsign/sign"
 	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
-// ErrWrongPassphrase reports that the supplied passphrase did not decrypt the
-// PKCS#12 bundle (a wrong password, or bytes that aren't a valid .p12).
-var ErrWrongPassphrase = errors.New("wrong passphrase or not a PKCS#12 file")
+// ErrWrongPassphrase reports that the supplied passphrase did not decrypt the PKCS#12 bundle.
+//
+// **Only that** (/pending 712 R6-9): this doc and `decodeP12`'s said bytes that are not a .p12 map
+// here too, and they never did — only `pkcs12.ErrIncorrectPassword` is mapped. A file that is not a
+// PKCS#12 bundle is `ErrNotPKCS12`, which a reprompt for the passphrase cannot fix.
+var ErrWrongPassphrase = errors.New("wrong passphrase")
+
+// ErrNotPKCS12 reports bytes the PKCS#12 decoder could not read as a bundle at all — not a .p12/.pfx
+// file, or one in a form nib's decoder does not read. The decoder's own message is kept beside it.
+var ErrNotPKCS12 = errors.New("not a PKCS#12 (.p12/.pfx) certificate file nib can read")
 
 // ParseP12 decodes a PKCS#12 (.p12/.pfx) bundle with passphrase and returns its
 // leaf certificate and CA chain — the PUBLIC parts only; the private key is
@@ -61,18 +69,18 @@ func SignExternal(pdfBytes, p12 []byte, passphrase string, opts Options) ([]byte
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}
 	}
-	return runSign(pdfBytes, data)
+	return runSign(pdfBytes, data, nil)
 }
 
-// decodeP12 wraps the PKCS#12 decode, mapping a wrong/garbage password to the
-// ErrWrongPassphrase sentinel so callers can reprompt.
+// decodeP12 wraps the PKCS#12 decode, mapping a wrong password to the ErrWrongPassphrase sentinel
+// so callers can reprompt, and every other decode failure to ErrNotPKCS12, so they do not.
 func decodeP12(p12 []byte, passphrase string) (key any, leaf *x509.Certificate, chain []*x509.Certificate, err error) {
 	key, leaf, chain, err = pkcs12.DecodeChain(p12, passphrase)
 	if err != nil {
 		if errors.Is(err, pkcs12.ErrIncorrectPassword) {
 			return nil, nil, nil, ErrWrongPassphrase
 		}
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("%w: %v", ErrNotPKCS12, err)
 	}
 	return key, leaf, chain, nil
 }
