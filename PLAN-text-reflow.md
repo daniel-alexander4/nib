@@ -813,6 +813,18 @@ back, anchors carried, the last page refusing, a multi-column page refusing; tie
 moved twice — so a popup now moves only with its note. Tier 3 drives a flow onto page 2 and reads the carried LINK there.
 Review `code-reviews/v1.171.1-p07s06-2026-09-30.md`.
 
+#### P07.S07 — a tagged paragraph keeps its structure when it changes page
+**Added 2026-09-30 by Dan's decision (`/pending 779`, A)**: every multi-page real-producer document is tagged (14/14), so
+without this slice S05/S06's carry refuses `tagged-across-pages` on all of them. A paragraph whose marked content belongs to
+its page's structure tree is carried WITH that structure: its MCIDs renumbered free on the target page (the page's
+`/StructParents` row created if it has none), each element's `/Pg` (or the MCR's) re-pointed, and its `/ParentTree`
+entries moved from the source row to the target's — through the repo's existing structure writers (`structwrite.go`
+`addMCIDTo`, `setParentTreeSlot`), never a second copy (ADR-009), and never claiming tagging it has not (ADR-031).
+Acceptance: a tagged paragraph carried to another page reads back there with its text AND its structure element, whose
+content resolves on the target page (the repo's structure reader, not a count); the source page's structure no longer
+claims it; `tagged-across-pages` remains only for what cannot be carried, by name; the S05 corpus read-back reaches the
+real-producer documents it could not before, and says how many.
+
 ### P08 — Typographic fidelity
 **Goal.** Justification, kerning from `TJ` arrays, and the text-state parameters the current edit
 path reads none of — `Tc`, `Tw`, `Tz`.
