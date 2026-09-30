@@ -97,7 +97,10 @@ func TestTheCapacityClauseDoesNotDisturbWhatAlreadyParses(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("setup: %d attestations", len(got))
 	}
-	if got[0].AcceptedPeer != strings.Repeat("ab", 32) {
+	// Inside a ceremony `StampCommitment` sets what the signature accepts — the predecessor,
+	// party 0 here (/pending 711 R5-3) — so that, not the wire peer the fixture started from, is
+	// what the token must still carry.
+	if !strings.EqualFold(got[0].AcceptedPeer, parties[0].fp) {
 		t.Errorf("the SPKI token no longer parses with a capacity clause present: %q", got[0].Reason)
 	}
 	if !strings.EqualFold(got[0].RosterHash, r.Commitment) {

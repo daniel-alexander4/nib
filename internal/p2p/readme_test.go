@@ -328,3 +328,27 @@ func TestAboutCopyContainsTrustClaims(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderedReadmeSaysNothingAboutWhereTheBlocksAre — /pending 711 R5-4. The page said who each
+// signer accepted is "in the acceptance block on the preceding pages" and called it "the
+// acceptance block printed on the page above", and neither is true of any document nib makes:
+// a two-party co-sign stacks its blocks on THIS page below the text (NextPlacement), and a
+// ceremony appends this page FIRST and its signature pages after it (PrepareCeremonyDocument).
+// The readme is added before any signature, so it cannot know where a block will land; the
+// page must not say. And a ceremony block prints "Party N of M" and no "Accepts:" line
+// (AppearanceLines), so the page must not tell a ceremony's reader the block names anyone.
+func TestRenderedReadmeSaysNothingAboutWhereTheBlocksAre(t *testing.T) {
+	flat := renderedReadme(t)
+	for _, gone := range []string{"preceding page", "page above", "page below", "following page",
+		"every signature names one party"} {
+		if strings.Contains(flat, gone) {
+			t.Errorf("the rendered readme says %q — a claim about where a signature block sits or what "+
+				"every one says, which the page is written before any block exists to know", gone)
+		}
+	}
+	// Setup: the sentence about acceptance is still on the page, so the absence above is not the
+	// paragraph having been deleted.
+	if !strings.Contains(flat, "Who each signer accepted") {
+		t.Fatal("setup: the acceptance paragraph is gone from the page, so nothing above was tested")
+	}
+}
