@@ -100,6 +100,9 @@ type Revision struct {
 	// whose `/Contents` `pkcs7.Parse` accepts, in xref order, and only when `/SigFlags` exists —
 	// or -1 when the library never reports it.
 	libPos int
+	// offset is where the xref says this object begins (0 inside an object stream, which (10) refuses);
+	// conjunct (11) requires the gap's owning header to sit there.
+	offset int64
 	// bag is `bagKey` over the certificate bag, for the per-position cross-check.
 	bag string
 	// named is the fingerprint the SignerInfo names, before anything has verified it.
@@ -210,6 +213,7 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 			Obj: ptr.GetID(), Gen: ptr.GetGen(),
 			Type: typ, Filter: filter, SubFilter: v.Key("SubFilter").Name(),
 			libPos:      -1,
+			offset:      x.Offset(),
 			hasContents: len(v.Key("Contents").RawString()) > 0,
 			underPerms:  perms[ptr.GetID()],
 		}
@@ -409,12 +413,13 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm 
 // assignGapOwners is conjunct (11): the gap belongs to THIS object. It returns the bytes scanned.
 //
 // Scanning back from the gap through bytes the signature itself covers, the nearest `N G obj`
-// header must be the record's own object number, and only `/Contents` and white space may sit
-// immediately before the `<`. A verbatim copy of the victim's dictionary under any other number
-// finds the victim's header, because those bytes are the victim's signed bytes; a copy REUSING the
-// victim's number replaces the victim in the xref (one signer, harmless). The digitorus reader
-// exposes no offsets (`read.go:118-131`), which is why this is a backward scan of signed bytes and
-// not an offset lookup — and nothing searches the whole file.
+// header must be the record's own object number AT THE OFFSET THE XREF GIVES IT (`headerAt`), and only
+// `/Contents` and white space may sit immediately before the `<`. A verbatim copy of the victim's dictionary
+// under any other number finds the victim's header, because those bytes are the victim's signed bytes; a copy
+// REUSING the victim's number also finds the victim's header, but the xref now points at the copy, so the
+// offsets disagree (this used to be called harmless — it let a later revision rewrite the victim's unsigned
+// `/Reason` and `/Name`). The scan is still a backward scan of signed bytes, and nothing searches the whole
+// file; the patched reader exposes the xref offset for the comparison (NOTICE.nib divergence 6).
 //
 // **Nearest, never "our own number anywhere"**: nearest makes gap → owner a FUNCTION, so no gap
 // has two well-formed owners. **Linear, never a regex or a lexer**: a regex over the window
@@ -445,6 +450,7 @@ func assignGapOwners(data []byte, revs []Revision) (scanned int) {
 	sort.Slice(starts, func(a, b int) bool { return starts[a] < starts[b] })
 	type owned struct {
 		obj uint32
+		at  int // where the owning header begins
 		ok  bool
 	}
 	owner := make(map[int64]owned, len(starts))
@@ -460,9 +466,9 @@ func assignGapOwners(data []byte, revs []Revision) (scanned int) {
 		if floor > gs {
 			floor = gs
 		}
-		obj, ok, n := gapOwner(data, int(gs), int(floor))
+		obj, at, ok, n := gapOwner(data, int(gs), int(floor))
 		scanned += n
-		owner[gs] = owned{obj, ok}
+		owner[gs] = owned{obj, at, ok}
 		prevEnd = ends[gs]
 	}
 	for i := range revs {
@@ -470,17 +476,37 @@ func assignGapOwners(data []byte, revs []Revision) (scanned int) {
 		if rv.Cause != "" || rv.conjunct != 0 {
 			continue
 		}
-		if o := owner[rv.gapStart]; !o.ok || o.obj != rv.Obj {
+		if o := owner[rv.gapStart]; !o.ok || o.obj != rv.Obj || !headerAt(data, rv.offset, o.at) {
 			rv.conjunct = 11
 		}
 	}
 	return scanned
 }
 
+// headerAt reports whether the xref's offset for a record names the header the gap's owner was found at: equal,
+// or earlier by white space only (a producer whose offset lands on the line break before `N G obj`).
+//
+// **Same number is not same object** (the P01 phase-close review): an appended revision that re-defines the
+// signer's object number with the same `/Contents` and `/ByteRange` finds the ORIGINAL header behind the gap —
+// those are the signed bytes — while the library reads `/Name`, `/Reason` and `/M` from the definition the xref
+// now points at. So a later party could rewrite an earlier signer's reason (which carries the co-sign attestation
+// token) and it verified as that signer's. The owner must be the object the xref names, at its offset.
+func headerAt(data []byte, offset int64, at int) bool {
+	if offset < 0 || offset > int64(at) || int64(at) > int64(len(data)) {
+		return false
+	}
+	for _, c := range data[offset:at] {
+		if !isPDFSpace(c) {
+			return false
+		}
+	}
+	return true
+}
+
 // gapOwner finds the object that wrote the hex string starting at gs: `/Contents` and white space
 // immediately before it, then the nearest `N G obj` header, looking no lower than floor. It never
 // reads below floor, and the bytes it examines are returned for the budget tests.
-func gapOwner(data []byte, gs, floor int) (obj uint32, ok bool, examined int) {
+func gapOwner(data []byte, gs, floor int) (obj uint32, at int, ok bool, examined int) {
 	const key = "/Contents"
 	i := gs - 1
 	for i >= floor && isPDFSpace(data[i]) {
@@ -489,7 +515,7 @@ func gapOwner(data []byte, gs, floor int) (obj uint32, ok bool, examined int) {
 	}
 	keyAt := i + 1 - len(key)
 	if keyAt < floor || string(data[keyAt:i+1]) != key {
-		return 0, false, examined
+		return 0, 0, false, examined
 	}
 	for j := keyAt - 3; j >= floor; j-- {
 		examined++
@@ -546,9 +572,9 @@ func gapOwner(data []byte, gs, floor int) (obj uint32, ok bool, examined int) {
 		if n > 1<<32-1 {
 			continue
 		}
-		return uint32(n), true, examined
+		return uint32(n), k + 1, true, examined
 	}
-	return 0, false, examined
+	return 0, 0, false, examined
 }
 
 // errLibraryWouldOverread refuses a document before the library copies its byte ranges.

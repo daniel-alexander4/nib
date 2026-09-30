@@ -110,21 +110,23 @@ type edge struct {
 }
 
 // refGraph walks ctx's references along the edges pdfcpu's validator follows unguarded. state and count are
-// indexed by `slot`.
+// indexed by `slot`, which is DENSE — an object's position among the table's live objects, never its number: sized by
+// the highest object number, a 400-byte file naming object 2^25 cost 6.1 GB (the P01 phase-close review).
 type refGraph struct {
 	ctx     *model.Context
-	size    int
-	state   []uint8 // 0 unvisited, 1 on the path, 2 done
+	pos     map[int]int // object number → dense position
+	state   []uint8     // 0 unvisited, 1 on the path, 2 done
 	count   []uint64
 	reached []bool // named by an edge the walk follows, so its paths are counted in whatever names it
 }
 
-// slot is n's index in state and count, or -1 for an object number outside the table (which names nothing).
+// slot is n's index in state and count, or -1 for an object number the table does not hold (which names nothing).
 func (g *refGraph) slot(n node) int {
-	if n.nr < 0 || n.nr >= g.size {
+	p, ok := g.pos[n.nr]
+	if !ok {
 		return -1
 	}
-	return n.nr*int(numRoles) + int(n.role)
+	return p*int(numRoles) + int(n.role)
 }
 
 // refuseUnboundedReferences refuses ctx when pdfcpu's validator would recurse on it without end, through more
@@ -160,12 +162,12 @@ func validatorPaths(ctx *model.Context) (uint64, error) {
 		}
 	}
 	sort.Ints(nrs)
-	size := 1
-	if len(nrs) > 0 {
-		size = nrs[len(nrs)-1] + 1
+	pos := make(map[int]int, len(nrs))
+	for i, nr := range nrs {
+		pos[nr] = i
 	}
-	slots := size * int(numRoles)
-	g := &refGraph{ctx: ctx, size: size, state: make([]uint8, slots), count: make([]uint64, slots), reached: make([]bool, slots)}
+	slots := len(nrs) * int(numRoles)
+	g := &refGraph{ctx: ctx, pos: pos, state: make([]uint8, slots), count: make([]uint64, slots), reached: make([]bool, slots)}
 	var roots []int
 	for _, nr := range nrs {
 		for _, r := range rootRoles(ctx.Table[nr].Object) {

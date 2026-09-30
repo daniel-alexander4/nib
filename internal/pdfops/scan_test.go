@@ -10,6 +10,8 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+
+	"nib/internal/testpdf"
 )
 
 // craftActivePDF builds a one-page PDF salted with active content: an
@@ -768,4 +770,29 @@ func fieldTreeFacts(t *testing.T, pdf []byte) (fieldAA, annotAA bool) {
 		}
 	}
 	return fieldAA, annotAA
+}
+
+// TestAnActionBehindAnIndirectNextArrayIsFound — the P01 phase-close review, fixing eachAction: a /Next that is a
+// REFERENCE to an array fell through to a dictionary dereference, found nothing, and every action in the array was
+// invisible to Scan and to StripActive's walk alike.
+func TestAnActionBehindAnIndirectNextArrayIsFound(t *testing.T) {
+	pdf := testpdf.Assemble(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [10 0 R] >>",
+		10: "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 11 0 R >>",
+		11: "<< /S /GoTo /D [3 0 R /Fit] /Next 12 0 R >>",
+		12: "[13 0 R]",
+		13: "<< /S /Launch /F (calc.exe) >>",
+	})
+	rep, err := Scan(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Kind == "action" && strings.Contains(f.Detail, "aunch") {
+			return
+		}
+	}
+	t.Errorf("the /Launch action behind an indirect /Next array was not found: %+v", rep.Findings)
 }

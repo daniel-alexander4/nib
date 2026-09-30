@@ -100,7 +100,11 @@ func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
 		return nil, err
 	}
 	nth := map[int]int{}
-	for _, pa := range pageFileAttachments(xt, root) {
+	pas, err := pageFileAttachments(xt, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, pa := range pas {
 		n := nth[pa.page]
 		nth[pa.page]++
 		out = append(out, embeddedFile{
@@ -155,9 +159,9 @@ func pageAttachmentName(pa pageFileAttachment) string {
 // pageFileAttachments walks page /Annots for Subtype /FileAttachment, mirroring
 // Scan's detection (scan.go), and returns each in page order. This is the carrier
 // the catalog name tree — and thus ListAttachments — does not cover.
-func pageFileAttachments(xt *model.XRefTable, root types.Dict) []pageFileAttachment {
+func pageFileAttachments(xt *model.XRefTable, root types.Dict) ([]pageFileAttachment, error) {
 	var out []pageFileAttachment
-	eachPage(xt, root, func(page types.Dict, nr int) {
+	if err := eachPage(xt, root, func(page types.Dict, nr int) {
 		for _, a := range derefArray(xt, page["Annots"]) {
 			annot := derefDict(xt, a)
 			if annot == nil || nameVal(annot, "Subtype") != "FileAttachment" {
@@ -169,8 +173,10 @@ func pageFileAttachments(xt *model.XRefTable, root types.Dict) []pageFileAttachm
 			}
 			out = append(out, pageFileAttachment{name: fileSpecName(xt, fs), page: nr, fs: fs})
 		}
-	})
-	return out
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // fileSpecName reads a filespec's basename (preferring /UF over /F), stripped to a
@@ -1213,7 +1219,7 @@ func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
 		return nil, err
 	}
 	var out []SignatureWidget
-	eachPage(ctx.XRefTable, root, func(page types.Dict, nr int) {
+	if err := eachPage(ctx.XRefTable, root, func(page types.Dict, nr int) {
 		for _, a := range derefArray(ctx.XRefTable, page["Annots"]) {
 			annot := derefDict(ctx.XRefTable, a)
 			if annot == nil || nameVal(annot, "Subtype") != "Widget" {
@@ -1247,7 +1253,9 @@ func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
 				HasAP: derefDict(ctx.XRefTable, annot["AP"]) != nil,
 			})
 		}
-	})
+	}); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

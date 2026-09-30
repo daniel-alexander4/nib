@@ -9,8 +9,8 @@ pins v0.1.2. The upstream licence is LICENSE, unchanged (BSD-style, The Go Autho
 Why: /pending 758, ADR-066 (which supersedes ADR-041's refusal of this option in part); lex.go:
 /pending 761, ADR-068 (which widens ADR-066's read.go-only scope to this one lex.go change).
 
-What changed, in read.go only
------------------------------
+What changed in read.go (and, for divergence 4, lex.go)
+-------------------------------------------------------
 
 `(*Reader).resolve` found an object-stream member by decoding the stream FROM ITS START and lexing
 its `id offset` header pairs until the id matched, then seeking forward to the member — for every
@@ -80,6 +80,11 @@ resolves another object per lookup, and where that object sits in an object stre
 same the cost compounds per level (three references a level is 3^d reads a lookup; d = 8 was 27 s a pass).
 pdfcpu refuses such streams, so no document nib opens carries one; this closes the shape for the paths that
 reach this reader without pdfcpu's gate (sign.HasSignatureBlob).
+
+6. (the P01 phase-close review) `(*xref).Offset` exposes the byte offset the xref records for an object, which
+upstream stored and never returned. It adds an accessor and changes no reading. internal/sign's conjunct (11)
+uses it to refuse a signature dictionary re-defined under its own object number in a later revision, whose
+unsigned /Reason and /Name the library would otherwise report under the original signer.
 
 internal/sign's FuzzThePatchedObjectStreamReaderMatchesTheOriginal (/pending 759) resolves random object
 streams through this reader and through v0.1.2 itself (a test-only copy under internal/sign/testdata)

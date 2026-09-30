@@ -6,7 +6,7 @@ diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
  			continue
  		}
 -		if o := owner[rv.gapStart]; !o.ok || o.obj != rv.Obj || !headerAt(data, rv.offset, o.at) {
-+		if o := owner[rv.gapStart]; false && (!o.ok || o.obj != rv.Obj || !headerAt(data, rv.offset, o.at)) {
++		if o := owner[rv.gapStart]; !o.ok || o.obj != rv.Obj {
  			rv.conjunct = 11
  		}
  	}

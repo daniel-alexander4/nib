@@ -650,16 +650,19 @@ func repointOBJRs(ctx *model.Context, moved map[int]types.IndirectRef) error {
 	if rerr != nil || root == nil {
 		return nil // an untagged composition has no OBJR to repoint
 	}
+	// **Every indirect object enters `seen` before it is walked, arrays included, and past `maxStructDepth` the carry
+	// is refused** — tagcarry.go's walk had the same shape and was fixed at /pending 643 (v1.169.45); this copy was not
+	// (the P01 phase-close review). An indirect `/K` array walked before its check re-walks every sharing path, so
+	// `[N 0 R N 0 R]` on object N ran to the old 64-level depth cap — 2^64 calls — and pdfcpu admits the loop.
 	seen := map[int]bool{}
+	tooDeep := false
 	var walk func(o types.Object, depth int)
 	walk = func(o types.Object, depth int) {
-		if depth > 64 {
+		if tooDeep {
 			return
 		}
-		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
-			for _, x := range arr {
-				walk(x, depth+1)
-			}
+		if depth > maxStructDepth {
+			tooDeep = true
 			return
 		}
 		if ir, isRef := o.(types.IndirectRef); isRef {
@@ -668,6 +671,12 @@ func repointOBJRs(ctx *model.Context, moved map[int]types.IndirectRef) error {
 				return
 			}
 			seen[nr] = true
+		}
+		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
+			for _, x := range arr {
+				walk(x, depth+1)
+			}
+			return
 		}
 		d, e := ctx.DereferenceDict(o)
 		if e != nil || d == nil {
@@ -685,6 +694,9 @@ func repointOBJRs(ctx *model.Context, moved map[int]types.IndirectRef) error {
 		}
 	}
 	walk(root["K"], 0)
+	if tooDeep {
+		return fmt.Errorf("%w: the structure tree is deeper than %d levels", errNoteCarry, maxStructDepth)
+	}
 	return nil
 }
 
