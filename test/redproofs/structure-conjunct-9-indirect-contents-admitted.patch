@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..68a4b3bd 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -395,7 +395,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 	}
+ 	contents := v.Key("Contents")
+ 	// (9) `/Contents` is a direct string: an indirect one is some other object's bytes.
+-	if contents.Kind() != dpdf.String || contents.GetPtr() != v.GetPtr() {
++	if contents.Kind() != dpdf.String {
+ 		return 9, gs, ge
+ 	}
+ 	// (10) the dictionary is not in an object stream: a compressed `/Contents` has no file offset,

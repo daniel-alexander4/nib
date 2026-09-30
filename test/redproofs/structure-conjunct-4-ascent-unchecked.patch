@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..64e318f5 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -340,7 +340,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 	}
+ 	// (4) starts strictly ascend.
+ 	for i := 2; i < n; i += 2 {
+-		if vals[i] <= vals[i-2] {
++		if false {
+ 			return 4, 0, 0
+ 		}
+ 	}

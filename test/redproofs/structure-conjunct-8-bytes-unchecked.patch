@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..2001b4d6 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -390,7 +390,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 		memo.forward += int(tok.end - gs - 1)
+ 	}
+ 	memo.forward += len(want)
+-	if string(tok.decoded) != want {
++	if false {
+ 		return 8, gs, ge
+ 	}
+ 	contents := v.Key("Contents")

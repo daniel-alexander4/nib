@@ -6341,3 +6341,56 @@ recorded. All tier 1.
 | **`Verify` never compares the sweep with pdfcpu's reading** (/pending 749, `a-signature-only-the-hybrid-stream-lists-is-not-named`) | `state "valid" over Alice alone, with Bob's signature unread — a verdict over a population nib did not read (/pending 749)` | `TestASignatureOnlyTheHybridStreamListsIsNamedBesideTheOnesNibChecked` — the classic table listed one signature and `/XRefStm` another, and the verdict vouched for the one the library reached |
 
 `recorded` 489 → 507. (/pending 741's patch re-recorded against `withUnchecked`, /pending 749.)
+
+## P01.S04 of PLAN-returned-document.md — the structure rule, the join and G1-G3 (v1.169.47)
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `structure-conjunct-1a-indirect-array-admitted` — (1), the direct arm | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(1) an indirect array: conjunct" |
+| `structure-conjunct-1b-non-integer-admitted` — (1), the integer arm | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(1) a real where an integer belongs: conjunct" |
+| `structure-conjunct-1c-short-range-admitted` — (1), the length arm | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(1) one pair: conjunct" |
+| `structure-conjunct-1d-odd-length-admitted` — (1), the parity arm | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(1) five elements: conjunct" |
+| `structure-conjunct-2-first-start-unchecked` — (2) the first start is 0 | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 2 cause" |
+| `structure-conjunct-3-lengths-unchecked` — (3) every length is positive | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 3 cause" |
+| `structure-conjunct-4-ascent-unchecked` — (4) starts strictly ascend | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 4 cause" |
+| `structure-conjunct-5-overlap-admitted` — (5) the overlap arm | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(5) overlapping pair: conjunct" |
+| `structure-conjunct-5-gap-count-unchecked` — (5) the count arm — exactly one gap | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(5) two gaps: conjunct" |
+| `structure-conjunct-6-past-eof-admitted` — (6) the last pair ends inside the file (also G3) | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 6 cause" |
+| `structure-conjunct-7-second-token-admitted` — (7) the token arm — one hex token fills the gap | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 7 cause" |
+| `structure-conjunct-8-bytes-unchecked` — (8) the bytes arm — the gap decodes to THIS /Contents | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "(8) gap at a same-length hex token: conjunct" |
+| `structure-conjunct-9-indirect-contents-admitted` — (9) /Contents is direct | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 9 cause" |
+| `structure-conjunct-10-objstm-admitted` — (10) not in an object stream | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 10 cause" |
+| `structure-conjunct-11-gap-owner-unchecked` — (11) the gap belongs to this object | `TestEachStructureConjunctRefusesItsOwnFixture`, tier 1 | "want conjunct 11 cause" |
+| `join-count-unchecked` — the join's shift detection — the count check | `TestTheJoinRefusesEveryDisagreement`, tier 1 | "want the count disagreement" |
+| `a-kids-nested-signature-is-unseen` — G1 — a signature nested under /Kids is seen | `TestAKidsNestedSignatureIsSeen`, tier 1 | "the document holds 0 it would process" |
+| `coverage-ends-at-the-first-pair` — G2 — a multi-pair ByteRange resolves to its last pair | `TestAnAbuttingSixElementByteRangeEndsAtItsLastPair`, tier 1 | "want Index(4)+Index(5)" |
+
+**Every conjunct arm was weakened separately, and three survived** (first recorded as one row for all of (1); the diff review split it into its four arms). Two are equivalent mutations, argued and
+not replayable: **(8)'s length arm** is an early exit — with it gone the bytes arm refuses every input it did;
+and **(7)'s delimiter arm** (`data[gs] != '<' || data[ge-1] != '>'`) is refused upstream of `structureOf`, not by
+it: `memo.token` reads from gs+1 and `fontcode.Hex` drops the first byte, so only an EMPTY `/Contents` can pass (8)
+and (11) without the gap being its real `<hex>` token — `/Contents()`, or `/Contents <>` with the `>` left inside
+the signed bytes — and `pkcs7.Parse` refuses both (`unparseable-contents`, `revisions.go:225-229`) before
+`structureOf` runs (`:249`). **So the arm is equivalent only while the parse precedes the structure rule**; moving
+`structureOf` ahead of it makes the arm live again (the diff review's finding; a scratch probe, both shapes, arm
+present or removed: `unparseable-contents`). Its `ge-gs < 2` guard stays, as the bounds check for `data[ge-1]`.
+**(1)'s kind arm** (`br.Kind() != dpdf.Array`) and **(9)'s kind arm** (`contents.Kind() != dpdf.String`) have no row
+either: a `/ByteRange` that is not an array yields no integers, so the length arm refuses it; a `/Contents` that is
+not a string does not parse as PKCS#7, so it never reaches (9) — argued, not probed. The third was a real hole: **(8)'s bytes arm had
+no fixture** — the only (8) case differed in LENGTH, so the length arm always fired first. S04 added `(8) gap at a
+same-length hex token`; with the bytes arm removed it goes red for its own assertion, and conjunct (11) still
+refuses the record — so the defect never reached a verdict, and the row proves the arm rather than the outcome.
+
+**The K-pair gate was proved red and is not a row.** With `libraryWouldOverread` answering false,
+`TestAByteRangeAskingForMoreThanTheFileNeverReachesTheLibrary` failed on every case ("the library was called 1
+times on a byte range it must not be handed"; "Verify allocated 15482340616 bytes on a 164630-byte file, want
+under 16 MiB") — which is the reason: a replayable row would allocate ~15 GB on every `redproof.sh --all`.
+
+**G1's row fails one step earlier than its test's message.** With the sweep restricted to `/Fields`, the nested
+signer is gone from the records while the library still counts it, so `Revisions` refuses the document at the
+join's count check and the test fails there — fail-closed, before its own record assertion. **G3** is the (6)
+row plus the K-pair proof above. **The join's shift proof deletes an ordinary record, where the plan says a
+refused one**: `joinLibrary` reads only each record's library position, never its cause (`revisions.go:645-657`),
+so it is the same path.
+
+`recorded` 507 → 525.

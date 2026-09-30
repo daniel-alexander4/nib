@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..bfbd33e7 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -356,7 +356,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 			gs, ge = prevEnd, vals[i]
+ 		}
+ 	}
+-	if gaps != 1 {
++	if gaps == 0 {
+ 		return 5, 0, 0
+ 	}
+ 	// (6) the last pair ends inside the file — before any byte of it is read.

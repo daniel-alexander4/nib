@@ -500,6 +500,14 @@ func TestEachStructureConjunctRefusesItsOwnFixture(t *testing.T) {
 		return ints(0, s, s+10, g.size-s-10)
 	}, nil)
 	add("(8) gap at another hex token", 8, CauseMalformedByteRange, d, wrote())
+	// (8), its bytes arm: a hex token of exactly /Contents' decoded length whose bytes differ — the one shape
+	// the length arm cannot refuse, so without it the comparison of the bytes had no fixture (P01.S04).
+	same := sigDict("1", "/Pad<"+strings.Repeat("ab", synthHexLen/2)+">")
+	d = one(same, nil, func(g geo) string {
+		s := g.at(t, "/Pad<") + int64(len("/Pad"))
+		return ints(0, s, s+synthHexLen+2, g.size-s-synthHexLen-2)
+	}, nil)
+	add("(8) gap at a same-length hex token", 8, CauseMalformedByteRange, d, wrote())
 	// (9) /Contents is an indirect string: the gap is object 6's bytes.
 	ind := "<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/adbe.pkcs7.detached/ByteRange[" + brSlot("1", 64) + "]/Contents 6 0 R>>"
 	d = one(ind, []sobj{{num: 6, body: contentsSlot("1")}}, nil, nil)

@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..193725a4 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -329,7 +329,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 		return 1, 0, 0
+ 	}
+ 	// (2) the first start is 0.
+-	if vals[0] != 0 {
++	if false {
+ 		return 2, 0, 0
+ 	}
+ 	// (3) every length is positive.
