@@ -211,13 +211,30 @@ func runSign(pdfBytes []byte, data sign.SignData, refuse func(*dpdf.Reader) erro
 		}
 	}
 	var out bytes.Buffer
-	if err := librarySign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
+	if err := containedLibrarySign(in, &out, rdr, data); err != nil {
 		return nil, describeSignFailure(err, data.TSA.URL)
 	}
 	if err := signedAsIntended(in, out.Bytes(), data.Certificate); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// containedLibrarySign is `librarySign` with the reader's panics made errors (/pending 761).
+//
+// The library walks the document through the same `digitorus/pdf` reader, lazily, with no recover of
+// its own (`fetchExistingSignatures` resolving `/AcroForm`), and that reader panics on ordinary
+// corruption — and, since /pending 761, on a member read that runs past its object stream's end
+// (`dpdf.ErrObjStmRunsPastEnd`), which pdfcpu reads and so ADR-041's gate admits. Uncontained, that
+// panic took the process from `Sign`. It is the reader's panic `Verify`'s sweep already recovers, said
+// the same way (`readPanicErr`).
+func containedLibrarySign(in []byte, out *bytes.Buffer, rdr *dpdf.Reader, data sign.SignData) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = readPanicErr(rec)
+		}
+	}()
+	return librarySign(bytes.NewReader(in), out, rdr, int64(len(in)), data)
 }
 
 // librarySign is the one call into `digitorus/pdfsign/sign`, as a variable so a test can make the

@@ -15,7 +15,7 @@ import (
 // and lexing the header's `id offset` pairs until the id matched — every time, caching nothing — and
 // both the revision sweep and the library's verify pass resolve EVERY xref object (ADR-058), so a
 // stream of N members cost N²/2 pairs per pass. /pending 751 bounded that from here; /pending 758
-// patched the library itself (`third_party/digitorus-pdf`, read.go only, see its NOTICE.nib): the
+// patched the library itself (`third_party/digitorus-pdf`, read.go and one lex.go loop, see its NOTICE.nib): the
 // patched `resolve` keeps each stream's decoder open and its header lexed SO FAR per `Reader`, so a
 // stream is decoded once and its header lexed once per pass, each only as far as a lookup has needed.
 //

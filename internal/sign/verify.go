@@ -247,8 +247,14 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	// cannot be adopted: pdfsign calls `Reader.Resolve`, which v0.2.0 removed — and its
 	// `readHexString` still spins at EOF.
 	//
-	// **The second gate below closes that residue** (ADR-041). Read the two together: the byte scan
-	// keeps unsigned documents out of the parser, and `pdfcpuCanRead` keeps unreadable ones out.
+	// **The second gate below closed THAT residue — the damaged-`/Filter` shape — and not the class**
+	// (ADR-041, ADR-068). Read the two together: the byte scan keeps unsigned documents out of the
+	// parser, and `pdfcpuCanRead` keeps out what pdfcpu cannot READ. It is not a model of what this
+	// library loops on, and the two differ: an array, hex or literal string left open at an object
+	// stream's clean end, and an `endobj` inside any array, are documents pdfcpu reads and the library
+	// never finished (/pending 761, measured: all four took the process through this door). Those are
+	// bounded inside the patched library (`third_party/digitorus-pdf/NOTICE.nib` divergences 3 and 4),
+	// not here.
 	if !scanForSignatureBlob(data) {
 		return Status{State: Unsigned}, nil, nil
 	}
@@ -743,11 +749,18 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 // The only behaviour change on that corpus was 10 flips moving `unsigned` → `invalid`, which is the
 // direction `scanForSignatureBlob` already argues for.
 //
-// Both of the library's unbounded paths are covered, and the second was not in the original
+// Both of the damaged-`/Filter` shapes are covered, and the second was not in the original
 // finding: a same-length payload of `(aaa…` in an object stream whose `/Filter` name is damaged
 // reaches `readLiteralString` and OOMs, and `<444…` reaches `readHexString`, which **spins** — a
 // hang, not a crash, killed by a watchdog at 90 s. pdfcpu refuses both with
 // `decodeObjectStreamObjects: problem decoding object stream 7`.
+//
+// **It refuses those because pdfcpu cannot READ them, not because the library would loop on them**
+// (/pending 761, ADR-068). The same payloads at the clean end of an object stream with an intact
+// filter, and an `endobj` inside any array, are documents pdfcpu reads, and the library never
+// finished them: measured, every one took the process through `Verify`, `Sign` and `SignApproval`
+// alike. This gate cannot see that class; the patched library bounds it (NOTICE.nib divergences 3
+// and 4, held by `TestAMemberLeftOpenAtTheStreamsEndIsRefusedNotRead`).
 //
 // # Cost
 //

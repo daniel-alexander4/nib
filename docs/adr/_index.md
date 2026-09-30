@@ -570,3 +570,7 @@ home today.
 - **[ADR-067 — the patched object-stream reader refuses what it cannot bound](067-the-patched-reader-refuses-what-it-cannot-bound.md)**
   — /pending 759, 760; supersedes ADR-066's "one divergence". Member reads are bounded by what the stream decoded and a
   stream by 64 MiB, refused as `lookup-cost`; the reader is fuzzed against an unchanged v0.1.2 kept in testdata.
+- **[ADR-068 — the patched library also patches its lexer](068-the-patched-library-also-patches-its-lexer.md)**
+  — /pending 761; supersedes ADR-066's read.go-only scope and ADR-067's "the gate covers Verify" in part. pdfcpu read
+  every endless-loop shape and each took the process on all five paths; `lex.go`'s readArray refuses `endobj`, the
+  object-stream view refuses reads past its end, and pdfcpu's gate is described as keeping out what it cannot read.
