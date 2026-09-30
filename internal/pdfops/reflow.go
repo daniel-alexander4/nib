@@ -88,7 +88,7 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 				return nil, 0, causeVertical
 			case r.replaced:
 				return nil, 0, causeReplacementText
-			case r.state.tr == 3 || r.state.tr == 7:
+			case invisibleMode(r.state.tr):
 				return nil, 0, causeInvisible
 			}
 			joinGap := 0.0
@@ -176,7 +176,9 @@ func lineMeasures(lines [][]reflowWord, space float64) []float64 {
 // check of its breaks re-derives. A paragraph of ONE line carries no record of its measure (its own width is only where its
 // words ended), so it was set in its column's: the furthest any line of the column reaches. Wrapped at its own width, a
 // grown one-liner would break short, and a short line followed by one whose first word would have fitted reads back as two
-// paragraphs. It stops an em short of anything drawn to its right on its line.
+// paragraphs. It stops an em short of anything drawn to its right on its line — and of any annotation there: a form label
+// re-set at its column's measure ran under the field beside it (P07 phase-close review), and `annotatedOver` asks only
+// about the box the paragraph HAD.
 func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space float64) []float64 {
 	measures := lineMeasures(lines, space)
 	if len(lines) == 1 {
@@ -190,10 +192,16 @@ func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space float64
 		// Never into something drawn beside it: a form label's line ends where its field or the next label begins, and
 		// its column's edge says nothing about that. An em short of the nearest thing on its line, to its right.
 		own, em := paragraphBox(p), p.lines[0].size
-		for _, o := range obstaclesOf(l, map[int]bool{pi: true}) {
-			if o.box[1] < own[3] && own[1] < o.box[3] && o.box[0] >= own[2]-1e-9 {
-				right = math.Min(right, o.box[0]-em)
+		beside := func(b [4]float64) {
+			if b[1] < own[3] && own[1] < b[3] && b[0] >= own[2]-1e-9 {
+				right = math.Min(right, b[0]-em)
 			}
+		}
+		for _, o := range obstaclesOf(l, map[int]bool{pi: true}) {
+			beside(o.box)
+		}
+		for _, a := range l.annots {
+			beside(a)
 		}
 		measures[0] = math.Max(measures[0], right-lines[0][0].startX)
 	}
@@ -332,8 +340,8 @@ func structReplacesText(ctx *model.Context, pg pdfread.Page, p textParagraph) bo
 	if err != nil || pd == nil {
 		return false
 	}
-	key, ok := pdfNumber(xt, pd["StructParents"])
-	if !ok || key < 0 {
+	key, ok, _ := structParentsOf(xt, pd)
+	if !ok {
 		return false
 	}
 	cat, err := xt.Catalog()
@@ -344,7 +352,7 @@ func structReplacesText(ctx *model.Context, pg pdfread.Page, p textParagraph) bo
 	if root == nil {
 		return false
 	}
-	row, _, found := rowFor(ctx, &structTree{root: root}, int(key))
+	row, _, found := rowFor(ctx, &structTree{root: root}, key)
 	if !found {
 		return false
 	}
@@ -711,8 +719,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		if layout.columns != 1 && len(region.paragraphs) > 0 && region.room < float64(extra)*pitch-measureSlack {
 			return reflowOutcome{cause: causePageFull}, nil // several columns: nothing flows to another page
 		}
-		steps, cause, below, err := pushDown(ctx, pg, layout, src, region.paragraphs, float64(extra)*pitch, region.floor, para.bottom(),
-			region.step, anchorXs(layout, region), nil)
+		steps, cause, below, err := pushDown(ctx, pg, layout, src, region.paragraphs, float64(extra)*pitch, region.floor, region.bound,
+			para.bottom(), region.step, anchorXs(layout, region), nil)
 		if err != nil {
 			return reflowOutcome{}, err
 		}
@@ -735,6 +743,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 type anchorShift struct {
 	zone [4]float64
 	dy   float64
+	set  anchorSet // what is anchored inside zone, resolved when the step was planned (`anchorsIn`)
 }
 
 // anchorXs is the horizontal extent of what moves when a paragraph grows over region: the whole page's width when the page

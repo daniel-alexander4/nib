@@ -193,11 +193,11 @@ func parentTreeOwnersOn(ctx *model.Context, pages []pageRecord) map[int][]string
 	// rather than left to depend on which read path got here.)
 	seenForms := map[int]bool{}
 	claim := func(o types.Object, what string) {
-		v, ok := pdfNumber(ctx.XRefTable, o)
-		if !ok || v < 0 {
+		v, ok := parentTreeKeyValue(ctx.XRefTable, o)
+		if !ok {
 			return
 		}
-		out[int(v)] = append(out[int(v)], what)
+		out[v] = append(out[v], what)
 	}
 	for _, rec := range pages {
 		p, d := rec.nr, rec.dict

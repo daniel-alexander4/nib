@@ -225,6 +225,15 @@ const onPage = (n, what) => page.evaluate(([n, what]) => {
   return [...pg.querySelectorAll('.annotationLayer a[href]')].map((a) => a.href);
 }, [n, what]);
 
+// rerendered waits until page 1's text layer shows the EDIT — the first line five times, where the page drew it twice — so
+// a check that something is absent from page 1 reads the new layer, not an empty or stale one (P07 phase-close review).
+const rerendered = (line) => page.waitForFunction((w) => {
+  const pg = document.querySelector('.viewerContainer:not([hidden]) .page[data-page-number="1"]');
+  pg?.scrollIntoView();
+  const text = [...(pg?.querySelectorAll('.textLayer span') || [])].map((s) => s.textContent).join(' ');
+  return text.split(w).length - 1 >= 5;
+}, line, { timeout: 15000 });
+
 test('a growth on a full page flows its last paragraph onto the next page, and the link on it goes too', async () => {
   await h.openDocument(FLOWDOC, 2);
   await page.waitForFunction((w) => [...document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="1"] .textLayer span')]
@@ -242,9 +251,11 @@ test('a growth on a full page flows its last paragraph onto the next page, and t
   await page.waitForFunction((w) => [...document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="2"] .textLayer span')]
     .some((s) => s.textContent.includes(w)) || (document.querySelector('.viewerContainer:not([hidden]) .page[data-page-number="2"]')?.scrollIntoView(), false), FLOW.leaving, { timeout: 15000 });
   assert.match(await onPage(2, 'text'), new RegExp(FLOW.leaving), 'the paragraph did not arrive on page 2');
+  await rerendered(FLOW.first.split(' ').slice(0, 7).join(' '));
   assert.doesNotMatch(await onPage(1, 'text'), new RegExp(FLOW.leaving), 'the paragraph is still drawn on page 1');
   await page.waitForFunction(() => document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="2"] .annotationLayer a[href]').length > 0, null, { timeout: 15000 });
   assert.deepEqual(await onPage(2, 'links'), ['https://example.com/carried'], 'the link did not go to page 2 with its paragraph');
+  // Page 1's layers are the re-rendered ones: `rerendered` above waited for the edit to show there.
   assert.deepEqual(await onPage(1, 'links'), [], 'the link stayed behind on page 1, over other words');
 });
 
@@ -308,6 +319,7 @@ test('a growth on a TAGGED page flows its paragraph onto the next page with its 
     `the flow was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
   await page.waitForFunction((w) => [...document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="2"] .textLayer span')]
     .some((s) => s.textContent.includes(w)) || (document.querySelector('.viewerContainer:not([hidden]) .page[data-page-number="2"]')?.scrollIntoView(), false), TFLOW.leaving, { timeout: 15000 });
+  await rerendered(TFLOW.first.split(' ').slice(0, 7).join(' '));
   assert.doesNotMatch(await onPage(1, 'text'), new RegExp(TFLOW.leaving), 'the paragraph is still drawn on page 1');
   const after = await page.evaluate(async (w) => {
     const t = await (await nibFetch('/api/tags/tree')).json();

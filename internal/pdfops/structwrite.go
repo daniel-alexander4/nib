@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -115,13 +116,16 @@ func addMarkedElementUnder(ctx *model.Context, tree *structTree, pageNr int, str
 // place a page gains a key (ADR-009): `addMarkedElementUnder` wrote it inline, and a carry onto an untagged page of a
 // tagged document needs the same (`PLAN-text-reflow.md` P07.S07).
 func pageRow(ctx *model.Context, tree *structTree, pageDict types.Dict, pageNr int) (key, slots int, err error) {
-	sp, hasKey := pageDict["StructParents"].(types.Integer)
-	if !hasKey {
+	key, hasKey, written := structParentsOf(ctx.XRefTable, pageDict)
+	if !written {
 		key = allocParentTreeKey(ctx, tree)
 		pageDict["StructParents"] = types.Integer(key)
 		return key, 0, nil
 	}
-	key = sp.Value()
+	if !hasKey {
+		return 0, 0, fmt.Errorf("pdfops: page %d declares a /StructParents that is not a key (%v) — refusing to overwrite it",
+			pageNr, pageDict["StructParents"])
+	}
 	slots, isSingle, _ := parentTreeKey(ctx, tree, key)
 	if isSingle {
 		return 0, 0, fmt.Errorf("pdfops: page %d declares /StructParents %d and that "+
@@ -129,6 +133,31 @@ func pageRow(ctx *model.Context, tree *structTree, pageDict types.Dict, pageNr i
 			"already inconsistent and adding to it would hide that", pageNr, key)
 	}
 	return key, slots, nil
+}
+
+// structParentsOf is the ONE reader of a page's `/StructParents` (P07 phase-close review; ADR-009): its key, resolved
+// through an indirect reference as every other number nib reads is (`pdfNumber`), and whether it has one. written says
+// the entry is there at all — one that does not resolve to a whole, non-negative number is written and names no key,
+// which a writer refuses rather than overwrites. Five sites read it as a bare `types.Integer`, so an indirect key read as
+// NO key: `pageRow` gave the page a new one and orphaned its row.
+func structParentsOf(xt *model.XRefTable, pageDict types.Dict) (key int, ok, written bool) {
+	o, written := pageDict["StructParents"]
+	if !written {
+		return 0, false, false
+	}
+	key, ok = parentTreeKeyValue(xt, o)
+	return key, ok, true
+}
+
+// parentTreeKeyValue reads o — a `/StructParents` or `/StructParent`, direct or indirect — as a `/ParentTree` key: a
+// non-negative whole number in int32's range, or not a key at all. The one reading of a key's VALUE, shared by
+// `structParentsOf` and the owners' census (`parentTreeOwners`), which had taken 2.5 as key 2 (P07 phase-close re-review).
+func parentTreeKeyValue(xt *model.XRefTable, o types.Object) (int, bool) {
+	v, isNum := pdfNumber(xt, o)
+	if !isNum || v < 0 || v != math.Trunc(v) || v > math.MaxInt32 {
+		return 0, false
+	}
+	return int(v), true
 }
 
 // parentTreeKey reports one key's `/ParentTree` entry — how many slots its array has, or whether it
@@ -227,51 +256,87 @@ func appendToRootKids(ctx *model.Context, tree *structTree, ref types.IndirectRe
 // A new key INSIDE a nested tree's range is still refused: placing it means choosing a leaf and splitting or re-sorting
 // it, which nothing nib does asks for.
 func parentTreeDict(ctx *model.Context, tree *structTree, key int) (types.Dict, error) {
-	ptObj, has := tree.root["ParentTree"]
-	if !has {
+	if _, has := tree.root["ParentTree"]; !has {
 		ptRef, err := ctx.IndRefForNewObject(types.Dict{"Nums": types.Array{}})
 		if err != nil {
 			return nil, err
 		}
 		tree.root["ParentTree"] = *ptRef
-		ptObj = *ptRef
+	}
+	path, holder, err := parentTreePlace(ctx, tree, key)
+	if err != nil {
+		return nil, err
+	}
+	if holder != nil {
+		return holder, nil
+	}
+	// Every node on the way down — the root included, when it carries `/Limits` (P07 phase-close review) — now spans key.
+	for _, node := range path {
+		widenLimits(ctx, node, key)
+	}
+	return path[len(path)-1], nil
+}
+
+// parentTreePlace is where parentTreeDict would write key, WITHOUT writing anything — the one predicate the writer and a
+// carry's up-front check (`targetRefusal`) both ask (P07 phase-close review; ADR-009: the check restated one of these
+// refusals and missed the rest). holder is the node already holding key, if one does; else path is the nodes from the
+// `/ParentTree` down to the leaf the entry goes in, or the refusal. A document with no `/ParentTree` places every key in the
+// flat one the writer creates.
+func parentTreePlace(ctx *model.Context, tree *structTree, key int) (path []types.Dict, holder types.Dict, err error) {
+	ptObj, has := tree.root["ParentTree"]
+	if !has {
+		return []types.Dict{{}}, nil, nil
 	}
 	pt, err := ctx.DereferenceDict(ptObj)
 	if err != nil || pt == nil {
-		return nil, fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
+		return nil, nil, fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
 	}
 	if _, nested := pt["Kids"]; !nested {
-		return pt, nil
+		return []types.Dict{pt}, nil, nil
 	}
-	if holder := parentTreeHolder(ctx, pt, key); holder != nil {
-		return holder, nil
+	if h := parentTreeHolder(ctx, pt, key); h != nil {
+		return nil, h, nil
 	}
 	if _, _, next := parentTreeKey(ctx, tree, -1); key < next {
-		return nil, fmt.Errorf("pdfops: /ParentTree key %d falls inside a NESTED number tree's range, and placing it "+
+		return nil, nil, fmt.Errorf("pdfops: /ParentTree key %d falls inside a NESTED number tree's range, and placing it "+
 			"means choosing and re-sorting a leaf — refusing rather than writing an entry a reader following /Limits "+
 			"would never find", key)
 	}
 	node := pt
+	path = []types.Dict{pt}
 	for depth := 0; ; depth++ {
 		kids, _ := ctx.DereferenceArray(node["Kids"])
 		if len(kids) == 0 {
 			if _, leaf := node["Nums"]; leaf || depth > 0 {
-				return node, nil
+				return path, nil, nil
 			}
-			return nil, fmt.Errorf("pdfops: the nested /ParentTree has an empty /Kids and no leaf to write key %d in", key)
+			return nil, nil, fmt.Errorf("pdfops: the nested /ParentTree has an empty /Kids and no leaf to write key %d in", key)
 		}
 		if depth > maxStructDepth {
-			return nil, fmt.Errorf("pdfops: the nested /ParentTree is deeper than %d", maxStructDepth)
+			return nil, nil, fmt.Errorf("pdfops: the nested /ParentTree is deeper than %d", maxStructDepth)
 		}
 		child, cerr := ctx.DereferenceDict(kids[len(kids)-1])
 		if cerr != nil || child == nil {
-			return nil, fmt.Errorf("pdfops: the nested /ParentTree's last kid does not resolve: %w", cerr)
-		}
-		if lim, _ := ctx.DereferenceArray(child["Limits"]); len(lim) == 2 {
-			child["Limits"] = types.Array{lim[0], types.Integer(key)}
+			return nil, nil, fmt.Errorf("pdfops: the nested /ParentTree's last kid does not resolve: %w", cerr)
 		}
 		node = child
+		path = append(path, child)
 	}
+}
+
+// widenLimits makes node's `/Limits`, when it carries them, span key. A `/Limits` of more than two entries is read by its
+// first two, as uacheck reads it, and written back as two; one whose bounds are not integers is left alone.
+func widenLimits(ctx *model.Context, node types.Dict, key int) {
+	lim, _ := ctx.DereferenceArray(node["Limits"])
+	if len(lim) < 2 {
+		return
+	}
+	lo, lok := lim[0].(types.Integer)
+	hi, hok := lim[1].(types.Integer)
+	if !lok || !hok {
+		return
+	}
+	node["Limits"] = types.Array{types.Integer(min(lo.Value(), key)), types.Integer(max(hi.Value(), key))}
 }
 
 // insertNum puts the pair (key, val) into a number tree's flat `[key value …]` array before the first larger key, so the
@@ -512,12 +577,11 @@ func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.Indi
 	if err != nil {
 		return 0, err
 	}
-	sp, ok := pageDict["StructParents"].(types.Integer)
+	key, ok, _ := structParentsOf(ctx.XRefTable, pageDict)
 	if !ok {
 		return 0, fmt.Errorf("pdfops: page %d has no /StructParents, so it owns no ParentTree "+
 			"entry to add a marked-content id to", pageNr)
 	}
-	key := sp.Value()
 	mcid, _, _ := parentTreeKey(ctx, tree, key)
 
 	e, found := ctx.XRefTable.FindTableEntryForIndRef(&elem)

@@ -150,9 +150,9 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 		if err := setPageContent(ctx, d, edited); err != nil {
 			return err
 		}
-		if sp, ok := d["StructParents"].(types.Integer); ok {
+		if key, ok, _ := structParentsOf(ctx.XRefTable, d); ok {
 			for mcid := range mine {
-				if err := clearParentTreeSlot(ctx, tree, sp.Value(), mcid); err != nil {
+				if err := clearParentTreeSlot(ctx, tree, key, mcid); err != nil {
 					return err
 				}
 			}

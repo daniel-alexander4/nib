@@ -34,10 +34,15 @@ func linesOf(l pageLayout, skip int) []flowLine {
 	return out
 }
 
+// flowNext is the page after the edited one, before and after the edit: where what leaves must arrive.
+type flowNext struct{ before, after pageLayout }
+
 // grewAsItShould checks the page after a grown edit of paragraph pi: the edited paragraph reads as edit on its own
-// baselines and extra more at its pitch, every line of the region reads exactly `extra × pitch` lower, and every other
-// line where it was. It returns the first difference, or "".
-func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float64) string {
+// baselines and extra more at its pitch, every line of the region reads exactly `extra × pitch` lower, every other line
+// where it was — and every line that leaves ARRIVES on the next page (next), the block's first baseline on that page's
+// first paragraph's, each line the same distance below it (P07 phase-close review: leaving lines were asserted only
+// gone). It returns the first difference, or "".
+func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float64, next *flowNext) string {
 	para := before.paragraphs[pi]
 	pitch := paragraphPitch(before, pi)
 	n := len(para.lines)
@@ -66,6 +71,16 @@ func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float
 	// A region paragraph pushed below the floor LEAVES for the next page (P07.S06's `pushDown`), so it is asserted gone
 	// from this page rather than lower on it — reached by the real corpus only once tagged text could leave (P07.S07).
 	leaves := func(i int) bool { return moved[i] && before.paragraphs[i].bottom()-dy < region.floor-measureSlack }
+	land := math.NaN() // how far up a leaving line is drawn on the next page
+	for _, q := range region.paragraphs {
+		if leaves(q) {
+			if next == nil || len(next.before.paragraphs) == 0 {
+				return fmt.Sprintf("paragraph %d left for the next page, which was not read", q)
+			}
+			land = before.paragraphs[q].lines[0].y - next.before.paragraphs[0].lines[0].y
+			break
+		}
+	}
 	after3 := linesOf(after, -1)
 	for i, q := range before.paragraphs {
 		if i == pi {
@@ -89,6 +104,13 @@ func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float
 			if leaves(i) {
 				if anywhere {
 					return fmt.Sprintf("line %q should have left for the next page and is still on this one", ln.text)
+				}
+				arrived := false
+				for _, a := range linesOf(next.after, -1) {
+					arrived = arrived || a.text == ln.text && math.Abs(a.x-ln.x0) < 1e-6 && math.Abs(a.y-(ln.y-land)) < 1e-6
+				}
+				if !arrived {
+					return fmt.Sprintf("line %q left and did not arrive on the next page at y %v", ln.text, ln.y-land)
 				}
 				continue
 			}
@@ -133,11 +155,19 @@ func TestAGrownParagraphPushesTheOnesBelowIt(t *testing.T) {
 	if cause != "" {
 		t.Fatalf("refused: %s", cause)
 	}
-	if d := grewAsItShould(before, after, 0, oneMoreLine, page); d != "" {
+	if d := grewAsItShould(before, after, 0, oneMoreLine, page, nil); d != "" {
 		t.Error(d)
 	}
-	if ln, ok := lineAtBaseline(after, [4]float64{0, 0, 612, 792}, 634, 12); !ok || !strings.HasPrefix(ln.text, "Words run") {
-		t.Errorf("paragraph 1 is not one pitch lower: %q %v", ln.text, ok)
+	// Paragraph 1 was drawn at 648 and 634, so a line at 634 is there on the unedited page too: one pitch lower is its
+	// lines at 634 AND 620, and nothing left at 648 (P07 phase-close review — the check passed on an unedited page).
+	all := [4]float64{0, 0, 612, 792}
+	for _, y := range []float64{634, 620} {
+		if ln, ok := lineAtBaseline(after, all, y, 12); !ok || !strings.HasPrefix(ln.text, "Words run") {
+			t.Errorf("paragraph 1 is not one pitch lower: nothing at %v (%q)", y, ln.text)
+		}
+	}
+	if ln, ok := lineAtBaseline(after, all, 648, 12); ok {
+		t.Errorf("a line is still at paragraph 1's old first baseline, 648: %q", ln.text)
 	}
 }
 
@@ -155,8 +185,13 @@ func TestAGrowthItCannotDoNamesWhy(t *testing.T) {
 		{"no room below", flowPage("BT /F1 12 Tf 72 558 Td (Page 1) Tj ET"), oneMoreLine, causePageFull, ""},
 		{"a rule in the band", flowPage("q 1 w 72 660 m 400 660 l S Q"), oneMoreLine, causeAnchored, ""},
 		{"a change bar in the margin beside the region", flowPage("q 1 w 560 600 m 560 655 l S Q"), oneMoreLine, causeAnchored, ""},
-		{"a note straddling the edited paragraph's bottom", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
+		// Over the edited paragraph's last line: `annotatedOver` refuses it, before any band is asked about.
+		{"a note over the edited paragraph's last line", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
 			"<< /Type /Annot /Subtype /Text /Rect [100 660 120 675] >>"), oneMoreLine, causeAnchored, ""},
+		// Beside the edited paragraph, clear of its box, across the top of what moves: only the band check reaches it (P07
+		// phase-close review — the case above was named for this check and refused by the other).
+		{"a note beside the edited paragraph straddling the top of what moves", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
+			"<< /Type /Annot /Subtype /Text /Rect [450 662 470 676] >>"), oneMoreLine, causeAnchored, ""},
 		{"a note straddling the moved region's bottom edge", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
 			"<< /Type /Annot /Subtype /Text /Rect [100 585 120 600] >>"), oneMoreLine, causeAnchored, ""},
 		{"a note in the free room the text moves into", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
@@ -229,7 +264,15 @@ func TestHowParagraphsGrowOverTheCorpora(t *testing.T) {
 					t.Errorf("%s ¶%d: the page lost its text", doc.name, pi)
 					continue
 				}
-				if d := grewAsItShould(l, after, pi, edit, visibleBoxOf(pg)); d != "" {
+				var next *flowNext
+				if ctx.PageCount >= 2 {
+					nb, nerr := readPageGlyphLayout(ctx, pageAt(ctx, nil, 2))
+					if nerr != nil {
+						t.Fatal(nerr)
+					}
+					next = &flowNext{before: nb, after: layoutOfPage(t, out, 2)}
+				}
+				if d := grewAsItShould(l, after, pi, edit, visibleBoxOf(pg), next); d != "" {
 					if strings.HasPrefix(d, "the paragraph did not grow") {
 						continue // fitted without a new line: P06's path, asserted elsewhere
 					}
@@ -404,4 +447,73 @@ func numbersOf(xt *model.XRefTable, o types.Object) string {
 	}
 	v, _ := pdfNumber(xt, o)
 	return fmt.Sprint(v)
+}
+
+// layoutOfPage is page p's glyph layout in pdf.
+func layoutOfPage(t *testing.T, pdf []byte, p int) pageLayout {
+	t.Helper()
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := readPageGlyphLayout(ctx, pageAt(ctx, nil, p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+// TestWhatLeavesArrivesOnTheNextPage — P07 phase-close review: `grewAsItShould` asserts what leaves ARRIVES, line by line,
+// where the block lands on the next page — asked of a growth that sends page 1's last paragraph over.
+func TestWhatLeavesArrivesOnTheNextPage(t *testing.T) {
+	pdf := cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")}, nil, "")
+	orig, edit := threeLinesMore()
+	out, refusal, err := ReflowParagraph(pdf, 1, 0, orig, edit)
+	if err != nil || out == nil {
+		t.Fatalf("refused %+v (%v)", refusal, err)
+	}
+	before := layoutOfPage(t, pdf, 1)
+	next := &flowNext{before: layoutOfPage(t, pdf, 2), after: layoutOfPage(t, out, 2)}
+	if d := grewAsItShould(before, layoutOfPage(t, out, 1), 0, edit, [4]float64{0, 0, 612, 792}, next); d != "" {
+		t.Error(d)
+	}
+	if d := grewAsItShould(before, layoutOfPage(t, out, 1), 0, edit, [4]float64{0, 0, 612, 792}, nil); !strings.Contains(d, "not read") {
+		t.Errorf("a paragraph left and the check did not ask where it went: %q", d)
+	}
+}
+
+// TestAOneLineParagraphIsNotSetUnderAFieldBesideIt — P07 phase-close review: a one-line paragraph is re-set at its column's
+// measure, which a form label's field beside it had not bounded — the edited label ran under the field. The measure now
+// stops an em short of any annotation beside the line, as it does of text and drawings: an edit that fits before the
+// field stays on its line, and one that does not wraps below, where the field it would run under refuses it.
+func TestAOneLineParagraphIsNotSetUnderAFieldBesideIt(t *testing.T) {
+	long := "A long paragraph line that runs well across the whole column width here ok"
+	c := "BT /F1 12 Tf 72 700 Td (Your name) Tj ET\n" +
+		fmt.Sprintf("BT /F1 12 Tf 14 TL 72 660 Td (%s) Tj T* (%s) Tj ET\n", long, long) +
+		fmt.Sprintf("BT /F1 12 Tf 14 TL 72 610 Td (%s) Tj T* (%s) Tj ET\n", long, long)
+	field := [4]float64{160, 696, 400, 712}
+	pdf := cascadeDoc([]string{c}, map[int]string{0: "/Annots [30 0 R]"}, "/AcroForm << /Fields [30 0 R] >>",
+		fmt.Sprintf("<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /DA (/Helv 0 Tf 0 g) /P 10 0 R /Rect [%v %v %v %v] >>",
+			field[0], field[1], field[2], field[3]))
+	for _, e := range []struct{ edit, cause string }{
+		{"Your full legal name as applicant", causeAnchored},
+		{"Your names", ""},
+	} {
+		out, refusal, err := ReflowParagraph(pdf, 1, 0, "Your name", e.edit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if refusal.Cause != e.cause {
+			t.Errorf("%q: refusal %+v, want %q", e.edit, refusal, e.cause)
+			continue
+		}
+		if out == nil {
+			continue
+		}
+		for _, q := range layoutOfPage(t, out, 1).paragraphs {
+			if meets(paragraphBox(q), field) {
+				t.Errorf("%q: %q is drawn under the field", e.edit, q.text())
+			}
+		}
+	}
 }

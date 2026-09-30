@@ -76,6 +76,10 @@ type pageLayout struct {
 	// sequences are the page's marked-content sequences that carry an MCID (`pageRuns.sequences`) — kept only by reflow's
 	// reader, so a carry can take a paragraph's structure to another page with it (P07.S07).
 	sequences []markedSeq
+	// annots are the boxes of the page's annotations, a popup's excepted (`pageAnchors` without what only moving text asks
+	// about) — kept only by reflow's reader, so a re-set line's measure stops short of a field or a note beside it as it
+	// stops short of text and drawings (`paragraphMeasures`, P07 phase-close review).
+	annots [][4]float64
 }
 
 // readPageLayout is the door consumers call: a page's runs, grouped.
@@ -109,6 +113,9 @@ func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error
 		}
 	}
 	l.marks = pr.marks
+	for _, a := range pageAnchors(ctx, pg, false) {
+		l.annots = append(l.annots, a.box)
+	}
 	return l, nil
 }
 

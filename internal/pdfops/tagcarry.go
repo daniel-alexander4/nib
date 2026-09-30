@@ -64,16 +64,15 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		if perr != nil || d == nil {
 			return nil, false
 		}
-		sp, ok := d["StructParents"]
-		if !ok {
+		key, isKey, written := structParentsOf(ctx.XRefTable, d)
+		if !written {
 			// A page with no /StructParents contributes no ParentTree entry, so there is nothing
 			// to re-anchor for it. That is not a failure — an untagged page in a tagged document
 			// is ordinary — but it does mean this page's content will be unreachable afterwards,
 			// which the caller's post-condition is what catches.
 			continue
 		}
-		n, isInt := sp.(types.Integer)
-		if !isInt {
+		if !isKey {
 			return nil, false
 		}
 		ir, e := pa.Ref, pa.Err
@@ -88,7 +87,7 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		}
 		out[ir.ObjectNumber.Value()] = pageSource{
 			objNr:         ir.ObjectNumber.Value(),
-			structParents: n.Value(),
+			structParents: key,
 			content:       b,
 		}
 	}

@@ -72,10 +72,13 @@ type Refusal struct {
 // reads that way the answer is ErrReflowStale, never a rewrite of whatever the index names now.
 //
 // **A paragraph that keeps its line count stays inside its own box**: the same baselines, and no line past the right edge
-// its lines already reach — so a NibFlag placed beside it still sits beside it (`/pending 457`'s decision for P06). One
-// that needs more lines GROWS DOWN (P07.S03): its new lines at its own pitch, the paragraphs below it in its column moved
-// down by the growth into the free room under them, and anything anchored where they will be — an annotation, a flag, a
-// destination, a drawing — refused as `anchored` rather than orphaned.
+// its lines already reach — so a NibFlag placed beside it still sits beside it (`/pending 457`'s decision for P06); a
+// paragraph of one line reaches its column's edge, short of anything drawn or annotated beside it. One that needs more
+// lines GROWS DOWN (P07.S03): its new lines at its own pitch, the paragraphs below it in its column moved down by the
+// growth, and what no longer fits above the page's margin carried whole to the next page, which is pushed in turn (P07.S06).
+// What is anchored wholly inside what moves — an annotation, a flag, a destination — moves with it, across pages included
+// (P07.S04, S06); anything else where the text will be — straddling, in the free room, an article bead, a drawing — refuses
+// `anchored` rather than being orphaned (P07 phase-close review: this said every anchor refused).
 func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte, Refusal, error) {
 	var refusal Refusal
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {

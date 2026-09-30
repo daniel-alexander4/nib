@@ -23,34 +23,67 @@ import (
 // annotCoordKeys are the keys holding user-space coordinates as flat x,y pairs, by the subtypes that carry them.
 var annotCoordKeys = []string{"QuadPoints", "L", "Vertices", "CL"}
 
-// shiftAnchors moves everything anchored inside zone on page pg down by dy. The rewrite has already refused anything that
-// touches the zone's height without lying inside it (`reflowParagraphIn`), so what is inside is all there is to move.
-func shiftAnchors(ctx *model.Context, pg pdfread.Page, zone [4]float64, dy float64) error {
+// anchorSet is what is anchored inside a zone of a page, resolved ONCE, from the page as it was before anything moved: the
+// notes on its `/Annots` (each with its popup, wherever that sits), the destination arrays naming it, and the NibFlags on
+// it by their index in the list. A flow moves exactly these (P07 phase-close review): it had re-selected each page's
+// anchors by zone AFTER the in-page shift had run, so what the shift moved into the old leave zone — the anchors of the
+// last paragraph that STAYED — was then carried to the next page with the ones that left.
+type anchorSet struct {
+	annots []types.Object
+	dests  []types.Array
+	flags  []int
+}
+
+// anchorsIn resolves what is anchored wholly inside zone on page pg — the one selection a flow plans with and then moves.
+// A popup is never selected for its own window; it goes where its note goes.
+func anchorsIn(ctx *model.Context, pg pdfread.Page, zone [4]float64) anchorSet {
 	xt := ctx.XRefTable
-	inside := func(b [4]float64) bool { return covers(zone, b) }
+	var s anchorSet
 	for _, o := range derefArray(xt, pg.Dict["Annots"]) {
 		d := derefDict(xt, o)
 		if d == nil || nameVal(d, "Subtype") == "Popup" {
-			continue // a popup moves with its note, below — never by where its window happens to be
-		}
-		llx, lly, urx, ury, ok := rectOf(ctx, d["Rect"])
-		if !ok || !inside([4]float64{llx, lly, urx, ury}) {
 			continue
 		}
-		shiftAnnot(ctx, d, dy)
-		if pop := derefDict(xt, d["Popup"]); pop != nil {
-			shiftAnnot(ctx, pop, dy)
+		if llx, lly, urx, ury, ok := rectOf(ctx, d["Rect"]); ok && covers(zone, [4]float64{llx, lly, urx, ury}) {
+			s.annots = append(s.annots, o)
 		}
 	}
 	if pg.Ref != nil {
 		page := pg.Ref.ObjectNumber.Value()
 		for _, arr := range destinationArrays(ctx, page) { // each shared array once
-			if b, ok := destinationBox(xt, arr, page); ok && inside(b) {
-				shiftDestination(xt, arr, dy)
+			if b, ok := destinationBox(xt, arr, page); ok && covers(zone, b) {
+				s.dests = append(s.dests, arr)
 			}
 		}
 	}
-	return shiftFlags(ctx, pg, zone, dy)
+	_, flags := nibFlags(ctx)
+	box := visibleBoxOf(pg)
+	for i, f := range flags {
+		if page, onPage, x, y, placed := flagOn(f, box); onPage && placed && page == pg.Nr && covers(zone, [4]float64{x, y, x, y}) {
+			s.flags = append(s.flags, i)
+		}
+	}
+	return s
+}
+
+// shiftAnchors moves the anchors of set, on page pg, down by dy. The rewrite has already refused anything that touches
+// the height that moves without lying inside a zone that moves (`pushDown`), so the set is all there is to move.
+func shiftAnchors(ctx *model.Context, pg pdfread.Page, set anchorSet, dy float64) error {
+	xt := ctx.XRefTable
+	for _, o := range set.annots {
+		d := derefDict(xt, o)
+		if d == nil {
+			continue
+		}
+		shiftAnnot(ctx, d, dy)
+		if pop := derefDict(xt, d["Popup"]); pop != nil {
+			shiftAnnot(ctx, pop, dy) // a popup moves with its note — never by where its window happens to be
+		}
+	}
+	for _, arr := range set.dests {
+		shiftDestination(xt, arr, dy)
+	}
+	return moveFlags(ctx, set.flags, pg, pg, dy)
 }
 
 // shiftAnnot moves annotation d down by dy: its /Rect and every coordinate key its subtype carries.
@@ -77,32 +110,24 @@ func shiftAnnot(ctx *model.Context, d types.Dict, dy float64) {
 	}
 }
 
-// carryAnchors moves everything anchored inside zone on page from to page to, dy lower: each annotation — and the popup
-// it opens, wherever that sits — leaves from's /Annots for to's, its /P re-pointed; each destination is re-pointed at to;
-// each NibFlag takes to's number and its fraction of to's page (P07.S06).
-func carryAnchors(ctx *model.Context, from, to pdfread.Page, zone [4]float64, dy float64) error {
+// carryAnchors moves the anchors of set from page from to page to, dy lower: each annotation — and the popup it opens,
+// wherever that sits — leaves from's /Annots for to's, its /P re-pointed; each destination is re-pointed at to; each
+// NibFlag takes to's number and its fraction of to's page (P07.S06).
+func carryAnchors(ctx *model.Context, from, to pdfread.Page, set anchorSet, dy float64) error {
 	xt := ctx.XRefTable
 	if from.Ref == nil || to.Ref == nil {
 		return fmt.Errorf("pdfops: a page to carry anchors between has no reference")
 	}
 	carry := map[string]bool{}
 	key := func(o types.Object) string { return fmt.Sprint(o) }
-	annots := derefArray(xt, from.Dict["Annots"])
-	for _, o := range annots {
-		d := derefDict(xt, o)
-		if d == nil || nameVal(d, "Subtype") == "Popup" {
-			continue // carried with its note, below
-		}
-		llx, lly, urx, ury, ok := rectOf(ctx, d["Rect"])
-		if !ok || !covers(zone, [4]float64{llx, lly, urx, ury}) {
-			continue
-		}
+	for _, o := range set.annots {
 		carry[key(o)] = true
-		if pop, ok := d["Popup"]; ok {
+		if pop, ok := derefDict(xt, o)["Popup"]; ok {
 			carry[key(pop)] = true
 		}
 	}
 	if len(carry) > 0 {
+		annots := derefArray(xt, from.Dict["Annots"])
 		var kept, moved types.Array
 		for _, o := range annots {
 			if carry[key(o)] {
@@ -123,14 +148,11 @@ func carryAnchors(ctx *model.Context, from, to pdfread.Page, zone [4]float64, dy
 		}
 		to.Dict["Annots"] = dst
 	}
-	page := from.Ref.ObjectNumber.Value()
-	for _, arr := range destinationArrays(ctx, page) {
-		if b, ok := destinationBox(xt, arr, page); ok && covers(zone, b) {
-			shiftDestination(xt, arr, dy)
-			arr[0] = *to.Ref
-		}
+	for _, arr := range set.dests {
+		shiftDestination(xt, arr, dy)
+		arr[0] = *to.Ref
 	}
-	return carryFlags(ctx, from, to, zone, dy)
+	return moveFlags(ctx, set.flags, from, to, dy)
 }
 
 // shiftPairs returns arr with every second number — each y — moved down by dy.
@@ -167,52 +189,34 @@ func shiftDestination(xt *model.XRefTable, arr types.Array, dy float64) {
 	}
 }
 
-// shiftFlags moves each NibFlag on page pg inside zone down by dy, re-encoding the set with every other field as it was.
-func shiftFlags(ctx *model.Context, pg pdfread.Page, zone [4]float64, dy float64) error {
-	return carryFlags(ctx, pg, pg, zone, dy)
-}
-
-// carryFlags moves each NibFlag on page from inside zone to page to, dy lower — the same page when they are one — with its
-// fraction taken of to's page, and every other field as it was.
-func carryFlags(ctx *model.Context, from, to pdfread.Page, zone [4]float64, dy float64) error {
-	if ctx.XRefTable.Info == nil {
+// moveFlags moves the NibFlags at indices idx — each on page from — to page to, dy lower — the same page when they are one —
+// with its fraction taken of to's page, and every other field, and every other flag, as it was.
+func moveFlags(ctx *model.Context, idx []int, from, to pdfread.Page, dy float64) error {
+	if len(idx) == 0 {
 		return nil
 	}
-	info := derefDict(ctx.XRefTable, *ctx.XRefTable.Info)
+	info, flags := nibFlags(ctx)
 	if info == nil {
-		return nil
-	}
-	enc, ok := stringVal(ctx.XRefTable, info[flagsKey])
-	if !ok {
-		return nil
-	}
-	raw, err := base64.StdEncoding.DecodeString(enc)
-	if err != nil {
-		return nil
-	}
-	var flags []map[string]any
-	if json.Unmarshal(raw, &flags) != nil {
 		return nil
 	}
 	box, tbox := visibleBoxOf(from), visibleBoxOf(to)
 	changed := false
-	for _, f := range flags {
-		page, _ := f["page"].(float64)
-		frac, _ := f["frac"].(map[string]any)
-		fx, xok := frac["x"].(float64)
-		fy, yok := frac["y"].(float64)
-		if int(page) != from.Nr || !xok || !yok {
+	for _, i := range idx {
+		if i < 0 || i >= len(flags) {
 			continue
 		}
-		x, y := box[0]+fx*(box[2]-box[0]), box[3]-fy*(box[3]-box[1])
-		if covers(zone, [4]float64{x, y, x, y}) {
-			frac["y"] = (tbox[3] - (y - dy)) / (tbox[3] - tbox[1])
-			if to.Nr != from.Nr {
-				frac["x"] = (x - tbox[0]) / (tbox[2] - tbox[0])
-				f["page"] = to.Nr
-			}
-			changed = true
+		f, _ := flags[i].(map[string]any)
+		page, onPage, x, y, placed := flagOn(f, box)
+		if !onPage || !placed || page != from.Nr {
+			continue
 		}
+		frac := f["frac"].(map[string]any) // flagOn read it as an object
+		frac["y"] = (tbox[3] - (y - dy)) / (tbox[3] - tbox[1])
+		if to.Nr != from.Nr {
+			frac["x"] = (x - tbox[0]) / (tbox[2] - tbox[0])
+			f["page"] = to.Nr
+		}
+		changed = true
 	}
 	if !changed {
 		return nil

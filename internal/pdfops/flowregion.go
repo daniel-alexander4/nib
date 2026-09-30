@@ -360,6 +360,17 @@ func obstaclesOf(l pageLayout, owned map[int]bool) []pageMark {
 // deviceComponents is the number of components each device colour space takes (P07.S05).
 var deviceComponents = map[string]int{"DeviceGray": 1, "DeviceRGB": 3, "DeviceCMYK": 4}
 
+// deviceColourOps is the number of components each device colour operator takes, and deviceSpaceOf the space that number
+// names — package-level, not built per operator (P07 phase-close review: two map literals per colour operator, in the
+// walk's inner loop).
+var (
+	deviceColourOps = map[string]int{"g": 1, "rg": 3, "k": 4, "G": 1, "RG": 3, "K": 4}
+	deviceSpaceOf   = map[int]string{1: "DeviceGray", 3: "DeviceRGB", 4: "DeviceCMYK"}
+	// spaceOp is the operator selecting a colour space, fill (true) or stroke; colourSetterOf the one setting a colour in it.
+	spaceOp        = map[bool]string{true: "cs", false: "CS"}
+	colourSetterOf = map[string]string{"cs": "sc", "CS": "SC"}
+)
+
 // initialDeviceColour is each device space's initial colour, black, as `cs` sets it.
 var initialDeviceColour = map[string]string{"DeviceGray": "0", "DeviceRGB": "0 0 0", "DeviceCMYK": "0 0 0 1"}
 

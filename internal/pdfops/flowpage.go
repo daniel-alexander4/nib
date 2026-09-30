@@ -16,13 +16,15 @@ import (
 //
 // The source page loses the paragraph's shows, each replaced by what it does besides drawing — `Tj`/`TJ` by nothing, `'`
 // by `T*`, `"` by its spacing and `T*` — so every state after it is exactly what it was. The target page's content is
-// wrapped in `q … Q`, so the page's default state is in force after it, and the paragraph is drawn there as its own
+// wrapped in `q … Q` and drawn after the paragraph, which is drawn first, in the page's default state, as its own
 // text object: each run's own show operator, in its own font, size, spacing, scaling, rise and render mode, under the
 // fill and stroke it was drawn in, at its user-space position translated. Its fonts enter the target's resources under
 // the name the target already gives the same font, else under a fresh one: a name is never overwritten.
 //
 // What cannot be carried exactly is refused (law 3): a graphics state dictionary or a colour outside the device spaces
-// (`state-not-carried`), a run its source page's clip would cut (the clip is not carried: same cause), marked content
+// (`state-not-carried`), a run its source page's clip would cut (the clip is not carried: same cause), a run inside a
+// sequence whose property list carries no MCID — `/OC`, a `/Lang` span — (same cause: only the MCID's sequence is
+// re-opened), invisible text (`invisible-text`), marked content
 // that cannot go to the other page with its structure (`tagged-across-pages`, P07.S07's `planTagCarry`), replacement
 // text, and a clipping render mode.
 
@@ -94,9 +96,15 @@ func carryRefusal(r textRun) string {
 		return causeTextInForm
 	case r.replaced:
 		return causeReplacementText
+	case invisibleMode(st.tr):
+		return causeInvisible // a search layer's words belong over their scan (P07 phase-close review)
 	case st.tr >= 4:
 		return causeClips
 	case st.extGState || st.fill == "" || ((st.tr == 1 || st.tr == 2) && st.stroke == ""):
+		return causeStateNotCarried
+	case r.propsWithoutMCID:
+		// Only the sequence carrying the run's MCID is re-opened on the target: an `/OC` membership or a `/Lang` span
+		// around it would be lost, and a hidden layer's text drawn for everyone (P07 phase-close review).
 		return causeStateNotCarried
 	case !covers(st.clip, runBox(r)):
 		return causeStateNotCarried
@@ -154,8 +162,8 @@ func fontNameOn(fonts types.Dict, want string, font types.Object) string {
 	return name
 }
 
-// setRunsOn plans runs, read from src — the content of the page whose resources are srcRes — as a text object appended
-// to old, dst's content (with any edit of its own already made), each dx right and dy DOWN in user space, and adds the
+// setRunsOn plans runs, read from src — the content of the page whose resources are srcRes — as a text object drawn
+// before old, dst's content (with any edit of its own already made), each dx right and dy DOWN in user space, and adds the
 // fonts it needs to dst. tags is the structure the runs take with them (`planTagCarry`) and dstSeqs the marked-content
 // sequences dst's own stream draws: each carried sequence is drawn under its own tag and property list at an MCID free
 // on dst, and the tree is written to say so (P07.S07). It returns dst's new content, or the cause.
@@ -178,9 +186,6 @@ func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun
 	srcFonts := derefDict(ctx.XRefTable, srcRes["Font"])
 	_, dstFonts := pageResources(ctx, dst)
 	var b strings.Builder
-	b.WriteString("q\n")
-	b.Write(old)
-	b.WriteString("\n" + closeOpen(old) + "Q\n")
 	if tags != nil {
 		if c := targetRefusal(ctx, dst); c != "" {
 			return nil, c, nil
@@ -227,7 +232,17 @@ func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun
 		b.WriteString("EMC\n")
 	}
 	b.WriteString("ET Q\n")
-	return []byte(b.String()), "", nil
+	// **The carried block is drawn LAST, over the target's own content** — which runs first, wrapped, whatever it leaves
+	// open closed inside its own `q … Q`. The phase-close review tried the other order, so that stream order would match
+	// reading order on an untagged page, and its re-review measured the cost: a target that paints a backdrop — a page-
+	// colour fill, a letterhead, a cell's shading, which `regionOf` lets text land on — then painted OVER the carried
+	// paragraph, hiding it while copy-and-paste still found it. A paragraph that cannot be seen is the worse failure.
+	var out strings.Builder
+	out.WriteString("q\n")
+	out.Write(old)
+	out.WriteString("\n" + closeOpen(old) + "Q\n")
+	out.WriteString(b.String())
+	return []byte(out.String()), "", nil
 }
 
 // groupedByMCID is runs with each MCID's runs together, in the order the runs first name each; runs with none keep their

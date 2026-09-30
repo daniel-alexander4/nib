@@ -318,7 +318,7 @@ func TestACarriedAnnotationTakesItsStructureReference(t *testing.T) {
 	if _, has := objr()["Pg"]; has {
 		t.Fatal("setup: the OBJR names a page of its own")
 	}
-	if err := carryAnchors(ctx, p1, p2, [4]float64{0, 690, 612, 720}, -300); err != nil {
+	if err := carryAnchors(ctx, p1, p2, anchorsIn(ctx, p1, [4]float64{0, 690, 612, 720}), -300); err != nil {
 		t.Fatal(err)
 	}
 	if !sameObject(objr()["Pg"], *p2.Ref) {
@@ -637,5 +637,122 @@ func TestAddingAnMCIDKeepsASingleKid(t *testing.T) {
 	k := derefDict(ctx.XRefTable, types.IndirectRef{ObjectNumber: 21})["K"]
 	if fmt.Sprint(k) != fmt.Sprintf("[0 %d]", m) {
 		t.Errorf("element 21's /K is %v after adding MCID %d, want [0 %d]", k, m, m)
+	}
+}
+
+// ptDoc is a two-page tagged document: page 1 (object 3) and page 2 (object 4) with the page-dictionary extras given, a
+// root naming elements 21 (on page 1) and 22 (on page 2), and objects from 24 on — its /ParentTree is object 24 when
+// objs gives one.
+func ptDoc(t *testing.T, page1, page2 string, objs map[int]string) (*model.Context, *structTree) {
+	t.Helper()
+	all := map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 20 0 R /MarkInfo << /Marked true >> >>",
+		2:  "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " + page1 + " >>",
+		4:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] " + page2 + " >>",
+		20: "<< /Type /StructTreeRoot /K [21 0 R 22 0 R] /ParentTreeNextKey 2 >>",
+		21: "<< /Type /StructElem /S /P /P 20 0 R /Pg 3 0 R /K 0 >>",
+		22: "<< /Type /StructElem /S /P /P 20 0 R /Pg 4 0 R /K 0 >>",
+	}
+	if _, has := objs[24]; has {
+		all[20] = "<< /Type /StructTreeRoot /K [21 0 R 22 0 R] /ParentTree 24 0 R /ParentTreeNextKey 2 >>"
+	}
+	for k, v := range objs {
+		all[k] = v
+	}
+	ctx, err := pdfread.Validated(assembleFixture(all), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := ctx.XRefTable.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx, &structTree{root: derefDict(ctx.XRefTable, cat["StructTreeRoot"])}
+}
+
+// TestAnIndirectStructParentsIsAKey — P07 phase-close review: a page whose `/StructParents` is an indirect reference to its
+// key was read as having NO key by five sites — `pageRow` gave it a new one, orphaning its row, and `addMCIDTo` refused.
+// One reader (`structParentsOf`) resolves it everywhere.
+func TestAnIndirectStructParentsIsAKey(t *testing.T) {
+	ctx, tree := ptDoc(t, "/StructParents 30 0 R", "/StructParents 1", map[int]string{
+		24: "<< /Nums [0 [21 0 R] 1 [22 0 R]] >>", 30: "0",
+	})
+	pd := pageAt(ctx, nil, 1).Dict
+	key, slots, err := pageRow(ctx, tree, pd, 1)
+	if err != nil || key != 0 || slots != 1 {
+		t.Errorf("pageRow: key %d, %d slots (%v), want key 0 with its one slot", key, slots, err)
+	}
+	if _, still := pd["StructParents"].(types.IndirectRef); !still {
+		t.Errorf("the page's key was rewritten: %v", pd["StructParents"])
+	}
+	mcid, err := addMCIDTo(ctx, tree, 1, *types.NewIndirectRef(21, 0))
+	if err != nil || mcid != 1 {
+		t.Errorf("addMCIDTo: MCID %d (%v), want 1 on the page's own row", mcid, err)
+	}
+	if row, _, _ := rowFor(ctx, tree, 0); len(row) != 2 {
+		t.Errorf("row 0 has %d slots, want 2", len(row))
+	}
+}
+
+// TestANewKeyRaisesEveryLimitOnItsWay — P07 phase-close review: a key written above every key goes at the end of the
+// rightmost leaf, and EVERY `/Limits` on the way down spans it — the root's too, when it carries one. (A `/Limits` of more
+// than two entries, which `widenLimits` also takes, does not survive pdfcpu's validating read to be asked about here.)
+func TestANewKeyRaisesEveryLimitOnItsWay(t *testing.T) {
+	ctx, tree := ptDoc(t, "/StructParents 0", "/StructParents 1", map[int]string{
+		24: "<< /Limits [0 1] /Kids [25 0 R 26 0 R] >>",
+		25: "<< /Limits [0 0] /Nums [0 [21 0 R]] >>",
+		26: "<< /Limits [1 1] /Nums [1 [22 0 R]] >>",
+	})
+	leaf, err := parentTreeDict(ctx, tree, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := func(n int) string {
+		d := derefDict(ctx.XRefTable, *types.NewIndirectRef(n, 0))
+		return fmt.Sprint(derefArray(ctx.XRefTable, d["Limits"]))
+	}
+	if got := lim(24); got != "[0 5]" {
+		t.Errorf("the root's /Limits %s, want [0 5]", got)
+	}
+	if got := lim(26); got != "[1 5]" {
+		t.Errorf("the rightmost leaf's /Limits %s, want [1 5]", got)
+	}
+	if !sameDict(leaf, derefDict(ctx.XRefTable, *types.NewIndirectRef(26, 0))) {
+		t.Error("the key was not placed in the rightmost leaf")
+	}
+}
+
+// sameDict says whether a and b are one dictionary (a map's identity).
+func sameDict(a, b types.Dict) bool {
+	return a != nil && b != nil && fmt.Sprintf("%p", a) == fmt.Sprintf("%p", b)
+}
+
+// TestATargetIsRefusedWhereTheWriterWouldBe — P07 phase-close review: `targetRefusal` restated one of `parentTreeDict`'s
+// refusals and missed the rest, so a carry onto a page whose nested tree had an empty `/Kids` was accepted and failed
+// half-written. It now asks the writer's own non-mutating predicate — for a page with a key and for one without (which
+// gets one above every key) — and writes nothing: a document with no `/ParentTree` does not gain one by being asked.
+func TestATargetIsRefusedWhereTheWriterWouldBe(t *testing.T) {
+	emptyKids := map[int]string{24: "<< /Kids [] >>"}
+	for _, c := range []struct {
+		name, page2 string
+		objs        map[int]string
+		want        string
+	}{
+		{"an empty /Kids, the page keyed", "/StructParents 1", emptyKids, causeTaggedAcross},
+		{"an empty /Kids, the page given a key", "", emptyKids, causeTaggedAcross},
+		{"a flat tree", "/StructParents 1", map[int]string{24: "<< /Nums [0 [21 0 R] 1 [22 0 R]] >>"}, ""},
+		{"no /ParentTree at all", "", nil, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, tree := ptDoc(t, "", c.page2, c.objs)
+			_, hadTree := tree.root["ParentTree"]
+			if got := targetRefusal(ctx, pageAt(ctx, nil, 2)); got != c.want {
+				t.Errorf("targetRefusal %q, want %q", got, c.want)
+			}
+			if _, hasTree := tree.root["ParentTree"]; hasTree != hadTree {
+				t.Error("asking created a /ParentTree")
+			}
+		})
 	}
 }

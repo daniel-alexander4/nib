@@ -6783,7 +6783,7 @@ const REFLOW_CAUSES = {
   'missing-glyph': "The document's font has no glyph for a character you typed.",
   'no-widths': "The document's font does not say how wide its letters are.",
   'no-space-glyph': "The document's font has no space character.",
-  'page-full': 'The new text needs more lines than there is free room for below the paragraph on this page.',
+  'page-full': 'The new text needs more room than there is — below the paragraph on this page, and on the pages after it. Text flows on only from a single-column page with nothing but margin below its last line (not past a signature block, a footnote or a page number set apart from the column), onto a single-column next page that opens with body text rather than a running header, and never past the last page.',
   'no-pitch': 'The paragraph is a single line, and nothing in its column says how far apart its lines would be set.',
   anchored: 'Something is fixed to a spot the text would move across — a link, a form field, a note, a flag, a bookmark or a drawing — and it would be left pointing at the wrong words.',
   'word-too-wide': 'A word is wider than the paragraph.',
@@ -6805,10 +6805,10 @@ const REFLOW_CAUSES = {
   'empty-text': 'There is no text to set. To remove the paragraph, redact it instead.',
   'ambiguous-style': 'A word you used appears in the paragraph in two styles, and which one to keep is unclear.',
   vertical: 'The text is written vertically.',
-  'invisible-text': 'The text is invisible — a search layer over a scanned image — so changing it would not change what the page shows.',
+  'invisible-text': 'The text — or text that would move with it — is invisible, a search layer over a scanned image, and moving or changing it would take it off the words it indexes.',
   'text-clips': 'Text below it is drawn as a clipping outline — moving it would change what the page shows through it.',
-  'state-not-carried': 'Text that would move to the next page is drawn with a transparency, colour or clipping that cannot be carried there.',
-  'tagged-across-pages': "Text that would move to the next page is tagged for accessibility in a way that cannot be carried to another page — its tagged content also draws a picture or a shape, or sits inside other tagged content.",
+  'state-not-carried': 'Text that would move to the next page is drawn with a transparency, colour or clipping, or marked with a setting (a layer, a language, a custom tag), that cannot be carried there.',
+  'tagged-across-pages': "Text that would move to the next page is tagged for accessibility in a way Nib cannot carry to another page and keep correct — the document's structure tree does not describe it cleanly, or its tagged content also holds a picture, a shape or other tagged content.",
 };
 // below is the text of the paragraph beneath the edited one that could not move with it (PLAN-text-reflow.md P07.S03):
 // the reason is that paragraph's, so the sentence says which one it is.

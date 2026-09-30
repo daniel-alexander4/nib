@@ -409,7 +409,7 @@ func checkCIDSetsComplete(d *Document) Result {
 		return r
 	}
 	if withSet == 0 {
-		return Result{Verdict: NotApplicable, Why: "no embedded CID font is used by text"}
+		return Result{Verdict: NotApplicable, Why: "no CID font with a descendant is used by text"}
 	}
 	return Result{Verdict: Pass}
 }

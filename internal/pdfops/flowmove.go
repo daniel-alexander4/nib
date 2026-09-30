@@ -20,7 +20,8 @@ import (
 // where it did. Nothing between the runs is touched: a colour change, marked content, a `Tc` — they stay where they are, in
 // the order they were, and an MCID keeps its glyphs.
 //
-// What a move cannot do, it refuses (law 3): a run drawn inside a form (the page's stream does not hold it), a show that
+// What a move cannot do, it refuses (law 3): a run drawn invisibly (`invisible-text` — a search layer belongs over its
+// scan), a run drawn inside a form (the page's stream does not hold it), a show that
 // relies on where a moved run's glyphs ended (`inline-follower` — a `Tm` resets the text matrix to the line's start), a run
 // drawn in a clipping mode (`text-clips` — the clip would move with it), and a matrix it cannot invert or that is not
 // finite (`degenerate-state`).
@@ -43,6 +44,11 @@ func moveRuns(src []byte, runs []textRun, dy float64) ([]runMove, string) {
 	for i, r := range sorted {
 		if r.inForm {
 			return nil, causeTextInForm
+		}
+		// Modes 3 and 7 draw nothing: an OCR layer's words, placed over the scan they transcribe. Moving them detaches them
+		// from the image they describe, so a move refuses them as P06's edit does (P07 phase-close review).
+		if invisibleMode(r.state.tr) {
+			return nil, causeInvisible
 		}
 		// Modes 4-7 add the glyphs' outlines to the clip, which everything drawn after the text object is cut by: moving
 		// the glyphs would move that window and change what shows through it.
@@ -73,6 +79,10 @@ func moveRuns(src []byte, runs []textRun, dy float64) ([]runMove, string) {
 	}
 	return out, ""
 }
+
+// invisibleMode says whether text rendering mode tr draws nothing: 3 (neither fill nor stroke) and 7 (clip only). The one
+// reading P06's edit (`paragraphWords`), a move (`moveRuns`) and a carry (`carryRefusal`) share.
+func invisibleMode(tr int) bool { return tr == 3 || tr == 7 }
 
 func matrixOperands(m runMatrix) string {
 	return fmt.Sprintf("%s %s %s %s %s %s", num(m[0]), num(m[1]), num(m[2]), num(m[3]), num(m[4]), num(m[5]))

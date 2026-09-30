@@ -82,16 +82,17 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 		if ir == nil {
 			continue
 		}
-		spRaw, has := d["StructParents"]
+		spRaw := d["StructParents"]
+		// Through the one reader (`structParentsOf`, P07 phase-close review): an indirect integer is a key, as it is to
+		// every writer — the checker had called it inconsistent while the writers read it as absent.
+		key, ok, has := structParentsOf(ctx.XRefTable, d)
 		if !has {
 			continue // an untagged page in a tagged document is ordinary
 		}
-		sp, ok := spRaw.(types.Integer)
 		if !ok {
-			add(fmt.Sprintf("structparents-type page=%d", p), "page %d has a /StructParents that is not an integer (%T)", p, spRaw)
+			add(fmt.Sprintf("structparents-type page=%d", p), "page %d has a /StructParents that is not a key — a non-negative whole number (%v)", p, spRaw)
 			continue
 		}
-		key := sp.Value()
 		pageKey[ir.ObjectNumber.Value()] = key
 		arr, isArray := nums[key]
 		if !isArray {
