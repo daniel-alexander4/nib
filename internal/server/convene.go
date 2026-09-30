@@ -634,7 +634,12 @@ func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
 	// holds — and a mutation removing THIS guard left the whole suite green, which is what proved
 	// the door was the load-bearing one. Removing both goes red. Two guards for one rule is the
 	// shape ADR-009 was written after finding six of.
-	s.closeOutEnded(s.unlockedVault(), time.Now())
+	//
+	// **Inside the sweep lock (/pending 710 R4-2).** Close-out and the unlock's re-arms read the same
+	// listing and reach opposite conclusions about one ceremony, and `runCeremonySweep` serialises
+	// them; this call ran outside it, so a re-arm could arm a delivery for a ceremony this had just
+	// moved, and two overlapping listings raced the same `CloseOutMirror`.
+	s.inCeremonySweep(func() { s.closeOutEnded(s.unlockedVault(), time.Now()) })
 	list, err := ceremony.ListStored(defaultOutputDir(), time.Now())
 	if err != nil {
 		httpError(w, http.StatusInternalServerError,

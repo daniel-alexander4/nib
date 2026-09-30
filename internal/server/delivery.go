@@ -2030,6 +2030,22 @@ func (s *Server) handleCeremonyDeliveryProgress(w http.ResponseWriter, r *http.R
 	})
 }
 
+// pullEndStateBeforeSigning is the ONE door through which a ceremony arm starts reading its
+// published end state (/pending 380's pull half), and both arm functions — `runSession` for TCP and
+// `runCeremonyReceive` for QUIC — call it (/pending 710 R4-3: the TCP arm never did).
+//
+// **Only before this party has signed.** A party who has signed holds a record and is reachable by
+// the convener's delivery round; one who has not is exactly the party the round cannot reach, and
+// this is how they learn the proceeding ended. It rides `holdDHT` like every other DHT reach on an
+// arm, so a LAN-local ceremony still emits nothing off-link inside its window (ADR-011). ctx is the
+// arm's own: the pull ends with the arm.
+func (s *Server) pullEndStateBeforeSigning(ctx context.Context, cer *ceremonyID) {
+	if cer == nil || cer.hasSigned() {
+		return
+	}
+	go s.fetchEndStateWhenSlow(ctx, cer, browseWindow)
+}
+
 // fetchEndStateWhenSlow reads this ceremony's published end state on the arm a pre-hop party
 // already holds, and closes the arm out when one arrives (/pending 380).
 //

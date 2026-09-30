@@ -567,16 +567,11 @@ func (s *Server) handleNetworkTest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	for time.Now().Before(deadline) {
-		if _, rerr := sock.Read(deadline); rerr != nil {
-			// Every error here is ordinary — a timeout ends the window, and our own
-			// announcements and foreign traffic are expected on a shared link. The socket
-			// counts them; this loop only has to stay until the window closes.
-			if time.Now().After(deadline) {
-				break
-			}
-		}
-	}
+	// Every datagram error is ordinary — our own announcements and foreign traffic are expected on
+	// a shared link, and the socket counts them; this only has to stay until the window closes.
+	// Through the one listen loop, which pauses on a failing socket rather than spinning a core
+	// (/pending 710 R4-7).
+	sock.ReadWindow(deadline, nil)
 	st := sock.Stats()
 	v := st.Verdict()
 	out.Verdict, out.Summary = v.Name(), v.Summary()

@@ -561,3 +561,98 @@ func testAbandonedThenSession(t *testing.T, abandoned int) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// TestEveryPathThroughTheAcceptLoopReArmsTheWindow — /pending 710 R4-1.
+//
+// The guard above polices what the timer is reset TO and cannot see whether it is reset at
+// all. `runSession` stops the arm-window timer on every accepted connection, and three of the
+// paths that keep the arm — an unreadable role frame, a served reconnect inside the
+// re-delivery window, an unserved one inside it — `continue`d without a `Reset`, so the
+// window was dead: the listener, the interactive slot and the announcer stayed up until
+// another dial arrived, and every other arm was answered 409 meanwhile. A racer's losing
+// candidate reaches the first by ordinary behaviour.
+//
+// The property is routing (ADR-009): after `timer.Stop()` the loop body has no `continue`,
+// and it ends in the one `timer.Reset`, so every path that does not `return` passes through
+// the re-arm. The per-connection handler must not touch the timer itself, or a second door
+// would exist. A behavioural version would have to spend `sessionAcceptTimeout`, five minutes.
+func TestEveryPathThroughTheAcceptLoopReArmsTheWindow(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "session.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fn *ast.FuncDecl
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "runSession" {
+			fn = fd
+		}
+	}
+	if fn == nil {
+		t.Fatal("setup: runSession not found in session.go — this guard walked nothing")
+	}
+	isTimerCall := func(n ast.Node, method string) bool {
+		es, ok := n.(*ast.ExprStmt)
+		if !ok {
+			return false
+		}
+		call, ok := es.X.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != method {
+			return false
+		}
+		id, ok := sel.X.(*ast.Ident)
+		return ok && id.Name == "timer"
+	}
+	// The accept loop is the `for` whose body stops the timer.
+	var loop *ast.ForStmt
+	var stop token.Pos
+	ast.Inspect(fn, func(n ast.Node) bool {
+		fs, ok := n.(*ast.ForStmt)
+		if !ok {
+			return true
+		}
+		for _, st := range fs.Body.List {
+			if isTimerCall(st, "Stop") {
+				loop, stop = fs, st.Pos()
+			}
+		}
+		return true
+	})
+	if loop == nil {
+		t.Fatal("setup: runSession has no loop that stops the arm timer — the accept loop this " +
+			"guard is about is gone, so nothing here could have failed")
+	}
+	var continues []string
+	ast.Inspect(loop.Body, func(n ast.Node) bool {
+		if br, ok := n.(*ast.BranchStmt); ok && br.Tok == token.CONTINUE && br.Pos() > stop {
+			continues = append(continues, fset.Position(br.Pos()).String())
+		}
+		return true
+	})
+	if len(continues) != 0 {
+		t.Errorf("the accept loop `continue`s after stopping the arm timer at %v — each skips the "+
+			"re-arm, so the arm window is dead and the listener stays up until another dial", continues)
+	}
+	last := loop.Body.List[len(loop.Body.List)-1]
+	if !isTimerCall(last, "Reset") {
+		t.Errorf("the accept loop does not END in `timer.Reset` (last statement at %s), so a path "+
+			"that neither returns nor reaches it leaves the arm window stopped",
+			fset.Position(last.Pos()))
+	}
+	// And the one re-arm is the only one: a Reset elsewhere in runSession is a second door.
+	var resets int
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if isTimerCall(n, "Reset") {
+			resets++
+		}
+		return true
+	})
+	if resets != 1 {
+		t.Errorf("runSession resets the arm timer at %d sites; the loop's bottom must be the one "+
+			"place the window resumes", resets)
+	}
+}

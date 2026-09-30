@@ -1399,9 +1399,23 @@ func (s *Server) declineCeremony(cer *ceremonyID) {
 	if cer == nil {
 		return
 	}
+	// **Reopened rather than skipped (/pending 710 R4-4).** This returned on a nil vault and said "the
+	// sweep at the next unlock reaches this ceremony", and it does not: `closeOutReason` refuses
+	// every ceremony that is not `LoadOK`, and a party who declines at its own hop holds no record,
+	// so the stored invitation (which carries the ceremony secret), the secrets and the pins stayed.
+	// The vault is nil mid-session only inside `handleVaultImport`'s window — it replaces the file,
+	// nils the vault and reopens it through `ensureUnlocked`, serialized by `setupMu` — so this
+	// joins that reopen: it either waits for the import's and finds it adopted, or does it itself.
 	v := s.unlockedVault()
 	if v == nil {
-		return // locked mid-session; the sweep at the next unlock reaches this ceremony
+		s.ensureUnlocked()
+		v = s.unlockedVault()
+	}
+	if v == nil {
+		log.Printf("declined ceremony %s: the vault could not be opened, so this machine still holds "+
+			"its pins, the ceremony secret and the ceremony folder, and nothing will remove them "+
+			"automatically", cer.inv.ID)
+		return
 	}
 	// **This used to prune two of the four stores, here, at the end state. P08.S06 routes it
 	// through the close-out door instead** — and the change is a routing change, not a deferral.
@@ -1777,6 +1791,13 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	if armAnnouncer != nil {
 		defer armAnnouncer.Close()
 	}
+	// **And the end-state pull, which this arm never had (/pending 710 R4-3).** Only
+	// `runCeremonyReceive` spawned it, so a TCP-armed invitee whose proceeding ended before the
+	// baton reached them held the interactive slot for the whole hop window and was never told —
+	// the end state was published for them and nothing on this side read it. The fourth thing
+	// that had to reach both arm functions and reached one; now both call the one door. A nil
+	// `cer` (a manual arm) is a no-op inside it.
+	s.pullEndStateBeforeSigning(hctx, cer)
 	// This user's own fingerprint, for the verification string — it binds both identities,
 	// and this goroutine holds the cert rather than the fingerprint.
 	myFP, err := sign.Fingerprint(cert)
@@ -1846,6 +1867,69 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 	// The arm window still bounds the whole of it: the timer is stopped while a session
 	// is in flight — `disarmIf` declines a pending consent, so firing mid-session would
 	// refuse on the user's behalf — and re-armed for the REMAINDER, never a fresh period.
+	// handle runs one accepted connection and reports whether it ended the arm. It never touches
+	// the timer: the loop below stops it before and resumes it after, in one place each.
+	handle := func(conn *p2p.Conn) (spent bool) {
+		// The dial says what it is for before either side picks a gate set (ADR-028). A peer that
+		// predates the role frame declared none and reads as RoleCoSign, which is what every
+		// pre-role dial to an interactive arm meant.
+		role, rerr := p2p.ReadRole(conn.Channel)
+		if rerr != nil {
+			conn.Close()
+			return false // an unreadable role is a peer this build cannot serve; the arm is not spent
+		}
+		served, final, answered, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
+		if final != nil && !opened {
+			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
+			opened = true
+		}
+		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
+		if !served {
+			return false
+		}
+		// ── The post-signing RE-DELIVERY window, on the TCP ceremony path (/pending 289) ──
+		//
+		// **P05.S10's criterion 15 was implemented on ONE of the two transports.**
+		// `runCeremonyReceive` — the QUIC ceremony path — keeps accepting for a bounded window
+		// after it signs, because *"a lost writeback is indistinguishable from a clean success:
+		// writeFrame does not confirm the initiator READ it"*. This loop returned instead, so on
+		// TCP the listener closed the moment the co-sign completed and a reconnect was met with
+		// `connection refused`. `coSignExchange` still wrote its cache; nothing could ever come
+		// back for it.
+		//
+		// It was invisible because the one behavioural drive of re-delivery ran QUIC, and the
+		// TCP rule was guarded only structurally — asserting that both call sites PASS a
+		// ceremony says nothing about what either does with it. Found by running that test's
+		// own body over TCP.
+		//
+		// **Gated on a ceremony that has SIGNED, and both halves matter.** Without a ceremony
+		// there is no `ReDeliverer` and no cache, so holding the arm open would buy nothing and
+		// cost an arm that outlives its session — P05.S01's whole point is that the arm is
+		// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
+		// decline or a consent timeout, which are decisions rather than losses.
+		if cer == nil || (!cer.hasSigned() && !cer.servedReDelivery()) {
+			return true // the arm is spent on a session, which is what it is for
+		}
+		if postSign.IsZero() {
+			// **Stop announcing, for the reason runCeremonyReceive's twin gives (/pending 300):**
+			// a re-delivery is a reconnect by a peer that already holds this address, so the
+			// window needs the listener and not the advertisement. Announcing through it
+			// leaves a stale candidate on the link that a later ceremony's browse can pick up.
+			armAnnouncer.Close()
+			// The initiator's own re-race bound, so the window closes at the moment the far
+			// side stops trying — the same figure runCeremonyReceive uses, for the same reason.
+			//
+			// **An ABSOLUTE deadline, fixed once, and the timer reset to its REMAINDER** — the
+			// rule `TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession` polices,
+			// and it applies to this second window for the same reason it applies to the
+			// first: a `Reset` to a fresh period would let each reconnect push the window out,
+			// and a re-delivery window anybody who can reach the listener holds open for free
+			// is the same defect one phase later.
+			postSign = time.Now().Add(connectDeadline)
+			return false // the loop resumes the timer to postSign's remainder
+		}
+		return time.Now().After(postSign)
+	}
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -1859,82 +1943,30 @@ func (s *Server) runSession(ln p2p.Listener, cer *ceremonyID, cert, key []byte, 
 			continue
 		}
 		timer.Stop()
-		// The dial says what it is for before either side picks a gate set (ADR-028). A peer that
-		// predates the role frame declared none and reads as RoleCoSign, which is what every
-		// pre-role dial to an interactive arm meant.
-		role, rerr := p2p.ReadRole(conn.Channel)
-		if rerr != nil {
-			conn.Close()
-			continue // an unreadable role is a peer this build cannot serve; the arm is not spent
-		}
-		served, final, answered, _ := s.serveOneSession(consentAnchor{ln: ln, kind: armInteractive}, cer, conn, cert, key, label, mode, myFP, role, false)
-		if final != nil && !opened {
-			s.openArrival(label, cer, final) // once: a re-delivery re-sends the SAME idempotent result
-			opened = true
-		}
-		s.sess.settle(answered) // after the arrival opened, so the page finds it (/pending 750)
-		if served {
-			// ── The post-signing RE-DELIVERY window, on the TCP ceremony path (/pending 289) ──
-			//
-			// **P05.S10's criterion 15 was implemented on ONE of the two transports.**
-			// `runCeremonyReceive` — the QUIC ceremony path — keeps accepting for a bounded window
-			// after it signs, because *"a lost writeback is indistinguishable from a clean success:
-			// writeFrame does not confirm the initiator READ it"*. This loop returned instead, so on
-			// TCP the listener closed the moment the co-sign completed and a reconnect was met with
-			// `connection refused`. `coSignExchange` still wrote its cache; nothing could ever come
-			// back for it.
-			//
-			// It was invisible because the one behavioural drive of re-delivery ran QUIC, and the
-			// TCP rule was guarded only structurally — asserting that both call sites PASS a
-			// ceremony says nothing about what either does with it. Found by running that test's
-			// own body over TCP.
-			//
-			// **Gated on a ceremony that has SIGNED, and both halves matter.** Without a ceremony
-			// there is no `ReDeliverer` and no cache, so holding the arm open would buy nothing and
-			// cost an arm that outlives its session — P05.S01's whole point is that the arm is
-			// one-shot. Before signing there is nothing to re-deliver, and `served` is then a
-			// decline or a consent timeout, which are decisions rather than losses.
-			if cer == nil || (!cer.hasSigned() && !cer.servedReDelivery()) {
-				return // the arm is spent on a session, which is what it is for
-			}
-			if postSign.IsZero() {
-				// **Stop announcing, for the reason runCeremonyReceive's twin gives (/pending 300):**
-				// a re-delivery is a reconnect by a peer that already holds this address, so the
-				// window needs the listener and not the advertisement. Announcing through it
-				// leaves a stale candidate on the link that a later ceremony's browse can pick up.
-				armAnnouncer.Close()
-				// The initiator's own re-race bound, so the window closes at the moment the far
-				// side stops trying — the same figure runCeremonyReceive uses, for the same reason.
-				//
-				// **An ABSOLUTE deadline, fixed once, and the timer reset to its REMAINDER** — the
-				// rule `TestTheArmWindowIsNotExtendedByConnectionsThatProduceNoSession` polices,
-				// and it applies to this second window for the same reason it applies to the
-				// first: a `Reset` to a fresh period would let each reconnect push the window out,
-				// and a re-delivery window anybody who can reach the listener holds open for free
-				// is the same defect one phase later.
-				postSign = time.Now().Add(connectDeadline)
-				remaining := time.Until(postSign)
-				timer.Reset(remaining)
-				continue
-			}
-			if time.Now().After(postSign) {
-				return
-			}
-			continue
-		}
-		remaining := time.Until(armedUntil)
-		if postSign.IsZero() {
-			if remaining <= 0 {
-				return
-			}
-			timer.Reset(remaining)
-			continue
-		}
-		// Inside the re-delivery window an unserved connection is an ordinary failed reconnect;
-		// keep the window rather than falling back to the pre-signing bound, which is longer.
-		if time.Now().After(postSign) {
+		if spent := handle(conn); spent {
 			return
 		}
+		// **ONE re-arm, at the bottom, for every connection that did not end the arm (/pending
+		// 710 R4-1).** The timer is stopped above for the whole of a connection, and this loop used
+		// to re-arm it on two of the five paths that keep the arm: an unreadable role frame, a
+		// served reconnect inside the re-delivery window, and an unserved one inside it each
+		// `continue`d with the timer dead. After any of them nothing ever disarmed — the listener, the
+		// interactive slot and the announcer stayed up until a later dial or the user noticed,
+		// and every other arm meanwhile was answered 409. A racer's losing candidate reaches the
+		// first path by ordinary behaviour (P05.S02). So the body decides only "spent or not" and
+		// this is the one place the window resumes, to the REMAINDER of whichever absolute
+		// deadline is live; `TestEveryPathThroughTheAcceptLoopReArmsTheWindow` holds it.
+		deadline := armedUntil
+		if !postSign.IsZero() {
+			// Inside the re-delivery window an unserved connection is an ordinary failed
+			// reconnect; keep the window rather than falling back to the pre-signing bound.
+			deadline = postSign
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return
+		}
+		timer.Reset(remaining)
 	}
 }
 
@@ -2688,14 +2720,8 @@ func (s *Server) runCeremonyReceive(ctx context.Context, cer *ceremonyID, hl *p2
 	if armAnnouncer != nil {
 		defer armAnnouncer.Close()
 	}
-	// **The pull half of /pending 380, and only before this party has signed.** A party who has
-	// signed holds a record and is reachable by the convener's delivery round; one who has not is
-	// exactly the party the round cannot reach, and this is how they learn the proceeding ended.
-	// It rides `holdDHT` like every other DHT reach on this arm, so a LAN-local ceremony still
-	// emits nothing off-link inside its window (ADR-011).
-	if !cer.hasSigned() {
-		go s.fetchEndStateWhenSlow(ctx, cer, browseWindow)
-	}
+	// **The pull half of /pending 380**, through the door both ceremony arms call.
+	s.pullEndStateBeforeSigning(ctx, cer)
 	// **No bootstrap here (S05d).** The QUIC arm used to warm the DHT before anyone knew whether
 	// the link would answer, which is off-link traffic on every hop of every ceremony carrying an
 	// invitation. connect's feed and publish now reach it through `cer.ensureBootstrapped` after

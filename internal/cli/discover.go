@@ -178,8 +178,9 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 		}
 	}()
 
-	for time.Now().Before(deadline) {
-		seen, err := sock.Read(deadline)
+	// Through the one listen loop (/pending 710 R4-7): it pauses on a failing socket rather than
+	// spinning a core for the window.
+	sock.ReadWindow(deadline, func(seen discovery.Seen, err error) {
 		switch {
 		case err == nil:
 			if !quiet {
@@ -190,7 +191,7 @@ func runDiscover(out, errw io.Writer, listen time.Duration, quiet bool) int {
 				fmt.Fprintln(out, "  self   heard our own announcement come back")
 			}
 		}
-	}
+	})
 
 	// ONE read of the counters, not one per consumer. The announce goroutine is still
 	// running at this point — it is stopped by the deferred close above — so two calls

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -318,6 +319,43 @@ func (s *Socket) Announce(a Announcement) (int, error) {
 // diagnostic can say "I heard myself, so the problem is not my sending".
 var ErrOwn = errors.New("own announcement")
 
+// socketErr marks a Read error that came from the SOCKET rather than from a datagram — a failed
+// deadline set or a failed receive, as against a foreign, malformed or own announcement. The two
+// look alike to a caller (both are a non-nil error), and they cost differently: a datagram error
+// consumed a datagram, while a socket that fails persistently fails again at once. It unwraps, so
+// `errors.Is(err, net.ErrClosed)` still answers as it did.
+type socketErr struct{ err error }
+
+func (e socketErr) Error() string { return e.err.Error() }
+func (e socketErr) Unwrap() error { return e.err }
+
+// socketFailurePause is how long ReadWindow waits after a failure of the socket itself before
+// reading again. Long enough that a socket failing on every call costs a few wakeups a second
+// rather than a core; short against the listen windows (3 s and up) it sits inside.
+const socketFailurePause = 50 * time.Millisecond
+
+// ReadWindow reads until deadline, handing every result to seen, and is the ONE listen loop both
+// discovery callers run (`nib discover` and `/api/lan/test`) — /pending 710 R4-7. Each had its own
+// `for time.Now().Before(deadline) { Read }` that retried at once on any error, so a socket failing
+// persistently spun a core for the whole window. A datagram error is still retried at once: the
+// next datagram may be ours. seen may be nil when only the counters matter.
+func (s *Socket) ReadWindow(deadline time.Time, seen func(Seen, error)) {
+	for time.Now().Before(deadline) {
+		got, err := s.Read(deadline)
+		if seen != nil {
+			seen(got, err)
+		}
+		var se socketErr
+		if errors.As(err, &se) && !errors.Is(err, os.ErrDeadlineExceeded) {
+			if wait := time.Until(deadline); wait > socketFailurePause {
+				time.Sleep(socketFailurePause)
+			} else {
+				return
+			}
+		}
+	}
+}
+
 // Read waits for one announcement.
 //
 // A caller loops on this, treating ErrOwn as informational, ErrNotOurs and
@@ -325,7 +363,7 @@ var ErrOwn = errors.New("own announcement")
 // caller's: this is where a browse budget (D16's 2 s) is applied, one layer up.
 func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	if err := s.pc.SetReadDeadline(deadline); err != nil {
-		return Seen{}, err
+		return Seen{}, socketErr{err}
 	}
 	buf := make([]byte, MaxDatagram+1) // +1 so an over-cap datagram is SEEN to be over
 	// **`p4` reads BOTH families, and that is measured rather than assumed.**
@@ -342,7 +380,7 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	// goes red the moment the bind or the reader narrows to v4.
 	n, _, src, err := s.p4.ReadFrom(buf)
 	if err != nil {
-		return Seen{}, err
+		return Seen{}, socketErr{err}
 	}
 	ua, _ := src.(*net.UDPAddr)
 
