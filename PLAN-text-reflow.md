@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 CLOSED (v1.167.9 — the walker's evidence, and ADR-056's page-content door); P06 — reflow one paragraph on one page — is next.
+**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 CLOSED (v1.167.9 — the walker's evidence, and ADR-056's page-content door); P06 CLOSED (v1.168.1 — one paragraph on one page); P07 — several paragraphs, and flow across pages — is building (slices firmed 2026-09-30).
 
 ---
 
@@ -636,6 +636,81 @@ operation refuses; nothing anchored to a position is silently orphaned.
 **Standing caveat.** This is where reflow stops being local. Every object anchored by absolute
 position on a page — and, once `PLAN-accessibility` lands, every MCID in the tag tree — is a thing
 that must move or break.
+
+**PIN 2026-09-30 (phase-open, read at the lines) — what exists, what does not.**
+- **Exists**: P06's emitter re-sets a paragraph's lines at given text matrices inside its own text object and restores
+  `Tf`/`Tc`/`Tw`/the line matrix after it (`reflow.go` `reflowParagraphIn`); the refusal a grown paragraph gets today,
+  `causeGrows` (`reflow.go:205`); a paragraph's column (`grouping.go:49-52`) and the page's column count; the CTM the
+  walker tracks (`textrun.go:266`); a matrix and a rect transform (`annotcarry.go:88-112`); painting operators classified,
+  with no position (`claimtagging.go:162`, `:268`); destination readers for outlines and link actions
+  (`outlinecarry.go`, `pageselect.go:957`).
+- **Does not exist**: a bounding box for any non-text mark (path, image, inline image, shading, form); anything that
+  moves an annotation, a destination or a NibFlag WITHIN a page by a translation; a notion of how much room lies below a
+  paragraph.
+- **Shape (rung 2, recorded)**: each step refuses what the next step moves, so every slice ships (D13) and the exit
+  criterion's "or the operation refuses" holds at every commit — S03 refuses an anchored object in the band it moves, and
+  S04 turns those refusals into moves. Whole paragraphs move; a paragraph is never split across a page (no widow/orphan
+  logic) — a paragraph that does not fit whole is refused. A shrinking paragraph leaves its gap, as P06 does: the goal
+  is overflow, and pulling text up is not in it. `/plan-review` did not fire: the phase is not security-, migration- or
+  egress-heavy (no persisted format changes — a NibFlag keeps its `{page, frac}` shape).
+
+#### P07.S01 — what lies below a paragraph *(done 2026-09-30, v1.169.49)*
+One door, `flowRegion`, answers for paragraph p: the paragraphs below it in its column, down to the first vertical gap
+clearly wider than the column's usual paragraph gap (that gap is the ROOM growth may consume; what lies past it — a
+footer, a page number — stays put); the band those paragraphs occupy; and every non-text mark whose box meets the band,
+from a new bounding-box reader over paths, images, inline images, shadings and forms (the walker's CTM, one door).
+Acceptance: the room and the band are asserted on hand-built pages (a footer past the gap stays out of the region); every
+non-text mark kind is boxed and a mark in the band names itself; a census over the generated and real-producer corpora
+says how many paragraphs have room for one more line, and why the others do not.
+
+**Tasks** (slice grill, 2026-09-30): T01 — `keepMarks` on the walker: every path paint, image `Do`, inline image and
+`sh` recorded as a `pageMark` boxed under the CTM (a stroke grows by half its line width; a shading is unbounded — it
+paints a clip the reader does not track). T02 — `flowRegion`: region paragraphs contiguous while each step is ≤
+max(1.5 × the column's median paragraph step, 2.5 em); the room down to the highest obstacle below in the column's extent
+less one em, or the page FLOOR — a bottom margin equal to the page's top margin; the band's marks and unowned text runs
+listed. T03 — every mark kind boxed, the room bounded both ways, and the corpus census. **Grill assumptions (rung 2)**:
+the floor mirrors the page's own top margin rather than reading every page for a document margin (one walk per page on a
+request path); text no paragraph of the region owns — an artifact, another column — is an obstacle, never moved.
+**Closed 2026-09-30 — what the code did that the text above does not say.** A mark that COVERS the whole band is a
+backdrop (a page or cell fill: the text stays over it wherever it moves) and blocks nothing — except a shading, whose box is
+unbounded because its clip is unknown. A run showing only white space draws no ink and is no obstacle (measured: 760 of 999
+real-producer paragraphs read as blocked without that). The review added a sixth kind, `form`: a form the walk does not
+enter (undecodable, nested past the depth bound, drawing itself) is boxed by its `/BBox`. **Census** (generated + hand-built,
+real-producer corpus): of 999 real-producer paragraphs P06 can reflow, **194 have room for one more line**; blocked by a
+mark in the band — path 581 (IRS form rules and vector-drawn glyphs dominate), image 34, inline image 21, text 36; no room —
+content below 78, page margin 55. Review `code-reviews/v1.169.48-p07s01-2026-09-30.md`.
+
+#### P07.S02 — move a paragraph
+A paragraph is re-set, unedited, `dy` lower, through P06's emitter (one door — a move is a reflow with its own text at
+translated line matrices). Acceptance: the moved paragraph reads back with identical text and line breaks, each baseline
+exactly `dy` lower; the decoded content outside its spans is byte-identical; a paragraph P06 would refuse refuses the
+move with the same cause.
+
+#### P07.S03 — grow into the room below
+An edited paragraph takes the lines it needs at its own line pitch; the region below moves down by the growth, bounded by
+the room; `paragraph-grows` gives way to `page-full` when the room is not enough. Anything anchored in the band — an
+annotation, a destination, a NibFlag, a non-text mark — REFUSES (`anchored`) in this slice. Acceptance: the edited
+paragraph reads back re-broken and every region paragraph reads back unchanged, `dy` lower; nothing outside the region
+moves; each refusal is named, including which region paragraph refused and why.
+
+#### P07.S04 — what is anchored moves with the text
+Annotations (`/Rect` and every coordinate key its subtype carries), widgets, link and outline destinations naming a
+position in the band, and NibFlags (`/pending 457`) move by the same `dy`; a non-text mark in the band still refuses, and
+so does an object straddling the band's edge. Acceptance: each anchored kind is moved and read back at `dy`; each
+straddling or unmovable kind refuses by name; the census from S01 is re-run and states what S04 unlocked.
+
+#### P07.S05 — a paragraph set on another page
+A paragraph re-set onto a DIFFERENT page, as its own text object: its fonts carried into that page's resources (a name
+collision renamed, never overwritten), with the colour, render mode and graphics state it was drawn under. Acceptance:
+the paragraph reads back on the target page with its text, font and size; the source page no longer draws it; a state
+the walker cannot carry refuses by name.
+
+#### P07.S06 — flow across pages
+When the room is not enough, the region's last paragraphs move to the top of the next page's region, which moves down in
+turn — to the document's last page, where overflow refuses. Single-column pages only; anchored objects (S04) and NibFlags
+move with their paragraph, across pages included. Acceptance: the phase's exit criterion, driven through the real binary
+at tier 3 — content that moves takes its annotations, links and widgets, or the operation refuses, and nothing anchored
+is silently orphaned.
 
 ### P08 — Typographic fidelity
 **Goal.** Justification, kerning from `TJ` arrays, and the text-state parameters the current edit

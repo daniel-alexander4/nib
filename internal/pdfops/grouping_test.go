@@ -246,6 +246,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"claimtagging.go": {
 			"readPageRuns": "the claim door counts text runs under no MCID and no artifact before making a new claim of tagging, and groups nothing (/pending 495)",
 		},
+		"flowregion.go": {
+			"textRun": "the flow region boxes the runs the grouping door set aside (pageLayout.loose) as obstacles to moving text; it groups nothing (text-reflow P07.S01)",
+		},
 		"reflow.go": {
 			"textRun": "reflow takes the runs of a paragraph the grouping door already made (readPageGlyphLayout), to delete their show operators and re-emit the paragraph in their text state; it groups nothing (text-reflow P06.S04)",
 		},
