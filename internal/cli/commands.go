@@ -1164,6 +1164,8 @@ func cmdSign(args []string) int {
 	if err != nil {
 		if errors.Is(err, sign.ErrWrongPassphrase) {
 			errf("wrong passphrase for %s", cert)
+		} else if errors.Is(err, sign.ErrNotPKCS12) {
+			errf("%s: %v", cert, err)
 		} else {
 			errf("%v", err)
 		}

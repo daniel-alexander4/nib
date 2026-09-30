@@ -137,7 +137,7 @@ func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}
 	}
-	return runSign(pdfBytes, data)
+	return runSign(pdfBytes, data, nil)
 }
 
 // SignApproval applies an approval signature to pdf. Unlike Sign it asserts no
@@ -147,13 +147,6 @@ func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 // already carries a certification ("no changes") signature — a later signature
 // would break that certification for strict validators.
 func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
-	certified, err := hasCertificationSignature(pdfBytes)
-	if err != nil {
-		return nil, err
-	}
-	if certified {
-		return nil, errors.New("document is certified (no changes allowed); it cannot be co-signed")
-	}
 	cert, signer, err := ParseIdentity(certPEM, keyPEM)
 	if err != nil {
 		return nil, err
@@ -185,7 +178,7 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 			Image:       a.Image,
 		}
 	}
-	return runSign(pdfBytes, data)
+	return runSign(pdfBytes, data, refuseCertified)
 }
 
 // runSign performs the digitorus incremental signing of pdfBytes with the given
@@ -197,15 +190,25 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 // written once here and reaches all of them (ADR-009, /pending 740): a hybrid input is made
 // readable to the signing library, or refused by name when it is signed (`readableBySigner`). The
 // read-back check is here for the same reason (/pending 747): the output is handed back only if nib
-// reads it as the input plus exactly the signature asked for (`signedAsIntended`).
-func runSign(pdfBytes []byte, data sign.SignData) ([]byte, error) {
+// reads it as the input plus exactly the signature asked for (`signedAsIntended`). And the library's
+// reader is opened through `libraryReader`, ADR-041's gate (/pending 712 R6-2, /pending 761), so
+// nothing this door signs reaches `digitorus/pdf` unless pdfcpu read it first.
+//
+// refuse, when set, is a caller's own precondition over the document the library is about to sign,
+// asked of the SAME reader so the gate is paid once — `SignApproval`'s certification refusal.
+func runSign(pdfBytes []byte, data sign.SignData, refuse func(*dpdf.Reader) error) ([]byte, error) {
 	in, err := readableBySigner(pdfBytes)
 	if err != nil {
 		return nil, err
 	}
-	rdr, err := dpdf.NewReader(bytes.NewReader(in), int64(len(in)))
+	rdr, err := libraryReader(in)
 	if err != nil {
-		return nil, fmt.Errorf("read pdf: %w", err)
+		return nil, err
+	}
+	if refuse != nil {
+		if err := refuse(rdr); err != nil {
+			return nil, err
+		}
 	}
 	var out bytes.Buffer
 	if err := librarySign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
@@ -435,7 +438,7 @@ func mentionsTimestamp(err error) bool {
 	return strings.Contains(m, "timestamp") || strings.Contains(m, "tsa")
 }
 
-// hasCertificationSignature reports whether pdf carries a certification (DocMDP)
+// certifiedIn reports whether a document carries a certification (DocMDP)
 // signature — the "no changes allowed" kind a later approval signature would
 // break for strict validators. Nib's own Verify is purely cryptographic and
 // does not surface the signature type, so we read it from the PDF structure:
@@ -453,21 +456,21 @@ func mentionsTimestamp(err error) bool {
 // A panic in the walk is returned as an error (/pending 502): the same lazy dereferences that needed
 // a recover in signatureBlobPresent panic here on corrupt input, and an unreadable document is one
 // SignApproval must refuse rather than one that takes the process.
-func hasCertificationSignature(pdf []byte) (certified bool, err error) {
+//
+// **It reads a reader `libraryReader` opened, never bytes of its own** (/pending 712 R6-2, /pending
+// 761): it used to call `dpdf.NewReader` itself with no readability gate in front, and its one
+// production caller is the co-sign path, which a peer's document reaches.
+func certifiedIn(r *dpdf.Reader) (certified bool, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			certified, err = false, fmt.Errorf("read pdf: %v", rec)
 		}
 	}()
-	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
-	if err != nil {
-		return false, fmt.Errorf("read pdf: %w", err)
-	}
 	acro := r.Trailer().Key("Root").Key("AcroForm")
 	if acro.IsNull() {
 		return false, nil
 	}
-	fields := acro.Key("Fields") //sigwalk:exempt hasCertificationSignature
+	fields := acro.Key("Fields") //sigwalk:exempt certifiedIn
 	for i := 0; i < fields.Len(); i++ {
 		f := fields.Index(i)
 		if f.Key("FT").Name() != "Sig" {
@@ -481,6 +484,50 @@ func hasCertificationSignature(pdf []byte) (certified bool, err error) {
 		}
 	}
 	return false, nil
+}
+
+// refuseCertified is `SignApproval`'s precondition, run by `runSign` over the reader it opened.
+func refuseCertified(r *dpdf.Reader) error {
+	certified, err := certifiedIn(r)
+	if err != nil {
+		return err
+	}
+	if certified {
+		return errors.New("document is certified (no changes allowed); it cannot be co-signed")
+	}
+	return nil
+}
+
+// libraryReader is the one way the signing paths open `digitorus/pdf`'s reader, and it is ADR-041's
+// rule applied to them: **nothing enters the library that pdfcpu cannot read** (/pending 712 R6-2,
+// /pending 761). `Verify` had the gate and the signer did not — `runSign` and the certification walk
+// each called `dpdf.NewReader` on the bytes they were handed, so a document whose object stream
+// spins or exhausts memory in the library's lexer (an unterminated `[`, `<` or `(` at the stream's
+// clean end, which pdfcpu refuses) reached it on the co-sign path, where no `recover` contains an
+// out-of-memory. The lookup-cost ceiling (`libraryLookupCost`, /pending 751) follows for the reason
+// the sweep runs it: the library would pay that cost too.
+//
+// The sweep opens its own reader and is not routed here, because both of its callers run the gate
+// first — `Verify` (`pdfcpuRead`) and `signedAsIntended` (over `out` by `pdfcpuCanRead`, over `in`
+// because `runSign` opened it here) — and a second pdfcpu read per call would be paid on every
+// verify. `TestEveryLibraryReaderIsBehindTheGate` holds that list.
+func libraryReader(pdf []byte) (r *dpdf.Reader, err error) {
+	if err := pdfcpuCanRead(pdf); err != nil {
+		return nil, fmt.Errorf("read pdf: nib cannot read this document, so it is not signed: %w", err)
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			r, err = nil, fmt.Errorf("read pdf: %v", rec)
+		}
+	}()
+	r, err = dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
+	if err != nil {
+		return nil, fmt.Errorf("read pdf: %w", err)
+	}
+	if _, err := libraryLookupCost(r); err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 // ParseIdentity decodes an identity's PEM certificate and key into a parsed

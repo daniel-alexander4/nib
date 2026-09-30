@@ -604,3 +604,35 @@ func TestVerifyNamesTheEndStateOnlyFromThisMachinesOwnRecords(t *testing.T) {
 			"this machine's own notes means one file verifies differently on two machines")
 	}
 }
+
+// TestVerifySaysWhenItCouldNotLookForTheEndState — /pending 712 R6-5. With no home directory the
+// server writes its ceremony records under a relative `nib`, and `nib verify` returned an empty
+// answer — which reads as "this machine has no record" on the one machine whose records went
+// somewhere else. Not looking is said.
+func TestVerifySaysWhenItCouldNotLookForTheEndState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := convenedFixture(t, t.TempDir(), 3, 3)
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	t.Setenv("HOME", "")
+	// STIMULUS: this platform really has no home directory now.
+	if _, err := ceremony.StoreRoot(); err == nil {
+		t.Skip("SKIP (not a pass): an empty $HOME still yields a home directory on this platform")
+	}
+	c := reportOf(t, path, now)
+	if !c.present || c.id == "" {
+		t.Fatalf("setup: the fixture carries no readable ceremony (present=%v id=%q)", c.present, c.id)
+	}
+	if c.endState != "" {
+		t.Errorf("an end state %q was reported with no records looked up", c.endState)
+	}
+	said := false
+	for _, line := range c.lines() {
+		if strings.Contains(line, "not looked up") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("`nib verify` could not look for this machine's records and said nothing, which "+
+			"reads as \"no record\":\n%s", strings.Join(c.lines(), "\n"))
+	}
+}

@@ -81,7 +81,7 @@ func TestHasCertificationSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := hasCertificationSignature(base); got {
+	if got := certificationOf(t, base); got {
 		t.Error("unsigned doc reported as certified")
 	}
 	cert, key, _ := GenerateIdentity("X")
@@ -89,14 +89,14 @@ func TestHasCertificationSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := hasCertificationSignature(approved); got {
+	if got := certificationOf(t, approved); got {
 		t.Error("approval-signed doc misreported as certified")
 	}
 	certified, err := Sign(base, cert, key, Options{Name: "X", When: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := hasCertificationSignature(certified); !got {
+	if got := certificationOf(t, certified); !got {
 		t.Error("certified doc not detected")
 	}
 }

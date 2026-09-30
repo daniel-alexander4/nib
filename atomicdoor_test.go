@@ -150,7 +150,7 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 	// or swapping it for a bare `os.WriteFile`, leaves this guard perfectly green. So the count is
 	// pinned the way `verify_test.go` pins the red-proof count: it may rise, and a fall is a
 	// question rather than a pass. Raise it in the same commit as a new door user.
-	const doorFloor = 8
+	const doorFloor = 13 // 8 until /pending 712 R6-4 measured 13 — a floor five below the tree let five users go quietly
 	if doorUsers < doorFloor {
 		t.Errorf("%d file(s) reach internal/atomicfile and this floor says at least %d. A site "+
 			"that stopped calling the door is invisible to every other check here — they all "+

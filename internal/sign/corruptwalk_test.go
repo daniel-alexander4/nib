@@ -34,7 +34,7 @@ func TestTheSignatureWalksDoNotPanicOnCorruptInput(t *testing.T) {
 						t.Fatalf("hasCertificationSignature panicked on a flip at %d^%#x: %v", off, bit, r)
 					}
 				}()
-				if _, err := hasCertificationSignature(doc); err != nil {
+				if _, err := ungatedCertification(doc); err != nil {
 					certErrs++
 				}
 			}()

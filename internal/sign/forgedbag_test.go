@@ -206,7 +206,7 @@ func signWithBagOf(t *testing.T, pdf, certPEM, keyPEM []byte, extra *x509.Certif
 		Certificate:       cert,
 		CertificateChains: [][]*x509.Certificate{{cert, extra}},
 		DigestAlgorithm:   crypto.SHA256,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

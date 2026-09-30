@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"nib/internal/atomicfile"
+	"nib/internal/ceremony"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,12 +44,15 @@ func expandHome(p string) string {
 
 // defaultOutputDir is where flattened/exported files land unless the user picks
 // another folder: ~/nib.
+//
+// The folder is `ceremony.StoreRoot`'s, the one door (/pending 712 R6-5); the relative fallback is
+// this surface's own answer when there is no home directory.
 func defaultOutputDir() string {
-	home, err := os.UserHomeDir()
+	root, err := ceremony.StoreRoot()
 	if err != nil {
 		return "nib"
 	}
-	return filepath.Join(home, "nib")
+	return root
 }
 
 // dirEntry is one browsable child of the listed folder: the name to show, and the

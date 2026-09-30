@@ -122,6 +122,47 @@ func TestPublicKeyLinePlainNoPub(t *testing.T) {
 	}
 }
 
+// TestPublicKeyLineRefusesAPubThatIsNotTheKeys — /pending 712 R6-3. A ".pub" beside the key was
+// returned unchecked, and every caller seals to the answer: `vault.Migrate` sealed the whole vault
+// to a stale `~/.ssh/id_*.pub` and overwrote the only copy that opened.
+func TestPublicKeyLineRefusesAPubThatIsNotTheKeys(t *testing.T) {
+	dir := t.TempDir()
+	keyA := filepath.Join(dir, "id_a")
+	keyB := filepath.Join(dir, "id_b")
+	lineA, err := Generate(keyA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineB, err := Generate(keyB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A matching .pub keeps the comment the user gave it.
+	if err := os.WriteFile(keyA+".pub", []byte(lineA+" dan@laptop\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := PublicKeyLine(keyA); err != nil || got != lineA+" dan@laptop" {
+		t.Errorf("a .pub that IS the key's public half: got %q, %v; want its own line, comment kept", got, err)
+	}
+	// A stale .pub naming another key is refused, never sealed to.
+	if err := os.WriteFile(keyA+".pub", []byte(lineB+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := PublicKeyLine(keyA)
+	var mismatch ErrPublicKeyMismatch
+	if !errors.As(err, &mismatch) {
+		t.Errorf("a .pub naming a different key: got %q, %v — the vault would be sealed to a key the "+
+			"user does not hold at %s", got, err, keyA)
+	}
+	// Where the key file yields nothing, the .pub is still the answer (the declared residue).
+	if err := os.WriteFile(keyA, []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := PublicKeyLine(keyA); err != nil || got != lineB {
+		t.Errorf("an unparseable key with a .pub: got %q, %v; want the .pub's line", got, err)
+	}
+}
+
 func TestUnwrapPassphrase(t *testing.T) {
 	dir := t.TempDir()
 	keyPath, pubLine := encryptedKey(t, dir, "hunter2")

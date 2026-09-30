@@ -938,8 +938,8 @@ func Validate(raw []byte) error {
 		}
 		// The payload is parsed for its VERSION as well as its shape: a backup whose contents
 		// were written by a newer Nib is refused here rather than after the overwrite. (The
-		// envelope's own ceiling at this door is /pending 287 and is deliberately not folded
-		// in — it is a filed, grill-pending item and gets its own pass.)
+		// envelope's own ceiling is checked above, through `checkEnvelopeVersion` — /pending 287
+		// folded it in, and this sentence said otherwise until /pending 712 R6-6.)
 		if _, uerr = decodeContents(plain); uerr != nil {
 			zero(plain)
 			return errors.New("backup is corrupt: its contents do not parse, or they were " +

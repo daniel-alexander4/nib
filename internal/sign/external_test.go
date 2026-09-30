@@ -63,6 +63,11 @@ func TestSignExternal(t *testing.T) {
 	if _, _, err := ParseP12(p12, "nope"); !errors.Is(err, ErrWrongPassphrase) {
 		t.Fatalf("ParseP12 wrong passphrase: err = %v, want ErrWrongPassphrase", err)
 	}
+	// A file that is not a PKCS#12 bundle is named as such (/pending 712 R6-9) — never as a wrong
+	// passphrase, which a reprompt cannot fix, and never as the decoder's raw message alone.
+	if _, _, err := ParseP12([]byte("%PDF-1.7 not a certificate"), "p12pass"); !errors.Is(err, ErrNotPKCS12) || errors.Is(err, ErrWrongPassphrase) {
+		t.Errorf("ParseP12 on a non-PKCS#12 file: err = %v, want ErrNotPKCS12 and not ErrWrongPassphrase", err)
+	}
 	// Correct passphrase yields the leaf + CA chain.
 	leaf, chain, err := ParseP12(p12, "p12pass")
 	if err != nil {

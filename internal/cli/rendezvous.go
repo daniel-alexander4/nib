@@ -438,11 +438,11 @@ func budgetNote(took, allowed time.Duration) string {
 // realCacheLine reports the cache an actual ceremony will use, which is NOT the scratch
 // directory this command runs on. Read-only: it never creates or repairs anything.
 func realCacheLine() string {
-	home, err := os.UserHomeDir()
+	root, err := ceremony.StoreRoot()
 	if err != nil {
 		return "could not locate your home directory, so the real cache was not inspected"
 	}
-	path := filepath.Join(home, "nib", "dht-nodes")
+	path := filepath.Join(root, "dht-nodes")
 	fi, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return path + " does not exist yet — a real ceremony would cold-start from the shipped seeds"
