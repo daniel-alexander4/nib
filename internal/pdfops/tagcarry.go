@@ -329,29 +329,39 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 	// (`structtree.go` `readKid`'s `inheritPg`). Collecting only elements that carry `/Pg` themselves
 	// therefore skipped exactly the elements a producer chose not to repeat it on, and left their
 	// integers claiming content in a sheet stream that holds only the `Do`. Caught in review.
-	var walk func(o types.Object, inherited *placement)
-	walk = func(o types.Object, inherited *placement) {
-		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
-			for _, x := range arr {
-				walk(x, inherited)
-			}
-			return
+	//
+	// **Every indirect object is entered into the visited set before it is walked, arrays included, and the
+	// walk is depth-bounded** (/pending 643). An indirect `/K` array used to be walked before the check, so an
+	// array naming itself recursed until Go's stack limit — fatal, not a panic — and pdfcpu's own structure
+	// validation marks each indirect kid valid before recursing into it and skips it on a revisit
+	// (validate/structTree.go:139-151, v0.13.0), so it admits the loop rather than refusing it. The bound is the package's structure bound (`maxStructDepth`); past it the carry is abandoned, as for
+	// any tree it cannot anchor. Keying arrays too means two elements sharing one `/K` array object walk it
+	// once, which is safe: the rewrite below is collected per element and is idempotent.
+	var walk func(o types.Object, inherited *placement, depth int) bool
+	walk = func(o types.Object, inherited *placement, depth int) bool {
+		if depth > maxStructDepth {
+			return false
 		}
-		// An element written INLINE has no object number and so cannot be in the visited set at
-		// all. An inline dictionary is reachable from one place by construction; note the set is
-		// keyed on the ELEMENT, and an indirect `/K` array is not entered into it, so two elements
-		// sharing one array object walk it twice. That is why the rewrite below is collected per
-		// element and applied once per element, and why it is idempotent.
+		// An element or array written INLINE has no object number and so cannot be in the visited set; it
+		// is reachable from one place by construction, and the depth bound covers its nesting.
 		if ir, isInd := o.(types.IndirectRef); isInd {
 			nr := ir.ObjectNumber.Value()
 			if seen[nr] {
-				return
+				return true
 			}
 			seen[nr] = true
 		}
+		if arr, e := ctx.DereferenceArray(o); e == nil && arr != nil {
+			for _, x := range arr {
+				if !walk(x, inherited, depth+1) {
+					return false
+				}
+			}
+			return true
+		}
 		d, e := ctx.DereferenceDict(o)
 		if e != nil || d == nil {
-			return
+			return true
 		}
 		// **An `MCR` and an `OBJR` carry their own `/Pg`, and only `StructElem` used to be
 		// repointed** — so an element moved to its sheet while its kid went on naming the page that
@@ -393,10 +403,13 @@ func carryTagsThroughNUp(src, composed []byte) ([]byte, bool) {
 			}
 		}
 		if k, ok := d["K"]; ok {
-			walk(k, inherited)
+			return walk(k, inherited, depth+1)
 		}
+		return true
 	}
-	walk(root["K"], nil)
+	if !walk(root["K"], nil, 0) {
+		return nil, false // deeper than the structure bound: not a tree this carry can anchor
+	}
 	if repointed == 0 || stranded > 0 {
 		return nil, false // all or nothing: a partly-anchored tree is worse than an honest loss
 	}
