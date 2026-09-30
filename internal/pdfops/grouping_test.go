@@ -246,6 +246,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"claimtagging.go": {
 			"readPageRuns": "the claim door counts text runs under no MCID and no artifact before making a new claim of tagging, and groups nothing (/pending 495)",
 		},
+		"flowcascade.go": {
+			"textRun": "a flow hands the runs of paragraphs the grouping door already made from one page to the next; it groups nothing (text-reflow P07.S06)",
+		},
 		"flowmove.go": {
 			"textRun": "a move re-draws the runs of a paragraph the grouping door already made, each at its own text matrix shifted; it groups nothing (text-reflow P07.S02)",
 		},

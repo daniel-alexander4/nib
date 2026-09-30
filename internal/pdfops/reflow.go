@@ -384,8 +384,9 @@ type reflowOutcome struct {
 	// below is the text of the paragraph below that refused to move, when the refusal is its — so the user is told WHICH
 	// paragraph stands in the way, not only why (P07.S03).
 	below string
-	// shift is what else a grown paragraph moves — its anchored objects (P07.S04) — applied to the document by the door.
-	shift *anchorShift
+	// flow is what else a grown paragraph moves — the pages after this one, and what is anchored on each (P07.S04, S06) —
+	// applied to the document by the door. flow[0] is this page, whose content is `content`.
+	flow []flowStep
 }
 
 // emitWord is a word as it will be drawn: its codes, the kern before each after the first (user space), its font.
@@ -556,7 +557,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		if len(region.marks) > 0 {
 			return reflowOutcome{cause: causeAnchored}, nil
 		}
-		if float64(extra)*pitch > region.room+measureSlack {
+		// The paragraph itself must fit: what lies below it can leave for the next page (P07.S06), it cannot.
+		if para.bottom()-float64(extra)*pitch < region.floor-measureSlack {
 			return reflowOutcome{cause: causePageFull}, nil
 		}
 	}
@@ -565,18 +567,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	if annotatedOver(ctx, pg, para) {
 		return reflowOutcome{cause: causeAnchored}, nil
 	}
-	// Everything anchored inside the zone that moves goes with it (P07.S04); anything at that height that is not inside it
-	// — straddling its edge, in the free room the text moves into, or in another column — refuses.
-	var zone [4]float64
-	if extra > 0 {
-		zone = anchorZone(layout, region, para)
-		reach := [4]float64{math.Inf(-1), region.band[1], math.Inf(1), region.band[3]}
-		for _, a := range pageAnchors(ctx, pg, true) {
-			if touches(a.box, reach) && !covers(zone, a.box) {
-				return reflowOutcome{cause: causeAnchored}, nil
-			}
-		}
-	}
+
 	// lineAt is the text state a broken line is set from: its own original line's, and past the last of them the last
 	// line's, shifted down by the pitch once for each line beyond it.
 	lineAt := func(i int) (runMatrix, bool) {
@@ -713,24 +704,31 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			e.Replace(sp.start, sp.end, nil)
 		}
 	}
-	for _, q := range region.paragraphs {
-		moves, cause := moveRuns(src, paragraphRunsWithBlanks(layout, q), float64(extra)*pitch)
-		if cause != "" {
-			return reflowOutcome{cause: cause, below: layout.paragraphs[q].text()}, nil
+	// The paragraphs below move down with it (P07.S03), what is anchored among them with them (P07.S04), and what no
+	// longer fits leaves for the next page (P07.S06) — one rule, `pushDown`, from this page on.
+	var flow []flowStep
+	if extra > 0 {
+		if layout.columns != 1 && len(region.paragraphs) > 0 && region.room < float64(extra)*pitch-measureSlack {
+			return reflowOutcome{cause: causePageFull}, nil // several columns: nothing flows to another page
 		}
-		for _, m := range moves {
+		steps, cause, below, err := pushDown(ctx, pg, layout, src, region.paragraphs, float64(extra)*pitch, region.floor, para.bottom(),
+			region.step, anchorXs(layout, region), nil)
+		if err != nil {
+			return reflowOutcome{}, err
+		}
+		if cause != "" {
+			return reflowOutcome{cause: cause, below: below}, nil
+		}
+		for _, m := range steps[0].moves {
 			e.Replace(m.span.start, m.span.end, m.with)
 		}
+		flow = steps
 	}
 	out, err := e.Apply()
 	if err != nil {
 		return reflowOutcome{}, err
 	}
-	o := reflowOutcome{content: out}
-	if extra > 0 {
-		o.shift = &anchorShift{zone: zone, dy: float64(extra) * pitch}
-	}
-	return o, nil
+	return reflowOutcome{content: out, flow: flow}, nil
 }
 
 // anchorShift is what a grown paragraph moves besides its text: everything anchored inside zone, down by dy.
@@ -739,15 +737,14 @@ type anchorShift struct {
 	dy   float64
 }
 
-// anchorZone is the part of the page that moves when paragraph p grows over region: from the region's bottom up to p's
-// own, across the column — or across the whole page when the page has one column, so a margin note or a signing flag
-// beside a moved paragraph moves with it rather than staying behind.
-func anchorZone(l pageLayout, region flowRegion, p textParagraph) [4]float64 {
-	x0, x1 := region.x0, region.x1
+// anchorXs is the horizontal extent of what moves when a paragraph grows over region: the whole page's width when the page
+// has one column, so a margin note or a signing flag beside a moved paragraph moves with it rather than staying behind; the
+// column's on a page of several, where anything beside it may belong to another column and refuses instead (P07.S04).
+func anchorXs(l pageLayout, region flowRegion) [2]float64 {
 	if l.columns == 1 {
-		x0, x1 = math.Inf(-1), math.Inf(1)
+		return [2]float64{math.Inf(-1), math.Inf(1)}
 	}
-	return [4]float64{x0, region.bottom, x1, p.bottom()}
+	return [2]float64{region.x0, region.x1}
 }
 
 // contentAround checks the stretch between a paragraph's first and last show operator holds only positioning, `Tf` and

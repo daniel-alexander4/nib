@@ -156,9 +156,9 @@ func fontNameOn(fonts types.Dict, want string, font types.Object) string {
 }
 
 // setRunsOn plans runs, read from src — the content of the page whose resources are srcRes — as a text object appended
-// to dst's content, each dx right and dy DOWN in user space, and adds the fonts it needs to dst. It returns dst's new
-// content, or the cause.
-func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun, dst pdfread.Page, dx, dy float64) ([]byte, string, error) {
+// to old, dst's content (with any edit of its own already made), each dx right and dy DOWN in user space, and adds the
+// fonts it needs to dst. It returns dst's new content, or the cause.
+func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun, dst pdfread.Page, old []byte, dx, dy float64) ([]byte, string, error) {
 	for _, r := range runs {
 		if c := carryRefusal(r); c != "" {
 			return nil, c, nil
@@ -168,10 +168,6 @@ func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun
 		}
 	}
 	srcFonts := derefDict(ctx.XRefTable, srcRes["Font"])
-	old, err := pdfread.PageContent(ctx, dst.Dict, dst.Nr)
-	if err != nil && err != model.ErrNoContent {
-		return nil, "", err
-	}
 	_, dstFonts := pageResources(ctx, dst)
 	var b strings.Builder
 	b.WriteString("q\n")
@@ -223,7 +219,11 @@ func setParagraphOn(ctx *model.Context, layout pageLayout, srcPg pdfread.Page, p
 	if srcPg.Attrs != nil {
 		srcRes = srcPg.Attrs.Resources
 	}
-	dstContent, cause, err := setRunsOn(ctx, src, srcRes, runs, dst, dx, dy)
+	old, err := pdfread.PageContent(ctx, dst.Dict, dst.Nr)
+	if err != nil && err != model.ErrNoContent {
+		return "", err
+	}
+	dstContent, cause, err := setRunsOn(ctx, src, srcRes, runs, dst, old, dx, dy)
 	if err != nil || cause != "" {
 		return cause, err
 	}
