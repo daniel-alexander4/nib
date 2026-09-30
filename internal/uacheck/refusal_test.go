@@ -188,11 +188,14 @@ func TestADefiniteFailureBeatsARefusalAtEverySite(t *testing.T) {
 // budgetDoc is heldContentDoc's tree under a page that draws `prefix` and then a form of twenty rectangles
 // 60,000 times — 1.2 million drawing operators, past the content walk's event budget, so the walk stops after
 // the prefix has been read (`TestEachContentBudgetHoldsOnItsOwn`'s shape).
-func budgetDoc(prefix string) []byte {
+func budgetDoc(prefix string) []byte { return budgetDocWith(prefix, "") }
+
+// budgetDocWith is budgetDoc with extra catalog entries.
+func budgetDocWith(prefix, cat string) []byte {
 	body := strings.Repeat("0 0 1 1 re f ", 20)
 	content := prefix + " " + strings.Repeat("/X0 Do ", 60000)
 	objs := map[int]string{
-		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		1: "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R " + cat + " >>",
 		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 " +
 			"/Resources << /Font << /F1 5 0 R >> /XObject << /X0 100 0 R >> >> /Contents 4 0 R >>",
@@ -235,7 +238,23 @@ func TestAStoppedContentWalkIsAnsweredAfterTheSubjectsItRead(t *testing.T) {
 	}
 }
 
-// TestAHeldRefusalNamesTheFirstSubject — the early return it replaced reported the FIRST subject nib could not
+// TestACatalogLangAnswersAStoppedWalkOnlyOnceItHasASubject — `/pending 703`. A catalog `/Lang` passes every piece of
+// page text, so ONE subject read before the walk stopped settles 7.2 t34: whatever the walk did not reach would pass
+// too. With none read, the catalog settles nothing — the document may show no text at all, which is veraPDF's "no
+// subject" — so the stop is answered, where the rule used to return Pass without reading the page.
+func TestACatalogLangAnswersAStoppedWalkOnlyOnceItHasASubject(t *testing.T) {
+	const text = "BT /F1 12 Tf 72 700 Td (x) Tj ET"
+	if got := verdictOf(t, budgetDocWith("/P << /MCID 1 >> BDC "+text+" EMC", "/Lang (en-US)"), "7.2 t34"); got.Verdict != Pass {
+		t.Errorf("text read before the stop, under a catalog /Lang: 7.2 t34 = %v (%s), want Pass", got.Verdict, got.Why)
+	}
+	got := verdictOf(t, budgetDocWith("/P << /MCID 1 >> BDC EMC", "/Lang (en-US)"), "7.2 t34")
+	if got.Verdict != CannotCheck || !strings.Contains(got.Why, "drawing operators") {
+		t.Errorf("no text read before the stop, under a catalog /Lang: 7.2 t34 = %v (%s), want CannotCheck naming the "+
+			"event budget", got.Verdict, got.Why)
+	}
+}
+
+// TestAHeldRefusalNamesTheFirstSubject —the early return it replaced reported the FIRST subject nib could not
 // settle, and so does the held one; an empty reason holds nothing.
 func TestAHeldRefusalNamesTheFirstSubject(t *testing.T) {
 	var h heldRefusal
