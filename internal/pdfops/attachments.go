@@ -119,7 +119,7 @@ func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
 // FileAttachment annotations. It reads no file's bytes, so it is cheap. An empty result (neither
 // carrier present) is not an error.
 func Attachments(pdf []byte) ([]AttachmentInfo, error) {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return nil, err
 	}

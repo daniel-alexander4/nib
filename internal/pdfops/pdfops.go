@@ -33,6 +33,13 @@ import (
 	"golang.org/x/text/language"
 )
 
+// inspectionRead is how a site that only READS a document reads it: `pdfread.ReadForInspection`, the optimizing read
+// without pdfcpu's per-page resource step, which is quadratic on a flat page tree (`/pending 754`, `/pending 763`).
+// A site that writes its context back out keeps `pdfread.ReadOptimized`. It is a variable only so
+// `TestReadOnlySitesAgreeAcrossReadings` can hold every caller's answer against the full pass; that test also
+// fails on a caller it has no row for.
+var inspectionRead = pdfread.ReadForInspection
+
 // pdfHeaderWindow is how far into a file the %PDF- header may sit. ISO 32000-1
 // §7.5.2 puts it at byte 0, but Adobe's implementation notes tell readers to
 // accept it anywhere in the first 1024 bytes, and pdf.js scans that far — so a
@@ -413,7 +420,7 @@ func readBool(xt *model.XRefTable, obj types.Object) bool {
 // derived artifact should also carry, and losing it silently drops the accessibility
 // property Nib ships.
 func carryLang(src, dst []byte) ([]byte, error) {
-	sctx, err := pdfread.ReadOptimized(src, model.NewDefaultConfiguration())
+	sctx, err := inspectionRead(src)
 	if err != nil {
 		return dst, nil // the source is what the operation already read; do not fail on it
 	}
@@ -474,7 +481,7 @@ func carryLang(src, dst []byte) ([]byte, error) {
 // carry re-added those to the tree as well, which duplicated a kept page's file and resurrected a
 // deleted page's.
 func CarryAttachments(src, dst []byte) (out []byte, dropped int, err error) {
-	sctx, err := pdfread.ReadOptimized(src, model.NewDefaultConfiguration())
+	sctx, err := inspectionRead(src)
 	if err != nil {
 		return dst, 0, nil
 	}

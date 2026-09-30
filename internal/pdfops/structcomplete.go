@@ -442,7 +442,7 @@ func completeOrHonest(carried, raw []byte) ([]byte, error) {
 // every document the gate itself was handed while driving NUp, a reversing Collect, DuplicatePage, RemovePages
 // and Append over each — 1,530 inputs, 1,196 of them real gate inputs, 152 incomplete: 0 differ.
 func carryIsComplete(pdf []byte) bool {
-	ctx, err := carryReading(pdf)
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return false
 	}
@@ -460,26 +460,6 @@ func carryIsComplete(pdf []byte) bool {
 	// `structureCarriedCompletely` because it is a property of the DOCUMENT and not of the tree, and
 	// `orphanPageObjects`' header says why it dereferences rather than type-asserting.
 	return len(structureCarriedCompletely(ctx, tree)) == 0 && len(orphanPageObjects(ctx, live)) == 0
-}
-
-// carryReading is the gate's read (see `carryIsComplete`): pdfcpu's pass without `optimizeResourceDicts`, and
-// each page that has no `/Resources` of its own given the ones it inherits.
-func carryReading(pdf []byte) (*model.Context, error) {
-	conf := model.NewDefaultConfiguration()
-	conf.OptimizeResourceDicts = false
-	ctx, err := pdfread.ReadOptimized(pdf, conf)
-	if err != nil {
-		return nil, err
-	}
-	for _, pg := range pdfread.Pages(ctx) {
-		if pg.Err != nil || pg.Dict == nil || pg.Attrs == nil || len(pg.Attrs.Resources) == 0 {
-			continue
-		}
-		if _, own := pg.Dict.Find("Resources"); !own {
-			pg.Dict["Resources"] = pg.Attrs.Resources
-		}
-	}
-	return ctx, nil
 }
 
 // carriesMCID reports whether a content stream marks any content with an `/MCID` — the property that

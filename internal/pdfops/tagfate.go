@@ -175,7 +175,7 @@ func (s tagState) partial() bool {
 // inspectTags parses a document and reports its tag state. **It parses; it never counts bytes.**
 func inspectTags(pdf []byte) tagState {
 	var s tagState
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := inspectionRead(pdf)
 	if err != nil {
 		return s // unreadable: not a claim we can judge, and readable=false says so
 	}

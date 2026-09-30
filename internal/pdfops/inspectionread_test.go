@@ -1,0 +1,197 @@
+package pdfops
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"testing"
+
+	"nib/internal/pdfread"
+	"nib/internal/testpdf"
+
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+)
+
+// inspectionSites is every function that reads through `inspectionRead`, and how to ask it for its answer. A row
+// is added when a site is switched, never before: the census below fails on a caller with no row and on a row with
+// no caller.
+var inspectionSites = map[string]func(pdf []byte) any{
+	"inspectTags": func(pdf []byte) any { return inspectTags(pdf) },
+	"Validate":    func(pdf []byte) any { return failed(Validate(pdf)) },
+	"carryLang": func(pdf []byte) any {
+		out, err := carryLang(pdf, carryTarget())
+		return []any{stable(out), failed(err)}
+	},
+	"CarryAttachments": func(pdf []byte) any {
+		out, n, err := CarryAttachments(pdf, carryTarget())
+		return []any{stable(out), n, failed(err)}
+	},
+	"Attachments":     func(pdf []byte) any { l, err := Attachments(pdf); return []any{l, failed(err)} },
+	"StructureSource": func(pdf []byte) any { s, ok := StructureSource(pdf); return []any{s, ok} },
+	"carryIsComplete": func(pdf []byte) any { return carryIsComplete(pdf) },
+}
+
+// fileID is the trailer's /ID and writeDate a date string: pdfcpu derives the /ID from the clock on every write
+// and stamps an embedded file's `/Params /ModDate` with the time it wrote it, so two writes of one document a
+// second apart differ in both (measured on 7.11-t01-pass-a).
+var (
+	fileID    = regexp.MustCompile(`/ID\s*\[\s*<[0-9A-Fa-f]*>\s*<[0-9A-Fa-f]*>\s*\]`)
+	writeDate = regexp.MustCompile(`\(D:[0-9]{14}[^)]*\)`)
+)
+
+// stable is a written document with its /ID and dates blanked.
+func stable(pdf []byte) []byte {
+	return writeDate.ReplaceAll(fileID.ReplaceAll(pdf, []byte("/ID[]")), []byte("(D:)"))
+}
+
+// carryTarget is the document a carry writes into: one blank page, no catalog extras.
+func carryTarget() []byte {
+	return testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+	})
+}
+
+// failed is whether err is set. Not its text: pdfcpu's message for a document it cannot read can differ run to run
+// (fda-176439 answers "not enough characters after #" or "encoding/hex: invalid byte" by the order it meets them).
+func failed(err error) bool { return err != nil }
+
+// TestReadOnlySitesAgreeAcrossReadings — `/pending 763`: a site switched to `inspectionRead` gives, on every
+// document, the answer it gave through the full pass (`pdfread.ReadOptimized` with the per-page resource step).
+// The documents are the corpora under ~/nib (skipped where absent) and a flat tagged document, whose pages inherit
+// nothing, plus one whose pages inherit /Resources from their /Pages node — the half of the step the door restores.
+func TestReadOnlySitesAgreeAcrossReadings(t *testing.T) {
+	docs := map[string][]byte{"flat tagged": flatTaggedDoc(3), "inherited resources": inheritedResourcesDoc()}
+	home, _ := os.UserHomeDir()
+	for _, root := range []string{filepath.Join(home, "nib", "producers"), filepath.Join(home, "nib", "verapdfs")} {
+		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && strings.EqualFold(filepath.Ext(p), ".pdf") {
+				if b, rerr := os.ReadFile(p); rerr == nil {
+					docs[p] = b
+				}
+			}
+			return nil
+		})
+	}
+	if len(docs) == 2 {
+		t.Log("no corpus under ~/nib/producers or ~/nib/verapdfs: comparing the two fixtures only")
+	}
+	full := func(pdf []byte) (*model.Context, error) {
+		return pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	}
+	answers := func(read func([]byte) (*model.Context, error)) map[string]map[string]any {
+		saved := inspectionRead
+		inspectionRead = read
+		defer func() { inspectionRead = saved }()
+		out := map[string]map[string]any{}
+		for site, ask := range inspectionSites {
+			out[site] = map[string]any{}
+			for name, pdf := range docs {
+				out[site][name] = ask(pdf)
+			}
+		}
+		return out
+	}
+	want, again, got := answers(full), answers(full), answers(pdfread.ReadForInspection)
+	sites := make([]string, 0, len(inspectionSites))
+	for s := range inspectionSites {
+		sites = append(sites, s)
+	}
+	sort.Strings(sites)
+	for _, site := range sites {
+		differ := 0
+		for name := range docs {
+			if !reflect.DeepEqual(want[site][name], again[site][name]) {
+				t.Errorf("%s on %s: the full pass gives two different answers — the comparison cannot see this document: "+
+					"%v, then %v", site, filepath.Base(name), abbrev(want[site][name]), abbrev(again[site][name]))
+				continue
+			}
+			if !reflect.DeepEqual(want[site][name], got[site][name]) {
+				differ++
+				if differ <= 3 {
+					t.Errorf("%s on %s: through the full pass %v, through inspectionRead %v", site, filepath.Base(name),
+						abbrev(want[site][name]), abbrev(got[site][name]))
+				}
+			}
+		}
+		t.Logf("%-18s %d documents, %d differ", site, len(docs), differ)
+	}
+}
+
+func abbrev(v any) string {
+	s := strings.Join(strings.Fields(fmt.Sprintf("%+v", v)), " ")
+	if len(s) > 160 {
+		s = s[:160] + "…"
+	}
+	return s
+}
+
+// inheritedResourcesDoc is two pages that draw a form they do not name themselves: the /XObject is on their
+// /Pages node, so a reader of the page's own dictionary finds it only once inheritance is resolved.
+func inheritedResourcesDoc() []byte {
+	content := "/P <</MCID 0>> BDC /Fm0 Do EMC"
+	return testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R /Lang (en) /MarkInfo << /Marked true >> >>",
+		2: "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /Resources << /XObject << /Fm0 6 0 R >> >> >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>",
+		5: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>",
+		4: "<< /Length " + strconv.Itoa(len(content)) + " >>\nstream\n" + content + "\nendstream",
+		6: "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 15 >>\nstream\n0 0 10 10 re f\nendstream",
+	})
+}
+
+// TestEveryInspectionReadCallerHasARow — the census: `inspectionRead` is called only from functions with a row in
+// inspectionSites, every row names a caller, and nothing in this package calls `pdfread.ReadForInspection` except
+// through the variable.
+func TestEveryInspectionReadCallerHasARow(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers := map[string]bool{}
+	for _, pkg := range pkgs {
+		for fname, f := range pkg.Files {
+			for _, d := range f.Decls {
+				fn, ok := d.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					switch n := n.(type) {
+					case *ast.Ident:
+						if n.Name == "inspectionRead" {
+							callers[fn.Name.Name] = true
+						}
+					case *ast.SelectorExpr:
+						if x, ok := n.X.(*ast.Ident); ok && x.Name == "pdfread" && n.Sel.Name == "ReadForInspection" {
+							t.Errorf("%s: %s calls pdfread.ReadForInspection directly — read through inspectionRead, so "+
+								"TestReadOnlySitesAgreeAcrossReadings holds its answer", fname, fn.Name.Name)
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	for c := range callers {
+		if inspectionSites[c] == nil {
+			t.Errorf("%s reads through inspectionRead and has no row in inspectionSites — add one, so its answer is "+
+				"compared with the full pass's", c)
+		}
+	}
+	for s := range inspectionSites {
+		if !callers[s] {
+			t.Errorf("inspectionSites has a row for %s, which does not read through inspectionRead", s)
+		}
+	}
+}
