@@ -6808,7 +6808,7 @@ const REFLOW_CAUSES = {
   'invisible-text': 'The text is invisible — a search layer over a scanned image — so changing it would not change what the page shows.',
   'text-clips': 'Text below it is drawn as a clipping outline — moving it would change what the page shows through it.',
   'state-not-carried': 'Text that would move to the next page is drawn with a transparency, colour or clipping that cannot be carried there.',
-  'tagged-across-pages': "Text that would move to the next page is tagged for accessibility as part of this page's structure.",
+  'tagged-across-pages': "Text that would move to the next page is tagged for accessibility in a way that cannot be carried to another page — its tagged content also draws a picture or a shape, or sits inside other tagged content.",
 };
 // below is the text of the paragraph beneath the edited one that could not move with it (PLAN-text-reflow.md P07.S03):
 // the reason is that paragraph's, so the sentence says which one it is.

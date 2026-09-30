@@ -249,6 +249,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"flowcascade.go": {
 			"textRun": "a flow hands the runs of paragraphs the grouping door already made from one page to the next; it groups nothing (text-reflow P07.S06)",
 		},
+		"flowtags.go": {
+			"textRun": "a carry takes the structure of runs the grouping door already made to the page they are drawn on, by their MCIDs and spans; it groups nothing (text-reflow P07.S07)",
+		},
 		"flowmove.go": {
 			"textRun": "a move re-draws the runs of a paragraph the grouping door already made, each at its own text matrix shifted; it groups nothing (text-reflow P07.S02)",
 		},

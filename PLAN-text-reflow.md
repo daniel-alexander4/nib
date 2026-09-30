@@ -813,7 +813,7 @@ back, anchors carried, the last page refusing, a multi-column page refusing; tie
 moved twice — so a popup now moves only with its note. Tier 3 drives a flow onto page 2 and reads the carried LINK there.
 Review `code-reviews/v1.171.1-p07s06-2026-09-30.md`.
 
-#### P07.S07 — a tagged paragraph keeps its structure when it changes page
+#### P07.S07 — a tagged paragraph keeps its structure when it changes page *(done 2026-09-30, v1.173.0)*
 **Added 2026-09-30 by Dan's decision (`/pending 779`, A)**: every multi-page real-producer document is tagged (14/14), so
 without this slice S05/S06's carry refuses `tagged-across-pages` on all of them. A paragraph whose marked content belongs to
 its page's structure tree is carried WITH that structure: its MCIDs renumbered free on the target page (the page's
@@ -824,6 +824,42 @@ Acceptance: a tagged paragraph carried to another page reads back there with its
 content resolves on the target page (the repo's structure reader, not a count); the source page's structure no longer
 claims it; `tagged-across-pages` remains only for what cannot be carried, by name; the S05 corpus read-back reaches the
 real-producer documents it could not before, and says how many.
+
+**PIN 2026-09-30 (slice deepdive + grill, read at the lines).** The plan's writers cannot do this as named: `addMCIDTo`
+cannot create a page's row (`structwrite.go:423`), appends an INTEGER kid (content on the element's `/Pg`, wrong when the
+element keeps content on the source page) and overwrites a non-array `/K`; and `parentTreeDict` refuses a NESTED
+`/ParentTree` (`structwrite.go:223`) — **measured: 7 of the 14 multi-page real-producer documents nest one**, so the slice
+as written reaches at most half its population. **Rung 1, recorded**: (a) the write half writes nested number trees for
+the two shapes nib ever writes — a key that exists (in place, in its leaf) and a new key above every key (appended to the
+rightmost leaf, `/Limits` raised along its path); anything else still refuses. (b) The element's kid is REPLACED IN PLACE
+by an MCR naming the target page — never an appended integer and never a re-pointed `/Pg`, so reading order and the
+element's other content are untouched. (c) The page-row door is extracted from `addMarkedElementUnder` (ADR-009) and the
+new MCID is above both the row and every MCID the target's own stream draws. (d) A carried sequence goes WHOLE: its
+opener and `EMC` leave the source, its slot is cleared; a sequence holding anything but the leaving shows and
+non-drawing state, one nested in another MCID, one drawing a form, an MCID no element claims, a property list with an
+indirect value — `tagged-across-pages`. (e) **Found by the dive, same path**: `carryAnchors` moved an annotation and left
+its OBJR's `/Pg` on the source page — live on any tagged form today; fixed here.
+
+**Tasks** (slice grill, 2026-09-30): T01 — nested `/ParentTree` writing behind `parentTreeDict`'s successor
+(`parentTreeLeaf`), `addMCIDTo` through `kidsArray`, the page-row door. T02 — `pageLayout.sequences`; `planTagCarry`
+(source side: each leaving run's whole sequence, its element, the source edits). T03 — `setRunsOn` emits each sequence
+under its own tag and property list with its new MCID, and writes the tree (slot moved, kid replaced by an MCR). T04 —
+`carryAnchors` re-points a moved annotation's OBJR. T05 — tests: a tagged carry read back through `ReadStructure` and
+`rowFor` both directions, `checkStructConsistency` clean, a nested tree, each refusal; the corpus read-back counts tagged
+carries.
+**PIN 2026-09-30 (build, measured — amends (d))**: the corpus read-back still refused 124 carries `tagged-across-pages`
+after the whole-sequence cut — **90** a sequence that also draws text that stays, **26** a clipping path inside it, 8 a
+sequence opened inside it. Clipping and path construction paint nothing and are now allowed; a SPLIT sequence is carried —
+the source keeps the sequence, its slot and its kid, and the carried text becomes a new MCR of the same element right
+after that kid, so the element reads in order across the pages. Also built from the review: the target's row is judged
+before anything is written (`targetRefusal`), and a flat `/Nums` gains a row in key order (`insertNum`).
+**Closed 2026-09-30.** A tagged paragraph carried or flowed to another page reads back there with its element
+(`ReadStructure`: its text, and the element on the new page when nothing of it stays behind), both `/ParentTree` rows say
+so, `checkStructConsistency` is clean, over flat and nested trees and onto a page that had no row; a carried link's OBJR
+follows it. **The S05 corpus read-back now reaches the real producers: 58 carried, 56 of them tagged, from 7 documents**
+(before: 0 — every page-1 paragraph of all 14 refused); `tagged-across-pages` 124 → **21**, and `state-not-carried` (162,
+S05's device-colour rule) is now what binds. Tier 3 drives a tagged flow through the binary and reads the element on page 2
+through `/api/tags/tree`. Review `code-reviews/v1.172.1-p07s07-2026-09-30.md` (3 warnings, 5 info; all dispositioned).
 
 ### P08 — Typographic fidelity
 **Goal.** Justification, kerning from `TJ` arrays, and the text-state parameters the current edit

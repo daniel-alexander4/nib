@@ -11,6 +11,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfread"
 )
@@ -163,6 +164,7 @@ func TestParagraphsCarriedAcrossRealPagesReadBack(t *testing.T) {
 	}
 	key := func(r textRun) string { return fmt.Sprintf("%q %.4f %.4f", r.text, r.x, r.y) }
 	accepted, coloured, newFont := 0, 0, 0
+	tagged, taggedDocs := 0, map[string]bool{} // P07.S07: carries that took their structure with them
 	refused := map[string]int{}
 	for _, corp := range corpora {
 		if corp.absent != "" {
@@ -192,6 +194,10 @@ func TestParagraphsCarriedAcrossRealPagesReadBack(t *testing.T) {
 				tried++
 				accepted++
 				moved := paragraphRunsWithBlanks(l, pi)
+				if carriedStructure(t, doc.pdf, out, moved) {
+					tagged++
+					taggedDocs[doc.name] = true
+				}
 				gone := map[string]bool{}
 				for _, r := range moved {
 					gone[key(r)] = true
@@ -240,10 +246,68 @@ func TestParagraphsCarriedAcrossRealPagesReadBack(t *testing.T) {
 		rs = append(rs, fmt.Sprintf("%s %d", k, n))
 	}
 	sort.Strings(rs)
-	t.Logf("carried %d paragraphs (%d runs not black, %d runs under a new font name); refused: %s", accepted, coloured, newFont, strings.Join(rs, ", "))
+	t.Logf("carried %d paragraphs (%d runs not black, %d runs under a new font name; %d tagged, from %d documents); refused: %s",
+		accepted, coloured, newFont, tagged, len(taggedDocs), strings.Join(rs, ", "))
 	if accepted == 0 || coloured == 0 || newFont == 0 {
 		t.Errorf("carried %d, coloured runs %d, renamed-font runs %d — the carry was not asked what it exists for", accepted, coloured, newFont)
 	}
+	if corpora[1].absent == "" && tagged == 0 {
+		t.Error("no tagged paragraph of a real-producer document was carried — the structure carry was not asked what it exists for")
+	}
+}
+
+// carriedStructure checks a carry of moved from page 1 of before to page 2 of after against the structure: each tagged run
+// is drawn on page 2 under an MCID page 2's row gives the element that owned it on page 1, the structure reader reads its
+// text on page 2, and the carry added no consistency defect. It reports whether any run was tagged.
+func carriedStructure(t *testing.T, before, after []byte, moved []textRun) bool {
+	t.Helper()
+	var tagged []textRun
+	for _, r := range moved {
+		if r.mcid >= 0 && strings.TrimSpace(r.text) != "" {
+			tagged = append(tagged, r)
+		}
+	}
+	if len(tagged) == 0 {
+		return false
+	}
+	_, was, bctx, btree := structureOf(t, before)
+	got, now, actx, atree := structureOf(t, after)
+	if len(now) > len(was) {
+		t.Errorf("the carry added consistency defects: %d before, %d after (%+v)", len(was), len(now), now)
+	}
+	owner := func(ctx *model.Context, tree *structTree, p, mcid int) int {
+		k, ok := pdfNumber(ctx.XRefTable, pageAt(ctx, nil, p).Dict["StructParents"])
+		if !ok {
+			return 0
+		}
+		row, _, _ := rowFor(ctx, tree, int(k))
+		if mcid >= len(row) {
+			return 0
+		}
+		if r, isRef := row[mcid].(types.IndirectRef); isRef {
+			return r.ObjectNumber.Value()
+		}
+		return 0
+	}
+	on2 := map[string]textRun{}
+	for _, r := range runsOf(t, after, 2) {
+		on2[fmt.Sprintf("%q %.4f", r.text, r.x)] = r
+	}
+	for _, r := range tagged {
+		elem := owner(bctx, btree, 1, r.mcid)
+		a, ok := on2[fmt.Sprintf("%q %.4f", r.text, r.x)]
+		switch {
+		case elem == 0:
+			t.Errorf("setup: page 1's %q (MCID %d) has no element and was carried", r.text, r.mcid)
+		case !ok || a.mcid < 0:
+			t.Errorf("%q is not drawn under an MCID on page 2", r.text)
+		case owner(actx, atree, 2, a.mcid) != elem:
+			t.Errorf("%q on page 2 (MCID %d) belongs to element %d, was element %d's", r.text, a.mcid, owner(actx, atree, 2, a.mcid), elem)
+		case !strings.Contains(got[elem].Text, strings.TrimSpace(r.text)):
+			t.Errorf("element %d reads %q, which lacks the carried %q", elem, got[elem].Text, r.text)
+		}
+	}
+	return true
 }
 
 // TestACarriedParagraphDrawsUnderTheDefaultState — P07.S05: a target page whose content leaves two `q`s unrestored under a

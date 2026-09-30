@@ -73,6 +73,9 @@ type pageLayout struct {
 	// (`readPageGlyphLayout`), which must know what else is drawn where text will move (P07.S01).
 	loose []textRun
 	marks []pageMark
+	// sequences are the page's marked-content sequences that carry an MCID (`pageRuns.sequences`) — kept only by reflow's
+	// reader, so a carry can take a paragraph's structure to another page with it (P07.S07).
+	sequences []markedSeq
 }
 
 // readPageLayout is the door consumers call: a page's runs, grouped.
@@ -96,9 +99,10 @@ func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error
 		return pageLayout{}, err
 	}
 	if pr.noText {
-		return pageLayout{noText: true, marks: pr.marks}, nil
+		return pageLayout{noText: true, marks: pr.marks, sequences: pr.sequences}, nil
 	}
 	l := groupRuns(pr.runs)
+	l.sequences = pr.sequences
 	for _, r := range pr.runs {
 		if !joinsALine(r) {
 			l.loose = append(l.loose, r)

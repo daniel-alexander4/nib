@@ -36,6 +36,7 @@ type carriedBlock struct {
 	res  types.Dict
 	runs []textRun
 	dy   float64
+	tags *tagCarry // the structure the runs take with them (P07.S07), or nil
 }
 
 // flowReach is the full width of a page from its floor up to top: anything anchored there moves, or refuses.
@@ -72,12 +73,23 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 			leaving = append(leaving, r)
 		}
 	}
+	var tags *tagCarry
 	if len(leaving) > 0 {
 		dels, cause := deleteRuns(src, leaving)
 		if cause != "" {
 			return nil, cause, layout.paragraphs[leave[0]].text(), nil
 		}
+		var res types.Dict
+		if pg.Attrs != nil {
+			res = pg.Attrs.Resources
+		}
+		t, brackets, cause := planTagCarry(ctx, pg, src, res, layout.sequences, leaving)
+		if cause != "" {
+			return nil, cause, layout.paragraphs[leave[0]].text(), nil
+		}
+		tags = t
 		st.moves = append(st.moves, dels...)
+		st.moves = append(st.moves, brackets...)
 	}
 	// Everything anchored at the height that moves is inside what stays and moves, or inside what leaves; anything else —
 	// straddling, in the free room, beside the column on a page of several — refuses.
@@ -124,19 +136,20 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		}
 		span := first.lines[0].y - last.lines[len(last.lines)-1].y
 		rest, cause, below, err := pushDown(ctx, next, nl, nsrc, append([]int{0}, nr.paragraphs...), span+step, nr.floor, q0.top(), step,
-			[2]float64{math.Inf(-1), math.Inf(1)}, &carriedBlock{src: src, res: res, runs: leaving, dy: dy})
+			[2]float64{math.Inf(-1), math.Inf(1)}, &carriedBlock{src: src, res: res, runs: leaving, dy: dy, tags: tags})
 		if err != nil || cause != "" {
 			return nil, cause, below, err
 		}
 		st.leave = &anchorShift{zone: leaveZone, dy: dy}
-		return finishStep(ctx, st, in, rest)
+		return finishStep(ctx, st, layout.sequences, in, rest)
 	}
-	return finishStep(ctx, st, in, nil)
+	return finishStep(ctx, st, layout.sequences, in, nil)
 }
 
 // finishStep builds the page's content when it is not the first — its own edits, then what arrives from the page before
-// drawn after them — and puts it before the steps that follow.
-func finishStep(ctx *model.Context, st flowStep, in *carriedBlock, rest []flowStep) ([]flowStep, string, string, error) {
+// drawn after them, its structure landing among seqs, the sequences the page's own stream draws — and puts it before the
+// steps that follow.
+func finishStep(ctx *model.Context, st flowStep, seqs []markedSeq, in *carriedBlock, rest []flowStep) ([]flowStep, string, string, error) {
 	if in != nil {
 		e := contentstream.NewEdit(st.src)
 		for _, m := range st.moves {
@@ -146,7 +159,7 @@ func finishStep(ctx *model.Context, st flowStep, in *carriedBlock, rest []flowSt
 		if err != nil {
 			return nil, "", "", err
 		}
-		content, cause, err := setRunsOn(ctx, in.src, in.res, in.runs, st.pg, edited, 0, in.dy)
+		content, cause, err := setRunsOn(ctx, in.src, in.res, in.runs, st.pg, edited, 0, in.dy, in.tags, seqs)
 		if err != nil || cause != "" {
 			return nil, cause, "", err
 		}

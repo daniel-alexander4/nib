@@ -69,9 +69,10 @@ type ptAnswer struct {
 // nested number tree (`/Kids`) as well as a flat `/Nums`. It is the ONE door for a parent-tree key (ADR-009); both
 // readers of `/StructParent` and `/StructParents` go through it.
 //
-// The writer (`pdfops.setParentTreeSlot`) REFUSES nested number trees rather than rebalancing them. A reader cannot
-// refuse: real producers write them, and a checker that could not read one would report a correctly tagged document as
-// broken.
+// The writer (`pdfops.parentTreeDict`) writes a nested number tree only where no rebalancing is needed — a key a node
+// already holds, or a new key above every key, raising each `/Limits` on the way down (`PLAN-text-reflow.md` P07.S07) —
+// and refuses the rest. A reader cannot refuse: real producers write them, and a checker that could not read one would
+// report a correctly tagged document as broken.
 //
 // **The lookup is veraPDF's, key by key** (RR2-1, measured on veraPDF 1.30.2 over 7.18.1 t1): a depth-first search
 // taking the FIRST node holding the key, and within one /Nums array the LAST pair, since that array is read into a map.
