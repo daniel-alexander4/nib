@@ -4965,6 +4965,7 @@ const UNCHECKED_WORDS = {
   'hybrid-reference': 'this file stores part of its structure in a hybrid cross-reference stream (/XRefStm), which Nib\'s signature reader does not follow',
   'unread': 'Nib\'s signature reader did not reach it',
   'unreadable': 'Nib cannot read this file as a PDF',
+  'lookup-cost': 'this file\'s object streams would take Nib\'s signature reader too long to read, so Nib refused to read them',
 };
 
 // refusedLine is one refused record in the details panel. Its filter is the document's own

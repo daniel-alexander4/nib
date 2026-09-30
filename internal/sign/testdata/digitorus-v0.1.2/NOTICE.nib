@@ -1,0 +1,13 @@
+github.com/digitorus/pdf v0.1.2 — the ORIGINAL, for a test only
+==================================================================
+
+read.go, lex.go and text.go are copied unchanged from the Go module cache's github.com/digitorus/pdf@v0.1.2
+(the three files the package's reader needs to compile; LICENSE is upstream's, BSD-style, The Go Authors).
+
+Why: /pending 759. `FuzzThePatchedObjectStreamReaderMatchesTheOriginal` (internal/sign/objstmfuzz_test.go)
+resolves the same random object streams through this original and through the patched copy in
+third_party/digitorus-pdf (go.mod's replace target), and compares every value and every panic.
+
+It never ships: it lives under testdata, which the go tool leaves out of `./...`, and only that test
+imports it. `TestTheOriginalReaderCopyIsUpstreamUnchanged` fails when any of the three files differs from
+the module cache's.

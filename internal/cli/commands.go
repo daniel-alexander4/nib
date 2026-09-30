@@ -1356,6 +1356,7 @@ var uncheckedWords = map[sign.UncheckedCause]string{
 	sign.UncheckedHybridReference: "this file stores part of its structure in a hybrid cross-reference stream (/XRefStm), which Nib's signature reader does not follow",
 	sign.UncheckedUnread:          "Nib's signature reader did not reach it",
 	sign.UncheckedUnreadable:      "Nib cannot read this file as a PDF",
+	sign.UncheckedLookupCost:      "this file's object streams would take Nib's signature reader too long to read, so Nib refused to read them",
 }
 
 // refusedLines is one line per signature-shaped dictionary Nib refused, whatever the verdict. The

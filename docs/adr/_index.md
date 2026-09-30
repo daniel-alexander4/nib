@@ -567,3 +567,6 @@ home today.
   — /pending 758; supersedes ADR-041's refusal of option A in part. `third_party/digitorus-pdf` differs from v0.1.2 in
   `read.go` only: each object stream decoded and its header lexed once per `Reader`, lazily, so nothing past the member is
   reached. One declared divergence (a backward `/First` resolves). `libraryLookupCost` re-fitted; census 3.26 s → 0.49 s a pass.
+- **[ADR-067 — the patched object-stream reader refuses what it cannot bound](067-the-patched-reader-refuses-what-it-cannot-bound.md)**
+  — /pending 759, 760; supersedes ADR-066's "one divergence". Member reads are bounded by what the stream decoded and a
+  stream by 64 MiB, refused as `lookup-cost`; the reader is fuzzed against an unchanged v0.1.2 kept in testdata.
