@@ -484,6 +484,11 @@ func (b *buffer) readArray() object {
 		if tok == nil || tok == keyword("]") {
 			break
 		}
+		// nib, /pending 761 (NOTICE.nib): an object's end inside an array is malformed, and readObject
+		// unreads `endobj` and answers null, so upstream appended null here for ever.
+		if tok == keyword("endobj") || tok == keyword("endstream") {
+			b.errorf("unexpected keyword %q parsing array", tok)
+		}
 		b.unreadToken(tok)
 		x = append(x, b.readObject())
 	}

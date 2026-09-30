@@ -32,8 +32,10 @@ import (
 //
 // The generator emits BALANCED content (every `[` and `<<` closed, strings whole, no `endobj`) and truncates only
 // flate bodies, because both readers hang or allocate without bound on an unterminated array, hex or
-// literal string at a clean end of stream (`lex.go` readByte returns '\n' at EOF forever; ADR-041's
-// pdfcpu gate keeps those from Verify). A truncated flate body ends in an unexpected-EOF error, which
+// literal string at a clean end of stream (`lex.go` readByte returns '\n' at EOF forever). The patched
+// reader now refuses those (`ErrObjStmRunsPastEnd`, /pending 761) and the original still never returns,
+// so they are held by TestAMemberLeftOpenAtTheStreamsEndIsRefusedNotRead, not here. (This said
+// ADR-041's pdfcpu gate kept them from Verify; measured, pdfcpu reads all three.) A truncated flate body ends in an unexpected-EOF error, which
 // both readers raise, so it is safe to cut anywhere. A watchdog fails any input that runs 20 s.
 
 // fuzzGen reads choices from the fuzzer's bytes; past the end every choice is 0.
@@ -82,8 +84,10 @@ func (g *fuzzGen) content(k int) string {
 		case 8:
 			fmt.Fprintf(&s, "%d 0 R ", g.next()%20)
 		case 9:
-			// Never `endobj`: inside an array both readers loop forever appending nil (readObject
-			// unreads it and readArray never advances) — an upstream exposure, not a divergence.
+			// Never `endobj`: inside an array the original loops forever appending nil (readObject
+			// unreads it and readArray never advances), and the patched lex.go refuses it (NOTICE.nib
+			// divergence 4) — a comparison that could never return. Held by
+			// TestAMemberLeftOpenAtTheStreamsEndIsRefusedNotRead instead.
 			s.WriteString([]string{"true ", "null ", "false ", "-0.5 "}[g.next()%4])
 		case 10:
 			s.WriteString([]string{"\n", "\r\n", "%c\n", "  "}[g.next()%4])

@@ -2,11 +2,12 @@ github.com/digitorus/pdf v0.1.2 — modified by nib
 ==================================================
 
 This directory is github.com/digitorus/pdf at v0.1.2, copied unchanged from the Go module cache
-except for ONE file, read.go, and this notice. go.mod replaces the module with this directory
-(`replace github.com/digitorus/pdf => ./third_party/digitorus-pdf`); the require line still pins
-v0.1.2. The upstream licence is LICENSE, unchanged (BSD-style, The Go Authors).
+except for TWO files, read.go and lex.go, and this notice. go.mod replaces the module with this
+directory (`replace github.com/digitorus/pdf => ./third_party/digitorus-pdf`); the require line still
+pins v0.1.2. The upstream licence is LICENSE, unchanged (BSD-style, The Go Authors).
 
-Why: /pending 758, ADR-066 (which supersedes ADR-041's refusal of this option in part).
+Why: /pending 758, ADR-066 (which supersedes ADR-041's refusal of this option in part); lex.go:
+/pending 761, ADR-068 (which widens ADR-066's read.go-only scope to this one lex.go change).
 
 What changed, in read.go only
 -----------------------------
@@ -54,15 +55,36 @@ many header ids naming one offset, offsets overlapping into one nested member, o
 64 MiB — upstream would read, at 44 s a pass for 400 ids at one 1 MB member and 30 s for 8,000 offsets
 into one nested array. nib's cost model cannot see a member's extent without paying for it.
 
+3. (/pending 761) The patched reader refuses, with a panic carrying ErrObjStmRunsPastEnd, a read of an
+object stream that is told the stream has ended more than 64 times. Past the end upstream's readByte
+answers '\n' for ever, so an array, hex string or literal string left open at the stream's clean end
+never terminates: the hex string spins, the other two allocate until the process runs out of memory.
+pdfcpu reads all three documents, so nib's gate in front of this reader does not keep them out. An
+honest read is told of the end a few times (its last token's delimiter, one look-ahead). The fuzz test
+below cannot compare this class — the original never returns — so it is held by internal/sign's
+TestAMemberLeftOpenAtTheStreamsEndIsRefusedNotRead instead.
+
+4. (/pending 761, the only change in lex.go) `(*buffer).readArray` refuses an `endobj` or `endstream`
+token, panicking "unexpected keyword %q parsing array" through the lexer's own errorf. Upstream's
+readObject unreads `endobj` and answers null (so `5 0 obj endobj` is a null object, which is
+unchanged), and readArray, seeing a token that is neither `]` nor nil, handed it back to readObject
+and appended that null for ever — anywhere, not only in an object stream, until the process ran out of
+memory. pdfcpu reads such a document, so nib's gate does not keep it out. `endstream` already panicked
+inside readObject; it is named so the loop's exits say what an array may not contain. readDict needs
+no change: a keyword where a key belongs already panics ("unexpected non-name key"). The same test
+holds this class, for the same reason.
+
 internal/sign's FuzzThePatchedObjectStreamReaderMatchesTheOriginal (/pending 759) resolves random object
 streams through this reader and through v0.1.2 itself (a test-only copy under internal/sign/testdata)
-and allows exactly these two classes of difference.
+and allows exactly the first two classes of difference; it never generates the third or fourth, where
+the original never returns.
 
 Maintenance
 -----------
 
 Re-apply this patch at every bump of github.com/digitorus/pdf. The guard in nib's root package
-(`TestTheLibraryPatchIsReadGoOnlyAsItsNoticeSays`) fails when go.mod's require moves off v0.1.2, when the replace
-stops pointing here, or when any file other than read.go differs from the module-cache original.
+(`TestTheLibraryPatchIsReadGoAndLexGoOnlyAsItsNoticeSays`) fails when go.mod's require moves off
+v0.1.2, when the replace stops pointing here, when either change is reverted, or when any file other
+than read.go and lex.go differs from the module-cache original.
 
 Reporting upstream is Dan's call.

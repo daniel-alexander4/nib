@@ -1,10 +1,10 @@
 diff --git a/internal/sign/identity.go b/internal/sign/identity.go
 --- a/internal/sign/identity.go
 +++ b/internal/sign/identity.go
-@@ -209,7 +209,7 @@
+@@ -212,7 +212,7 @@
  	}
  	var out bytes.Buffer
- 	if err := librarySign(bytes.NewReader(in), &out, rdr, int64(len(in)), data); err != nil {
+ 	if err := containedLibrarySign(in, &out, rdr, data); err != nil {
 -		return nil, describeSignFailure(err, data.TSA.URL)
 +		return nil, fmt.Errorf("sign: %w", err)
  	}

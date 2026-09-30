@@ -1288,6 +1288,18 @@ type objStmCache struct {
 // (plus a slack per lookup and per stream), and refuses to decode past objStmMaxDecoded at all.
 var ErrObjStmTooCostly = errors.New("malformed PDF: an object stream's members cost more to read than the stream holds")
 
+// ErrObjStmRunsPastEnd is raised (as a panic) when a read keeps asking an object stream for bytes
+// after its end (nib, /pending 761; NOTICE.nib). Past the end the lexer's readByte answers '\n' for
+// ever, so an array, hex string or literal string left open at the stream's clean end never
+// terminates: readHexString spins, readLiteralString and readArray append until the process runs out
+// of memory. pdfcpu reads all three documents, so its gate does not keep them out. An honest read
+// reaches the end a few times (the last token's delimiter, one look-ahead); objStmMaxEndReads is far
+// past that and far short of harm.
+var ErrObjStmRunsPastEnd = errors.New("malformed PDF: an object stream member runs past the end of its stream")
+
+// objStmMaxEndReads is how many times one view may be told the stream has ended.
+const objStmMaxEndReads = 64
+
 const (
 	objStmSpendFactor = 4
 	objStmSpendSlack  = 4096 + 64 // per stream: one read-ahead chunk; per lookup: the reference look-ahead
@@ -1441,11 +1453,15 @@ type objStmView struct {
 	pos    int64
 	member bool  // a member read, charged; the header lexer's view is not
 	start  int64 // where the member read began
+	ends   int   // reads answered with the stream's end (/pending 761)
 }
 
 func (v *objStmView) Read(p []byte) (int, error) {
 	for v.pos >= int64(len(v.c.data)) {
 		if !v.c.extend() {
+			if v.ends++; v.ends > objStmMaxEndReads {
+				panic(ErrObjStmRunsPastEnd)
+			}
 			return 0, v.c.err
 		}
 	}
