@@ -79,6 +79,38 @@ func ReadOptimizedOrRefuse(pdf []byte, conf *model.Configuration) (*model.Contex
 	return readOptimized(pdf, conf, true)
 }
 
+// ReadForInspection is `ReadOptimized` without pdfcpu's per-page resource step, for a reader that NEVER writes the
+// context back out — `/pending 754` (the carry gate, where it began) and `/pending 763`.
+//
+// The step (`optimizeResourceDicts`, optimize.go:1592, v0.13.0) calls `PageDict(i, true)` for every page, which on a
+// flat page tree dereferences every kid before the one it wants: quadratic in pages, ~15 s of a 7,059-page document's
+// prepare. It does two things. It prunes each page's `/Resources` to the names its content uses — a reader that
+// looks names up from the content sees the same objects — and it puts inherited `/Resources` on the page, which a
+// reader of a page's own dictionary does see, so that half is restored here from one `Pages` walk (the nearest
+// ancestor's dictionary, which is what PDF's inheritance means; pdfcpu merges every ancestor's, and the difference
+// is names a page cannot draw). The rest of the pass — the form and font merging a reader may depend on — runs.
+//
+// **Only for a context nothing writes.** A writer would ship the unpruned resources, and `ctx.Conf` keeps the step
+// off for any later `PageDict(n, true)` on this context. Every caller is held against `ReadOptimized`'s answer by
+// `pdfops`' `TestReadOnlySitesAgreeAcrossReadings`.
+func ReadForInspection(pdf []byte) (*model.Context, error) {
+	conf := model.NewDefaultConfiguration()
+	conf.OptimizeResourceDicts = false
+	ctx, err := ReadOptimized(pdf, conf)
+	if err != nil {
+		return nil, err
+	}
+	for _, pg := range Pages(ctx) {
+		if pg.Err != nil || pg.Dict == nil || pg.Attrs == nil || len(pg.Attrs.Resources) == 0 {
+			continue
+		}
+		if _, own := pg.Dict.Find("Resources"); !own {
+			pg.Dict["Resources"] = pg.Attrs.Resources
+		}
+	}
+	return ctx, nil
+}
+
 func readOptimized(pdf []byte, conf *model.Configuration, strict bool) (*model.Context, error) {
 	ctx, err := Validated(pdf, conf)
 	if err != nil {

@@ -523,7 +523,7 @@ func clip(s string, max int) string {
 // gate after a strip: success means the surgical removal produced a valid
 // document; an error means the UI should recommend stepping down to flatten.
 func Validate(pdf []byte) error {
-	_, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	_, err := inspectionRead(pdf)
 	return err
 }
 

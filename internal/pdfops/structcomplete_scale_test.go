@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/pdfread"
 )
 
 // flatTaggedDoc is n pages under ONE `/Pages` — the flat tree pdfcpu's writer and nib's Markdown conversion
@@ -76,7 +78,7 @@ func TestTheCarryGateSeesAFormDrawnTwiceThroughInheritedResources(t *testing.T) 
 	}
 	// Incomplete is not enough: without the inherited resources the page owns nothing either, so the gate
 	// still refuses — on an unowned key, for the wrong reason. The draw count must see the form twice.
-	ctx, err := carryReading(pdf)
+	ctx, err := pdfread.ReadForInspection(pdf)
 	if err != nil {
 		t.Fatal(err)
 	}
