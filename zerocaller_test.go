@@ -89,6 +89,8 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			" `sign.Revisions` is P01.S01's record index, exposed through the same door `Verify` uses; `SignedRevisionFor` selects " +
 			"the user's own signature from it, and until then `Verify` reads the records internally.",
 
+		"AmbiguousPageTrees": "test-support — the four page-tree shapes two readings order differently " +
+			"(/pending 755), shared by pdfops' ContentDigest tests and ceremony's Convene refusal test.",
 		"Assemble": "test-support — testpdf's hand-assembler for page-tree shapes pdfcpu will not write " +
 			"(a wrong subtree /Count, a /Page with /Kids), exported for /pending 753's pdfread.Pages " +
 			"shape tests in pdfread and pdfops.",

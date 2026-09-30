@@ -408,7 +408,10 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	hashChunk(h, []byte("nib-content-digest"))
 	hashUint(h, ContentDigestVersion)
 	hashUint(h, uint64(ctx.PageCount))
-	pages := digestPageDicts(ctx)
+	pages, err := digestPageDicts(ctx)
+	if err != nil {
+		return "", err
+	}
 	st.fastPath = pages != nil
 	for i := 1; i <= ctx.PageCount; i++ {
 		// `pages` is nil whenever the one-pass walk was not usable, and a nil SLICE must not be
@@ -421,8 +424,14 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 		if d == nil {
 			var err error
 			d, _, _, err = ctx.PageDict(i, false)
-			if err != nil || d == nil {
+			if err != nil {
 				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
+			}
+			if d == nil {
+				// pdfcpu answers nil with NO error where its walk finds nothing at that number —
+				// a /Page carrying /Kids, for one. `%w` of that nil printed `%!w(<nil>)`.
+				return "", fmt.Errorf("page %d is unreadable: the page tree has no page at that "+
+					"number, though it counts %d", i, ctx.PageCount)
 			}
 		}
 		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** The digest hashes pdfcpu's bare join, and what it
@@ -473,6 +482,47 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// ErrPageTreeAmbiguous is ContentDigest's refusal of a page tree that two readings order differently.
+//
+// The digest is `ceremony.Record.DocHash` (ADR-013), a commitment to one page order. On a malformed tree
+// `collectLeaves` and pdfcpu's `PageDict` (through `pdfread.Pages`, ADR-065) can agree on how MANY pages there
+// are and still name different objects at a position, so the hash would cover an order no reader shows — or a
+// different order from the one the next party's reader shows. There is no one right answer to commit to, so the
+// document is refused and the user is told how to get a well-formed copy. /pending 755.
+var ErrPageTreeAmbiguous = errors.New("this document's page tree is malformed: two readings of it disagree " +
+	"about its pages, so there is no one order to commit to — re-save it (print to PDF, or Save As in another " +
+	"application) before it is used in a ceremony")
+
+// CheckPageOrder is ContentDigest's page-order check on its own: ErrPageTreeAmbiguous when the
+// document's page tree is one two readings order differently, nil otherwise. It is the SAME
+// predicate the digest applies (`digestPageDicts`, ADR-009) — one door, two callers — so a
+// document it passes is one the digest will not refuse on this ground.
+//
+// `ceremony.Convene` calls it on the ORIGINAL document, because the digest there is taken over the
+// prepared copy, whose merge rewrites the tree and settles the order silently; this is the only
+// place the convener can be told. A document that will not read at all returns nil: that refusal is
+// the reader's, and belongs to the door that reads it next.
+//
+// **It reads with validation and WITHOUT pdfcpu's Optimize**, which the digest's read runs. Measured
+// on tier 4's 7.3 MB interrupt fixture: the optimized read is ~11 s and the validated one ~1.6 s,
+// with the comparison itself ~20 ms. Validation is what rewrites a page tree (and what leaves shape
+// (d)'s indirect empty /Kids alone); Optimize dedupes resources and does not touch /Kids. Measured
+// agreement: the verdict matches ContentDigest's on the four traced shapes, the agreeing shapes and
+// the 330 corpus documents the digest reads (`TestCheckPageOrderAgreesWithTheDigestOnTheCorpora`).
+func CheckPageOrder(pdf []byte) error {
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		return nil
+	}
+	_, err = digestPageDicts(ctx)
+	return err
+}
+
+// pageTreeAmbiguous names the first page the two readings disagree on, wrapping ErrPageTreeAmbiguous.
+func pageTreeAmbiguous(page int) error {
+	return fmt.Errorf("%w (they first part at page %d)", ErrPageTreeAmbiguous, page)
+}
+
 // digestPageDicts returns the page dicts in document order, from ONE walk of the page tree.
 //
 // # Why not `ctx.PageDict(i)` per page, which is what this loop used to do
@@ -485,35 +535,52 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 // walk here would be the thing that ADR forbids, and `collectLeaves`' own comment already carries
 // the obligation: *"The two walks must agree."* This makes it three, through one door.
 //
-// # It is not authoritative, and the fallback is what keeps the digest a commitment
+// # It is not authoritative, so it is checked against pdfcpu's reading (/pending 755)
 //
 // `ContentDigest`'s output is `ceremony.Record.DocHash` (ADR-013): a value a convener signs and
 // every later party recomputes, where a moved byte reads as tampering across a point release. So
-// this is an OPTIMISATION and never a re-decision about what a page is. Two walks can disagree on a
-// malformed tree — pdfcpu counts a `/Type /Page` node that nonetheless carries `/Kids` as a page and
-// descends past it, `collectLeaves` descends into it; a childless `/Type /Pages` node goes the other
-// way. (The typeless node, the third case, cannot arrive: pdfcpu's read refuses one outright, which
-// `TestPDFCPURefusesATypelessPageNode` guards.)
+// this is an OPTIMISATION and never a re-decision about what a page is. A matching COUNT is not
+// enough: traced, four malformed shapes give `collectLeaves` exactly `ctx.PageCount` leaves while
+// pdfcpu's `PageDict` answers a different object at some position —
 //
-// **A nil entry means "ask pdfcpu for this page"**, and a count disagreement nils the whole slice —
-// so a document where the walks differ is hashed exactly as it was before this function existed,
-// at the old cost. The fast path is taken only where the two agree on how many pages there are.
-func digestPageDicts(ctx *model.Context) []types.Dict {
+//   - a subtree whose `/Count` is too small while the root's total is right (pdfcpu skips by the count
+//     and lands on the wrong kid, so it answers one page twice and another never);
+//   - a `/Type /Page` carrying a DIRECT `/Kids`;
+//   - a `/Type /Page` carrying an INDIRECT `/Kids` (pdfcpu's `ArrayEntry` is direct-only, so it answers the
+//     node itself as the page, while `derefArray` descends);
+//   - an empty `/Pages` whose `/Kids` is an INDIRECT empty array (validation returns before rewriting it,
+//     and pdfcpu answers the `/Pages` dict itself as a page, where `collectLeaves` walks past it).
+//
+// So whenever the fast path would be taken, every leaf's reference is compared with `pdfread.Pages`' answer
+// at the same position, and that answer must carry no error and a dict. **Any mismatch is
+// `ErrPageTreeAmbiguous`**: hashing either reading would commit the convener to an order the other need not
+// show. Where they agree the digest is the value it always was (the dicts are the same objects), so no
+// `ContentDigestVersion` moves.
+//
+// **A nil slice means "ask pdfcpu for every page"**: a count disagreement, or a tree `collectLeaves` refuses
+// (a cycle, depth past 50), hashes exactly as before this function existed, at the old cost.
+func digestPageDicts(ctx *model.Context) ([]types.Dict, error) {
 	root, err := ctx.XRefTable.Catalog()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	leaves, _, err := collectLeaves(ctx.XRefTable, root)
 	if err != nil || len(leaves) != ctx.PageCount {
-		return nil
+		return nil, nil
+	}
+	pdfcpu := pdfread.Pages(ctx)
+	if len(pdfcpu) != len(leaves) {
+		return nil, pageTreeAmbiguous(min(len(pdfcpu), len(leaves)) + 1)
 	}
 	out := make([]types.Dict, 0, len(leaves))
-	for _, l := range leaves {
-		// A nil dict would silently become "ask pdfcpu", which is the right answer anyway; it
-		// cannot happen, because collectLeaves errors on a node it cannot read.
+	for i, l := range leaves {
+		p := pdfcpu[i]
+		if p.Err != nil || p.Dict == nil || p.Ref == nil || *p.Ref != l.ref {
+			return nil, pageTreeAmbiguous(i + 1)
+		}
 		out = append(out, l.dic)
 	}
-	return out
+	return out, nil
 }
 
 // embeddedEntry is one key/value pair of the catalog's /Names /EmbeddedFiles tree, as the tree
