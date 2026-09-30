@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..3dc081bf 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -470,7 +470,7 @@ func assignGapOwners(data []byte, revs []Revision) (scanned int) {
+ 		if rv.Cause != "" || rv.conjunct != 0 {
+ 			continue
+ 		}
+-		if o := owner[rv.gapStart]; !o.ok || o.obj != rv.Obj {
++		if o := owner[rv.gapStart]; false && (!o.ok || o.obj != rv.Obj) {
+ 			rv.conjunct = 11
+ 		}
+ 	}

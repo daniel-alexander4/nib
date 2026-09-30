@@ -1,0 +1,22 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..0f49a09a 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -196,8 +196,17 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
+ 	}
+ 	lib := 0
+ 	memo := &gapMemo{at: map[int64]*gapToken{}}
++	listed := map[uint32]bool{}
++	fs := r.Trailer().Key("Root").Key("AcroForm").Key("Fields")
++	for i := 0; i < fs.Len(); i++ {
++		p := fs.Index(i).Key("V").GetPtr()
++		listed[p.GetID()] = true
++	}
+ 	for _, x := range r.Xref() {
+ 		ptr := x.Ptr()
++		if !listed[ptr.GetID()] {
++			continue
++		}
+ 		v := r.Resolve(ptr, ptr)
+ 		filter := v.Key("Filter").Name()
+ 		typ := v.Key("Type").Name()

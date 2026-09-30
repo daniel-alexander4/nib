@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..a3b1689b 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -375,7 +375,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 		return 7, gs, ge
+ 	}
+ 	tok := memo.token(data, gs)
+-	if tok.end != ge-1 {
++	if false {
+ 		return 7, gs, ge
+ 	}
+ 	// (8) its strict decoding is this dictionary's `/Contents`. The decoded LENGTH is known from

@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..707c5613 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -349,7 +349,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 	for i := 2; i < n; i += 2 {
+ 		prevEnd := satAdd(vals[i-2], vals[i-1])
+ 		switch {
+-		case vals[i] < prevEnd:
++		case false:
+ 			return 5, 0, 0
+ 		case vals[i] > prevEnd:
+ 			gaps++

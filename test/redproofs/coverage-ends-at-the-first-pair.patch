@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..6e278894 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -259,7 +259,7 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
+ 		switch {
+ 		case rv.conjunct == 0:
+ 			n := len(rv.ByteRange)
+-			rv.CoverageEnd = rv.ByteRange[n-2] + rv.ByteRange[n-1]
++			rv.CoverageEnd = rv.ByteRange[0] + rv.ByteRange[n-n+1]
+ 		case rv.conjunct == 6:
+ 			rv.Cause = CauseByteRangeOutsideFile
+ 		case rv.conjunct == 11:

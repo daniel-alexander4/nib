@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..3ea1a2a9 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -653,7 +653,7 @@ func joinLibrary(revs []Revision, signers []verify.Signer) ([]int, error) {
+ 		}
+ 		idx = append(idx, j)
+ 	}
+-	if len(idx) != len(signers) {
++	if false {
+ 		return nil, fmt.Errorf("%w: the library reported %d signers and the document holds %d it would process", errJoin, len(signers), len(idx))
+ 	}
+ 	for i, j := range idx {

@@ -510,7 +510,16 @@ roster is rejected — that is exactly how the copy would count. **Defaults**: a
 the stamp named; `nib verify` exits 2 whenever a signature is refused; B-LTA reads valid + "content added after signing" +
 the timestamp line (a smarter cause is 737's residue); a join error keeps today's counting.
 
-#### P01.S04 — the red proofs
+#### P01.S04 — the red proofs *(done 2026-09-30, v1.169.47)*
+**Ledger**: every conjunct has a proof red for its own assertion — met per ARM (18 replayable rows, `recorded` 507 → 525):
+(1) direct, integer, length and parity arms, (2)-(4), (5) overlap and count, (6), (7) token, (8) bytes, (9), (10), (11); **(7)'s delimiter arm and (8)'s length arm are
+equivalent mutations** (the delimiter arm only while `pkcs7.Parse` precedes the structure rule) (argued in `docs/red-proofs.md`, not replayable), and **(8)'s bytes arm had no fixture** — one
+added. The join's shift detection — met (`join-count-unchecked`; the plan's "a refused record" is the same path, since
+`joinLibrary` reads only positions). The K-pair gate — **proved red, recorded as prose, not a row**: the mutated test
+allocates ~15 GB. G1 — met, red at `Revisions`' join (fail-closed) before the test's own message; G2 — met; G3 — the (6)
+row plus the K-pair proof. "The /Kids proof fails against the pre-S01 walk" — taken at S01/S02 (ledger above).
+**Tasks**: T01 — the rows in `test/redproofs/` and the section in `docs/red-proofs.md`; T02 — the same-length (8)
+fixture; T03 — the inventory's re-check (`instruments/returned-document.md`).
 Scope: a proof per new refusal and per gap-down, registered in `docs/red-proofs.md` — one per structural conjunct (the
 eleven above, each weakened separately), the join's shift detection (delete one refused record before the join; the
 count check must fire), and the K-pair gate. The inventory's G1-G3 (`memory/instruments/returned-document.md`) are

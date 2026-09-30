@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..92f2a830 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -360,7 +360,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 		return 5, 0, 0
+ 	}
+ 	// (6) the last pair ends inside the file — before any byte of it is read.
+-	if satAdd(vals[n-2], vals[n-1]) > int64(len(data)) {
++	if false {
+ 		return 6, gs, ge
+ 	}
+ 	// (7) the gap is exactly one hex-string token: `<`, hex digits and white space, `>`. A `>`

@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..a80bcae8 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -400,7 +400,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 	}
+ 	// (10) the dictionary is not in an object stream: a compressed `/Contents` has no file offset,
+ 	// so a gap that decodes to it is a copy somewhere else in the file.
+-	if inObjStm {
++	if false && inObjStm {
+ 		return 10, gs, ge
+ 	}
+ 	return 0, gs, ge

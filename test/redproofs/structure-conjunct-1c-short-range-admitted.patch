@@ -1,0 +1,13 @@
+diff --git a/internal/sign/revisions.go b/internal/sign/revisions.go
+index 5514d2a1..4304c6f8 100644
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -325,7 +325,7 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm
+ 	n := len(vals)
+ 	// (1) a direct array of integers, even length >= 4. An indirect array resolves with the
+ 	// referenced object as its parent, so a parent other than this dictionary is an indirection.
+-	if br.Kind() != dpdf.Array || br.GetPtr() != v.GetPtr() || !allInts || n < 4 || n%2 != 0 {
++	if br.Kind() != dpdf.Array || br.GetPtr() != v.GetPtr() || !allInts || n == 0 || n%2 != 0 {
+ 		return 1, 0, 0
+ 	}
+ 	// (2) the first start is 0.
