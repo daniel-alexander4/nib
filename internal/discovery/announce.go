@@ -290,6 +290,16 @@ func (a Announcement) check() error {
 	if len(strings.Fields(a.Name)) != pairing.NameWords {
 		return fmt.Errorf("%w: name is not %d words", ErrMalformed, pairing.NameWords)
 	}
+	// **The exact shape pairing.Name renders, not merely six fields** (/pending 711 R5-6). A
+	// word count admitted any byte up to the length cap — control characters, ANSI escapes, a
+	// "\n" that Fields reads as a separator — from any host onLink admits, and the server logs
+	// the name before a pin has matched it (`resolve`'s hop refusal), so one datagram forged a
+	// log line or drove the operator's terminal. Every word in the list is lowercase ASCII
+	// (TestWordlistProperties) and render joins them with one space, so nothing this Nib would
+	// emit is refused, and a name that could not match any pin is refused before anyone reads it.
+	if !renderedShape(a.Name) {
+		return fmt.Errorf("%w: name is not %d lowercase words separated by single spaces", ErrMalformed, pairing.NameWords)
+	}
 	if len(a.Name) > 0xff {
 		return fmt.Errorf("%w: name too long", ErrMalformed)
 	}
@@ -352,4 +362,26 @@ func Parse(b []byte) (Announcement, error) {
 		return Announcement{}, err
 	}
 	return a, nil
+}
+
+// renderedShape reports whether name is NameWords runs of a-z joined by single spaces — the
+// form pairing.Name produces. It checks shape, not membership in the word list: membership is
+// pairing.Matches' job, and the shape is what keeps an unmatched name safe to print.
+func renderedShape(name string) bool {
+	words, inWord := 0, false
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+			if !inWord {
+				words++
+				inWord = true
+			}
+		case c == ' ' && inWord && i+1 < len(name):
+			inWord = false
+		default:
+			return false
+		}
+	}
+	return words == pairing.NameWords
 }

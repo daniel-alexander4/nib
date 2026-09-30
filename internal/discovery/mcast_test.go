@@ -154,9 +154,9 @@ func TestOwnAnnouncementsAreFilteredByNonceNotAddress(t *testing.T) {
 // net.ListenPacket does not set SO_REUSEADDR — the stdlib only does when the bind
 // address is multicast, and this binds the wildcard — so without the ListenConfig
 // control this fails and same-host discovery is impossible. darwin and the BSDs need
-// SO_REUSEPORT as well; rather than ship a //go:build file per platform with a no-op
-// sibling (the shape that already produced one silent defect here), the gap is named
-// and this test is what fails loudly there.
+// SO_REUSEPORT as well, which reuseaddr_unix.go does not set: the gap is named (see
+// open) rather than filled on a platform nothing here runs, and this test is what fails
+// loudly there.
 func TestTwoSocketsCanShareThePort(t *testing.T) {
 	var n1, n2 [nonceLen]byte
 	n1[0], n2[0] = 1, 2

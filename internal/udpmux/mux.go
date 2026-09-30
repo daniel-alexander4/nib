@@ -86,6 +86,17 @@ const (
 	// after a connection has been idle or closed for this long — at which point
 	// the address is free to be an ordinary DHT node again.
 	peerTTL = 5 * time.Minute
+
+	// sweepEvery is the least interval between two full sweeps of an expiring table
+	// (/pending 711 R5-2). Sweeping on EVERY insert made an insert cost the table's size
+	// under the write lock, so filling it was quadratic: measured, 60k QUIC Initials'
+	// worth of connection ids took 57.9 s to register and 60k destinations 84.6 s to
+	// learn, one lock hold of about 1 ms each at the end, with the read loop waiting on
+	// the same locks for every inbound datagram. Swept at most this often, an insert is
+	// O(1) and a sweep's O(n) is paid once per interval. An entry therefore outlives its
+	// expiry by at most this long IN THE MAP, never in effect: every lookup compares the
+	// expiry itself, so a stale entry routes nothing.
+	sweepEvery = peerTTL / 8
 )
 
 // Mux owns one UDP socket and hands out two net.PacketConn views of it.
@@ -97,12 +108,16 @@ type Mux struct {
 
 	mu    sync.RWMutex
 	peers map[netip.AddrPort]time.Time
+	// peersSweep is when the peer table may next be swept (sweepDue). Guarded by mu.
+	peersSweep time.Time
 
 	// cidMu guards the connection-ID table and its length. Separate from mu because
 	// the two are read on different rules and a short-header packet touches only one.
 	cidMu  sync.RWMutex
 	cidLen int
 	cids   map[string]time.Time
+	// cidsSweep is when the id table may next be swept (sweepDue). Guarded by cidMu.
+	cidsSweep time.Time
 
 	// now is fixed at construction so the read loop never observes it changing.
 	// A test that reassigned it on a live Mux would race with route().
@@ -142,7 +157,8 @@ type Stats struct {
 	Learned uint64
 	// Expired — addresses swept from the peer table after peerTTL.
 	Expired uint64
-	// Peers — the live peer-table size.
+	// Peers — the live peer-table size, which may include entries past their expiry for up
+	// to sweepEvery (they route nothing; see sweepEvery).
 	Peers int
 	// DroppedQUIC, DroppedDHT — datagrams discarded because that side's queue
 	// was full. Non-zero means a consumer is not keeping up, not a routing bug.
@@ -279,12 +295,24 @@ func (m *Mux) RegisterConnectionID(cid []byte) {
 		m.cidLen = len(cid)
 	}
 	m.cids[string(cid)] = now.Add(peerTTL)
-	for k, exp := range m.cids {
-		if !now.Before(exp) {
-			delete(m.cids, k)
+	if sweepDue(now, &m.cidsSweep) {
+		for k, exp := range m.cids {
+			if !now.Before(exp) {
+				delete(m.cids, k)
+			}
 		}
 	}
 	m.cidMu.Unlock()
+}
+
+// sweepDue reports whether an expiring table may be swept now, and if so books the next
+// sweep. It is the one rule both tables follow; the caller holds the table's write lock.
+func sweepDue(now time.Time, next *time.Time) bool {
+	if now.Before(*next) {
+		return false
+	}
+	*next = now.Add(sweepEvery)
+	return true
 }
 
 // knownCID reports whether a short-header packet carries an ID we issued, and whether
@@ -363,7 +391,7 @@ func (m *Mux) isQUICPeer(addr net.Addr) bool {
 }
 
 // learn records a QUIC destination, and sweeps expired entries while it holds the
-// lock. Sweeping here rather than on a timer keeps the package free of a goroutine
+// lock — at most once per sweepEvery, so an insert does not cost the table's size. Sweeping here rather than on a timer keeps the package free of a goroutine
 // whose only job is to delete map keys: the table only grows on a write, so a write
 // is exactly when it is worth looking.
 func (m *Mux) learn(addr net.Addr) {
@@ -391,10 +419,12 @@ func (m *Mux) learn(addr net.Addr) {
 		m.learned.Add(1)
 	}
 	m.peers[k] = now.Add(peerTTL)
-	for other, exp := range m.peers {
-		if other != k && !now.Before(exp) {
-			delete(m.peers, other)
-			m.expired.Add(1)
+	if sweepDue(now, &m.peersSweep) {
+		for other, exp := range m.peers {
+			if other != k && !now.Before(exp) {
+				delete(m.peers, other)
+				m.expired.Add(1)
+			}
 		}
 	}
 	m.mu.Unlock()

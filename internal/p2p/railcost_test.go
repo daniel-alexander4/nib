@@ -26,15 +26,15 @@ import (
 // `handleCeremonies` already pays one `ReadMirror` per stored ceremony (its header says it opens no
 // document; `closeOutEnded` opens every one and discards the bytes — that is `/pending 360`).
 // `ReadMirror` runs `sign.Verify` once, plus `ContentDigest` while the document is unsigned.
-// `NextContributor` runs `sign.Verify` TWICE more. So the marginal cost of progress is those two
-// passes, and whether that matters depends on the split between `sign.Verify` and `ContentDigest`
+// `NextContributor` ran `sign.Verify` TWICE more until /pending 711 R5-7 and runs it ONCE now.
+// So the marginal cost of progress is that pass, and whether that matters depends on the split between `sign.Verify` and `ContentDigest`
 // inside a figure nobody has decomposed.
 //
 // # What this is NOT
 //
 // Not a benchmark and not a threshold. It RECORDS, with `-v`, and asserts only the two shape
 // properties that can rot: that a signed document skips the digest, and that `NextContributor`
-// costs more than one bare verify — because if either stops holding, the arithmetic above is a
+// costs ONE bare verify and not two — because if either stops holding, the arithmetic above is a
 // story about a different program. Wall-clock numbers are machine facts and pinning one would be a
 // test that goes red on a busy laptop.
 func TestWhatTheCeremonyListingCostsPerCeremony(t *testing.T) {
@@ -89,8 +89,10 @@ func TestWhatTheCeremonyListingCostsPerCeremony(t *testing.T) {
 
 		// **The shape property, asserted only where the signal is above the noise.**
 		//
-		// `NextContributor` runs `sign.Verify` twice — once for the Invalid test and once inside
-		// `ReadAttestations` — so it cannot be cheaper than one. But at ONE page the medians are
+		// `NextContributor` ran `sign.Verify` twice — once for the Invalid test and once inside
+		// `ReadAttestations` — and since /pending 711 R5-7 runs it once, over which both read the
+		// same Status. Measured on the day it changed, 200 pages: 51.4 ms against a bare verify's
+		// 51.7 ms. So the property is now "about one verify, well short of two". At ONE page the medians are
 		// 1.34 ms against 1.41 ms with a spread of ±16 ms on the second: the small end is entirely
 		// scheduler noise, and asserting there produced a red on the very first run against
 		// perfectly good code. Measured at the top of the range instead, where the readings are
@@ -100,11 +102,14 @@ func TestWhatTheCeremonyListingCostsPerCeremony(t *testing.T) {
 		if pages < 200 {
 			continue
 		}
-		if nextCost < signedVerify {
-			t.Errorf("%d pages: NextContributor (%v) is cheaper than the single sign.Verify it "+
-				"calls twice (%v). Either the double verify is gone — in which case this slice's "+
-				"arithmetic is about a program that no longer exists — or the fixture carries no "+
-				"signatures and every number above is a measurement of an empty document",
+		if nextCost > signedVerify*8/5 {
+			t.Errorf("%d pages: NextContributor (%v) costs %.1fx the single sign.Verify it should "+
+				"call once (%v) — the document is being verified twice again (/pending 711 R5-7)",
+				pages, nextCost, float64(nextCost)/float64(signedVerify), signedVerify)
+		}
+		if nextCost < signedVerify/2 {
+			t.Errorf("%d pages: NextContributor (%v) is well under the sign.Verify it calls (%v) — "+
+				"the fixture carries no signatures and every number above measures an empty document",
 				pages, nextCost, signedVerify)
 		}
 	}

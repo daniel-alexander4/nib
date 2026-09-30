@@ -120,7 +120,20 @@ type Roster struct {
 // at the same two call sites, and both sites already call this. A `StampParty` beside
 // `StampCommitment` would be two doors onto one rule at two sites each — the ADR-009 shape this
 // function's own comment was written about.
+//
+// **And what the signature ACCEPTS, which is the third rule this door carries (/pending 711
+// R5-3).** Inside a ceremony a signature accepts its signing PREDECESSOR (`PredecessorOf`, D22 as
+// amended), never the wire peer. Both contribution doors used to write that line themselves, and
+// the only thing keeping them in step was a guard that each file mentioned `PredecessorOf(`; the
+// quote, which also calls this, wrote neither and showed the WIRE peer. It is decided on
+// `len(r.Entries) > 0` — the one spelling of "inside a ceremony" (`coSignExchange`'s
+// `inCeremony`, `PlacementFor`) — and so BEFORE the commitment check below, exactly as both
+// doors decided it before. `PredecessorOf` has this one production caller, which
+// `TestBothContributionDoorsAgreeOnWhatASignatureAccepts` holds.
 func StampCommitment(att *Attestation, r Roster, meFP string) {
+	if len(r.Entries) > 0 {
+		att.AcceptedPeer = PredecessorOf(r, meFP)
+	}
 	if r.Commitment == "" || r.CommitmentVersion <= 0 {
 		return
 	}
@@ -216,7 +229,12 @@ var (
 // It returns the roster entry whose contribution the document is waiting for, having first
 // established that everything already on the document is the prefix before it.
 func NextContributor(pdf []byte, r Roster) (RosterEntry, error) {
-	pr, err := ContributionProgress(pdf, r)
+	return nextContributorFrom(sign.Verify(pdf), r)
+}
+
+// nextContributorFrom is NextContributor over a document already verified — see progressFrom.
+func nextContributorFrom(st sign.Status, r Roster) (RosterEntry, error) {
+	pr, err := progressFrom(st, r)
 	if err != nil {
 		return RosterEntry{}, err
 	}
@@ -256,6 +274,16 @@ type Progress struct {
 // comparisons. The alternative on offer was a second function that answers "has k signed" its own
 // way; this repo already has three of those.
 func ContributionProgress(pdf []byte, r Roster) (Progress, error) {
+	return progressFrom(sign.Verify(pdf), r)
+}
+
+// progressFrom is ContributionProgress over the verification of the document, taken ONCE
+// (/pending 711 R5-7). It used to call `sign.Verify(pdf)` for the state and then
+// `ReadAttestations(pdf)`, which is `sign.Verify` again — ADR-041's full pdfcpu read gate and a
+// hash per signature, twice, over a document a pinned peer chose up to the 128 MiB frame — and
+// `coSignExchange` verified the same inbound a third time before consent. The exported doors
+// verify once and call this; a caller that has already verified passes its Status.
+func progressFrom(st sign.Status, r Roster) (Progress, error) {
 	signing := SigningOrder(r)
 	if len(signing) == 0 {
 		return Progress{}, fmt.Errorf("%w: this roster has no signing parties", ErrPrefixMismatch)
@@ -284,12 +312,12 @@ func ContributionProgress(pdf []byte, r Roster) (Progress, error) {
 	// legitimate state and indistinguishable from one. Catching that needs a per-hop continuity
 	// check over the document's bytes, which `embed.go` records as unsolved and which S05 and
 	// S06 inherit. L3 is about ORDER, and it says so here rather than appearing to cover it.
-	if st := sign.Verify(pdf); st.State == sign.Invalid {
+	if st.State == sign.Invalid {
 		return Progress{}, fmt.Errorf("%w: this document carries a signature that cannot be "+
 			"read, so what is already on it cannot be checked against the roster",
 			ErrPrefixUnproven)
 	}
-	ats := ReadAttestations(pdf)
+	ats := Attestations(st, Proceeding{})
 	if len(ats) > len(signing) {
 		return Progress{}, fmt.Errorf("%w: the document carries %d signature(s) and the "+
 			"ceremony has %d signing part(ies)", ErrPrefixMismatch, len(ats), len(signing))
@@ -421,7 +449,14 @@ func InRoster(r Roster, fp string) bool {
 //
 // `me` is the local party's hex SPKI fingerprint.
 func AdmitContribution(pdf []byte, r Roster, me string) error {
-	next, err := NextContributor(pdf, r)
+	return admitContributionFrom(sign.Verify(pdf), r, me)
+}
+
+// admitContributionFrom is AdmitContribution over a document already verified — the form
+// `coSignExchange` calls, because it has verified the inbound for its own checks and a second
+// verify of the same bytes answers nothing new (/pending 711 R5-7).
+func admitContributionFrom(st sign.Status, r Roster, me string) error {
+	next, err := nextContributorFrom(st, r)
 	if err != nil {
 		return err
 	}

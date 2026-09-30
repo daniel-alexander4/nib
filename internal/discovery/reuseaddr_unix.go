@@ -16,7 +16,7 @@ import "syscall"
 // sibling is the shape that already shipped one silent defect here (ReplaceOthers returning
 // 0 off Linux)". That reasoning was right about the hazard and produced a worse outcome
 // than the hazard: not a silent no-op, but no binary. Both files here do the real thing, and
-// TestBothPlatformsSetReuseAddr asserts neither is a stub.
+// TestNoBuildTaggedSiblingIsAStub (verify_test.go) asserts neither is a stub.
 func setReuseAddr(fd uintptr) error {
 	return syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
 }

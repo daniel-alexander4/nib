@@ -153,12 +153,12 @@ func open(all []net.Interface, nonce [nonceLen]byte) (*Socket, error) {
 	// socket at all, and same-host discovery is exactly the case tier 4 drives.
 	//
 	// Only SO_REUSEADDR, deliberately: darwin and the BSDs need SO_REUSEPORT as well
-	// for two listeners to share a port. That would mean a //go:build file per
-	// platform, and a no-op sibling is the shape that already shipped one silent
-	// defect here (ReplaceOthers returning 0 off Linux). So the gap is left open and
-	// named instead, with a test that asserts two sockets CAN share the port — which
-	// fails loudly on darwin if this turns out to be insufficient, rather than
-	// leaving a tagged file nobody can verify.
+	// for two listeners to share a port, and nothing here sets it. The call sits in a
+	// per-platform pair (reuseaddr_unix.go, reuseaddr_windows.go) because the fd type
+	// differs, and TestNoBuildTaggedSiblingIsAStub asserts neither half is a no-op. The
+	// darwin gap is left open and named rather than filled blind: no machine here can
+	// run it, and TestTwoSocketsCanShareThePort is what fails loudly there if
+	// SO_REUSEADDR alone turns out to be insufficient.
 	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
 		var serr error
 		if err := c.Control(func(fd uintptr) {
@@ -384,17 +384,22 @@ func (s *Socket) Read(deadline time.Time) (Seen, error) {
 	}
 	ua, _ := src.(*net.UDPAddr)
 
-	// Off-link sources are discarded BEFORE parsing, and this is a real boundary
-	// rather than tidiness. Go binds a multicast listener to the wildcard, so this
-	// port accepts ordinary unicast from any host that can route to it — measured, a
-	// unicast datagram to 127.0.0.1:8446 parses and is returned as a peer. Without
-	// this, anyone who can land a packet here can inject a candidate for any peer
-	// whose six-word name they know, and names are public by design.
+	// Off-link sources are discarded BEFORE parsing. Go binds a multicast listener to
+	// the wildcard, so this port accepts ordinary unicast from any host that can route
+	// to it; without this, an honest datagram from anywhere on the internet would be
+	// returned as a candidate for any peer whose six-word name it knows, and names are
+	// public by design.
 	//
-	// The scope guarantee on the way OUT is the hop limit; on the way IN there is
-	// none, and this is it. It does not stop an on-link attacker spoofing a source —
-	// nothing at this layer could — but it removes every attacker who is not on the
-	// link, which is the whole of the remote case.
+	// **It reads the CLAIMED source, so it is a scope filter and not an authentication
+	// step.** A UDP source address is not verified by anything, and an announcement
+	// needs no reply, so it does NOT remove the remote attacker; it removes the one who
+	// does not bother to lie. Three roads pass it: an on-link host spoofing any source;
+	// an off-link host that can route to this port (a public or global-IPv6 address)
+	// spoofing an in-subnet, 169.254/16 or fe80::/10 source; and any local process —
+	// another OS user's included — sending from loopback, which onLink admits on
+	// purpose (a unicast to 127.0.0.1:8446 parses and is returned as a peer, measured).
+	// What bounds all three is L1: a candidate is a hint to dial, never an identity,
+	// and the pin decides who the peer is.
 	if !s.onLink(ua) {
 		s.offLink.Add(1)
 		return Seen{}, ErrNotOurs

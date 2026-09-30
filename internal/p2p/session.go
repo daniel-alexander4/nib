@@ -133,7 +133,7 @@ func MaxRemoteDecisionWait() time.Duration { return remoteDecisionDeadline }
 // **`Receive` arms FOUR deadlines and only these TWO are before the gate.** The other two are
 // `postConsentDeadline`, armed after consent to write the frame. Both a deepdive and its grill
 // miscounted this — one said two arms, the other three — which is why
-// `TestReceiveArmsTheDeadlinesThisLagCountsOn` asserts the population instead of trusting a
+// `TestReceiveArmsTheDeadlinesTheArrivalLagCountsOn` asserts the population instead of trusting a
 // remembered number.
 //
 // The human window is `PeerGateWindow` and **no connection deadline bounds it**, because no I/O
@@ -994,7 +994,11 @@ type ReDeliverer interface {
 // user's acceptance signature, and returns the co-signed result. A future gRPC
 // transport would be another adapter calling this same function.
 func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inbound []byte, c Confirmer, rd ReDeliverer, roster Roster) ([]byte, error) {
-	ats := ReadAttestations(inbound)
+	// Verified ONCE, and the L3 gate below reads the same Status (/pending 711 R5-7): this is a
+	// document a pinned peer chose, up to the frame cap, and every verify is ADR-041's full read
+	// gate plus a hash per signature — it used to be three before the user was even asked.
+	inboundStatus := sign.Verify(inbound)
+	ats := Attestations(inboundStatus, Proceeding{})
 	inCeremony := len(roster.Entries) > 0
 	// **The single-prior-signer rule is CONDITIONED, not deleted (P07.S03, T05).**
 	//
@@ -1090,7 +1094,7 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	// "this is not the peer you are connected to" beats "it is not your turn" when both are
 	// true. The gate is new and yields precedence to the invariants it joins.
 	if inCeremony {
-		if err := AdmitContribution(inbound, roster, hex.EncodeToString(myFP)); err != nil {
+		if err := admitContributionFrom(inboundStatus, roster, hex.EncodeToString(myFP)); err != nil {
 			return nil, err
 		}
 	}
@@ -1131,19 +1135,12 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	if err != nil {
 		return nil, err
 	}
-	// **What this signature ACCEPTS is the next signing party, not the wire peer (P07.S05,
-	// D22 amended).** Outside a ceremony there is no roster and the two are the same thing; inside
-	// one they part company the moment a non-signing convener carries the baton, and a signature
-	// accepting the CARRIER attests to somebody who never signs — leaving the chain broken at
-	// every hop and `crossBind` reporting it so.
-	//
-	// `PredecessorOf` returns "" for the FIRST signer, which is correct and is C14 as amended:
-	// the first signature accepts nobody, because there is nobody before it.
+	// **What this signature ACCEPTS is the signing PREDECESSOR inside a ceremony, not the wire
+	// peer (P07.S05, D22 amended).** Outside a ceremony there is no roster and the two are the same
+	// thing, so the wire peer set here stands; inside one `StampCommitment` below overwrites it
+	// (/pending 711 R5-3), the one door both contribution paths share — "" for the first signer,
+	// which is C14 as amended.
 	accepted := hex.EncodeToString(peerFP)
-	if inCeremony {
-		myFPHex := hex.EncodeToString(myFP)
-		accepted = PredecessorOf(roster, myFPHex)
-	}
 	// **The time the party was ASKED, not the time the signature is made.** They differ by however
 	// long somebody spent reading the document, and the quote showed them the first — so signing
 	// the second puts a block on the page that is not the block they consented to. A confirmer

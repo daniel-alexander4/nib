@@ -521,6 +521,11 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
 	if err != nil {
 		return netip.Addr{}, 0, "", "", err
 	}
+	// refused is the first IGD that answered "no" (/pending 711 R5-5). Every other failure
+	// here means "no usable gateway at that location" and is skipped; a refusal is an answer,
+	// and dropping it made `Map`'s ErrResultCode branch unreachable, so a 718 or 606 from the
+	// only tier macOS and Windows have was diagnosed as no gateway at all.
+	var refused error
 	for _, loc := range locs {
 		ctl, st, err := controlURLFor(ctx, client, loc, hostOK)
 		if err != nil {
@@ -546,6 +551,9 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
 			}
 		}
 		if addErr != nil {
+			if refused == nil && errors.Is(addErr, ErrResultCode) {
+				refused = addErr
+			}
 			continue
 		}
 		ip, err := soapGetExternalIP(ctx, client, ctl, st)
@@ -553,6 +561,9 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
 			continue
 		}
 		return ip, internalPort, ctl, st, nil
+	}
+	if refused != nil {
+		return netip.Addr{}, 0, "", "", refused
 	}
 	return netip.Addr{}, 0, "", "", ErrNoMapping
 }

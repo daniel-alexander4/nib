@@ -394,6 +394,13 @@ func TestMapViaUPnPLoop(t *testing.T) {
 		if err == nil {
 			t.Error("a refusing IGD produced a mapping")
 		}
+		// /pending 711 R5-5: the refusal is carried OUT of the loop, so `Map` can say the IGD
+		// said no rather than that there is no gateway — the confusion
+		// TestARefusalIsCarriedOutNotFlattened forbids for PCP and NAT-PMP.
+		if !errors.Is(err, ErrResultCode) {
+			t.Errorf("a refusing IGD's answer left the loop as %v, want ErrResultCode — Map reports "+
+				"it as no gateway at all", err)
+		}
 		if len(recorded) != 0 {
 			t.Errorf("a DEFINITIVE refusal recorded %d delete handle(s) — a UPnP delete is keyed on "+
 				"the external port with no ownership check, so a handle for a mapping that was never "+

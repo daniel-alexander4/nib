@@ -66,10 +66,12 @@ var readmeParagraphs = []string{
 		"acceptance block — but not anything added afterward. Each later acceptance block is added " +
 		"after the signature before it; that is normal and expected. A verifier reports anything " +
 		"added after the last signature separately.",
-	"Who each signer accepted: every signature names one party, in the acceptance block on the " +
-		"preceding pages, and that is the only identity that signature vouches for. Where two parties " +
-		"sign together, each names the other. Where more than two do, the parties are the ones named " +
-		"by whoever convened the proceeding — so signers who never connected to each other " +
+	"Who each signer accepted: a signature records inside itself at most one party it accepts, and " +
+		"that is the only identity that signature vouches for. Where two parties sign together, each " +
+		"names the other, and its printed acceptance block shows that name too. Where more than two " +
+		"do, every signature after the first names the signer before it, each printed block says only " +
+		"which party of how many signed it, and the parties are the ones named by whoever convened " +
+		"the proceeding — so signers who never connected to each other " +
 		"have not checked each other's identity, and no signature here claims they did.",
 	"These identities are self-generated on each machine and are not vouched for by a certificate " +
 		"authority or any third party. This is not a qualified electronic signature (QES): it proves " +
@@ -79,8 +81,8 @@ var readmeParagraphs = []string{
 		"whether the document is unchanged since each signature, and whether anything was added " +
 		"after the last signature.",
 	"What is authoritative is the signature itself — who each party accepts is recorded inside their " +
-		"signature and shown in the verifier's signature details. The acceptance block printed on the " +
-		"page above is a human-readable convenience; trust the signature details, not the printed block.",
+		"signature and shown in the verifier's signature details. A printed acceptance block is a " +
+		"human-readable convenience; trust the signature details, not the printed block.",
 }
 
 // readmeBody is the full text of the page, paragraphs separated by a blank line.

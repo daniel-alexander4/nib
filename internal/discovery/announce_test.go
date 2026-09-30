@@ -383,3 +383,51 @@ func TestAnEncoderCannotEmitATransportItsOwnParserRefuses(t *testing.T) {
 		t.Errorf("refused as %v, want ErrMalformed", err)
 	}
 }
+
+// TestParseRefusesANameItCouldNotPrintSafely — /pending 711 R5-6. Every refused row below has
+// six `strings.Fields`, which is all the check used to ask, so every one parsed; the server then
+// logged the name with %s before any pin had matched it. The rows are the bytes that make that
+// a forged log line or a terminal escape, plus the non-canonical spacings a rendered name
+// never has.
+func TestParseRefusesANameItCouldNotPrintSafely(t *testing.T) {
+	raw := func(name string) []byte {
+		base, err := good(t).Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := append([]byte(nil), base[:headerLen-1]...)
+		b = append(b, byte(len(name)))
+		return append(b, name...)
+	}
+	// Stimulus: names the product renders parse through the same raw builder.
+	for seed := byte(0); seed < 32; seed++ {
+		if _, err := Parse(raw(aName(t, seed))); err != nil {
+			t.Fatalf("a rendered name %q is refused: %v — the rows below would pass for the wrong reason",
+				aName(t, seed), err)
+		}
+	}
+	for _, name := range []string{
+		"one two three four\nlink: forged",
+		"one two three four five \x1b[2Jsix",
+		"one two three four five six\x00",
+		"One two three four five six",
+		"one  two three four five six",
+		"one\ttwo three four five six",
+		" one two three four five six",
+		"one two three four five six ",
+		"one two three four five sïx",
+	} {
+		if len(strings.Fields(name)) != pairing.NameWords {
+			t.Fatalf("row %q does not have six fields, so the old check refused it too", name)
+		}
+		got, err := Parse(raw(name))
+		if err == nil {
+			t.Errorf("Parse accepted the name %q: a datagram from any on-link source reaches the "+
+				"server's log with these bytes intact", name)
+			continue
+		}
+		if !errors.Is(err, ErrMalformed) || got != (Announcement{}) {
+			t.Errorf("name %q: refused as %v with %+v, want ErrMalformed and the zero announcement", name, err, got)
+		}
+	}
+}

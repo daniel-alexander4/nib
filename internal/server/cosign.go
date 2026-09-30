@@ -419,18 +419,12 @@ func (s *Server) buildCoSigned(w http.ResponseWriter, pdf, cert, key []byte, att
 			httpError(w, http.StatusConflict, err.Error())
 			return nil, false
 		}
-		// **What this signature ACCEPTS comes off the roster too (P07.S05, D22 amended).**
+		// **What this signature ACCEPTS comes off the roster too (P07.S05, D22 amended)** — the
+		// signing predecessor, not the wire peer the caller built `att` from, which under a carry
+		// route is a non-signing convener. `StampCommitment` writes it (/pending 711 R5-3), the
+		// one door both contribution paths and the quote call, so the two cannot drift apart.
 		//
-		// The caller built `att` before the ceremony was resolved, from the peer it is dialling —
-		// which is the wire peer, and under a carry route the wire peer is a non-signing convener.
-		// A first signer would then attest to somebody who never signs, and the two contribution
-		// doors would disagree about what `AcceptedPeer` MEANS: `coSignExchange` already reads it
-		// off the roster. Overridden here rather than at the caller because this is the same door
-		// the gate above hangs on, and a rule at one of two doors is the ADR-009 shape.
-		//
-		// The first signer accepts "" — there is nobody before them, and that is C14 as amended.
-		att.AcceptedPeer = p2p.PredecessorOf(roster, hex.EncodeToString(myFP))
-		// And it NAMES the ceremony — and, since P07.S07a, this party: their label, their
+		// It also NAMES the ceremony — and, since P07.S07a, this party: their label, their
 		// capacity and their position in the signing order, through the one door the receiving
 		// side also uses. `att.Signer` arrives here as the `"Nib User"` constant
 		// `cosignAttestation` sets for the manual co-sign; inside a ceremony the roster overrides

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -386,7 +389,9 @@ func TestEveryContributionEntryPointReachesTheGate(t *testing.T) {
 					continue
 				}
 				perDir[label]++
-				if !strings.Contains(fn.body, "AdmitContribution(") {
+				// `admitContributionFrom(` is the same gate over a Status the caller already has
+				// (/pending 711 R5-7), and `AdmitContribution` is a one-line wrapper over it.
+				if !strings.Contains(fn.body, "AdmitContribution(") && !strings.Contains(fn.body, "admitContributionFrom(") {
 					t.Errorf("%s/%s: %s adds a signature block and never reaches the L3 gate, so "+
 						"a party can contribute out of roster order through it. D23: no "+
 						"contribution out of roster order, at every site that makes one.",
@@ -660,30 +665,98 @@ func TestASignatureAcceptsItsPREDECESSOR(t *testing.T) {
 	if got := PredecessorOf(r, strings.Repeat("ff", 32)); got != "" {
 		t.Errorf("a stranger has a predecessor: %s", shortFP(got))
 	}
+
+	// **And the SIGNATURE carries it** (/pending 711 R5-10) — the name says a signature accepts
+	// its predecessor, and the lines above only ask `PredecessorOf`. Each party's attestation is
+	// built the way both contribution doors build it: from the WIRE peer, which under a carry
+	// route is the non-signing convener, then through `StampCommitment`. The document is signed,
+	// read back, and each verified signature must name — and cross-bind to — the party before it.
+	doc := l3Prepared(t)
+	for _, p := range []l3Party{a, b} {
+		att := Attestation{Signer: "P", AcceptedPeer: conv.fp, Intent: "ok", When: time.Now()}
+		StampCommitment(&att, r, p.fp)
+		place, err := NextPlacement(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if doc, err = Contribute(doc, p.cert, p.key, att, nil, place); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ats := ReadAttestations(doc)
+	if len(ats) != 2 || !ats[0].Valid || !ats[1].Valid {
+		t.Fatalf("setup: want two valid signatures, got %+v", ats)
+	}
+	if ats[0].AcceptedPeer != "" {
+		t.Errorf("the first signature accepts %s — it was built from the wire peer (the convener) "+
+			"and nothing replaced it with the roster's answer, which is nobody", shortFP(ats[0].AcceptedPeer))
+	}
+	if !strings.EqualFold(ats[1].AcceptedPeer, a.fp) || !ats[1].Matched {
+		t.Errorf("B's signature accepts %s (matched=%v), want A (%s) and matched — a signature "+
+			"accepting the carrier attests to somebody who never signs",
+			shortFP(ats[1].AcceptedPeer), ats[1].Matched, shortFP(a.fp))
+	}
 }
 
-// TestBothContributionDoorsAgreeOnWhatASignatureAccepts — ADR-009 on the MEANING, not the call.
+// TestBothContributionDoorsAgreeOnWhatASignatureAccepts — ADR-009 on the MEANING, routed
+// through ONE door.
 //
 // There are two doors that build an attestation — `coSignExchange` here and `buildCoSigned` in
 // `internal/server` — and for a while only one of them read `AcceptedPeer` off the roster. They
 // coincided at N=2 by luck (the wire peer IS the other signer there) and would have parted company
 // at the first carry hop, with one door attesting to the previous signer and the other to a
 // convener who never signs.
+//
+// **This used to check that each file MENTIONED `PredecessorOf(`** (/pending 711 R5-3), which a
+// call used for something else, or a step added at one door only, passes. The rule now lives in
+// `StampCommitment`, which the contribution census above requires at every function that calls
+// `Contribute(`; what is asserted here is that nothing else decides it — `PredecessorOf` has
+// exactly one production caller, and it is that door.
 func TestBothContributionDoorsAgreeOnWhatASignatureAccepts(t *testing.T) {
-	for _, tc := range []struct{ dir, file string }{
-		{".", "session.go"},
-		{filepath.Join("..", "server"), "cosign.go"},
-	} {
-		raw, err := os.ReadFile(filepath.Join(tc.dir, tc.file))
+	callers := map[string]int{}
+	fset := token.NewFileSet()
+	for _, dir := range []string{".", filepath.Join("..", "server"), filepath.Join("..", "cli"), filepath.Join("..", "ceremony")} {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		code := l3StripComments(string(raw))
-		if !strings.Contains(code, "PredecessorOf(") {
-			t.Errorf("%s/%s builds a contribution and never reads AcceptedPeer off the roster. "+
-				"The two doors then disagree about what a signature ACCEPTS — one attests to the "+
-				"previous signer, the other to whoever is on the socket, which under a carry "+
-				"route is a convener who never signs.", tc.dir, tc.file)
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range f.Decls {
+				fn, ok := d.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					name := ""
+					switch f := call.Fun.(type) {
+					case *ast.Ident:
+						name = f.Name
+					case *ast.SelectorExpr:
+						name = f.Sel.Name
+					}
+					if name == "PredecessorOf" {
+						callers[filepath.Join(dir, e.Name())+":"+fn.Name.Name]++
+					}
+					return true
+				})
+			}
 		}
+	}
+	want := filepath.Join(".", "l3.go") + ":StampCommitment"
+	if callers[want] != 1 || len(callers) != 1 {
+		t.Errorf("PredecessorOf's production callers are %v, want exactly %s — a second site deciding "+
+			"what a signature accepts is two doors onto one rule, and the next edit to one of them "+
+			"is invisible to the other", callers, want)
 	}
 }
