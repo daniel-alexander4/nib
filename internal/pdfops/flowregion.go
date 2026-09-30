@@ -163,6 +163,10 @@ type flowRegion struct {
 	bottom, floor, room float64
 	// bound says what set the floor: `roomBelowContent` or `roomBelowMargin`.
 	bound string
+	// step is the column's paragraph step — last baseline to the next paragraph's first — its median where it has one,
+	// else the step from pi to the first paragraph below it, else 0: how far a block pushed onto the next page stands from
+	// what it pushes (P07.S06).
+	step float64
 	// band is the column's extent from pi's bottom down to the floor: where the region's text is, and will be.
 	band [4]float64
 	// marks are the marks meeting the band — the column's extent from pi's bottom down to the floor — that the region
@@ -269,6 +273,7 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 	if len(steps) >= 2 {
 		usual = median(steps)
 	}
+	r.step = usual
 	pos := sort.SearchInts(col, pi)
 	owned := map[int]bool{pi: true}
 	last := p
@@ -277,6 +282,9 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 		em := math.Max(last.lines[len(last.lines)-1].size, q.lines[0].size)
 		if step := last.lines[len(last.lines)-1].y - q.lines[0].y; step > math.Max(regionGapRatio*usual, regionGapEm*em) {
 			break
+		}
+		if r.step == 0 {
+			r.step = last.lines[len(last.lines)-1].y - q.lines[0].y
 		}
 		r.paragraphs = append(r.paragraphs, col[k])
 		owned[col[k]] = true

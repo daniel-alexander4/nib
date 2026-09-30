@@ -47,8 +47,8 @@ func pageAnchors(ctx *model.Context, pg pdfread.Page, withMoving bool) []pageAnc
 	var out []pageAnchor
 	for _, o := range derefArray(xt, pg.Dict["Annots"]) {
 		d := derefDict(xt, o)
-		if d == nil {
-			continue
+		if d == nil || nameVal(d, "Subtype") == "Popup" {
+			continue // a popup is its note's window, wherever it is shown: it goes where its note goes (carryAnchors)
 		}
 		kind := anchorAnnotation
 		if nameVal(d, "Subtype") == "Widget" {

@@ -363,11 +363,14 @@ covered: they are gone from the page, from copy-and-paste and from Find.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line
 spacing, and the paragraphs below it in its column move down with it into the free
-space under them; a footer or page number past that space stays put. Notes, links,
-form fields, signing flags and bookmarks on or beside the paragraphs that move go with
-them. If there is not room on the page, or something cannot move with the text — a
-line or picture drawn there, or a note or link half in and half out of what moves — it
-is refused with the reason rather than left pointing at the wrong words. (The same
+space under them; a footer or page number past that space stays put. When the page
+runs out of room, the last paragraphs move whole to the top of the next page, pushing
+its text down in turn, page after page — on a single-column page, and not past the
+last page. Notes, links, form fields, signing flags and bookmarks on or beside the
+paragraphs that move go with them, onto the next page too. If something cannot move
+with the text — a line or picture drawn there, a note or link half in and half out of
+what moves, or text that would change page but is tagged for accessibility as part of
+its page — it is refused with the reason rather than left pointing at the wrong words. (The same
 goes for a link laid over the paragraph's own words, which the new wrapping would
 move under it.)
 

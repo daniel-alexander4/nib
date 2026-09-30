@@ -187,3 +187,63 @@ test('a signed document is refused: the dialog says why before any request, and 
   assert.equal(answer.body.ok, false, 'the server reflowed a signed document');
   assert.equal(answer.body.cause, 'signed', `the server refused for another reason: ${answer.body.cause}`);
 });
+
+// P07's exit criterion through the binary (S06): a growth on a full page flows its last paragraph onto page 2 — and the link
+// laid over that paragraph goes with it, onto page 2, rather than staying behind on page 1 over other words. Read from
+// pdf.js's text and annotation layers of the re-rendered pages.
+function flowPDF() {
+  const line = (p, k) => `Page ${p} paragraph ${String(k).padStart(2, '0')} words run on`;
+  const pageContent = (p, n) => Array.from({ length: n }, (_, k) =>
+    `BT /F1 12 Tf 14 TL 72 ${700 - 38 * k} Td (${line(p, k)}) Tj T* (${line(p, k)}) Tj ET`).join('\n');
+  const c1 = pageContent(1, 16), c2 = pageContent(2, 3);
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 5 0 R /Annots [8 0 R] >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>',
+    `<< /Length ${c1.length} >>\nstream\n${c1}\nendstream`,
+    `<< /Length ${c2.length} >>\nstream\n${c2}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Annot /Subtype /Link /Rect [72 114 300 142] /Border [0 0 0] /A << /S /URI /URI (https://example.com/carried) >> >>',
+  ];
+  let out = '%PDF-1.7\n';
+  const offs = [];
+  objs.forEach((o, i) => { offs.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return { pdf: Buffer.from(out, 'latin1'), first: `${line(1, 0)} ${line(1, 0)}`, leaving: line(1, 15) };
+}
+const FLOW = flowPDF();
+const FLOWDOC = writeRawFixture('reflow-flow.pdf', FLOW.pdf);
+
+const onPage = (n, what) => page.evaluate(([n, what]) => {
+  const pg = document.querySelector(`.viewerContainer:not([hidden]) .page[data-page-number="${n}"]`);
+  if (!pg) return null;
+  pg.scrollIntoView();
+  if (what === 'text') return [...pg.querySelectorAll('.textLayer span')].map((s) => s.textContent).join(' ');
+  return [...pg.querySelectorAll('.annotationLayer a[href]')].map((a) => a.href);
+}, [n, what]);
+
+test('a growth on a full page flows its last paragraph onto the next page, and the link on it goes too', async () => {
+  await h.openDocument(FLOWDOC, 2);
+  await page.waitForFunction((w) => [...document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="1"] .textLayer span')]
+    .some((s) => s.textContent.includes(w)), FLOW.leaving);
+  await page.waitForFunction(() => document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="1"] .annotationLayer a[href]').length === 1);
+  assert.deepEqual(await onPage(1, 'links'), ['https://example.com/carried'], 'setup: the link must be on page 1 before the edit');
+  await openReflow();
+  assert.equal(await page.$eval('#reflowText', (t) => t.value), FLOW.first, 'the dialog did not offer page 1\'s first paragraph');
+  const l = FLOW.first.split(' ').slice(0, 7).join(' ');
+  await page.fill('#reflowText', `${FLOW.first} ${l} ${l} ${l}`);
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the flow was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction((w) => [...document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="2"] .textLayer span')]
+    .some((s) => s.textContent.includes(w)) || (document.querySelector('.viewerContainer:not([hidden]) .page[data-page-number="2"]')?.scrollIntoView(), false), FLOW.leaving, { timeout: 15000 });
+  assert.match(await onPage(2, 'text'), new RegExp(FLOW.leaving), 'the paragraph did not arrive on page 2');
+  assert.doesNotMatch(await onPage(1, 'text'), new RegExp(FLOW.leaving), 'the paragraph is still drawn on page 1');
+  await page.waitForFunction(() => document.querySelectorAll('.viewerContainer:not([hidden]) .page[data-page-number="2"] .annotationLayer a[href]').length > 0, null, { timeout: 15000 });
+  assert.deepEqual(await onPage(2, 'links'), ['https://example.com/carried'], 'the link did not go to page 2 with its paragraph');
+  assert.deepEqual(await onPage(1, 'links'), [], 'the link stayed behind on page 1, over other words');
+});

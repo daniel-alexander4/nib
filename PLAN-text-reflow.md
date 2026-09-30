@@ -787,12 +787,31 @@ refuses all 641 of their page-1 paragraphs `tagged-across-pages` and reaches onl
 Dan whether P07 carries the structure tree (recommended) or ships with the refusal. Review
 `code-reviews/v1.171.0-p07s05-2026-09-30.md`.
 
-#### P07.S06 — flow across pages
+#### P07.S06 — flow across pages *(done 2026-09-30, v1.172.0)*
 When the room is not enough, the region's last paragraphs move to the top of the next page's region, which moves down in
 turn — to the document's last page, where overflow refuses. Single-column pages only; anchored objects (S04) and NibFlags
 move with their paragraph, across pages included. Acceptance: the phase's exit criterion, driven through the real binary
 at tier 3 — content that moves takes its annotations, links and widgets, or the operation refuses, and nothing anchored
 is silently orphaned.
+
+**PIN 2026-09-30 (slice grill).** Landing and pushing are ONE rule, `pushDown`: a block of a column's paragraphs starting at
+one of them moves down by P; what no longer fits above the page's floor leaves, whole, for the top of the next page, whose
+block from its first paragraph is pushed in turn — and on the last page it refuses `page-full`. The edited page is its
+first application. The carried block lands with its first baseline on the next page's first paragraph's, and pushes it by
+the block's baseline span plus its column's usual paragraph step. Anchors inside what crosses CROSS: an annotation moves
+from one page's `/Annots` to the next's (its `/P` re-pointed), a destination's page reference changes, a flag's page
+number. **Rung 2, recorded**: the next page's body starts at its first paragraph — a running header there leaves no room,
+and the growth refuses rather than guessing around it; the block keeps its own x (one document's pages share a column); a
+blank next page refuses; tagged documents refuse at the carry (`/pending 779`), so the real corpus cannot reach this slice
+and its evidence is generated documents.
+
+**Tasks** (slice grill, 2026-09-30): T01 — `pushDown` over pages, returning each page's edits. T02 — the edited page
+composes P06's emission, S02's moves and S05's deletions in one edit. T03 — `setRunsOn` over the target's already-edited
+content. T04 — `carryAnchors`: annotations, destinations and flags across pages. T05 — two- and three-page cascades read
+back, anchors carried, the last page refusing, a multi-column page refusing; tier 3 through the binary.
+**Closed 2026-09-30.** Red-proofing found a popup treated as an anchor of its own — its window refused flows and was
+moved twice — so a popup now moves only with its note. Tier 3 drives a flow onto page 2 and reads the carried LINK there.
+Review `code-reviews/v1.171.1-p07s06-2026-09-30.md`.
 
 ### P08 — Typographic fidelity
 **Goal.** Justification, kerning from `TJ` arrays, and the text-state parameters the current edit

@@ -105,10 +105,7 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 		if err := setPageContent(ctx, d, o.content); err != nil {
 			return err
 		}
-		if o.shift != nil {
-			return shiftAnchors(ctx, pg, o.shift.zone, o.shift.dy)
-		}
-		return nil
+		return applyFlow(ctx, o.flow)
 	})
 	if errors.Is(err, errNothingToWrite) {
 		return nil, refusal, nil
