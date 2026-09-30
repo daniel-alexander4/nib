@@ -72,8 +72,9 @@ type pageLayout struct {
 }
 
 // readPageLayout is the door consumers call: a page's runs, grouped.
-func readPageLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error) {
-	pr, err := readPageRuns(ctx, pg)
+// shared is a loop's one budget for the pages it reads, as `readPageRuns` takes it.
+func readPageLayout(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageLayout, error) {
+	pr, err := readPageRuns(ctx, pg, shared...)
 	if err != nil {
 		return pageLayout{}, err
 	}

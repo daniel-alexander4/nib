@@ -113,8 +113,9 @@ func readStructureView(pdf []byte) (structureView, error) {
 		}
 		return b
 	}
+	budget := newFormWalkBudget(ctx.PageCount) // one for the document (`readPageRuns`)
 	for pg := 1; pg <= ctx.PageCount; pg++ {
-		pr, perr := readPageRuns(ctx, pageAt(ctx, walked, pg))
+		pr, perr := readPageRuns(ctx, pageAt(ctx, walked, pg), budget)
 		if perr != nil {
 			return structureView{}, perr
 		}

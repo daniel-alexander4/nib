@@ -54,6 +54,8 @@ const (
 	maxOptimizeCompare = 1 << 22
 	// maxUnfold saturates one graph's unfolded size, so the estimate cannot overflow.
 	maxUnfold = 1 << 24
+	// maxPairDepth bounds `pairSteps`' recursion: three levels a compared pair (stream, /Resources, /XObject).
+	maxPairDepth = 1 << 12
 )
 
 // ReadOptimized is nib's one `ReadValidateAndOptimize`: it reads and validates through `Validated` (so a `/UseCMap`
@@ -268,6 +270,8 @@ func (e *optimizeEstimate) compareUnits() int {
 	type group struct {
 		n, largest int
 		shapes     map[uint64]bool
+		members    map[int]uint64 // object number → shape hash
+		cyclic     bool
 	}
 	groups := map[int64]*group{}
 	for nr, sd := range e.forms {
@@ -277,12 +281,14 @@ func (e *optimizeEstimate) compareUnits() int {
 		}
 		g := groups[length]
 		if g == nil {
-			g = &group{shapes: map[uint64]bool{}}
+			g = &group{shapes: map[uint64]bool{}, members: map[int]uint64{}}
 			groups[length] = g
 		}
 		s := e.shape(*types.NewIndirectRef(nr, 0), map[int]bool{})
 		g.n++
 		g.shapes[s.hash] = true
+		g.members[nr] = s.hash
+		g.cyclic = g.cyclic || s.cyclic
 		if s.size > g.largest {
 			g.largest = s.size
 		}
@@ -291,7 +297,114 @@ func (e *optimizeEstimate) compareUnits() int {
 	for _, g := range groups {
 		units = satAdd(units, satMul(satMul(g.n-1, len(g.shapes)), g.largest))
 	}
+	// A group holding a cycle is charged by walking its comparisons, because its unfolded size says nothing about
+	// them — `pairSteps`. As above, the cache can hold only structurally distinct forms apart, so every pair of
+	// distinct shapes is charged and each further copy one comparison with the first of its shape.
+	for _, g := range groups {
+		if !g.cyclic || units > maxOptimizeCompare {
+			continue
+		}
+		nrs := make([]int, 0, len(g.members))
+		for nr := range g.members {
+			nrs = append(nrs, nr)
+		}
+		sort.Ints(nrs)
+		first := map[uint64]int{}
+		var reps []int
+		for _, nr := range nrs {
+			if _, seen := first[g.members[nr]]; !seen {
+				first[g.members[nr]] = nr
+				reps = append(reps, nr)
+			}
+		}
+		charge := func(a, b int) {
+			left := maxOptimizeCompare - units + 1
+			units += e.pairSteps(*types.NewIndirectRef(a, 0), *types.NewIndirectRef(b, 0), nil, &left, 0)
+		}
+		for i := 1; i < len(reps) && units <= maxOptimizeCompare; i++ {
+			for j := 0; j < i && units <= maxOptimizeCompare; j++ {
+				charge(reps[i], reps[j])
+			}
+		}
+		for _, nr := range nrs {
+			if rep := first[g.members[nr]]; rep != nr && units <= maxOptimizeCompare {
+				charge(nr, rep)
+			}
+		}
+	}
 	return units
+}
+
+// pairSteps counts the steps pdfcpu's `model.EqualObjects` (v0.13.0, model/equal.go) takes comparing a and b, and
+// stops counting once *left runs out — `/pending 715`. It mirrors the walk: equal references are equal at once, a
+// pair of object numbers already on the path is equal at once (the ONLY cut on a cycle, which is why two cycles of
+// different lengths are walked to their lcm), and otherwise dictionaries and arrays of one size descend. It errs
+// towards cost: it does not stop at the first difference, because pdfcpu ranges a dictionary in map order and so
+// may meet the difference last.
+func (e *optimizeEstimate) pairSteps(a, b types.Object, pairs []int, left *int, depth int) int {
+	if *left <= 0 {
+		return 0
+	}
+	if depth > maxPairDepth {
+		// pdfcpu recurses as deep as this walk does, and a walk this deep is a pair path no document needs: it is
+		// charged everything left, so the pass is skipped rather than this walk (or pdfcpu's) running the stack out.
+		all := *left
+		*left = 0
+		return all
+	}
+	*left--
+	steps := 1
+	ra, aRef := a.(types.IndirectRef)
+	rb, bRef := b.(types.IndirectRef)
+	if aRef && bRef {
+		if ra == rb {
+			return steps
+		}
+		x, y := ra.ObjectNumber.Value(), rb.ObjectNumber.Value()
+		if x > y {
+			x, y = y, x
+		}
+		for i := 0; i+1 < len(pairs); i += 2 {
+			*left-- // pdfcpu's containsPair is a linear scan
+			steps++
+			if pairs[i] == x && pairs[i+1] == y {
+				return steps
+			}
+		}
+		pairs = append(pairs[:len(pairs):len(pairs)], x, y)
+	}
+	da, erra := e.ctx.Dereference(a)
+	db, errb := e.ctx.Dereference(b)
+	if erra != nil || errb != nil || da == nil || db == nil {
+		return steps
+	}
+	switch va := da.(type) {
+	case types.Dict:
+		if vb, ok := db.(types.Dict); ok && len(va) == len(vb) {
+			steps += e.pairDictSteps(va, vb, pairs, left, depth)
+		}
+	case types.StreamDict:
+		if vb, ok := db.(types.StreamDict); ok && len(va.Dict) == len(vb.Dict) {
+			steps += e.pairDictSteps(va.Dict, vb.Dict, pairs, left, depth)
+		}
+	case types.Array:
+		if vb, ok := db.(types.Array); ok && len(va) == len(vb) {
+			for i := range va {
+				steps += e.pairSteps(va[i], vb[i], pairs, left, depth+1)
+			}
+		}
+	}
+	return steps
+}
+
+func (e *optimizeEstimate) pairDictSteps(a, b types.Dict, pairs []int, left *int, depth int) int {
+	steps := 0
+	for k, va := range a {
+		if vb, ok := b[k]; ok {
+			steps += e.pairSteps(va, vb, pairs, left, depth+1)
+		}
+	}
+	return steps
 }
 
 // objShape is an object's structural hash — equal objects hash equal, so the number of distinct hashes
@@ -300,6 +413,8 @@ func (e *optimizeEstimate) compareUnits() int {
 type objShape struct {
 	hash uint64
 	size int
+	// cyclic is set when the object's graph meets an object already on its own path — a size that stopped there.
+	cyclic bool
 }
 
 // shape computes o's objShape, memoised by object number. An object met again on the current path hashes by
@@ -314,8 +429,11 @@ func (e *optimizeEstimate) shape(o types.Object, onPath map[int]bool) objShape {
 			return s
 		}
 		if onPath[nr] {
+			// The size cut here is only the size of one pass round the cycle, which is NOT what a comparison
+			// costs: the shape is marked cyclic, and `compareUnits` counts such a group's comparisons by walking
+			// them (`pairSteps`, /pending 715).
 			fmt.Fprintf(h, "cycle %d", nr)
-			return objShape{hash: h.Sum64(), size: 1}
+			return objShape{hash: h.Sum64(), size: 1, cyclic: true}
 		}
 		onPath[nr] = true
 		d, err := e.ctx.Dereference(v)
@@ -336,16 +454,17 @@ func (e *optimizeEstimate) shape(o types.Object, onPath map[int]bool) objShape {
 		h.Reset()
 		fmt.Fprintf(h, "%x", s.hash)
 		h.Write(v.Raw)
-		return objShape{hash: h.Sum64(), size: s.size}
+		return objShape{hash: h.Sum64(), size: s.size, cyclic: s.cyclic}
 	case types.Array:
 		fmt.Fprintf(h, "array %d", len(v))
-		size := 1
+		size, cyclic := 1, false
 		for _, el := range v {
 			c := e.shape(el, onPath)
 			fmt.Fprintf(h, " %x", c.hash)
 			size = satAdd(size, c.size)
+			cyclic = cyclic || c.cyclic
 		}
-		return objShape{hash: h.Sum64(), size: min(size, maxUnfold)}
+		return objShape{hash: h.Sum64(), size: min(size, maxUnfold), cyclic: cyclic}
 	case nil:
 		fmt.Fprintf(h, "null")
 	default:
@@ -359,13 +478,14 @@ func (e *optimizeEstimate) shapeDict(h interface {
 	Sum64() uint64
 }, kind string, d types.Dict, onPath map[int]bool) objShape {
 	fmt.Fprintf(h, "%s %d", kind, len(d))
-	size := 1
+	size, cyclic := 1, false
 	for _, k := range sortedKeys(d) {
 		c := e.shape(d[k], onPath)
 		fmt.Fprintf(h, " /%s %x", k, c.hash)
 		size = satAdd(size, c.size)
+		cyclic = cyclic || c.cyclic
 	}
-	return objShape{hash: h.Sum64(), size: min(size, maxUnfold)}
+	return objShape{hash: h.Sum64(), size: min(size, maxUnfold), cyclic: cyclic}
 }
 
 func sortedKeys(d types.Dict) []string {

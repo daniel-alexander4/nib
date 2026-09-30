@@ -126,6 +126,29 @@ func (b *formWalkBudget) formContent(sd *types.StreamDict, obj types.Object) []b
 	return src
 }
 
+// deeper reports whether a walk at depth may enter a form one level further in, where limit is the walker's own
+// depth bound, and past it stops the walk and SAYS so — `/pending 715`. A depth cut that returned silently left
+// every form below it unread while the counts or runs built above it read as the whole page, which is the defect
+// the budget exists to refuse; `internal/uacheck` names its own cut the same way (`content.go`, `maxFormDepth`).
+func (b *formWalkBudget) deeper(depth, limit int) bool {
+	if b.over != "" {
+		return false
+	}
+	if depth >= limit {
+		b.over = fmt.Sprintf("the content nests form XObjects more than %d deep; nib stops reading there, so "+
+			"what the deeper forms draw was never read", limit)
+		return false
+	}
+	return true
+}
+
+// nextPage starts the next page of a walk that shares one budget across a document (`readPageRunsWithin`). The
+// counts carry over — that is the point — and the decoded forms do not: holding every page's forms for the whole
+// document would keep up to the document's byte allowance alive at once, where a page's walk holds a page's.
+func (b *formWalkBudget) nextPage() {
+	b.decoded = nil
+}
+
 // err is the budget's verdict: nil, or why the walk stopped.
 func (b *formWalkBudget) err() error {
 	if b.over == "" {

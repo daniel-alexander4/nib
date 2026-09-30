@@ -72,8 +72,9 @@ const maxHeadingLines = 3
 // document. It reads; it never writes.
 func proposeStructure(ctx *model.Context) (proposal, error) {
 	layouts := make([]pageLayout, 0, ctx.PageCount)
+	budget := newFormWalkBudget(ctx.PageCount) // one for the document (`readPageRuns`)
 	for _, pg := range pdfread.Pages(ctx) {
-		l, err := readPageLayout(ctx, pg)
+		l, err := readPageLayout(ctx, pg, budget)
 		if err != nil {
 			return proposal{}, err
 		}

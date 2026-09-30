@@ -91,13 +91,14 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			pageNrs = append(pageNrs, el.page)
 		}
 		pageNrs = append(pageNrs, alsoPages...)
-		walked := pdfread.Pages(ctx) // one walk for the whole read, not one per page (/pending 756)
+		walked := pdfread.Pages(ctx)              // one walk for the whole read, not one per page (/pending 756)
+		budget := newFormWalkBudget(len(pageNrs)) // one for the pages read (`readPageRuns`)
 		for _, pageNr := range pageNrs {
 			el := proposedElement{page: pageNr}
 			if _, seen := pages[el.page]; seen {
 				continue
 			}
-			pr, perr := readPageRuns(ctx, pageAt(ctx, walked, el.page))
+			pr, perr := readPageRuns(ctx, pageAt(ctx, walked, el.page), budget)
 			if perr != nil {
 				return perr
 			}
