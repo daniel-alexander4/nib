@@ -291,6 +291,16 @@ func waitCtx(ctx context.Context, d time.Duration) bool {
 // rather than introducing a new limit on retry. Said out loud because a future reader will
 // otherwise read Once as one.
 //
+// **On a SHARED endpoint the object is not the unit of network contact (/pending 710 R4-6).** The
+// delivery round opens one `rz` (`openRoundRendezvous`), stamps a door `ceremonyID` over it, and
+// every leg borrows the same `rz` into its own `ceremonyID` — so one DHT server is bootstrapped once
+// per leg that reaches the DHT, plus once by the door. That is deliberate and not a missed dedupe:
+// hoisting the Once onto the shared `rz` would let the FIRST leg's ctx govern the attempt for the
+// whole round, and a leg that ends early (the LAN answered) mid-bootstrap would cache a cancelled
+// attempt for every later leg — a round that could no longer reach the DHT at all. A re-bootstrap
+// over a warm routing table is a traversal from nodes already held; its cost is unmeasured, and the
+// live-DHT harness that could measure it is `/pending 2`'s.
+//
 // The first caller's ctx governs the attempt and later callers get the cached result; every caller
 // is bound to the ceremony's own lifetime, so a ctx that dies is a ceremony that is ending.
 func (c *ceremonyID) ensureBootstrapped(ctx context.Context) error {

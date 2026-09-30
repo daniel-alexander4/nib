@@ -137,7 +137,7 @@ func TestEveryCeremonySweepGoesThroughTheOneDoor(t *testing.T) {
 		t.Fatalf("setup: scanned %d source file(s) — this guard is not reading internal/server", scanned)
 	}
 	if len(takers) != 1 || takers["ceremonyarm.go"] != 1 {
-		t.Errorf("sweepMu is taken in %v, want exactly one place (ceremonyarm.go, runCeremonySweep). "+
+		t.Errorf("sweepMu is taken in %v, want exactly one place (ceremonyarm.go, inCeremonySweep). "+
 			"A second taker is a second answer to \"is a sweep running\", which is the duplicate "+
 			"derivation ADR-009 refuses", takers)
 	}

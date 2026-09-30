@@ -324,15 +324,28 @@ func (s *Server) rearmCeremoniesAsync(v *vault.Vault, prefer string) {
 // depth available in practice — the triggers are an unlock, an import and an accept, all of them
 // human-paced.
 //
-// **And the lock is not on any path a user waits on.** Every caller is already detached, so what
-// queues behind it is another sweep. The body itself is bounded local work: a directory listing, a
-// mirror read per ceremony, vault writes for a close-out, and a socket bind — every arm hands its
-// accept loop to its own goroutine rather than waiting on the network inside this hold.
+// **One path a user waits on DOES take the lock, and it must (/pending 710 R4-2).** `GET
+// /api/ceremonies` runs `closeOutEnded` synchronously before it lists, so the user sees what is on
+// disk — and it ran it OUTSIDE this lock, which reinstated the race the paragraph above closes: the
+// unlock's re-arm could arm a delivery for a ceremony the GET had just moved out from under it, and
+// two overlapping GETs raced `CloseOutMirror` (Stat, then a Rename that finds ENOENT). It goes
+// through `inCeremonySweep` on its own goroutine, so what it can wait on is one sweep's body:
+// bounded local work — a directory listing, a mirror read per ceremony, vault writes for a
+// close-out, and a socket bind — because every arm hands its accept loop to its own goroutine
+// rather than waiting on the network inside this hold. Every other caller is detached.
 func (s *Server) runCeremonySweep(what string, body func()) {
 	go func() {
 		defer safe.Recover(what)
-		s.sweepMu.Lock()
-		defer s.sweepMu.Unlock()
-		body()
+		s.inCeremonySweep(body)
 	}()
+}
+
+// inCeremonySweep runs body under `sweepMu` on the CALLER's goroutine — the one place the lock is
+// taken. `runCeremonySweep` is its detached form; the listing route calls it directly because its
+// answer must be post-close-out. Every `closeOutEnded` call goes through one of the two
+// (`TestEveryCloseOutRunsInsideTheCeremonySweep`).
+func (s *Server) inCeremonySweep(body func()) {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	body()
 }

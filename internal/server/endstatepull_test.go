@@ -205,20 +205,33 @@ func TestThePreHopEndStateMechanismIsStillWired(t *testing.T) {
 	// by the convener's delivery round. Spawning it unconditionally is mutation 2, and it would
 	// have every party in a ceremony reading the DHT for an end state the round is about to hand
 	// them.
-	// `runCeremonyReceive`, not `armCeremonyHop` — the arm's LISTENING half, which is where the
-	// pull is spawned and where `cer` is in hand. Named by reading `go s.fetchEndStateWhenSlow(`'s
-	// enclosing function rather than by remembering it.
-	arm := funcBodyFrom(string(session), strings.Index(string(session), "func (s *Server) runCeremonyReceive("))
-	if !strings.Contains(arm, "armAnnouncer") {
-		t.Fatal("runCeremonyReceive's body could not be read — an empty body contains none of the " +
-			"strings below either, so every clause in this test would pass over nothing")
+	// **Both arm functions, through one door (/pending 710 R4-3).** This clause read only
+	// `runCeremonyReceive`, so it covered one of the two ceremony arms, and the TCP one — `runSession`
+	// — never spawned the pull: a TCP-armed invitee whose proceeding ended held the slot for the hop
+	// window, which is the consequence the message below states. The listening half of each arm, not
+	// `armCeremonyHop`, because that is where `cer` is in hand.
+	for _, fn := range []string{"runCeremonyReceive", "runSession"} {
+		arm := funcBodyFrom(string(session), strings.Index(string(session), "func (s *Server) "+fn+"("))
+		if !strings.Contains(arm, "armAnnouncer") {
+			t.Fatalf("%s's body could not be read — an empty body contains none of the strings "+
+				"below either, so this clause would pass over nothing", fn)
+		}
+		if !strings.Contains(arm, "s.pullEndStateBeforeSigning(") {
+			t.Errorf("the ceremony arm %s no longer starts the end-state pull. A party whose "+
+				"proceeding ends before the baton reaches them then holds the interactive slot for "+
+				"the whole hop window, and nothing local ever tells them otherwise", fn)
+		}
 	}
-	if !strings.Contains(arm, "go s.fetchEndStateWhenSlow(") {
-		t.Error("the ceremony arm no longer spawns fetchEndStateWhenSlow. A party whose proceeding " +
-			"ends before the baton reaches them then holds the interactive slot until the process " +
-			"exits, and nothing local ever tells them otherwise")
+	// The door is the only spawn site, and it carries the guard.
+	if n := strings.Count(string(session)+string(delivery), "go s.fetchEndStateWhenSlow("); n != 1 {
+		t.Errorf("fetchEndStateWhenSlow is spawned at %d sites; `pullEndStateBeforeSigning` is the "+
+			"one door, or its guard reaches some arms and not others", n)
 	}
-	if !strings.Contains(arm, "if !cer.hasSigned() {") {
+	door := funcBodyFrom(string(delivery), strings.Index(string(delivery), "func (s *Server) pullEndStateBeforeSigning("))
+	if !strings.Contains(door, "go s.fetchEndStateWhenSlow(") {
+		t.Fatal("pullEndStateBeforeSigning's body could not be read, or no longer spawns the pull")
+	}
+	if !strings.Contains(door, "cer.hasSigned()") {
 		t.Error("the pull is no longer guarded on this party not having signed. A party who HAS " +
 			"signed holds a record and is reached by the delivery round; spawning it for them is " +
 			"every party in the ceremony reading the DHT for something they are about to be handed")
