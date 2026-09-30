@@ -1,7 +1,7 @@
-// Package testpdf generates small AcroForm PDFs for tests. It is imported only
-// from _test files, so pdfcpu is not linked into the nib binary (the M1
-// binary does its PDF work in the browser via pdf.js); pdfcpu joins the main
-// build when stamping/flattening land in later milestones.
+// Package testpdf generates small AcroForm PDFs for tests, and for
+// `build/genpdf.go`'s fixture generator. No product package imports it — the nib
+// binary reaches pdfcpu through `internal/pdfops`, not through here — so what it
+// builds is a fixture, never a document nib ships.
 package testpdf
 
 import (

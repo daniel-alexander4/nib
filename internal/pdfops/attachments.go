@@ -1219,15 +1219,9 @@ func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
 			if annot == nil || nameVal(annot, "Subtype") != "Widget" {
 				continue
 			}
-			// /FT may live on the widget or be inherited from its AcroForm field parent; a
-			// signature widget that carries neither is not one.
-			ft := nameVal(annot, "FT")
-			if ft == "" {
-				if parent := derefDict(ctx.XRefTable, annot["Parent"]); parent != nil {
-					ft = nameVal(parent, "FT")
-				}
-			}
-			if ft != "Sig" {
+			// /FT is inheritable from ANY ancestor field (ISO 32000-1 Table 220), not only the
+			// widget's direct parent — `inheritedFieldType` is the one reading of it.
+			if inheritedFieldType(ctx.XRefTable, annot) != "Sig" {
 				continue
 			}
 			r := derefArray(ctx.XRefTable, annot["Rect"])

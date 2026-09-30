@@ -53,10 +53,17 @@ import (
 // # When a stream cannot be read
 //
 // Its names are unknowable, so its owner cannot be pruned. `refuseUnreadable` — redaction — refuses
-// the operation, because keeping the owner's dictionary keeps whatever the redacted page shared with
 // it. `keepUnreadable` — every other door — leaves that owner's dictionary as it was, which is what
 // every subset did before this existed; a page whose content no reader can decode is not made
 // unremovable by it.
+//
+// **Under `keepUnreadable` the PAGE is left as it was whenever anything it reaches is unreadable, not
+// only when the page's own content is** (`/pending 709` R2-9). An unreadable annotation appearance or
+// resource child stops the page's prune before its `/Resources` is rebuilt. Where that stream has no
+// `/Resources` of its own it reads the page's, so the page IS its owner and pruning it could blank the
+// annotation; where it has its own, the page was prunable and is over-kept. The direction is the safe
+// one — every entry survives, which is the pre-`/pending 688` behaviour — and the reader cannot tell
+// the two apart, because a stream it cannot decode is refused before its `/Resources` is looked at.
 
 // unreadablePolicy says what a selection does with a kept page whose drawing it cannot read.
 type unreadablePolicy int

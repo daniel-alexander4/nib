@@ -804,8 +804,12 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 		return nil, err
 	}
 
-	parts := make([]SplitPart, 0, len(bms))
-	seen := map[string]int{}
+	// The spans are decided BEFORE the first part is collected, so the cap refuses before any of the
+	// work it bounds is done — each part is a full `Collect` of the whole document.
+	type span struct {
+		sel, title string
+	}
+	var spans []span
 	for i, bm := range bms {
 		from := bm.PageFrom
 		if from < 1 {
@@ -818,18 +822,36 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 		if thru < from {
 			continue // two bookmarks on the same page → empty span
 		}
-		data, err := Collect(pdf, []string{fmt.Sprintf("%d-%d", from, thru)})
+		spans = append(spans, span{fmt.Sprintf("%d-%d", from, thru), bm.Title})
+	}
+	if err := refuseTooManyParts(len(spans)); err != nil {
+		return nil, err
+	}
+	parts := make([]SplitPart, 0, len(spans))
+	seen := map[string]int{}
+	for _, sp := range spans {
+		data, err := Collect(pdf, []string{sp.sel})
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+bm.Title), len(parts)+1, seen), Data: data})
+		parts = append(parts, SplitPart{Name: UniqueName(SanitizeFilename(prefix+sp.title), len(parts)+1, seen), Data: data})
 	}
 	return parts, nil
 }
 
-// maxSplitParts caps how many files a page-span split may produce, so a tiny
-// every-N on a huge document can't spew thousands of files.
+// maxSplitParts caps how many files a split may produce, so a tiny every-N on a huge document — or a
+// document with thousands of top-level bookmarks — can't spew thousands of files, each a full parse.
 const maxSplitParts = 500
+
+// refuseTooManyParts is the cap's one door (ADR-009): both page-sequence splitters call it. It bound
+// only `SplitBySpans` until `/pending 709` R2-6, so a bookmark split was parts × a full parse with no
+// ceiling at all.
+func refuseTooManyParts(n int) error {
+	if n > maxSplitParts {
+		return fmt.Errorf("too many output files (%d, max %d)", n, maxSplitParts)
+	}
+	return nil
+}
 
 // SplitBySpans splits pdf into one file per page-span selection in spans, in
 // order — each span is a pdfcpu page selection (e.g. "1-3" or "5"), collected
@@ -840,8 +862,8 @@ func SplitBySpans(pdf []byte, spans []string, prefix string) ([]SplitPart, error
 	if len(spans) == 0 {
 		return nil, fmt.Errorf("no page ranges given")
 	}
-	if len(spans) > maxSplitParts {
-		return nil, fmt.Errorf("too many output files (%d, max %d)", len(spans), maxSplitParts)
+	if err := refuseTooManyParts(len(spans)); err != nil {
+		return nil, err
 	}
 	parts := make([]SplitPart, 0, len(spans))
 	seen := map[string]int{}
