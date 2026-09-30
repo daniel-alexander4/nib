@@ -49,19 +49,12 @@ var corpusAllow = map[string]string{}
 // stops disagreeing is an error.
 var corpusStrict = map[string]string{
 	// Measured at the P08 phase close, 2026-09-28, veraPDF 1.30.2 over the 297-file set.
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t30":                        "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t31":                        "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t32":                        "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t30":                          "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t31":                          "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t32":                          "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
-	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t34":                        "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
-	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t34":                          "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
-	"7.18 Annotations/7.18.1 General/7.18.1-t03-pass-f.pdf / 7.2 t34": "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
-	"7.20 XObjects/7.20-t01-fail-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
-	"7.20 XObjects/7.20-t01-pass-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
-	"7.20 XObjects/7.20-t02-fail-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
-	"7.20 XObjects/7.20-t02-pass-a.pdf / 7.2 t34":                     "/pending 703 — nib answers Pass on content language where veraPDF has no subject",
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t30": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t31": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.1 General/7.1-t11-fail-a.pdf / 7.2 t32": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t30":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t31":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
+	"7.15 XFA/7.15-t01-fail-a.pdf / 7.2 t32":   "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject",
 }
 
 // corpusReach is, per implemented clause, the number of corpus files on which veraPDF evaluated the clause and
@@ -132,6 +125,9 @@ var corpusStrict = map[string]string{
 // P05.S04: both media-clip clauses join at **5** — every corpus file under `7.18.6 Media`, and unlike P05.S02's
 // TrapNet clause this family has real corpus evidence on BOTH halves (two `t01` files and three `t02`). Pairs
 // 22,972 → 23,562, and the phase closes the checker at 80 of the 106.
+// `/pending 703`: `7.2 t34` DROPS 295 → **288**, and the drop is the fix. The seven files leaving are exactly the
+// seven `corpusStrict` named — a catalog `/Lang` and no page-content text — where veraPDF has no subject and nib now
+// answers NotApplicable instead of Pass. No other row moved.
 var corpusReach = map[string]int{
 	"5 t1": 294, "5 t2": 293, "6.2 t1": 295,
 	// P06.S01. The three prefix clauses share `5 t2`'s subject gate — the identification's presence — so
@@ -199,7 +195,7 @@ var corpusReach = map[string]int{
 	"7.18.5 t1": 31, "7.18.5 t2": 31, "7.18.8 t1": 1, "7.18.2 t1": 0,
 	"7.18.1 t3": 19, "7.18.3 t1": 295,
 	"7.18.6.2 t1": 5, "7.18.6.2 t2": 5,
-	"7.2 t33": 293, "7.2 t34": 295, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
+	"7.2 t33": 293, "7.2 t34": 288, "7.3 t1": 18, "7.4.2 t1": 134, "7.5 t1": 36,
 	"7.10 t1": 6, "7.10 t2": 6, "7.18.4 t1": 19,
 	"7.21.4.1 t1": 287, "7.21.4.2 t2": 62, "7.21.7 t1": 282, "7.21.7 t2": 282,
 }

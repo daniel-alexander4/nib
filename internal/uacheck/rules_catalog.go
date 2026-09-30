@@ -283,9 +283,13 @@ func checkMetadataLanguage(d *Document) Result {
 func checkContentLanguage(d *Document) Result {
 	// A declared catalog /Lang determines every piece of text — present counts, even empty: veraPDF's
 	// test is `gContainsCatalogLang`, and an empty value is 7.2 t29's failure, which nib does not check.
-	if catalogDeclaresLang(d) {
-		return Result{Verdict: Pass}
-	}
+	//
+	// **It settles each subject; it does not supply one** (`/pending 703`). The test is evaluated per piece of
+	// page-content text, so a document that shows none has no subject however its catalog reads: veraPDF
+	// reports nothing for 7.2 t34 on seven corpus files that declare a catalog `/Lang` and show no page-content
+	// text (text only in an annotation appearance, or none at all), and this rule used to answer Pass on all
+	// seven by returning before it had counted a single subject.
+	catalogLang := catalogDeclaresLang(d)
 	// A walk that stopped leaves the events it DID record, each settled where it was drawn; they are judged,
 	// and the stop is answered only when none of them fails (`heldRefusal`).
 	events, errWhy := d.contentEvents()
@@ -297,7 +301,7 @@ func checkContentLanguage(d *Document) Result {
 			continue
 		}
 		texts++
-		if ev.langDetermined {
+		if catalogLang || ev.langDetermined {
 			continue
 		}
 		if ev.langUnread != "" {
@@ -333,6 +337,10 @@ func checkContentLanguage(d *Document) Result {
 	}
 	if r, ok := held.result(); ok {
 		return r
+	}
+	// With a catalog /Lang, one subject seen is enough: any text the walk did not reach would pass too.
+	if catalogLang && texts > 0 {
+		return Result{Verdict: Pass}
 	}
 	if errWhy != "" {
 		return Result{Verdict: CannotCheck, Why: errWhy}

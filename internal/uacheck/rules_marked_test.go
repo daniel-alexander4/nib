@@ -296,6 +296,38 @@ func TestTextInsideAnArtifactStillNeedsALanguage(t *testing.T) {
 	}
 }
 
+// TestACatalogLangSettlesTextItDoesNotSupplyIt — `/pending 703`. veraPDF's 7.2 t34 is evaluated per piece of
+// page-content text, so a catalog `/Lang` passes each subject and supplies none: a document that shows no page-content
+// text has NO subject however its catalog reads. veraPDF reported nothing for t34 on seven corpus files of exactly that
+// shape (`7.1-t11-fail-a`, `7.15-t01-fail-a`, `7.18.1-t03-pass-f`, `7.20-t0{1,2}-{fail,pass}-a`) while nib answered
+// Pass, because the catalog check returned before a single subject was counted. Every row below was run on veraPDF
+// 1.30.2: the two NotApplicable rows produce no 7.2-34 check at all, the Pass row one passed check.
+func TestACatalogLangSettlesTextItDoesNotSupplyIt(t *testing.T) {
+	ap := "BT /F1 12 Tf 0 0 Td (note) Tj ET"
+	annotPage := map[int]string{
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> " +
+			"/Contents 4 0 R /StructParents 0 /Annots [20 0 R] >>",
+		20: "<< /Type /Annot /Subtype /Square /Rect [0 0 50 50] /F 4 /AP << /N 21 0 R >> >>",
+		21: fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 50 50] /Resources << /Font << /F1 5 0 R >> >> "+
+			"/Length %d >>\nstream\n%s\nendstream", len(ap), ap),
+	}
+	for _, tc := range []struct {
+		name string
+		doc  markedDoc
+		want Verdict
+	}{
+		{"a catalog /Lang over a page that shows no text", markedDoc{content: "0 0 m 10 10 l S", catalogLang: lang("en-US")}, NotApplicable},
+		{"a catalog /Lang over text only in an annotation appearance", markedDoc{content: "0 0 m 10 10 l S", catalogLang: lang("en-US"), extra: annotPage}, NotApplicable},
+		// CONTROL: the same catalog over one piece of page text passes, so the rows above are the population
+		// and not the catalog check going missing.
+		{"a catalog /Lang over page text", markedDoc{content: "/P <</MCID 0>> BDC\n" + markedText + "\nEMC", catalogLang: lang("en-US")}, Pass},
+	} {
+		if got := verdictOf(t, tc.doc.build(), "7.2 t34"); got.Verdict != tc.want {
+			t.Errorf("%s: 7.2 t34 = %v (%s), want %v — veraPDF's verdict on this document", tc.name, got.Verdict, got.Why, tc.want)
+		}
+	}
+}
+
 // TestALangOnlyStreamIsWalkedOncePerSTREAMNotOncePerUSE — the cost property, and it is a correctness
 // property wearing cost's clothes.
 //

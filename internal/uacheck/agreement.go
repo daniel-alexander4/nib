@@ -16,7 +16,6 @@ var knownDisagreements = map[string]string{
 	"7.2 t30": "/pending 674",
 	"7.2 t31": "/pending 674",
 	"7.2 t32": "/pending 674",
-	"7.2 t34": "/pending 703",
 	"7.11 t1": "/pending 695",
 }
 
