@@ -1,6 +1,7 @@
 package pdfops
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/pdfread"
 )
@@ -130,10 +132,6 @@ func TestAGrownParagraphPushesTheOnesBelowIt(t *testing.T) {
 // cannot move is NAMED.
 func TestAGrowthItCannotDoNamesWhy(t *testing.T) {
 	form := "BT /F1 12 Tf 14 TL 72 648 Td (Words run across the column here and wrap) Tj T* (Formed words here) Tj ET"
-	flagged, err := SetFlags(flowPage(""), []byte(`[{"page":1,"frac":{"x":0.2,"y":0.2},"type":"sig"}]`))
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, c := range []struct {
 		name  string
 		pdf   []byte
@@ -143,16 +141,18 @@ func TestAGrowthItCannotDoNamesWhy(t *testing.T) {
 	}{
 		{"no room below", flowPage("BT /F1 12 Tf 72 558 Td (Page 1) Tj ET"), oneMoreLine, causePageFull, ""},
 		{"a rule in the band", flowPage("q 1 w 72 660 m 400 660 l S Q"), oneMoreLine, causeAnchored, ""},
+		{"a change bar in the margin beside the region", flowPage("q 1 w 560 600 m 560 655 l S Q"), oneMoreLine, causeAnchored, ""},
+		{"a note straddling the edited paragraph's bottom", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
+			"<< /Type /Annot /Subtype /Text /Rect [100 660 120 675] >>"), oneMoreLine, causeAnchored, ""},
+		{"a note straddling the moved region's bottom edge", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
+			"<< /Type /Annot /Subtype /Text /Rect [100 585 120 600] >>"), oneMoreLine, causeAnchored, ""},
+		{"a note in the free room the text moves into", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica,
+			"<< /Type /Annot /Subtype /Text /Rect [100 575 120 590] >>"), oneMoreLine, causeAnchored, ""},
+		{"a note in another column at the region's height", pageWith(flowPageContent+"BT /F1 12 Tf 470 640 Td (Aside) Tj ET", "", "", "/Annots [6 0 R]", helvetica,
+			"<< /Type /Annot /Subtype /Text /Rect [480 600 500 615] >>"), oneMoreLine, causeAnchored, ""},
 		{"a link over a word it re-wraps, even without growing",
 			pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica, "<< /Type /Annot /Subtype /Link /Rect [100 695 160 712] /Border [0 0 0] >>"),
 			"Words run across the column here and wrap Words run across the column here and wrap Words run across the column there and wrap", causeAnchored, ""},
-		{"a note in the band", pageWith(flowPageContent, "", "", "/Annots [6 0 R]", helvetica, "<< /Type /Annot /Subtype /Text /Rect [100 640 120 655] >>"),
-			oneMoreLine, causeAnchored, ""},
-		{"a signing flag in the band", flagged, oneMoreLine, causeAnchored, ""},
-		{"a bookmark to a paragraph below",
-			pageWith(flowPageContent, "", "/Outlines 6 0 R", "", helvetica, "<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>",
-				"<< /Title (Second) /Parent 6 0 R /Dest [3 0 R /XYZ 72 660 0] >>"),
-			oneMoreLine, causeAnchored, ""},
 		{"a one-line paragraph with nothing to take a pitch from", helveticaPage("BT /F1 12 Tf 72 700 Td (A short line of words) Tj ET"),
 			"A short line of words " + strings.Repeat("that goes on and on ", 6), causeNoPitch, ""},
 		{"a paragraph below drawn inside a form",
@@ -297,4 +297,98 @@ func TestAOneLinerStopsShortOfWhatIsBesideIt(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestWhatIsAnchoredMovesWithTheText — `PLAN-text-reflow.md` P07.S04: when a paragraph grows, everything anchored inside
+// the part of the page that moves goes with it, by exactly the growth — a note, a link and its quadrilaterals, an ink
+// drawing, a form field's widget, a note in the margin beside a moved paragraph (a one-column page), a signing flag, and a
+// destination shared by a
+// bookmark, a link and a name, which moves ONCE. What lies above the edited paragraph does not move.
+func TestWhatIsAnchoredMovesWithTheText(t *testing.T) {
+	const dy = 14 // one line at the paragraph's pitch
+	pdf := pageWith(flowPageContent, "",
+		"/Outlines 6 0 R /Names << /Dests << /Names [(sec2) 8 0 R] >> >> /AcroForm << /Fields [14 0 R] >>",
+		"/Annots [9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R]", helvetica,
+		"<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>",
+		"<< /Title (Second) /Parent 6 0 R /Dest (sec2) >>",
+		"[3 0 R /XYZ 72 660 0]",
+		"<< /Type /Annot /Subtype /Text /Rect [100 640 120 655] >>",
+		"<< /Type /Annot /Subtype /Link /Rect [80 606 150 621] /QuadPoints [80 621 150 621 80 606 150 606] /Dest (sec2) >>",
+		"<< /Type /Annot /Subtype /Ink /Rect [99 614 111 631] /InkList [[100 615 110 630]] >>",
+		"<< /Type /Annot /Subtype /Text /Rect [560 640 580 655] >>",
+		"<< /Type /Annot /Subtype /Text /Rect [560 740 580 755] >>",
+		"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /DA (/Helv 0 Tf 0 g) /P 3 0 R /Rect [200 640 260 655] >>")
+	pdf, err := SetFlags(pdf, []byte(`[{"page":1,"frac":{"x":0.5,"y":0.2},"type":"sig","label":"kept"},{"page":1,"frac":{"x":0.5,"y":0.05},"type":"sig"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, cause, _, _ := reflowRead(t, pdf, 0, oneMoreLine)
+	if cause != "" {
+		t.Fatalf("refused: %s", cause)
+	}
+	out, _, err := ReflowParagraph(pdf, 1, 0, flowParagraph0, oneMoreLine)
+	if err != nil || out == nil {
+		t.Fatalf("the growth wrote nothing: %v", err)
+	}
+	ctx, err := pdfread.Validated(out, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg := pageAt(ctx, nil, 1)
+	var rects []string
+	for _, o := range derefArray(ctx.XRefTable, pg.Dict["Annots"]) {
+		d := derefDict(ctx.XRefTable, o)
+		llx, lly, urx, ury, _ := rectOf(ctx, d["Rect"])
+		line := fmt.Sprintf("%s %v %v %v %v", nameVal(d, "Subtype"), llx, lly, urx, ury)
+		for _, k := range []string{"QuadPoints", "InkList"} {
+			if v, ok := d[k]; ok {
+				line += " " + k + numbersOf(ctx.XRefTable, v)
+			}
+		}
+		rects = append(rects, line)
+	}
+	want := []string{
+		"Text 100 626 120 641",
+		"Link 80 592 150 607 QuadPoints[80 607 150 607 80 592 150 592]",
+		"Ink 99 600 111 617 InkList[[100 601 110 616]]",
+		"Text 560 626 580 641",
+		"Text 560 740 580 755", // above the edited paragraph: it does not move
+		"Widget 200 626 260 641",
+	}
+	if strings.Join(rects, "\n") != strings.Join(want, "\n") {
+		t.Errorf("annotations\n got  %q\n want %q", rects, want)
+	}
+	if b, ok := destinationBox(ctx.XRefTable, types.StringLiteral("sec2"), pg.Ref.ObjectNumber.Value()); !ok || b[1] != 660-dy {
+		t.Errorf("the shared destination's top is %v (%v), want %v — moved once", b[1], ok, 660-dy)
+	}
+	raw, err := FlagsJSON(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags []map[string]any
+	if err := json.Unmarshal(raw, &flags); err != nil || len(flags) != 2 {
+		t.Fatalf("flags %s (%v)", raw, err)
+	}
+	f0 := flags[0]["frac"].(map[string]any)
+	if y := f0["y"].(float64); math.Abs(y-(0.2+dy/792.0)) > 1e-12 || flags[0]["label"] != "kept" {
+		t.Errorf("the flag in the zone reads %v, want y %v and its other fields kept", flags[0], 0.2+dy/792.0)
+	}
+	if y := flags[1]["frac"].(map[string]any)["y"].(float64); y != 0.05 {
+		t.Errorf("the flag above the paragraph moved: y %v", y)
+	}
+}
+
+const flowParagraph0 = "Words run across the column here and wrap Words run across the column here and wrap Words run across the column here and wrap"
+
+// numbersOf prints a (nested) array of numbers by value, as %v prints float64s — not as pdfcpu's two-decimal String.
+func numbersOf(xt *model.XRefTable, o types.Object) string {
+	if arr := derefArray(xt, o); arr != nil {
+		parts := make([]string, len(arr))
+		for i, e := range arr {
+			parts[i] = numbersOf(xt, e)
+		}
+		return "[" + strings.Join(parts, " ") + "]"
+	}
+	v, _ := pdfNumber(xt, o)
+	return fmt.Sprint(v)
 }

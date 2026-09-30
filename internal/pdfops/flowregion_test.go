@@ -131,6 +131,12 @@ func TestTheRoomBelowAParagraph(t *testing.T) {
 			t.Errorf("marks %v, want none", r.marks)
 		}
 	})
+	t.Run("a fill behind the column alone is a backdrop too", func(t *testing.T) {
+		r, _ := regionFor(t, flowPage("q 0.9 g 60 20 360 740 re f Q"), 0)
+		if len(r.marks) != 0 {
+			t.Errorf("marks %v, want none", r.marks)
+		}
+	})
 	t.Run("a shading is never a backdrop", func(t *testing.T) {
 		pdf := pageWith(flowPageContent+"/Sh1 sh", "/Shading << /Sh1 6 0 R >>", "", "", helvetica,
 			"<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 1 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >>")

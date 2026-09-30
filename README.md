@@ -363,11 +363,13 @@ covered: they are gone from the page, from copy-and-paste and from Find.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line
 spacing, and the paragraphs below it in its column move down with it into the free
-space under them; a footer or page number past that space stays put. If there is not
-room on the page, or something is fixed in place where the text would move — a link,
-a form field, a note, a signing flag, a bookmark, a line or picture — it is refused
-with the reason rather than left pointing at the wrong words. (The same goes for a
-link laid over the paragraph's own words.)
+space under them; a footer or page number past that space stays put. Notes, links,
+form fields, signing flags and bookmarks on or beside the paragraphs that move go with
+them. If there is not room on the page, or something cannot move with the text — a
+line or picture drawn there, or a note or link half in and half out of what moves — it
+is refused with the reason rather than left pointing at the wrong words. (The same
+goes for a link laid over the paragraph's own words, which the new wrapping would
+move under it.)
 
 It changes only what it can set exactly. The new text must use only characters the
 document's font carries; a
