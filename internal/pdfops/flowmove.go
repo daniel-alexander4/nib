@@ -57,12 +57,10 @@ func moveRuns(src []byte, runs []textRun, dy float64) ([]runMove, string) {
 	var out []runMove
 	for _, r := range sorted {
 		st := r.state
-		inv, ok := st.ctm.inverse()
-		if !ok || !finite(st.tm[:]...) || !finite(st.tlm[:]...) || !finite(st.ctm[:]...) {
+		tm, ok := shiftedTm(st, dy)
+		if !ok {
 			return nil, causeDegenerate
 		}
-		// tm·CTM places the glyphs; the moved matrix places them dy lower: tm′ = tm·CTM·T(0, −dy)·CTM⁻¹.
-		tm := st.tm.mul(st.ctm).mul(runTranslate(0, -dy)).mul(inv)
 		show, ok := asTj(src, r.span)
 		if !ok {
 			return nil, causeMixedContent
@@ -112,6 +110,17 @@ func asTj(src []byte, span opSpan) (string, bool) {
 		return text(parts[0]) + " Tw " + text(parts[1]) + " Tc " + text(parts[2]) + " Tj", true
 	}
 	return "", false
+}
+
+// shiftedTm is the text matrix that draws what st's text matrix draws, dy lower in user space — the one shift a move and a
+// grown paragraph's new lines share. tm·CTM places the glyphs, so tm′ = tm·CTM·T(0, −dy)·CTM⁻¹: under a flipped or scaled
+// CTM it still moves down the PAGE. False when the CTM cannot be inverted or a figure is not finite.
+func shiftedTm(st runTextState, dy float64) (runMatrix, bool) {
+	inv, ok := st.ctm.inverse()
+	if !ok || !finite(dy) || !finite(st.tm[:]...) || !finite(st.tlm[:]...) || !finite(st.ctm[:]...) {
+		return runMatrix{}, false
+	}
+	return st.tm.mul(st.ctm).mul(runTranslate(0, -dy)).mul(inv), true
 }
 
 // inverse is m's inverse, or false when m is singular.

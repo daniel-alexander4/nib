@@ -707,12 +707,33 @@ it), said to the user like every other cause. **Measured**: 1,379 paragraphs of 
 moved and read back exactly — 171 of several lines, 630 kerned, 241 carrying blank runs; refused inline-follower 2,
 text-in-form 2. Review `code-reviews/v1.169.49-p07s02-2026-09-30.md`.
 
-#### P07.S03 — grow into the room below
+#### P07.S03 — grow into the room below *(done 2026-09-30, v1.170.0)*
 An edited paragraph takes the lines it needs at its own line pitch; the region below moves down by the growth, bounded by
 the room; `paragraph-grows` gives way to `page-full` when the room is not enough. Anything anchored in the band — an
 annotation, a destination, a NibFlag, a non-text mark — REFUSES (`anchored`) in this slice. Acceptance: the edited
 paragraph reads back re-broken and every region paragraph reads back unchanged, `dy` lower; nothing outside the region
 moves; each refusal is named, including which region paragraph refused and why.
+
+**PIN 2026-09-30 (slice grill) — the edited paragraph's own anchored objects were unchecked, and are now.** A re-wrap moves
+the paragraph's WORDS inside its box, so a link or widget laid over a word points at another word after any edit — true of
+P06 already, and exactly what the exit criterion forbids. The `anchored` check covers annotations over the edited
+paragraph's own box on every edit, growing or not, and everything anchored in the band when it grows. **Rung 2, recorded**:
+a destination inside the edited paragraph's box is not checked (its first baseline does not move); a NibFlag inside it
+stays allowed, as P06 decided; `paragraph-grows` is retired for `page-full`; a one-line paragraph's pitch is its column's
+median line step at its size, else `no-pitch` — never an invented 1.2 em.
+
+**Tasks** (slice grill, 2026-09-30): T01 — `shiftedTm`, the one user-space shift the move and the extra lines share.
+T02 — `pageAnchors`: `/Annots` rects (widget / annotation), NibFlags on the page (top-left fractions of the crop box; a
+rotated page's flag is unbounded), and positioned destinations to the page from outlines, links on every page,
+`/OpenAction` and the `/Dests` name tree. T03 — grow in `reflowParagraphIn`: extra lines at the last line's matrix shifted
+k × pitch; the region moved by `moveRuns` in the same edit; `no-pitch`, `page-full`, `anchored`; a region paragraph's
+refusal carried with its text. T04 — `Refusal{Cause, Below}` from `ReflowParagraph`, on `/api/reflow`, said by the dialog.
+T05 — hand-built grow and refusals, a corpus grow-and-read-back, tier 3 through the binary.
+**Closed 2026-09-30.** The build found a critical the grill did not: a one-line paragraph carries no record of its
+measure, so it is set to its COLUMN's — and stops an em short of anything drawn beside it on its line (irs-f1040's
+"Apt. no." had been set straight into "Check here"). P06's corpus test now reads the edit by baseline, since a growth can
+regroup the page. **Census**: 10 real paragraphs grew, 8 pushing a region; refused no-pitch 209, anchored 132, page-full
+16. Tier 3 drives a growth through the binary. Review `code-reviews/v1.169.50-p07s03-2026-09-30.md`.
 
 #### P07.S04 — what is anchored moves with the text
 Annotations (`/Rect` and every coordinate key its subtype carries), widgets, link and outline destinations naming a

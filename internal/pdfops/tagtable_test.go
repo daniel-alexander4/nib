@@ -122,7 +122,7 @@ var tagFates = map[string]tagFate{
 		f[0], f[1] = f[1], f[0]
 		out, cause, err := ReflowParagraph(b, 1, 0, ps[0].Text, strings.Join(f, " "))
 		if out == nil {
-			return nil, fmt.Errorf("refused: %q (%v)", cause, err)
+			return nil, fmt.Errorf("refused: %q (%v)", cause.Cause, err)
 		}
 		return out, nil
 	}},

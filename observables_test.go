@@ -287,6 +287,8 @@ var published = map[string][]string{
 	"pdfops.OutlineItem":    {"internal/cli/commands.go", "web/app.js"},
 	// text-reflow P06.S05: the reflow editor lists a page's paragraphs, reading index, text and refusal.
 	"pdfops.Paragraph": {"web/app.js"},
+	// text-reflow P07.S03: the reflow editor reads why a reflow fell back, and which paragraph below stood in the way.
+	"pdfops.Refusal": {"web/app.js"},
 	// `internal/server/scan.go` removed /pending 558, same carrier case: `scan.go:33` embeds it as
 	// `Residual pdfops.ScanReport` and reads none of its fields.
 	"pdfops.ScanReport": {"web/app.js"},

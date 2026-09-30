@@ -46,10 +46,11 @@ const maxReflowFormBytes = 1 << 20
 
 type reflowResponse struct {
 	docResponse
-	// Ok is whether the paragraph was re-set. When it was not, Cause names why (law 3) — "" means the text was the
-	// paragraph's own and nothing needed doing — and the document is untouched.
-	Ok    bool   `json:"ok"`
-	Cause string `json:"cause,omitempty"`
+	// Ok is whether the paragraph was re-set. When it was not, the Refusal's Cause names why (law 3) — "" means the text
+	// was the paragraph's own and nothing needed doing — Below names the paragraph below that could not move with it, and
+	// the document is untouched.
+	Ok bool `json:"ok"`
+	pdfops.Refusal
 }
 
 // handleReflow re-sets one paragraph as new text and commits the result. The request names the paragraph by page and
@@ -76,10 +77,10 @@ func (s *Server) handleReflow(w http.ResponseWriter, r *http.Request) {
 	before := s.docBytes(doc)
 	// D11, at the server door — whatever the UI allowed. tagwrite's predicate: one door for "is this signed".
 	if sign.HasSignatureBlob(before) {
-		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Cause: pdfops.ReflowCauseSigned})
+		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Refusal: pdfops.Refusal{Cause: pdfops.ReflowCauseSigned}})
 		return
 	}
-	result, cause, err := pdfops.ReflowParagraph(before, page, index, r.FormValue("original"), r.FormValue("text"))
+	result, refusal, err := pdfops.ReflowParagraph(before, page, index, r.FormValue("original"), r.FormValue("text"))
 	switch {
 	case errors.Is(err, pdfops.ErrReflowStale):
 		httpError(w, http.StatusConflict, "that paragraph has changed since it was read — read the page again")
@@ -88,11 +89,11 @@ func (s *Server) handleReflow(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not reflow the paragraph: "+err.Error())
 		return
 	case result == nil:
-		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Cause: cause})
+		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Refusal: refusal})
 		return
 	}
 	if pdfops.Validate(result) != nil {
-		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Cause: pdfops.ReflowCauseInvalidOutput})
+		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Refusal: pdfops.Refusal{Cause: pdfops.ReflowCauseInvalidOutput}})
 		return
 	}
 	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
