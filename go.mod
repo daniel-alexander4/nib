@@ -52,3 +52,6 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+// /pending 758, ADR-066: the object-stream lookup is patched (read.go only); see third_party/digitorus-pdf/NOTICE.nib.
+replace github.com/digitorus/pdf => ./third_party/digitorus-pdf

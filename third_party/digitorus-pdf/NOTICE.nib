@@ -1,0 +1,56 @@
+github.com/digitorus/pdf v0.1.2 — modified by nib
+==================================================
+
+This directory is github.com/digitorus/pdf at v0.1.2, copied unchanged from the Go module cache
+except for ONE file, read.go, and this notice. go.mod replaces the module with this directory
+(`replace github.com/digitorus/pdf => ./third_party/digitorus-pdf`); the require line still pins
+v0.1.2. The upstream licence is LICENSE, unchanged (BSD-style, The Go Authors).
+
+Why: /pending 758, ADR-066 (which supersedes ADR-041's refusal of this option in part).
+
+What changed, in read.go only
+-----------------------------
+
+`(*Reader).resolve` found an object-stream member by decoding the stream FROM ITS START and lexing
+its `id offset` header pairs until the id matched, then seeking forward to the member — for every
+member, with nothing cached. pdfsign's verify and nib's revision sweep each resolve every xref entry,
+so a stream of N members cost N²/2 header pairs and N²/2 decoded bytes per pass. An honest InDesign
+file (2.7 MB) paid 3.2 s a pass for it.
+
+The patched resolve keeps, per Reader, one `objStmCache` per object stream:
+
+  - the decoder, kept open, and the bytes decoded SO FAR — extended lazily, only as far as a read
+    needs, so a corrupt zlib tail or a short /Length after the wanted member is never reached,
+    exactly as upstream never reached it;
+  - the header pairs lexed SO FAR — lexed lazily up to the wanted id, first listing wins, ids
+    truncated to uint32 as upstream compared them; a token that is not an integer reads as 0, and
+    once the header reaches its end every later pair reads as (0, 0), as upstream's loop read them;
+  - a panic raised part-way (by the lexer or the decoder), raised again by any later lookup that
+    needs to go past that point.
+
+Each lookup reads its member from the member's own offset, over the cached bytes. The checks on the
+stream's dictionary (/Type, /N, /First, /Extends) are still made on every lookup, from a fresh read
+of it, and the /Extends walk is unchanged.
+
+The cache key is every input the decoded bytes depend on: the stream's own objptr (which decryption
+keys on), its data offset, and its raw /Length, /Filter and /DecodeParms.
+
+No mutex: every Reader is used by one call on one goroutine (nib's internal/sign and pdfsign's
+sign and verify each open a Reader, use it and drop it).
+
+The one declared divergence
+---------------------------
+
+Upstream read the member by seeking the HEADER'S OWN buffer. A /First pointing behind that buffer's
+current 4 KB chunk is a backward seek, which set a negative buffer index and panicked. The patched
+reader reads the member from its offset and resolves it. No real producer writes such a /First (the
+header precedes the members); a member at a NEGATIVE offset still panics.
+
+Maintenance
+-----------
+
+Re-apply this patch at every bump of github.com/digitorus/pdf. The guard in nib's root package
+(`TestTheLibraryPatchIsReadGoOnlyAsItsNoticeSays`) fails when go.mod's require moves off v0.1.2, when the replace
+stops pointing here, or when any file other than read.go differs from the module-cache original.
+
+Reporting upstream is Dan's call.

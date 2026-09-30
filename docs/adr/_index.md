@@ -563,3 +563,7 @@ home today.
 - **[ADR-065 — a per-page loop reads the pages from one walk of the tree](065-a-per-page-loop-reads-the-pages-from-one-walk.md)**
   — /pending 753. `pdfread.Pages` answers what `PageDict` answers for every page from one walk, and falls back to
   `PageDict` per page wherever one walk cannot reproduce pdfcpu. Prepare on 7,059 pages: 50 s → 12 s.
+- **[ADR-066 — nib carries a patched `digitorus/pdf`, and the patch is its object-stream lookup alone](066-nib-carries-a-patched-digitorus-pdf-and-the-patch-is-its-object-stream-lookup.md)**
+  — /pending 758; supersedes ADR-041's refusal of option A in part. `third_party/digitorus-pdf` differs from v0.1.2 in
+  `read.go` only: each object stream decoded and its header lexed once per `Reader`, lazily, so nothing past the member is
+  reached. One declared divergence (a backward `/First` resolves). `libraryLookupCost` re-fitted; census 3.26 s → 0.49 s a pass.

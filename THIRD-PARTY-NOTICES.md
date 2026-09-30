@@ -1893,7 +1893,7 @@ SOFTWARE.
 
 ---
 
-## github.com/digitorus/pdf v0.1.2
+## github.com/digitorus/pdf v0.1.2 — modified by nib, see third_party/digitorus-pdf/NOTICE.nib
 
 ```
 Copyright (c) 2009 The Go Authors. All rights reserved.

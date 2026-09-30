@@ -588,7 +588,10 @@ func gofmtCmd() *exec.Cmd {
 	}
 	for _, e := range ents {
 		n := e.Name()
-		if strings.HasPrefix(n, ".") {
+		// third_party/ is upstream code kept byte-identical to its release except where its
+		// NOTICE.nib says (ADR-066, TestTheLibraryPatchIsReadGoOnlyAsItsNoticeSays): upstream's own
+		// formatting is part of what that guard compares, so gofmt must not own it.
+		if strings.HasPrefix(n, ".") || n == "third_party" {
 			continue
 		}
 		if e.IsDir() || strings.HasSuffix(n, ".go") {

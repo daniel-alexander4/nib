@@ -96,8 +96,17 @@ mods="$(go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./cmd/nib | grep -v 
 mpl_mods=()
 
 while IFS= read -r mod; do
-  read -r ver dir < <(go list -m -f '{{.Version}} {{.Dir}}' "$mod")
-  emit "## ${mod} ${ver}"
+  read -r ver dir repl < <(go list -m -f '{{.Version}} {{.Dir}} {{with .Replace}}{{.Path}}{{end}}' "$mod")
+  # A module go.mod replaces with a directory in this tree is a MODIFIED copy (/pending 758): its
+  # heading says so and names the notice that says what changed, which the licence text below it
+  # (read from that directory, where it is kept unchanged) cannot.
+  case "$repl" in
+  ./* | ../*)
+    emit "## ${mod} ${ver} — modified by nib, see ${repl#./}/NOTICE.nib"
+    [ -f "$dir/NOTICE.nib" ] || { echo "gen-notices: ${mod} is replaced by ${repl} and it carries no NOTICE.nib" >&2; exit 1; }
+    ;;
+  *) emit "## ${mod} ${ver}" ;;
+  esac
   emit ""
   found=0
   for name in LICENSE LICENSE.txt LICENSE.md COPYING COPYING.txt; do
