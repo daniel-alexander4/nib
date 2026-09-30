@@ -74,6 +74,13 @@ inside readObject; it is named so the loop's exits say what an array may not con
 no change: a keyword where a key belongs already panics ("unexpected non-name key"). The same test
 holds this class, for the same reason.
 
+5. (/pending 768) The patched reader refuses, with a panic carrying ErrObjStmIndirectKey, an object stream
+whose /Type, /N or /First is an indirect reference. Each lookup reads those three afresh, so a reference
+resolves another object per lookup, and where that object sits in an object stream whose dictionary does the
+same the cost compounds per level (three references a level is 3^d reads a lookup; d = 8 was 27 s a pass).
+pdfcpu refuses such streams, so no document nib opens carries one; this closes the shape for the paths that
+reach this reader without pdfcpu's gate (sign.HasSignatureBlob).
+
 internal/sign's FuzzThePatchedObjectStreamReaderMatchesTheOriginal (/pending 759) resolves random object
 streams through this reader and through v0.1.2 itself (a test-only copy under internal/sign/testdata)
 and allows exactly the first two classes of difference; it never generates the third or fourth, where

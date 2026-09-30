@@ -578,3 +578,7 @@ home today.
   — /pending 764; extends 675's `/UseCMap` check. One walk before the validator over the edges pdfcpu follows without
   a guard, refusing a loop (fatal stack overflow), more paths than the budget (sharing is walked once per path and per
   page), and depth; objects pdfcpu marks first stop the walk. 0 of 333 real documents refused; 1.6% of a read.
+- **[ADR-070 — the patched reader refuses an indirect object-stream key](070-the-patched-reader-refuses-an-indirect-object-stream-key.md)**
+  — /pending 768; supersedes ADR-067's "declared, not charged" in part. An object stream whose `/Type`, `/N` or
+  `/First` is a reference compounded per level; the reader refuses it (NOTICE.nib divergence 5), so the ungated
+  `HasSignatureBlob` (712, decided C) needs no gate for it. Verified by review only.

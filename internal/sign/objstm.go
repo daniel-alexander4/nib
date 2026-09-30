@@ -62,12 +62,11 @@ import (
 // member — are refused by the patched reader itself as it reads (`dpdf.ErrObjStmTooCostly`, past four
 // times what the stream has decoded), which `readPanicErr` routes to this ceiling's error.
 //
-// Declared: nothing a dictionary key REFERS to is charged (`/Type 7 0 R` re-reads object 7 per lookup)
-// — only the dictionary's own text is. An indirect `/Type`, `/N` or `/First` compounds per level (three
-// references a level into the next stream is 3^d reads a lookup; d = 8 is 27 s a pass), and pdfcpu
-// refuses every such stream ("obj stream dict missing entry First", "corrupt object stream"), so
-// `Verify`'s readability gate keeps it from the sweep; a path to the reader that skips that gate does not
-// (`signatureBlobPresent` is one, deliberately — see its doc, /pending 712).
+// Nothing a dictionary key REFERS to is charged — only the dictionary's own text is — because the patched
+// reader refuses the one shape where that mattered: an indirect `/Type`, `/N` or `/First`, which it read
+// afresh per lookup and which compounded per level (three references a level into the next stream was
+// 3^d reads a lookup; d = 8 was 27 s a pass). It panics `dpdf.ErrObjStmIndirectKey` instead (/pending 768,
+// ADR-070), as pdfcpu already refused such streams ("obj stream dict missing entry First").
 const (
 	lookupPairWeight     = 200
 	lookupByteWeight     = 100
