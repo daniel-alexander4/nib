@@ -348,3 +348,30 @@ func obstaclesOf(l pageLayout, owned map[int]bool) []pageMark {
 	}
 	return append(out, l.marks...)
 }
+
+// deviceComponents is the number of components each device colour space takes (P07.S05).
+var deviceComponents = map[string]int{"DeviceGray": 1, "DeviceRGB": 3, "DeviceCMYK": 4}
+
+// initialDeviceColour is each device space's initial colour, black, as `cs` sets it.
+var initialDeviceColour = map[string]string{"DeviceGray": "0", "DeviceRGB": "0 0 0", "DeviceCMYK": "0 0 0 1"}
+
+// colourOp writes colour components and the operator that sets them.
+func colourOp(v []float64, op string) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = num(x)
+	}
+	return strings.Join(parts, " ") + " " + op
+}
+
+// clipTo applies a pending clip: when a `W` marked the path, the clip becomes its intersection with the path's box. A path
+// with no points clips everything away.
+func clipTo(clip [4]float64, p markBox, pending bool) ([4]float64, bool) {
+	if !pending {
+		return clip, false
+	}
+	if !p.set {
+		return [4]float64{0, 0, 0, 0}, false
+	}
+	return [4]float64{math.Max(clip[0], p.box[0]), math.Max(clip[1], p.box[1]), math.Min(clip[2], p.box[2]), math.Min(clip[3], p.box[3])}, false
+}

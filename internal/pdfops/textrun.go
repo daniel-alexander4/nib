@@ -116,8 +116,13 @@ type textRun struct {
 // before the CTM), the `Tf` size, character and word spacing, horizontal scaling, rise, and the scale from text space
 // to user space along the baseline.
 type runTextState struct {
-	tm, tlm        runMatrix
-	ctm            runMatrix // the CTM the run was drawn under: text space reaches user space through tm·ctm (P07.S02)
+	tm, tlm runMatrix
+	ctm     runMatrix // the CTM the run was drawn under: text space reaches user space through tm·ctm (P07.S02)
+	// fill, stroke, extGState and clip are the graphics state the run was drawn in (`runGState`), for a paragraph set on
+	// another page (P07.S05).
+	fill, stroke   string
+	extGState      bool
+	clip           [4]float64
 	tfSize, tc, tw float64
 	th, ts, scale  float64
 	tr             int // the text rendering mode: 3 draws nothing, 7 only clips
@@ -276,9 +281,23 @@ type runGState struct {
 	tl, ts   float64
 	tr       int     // `Tr`, the text rendering mode
 	lw       float64 // `w`, the line width a stroke is drawn at — read only for a mark's box (P07.S01)
+	// fill and stroke are the operators that set the current colours, re-emittable anywhere — when the colour is in a
+	// DEVICE space; "" when it is not (a colour space, a pattern), which a paragraph moved to another page cannot carry.
+	// fillSpace and strokeSpace are the device space in force for `sc`, or "" (P07.S05).
+	fill, stroke           string
+	fillSpace, strokeSpace string
+	// extGState is whether a `gs` has applied a graphics state dictionary — alpha, blend, a soft mask — none of which is
+	// carried to another page.
+	extGState bool
+	// clip is the box the clipping path is known to lie within, in user space: every `W` path's box intersected.
+	clip [4]float64
 }
 
-func newRunGState() runGState { return runGState{ctm: runIdentity, th: 1, lw: 1} }
+func newRunGState() runGState {
+	inf := math.Inf(1)
+	return runGState{ctm: runIdentity, th: 1, lw: 1, fill: "0 g", stroke: "0 G", fillSpace: "DeviceGray", strokeSpace: "DeviceGray",
+		clip: [4]float64{-inf, -inf, inf, inf}}
+}
 
 // runFont is what the walk needs from a font dictionary.
 type runFont struct {
@@ -747,8 +766,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	var ops []runOperand
 	toks := contentstream.Tokenize(src)
 	// path is the box of the path under construction, in user space; a painting operator records it and every path
-	// operator that ends one (`n` included) clears it.
+	// operator that ends one (`n` included) clears it. clipping says a `W` marked it as the next clip.
 	var path markBox
+	clipping := false
 	// A stream's sequences end with the stream: an unbalanced `EMC` inside a form cannot close the page's
 	// sequence, and a form that leaves one open cannot tag what the page draws after it.
 	base, seqBase := len(w.mcStack), len(w.seqOpen)
@@ -859,12 +879,68 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			}
 		case "S", "s", "B", "B*", "b", "b*":
 			w.markPath(path, gs, true)
+			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "f", "F", "f*":
 			w.markPath(path, gs, false)
+			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "n":
+			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
+		case "W", "W*":
+			clipping = true
+		case "gs":
+			gs.extGState = true
+		case "g", "rg", "k", "G", "RG", "K":
+			op := string(tok.Bytes(src))
+			n := map[string]int{"g": 1, "rg": 3, "k": 4, "G": 1, "RG": 3, "K": 4}[op]
+			space := map[int]string{1: "DeviceGray", 3: "DeviceRGB", 4: "DeviceCMYK"}[n]
+			set := ""
+			if v, ok := numbers(n); ok {
+				set = colourOp(v, op)
+			}
+			if op == "g" || op == "rg" || op == "k" {
+				gs.fill, gs.fillSpace = set, space
+			} else {
+				gs.stroke, gs.strokeSpace = set, space
+			}
+		case "cs", "CS":
+			op := string(tok.Bytes(src))
+			space := ""
+			if os := last(1); os != nil {
+				if name, ok := os[0].name(src); ok && deviceComponents[name] > 0 {
+					space = name
+				}
+			}
+			// Setting a colour space sets its initial colour: black, in every device space.
+			set := ""
+			if space != "" {
+				set = "/" + space + " " + op + " " + initialDeviceColour[space] + " " + map[string]string{"cs": "sc", "CS": "SC"}[op]
+			}
+			if op == "cs" {
+				gs.fill, gs.fillSpace = set, space
+			} else {
+				gs.stroke, gs.strokeSpace = set, space
+			}
+		case "sc", "scn", "SC", "SCN":
+			op := string(tok.Bytes(src))
+			fill := op == "sc" || op == "scn"
+			space := gs.strokeSpace
+			if fill {
+				space = gs.fillSpace
+			}
+			set := ""
+			if n := deviceComponents[space]; n > 0 {
+				if v, ok := numbers(n); ok && len(ops) == n {
+					set = "/" + space + " " + map[bool]string{true: "cs", false: "CS"}[fill] + " " + colourOp(v, map[bool]string{true: "sc", false: "SC"}[fill])
+				}
+			}
+			if fill {
+				gs.fill = set
+			} else {
+				gs.stroke = set
+			}
 		case "sh":
 			w.markShading()
 		case "BT":
@@ -1054,7 +1130,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	if w.keepGlyphs {
 		run.kernAfter = pendingKern * scale
 		run.face = gs.font
-		run.state = runTextState{tm: textAt, tlm: tlm, ctm: gs.ctm, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
+		run.state = runTextState{tm: textAt, tlm: tlm, ctm: gs.ctm, fill: gs.fill, stroke: gs.stroke, extGState: gs.extGState, clip: gs.clip, tfSize: gs.size, tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, scale: scale, tr: gs.tr}
 	}
 	run.text = string(text)
 	run.width = advance * scale
