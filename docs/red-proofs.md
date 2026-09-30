@@ -6394,3 +6394,15 @@ refused one**: `joinLibrary` reads only each record's library position, never it
 so it is the same path.
 
 `recorded` 507 → 525.
+
+## P01 phase close of PLAN-returned-document.md — conjunct (11)'s offset arm (v1.169.48)
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `structure-conjunct-11-offset-unchecked` — (11) requires the owning header at the xref's offset | `TestADictionaryRedefinedUnderTheSignersNumberIsRefused`, tier 1 | "want conjunct 11 cause" |
+
+The phase-close review found a later revision could re-define a signer's own object number with the same `/Contents`
+and `/ByteRange` and a rewritten `/Reason`: the gap's nearest header was the original's, so (11) passed while the library
+read the new definition. `structure-conjunct-11-gap-owner-unchecked` was re-recorded against the widened condition.
+
+`recorded` 525 → 526.

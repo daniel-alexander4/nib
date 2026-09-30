@@ -135,6 +135,13 @@ func (x *xref) Stream() objptr {
 	return x.stream
 }
 
+// Offset is the byte offset the xref gives this object (0 for an object-stream member). nib (NOTICE.nib
+// divergence 6): internal/sign checks that the dictionary a signature's gap belongs to is the one the xref
+// points at, not an earlier definition of the same object number.
+func (x *xref) Offset() int64 {
+	return x.offset
+}
+
 func GetDict() dict {
 	return dict{}
 }

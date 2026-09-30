@@ -134,8 +134,13 @@ func failed(err error) bool { return err != nil }
 
 // TestReadOnlySitesAgreeAcrossReadings — `/pending 763`: a site switched to `inspectionRead` gives, on every
 // document, the answer it gave through the full pass (`pdfread.ReadOptimized` with the per-page resource step).
-// The documents are the corpora under ~/nib (skipped where absent) and a flat tagged document, whose pages inherit
-// nothing, plus one whose pages inherit /Resources from their /Pages node — the half of the step the door restores.
+// The documents are the corpora under ~/nib (skipped where absent), a flat tagged document whose pages inherit nothing,
+// and one whose pages inherit /Resources from their /Pages node.
+//
+// **What this cannot see: the door's inherited-/Resources restore** (the P01 phase-close review, measured). Every
+// switched site resolves inheritance through `pdfread.Pages`' attributes rather than the page's own dictionary, so
+// with the restore deleted all 20 sites still agree on all 335 documents. The restore's one reader is the carry gate,
+// and it is held there: `TestTheCarryGateSeesAFormDrawnTwiceThroughInheritedResources` goes red without it.
 func TestReadOnlySitesAgreeAcrossReadings(t *testing.T) {
 	docs := map[string][]byte{"flat tagged": flatTaggedDoc(3), "inherited resources": inheritedResourcesDoc()}
 	home, _ := os.UserHomeDir()

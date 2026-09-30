@@ -64,23 +64,44 @@ var riskyActions = map[string]string{
 // **Without this, one benign action hides any number of risky ones.** /Next (§12.6.1) is
 // a dict or an ARRAY of dicts, each of which may chain further, and both Scan and
 // StripActive used to look only at the head: `<< /S /GoTo /Next << /S /JavaScript >> >>`
-// scanned clean and survived the strip untouched. Depth is bounded because /Next can be
-// circular in a malformed file and this runs on documents chosen for being malformed.
+// scanned clean and survived the strip untouched.
+//
+// **Each indirect action is visited once** (the phase-close review of PLAN-returned-document P01): a depth cap
+// alone bounds a cycle's length, not its fan-out, so `/Next [10 0 R 10 0 R]` on object 10 was walked 2^32 times and
+// hung `Scan` — which reads with pdfcpu's unvalidated reader and so meets no `pdfread` loop check. This is
+// `eachFormField`'s rule (`/pending 689`), and the depth cap stays for chains of direct dicts. A `/Next` that is a
+// reference to an ARRAY is followed too; it used to fall through to a dict dereference and hide its actions.
 func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Dict)) {
-	if act == nil || depth > 32 {
-		return
-	}
-	fn(act)
-	switch next := act["Next"].(type) {
-	case types.Array:
-		for _, a := range next {
-			eachAction(xt, derefDict(xt, a), depth+1, fn)
+	seen := map[int]bool{}
+	var walk func(d types.Dict, depth int)
+	visit := func(o types.Object, depth int) {
+		if ir, ok := o.(types.IndirectRef); ok {
+			n := ir.ObjectNumber.Value()
+			if seen[n] {
+				return
+			}
+			seen[n] = true
 		}
-	default:
-		if d := derefDict(xt, act["Next"]); d != nil {
-			eachAction(xt, d, depth+1, fn)
-		}
+		walk(derefDict(xt, o), depth)
 	}
+	walk = func(d types.Dict, depth int) {
+		if d == nil || depth > 32 {
+			return
+		}
+		fn(d)
+		next, ok := d["Next"]
+		if !ok {
+			return
+		}
+		if arr := derefArray(xt, next); arr != nil {
+			for _, a := range arr {
+				visit(a, depth+1)
+			}
+			return
+		}
+		visit(next, depth+1)
+	}
+	walk(act, depth)
 }
 
 // Scan reads the PDF and reports active or hidden content: auto-run hooks
@@ -206,7 +227,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 	}
 
 	// Page-level additional actions, attachment annotations, and link/widget actions.
-	eachPage(xt, root, func(page types.Dict, nr int) {
+	if err := eachPage(xt, root, func(page types.Dict, nr int) {
 		if _, ok := page.Find("AA"); ok {
 			add("additionalActions", "medium", "Page additional actions (run on open or close)", nr)
 		}
@@ -227,7 +248,9 @@ func Scan(pdf []byte) (ScanReport, error) {
 				}
 			})
 		}
-	})
+	}); err != nil {
+		return ScanReport{}, err
+	}
 
 	return rep, nil
 }
@@ -340,7 +363,7 @@ func StripActive(pdf []byte) ([]byte, error) {
 		if _, err := pdfcpu.RemoveAnnotations(ctx, nil, []string{"FileAttachment", "Sound", "Movie", "Screen", "3D"}, nil, false); err != nil {
 			return err
 		}
-		eachPage(xt, root, func(page types.Dict, _ int) {
+		if err := eachPage(xt, root, func(page types.Dict, _ int) {
 			dropKey(xt, page, "AA")
 			for _, a := range derefArray(xt, page["Annots"]) {
 				annot := derefDict(xt, a)
@@ -365,7 +388,9 @@ func StripActive(pdf []byte) ([]byte, error) {
 					}
 				}
 			}
-		})
+		}); err != nil {
+			return err
+		}
 		return removeAllAttachments(ctx)
 	})
 	if err != nil {
@@ -413,9 +438,11 @@ func StripMetadata(pdf []byte) ([]byte, error) {
 		ctx.Info = nil // ensureInfoDict re-adds only Producer/dates for <PDF2.0; nothing reads the cleared fields
 		ctx.ID = nil   // nil forces a fresh pair; otherwise /ID[0] is preserved as a permanent tracker
 		dropKey(xt, root, "Metadata")
-		eachPage(xt, root, func(page types.Dict, _ int) {
+		if err := eachPage(xt, root, func(page types.Dict, _ int) {
 			dropKey(xt, page, "Metadata") // page-level XMP duplicates dc:title/creator too
-		})
+		}); err != nil {
+			return err
+		}
 		return nil
 	})
 }
@@ -632,15 +659,25 @@ func removeAllAttachments(ctx *model.Context) error {
 	return err
 }
 
+// errPageTreeTooLarge is eachPage's refusal of a tree whose walk would visit more nodes than the file could
+// honestly hold.
+var errPageTreeTooLarge = errors.New("pdfops: the page tree names its nodes more times than a document of this size can hold, so it was not walked")
+
 // eachPage invokes fn for each leaf page dict in document order (1-based),
 // walking the page tree directly so it needs no validated PageCount. A depth
 // cap and a per-walk visited set guard against malformed or cyclic trees.
-func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr int)) {
+//
+// **And a visit budget bounds sharing** (the phase-close review of PLAN-returned-document P01). A node named twice
+// is walked twice — see below — so a chain of `/Pages` nodes each listing the next twice is 2^depth leaves from a
+// couple of kilobytes, and `Scan` reads without `pdfread`'s path budget. Past 16 visits per object in the file (plus
+// a floor) the walk stops and says so: a truncated walk would be a security scan that silently skipped pages.
+func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr int)) error {
 	pages := derefDict(xt, root["Pages"])
 	if pages == nil {
-		return
+		return nil
 	}
 	nr := 0
+	budget := 16*len(xt.Table) + 1024
 	// onPath, not a global seen-set. The set was there to stop a malformed tree recursing
 	// forever, and it did — but it also SKIPPED a page object referenced twice, so the
 	// numbering diverged from the viewer's: pdf.js walks the tree without deduplicating and
@@ -653,9 +690,10 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 	onPath := map[int]bool{}
 	var walk func(node types.Dict, depth int)
 	walk = func(node types.Dict, depth int) {
-		if node == nil || depth > 50 {
+		if node == nil || depth > 50 || budget < 0 {
 			return
 		}
+		budget--
 		kids := derefArray(xt, node["Kids"])
 		if len(kids) == 0 {
 			nr++
@@ -678,6 +716,10 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 		}
 	}
 	walk(pages, 0)
+	if budget < 0 {
+		return errPageTreeTooLarge
+	}
+	return nil
 }
 
 func derefDict(xt *model.XRefTable, o types.Object) types.Dict {

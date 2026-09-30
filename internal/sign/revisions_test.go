@@ -993,7 +993,7 @@ func TestTheGapScanCountsEveryByteItWalks(t *testing.T) {
 	data := []byte("5 0 obj\n<</A[" + strings.Repeat("x5 obj ", r) + "]/Contents<00>>>")
 	gs := bytes.Index(data, []byte("<00>"))
 	keyAt := gs - len("/Contents")
-	obj, ok, examined := gapOwner(data, gs, 0)
+	obj, _, ok, examined := gapOwner(data, gs, 0)
 	// STIMULUS: the owner is found, past r near-miss candidates.
 	if !ok || obj != 5 || bytes.Count(data, []byte("x5 obj ")) != r {
 		t.Fatalf("STIMULUS: owner %d ok %v over %d candidates", obj, ok, bytes.Count(data, []byte("x5 obj ")))
@@ -1671,5 +1671,54 @@ func TestTheSignerFingerprintHasOneWriter(t *testing.T) {
 	want := map[string]int{"signerInfo": 1, "joinLibrary": 1}
 	if fmt.Sprint(sites) != fmt.Sprint(want) {
 		t.Errorf("Fingerprint fields are written in %v, want exactly %v", sites, want)
+	}
+}
+
+// TestADictionaryRedefinedUnderTheSignersNumberIsRefused — the P01 phase-close review: an appended revision that
+// re-defines the signer's OWN object number, with the same /Contents and /ByteRange and a different /Reason, found
+// the original header behind the gap (those are the signed bytes) and passed all eleven conjuncts, while the library
+// read /Reason from the new definition — so a later party rewrote an earlier signer's reason, which carries the
+// co-sign attestation token, and it verified as that signer's. (11) now requires the owner at the xref's offset.
+func TestADictionaryRedefinedUnderTheSignersNumberIsRefused(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newIdentity(t, "Alice")
+	signed, err := SignApproval(base, a.certPEM, a.keyPEM, Options{Name: "Alice", Reason: "original", When: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vnum, vbody := victimDict(t, signed)
+	r, err := dpdf.NewReader(bytes.NewReader(signed), int64(len(signed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := int(func() uint32 { p := r.Trailer().Key("Root").GetPtr(); return p.GetID() }())
+	if !strings.Contains(vbody, "(original)") {
+		t.Fatalf("setup: the signer's dictionary carries no /Reason (original): %.200s", vbody)
+	}
+	redefined := strings.Replace(vbody, "(original)", "(rewritten)", 1)
+	doc := synthRevision(t, signed, []sobj{{num: vnum, body: redefined}}, root)
+
+	// STIMULUS: the library alone verifies the signature and reports the REWRITTEN reason under Alice's key.
+	resp, lerr := verify.Verify(bytes.NewReader(doc), int64(len(doc)))
+	if lerr != nil || len(resp.Signers) != 1 || !resp.Signers[0].ValidSignature || resp.Signers[0].Reason != "rewritten" {
+		t.Fatalf("STIMULUS: library err %v; the redefinition does not verify with the rewritten reason", lerr)
+	}
+	rec := recordFor(t, mustSweep(t, doc), uint32(vnum))
+	if rec.conjunct != 11 || rec.Cause != CauseContentsElsewhere {
+		t.Errorf("the redefined dictionary: conjunct %d cause %q, want conjunct 11 cause %q — its gap is the original's",
+			rec.conjunct, rec.Cause, CauseContentsElsewhere)
+	}
+	st := Verify(doc)
+	for _, s := range st.Signers {
+		if s.Reason == "rewritten" {
+			t.Errorf("a signer is reported with the rewritten reason %q under fingerprint %s", s.Reason, s.Fingerprint)
+		}
+	}
+	// The untouched document keeps its signer.
+	if rec := recordFor(t, mustSweep(t, signed), uint32(vnum)); rec.Cause != "" || rec.conjunct != 0 {
+		t.Errorf("the untouched signature is refused: conjunct %d cause %q", rec.conjunct, rec.Cause)
 	}
 }

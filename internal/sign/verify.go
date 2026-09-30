@@ -687,6 +687,11 @@ func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
 // gate alone used to keep out — an object stream whose `/Type`, `/N` or `/First` is a reference, which
 // compounds per level (ADR-067's declaration) — the reader now refuses itself (`ErrObjStmIndirectKey`,
 // /pending 768, ADR-070), so this path needs no gate for it.
+//
+// **It does need the object-stream cost door, and it did not have it** (the P01 phase-close review): an `/Extends`
+// cycle that pdfcpu reads without error hung this walk, because the only thing refusing an `/Extends` cycle is
+// `libraryLookupCost`, which the sweep and the signer run and this did not. It runs here before anything is
+// resolved; a document past its ceilings answers from the byte scan, like every other document this walk cannot read.
 func signatureBlobPresent(pdf []byte) (present bool) {
 	// The recover is positional: it must cover the whole parse below, including the lazy
 	// dereferences inside the Key/Index walk, which is where most of the 115 panics landed.
@@ -706,6 +711,9 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 	}
 	r, err := dpdf.NewReader(bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
+		return scanForSignatureBlob(pdf)
+	}
+	if _, err := libraryLookupCost(r); err != nil {
 		return scanForSignatureBlob(pdf)
 	}
 	// **A parse that found no catalog is not a parse that found no signatures** (/pending 733): a

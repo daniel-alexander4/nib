@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -187,5 +188,53 @@ func TestSharingAcrossPagesIsCountedThroughEveryResourceEntry(t *testing.T) {
 			_, err := pdfread.Validated(testpdf.FanIn(pdf, 400, 12), model.NewDefaultConfiguration())
 			return err
 		})
+	}
+}
+
+// sparseDoc is a one-page document whose content stream is object number nr, written with a sparse xref (two
+// subsections), so the file stays a few hundred bytes however large nr is.
+func sparseDoc(nr int) []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.7\n")
+	off := map[int]int{}
+	for _, o := range []struct {
+		n int
+		s string
+	}{
+		{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+		{2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"},
+		{3, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents %d 0 R >>", nr)},
+		{nr, "<< /Length 0 >>\nstream\n\nendstream"},
+	} {
+		off[o.n] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", o.n, o.s)
+	}
+	x := b.Len()
+	fmt.Fprintf(&b, "xref\n0 4\n0000000000 65535 f \n%010d 00000 n \n%010d 00000 n \n%010d 00000 n \n%d 1\n%010d 00000 n \n",
+		off[1], off[2], off[3], nr, off[nr])
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", nr+1, x)
+	return b.Bytes()
+}
+
+// The reference door's working memory follows the number of objects, not the highest object NUMBER (the P01
+// phase-close review): its slots were sized by the largest number, so a 400-byte file naming object 2^25 cost 6.1 GB.
+func TestTheReferenceWalkIsSizedByObjectsNotByTheirNumbers(t *testing.T) {
+	pdf := sparseDoc(1 << 20)
+	raw, err := api.ReadContext(bytes.NewReader(pdf), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatalf("setup: the sparse document does not read: %v", err)
+	}
+	if _, ok := raw.Table[1<<20]; !ok || len(raw.Table) > 16 {
+		t.Fatalf("setup: the table holds %d entries and object 2^20 is present=%v; want a handful, including it", len(raw.Table), ok)
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if _, err := pdfread.ValidatorPaths(raw); err != nil {
+		t.Fatalf("the walk refused a sparse, loop-free document: %v", err)
+	}
+	runtime.ReadMemStats(&after)
+	if got := after.TotalAlloc - before.TotalAlloc; got > 4<<20 {
+		t.Errorf("the walk allocated %d bytes over %d objects — it is sized by the highest object number", got, len(raw.Table))
 	}
 }
