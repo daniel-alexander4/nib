@@ -6,6 +6,7 @@ import "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 var (
 	DecodeOnce             = &decodeOnce
 	PassDecodesPageContent = passDecodesPageContent
+	ValidatorPaths         = validatorPaths // the reference door's walk (refgraph.go), without the budget
 )
 
 // WalkedInOnePass reports whether Pages answered from its one walk rather than asking PageDict page by page.

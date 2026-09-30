@@ -27,7 +27,7 @@ func TestAUseCMapLoopIsRefusedAtEveryDoor(t *testing.T) {
 			t.Fatalf("setup: %s carries no /UseCMap back to 20", name)
 		}
 		for door, f := range doors {
-			if err := f(c.PDF); !errors.Is(err, pdfread.ErrUseCMapCycle) {
+			if err := f(c.PDF); !errors.Is(err, pdfread.ErrReferenceCycle) {
 				t.Errorf("%s over %s returned %v, want the /UseCMap loop refused", door, name, err)
 			}
 		}

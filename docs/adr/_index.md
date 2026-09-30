@@ -574,3 +574,7 @@ home today.
   — /pending 761; supersedes ADR-066's read.go-only scope and ADR-067's "the gate covers Verify" in part. pdfcpu read
   every endless-loop shape and each took the process on all five paths; `lex.go`'s readArray refuses `endobj`, the
   object-stream view refuses reads past its end, and pdfcpu's gate is described as keeping out what it cannot read.
+- **[ADR-069 — the reference door mirrors pdfcpu's unguarded recursion](069-the-reference-door-mirrors-pdfcpus-unguarded-recursion.md)**
+  — /pending 764; extends 675's `/UseCMap` check. One walk before the validator over the edges pdfcpu follows without
+  a guard, refusing a loop (fatal stack overflow), more paths than the budget (sharing is walked once per path and per
+  page), and depth; objects pdfcpu marks first stop the walk. 0 of 333 real documents refused; 1.6% of a read.

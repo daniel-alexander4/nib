@@ -760,8 +760,8 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 }
 
 // PageCount returns the number of pages in the PDF: `api.PageCount` (pkg/api/page.go:213, v0.13.0 — a
-// validated read, then the context's count) restated over the read door, so the `/UseCMap` loop is checked
-// on the one parse rather than a second (`/pending 675`; see FlagsJSON).
+// validated read, then the context's count) restated over the read door, so the reference door runs
+// on the one parse rather than a second (`/pending 675`, `/pending 764`; see FlagsJSON).
 func PageCount(pdf []byte) (int, error) {
 	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
 	if err != nil {
