@@ -417,8 +417,32 @@ func completeOrHonest(carried, raw []byte) ([]byte, error) {
 // **An unreadable or unmodellable document is NOT complete.** A carry whose output this cannot parse
 // is one nothing downstream can parse either, and answering "complete" on a failed read would make
 // the gate report its own blindness as a pass — the vacuous-green shape this slice exists to remove.
+//
+// # It reads with pdfcpu's pass, minus the one step that walks the page tree per page (`/pending 754`)
+//
+// The pass is kept because the gate models the NEXT optimizing read, and that read fuses equal form
+// XObjects (`optimizeFontAndImages`) — which is what makes condition 4 visible (`subsetCarrying`'s header).
+// Its `optimizeResourceDicts` step is not: it asks `PageDict(i, true)` for every page, and on a flat tree —
+// what pdfcpu's writer and nib's Markdown conversion produce — each call dereferences every kid before the
+// one it wants. Measured on tier 4's 7,059-page fixture on a loaded machine: ~15 s of `PrepareDocument`'s
+// ~23 s (median of 3; 6.6 s after), the gate's read 15.7 s -> 5.9 s. What that step changes, and why the gate
+// does not need it:
+//
+//   - it prunes each page's `/Resources` to the names its content uses. The draw count looks names up from
+//     the content, so it sees the same forms; a claim by an undrawn form would differ, and no carry output in
+//     the differential below held one.
+//   - it puts inherited `/Resources` on the page. That one the gate DOES read (`scanPages` takes a page's own
+//     dictionary), so it is restored here from the one walk: the nearest ancestor's dictionary, which is what
+//     PDF's inheritance means. pdfcpu merges every ancestor's; the difference is names a page cannot draw.
+//   - without it the pass decodes no page content (`pdfread.passDecodesPageContent`), so no content estimate
+//     is made or cached. The gate reads page content only through `pdfread.PageContent`, under its own budget.
+//
+// Differential at the change: the gate's full defect list under the full pass, under this read, and under a
+// validated read with no pass, over ~/nib/producers and ~/nib/verapdfs (334 files) plus the fixture, and over
+// every document the gate itself was handed while driving NUp, a reversing Collect, DuplicatePage, RemovePages
+// and Append over each — 1,530 inputs, 1,196 of them real gate inputs, 152 incomplete: 0 differ.
 func carryIsComplete(pdf []byte) bool {
-	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
+	ctx, err := carryReading(pdf)
 	if err != nil {
 		return false
 	}
@@ -436,6 +460,26 @@ func carryIsComplete(pdf []byte) bool {
 	// `structureCarriedCompletely` because it is a property of the DOCUMENT and not of the tree, and
 	// `orphanPageObjects`' header says why it dereferences rather than type-asserting.
 	return len(structureCarriedCompletely(ctx, tree)) == 0 && len(orphanPageObjects(ctx, live)) == 0
+}
+
+// carryReading is the gate's read (see `carryIsComplete`): pdfcpu's pass without `optimizeResourceDicts`, and
+// each page that has no `/Resources` of its own given the ones it inherits.
+func carryReading(pdf []byte) (*model.Context, error) {
+	conf := model.NewDefaultConfiguration()
+	conf.OptimizeResourceDicts = false
+	ctx, err := pdfread.ReadOptimized(pdf, conf)
+	if err != nil {
+		return nil, err
+	}
+	for _, pg := range pdfread.Pages(ctx) {
+		if pg.Err != nil || pg.Dict == nil || pg.Attrs == nil || len(pg.Attrs.Resources) == 0 {
+			continue
+		}
+		if _, own := pg.Dict.Find("Resources"); !own {
+			pg.Dict["Resources"] = pg.Attrs.Resources
+		}
+	}
+	return ctx, nil
 }
 
 // carriesMCID reports whether a content stream marks any content with an `/MCID` — the property that
