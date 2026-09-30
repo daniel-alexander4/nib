@@ -25,8 +25,8 @@ import (
 // page's markup (HTML comments stripped), `web/app.js`'s string literals (comments stripped, so the
 // many code comments that DISCUSS conformance are not claims), and every string literal in non-test Go
 // under `internal/` and `cmd/` — the CLI's help and output, the server's responses, and the refusal
-// and `Why` text the checker hands both. Struct tags are skipped: `json:"conformant"` is a wire key
-// naming `Report.Conformant` ("every clause nib checks passes"), which the page reads and never prints.
+// and `Why` text the checker hands both. Struct tags are skipped: a wire key is read by code, never
+// printed (the report's own flag is `allCheckedPass`, renamed from `conformant` by /pending 765 part 4).
 // ADRs, plans and `docs/red-proofs.md` are not scanned: they are where the rule is argued, so they must
 // be free to name what it forbids.
 //
