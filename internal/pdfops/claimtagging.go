@@ -140,8 +140,9 @@ func UnmarkedTextRuns(pdf []byte) (int, error) {
 		return 0, err
 	}
 	n := 0
+	budget := newFormWalkBudget(ctx.PageCount) // one for the document (`readPageRuns`)
 	for _, pg := range pdfread.Pages(ctx) {
-		pr, perr := readPageRuns(ctx, pg)
+		pr, perr := readPageRuns(ctx, pg, budget)
 		if perr != nil {
 			return 0, perr
 		}
@@ -381,7 +382,8 @@ func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, vi
 	budget *formWalkBudget) int {
 	here, forms := uncoveredDrawingSpans(src, imageXObjectNames(ctx, res))
 	n := len(here)
-	if depth >= maxFormDepth || res == nil {
+	// The depth cut is charged only where there is a form to go into: a leaf at the limit loses nothing.
+	if res == nil || len(forms) == 0 || !budget.deeper(depth, maxFormDepth) {
 		return n
 	}
 	xobjs, err := ctx.DereferenceDict(res["XObject"])

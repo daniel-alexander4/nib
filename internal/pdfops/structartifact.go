@@ -102,10 +102,11 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 		pages = append(pages, pg)
 	}
 	sort.Ints(pages)
+	budget := newFormWalkBudget(len(pages)) // one for the pages read (`readPageRuns`)
 	for _, pg := range pages {
 		mine := owned[pg]
 		// ADR-009 exemption (grouping_test.go): this reads the page's marked-content sequences and groups nothing.
-		pr, err := readPageRuns(ctx, tree.walkedPage(ctx, pg))
+		pr, err := readPageRuns(ctx, tree.walkedPage(ctx, pg), budget)
 		if err != nil {
 			return err
 		}

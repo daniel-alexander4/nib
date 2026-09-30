@@ -312,7 +312,7 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw,
 func countFormDraws(ctx *model.Context, src []byte, res types.Dict, counts map[int]formDraw,
 	chain map[int]bool, depth int, budget *formWalkBudget) {
 
-	if depth > maxFormDrawDepth {
+	if !budget.deeper(depth, maxFormDrawDepth+1) {
 		return
 	}
 	var operands []contentstream.Token
@@ -376,7 +376,7 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 	if ierr != nil || inner == nil {
 		inner = res // a form with no resources of its own inherits the invoking stream's
 	}
-	if depth+1 > maxFormDrawDepth {
+	if !budget.deeper(depth, maxFormDrawDepth) {
 		return
 	}
 	body := budget.formContent(sd, obj)

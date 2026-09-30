@@ -176,16 +176,30 @@ const maxFormDepth = 12
 
 // readPageRuns reads one page's positioned runs. The caller resolves the page (`pageAt`), so a loop over the
 // pages walks the page tree once rather than once per page (/pending 756).
-func readPageRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
-	return readPageRunsKeeping(ctx, pg, false)
+//
+// shared is the budget a LOOP over pages passes, made once for the pages it reads (`newFormWalkBudget(pages)`) —
+// `/pending 715`. Without it the page gets a budget of its own, which is right for one page and wrong for a loop:
+// N pages that each stay just under a page's budget cost N budgets (measured: 64 pages sharing one fan-out form,
+// 9.4 s, ~0.14 s a page for ~100 bytes of file a page), where the budget's own rule is one per document with an
+// allowance per page. `TestEveryPageLoopSharesOneWalkBudget` holds every loop to it.
+func readPageRuns(ctx *model.Context, pg pdfread.Page, shared ...*formWalkBudget) (pageRuns, error) {
+	return readPageRunsKeeping(ctx, pg, false, pageBudget(shared))
+}
+
+// pageBudget is the shared budget when a loop passed one, else a budget for this page alone.
+func pageBudget(shared []*formWalkBudget) *formWalkBudget {
+	if len(shared) > 0 && shared[0] != nil {
+		return shared[0]
+	}
+	return newFormWalkBudget(1)
 }
 
 // readPageGlyphRuns is readPageRuns with each run's glyphs kept (`textRun.glyphs`) — reflow's reader.
 func readPageGlyphRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
-	return readPageRunsKeeping(ctx, pg, true)
+	return readPageRunsKeeping(ctx, pg, true, newFormWalkBudget(1))
 }
 
-func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keepGlyphs bool) (pageRuns, error) {
+func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keepGlyphs bool, budget *formWalkBudget) (pageRuns, error) {
 	pageNr := pg.Nr
 	return containRunRead(pageNr, func() (pageRuns, error) {
 		d, attrs, err := pg.Dict, pg.Attrs, pg.Err
@@ -201,6 +215,8 @@ func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keepGlyphs bool) (
 			res = attrs.Resources
 		}
 		w := newRunWalker(ctx.XRefTable)
+		budget.nextPage()
+		w.budget = budget
 		w.keepGlyphs = keepGlyphs
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
 		// Runs from a walk that stopped are the runs of part of the page: every caller would read the rest
@@ -1072,7 +1088,7 @@ func (w *runWalker) drawForm(res types.Dict, name string, gs runGState, depth in
 			return true
 		}
 	}
-	if depth >= maxFormDepth {
+	if !w.budget.deeper(depth, maxFormDepth) {
 		return true
 	}
 	body := w.budget.formContent(sd, obj)
