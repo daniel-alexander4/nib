@@ -680,11 +680,32 @@ real-producer corpus): of 999 real-producer paragraphs P06 can reflow, **194 hav
 mark in the band — path 581 (IRS form rules and vector-drawn glyphs dominate), image 34, inline image 21, text 36; no room —
 content below 78, page margin 55. Review `code-reviews/v1.169.48-p07s01-2026-09-30.md`.
 
-#### P07.S02 — move a paragraph
+#### P07.S02 — move a paragraph *(done 2026-09-30, v1.169.50)*
 A paragraph is re-set, unedited, `dy` lower, through P06's emitter (one door — a move is a reflow with its own text at
 translated line matrices). Acceptance: the moved paragraph reads back with identical text and line breaks, each baseline
 exactly `dy` lower; the decoded content outside its spans is byte-identical; a paragraph P06 would refuse refuses the
 move with the same cause.
+
+**PIN 2026-09-30 (slice grill, read at the lines) — a move is NOT a re-set, and two of the clauses above are amended.**
+P06's emitter re-breaks words and spaces them at the paragraph's MEDIAN gap with its space glyph (`reflow.go`
+`reflowParagraphIn`), so "moved through the emitter" would re-space every justified line and drop per-run state between
+shows — a move that changes how the text is set. A move changes WHERE and nothing else: each run keeps its own show
+operator (its codes, `TJ` kerning, `"`'s spacing), gains a `Tm` placing it `dy` lower in user space (tm′ = tm·CTM·T(0,−dy)·CTM⁻¹,
+so a flipped or scaled CTM moves it down the PAGE), and its own line matrix is restored after it, so relative positioning
+that follows lands unchanged; nothing between the runs is touched, so marked content keeps its glyphs. Its refusals are
+therefore the ones that bear on a move — `text-in-form`, `inline-follower` (a show drawn straight after a moved run),
+`degenerate-state` — not P06's word-level set (`styled-word`, `no-space-glyph` … say nothing about moving). **Clause 1
+reads "every run reads back identical, exactly `dy` lower"; clause 3 reads "what a move cannot do refuses by name".** A
+paragraph's blank runs (a show of white space only, P07.S01's 760) move with it, or the next word reads as a follower.
+
+**Tasks** (slice grill, 2026-09-30): T01 — `runTextState.ctm`; `runMatrix.inverse`. T02 — `moveRuns` / `moveParagraph`
+(`flowmove.go`): `'` and `"` rewritten as `Tj` with `"`'s spacing stated; the replacement separated on both sides;
+`paragraphRunsWithBlanks`. T03 — the corpus read-back (every paragraph of the generated and real-producer corpora, every
+run compared), the written round trip on `'`/`"`/`TJ`/flipped CTM/tagged, and each refusal.
+**Closed 2026-09-30.** The review added a fourth refusal, `text-clips` (a run in render mode 4–7 carries the clip with
+it), said to the user like every other cause. **Measured**: 1,379 paragraphs of the generated and real-producer corpora
+moved and read back exactly — 171 of several lines, 630 kerned, 241 carrying blank runs; refused inline-follower 2,
+text-in-form 2. Review `code-reviews/v1.169.49-p07s02-2026-09-30.md`.
 
 #### P07.S03 — grow into the room below
 An edited paragraph takes the lines it needs at its own line pitch; the region below moves down by the growth, bounded by

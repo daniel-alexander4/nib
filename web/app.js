@@ -6804,6 +6804,7 @@ const REFLOW_CAUSES = {
   'ambiguous-style': 'A word you used appears in the paragraph in two styles, and which one to keep is unclear.',
   vertical: 'The text is written vertically.',
   'invisible-text': 'The text is invisible — a search layer over a scanned image — so changing it would not change what the page shows.',
+  'text-clips': 'Text below it is drawn as a clipping outline — moving it would change what the page shows through it.',
 };
 function reflowCauseSentence(cause) {
   const why = REFLOW_CAUSES[cause] || 'It cannot be re-set exactly (' + cause + ').';
