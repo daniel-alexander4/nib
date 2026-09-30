@@ -111,7 +111,7 @@ func ocrRunsOf(t *testing.T, pdf []byte) map[string]textRun {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	pr, err := readPageRuns(ctx, 1)
+	pr, err := readPageRuns(ctx, pageAt(ctx, nil, 1))
 	if err != nil {
 		t.Fatalf("runs: %v", err)
 	}

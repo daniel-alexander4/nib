@@ -192,7 +192,7 @@ func TestParagraphCountsMatchTheHandCheckedCorpus(t *testing.T) {
 			t.Fatalf("%s: %d page(s), the expectation has %d", c.name, ctx.PageCount, len(c.pages))
 		}
 		for i, want := range c.pages {
-			l, lerr := readPageLayout(ctx, i+1)
+			l, lerr := readPageLayout(ctx, pageAt(ctx, nil, i+1))
 			if lerr != nil {
 				t.Fatalf("%s page %d: %v", c.name, i+1, lerr)
 			}

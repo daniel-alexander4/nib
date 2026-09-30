@@ -320,7 +320,7 @@ func TestAnImageOnlyPageReturnsNoRunsAndSaysSo(t *testing.T) {
 		if rerr != nil {
 			t.Fatal(rerr)
 		}
-		pr, perr := readPageRuns(ctx, 1)
+		pr, perr := readPageRuns(ctx, pageAt(ctx, nil, 1))
 		if perr != nil {
 			t.Fatal(perr)
 		}
@@ -408,7 +408,7 @@ func TestRunsOverTheCorpusAreDecodedAndMeasured(t *testing.T) {
 		}
 		total := 0
 		for p := 1; p <= ctx.PageCount; p++ {
-			pr, perr := readPageRuns(ctx, p)
+			pr, perr := readPageRuns(ctx, pageAt(ctx, nil, p))
 			if perr != nil {
 				t.Fatalf("%s page %d: %v", doc.name, p, perr)
 			}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 
+	"nib/internal/pdfread"
+
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
@@ -70,8 +72,8 @@ type pageLayout struct {
 }
 
 // readPageLayout is the door consumers call: a page's runs, grouped.
-func readPageLayout(ctx *model.Context, pageNr int) (pageLayout, error) {
-	pr, err := readPageRuns(ctx, pageNr)
+func readPageLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error) {
+	pr, err := readPageRuns(ctx, pg)
 	if err != nil {
 		return pageLayout{}, err
 	}
@@ -83,8 +85,8 @@ func readPageLayout(ctx *model.Context, pageNr int) (pageLayout, error) {
 
 // readPageGlyphLayout is readPageLayout over runs that keep their glyphs (`readPageGlyphRuns`) — reflow's reader. The
 // grouping is the same door; only what each run carries differs.
-func readPageGlyphLayout(ctx *model.Context, pageNr int) (pageLayout, error) {
-	pr, err := readPageGlyphRuns(ctx, pageNr)
+func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error) {
+	pr, err := readPageGlyphRuns(ctx, pg)
 	if err != nil {
 		return pageLayout{}, err
 	}

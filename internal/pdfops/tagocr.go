@@ -193,8 +193,11 @@ func tagOCRPage(ctx *model.Context, tree *structTree, pageNr int, words []Word, 
 // **Every page, not only the pages with words.** A page tesseract read nothing on is still a picture,
 // and leaving it would make `claimTagging` refuse the whole document — costing the pages that DID
 // recognise their description, to say nothing about a page nobody can describe either way.
-func artifactUncoveredDrawings(ctx *model.Context, pageNr int) error {
-	d, _, attrs, derr := ctx.PageDict(pageNr, false)
+//
+// The caller resolves the page from one walk of the tree (`structTree.walkedPage`, /pending 756).
+func artifactUncoveredDrawings(ctx *model.Context, pg pdfread.Page) error {
+	pageNr := pg.Nr
+	d, attrs, derr := pg.Dict, pg.Attrs, pg.Err
 	if derr != nil || d == nil {
 		return fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, derr)
 	}
@@ -267,7 +270,7 @@ func TagOCRLayer(pdf []byte, words []Word, lang string) (out []byte, tagged bool
 		// inside `tagOCRPage`, because a page with no recognised words never enters that function and
 		// is exactly as much a picture as one that did.
 		for p := 1; p <= ctx.PageCount; p++ {
-			if err := artifactUncoveredDrawings(ctx, p); err != nil {
+			if err := artifactUncoveredDrawings(ctx, st.walkedPage(ctx, p)); err != nil {
 				return err
 			}
 		}

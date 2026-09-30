@@ -181,7 +181,7 @@ func TestAHugeFormDrawnRepeatedlyIsRefusedPromptly(t *testing.T) {
 	ctx := optimizedCtx(t, pdf)
 	const why = "bytes of form XObjects"
 	var err error
-	finishesWithin(t, 3, "readPageRuns over 80 draws of a 64 MiB form", func() { _, err = readPageRuns(ctx, 1) })
+	finishesWithin(t, 3, "readPageRuns over 80 draws of a 64 MiB form", func() { _, err = readPageRuns(ctx, pageAt(ctx, nil, 1)) })
 	if err == nil || !strings.Contains(err.Error(), why) {
 		t.Errorf("readPageRuns returned %v, want the byte budget named", err)
 	}

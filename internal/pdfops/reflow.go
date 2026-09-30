@@ -268,11 +268,11 @@ func finite(vs ...float64) bool {
 // paragraphRefusal is the one door for "why this paragraph cannot be reflowed" before any text is typed: what its
 // words say (`paragraphWords`), then replacement text on the structure element its marked content belongs to. Both
 // routes ask it, so the dialog refuses up front exactly what the rewrite would.
-func paragraphRefusal(ctx *model.Context, pageNr int, p textParagraph) string {
+func paragraphRefusal(ctx *model.Context, pg pdfread.Page, p textParagraph) string {
 	if _, _, cause := paragraphWords(p); cause != "" {
 		return cause
 	}
-	if structReplacesText(ctx, pageNr, p) {
+	if structReplacesText(ctx, pg, p) {
 		return causeReplacementText
 	}
 	return ""
@@ -282,7 +282,7 @@ func paragraphRefusal(ctx *model.Context, pageNr int, p textParagraph) string {
 // ancestor of one — carrying `/ActualText`, `/Alt` or `/E`: the tree then reports that text for these glyphs, and
 // rewriting the glyphs would leave the old words there. Only the page's own stream is asked (a run in a form is
 // refused before this), through the page's `/StructParents` row of the `/ParentTree`.
-func structReplacesText(ctx *model.Context, pageNr int, p textParagraph) bool {
+func structReplacesText(ctx *model.Context, pg pdfread.Page, p textParagraph) bool {
 	var mcids []int
 	seen := map[int]bool{}
 	for _, l := range p.lines {
@@ -297,7 +297,7 @@ func structReplacesText(ctx *model.Context, pageNr int, p textParagraph) bool {
 		return false
 	}
 	xt := ctx.XRefTable
-	pd, _, _, err := ctx.PageDict(pageNr, false)
+	pd, err := pg.Dict, pg.Err
 	if err != nil || pd == nil {
 		return false
 	}
@@ -367,16 +367,18 @@ type emitWord struct {
 // DELETED, so the original words are gone from the content rather than covered. Anything the rewrite cannot do exactly
 // is a named cause and no content (law 3).
 func reflowParagraph(ctx *model.Context, pageNr, pi int, text string) (reflowOutcome, error) {
-	layout, err := readPageGlyphLayout(ctx, pageNr)
+	pg := pageAt(ctx, nil, pageNr)
+	layout, err := readPageGlyphLayout(ctx, pg)
 	if err != nil {
 		return reflowOutcome{}, err
 	}
-	return reflowParagraphIn(ctx, layout, pageNr, pi, text)
+	return reflowParagraphIn(ctx, layout, pg, pi, text)
 }
 
 // reflowParagraphIn is reflowParagraph over a layout the caller already read — the door reads one to check staleness.
-func reflowParagraphIn(ctx *model.Context, layout pageLayout, pageNr, pi int, text string) (reflowOutcome, error) {
-	d, _, _, err := ctx.PageDict(pageNr, false)
+func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, pi int, text string) (reflowOutcome, error) {
+	pageNr := pg.Nr
+	d, err := pg.Dict, pg.Err
 	if err != nil || d == nil {
 		return reflowOutcome{}, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 	}
@@ -384,7 +386,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pageNr, pi int, te
 		return reflowOutcome{cause: causeNoParagraph}, nil
 	}
 	para := layout.paragraphs[pi]
-	if cause := paragraphRefusal(ctx, pageNr, para); cause != "" {
+	if cause := paragraphRefusal(ctx, pg, para); cause != "" {
 		return reflowOutcome{cause: cause}, nil
 	}
 	lines, space, _ := paragraphWords(para)

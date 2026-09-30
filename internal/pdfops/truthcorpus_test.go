@@ -158,7 +158,7 @@ func readTruth(t *testing.T, pdf []byte) []truthBlock {
 		}
 		live[ir.ObjectNumber.Value()] = true
 		pageNr[ir.ObjectNumber.Value()] = pg
-		pr, perr := readPageRuns(ctx, pg)
+		pr, perr := readPageRuns(ctx, pageAt(ctx, nil, pg))
 		if perr != nil {
 			t.Fatal(perr)
 		}
@@ -229,7 +229,7 @@ func layoutBlocks(t *testing.T, pdf []byte) []truthBlock {
 	}
 	var out []truthBlock
 	for pg := 1; pg <= ctx.PageCount; pg++ {
-		l, lerr := readPageLayout(ctx, pg)
+		l, lerr := readPageLayout(ctx, pageAt(ctx, nil, pg))
 		if lerr != nil {
 			t.Fatal(lerr)
 		}

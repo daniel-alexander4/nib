@@ -140,8 +140,8 @@ func UnmarkedTextRuns(pdf []byte) (int, error) {
 		return 0, err
 	}
 	n := 0
-	for p := 1; p <= ctx.PageCount; p++ {
-		pr, perr := readPageRuns(ctx, p)
+	for _, pg := range pdfread.Pages(ctx) {
+		pr, perr := readPageRuns(ctx, pg)
 		if perr != nil {
 			return 0, perr
 		}

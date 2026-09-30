@@ -90,7 +90,7 @@ func TestACommittedProposalReadsBackAsItsOwnTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, err := readPageRuns(ctx, 1)
+	pr, err := readPageRuns(ctx, pageAt(ctx, nil, 1))
 	if err != nil {
 		t.Fatal(err)
 	}

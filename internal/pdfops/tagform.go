@@ -92,13 +92,17 @@ func AuthorTaggedForm(pdf []byte, fields []FormField) (out []byte, tagged bool, 
 //
 // An annotation that already carries a `/StructParent` is left alone: something already describes it,
 // and a second element pointing at the same annotation gives a reader two answers to one question.
+//
+// The page comes from the tree's one walk (`structTree.walkedPage`), because both callers ask for every page and
+// a `PageDict` plus a `PageDictIndRef` per page were two walks of the tree from its root each (/pending 756).
 func describeAnnotationsOnPage(ctx *model.Context, tree *structTree, pageNr int, subtype types.Name, elemType string) (int, error) {
-	d, _, _, err := ctx.PageDict(pageNr, false)
+	pg := tree.walkedPage(ctx, pageNr)
+	d, err := pg.Dict, pg.Err
 	if err != nil || d == nil {
 		return 0, fmt.Errorf("pdfops: page %d does not resolve: %w", pageNr, err)
 	}
-	pageRef, err := ctx.PageDictIndRef(pageNr)
-	if err != nil || pageRef == nil {
+	pageRef := pg.Ref
+	if pageRef == nil {
 		return 0, fmt.Errorf("pdfops: page %d has no indirect reference: %w", pageNr, err)
 	}
 	annots, aerr := ctx.DereferenceArray(d["Annots"])

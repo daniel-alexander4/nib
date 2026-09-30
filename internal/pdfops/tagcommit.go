@@ -91,12 +91,13 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			pageNrs = append(pageNrs, el.page)
 		}
 		pageNrs = append(pageNrs, alsoPages...)
+		walked := pdfread.Pages(ctx) // one walk for the whole read, not one per page (/pending 756)
 		for _, pageNr := range pageNrs {
 			el := proposedElement{page: pageNr}
 			if _, seen := pages[el.page]; seen {
 				continue
 			}
-			pr, perr := readPageRuns(ctx, el.page)
+			pr, perr := readPageRuns(ctx, pageAt(ctx, walked, el.page))
 			if perr != nil {
 				return perr
 			}
@@ -136,11 +137,11 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			if cerr != nil {
 				return cerr
 			}
-			// Inherited resources, through `PageDict`: a page that inherits its `/XObject` from an
+			// Inherited resources, as `PageDict` resolves them: a page that inherits its `/XObject` from an
 			// ancestor draws the same pictures, and reading only `d["Resources"]` would see none of them.
 			var res types.Dict
-			if _, _, attrs, aerr := ctx.PageDict(pg, false); aerr == nil && attrs != nil {
-				res = attrs.Resources
+			if wp := tree.walkedPage(ctx, pg); wp.Err == nil && wp.Attrs != nil {
+				res = wp.Attrs.Resources
 			}
 			pages[pg].dict = d
 			pages[pg].src = src

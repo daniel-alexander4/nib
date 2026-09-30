@@ -54,7 +54,7 @@ func TestEveryFormWalkerStopsAtTheWalkBudgetAndSaysSo(t *testing.T) {
 	if n, err := uncoveredDrawings(control); err != nil || n != 1000 {
 		t.Fatalf("control: %d uncovered drawings (%v), want 1000", n, err)
 	}
-	if pr, err := readPageRuns(ctx, 1); err != nil || len(pr.runs) != 1000 {
+	if pr, err := readPageRuns(ctx, pageAt(ctx, nil, 1)); err != nil || len(pr.runs) != 1000 {
 		t.Fatalf("control: %d runs (%v), want 1000", len(pr.runs), err)
 	}
 	if !carryIsComplete(control) {
@@ -72,7 +72,7 @@ func TestEveryFormWalkerStopsAtTheWalkBudgetAndSaysSo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), budget) {
 		t.Errorf("uncoveredDrawings over seven levels returned %v, want the walk budget named", err)
 	}
-	finishesWithin(t, 10, "readPageRuns over seven levels", func() { _, err = readPageRuns(ctx, 1) })
+	finishesWithin(t, 10, "readPageRuns over seven levels", func() { _, err = readPageRuns(ctx, pageAt(ctx, nil, 1)) })
 	if err == nil || !strings.Contains(err.Error(), budget) {
 		t.Errorf("readPageRuns over seven levels returned %v, want the walk budget named", err)
 	}
@@ -114,7 +114,7 @@ func TestNestedSequencesCostTheRunReaderLinearTime(t *testing.T) {
 		}
 		var pr pageRuns
 		finishesWithin(t, 10, fmt.Sprintf("%d shows with the artifact %s %d nested sequences", n, where.name, n),
-			func() { pr, err = readPageRuns(ctx, 1) })
+			func() { pr, err = readPageRuns(ctx, pageAt(ctx, nil, 1)) })
 		if err != nil || len(pr.runs) != n {
 			t.Fatalf("%d runs (%v), want %d", len(pr.runs), err, n)
 		}
@@ -138,7 +138,7 @@ func TestNestedSequencesCostTheRunReaderLinearTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishesWithin(t, 10, fmt.Sprintf("%d form draws inside %d nested sequences", n, n), func() { _, err = readPageRuns(ctx, 1) })
+	finishesWithin(t, 10, fmt.Sprintf("%d form draws inside %d nested sequences", n, n), func() { _, err = readPageRuns(ctx, pageAt(ctx, nil, 1)) })
 	if err == nil || !strings.Contains(err.Error(), "enters form XObjects more than") {
 		t.Fatalf("%d form draws on one page returned %v, want the walk budget named", n, err)
 	}
@@ -171,7 +171,7 @@ func TestAFormDrawnManyTimesStopsAtTheByteBudget(t *testing.T) {
 	if _, err := uncoveredDrawings(pdf); err == nil || !strings.Contains(err.Error(), why) {
 		t.Errorf("uncoveredDrawings returned %v, want the byte budget named", err)
 	}
-	if _, err := readPageRuns(ctx, 1); err == nil || !strings.Contains(err.Error(), why) {
+	if _, err := readPageRuns(ctx, pageAt(ctx, nil, 1)); err == nil || !strings.Contains(err.Error(), why) {
 		t.Errorf("readPageRuns returned %v, want the byte budget named", err)
 	}
 }
