@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"nib/internal/atomicfile"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -416,6 +417,12 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 			return r, nil, err
 		}
 		got, herr := DocumentHash(pdf)
+		if errors.Is(herr, pdfops.ErrPageTreeAmbiguous) {
+			// Named, never "damaged" (/pending 755): the copy is intact, and it is the document's
+			// own page tree that two readers order differently — true of every copy of it, so
+			// telling the user this machine's copy was damaged sends them after the wrong fault.
+			return r, nil, fmt.Errorf("the stored document cannot be checked against its record: %w", herr)
+		}
 		if herr != nil {
 			return r, nil, fmt.Errorf("%w: its document will not parse: %v", ErrMirrorDamaged, herr)
 		}

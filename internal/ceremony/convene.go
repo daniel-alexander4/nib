@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nib/internal/p2p"
+	"nib/internal/pdfops"
 	"nib/internal/sign"
 )
 
@@ -213,6 +214,12 @@ func Convene(pdf []byte, req ConveneRequest, certPEM, keyPEM []byte, now time.Ti
 	if sign.Verify(pdf).State != sign.Unsigned {
 		return Convened{}, errors.New("this document is already signed; a ceremony is convened " +
 			"before anybody signs, because appending pages would break every signature on it")
+	}
+	// On the ORIGINAL, because DocHash is taken over the prepared copy and preparing merges the
+	// document, which rewrites its page tree and settles an ambiguous order silently (/pending
+	// 755). Same predicate the digest applies, through its one door.
+	if err := pdfops.CheckPageOrder(pdf); err != nil {
+		return Convened{}, err
 	}
 
 	convFP, err := sign.Fingerprint(certPEM)

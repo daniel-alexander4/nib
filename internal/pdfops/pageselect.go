@@ -185,8 +185,10 @@ type pageLeaf struct {
 //
 // **`ContentDigest` is the second caller** (`digestPageDicts`, attachments.go), which is why the
 // obligation two paragraphs down — *"The two walks must agree"* — now reaches three walks. It is
-// not authoritative there: a count disagreement with `ctx.PageCount` falls back to `PageDict`,
-// because that digest is a signed commitment and an optimisation may not re-decide what a page is.
+// not authoritative there: a count disagreement with `ctx.PageCount` falls back to `PageDict`, and
+// where the counts agree each leaf is checked against `pdfread.Pages` and a mismatch refuses the
+// document (`ErrPageTreeAmbiguous`, /pending 755), because that digest is a signed commitment and an
+// optimisation may not re-decide what a page is.
 func collectLeaves(xt *model.XRefTable, root types.Dict) ([]pageLeaf, types.IndirectRef, error) {
 	pagesRef, ok := root["Pages"].(types.IndirectRef)
 	if !ok {
