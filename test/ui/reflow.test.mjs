@@ -16,8 +16,7 @@ const { page } = h;
 after(() => shutdown(h));
 
 // A three-line Helvetica paragraph in one text object, built by hand so the operators on the page are known.
-function paragraphPDF() {
-  const content = 'BT /F1 14 Tf 18 TL 72 700 Td (The quick brown fox jumps) Tj T* (over the lazy dog and runs) Tj T* (away from here.) Tj ET';
+function paragraphPDF(content = 'BT /F1 14 Tf 18 TL 72 700 Td (The quick brown fox jumps) Tj T* (over the lazy dog and runs) Tj T* (away from here.) Tj ET') {
   const objs = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -75,6 +74,34 @@ test('a character the font cannot draw keeps the dialog open and says why', asyn
   assert.match(why, /Edit text/, 'the refusal did not point at the fallback');
   assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), false, 'the dialog closed on a refusal, losing the typed text');
   await page.click('#reflowCancel');
+});
+
+// P07.S03 through the binary: an edit that needs more lines grows DOWN, and the paragraph below it is pushed lower — read
+// from pdf.js's text layer of the re-rendered page, a reader the Go side has no hand in.
+const GROW = writeRawFixture('reflow-grow.pdf', paragraphPDF(
+  'BT /F1 14 Tf 18 TL 72 700 Td (The quick brown fox jumps) Tj T* (over the lazy dog and runs) Tj T* (away from here.) Tj ET ' +
+  'BT /F1 14 Tf 72 640 Td (Second stays.) Tj ET'));
+
+const spanTop = (word) => page.evaluate((w) => {
+  const s = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].find((e) => e.textContent.includes(w));
+  return s ? s.getBoundingClientRect().top : null;
+}, word);
+
+test('an edit that needs more lines pushes the paragraph below it down', async () => {
+  await h.openDocument(GROW, 1);
+  await page.waitForFunction(() => /Second stays/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const before = await spanTop('Second');
+  assert.notEqual(before, null, 'setup: the second paragraph must be on the page before the edit');
+  await openReflow();
+  await page.fill('#reflowText', 'The quick brown fox jumps over the lazy dog and runs away from here, and then it runs some more.');
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the growth was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction(() => /some more/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const after = await spanTop('Second');
+  assert.ok(after > before + 5, `the paragraph below did not move down: top ${before} → ${after}`);
+  assert.match(await pageText(), /Second stays\./, 'the paragraph below lost its text');
 });
 
 // The P06 phase-close review: every 409 was shown as "That paragraph has changed", the dialog closed, and what the user

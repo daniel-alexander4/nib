@@ -172,6 +172,34 @@ func lineMeasures(lines [][]reflowWord, space float64) []float64 {
 	return out
 }
 
+// paragraphMeasures is the room each line of paragraph pi of l has — the one measure the rewrite breaks at and every
+// check of its breaks re-derives. A paragraph of ONE line carries no record of its measure (its own width is only where its
+// words ended), so it was set in its column's: the furthest any line of the column reaches. Wrapped at its own width, a
+// grown one-liner would break short, and a short line followed by one whose first word would have fitted reads back as two
+// paragraphs. It stops an em short of anything drawn to its right on its line.
+func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space float64) []float64 {
+	measures := lineMeasures(lines, space)
+	if len(lines) == 1 {
+		p := l.paragraphs[pi]
+		right := math.Inf(-1)
+		for _, q := range l.paragraphs {
+			if q.column == p.column {
+				right = math.Max(right, paragraphBox(q)[2])
+			}
+		}
+		// Never into something drawn beside it: a form label's line ends where its field or the next label begins, and
+		// its column's edge says nothing about that. An em short of the nearest thing on its line, to its right.
+		own, em := paragraphBox(p), p.lines[0].size
+		for _, o := range obstaclesOf(l, map[int]bool{pi: true}) {
+			if o.box[1] < own[3] && own[1] < o.box[3] && o.box[0] >= own[2]-1e-9 {
+				right = math.Min(right, o.box[0]-em)
+			}
+		}
+		measures[0] = math.Max(measures[0], right-lines[0][0].startX)
+	}
+	return measures
+}
+
 // measureSlack absorbs the arithmetic in comparing a sum against the maximum of the same sums.
 const measureSlack = 1e-6
 
@@ -202,7 +230,9 @@ const (
 	causeTagged          = "tagged"           // marked content sits among its lines; moving text would mis-tag it (P07)
 	causeReplacementText = "replacement-text" // the paragraph sits inside /ActualText or /Alt, which would keep the old words readable
 	causeNoSpaceGlyph    = "no-space-glyph"   // the font draws no space, and a gap with no glyph is invisible to every reader of the text
-	causeGrows           = "paragraph-grows"  // it needs more lines than it had — P07's flow
+	causePageFull        = "page-full"        // it needs more room than lies free below it on the page (P07.S06 flows it on)
+	causeNoPitch         = "no-pitch"         // it grows, and neither it nor its column says how far apart its lines are set
+	causeAnchored        = "anchored"         // an annotation, link, widget, flag, bookmark or drawing sits where the text would move
 	causeWordTooWide     = "word-too-wide"    // a word is wider than the paragraph's measure
 	causeNoParagraph     = "no-such-paragraph"
 	causeEmpty           = "empty-text"       // the new text has no words: deleting a paragraph is not a reflow
@@ -225,7 +255,7 @@ const (
 // sentence for. `TestEveryReflowCauseIsSaidToTheUser` holds `web/app.js`'s REFLOW_CAUSES to it.
 var ReflowCauses = []string{
 	causeMissingGlyph, causeMixedState, causeMixedContent, causeInlineFollower, causeTagged, causeReplacementText,
-	causeNoSpaceGlyph, causeGrows, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
+	causeNoSpaceGlyph, causePageFull, causeNoPitch, causeAnchored, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
 	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
 	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, ReflowCauseSigned, ReflowCauseInvalidOutput,
 }
@@ -351,6 +381,9 @@ func structReplacesText(ctx *model.Context, pg pdfread.Page, p textParagraph) bo
 type reflowOutcome struct {
 	content []byte // the page's new content; nil when nothing was written
 	cause   string // why not, when content is nil and the text changed
+	// below is the text of the paragraph below that refused to move, when the refusal is its — so the user is told WHICH
+	// paragraph stands in the way, not only why (P07.S03).
+	below string
 }
 
 // emitWord is a word as it will be drawn: its codes, the kern before each after the first (user space), its font.
@@ -505,13 +538,48 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		words = append(words, ew)
 	}
-	measures := lineMeasures(lines, space)
+	measures := paragraphMeasures(layout, pi, lines, space)
 	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width }, space)
-	if len(broken) > len(para.lines) {
-		return reflowOutcome{cause: causeGrows}, nil
+	// A paragraph that needs more lines grows DOWN into the room below it (P07.S03): its new lines at its own pitch, and
+	// the paragraphs below it moved by the growth. What it cannot move with them, it refuses.
+	n := len(para.lines)
+	extra := len(broken) - n
+	var region flowRegion
+	pitch := 0.0
+	if extra > 0 {
+		if pitch = paragraphPitch(layout, pi); !(pitch > 0) || !finite(pitch) {
+			return reflowOutcome{cause: causeNoPitch}, nil
+		}
+		region = regionOf(layout, pi, visibleBoxOf(pg))
+		if len(region.marks) > 0 {
+			return reflowOutcome{cause: causeAnchored}, nil
+		}
+		if float64(extra)*pitch > region.room+measureSlack {
+			return reflowOutcome{cause: causePageFull}, nil
+		}
+	}
+	// A re-wrap moves the paragraph's words inside its box, so an annotation laid over them — a link on a word, a form
+	// widget — would point at other words after ANY edit; when it grows, anything anchored in the band below moves too.
+	if annotatedOver(ctx, pg, para) {
+		return reflowOutcome{cause: causeAnchored}, nil
+	}
+	if extra > 0 {
+		for _, a := range pageAnchors(ctx, pg, true) {
+			if touches(a.box, region.band) {
+				return reflowOutcome{cause: causeAnchored}, nil
+			}
+		}
+	}
+	// lineAt is the text state a broken line is set from: its own original line's, and past the last of them the last
+	// line's, shifted down by the pitch once for each line beyond it.
+	lineAt := func(i int) (runMatrix, bool) {
+		if i < n {
+			return para.lines[i].runs[0].state.tm, true
+		}
+		return shiftedTm(para.lines[n-1].runs[0].state, float64(i-n+1)*pitch)
 	}
 	for i, l := range broken {
-		if len(l) == 1 && l[0].width > measures[i]+measureSlack {
+		if len(l) == 1 && l[0].width > measures[min(i, len(measures)-1)]+measureSlack {
 			return reflowOutcome{cause: causeWordTooWide}, nil
 		}
 	}
@@ -576,8 +644,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		return reflowOutcome{cause: causeDegenerate}, nil
 	}
 	for i, l := range broken {
-		tm := para.lines[i].runs[0].state.tm
-		if !finite(tm[:]...) || !finite(last.state.tlm[:]...) {
+		tm, ok := lineAt(i)
+		if !ok || !finite(tm[:]...) || !finite(last.state.tlm[:]...) {
 			return reflowOutcome{cause: causeDegenerate}, nil
 		}
 		for _, w := range l {
@@ -592,12 +660,14 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	// at this point is whatever preceded the paragraph's first show.
 	fmt.Fprintf(&buf, "\n%s Tc %s Tw\n", num(st0.tc), num(st0.tw))
 	for i, l := range broken {
-		tm := para.lines[i].runs[0].state.tm
+		tm, _ := lineAt(i)
 		fmt.Fprintf(&buf, "%s %s %s %s %s %s Tm\n", num(tm[0]), num(tm[1]), num(tm[2]), num(tm[3]), num(tm[4]), num(tm[5]))
 		font, size := l[0].font, l[0].tfSize
 		fmt.Fprintf(&buf, "%s %s Tf\n[", pdfName(font), num(size))
-		// The line's lead: where its first word began, past the origin of its first run (a leading kern or space).
-		if lead := lines[i][0].startX - para.lines[i].runs[0].x; math.Abs(lead) > 1e-9 {
+		// The line's lead: where its first word began, past the origin of its first run (a leading kern or space). A new
+		// line takes the last line's.
+		li := min(i, n-1)
+		if lead := lines[li][0].startX - para.lines[li].runs[0].x; math.Abs(lead) > 1e-9 {
 			fmt.Fprintf(&buf, "%s ", adj(lead, size))
 		}
 		for wi, w := range l {
@@ -634,6 +704,15 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			e.Replace(sp.start, sp.end, []byte(buf.String()))
 		} else {
 			e.Replace(sp.start, sp.end, nil)
+		}
+	}
+	for _, q := range region.paragraphs {
+		moves, cause := moveRuns(src, paragraphRunsWithBlanks(layout, q), float64(extra)*pitch)
+		if cause != "" {
+			return reflowOutcome{cause: cause, below: layout.paragraphs[q].text()}, nil
+		}
+		for _, m := range moves {
+			e.Replace(m.span.start, m.span.end, m.with)
 		}
 	}
 	out, err := e.Apply()
@@ -720,4 +799,29 @@ func regularByte(c byte) bool {
 		return false
 	}
 	return true
+}
+
+// paragraphPitch is how far apart paragraph pi's lines are set, baseline to baseline in user space: the median of its own
+// steps, or for a paragraph of one line the median step of its column's paragraphs set at its size — or 0 when neither
+// says, and a grown paragraph is refused rather than set at an invented leading.
+func paragraphPitch(l pageLayout, pi int) float64 {
+	p := l.paragraphs[pi]
+	stepsOf := func(q textParagraph) []float64 {
+		var out []float64
+		for i := 1; i < len(q.lines); i++ {
+			out = append(out, q.lines[i-1].y-q.lines[i].y)
+		}
+		return out
+	}
+	if len(p.lines) > 1 {
+		return median(stepsOf(p))
+	}
+	size := p.lines[0].size
+	var steps []float64
+	for _, q := range l.paragraphs {
+		if q.column == p.column && len(q.lines) > 1 && math.Abs(q.lines[0].size-size) <= 0.1*size {
+			steps = append(steps, stepsOf(q)...)
+		}
+	}
+	return median(steps)
 }

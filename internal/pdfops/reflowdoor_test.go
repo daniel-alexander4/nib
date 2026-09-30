@@ -28,12 +28,12 @@ func TestTheReflowDoor(t *testing.T) {
 	if _, _, err := ReflowParagraph(pdf, 1, 7, orig, edit); !errors.Is(err, ErrReflowStale) {
 		t.Errorf("an index past the page's paragraphs: %v", err)
 	}
-	if out, cause, err := ReflowParagraph(pdf, 1, 0, orig, orig); out != nil || cause != "" || err != nil {
-		t.Errorf("the paragraph's own text wrote %d bytes (cause %q, %v)", len(out), cause, err)
+	if out, cause, err := ReflowParagraph(pdf, 1, 0, orig, orig); out != nil || cause != (Refusal{}) || err != nil {
+		t.Errorf("the paragraph's own text wrote %d bytes (cause %v, %v)", len(out), cause, err)
 	}
 	out, cause, err := ReflowParagraph(pdf, 1, 0, orig, edit)
-	if err != nil || cause != "" || out == nil {
-		t.Fatalf("the edit: cause %q, %v", cause, err)
+	if err != nil || cause != (Refusal{}) || out == nil {
+		t.Fatalf("the edit: cause %v, %v", cause, err)
 	}
 	after, err := Paragraphs(out, 1)
 	if err != nil || after[0].Text != edit {

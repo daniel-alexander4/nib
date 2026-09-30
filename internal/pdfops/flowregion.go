@@ -163,6 +163,8 @@ type flowRegion struct {
 	bottom, floor, room float64
 	// bound says what set the floor: `roomBelowContent` or `roomBelowMargin`.
 	bound string
+	// band is the column's extent from pi's bottom down to the floor: where the region's text is, and will be.
+	band [4]float64
 	// marks are the marks meeting the band — the column's extent from pi's bottom down to the floor — that the region
 	// does not own. None of them moves with the text.
 	marks []pageMark
@@ -214,6 +216,12 @@ func paragraphBox(p textParagraph) [4]float64 {
 // meets says whether boxes a and b overlap in both axes. Touching edges do not meet.
 func meets(a, b [4]float64) bool {
 	return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+// touches says whether boxes a and b share any point, edges included — the test for an anchor, which may be a point (a
+// destination's top, a flag) and has no area to overlap with.
+func touches(a, b [4]float64) bool {
+	return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 }
 
 // covers says whether box a contains box b.
@@ -277,21 +285,7 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 	r.bottom = last.bottom()
 	em := last.lines[len(last.lines)-1].size
 
-	// Everything the region does not own is an obstacle: other paragraphs, text no paragraph holds, and every mark.
-	var obstacles []pageMark
-	for i, q := range l.paragraphs {
-		if !owned[i] {
-			obstacles = append(obstacles, pageMark{kind: markText, box: paragraphBox(q)})
-		}
-	}
-	for _, t := range l.loose {
-		// A run that shows only white space draws no ink — a producer that sets each space as its own show is the
-		// commonest source (measured: 760 of 999 real-producer paragraphs would otherwise read as blocked).
-		if strings.TrimFunc(t.text, unicode.IsSpace) != "" {
-			obstacles = append(obstacles, pageMark{kind: markText, box: runBox(t)})
-		}
-	}
-	obstacles = append(obstacles, l.marks...)
+	obstacles := obstaclesOf(l, owned)
 
 	// The margin floor mirrors the page's top margin: the gap between the page's top and the highest thing it draws.
 	top := math.Inf(-1)
@@ -317,6 +311,7 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 	// The band: the column's extent, from pi's bottom down to the floor. A mark meeting it is drawn where the region
 	// will be, and moves with nothing.
 	band := [4]float64{r.x0, math.Min(r.floor, r.bottom), r.x1, p.bottom()}
+	r.band = band
 	for _, o := range obstacles {
 		// A mark covering the whole band is the text's BACKDROP — a page or cell fill — and the text stays over it
 		// wherever in the band it moves, so it blocks nothing. Not a shading: its box is unbounded because its clip is
@@ -326,4 +321,23 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 		}
 	}
 	return r
+}
+
+// obstaclesOf is everything drawn on the page that the paragraphs in owned do not draw: other paragraphs, text no paragraph
+// holds — an artifact, a stray run — and every non-text mark. A run showing only white space draws no ink and is none (a
+// producer that sets each space as its own show is the commonest source: measured, 760 of 999 real-producer paragraphs
+// would otherwise read as blocked).
+func obstaclesOf(l pageLayout, owned map[int]bool) []pageMark {
+	var out []pageMark
+	for i, q := range l.paragraphs {
+		if !owned[i] {
+			out = append(out, pageMark{kind: markText, box: paragraphBox(q)})
+		}
+	}
+	for _, t := range l.loose {
+		if strings.TrimFunc(t.text, unicode.IsSpace) != "" {
+			out = append(out, pageMark{kind: markText, box: runBox(t)})
+		}
+	}
+	return append(out, l.marks...)
 }

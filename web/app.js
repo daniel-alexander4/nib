@@ -6783,7 +6783,9 @@ const REFLOW_CAUSES = {
   'missing-glyph': "The document's font has no glyph for a character you typed.",
   'no-widths': "The document's font does not say how wide its letters are.",
   'no-space-glyph': "The document's font has no space character.",
-  'paragraph-grows': 'The new text needs more lines than the paragraph has.',
+  'page-full': 'The new text needs more lines than there is free room for below the paragraph on this page.',
+  'no-pitch': 'The paragraph is a single line, and nothing in its column says how far apart its lines would be set.',
+  anchored: 'Something is fixed to a spot the text would move across — a link, a form field, a note, a flag, a bookmark or a drawing — and it would be left pointing at the wrong words.',
   'word-too-wide': 'A word is wider than the paragraph.',
   tagged: "The paragraph's lines are tagged for accessibility one by one, and moving text between them would mis-tag it.",
   'replacement-text': 'The paragraph carries replacement text for screen readers that would still read the old words.',
@@ -6806,9 +6808,12 @@ const REFLOW_CAUSES = {
   'invisible-text': 'The text is invisible — a search layer over a scanned image — so changing it would not change what the page shows.',
   'text-clips': 'Text below it is drawn as a clipping outline — moving it would change what the page shows through it.',
 };
-function reflowCauseSentence(cause) {
+// below is the text of the paragraph beneath the edited one that could not move with it (PLAN-text-reflow.md P07.S03):
+// the reason is that paragraph's, so the sentence says which one it is.
+function reflowCauseSentence(cause, below) {
   const why = REFLOW_CAUSES[cause] || 'It cannot be re-set exactly (' + cause + ').';
-  return why + ' Use Edit text to cover and replace it instead.';
+  const which = below ? 'The paragraph below it (\u201c' + (below.length > 40 ? below.slice(0, 40) + '\u2026' : below) + '\u201d) cannot move with it. ' : '';
+  return which + why + ' Use Edit text to cover and replace it instead.';
 }
 let reflowParas = [];
 function reflowPicked() {
@@ -6874,7 +6879,7 @@ async function reflowSubmit() {
   if (!res.ok) return toast(await errText(res, 'reflow failed'));
   const out = await res.json();
   if (!out.ok) {
-    els.reflowWhy.textContent = out.cause ? reflowCauseSentence(out.cause) : 'That is the paragraph as it already reads — nothing to change.';
+    els.reflowWhy.textContent = out.cause ? reflowCauseSentence(out.cause, out.below) : 'That is the paragraph as it already reads — nothing to change.';
     els.reflowWhy.hidden = false;
     return;
   }

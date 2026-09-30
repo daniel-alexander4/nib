@@ -52,20 +52,32 @@ func Paragraphs(pdf []byte, page int) ([]Paragraph, error) {
 	for i, p := range l.paragraphs {
 		para := Paragraph{Index: i, Text: p.text()}
 		para.Refusal = paragraphRefusal(ctx, pg, p)
+		if para.Refusal == "" && annotatedOver(ctx, pg, p) {
+			para.Refusal = causeAnchored // told before the user types, not after
+		}
 		out = append(out, para)
 	}
 	return out, nil
 }
 
-// ReflowParagraph re-sets paragraph index of page as text and returns the whole document rewritten — or the cause it
+// Refusal is why a reflow fell back: its cause, and — when a paragraph below the edited one could not move with it — that
+// paragraph's text, so the user is told which one stands in the way (P07.S03).
+type Refusal struct {
+	Cause string `json:"cause,omitempty"`
+	Below string `json:"below,omitempty"`
+}
+
+// ReflowParagraph re-sets paragraph index of page as text and returns the whole document rewritten — or the refusal it
 // fell back on, with no document. original is the paragraph's text as the caller read it: when the paragraph no longer
 // reads that way the answer is ErrReflowStale, never a rewrite of whatever the index names now.
 //
-// **Everything it draws stays inside the paragraph's own box**: the same baselines, no more lines, and no line past the
-// right edge its lines already reach. So a NibFlag placed beside the paragraph still sits beside it — the decision
-// `/pending 457` waited on for this phase; text that MOVES is P07's.
-func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte, string, error) {
-	var cause string
+// **A paragraph that keeps its line count stays inside its own box**: the same baselines, and no line past the right edge
+// its lines already reach — so a NibFlag placed beside it still sits beside it (`/pending 457`'s decision for P06). One
+// that needs more lines GROWS DOWN (P07.S03): its new lines at its own pitch, the paragraphs below it in its column moved
+// down by the growth into the free room under them, and anything anchored where they will be — an annotation, a flag, a
+// destination, a drawing — refused as `anchored` rather than orphaned.
+func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte, Refusal, error) {
+	var refusal Refusal
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		if page < 1 || page > ctx.PageCount {
 			return fmt.Errorf("pdfops: there is no page %d", page)
@@ -83,7 +95,7 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 			return err
 		}
 		if o.content == nil {
-			cause = o.cause
+			refusal = Refusal{Cause: o.cause, Below: o.below}
 			return errNothingToWrite
 		}
 		d, err := pg.Dict, pg.Err
@@ -93,12 +105,12 @@ func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte
 		return setPageContent(ctx, d, o.content)
 	})
 	if errors.Is(err, errNothingToWrite) {
-		return nil, cause, nil
+		return nil, refusal, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, Refusal{}, err
 	}
-	return out, "", nil
+	return out, Refusal{}, nil
 }
 
 // errNothingToWrite stops the rewrite when the reflow fell back: the document is not written at all.

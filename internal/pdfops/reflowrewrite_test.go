@@ -153,7 +153,7 @@ func TestAReflowItCannotDoExactlyNamesWhy(t *testing.T) {
 		name, content, text, want string
 	}{
 		{"a character the font does not carry", reflowPara + reflowTail, "The quick brown Ω fox", causeMissingGlyph},
-		{"an edit needing more lines than the paragraph has", reflowPara + reflowTail, "The quick " + grow, causeGrows},
+		{"an edit needing more room than lies free below it", reflowPara + reflowTail, "The quick " + grow, causePageFull},
 		{"a word wider than the measure", reflowPara + reflowTail, "The " + strings.Repeat("x", 80), causeWordTooWide},
 		{"marked content between its lines",
 			"BT /F1 12 Tf 14 TL 72 700 Td /P <</MCID 0>> BDC (The quick brown fox jumps) Tj EMC T* /P <</MCID 1>> BDC (over the lazy dog) Tj EMC ET",
@@ -248,40 +248,59 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 							t.Fatalf("%s / %s p%d ¶%d: the rewritten document does not read: %v", corp.name, doc.name, p, pi, err)
 						}
 						l3, err := readPageGlyphLayout(c3, pageAt(c3, nil, p))
-						if err != nil || pi >= len(l3.paragraphs) {
-							t.Errorf("%s / %s p%d ¶%d: the rewritten page lost the paragraph (%v)", corp.name, doc.name, p, pi, err)
+						if err != nil {
+							t.Errorf("%s / %s p%d ¶%d: the rewritten page does not read (%v)", corp.name, doc.name, p, pi, err)
 							return true, ""
 						}
-						got := l3.paragraphs[pi]
-						if got.text() != edit {
-							t.Errorf("%s / %s p%d ¶%d: wrote %q, reads back %q", corp.name, doc.name, p, pi, edit, got.text())
-							return true, ""
-						}
-						others := func(l pageLayout) []string {
-							var o []string
-							for j, q := range l.paragraphs {
-								if j != pi {
-									o = append(o, q.text())
-								}
-							}
-							return o
-						}
-						// Compared as TEXT, not as paragraphs: grouping reads the whole page, so new line widths in one
-						// paragraph can move a boundary between two others (measured: fda-83122 p1, where "These are also"
-						// and "explained in this paper." join) with every glyph still drawn where it was.
-						if a, b := normalizedText(strings.Join(others(l), " ")), normalizedText(strings.Join(others(l3), " ")); a != b {
-							t.Errorf("%s / %s p%d ¶%d: the page's other paragraphs changed:\n was %q\n now %q", corp.name, doc.name, p, pi, a, b)
-						}
+						// Checked by LINE, at the baselines the rewrite set, not by paragraph index: grouping reads the whole
+						// page, so a changed line width can join the edited paragraph to a neighbour (measured: fda-156618
+						// p1, whose widest line moved the column's right edge) with every glyph where the rewrite put it.
 						origLines, space, _ := paragraphWords(para)
+						pitch := paragraphPitch(l, pi)
+						baseline := func(i int) float64 {
+							if i < len(para.lines) {
+								return para.lines[i].y
+							}
+							return para.lines[len(para.lines)-1].y - float64(i-len(para.lines)+1)*pitch
+						}
+						got := textParagraph{column: para.column}
+						for i, n := 0, 0; n < len(editWords(edit)); i++ {
+							ln, ok := lineAtBaseline(l3, paragraphBox(para), baseline(i), para.lines[0].size)
+							if !ok {
+								break
+							}
+							got.lines = append(got.lines, ln)
+							n += len(editWords(ln.text))
+						}
+						if len(got.lines) == 0 || normalizedText(got.text()) != normalizedText(edit) {
+							t.Errorf("%s / %s p%d ¶%d: wrote %q, its baselines read %q", corp.name, doc.name, p, pi, edit, got.text())
+							return true, ""
+						}
 						newLines, _, cause := paragraphWords(got)
 						if cause == "" {
 							var words []reflowWord
 							for _, ln := range newLines {
 								words = append(words, ln...)
 							}
-							if a, b := lineTexts(rebreak(words, lineMeasures(origLines, space), space)), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
+							if a, b := lineTexts(rebreak(words, paragraphMeasures(l, pi, origLines, space), space)), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
 								t.Errorf("%s / %s p%d ¶%d: written as %q, the breaker sets %q", corp.name, doc.name, p, pi, b, a)
 							}
+						}
+						// And the page reads, in order, as it did with the paragraph replaced by the edit: nothing else was
+						// lost, duplicated or reordered.
+						page := func(l pageLayout, replace int, with string) string {
+							var o []string
+							for j, q := range l.paragraphs {
+								if j == replace {
+									o = append(o, with)
+								} else {
+									o = append(o, q.text())
+								}
+							}
+							return normalizedText(strings.Join(o, " "))
+						}
+						if a, b := page(l, pi, edit), page(l3, -1, ""); a != b {
+							t.Errorf("%s / %s p%d ¶%d: the page no longer reads as the edit in place:\n want %q\n  got %q", corp.name, doc.name, p, pi, a, b)
 						}
 						return true, ""
 					}
@@ -491,4 +510,17 @@ func TestTheReviewsFindingsHold(t *testing.T) {
 			}
 		}
 	})
+}
+
+// lineAtBaseline is the line of l whose baseline is y, within a third of an em of size, and which starts inside box's
+// horizontal extent — or false. By position, not by column index: a rewrite can renumber a page's columns.
+func lineAtBaseline(l pageLayout, box [4]float64, y, size float64) (textLine, bool) {
+	for _, q := range l.paragraphs {
+		for _, ln := range q.lines {
+			if math.Abs(ln.y-y) <= 0.3*size && ln.x0 >= box[0]-0.5*size && ln.x0 < box[2] {
+				return ln, true
+			}
+		}
+	}
+	return textLine{}, false
 }

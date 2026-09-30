@@ -361,8 +361,16 @@ own lines and margins — a changed word pushes the rest of the paragraph along,
 way a word processor would. Unlike Edit text, the **old words are removed**, not
 covered: they are gone from the page, from copy-and-paste and from Find.
 
-It changes only what it can set exactly. The new text must fit in the lines the
-paragraph already has, and use only characters the document's font carries; a
+When the new text needs **more lines**, the paragraph grows down, at its own line
+spacing, and the paragraphs below it in its column move down with it into the free
+space under them; a footer or page number past that space stays put. If there is not
+room on the page, or something is fixed in place where the text would move — a link,
+a form field, a note, a signing flag, a bookmark, a line or picture — it is refused
+with the reason rather than left pointing at the wrong words. (The same goes for a
+link laid over the paragraph's own words.)
+
+It changes only what it can set exactly. The new text must use only characters the
+document's font carries; a
 paragraph drawn in a way Nib cannot rewrite faithfully (text inside a stamp, turned
 or vertical text, lines tagged one by one for accessibility, text a screen reader is
 told to read differently, or an invisible search layer over a scan) is refused with
