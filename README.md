@@ -363,7 +363,7 @@ covered: they are gone from the page, from copy-and-paste and from Find. Every l
 keeps the spacing it was set with — letter spacing, word spacing, condensed or raised
 type — so the words you did not change look exactly as they did, and a word you type
 takes the spacing of the text just before it. A **justified** paragraph stays justified: every line
-but the last is set out to the right margin again.
+but the last is set out to the right margin again. A **centred** heading stays centred when you change its length.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line
 spacing, and the paragraphs below it in its column move down with it into the free

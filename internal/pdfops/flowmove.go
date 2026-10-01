@@ -129,12 +129,15 @@ func asTj(src []byte, span opSpan) (string, bool) {
 // shiftedTm is the text matrix that draws what st's text matrix draws, dy lower in user space — the one shift a move and a
 // grown paragraph's new lines share. tm·CTM places the glyphs, so tm′ = tm·CTM·T(0, −dy)·CTM⁻¹: under a flipped or scaled
 // CTM it still moves down the PAGE. False when the CTM cannot be inverted or a figure is not finite.
-func shiftedTm(st runTextState, dy float64) (runMatrix, bool) {
+func shiftedTm(st runTextState, dy float64) (runMatrix, bool) { return shiftedTmBy(st, 0, dy) }
+
+// shiftedTmBy is shiftedTm also moved dx along the page — a centred line re-set about its axis (P08.S04).
+func shiftedTmBy(st runTextState, dx, dy float64) (runMatrix, bool) {
 	inv, ok := st.ctm.inverse()
-	if !ok || !finite(dy) || !finite(st.tm[:]...) || !finite(st.tlm[:]...) || !finite(st.ctm[:]...) {
+	if !ok || !finite(dx, dy) || !finite(st.tm[:]...) || !finite(st.tlm[:]...) || !finite(st.ctm[:]...) {
 		return runMatrix{}, false
 	}
-	return st.tm.mul(st.ctm).mul(runTranslate(0, -dy)).mul(inv), true
+	return st.tm.mul(st.ctm).mul(runTranslate(dx, -dy)).mul(inv), true
 }
 
 // inverse is m's inverse, or false when m is singular.
