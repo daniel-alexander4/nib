@@ -1015,10 +1015,34 @@ with every line but the last at one right edge (red with justification off). Rev
 critical, 4 warnings, 5 info over two rounds; all dispositioned; one refinement registered as unproven — the tightest line's
 `Tw` for a continuing paragraph matters only on the refit path).
 
-#### P08.S04 — a centred or right-aligned paragraph keeps its axis
+#### P08.S04 — a centred or right-aligned paragraph keeps its axis *(done 2026-09-30, v1.176.0)*
 The door's centred and right paragraphs are re-set about their axis; a one-line paragraph reads as centred only on
 evidence (its column or page centre, its indent). Acceptance: hand-built centred and right paragraphs re-wrap about their
 axis; the corpus census of what reads as centred is recorded with its false-positive check.
+
+**Tasks** (slice grill, 2026-09-30 — **amended by measurement: centred only; right is not read**). Grouping splits lines that
+begin at different places into paragraphs of their own, so a centred or right-aligned "paragraph" is, in practice, a LINE
+(the census found no centred paragraph of three or more lines). A one-line paragraph ending at its column's right edge is,
+in the corpus, a contents row ending in a page number (Antenna House: all 163) or a justified two-liner's first line — right
+alignment cannot be told from it, so it is not read and those lines keep their left start, as before. T01 —
+`centredAlignment` (from `paragraphAlignment`): every line's middle within half a point of its column's centre, or on a
+single-column page the page's, and no wider than 70% of the column (a full line whose middle falls there is not centred).
+T02 — the emitter starts each centred line half its width before the axis, and a centred line's measure is the width that
+fits about the axis. T03 — tests and the corpus census. **Corpus**: 78 paragraphs read as centred (titles, headings, a LaTeX
+title block, centred table cells), **58 re-set centred**; the rest refuse on their own causes. A centred line that would need
+a second line refuses `no-pitch` as before (a one-line paragraph has no line spacing of its own).
+**PIN 2026-09-30 (review — amends T01–T02 and the census)**: a centred line's room is both sides of its axis AND short of
+anything beside it on either side (`roomOnItsLine`, the one door `paragraphMeasures` now shares — a symmetric width had
+re-opened P07's "a label runs under its field" and merged table cells); the line is MOVED (its text matrix shifted), not led
+in, so the page reads it where its ink is; a line beginning where two others of its column begin is left-aligned whatever its
+middle. Corpus re-measured in-tree (`TestCentredLinesOverTheCorpus`): **67 read centred, 41 re-set** and read back centred.
+**Closed 2026-09-30.** Ledger: hand-built centred paragraphs re-wrap about their axis — met (a heading edited shorter,
+longer, and wider than the room from its old left edge stays on 306 to 1e-6; RIGHT-aligned is not read, by measurement, and
+keeps its left start as before — the acceptance's "right" clause is answered by that pin, not by code); the corpus census of
+what reads as centred is recorded with its false-positive check — met (67/41 in-tree; the false positives the review found —
+a body line on a shared left edge, a cell running into its neighbour, a label under its field — each has a test). Tier 3
+keeps a centred heading's middle through the binary (red with the shift off). Review `code-reviews/v1.176.0-p08s04-…` (3
+critical, 2 warnings, 3 info; all dispositioned).
 
 #### P08.S05 — a typed word takes the document's kerning
 A new word's glyph pairs take the kern the page draws for that pair in that face and size — only where the page draws it

@@ -283,6 +283,10 @@ type alignment struct {
 	edge      float64 // where a justified paragraph's lines end, in user space
 	tol       float64 // how far apart line ends may be and still be the edge: justifyTol em
 	continues bool    // its last line ends at the edge too: the paragraph runs on past it, and that line is set flush
+	// centred is a paragraph whose every line is centred on axis — its column's centre, or on a single-column page the
+	// page's (P08.S04); width is the most a line may take about it.
+	centred     bool
+	axis, width float64
 	// lastDelta is what a justified paragraph's last line adds to each space the spacer gives it: the spacer's residual is
 	// the median over every line, stretched ones included, and the last line is the one set at its natural spaces — the
 	// residual of the original last line (0, the font's own space, where it has one word).
@@ -295,9 +299,10 @@ const justifyTol = 0.05
 // paragraphAlignment is the one door for how paragraph pi's lines (read by `paragraphWords`) are aligned. Justified when
 // two or more lines before the last end within justifyTol em of each other and the lines after the first begin together;
 // or — two lines, the most a paragraph of two can show — when the first ends at its column's right edge, the last ends
-// short of it, and the first is set looser than the last (by median gap). A paragraph of one line says nothing and is not justified.
+// short of it, and the first is set looser than the last (by median gap). A paragraph of one line says nothing of
+// justification. A paragraph that is not justified may be centred (`centredAlignment`).
 func paragraphAlignment(l pageLayout, pi int, lines [][]reflowWord) alignment {
-	if len(lines) < 2 {
+	if len(lines) == 0 {
 		return alignment{}
 	}
 	p := l.paragraphs[pi]
@@ -306,6 +311,9 @@ func paragraphAlignment(l pageLayout, pi int, lines [][]reflowWord) alignment {
 	for _, ln := range lines {
 		end := ln[len(ln)-1]
 		lefts, rights = append(lefts, ln[0].startX), append(rights, end.startX+end.width)
+	}
+	if len(lines) == 1 {
+		return centredAlignment(l, pi, lefts, rights) // one line says nothing of justification
 	}
 	spread := func(v []float64) float64 {
 		lo, hi := math.Inf(1), math.Inf(-1)
@@ -379,7 +387,7 @@ func paragraphAlignment(l pageLayout, pi int, lines [][]reflowWord) alignment {
 		return justified(median(rights[:body]))
 	}
 	if body != 1 || len(lines[0]) < 2 || len(lines[1]) < 2 {
-		return alignment{}
+		return centredAlignment(l, pi, lefts, rights)
 	}
 	right := math.Inf(-1)
 	for _, q := range l.paragraphs {
@@ -397,6 +405,57 @@ func paragraphAlignment(l pageLayout, pi int, lines [][]reflowWord) alignment {
 	}
 	if math.Abs(rights[0]-right) <= tol && rights[1] < rights[0]-10*tol && gap(lines[0]) > gap(lines[1])+tol {
 		return justified(rights[0])
+	}
+	return centredAlignment(l, pi, lefts, rights)
+}
+
+// centredAlignment reads a paragraph as centred when EVERY line's middle lies within half a point of one axis — its
+// column's centre, or, on a single-column page, the page's (on a page of several the page's centre is a gutter) — and
+// every line takes no more than 70% of the column's width (which keeps it well in from the margin, since its middle is on
+// the axis). That is what tells a centred heading from a full line whose middle happens to fall there; measured over the
+// real-producer corpus they leave titles, headings, a LaTeX title block and centred table cells. RIGHT alignment is not
+// read: a one-line paragraph ending at its column's right edge is, in the corpus, a contents row ending in a page number
+// (Antenna House: every one), and lines set flush right with ragged starts are split into paragraphs of their own.
+func centredAlignment(l pageLayout, pi int, lefts, rights []float64) alignment {
+	p := l.paragraphs[pi]
+	cl, cr := math.Inf(1), math.Inf(-1)
+	for _, q := range l.paragraphs {
+		if q.column == p.column {
+			b := paragraphBox(q)
+			cl, cr = math.Min(cl, b[0]), math.Max(cr, b[2])
+		}
+	}
+	// A line that begins where other lines of its column begin is set from that edge, whatever its middle: two others
+	// starting within half a point is a left edge (a body line on a page grouped as one column read as centred: the
+	// review of P08.S04).
+	for i := range p.lines {
+		shared := 0
+		for qi, q := range l.paragraphs {
+			for _, ln := range q.lines {
+				if qi != pi && q.column == p.column && math.Abs(ln.x0-p.lines[i].x0) <= 0.5 {
+					shared++
+				}
+			}
+		}
+		if shared >= 2 {
+			return alignment{}
+		}
+	}
+	axes := []float64{(cl + cr) / 2}
+	if l.columns == 1 && l.box[2] > l.box[0] {
+		axes = append(axes, (l.box[0]+l.box[2])/2)
+	}
+	for _, axis := range axes {
+		ok := true
+		for i := range lefts {
+			ok = ok && math.Abs((lefts[i]+rights[i])/2-axis) <= 0.5 && rights[i]-lefts[i] <= 0.7*(cr-cl)
+		}
+		if ok {
+			// A line may take as much as fits on both sides of the axis: within its column, and short of anything drawn
+			// beside it on either side.
+			left, right := roomOnItsLine(l, pi)
+			return alignment{centred: true, axis: axis, width: 2 * math.Min(axis-left, right-axis)}
+		}
 	}
 	return alignment{}
 }
@@ -566,30 +625,43 @@ func lineMeasures(lines [][]reflowWord, space wordSpacer) []float64 {
 func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space wordSpacer) []float64 {
 	measures := lineMeasures(lines, space)
 	if len(lines) == 1 {
-		p := l.paragraphs[pi]
-		right := math.Inf(-1)
-		for _, q := range l.paragraphs {
-			if q.column == p.column {
-				right = math.Max(right, paragraphBox(q)[2])
-			}
-		}
-		// Never into something drawn beside it: a form label's line ends where its field or the next label begins, and
-		// its column's edge says nothing about that. An em short of the nearest thing on its line, to its right.
-		own, em := paragraphBox(p), p.lines[0].size
-		beside := func(b [4]float64) {
-			if b[1] < own[3] && own[1] < b[3] && b[0] >= own[2]-1e-9 {
-				right = math.Min(right, b[0]-em)
-			}
-		}
-		for _, o := range obstaclesOf(l, map[int]bool{pi: true}) {
-			beside(o.box)
-		}
-		for _, a := range l.annots {
-			beside(a)
-		}
+		_, right := roomOnItsLine(l, pi)
 		measures[0] = math.Max(measures[0], right-lines[0][0].startX)
 	}
 	return measures
+}
+
+// roomOnItsLine is how far a one-line paragraph may reach on each side: its column's edges, and never into something
+// drawn beside it — a form label's line ends where its field or the next label begins, and a table cell where the next
+// cell does, and its column's edge says nothing about either. An em short of the nearest thing on its line, each side.
+// The one door for "beside" (`paragraphMeasures` asks the right, a centred line both: P08.S04's review).
+func roomOnItsLine(l pageLayout, pi int) (left, right float64) {
+	p := l.paragraphs[pi]
+	left, right = math.Inf(1), math.Inf(-1)
+	for _, q := range l.paragraphs {
+		if q.column == p.column {
+			b := paragraphBox(q)
+			left, right = math.Min(left, b[0]), math.Max(right, b[2])
+		}
+	}
+	own, em := paragraphBox(p), p.lines[0].size
+	beside := func(b [4]float64) {
+		if b[1] < own[3] && own[1] < b[3] {
+			switch {
+			case b[0] >= own[2]-1e-9:
+				right = math.Min(right, b[0]-em)
+			case b[2] <= own[0]+1e-9:
+				left = math.Max(left, b[2]+em)
+			}
+		}
+	}
+	for _, o := range obstaclesOf(l, map[int]bool{pi: true}) {
+		beside(o.box)
+	}
+	for _, a := range l.annots {
+		beside(a)
+	}
+	return left, right
 }
 
 // measureSlack absorbs the arithmetic in comparing a sum against the maximum of the same sums.
@@ -1018,6 +1090,12 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		words = append(words, ew)
 	}
 	measures := paragraphMeasures(layout, pi, lines, space)
+	if align.centred {
+		// Centred: every line may take the width that fits about the axis, whichever line it is.
+		for i := range measures {
+			measures[i] = align.width
+		}
+	}
 	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width },
 		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) })
 	// A justified paragraph sets every line but its last to the flush edge (P08.S03). Broken at its own measure — which
@@ -1068,6 +1146,27 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			return para.lines[i].runs[0].state.tm, true
 		}
 		return shiftedTm(para.lines[n-1].runs[0].state, float64(i-n+1)*pitch)
+	}
+	// A centred line is MOVED to its axis — its text matrix shifted, not a lead inside it — so the line's origin is where
+	// its ink begins, as every reader of the page's geometry takes it (`textLine.x0`; the review of P08.S04: a lead left
+	// the layout reading the old place, and a field beside the moved ink went unseen).
+	if align.centred {
+		plain := lineAt
+		lineAt = func(i int) (runMatrix, bool) {
+			li := min(i, n-1)
+			w := 0.0
+			for wi, word := range broken[i] {
+				if wi > 0 {
+					w += space(broken[i][wi-1].face, broken[i][wi-1].tfSize, lastSpacing(broken[i][wi-1].spacing))
+				}
+				w += word.width
+			}
+			dx := align.axis - w/2 - lines[li][0].startX
+			if math.Abs(dx) <= 1e-9 {
+				return plain(i)
+			}
+			return shiftedTmBy(para.lines[li].runs[0].state, dx, float64(max(0, i-n+1))*pitch)
+		}
 	}
 	for i, l := range broken {
 		if len(l) == 1 && l[0].width > measures[min(i, len(measures)-1)]+measureSlack {

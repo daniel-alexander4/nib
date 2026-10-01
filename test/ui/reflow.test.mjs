@@ -415,3 +415,37 @@ test('a justified paragraph re-wraps justified', async () => {
     assert.ok(Math.abs(after[i] - before[0]) < 1.5, `line ${i} ends at ${after[i]}, the flush edge is ${before[0]} — ends ${after}`);
   }
 });
+
+// P08.S04 through the binary: a heading centred on the page stays centred when its length changes — read from pdf.js's
+// text layer, its middle before and after. (Helvetica 18: "Annual Report" is 115.056 wide, centred on 306.)
+const CENTRED = writeRawFixture('reflow-centred.pdf', paragraphPDF(
+  'BT /F1 18 Tf 1 0 0 1 248.472 720 Tm (Annual Report) Tj ET ' +
+  'BT /F1 14 Tf 18 TL 72 680 Td (The body of the page runs from the left margin across the column,) Tj T* (and wraps here as a body paragraph does.) Tj ET'));
+
+// The middle of the row a word is on: pdf.js may draw a line as several spans, so the row is every span at its top.
+const rowMiddle = (word) => page.evaluate((w) => {
+  const spans = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].filter((s) => s.textContent.trim());
+  const hit = spans.find((e) => e.textContent.includes(w));
+  if (!hit) return null;
+  const top = hit.getBoundingClientRect().top;
+  const row = spans.map((s) => s.getBoundingClientRect()).filter((r) => Math.abs(r.top - top) < 2);
+  return (Math.min(...row.map((r) => r.left)) + Math.max(...row.map((r) => r.right))) / 2;
+}, word);
+
+test('a centred heading stays centred when its length changes', async () => {
+  // This file opens a ninth document here, past the cap of eight (ADR-005): close the last one first.
+  await h.closeDocument();
+  await h.openDocument(CENTRED, 1);
+  await page.waitForFunction(() => /Annual/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const before = await rowMiddle('Annual');
+  assert.notEqual(before, null, 'setup: the heading is not on the page');
+  await openReflow();
+  await page.fill('#reflowText', 'The Annual Report for the Year');
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the heading was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction(() => /Year/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const after = await rowMiddle('Year');
+  assert.ok(Math.abs(after - before) < 1.5, `the heading's middle moved from ${before} to ${after}`);
+});

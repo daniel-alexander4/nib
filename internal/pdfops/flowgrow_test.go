@@ -50,7 +50,9 @@ func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float
 	for i := 0; ; i++ {
 		y := para.lines[min(i, n-1)].y - float64(max(0, i-n+1))*pitch
 		ln, ok := lineAtBaseline(after, paragraphBox(para), y, para.lines[0].size)
-		if !ok || len(strings.Join(got, " ")) >= len(edit) {
+		// Lengths of the NORMALIZED texts: an edit can carry a double space its read-back collapses, and the raw length
+		// read one line too far (a centred heading that now fits on its line, P08.S04).
+		if !ok || len(normalizedText(strings.Join(got, " "))) >= len(normalizedText(edit)) {
 			break
 		}
 		got = append(got, ln.text)

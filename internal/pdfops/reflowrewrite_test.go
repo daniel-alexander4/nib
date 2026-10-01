@@ -517,11 +517,14 @@ func TestTheReviewsFindingsHold(t *testing.T) {
 }
 
 // lineAtBaseline is the line of l whose baseline is y, within a third of an em of size, and which starts inside box's
-// horizontal extent — or false. By position, not by column index: a rewrite can renumber a page's columns.
+// horizontal extent — or false. By position, not by column index: a rewrite can renumber a page's columns. A line that
+// starts to the left of the box is it too when its middle lies inside it: a centred line re-set longer moves its start
+// out (P08.S04).
 func lineAtBaseline(l pageLayout, box [4]float64, y, size float64) (textLine, bool) {
 	for _, q := range l.paragraphs {
 		for _, ln := range q.lines {
-			if math.Abs(ln.y-y) <= 0.3*size && ln.x0 >= box[0]-0.5*size && ln.x0 < box[2] {
+			mid := (ln.x0 + ln.x1) / 2
+			if math.Abs(ln.y-y) <= 0.3*size && (ln.x0 >= box[0]-0.5*size || mid >= box[0]) && ln.x0 < box[2] {
 				return ln, true
 			}
 		}

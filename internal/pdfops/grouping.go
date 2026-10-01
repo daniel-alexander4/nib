@@ -73,6 +73,9 @@ type pageLayout struct {
 	// (`readPageGlyphLayout`), which must know what else is drawn where text will move (P07.S01).
 	loose []textRun
 	marks []pageMark
+	// box is the page's visible box — kept only by reflow's reader, so a paragraph can be read as centred on the page
+	// (P08.S04).
+	box [4]float64
 	// sequences are the page's marked-content sequences that carry an MCID (`pageRuns.sequences`) — kept only by reflow's
 	// reader, so a carry can take a paragraph's structure to another page with it (P07.S07).
 	sequences []markedSeq
@@ -113,6 +116,7 @@ func readPageGlyphLayout(ctx *model.Context, pg pdfread.Page) (pageLayout, error
 		}
 	}
 	l.marks = pr.marks
+	l.box = visibleBoxOf(pg)
 	for _, a := range pageAnchors(ctx, pg, false) {
 		l.annots = append(l.annots, a.box)
 	}
