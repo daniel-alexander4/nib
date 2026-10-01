@@ -130,7 +130,7 @@ func rightEdgeOf(p textParagraph) float64 {
 	if len(lines) == 0 {
 		return 0
 	}
-	return lines[0][0].startX + lineMeasures(lines, space)[0]
+	return lines[0][0].startX + lineMeasures(lines, spacerOf(lines, space))[0]
 }
 
 // TestAnUneditedReflowWritesNothing — law 1 at the door: the paragraph's own text is no edit, and the page is not
@@ -164,11 +164,15 @@ func TestAReflowItCannotDoExactlyNamesWhy(t *testing.T) {
 		{"an artifact drawn straight after it",
 			"BT /F1 12 Tf 14 TL 72 700 Td (The quick brown fox jumps) Tj T* (over the lazy dog) Tj /Artifact BMC (DRAFT) Tj EMC ET",
 			"The quick brown fox leaps over the lazy dog", causeInlineFollower},
-		{"runs set under different character spacing",
-			// `"` sets word and character spacing AS it shows, so the second line is set under different spacing with
-			// nothing between the two shows for the content check to see.
-			"BT /F1 12 Tf 14 TL 72 700 Td (The quick brown fox jumps) Tj 0 1 (over the lazy dog) \" ET",
+		{"lines drawn at different scales",
+			// A spacing is carried glyph by glyph (P08.S01); a text matrix's scale converts every kern and lead the
+			// rewrite writes, and is not.
+			"BT /F1 12 Tf 14 TL 72 700 Td (The quick brown fox jumps) Tj 1.2 0 0 1 72 686 Tm (over the lazy dog) Tj ET",
 			"The quick brown fox leaps over the lazy dog", causeMixedState},
+		{"a clipping mode",
+			// Mode 5 adds the outlines to the clip: re-set, the window everything after it is cut by would change.
+			"BT /F1 12 Tf 14 TL 72 700 Td 5 Tr (The quick brown fox jumps) Tj T* (over the lazy dog) Tj ET",
+			"The quick brown fox leaps over the lazy dog", causeClips},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, cause := reflowed(t, helveticaPage(c.content), 0, c.text)
@@ -282,7 +286,7 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 							for _, ln := range newLines {
 								words = append(words, ln...)
 							}
-							if a, b := lineTexts(rebreak(words, paragraphMeasures(l, pi, origLines, space), space)), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
+							if a, b := lineTexts(rebreak(words, paragraphMeasures(l, pi, origLines, spacerOf(origLines, space)), spacerOf(origLines, space))), lineTexts(newLines); strings.Join(a, "\n") != strings.Join(b, "\n") {
 								t.Errorf("%s / %s p%d ¶%d: written as %q, the breaker sets %q", corp.name, doc.name, p, pi, b, a)
 							}
 						}

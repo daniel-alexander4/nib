@@ -98,7 +98,7 @@ func carryRefusal(r textRun) string {
 		return causeReplacementText
 	case invisibleMode(st.tr):
 		return causeInvisible // a search layer's words belong over their scan (P07 phase-close review)
-	case st.tr >= 4:
+	case clipMode(st.tr):
 		return causeClips
 	case st.extGState || st.fill == "" || ((st.tr == 1 || st.tr == 2) && st.stroke == ""):
 		return causeStateNotCarried
@@ -226,7 +226,7 @@ func setRunsOn(ctx *model.Context, src []byte, srcRes types.Dict, runs []textRun
 			return nil, causeMixedContent, nil
 		}
 		fmt.Fprintf(&b, "%s %s Tf %s Tc %s Tw %s Tz %s Ts %d Tr %s Tm %s\n", pdfName(name), num(st.tfSize), num(st.tc), num(st.tw),
-			num(st.th*100), num(st.ts), st.tr, matrixOperands(tm), show)
+			tzOperand(st.th), num(st.ts), st.tr, matrixOperands(tm), show)
 	}
 	if open >= 0 {
 		b.WriteString("EMC\n")

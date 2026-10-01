@@ -331,3 +331,27 @@ test('a growth on a TAGGED page flows its paragraph onto the next page with its 
   assert.equal(after.el[0].text, `${TFLOW.leaving}${TFLOW.leaving}`, 'the element does not read its text on page 2');
   assert.equal(after.link?.page, 2, 'the link\'s structure element stayed on page 1');
 });
+
+// P08.S01 through the binary: a paragraph whose runs differ in letter and word spacing — a word drawn across two `Tc`s,
+// a line under `Tw` and `Tz` — was refused as mixed-state; now each glyph keeps its spacing and the edit is re-set.
+const SPACED = writeRawFixture('reflow-spaced.pdf', paragraphPDF(
+  'BT /F1 14 Tf 18 TL 72 700 Td 0.5 Tc (The qu) Tj 1.5 Tc (ick brown fox jumps) Tj T* 0 Tc 2 Tw 110 Tz (over the lazy dog and runs) Tj T* (away from here.) Tj ET'));
+
+test('a paragraph set with mixed letter and word spacing is re-set, not refused', async () => {
+  await h.openDocument(SPACED, 1);
+  await page.waitForFunction(() => /lazy/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  await openReflow();
+  assert.equal(await page.$eval('#reflowText', (t) => t.value), 'The quick brown fox jumps over the lazy dog and runs away from here.',
+    'the dialog did not offer the mixed-spacing paragraph as one');
+  assert.equal(await page.$eval('#reflowGo', (b) => b.disabled), false,
+    `the dialog refused the mixed-spacing paragraph before anything was typed: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.fill('#reflowText', 'The quick brown fox jumps over the tame dog and runs away from here.');
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the mixed-spacing paragraph was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction(() => /tame/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const after = await pageText();
+  assert.match(after, /tame dog/, `the re-rendered page reads: ${after}`);
+  assert.doesNotMatch(after, /lazy/, `"lazy" is still on the page: ${after}`);
+});

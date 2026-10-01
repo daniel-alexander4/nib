@@ -52,7 +52,7 @@ func moveRuns(src []byte, runs []textRun, dy float64) ([]runMove, string) {
 		}
 		// Modes 4-7 add the glyphs' outlines to the clip, which everything drawn after the text object is cut by: moving
 		// the glyphs would move that window and change what shows through it.
-		if r.state.tr >= 4 {
+		if clipMode(r.state.tr) {
 			return nil, causeClips
 		}
 		spans[i] = r.span
@@ -83,6 +83,10 @@ func moveRuns(src []byte, runs []textRun, dy float64) ([]runMove, string) {
 // invisibleMode says whether text rendering mode tr draws nothing: 3 (neither fill nor stroke) and 7 (clip only). The one
 // reading P06's edit (`paragraphWords`), a move (`moveRuns`) and a carry (`carryRefusal`) share.
 func invisibleMode(tr int) bool { return tr == 3 || tr == 7 }
+
+// clipMode says whether text rendering mode tr adds the glyphs' outlines to the clip (4-7): moved or re-set, the window
+// everything after the text object is cut by moves with them. The one reading an edit, a move and a carry share.
+func clipMode(tr int) bool { return tr >= 4 && tr <= 7 }
 
 func matrixOperands(m runMatrix) string {
 	return fmt.Sprintf("%s %s %s %s %s %s", num(m[0]), num(m[1]), num(m[2]), num(m[3]), num(m[4]), num(m[5]))

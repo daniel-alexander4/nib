@@ -24,9 +24,13 @@ import (
 // between them, but not the kern before its first glyph, which belongs to the gap in front of it.
 type reflowWord struct {
 	glyphs []runGlyph
-	width  float64
-	face   *runFont
-	size   float64
+	// spacing is the text state each glyph was drawn under, by index: a word is drawn across runs of different spacing
+	// often enough (Acrobat writes a `Tc` per run, mid-word) that one state per word would re-space its glyphs (P08.S01).
+	spacing []textSpacing
+	width   float64
+	face    *runFont
+	size    float64
+	scale   float64 // text space → user space along the baseline, as `runTextState.scale`
 	// font and tfSize are the `Tf` operands of the run the word began in — what re-emitting it selects.
 	font   string
 	tfSize float64
@@ -34,6 +38,53 @@ type reflowWord struct {
 	// first run's origin, which a re-emitted line must keep.
 	startX float64
 }
+
+// textSpacing is the part of the text state that sets how a glyph advances and where it sits: character and word spacing,
+// horizontal scaling (`Tz`, as a fraction), rise and the rendering mode. A re-set glyph is drawn under the spacing it was
+// drawn with, so it advances exactly as it did.
+type textSpacing struct {
+	tc, tw, th, ts float64
+	tr             int
+}
+
+func spacingOf(st runTextState) textSpacing {
+	return textSpacing{tc: st.tc, tw: st.tw, th: st.th, ts: st.ts, tr: st.tr}
+}
+
+// operators writes the operators that take a content stream from text state from to s: only what differs.
+func (s textSpacing) operators(from textSpacing) string {
+	var b strings.Builder
+	if s.tc != from.tc {
+		fmt.Fprintf(&b, "%s Tc ", num(s.tc))
+	}
+	if s.tw != from.tw {
+		fmt.Fprintf(&b, "%s Tw ", num(s.tw))
+	}
+	if s.th != from.th {
+		fmt.Fprintf(&b, "%s Tz ", tzOperand(s.th))
+	}
+	if s.ts != from.ts {
+		fmt.Fprintf(&b, "%s Ts ", num(s.ts))
+	}
+	if s.tr != from.tr {
+		fmt.Fprintf(&b, "%d Tr ", s.tr)
+	}
+	return b.String()
+}
+
+// allOperators writes all five, whatever was in force.
+func (s textSpacing) allOperators() string {
+	return fmt.Sprintf("%s Tc %s Tw %s Tz %s Ts %d Tr ", num(s.tc), num(s.tw), tzOperand(s.th), num(s.ts), s.tr)
+}
+
+// tzOperand is the `Tz` operand that sets horizontal scaling th: a percentage, rounded where the multiplication left a
+// trace (`110 Tz` reads as 1.1, and 1.1 × 100 is 110.00000000000001).
+func tzOperand(th float64) string { return num(math.Round(th*100*1e9) / 1e9) }
+
+// style is what of a glyph's spacing the reader SEES as its look rather than its fit: rise (a superscript), rendering mode
+// (a stroked synthetic bold) and horizontal scaling (condensed type). Character and word spacing are fit — a producer
+// varies them line by line to fill a measure.
+func (s textSpacing) style() textSpacing { return textSpacing{th: s.th, ts: s.ts, tr: s.tr} }
 
 func (w reflowWord) text() string {
 	var s string
@@ -90,6 +141,13 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 				return nil, 0, causeReplacementText
 			case invisibleMode(r.state.tr):
 				return nil, 0, causeInvisible
+			case clipMode(r.state.tr):
+				// The glyphs' outlines join the clip: re-set, the window everything after them is cut by changes.
+				return nil, 0, causeClips
+			case math.Abs(r.state.scale-p.lines[0].runs[0].state.scale) > 1e-9:
+				// Each glyph keeps its own spacing (P08.S01); a text matrix's SCALE — a size or stretch set by `Tm` — converts
+				// every kern and lead the rewrite writes, and is not carried.
+				return nil, 0, causeMixedState
 			}
 			joinGap := 0.0
 			em := math.Max(lineEm, r.size)
@@ -124,8 +182,9 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 					continue
 				}
 				if cur == nil {
-					cur = &reflowWord{face: r.face, size: r.size, font: r.font, tfSize: r.state.tfSize, startX: start}
+					cur = &reflowWord{face: r.face, size: r.size, scale: r.state.scale, font: r.font, tfSize: r.state.tfSize, startX: start}
 					cur.glyphs = append(cur.glyphs, g)
+					cur.spacing = append(cur.spacing, spacingOf(r.state))
 					cur.width += g.advance
 					continue
 				}
@@ -133,6 +192,7 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 					g.kern += joinGap // the gap between two runs of one word, kept inside it
 				}
 				cur.glyphs = append(cur.glyphs, g)
+				cur.spacing = append(cur.spacing, spacingOf(r.state))
 				cur.width += g.kern + g.advance
 			}
 		}
@@ -149,17 +209,139 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 	return lines, gaps[len(gaps)/2], ""
 }
 
+// wordSpacer is the space a paragraph sets after a word: by its last glyph's font, size and spacing.
+type wordSpacer func(face *runFont, tfSize float64, after textSpacing) float64
+
+// spacerOf is the space a paragraph sets after a word: the font's own space glyph, advanced under the spacing that word
+// ends in — so a line under `Tw 2` or `Tz 110` keeps its wider spaces, and a typed word's is the space of the spacing it
+// is drawn in — plus the paragraph's MEDIAN of what each gap it drew added to that natural space (a producer that
+// positions its words rather than drawing a space, or adjusts the space it draws). One wide gap moves no other: the
+// residual is the paragraph's, and a spacing's own gaps are never its only evidence (P08.S01's review, R2-2). Where
+// the font draws no space it can measure, the paragraph's median gap, fallback.
+func spacerOf(lines [][]reflowWord, fallback float64) wordSpacer {
+	scale := lines[0][0].scale
+	natural := func(f *runFont, tfSize float64, s textSpacing) (float64, bool) {
+		codes := f.codesFor(" ")
+		if len(codes) == 0 {
+			return 0, false
+		}
+		w0, src := f.widths.advance(fontcode.Value(codes[0]))
+		if src == widthNone {
+			return 0, false
+		}
+		tx := w0/1000*tfSize + s.tc
+		if len(codes[0]) == 1 && codes[0][0] == ' ' {
+			tx += s.tw // word spacing applies to the single-byte code 32 alone
+		}
+		return tx * s.th * scale, true
+	}
+	var residual []float64
+	for _, l := range lines {
+		for i := 1; i < len(l); i++ {
+			prev := l[i-1]
+			if nat, ok := natural(prev.face, prev.tfSize, lastSpacing(prev.spacing)); ok {
+				residual = append(residual, l[i].startX-prev.startX-prev.width-nat)
+			}
+		}
+	}
+	if len(residual) == 0 {
+		return func(*runFont, float64, textSpacing) float64 { return fallback }
+	}
+	extra := median(residual)
+	return func(f *runFont, tfSize float64, after textSpacing) float64 {
+		if nat, ok := natural(f, tfSize, after); ok {
+			return nat + extra
+		}
+		return fallback
+	}
+}
+
+// wordAlignment is an edit aligned to its paragraph word by word: the longest common subsequence of the two, kept is one
+// such alignment (each kept word of the edit → the paragraph word it is), and the two tables say what EVERY longest one
+// does — an edit is often explained equally well by two, and which occurrence a word is then is a guess.
+type wordAlignment struct {
+	kept     map[int]int
+	old, new []string
+	f, b     []uint16 // f[i][j] = LCS(old[:i], new[:j]); b[i][j] = LCS(old[i:], new[j:]); rows of len(new)+1
+	ok       bool     // false past the size bound: nothing is kept, and nothing can be vouched for
+}
+
+// alignWords aligns an edit's words to the paragraph's. O(old × new) in time and in two tables of uint16s — a page's
+// paragraph is hundreds of words; past 4M cells (a paragraph and its edit both past some 2,000 words, measured at 57 ms)
+// nothing is aligned, and a word drawn in two looks is refused rather than guessed.
+func alignWords(old, edited []string) wordAlignment {
+	al := wordAlignment{kept: map[int]int{}, old: old, new: edited}
+	n, m := len(old), len(edited)
+	if (n+1)*(m+1) > 1<<22 || n >= 1<<16 || m >= 1<<16 {
+		return al
+	}
+	w := m + 1
+	al.f, al.b, al.ok = make([]uint16, (n+1)*w), make([]uint16, (n+1)*w), true
+	for i := 1; i <= n; i++ {
+		for j := 1; j <= m; j++ {
+			if old[i-1] == edited[j-1] {
+				al.f[i*w+j] = al.f[(i-1)*w+j-1] + 1
+			} else {
+				al.f[i*w+j] = max(al.f[(i-1)*w+j], al.f[i*w+j-1])
+			}
+		}
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if old[i] == edited[j] {
+				al.b[i*w+j] = al.b[(i+1)*w+j+1] + 1
+			} else {
+				al.b[i*w+j] = max(al.b[(i+1)*w+j], al.b[i*w+j+1])
+			}
+		}
+	}
+	for i, j := 0, 0; i < n && j < m; {
+		switch {
+		case old[i] == edited[j]:
+			al.kept[j] = i
+			i, j = i+1, j+1
+		case al.b[(i+1)*w+j] >= al.b[i*w+j+1]:
+			i++
+		default:
+			j++
+		}
+	}
+	return al
+}
+
+// choices is what every longest alignment says of the edit's word j: the paragraph words some longest alignment makes it,
+// and whether some longest alignment leaves it unkept (typed, or moved). Only meaningful when ok.
+func (al wordAlignment) choices(j int) (olds []int, unkept bool) {
+	w := len(al.new) + 1
+	best := al.b[0]
+	for i := range al.old {
+		if al.old[i] == al.new[j] && al.f[i*w+j]+1+al.b[(i+1)*w+j+1] == best {
+			olds = append(olds, i)
+		}
+	}
+	for i := 0; i <= len(al.old); i++ {
+		if al.f[i*w+j]+al.b[i*w+j+1] == best {
+			unkept = true
+			break
+		}
+	}
+	return olds, unkept
+}
+
+// lastSpacing is the spacing a word's last glyph was drawn under — the one the space after it is drawn and measured in.
+func lastSpacing(sp []textSpacing) textSpacing { return sp[len(sp)-1] }
+
 // lineMeasures is the room each of the paragraph's lines had: from where its first word begins to the paragraph's right
-// edge — the furthest any of its lines reaches, set with its own space. A breaker that set a line narrower than its
+// edge — the furthest any of its lines reaches, set with its own spaces. A breaker that set a line narrower than its
 // room would have fitted the next word, so the right edge can have been no nearer; a first-line indent has less room on
 // its line, and that is the difference between this and one measure for every line.
-func lineMeasures(lines [][]reflowWord, space float64) []float64 {
+func lineMeasures(lines [][]reflowWord, space wordSpacer) []float64 {
 	right := math.Inf(-1)
 	for _, l := range lines {
 		w := l[0].startX
 		for i, word := range l {
 			if i > 0 {
-				w += space
+				w += space(l[i-1].face, l[i-1].tfSize, lastSpacing(l[i-1].spacing))
 			}
 			w += word.width
 		}
@@ -179,7 +361,7 @@ func lineMeasures(lines [][]reflowWord, space float64) []float64 {
 // paragraphs. It stops an em short of anything drawn to its right on its line — and of any annotation there: a form label
 // re-set at its column's measure ran under the field beside it (P07 phase-close review), and `annotatedOver` asks only
 // about the box the paragraph HAD.
-func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space float64) []float64 {
+func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space wordSpacer) []float64 {
 	measures := lineMeasures(lines, space)
 	if len(lines) == 1 {
 		p := l.paragraphs[pi]
@@ -211,11 +393,12 @@ func paragraphMeasures(l pageLayout, pi int, lines [][]reflowWord, space float64
 // measureSlack absorbs the arithmetic in comparing a sum against the maximum of the same sums.
 const measureSlack = 1e-6
 
-// breakAt is BreakGreedy with a line's room by index — past the last measured line, the last line's.
-func breakAt[T any](items []T, measures []float64, width func(T) float64, space float64) [][]T {
+// breakAt is BreakGreedy with a line's room by index — past the last measured line, the last line's — and the space after
+// an item by the item.
+func breakAt[T any](items []T, measures []float64, width func(T) float64, space func(prev T) float64) [][]T {
 	return mdpdf.BreakGreedy(items, 0, mdpdf.BreakOps[T]{
 		Width: width,
-		Space: func(T) float64 { return space },
+		Space: space,
 		LineWidth: func(line int) float64 {
 			if line >= len(measures) {
 				line = len(measures) - 1
@@ -232,7 +415,7 @@ func breakAt[T any](items []T, measures []float64, width func(T) float64, space 
 const (
 	reflowNoChange       = ""                 // the text is the paragraph's own: nothing to do (law 1)
 	causeMissingGlyph    = "missing-glyph"    // the font carries no code for a character (D8)
-	causeMixedState      = "mixed-state"      // the paragraph's runs differ in spacing, scaling, rise or scale
+	causeMixedState      = "mixed-state"      // runs differ in their text matrix's scale — a size or stretch set by `Tm`, not `Tf`/`Tz` (P08.S06)
 	causeMixedContent    = "mixed-content"    // something other than positioning sits among its show operators
 	causeInlineFollower  = "inline-follower"  // text is drawn straight after it with no repositioning
 	causeTagged          = "tagged"           // marked content sits among its lines; moving text would mis-tag it (P07)
@@ -256,7 +439,7 @@ const (
 	causeEmptyLine       = "empty-line"       // a line of the paragraph draws no word
 	causeNoSpaceWidth    = "no-space-width"   // the paragraph draws no space between words to measure one by
 	causeDegenerate      = "degenerate-state" // a zero or infinite scale, size or coordinate
-	causeClips           = "text-clips"       // a run to be moved is drawn in a clipping mode (Tr 4-7): moving it moves the clip
+	causeClips           = "text-clips"       // drawn in a clipping mode (Tr 4-7): re-set or moved, the clip it makes changes
 )
 
 // ReflowCauses is every cause a reflow can fall back on, the server's included — the list the editor must have a
@@ -397,14 +580,16 @@ type reflowOutcome struct {
 	flow []flowStep
 }
 
-// emitWord is a word as it will be drawn: its codes, the kern before each after the first (user space), its font.
+// emitWord is a word as it will be drawn: its codes, the kern before each after the first (user space), the spacing each
+// is drawn under, its font.
 type emitWord struct {
-	face   *runFont
-	codes  [][]byte
-	kerns  []float64
-	width  float64
-	font   string
-	tfSize float64
+	face    *runFont
+	codes   [][]byte
+	kerns   []float64
+	spacing []textSpacing
+	width   float64
+	font    string
+	tfSize  float64
 }
 
 // reflowParagraph re-sets paragraph pi of page pageNr as text, in the paragraph's own font, at its own measure and
@@ -434,7 +619,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	if cause := paragraphRefusal(ctx, pg, para); cause != "" {
 		return reflowOutcome{cause: cause}, nil
 	}
-	lines, space, _ := paragraphWords(para)
+	lines, medianGap, _ := paragraphWords(para)
+	space := spacerOf(lines, medianGap)
 	if normalizedText(text) == normalizedText(para.text()) {
 		return reflowOutcome{cause: reflowNoChange}, nil
 	}
@@ -446,33 +632,72 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		runs = append(runs, l.runs...)
 	}
 	first := runs[0]
-	for _, r := range runs[1:] {
-		a, b := r.state, first.state
-		if a.tc != b.tc || a.tw != b.tw || a.th != b.th || a.ts != b.ts || a.tr != b.tr || math.Abs(a.scale-b.scale) > 1e-9 {
-			return reflowOutcome{cause: causeMixedState}, nil
-		}
-	}
-	// The words the paragraph already draws keep their own codes, kerns and font; a new word is spelled in the first
-	// run's font from the codes it carries, preferring a code the paragraph already draws. A word drawn in two styles
-	// has no one identity to keep, so the new text may not use it (law 3 — never guess which was meant).
-	known := map[string]emitWord{}
-	ambiguous := map[string]bool{}
+	// The words the paragraph already draws keep their own codes, kerns, spacing and font — each its OWN occurrence: the
+	// edit is aligned to the paragraph word by word (`alignWords`), and a word the alignment keeps is drawn as it was. A
+	// word the alignment does not keep (typed, or moved) takes any occurrence of it while they all look alike. A word drawn
+	// in two LOOKS (a font, a size, or a style: a stroked synthetic bold, a raised figure) is used only where EVERY longest
+	// alignment keeps it and keeps it in one look — an edit two alignments explain equally does not say which copy
+	// survived — and refuses everywhere else (law 3 — never guess). A new word is spelled in the first run's font from the
+	// codes it carries, preferring a code the paragraph already draws.
+	known := map[string][]emitWord{}
+	var old []emitWord
+	var oldText []string
+	styles := map[textSpacing]int{} // how many glyphs the paragraph draws in each style
 	used := map[string]bool{}
 	for _, l := range lines {
 		for _, w := range l {
-			ew := emitWord{width: w.width, font: w.font, tfSize: w.tfSize, face: w.face}
+			ew := emitWord{width: w.width, font: w.font, tfSize: w.tfSize, face: w.face, spacing: w.spacing}
 			for gi, g := range w.glyphs {
 				ew.codes = append(ew.codes, g.code)
 				if gi > 0 {
 					ew.kerns = append(ew.kerns, g.kern)
 				}
 				used[string(g.code)] = true
+				styles[w.spacing[gi].style()]++
 			}
-			if prev, dup := known[w.text()]; !dup {
-				known[w.text()] = ew
-			} else if prev.font != ew.font || prev.tfSize != ew.tfSize {
-				ambiguous[w.text()] = true
+			known[w.text()] = append(known[w.text()], ew)
+			old = append(old, ew)
+			oldText = append(oldText, w.text())
+		}
+	}
+	sameLook := func(a, b emitWord) bool {
+		if a.font != b.font || a.tfSize != b.tfSize || len(a.spacing) != len(b.spacing) {
+			return false
+		}
+		for i := range a.spacing {
+			if a.spacing[i].style() != b.spacing[i].style() {
+				return false
 			}
+		}
+		return true
+	}
+	ambiguous := map[string]bool{}
+	for t, occ := range known {
+		for _, o := range occ[1:] {
+			if !sameLook(o, occ[0]) {
+				ambiguous[t] = true
+			}
+		}
+	}
+	// A typed word takes the paragraph's usual style — the one most of its glyphs are drawn in, never a superscript's or
+	// a stroked word's that happens to stand before it — and the fit (character and word spacing) of the glyph before it.
+	// A tie goes to the plainer style — unscaled, unraised, filled — and then to the smaller figures, so the choice never
+	// rests on a map's order and never makes typed text raised or stroked on an even count.
+	plainer := func(a, b textSpacing) bool {
+		ka := [5]float64{math.Abs(a.th - 1), math.Abs(a.ts), float64(a.tr), a.th, a.ts}
+		kb := [5]float64{math.Abs(b.th - 1), math.Abs(b.ts), float64(b.tr), b.th, b.ts}
+		for i := range ka {
+			if ka[i] != kb[i] {
+				return ka[i] < kb[i]
+			}
+		}
+		return false
+	}
+	var usual textSpacing
+	best := 0
+	for st, n := range styles {
+		if n > best || (n == best && plainer(st, usual)) {
+			usual, best = st, n
 		}
 	}
 	// drawn is every code the page's paragraphs show in each face: a subset font embeds only the glyphs its document
@@ -526,23 +751,46 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		return code, w0, ""
 	}
 	var words []emitWord
-	for _, t := range editWords(text) {
+	edited := editWords(text)
+	al := alignWords(oldText, edited)
+	for ni, t := range edited {
 		if ambiguous[t] {
-			return reflowOutcome{cause: causeAmbiguousStyle}, nil
+			// Drawn in two looks: kept only where every longest alignment keeps it, and keeps it in one look.
+			if !al.ok {
+				return reflowOutcome{cause: causeAmbiguousStyle}, nil
+			}
+			olds, unkept := al.choices(ni)
+			if unkept || len(olds) == 0 {
+				return reflowOutcome{cause: causeAmbiguousStyle}, nil
+			}
+			for _, oi := range olds[1:] {
+				if !sameLook(old[oi], old[olds[0]]) {
+					return reflowOutcome{cause: causeAmbiguousStyle}, nil
+				}
+			}
 		}
-		if ew, ok := known[t]; ok {
-			words = append(words, ew)
+		if oi, ok := al.kept[ni]; ok {
+			words = append(words, old[oi])
 			continue
 		}
+		if occ, ok := known[t]; ok {
+			words = append(words, occ[0]) // every occurrence looks alike, or the word refused above
+			continue
+		}
+		fit := spacingOf(first.state)
+		if n := len(words); n > 0 {
+			fit = lastSpacing(words[n-1].spacing)
+		}
+		sp := textSpacing{tc: fit.tc, tw: fit.tw, th: usual.th, ts: usual.ts, tr: usual.tr}
 		ew := emitWord{font: first.font, tfSize: first.state.tfSize, face: first.face}
 		for ri, r := range t {
 			code, w0, why := pick(first.face, string(r), false)
 			if why != "" {
 				return reflowOutcome{cause: why}, nil
 			}
-			st := first.state
-			ew.width += (w0/1000*st.tfSize + st.tc) * st.th * st.scale
+			ew.width += (w0/1000*first.state.tfSize + sp.tc) * sp.th * first.state.scale
 			ew.codes = append(ew.codes, code)
+			ew.spacing = append(ew.spacing, sp)
 			if ri > 0 {
 				ew.kerns = append(ew.kerns, 0)
 			}
@@ -550,7 +798,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		words = append(words, ew)
 	}
 	measures := paragraphMeasures(layout, pi, lines, space)
-	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width }, space)
+	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width },
+		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) })
 	// A paragraph that needs more lines grows DOWN into the room below it (P07.S03): its new lines at its own pitch, and
 	// the paragraphs below it moved by the growth. What it cannot move with them, it refuses.
 	n := len(para.lines)
@@ -612,7 +861,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	// goes in a TJ adjustment beside it.
 	type spaceGlyph struct {
 		code []byte
-		adv  float64
+		w0   float64 // its width in glyph space; its advance depends on the spacing it is drawn under
 	}
 	// Keyed by face AND size: the space's advance scales with the `Tf` size it is drawn at.
 	type spaceKey struct {
@@ -637,17 +886,27 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			default:
 				return reflowOutcome{cause: why}, nil
 			}
-			st := first.state
-			tx := w0/1000*w.tfSize + st.tc
-			if len(code) == 1 && code[0] == ' ' {
-				tx += st.tw
-			}
-			spaces[k] = spaceGlyph{code: code, adv: tx * st.th * st.scale}
+			spaces[k] = spaceGlyph{code: code, w0: w0}
 		}
 	}
+	// spaceAdvance is the user-space advance of space glyph sp drawn at size under spacing s.
+	spaceAdvance := func(sp spaceGlyph, size float64, s textSpacing) float64 {
+		tx := sp.w0/1000*size + s.tc
+		if len(sp.code) == 1 && sp.code[0] == ' ' {
+			tx += s.tw
+		}
+		return tx * s.th * first.state.scale
+	}
 	st0 := first.state
-	if !(st0.scale > 0) || st0.th == 0 || !finite(st0.scale, st0.th, st0.tc, st0.tw, space) {
+	if !(st0.scale > 0) || !finite(st0.scale, medianGap) {
 		return reflowOutcome{cause: causeDegenerate}, nil
+	}
+	for _, w := range words {
+		for _, s := range w.spacing {
+			if s.th == 0 || !finite(s.tc, s.tw, s.th, s.ts) {
+				return reflowOutcome{cause: causeDegenerate}, nil
+			}
+		}
 	}
 	for i, l := range broken {
 		tm, ok := lineAt(i)
@@ -660,49 +919,85 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			}
 		}
 	}
-	adj := func(user, size float64) string { return num(-user / st0.scale / (size * st0.th) * 1000) }
+	// adj writes a user-space horizontal displacement as a `TJ` adjustment: in thousandths of the size, under the `Tz` in
+	// force where it is written.
+	adj := func(user, size float64, s textSpacing) string { return num(-user / st0.scale / (size * s.th) * 1000) }
 	var buf strings.Builder
-	// The spacing the lines were measured under, stated before them: a deleted `"` set it as it showed, and the state
-	// at this point is whatever preceded the paragraph's first show.
-	fmt.Fprintf(&buf, "\n%s Tc %s Tw\n", num(st0.tc), num(st0.tw))
+	// The spacing the first glyph was drawn under, stated before the lines — a deleted `"` set it as it showed, and the
+	// state at this point is whatever preceded the paragraph's first show — and from there only what changes, before the
+	// glyph that needs it: an operator cannot sit inside a `TJ` array, so a change closes the array and opens another.
+	cur := words[0].spacing[0]
+	fmt.Fprintf(&buf, "\n%s\n", cur.allOperators())
+	var font string
+	var size float64
+	open := false
+	closeArray := func() {
+		if open {
+			buf.WriteString("] TJ\n")
+			open = false
+		}
+	}
+	openArray := func() {
+		if !open {
+			buf.WriteString("[")
+			open = true
+		}
+	}
+	setFont := func(f string, sz float64) {
+		if f != font || sz != size {
+			closeArray()
+			font, size = f, sz
+			fmt.Fprintf(&buf, "%s %s Tf\n", pdfName(font), num(size))
+		}
+	}
+	setSpacing := func(s textSpacing) {
+		if s != cur {
+			closeArray()
+			buf.WriteString(s.operators(cur) + "\n")
+			cur = s
+		}
+	}
 	for i, l := range broken {
 		tm, _ := lineAt(i)
+		closeArray()
 		fmt.Fprintf(&buf, "%s %s %s %s %s %s Tm\n", num(tm[0]), num(tm[1]), num(tm[2]), num(tm[3]), num(tm[4]), num(tm[5]))
-		font, size := l[0].font, l[0].tfSize
-		fmt.Fprintf(&buf, "%s %s Tf\n[", pdfName(font), num(size))
+		font = "" // every line states its font
+		setFont(l[0].font, l[0].tfSize)
+		setSpacing(l[0].spacing[0])
+		openArray()
 		// The line's lead: where its first word began, past the origin of its first run (a leading kern or space). A new
 		// line takes the last line's.
 		li := min(i, n-1)
 		if lead := lines[li][0].startX - para.lines[li].runs[0].x; math.Abs(lead) > 1e-9 {
-			fmt.Fprintf(&buf, "%s ", adj(lead, size))
+			fmt.Fprintf(&buf, "%s ", adj(lead, size, cur))
 		}
 		for wi, w := range l {
 			if wi > 0 {
-				// The space is drawn in the font of the word before it, and only then does the font change: an
-				// operator cannot sit inside a TJ array, so a change of font closes the array and opens another.
+				// The space is drawn in the font and spacing of the glyph before it, and only then does either change.
 				sp := spaces[spaceKey{l[wi-1].face, l[wi-1].tfSize}]
+				openArray()
 				fmt.Fprintf(&buf, "<%X>", sp.code)
-				if extra := space - sp.adv; math.Abs(extra) > 1e-9 {
-					fmt.Fprintf(&buf, " %s ", adj(extra, size))
-				}
-				if w.font != font || w.tfSize != size {
-					font, size = w.font, w.tfSize
-					fmt.Fprintf(&buf, "] TJ\n%s %s Tf\n[", pdfName(font), num(size))
+				prev := l[wi-1]
+				if extra := space(prev.face, prev.tfSize, cur) - spaceAdvance(sp, size, cur); math.Abs(extra) > 1e-9 {
+					fmt.Fprintf(&buf, " %s ", adj(extra, size, cur))
 				}
 			}
+			setFont(w.font, w.tfSize)
 			for ci, c := range w.codes {
-				if ci > 0 && w.kerns[ci-1] != 0 {
-					fmt.Fprintf(&buf, " %s ", adj(w.kerns[ci-1], size))
+				setSpacing(w.spacing[ci])
+				openArray()
+				if ci > 0 && math.Abs(w.kerns[ci-1]) > 1e-9 { // past arithmetic noise, as every other adjustment
+					fmt.Fprintf(&buf, " %s ", adj(w.kerns[ci-1], size, cur))
 				}
 				fmt.Fprintf(&buf, "<%X>", c)
 			}
 		}
-		buf.WriteString("] TJ\n")
 	}
+	closeArray()
 	// Restore what the deleted operators left behind: the font, the spacing, and the line matrix (a `Tm` sets both the
-	// text and the line matrix), so everything after the paragraph in this text object lands where it did.
+	// text and the line matrix), so everything after the paragraph in this text object lands where it did, as it was.
 	st := last.state
-	fmt.Fprintf(&buf, "%s %s Tf %s Tc %s Tw %s %s %s %s %s %s Tm\n", pdfName(last.font), num(st.tfSize), num(st.tc), num(st.tw),
+	fmt.Fprintf(&buf, "%s %s Tf %s%s %s %s %s %s %s Tm\n", pdfName(last.font), num(st.tfSize), spacingOf(st).allOperators(),
 		num(st.tlm[0]), num(st.tlm[1]), num(st.tlm[2]), num(st.tlm[3]), num(st.tlm[4]), num(st.tlm[5]))
 	e := contentstream.NewEdit(src)
 	for _, sp := range spans {
@@ -781,7 +1076,8 @@ func contentAround(src []byte, spans []opSpan) string {
 				continue
 			}
 			switch op {
-			case "Td", "TD", "Tm", "T*", "TL", "Tf":
+			case "Td", "TD", "Tm", "T*", "TL", "Tf", "Tc", "Tw", "Tz", "Ts", "Tr":
+				// Positioning, and the text state each glyph carries for itself (P08.S01) — the rewrite states it again.
 			case "BDC", "BMC", "EMC":
 				return causeTagged
 			default:
