@@ -8,6 +8,7 @@
 package browser
 
 import (
+	"log"
 	"nib/internal/safe"
 	"os"
 	"os/exec"
@@ -15,7 +16,7 @@ import (
 	"time"
 )
 
-// fileExists reports whether an absolute path is a regular, runnable file.
+// fileExists reports whether a path names something that is not a directory. It does not check that it is runnable.
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
@@ -56,6 +57,9 @@ func Open(url string) (*exec.Cmd, error) {
 			// fails at once, and one that is working is still running. It costs a
 			// quarter-second on the failing path and nothing on the working one.
 			if launched(cmd, appModeSettle) {
+				// Which branch opened the window is logged, because nothing else records it and the two behave
+				// differently — printing among them (/pending 788). Never the URL: it carries the launch key.
+				log.Printf("opened the window in app mode with %s", path)
 				return cmd, nil
 			}
 			// It failed. Fall through to the tab fallback rather than serving a window
@@ -65,6 +69,7 @@ func Open(url string) (*exec.Cmd, error) {
 	}
 
 	name, args := tabOpener(url)
+	log.Printf("no Chromium-family browser opened an app window; opening a tab in the default browser with %s", name)
 	cmd := exec.Command(name, args...)
 	err := cmd.Start()
 	if err == nil {
