@@ -943,11 +943,35 @@ typed. **Corpus (one-word edit, real producers)**: `mixed-state` **1,463 → 206
 `Tm`, S06's); paragraphs with only state operators between their shows no longer refuse (472 → 0); reflowed **2,649 →
 2,886**. Tier 3 re-sets a mixed-spacing paragraph through the binary (red under a `Tc` refusal, on its own assertion).
 
-#### P08.S02 — a space drawn as its own show
+#### P08.S02 — a space drawn as its own show *(done 2026-09-30, v1.174.1)*
 A blank show between a paragraph's runs (`( ) Tj`, a `TJ` of spaces) is the paragraph's space and goes with it (/pending
 732); a refusal that remains names what is actually there. Acceptance: N one-glyph runs with separate space shows reflow
 at every N; the corpus's blank-show refusals (276, and 398 with state operators) fall; the cause sentence is true of what
 it refuses.
+
+**Tasks** (slice grill, 2026-09-30 — measured before it, at S01's close): T01 — a blank run joins the paragraph's spans
+only when it is drawn in the page's own stream (a form's offsets index another stream) and its span lies BETWEEN the
+paragraph's first and last show: over the corpus that unblocks 660 paragraphs and regresses none of the 5,110 that reflow;
+taking every blank near the lines regresses 128. T02 — `contentAround` names what it finds over the whole range, not the
+first foreign operator: marked content `tagged`, a show, paint or colour `mixed-content`, and lines drawn as separate text
+objects a new `text-objects` with its own sentence. T03 — tests: one-glyph runs with separate space shows at several N, a
+blank run outside the range untouched, a form's blank never deleted, each cause; the corpus census. **Grill defaults (rung
+1/2)**: BT/ET between lines stays refused — allowed alone it unblocks ~0 (those paragraphs are tagged line by line); 732's
+other half (the dialog's `Validated` read vs the staleness check's optimized one) is unmeasured and is filed on its own.
+**PIN 2026-09-30 (build, measured — amends T01)**: the first cut exposed 97 `inline-follower` refusals, every one a blank
+show straight after the paragraph's last (Acrobat 89): a blank there, with nothing but text state between, is the
+paragraph's too — but only a `Tj`/`TJ` (a `"` sets the spacing what follows is drawn in, the review's W1) — 97 → 7. And a
+run grouping drops is a space only if it DECODES to white space: a glyph that reads as nothing (a Dingbats mark with no
+/ToUnicode) is ink, and was being cut (the review's C1). Narrowed again by round 2: a show is a space only if every code it
+draws is the single-byte 32 or a code the paragraph's own lines draw as a space (a ToUnicode can call a check mark U+0020),
+and never in a clipping mode.
+**Closed 2026-09-30.** Corpus (one-word edit, real producers): reflowed 2,886 → **3,345**; `mixed-content` 1,691 → **124**;
+`inline-follower` 97 → **7**; the line-by-line tagged producers now read `tagged` (1,233). Ledger: N one-glyph runs with
+separate space shows reflow at N = 2, 3, 5 — met; the corpus's blank-show refusals fall — met (classes A and C of the
+phase-open census are the 660 + 97 unblocked); the cause sentence is true of what it refuses — met (`text-objects` added,
+`mixed-content` names other text, `tagged` wins over the stretch). Tier 3 re-sets a paragraph of space-shows through the
+binary (red under the blank inclusion removed). Review `code-reviews/v1.174.1-p08s02-2026-09-30.md` (1 critical, 4 warnings,
+2 info over two rounds; all fixed). /pending 732 closed; its unmeasured half is /pending 789.
 
 #### P08.S03 — a justified paragraph re-wraps justified
 One door, `paragraphAlignment`, reads a paragraph's lines as left, justified, centred or right. A justified paragraph is
