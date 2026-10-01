@@ -12,8 +12,9 @@ import (
 
 // rebreak breaks words at the paragraph's line measures with space between them, through the one line breaker — the
 // breaker as the rewrite calls it, over the words the paragraph already has. A test instrument.
-func rebreak(words []reflowWord, measures []float64, space float64) [][]reflowWord {
-	return breakAt(words, measures, func(w reflowWord) float64 { return w.width }, space)
+func rebreak(words []reflowWord, measures []float64, space wordSpacer) [][]reflowWord {
+	return breakAt(words, measures, func(w reflowWord) float64 { return w.width },
+		func(w reflowWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) })
 }
 
 // lineTexts renders broken lines as their words joined by a space — what a reader of the broken paragraph sees.
@@ -71,7 +72,7 @@ func TestAnUneditedParagraphRebreaksWhereItWasBroken(t *testing.T) {
 				for _, ln := range lines {
 					words = append(words, ln...)
 				}
-				got := lineTexts(rebreak(words, lineMeasures(lines, space), space))
+				got := lineTexts(rebreak(words, lineMeasures(lines, spacerOf(lines, space)), spacerOf(lines, space)))
 				want := lineTexts(lines)
 				if len(want) > 1 {
 					multi++
@@ -123,7 +124,7 @@ func TestHowOftenARealProducersParagraphRebreaksInPlace(t *testing.T) {
 				for _, ln := range lines {
 					words = append(words, ln...)
 				}
-				if strings.Join(lineTexts(rebreak(words, lineMeasures(lines, space), space)), "\n") == strings.Join(lineTexts(lines), "\n") {
+				if strings.Join(lineTexts(rebreak(words, lineMeasures(lines, spacerOf(lines, space)), spacerOf(lines, space))), "\n") == strings.Join(lineTexts(lines), "\n") {
 					same++
 				} else {
 					differ++
@@ -200,12 +201,19 @@ func TestAParagraphItCannotReadFaithfullyNamesWhy(t *testing.T) {
 		{"no-widths", func(r *textRun) { r.widthSrc = widthNone }},
 		{"undecoded", func(r *textRun) { r.decoded = false }},
 		{"glyphs-not-kept", func(r *textRun) { r.glyphs = nil }},
+		{"text-clips", func(r *textRun) { r.state.tr = 5 }}, // asked here, so the dialog refuses it before anything is typed
 	} {
 		r := base()
 		c.edit(&r)
 		if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{r}}}}); cause != c.want {
 			t.Errorf("want %q, got %q", c.want, cause)
 		}
+	}
+	// A second line drawn at another text-matrix scale is refused here too, before anything is typed (P08.S01's review).
+	scaled := base()
+	scaled.state.scale = 1.5
+	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base()}}, {runs: []textRun{scaled}}}}); cause != causeMixedState {
+		t.Errorf("a line at another scale: want %q, got %q", causeMixedState, cause)
 	}
 	// And the control: the same run unedited is read, and a paragraph with no gap in it cannot say how wide its space is.
 	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base()}}}}); cause != "no-space-width" {

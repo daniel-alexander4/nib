@@ -359,7 +359,10 @@ good — or until you flatten / finalize the whole document.
 change its words, and Nib re-sets it **in the document's own font and size**, on its
 own lines and margins — a changed word pushes the rest of the paragraph along, the
 way a word processor would. Unlike Edit text, the **old words are removed**, not
-covered: they are gone from the page, from copy-and-paste and from Find.
+covered: they are gone from the page, from copy-and-paste and from Find. Every letter
+keeps the spacing it was set with — letter spacing, word spacing, condensed or raised
+type — so the words you did not change look exactly as they did, and a word you type
+takes the spacing of the text just before it.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line
 spacing, and the paragraphs below it in its column move down with it into the free

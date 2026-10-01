@@ -8,7 +8,7 @@ reinstated to the backlog by Dan on 2026-09-06.
 declined entry differ, the plan wins — **two of that entry's four stated prerequisites do not
 survive measurement**, and they are corrected here rather than quietly dropped.
 
-**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 CLOSED (v1.167.9 — the walker's evidence, and ADR-056's page-content door); P06 CLOSED (v1.168.1 — one paragraph on one page); P07 — several paragraphs, and flow across pages — is building (slices firmed 2026-09-30).
+**Status: building.** P01 CLOSED (v1.128.69); P02–P04 CLOSED (v1.129.73–.75, built as `PLAN-accessibility.md` P08.S01–S03 per D10); P05 CLOSED (v1.167.9 — the walker's evidence, and ADR-056's page-content door); P06 CLOSED (v1.168.1 — one paragraph on one page); P07 CLOSED (v1.173.1 — several paragraphs, and flow across pages); P08 — typographic fidelity — is building (slices firmed 2026-09-30).
 
 ---
 
@@ -881,6 +881,97 @@ path reads none of — `Tc`, `Tw`, `Tz`.
 
 **Exit criteria.** A justified paragraph re-wraps justified; kerned text keeps its kerning; a
 document using character or word spacing is not silently re-spaced.
+
+**PIN 2026-09-30 (phase-open, measured over the real-producer corpus `~/nib/producers`, 9 producers) — what exists, what
+does not.**
+- **Exists**: the reader folds `Tc`, `Tw` (single-byte code 32 only) and `Tz` into every glyph's advance and keeps each
+  `TJ` adjustment as the next glyph's `kern` (`textrun.go` `show`); a word the paragraph already draws is re-emitted with
+  its own codes AND kerns (`reflow.go` `known`), so kept text keeps its kerning today; a uniform `Tc`/`Tw` is restated
+  before the lines and restored after them; moved paragraphs (P07) carry their operators verbatim (`flowmove.go`).
+- **Does not exist**: any notion of alignment — every re-set line starts at its original line's matrix and is set at ONE
+  space, the paragraph's median gap, so a justified paragraph re-wraps RAGGED (measured: of 1,126 readable paragraphs of
+  three or more lines, **274 justified** — 230 by `TJ`/position, 44 by `Tw` — and AH's **75** that reflow today all come
+  out ragged, silently); a typed word's kerning (new words get 0); `Tz`/`Ts` restored after the paragraph; a word whose
+  runs differ in state, font or size.
+- **The refusals P08 owns, on the rewrite path** (each multi-word paragraph given a one-word edit): of 11,880 multi-word paragraphs,
+  **2,649 reflow**; `mixed-state` **1,463** (the largest — InDesign justifies with per-line `Tc`+`Tw`, Acrobat writes
+  ±0.0005 `Tc`/`Tw` per run); `mixed-content` 1,211 — and over every readable multi-word paragraph the operators that
+  `contentAround` calls foreign are text-state operators only in 472, blank shows only (/pending 732) in 276, both in 398;
+  the rest (BT/ET between lines, marks, colour) are not P08's; `styled-word` 381.
+- **Kerning is two populations**: per (face, size, pair), InDesign/AH/Ghostscript draw one consistent value (InDesign 2,304
+  consistent nonzero pairs vs 545 inconsistent), Acrobat and Word draw positional noise (Acrobat 10,747 inconsistent vs
+  2,792). A typed word can therefore borrow a pair's kern only where the page draws that pair one way.
+- **Shape (rung 1/2, recorded)**: each slice turns a measured refusal or silent loss into an exact result or keeps a
+  named refusal (law 3), state first because InDesign's justification IS state. Alignment is one door covering left,
+  justified, centred and right (S03, S04) — the exit criterion names justified, and a centred heading re-set off its axis
+  (**265** short paragraphs centred on the page in this corpus) is the same silent loss, so it is in (rung 2). Out:
+  hyphenation (a justified producer's hyphen is kept as the glyph it is; nothing new is hyphenated), and paragraphs split
+  across text objects (BT/ET between lines — 2,900 refusals, not typographic). `/plan-review` did not fire: not security-,
+  migration- or egress-heavy — no persisted or wire format changes (the cause list is the one wire surface, and only
+  shrinks or gains a name).
+
+#### P08.S01 — a word keeps the spacing it was drawn with *(done 2026-09-30, v1.174.0)*
+A paragraph whose runs differ in `Tc`, `Tw`, `Tz` or `Ts` is re-set word by word, each kept word under the state it was
+drawn in (the emitter states what changes before a word, and restores all four after the paragraph); text-state
+operators between the paragraph's shows are part of it, not foreign content. A typed word takes the state of the word
+before it (the first: the paragraph's first run's). Acceptance: hand-built mixed-`Tc`/`Tw`/`Tz`/`Ts` paragraphs reflow and
+each word reads back at its own advance; the state after the paragraph is what it was; the corpus's `mixed-state` and
+state-operator `mixed-content` refusals fall to what still cannot be carried, each named.
+
+**Tasks** (slice grill, 2026-09-30 — **amended: per GLYPH, not per word**: in 585 of the corpus's 849 readable mixed-state
+paragraphs a single word is drawn across runs of different state — Acrobat 522 of 586 — so one state per word would
+re-space glyphs silently): T01 — `paragraphWords` records each glyph's spacing (`tc tw th ts tr`) from its run. T02 — the
+emitter states what changes before the glyph that needs it (closing and reopening the `TJ`), converts a kern or a lead
+with the `Tz` in force, sets a space's advance under the state of the glyph before it, opens with the first glyph's full
+state and restores `Tf Tc Tw Tz Ts Tr Tm` after. T03 — `mixed-state` narrows to a text-matrix scale that differs (geometry,
+not state); `contentAround` admits `Tc Tw Tz Ts Tr`; the edit path refuses a clipping mode (`Tr` 4–6, `text-clips`) as a
+move and a carry already do. T04 — a typed word takes the spacing of the glyph before it; `REFLOW_CAUSES`' sentence for
+`mixed-state` is made true; tests and the corpus census. **Grill defaults (rung 1/2)**: a word drawn under two spacings
+is not `ambiguous-style` (a style is a font and a size) and its first occurrence is used; a differing scale stays refused.
+**Closed 2026-09-30 — what the code did that the text above does not say** (four review rounds,
+`code-reviews/v1.174.0-p08s01-2026-09-30.md`, every finding fixed). The grill default above was **overturned by the review's
+critical**: a word drawn under two LOOKS — a font, a size, or a style (`Tz`, `Ts`, `Tr`: a stroked synthetic bold, a raised
+figure) — silently took its first copy's look. Now the edit is ALIGNED to the paragraph word by word (`alignWords`, LCS): a
+kept word keeps its own occurrence's codes, kerns and spacing, and a word in two looks is used only where EVERY longest
+alignment keeps it in one look, else `ambiguous-style` (measured 0.15 ms at 100 words, 57 ms at the 2,000-word bound). A
+typed word takes the paragraph's USUAL style (most glyphs; a tie to the plainer) and the fit (`Tc`, `Tw`) of the glyph
+just before it. The space after a word is the font's own space under that word's spacing plus the paragraph's median
+residual — a line under `Tw 2` or `Tz 110` keeps its wider spaces, one wide gap moves none (P07's "every space is the
+paragraph's" became "the space the document drew after a word of that size"). The clip (`text-clips`, now refused on the
+edit path too, as move and carry did — one `clipMode`) and scale refusals live in `paragraphWords`, asked before anything is
+typed. **Corpus (one-word edit, real producers)**: `mixed-state` **1,463 → 206** (what remains is a size or stretch set by
+`Tm`, S06's); paragraphs with only state operators between their shows no longer refuse (472 → 0); reflowed **2,649 →
+2,886**. Tier 3 re-sets a mixed-spacing paragraph through the binary (red under a `Tc` refusal, on its own assertion).
+
+#### P08.S02 — a space drawn as its own show
+A blank show between a paragraph's runs (`( ) Tj`, a `TJ` of spaces) is the paragraph's space and goes with it (/pending
+732); a refusal that remains names what is actually there. Acceptance: N one-glyph runs with separate space shows reflow
+at every N; the corpus's blank-show refusals (276, and 398 with state operators) fall; the cause sentence is true of what
+it refuses.
+
+#### P08.S03 — a justified paragraph re-wraps justified
+One door, `paragraphAlignment`, reads a paragraph's lines as left, justified, centred or right. A justified paragraph is
+broken at its flush edge and each line but the last is set to it, the slack shared across its spaces by `TJ` adjustment
+(the one mechanism every font has — `Tw` is inert on a multi-byte code); its last line is set at the paragraph's natural
+space. Acceptance: hand-built and corpus justified paragraphs re-wrap with every line but the last flush to both edges;
+an unedited justified paragraph still re-breaks in place; a ragged paragraph is untouched by the door.
+
+#### P08.S04 — a centred or right-aligned paragraph keeps its axis
+The door's centred and right paragraphs are re-set about their axis; a one-line paragraph reads as centred only on
+evidence (its column or page centre, its indent). Acceptance: hand-built centred and right paragraphs re-wrap about their
+axis; the corpus census of what reads as centred is recorded with its false-positive check.
+
+#### P08.S05 — a typed word takes the document's kerning
+A new word's glyph pairs take the kern the page draws for that pair in that face and size — only where the page draws it
+one way; positional noise lends nothing. Acceptance: a typed word in a kerned paragraph reads back with the page's kerns;
+a word the paragraph already draws keeps its own (asserted, already true); Acrobat/Word-style inconsistent kerning lends
+none.
+
+#### P08.S06 — a word in two styles
+A word whose runs change font or size part-way through (`styled-word`, 381) is carried as its pieces, each in its own
+font — and a paragraph whose runs differ in a size set by the text matrix rather than `Tf` (`mixed-state`, **190** left
+after S01: InDesign's `Tf 1` with the size in `Tm`, measured at 1–60% apart) is the same problem one operator over. Acceptance: a mixed-style word reflows and reads back in both styles; a typed word that matches it is not
+ambiguous; the corpus's `styled-word` refusals fall.
 
 ---
 

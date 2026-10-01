@@ -6792,7 +6792,7 @@ const REFLOW_CAUSES = {
   'styled-word': 'A word changes style part-way through.',
   rotated: 'The text is drawn turned.',
   'text-in-form': 'The text is drawn inside a stamp or overlay, not on the page itself.',
-  'mixed-state': "The paragraph's lines are set with different letter or word spacing.",
+  'mixed-state': 'Parts of the paragraph are drawn at a different size or stretch.',
   'mixed-content': 'Something other than the text itself — a colour change or a drawing — sits between its lines.',
   'inline-follower': 'More text is drawn straight after the paragraph, and it would move.',
   undecoded: "Some of the paragraph's characters cannot be read as text.",
@@ -6806,7 +6806,7 @@ const REFLOW_CAUSES = {
   'ambiguous-style': 'A word you used appears in the paragraph in two styles, and which one to keep is unclear.',
   vertical: 'The text is written vertically.',
   'invisible-text': 'The text — or text that would move with it — is invisible, a search layer over a scanned image, and moving or changing it would take it off the words it indexes.',
-  'text-clips': 'Text below it is drawn as a clipping outline — moving it would change what the page shows through it.',
+  'text-clips': 'The text, or text that would move with it, is drawn as a clipping outline — re-setting it would change what the page shows through it.',
   'state-not-carried': 'Text that would move to the next page is drawn with a transparency, colour or clipping, or marked with a setting (a layer, a language, a custom tag), that cannot be carried there.',
   'tagged-across-pages': "Text that would move to the next page is tagged for accessibility in a way Nib cannot carry to another page and keep correct — the document's structure tree does not describe it cleanly, or its tagged content also holds a picture, a shape or other tagged content.",
 };

@@ -185,14 +185,26 @@ func TestThePhaseClosesFindingsHold(t *testing.T) {
 		}
 	})
 	t.Run("a space is measured at the size of the word it follows", func(t *testing.T) {
+		// The space after a word is the one the paragraph drew after a word of that size (P08.S01: its font's space in
+		// its own size and spacing): "BIG " carries an 18pt space, every other word a 12pt one — read off the positions.
 		pdf := helveticaPage("BT 14 TL 72 700 Td /F1 12 Tf (The quick ) Tj /F1 18 Tf (BIG ) Tj /F1 12 Tf (brown fox jumps) Tj T* (over the lazy dog) Tj ET")
 		before, after, _ := rewriteReadsBack(t, pdf, "The BIG quick brown fox jumps")
-		_, space, _ := paragraphWords(before)
+		drew := map[float64]float64{}
+		orig, _, _ := paragraphWords(before)
+		for _, l := range orig {
+			for wi := 1; wi < len(l); wi++ {
+				drew[l[wi-1].tfSize] = l[wi].startX - (l[wi-1].startX + l[wi-1].width)
+			}
+		}
+		if len(drew) != 2 || math.Abs(drew[18]-drew[12]*1.5) > 1e-6 {
+			t.Fatalf("setup: spaces drawn %v, want an 18pt space after BIG and 12pt ones elsewhere", drew)
+		}
 		lines, _, _ := paragraphWords(after)
 		for i, l := range lines {
 			for wi := 1; wi < len(l); wi++ {
-				if gap := l[wi].startX - (l[wi-1].startX + l[wi-1].width); math.Abs(gap-space) > 1e-6 {
-					t.Errorf("line %d: %q to %q is %v apart; the paragraph's space is %v", i, l[wi-1].text(), l[wi].text(), gap, space)
+				want := drew[l[wi-1].tfSize]
+				if gap := l[wi].startX - (l[wi-1].startX + l[wi-1].width); math.Abs(gap-want) > 1e-6 {
+					t.Errorf("line %d: %q to %q is %v apart; the paragraph drew %v after a word of its size", i, l[wi-1].text(), l[wi].text(), gap, want)
 				}
 			}
 		}
@@ -205,9 +217,26 @@ func TestThePhaseClosesFindingsHold(t *testing.T) {
 		}
 	})
 	t.Run("a word drawn in two styles may not be reused, because which was meant is a guess", func(t *testing.T) {
+		// Kept in place, each occurrence is its own (P08.S01: the edit is aligned to the paragraph); moved, which was meant
+		// is a guess.
 		pdf := twoFontPage("F1", "F2", "BT /F1 12 Tf 14 TL 72 700 Td (Read ) Tj /F2 12 Tf (this) Tj /F1 12 Tf ( and this again) Tj T* (over the lazy dog) Tj ET")
-		if _, cause := reflowed(t, pdf, 0, "See this and this again over the lazy dog"); cause != causeAmbiguousStyle {
-			t.Errorf("fell back on %q, want %s", cause, causeAmbiguousStyle)
+		if _, cause := reflowed(t, pdf, 0, "See and this again this over the lazy dog"); cause != causeAmbiguousStyle {
+			t.Errorf("moved: fell back on %q, want %s", cause, causeAmbiguousStyle)
+		}
+		out, cause := reflowed(t, pdf, 0, "See this and this again over the lazy dog")
+		if cause != "" {
+			t.Fatalf("both kept in place: fell back on %q", cause)
+		}
+		l, _ := layoutOf(t, out)
+		lines, _, _ := paragraphWords(l.paragraphs[0])
+		var fonts []string
+		for _, w := range lines[0] {
+			if w.text() == "this" {
+				fonts = append(fonts, w.font)
+			}
+		}
+		if len(fonts) != 2 || fonts[0] != "F2" || fonts[1] != "F1" {
+			t.Errorf("both kept in place: \"this\" drawn in %v, want each its own [F2 F1]", fonts)
 		}
 		if _, cause := reflowed(t, pdf, 0, "See that and that again over the lazy dog"); cause != "" {
 			t.Errorf("setup: an edit using neither \"this\" fell back on %q", cause)
