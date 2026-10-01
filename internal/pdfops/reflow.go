@@ -3,6 +3,7 @@ package pdfops
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -220,40 +221,49 @@ type wordSpacer func(face *runFont, tfSize float64, after textSpacing) float64
 // the font draws no space it can measure, the paragraph's median gap, fallback.
 func spacerOf(lines [][]reflowWord, fallback float64) wordSpacer {
 	scale := lines[0][0].scale
-	natural := func(f *runFont, tfSize float64, s textSpacing) (float64, bool) {
-		codes := f.codesFor(" ")
-		if len(codes) == 0 {
-			return 0, false
-		}
-		w0, src := f.widths.advance(fontcode.Value(codes[0]))
-		if src == widthNone {
-			return 0, false
-		}
-		tx := w0/1000*tfSize + s.tc
-		if len(codes[0]) == 1 && codes[0][0] == ' ' {
-			tx += s.tw // word spacing applies to the single-byte code 32 alone
-		}
-		return tx * s.th * scale, true
-	}
-	var residual []float64
-	for _, l := range lines {
-		for i := 1; i < len(l); i++ {
-			prev := l[i-1]
-			if nat, ok := natural(prev.face, prev.tfSize, lastSpacing(prev.spacing)); ok {
-				residual = append(residual, l[i].startX-prev.startX-prev.width-nat)
-			}
-		}
-	}
+	residual := spaceResiduals(lines)
 	if len(residual) == 0 {
 		return func(*runFont, float64, textSpacing) float64 { return fallback }
 	}
 	extra := median(residual)
 	return func(f *runFont, tfSize float64, after textSpacing) float64 {
-		if nat, ok := natural(f, tfSize, after); ok {
+		if nat, ok := naturalSpace(f, tfSize, after, scale); ok {
 			return nat + extra
 		}
 		return fallback
 	}
+}
+
+// naturalSpace is the user-space advance of font f's own space glyph at tfSize under spacing s, or false when the font
+// draws no space it can measure.
+func naturalSpace(f *runFont, tfSize float64, s textSpacing, scale float64) (float64, bool) {
+	codes := f.codesFor(" ")
+	if len(codes) == 0 {
+		return 0, false
+	}
+	w0, src := f.widths.advance(fontcode.Value(codes[0]))
+	if src == widthNone {
+		return 0, false
+	}
+	tx := w0/1000*tfSize + s.tc
+	if len(codes[0]) == 1 && codes[0][0] == ' ' {
+		tx += s.tw // word spacing applies to the single-byte code 32 alone
+	}
+	return tx * s.th * scale, true
+}
+
+// spaceResiduals is what each gap lines draw between words added to the natural space after the word before it.
+func spaceResiduals(lines [][]reflowWord) []float64 {
+	var out []float64
+	for _, l := range lines {
+		for i := 1; i < len(l); i++ {
+			prev := l[i-1]
+			if nat, ok := naturalSpace(prev.face, prev.tfSize, lastSpacing(prev.spacing), prev.scale); ok {
+				out = append(out, l[i].startX-prev.startX-prev.width-nat)
+			}
+		}
+	}
+	return out
 }
 
 // wordAlignment is an edit aligned to its paragraph word by word: the longest common subsequence of the two, kept is one
@@ -264,6 +274,198 @@ type wordAlignment struct {
 	old, new []string
 	f, b     []uint16 // f[i][j] = LCS(old[:i], new[:j]); b[i][j] = LCS(old[i:], new[j:]); rows of len(new)+1
 	ok       bool     // false past the size bound: nothing is kept, and nothing can be vouched for
+}
+
+// alignment is how a paragraph's lines sit in their measure (P08.S03): justified — every line but the last set from the
+// left edge to the flush edge — or not. S04 adds centred and right.
+type alignment struct {
+	justified bool
+	edge      float64 // where a justified paragraph's lines end, in user space
+	tol       float64 // how far apart line ends may be and still be the edge: justifyTol em
+	continues bool    // its last line ends at the edge too: the paragraph runs on past it, and that line is set flush
+	// lastDelta is what a justified paragraph's last line adds to each space the spacer gives it: the spacer's residual is
+	// the median over every line, stretched ones included, and the last line is the one set at its natural spaces — the
+	// residual of the original last line (0, the font's own space, where it has one word).
+	lastDelta float64
+}
+
+// justifyTol is how far apart, in ems, two line ends may be and still be one edge.
+const justifyTol = 0.05
+
+// paragraphAlignment is the one door for how paragraph pi's lines (read by `paragraphWords`) are aligned. Justified when
+// two or more lines before the last end within justifyTol em of each other and the lines after the first begin together;
+// or — two lines, the most a paragraph of two can show — when the first ends at its column's right edge, the last ends
+// short of it, and the first is set looser than the last (by median gap). A paragraph of one line says nothing and is not justified.
+func paragraphAlignment(l pageLayout, pi int, lines [][]reflowWord) alignment {
+	if len(lines) < 2 {
+		return alignment{}
+	}
+	p := l.paragraphs[pi]
+	tol := justifyTol * p.lines[0].size
+	var lefts, rights []float64
+	for _, ln := range lines {
+		end := ln[len(ln)-1]
+		lefts, rights = append(lefts, ln[0].startX), append(rights, end.startX+end.width)
+	}
+	spread := func(v []float64) float64 {
+		lo, hi := math.Inf(1), math.Inf(-1)
+		for _, x := range v {
+			lo, hi = math.Min(lo, x), math.Max(hi, x)
+		}
+		return hi - lo
+	}
+	body := len(lines) - 1
+	em := p.lines[0].size
+	// usual is the gaps of a line that are its ordinary spaces: within 1.5 em of its narrowest — a wider one is a jump (a
+	// label to its value, a tab to a page number), and a producer's wider space after a sentence is within it.
+	usual := func(g []float64) []float64 {
+		if len(g) == 0 {
+			return nil
+		}
+		lo := slices.Min(g)
+		var out []float64
+		for _, x := range g {
+			if x <= lo+1.5*em {
+				out = append(out, x)
+			}
+		}
+		return out
+	}
+	justified := func(edge float64) alignment {
+		a := alignment{justified: true, edge: edge, tol: tol}
+		// A paragraph whose last line ALSO ends at the edge continues past this page or column: that line is justified too,
+		// and set to the edge like the rest (the review of S03, R2-W1).
+		a.continues = math.Abs(rights[body]-edge) <= tol && len(lines[body]) > 1
+		all := spaceResiduals(lines)
+		if len(all) == 0 {
+			return a
+		}
+		// The natural space is the last line's — its usual gaps' median — or, continuing, the tightest line's.
+		natural := math.Inf(1)
+		for i, ln := range lines {
+			if (i == body || a.continues) && len(ln) > 1 {
+				if r := usual(spaceResiduals(lines[i : i+1])); len(r) > 0 {
+					natural = math.Min(natural, median(r))
+				}
+			}
+		}
+		if !math.IsInf(natural, 0) {
+			a.lastDelta = natural - median(all)
+		} else {
+			a.lastDelta = -median(all)
+		}
+		return a
+	}
+	// Justification stretches a line's spaces alike; a line that ends at the edge by one wide gap — a tab to a page number,
+	// a label to its value — is a table row, not a justified line. A gap after a sentence's or a clause's punctuation is
+	// left out: a producer may widen the space there (70 of the corpus's justified paragraphs do; the review of S03, R2-C1),
+	// but a leader of dots is not punctuation.
+	even := func(ln []reflowWord) bool {
+		var g []float64
+		for i := 1; i < len(ln); i++ {
+			t := ln[i-1].text()
+			if strings.ContainsAny(t[len(t)-1:], ".:;?!,)") && !strings.HasSuffix(t, "..") {
+				continue
+			}
+			g = append(g, ln[i].startX-ln[i-1].startX-ln[i-1].width)
+		}
+		return len(g) < 2 || spread(g) <= 5*tol
+	}
+	evenLines := true
+	for _, ln := range lines[:body] {
+		evenLines = evenLines && even(ln)
+	}
+	if body >= 2 && spread(rights[:body]) <= tol && spread(lefts[1:]) <= tol && evenLines {
+		return justified(median(rights[:body]))
+	}
+	if body != 1 || len(lines[0]) < 2 || len(lines[1]) < 2 {
+		return alignment{}
+	}
+	right := math.Inf(-1)
+	for _, q := range l.paragraphs {
+		if q.column == p.column {
+			right = math.Max(right, paragraphBox(q)[2])
+		}
+	}
+	// The MEDIAN gap: one wide gap (a label's jump to its value) does not make a line looser.
+	gap := func(ln []reflowWord) float64 {
+		var g []float64
+		for i := 1; i < len(ln); i++ {
+			g = append(g, ln[i].startX-ln[i-1].startX-ln[i-1].width)
+		}
+		return median(g)
+	}
+	if math.Abs(rights[0]-right) <= tol && rights[1] < rights[0]-10*tol && gap(lines[0]) > gap(lines[1])+tol {
+		return justified(rights[0])
+	}
+	return alignment{}
+}
+
+// justifiedLines is the extra space each gap of each broken line takes so the line ends at a justified paragraph's flush
+// edge: every line but the last, its slack shared evenly over its spaces, shrinking as well as stretching; the last line
+// its natural spaces (`lastDelta`). fits is false when some line cannot be set within the edge — a line of one word wider
+// than it, a last line wider than it at its natural spaces, or a line whose spaces would have to fall under a quarter of
+// their natural width to reach it. lines are the paragraph as read, for where each line begins (a new line past them
+// begins where the last did).
+func justifiedLines(a alignment, broken [][]emitWord, lines [][]reflowWord, space wordSpacer) (out []float64, fits bool) {
+	out = make([]float64, len(broken))
+	if !a.justified {
+		return out, true
+	}
+	last := len(broken) - 1
+	if !a.continues {
+		out[last] = a.lastDelta
+	}
+	for i, l := range broken {
+		x := lines[min(i, len(lines)-1)][0].startX
+		var gaps []float64
+		for wi, w := range l {
+			if wi > 0 {
+				g := space(l[wi-1].face, l[wi-1].tfSize, lastSpacing(l[wi-1].spacing))
+				if i == last && !a.continues {
+					g += a.lastDelta
+				}
+				gaps = append(gaps, g)
+				x += g
+			}
+			x += w.width
+		}
+		slack := a.edge - x
+		switch {
+		case (i == last && !a.continues) || len(gaps) == 0:
+			// Within the paragraph's own tolerance of the edge is AT it: the lines it was read from end that far apart.
+			if slack < -a.tol-measureSlack {
+				return out, false
+			}
+		default:
+			// A quarter of the NATURAL space — the spacer's gap carries the paragraph's median stretch; lastDelta takes it off.
+			per := slack / float64(len(gaps))
+			for _, g := range gaps {
+				if g+per < (g+a.lastDelta)/4 {
+					return out, false
+				}
+			}
+			out[i] = per
+		}
+	}
+	return out, true
+}
+
+// withWordSpacing is lines with every glyph's word spacing set to tw — a copy; the lines read are not changed.
+func withWordSpacing(lines [][]reflowWord, tw float64) [][]reflowWord {
+	out := make([][]reflowWord, len(lines))
+	for i, l := range lines {
+		out[i] = make([]reflowWord, len(l))
+		for j, w := range l {
+			sp := append([]textSpacing(nil), w.spacing...)
+			for k := range sp {
+				sp[k].tw = tw
+			}
+			w.spacing = sp
+			out[i][j] = w
+		}
+	}
+	return out
 }
 
 // alignWords aligns an edit's words to the paragraph's. O(old × new) in time and in two tables of uint16s — a page's
@@ -621,6 +823,23 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		return reflowOutcome{cause: cause}, nil
 	}
 	lines, medianGap, _ := paragraphWords(para)
+	// A justified paragraph's word spacing IS its justification: InDesign sets each line's `Tw` to stretch it to the edge,
+	// and `Tw` moves nothing but the space (code 32). Carried with its words it would stretch every space after a word to its
+	// OLD line's width (the review of S03, C3); so in a justified paragraph every word is given the word spacing of its last
+	// line — the one set naturally — and the re-set lines are stretched to the edge afresh. No glyph moves by it.
+	align := paragraphAlignment(layout, pi, lines)
+	if align.justified {
+		// The natural word spacing is the last line's; a paragraph that continues past its last line has none set
+		// naturally, and takes the tightest line's.
+		tw := lastSpacing(lines[len(lines)-1][len(lines[len(lines)-1])-1].spacing).tw
+		if align.continues {
+			for _, l := range lines {
+				tw = math.Min(tw, lastSpacing(l[len(l)-1].spacing).tw)
+			}
+		}
+		lines = withWordSpacing(lines, tw)
+		align = paragraphAlignment(layout, pi, lines)
+	}
 	space := spacerOf(lines, medianGap)
 	if normalizedText(text) == normalizedText(para.text()) {
 		return reflowOutcome{cause: reflowNoChange}, nil
@@ -778,7 +997,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			words = append(words, occ[0]) // every occurrence looks alike, or the word refused above
 			continue
 		}
-		fit := spacingOf(first.state)
+		fit := lines[0][0].spacing[0] // the paragraph's first glyph — its word spacing normalized when justified
 		if n := len(words); n > 0 {
 			fit = lastSpacing(words[n-1].spacing)
 		}
@@ -801,6 +1020,22 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	measures := paragraphMeasures(layout, pi, lines, space)
 	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width },
 		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) })
+	// A justified paragraph sets every line but its last to the flush edge (P08.S03). Broken at its own measure — which
+	// re-breaks the corpus's justified paragraphs in place — a line can still need more than the edge when the paragraph's
+	// median space carries stretch; then it is broken again AT the edge, at its natural spaces, and a word that does not fit
+	// even so is too wide.
+	justify, fits := justifiedLines(align, broken, lines, space)
+	if !fits {
+		edgeMeasures := make([]float64, len(lines))
+		for i, l := range lines {
+			edgeMeasures[i] = align.edge - l[0].startX
+		}
+		broken = breakAt(words, edgeMeasures, func(w emitWord) float64 { return w.width },
+			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta })
+		if justify, fits = justifiedLines(align, broken, lines, space); !fits {
+			return reflowOutcome{cause: causeWordTooWide}, nil
+		}
+	}
 	// A paragraph that needs more lines grows DOWN into the room below it (P07.S03): its new lines at its own pitch, and
 	// the paragraphs below it moved by the growth. What it cannot move with them, it refuses.
 	n := len(para.lines)
@@ -1032,7 +1267,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 				openArray()
 				fmt.Fprintf(&buf, "<%X>", sp.code)
 				prev := l[wi-1]
-				if extra := space(prev.face, prev.tfSize, cur) - spaceAdvance(sp, size, cur); math.Abs(extra) > 1e-9 {
+				if extra := space(prev.face, prev.tfSize, cur) + justify[i] - spaceAdvance(sp, size, cur); math.Abs(extra) > 1e-9 {
 					fmt.Fprintf(&buf, " %s ", adj(extra, size, cur))
 				}
 			}
