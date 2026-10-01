@@ -417,6 +417,7 @@ const (
 	causeMissingGlyph    = "missing-glyph"    // the font carries no code for a character (D8)
 	causeMixedState      = "mixed-state"      // runs differ in their text matrix's scale — a size or stretch set by `Tm`, not `Tf`/`Tz` (P08.S06)
 	causeMixedContent    = "mixed-content"    // something other than positioning sits among its show operators
+	causeTextObjects     = "text-objects"     // its lines are drawn as separate text objects (BT … ET each)
 	causeInlineFollower  = "inline-follower"  // text is drawn straight after it with no repositioning
 	causeTagged          = "tagged"           // marked content sits among its lines; moving text would mis-tag it (P07)
 	causeReplacementText = "replacement-text" // the paragraph sits inside /ActualText or /Alt, which would keep the old words readable
@@ -445,7 +446,7 @@ const (
 // ReflowCauses is every cause a reflow can fall back on, the server's included — the list the editor must have a
 // sentence for. `TestEveryReflowCauseIsSaidToTheUser` holds `web/app.js`'s REFLOW_CAUSES to it.
 var ReflowCauses = []string{
-	causeMissingGlyph, causeMixedState, causeMixedContent, causeInlineFollower, causeTagged, causeReplacementText,
+	causeMissingGlyph, causeMixedState, causeMixedContent, causeTextObjects, causeInlineFollower, causeTagged, causeReplacementText,
 	causeNoSpaceGlyph, causePageFull, causeNoPitch, causeAnchored, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
 	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
 	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
@@ -847,6 +848,59 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		spans[i] = r.span
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	// A producer that shows each space as its own `( ) Tj` draws it between the words; no line holds it (grouping drops a
+	// blank run), so it is the paragraph's to delete with it (P08.S02, /pending 732). Only a blank between the paragraph's
+	// own first and last show, or straight after its last with nothing but text state between (Acrobat ends a paragraph on
+	// one: left in place, it is a show relying on where the deleted text ended) — one elsewhere may belong to whatever is
+	// drawn there — and only one in the page's own stream, since a form's offsets index another stream.
+	lo, hi := spans[0].start, spans[len(spans)-1].end
+	// spaceCodes is every code the paragraph's own lines draw as a space, in each face: a blank show is deleted only if every
+	// code it draws is the single-byte 32 — the code PDF itself treats as the word space — or one of these. Decoding to
+	// white space is no promise of a blank glyph: a ToUnicode can map a check mark to U+0020.
+	spaceCodes := map[*runFont]map[string]bool{}
+	for _, r := range runs {
+		for _, g := range r.glyphs {
+			if g.text == " " {
+				if spaceCodes[r.face] == nil {
+					spaceCodes[r.face] = map[string]bool{}
+				}
+				spaceCodes[r.face][string(g.code)] = true
+			}
+		}
+	}
+	drawsOnlySpaces := func(r textRun) bool {
+		if !r.decoded || len(r.glyphs) == 0 || len(r.glyphs) != r.codes {
+			return false
+		}
+		for _, g := range r.glyphs {
+			if !(len(g.code) == 1 && g.code[0] == ' ') && !spaceCodes[r.face][string(g.code)] {
+				return false
+			}
+		}
+		return true
+	}
+	var after []opSpan
+	for _, r := range paragraphRunsWithBlanks(layout, pi)[len(runs):] {
+		switch {
+		// A run no line holds is not always a space: a glyph that decodes to nothing or to white space can be ink (a
+		// Dingbats check mark), and a space in a clipping mode cuts what follows (`text-clips`, as the paragraph's own).
+		case r.inForm || !drawsOnlySpaces(r) || clipMode(r.state.tr):
+		case r.span.start >= lo && r.span.end <= hi:
+			spans = append(spans, r.span)
+		case r.span.start >= hi:
+			after = append(after, r.span)
+		}
+	}
+	sort.Slice(after, func(i, j int) bool { return after[i].start < after[j].start })
+	for _, b := range after {
+		// A trailing `'` or `"` moves to a new line and `"` sets the spacing everything after it is drawn in: deleted, the
+		// restore (the paragraph's own last state) would undo it. Only a plain `Tj`/`TJ` ends a paragraph.
+		if op := showOperator(src[b.start:b.end]); (op != "Tj" && op != "TJ") || !onlyTextState(src[hi:b.start]) {
+			break
+		}
+		spans, hi = append(spans, b), b.end
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 	if c := contentAround(src, spans); c != "" {
 		return reflowOutcome{cause: c}, nil
 	}
@@ -1051,10 +1105,13 @@ func anchorXs(l pageLayout, region flowRegion) [2]float64 {
 	return [2]float64{region.x0, region.x1}
 }
 
-// contentAround checks the stretch between a paragraph's first and last show operator holds only positioning, `Tf` and
-// the paragraph's own shows — marked content there is `tagged`, anything else `mixed-content` — and that what follows it
-// repositions before it draws: the rewrite restores the line matrix, and a show relying on the text matrix the last
-// deleted show left would land at the line's start instead. It returns the cause, or "".
+// contentAround checks the stretch between a paragraph's first and last show operator holds only positioning, `Tf`, the
+// text state and the paragraph's own shows, and that what follows it repositions before it draws: the rewrite restores the
+// line matrix, and a show relying on the text matrix the last deleted show left would land at the line's start instead.
+// It returns the cause, or "". Over the stretch it names the most specific thing there, not the first: marked content is
+// `tagged`, another show, a paint or a colour `mixed-content`, and lines drawn as separate text objects `text-objects` — a
+// producer that tags line by line also closes a text object per line, and "a colour change or a drawing" is not what
+// stands in its way (/pending 732).
 //
 // Replacement text around the paragraph is not asked here: the walker records it per run (`textRun.replaced`, inline
 // and named property lists alike), and `paragraphWords` refuses it — one reader of a property list, not two.
@@ -1066,6 +1123,18 @@ func contentAround(src []byte, spans []opSpan) string {
 		return i >= 0 && at < spans[i].end
 	}
 	lo, hi := spans[0].start, spans[len(spans)-1].end
+	tagged, foreign, objects := false, false, false
+	within := func() string {
+		switch {
+		case tagged:
+			return causeTagged
+		case foreign:
+			return causeMixedContent
+		case objects:
+			return causeTextObjects
+		}
+		return ""
+	}
 	for _, tk := range toks {
 		if tk.Kind != contentstream.Operator || tk.End <= lo {
 			continue
@@ -1079,11 +1148,16 @@ func contentAround(src []byte, spans []opSpan) string {
 			case "Td", "TD", "Tm", "T*", "TL", "Tf", "Tc", "Tw", "Tz", "Ts", "Tr":
 				// Positioning, and the text state each glyph carries for itself (P08.S01) — the rewrite states it again.
 			case "BDC", "BMC", "EMC":
-				return causeTagged
+				tagged = true
+			case "BT", "ET":
+				objects = true
 			default:
-				return causeMixedContent
+				foreign = true
 			}
 			continue
+		}
+		if c := within(); c != "" {
+			return c
 		}
 		switch op {
 		case "Tj", "TJ":
@@ -1092,7 +1166,34 @@ func contentAround(src []byte, spans []opSpan) string {
 			return ""
 		}
 	}
-	return ""
+	return within()
+}
+
+// showOperator is the operator a show's span ends in — `Tj`, `TJ`, `'` or `"`.
+func showOperator(span []byte) string {
+	op := ""
+	for _, tk := range contentstream.Tokenize(span) {
+		if tk.Kind == contentstream.Operator {
+			op = string(tk.Bytes(span))
+		}
+	}
+	return op
+}
+
+// onlyTextState reports whether src holds no operator but the text state's — `Tf`, `Tc`, `Tw`, `Tz`, `Ts`, `Tr`, `TL` — so
+// a show after it draws where the show before it ended.
+func onlyTextState(src []byte) bool {
+	for _, tk := range contentstream.Tokenize(src) {
+		if tk.Kind != contentstream.Operator {
+			continue
+		}
+		switch string(tk.Bytes(src)) {
+		case "Tf", "Tc", "Tw", "Tz", "Ts", "Tr", "TL":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // num writes a number the way a content stream wants it: fixed-point with no exponent, as few digits as represent it

@@ -355,3 +355,25 @@ test('a paragraph set with mixed letter and word spacing is re-set, not refused'
   assert.match(after, /tame dog/, `the re-rendered page reads: ${after}`);
   assert.doesNotMatch(after, /lazy/, `"lazy" is still on the page: ${after}`);
 });
+
+// P08.S02 through the binary: a producer that shows each space as its own `( ) Tj` was refused as mixed-content; its
+// spaces are the paragraph's and go with it.
+const SPACESHOWN = writeRawFixture('reflow-spaceshown.pdf', paragraphPDF(
+  'BT /F1 14 Tf 18 TL 72 700 Td (The) Tj ( ) Tj (quick) Tj ( ) Tj (brown) Tj ( ) Tj (fox) Tj ( ) Tj (jumps) Tj T* (over) Tj ( ) Tj (the) Tj ( ) Tj (lazy) Tj ( ) Tj (dog) Tj ( ) Tj (and) Tj ( ) Tj (runs) Tj T* (away) Tj ( ) Tj (from) Tj ( ) Tj (here.) Tj ( ) Tj ET'));
+
+test('a paragraph whose spaces are each their own show is re-set, not refused', async () => {
+  await h.openDocument(SPACESHOWN, 1);
+  await page.waitForFunction(() => /lazy/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  await openReflow();
+  assert.equal(await page.$eval('#reflowGo', (b) => b.disabled), false,
+    `the dialog refused the paragraph before anything was typed: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.fill('#reflowText', 'The quick brown fox jumps over the tame dog and runs away from here.');
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the paragraph was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction(() => /tame/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const after = await pageText();
+  assert.match(after, /tame dog/, `the re-rendered page reads: ${after}`);
+  assert.doesNotMatch(after, /lazy/, `"lazy" is still on the page: ${after}`);
+});
