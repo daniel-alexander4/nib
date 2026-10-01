@@ -582,3 +582,8 @@ home today.
   — /pending 768; supersedes ADR-067's "declared, not charged" in part. An object stream whose `/Type`, `/N` or
   `/First` is a reference compounded per level; the reader refuses it (NOTICE.nib divergence 5), so the ungated
   `HasSignatureBlob` (712, decided C) needs no gate for it. Verified by review only.
+- **[ADR-071 — text that moves takes what is anchored to it, and its structure, or refuses](071-text-that-moves-takes-what-is-anchored-to-it-or-refuses.md)**
+  — PLAN-text-reflow P07. A flow's anchors are chosen from the original page and applied by identity; a flow leaves a
+  page only past its margin; a carried paragraph takes its marked content and element (MCR in place of the kid); the
+  write half writes nested `/ParentTree`s (reversing its blanket refusal, 7 of 14 real documents); one `/StructParents`
+  reader.

@@ -365,16 +365,18 @@ When the new text needs **more lines**, the paragraph grows down, at its own lin
 spacing, and the paragraphs below it in its column move down with it into the free
 space under them; a footer or page number past that space stays put. When the page
 runs out of room, the last paragraphs move whole to the top of the next page, pushing
-its text down in turn, page after page — on a single-column page, and not past the
-last page. Notes, links, form fields, signing flags and bookmarks on or beside the
+its text down in turn, page after page — on single-column pages, only where nothing but
+margin lies below the text (a signature block or a footnote below it stops the flow
+rather than being jumped), onto a next page that opens with body text rather than a
+running header, and not past the last page. (A page number drawn apart from the column
+can make a page read as two columns, and then the flow is refused too.) Notes, links, form fields, signing flags and bookmarks on or beside the
 paragraphs that move go with them, onto the next page too — and in a document tagged
 for accessibility, so does each paragraph's tag, so a screen reader finds it on its new
 page. If something cannot move with the text — a line or picture drawn there, a note or
-link half in and half out of what moves, or tagged text whose tag also holds a drawing
-or sits inside another — it is refused with the reason rather than left pointing at the
-wrong words. (The same
-goes for a link laid over the paragraph's own words, which the new wrapping would
-move under it.)
+link half in and half out of what moves, invisible search text over a scan, or tagged
+text Nib cannot re-tag correctly on its new page — it is refused with the reason rather
+than left pointing at the wrong words. (The same goes for any note, link or form field
+laid over the paragraph itself, which the new wrapping would move under it.)
 
 It changes only what it can set exactly. The new text must use only characters the
 document's font carries; a

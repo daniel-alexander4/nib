@@ -85,7 +85,7 @@ func planTagCarry(ctx *model.Context, pg pdfread.Page, src []byte, res types.Dic
 		return nil, nil, ""
 	}
 	xt := ctx.XRefTable
-	key, ok := pdfNumber(xt, pg.Dict["StructParents"])
+	key, ok, _ := structParentsOf(xt, pg.Dict)
 	cat, err := xt.Catalog()
 	if !ok || err != nil {
 		return nil, nil, causeTaggedAcross
@@ -94,11 +94,11 @@ func planTagCarry(ctx *model.Context, pg pdfread.Page, src []byte, res types.Dic
 	if root == nil {
 		return nil, nil, causeTaggedAcross
 	}
-	row, _, found := rowFor(ctx, &structTree{root: root}, int(key))
+	row, _, found := rowFor(ctx, &structTree{root: root}, key)
 	if !found || pg.Ref == nil {
 		return nil, nil, causeTaggedAcross
 	}
-	tc := &tagCarry{src: pg, srcKey: int(key), byMCID: map[int]*tagMove{}}
+	tc := &tagCarry{src: pg, srcKey: key, byMCID: map[int]*tagMove{}}
 	var edits []runMove
 	for _, m := range mcids {
 		seq, part, ok := carriedSequence(src, seqs, m, leavingEnds)
@@ -287,27 +287,35 @@ func mcidKid(ctx *model.Context, elem types.IndirectRef, pg types.IndirectRef, m
 	return nil, nil, -1
 }
 
-// targetRefusal is why page dst cannot take a carried sequence's structure, or "": its `/StructParents` names a single
-// reference rather than a row, or a key with no row inside a nested `/ParentTree`'s range, where `parentTreeDict` will not
-// place one. Asked before `land` writes anything, so the carry refuses by name rather than failing half-written.
+// targetRefusal is why page dst cannot take a carried sequence's structure, or "": its `/StructParents` is not a key, or
+// names a single reference rather than a row, or `parentTreeDict` would refuse to place its row — asked through the same
+// non-mutating predicate the writer asks (`parentTreePlace`), so every refusal of the writer's is one here (P07
+// phase-close review: this restated the nested-range refusal and missed an empty `/Kids`, a tree too deep and a kid that
+// does not resolve). A page with no key gets one above every key (`allocParentTreeKey`), which is asked about too. Asked
+// before `land` writes anything, so the carry refuses by name rather than failing half-written — and it writes nothing
+// itself: not a key, not a `/ParentTree`.
 func targetRefusal(ctx *model.Context, dst pdfread.Page) string {
 	xt := ctx.XRefTable
-	key, has := pdfNumber(xt, dst.Dict["StructParents"])
 	cat, err := xt.Catalog()
-	if !has || err != nil {
-		return "" // no key: a new one is allocated above every key, which every tree shape takes
+	if err != nil {
+		return causeTaggedAcross
 	}
 	root := derefDict(xt, cat["StructTreeRoot"])
 	if root == nil {
 		return causeTaggedAcross
 	}
 	tree := &structTree{root: root}
-	_, single, next := parentTreeKey(ctx, tree, int(key))
-	if single {
+	key, ok, written := structParentsOf(xt, dst.Dict)
+	switch {
+	case written && !ok:
+		return causeTaggedAcross
+	case !written:
+		key = parentTreeKeyFloor(ctx, root) // what `allocParentTreeKey` hands out, read without caching it
+	}
+	if _, single, _ := parentTreeKey(ctx, tree, key); single {
 		return causeTaggedAcross
 	}
-	pt := derefDict(xt, root["ParentTree"])
-	if _, nested := pt["Kids"]; nested && parentTreeHolder(ctx, pt, int(key)) == nil && int(key) < next {
+	if _, _, err := parentTreePlace(ctx, tree, key); err != nil {
 		return causeTaggedAcross
 	}
 	return ""

@@ -96,6 +96,11 @@ type textRun struct {
 	// replaced is whether the run was drawn inside a sequence carrying replacement text (`mcFrame.replaced`):
 	// readers report that text instead of these glyphs, so rewriting the glyphs alone leaves the old words readable.
 	replaced bool
+	// propsWithoutMCID is whether the run was drawn inside a sequence opened with a property list and no MCID — an
+	// optional-content membership (`/OC /oc1 BDC`), a `/Span <</Lang (fr)>>` — at any depth (`mcFrame.props`). A carry to
+	// another page re-opens only the sequence carrying the run's MCID, so it would draw the run outside that list: a
+	// hidden layer drawn unconditionally, a language lost (P07 phase-close review).
+	propsWithoutMCID bool
 	// rotated is whether the run's baseline is not upright left-to-right in user space — turned, vertical or
 	// mirrored (`baselineTurns`). Grouping measures lines as horizontal baselines, so it reports a page
 	// carrying one rather than reading it as upright (`/pending 503`).
@@ -154,6 +159,12 @@ func baselineTurns(m runMatrix) bool {
 func (w *runWalker) inReplacement() bool {
 	n := len(w.mcStack)
 	return n > 0 && w.mcStack[n-1].replaced
+}
+
+// inPropsWithoutMCID reports whether a sequence opened with a property list and no MCID is open at this point of the walk.
+func (w *runWalker) inPropsWithoutMCID() bool {
+	n := len(w.mcStack)
+	return n > 0 && w.mcStack[n-1].props
 }
 
 // inArtifact reports whether an `/Artifact` sequence is open at this point of the walk.
@@ -508,17 +519,21 @@ type mcFrame struct {
 	// replaced is whether this frame or any below it carries replacement text — `/ActualText`, `/Alt` or `/E` in
 	// its property list, written inline or named in `/Properties` — which readers report INSTEAD of the glyphs.
 	replaced bool
+	// props is whether this frame or any below it is a `BDC` whose property list carries no MCID (and is not an
+	// `/Artifact`'s): content a carry would take out of it (`textRun.propsWithoutMCID`).
+	props bool
 }
 
 // push opens a sequence: v as `mcFrame.v`, and seq its index into `seqs` or -1. `mcStack` and `seqOpen`
 // move in lockstep, so this is the only place either grows.
-func (w *runWalker) push(v, seq int, replaced bool) {
-	f := mcFrame{v: v, force: -1, seqAt: -1, replaced: replaced}
+func (w *runWalker) push(v, seq int, replaced, props bool) {
+	f := mcFrame{v: v, force: -1, seqAt: -1, replaced: replaced, props: props}
 	i := len(w.mcStack)
 	if i > 0 {
 		below := w.mcStack[i-1]
 		f.force, f.artifact, f.seqAt = below.force, below.artifact, below.seqAt
 		f.replaced = f.replaced || below.replaced
+		f.props = f.props || below.props
 	}
 	if v != -1 {
 		f.force = i
@@ -893,9 +908,15 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "gs":
 			gs.extGState = true
 		case "g", "rg", "k", "G", "RG", "K":
+			// The colour is read only for a reader that re-emits it (a paragraph set on another page, P07.S05): every other
+			// reader walks past it, as it walks past every mark (P07 phase-close review — measured +0.75-1 µs per colour
+			// operator in every reader before it was gated).
+			if !w.keepGlyphs && !w.keepMarks {
+				break
+			}
 			op := string(tok.Bytes(src))
-			n := map[string]int{"g": 1, "rg": 3, "k": 4, "G": 1, "RG": 3, "K": 4}[op]
-			space := map[int]string{1: "DeviceGray", 3: "DeviceRGB", 4: "DeviceCMYK"}[n]
+			n := deviceColourOps[op]
+			space := deviceSpaceOf[n]
 			set := ""
 			if v, ok := numbers(n); ok {
 				set = colourOp(v, op)
@@ -906,6 +927,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke, gs.strokeSpace = set, space
 			}
 		case "cs", "CS":
+			if !w.keepGlyphs && !w.keepMarks {
+				break
+			}
 			op := string(tok.Bytes(src))
 			space := ""
 			if os := last(1); os != nil {
@@ -916,7 +940,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			// Setting a colour space sets its initial colour: black, in every device space.
 			set := ""
 			if space != "" {
-				set = "/" + space + " " + op + " " + initialDeviceColour[space] + " " + map[string]string{"cs": "sc", "CS": "SC"}[op]
+				set = "/" + space + " " + op + " " + initialDeviceColour[space] + " " + colourSetterOf[op]
 			}
 			if op == "cs" {
 				gs.fill, gs.fillSpace = set, space
@@ -924,6 +948,9 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke, gs.strokeSpace = set, space
 			}
 		case "sc", "scn", "SC", "SCN":
+			if !w.keepGlyphs && !w.keepMarks {
+				break
+			}
 			op := string(tok.Bytes(src))
 			fill := op == "sc" || op == "scn"
 			space := gs.strokeSpace
@@ -933,7 +960,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			set := ""
 			if n := deviceComponents[space]; n > 0 {
 				if v, ok := numbers(n); ok && len(ops) == n {
-					set = "/" + space + " " + map[bool]string{true: "cs", false: "CS"}[fill] + " " + colourOp(v, map[bool]string{true: "sc", false: "SC"}[fill])
+					set = "/" + space + " " + spaceOp[fill] + " " + colourOp(v, colourSetterOf[spaceOp[fill]])
 				}
 			}
 			if fill {
@@ -1029,7 +1056,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 					entry = mcArtifact
 				}
 			}
-			w.push(entry, -1, false)
+			w.push(entry, -1, false, false)
 		case "BDC":
 			entry, opener, replaced := -1, -1, false
 			if os := last(2); os != nil {
@@ -1047,7 +1074,8 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 					inForm: depth > 0, stm: w.stm})
 				seq = len(w.seqs) - 1
 			}
-			w.push(entry, seq, replaced)
+			// A property list with no MCID: `entry` is -1 only for a `BDC` that is not an `/Artifact` and names none.
+			w.push(entry, seq, replaced, opener >= 0 && entry == -1)
 		case "EMC":
 			if n := len(w.mcStack); n > base {
 				w.mcStack = w.mcStack[:n-1]
@@ -1079,7 +1107,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
 		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact(),
-		replaced: w.inReplacement()}
+		replaced: w.inReplacement(), propsWithoutMCID: w.inPropsWithoutMCID()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}

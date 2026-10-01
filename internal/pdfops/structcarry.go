@@ -105,9 +105,10 @@ func carryStructure(ctx *model.Context, root types.Dict, kept []keptPage) (bool,
 	if _, nested := pt["Kids"]; nested {
 		// A nested number tree is refused here. The write half has written one since P07.S07 (`parentTreeDict`),
 		// but this carry was built and measured over flat trees only, so it keeps its own refusal until a nested
-		// source is driven through it (`/pending 528`). Measured: **0 of 294** tagged
-		// files in veraPDF's own corpus and neither LibreOffice conversion nests one — LibreOffice
-		// keeps 682 flat `/Nums` entries across 142 pages — so the refusal costs nothing measurable.
+		// source is driven through it (`/pending 528`). It is NOT free: **7 of the 14** multi-page real-producer
+		// documents nest their `/ParentTree` (Acrobat, Designer, InDesign, Word; measured 2026-09-30 for P07.S07), so
+		// a subset of any of them drops its tags here. The earlier "costs nothing measurable" read only veraPDF's
+		// corpus (0 of 294 nest one) and LibreOffice's conversions (flat) — P07 phase-close review.
 		// Flattening it instead is `/pending 528`.
 		return false, nil
 	}
@@ -646,7 +647,7 @@ func carryOntoClone(ctx *model.Context, tree *structTree, k keptPage, placed map
 		write func(newKey int)
 	}
 	var claims []claim
-	if v, ok := pdfNumber(xt, k.dic["StructParents"]); ok && v >= 0 {
+	if v, ok, _ := structParentsOf(xt, k.dic); ok {
 		page := k.dic
 		claims = append(claims, claim{int(v), func(n int) { page["StructParents"] = types.Integer(n) }})
 	}

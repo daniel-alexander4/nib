@@ -289,13 +289,23 @@ func carriedStructure(t *testing.T, before, after []byte, moved []textRun) bool 
 		}
 		return 0
 	}
-	on2 := map[string]textRun{}
+	// Every page-2 run of the carried run's text and x — page 2's own bullets share both — and the carried one is the one
+	// its element owns: keying one run by text and x read whichever the stream drew LAST, which was the carried block until
+	// the P07 phase-close review drew it first.
+	on2 := map[string][]textRun{}
 	for _, r := range runsOf(t, after, 2) {
-		on2[fmt.Sprintf("%q %.4f", r.text, r.x)] = r
+		k := fmt.Sprintf("%q %.4f", r.text, r.x)
+		on2[k] = append(on2[k], r)
 	}
 	for _, r := range tagged {
 		elem := owner(bctx, btree, 1, r.mcid)
-		a, ok := on2[fmt.Sprintf("%q %.4f", r.text, r.x)]
+		cands := on2[fmt.Sprintf("%q %.4f", r.text, r.x)]
+		a, ok := textRun{mcid: -1}, len(cands) > 0
+		for _, c := range cands {
+			if a.mcid < 0 || c.mcid >= 0 && owner(actx, atree, 2, c.mcid) == elem {
+				a = c
+			}
+		}
 		switch {
 		case elem == 0:
 			t.Errorf("setup: page 1's %q (MCID %d) has no element and was carried", r.text, r.mcid)
@@ -345,5 +355,30 @@ func TestDeletingAQuoteShowKeepsItsSpacing(t *testing.T) {
 	}
 	if before.state.tw != 5 {
 		t.Fatalf("setup: the later text was not set under the quote's word spacing (Tw %v)", before.state.tw)
+	}
+}
+
+// TestACarriedParagraphIsDrawnOverTheTargetsBackdrop — P07 phase-close re-review: a next page that paints a backdrop
+// (here a white page fill, which `regionOf` lets text land on) is drawn BEFORE what arrives, so the carried paragraph is
+// visible on it. Drawing the carried block first, for stream order, hid it under the fill.
+func TestACarriedParagraphIsDrawnOverTheTargetsBackdrop(t *testing.T) {
+	pdf := cascadeDoc([]string{cascadePage(1, 16, ""), "1 1 1 rg 0 0 612 792 re f\n" + cascadePage(2, 3, "")}, nil, "")
+	orig, edit := threeLinesMore()
+	out, refusal, err := ReflowParagraph(pdf, 1, 0, orig, edit)
+	if err != nil || out == nil {
+		t.Fatalf("refused %+v (%v)", refusal, err)
+	}
+	ctx, err := pdfread.Validated(out, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg := pageAt(ctx, nil, 2)
+	c, err := pdfread.PageContent(ctx, pg.Dict, pg.Nr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arrived, fill := bytes.Index(c, []byte(cascadeLine(1, 15))), bytes.Index(c, []byte("0 0 612 792 re f"))
+	if arrived < 0 || fill < 0 || arrived < fill {
+		t.Errorf("page 2 paints its backdrop at %d and draws what arrived at %d: the arrival must come after, or it is hidden", fill, arrived)
 	}
 }

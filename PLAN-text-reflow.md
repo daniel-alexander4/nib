@@ -626,12 +626,26 @@ the readers, and an unread counter is what `observables_test.go` refuses; NibFla
 box, asserted, /pending 457 moved to P07. Ledger: clauses 1–3 met (2–3 through the binary), clause 4 met at the handler and
 not through the binary.
 
-### P07 — Several paragraphs, and flow across pages
+### P07 — Several paragraphs, and flow across pages *(done 2026-09-30, v1.173.1)*
 **Goal.** An edit that overflows its paragraph pushes the ones below it, and eventually onto the next
 page.
 
 **Exit criteria.** Content that moves takes its annotations, links and form widgets with it, or the
 operation refuses; nothing anchored to a position is silently orphaned.
+
+**PHASE CLOSE 2026-09-30 (v1.173.1) — exit criteria, split on `and`/`or`, each with its evidence:**
+- [x] content that moves takes its **annotations** with it — notes and their popups move and cross (`TestWhatIsAnchoredMovesWithTheText`, `TestWhatIsAnchoredCrossesWithItsParagraph`); a kept anchor is never carried off its page (`TestAKeptAnchorStaysOnItsPage`, the phase-close review's C1).
+- [x] …its **links** — link annotations and every destination naming what moves: links, bookmarks, named destinations, `/OpenAction`, `GoTo` in widget `/A`, `/AA` and `/Next` chains (`TestEveryDestinationToWhatLeavesCrosses`); tier 3 carries a link onto page 2 through the binary.
+- [x] …its **form widgets** — a widget crosses with its `/P` re-pointed; a re-set line no longer runs under a widget beside it (C3, `TestAOneLineParagraphIsNotSetUnderAFieldBesideIt`).
+- [x] **or the operation refuses** — every shape that cannot move exactly refuses by name (S03–S07, the phase-close W1–W4 refusals), and the user is told which paragraph stands in the way (`TestARefusalNamesTheParagraphBelow`, server door).
+- [x] **nothing anchored to a position is silently orphaned** — NibFlags move with their text (S04/S06) or refuse; structure MCIDs and OBJRs follow a carried paragraph (S07); beads refuse; a flow never jumps content below it (C2, `TestAFlowOnlyLeavesAPageItsMarginBounds`).
+**Amends S06's PIN**: "a running header there leaves no room, and the growth refuses" was FALSE (the review's probe4 landed
+a paragraph in page 2's header slot); it is true now, by the margin rule (ADR-071 rule 2). **Repo law**: ADR-071.
+**Required-run gates** (CLAUDE.md "the higher tiers are a SLICE gate"): tiers 0–3 run at this close (see the commit);
+tiers 4/6 do NOT fire — no change to `internal/server`'s session, ceremony, delivery or discovery paths, `internal/p2p` or
+`internal/rendezvous` (the server diff is `reflow_test.go` only). **Review**: `code-reviews/v1.173.0-p07-phase-close-…`
+(3 critical, 7 warning, 14 info in-phase — all dispositioned; I12 reverted after its own re-review; 15 pre-existing filed
+/pending 780–787). **Graduation pass**: 35 rows, 35 keep-live, 0 actionable (inventory P07 section).
 
 **Standing caveat.** This is where reflow stops being local. Every object anchored by absolute
 position on a page — and, once `PLAN-accessibility` lands, every MCID in the tag tree — is a thing

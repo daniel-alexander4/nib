@@ -16,6 +16,12 @@ import (
 // page's floor leaves, whole, for the top of the next page, where it lands on that page's first paragraph's baseline and
 // pushes that page's block down by its own baseline span plus its column's paragraph step — and so on, to the last page,
 // where what still does not fit refuses `page-full`. The edited page is the rule's first application.
+//
+// **Only a region the page's MARGIN bounds sends anything on** (P07 phase-close review). A region whose floor is content
+// below it that stays — the next section past a wide gap, a footer above the margin — would hand its last paragraphs to the
+// next page while that content stayed behind: reading order inverted. And the region a block lands in must be bounded by
+// the margin too: a running header is the next page's first paragraph, its region ends at the body below it, and a block
+// landed there sat in the header's place. Either refuses `page-full`, on every page of the cascade.
 
 // flowStep is one page's share of a flow: the edits to its content, what it moves within itself, and what it hands on.
 type flowStep struct {
@@ -24,7 +30,7 @@ type flowStep struct {
 	// moves are the edits to src: kept paragraphs moved, leaving ones deleted.
 	moves []runMove
 	// keep is the zone moved within the page, and by how much; leave is the zone of what went to the next page, and how
-	// far down it was drawn there. Either may be nil.
+	// far down it was drawn there. Either may be nil. Each carries its anchors, resolved when the step was planned.
 	keep, leave *anchorShift
 	// content is the page's new content, for every page but the first (whose edit the rewrite composes itself).
 	content []byte
@@ -44,18 +50,22 @@ func flowReach(floor, top float64) [4]float64 {
 	return [4]float64{math.Inf(-1), floor, math.Inf(1), top}
 }
 
-// pushDown plans moving block — paragraph indices of layout on pg, top to bottom, one column — down by p, above floor;
-// top is the top of what moves on this page (the edited paragraph's bottom on the first page, the first paragraph's top on
+// pushDown plans moving block — paragraph indices of layout on pg, top to bottom, one column — down by p, above floor,
+// which bound says what set (`roomBelowMargin` or `roomBelowContent`); top is the top of what moves on this page (the edited paragraph's bottom on the first page, the first paragraph's top on
 // the others), step the column's paragraph step, and in what arrives from the page before, if anything. It returns the
 // steps from this page on, or the refusal and the text of the paragraph that caused it.
 //
 // xs is the zone's horizontal extent: the page's width on a page of one column, the column's on several (`anchorZone`).
-func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte, block []int, p, floor, top, step float64, xs [2]float64, in *carriedBlock) ([]flowStep, string, string, error) {
+func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte, block []int, p, floor float64, bound string,
+	top, step float64, xs [2]float64, in *carriedBlock) ([]flowStep, string, string, error) {
 	keepN := len(block)
 	for keepN > 0 && layout.paragraphs[block[keepN-1]].bottom()-p < floor-measureSlack {
 		keepN--
 	}
 	keep, leave := block[:keepN], block[keepN:]
+	if len(leave) > 0 && bound != roomBelowMargin {
+		return nil, causePageFull, "", nil // content below the region stays: what leaves would be read after it
+	}
 	st := flowStep{pg: pg, src: src}
 	for _, q := range keep {
 		moves, cause := moveRuns(src, paragraphRunsWithBlanks(layout, q), p)
@@ -64,18 +74,18 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		}
 		st.moves = append(st.moves, moves...)
 	}
-	var leaving []textRun
+	var runs []textRun // what leaves
 	for _, q := range leave {
 		for _, r := range paragraphRunsWithBlanks(layout, q) {
 			if c := carryRefusal(r); c != "" {
 				return nil, c, layout.paragraphs[q].text(), nil
 			}
-			leaving = append(leaving, r)
+			runs = append(runs, r)
 		}
 	}
 	var tags *tagCarry
-	if len(leaving) > 0 {
-		dels, cause := deleteRuns(src, leaving)
+	if len(runs) > 0 {
+		dels, cause := deleteRuns(src, runs)
 		if cause != "" {
 			return nil, cause, layout.paragraphs[leave[0]].text(), nil
 		}
@@ -83,7 +93,7 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		if pg.Attrs != nil {
 			res = pg.Attrs.Resources
 		}
-		t, brackets, cause := planTagCarry(ctx, pg, src, res, layout.sequences, leaving)
+		t, brackets, cause := planTagCarry(ctx, pg, src, res, layout.sequences, runs)
 		if cause != "" {
 			return nil, cause, layout.paragraphs[leave[0]].text(), nil
 		}
@@ -106,15 +116,29 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		if !touches(a.box, flowReach(math.Min(floor, keepBottom), top)) {
 			continue
 		}
-		if st.keep != nil && covers(st.keep.zone, a.box) || len(leave) > 0 && covers(leaveZone, a.box) {
+		inKeep, inLeave := st.keep != nil && covers(st.keep.zone, a.box), len(leave) > 0 && covers(leaveZone, a.box)
+		// A bead moves with nothing; an anchor inside both zones — where what stays and what leaves overlap — has no one
+		// right answer (P07 phase-close review).
+		if a.kind != anchorBead && inKeep != inLeave {
 			continue
 		}
 		return nil, causeAnchored, "", nil
+	}
+	// What each zone moves is resolved NOW, from the page as it was: applying the flow moves exactly these, and never
+	// re-selects by zone after something has moved into one (P07 phase-close review).
+	if st.keep != nil {
+		st.keep.set = anchorsIn(ctx, pg, st.keep.zone)
 	}
 	if len(leave) > 0 {
 		next, nl, cause, err := nextPageFor(ctx, pg)
 		if err != nil || cause != "" {
 			return nil, cause, "", err
+		}
+		leaving := anchorsIn(ctx, pg, leaveZone)
+		// A flag's fraction is of the page as shown: carried onto a page turned otherwise than its own, the same fraction
+		// is another place (P07 phase-close review). Refused rather than converted.
+		if len(leaving.flags) > 0 && pageRotation(next) != pageRotation(pg) {
+			return nil, causeAnchored, "", nil
 		}
 		first, last := layout.paragraphs[leave[0]], layout.paragraphs[leave[len(leave)-1]]
 		q0 := nl.paragraphs[0]
@@ -122,6 +146,9 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 		nr := regionOf(nl, 0, visibleBoxOf(next))
 		if last.bottom()-dy < nr.floor-measureSlack {
 			return nil, causePageFull, "", nil // the block is taller than the next page's body
+		}
+		if nr.bound != roomBelowMargin {
+			return nil, causePageFull, "", nil // the first paragraph's region ends at content below it: a running header
 		}
 		if len(nr.marks) > 0 || drawnOver(nl, 0) {
 			return nil, causeAnchored, "", nil
@@ -135,12 +162,12 @@ func pushDown(ctx *model.Context, pg pdfread.Page, layout pageLayout, src []byte
 			res = pg.Attrs.Resources
 		}
 		span := first.lines[0].y - last.lines[len(last.lines)-1].y
-		rest, cause, below, err := pushDown(ctx, next, nl, nsrc, append([]int{0}, nr.paragraphs...), span+step, nr.floor, q0.top(), step,
-			[2]float64{math.Inf(-1), math.Inf(1)}, &carriedBlock{src: src, res: res, runs: leaving, dy: dy, tags: tags})
+		rest, cause, below, err := pushDown(ctx, next, nl, nsrc, append([]int{0}, nr.paragraphs...), span+step, nr.floor, nr.bound,
+			q0.top(), step, [2]float64{math.Inf(-1), math.Inf(1)}, &carriedBlock{src: src, res: res, runs: runs, dy: dy, tags: tags})
 		if err != nil || cause != "" {
 			return nil, cause, below, err
 		}
-		st.leave = &anchorShift{zone: leaveZone, dy: dy}
+		st.leave = &anchorShift{zone: leaveZone, dy: dy, set: leaving}
 		return finishStep(ctx, st, layout.sequences, in, rest)
 	}
 	return finishStep(ctx, st, layout.sequences, in, nil)
@@ -197,8 +224,9 @@ func drawnOver(l pageLayout, pi int) bool {
 	return false
 }
 
-// applyFlow writes a flow's pages after the first, then moves what is anchored, page by page: each page's own anchors move
-// before those carried onto it arrive, so an arriving anchor — already at its final place — is never moved twice.
+// applyFlow writes a flow's pages after the first, then moves what is anchored, page by page — exactly the anchors each
+// step resolved when it was planned, so an anchor is moved once, by the zone it was in before anything moved: one the
+// in-page shift took into the old leave zone is not then carried off its page (P07 phase-close review).
 func applyFlow(ctx *model.Context, flow []flowStep) error {
 	for _, st := range flow[min(1, len(flow)):] {
 		if err := setPageContent(ctx, st.pg.Dict, st.content); err != nil {
@@ -208,15 +236,23 @@ func applyFlow(ctx *model.Context, flow []flowStep) error {
 	for k := range flow {
 		st := flow[k]
 		if st.keep != nil {
-			if err := shiftAnchors(ctx, st.pg, st.keep.zone, st.keep.dy); err != nil {
+			if err := shiftAnchors(ctx, st.pg, st.keep.set, st.keep.dy); err != nil {
 				return err
 			}
 		}
 		if k > 0 && flow[k-1].leave != nil {
-			if err := carryAnchors(ctx, flow[k-1].pg, st.pg, flow[k-1].leave.zone, flow[k-1].leave.dy); err != nil {
+			if err := carryAnchors(ctx, flow[k-1].pg, st.pg, flow[k-1].leave.set, flow[k-1].leave.dy); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// pageRotation is page pg's `/Rotate`, as a quarter turn in [0, 360).
+func pageRotation(pg pdfread.Page) int {
+	if pg.Attrs == nil {
+		return 0
+	}
+	return ((pg.Attrs.Rotate % 360) + 360) % 360
 }

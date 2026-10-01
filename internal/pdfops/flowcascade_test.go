@@ -210,3 +210,254 @@ func TestAFlowRefusesWhatItCannotCarry(t *testing.T) {
 		})
 	}
 }
+
+// flagsOf is the document's NibFlags, decoded.
+func flagsOf(t *testing.T, pdf []byte) []map[string]any {
+	t.Helper()
+	raw, err := FlagsJSON(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var flags []map[string]any
+	if err := json.Unmarshal(raw, &flags); err != nil {
+		t.Fatalf("flags %s: %v", raw, err)
+	}
+	return flags
+}
+
+// TestAKeptAnchorStaysOnItsPage — P07 phase-close review: a link, a bookmark and a flag on the LAST paragraph that STAYS
+// on page 1 (baselines 168 and 154) are moved down with it, 42 points, and stay on page 1; the link and flag on the
+// paragraph that leaves (130 and 116) cross to page 2. They had been re-selected by zone after the in-page shift, which had
+// moved the kept ones into the zone of what left — and they were carried off with it.
+func TestAKeptAnchorStaysOnItsPage(t *testing.T) {
+	pdf := cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")},
+		map[int]string{0: "/Annots [30 0 R 33 0 R]"}, "/Outlines 31 0 R",
+		"<< /Type /Annot /Subtype /Link /Rect [80 160 96 172] /Border [0 0 0] /Dest [12 0 R /Fit] >>",
+		"<< /Type /Outlines /First 32 0 R /Last 32 0 R /Count 1 >>",
+		"<< /Title (Kept) /Parent 31 0 R /Dest [10 0 R /XYZ 72 170 0] >>",
+		"<< /Type /Annot /Subtype /Link /Rect [80 118 96 134] /Border [0 0 0] /Dest [12 0 R /Fit] >>")
+	pdf, err := SetFlags(pdf, []byte(fmt.Sprintf(`[{"page":1,"frac":{"x":0.5,"y":%v}},{"page":1,"frac":{"x":0.5,"y":%v}}]`,
+		(792.0-165)/792, (792.0-125)/792)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, edit := threeLinesMore()
+	out, refusal, err := ReflowParagraph(pdf, 1, 0, orig, edit)
+	if err != nil || out == nil {
+		t.Fatalf("refused %+v (%v)", refusal, err)
+	}
+	ctx, err := pdfread.Validated(out, model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rects := func(p int) string {
+		var got []string
+		for _, o := range derefArray(ctx.XRefTable, pageAt(ctx, nil, p).Dict["Annots"]) {
+			llx, lly, urx, ury, _ := rectOf(ctx, derefDict(ctx.XRefTable, o)["Rect"])
+			got = append(got, fmt.Sprintf("%v %v %v %v", llx, lly, urx, ury))
+		}
+		return strings.Join(got, "|")
+	}
+	if got, want := rects(1), "80 118 96 130"; got != want {
+		t.Errorf("page 1's links %q, want %q — the kept link, 42 lower", got, want)
+	}
+	if got, want := rects(2), "80 688 96 704"; got != want {
+		t.Errorf("page 2's links %q, want %q — the leaving link, where its paragraph landed", got, want)
+	}
+	pg1 := pageAt(ctx, nil, 1)
+	kept := false
+	for _, arr := range destinationArrays(ctx, pg1.Ref.ObjectNumber.Value()) {
+		if b, ok := destinationBox(ctx.XRefTable, arr, pg1.Ref.ObjectNumber.Value()); ok && near6(b[1], 128) {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Error("the bookmark on the kept paragraph does not point at page 1, 42 lower")
+	}
+	flags := flagsOf(t, out)
+	fy := func(i int) float64 { return flags[i]["frac"].(map[string]any)["y"].(float64) }
+	if len(flags) != 2 || flags[0]["page"].(float64) != 1 || !near6(fy(0), (792.0-123)/792) {
+		t.Errorf("the kept flag is %v, want page 1 at y fraction %v", flags, (792.0-123)/792)
+	}
+	if len(flags) == 2 && (flags[1]["page"].(float64) != 2 || !near6(fy(1), (792.0-695)/792)) {
+		t.Errorf("the leaving flag is %v, want page 2 at y fraction %v", flags[1], (792.0-695)/792)
+	}
+}
+
+// TestAFlowOnlyLeavesAPageItsMarginBounds — P07 phase-close review: a region whose floor is content below it that STAYS —
+// the next section, past a wide gap — does not send its last paragraphs to the next page, where they would be read after
+// that section; and a block does not land in a region that content bounds — a running header, the next page's first
+// paragraph — whether or not the header would then have to leave too. Each refuses `page-full`.
+func TestAFlowOnlyLeavesAPageItsMarginBounds(t *testing.T) {
+	orig, edit := threeLinesMore()
+	hdr := func(p, y int) string {
+		return fmt.Sprintf("BT /F1 12 Tf 72 %d Td (Running header of page %d) Tj ET\n", y, p)
+	}
+	// A page-2 body set lower, so the header's own region has room below it to be pushed into and nothing on page 2 leaves.
+	lowBody := strings.ReplaceAll(cascadePage(2, 3, ""), "72 700 Td", "72 600 Td")
+	lowBody = strings.ReplaceAll(lowBody, "72 662 Td", "72 562 Td")
+	lowBody = strings.ReplaceAll(lowBody, "72 624 Td", "72 524 Td")
+	fiveMore := orig + strings.Repeat(" "+cascadeLine(1, 0), 5) // more than the 61 points above Section B's floor
+	for _, c := range []struct {
+		name string
+		pdf  []byte
+		edit string
+	}{
+		{"content past a wide gap below the region stays", cascadeDoc([]string{
+			cascadePage(1, 12, "BT /F1 12 Tf 72 180 Td (Section B heading stays here) Tj ET\n"), cascadePage(2, 3, "")}, nil, ""), fiveMore},
+		{"a running header on the next page, which would leave in turn", cascadeDoc([]string{
+			cascadePage(1, 16, ""), hdr(2, 760) + cascadePage(2, 3, ""), hdr(3, 760) + cascadePage(3, 3, "")}, nil, ""), edit},
+		{"a running header on the next page, with room below it", cascadeDoc([]string{
+			cascadePage(1, 16, ""), hdr(2, 760) + lowBody}, nil, ""), edit},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, refusal, err := ReflowParagraph(c.pdf, 1, 0, orig, c.edit)
+			if err != nil || out != nil || refusal.Cause != causePageFull {
+				t.Errorf("wrote %d bytes, refusal %+v (%v), want page-full", len(out), refusal, err)
+			}
+		})
+	}
+}
+
+// TestEveryDestinationToWhatLeavesCrosses — P07 phase-close review: a destination reached by a GoTo on a widget's `/A`, in
+// an annotation's, a page's or the catalog's `/AA`, or chained after another action by `/Next`, names page 1 where the
+// leaving paragraph was (top 142) and must name page 2 where it landed (top 712) — only a link's first action and a
+// bookmark's were read, and the rest stayed pointing at what had left.
+func TestEveryDestinationToWhatLeavesCrosses(t *testing.T) {
+	goTo := "<< /S /GoTo /D [10 0 R /XYZ 72 142 0] >>"
+	orig, edit := threeLinesMore()
+	for _, c := range []struct {
+		name               string
+		p2, catalog, extra string
+	}{
+		{"a widget's action", "/Annots [30 0 R]", "/AcroForm << /Fields [30 0 R] >>",
+			"<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 65536 /T (go) /P 12 0 R /Rect [300 740 360 760] /A " + goTo + " >>"},
+		{"an annotation's additional actions", "/Annots [30 0 R]", "",
+			"<< /Type /Annot /Subtype /Square /P 12 0 R /Rect [300 740 360 760] /AA << /U " + goTo + " >> >>"},
+		{"a page's additional actions", "/AA << /O " + goTo + " >>", "", ""},
+		{"the catalog's additional actions", "", "/AA << /WC " + goTo + " >>", ""},
+		{"a GoTo chained after a URI", "/Annots [30 0 R]", "",
+			"<< /Type /Annot /Subtype /Link /P 12 0 R /Rect [300 740 360 760] /A << /S /URI /URI (https://example.org/) /Next [" + goTo + "] >> >>"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var extra []string
+			if c.extra != "" {
+				extra = []string{c.extra}
+			}
+			pdf := cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")}, map[int]string{1: c.p2}, c.catalog, extra...)
+			out, refusal, err := ReflowParagraph(pdf, 1, 0, orig, edit)
+			if err != nil || out == nil {
+				t.Fatalf("refused %+v (%v)", refusal, err)
+			}
+			ctx, err := pdfread.Validated(out, model.NewDefaultConfiguration())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for p, top := range map[int]float64{1: 142, 2: 712} {
+				nr := pageAt(ctx, nil, p).Ref.ObjectNumber.Value()
+				found := false
+				for _, arr := range destinationArrays(ctx, nr) {
+					if b, ok := destinationBox(ctx.XRefTable, arr, nr); ok && near6(b[1], top) {
+						found = true
+					}
+				}
+				if want := p == 2; found != want {
+					t.Errorf("a destination at top %v on page %d: %v, want %v", top, p, found, want)
+				}
+			}
+		})
+	}
+}
+
+// TestAFlowRefusesWhatNothingMoves — P07 phase-close review: an article bead over what moves — nothing moves a bead; text
+// drawn invisibly (a search layer over a scan) moved or carried; text in a sequence whose property list names no MCID
+// (`/OC`, a `/Lang` span), which a carry re-opens only the MCID's sequence for; and a flag carried onto a page turned
+// otherwise than its own, where the same fraction is another place. Each is refused by name, and each fixture without its
+// one difference flows (the control), so the refusal is about that difference.
+func TestAFlowRefusesWhatNothingMoves(t *testing.T) {
+	orig, edit := threeLinesMore()
+	last := func(wrap func(string) string) string { // page 1 with paragraph 15 drawn through wrap
+		p := cascadePage(1, 16, "")
+		i := strings.LastIndex(strings.TrimSuffix(p, "\n"), "\n") + 1
+		return p[:i] + wrap(p[i:])
+	}
+	flagAt125 := func(pdf []byte) []byte {
+		out, err := SetFlags(pdf, []byte(fmt.Sprintf(`[{"page":1,"frac":{"x":0.5,"y":%v}}]`, (792.0-125)/792)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	ocDoc := func(wrapped bool) []byte {
+		p1 := cascadePage(1, 16, "")
+		if wrapped {
+			p1 = last(func(s string) string { return "/OC /oc1 BDC " + s + "EMC\n" })
+		}
+		p2 := cascadePage(2, 3, "")
+		return assembleFixture(map[int]string{
+			1:  "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [40 0 R] /D << /OFF [40 0 R] >> >> >>",
+			2:  "<< /Type /Pages /Kids [10 0 R 12 0 R] /Count 2 >>",
+			5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+			10: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> /Properties << /oc1 40 0 R >> >> /Contents 11 0 R >>",
+			11: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(p1), p1),
+			12: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 13 0 R >>",
+			13: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(p2), p2),
+			40: "<< /Type /OCG /Name (Hidden layer) >>",
+		})
+	}
+	plain := cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")}, nil, "")
+	for _, c := range []struct {
+		name         string
+		pdf, control []byte
+		cause, below string
+	}{
+		// Wholly inside the zone that leaves, where a note would cross with it: a bead does not.
+		{"an article bead over the paragraph that leaves",
+			cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")}, map[int]string{0: "/B [30 0 R]"}, "",
+				"<< /Type /Bead /R [72 115 300 140] /P 10 0 R >>"), plain, causeAnchored, ""},
+		// Paragraph 1 only: every text object states its mode, which outlives `ET` (it is graphics state).
+		{"a search layer moved within the page", cascadeDoc([]string{
+			strings.Replace(strings.ReplaceAll(cascadePage(1, 16, ""), "BT /F1", "BT 0 Tr /F1"), "BT 0 Tr /F1 12 Tf 14 TL 72 662 Td", "BT 3 Tr /F1 12 Tf 14 TL 72 662 Td", 1),
+			cascadePage(2, 3, "")}, nil, ""), plain, causeInvisible, cascadeLine(1, 1) + " " + cascadeLine(1, 1)},
+		{"a search layer carried to the next page", cascadeDoc([]string{
+			last(func(s string) string { return strings.Replace(s, "BT ", "BT 7 Tr ", 1) }), cascadePage(2, 3, "")}, nil, ""), plain,
+			causeInvisible, cascadeLine(1, 15) + " " + cascadeLine(1, 15)},
+		{"text in an optional-content layer carried", ocDoc(true), ocDoc(false), causeStateNotCarried, cascadeLine(1, 15) + " " + cascadeLine(1, 15)},
+		{"text in a language span carried", cascadeDoc([]string{
+			last(func(s string) string { return "/Span <</Lang (fr-FR)>> BDC " + s + "EMC\n" }), cascadePage(2, 3, "")}, nil, ""), plain,
+			causeStateNotCarried, cascadeLine(1, 15) + " " + cascadeLine(1, 15)},
+		{"a flag carried onto a turned page",
+			flagAt125(cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")}, map[int]string{1: "/Rotate 90"}, "")),
+			cascadeDoc([]string{cascadePage(1, 16, ""), cascadePage(2, 3, "")}, map[int]string{1: "/Rotate 90"}, ""), causeAnchored, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if out, refusal, err := ReflowParagraph(c.control, 1, 0, orig, edit); err != nil || out == nil {
+				t.Fatalf("setup: the control refused %+v (%v)", refusal, err)
+			}
+			out, refusal, err := ReflowParagraph(c.pdf, 1, 0, orig, edit)
+			if err != nil || out != nil || refusal.Cause != c.cause || refusal.Below != c.below {
+				t.Errorf("wrote %d bytes, refusal %+v (%v), want %s below %q", len(out), refusal, err, c.cause, c.below)
+			}
+		})
+	}
+}
+
+// TestOneMalformedFlagDoesNotHideTheOthers — P07 phase-close review: the refusal check decoded the whole flag list into one
+// typed shape, so one flag whose fraction was not an object read as NO flags, and a growth into the room where a valid flag
+// sat went through — while the mover, decoding its own way, still saw the valid one. One decoder now reads each flag alone.
+func TestOneMalformedFlagDoesNotHideTheOthers(t *testing.T) {
+	pdf := cascadeDoc([]string{cascadePage(1, 12, "")}, nil, "")
+	orig, edit := threeLinesMore()
+	if out, refusal, err := ReflowParagraph(pdf, 1, 0, orig, edit); err != nil || out == nil {
+		t.Fatalf("setup: with no flag the growth refused %+v (%v)", refusal, err)
+	}
+	// y 200 lies in the free room below page 1's twelve paragraphs, which the growth moves them into.
+	flagged, err := SetFlags(pdf, []byte(fmt.Sprintf(`[{"page":3,"frac":"not a fraction"},{"page":1,"frac":{"x":0.5,"y":%v}}]`, (792.0-200)/792)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, refusal, err := ReflowParagraph(flagged, 1, 0, orig, edit)
+	if err != nil || out != nil || refusal.Cause != causeAnchored {
+		t.Errorf("wrote %d bytes, refusal %+v (%v), want anchored — the valid flag sits where the text moves", len(out), refusal, err)
+	}
+}

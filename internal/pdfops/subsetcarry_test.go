@@ -426,10 +426,11 @@ func TestAnOBJROnADroppedPageGoesAndOneOnAKeptPageStays(t *testing.T) {
 	}
 }
 
-// TestASubsetRefusesToCarryANestedParentTree — the shape the write half will not rebalance.
+// TestASubsetRefusesToCarryANestedParentTree — the shape the SUBSET carry still refuses (`carryStructure`, `/pending
+// 528`), though the write half has written a nested tree since P07.S07 (`parentTreeDict`).
 //
-// Measured: 0 of 294 tagged files in veraPDF's corpus nest one, and neither LibreOffice conversion
-// does, so this is the only place the refusal can be exercised at all.
+// Measured: 0 of 294 tagged files in veraPDF's corpus nest one and neither LibreOffice conversion does, but 7 of the 14
+// multi-page real-producer documents do (P07 phase-close review) — so this refusal is reached in practice, not only here.
 func TestASubsetRefusesToCarryANestedParentTree(t *testing.T) {
 	// **The control is a `Collect` OF the flat fixture, not the fixture's own bytes.** Reading the
 	// hand-assembled fixture says `carried` whatever the carry does — measured, with
@@ -449,9 +450,8 @@ func TestASubsetRefusesToCarryANestedParentTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s := inspectTags(out); s.tree {
-		t.Errorf("a nested /ParentTree was carried (%+v). The write half refuses to rebalance one "+
-			"(`parentTreeDict`), so a reader following /Kids would never find the entries this "+
-			"prune rewrote", s)
+		t.Errorf("a nested /ParentTree was carried (%+v). The subset carry refuses one (`carryStructure`, "+
+			"/pending 528): it was built and measured over flat trees only", s)
 	}
 }
 

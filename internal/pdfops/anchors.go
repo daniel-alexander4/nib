@@ -16,8 +16,10 @@ import (
 // Text that moves leaves behind everything that says WHERE on the page something is, rather than what it is beside: an
 // annotation's `/Rect` (a link over a word, a form widget, a sticky note), a NibFlag's fraction of the page, and a
 // destination's `top` — a bookmark, a link from another page, the document's open action, a named destination a URL can
-// reach. Each is read here as a box in user space. The phase's exit criterion is that none is silently orphaned, so until
-// the next slice moves them, reflow refuses to move text across one.
+// reach. Each is read here as a box in user space. The phase's exit criterion is that none is silently orphaned: what lies
+// wholly inside what moves moves with it (`anchormove.go`, P07.S04; across pages, P07.S06), and anything else the moving
+// text touches — straddling, in the free room, an article bead — refuses `anchored` (P07 phase-close review: this said
+// every anchor refused, which stopped being true at S04).
 
 // anchorKind names what is anchored.
 type anchorKind string
@@ -27,6 +29,9 @@ const (
 	anchorWidget      anchorKind = "widget"
 	anchorFlag        anchorKind = "flag"
 	anchorDestination anchorKind = "destination"
+	// anchorBead is an article thread's bead (`/B` on the page, its `/R` the rectangle it reads). Nothing moves a bead, so
+	// one meeting moving text always refuses (P07 phase-close review).
+	anchorBead anchorKind = "bead"
 )
 
 // pageAnchor is one thing anchored to a position on a page, boxed in user space. A destination's box is the line it
@@ -68,54 +73,97 @@ func pageAnchors(ctx *model.Context, pg pdfread.Page, withMoving bool) []pageAnc
 	if pg.Ref != nil {
 		out = append(out, destinationAnchors(ctx, pg.Ref.ObjectNumber.Value())...)
 	}
+	return append(out, beadAnchors(ctx, pg)...)
+}
+
+// maxBeads bounds the beads read off one page: `/B` is an array the file writes.
+const maxBeads = 10000
+
+// beadAnchors reads page pg's article beads — each `/B` entry's `/R` — as boxes; a bead whose rectangle cannot be read
+// could be anywhere.
+func beadAnchors(ctx *model.Context, pg pdfread.Page) []pageAnchor {
+	var out []pageAnchor
+	for i, o := range derefArray(ctx.XRefTable, pg.Dict["B"]) {
+		if i >= maxBeads {
+			return append(out, pageAnchor{anchorBead, everywhere})
+		}
+		llx, lly, urx, ury, ok := rectOf(ctx, derefDict(ctx.XRefTable, o)["R"])
+		if !ok {
+			out = append(out, pageAnchor{anchorBead, everywhere})
+			continue
+		}
+		out = append(out, pageAnchor{anchorBead, [4]float64{llx, lly, urx, ury}})
+	}
 	return out
 }
 
 // flagAnchors reads the NibFlags on page pg as points. A flag's `frac` is a fraction of the page as the viewer shows it,
 // from its top-left corner — the crop box, turned by `/Rotate`. Unturned it maps straight back to user space; on a turned
-// page it is placed nowhere this reader will vouch for, so it could be anywhere.
+// page it is placed nowhere this reader will vouch for, so it could be anywhere — and so could a flag on this page whose
+// fraction does not read.
 func flagAnchors(ctx *model.Context, pg pdfread.Page) []pageAnchor {
-	if ctx.XRefTable.Info == nil {
-		return nil
-	}
-	info := derefDict(ctx.XRefTable, *ctx.XRefTable.Info)
-	if info == nil {
-		return nil
-	}
-	enc, ok := stringVal(ctx.XRefTable, info[flagsKey])
-	if !ok {
-		return nil
-	}
-	raw, err := base64.StdEncoding.DecodeString(enc)
-	if err != nil {
-		return nil // unreadable reads as no flags, as FlagsJSON has it
-	}
-	var flags []struct {
-		Page int `json:"page"`
-		Frac struct {
-			X float64 `json:"x"`
-			Y float64 `json:"y"`
-		} `json:"frac"`
-	}
-	if json.Unmarshal(raw, &flags) != nil {
-		return nil
-	}
+	_, flags := nibFlags(ctx)
 	box := visibleBoxOf(pg)
-	rotated := pg.Attrs != nil && pg.Attrs.Rotate%360 != 0
+	rotated := pageRotation(pg) != 0
 	var out []pageAnchor
 	for _, f := range flags {
-		if f.Page != pg.Nr {
+		page, onPage, x, y, placed := flagOn(f, box)
+		if !onPage || page != pg.Nr {
 			continue
 		}
-		if rotated || !(box[2] > box[0] && box[3] > box[1]) {
+		if !placed || rotated || !(box[2] > box[0] && box[3] > box[1]) {
 			out = append(out, pageAnchor{anchorFlag, everywhere})
 			continue
 		}
-		x := box[0] + f.Frac.X*(box[2]-box[0])
-		y := box[3] - f.Frac.Y*(box[3]-box[1])
 		out = append(out, pageAnchor{anchorFlag, [4]float64{x, y, x, y}})
 	}
 	return out
+}
+
+// nibFlags is the NibFlags list as the Info dictionary holds it, and that dictionary — the ONE decoder the refusal check
+// (`flagAnchors`) and the mover (`moveFlags`) share (P07 phase-close review; ADR-009). Each element is read on its own:
+// the check decoded the whole list into one typed shape and the mover into another, so one malformed flag read as NO
+// flags to the check while the mover still moved the valid ones. A blob that does not decode as a list is no flags, as
+// `FlagsJSON` has it.
+func nibFlags(ctx *model.Context) (types.Dict, []any) {
+	if ctx.XRefTable.Info == nil {
+		return nil, nil
+	}
+	info := derefDict(ctx.XRefTable, *ctx.XRefTable.Info)
+	if info == nil {
+		return nil, nil
+	}
+	enc, ok := stringVal(ctx.XRefTable, info[flagsKey])
+	if !ok {
+		return info, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return info, nil // unreadable reads as no flags, as FlagsJSON has it
+	}
+	var flags []any
+	if json.Unmarshal(raw, &flags) != nil {
+		return info, nil
+	}
+	return info, flags
+}
+
+// flagOn reads one flag: its page number (onPage false when it names none), and — placed — its point in user space on a
+// page whose visible box is box, from its fraction of that page. A flag on a page whose fraction does not read is on that
+// page and placed nowhere.
+func flagOn(f any, box [4]float64) (page int, onPage bool, x, y float64, placed bool) {
+	m, _ := f.(map[string]any)
+	p, ok := m["page"].(float64)
+	if !ok || p != math.Trunc(p) {
+		return 0, false, 0, 0, false
+	}
+	frac, _ := m["frac"].(map[string]any)
+	fx, xok := frac["x"].(float64)
+	fy, yok := frac["y"].(float64)
+	if !xok || !yok || !finite(fx, fy) {
+		return int(p), true, 0, 0, false
+	}
+	return int(p), true, box[0] + fx*(box[2]-box[0]), box[3] - fy*(box[3]-box[1]), true
 }
 
 // stringVal reads a PDF string or name as Go text.
@@ -175,16 +223,55 @@ func destinationArrays(ctx *model.Context, page int) []types.Array {
 	return out
 }
 
+// maxActions bounds one walk of an action and its `/Next` chain: a chain is a linked structure the file writes, and a loop in
+// it is a loop.
+const maxActions = 10000
+
 // destinationObjects collects every destination the document holds, unresolved: the open action, the outline, the old
-// catalog /Dests, the /Dests name tree, and every link annotation on every page.
+// catalog /Dests, the /Dests name tree, and every annotation on every page — a link's `/Dest`, and a GoTo in any
+// annotation's `/A` or `/AA` (a widget's button is as much a link as a link is) — and the GoTo actions in the catalog's and
+// every page's `/AA`. An action's `/Next` is followed: a GoTo chained after a JavaScript or a sound is still a GoTo (P07
+// phase-close review: only the first action of a link or bookmark was read, and a widget's GoTo stayed where the text left).
 func destinationObjects(ctx *model.Context) []types.Object {
 	xt := ctx.XRefTable
 	var dests []types.Object
+	// fromAction reads action a and every action its `/Next` chains, each once and bounded.
 	fromAction := func(a types.Object) {
-		if act := derefDict(xt, a); act != nil && nameVal(act, "S") == "GoTo" {
-			if d, ok := act["D"]; ok {
-				dests = append(dests, d)
+		seen := map[int]bool{}
+		queue := []types.Object{a}
+		for n := 0; len(queue) > 0 && n < maxActions; n++ {
+			o := queue[0]
+			queue = queue[1:]
+			if ir, ok := o.(types.IndirectRef); ok {
+				if seen[ir.ObjectNumber.Value()] {
+					continue
+				}
+				seen[ir.ObjectNumber.Value()] = true
 			}
+			act := derefDict(xt, o)
+			if act == nil {
+				continue
+			}
+			if nameVal(act, "S") == "GoTo" {
+				if d, ok := act["D"]; ok {
+					dests = append(dests, d)
+				}
+			}
+			next, ok := act["Next"]
+			if !ok {
+				continue
+			}
+			if arr := derefArray(xt, next); arr != nil {
+				queue = append(queue, arr...)
+			} else {
+				queue = append(queue, next)
+			}
+		}
+	}
+	// fromTriggers reads an additional-actions dictionary: every trigger's action.
+	fromTriggers := func(aa types.Object) {
+		for _, a := range derefDict(xt, aa) {
+			fromAction(a)
 		}
 	}
 	if root, err := xt.Catalog(); err == nil && root != nil {
@@ -195,6 +282,7 @@ func destinationObjects(ctx *model.Context) []types.Object {
 				fromAction(oa)
 			}
 		}
+		fromTriggers(root["AA"])
 		if ol := derefDict(xt, root["Outlines"]); ol != nil {
 			// Every item once: an item reached twice by reference is a loop the file wrote, and the walk is bounded.
 			seen := map[int]bool{}
@@ -240,16 +328,18 @@ func destinationObjects(ctx *model.Context) []types.Object {
 		if p.Err != nil || p.Dict == nil {
 			continue
 		}
+		fromTriggers(p.Dict["AA"])
 		for _, o := range derefArray(xt, p.Dict["Annots"]) {
 			d := derefDict(xt, o)
-			if d == nil || nameVal(d, "Subtype") != "Link" {
+			if d == nil {
 				continue
 			}
-			if dest, ok := d["Dest"]; ok {
+			if dest, ok := d["Dest"]; ok && nameVal(d, "Subtype") == "Link" {
 				dests = append(dests, dest)
 			} else {
 				fromAction(d["A"])
 			}
+			fromTriggers(d["AA"])
 		}
 	}
 	return dests
