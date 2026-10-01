@@ -905,7 +905,8 @@ does not.**
   named refusal (law 3), state first because InDesign's justification IS state. Alignment is one door covering left,
   justified, centred and right (S03, S04) — the exit criterion names justified, and a centred heading re-set off its axis
   (**265** short paragraphs centred on the page in this corpus) is the same silent loss, so it is in (rung 2). Out:
-  hyphenation (a justified producer's hyphen is kept as the glyph it is; nothing new is hyphenated), and paragraphs split
+  NEW hyphenation (nothing is hyphenated that was not — but a producer's break hyphen rejoins when its break moves: S07,
+  added at S03 by measurement, which this pin's first wording ruled out unmeasured), and paragraphs split
   across text objects (BT/ET between lines — 2,900 refusals, not typographic). `/plan-review` did not fire: not security-,
   migration- or egress-heavy — no persisted or wire format changes (the cause list is the one wire surface, and only
   shrinks or gains a name).
@@ -973,12 +974,46 @@ phase-open census are the 660 + 97 unblocked); the cause sentence is true of wha
 binary (red under the blank inclusion removed). Review `code-reviews/v1.174.1-p08s02-2026-09-30.md` (1 critical, 4 warnings,
 2 info over two rounds; all fixed). /pending 732 closed; its unmeasured half is /pending 789.
 
-#### P08.S03 — a justified paragraph re-wraps justified
+#### P08.S03 — a justified paragraph re-wraps justified *(done 2026-09-30, v1.175.0)*
 One door, `paragraphAlignment`, reads a paragraph's lines as left, justified, centred or right. A justified paragraph is
 broken at its flush edge and each line but the last is set to it, the slack shared across its spaces by `TJ` adjustment
 (the one mechanism every font has — `Tw` is inert on a multi-byte code); its last line is set at the paragraph's natural
 space. Acceptance: hand-built and corpus justified paragraphs re-wrap with every line but the last flush to both edges;
 an unedited justified paragraph still re-breaks in place; a ragged paragraph is untouched by the door.
+
+**Tasks** (slice grill, 2026-09-30 — **amended by measurement: the breaker does not change**). Over the corpus's justified
+paragraphs the current breaker at the current measure already re-breaks them in place (AH 225 of 232, InDesign 34 of 34,
+Acrobat 16 of 16 and 12 of 12 two-liners); breaking at the flush edge, with natural or minimal spaces, does WORSE (AH 220,
+151, 25). So justification is emission only. T01 — `paragraphAlignment`: justified when two or more lines before the last
+end within 0.05 em of each other and the lines after the first start together, or — two lines — the first ends at its
+column's right edge within 0.05 em, the last is shorter, and the first is set looser than the last (the evidence a single
+line can give); the flush edge is where those lines end. T02 — the emitter sets every line but the last to the flush edge,
+its slack (positive or negative) shared over its spaces as `TJ` adjustment; a line of one word, or one whose spaces would
+fall under a quarter of their natural width, stays as set; the last line keeps its natural spaces. T03 — tests: hand-built
+justified paragraphs re-wrap flush with a natural last line; a ragged one is untouched; the corpus read-back holds every
+re-set justified line flush. **Grill defaults (rung 1/2)**: a word keeps the `Tc` its old line was letter-spaced with
+(S01) — re-letter-spacing is not done; InDesign's per-line `Tw` reaches the space through the spacer and the slack corrects
+it to the edge.
+**PIN 2026-09-30 (build and review — amends T01–T02 and the defaults)**: the breaker does not change for a paragraph it
+can set flush; where some line cannot reach the edge (a stretched median space puts the paragraph's own measure past its
+edge — constructed: lines written to 368 against 271), the paragraph is broken again AT the edge at its natural spaces, and a
+word still too wide refuses `word-too-wide`; a line within the paragraph's own tolerance (0.05 em) of the edge is at it
+(real OID and URL lines end 0.01 and 0.33pt past). **The default above about `Tw` was wrong (review C3)**: carried with its
+words, a line's justification `Tw` stretched every space after them to their OLD line's width — so in a justified
+paragraph every glyph takes the last line's `Tw` (it moves only the space, code 32: no glyph moves). Detection needs even
+spaces on the justified lines (a table row ends at the edge by one wide gap, review C2); the last line's natural space is
+its usual gaps' median (within 1.5 em of its narrowest); the shrink floor is a quarter of the natural space, the spacer's
+median stretch taken off. Round 2: a gap after sentence punctuation is left out of the evenness (it had vetoed 76 of 284 real
+justified paragraphs), and a paragraph whose last line also ends at the edge CONTINUES past it — that line is set flush too.
+**Closed 2026-09-30.** Ledger: hand-built justified paragraphs (by `Tw` and by `TJ`) re-wrap with every line but the last at
+the flush edge — met, and with even spaces when stretched words land on the last line; corpus justified paragraphs re-wrap
+flush — met (13 re-set, 50/50 lines flush and even; the door reads 283 of the corpus's 284 flush paragraphs as justified);
+an unedited justified paragraph still re-breaks in place — met (the breaker is unchanged; the re-break at the edge fires only
+on a line that cannot be set flush); a ragged paragraph is untouched by the door — met (ragged, right-aligned and table cases
+read not justified, a ragged paragraph keeps its drawn spaces). Tier 3 re-wraps a Tw-justified paragraph through the binary
+with every line but the last at one right edge (red with justification off). Review `code-reviews/v1.175.0-p08s03-…` (4
+critical, 4 warnings, 5 info over two rounds; all dispositioned; one refinement registered as unproven — the tightest line's
+`Tw` for a continuing paragraph matters only on the refit path).
 
 #### P08.S04 — a centred or right-aligned paragraph keeps its axis
 The door's centred and right paragraphs are re-set about their axis; a one-line paragraph reads as centred only on
@@ -990,6 +1025,16 @@ A new word's glyph pairs take the kern the page draws for that pair in that face
 one way; positional noise lends nothing. Acceptance: a typed word in a kerned paragraph reads back with the page's kerns;
 a word the paragraph already draws keeps its own (asserted, already true); Acrobat/Word-style inconsistent kerning lends
 none.
+
+#### P08.S07 — a word broken at a line's end rejoins when the break moves
+**Added 2026-09-30 at S03's grill, by measurement** — the phase-open pin put hyphenation out ("a justified producer's
+hyphen is kept as the glyph it is") on no measurement, and it was wrong: a line ending in a hyphen whose next line opens in
+lower case is in **301 of 909** AH and **106 of 436** InDesign multi-line paragraphs — the justifying producers — and a
+re-wrap carries the fragment mid-line ("accom- modate"), silently. A broken word whose halves the edit keeps together joins
+again (the hyphen glyph dropped, no space) wherever the re-wrap puts it mid-line, and keeps its hyphen only where it still
+ends a line: the breaker measures the first half with its hyphen at a line's end and without it mid-line. Nothing new is
+hyphenated. Acceptance: a hyphenated break moved mid-line reads back as one word; one left at a line's end keeps its hyphen;
+an unedited paragraph still re-breaks in place; a hyphen that is part of a word ("well-known") is never dropped.
 
 #### P08.S06 — a word in two styles
 A word whose runs change font or size part-way through (`styled-word`, 381) is carried as its pieces, each in its own

@@ -377,3 +377,41 @@ test('a paragraph whose spaces are each their own show is re-set, not refused', 
   assert.match(after, /tame dog/, `the re-rendered page reads: ${after}`);
   assert.doesNotMatch(after, /lazy/, `"lazy" is still on the page: ${after}`);
 });
+
+// P08.S03 through the binary: a justified paragraph (Tw per line, InDesign's way) re-wraps justified — read from pdf.js's
+// text layer of the re-rendered page, every line but the last ends at one right edge.
+const JUSTIFIED = writeRawFixture('reflow-justified.pdf', paragraphPDF(
+  // Tw computed from Helvetica's widths so the first three lines end at 330.896 (PLAN P08.S03's tier-3 case).
+  'BT /F1 14 Tf 18 TL 72 700 Td 1.3051428571428605 Tw (The quick brown fox jumps over the lazy) Tj T* 1.2347500000000053 Tw (dog and then runs far away from here to) Tj T* 0.6666666666666666 Tw (the river where it rests in the shade of an) Tj T* 0 Tw (old tree.) Tj 0 Tw ET'));
+
+const lineRights = () => page.evaluate(() => {
+  const rows = new Map();
+  for (const s of document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')) {
+    if (!s.textContent.trim()) continue;
+    const r = s.getBoundingClientRect();
+    const key = Math.round(r.top);
+    rows.set(key, Math.max(rows.get(key) ?? -Infinity, r.right));
+  }
+  return [...rows.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1]);
+});
+
+test('a justified paragraph re-wraps justified', async () => {
+  await h.openDocument(JUSTIFIED, 1);
+  await page.waitForFunction(() => /lazy/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const before = await lineRights();
+  assert.ok(before.length === 4 && Math.abs(before[0] - before[1]) < 1.5 && Math.abs(before[1] - before[2]) < 1.5,
+    `setup: the paragraph is not set flush — line ends ${before}`);
+  await openReflow();
+  await page.fill('#reflowText', 'The quick fox jumps over the lazy dog and then runs far away from here to the river where it rests in the shade of an old tree.');
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the justified paragraph was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  // Wait for the NEW text to be drawn, not the old to be gone: between the two the layer is empty.
+  await page.waitForFunction(() => /quick fox/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const after = await lineRights();
+  assert.ok(after.length >= 3, `the re-set paragraph reads ${after.length} lines`);
+  for (let i = 0; i < after.length - 1; i++) {
+    assert.ok(Math.abs(after[i] - before[0]) < 1.5, `line ${i} ends at ${after[i]}, the flush edge is ${before[0]} — ends ${after}`);
+  }
+});
