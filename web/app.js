@@ -8394,28 +8394,51 @@ els.exportFormCsvBtn.onclick = () => exportFormData('csv', 'csv');
 els.exportFormXfdfBtn.onclick = () => exportFormData('xfdf', 'xfdf');
 els.exportCertBtn.onclick = () => downloadAuthed('/api/identity', 'nib-identity.cer');
 
+// printFrameCleanup removes the last print's frame and frees its bytes. Firefox's print() returns while its preview is
+// still open, and its frame cannot be listened to for `afterprint` (/pending 788) — so a frame is removed when the NEXT
+// print starts, never on a timer that could pull it from under a preview the user is still in.
+let printFrameCleanup = null;
 els.printBtn.onclick = async () => {
   if (!view.pdfDocument) return toast('Open a PDF first');
   // Print the real PDF bytes (WYSIWYG, vector) through the browser's own print
   // dialog. Printing the on-screen page stack would capture pdf.js's screen-DPI
   // page canvases plus the app chrome, not the document — so feed the same
   // baked bytes Save/Export use into a hidden iframe and print that. A hidden
-  // iframe (not window.open) sidesteps popup blockers; the Blob URL must outlive
-  // the print call, so it's revoked on afterprint with a timeout fallback for
-  // browsers that never fire the event.
+  // iframe (not window.open) sidesteps popup blockers.
+  const exportName = exportBase(); // captured before the await, as every export's name is (ADR-001)
   let bytes;
   try { bytes = await bakedBytes(); } catch (e) { console.error('print bake failed', e); return toast('could not prepare the document to print'); }
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
   const frame = document.createElement('iframe');
   frame.style.display = 'none';
   frame.src = url;
   let cleaned = false;
   const cleanup = () => { if (cleaned) return; cleaned = true; URL.revokeObjectURL(url); frame.remove(); };
+  if (printFrameCleanup) printFrameCleanup();
+  printFrameCleanup = cleanup;
+  // Only a frame that never loads is removed on a timer; one that loaded may be under an open preview.
+  const loadTimer = setTimeout(cleanup, 60000);
   frame.onload = () => {
-    frame.contentWindow.focus();
-    frame.contentWindow.addEventListener('afterprint', cleanup);
-    frame.contentWindow.print();
-    setTimeout(cleanup, 60000);
+    clearTimeout(loadTimer);
+    // **Each touch of the frame is its own try** (/pending 788, measured in Firefox 157): Firefox shows a PDF through
+    // PDF.js in a document CROSS-ORIGIN to this page, so `addEventListener` throws a SecurityError — and when it was
+    // unguarded, `print()` after it never ran and the button did nothing at all. That is every stock Ubuntu install,
+    // where no Chromium-family browser is found and nib opens through xdg-open (`internal/browser`). `print()` itself is
+    // allowed there and opens Firefox's preview of the PDF; without `afterprint` the frame goes when the next print starts.
+    const w = frame.contentWindow;
+    try { w.focus(); } catch { /* a cross-origin frame: print still works */ }
+    try { w.addEventListener('afterprint', cleanup); } catch { /* likewise; the next print cleans up */ }
+    try {
+      w.print();
+    } catch (e) {
+      // A browser that will not print the frame at all (Firefox with its PDF viewer switched off) — say so, and hand
+      // the user the same bytes to print from their own PDF viewer rather than doing nothing.
+      console.warn('print refused by the browser', e);
+      cleanup();
+      toast('Your browser would not print from inside Nib. Save the PDF and print it from your PDF app.');
+      openSaveAs(blob, exportName + '.pdf', 'Save to print');
+    }
   };
   document.body.appendChild(frame);
 };
