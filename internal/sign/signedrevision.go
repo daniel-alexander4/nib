@@ -37,9 +37,9 @@ const (
 	// RevisionPrefixFailed: a candidate version was cut out of the file and did not stand up on its own (D4) — it did
 	// not parse, or the signature did not re-verify across exactly its bytes.
 	RevisionPrefixFailed RevisionCause = "prefix-failed-reverify"
-	// RevisionCouldNotCheck: the whole file could not be checked and no candidate re-verified. **Parked for Dan as an
-	// amendment to D7** (plan-review C2): none of the four causes is true of a file nib could not read, and borrowing
-	// one would state something nib never observed.
+	// RevisionCouldNotCheck: the whole file could not be checked and no candidate re-verified — D7's fifth cause
+	// (plan-review C2; confirmed by Dan 2026-10-02): none of the other four is true of a file nib could not read, and
+	// borrowing one would state something nib never observed.
 	RevisionCouldNotCheck RevisionCause = "could-not-check"
 )
 
