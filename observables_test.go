@@ -280,9 +280,8 @@ var published = map[string][]string{
 	"instance.Record":   {"internal/instance/instance.go", "internal/server/handoff.go"},
 	"ots.VerifyResult":  {"internal/server/timestamp.go"},
 	"sign.Status":       {"web/app.js", "internal/server/server.go"},
-	// PLAN-returned-document P02.S01: the signer's own version, or why there is none. Its reader is P02.S03's route,
-	// not built yet — recorded in `internalShapes` until then, and named here (with the route's file) when it lands.
-	"sign.SignedRevision": {},
+	// PLAN-returned-document P02.S03: the route projects every field into its header or its 422 body.
+	"sign.SignedRevision": {"internal/server/revision.go"},
 	// `internal/server/attachments.go` removed /pending 558: it EMBEDS the shape in a response
 	// (`attachments.go:11`, `Attachments []pdfops.AttachmentInfo`) and reads no field of it. A
 	// carrier is not a reader, and naming one makes the shape read as better covered than it is.
@@ -418,13 +417,6 @@ var excluded = map[string]string{}
 // is an edit to `published`, which is the right one: this is a claim about the TABLE, and the
 // table is the only thing the scan reads.
 var internalShapes = map[string]string{
-	// **`SignedRevision` has no reader outside `internal/sign` because its reader is not built yet** (PLAN-returned-document
-	// P02.S01 → P02.S03). `SignedRevisionFor` is gated on P02.S03 in zerocaller_test.go, so the two entries expire
-	// together: the route is both the caller and the out-of-package reader.
-	"sign.SignedRevision": "gated — PLAN-returned-document.md P02.S03." +
-		" S03 builds its reader, the route GET /api/document/revision; SignedRevisionFor is gated on the same" +
-		" coordinate in zerocaller_test.go, and TestNoGatedExemptionOutlivesItsCoordinate reads both files.",
-
 	// **`Anchor` crosses the package boundary as an OPAQUE TOKEN, which is the case the rule is
 	// wrong about rather than a missing reader.** `internal/server/delivery.go:1215,1736,2060`
 	// derive one from an invitation and hand it straight to `VerifyAgainst`. Named search for a
@@ -467,21 +459,11 @@ var internalShapes = map[string]string{
 // Deleting an entry is how one gets fixed; a NEW unread field cannot be parked without
 // somebody writing a line, which is the intended cost.
 var unreadKnown = map[string]string{
-	// ── PLAN-returned-document P02.S01, parked until P02.S03 builds the route that reads them ───────
-	// Written in zerocaller_test.go's `gated —` form so TestNoGatedExemptionOutlivesItsCoordinate fails the
-	// moment P02.S03 is marked done: the stale-park arm below fires only on `/pending` reasons, and the empty
-	// reader list in `published` would otherwise let all nine pass forever (the S01 fix review).
-	"sign.SignedRevision.Prefix":          "gated — PLAN-returned-document.md P02.S03." + " the route serves it as the response body",
-	"sign.SignedRevision.Cause":           "gated — PLAN-returned-document.md P02.S03." + " the route's 422 refusal names it",
-	"sign.SignedRevision.Obj":             "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (plan-review W5)",
-	"sign.SignedRevision.End":             "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header",
-	"sign.SignedRevision.RedefinedObj":    "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (W8)",
-	"sign.SignedRevision.Later":           "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (W3)",
-	"sign.SignedRevision.Earlier":         "gated — PLAN-returned-document.md P02.S03." + " the response (W3)",
-	"sign.SignedRevision.Refused":         "gated — PLAN-returned-document.md P02.S03." + " the 422 refusal's refused[] (W5, I6)",
-	"sign.SignedRevision.Attributed":      "gated — PLAN-returned-document.md P02.S03." + " the 422 refusal on `resaved` (C1)",
-	"sign.SignedRevision.EarlierRevision": "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (P02.S02)",
-	"sign.SignedRevision.LaterUnchecked":  "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (P02.S02 re-review)",
+	// ── PLAN-returned-document P02.S03: the X-Nib-Revision facts the surface (P03.S02) words, parked until it does ──
+	"server.revisionFacts.EarlierRevision": "gated — PLAN-returned-document.md P03.S02." + " the verdict says the version came from an earlier revision",
+	"server.revisionFacts.RedefinedObj":    "gated — PLAN-returned-document.md P03.S02." + " the verdict names the rewritten dictionary (W8)",
+	"server.revisionFacts.LaterUnchecked":  "gated — PLAN-returned-document.md P03.S02." + " the verdict says whether this is the last version",
+	"server.revisionFacts.Truncated":       "gated — PLAN-returned-document.md P03.S02." + " the signer list says it was cut",
 
 	// ── internal/server, entered the day the scan could first see it (/pending 347) ──────────
 	//

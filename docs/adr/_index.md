@@ -587,3 +587,7 @@ home today.
   page only past its margin; a carried paragraph takes its marked content and element (MCR in place of the kid); the
   write half writes nested `/ParentTree`s (reversing its blanket refusal, 7 of 14 real documents); one `/StructParents`
   reader.
+- **[ADR-072 — a refusal about a document is a 422 naming its cause, and a fact about returned bytes rides in a header](072-a-document-fact-refusal-is-a-422-and-a-returned-bytes-fact-rides-in-a-header.md)**
+  — PLAN-returned-document P02.S03. 409 stays ADR-004's "not that document" (it reconciles the tabs); a contents
+  refusal is 422 + `{cause}`; facts about returned bytes ride in one JSON header, lists capped; a malformed parameter is
+  400 after normalisation.

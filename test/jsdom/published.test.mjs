@@ -74,6 +74,11 @@ const PUBLISHED = [
   // text-reflow P06.S05: the reflow editor's paragraph list, and the reflow's outcome and cause.
   { type: 'paragraphsResponse', readers: ['web/app.js'] },
   { type: 'reflowResponse', readers: ['web/app.js'] },
+  // PLAN-returned-document P02.S03: the signed version's facts (the X-Nib-Revision header) and the 422 refusal.
+  // `fetchSignedRevision` reads the refusal's three fields and parses the facts; the facts' fields are worded by the
+  // surface for a document that came back (P03.S02), parked below until it does.
+  { type: 'revisionFacts', readers: ['web/app.js'] },
+  { type: 'revisionRefusal', readers: ['web/app.js'] },
   { type: 'attachmentsResponse', readers: ['web/app.js'] },
   { type: 'attestationsResponse', readers: ['web/app.js'] },
   { type: 'attestationView', readers: ['web/app.js'] },
@@ -302,6 +307,16 @@ const EXCLUDED = {
 // one gets fixed; a NEW unread field cannot be parked here without someone writing a
 // line, which is the intended cost.
 const UNREAD_KNOWN = {
+  // PLAN-returned-document P02.S03 → P03.S02: the facts the verdict surface words. Parked by name, so each fails here the
+  // day P03.S02 lands without reading it (observables_test.go gates the same four on P03.S02).
+  'revisionFacts.end': 'P03.S02: the verdict says how far the signed version reaches',
+  'revisionFacts.earlierRevision': 'P03.S02: the verdict says the version came from an earlier revision',
+  'revisionFacts.redefinedObj': 'P03.S02: the verdict names the rewritten dictionary (W8)',
+  'revisionFacts.later': 'P03.S02: the signer list names later signatures of the same name',
+  'revisionFacts.laterUnchecked': 'P03.S02: the verdict says whether this is the last version',
+  'revisionFacts.earlier': 'P03.S02: the signer list names the earlier signatures',
+  'revisionFacts.truncated': 'P03.S02: the signer list says it was cut',
+  'revisionFacts.history': 'P03.S02: the verdict words the working copy\'s recorded history (W9)',
   // **`updateResponse.managed` was here and the FIELD is gone (/pending 350, v1.117.309).** This
   // entry had the argument already written — "a field consumed by the code that sets it has no
   // consumer at the far end, which is the whole property here" — and it sat as a park rather than
@@ -764,6 +779,7 @@ test('every field of every published shape has a reader in the file that declare
 // `TestTheConsentViewPublishesNoUnreadPeerFields` is what keeps them gone, because neither scan
 // can see them come back.
 const COINCIDENTAL = {
+  'revisionFacts.obj': 'P03.S02 is its reader (the verdict names which signature held). Its only match is `r.obj` in the line naming a refused signature (sign.RefusedSignature, app.js refusedLine).',
   'attestationView.signer': 'read in Go by the side that SETS it (internal/p2p), never at the far end; the client renders signer identity from sign.Status instead. Its only match is `pending.signer`, a pendingView.',
   'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash and oneProceeding, not this.',
   'attestationView.when': 'as above. Matches are `q.when` (cosignQuote) and `s.when` (sign.SignerInfo).',

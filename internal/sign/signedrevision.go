@@ -8,6 +8,7 @@ import (
 	_ "crypto/sha512"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/hex"
 	"regexp"
 	"sort"
 	"strconv"
@@ -20,8 +21,10 @@ import (
 type RevisionCause string
 
 const (
-	// RevisionNoSignature: nothing in the file is a signature — a document timestamp is not one (ADR-060), so a
-	// timestamp-only document lands here too, and the sentence must not say "nothing signed this".
+	// RevisionNoSignature: nothing in the file AS IT NOW STANDS is a signature — a document timestamp is not one
+	// (ADR-060), so a timestamp-only document lands here too, and the sentence must not say "nothing signed this".
+	// An earlier revision may still hold someone else's signature whose dictionary a later revision replaced (only the
+	// asking signer's own earlier revisions are walked), so P03 words it as the file as it stands, never as "unsigned".
 	RevisionNoSignature RevisionCause = "no-signature"
 	// RevisionResaved: a signature NAMING the requested certificate is in the file and does not verify against it. The
 	// name is the SignerInfo's own claim, which anyone can write (the certificate rides in every document its owner
@@ -55,10 +58,15 @@ const maxCandidateRecords = 1024
 // exhaust the budget first — the answer is then `could-not-check`, which is honest, never `not-your-signature`.
 const screenBudgetFactor = 16
 
-// maxBoundaryScreens bounds how many earlier revisions the boundary walk screens (P02.S02). A screen is a pdfcpu read
-// and a sweep of the prefix — measured 3-7 ms at 12.6 MB, ~112 ms for a fake section pdfcpu refuses — so 16 is about
-// 2 s on the worst hostile shape measured, which then ends `could-not-check`.
+// maxBoundaryScreens bounds how many earlier revisions the boundary walk reads with pdfcpu (P02.S02) — only those a
+// `prescreen` of their own bytes passed, so in practice the signer's own signed revisions.
 const maxBoundaryScreens = 16
+
+// maxBoundaryPrescreens bounds how many boundaries the walk prescreens. A prescreen parses one signature blob from the
+// bytes and hashes at most the file once per candidate (charged to the budget) — measured 53 ms for 20 fake xref
+// sections in a 100 MB file, where pdfcpu-reading each had cost 2 min 6 s — so this bound can be generous: crowding a
+// version out now takes hundreds of fake sections, not seventeen.
+const maxBoundaryPrescreens = 256
 
 // maxXrefLeadingSpace is how much white space a `startxref` offset may point before its section: pdfsign's points one
 // byte early, at the end-of-line before the header.
@@ -219,14 +227,22 @@ func walkBoundaries(pdf []byte, fingerprint string, tried map[int64]bool, after 
 		return nil, false, 0
 	}
 	ends := rawByteRangeEnds(pdf)
+	prescreens := 0
 	for _, b := range revisionBoundaries(pdf) {
-		if b <= after || b == int64(len(pdf)) || !ends[b] || tried[b] {
+		if b <= after || b == int64(len(pdf)) || len(ends[b]) == 0 || tried[b] {
 			continue
 		}
-		if screens == maxBoundaryScreens || *verifies == maxRevisionCandidates || *budget < 0 {
+		if prescreens == maxBoundaryPrescreens || screens == maxBoundaryScreens || *verifies == maxRevisionCandidates || *budget < 0 {
 			return nil, true, screens
 		}
-		screens++
+		prescreens++
+		if !prescreen(pdf, ends[b], fingerprint, budget) {
+			if *budget < 0 {
+				return nil, true, screens // the budget is spent with boundaries untried
+			}
+			continue
+		}
+		screens++ // only a boundary whose own bytes say it could be the signer's costs a pdfcpu read
 		prefix := pdf[:b:b]
 		c := boundaryCandidate(prefix, fingerprint)
 		if c == nil {
@@ -291,14 +307,14 @@ var (
 	reObjHeader    = regexp.MustCompile(`^\d+\s+\d+\s+obj`)
 )
 
-// rawByteRangeEnds is where every literal `/ByteRange [ints]` in pdf says its last pair ends. A signature that can
-// verify has its ByteRange in literal bytes (an indirect one is refused by the sweep), so a boundary no literal ends
-// at holds no version `holder` could accept, and is never screened.
-func rawByteRangeEnds(pdf []byte) map[int64]bool {
-	out := map[int64]bool{}
-	for _, m := range reRawByteRange.FindAllSubmatch(pdf, -1) {
+// rawByteRangeEnds is where every literal `/ByteRange [ints]` in pdf says its last pair ends, with where each such
+// literal begins. A signature that can verify has its ByteRange in literal bytes (an indirect one is refused by the
+// sweep), so a boundary no literal ends at holds no version `holder` could accept, and is never screened.
+func rawByteRangeEnds(pdf []byte) map[int64][]rawByteRange {
+	out := map[int64][]rawByteRange{}
+	for _, m := range reRawByteRange.FindAllSubmatchIndex(pdf, -1) {
 		var br []int64
-		for _, f := range bytes.Fields(m[1]) {
+		for _, f := range bytes.Fields(pdf[m[2]:m[3]]) {
 			v, err := strconv.ParseInt(string(f), 10, 64)
 			if err != nil {
 				br = nil
@@ -307,10 +323,101 @@ func rawByteRangeEnds(pdf []byte) map[int64]bool {
 			br = append(br, v)
 		}
 		if e, ok := lastPairEnd(br, len(pdf)); ok {
-			out[e] = true
+			out[e] = append(out[e], rawByteRange{at: m[0], br: br})
 		}
 	}
 	return out
+}
+
+// rawByteRange is one literal ByteRange: where it begins in the file, and its numbers.
+type rawByteRange struct {
+	at int
+	br []int64
+}
+
+var reRawContents = regexp.MustCompile(`/Contents\s*<([0-9A-Fa-f\s]*)>`)
+
+// prescreen reports whether a literal ByteRange ending at a boundary could be the signer's, from the bytes around it
+// alone and BEFORE pdfcpu reads the prefix: its object's literal `/Contents` must parse as a SignerInfo naming the
+// signer, that SignerInfo must check against the named key, and its ranges must hash to the digest it signed. A genuine
+// holder passes by construction — the sweep refuses an indirect `/Contents` (conjunct 9) and a signature inside an
+// object stream (conjunct 10), so its blob is literal bytes in its own object. Measured (P02.S03): without it, 20 fake
+// xref sections in a 100 MB file cost 2 min 6 s, every one a full pdfcpu read of a prefix it then refused.
+func prescreen(pdf []byte, lits []rawByteRange, fingerprint string, budget *int64) bool {
+	// EVERY byte this looks at is charged to the budget, the scans as well as the hashing (P02.S03's review: 64,000
+	// literals in one 1.4 MB object cost 3 min uncharged — each one scanned back to its header and forward to `endobj`).
+	// With the charge the work is linear in the file, and a document that exhausts it reads `could-not-check`.
+	seen := map[int]bool{}
+	for _, l := range lits {
+		if *budget < 0 {
+			return false
+		}
+		start := bytes.LastIndex(pdf[:l.at], []byte(" obj"))
+		if start < 0 {
+			*budget -= int64(l.at)
+			continue
+		}
+		*budget -= int64(l.at - start)
+		if seen[start] {
+			continue // one object, examined once
+		}
+		seen[start] = true
+		end := bytes.Index(pdf[l.at:], []byte("endobj"))
+		if end < 0 {
+			*budget -= int64(len(pdf) - l.at)
+			continue
+		}
+		span := pdf[start : l.at+end]
+		*budget -= int64(end) + int64(len(span)) // the forward scan, then the /Contents search over the object
+		if *budget < 0 {
+			return false
+		}
+		m := reRawContents.FindSubmatch(span)
+		if m == nil {
+			continue
+		}
+		raw := make([]byte, 0, len(m[1]))
+		for _, f := range bytes.Fields(m[1]) {
+			raw = append(raw, f...)
+		}
+		blob := make([]byte, len(raw)/2)
+		if _, err := hex.Decode(blob, raw[:len(blob)*2]); err != nil {
+			continue
+		}
+		// Untrimmed, as the sweep parses it: a signature value can end in 0x00, and trimming the padding cut one in
+		// 256 genuine signatures (P02.S03's review).
+		p7, err := pkcs7.Parse(blob)
+		if err != nil {
+			continue
+		}
+		pr := proofOf(p7)
+		if pr == nil || hex.EncodeToString(fingerprintOf(pr.cert)) != fingerprint {
+			continue
+		}
+		bare := pr.signedAttrs == nil
+		if !bare && !pr.attributed() {
+			continue
+		}
+		cost, ok := rangeCost(l.br, len(pdf))
+		if !ok {
+			continue
+		}
+		if cost > *budget {
+			*budget = -1
+			return false
+		}
+		*budget -= cost
+		if bare {
+			if pr.encapsulated || pr.checks(selected(pdf, l.br)) {
+				return true
+			}
+			continue
+		}
+		if pr.digestMatches(pdf, l.br) {
+			return true
+		}
+	}
+	return false
 }
 
 // revisionBoundaries is every place pdfcpu-shaped bytes say a revision ends, newest first: a `%%EOF` whose `startxref`
