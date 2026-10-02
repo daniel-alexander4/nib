@@ -214,7 +214,7 @@ func TestCentredLinesOverTheCorpus(t *testing.T) {
 					t.Errorf("%s p%d ¶%d %q: nothing on its baseline", doc.name, p, pi, para.text())
 					continue
 				}
-				if normalizedText(ln.text) != normalizedText(edit) {
+				if !readsAsEdit(ln.text, edit) {
 					t.Errorf("%s p%d ¶%d: reads back %q, want %q", doc.name, p, pi, ln.text, edit)
 					continue
 				}

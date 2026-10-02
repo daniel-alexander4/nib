@@ -1084,7 +1084,7 @@ corpus, 1 of them off; the hand-built two-way pair and noisy face lend nothing).
 (3,793 glyphs) per page, read only when a word is typed. Review `code-reviews/v1.177.0-p08s05-2026-10-01.md` (3 critical,
 2 warnings, 3 info; all dispositioned).
 
-#### P08.S07 — a word broken at a line's end rejoins when the break moves
+#### P08.S07 — a word broken at a line's end rejoins when the break moves *(done 2026-10-01, v1.178.0)*
 **Added 2026-09-30 at S03's grill, by measurement** — the phase-open pin put hyphenation out ("a justified producer's
 hyphen is kept as the glyph it is") on no measurement, and it was wrong: a line ending in a hyphen whose next line opens in
 lower case is in **301 of 909** AH and **106 of 436** InDesign multi-line paragraphs — the justifying producers — and a
@@ -1093,6 +1093,44 @@ again (the hyphen glyph dropped, no space) wherever the re-wrap puts it mid-line
 ends a line: the breaker measures the first half with its hyphen at a line's end and without it mid-line. Nothing new is
 hyphenated. Acceptance: a hyphenated break moved mid-line reads back as one word; one left at a line's end keeps its hyphen;
 an unedited paragraph still re-breaks in place; a hyphen that is part of a word ("well-known") is never dropped.
+
+**Tasks** (slice grill, 2026-10-01 — measured before it: over the corpus, 836 breaks — a line-final word ending in a hyphen
+after a letter, the next line opening in lower case — of which 630 are written joined elsewhere in their document, 22
+hyphenated ("full-time", "income-to-poverty"), 4 both and 180 neither; the page with two either side agrees with the whole
+document's verdict for 88% of Antenna House's and 81% of InDesign's, the page alone 76% and 66%). T01 — the one breaker
+(`mdpdf.BreakGreedy`, law 4) gains two optional hooks: `Hyphenate` (an item's one break point: head with its hyphen ends a
+line, tail begins the next — taken where the whole item does not fit and the head does, or where the item is wider than a
+line) and `KeepBreak` (the break is taken first where the line so far is the line it ended). mdpdf passes neither. T02 —
+`rejoinBroken`: a break both halves of which the edit keeps (by the alignment, consecutive) becomes one item — without its
+hyphen where the evidence writes the word joined and not hyphenated, with it where it writes it hyphenated, always without a
+soft hyphen (U+00AD); where nothing says, the halves stay apart and the re-set refuses `hyphen-unsure` if the head no longer
+ends a line with its tail opening the next. Evidence (`hyphenEvidence`): every whole word on the page and two either side
+— never a line-final word ending in a hyphen or the word after it — read lazily, only when a break is kept. T03 — tests:
+the breaker's hooks; a break moved mid-line rejoins (dropped / kept by evidence); an edit after it keeps it; no evidence
+refuses only where it moves; a capital or a figure before the hyphen is not a break; a soft hyphen needs no evidence; the
+corpus census; tier 3. **Grill defaults (rung 1/2)**: refusing an unsettled break over guessing (law 3); the radius 2
+(bounded cost, 12 points of agreement over the page alone); a break whose halves are in different fonts is unsettled.
+**PIN 2026-10-01 (build — the producer's break is kept where its line is untouched)**: at natural spaces a whole rejoined
+word often fits where the producer broke it, so an edit AFTER the break pulled the word up and changed a line it never
+reached; `KeepBreak` keeps the producer's decision while the line up to the break is the line it ended (the same kept words,
+in order), and only a line the edit changed tries the whole word first. The census holds it: of the breaks an edit at the
+paragraph's end did not reach, 142 in place, 0 moved. Test instruments that compared a read-back to the edit word for word
+now use one comparator (`readsAsEdit`: a broken pair may read back as one word) and count letters, not words, to know when
+they have read the edit (`editLetters`) — four sites. The breaker change kept its "does not fit" comparison verbatim (a NaN
+width fits, as before — `TestThePhaseClosesFindingsHold` caught the inversion).
+**Closed 2026-10-01.** Ledger: a hyphenated break moved mid-line reads back as one word — met (hand-built, both evidence
+kinds; corpus: 95 paragraphs re-set with the break moved, 53 words rejoined, 67 refused `hyphen-unsure`; tier 3 reads
+"accommodate" and no "accom-" in pdf.js); one left at a line's end keeps its hyphen — met (an edit after the break keeps it,
+hand-built; the breaker's `KeepBreak` case); an unedited paragraph still re-breaks in place — met for breaks (142 of 142 breaks
+an end edit did not reach stay on their line; whole-line drift at natural spaces is S03's measured, pre-existing behaviour);
+a hyphen that is part of a word ("well-known") is never dropped — met (mid-line it is not a break; at a line end it is
+dropped only where the document writes the word joined and not hyphenated). Evidence costs 13.7 ms a read, only when a
+break is kept. Review `code-reviews/v1.178.0-p08s07-2026-10-01.md` (0 critical, 5 warnings, 5 info; all dispositioned): a
+word across three lines ("con-" / "tra-" / "ry") rejoined its first break and left the second mid-line — a break in a chain
+is now unsure (refused where it moves); a paragraph past the word alignment's bound carrying a break now refuses rather than
+leave it to land mid-line; evidence reads U+2010 as '-' and drops an inner soft hyphen. Found on the way, pre-existing and filed (/pending 790): a re-set line on a two-column page can read back
+merged into the neighbouring column's line 4 pt above it (drawn right; the reader's grouping joins them).
+
 
 #### P08.S06 — a word in two styles
 A word whose runs change font or size part-way through (`styled-word`, 381) is carried as its pieces, each in its own

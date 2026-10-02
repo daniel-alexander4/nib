@@ -501,3 +501,34 @@ test('a typed word takes the kerning the page draws for its pairs', async () => 
   // the two, not its last digit; a kern written the wrong way round would read below the unkerned 0.80.
   assert.ok(kern > 1.4 && kern < 3.5, `"AVAV" is ${kern} pt narrower than "VAAV", want one AV kern (1.96 pt drawn) — scale ${scale}, rows ${JSON.stringify(two.after.spans)} / ${JSON.stringify(one.after.spans)}`);
 });
+
+// P08.S07 through the binary: a word the producer hyphenated across a line end ("accom-" / "modate") rejoins when the
+// edit moves it mid-line — the document writes "accommodate" whole below, so the hyphen goes. Read from pdf.js's text
+// layer: the word is on the page twice (the evidence and the paragraph), and "accom-" nowhere.
+const BROKEN = writeRawFixture('reflow-broken.pdf', paragraphPDF(
+  'BT /F1 12 Tf 14 TL 72 700 Td 17.159 Tw (We will do all that we can to accom-) Tj T* 12.065 Tw (modate the needs of each and every one of) Tj T* 0 Tw (our clients this year.) Tj ET ' +
+  'BT /F1 12 Tf 72 500 Td (It is hard to accommodate them all here.) Tj ET'));
+
+test('a hyphenated word rejoins when the edit moves it mid-line', async () => {
+  await h.closeDocument();
+  await h.openDocument(BROKEN, 1);
+  await page.waitForFunction(() => /accom-/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  await openReflow();
+  const offered = await page.$eval('#reflowText', (t) => t.value);
+  assert.equal(offered, 'We will do all that we can to accom- modate the needs of each and every one of our clients this year.',
+    'setup: the dialog did not offer the broken paragraph as one');
+  await page.fill('#reflowText', offered.replace('We will ', ''));
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the paragraph was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  // Wait for the NEW text, not the old to be gone (between the two the layer is empty), white space collapsed: pdf.js
+  // draws each word of a stretched line as its own span.
+  await page.waitForFunction(() => {
+    const t = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ').replace(/\s+/g, ' ');
+    return /^Do all|\bdo all/.test(t) && !/We will/.test(t);
+  });
+  const after = (await pageText()).replace(/\s+/g, ' ');
+  assert.doesNotMatch(after, /accom-/, `the fragment is still on the page: ${after}`);
+  assert.equal((after.match(/accommodate/g) || []).length, 2, `the word is not rejoined in the paragraph: ${after}`);
+});
