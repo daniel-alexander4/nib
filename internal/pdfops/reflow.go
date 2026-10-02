@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -159,6 +160,16 @@ func (w reflowWord) text() string {
 	return s
 }
 
+// centredStackTol is how near the axis another line's middle must be for its shared left edge NOT to count against a
+// centred reading: producers centre a stack of lines loosely (an Acrobat address block sits 1.2 pt off its column's
+// centre), and a body line sharing an edge has its middle far off the axis — wherever its length puts it.
+const centredStackTol = 2.0
+
+// centredMaxWidth is the widest a centred line may be, as a share of its column: wider, a line whose middle falls on the
+// axis is a full line, not a centred one (P08.S04) — and a centred line is never re-set wider than this, or it would not
+// read back centred.
+const centredMaxWidth = 0.7
+
 // wordGapEm is the smallest gap between two runs on a line, in ems of the larger of the line so far and the later run,
 // that separates two words. Below it the runs are one word drawn in pieces (a kerned producer, a change of style inside a
 // word). Grouping reads a paragraph's text by the same rule (`separatesWords`), so the text the user edits and the
@@ -268,14 +279,19 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 		}
 		lines = append(lines, line)
 	}
-	// The space after a word that ENDS at another size than it began — a trailing footnote figure ("smoke¹³") — is drawn
-	// in the word's own body look, its first glyph's: the figure's font sets it narrower, or has no space at all (the
-	// review of S06, W2). A word wholly at another size keeps its own: "BIG " was drawn with an 18pt space (P08.S01).
+	// The space after a word is drawn in its BODY look — the largest it is drawn in (the last of those tied): a figure
+	// before or after it ("smoke¹³", "¹⁴C") is the smaller, and its font sets the space narrower or has none (the review
+	// of S06, W2; the P08 phase-close review, W1 — the first glyph's look got "¹⁴C" wrong). A word wholly at another
+	// size keeps its own: "BIG " was drawn with an 18pt space (P08.S01).
 	for _, l := range lines {
 		for i := range l {
-			if f := l[i].looks[0]; l[i].tfSize != f.tfSize {
-				l[i].face, l[i].font, l[i].tfSize = f.face, f.font, f.tfSize
+			body := l[i].looks[len(l[i].looks)-1]
+			for _, lk := range l[i].looks {
+				if lk.tfSize > body.tfSize {
+					body = lk
+				}
 			}
+			l[i].face, l[i].font, l[i].tfSize = body.face, body.font, body.tfSize
 		}
 	}
 	if len(gaps) == 0 {
@@ -471,8 +487,11 @@ func paragraphAlignment(l pageLayout, pi int, lines [][]reflowWord) alignment {
 	even := func(ln []reflowWord) bool {
 		var g []float64
 		for i := 1; i < len(ln); i++ {
-			t := ln[i-1].text()
-			if strings.ContainsAny(t[len(t)-1:], ".:;?!,)") && !strings.HasSuffix(t, "..") {
+			// The word's last RUNE past any closing quote: a sentence ending ".”" ends in punctuation too, and a
+			// byte slice saw a UTF-8 continuation byte — and panicked on a word that reads as nothing (the P08
+			// phase-close review, W2, W3).
+			t := strings.TrimRight(ln[i-1].text(), "\"'”’»")
+			if r, _ := utf8.DecodeLastRuneInString(t); t != "" && strings.ContainsRune(".:;?!,)]", r) && !strings.HasSuffix(t, "..") {
 				continue
 			}
 			g = append(g, ln[i].startX-ln[i-1].startX-ln[i-1].width)
@@ -525,22 +544,6 @@ func centredAlignment(l pageLayout, pi int, lefts, rights []float64) alignment {
 			cl, cr = math.Min(cl, b[0]), math.Max(cr, b[2])
 		}
 	}
-	// A line that begins where other lines of its column begin is set from that edge, whatever its middle: two others
-	// starting within half a point is a left edge (a body line on a page grouped as one column read as centred: the
-	// review of P08.S04).
-	for i := range p.lines {
-		shared := 0
-		for qi, q := range l.paragraphs {
-			for _, ln := range q.lines {
-				if qi != pi && q.column == p.column && math.Abs(ln.x0-p.lines[i].x0) <= 0.5 {
-					shared++
-				}
-			}
-		}
-		if shared >= 2 {
-			return alignment{}
-		}
-	}
 	axes := []float64{(cl + cr) / 2}
 	if l.columns == 1 && l.box[2] > l.box[0] {
 		axes = append(axes, (l.box[0]+l.box[2])/2)
@@ -548,13 +551,32 @@ func centredAlignment(l pageLayout, pi int, lefts, rights []float64) alignment {
 	for _, axis := range axes {
 		ok := true
 		for i := range lefts {
-			ok = ok && math.Abs((lefts[i]+rights[i])/2-axis) <= 0.5 && rights[i]-lefts[i] <= 0.7*(cr-cl)
+			ok = ok && math.Abs((lefts[i]+rights[i])/2-axis) <= 0.5 && rights[i]-lefts[i] <= centredMaxWidth*(cr-cl)
+		}
+		// A line that begins where other lines of its column begin is set from that edge, whatever its middle: two others
+		// starting within half a point is a left edge (a body line on a page grouped as one column read as centred: the
+		// review of P08.S04) — unless they are centred on this axis too: a stack of centred lines of near length starts
+		// in near places by coincidence (an address block re-set by one word read as left-aligned: the P08 phase-close
+		// fix pass).
+		for i := range p.lines {
+			shared := 0
+			for qi, q := range l.paragraphs {
+				for _, ln := range q.lines {
+					if qi != pi && q.column == p.column && math.Abs(ln.x0-p.lines[i].x0) <= 0.5 && math.Abs((ln.x0+ln.x1)/2-axis) > centredStackTol {
+						shared++
+					}
+				}
+			}
+			if shared >= 2 {
+				ok = false
+			}
 		}
 		if ok {
-			// A line may take as much as fits on both sides of the axis: within its column, and short of anything drawn
-			// beside it on either side.
+			// A line may take as much as fits on both sides of the axis: within its column, short of anything drawn beside
+			// it on either side — and no wider than this door reads as centred, so what is written reads back centred and
+			// the next edit keeps the axis (the P08 phase-close review, C1).
 			left, right := roomOnItsLine(l, pi)
-			return alignment{centred: true, axis: axis, width: 2 * math.Min(axis-left, right-axis)}
+			return alignment{centred: true, axis: axis, width: math.Min(2*math.Min(axis-left, right-axis), centredMaxWidth*(cr-cl))}
 		}
 	}
 	return alignment{}
@@ -785,9 +807,6 @@ func breakAt[T any](items []T, measures []float64, width func(T) float64, space 
 	})
 }
 
-// reflowWord's emission needs the run a word came from: its font resource name and text state. New words take the
-// paragraph's first run's.
-
 // A reflow refusal names its cause (law 3). Each is a fallback to cover-and-replace, never an error.
 const (
 	reflowNoChange       = ""                 // the text is the paragraph's own: nothing to do (law 1)
@@ -817,6 +836,7 @@ const (
 	causeNoSpaceWidth    = "no-space-width"   // the paragraph draws no space between words to measure one by
 	causeDegenerate      = "degenerate-state" // a zero or infinite scale, size or coordinate
 	causeClips           = "text-clips"       // drawn in a clipping mode (Tr 4-7): re-set or moved, the clip it makes changes
+	causeCentredGrows    = "centred-grows"    // a centred line would need a second line, which would not read back as one centred paragraph
 	causeHyphenUnsure    = "hyphen-unsure"    // a word hyphenated at a line end would move mid-line, and nothing says whether its hyphen is part of it (P08.S07)
 )
 
@@ -826,7 +846,7 @@ var ReflowCauses = []string{
 	causeMissingGlyph, causeMixedState, causeMixedContent, causeTextObjects, causeInlineFollower, causeTagged, causeReplacementText,
 	causeNoSpaceGlyph, causePageFull, causeNoPitch, causeAnchored, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
 	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept,
-	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeHyphenUnsure, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
+	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeHyphenUnsure, causeCentredGrows, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
 }
 
 // editWords cuts text as a user typed it into words: at white space, but never at a no-break space, which is part of
@@ -1044,7 +1064,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	// word the alignment does not keep (typed, or moved) takes any occurrence of it while they all look alike. A word drawn
 	// in two LOOKS (a font, a size, or a style: a stroked synthetic bold, a raised figure) is used only where EVERY longest
 	// alignment keeps it and keeps it in one look — an edit two alignments explain equally does not say which copy
-	// survived — and refuses everywhere else (law 3 — never guess). A new word is spelled in the first run's font from the
+	// survived — and refuses everywhere else (law 3 — never guess). A new word is spelled in the paragraph's usual look (P08.S06) from the
 	// codes it carries, preferring a code the paragraph already draws, and kerned as the page kerns its pairs (`kernsOf`).
 	u := usualLook(lines) // the look a typed word is drawn in
 	known := map[string][]emitWord{}
@@ -1209,7 +1229,9 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 					kerns = kernsOf(layout)
 				}
 				// The kern the page draws for this pair, where it draws it one way (P08.S05), under this word's scaling.
-				k := -kerns.lend(u.face, u.tfSize*first.state.scale, ew.codes[n-1], code) / 1000 * u.tfSize * sp.th * first.state.scale
+				// Keyed as the table is (`kernDraws`: the run's size across its baseline), so a matrix stretched along the
+				// line still finds its pairs (the P08 phase-close review, W1).
+				k := -kerns.lend(u.face, u.tfSize*first.size/first.state.tfSize, ew.codes[n-1], code) / 1000 * u.tfSize * sp.th * first.state.scale
 				ew.kerns = append(ew.kerns, k)
 				ew.width += k
 			}
@@ -1288,6 +1310,12 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	// the paragraphs below it moved by the growth. What it cannot move with them, it refuses.
 	n := len(para.lines)
 	extra := len(broken) - n
+	if extra > 0 && align.centred {
+		// A centred line that needs a second one: grown, its lines start in different places and read back as two
+		// paragraphs, the first of them too wide to read centred, so the next edit loses the axis (the P08 phase-close
+		// review, C1). S04 refused it as `no-pitch`, which S05's pitch floor stopped saying.
+		return reflowOutcome{cause: causeCentredGrows}, nil
+	}
 	var region flowRegion
 	pitch := 0.0
 	if extra > 0 {

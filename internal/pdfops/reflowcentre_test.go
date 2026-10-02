@@ -50,7 +50,8 @@ func midsOf(t *testing.T, pdf []byte, prefix string) []float64 {
 // TestACentredHeadingStaysCentred — `PLAN-text-reflow.md` P08.S04: a heading centred on its page is re-set centred on the
 // same axis when edited shorter and longer. It used to be re-set from its old left edge, so any change of length left it
 // off-centre, silently. (Centred lines with different starts are grouped as a paragraph EACH, so a centred paragraph is a
-// line; one that would need a second line has no pitch to set it at, and refuses as it did.)
+// line; one that would need a second line refuses `centred-grows` — it would read back as two paragraphs, the first not
+// centred: the P08 phase-close review, C1.)
 func TestACentredHeadingStaysCentred(t *testing.T) {
 	pdf := helveticaPage(centredPage("Annual Report", 306))
 	l, _ := layoutOf(t, pdf)
@@ -58,9 +59,9 @@ func TestACentredHeadingStaysCentred(t *testing.T) {
 	if a := paragraphAlignment(l, 0, lines); !a.centred || math.Abs(a.axis-306) > 1e-6 {
 		t.Fatalf("setup: the heading reads as %+v, want centred on 306", a)
 	}
-	// The third is wider than the room from the heading's old left edge to the column's right (it would wrap, and a
-	// one-line paragraph has no pitch to wrap at) but fits about the axis: a centred line's room is both sides of it.
-	for _, edit := range []string{"Short Report", "The Annual Report for the Year", "The Annual Report of the Board for the Year 2025"} {
+	// Each is re-set centred, READS BACK centred on the same axis, and a second edit of the result keeps it there (the
+	// P08 phase-close review, C1: a line written wider than the door reads as centred lost its axis on the next edit).
+	for _, edit := range []string{"Short Report", "The Annual Report for the Year"} {
 		out, cause := reflowed(t, pdf, 0, edit)
 		if cause != "" {
 			t.Fatalf("%q refused (%s)", edit, cause)
@@ -71,6 +72,23 @@ func TestACentredHeadingStaysCentred(t *testing.T) {
 				t.Errorf("%q: line %d centred on %v, not 306", edit, i, m)
 			}
 		}
+		l2, _ := layoutOf(t, out)
+		lines2, _, _ := paragraphWords(l2.paragraphs[0])
+		if a := paragraphAlignment(l2, 0, lines2); !a.centred || math.Abs(a.axis-306) > 1e-6 {
+			t.Errorf("%q re-set reads as %+v, want centred on 306", edit, a)
+		}
+		again, cause := reflowed(t, out, 0, "Annual Report")
+		if cause != "" {
+			t.Fatalf("%q then \"Annual Report\" refused (%s)", edit, cause)
+		}
+		if m := midsOf(t, again, "Annual"); math.Abs(m[0]-306) > 1e-6 {
+			t.Errorf("%q then \"Annual Report\": centred on %v, not 306", edit, m[0])
+		}
+	}
+	// Wider than the door reads as centred (70% of the column) it would not read back centred, and as two lines it would
+	// read back as two paragraphs: refused, named.
+	if _, cause := reflowed(t, pdf, 0, "The Annual Report of the Board for the Year 2025"); cause != causeCentredGrows {
+		t.Errorf("a centred line wider than the door reads: cause %q, want %q", cause, causeCentredGrows)
 	}
 }
 
@@ -220,6 +238,15 @@ func TestCentredLinesOverTheCorpus(t *testing.T) {
 				}
 				if mid := (ln.x0 + ln.x1) / 2; math.Abs(mid-a.axis) > justifyTol*para.lines[0].size {
 					t.Errorf("%s p%d ¶%d %q: centred on %v, the axis is %v", doc.name, p, pi, edit, mid, a.axis)
+				}
+				// And it READS BACK centred, so the next edit keeps the axis (the P08 phase-close review, C1).
+				for qi, q := range l3.paragraphs {
+					if len(q.lines) == 1 && q.lines[0].y == ln.y && q.lines[0].x0 == ln.x0 {
+						w3, _, cause := paragraphWords(q)
+						if a3 := paragraphAlignment(l3, qi, w3); cause == "" && !a3.centred {
+							t.Errorf("%s p%d ¶%d %q: re-set centred, reads back not centred", doc.name, p, pi, edit)
+						}
+					}
 				}
 			}
 		}

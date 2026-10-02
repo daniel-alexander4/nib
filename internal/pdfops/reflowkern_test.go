@@ -52,8 +52,10 @@ func typedKerns(t *testing.T, pdf []byte, w string) []float64 {
 func TestATypedWordTakesThePagesKerning(t *testing.T) {
 	// Plain, and under 110% horizontal scaling: a kern is read back to the `TJ` number the producer wrote, and the
 	// typed word's is written under its own scaling, so the same numbers come back.
-	for _, tz := range []string{"", "110 Tz "} {
-		t.Run("Tz="+tz, func(t *testing.T) { typedWordTakesThePagesKerning(t, strings.Replace(kernedPara, "BT ", "BT "+tz, 1)) })
+	// And under a text matrix stretched along the line: the table keys a pair by the size ACROSS the baseline, and the
+	// lookup must too (the P08 phase-close review, W1 — 97 InDesign paragraphs lent nothing).
+	for _, tz := range []string{"", "110 Tz ", "1.2 0 0 1 0 0 Tm "} {
+		t.Run("state="+tz, func(t *testing.T) { typedWordTakesThePagesKerning(t, strings.Replace(kernedPara, "BT ", "BT "+tz, 1)) })
 	}
 }
 

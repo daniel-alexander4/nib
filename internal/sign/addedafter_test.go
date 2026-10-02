@@ -202,8 +202,9 @@ func mustHex(t *testing.T, b []byte) []byte {
 	return out
 }
 
-// kidsNested is a document whose only signature sits under a parent field's `/Kids`, where the
-// `/Fields` walk cannot see it, carrying `blob` as its `/Contents`.
+// kidsNested is a document whose only signature sits under a parent field's `/Kids` (which the
+// `/Fields` walk once could not see, and since the P08 phase-close review does), carrying `blob` as
+// its `/Contents`.
 func kidsNested(t *testing.T, sig string, blob func([]byte) []byte) []byte {
 	t.Helper()
 	objs := baseObjs(sig)
@@ -217,17 +218,22 @@ func kidsNested(t *testing.T, sig string, blob func([]byte) []byte) []byte {
 }
 
 // TestANestedSignatureThatFailsIsNotUnsigned — the zero-signer rule (grill pin). A `/Kids`-nested
-// signature whose PKCS#7 does not parse: the library drops it, and `signatureBlobPresent` walks
-// `/Fields` and cannot see it, so the document read `Unsigned` — "never signed" — while `Revisions`
-// held its record. The sweep's non-empty `/Contents` makes it `Invalid`.
+// signature whose PKCS#7 does not parse: the library drops it, and `signatureBlobPresent` walked
+// `/Fields`' top level and could not see it, so the document read `Unsigned` — "never signed" — while
+// `Revisions` held its record. The sweep's non-empty `/Contents` makes it `Invalid` on its own; the
+// walk now descends `/Kids` too (the P08 phase-close review), and each is asked separately here.
 func TestANestedSignatureThatFailsIsNotUnsigned(t *testing.T) {
 	doc := kidsNested(t, sigDict("1", ""), func([]byte) []byte { return bytes.Repeat([]byte{0x30, 0x01}, 40) })
 	resp, lerr := verify.Verify(bytes.NewReader(doc), int64(len(doc)))
-	rec := recordFor(t, mustSweep(t, doc), 5)
-	// STIMULUS: the library reports no signer, the /Fields walk sees no blob, and the record carries
-	// a non-empty /Contents it could not parse.
-	if (lerr == nil && resp != nil && len(resp.Signers) != 0) || signatureBlobPresent(doc) || !rec.hasContents || rec.Cause != CauseUnparseableContents {
-		t.Fatalf("STIMULUS: library err %v, blob walk %v, record contents %v cause %q", lerr, signatureBlobPresent(doc), rec.hasContents, rec.Cause)
+	revs := mustSweep(t, doc)
+	rec := recordFor(t, revs, 5)
+	// STIMULUS: the library reports no signer, and the record carries a non-empty /Contents it could
+	// not parse — so the sweep, independently of the /Fields walk, sees a checkable blob.
+	if (lerr == nil && resp != nil && len(resp.Signers) != 0) || !rec.hasContents || rec.Cause != CauseUnparseableContents || !anyCheckableBlob(revs) {
+		t.Fatalf("STIMULUS: library err %v, record contents %v cause %q, sweep blob %v", lerr, rec.hasContents, rec.Cause, anyCheckableBlob(revs))
+	}
+	if !signatureBlobPresent(doc) {
+		t.Errorf("the /Fields walk does not see the nested blob — every gate that asks it alone reads the document unsigned")
 	}
 	st := Verify(doc)
 	if st.State != Invalid {
@@ -235,6 +241,25 @@ func TestANestedSignatureThatFailsIsNotUnsigned(t *testing.T) {
 	}
 	if len(st.Refused) != 1 || st.Refused[0].Obj != 5 || st.Refused[0].Cause != CauseUnparseableContents {
 		t.Errorf("refused %+v, want object 5 %q — the zero-signer path must still name what it refused", st.Refused, CauseUnparseableContents)
+	}
+}
+
+// TestAnUnlistedSignatureThatFailsIsNotUnsigned — the zero-signer rule held by the SWEEP alone (the
+// review of the P08 phase-close fix): a signature field nothing references — not in `/Fields`, not in
+// any `/Kids` — is invisible to the `/Fields` walk however deep it goes, so `Invalid` can only come
+// from the sweep's checkable blob. Without that disjunct the document reads `Unsigned` again.
+func TestAnUnlistedSignatureThatFailsIsNotUnsigned(t *testing.T) {
+	objs := baseObjs(sigDict("1", ""))
+	objs[3] = sobj{num: 4, body: "<</T(parent)>>"}
+	objs = append(objs, sobj{num: 6, body: "<</FT/Sig/T(child)/V 5 0 R>>"})
+	doc := fillSig(t, synthRevision(t, nil, objs, 1), "1", nil, func([]byte) []byte { return bytes.Repeat([]byte{0x30, 0x01}, 40) })
+	revs := mustSweep(t, doc)
+	// STIMULUS: the walk cannot see it, the sweep can.
+	if signatureBlobPresent(doc) || !anyCheckableBlob(revs) {
+		t.Fatalf("STIMULUS: walk %v, sweep %v — want the walk blind and the sweep seeing it", signatureBlobPresent(doc), anyCheckableBlob(revs))
+	}
+	if st := Verify(doc); st.State != Invalid {
+		t.Errorf("state %s, want invalid: an unlisted signature nib could not parse is not an unsigned document", st.State)
 	}
 }
 
