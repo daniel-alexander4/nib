@@ -215,6 +215,7 @@ func TestASoftHyphenIsAlwaysTheProducers(t *testing.T) {
 		for i, gl := range w.glyphs {
 			e.codes = append(e.codes, gl.code)
 			e.spacing = append(e.spacing, textSpacing{th: 1})
+			e.looks = append(e.looks, glyphLook{})
 			if i > 0 {
 				e.kerns = append(e.kerns, 0)
 			}
@@ -405,6 +406,7 @@ func TestAWordAcrossThreeLinesIsUnsure(t *testing.T) {
 		for i, gl := range w.glyphs {
 			e.codes = append(e.codes, gl.code)
 			e.spacing = append(e.spacing, textSpacing{th: 1})
+			e.looks = append(e.looks, glyphLook{})
 			if i > 0 {
 				e.kerns = append(e.kerns, 0)
 			}

@@ -165,8 +165,8 @@ func TestAReflowItCannotDoExactlyNamesWhy(t *testing.T) {
 			"BT /F1 12 Tf 14 TL 72 700 Td (The quick brown fox jumps) Tj T* (over the lazy dog) Tj /Artifact BMC (DRAFT) Tj EMC ET",
 			"The quick brown fox leaps over the lazy dog", causeInlineFollower},
 		{"lines drawn at different scales",
-			// A spacing is carried glyph by glyph (P08.S01); a text matrix's scale converts every kern and lead the
-			// rewrite writes, and is not.
+			// A spacing is carried glyph by glyph (P08.S01) and a uniform text-matrix scale is restated as a size
+			// (P08.S06); a STRETCH set by `Tm` (1.2 across, 1 up) is neither.
 			"BT /F1 12 Tf 14 TL 72 700 Td (The quick brown fox jumps) Tj 1.2 0 0 1 72 686 Tm (over the lazy dog) Tj ET",
 			"The quick brown fox leaps over the lazy dog", causeMixedState},
 		{"a clipping mode",
@@ -456,11 +456,31 @@ func TestTheReviewsFindingsHold(t *testing.T) {
 			t.Errorf("\"Word\" reads %v wide before and %v after; it is %v", b, a, want)
 		}
 	})
-	t.Run("a word drawn in two fonts is refused, not re-set in the first", func(t *testing.T) {
+	t.Run("a word drawn in two fonts is re-set in both, never in the first alone", func(t *testing.T) {
+		// It was refused (`styled-word`) until P08.S06; each glyph now keeps its own font.
 		pdf := twoFontPage("F1", "F2", "BT /F1 12 Tf 14 TL 72 700 Td (The Wo) Tj /F2 12 Tf (rd and more) Tj /F1 12 Tf T* (words here) Tj ET")
-		if _, cause := reflowed(t, pdf, 0, "The Word and more words"); cause != "styled-word" {
-			t.Errorf("fell back on %q, want styled-word", cause)
+		out, cause := reflowed(t, pdf, 0, "The Word and more words")
+		if cause != "" {
+			t.Fatalf("refused (%s)", cause)
 		}
+		l, _ := layoutOf(t, out)
+		lines, _, _ := paragraphWords(l.paragraphs[0])
+		for _, ln := range lines {
+			for _, w := range ln {
+				if w.text() != "Word" {
+					continue
+				}
+				var got []string
+				for _, lk := range w.looks {
+					got = append(got, lk.font)
+				}
+				if strings.Join(got, " ") != "F1 F1 F2 F2" {
+					t.Errorf("\"Word\" reads back in fonts %v, want F1 F1 F2 F2", got)
+				}
+				return
+			}
+		}
+		t.Errorf("no \"Word\" in %v", lineTexts(lines))
 	})
 	t.Run("a line's lead survives: a leading TJ adjustment is where its first word begins", func(t *testing.T) {
 		pdf := helveticaPage("BT /F1 12 Tf 14 TL 72 700 Td [-500 (The quick brown fox jumps)] TJ T* [-500 (over the lazy dog)] TJ ET")

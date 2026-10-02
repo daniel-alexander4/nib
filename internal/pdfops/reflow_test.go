@@ -151,7 +151,9 @@ func glyphRun(x float64, g []runGlyph) textRun {
 	for _, gl := range g {
 		w += gl.kern + gl.advance
 	}
-	return textRun{x: x, width: w, size: 10, decoded: true, widthSrc: widthFromWidths, codes: len(g), glyphs: g}
+	id := runMatrix{1, 0, 0, 1, 0, 0}
+	return textRun{x: x, width: w, size: 10, decoded: true, widthSrc: widthFromWidths, codes: len(g), glyphs: g,
+		state: runTextState{tm: id, ctm: id, scale: 1, th: 1}}
 }
 
 // TestAParagraphIsCutIntoWordsByItsOwnRules — the three word rules, and the space, on a hand-built line whose answer is
@@ -209,11 +211,17 @@ func TestAParagraphItCannotReadFaithfullyNamesWhy(t *testing.T) {
 			t.Errorf("want %q, got %q", c.want, cause)
 		}
 	}
-	// A second line drawn at another text-matrix scale is refused here too, before anything is typed (P08.S01's review).
+	// A second line drawn STRETCHED by its text matrix is refused here too, before anything is typed (P08.S01's review);
+	// one at a uniform scale is restated as a size (P08.S06) and read.
+	stretched := base()
+	stretched.state.tm = runMatrix{1.5, 0, 0, 1, 0, 0}
+	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base(), glyphRun(5, glyphsOf(" c", 1, nil))}}, {runs: []textRun{stretched}}}}); cause != causeMixedState {
+		t.Errorf("a line stretched by its text matrix: want %q, got %q", causeMixedState, cause)
+	}
 	scaled := base()
-	scaled.state.scale = 1.5
-	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base()}}, {runs: []textRun{scaled}}}}); cause != causeMixedState {
-		t.Errorf("a line at another scale: want %q, got %q", causeMixedState, cause)
+	scaled.state.tm = runMatrix{1.5, 0, 0, 1.5, 0, 0}
+	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base(), glyphRun(5, glyphsOf(" c", 1, nil))}}, {runs: []textRun{scaled}}}}); cause != "" {
+		t.Errorf("a line at a uniform scale: refused %q, want it read", cause)
 	}
 	// And the control: the same run unedited is read, and a paragraph with no gap in it cannot say how wide its space is.
 	if _, _, cause := paragraphWords(textParagraph{lines: []textLine{{runs: []textRun{base()}}}}); cause != "no-space-width" {

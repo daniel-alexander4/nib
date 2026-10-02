@@ -368,7 +368,10 @@ your word too — and where the page places its letters inconsistently, nothing 
 document **hyphenated** across a line end ("accom-" / "modate") becomes one word again when your edit moves it
 inside a line — without the hyphen where the document writes the word whole elsewhere, with it where the document
 writes it hyphenated ("full-time"). If nothing nearby says which, the edit is refused with the reason rather than
-guessed. A **justified** paragraph stays justified: every line
+guessed. A word that changes **font** part-way — an italic word with a roman comma, a footnote
+number in another face, set smaller and raised — keeps each letter in its own font, size and height, and
+text whose size a publishing program set through its text matrix rather than its font size is re-set at
+that size too. A **justified** paragraph stays justified: every line
 but the last is set out to the right margin again. A **centred** heading stays centred when you change its length.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line

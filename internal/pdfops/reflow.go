@@ -29,15 +29,79 @@ type reflowWord struct {
 	// often enough (Acrobat writes a `Tc` per run, mid-word) that one state per word would re-space its glyphs (P08.S01).
 	spacing []textSpacing
 	width   float64
-	face    *runFont
-	size    float64
-	scale   float64 // text space → user space along the baseline, as `runTextState.scale`
-	// font and tfSize are the `Tf` operands of the run the word began in — what re-emitting it selects.
+	// looks is the font each glyph was drawn in, by index: a word can change font part-way (an italic word's roman comma,
+	// a footnote figure in another face — P08.S06), so each glyph is re-emitted in its own.
+	looks []glyphLook
+	// face, size, font and tfSize are the LAST glyph's look — the one the space after the word is drawn in.
+	face   *runFont
+	size   float64
+	scale  float64 // the paragraph's reference scale: every glyph is normalized to it (`paragraphWords`)
 	font   string
 	tfSize float64
 	// startX is where the word's first glyph begins, in user space: a line's lead is its first word's startX less its
 	// first run's origin, which a re-emitted line must keep.
 	startX float64
+}
+
+// glyphLook is the font a glyph is drawn in: its resource name, its size as a `Tf` operand at the paragraph's reference
+// scale, and the font itself.
+type glyphLook struct {
+	face   *runFont
+	font   string
+	tfSize float64
+}
+
+// normalizedTo is how run r's glyphs are drawn at the paragraph's reference run r0's text-matrix scale: the factor k that
+// scales r's `Tf` size, character and word spacing and rise to r0's text space, and r's baseline offset from origin (its
+// line's base run, `baseRun`) in r0's text-space units — carried as rise, so a figure raised by its text matrix stays
+// raised. The cause is `mixed-state` when the two matrices differ in more than a uniform scale and a move — a stretch, a
+// shear or a turn set by `Tm` cannot be restated as a size (P08.S06) — and `degenerate-state` when either does not measure.
+func normalizedTo(r, r0, origin textRun) (k, rise float64, cause string) {
+	m, m0, mo := r.state.tm.mul(r.state.ctm), r0.state.tm.mul(r0.state.ctm), origin.state.tm.mul(origin.state.ctm)
+	h, v := math.Hypot(m[0], m[1]), math.Hypot(m[2], m[3])
+	h0, v0 := math.Hypot(m0[0], m0[1]), math.Hypot(m0[2], m0[3])
+	if !(h0 > 0) || !(v0 > 0) || !(h > 0) || !finite(h, v, h0, v0, m[4], m[5], mo[4], mo[5]) {
+		return 0, 0, causeDegenerate
+	}
+	// Uniform: the whole linear part is k times the reference's — which is also what makes the vertical scale k.
+	k = h / h0
+	for i := 0; i < 4; i++ {
+		if math.Abs(m[i]-k*m0[i]) > 1e-6*math.Max(1, math.Abs(m[i])) {
+			return 0, 0, causeMixedState
+		}
+	}
+	// The offset of r's origin from its line's, across the baseline, in r0's text-space units: Δ solved on r0's axes, so a
+	// slanted matrix (a synthetic italic) does not read a step along the line as a rise (the review of S06, C1).
+	dx, dy := m[4]-mo[4], m[5]-mo[5]
+	rise = acrossBaseline(m0, dx, dy)
+	// Under a tenth of an em is a producer's jitter, not a raised figure: the corpus draws 89 runs 0.01–1 pt off their
+	// line's baseline, and carried as rise each would make a word look unlike its other copies (the review, I1).
+	if math.Abs(rise*v0) < 0.1*origin.size || !finite(rise) {
+		rise = 0
+	}
+	return k, rise, ""
+}
+
+// acrossBaseline is the component of the displacement (dx, dy) along m's text-space y axis, in its units: (dx, dy) solved
+// as a·x + b·y on m's axes, b returned.
+func acrossBaseline(m runMatrix, dx, dy float64) float64 {
+	det := m[0]*m[3] - m[1]*m[2]
+	if det == 0 {
+		return 0
+	}
+	return (m[0]*dy - m[1]*dx) / det
+}
+
+// baseRun is the run of line l that sets its baseline: the one drawing the most glyphs (the first of those tied) — never
+// simply the first run, which may be a raised figure opening a footnote (the review of S06, C2).
+func baseRun(l textLine) int {
+	best := 0
+	for i, r := range l.runs {
+		if len(r.glyphs) > len(l.runs[best].glyphs) {
+			best = i
+		}
+	}
+	return best
 }
 
 // textSpacing is the part of the text state that sets how a glyph advances and where it sits: character and word spacing,
@@ -107,8 +171,8 @@ func separatesWords(gap, em float64) bool { return gap > wordGapEm*em }
 // paragraphWords cuts a paragraph read with its glyphs into its words, line by line, and measures the paragraph's space.
 //
 // A word ends at a space glyph, at a gap between runs wider than wordGapEm, and at the end of a line. A narrower gap
-// between runs of the SAME font continues the word, carried as a kern on its next glyph; a word whose runs change font
-// or size is `styled-word` (P08's typographic fidelity). The paragraph's space is the MEDIAN of the gaps it draws BETWEEN
+// between runs continues the word, carried as a kern on its next glyph — in the same font or another: each glyph keeps
+// its own look, normalized to the paragraph's first run (`normalizedTo`, P08.S06). The paragraph's space is the MEDIAN of the gaps it draws BETWEEN
 // words — a space glyph's own kern and advance, or the gap between runs — never a gap before a line's first word, which
 // is an indent (kept per line: see lineMeasures). The cause is non-empty when the paragraph cannot be reflowed, and names
 // why (law 3).
@@ -145,11 +209,17 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 			case clipMode(r.state.tr):
 				// The glyphs' outlines join the clip: re-set, the window everything after them is cut by changes.
 				return nil, 0, causeClips
-			case math.Abs(r.state.scale-p.lines[0].runs[0].state.scale) > 1e-9:
-				// Each glyph keeps its own spacing (P08.S01); a text matrix's SCALE — a size or stretch set by `Tm` — converts
-				// every kern and lead the rewrite writes, and is not carried.
-				return nil, 0, causeMixedState
 			}
+			// Every glyph is normalized to the paragraph's first run (P08.S06): a run at another text-matrix scale — InDesign
+			// sets `Tf 1` and the size in `Tm` — is restated as a `Tf` size, its spacing and rise scaled with it, and its
+			// baseline offset carried as rise. A stretch, shear or turn set by `Tm` is not a size, and stays refused.
+			k, rise, why := normalizedTo(r, p.lines[0].runs[0], l.runs[baseRun(l)])
+			if why != "" {
+				return nil, 0, why
+			}
+			look := glyphLook{face: r.face, font: r.font, tfSize: r.state.tfSize * k}
+			sp := spacingOf(r.state)
+			sp.tc, sp.tw, sp.ts = sp.tc*k, sp.tw*k, sp.ts*k+rise
 			joinGap := 0.0
 			em := math.Max(lineEm, r.size)
 			lineEm = em
@@ -162,11 +232,8 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 						end()
 						gaps = append(gaps, gap)
 					}
-				case cur != nil && len(r.glyphs) > 0 && r.glyphs[0].text != " " && (r.font != cur.font || r.state.tfSize != cur.tfSize):
-					// Only a run that CONTINUES the word: one opening with a space ends the word, and a change of font
-					// at a word boundary is an ordinary bold or italic word.
-					return nil, 0, causeStyledWord
 				default:
+					// A run that continues the word — in its font or another (P08.S06: each glyph keeps its own look).
 					joinGap = gap
 				}
 			}
@@ -183,17 +250,15 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 					continue
 				}
 				if cur == nil {
-					cur = &reflowWord{face: r.face, size: r.size, scale: r.state.scale, font: r.font, tfSize: r.state.tfSize, startX: start}
-					cur.glyphs = append(cur.glyphs, g)
-					cur.spacing = append(cur.spacing, spacingOf(r.state))
-					cur.width += g.advance
-					continue
-				}
-				if gi == 0 {
+					cur = &reflowWord{scale: p.lines[0].runs[0].state.scale, startX: start}
+					cur.width -= g.kern // the kern before a word's first glyph belongs to the gap in front of it
+				} else if gi == 0 {
 					g.kern += joinGap // the gap between two runs of one word, kept inside it
 				}
 				cur.glyphs = append(cur.glyphs, g)
-				cur.spacing = append(cur.spacing, spacingOf(r.state))
+				cur.spacing = append(cur.spacing, sp)
+				cur.looks = append(cur.looks, look)
+				cur.face, cur.size, cur.font, cur.tfSize = look.face, r.size, look.font, look.tfSize
 				cur.width += g.kern + g.advance
 			}
 		}
@@ -203,11 +268,46 @@ func paragraphWords(p textParagraph) (lines [][]reflowWord, space float64, cause
 		}
 		lines = append(lines, line)
 	}
+	// The space after a word that ENDS at another size than it began — a trailing footnote figure ("smoke¹³") — is drawn
+	// in the word's own body look, its first glyph's: the figure's font sets it narrower, or has no space at all (the
+	// review of S06, W2). A word wholly at another size keeps its own: "BIG " was drawn with an 18pt space (P08.S01).
+	for _, l := range lines {
+		for i := range l {
+			if f := l[i].looks[0]; l[i].tfSize != f.tfSize {
+				l[i].face, l[i].font, l[i].tfSize = f.face, f.font, f.tfSize
+			}
+		}
+	}
 	if len(gaps) == 0 {
 		return lines, 0, causeNoSpaceWidth
 	}
 	sort.Float64s(gaps)
 	return lines, gaps[len(gaps)/2], ""
+}
+
+// usualLook is the look most of a paragraph's glyphs are drawn in — the first met of those tied — which a typed word
+// takes and the space after a figure is drawn in: never the paragraph's first run's alone, which may be a raised figure
+// opening a footnote (the review of S06, W1).
+func usualLook(lines [][]reflowWord) glyphLook {
+	count := map[glyphLook]int{}
+	var order []glyphLook
+	for _, l := range lines {
+		for _, w := range l {
+			for _, lk := range w.looks {
+				if count[lk] == 0 {
+					order = append(order, lk)
+				}
+				count[lk]++
+			}
+		}
+	}
+	var best glyphLook
+	for _, lk := range order {
+		if count[lk] > count[best] {
+			best = lk
+		}
+	}
+	return best
 }
 
 // wordSpacer is the space a paragraph sets after a word: by its last glyph's font, size and spacing.
@@ -692,7 +792,7 @@ func breakAt[T any](items []T, measures []float64, width func(T) float64, space 
 const (
 	reflowNoChange       = ""                 // the text is the paragraph's own: nothing to do (law 1)
 	causeMissingGlyph    = "missing-glyph"    // the font carries no code for a character (D8)
-	causeMixedState      = "mixed-state"      // runs differ in their text matrix's scale — a size or stretch set by `Tm`, not `Tf`/`Tz` (P08.S06)
+	causeMixedState      = "mixed-state"      // runs differ in their text matrix by more than a scale and a move — a stretch, shear or turn set by `Tm` (P08.S06)
 	causeMixedContent    = "mixed-content"    // something other than positioning sits among its show operators
 	causeTextObjects     = "text-objects"     // its lines are drawn as separate text objects (BT … ET each)
 	causeInlineFollower  = "inline-follower"  // text is drawn straight after it with no repositioning
@@ -713,7 +813,6 @@ const (
 	causeNoWidths        = "no-widths"        // a glyph's width has no source (law 2)
 	causeUndecoded       = "undecoded"        // a code decodes to no text, so the words cannot be read
 	causeGlyphsNotKept   = "glyphs-not-kept"  // the run's glyphs could not be read one by one
-	causeStyledWord      = "styled-word"      // a word changes font or size part-way through (P08)
 	causeEmptyLine       = "empty-line"       // a line of the paragraph draws no word
 	causeNoSpaceWidth    = "no-space-width"   // the paragraph draws no space between words to measure one by
 	causeDegenerate      = "degenerate-state" // a zero or infinite scale, size or coordinate
@@ -726,7 +825,7 @@ const (
 var ReflowCauses = []string{
 	causeMissingGlyph, causeMixedState, causeMixedContent, causeTextObjects, causeInlineFollower, causeTagged, causeReplacementText,
 	causeNoSpaceGlyph, causePageFull, causeNoPitch, causeAnchored, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
-	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
+	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept,
 	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeHyphenUnsure, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
 }
 
@@ -862,7 +961,9 @@ type reflowOutcome struct {
 // emitWord is a word as it will be drawn: its codes, the kern before each after the first (user space), the spacing each
 // is drawn under, its font.
 type emitWord struct {
+	// face, font and tfSize are the last glyph's look (the space after the word is drawn in it); looks is each glyph's.
 	face    *runFont
+	looks   []glyphLook
 	codes   [][]byte
 	kerns   []float64
 	spacing []textSpacing
@@ -945,6 +1046,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	// alignment keeps it and keeps it in one look — an edit two alignments explain equally does not say which copy
 	// survived — and refuses everywhere else (law 3 — never guess). A new word is spelled in the first run's font from the
 	// codes it carries, preferring a code the paragraph already draws, and kerned as the page kerns its pairs (`kernsOf`).
+	u := usualLook(lines) // the look a typed word is drawn in
 	known := map[string][]emitWord{}
 	var old []emitWord
 	var oldText []string
@@ -956,7 +1058,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		for wi, w := range l {
 			oldWord = append(oldWord, w)
 			oldAt = append(oldAt, [2]int{li, wi})
-			ew := emitWord{width: w.width, font: w.font, tfSize: w.tfSize, face: w.face, spacing: w.spacing, oldIdx: len(oldWord)}
+			ew := emitWord{width: w.width, font: w.font, tfSize: w.tfSize, face: w.face, spacing: w.spacing, looks: w.looks, oldIdx: len(oldWord)}
 			for gi, g := range w.glyphs {
 				ew.codes = append(ew.codes, g.code)
 				if gi > 0 {
@@ -971,11 +1073,11 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 	}
 	sameLook := func(a, b emitWord) bool {
-		if a.font != b.font || a.tfSize != b.tfSize || len(a.spacing) != len(b.spacing) {
+		if len(a.spacing) != len(b.spacing) || len(a.looks) != len(b.looks) {
 			return false
 		}
 		for i := range a.spacing {
-			if a.spacing[i].style() != b.spacing[i].style() {
+			if a.spacing[i].style() != b.spacing[i].style() || a.looks[i].font != b.looks[i].font || a.looks[i].tfSize != b.looks[i].tfSize {
 				return false
 			}
 		}
@@ -1095,24 +1197,25 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			fit = lastSpacing(words[n-1].spacing)
 		}
 		sp := textSpacing{tc: fit.tc, tw: fit.tw, th: usual.th, ts: usual.ts, tr: usual.tr}
-		ew := emitWord{font: first.font, tfSize: first.state.tfSize, face: first.face}
+		ew := emitWord{font: u.font, tfSize: u.tfSize, face: u.face}
 		for _, r := range t {
-			code, w0, why := pick(first.face, string(r), false)
+			code, w0, why := pick(u.face, string(r), false)
 			if why != "" {
 				return reflowOutcome{cause: why}, nil
 			}
-			ew.width += (w0/1000*first.state.tfSize + sp.tc) * sp.th * first.state.scale
+			ew.width += (w0/1000*u.tfSize + sp.tc) * sp.th * first.state.scale
 			if n := len(ew.codes); n > 0 { // by code, not by the string's byte offset: a letter can take several bytes
 				if kerns == nil {
 					kerns = kernsOf(layout)
 				}
 				// The kern the page draws for this pair, where it draws it one way (P08.S05), under this word's scaling.
-				k := -kerns.lend(first.face, first.size, ew.codes[n-1], code) / 1000 * first.state.tfSize * sp.th * first.state.scale
+				k := -kerns.lend(u.face, u.tfSize*first.state.scale, ew.codes[n-1], code) / 1000 * u.tfSize * sp.th * first.state.scale
 				ew.kerns = append(ew.kerns, k)
 				ew.width += k
 			}
 			ew.codes = append(ew.codes, code)
 			ew.spacing = append(ew.spacing, sp)
+			ew.looks = append(ew.looks, u)
 		}
 		words = append(words, ew)
 	}
@@ -1208,11 +1311,24 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 
 	// lineAt is the text state a broken line is set from: its own original line's, and past the last of them the last
 	// line's, shifted down by the pitch once for each line beyond it.
+	// A line is set at the paragraph's reference scale — every glyph's size was restated to it (P08.S06) — from its own
+	// first run's origin: the line's text matrix is the reference run's, moved there.
+	ref := para.lines[0].runs[0].state.tm
+	// The line's origin is its first run's along the baseline and its base run's across it (`baseRun`): a line opening with
+	// a raised figure is set on its body's baseline, the figure raised by its own rise (the review of S06, C2).
+	lineState := func(li int) runTextState {
+		ln := para.lines[li]
+		st := ln.runs[0].state
+		b := ln.runs[baseRun(ln)].state.tm
+		c := acrossBaseline(ref, b[4]-st.tm[4], b[5]-st.tm[5])
+		st.tm = runMatrix{ref[0], ref[1], ref[2], ref[3], st.tm[4] + c*ref[2], st.tm[5] + c*ref[3]}
+		return st
+	}
 	lineAt := func(i int) (runMatrix, bool) {
 		if i < n {
-			return para.lines[i].runs[0].state.tm, true
+			return lineState(i).tm, true
 		}
-		return shiftedTm(para.lines[n-1].runs[0].state, float64(i-n+1)*pitch)
+		return shiftedTm(lineState(n-1), float64(i-n+1)*pitch)
 	}
 	// A centred line is MOVED to its axis — its text matrix shifted, not a lead inside it — so the line's origin is where
 	// its ink begins, as every reader of the page's geometry takes it (`textLine.x0`; the review of P08.S04: a lead left
@@ -1232,7 +1348,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			if math.Abs(dx) <= 1e-9 {
 				return plain(i)
 			}
-			return shiftedTmBy(para.lines[li].runs[0].state, dx, float64(max(0, i-n+1))*pitch)
+			return shiftedTmBy(lineState(li), dx, float64(max(0, i-n+1))*pitch)
 		}
 	}
 	for i, l := range broken {
@@ -1369,8 +1485,13 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			return reflowOutcome{cause: causeDegenerate}, nil
 		}
 		for _, w := range l {
-			if w.tfSize == 0 || !finite(w.tfSize, w.width) {
+			if !finite(w.width) {
 				return reflowOutcome{cause: causeDegenerate}, nil
+			}
+			for _, lk := range w.looks {
+				if lk.tfSize == 0 || !finite(lk.tfSize) {
+					return reflowOutcome{cause: causeDegenerate}, nil
+				}
 			}
 		}
 	}
@@ -1417,7 +1538,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		closeArray()
 		fmt.Fprintf(&buf, "%s %s %s %s %s %s Tm\n", num(tm[0]), num(tm[1]), num(tm[2]), num(tm[3]), num(tm[4]), num(tm[5]))
 		font = "" // every line states its font
-		setFont(l[0].font, l[0].tfSize)
+		setFont(l[0].looks[0].font, l[0].looks[0].tfSize)
 		setSpacing(l[0].spacing[0])
 		openArray()
 		// The line's lead: where its first word began, past the origin of its first run (a leading kern or space). A new
@@ -1428,7 +1549,9 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		for wi, w := range l {
 			if wi > 0 {
-				// The space is drawn in the font and spacing of the glyph before it, and only then does either change.
+				// The space is drawn in the word's own look — its last glyph's, or the usual one after a figure — and the
+				// spacing of the glyph before it, and only then does either change.
+				setFont(l[wi-1].font, l[wi-1].tfSize)
 				sp := spaces[spaceKey{l[wi-1].face, l[wi-1].tfSize}]
 				openArray()
 				fmt.Fprintf(&buf, "<%X>", sp.code)
@@ -1437,8 +1560,8 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 					fmt.Fprintf(&buf, " %s ", adj(extra, size, cur))
 				}
 			}
-			setFont(w.font, w.tfSize)
 			for ci, c := range w.codes {
+				setFont(w.looks[ci].font, w.looks[ci].tfSize) // each glyph in its own font (P08.S06)
 				setSpacing(w.spacing[ci])
 				openArray()
 				if ci > 0 && math.Abs(w.kerns[ci-1]) > 1e-9 { // past arithmetic noise, as every other adjustment

@@ -1132,11 +1132,41 @@ leave it to land mid-line; evidence reads U+2010 as '-' and drops an inner soft 
 merged into the neighbouring column's line 4 pt above it (drawn right; the reader's grouping joins them).
 
 
-#### P08.S06 — a word in two styles
+#### P08.S06 — a word in two styles *(done 2026-10-01, v1.179.0)*
 A word whose runs change font or size part-way through (`styled-word`, 381) is carried as its pieces, each in its own
 font — and a paragraph whose runs differ in a size set by the text matrix rather than `Tf` (`mixed-state`, **190** left
 after S01: InDesign's `Tf 1` with the size in `Tm`, measured at 1–60% apart) is the same problem one operator over. Acceptance: a mixed-style word reflows and reads back in both styles; a typed word that matches it is not
 ambiguous; the corpus's `styled-word` refusals fall.
+**Tasks** (slice grill, 2026-10-01 — measured before it: over the corpus, 374 multi-word paragraphs refused `styled-word`,
+EVERY ONE a change of font inside a word — an italic word's roman punctuation, a footnote figure in another face, a symbol
+— and none a change of size alone; 206 refused `mixed-state`, 155 of them runs whose text matrices differ only by a uniform
+scale and a move (InDesign's `Tf 1` with the size in `Tm`), 51 by a stretch). One change answers both: T01 — every glyph is
+NORMALIZED to the paragraph's first run (`normalizedTo`): a run at k times its scale is restated as `Tf` × k, its `Tc`,
+`Tw` and `Ts` scaled with it, and its baseline offset from its line's first run carried as rise (a hundredth of a point and
+under is arithmetic, not a raised figure); a stretch, shear or turn stays `mixed-state`, a matrix that does not measure is
+`degenerate-state`. T02 — each glyph keeps its own font (`glyphLook`): a word's own font is its LAST glyph's (the space after
+it is drawn in it), the emitter selects each glyph's, and every line is set at the reference scale from its own first run's
+origin. `styled-word` is retired (no cause produces it; its sentence goes with it) and `mixed-state`'s sentence says what it
+now refuses. T03 — tests: a paragraph mixing `Tf 1` + `Tm 12` with `Tf 12` re-set at its widths and size, the line after it
+untouched; a figure in another font, smaller and raised by its text matrix, stays in its font, size and rise; a word in two
+fonts re-set in both (replacing the `styled-word` refusal's test); a stretched line still refused; the corpus census; tier
+3. **Grill defaults (rung 1/2)**: a word in two looks keeps each glyph's (no "dominant style"); the rise threshold (0.01 pt);
+a typed word takes the first run's font, as before.
+**PIN 2026-10-01 (review C1, C2, W1, W2, I1 — where a re-set glyph lands)**: a rise is solved on the reference matrix's own
+axes (a slanted matrix read a step along the line as a rise); a line's baseline is its BASE run's — the run drawing most
+glyphs — not its first, which may be a raised footnote figure (every body word was recorded 3 pt low, 6 corpus paragraphs),
+and the emitted line's origin is the first run's along the baseline and the base run's across it; a typed word takes the
+paragraph's USUAL look (most glyphs), never the first run's; the space after a word that ends at another size than it began
+(a trailing figure) is drawn in its first glyph's look — a word wholly at another size ("BIG ") keeps its own, as S01 holds;
+and a baseline offset under a tenth of an em is a producer's jitter (89 corpus runs 0.01–1 pt), not a rise.
+**Closed 2026-10-01.** Ledger: a mixed-style word reflows and reads back in both styles — met (hand-built F1 F1 F2 F2; the
+raised figure in F2 at 7 pt, 3 pt up, on its own line and moved to another; corpus: 89 paragraphs of the S06 population re-set, read back with
+every glyph's font, user size and rise, every occurrence — 3,879 checked); a typed word that matches it is not ambiguous — met (a typed word is matched to a kept
+word by the alignment, P08.S01, and a word drawn once in two fonts has one look); the corpus's `styled-word` refusals fall —
+met (374 → 0: the cause no longer exists; `mixed-state` 206 → 51, the stretches). The rest of the population refuses on
+causes of its own (tagged, replacement text, anchored, invisible OCR layers). Review `code-reviews/v1.179.0-p08s06-2026-10-01.md`
+(2 critical, 4 warnings, 3 info; all fixed and red-proved).
+
 
 ---
 
