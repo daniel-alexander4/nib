@@ -271,7 +271,9 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # that the client's display-space fractions and the new server shape agree about what was drawn.
 # 40 since text-reflow P06.S05 (reflow.test.mjs): the old word's absence is read from pdf.js's text layer of the
 # re-rendered page — a second reader — which only a real browser renders.
-expect_files=40
+# 41 since PLAN-returned-document P03.S01 (returnedsheet.test.mjs): the returned-document sheet by keyboard alone —
+# where focus LANDS after the sheet goes, which jsdom cannot see.
+expect_files=41
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

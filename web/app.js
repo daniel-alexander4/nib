@@ -97,6 +97,8 @@ const els = {
   themeToggle: $('themeToggle'),
   viewerWrap: $('viewerWrap'), empty: $('empty'), tabstrip: $('tabstrip'), closeAllBtn: $('closeAllBtn'),
   ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
+  returnedBtn: $('returnedBtn'), returnedSheet: $('returnedSheet'), returnedHeading: $('returnedHeading'),
+  returnedClose: $('returnedClose'), returnedDoc: $('returnedDoc'), returnedVerdict: $('returnedVerdict'),
   cerSetupBar: $('cerSetupBar'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
@@ -266,6 +268,11 @@ const els = {
   splitBoxBtn: $('splitBoxBtn'), applyBoxSplitBtn: $('applyBoxSplitBtn'),
 };
 
+// returnedState is the returned-document sheet's capture, or null (P03.S01): the document's id and view, and the
+// control that opened it — either twin, since the `data-forward` door clicks the real button while the user's focus is
+// on the twin. Declared here, not beside the sheet's functions, because activateView and closeDocument read it.
+let returnedState = null;
+
 // Controls duplicated across the menubar and toolbar are addressed by class.
 const all = (sel) => document.querySelectorAll(sel);
 
@@ -390,7 +397,13 @@ async function apiFetch(url, opts = {}) {
   const pinned = opts.docId;
   delete opts.unpinned;
   delete opts.docId;
-  if (hasPin) { if (pinned) opts.headers['X-Nib-Doc'] = pinned; }
+  // **A present-but-falsy id is a THROW, never an omission** (/pending 652). On the wire an absent header IS the
+  // current document — `docFor` answers it with `activeDoc()` — so omitting it for a caller that captured nothing sent
+  // exactly the request the comment above says pinning exists to prevent. A caller with no document refuses itself
+  // before it asks (every site guards, the convene now included); this is the backstop for the next one that forgets —
+  // and for a race the guards cannot see, where a mutation's answer installs the server's empty `docResponse{}`.
+  if (hasPin && !pinned) throw new Error('there is no open document for this — open it again and retry');
+  if (hasPin) opts.headers['X-Nib-Doc'] = pinned;
   else if (!unpinned && view.docMeta && view.docMeta.id) opts.headers['X-Nib-Doc'] = view.docMeta.id;
   const res = await fetch(url, opts);
   if (res.status === 401) { refreshStatus(); throw new Error('locked'); }
@@ -2955,6 +2968,9 @@ const DOC_BOUND_MODALS = [
 function activateView(v) {
   if (v === view) return;
   const out = view;
+  // The returned-document sheet is about the document it was opened on (ADR-001); on another tab it would describe the
+  // wrong one, so it goes. Focus stays where the tab switch put it.
+  closeReturnedSheet(false);
 
   // ── A: quiesce the outgoing view ────────────────────────────────────────────
   // Drags first, and before the hide: the preview nodes live in the outgoing view's page
@@ -3557,6 +3573,7 @@ async function setDocumentFromServer(meta, target = view) {
 // sufficient on its own: see the generation re-check in buildThumbnails, which
 // would otherwise append into the grid this function just cleared.
 function closeDocument() {
+  closeReturnedSheet(false); // its document is going — see activateView
   // Close is CLOSE ALL, and it is that way because the server says so: handleClose calls
   // setDoc(nil), which empties the whole registry and clears every open document's undo
   // rings. An arrival can already leave two documents open, so a client that dropped only
@@ -9734,6 +9751,9 @@ function setSignLocked(locked) {
 // be clicked off — and left a pdf.js Text/Highlight/Draw mode live on a document the toast had just
 // called "can no longer be edited". Every exit is a no-op when its tool is not armed.
 function disarmEditingTools() {
+  // Every tool arms through this door, and a tool armed under the returned-document sheet would act on the HIDDEN
+  // viewer — so the sheet goes first (the P03.S01 review). Focus stays with the control that armed the tool.
+  closeReturnedSheet(false);
   setMarkerMode(null);
   if (view.redactMode) { view.redactMode = false; reflectRedact(); }
   if (view.editMode) { view.editMode = false; reflectEdit(); }
@@ -11555,6 +11575,8 @@ all('[data-forward]').forEach((b) => { b.onclick = () => $(b.dataset.forward).cl
 // binding must already be initialized (a `let` declared later would throw on its TDZ).
 let libraryImages = []; // cached /api/images list (the image-library panel)
 const DOC_REQUIRED = [
+  // A document that came back (P03.S01): the sheet is ABOUT the open document, and has no subject without one.
+  'returnedBtn',
   'saveFlatBtn', 'saveEditableBtn', 'saveFillableBtn', 'printBtn',
   'exportZipBtn', 'exportPngBtn', 'exportFormJsonBtn', 'exportFormCsvBtn', 'exportFormXfdfBtn', 'exportTableXlsxBtn', 'exportTableCsvBtn', 'exportTableOdsBtn', 'exportBookmarkSplitBtn',
   'exportPageSplitBtn', 'pdfaBtn',
@@ -13441,6 +13463,9 @@ function syncSidebarForMode(tab) {
   // `parkCeremonySheet` returns early when there is no sheet showing, so this stays a no-op for
   // every mode change that is not leaving an open setup.
   if (tab !== 'collaborate') parkCeremonySheet(false);
+  // The returned-document sheet goes on ANY mode change: the new mode's tools act on the viewer it stands over, and the
+  // control that opened it is now in a hidden pane, so restoring focus there would drop it to <body> (WCAG 2.4.3).
+  closeReturnedSheet(false);
   // Loaded when the panel becomes reachable rather than on a timer or at boot. It reads the local
   // mirror, so it is cheap and needs no network — but it is also not free (the server opens each
   // record), and a user who never goes near Collaborate should not pay for it.
@@ -15669,8 +15694,56 @@ function cerEls() {
 // The tier-3 clause stays. It is cheap, it is the only thing that would notice if the round trip
 // ever DID start re-laying out, and it reads the viewer's own scroll rather than the `.pageNum`
 // input — which is written on open and close and reported the right answer whatever the viewer did.
+// ── A document that came back (PLAN-returned-document P03.S01, D12) ──────────────────────────────────────────────
+//
+// The sheet that answers "I signed this, sent it off, and it came back — what changed?". It is about ONE document,
+// captured here when it opens (ADR-001): every request it will make (P03.S02) names that id, and an active-tab change
+// closes it rather than leave it describing a document no longer on screen. Opening it fetches NOTHING — recovery is on
+// demand (D10) and the verdict is S02's; a sheet that showed a half-worded cause would be D8's degraded surface.
+//
+// returnedState (declared beside `els`, because activateView and closeDocument read it from boot on) is the open
+// sheet's capture.
+
+function openReturnedSheet() {
+  if (!view.pdfDocument || !view.docMeta || !view.docMeta.id) return; // DOC_REQUIRED disables it; this is the backstop
+  const opener = document.activeElement && document.activeElement !== document.body ? document.activeElement : els.returnedBtn;
+  // Parked, not closed: a convener mid-setup keeps everything typed, exactly as "See the document" leaves it.
+  if (els.ceremonySheet && !els.ceremonySheet.hidden) parkCeremonySheet(false);
+  returnedState = { docId: view.docMeta.id, view, opener };
+  // A name off disk: text, never markup.
+  els.returnedDoc.textContent = view.originalName || view.docMeta.name || view.docMeta.path || 'This document';
+  els.returnedVerdict.textContent = '';
+  els.returnedSheet.hidden = false;
+  els.viewerWrap.hidden = true;
+  els.returnedHeading.focus();
+}
+
+// closeReturnedSheet puts the viewer back. restoreFocus returns focus to the control that opened the sheet; a tab switch
+// or a close passes false, because the user's focus is already where they put it.
+function closeReturnedSheet(restoreFocus = true) {
+  if (!returnedState) return;
+  const { opener } = returnedState;
+  returnedState = null;
+  els.returnedSheet.hidden = true;
+  els.viewerWrap.hidden = false;
+  // AFTER the flip: focusing into a hidden subtree is a silent no-op (see parkCeremonySheet).
+  if (restoreFocus && opener && opener.isConnected) opener.focus();
+}
+
+if (els.returnedBtn) els.returnedBtn.onclick = () => openReturnedSheet();
+if (els.returnedClose) els.returnedClose.onclick = () => closeReturnedSheet();
+// Escape leaves the sheet wherever focus is — clicking its text leaves focus on <body>, outside the sheet — unless a
+// modal is up, whose Escape it is.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !returnedState || topModal()) return;
+  e.preventDefault();
+  closeReturnedSheet();
+});
+
 function showCeremonySheet(open) {
   if (!els.ceremonySheet || !els.viewerWrap) return;
+  // One sheet stands in place of the viewer at a time: the ceremony's takes the screen from a returned-document one.
+  if (open) closeReturnedSheet(false);
   els.ceremonySheet.hidden = !open;
   els.viewerWrap.hidden = !!open;
 }
@@ -16275,6 +16348,15 @@ async function conveneFromPanel() {
   if (!roster.length) { say('Choose at least one other person to sign.'); return; }
   const expires = document.getElementById('cerExpires')?.value || '';
   if (!expires) { say('Set the date this ceremony stays open until.'); return; }
+  // **Bound late, as the resume binds, and refused here when there is still nothing to bind to** (/pending 652). With
+  // nothing bound it used to go out with no header, which `docFor` answers with whatever is active; the late binding
+  // reaches that same document, now NAMED — and with no document open at all the request is refused before it is made.
+  // `apiFetch` throws on a falsy pin as the backstop.
+  bindCeremonySetupDoc();
+  if (!ceremonySetupDoc) {
+    say('No document is open for this ceremony. Choose "See the document" and open the one it is for first.');
+    return;
+  }
   const body = {
     roster,
     intent: document.getElementById('cerIntent')?.value || '',
@@ -16292,18 +16374,10 @@ async function conveneFromPanel() {
       body: JSON.stringify(body),
       // Pinned to the document the setup is bound to (ADR-001, ADR-004).
       //
-      // **Passed unconditionally.** The first cut spread `{}` when the capture was null, and
-      // `apiFetch` tests `'docId' in opts` deliberately — an absent key is its fall-back-to-current
-      // branch, which is the one its own comment says pinning exists to prevent. Present-and-null
-      // sends no header instead.
-      //
-      // **What that does NOT do, stated because it would be easy to claim otherwise:** sending no
-      // header is not a refusal. `docFor` returns `activeDoc()` when the header is absent, so with
-      // a document open the two spellings pick the same document in every case where the client's
-      // active view and the server's active document agree. The difference is that the client stops
-      // asserting a pin it never captured. What actually closes the no-capture hole is the
-      // late binding below, not this line — and **no tier catches the difference between the two
-      // spellings**, which is recorded here rather than implied away.
+      // **Passed unconditionally.** The first cut spread `{}` when the capture was null, and `apiFetch` tests
+      // `'docId' in opts` deliberately — an absent key is its fall-back-to-current branch, which is the one its own
+      // comment says pinning exists to prevent. A present-but-null pin is a THROW there (/pending 652), and the refusal
+      // above means this line is only ever reached with an id.
       docId: ceremonySetupDoc,
     });
     if (!res.ok) { say(await errText(res, 'this ceremony could not be convened')); return; }

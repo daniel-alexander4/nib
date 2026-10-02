@@ -13,8 +13,9 @@ import { boot } from './boot.mjs';
 import { setNextDocument, lastDocument } from './stub-pdfjs.mjs';
 
 const DOC = '/tmp/nib-harness/doc.pdf';
+// Every document the server holds has an id (`docResponse`), and pinned requests need one (/pending 652).
 const docResponse = (over = {}) => ({
-  name: 'doc.pdf', path: DOC, canSave: true,
+  id: 'test-epoch:1', name: 'doc.pdf', path: DOC, canSave: true,
   signature: { state: 'unsigned' }, canUndo: false, canRedo: false, ...over,
 });
 

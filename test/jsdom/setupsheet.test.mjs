@@ -68,6 +68,8 @@ const { document: doc, settle, calls } = await boot({
     // Mutable, because /pending 413's pin is that the line follows the BOUND document and not the
     // active one — which needs two documents that are actually different.
     '/api/open': () => nextOpen,
+    // Shaped like handleClose: docResponse(nil). The convene test that needs a document closes it again.
+    '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     '/api/scan': { hidden: [] },
   },
 });
@@ -603,6 +605,12 @@ test('a row touched while the draft is still in flight is kept, and the rest sti
 });
 
 test('emptying the form returns it to how it OPENS, not to all-false', async () => {
+  // A convene is pinned to the document its setup is bound to, and with none bound it is refused before the request
+  // (/pending 652) — the successful convene this test is about needs one open.
+  setNextDocument({ numPages: 3 });
+  doc.getElementById('pathInput').value = '/tmp/nib-harness/lease.pdf';
+  doc.getElementById('openGo').click();
+  await settle();
   await openSheet();
   const iSign = doc.getElementById('cerISign');
   // **`defaultChecked`, not `checked`** — it reflects the HTML attribute whatever the live state
@@ -626,6 +634,10 @@ test('emptying the form returns it to how it OPENS, not to all-false', async () 
     + 'Signs:false and the invitations screen lists only invitees, so nothing on screen tells them '
     + 'they left themselves out. Emptying a form means returning it to how it opens, which for a '
     + 'checkbox is not the same as clearing it');
+  // Closed again: the tests after this one are about a setup with NOTHING open.
+  doc.defaultView.confirm = () => true;
+  doc.getElementById('closeAllBtn').click();
+  await settle();
 });
 
 test('leaving the Ceremony mode PARKS the setup rather than dropping the thread', async () => {

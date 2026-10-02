@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { boot, REPO } from './boot.mjs';
+import { setNextDocument } from './stub-pdfjs.mjs';
 
 const APP = readFileSync(join(REPO, 'web', 'app.js'), 'utf8');
 
@@ -71,6 +72,12 @@ let invitesAnswer = () => ({
 
 const { document: doc, settle } = await boot({
   routes: {
+    // A convene is pinned to the document its setup is bound to, and with none bound it is refused before the request
+    // (/pending 652) — so the convene tests open one first.
+    '/api/open': {
+      id: 'test-epoch:5', name: 'lease.pdf', path: '/tmp/nib-harness/lease.pdf', canSave: true,
+      signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
+    },
     '/api/ceremonies': () => listing,
     '/api/ceremony/next': () => nextAnswer,
     '/api/ceremony/invites': (opts) => {
@@ -262,7 +269,33 @@ test('the convene form picks a roster from pinned peers and shows no hex', async
     'the picker does not carry the fingerprint at all, so nothing could be convened');
 });
 
+
+// /pending 652: with no document bound, the convene is refused HERE — it used to go out with no X-Nib-Doc, which the
+// server answers with whatever is active. Runs before any test opens one.
+test('a convene with no document open is refused before any request', async () => {
+  await showPanel();
+  doc.getElementById('ceremonyConveneBtn').click();
+  await settle();
+  doc.querySelector('.cerpeerbox').checked = true;
+  doc.getElementById('cerExpires').value = '2026-10-01T12:00';
+  const before = convenePosted;
+  doc.getElementById('ceremonyConveneForm').dispatchEvent(new doc.defaultView.Event('submit', { cancelable: true }));
+  await settle();
+  assert.equal(convenePosted, before, 'a convene went out with no document bound');
+  assert.match(doc.getElementById('cerConveneError').textContent, /No document is open/,
+    'the refusal does not say why');
+});
+
+// openLease opens a document, so a convene has one to be pinned to (/pending 652).
+async function openLease() {
+  setNextDocument({ numPages: 1 });
+  doc.getElementById('pathInput').value = '/tmp/nib-harness/lease.pdf';
+  doc.getElementById('openGo').click();
+  await settle();
+}
+
 test('the invitations screen says what an invitation is, in D21\'s terms', async () => {
+  await openLease();
   await showPanel();
   doc.getElementById('ceremonyConveneBtn').click();
   await settle();
@@ -330,6 +363,7 @@ test('a warning is bound to the control that caused it, by its code', async () =
   const saved = convened;
   convened = { ...convened, warnings: [{ code: 'sitting-ceiling', text: 'This ceremony has 9 parties.' }] };
   try {
+    await openLease();
     await showPanel();
     doc.getElementById('ceremonyConveneBtn').click();
     await settle();

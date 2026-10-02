@@ -24,10 +24,12 @@ import { boot } from './boot.mjs';
 import { setNextDocument } from './stub-pdfjs.mjs';
 
 const DOC = '/tmp/nib-harness/doc.pdf';
+// Each open is a new document with its own id, as the server's registry numbers them.
+let perviewOpened = 0;
 const h = await boot({
   routes: {
     '/api/open': () => ({
-      name: 'doc.pdf', path: DOC, canSave: true,
+      id: `test-epoch:${++perviewOpened}`, name: 'doc.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
     }),
     // Needed by the Compare test below, which has to reach the branch of installOpened

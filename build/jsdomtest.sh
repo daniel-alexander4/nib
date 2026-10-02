@@ -130,7 +130,10 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 #
 # 88 since /pending 788 (print.test.mjs): Print in a browser whose PDF frame this page may not script —
 # Firefox, the stock Ubuntu path. Its own file because its frames' windows are stubbed per test.
-Nib_expect_files=89
+#
+# 90 since PLAN-returned-document P03.S01 (returnedsheet.test.mjs): the sheet for a document that came back — its own
+# file because it opens documents one after another and closes them all, which no other file's boot can share.
+Nib_expect_files=90
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

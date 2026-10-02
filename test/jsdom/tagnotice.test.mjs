@@ -23,14 +23,14 @@ let dropped = false;
 const h = await boot({
   routes: {
     '/api/open': () => ({
-      name: 'tagged.pdf', path: DOC, canSave: true,
+      id: 'test-epoch:1', name: 'tagged.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
       taggingDropped: dropped,
     }),
     // The route a page rotation actually takes — driven through the real button below, because a
     // bare fetch would not re-render anything and would prove nothing about the banner.
     '/api/pages': () => ({
-      name: 'tagged.pdf', path: DOC, canSave: true,
+      id: 'test-epoch:1', name: 'tagged.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: true, canRedo: false,
       taggingDropped: dropped,
     }),

@@ -814,11 +814,70 @@ language, every signature with its position relative to yours and whether this m
 signer, and the changes; the three terminal states each render their own sentence; the fallback
 chain is offered in order.
 
-#### P03.S01 — the command and the sheet
+**PIN 2026-10-02 (phase-open, firmed against HEAD `8766fdf4` / v1.179.6 — read at the lines, not from the plan).**
+- **The fallback chain's first link is P04's, by the plan's own inventory.** No kept copy exists to offer: `~/nib/signed/`
+  is the ceremony DELIVERY folder (`internal/server/delivery.go:371`), not retention, and the inventory already files the
+  link under retention (`instruments/returned-document.md` S5, "retained copy → the dispute surface's fallback chain").
+  So P03.S03 builds the chain from the two links that exist — the ceremony mirror, then pick your own file — in that
+  order, with the kept copy's slot named and empty; **P04.S02 puts the kept copy at its head**, and P04's acceptance
+  gains that clause. The exit criterion's "offered in order" is checked on P03's two links at P03's close and on all
+  three at P04's.
+- **No route hands the mirrored document to the client.** Every `ceremony.ReadMirror` caller
+  (`ceremonynext.go:246`, `delivery.go:1395`, `ceremonystop.go:73`, …) uses the bytes server-side. The mirror link
+  needs a read route, pinned (ADR-004), and a way to find the ceremony a document belongs to — S03's grill.
+- **"Known to this machine" is server-side only, and only as a count.** `unverifiedSigners` (`server.go:1784`) counts
+  signers whose fingerprint is neither a pinned peer nor this machine's identity; no per-signer flag reaches the client,
+  and `renderConsentSigners` (`app.js:1917`) shows fingerprints with no known/unknown mark. D9 needs it per signer:
+  S02 adds a per-signer `known` beside the count, from the same one `PinnedPeers()` copy (one rule, ADR-009).
+- **"You" is `selfFingerprint`** (`app.js:1084`, from `/api/peers`), which exists only with an unlocked vault and an
+  identity; an external signer's certificate (`/api/identity/external`) is a second "you". S02 decides how the surface
+  picks among them and what it says with neither (the route itself refuses a missing fingerprint, 400).
+- **The pieces S01 and S03 reuse exist:** the `secure` tab's Sign & Timestamp card (`index.html:488`), the one
+  `data-forward` door (`app.js:11547`; precedent `index.html:538`, a Send & Receive twin), the `#ceremonySheet` pattern
+  (`showCeremonySheet`/`parkCeremonySheet`/`resumeCeremonySheet`, `app.js:15672/15783/15906`), Compare's bytes-in
+  path (`openCompare`, `getDocument({data: buf})` at `app.js:4433`), and the id gates (`ids`, `modes`, `doccontrols`).
+- **/pending 652 is S01's first task**: `apiFetch` drops `X-Nib-Doc` for a falsy `docId`, which on this route answers
+  the ACTIVE document's signed version — S01 is the first caller of `fetchSignedRevision`.
+- **Firmed: three slices, as sketched**, with the amendments above folded into their acceptance. `/plan-review` does
+  not fire: P03 is a UI surface — no security, migration or egress change; the mirror read route is a same-user,
+  session-gated read of the user's own files, which S03's grill attacks.
+
+#### P03.S01 — the command and the sheet *(done 2026-10-02, v1.179.7)*
 Scope: `"Check a document that came back…"` in the `secure` tab's *Sign & Timestamp* card, with a
 `data-forward` alias into *Send & Receive*; the sheet itself. Refs: D12.
 Acceptance: reachable in both the sidebar and the collapsed toolbar without a second declaration;
 the id gates (`ids`, `modes`, `doccontrols`) pass; keyboard-only operation and focus restore hold.
+
+Grill (2026-10-02, light — a UI slice over a pinning seam; deepdive of `apiFetch`'s 36 `docId` sites: 35 guarded, the
+convene's deliberate `null` the one falsy path). Conclusions: the sheet is ABOUT one document, captured at open
+(ADR-001) — it closes when the active tab changes rather than describe another document; it never shares the screen
+with the ceremony sheet (opening either hides the other); S01 does NOT fetch — the verdict is S02's, and a sheet that
+showed a raw cause would be D8's degraded surface; the D10 caller census stays empty until S02 names its caller.
+- T01 — /pending 652: `apiFetch` throws on a present-but-falsy `docId` (a toastable sentence); `conveneFromPanel` refuses
+  before the call with no bound document (what `renderCeremonySetupDoc` already promises); `pinning.test.mjs`'s source
+  pin updated; a test that a falsy id throws; the convene tests load a document.
+- T02 — the command `#returnedBtn` in *Sign & Timestamp* and its `data-forward` twin in *Send & Receive*; in
+  `DOC_REQUIRED`; not an editing tool (it only reads).
+- T03 — `#returnedSheet` on the `#ceremonySheet` pattern: shown in place of the viewer; heading, the document's name,
+  an empty verdict region for S02, one way out ("Back to the document"); Escape leaves; focus to the heading on open and
+  back to the OPENER (either twin) on close; closes on an active-view change; hides an open ceremony sheet and is hidden
+  by one.
+- T04 — jsdom: both entry points open it, the forward resolves through the one door, focus in and back, Escape, a tab
+  switch closes it, the ceremony exclusion, disabled with no document; the id gates.
+
+**Built (v1.179.7):** T01–T04 as tasked, plus what they found. The throw exposed seven jsdom tests (five files) whose
+stubs installed a document with no `id` — the server never does (`docResponse` always sets one) — and passed with an
+`undefined` pin; their stubs now carry ids, and one setup-sheet test opens a document for the convene it is about.
+**Added beyond the Ts:** a tier-3 test (`test/ui/returnedsheet.test.mjs`) — where focus LANDS after the sheet goes is
+invisible to jsdom — and, from the review (`code-reviews/v1.179.6-p03s01-…`, 0 critical, 3 warning, 7 info, all
+dispositioned): the sheet closes on any mode change and on any tool arming (`disarmEditingTools`, the one door), is a
+`role="region"`, and Escape works wherever focus is unless a modal is up. **Live:** the real binary in a real browser,
+keyboard only — Enter on the command and on its twin opens the sheet with focus on its heading, Escape and "Back to the
+document" return focus to whichever opened it, and the reader's scroll survives (tier 3, 2/2, red without the restore).
+**Acceptance ledger:** reachable in the sidebar card and through the Send & Receive twin without a second declaration ✅
+(one `data-forward`, resolved by the one door); the id gates pass ✅ (`ids` 2/2, `modes` 2/2, `doccontrols` 5/5);
+keyboard-only operation holds ✅ (tier 3, Enter/Tab/Escape); focus restore holds ✅ (tier 3, both openers, and jsdom).
+/pending 652 closed (T01).
 
 #### P03.S02 — the verdict, told for a dispute
 Scope: the three terminal states, and the signer list ordered around yours. Refs: D8, D9.
@@ -829,7 +888,8 @@ unsigned file says so without implying you never signed.
 #### P03.S03 — "see what changed"
 Scope: hand the recovered prefix to the shipped compare pipeline as bytes. Refs: D11.
 Acceptance: the diff renders from server-supplied bytes with no change to the differ; the fallback
-chain — kept copy → ceremony mirror → pick your own file — is offered in that order.
+chain — kept copy → ceremony mirror → pick your own file — is offered in that order. **(phase-open PIN 2026-10-02)**: the
+kept copy's link is P04.S02's; P03 offers mirror → own file in that order, the kept copy's slot named and empty.
 
 ### P04 — Retention at signing *(Dan's option C)*
 **Goal.** Make the dispute answerable in the case the file itself cannot answer.
@@ -847,6 +907,8 @@ Acceptance: unticked signs and writes nothing; ticked writes exactly one file; a
 surfaced at signing and the signature is not silently returned as if the copy existed.
 
 #### P04.S02 — the copy is visible and removable
+**(P03 phase-open PIN 2026-10-02)**: and the dispute surface offers the kept copy FIRST in its fallback chain, ahead of
+the ceremony mirror (inventory S5).
 Scope: listing and deletion. Refs: D15.
 Acceptance: a kept copy appears in a surface the user can reach and can be deleted from it.
 
