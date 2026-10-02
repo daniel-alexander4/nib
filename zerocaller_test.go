@@ -85,10 +85,9 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
-		"SignedRevisionFor": "gated — PLAN-returned-document.md P02.S03." +
-			" P02.S01 built the selection and the re-verification; its caller is the route `GET /api/document/revision`," +
-			" which S03 builds. (`Revisions`' row, gated on P02.S01, is gone: `SignedRevisionFor` is its caller.)",
-
+		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +
+			"fixtures (P02.S03); `sign` keeps its own `synthRevision` because testpdf feeds sign's tests.",
+		"SignatureDictionary": "test-support — the signer's dictionary text a returned-document fixture redefines or copies.",
 		"AmbiguousPageTrees": "test-support — the four page-tree shapes two readings order differently " +
 			"(/pending 755), shared by pdfops' ContentDigest tests and ceremony's Convene refusal test.",
 		"Assemble": "test-support — testpdf's hand-assembler for page-tree shapes pdfcpu will not write " +

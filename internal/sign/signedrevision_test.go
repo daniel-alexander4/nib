@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -198,7 +199,7 @@ func revisionShapes(t *testing.T) []revisionShape {
 	// cap after it, each with a ByteRange ending at its own marker — the first version is genuine, but the search for
 	// the last was cut, and the result must say so.
 	fakesAfter := func(prev []byte) []byte {
-		k := maxBoundaryScreens + 2
+		k := maxBoundaryPrescreens + 2
 		build := func(heads, ends []int64) []byte {
 			var sb strings.Builder
 			for i := 0; i < k; i++ {
@@ -262,7 +263,7 @@ func revisionShapes(t *testing.T) []revisionShape {
 					t.Errorf("Earlier %v, want [%d]", got.Earlier, ce)
 				}
 			}},
-		{name: "the last version hidden behind more fake xref sections than the screen cap", doc: hiddenLast, fp: a.fp, want: sA,
+		{name: "the last version hidden behind more fake xref sections than the prescreen cap", doc: hiddenLast, fp: a.fp, want: sA,
 			check: func(t *testing.T, got SignedRevision) {
 				if !got.LaterUnchecked {
 					t.Error("the search for a later version was cut and the result reads as the signer's last")
@@ -1092,7 +1093,7 @@ func TestRevisionBoundariesAreWhatTheXrefSays(t *testing.T) {
 	}
 	ends := rawByteRangeEnds([]byte("/ByteRange [0 10 20 30] /ByteRange[0 1 2 x] /ByteRange [0 10 20 -3] " +
 		"/ByteRange [0 1 + 2 4] /ByteRange [ 0 5 7 8 ]" + strings.Repeat(" ", 60)))
-	if !ends[50] || !ends[15] || len(ends) != 2 {
+	if len(ends[50]) != 1 || len(ends[15]) != 1 || len(ends) != 2 {
 		t.Errorf("rawByteRangeEnds %v, want {50, 15}: only whole, non-negative, all-integer literal arrays end anywhere", ends)
 	}
 }
@@ -1157,14 +1158,14 @@ func TestTheBoundaryWalkIsBounded(t *testing.T) {
 	if _, _, screens := walkBoundariesCounted(same, a.fp, &verifies, &budget); screens > 1 {
 		t.Errorf("5,000 markers naming one xref cost %d screens; they collapse to the earliest, so one", screens)
 	}
-	distinct := hostile(maxBoundaryScreens+4, true)
+	distinct := hostile(maxBoundaryPrescreens+4, true)
 	got = SignedRevisionFor(distinct, a.fp)
 	if got.Prefix != nil || got.Cause != RevisionCouldNotCheck {
 		t.Errorf("more fake xref sections than the screen cap ahead of the version: cause %q, %d bytes; want could-not-check", got.Cause, len(got.Prefix))
 	}
 	verifies, budget = 0, int64(1<<40)
-	if _, cut, screens := walkBoundariesCounted(distinct, a.fp, &verifies, &budget); screens != maxBoundaryScreens || !cut {
-		t.Errorf("%d screens, cut %v; want exactly the cap, %d, and cut", screens, cut, maxBoundaryScreens)
+	if _, cut, screens := walkBoundariesCounted(distinct, a.fp, &verifies, &budget); screens != 0 || !cut {
+		t.Errorf("%d pdfcpu screens, cut %v; want none — every fake fails the prescreen — and cut at the prescreen cap", screens, cut)
 	}
 	verifies, budget = 0, int64(1<<40)
 	if _, _, screens := walkBoundariesCounted(sA, a.fp, &verifies, &budget); screens != 0 {
@@ -1213,5 +1214,142 @@ func TestABoundaryEndsThroughEachLineEnding(t *testing.T) {
 		if !found {
 			t.Errorf("%s: the end through the line ending, %d, is not offered", name, want)
 		}
+	}
+}
+
+// TestThePrescreenAdmitsOnlyTheSignersOwnRanges — what keeps fake sections from costing a pdfcpu read each: the
+// literal's object must hold a blob naming the signer, signed with the named key, over exactly the bytes its ranges
+// select.
+func TestThePrescreenAdmitsOnlyTheSignersOwnRanges(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := newIdentity(t, "Alice"), newIdentity(t, "Bob")
+	sA := signAs(t, base, a, "original")
+	end := int64(len(sA))
+	lits := rawByteRangeEnds(sA)[end]
+	if len(lits) != 1 {
+		t.Fatalf("stimulus: %d literal ByteRanges end at the signed version's end, want the signer's one", len(lits))
+	}
+	budget := int64(1 << 40)
+	if !prescreen(sA, lits, a.fp, &budget) {
+		t.Fatal("the signer's own signature failed the prescreen — every genuine version behind a later revision would be lost")
+	}
+	if prescreen(sA, lits, b.fp, &budget) {
+		t.Error("a blob naming someone else passed for this signer")
+	}
+	if prescreen(forgeSignerInfo(t, sA), rawByteRangeEnds(forgeSignerInfo(t, sA))[end], a.fp, &budget) {
+		t.Error("a SignerInfo whose signature does not check passed")
+	}
+	other := []rawByteRange{{at: lits[0].at, br: []int64{0, 10, 20, end - 30}}}
+	if prescreen(sA, other, a.fp, &budget) {
+		t.Error("ranges selecting other bytes passed against the signer's digest")
+	}
+	// A budget that covers the scans but not the hash: the hash must be refused BEFORE it runs (budget spent to -1).
+	full := int64(1 << 40)
+	if !prescreen(sA, lits, a.fp, &full) {
+		t.Fatal("stimulus: the honest prescreen failed with an unbounded budget")
+	}
+	hashCost, _ := rangeCost(lits[0].br, len(sA))
+	scanCost := int64(1<<40) - full - hashCost
+	tight := scanCost + hashCost - 1
+	if prescreen(sA, lits, a.fp, &tight) || tight != -1 {
+		t.Errorf("a budget covering the scans (%d) but not the hash (%d): passed, or not refused before hashing (budget %d)", scanCost, hashCost, tight)
+	}
+}
+
+// TestThePrescreenChargesWhatItScans — 64,000 ByteRange literals in one object, each ending at a real boundary, used
+// to cost 3 min uncharged (P02.S03's review): every literal scanned back to its header and forward to `endobj`.
+func TestThePrescreenChargesWhatItScans(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newIdentity(t, "Alice")
+	bnd := int64(len(base))
+	lit := fmt.Sprintf("/ByteRange[0 1 2 %d]", bnd-2)
+	doc := synthRevision(t, base, []sobj{{num: 900, body: "<< /X [" + strings.Repeat(lit, 64000) + "] >>"}}, catalogOf(t, base))
+	if n := len(rawByteRangeEnds(doc)[bnd]); n < 64000 {
+		t.Fatalf("stimulus: %d literals end at the base's boundary, not 64,000", n)
+	}
+	done := make(chan SignedRevision, 1)
+	t0 := time.Now()
+	go func() { done <- SignedRevisionFor(doc, a.fp) }()
+	select {
+	case got := <-done:
+		if d := time.Since(t0); d > 3*time.Second {
+			t.Errorf("64,000 literals in one object took %v (cause %q); the scans are not charged", d, got.Cause)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("64,000 literals in one object did not finish in 30 s")
+	}
+}
+
+// TestThePrescreenKeepsASignatureEndingInZero — a signature value can end in 0x00; trimming the zero padding cut one in
+// 256 genuine signatures, which the walk then lost (P02.S03's review).
+func TestThePrescreenKeepsASignatureEndingInZero(t *testing.T) {
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "t"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &ec.PublicKey, ec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := x509.ParseCertificate(der)
+	prefix := []byte("%PDF-1.7\n% the bytes the signature covers\n")
+	var blob []byte
+	for i := 0; i < 5000 && blob == nil; i++ {
+		sd, _ := pkcs7.NewSignedData(prefix)
+		sd.SetDigestAlgorithm(pkcs7.OIDDigestAlgorithmSHA256)
+		if err := sd.AddSigner(cert, ec, pkcs7.SignerInfoConfig{}); err != nil {
+			t.Fatal(err)
+		}
+		sd.Detach()
+		raw, err := sd.Finish()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if raw[len(raw)-1] == 0 {
+			blob = raw
+		}
+	}
+	if blob == nil {
+		t.Fatal("stimulus: no signature ending in 0x00 in 5,000 tries")
+	}
+	n := len(prefix)
+	pdf := append(append([]byte(nil), prefix...), fmt.Sprintf(" 9 0 obj\n<< /ByteRange [0 %d] /Contents <%x0000000000> >>\nendobj\n", n, blob)...)
+	fp := hex.EncodeToString(fingerprintOf(cert))
+	budget := int64(1 << 30)
+	if !prescreen(pdf, rawByteRangeEnds(pdf)[int64(n)], fp, &budget) {
+		t.Error("a genuine signature whose DER ends in 0x00 failed the prescreen")
+	}
+}
+
+// TestThePrescreenChargesItsForwardScan — each literal in its own short pseudo-object, one `endobj` at the far end: the
+// back scan is short every time and the forward scan is the whole file every time, so it is the forward charge that
+// keeps this linear.
+func TestThePrescreenChargesItsForwardScan(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newIdentity(t, "Alice")
+	bnd := int64(len(base))
+	unit := fmt.Sprintf(" 9 0 obj /ByteRange[0 1 2 %d]", bnd-2)
+	doc := synthRevision(t, base, []sobj{{num: 900, body: "<< /X (" + strings.Repeat(unit, 30000) + " endobj) >>"}}, catalogOf(t, base))
+	if n := len(rawByteRangeEnds(doc)[bnd]); n < 30000 {
+		t.Fatalf("stimulus: %d literals end at the base's boundary, not 30,000", n)
+	}
+	done := make(chan struct{})
+	t0 := time.Now()
+	go func() { SignedRevisionFor(doc, a.fp); close(done) }()
+	select {
+	case <-done:
+		if d := time.Since(t0); d > 3*time.Second {
+			t.Errorf("30,000 pseudo-objects took %v; the forward scans are not charged", d)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("30,000 pseudo-objects did not finish in 30 s")
 	}
 }

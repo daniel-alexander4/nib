@@ -30,6 +30,7 @@ import (
 	"nib/internal/sign"
 	"nib/internal/vault"
 
+	"golang.org/x/sync/singleflight"
 	"nib/internal/addrscope"
 )
 
@@ -175,6 +176,12 @@ type Server struct {
 	// that method: constructing a Server must not put a socket on the network.
 	deliveryRearm atomic.Bool
 	version       string // running build version, reported by the update check and the About dialog
+	// revisionFlight collapses concurrent requests for one document's signed version into one walk (P02.S03, I5): a
+	// double click on a 512 MiB document would otherwise pay two full recoveries.
+	revisionFlight singleflight.Group
+	// revisionFor is sign.SignedRevisionFor; nil means that. A seam only for the single-flight tests, which must count
+	// walks and hold one open — the route's behaviour is otherwise sign's.
+	revisionFor func(pdf []byte, fingerprint string) sign.SignedRevision
 
 	setupMu sync.Mutex // serializes first-run vault setup so AutoSetup runs once
 
@@ -450,6 +457,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/upload", s.requireUnlocked(s.handleUpload))
 	mux.HandleFunc("POST /api/combine", s.requireUnlocked(s.handleCombine))
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
+	// The version a signer signed, recovered from the document's own bytes (PLAN-returned-document P02.S03).
+	mux.HandleFunc("GET /api/document/revision", s.requireUnlocked(s.handleDocumentRevision))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
 	mux.HandleFunc("GET /api/stamps", s.requireUnlocked(s.handleStamps))
 	mux.HandleFunc("GET /api/docs", s.requireUnlocked(s.handleDocs))

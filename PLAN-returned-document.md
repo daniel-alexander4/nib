@@ -739,13 +739,47 @@ verifies) ✅ and in bytes (the shared 16×len budget, the linear scan) ✅ on h
 measured (5,000 same-xref markers → one screen and the version; 20 distinct fakes at 12 MB → 1.2 s, 16 screens,
 `could-not-check`) ✅. W6's exit-criterion amendment ✅. W8 ✅ (`RedefinedObj` where the whole file was read).
 
-#### P02.S03 — the route
+#### P02.S03 — the route *(done 2026-10-02, v1.179.5)*
 Scope: `GET /api/document/revision?signer=<fp>` through the existing mux block and `docFor`, behind `requireSession`
 (ADR-054), answering the prefix as `application/pdf` with `Cache-Control: no-store` (`handlePDF`'s headers) or a JSON
 refusal naming its cause, reached from the client only via `apiFetch` (so `X-Nib-Doc` is carried per ADR-004). Refs: D7,
 D10.
 Acceptance: each of the four causes is reachable and distinguishable at the client; the route is called from no boot or
 open path; `TestEveryRouteIsBehindTheSessionOrNamed` covers it without a new exemption.
+**(grill 2026-10-02, `grills/2026-10-02-p02s03-route.md` — deepdive + grill, verdict AMENDED)** The route keeps W4/W5's
+shape (`requireUnlocked` wraps `requireSession`, so the census holds with no exemption), but **a client caller lands in
+this slice**: the request-field census refuses a server-read `signer` no `apiFetch` sends, and its product-gap
+exemption is full. **W9 cracked**: a barrier clears undo without marking it evicted and a save replaces the bytes with no
+history, so the fact is RECORDED history and "none" never means "as it arrived". The route projects every field (a
+marshal names none, so the census would still see eleven unread), and its single-flight key carries the bytes' identity.
+Tasks: T01 handler (400 on a malformed fingerprint, lowercased first; bytes and history in one hold); T02 single-flight;
+T03 200 + `X-Nib-Revision`; T04 422 `{cause, refused, attributed}`; T05 `history`; T06 `fetchSignedRevision` (pinned,
+no caller); T07 nothing calls it on boot or open; T08 the route's Go test, every cause; T09 the client tells them apart;
+T10 the census rows; T11 cost; T12 ADR-072; T13 `/redproof`.
+**Built (v1.179.5):** as tasked, plus one thing T11 found. **At 100 MB the boundary walk cost 2 min 6 s** on 20 fake xref
+sections — pdfcpu fell into a slow full read of every fake prefix. The walk now PRESCREENS each boundary from its own
+bytes before any pdfcpu read (`prescreen`, in `internal/sign`): the ByteRange literal's object must hold a literal
+`/Contents` naming the signer, checked against the named key, over ranges hashing to the signed digest — which a genuine
+holder always satisfies (conjuncts 9 and 10). 2 min 6 s → 53 ms; honest 100 MB recovery 0.54 s (one Verify 0.22 s).
+With rejection cheap, the bounds split: 256 prescreens, 16 pdfcpu reads — crowding a version out now takes hundreds of
+fake sections, not seventeen. `internal/testpdf` gains `AppendRevision` and `SignatureDictionary` (test-support) for the
+server's fixtures. ADR-072.
+**Review (`code-reviews/v1.179.5-p02s03-2026-10-02.md`; 2 critical, 2 warning, 4 info), all fixed or declared and
+red-proved:** the prescreen charges every byte it scans to the budget (64,000 literals in one object had cost 3 min
+uncharged) and examines each object once, with no 1 MiB window; blobs are parsed untrimmed (trimming the padding cut a
+genuine signature ending in 0x00, one in 256); the single-flight key gains the length. Declared: a walk outlives its
+client (every bound is linear in the file); HEAD pays the walk. **Live (real binary, headless, `/api/open` then the
+route over HTTP):** the signer's version byte-identical with its facts on the untouched, spoofed and redefined files
+(`earlierRevision`, `redefinedObj` on the last); 422 `not-your-signature` / `no-signature` as the file stands; 403
+with no session. Found live and worded, not changed: a stranger asking about the redefined file reads `no-signature`
+— true of the file as it stands, while an earlier revision holds someone else's signature (P03 words it).
+**Acceptance ledger:** each cause reachable and distinguishable at the client ✅ — **five**, not four (C2's parked
+`could-not-check`): the route's Go test returns each as a distinct 422 through the real mux, and the jsdom test runs the
+real `fetchSignedRevision` over each; the route is called from no boot or open path ✅ (jsdom spy: zero requests through
+boot and a signed open; one literal in app.js, inside the helper); `TestEveryRouteIsBehindTheSessionOrNamed` covers it
+without a new exemption ✅ (`requireUnlocked` wraps `requireSession`; live 403). Pins: W4 ✅, W5 ✅ (422 + JSON, the
+header), W9 ✅ (recorded history, the gap declared), I4 ✅, I5 ✅ (single-flight, proved by count and by an edit
+mid-walk), I6 ✅.
 
 ### P03 — The surface
 **Goal.** The page the request asked for.

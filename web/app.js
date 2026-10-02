@@ -437,6 +437,22 @@ async function apiFetch(url, opts = {}) {
 // requests of its own, and a 409 from one of those would call it again.
 let reconciling = false;
 
+// fetchSignedRevision asks for the version of document `docId` that the signer with certificate fingerprint `fp`
+// signed, recovered from the document's own bytes (PLAN-returned-document P02.S03). Pinned to `docId` (ADR-001) and
+// never called when a document opens (D10): its caller is the surface for a document that came back (P03). Resolves
+// `{ ok: true, bytes, facts }` — the signed version and the X-Nib-Revision facts about it — or `{ ok: false, cause,
+// refused, attributed }` for the 422 that names why there is none; throws on anything else.
+async function fetchSignedRevision(docId, fp) {
+  const res = await apiFetch(`/api/document/revision?signer=${encodeURIComponent(fp)}`, { docId });
+  if (res.status === 422) {
+    const body = await res.json();
+    return { ok: false, cause: body.cause, refused: body.refused || [], attributed: !!body.attributed };
+  }
+  if (!res.ok) throw new Error(await errText(res, 'Could not recover the signed version'));
+  const facts = JSON.parse(res.headers.get('X-Nib-Revision') || '{}');
+  return { ok: true, bytes: await res.arrayBuffer(), facts };
+}
+
 // errText extracts the server's {error} message from a failed response, falling
 // back when the body isn't JSON (proxy error, truncated) — so failure paths can
 // always toast something instead of rejecting inside the error handler itself.
