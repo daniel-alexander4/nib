@@ -471,15 +471,17 @@ var unreadKnown = map[string]string{
 	// Written in zerocaller_test.go's `gated —` form so TestNoGatedExemptionOutlivesItsCoordinate fails the
 	// moment P02.S03 is marked done: the stale-park arm below fires only on `/pending` reasons, and the empty
 	// reader list in `published` would otherwise let all nine pass forever (the S01 fix review).
-	"sign.SignedRevision.Prefix":       "gated — PLAN-returned-document.md P02.S03." + " the route serves it as the response body",
-	"sign.SignedRevision.Cause":        "gated — PLAN-returned-document.md P02.S03." + " the route's 422 refusal names it",
-	"sign.SignedRevision.Obj":          "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (plan-review W5)",
-	"sign.SignedRevision.End":          "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header",
-	"sign.SignedRevision.RedefinedObj": "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (W8)",
-	"sign.SignedRevision.Later":        "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (W3)",
-	"sign.SignedRevision.Earlier":      "gated — PLAN-returned-document.md P02.S03." + " the response (W3)",
-	"sign.SignedRevision.Refused":      "gated — PLAN-returned-document.md P02.S03." + " the 422 refusal's refused[] (W5, I6)",
-	"sign.SignedRevision.Attributed":   "gated — PLAN-returned-document.md P02.S03." + " the 422 refusal on `resaved` (C1)",
+	"sign.SignedRevision.Prefix":          "gated — PLAN-returned-document.md P02.S03." + " the route serves it as the response body",
+	"sign.SignedRevision.Cause":           "gated — PLAN-returned-document.md P02.S03." + " the route's 422 refusal names it",
+	"sign.SignedRevision.Obj":             "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (plan-review W5)",
+	"sign.SignedRevision.End":             "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header",
+	"sign.SignedRevision.RedefinedObj":    "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (W8)",
+	"sign.SignedRevision.Later":           "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (W3)",
+	"sign.SignedRevision.Earlier":         "gated — PLAN-returned-document.md P02.S03." + " the response (W3)",
+	"sign.SignedRevision.Refused":         "gated — PLAN-returned-document.md P02.S03." + " the 422 refusal's refused[] (W5, I6)",
+	"sign.SignedRevision.Attributed":      "gated — PLAN-returned-document.md P02.S03." + " the 422 refusal on `resaved` (C1)",
+	"sign.SignedRevision.EarlierRevision": "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (P02.S02)",
+	"sign.SignedRevision.LaterUnchecked":  "gated — PLAN-returned-document.md P02.S03." + " the X-Nib-Revision header (P02.S02 re-review)",
 
 	// ── internal/server, entered the day the scan could first see it (/pending 347) ──────────
 	//
