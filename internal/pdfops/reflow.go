@@ -667,12 +667,15 @@ func roomOnItsLine(l pageLayout, pi int) (left, right float64) {
 // measureSlack absorbs the arithmetic in comparing a sum against the maximum of the same sums.
 const measureSlack = 1e-6
 
-// breakAt is BreakGreedy with a line's room by index — past the last measured line, the last line's — and the space after
-// an item by the item.
-func breakAt[T any](items []T, measures []float64, width func(T) float64, space func(prev T) float64) [][]T {
+// breakAt is BreakGreedy with a line's room by index — past the last measured line, the last line's — the space after
+// an item by the item, and an item's one break point, where it carries one, with when to keep it (nil: none does).
+func breakAt[T any](items []T, measures []float64, width func(T) float64, space func(prev T) float64, hyphenate func(T) (T, T, bool),
+	keepBreak func([]T, T) bool) [][]T {
 	return mdpdf.BreakGreedy(items, 0, mdpdf.BreakOps[T]{
-		Width: width,
-		Space: space,
+		Width:     width,
+		Space:     space,
+		Hyphenate: hyphenate,
+		KeepBreak: keepBreak,
 		LineWidth: func(line int) float64 {
 			if line >= len(measures) {
 				line = len(measures) - 1
@@ -715,6 +718,7 @@ const (
 	causeNoSpaceWidth    = "no-space-width"   // the paragraph draws no space between words to measure one by
 	causeDegenerate      = "degenerate-state" // a zero or infinite scale, size or coordinate
 	causeClips           = "text-clips"       // drawn in a clipping mode (Tr 4-7): re-set or moved, the clip it makes changes
+	causeHyphenUnsure    = "hyphen-unsure"    // a word hyphenated at a line end would move mid-line, and nothing says whether its hyphen is part of it (P08.S07)
 )
 
 // ReflowCauses is every cause a reflow can fall back on, the server's included — the list the editor must have a
@@ -723,7 +727,7 @@ var ReflowCauses = []string{
 	causeMissingGlyph, causeMixedState, causeMixedContent, causeTextObjects, causeInlineFollower, causeTagged, causeReplacementText,
 	causeNoSpaceGlyph, causePageFull, causeNoPitch, causeAnchored, causeWordTooWide, causeNoParagraph, causeEmpty, causeAmbiguousStyle, causeVertical,
 	causeInvisible, causeTextInForm, causeRotated, causeNoWidths, causeUndecoded, causeGlyphsNotKept, causeStyledWord,
-	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
+	causeEmptyLine, causeNoSpaceWidth, causeDegenerate, causeClips, causeHyphenUnsure, causeStateNotCarried, causeTaggedAcross, ReflowCauseSigned, ReflowCauseInvalidOutput,
 }
 
 // editWords cuts text as a user typed it into words: at white space, but never at a no-break space, which is part of
@@ -865,6 +869,16 @@ type emitWord struct {
 	width   float64
 	font    string
 	tfSize  float64
+	// broken is a word the producer hyphenated across a line end, rejoined: its head (the hyphen included) and its tail,
+	// which the breaker sets on two lines where the whole word does not fit (P08.S07). nil for every other word.
+	broken *[2]emitWord
+	// oldIdx is 1 + the index of the paragraph's word this one keeps (its own occurrence, by the alignment); 0 for a word
+	// typed or moved. keepFrom, on a rejoined break, is the oldIdx of the first word of the line the break ended: a line
+	// that is those words up to the head is that line, and keeps its break (P08.S07).
+	oldIdx, keepFrom int
+	// seq is 1 + the word's index in the edit's words after rejoining — how a break left unsure is found again in the
+	// lines the breaker returns.
+	seq int
 }
 
 // reflowParagraph re-sets paragraph pi of page pageNr as text, in the paragraph's own font, at its own measure and
@@ -936,9 +950,13 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	var oldText []string
 	styles := map[textSpacing]int{} // how many glyphs the paragraph draws in each style
 	used := map[string]bool{}
-	for _, l := range lines {
-		for _, w := range l {
-			ew := emitWord{width: w.width, font: w.font, tfSize: w.tfSize, face: w.face, spacing: w.spacing}
+	var oldWord []reflowWord // by old index, with where it stood
+	var oldAt [][2]int
+	for li, l := range lines {
+		for wi, w := range l {
+			oldWord = append(oldWord, w)
+			oldAt = append(oldAt, [2]int{li, wi})
+			ew := emitWord{width: w.width, font: w.font, tfSize: w.tfSize, face: w.face, spacing: w.spacing, oldIdx: len(oldWord)}
 			for gi, g := range w.glyphs {
 				ew.codes = append(ew.codes, g.code)
 				if gi > 0 {
@@ -1067,7 +1085,9 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			continue
 		}
 		if occ, ok := known[t]; ok {
-			words = append(words, occ[0]) // every occurrence looks alike, or the word refused above
+			w := occ[0]  // every occurrence looks alike, or the word refused above
+			w.oldIdx = 0 // a copy, not that occurrence kept
+			words = append(words, w)
 			continue
 		}
 		fit := lines[0][0].spacing[0] // the paragraph's first glyph — its word spacing normalized when justified
@@ -1096,6 +1116,11 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		words = append(words, ew)
 	}
+	// A word the producer hyphenated across a line end, both halves kept by the edit, rejoins (P08.S07).
+	words, unsureBreaks := rejoinBroken(ctx, layout, pageNr, lines, words, al, oldWord, oldAt)
+	for i := range words {
+		words[i].seq = i + 1
+	}
 	measures := paragraphMeasures(layout, pi, lines, space)
 	if align.centred {
 		// Centred: every line may take the width that fits about the axis, whichever line it is.
@@ -1103,8 +1128,25 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			measures[i] = align.width
 		}
 	}
+	hyphenate := func(w emitWord) (emitWord, emitWord, bool) {
+		if w.broken == nil {
+			return w, w, false
+		}
+		return w.broken[0], w.broken[1], true
+	}
+	keepBreak := func(line []emitWord, w emitWord) bool {
+		if w.broken == nil || len(line) != w.broken[0].oldIdx-w.keepFrom {
+			return false
+		}
+		for i, x := range line {
+			if x.oldIdx != w.keepFrom+i {
+				return false
+			}
+		}
+		return true
+	}
 	broken := breakAt(words, measures, func(w emitWord) float64 { return w.width },
-		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) })
+		func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, hyphenate, keepBreak)
 	// A justified paragraph sets every line but its last to the flush edge (P08.S03). Broken at its own measure — which
 	// re-breaks the corpus's justified paragraphs in place — a line can still need more than the edge when the paragraph's
 	// median space carries stretch; then it is broken again AT the edge, at its natural spaces, and a word that does not fit
@@ -1116,9 +1158,27 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 			edgeMeasures[i] = align.edge - l[0].startX
 		}
 		broken = breakAt(words, edgeMeasures, func(w emitWord) float64 { return w.width },
-			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta })
+			func(w emitWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) + align.lastDelta }, hyphenate, keepBreak)
 		if justify, fits = justifiedLines(align, broken, lines, space); !fits {
 			return reflowOutcome{cause: causeWordTooWide}, nil
+		}
+	}
+	// A break left unsure stays only where it still ends a line: its head last on a line, its tail first on the next.
+	if len(unsureBreaks) > 0 {
+		at := map[int][2]int{} // seq → line, position
+		for li, l := range broken {
+			for wi, w := range l {
+				at[w.seq] = [2]int{li, wi}
+			}
+		}
+		for _, pr := range unsureBreaks {
+			if pr[0] < 0 {
+				return reflowOutcome{cause: causeHyphenUnsure}, nil
+			}
+			h, t := at[pr[0]+1], at[pr[1]+1]
+			if h[1] != len(broken[h[0]])-1 || t != [2]int{h[0] + 1, 0} {
+				return reflowOutcome{cause: causeHyphenUnsure}, nil
+			}
 		}
 	}
 	// A paragraph that needs more lines grows DOWN into the room below it (P07.S03): its new lines at its own pitch, and

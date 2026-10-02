@@ -371,6 +371,14 @@ type BreakOps[T any] struct {
 	IsBreak   func(T) bool
 	Split     func(T, float64) []T
 	LineWidth func(line int) float64
+	// Hyphenate offers an item's one break point, where it has one: head ends a line (its hyphen included) and tail
+	// begins the next. An item that does not fit where it stands is broken there when head fits — so a word a producer
+	// hyphenated keeps its hyphen only where it still ends a line (`PLAN-text-reflow.md` P08.S07). Nothing new is
+	// hyphenated: only an item that carries a break point offers one.
+	Hyphenate func(T) (head, tail T, ok bool)
+	// KeepBreak says the line so far is the one the item's break point ended: the break is then taken first, where its
+	// head fits, before the whole item is tried — so an edit after a producer's break leaves the line it ended alone.
+	KeepBreak func(line []T, item T) bool
 }
 
 // BreakGreedy is the line breaker — THE one: mdpdf's layout and `pdfops`' reflow both call it (`PLAN-text-reflow.md`
@@ -398,14 +406,40 @@ func BreakGreedy[T any](items []T, maxW float64, ops BreakOps[T]) [][]T {
 			continue
 		}
 		ww := ops.Width(w)
+		if ops.Hyphenate != nil && ops.KeepBreak != nil && ops.KeepBreak(cur, w) {
+			if head, tail, ok := ops.Hyphenate(w); ok {
+				need := ops.Width(head)
+				if len(cur) > 0 {
+					need += curW + ops.Space(cur[len(cur)-1])
+				}
+				if need <= width() {
+					cur, curW = append(cur, head), need
+					flush()
+					w, ww = tail, ops.Width(tail)
+				}
+			}
+		}
 		if len(cur) > 0 {
 			sp := ops.Space(cur[len(cur)-1])
-			if curW+sp+ww > width() {
-				flush()
-			} else {
+			// Written as the negation of "does not fit", not as "fits": a NaN width fits, as it always has, and the
+			// degenerate state is refused where it is emitted (`degenerate-state`), not by a different break.
+			if !(curW+sp+ww > width()) {
 				cur = append(cur, w)
 				curW += sp + ww
 				continue
+			}
+			if ops.Hyphenate != nil {
+				if head, tail, ok := ops.Hyphenate(w); ok && curW+sp+ops.Width(head) <= width() {
+					cur = append(cur, head)
+					w, ww = tail, ops.Width(tail)
+				}
+			}
+			flush()
+		}
+		if ww > width() && ops.Hyphenate != nil {
+			if head, tail, ok := ops.Hyphenate(w); ok && ops.Width(head) <= width() {
+				lines = append(lines, []T{head})
+				w, ww = tail, ops.Width(tail)
 			}
 		}
 		if ww > width() && ops.Split != nil {

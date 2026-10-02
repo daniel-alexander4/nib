@@ -364,7 +364,11 @@ keeps the spacing it was set with — letter spacing, word spacing, condensed or
 type — so the words you did not change look exactly as they did, and a word you type
 takes the spacing of the text just before it. A word you type is **kerned** the way the page
 kerns: a pair of letters the document always sets closer (an *AV*, a *To*) is set that close in
-your word too — and where the page places its letters inconsistently, nothing is borrowed. A **justified** paragraph stays justified: every line
+your word too — and where the page places its letters inconsistently, nothing is borrowed. A word the
+document **hyphenated** across a line end ("accom-" / "modate") becomes one word again when your edit moves it
+inside a line — without the hyphen where the document writes the word whole elsewhere, with it where the document
+writes it hyphenated ("full-time"). If nothing nearby says which, the edit is refused with the reason rather than
+guessed. A **justified** paragraph stays justified: every line
 but the last is set out to the right margin again. A **centred** heading stays centred when you change its length.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line

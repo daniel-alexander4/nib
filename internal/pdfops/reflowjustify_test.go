@@ -302,14 +302,14 @@ func TestRealJustifiedParagraphsReWrapFlush(t *testing.T) {
 				size := para.lines[0].size
 				pitch := paragraphPitch(l, pi)
 				var got []textLine
-				for i, n := 0, 0; n < len(editWords(edit)); i++ {
+				for i, n := 0, 0; n < editLetters(edit); i++ { // letters: a hyphenated break can read back rejoined (P08.S07)
 					y := para.lines[min(i, len(para.lines)-1)].y - float64(max(0, i-len(para.lines)+1))*pitch
 					ln, ok := lineAtBaseline(l3, paragraphBox(para), y, size)
 					if !ok {
 						break
 					}
 					got = append(got, ln)
-					n += len(editWords(ln.text))
+					n += editLetters(ln.text)
 				}
 				ws, _, cause := paragraphWords(textParagraph{lines: got, column: para.column})
 				if cause != "" || len(ws) < 2 {

@@ -14,7 +14,7 @@ import (
 // breaker as the rewrite calls it, over the words the paragraph already has. A test instrument.
 func rebreak(words []reflowWord, measures []float64, space wordSpacer) [][]reflowWord {
 	return breakAt(words, measures, func(w reflowWord) float64 { return w.width },
-		func(w reflowWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) })
+		func(w reflowWord) float64 { return space(w.face, w.tfSize, lastSpacing(w.spacing)) }, nil, nil)
 }
 
 // lineTexts renders broken lines as their words joined by a space — what a reader of the broken paragraph sees.

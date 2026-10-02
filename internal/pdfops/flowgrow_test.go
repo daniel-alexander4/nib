@@ -52,12 +52,13 @@ func grewAsItShould(before, after pageLayout, pi int, edit string, page [4]float
 		ln, ok := lineAtBaseline(after, paragraphBox(para), y, para.lines[0].size)
 		// Lengths of the NORMALIZED texts: an edit can carry a double space its read-back collapses, and the raw length
 		// read one line too far (a centred heading that now fits on its line, P08.S04).
-		if !ok || len(normalizedText(strings.Join(got, " "))) >= len(normalizedText(edit)) {
+		// Letters, not words: a word the producer hyphenated across a line end can read back rejoined (P08.S07).
+		if !ok || editLetters(strings.Join(got, " ")) >= editLetters(edit) {
 			break
 		}
 		got = append(got, ln.text)
 	}
-	if normalizedText(strings.Join(got, " ")) != normalizedText(edit) {
+	if !readsAsEdit(strings.Join(got, " "), edit) {
 		return fmt.Sprintf("the edited paragraph's baselines read %q", got)
 	}
 	extra := len(got) - n

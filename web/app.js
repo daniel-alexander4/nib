@@ -6787,6 +6787,7 @@ const REFLOW_CAUSES = {
   'no-pitch': 'The paragraph is a single line, and nothing in its column says how far apart its lines would be set.',
   anchored: 'Something is fixed to a spot the text would move across — a link, a form field, a note, a flag, a bookmark or a drawing — and it would be left pointing at the wrong words.',
   'word-too-wide': 'A word is wider than the paragraph.',
+  'hyphen-unsure': 'A word split across two lines with a hyphen would now sit inside a line, and nothing in the document says whether that hyphen belongs in the word.',
   tagged: "The paragraph's lines are tagged for accessibility one by one, and moving text between them would mis-tag it.",
   'replacement-text': 'The paragraph carries replacement text for screen readers that would still read the old words.',
   'styled-word': 'A word changes style part-way through.',

@@ -268,15 +268,16 @@ func TestEveryRewrittenParagraphReadsBackAsItsEdit(t *testing.T) {
 							return para.lines[len(para.lines)-1].y - float64(i-len(para.lines)+1)*pitch
 						}
 						got := textParagraph{column: para.column}
-						for i, n := 0, 0; n < len(editWords(edit)); i++ {
+						// Letters, not words: a hyphenated break can read back rejoined (P08.S07).
+						for i, n := 0, 0; n < editLetters(edit); i++ {
 							ln, ok := lineAtBaseline(l3, paragraphBox(para), baseline(i), para.lines[0].size)
 							if !ok {
 								break
 							}
 							got.lines = append(got.lines, ln)
-							n += len(editWords(ln.text))
+							n += editLetters(ln.text)
 						}
-						if len(got.lines) == 0 || normalizedText(got.text()) != normalizedText(edit) {
+						if len(got.lines) == 0 || !readsAsEdit(got.text(), edit) {
 							t.Errorf("%s / %s p%d ¶%d: wrote %q, its baselines read %q", corp.name, doc.name, p, pi, edit, got.text())
 							return true, ""
 						}
