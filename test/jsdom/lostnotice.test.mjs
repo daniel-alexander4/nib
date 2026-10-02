@@ -23,7 +23,7 @@ let lostAnnots = 0;
 let lostFields = 0;
 
 const meta = () => ({
-  name: 'noted.pdf', path: DOC, canSave: true,
+  id: 'test-epoch:1', name: 'noted.pdf', path: DOC, canSave: true,
   signature: { state: 'unsigned' }, canUndo: true, canRedo: false,
   lostAnnots: lostAnnots || undefined,
   lostFields: lostFields || undefined,

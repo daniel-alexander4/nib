@@ -17,14 +17,14 @@ const posted = [];
 const h = await boot({
   routes: {
     '/api/open': () => ({
-      name: 'insert.pdf', path: DOC, canSave: true,
+      id: 'test-epoch:1', name: 'insert.pdf', path: DOC, canSave: true,
       signature: { state: 'unsigned' }, canUndo: false, canRedo: false,
     }),
     '/api/pages': (opts) => {
       const form = opts.body;
       posted.push({ op: form.get('op'), page: form.get('page'), side: form.get('side') });
       return {
-        name: 'insert.pdf', path: DOC, canSave: true,
+        id: 'test-epoch:1', name: 'insert.pdf', path: DOC, canSave: true,
         signature: { state: 'unsigned' }, canUndo: true, canRedo: false,
       };
     },

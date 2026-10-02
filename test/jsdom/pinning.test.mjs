@@ -555,8 +555,10 @@ test('apiFetch honours an explicit docId over the current document', () => {
     'apiFetch does not read the docId its callers pass');
   assert.match(APP, /const hasPin = Object\.prototype\.hasOwnProperty\.call\(opts, 'docId'\);/,
     'apiFetch decides pinning by truthiness, so a captured-but-missing id silently falls back to the CURRENT one — the exact request pinning exists to prevent, arriving through the option meant to stop it');
-  assert.match(APP, /if \(hasPin\) \{ if \(pinned\) opts\.headers\['X-Nib-Doc'\] = pinned; \}/,
+  assert.match(APP, /if \(hasPin\) opts\.headers\['X-Nib-Doc'\] = pinned;/,
     'apiFetch ignores the captured id in favour of the current one — which is the defect, not the fix');
+  assert.match(APP, /if \(hasPin && !pinned\) throw /,
+    'a present-but-falsy docId is omitted rather than refused, and on the wire an absent header IS the current document (/pending 652)');
   assert.match(APP, /delete opts\.docId;/,
     'docId is forwarded into fetch() as a request option');
 });
@@ -731,4 +733,23 @@ test('every bare function call resolves to something app.js declares', () => {
   // Stimulus: the scan must be reading a real population, or the green above is over an
   // empty set — which is what a broken strip step would silently produce.
   assert.ok(declared.size > 400, `only ${declared.size} declarations found — the scan is not reading app.js properly`);
+});
+
+// /pending 652, behaviourally: the REAL apiFetch, its text taken from app.js, over a stubbed fetch. A present-but-falsy
+// docId used to send no header — which `docFor` answers with the ACTIVE document — and now throws before any request.
+test('a present-but-falsy docId throws before a request goes out (/pending 652)', async () => {
+  const at = APP.indexOf('async function apiFetch(');
+  const text = APP.slice(at, APP.indexOf('\n}\n', at) + 2);
+  const sent = [];
+  const fetchStub = async (url, opts) => { sent.push({ url, headers: opts.headers }); return new Response('{}', { status: 200 }); };
+  const apiFetch = new Function('fetch', 'csrf', 'view', 'refreshStatus', 'showLaunchOverlay', 'reconcileWithServer', 'reconciling',
+    `${text}\nreturn apiFetch;`)(fetchStub, 't', { docMeta: { id: 'test-epoch:7' } }, () => {}, () => {}, async () => {}, false);
+  for (const bad of [null, undefined, '', 0]) {
+    await assert.rejects(apiFetch('/api/x', { docId: bad }), /no open document/, `docId ${String(bad)} did not throw`);
+  }
+  assert.equal(sent.length, 0, 'a request went out for a falsy pin');
+  // Controls: a real pin is sent as given, and an absent key still means the current document.
+  await apiFetch('/api/x', { docId: 'test-epoch:3' });
+  await apiFetch('/api/x', {});
+  assert.deepEqual(sent.map((r) => r.headers['X-Nib-Doc']), ['test-epoch:3', 'test-epoch:7']);
 });

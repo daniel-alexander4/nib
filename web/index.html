@@ -490,6 +490,7 @@
         <button data-forward="exportCertBtn">Signing certificate</button>
         <button id="timestampBtn" title="Anchor this document in time with OpenTimestamps">Timestamp (OpenTimestamps)…</button>
         <button id="timestampVerifyBtn" title="Check a document against its .ots proof">Verify a timestamp…</button>
+        <button id="returnedBtn" title="You signed this and it came back: what changed since your signature">Check a document that came back…</button>
       </div>
 
       
@@ -536,6 +537,7 @@
       <button id="cosignBtn">Co-sign with a peer…</button>
       <button data-forward="timestampVerifyBtn">Verify a timestamp…</button>
       <button data-forward="managePeersBtn">Identity &amp; peers…</button>
+      <button data-forward="returnedBtn">Check a document that came back…</button>
             </div>
     </div><div class="tbtab" data-tab="settings">
       <!-- Settings is a MODE, not a dropdown behind a gear (v1.126.0). Its items are the same
@@ -749,6 +751,23 @@
            **The first surface of its kind in this app.** ADR-025 made Settings the sixth mode with
            its items as sidebar CARDS, so there is no structure to copy — Settings is a list of small
            controls and this is a roster picker. -->
+      <!-- A document that came back (PLAN-returned-document P03, D12): a reading surface shown IN PLACE of the viewer,
+           as the ceremony sheet is — not a modal (a document, a verdict and a signer list do not fit one) and not a tab
+           (it is about a document, not another one). It is about ONE document, captured when it opens, so it closes
+           when the active tab changes rather than describe a different one. -->
+      <div id="returnedSheet" class="sheet" hidden role="region" aria-labelledby="returnedHeading">
+        <div class="sheethead">
+          <h2 id="returnedHeading" tabindex="-1">A document that came back</h2>
+          <div class="sheetheadbtns">
+            <button id="returnedClose" type="button" class="sheetclose">Back to the document</button>
+          </div>
+        </div>
+        <div class="sheetbody">
+          <p id="returnedDoc" class="cerdocline"></p>
+          <!-- The verdict, in dispute language, and the signer list around yours: P03.S02. -->
+          <div id="returnedVerdict" aria-live="polite"></div>
+        </div>
+      </div>
       <div id="ceremonySheet" class="sheet" hidden>
         <div class="sheethead">
           <h2>Convene a ceremony</h2>
