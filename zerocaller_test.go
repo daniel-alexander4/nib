@@ -85,9 +85,9 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		// Two are left, and they are `test-support` rather than `gated`: nothing schedules a caller
 		// for them, so a coordinate would be a date nobody is keeping.
 
-		"Revisions": "gated — PLAN-returned-document.md P02.S01." +
-			" `sign.Revisions` is P01.S01's record index, exposed through the same door `Verify` uses; `SignedRevisionFor` selects " +
-			"the user's own signature from it, and until then `Verify` reads the records internally.",
+		"SignedRevisionFor": "gated — PLAN-returned-document.md P02.S03." +
+			" P02.S01 built the selection and the re-verification; its caller is the route `GET /api/document/revision`," +
+			" which S03 builds. (`Revisions`' row, gated on P02.S01, is gone: `SignedRevisionFor` is its caller.)",
 
 		"AmbiguousPageTrees": "test-support — the four page-tree shapes two readings order differently " +
 			"(/pending 755), shared by pdfops' ContentDigest tests and ceremony's Convene refusal test.",
@@ -335,10 +335,16 @@ var gatedRow = regexp.MustCompile(`^gated — (PLAN-[A-Za-z0-9-]+\.md) (P\d+(?:\
 // saying it is required.
 func TestNoGatedExemptionOutlivesItsCoordinate(t *testing.T) {
 	// Re-run the guard's own map by calling it indirectly is not possible, so the rows are read
-	// from this file's source — the one place they are written — rather than duplicated here.
-	src, err := os.ReadFile("zerocaller_test.go")
-	if err != nil {
-		t.Fatal(err)
+	// from the sources they are written in — this file's exemptions, and observables_test.go's parks
+	// and internal shapes, whose own stale arm cannot see a park with no `/pending` reason — rather
+	// than duplicated here.
+	var src []byte
+	for _, f := range []string{"zerocaller_test.go", "observables_test.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src = append(src, b...)
 	}
 	rows := regexp.MustCompile(`"gated — (PLAN-[A-Za-z0-9-]+\.md) (P\d+(?:\.S\d+)?)\."`).
 		FindAllStringSubmatch(string(src), -1)

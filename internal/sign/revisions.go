@@ -107,6 +107,10 @@ type Revision struct {
 	bag string
 	// named is the fingerprint the SignerInfo names, before anything has verified it.
 	named string
+	// proof is a small COPY of what `SignedRevisionFor` needs from the SignerInfo — never the parsed blob, which aliases
+	// `/Contents`: M dictionaries sharing one indirect `/Contents` held M decoded copies, +804 MB on a 4 MB file
+	// (P02.S01's review), on the path every install, mutation and undo runs. Nil where there is no single signer.
+	proof *signerProof
 	// brIndirect is a `/ByteRange` that resolves to an ARRAY held in another object: the library
 	// re-parses it on every `Key` call, three times per pair (`libraryWouldOverread`).
 	brIndirect bool
@@ -244,6 +248,7 @@ func sweep(pdf []byte) (revs []Revision, st sweepStats, err error) {
 			rev.libPos = lib
 			lib++
 		}
+		rev.proof = proofOf(p7)
 		rev.bag = bagKey(rawsOf(p7.Certificates))
 		// GetOnlySigner is nil for a bag that names no certificate it carries, and for the
 		// multi-SignerInfo shape a PDF signature never has. Either way nib cannot say who signed.
