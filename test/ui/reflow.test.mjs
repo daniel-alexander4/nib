@@ -449,3 +449,55 @@ test('a centred heading stays centred when its length changes', async () => {
   const after = await rowMiddle('Year');
   assert.ok(Math.abs(after - before) < 1.5, `the heading's middle moved from ${before} to ${after}`);
 });
+
+// P08.S05 through the binary: a typed word takes the kern the page draws for its pairs. The page kerns by table — "AV"
+// tightened by 140 three times, and ten more pairs below the paragraph, each three times (a face lends only past a table
+// of five) — and draws "VA" unkerned and "AA" never; two typed words of the same four glyphs, "AVAV" (two AV pairs) and
+// "VAAV" (one), differ in width by one kern, read from pdf.js's text layer. (In the bytes, unkerned, they are the same width;
+// pdf.js's own arithmetic reads them 0.80 pt apart — see the threshold below.)
+// (A positive `TJ` number tightens: it moves the next glyph left.)
+const TABLE = ['To', 'Yo', 'Wa', 'Va', 'Ye', 'Te', 'Pa', 'Ly', 'Fa', 'Ta'];
+const KERNED = writeRawFixture('reflow-kerned.pdf', paragraphPDF(
+  'BT /F1 14 Tf 18 TL 72 700 Td [(The C) (A) 140 (VE and the S) (A) 140 (VE are near the old) ] TJ T* [(A) 140 (VAIL road.) ] TJ ET ' +
+  'BT /F1 14 Tf 18 TL 72 400 Td ' + [0, 4, 8].map((i) => '[' + TABLE.slice(i, i + 4).map((p) => `(${p[0]}) 40 (${p[1]} ) `.repeat(3)).join('') + '] TJ').join(' T* ') + ' ET'));
+
+const rowWidth = (word) => page.evaluate((w) => {
+  const spans = [...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].filter((s) => s.textContent.trim());
+  const hit = spans.find((e) => e.textContent.includes(w));
+  if (!hit) return null;
+  const top = hit.getBoundingClientRect().top;
+  const row = spans.map((s) => s.getBoundingClientRect()).filter((r) => Math.abs(r.top - top) < 2);
+  const rowSpans = spans.filter((s) => Math.abs(s.getBoundingClientRect().top - top) < 2);
+  return { left: Math.min(...row.map((r) => r.left)), right: Math.max(...row.map((r) => r.right)),
+    spans: rowSpans.map((s) => { const r = s.getBoundingClientRect(); return `${JSON.stringify(s.textContent)} ${r.left.toFixed(2)}-${r.right.toFixed(2)}`; }) };
+}, word);
+
+async function typedRow(word) {
+  await h.closeDocument();
+  await h.openDocument(KERNED, 1);
+  await page.waitForFunction(() => /AVAIL/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  await openReflow();
+  assert.equal(await page.$eval('#reflowText', (t) => t.value), 'The CAVE and the SAVE are near the old AVAIL road.',
+    'setup: the dialog did not offer the kerned paragraph as one');
+  await page.fill('#reflowText', `The CAVE and the SAVE are near the old AVAIL road. ${word}`);
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the kerned paragraph was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction((w) => new RegExp(w).test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')), word);
+  return { after: await rowWidth(word) };
+}
+
+test('a typed word takes the kerning the page draws for its pairs', async () => {
+  const two = await typedRow('AVAV');
+  const one = await typedRow('VAAV');
+  // px per point, from the page itself: its MediaBox is 612 points wide.
+  const scale = await page.evaluate(() => document.querySelector('.viewerContainer:not([hidden]) .page').getBoundingClientRect().width / 612);
+  assert.ok(Math.abs(two.after.left - one.after.left) < 0.5, `setup: the two rows start at ${two.after.left} and ${one.after.left}`);
+  const kern = (one.after.right - two.after.right) / scale;
+  // The Go read-back of these bytes is exact (1.96 pt, `TestATypedWordTakesThePagesKerning`); pdf.js's text layer measures
+  // its own way: it reads 2.73 here, and 0.80 with the lending switched off (both measured 2026-10-01 — the two words draw
+  // the same glyphs, but pdf.js's own arithmetic differs by their order). So this asserts the kern by a threshold between
+  // the two, not its last digit; a kern written the wrong way round would read below the unkerned 0.80.
+  assert.ok(kern > 1.4 && kern < 3.5, `"AVAV" is ${kern} pt narrower than "VAAV", want one AV kern (1.96 pt drawn) — scale ${scale}, rows ${JSON.stringify(two.after.spans)} / ${JSON.stringify(one.after.spans)}`);
+});
