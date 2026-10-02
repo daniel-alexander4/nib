@@ -2,6 +2,7 @@ package sign
 
 import (
 	"bytes"
+	"cmp"
 	"crypto"
 	_ "crypto/sha1"
 	_ "crypto/sha256"
@@ -10,8 +11,8 @@ import (
 	"encoding/asn1"
 	"encoding/hex"
 	"regexp"
+	"slices"
 	"sort"
-	"strconv"
 
 	"github.com/digitorus/pkcs7"
 )
@@ -65,8 +66,18 @@ const maxBoundaryScreens = 16
 // maxBoundaryPrescreens bounds how many boundaries the walk prescreens. A prescreen parses one signature blob from the
 // bytes and hashes at most the file once per candidate (charged to the budget) — measured 53 ms for 20 fake xref
 // sections in a 100 MB file, where pdfcpu-reading each had cost 2 min 6 s — so this bound can be generous: crowding a
-// version out now takes hundreds of fake sections, not seventeen.
+// version out takes hundreds of fake sections, not seventeen. **That held only once a SignerInfo with no signed
+// attributes was checked against its key** (P02 phase close): a forged one admitted on "it encapsulates content" alone
+// passed every prescreen, and seventeen fakes cut the walk at 16 pdfcpu reads — `could-not-check` for a version in the
+// file, 1.3 s at 23 MB. Checked, the same seventeen cost no pdfcpu read and the version comes back.
 const maxBoundaryPrescreens = 256
+
+// maxEncapsulatedContent is the most encapsulated content a `signerProof` keeps a copy of. The library verifies a
+// SignerInfo over the encapsulated content FOLLOWED BY the bytes the ranges select (pdfsign `verify/signature.go`
+// appends them), so a SignerInfo with no signed attributes cannot be screened without it. The `adbe.pkcs7.sha1` shape
+// carries a 20-byte digest; a SignerInfo encapsulating more than this is not screened and so never admitted — declared:
+// one the library would verify is then lost to the screened paths, and none exists on disk.
+const maxEncapsulatedContent = 1024
 
 // maxXrefLeadingSpace is how much white space a `startxref` offset may point before its section: pdfsign's points one
 // byte early, at the end-of-line before the header.
@@ -101,8 +112,9 @@ type SignedRevision struct {
 	EarlierRevision bool `json:"earlierRevision,omitempty"`
 	// LaterUnchecked: a version was found, and the search for a LATER one by the same signer was stopped by a bound
 	// before every earlier revision was looked at (P02.S02's re-review: the signer's certificate is public, so anyone
-	// can copy a dictionary naming it and spend the walk's screens ahead of the signer's last version). The version
-	// returned is genuine; whether it is the signer's last is not established, and the surface must say so.
+	// can copy a dictionary naming it and spend the walk's screens ahead of the signer's last version) — or before every
+	// record naming the signer was considered (`maxCandidateRecords`). The version returned is genuine; whether it is
+	// the signer's last is not established, and the surface must say so.
 	LaterUnchecked bool `json:"laterUnchecked,omitempty"`
 }
 
@@ -116,8 +128,10 @@ type SignedRevision struct {
 // the digitorus reader on a file the pdfcpu gate refused (ADR-041).
 func SignedRevisionFor(pdf []byte, fingerprint string) SignedRevision {
 	_, revs, err := verifyIndexed(pdf)
-	cands := revisionCandidates(pdf, revs, err, fingerprint)
-	failed, cut := false, false
+	cands, capped := revisionCandidates(pdf, revs, err, fingerprint)
+	// A capped candidate list left records naming the signer unconsidered, any of which could end later — at the file's
+	// own end, which the walk never looks at — so nothing found here or by the walk is known to be the last.
+	failed, cut := false, capped
 	verifies := 0
 	budget := int64(screenBudgetFactor) * int64(len(pdf))
 	tried := map[int64]bool{} // ends actually re-verified — a candidate screened out was never tried (P02.S02 review C3)
@@ -150,14 +164,16 @@ func SignedRevisionFor(pdf []byte, fingerprint string) SignedRevision {
 			failed = true
 			continue
 		}
-		obj, ok := holder(prs, fingerprint, c.end)
+		held, ok := holder(prs, fingerprint, c.end)
 		if !ok {
 			failed = true
 			continue
 		}
-		best = &SignedRevision{Prefix: prefix, Obj: obj, End: c.end}
-		if c.onlyRefused {
-			best.RedefinedObj = c.obj
+		best = &SignedRevision{Prefix: prefix, Obj: held.Obj, End: c.end}
+		// The record that re-verified names the object, never the first proposer of its end in xref order — which can be
+		// an appended copy — and only where the file as it stands holds no well-formed record of it with these ranges.
+		if c.onlyRefused && redefinedIn(revs, held) {
+			best.RedefinedObj = held.Obj
 		}
 		for _, r := range revs {
 			if r.Fingerprint == fingerprint && r.countsAsSigner() && r.CoverageEnd < c.end {
@@ -176,25 +192,30 @@ func SignedRevisionFor(pdf []byte, fingerprint string) SignedRevision {
 	if best != nil {
 		after = best.End
 	}
-	found, wcut, _ := walkBoundaries(pdf, fingerprint, tried, after, &verifies, &budget)
-	if found != nil {
+	w := walkBoundaries(pdf, fingerprint, tried, after, &verifies, &budget)
+	// A walk prefix that passed every screen and then did not re-verify is the main loop's `failed` (I3), not a
+	// statement about the signer: without it the refusal read `not-your-signature` or `no-signature` about a signer
+	// whose own key and digest nib had just checked.
+	failed = failed || w.failed
+	if found := w.found; found != nil {
 		found.Later = laterNaming(pdf, revs, fingerprint, found.End)
-		// Found only by the walk means no record in the file as it stands reached it — any that did was a candidate
-		// above, within `maxCandidateRecords` — so where the whole file was read, the latest revision redefined or
-		// dropped that object (W8). Where it was not read, nothing can be said about what the latest revision holds.
-		if err == nil {
+		found.LaterUnchecked = capped
+		// W8 is a COMPARISON with the file as it stands, never an inference from the walk having been needed: the
+		// candidate cap can drop the very record that still holds the object unchanged. Where the whole file was not
+		// read, nothing can be said about what the latest revision holds.
+		if err == nil && redefinedIn(revs, w.held) {
 			found.RedefinedObj = found.Obj
 		}
 		return *found
 	}
 	if best != nil {
 		best.Later = laterNaming(pdf, revs, fingerprint, best.End)
-		best.LaterUnchecked = wcut
+		best.LaterUnchecked = w.cut || capped
 		return *best
 	}
 	out := SignedRevision{Refused: refusedOf(revs)}
 	switch {
-	case err != nil, cut, wcut:
+	case err != nil, cut, w.cut:
 		out.Cause = RevisionCouldNotCheck
 	case failed:
 		out.Cause = RevisionPrefixFailed
@@ -203,7 +224,7 @@ func SignedRevisionFor(pdf []byte, fingerprint string) SignedRevision {
 		for _, r := range revs {
 			if fingerprint != "" && r.named == fingerprint && !r.Timestamp {
 				out.Cause = RevisionResaved
-				if r.proof.attributed() {
+				if !out.Attributed && r.proof.attributed() { // a key verify each; one that checks settles it
 					out.Attributed = true
 				}
 				continue
@@ -216,33 +237,72 @@ func SignedRevisionFor(pdf []byte, fingerprint string) SignedRevision {
 	return out
 }
 
-// walkBoundaries tries each earlier revision of pdf after `after`, newest first, for the signer's version. A revision boundary is a
-// `%%EOF` the file's own cross-reference structure ends at (`revisionBoundaries`), and only one a literal ByteRange
-// ends at is worth a look (`rawByteRangeEnds`) — every other costs nothing. Each is SCREENED behind pdfcpu's read
-// (`boundaryCandidate`, ADR-041), then re-verified like any candidate. cut is true when a bound stopped the walk with
-// boundaries untried: the answer is then `could-not-check`, never a cause that claims nib looked everywhere. screens
-// is how many prefixes it screened, for the bound tests.
-func walkBoundaries(pdf []byte, fingerprint string, tried map[int64]bool, after int64, verifies *int, budget *int64) (found *SignedRevision, cut bool, screens int) {
+// walkResult is what the boundary walk saw. found is the signer's version and held the record that re-verified inside
+// it; cut is true when a bound stopped the walk with boundaries untried (the answer is then `could-not-check`, never a
+// cause that claims nib looked everywhere); failed is true when a prefix passed every screen and then did not
+// re-verify; screens is how many prefixes it read with pdfcpu, for the bound tests.
+type walkResult struct {
+	found   *SignedRevision
+	held    Revision
+	cut     bool
+	failed  bool
+	screens int
+}
+
+// walkBoundaries tries each earlier revision of pdf after `after`, newest first, for the signer's version. A revision
+// boundary is a `%%EOF` the file's own cross-reference structure ends at (`revisionBoundaries`), and only one a literal
+// ByteRange ends at is worth a look (`rawByteRangesEndingAt`) — every other costs nothing. Each is SCREENED behind
+// pdfcpu's read (`boundaryCandidate`, ADR-041), then re-verified like any candidate.
+//
+// **Both whole-file scans are charged to the budget, and the boundaries are found FIRST** (P02's phase-close review):
+// they materialised every literal ByteRange and every marker uncharged, measured at 1.7 GB allocated, ~907 MB peak, for
+// 64 MB of `/ByteRange[0 1 1 1]` — ~14× the file, on every request. The boundary scan keeps one end per offset, and the
+// literal scan keeps only literals ending at a boundary still to try, as an end and an offset, re-reading the numbers
+// when one is prescreened; a file with no such boundary skips it.
+func walkBoundaries(pdf []byte, fingerprint string, tried map[int64]bool, after int64, verifies *int, budget *int64) (w walkResult) {
 	if fingerprint == "" {
-		return nil, false, 0
+		return w
 	}
-	ends := rawByteRangeEnds(pdf)
-	prescreens := 0
-	for _, b := range revisionBoundaries(pdf) {
-		if b <= after || b == int64(len(pdf)) || len(ends[b]) == 0 || tried[b] {
-			continue
+	bounds, ok := revisionBoundaries(pdf, budget)
+	if !ok {
+		w.cut = true
+		return w
+	}
+	keep := bounds[:0]
+	for _, b := range bounds {
+		if b > after && b != int64(len(pdf)) && !tried[b] {
+			keep = append(keep, b)
 		}
-		if prescreens == maxBoundaryPrescreens || screens == maxBoundaryScreens || *verifies == maxRevisionCandidates || *budget < 0 {
-			return nil, true, screens
+	}
+	if len(keep) == 0 {
+		return w
+	}
+	lits, ok := rawByteRangesEndingAt(pdf, keep, budget)
+	if !ok {
+		w.cut = true
+		return w
+	}
+	prescreens := 0
+	for k := 0; k < len(lits); {
+		b, n := lits[k].end, k
+		for n < len(lits) && lits[n].end == b {
+			n++
+		}
+		run := lits[k:n]
+		k = n
+		if prescreens == maxBoundaryPrescreens || w.screens == maxBoundaryScreens || *verifies == maxRevisionCandidates || *budget < 0 {
+			w.cut = true
+			return w
 		}
 		prescreens++
-		if !prescreen(pdf, ends[b], fingerprint, budget) {
+		if !prescreen(pdf, run, fingerprint, budget) {
 			if *budget < 0 {
-				return nil, true, screens // the budget is spent with boundaries untried
+				w.cut = true // the budget is spent with boundaries untried
+				return w
 			}
 			continue
 		}
-		screens++ // only a boundary whose own bytes say it could be the signer's costs a pdfcpu read
+		w.screens++ // only a boundary whose own bytes say it could be the signer's costs a pdfcpu read
 		prefix := pdf[:b:b]
 		c := boundaryCandidate(prefix, fingerprint)
 		if c == nil {
@@ -250,28 +310,32 @@ func walkBoundaries(pdf []byte, fingerprint string, tried map[int64]bool, after 
 		}
 		if !c.screen(prefix, budget) {
 			if *budget < 0 {
-				return nil, true, screens // the budget is spent with boundaries untried
+				w.cut = true // the budget is spent with boundaries untried
+				return w
 			}
 			continue
 		}
 		*verifies++
 		prs, err := Revisions(prefix)
 		if err != nil {
+			w.failed = true
 			continue
 		}
-		obj, ok := holder(prs, fingerprint, b)
+		held, ok := holder(prs, fingerprint, b)
 		if !ok {
+			w.failed = true
 			continue
 		}
-		out := &SignedRevision{Prefix: prefix, Obj: obj, End: b, EarlierRevision: true}
+		out := &SignedRevision{Prefix: prefix, Obj: held.Obj, End: b, EarlierRevision: true}
 		for _, r := range prs {
 			if r.Fingerprint == fingerprint && r.countsAsSigner() && r.CoverageEnd < b {
 				out.Earlier = append(out.Earlier, r.CoverageEnd)
 			}
 		}
-		return out, false, screens
+		w.found, w.held = out, held
+		return w
 	}
-	return nil, false, screens
+	return w
 }
 
 // boundaryCandidate reads a prefix the way the verify door does — pdfcpu first, then the sweep (ADR-041; the guard
@@ -303,46 +367,147 @@ func boundaryCandidate(prefix []byte, fingerprint string) *candidate {
 }
 
 var (
-	reRawByteRange = regexp.MustCompile(`/ByteRange\s*\[([0-9\s+\-]*)\]`)
-	reObjHeader    = regexp.MustCompile(`^\d+\s+\d+\s+obj`)
+	byteRangeName = []byte("/ByteRange")
+	reObjHeader   = regexp.MustCompile(`^\d+\s+\d+\s+obj`)
 )
 
-// rawByteRangeEnds is where every literal `/ByteRange [ints]` in pdf says its last pair ends, with where each such
-// literal begins. A signature that can verify has its ByteRange in literal bytes (an indirect one is refused by the
-// sweep), so a boundary no literal ends at holds no version `holder` could accept, and is never screened.
-func rawByteRangeEnds(pdf []byte) map[int64][]rawByteRange {
-	out := map[int64][]rawByteRange{}
-	for _, m := range reRawByteRange.FindAllSubmatchIndex(pdf, -1) {
-		var br []int64
-		for _, f := range bytes.Fields(pdf[m[2]:m[3]]) {
-			v, err := strconv.ParseInt(string(f), 10, 64)
-			if err != nil {
-				br = nil
-				break
-			}
-			br = append(br, v)
-		}
-		if e, ok := lastPairEnd(br, len(pdf)); ok {
-			out[e] = append(out[e], rawByteRange{at: m[0], br: br})
-		}
-	}
-	return out
+// rawByteRange is one literal ByteRange: where it begins in the file, and where its last pair ends. Its numbers are
+// re-read from the file when it is prescreened (`parseByteRange`), so a hostile file's literals cost 16 bytes each to
+// keep — and only those ending at a boundary are kept at all.
+type rawByteRange struct {
+	end int64
+	at  int
 }
 
-// rawByteRange is one literal ByteRange: where it begins in the file, and its numbers.
-type rawByteRange struct {
-	at int
-	br []int64
+// rawByteRangesEndingAt is every literal `/ByteRange [ints]` in pdf whose last pair ends at one of bounds (newest first,
+// strictly descending, as `revisionBoundaries` gives them), ordered by that end newest first and by position within it.
+// A signature that can verify has its ByteRange in literal bytes (an indirect one is refused by the sweep), so a
+// boundary no literal ends at holds no version `holder` could accept, and is never screened. Every byte scanned is
+// charged to budget; false when it runs out.
+func rawByteRangesEndingAt(pdf []byte, bounds []int64, budget *int64) ([]rawByteRange, bool) {
+	*budget -= int64(len(pdf)) // the search for the name, once across the file
+	if *budget < 0 {
+		return nil, false
+	}
+	var out []rawByteRange
+	var buf []int64
+	for i := 0; ; {
+		j := bytes.Index(pdf[i:], byteRangeName)
+		if j < 0 {
+			break
+		}
+		at := i + j
+		br, next, ok := parseByteRange(pdf, at, buf[:0])
+		*budget -= int64(next - at)
+		if *budget < 0 {
+			return nil, false
+		}
+		i = next
+		if !ok {
+			continue
+		}
+		buf = br
+		e, ok := lastPairEnd(br, len(pdf))
+		if !ok {
+			continue
+		}
+		if _, hit := slices.BinarySearchFunc(bounds, e, func(b, t int64) int { return cmp.Compare(t, b) }); hit {
+			out = append(out, rawByteRange{end: e, at: at})
+		}
+	}
+	slices.SortStableFunc(out, func(a, b rawByteRange) int { return cmp.Compare(b.end, a.end) })
+	return out, true
+}
+
+// parseByteRange reads the literal ByteRange beginning at pdf[at] (which holds `/ByteRange`) into dst: the name, PDF
+// white space, `[`, then only digits, signs and white space up to `]` — the shape `/ByteRange\s*\[([0-9\s+\-]*)\]`
+// names, read by hand so a scan over every literal allocates nothing — and every field a whole base-10 integer, as
+// `strconv.ParseInt` takes it. next is where a scan resumes: past the `]` of a literal, else past the name.
+func parseByteRange(pdf []byte, at int, dst []int64) (br []int64, next int, ok bool) {
+	i := at + len(byteRangeName)
+	next = i
+	for i < len(pdf) && isRegexpSpace(pdf[i]) {
+		i++
+	}
+	if i >= len(pdf) || pdf[i] != '[' {
+		return nil, next, false
+	}
+	i++
+	start := i
+	for i < len(pdf) && (isRegexpSpace(pdf[i]) || pdf[i] >= '0' && pdf[i] <= '9' || pdf[i] == '+' || pdf[i] == '-') {
+		i++
+	}
+	if i >= len(pdf) || pdf[i] != ']' {
+		return nil, next, false
+	}
+	next = i + 1
+	br = dst
+	for f := start; f < i; {
+		for f < i && isRegexpSpace(pdf[f]) {
+			f++
+		}
+		g := f
+		for g < i && !isRegexpSpace(pdf[g]) {
+			g++
+		}
+		if g == f {
+			break
+		}
+		v, ok := parseInt64(pdf[f:g])
+		if !ok {
+			return nil, next, false
+		}
+		br = append(br, v)
+		f = g
+	}
+	return br, next, true
+}
+
+// isRegexpSpace is RE2's `\s`, the white space `parseByteRange` admits.
+func isRegexpSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r'
+}
+
+// parseInt64 is `strconv.ParseInt(string(tok), 10, 64)` without the string: an optional sign, then decimal digits, in
+// range.
+func parseInt64(tok []byte) (int64, bool) {
+	neg := false
+	if len(tok) > 0 && (tok[0] == '+' || tok[0] == '-') {
+		neg, tok = tok[0] == '-', tok[1:]
+	}
+	if len(tok) == 0 {
+		return 0, false
+	}
+	limit := uint64(1<<63 - 1)
+	if neg {
+		limit++
+	}
+	var u uint64
+	for _, c := range tok {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		d := uint64(c - '0')
+		if u > (limit-d)/10 {
+			return 0, false
+		}
+		u = u*10 + d
+	}
+	if neg {
+		return -int64(u-1) - 1, true
+	}
+	return int64(u), true
 }
 
 var reRawContents = regexp.MustCompile(`/Contents\s*<([0-9A-Fa-f\s]*)>`)
 
 // prescreen reports whether a literal ByteRange ending at a boundary could be the signer's, from the bytes around it
 // alone and BEFORE pdfcpu reads the prefix: its object's literal `/Contents` must parse as a SignerInfo naming the
-// signer, that SignerInfo must check against the named key, and its ranges must hash to the digest it signed. A genuine
-// holder passes by construction — the sweep refuses an indirect `/Contents` (conjunct 9) and a signature inside an
-// object stream (conjunct 10), so its blob is literal bytes in its own object. Measured (P02.S03): without it, 20 fake
-// xref sections in a 100 MB file cost 2 min 6 s, every one a full pdfcpu read of a prefix it then refused.
+// signer, and that SignerInfo must pass `couldHold` over the literal's ranges — the screen the main loop's candidates
+// pass. A genuine holder passes by construction — the sweep refuses an indirect `/Contents` (conjunct 9) and a
+// signature inside an object stream (conjunct 10), so its blob is literal bytes in its own object. Measured (P02.S03):
+// without it, 20 fake xref sections in a 100 MB file cost 2 min 6 s, every one a full pdfcpu read of a prefix it then
+// refused.
 func prescreen(pdf []byte, lits []rawByteRange, fingerprint string, budget *int64) bool {
 	// EVERY byte this looks at is charged to the budget, the scans as well as the hashing (P02.S03's review: 64,000
 	// literals in one 1.4 MB object cost 3 min uncharged — each one scanned back to its header and forward to `endobj`).
@@ -351,6 +516,11 @@ func prescreen(pdf []byte, lits []rawByteRange, fingerprint string, budget *int6
 	for _, l := range lits {
 		if *budget < 0 {
 			return false
+		}
+		br, next, ok := parseByteRange(pdf, l.at, nil)
+		*budget -= int64(next - l.at) // the numbers, re-read
+		if !ok {
+			continue
 		}
 		start := bytes.LastIndex(pdf[:l.at], []byte(" obj"))
 		if start < 0 {
@@ -394,27 +564,11 @@ func prescreen(pdf []byte, lits []rawByteRange, fingerprint string, budget *int6
 		if pr == nil || hex.EncodeToString(fingerprintOf(pr.cert)) != fingerprint {
 			continue
 		}
-		bare := pr.signedAttrs == nil
-		if !bare && !pr.attributed() {
-			continue
-		}
-		cost, ok := rangeCost(l.br, len(pdf))
-		if !ok {
-			continue
-		}
-		if cost > *budget {
-			*budget = -1
-			return false
-		}
-		*budget -= cost
-		if bare {
-			if pr.encapsulated || pr.checks(selected(pdf, l.br)) {
-				return true
-			}
-			continue
-		}
-		if pr.digestMatches(pdf, l.br) {
+		if pr.couldHold(pdf, br, budget) {
 			return true
+		}
+		if *budget < 0 {
+			return false
 		}
 	}
 	return false
@@ -424,14 +578,18 @@ func prescreen(pdf []byte, lits []rawByteRange, fingerprint string, budget *int6
 // (within 64 bytes before it) names an offset that — after PDF white space, since pdfsign's points one byte early —
 // begins `xref` or an object whose dictionary says `/XRef`. Each marker offers its end bare and through `\r`, `\n` or
 // `\r\n`. Markers naming one offset collapse to the EARLIEST (P02.S02's grill: 5,000 appended markers pointing at the
-// genuine xref otherwise queue ahead of it), and a linearized file's first-page `startxref 0` names nothing.
-func revisionBoundaries(pdf []byte) []int64 {
-	type marker struct {
-		ends []int64
-		xref int64
+// genuine xref otherwise queue ahead of it), and a linearized file's first-page `startxref 0` names nothing. The ends
+// are strictly descending. Every byte looked at is charged to budget; false when it runs out.
+//
+// It keeps one int64 per end and one set entry per offset (P02's phase-close review: a struct and a slice per marker
+// measured ~573 MB peak for 64 MB of distinct xref markers).
+func revisionBoundaries(pdf []byte, budget *int64) ([]int64, bool) {
+	*budget -= int64(len(pdf)) // the search for the marker, once across the file
+	if *budget < 0 {
+		return nil, false
 	}
-	var marks []marker
-	seen := map[int64]bool{}
+	var out []int64 // oldest first, reversed at the end
+	seen := map[int64]struct{}{}
 	for i := 0; ; {
 		j := bytes.Index(pdf[i:], []byte("%%EOF"))
 		if j < 0 {
@@ -440,12 +598,19 @@ func revisionBoundaries(pdf []byte) []int64 {
 		p := i + j
 		i = p + 5
 		lo := max(p-64, 0)
+		*budget -= int64(p - lo)
+		if *budget < 0 {
+			return nil, false
+		}
 		sx := bytes.LastIndex(pdf[lo:p], []byte("startxref"))
 		if sx < 0 {
 			continue
 		}
-		off, err := strconv.ParseInt(string(bytes.TrimSpace(pdf[lo+sx+9:p])), 10, 64)
-		if err != nil || off <= 0 || off >= int64(p) || seen[off] {
+		off, ok := parseInt64(bytes.TrimSpace(pdf[lo+sx+9 : p]))
+		if !ok || off <= 0 || off >= int64(p) {
+			continue
+		}
+		if _, dup := seen[off]; dup {
 			continue
 		}
 		// A BOUNDED look at the offset, so each marker costs a constant (P02.S02's review: an unbounded white-space skip,
@@ -454,35 +619,35 @@ func revisionBoundaries(pdf []byte) []int64 {
 		for n := 0; n < maxXrefLeadingSpace && len(at) > 0 && isPDFSpace(at[0]); n++ {
 			at = at[1:]
 		}
+		look := int64(maxXrefLeadingSpace + 32)
 		isXref := bytes.HasPrefix(at, []byte("xref"))
 		if !isXref && reObjHeader.Match(at[:min(len(at), 32)]) {
 			w := at[:min(len(at), 1024)]
+			look += 2 * int64(len(w)) // the search for `stream`, then for `/XRef`
 			if k := bytes.Index(w, []byte("stream")); k >= 0 {
 				w = w[:k]
 			}
 			isXref = bytes.Contains(w, []byte("/XRef"))
 		}
+		*budget -= look
+		if *budget < 0 {
+			return nil, false
+		}
 		if !isXref {
 			continue
 		}
-		seen[off] = true
+		seen[off] = struct{}{}
 		e := int64(p + 5)
-		m := marker{ends: []int64{e}, xref: off}
+		out = append(out, e)
 		if e < int64(len(pdf)) && (pdf[e] == '\r' || pdf[e] == '\n') {
-			m.ends = append(m.ends, e+1)
+			out = append(out, e+1)
 			if pdf[e] == '\r' && e+1 < int64(len(pdf)) && pdf[e+1] == '\n' {
-				m.ends = append(m.ends, e+2)
+				out = append(out, e+2)
 			}
 		}
-		marks = append(marks, m)
 	}
-	var out []int64
-	for k := len(marks) - 1; k >= 0; k-- {
-		for x := len(marks[k].ends) - 1; x >= 0; x-- {
-			out = append(out, marks[k].ends[x])
-		}
-	}
-	return out
+	slices.Reverse(out)
+	return out, true
 }
 
 // candidate is one version worth re-verifying: where a record naming the signer says its signature ends.
@@ -498,39 +663,56 @@ type candidate struct {
 	checked bool
 }
 
-// screen reports whether any record proposing this end could hold: its SignerInfo checks against the certificate it
-// names, and its ranges' bytes hash to the messageDigest that signature covers. The bytes a record would hash are
-// charged to budget BEFORE they are hashed; once a record would overrun it, budget is spent (-1) and nothing is hashed
-// again — every later candidate is refused here, which ends the search as `could-not-check`.
+// screen reports whether any record proposing this end could hold (`couldHold`). Once a record would overrun the
+// budget, it is spent (-1) and nothing is hashed again — every later candidate is refused here, which ends the search
+// as `could-not-check`.
 func (c candidate) screen(pdf []byte, budget *int64) bool {
 	for _, r := range c.proposers {
-		if r.proof == nil {
-			continue
-		}
-		bare := r.proof.signedAttrs == nil // signs the content itself, so the check IS the hash of the ranges
-		if !bare && !r.proof.attributed() {
-			continue
-		}
-		cost, ok := rangeCost(r.ByteRange, len(pdf))
-		if !ok {
-			continue
-		}
-		if cost > *budget {
-			*budget = -1
-			return false
-		}
-		*budget -= cost
-		if bare {
-			if r.proof.encapsulated || r.proof.checks(selected(pdf, r.ByteRange)) {
-				return true
-			}
-			continue
-		}
-		if r.proof.digestMatches(pdf, r.ByteRange) {
+		if r.proof.couldHold(pdf, r.ByteRange, budget) {
 			return true
+		}
+		if *budget < 0 {
+			return false
 		}
 	}
 	return false
+}
+
+// couldHold is THE screen (ADR-009): whether this SignerInfo could be one the library verifies over the bytes br
+// selects. Its signature must check against the certificate it names — over its signed attributes, whose
+// messageDigest the ranges' bytes must then hash to; or, with none, over the encapsulated content followed by those
+// bytes, which is what the library verifies (pdfsign `verify/signature.go` appends the ranges to `p7.Content`). The
+// main loop's candidates and the walk's prescreen both call it; they had each carried their own copy, and both copies
+// admitted a SignerInfo with no signed attributes on "it encapsulates content" alone — so anyone holding the signer's
+// PUBLIC certificate could sign with their own key and pass (P02's phase-close review). The bytes are charged to budget
+// BEFORE they are hashed; a record that would overrun it spends it (-1) and is refused.
+func (pr *signerProof) couldHold(pdf []byte, br []int64, budget *int64) bool {
+	if pr == nil {
+		return false
+	}
+	bare := pr.signedAttrs == nil // signs the content itself, so the check IS the signature over the bytes
+	if !bare && !pr.attributed() {
+		return false
+	}
+	cost, ok := rangeCost(br, len(pdf))
+	if !ok {
+		return false
+	}
+	if bare {
+		if pr.encapsulated && pr.content == nil {
+			return false // more than `maxEncapsulatedContent` was encapsulated, so nothing was kept to check it over
+		}
+		cost = satAdd(cost, int64(len(pr.content)))
+	}
+	if cost > *budget {
+		*budget = -1
+		return false
+	}
+	*budget -= cost
+	if bare {
+		return pr.checks(selected(pr.content, pdf, br))
+	}
+	return pr.digestMatches(pdf, br)
 }
 
 // revisionCandidates is the seam P02.S02 extends with the file's earlier revision boundaries.
@@ -543,12 +725,14 @@ func (c candidate) screen(pdf []byte, budget *int64) bool {
 // are candidates on purpose: a later revision redefining the signer's dictionary leaves the original ByteRange on the
 // refused record, and its prefix is the signer's version. Ends proposed by a well-formed record come first, then the
 // rest, each newest first.
-func revisionCandidates(pdf []byte, revs []Revision, err error, fingerprint string) []candidate {
+//
+// capped is true when `maxCandidateRecords` stopped it with naming records unconsidered: nothing it returns is then the
+// whole set, and the caller must not reason as if it were.
+func revisionCandidates(pdf []byte, revs []Revision, err error, fingerprint string) (out []candidate, capped bool) {
 	if fingerprint == "" {
-		return nil
+		return nil, false
 	}
 	at := map[int64]int{}
-	var out []candidate
 	considered := 0
 	for i := range revs {
 		r := &revs[i]
@@ -563,6 +747,7 @@ func revisionCandidates(pdf []byte, revs []Revision, err error, fingerprint stri
 			continue
 		}
 		if considered == maxCandidateRecords {
+			capped = true
 			break
 		}
 		considered++
@@ -584,7 +769,7 @@ func revisionCandidates(pdf []byte, revs []Revision, err error, fingerprint stri
 		}
 		return out[i].end > out[j].end
 	})
-	return out
+	return out, capped
 }
 
 // lastPairEnd is where a raw ByteRange's last pair ends (D5), refused for anything a slice could not take.
@@ -602,13 +787,26 @@ func lastPairEnd(br []int64, size int) (int64, bool) {
 
 // holder is the record inside a cut-out prefix that proves it: a verified, well-formed signer with this fingerprint
 // whose coverage is the whole prefix (I2 — the check that can fail; the length matches by construction of the cut).
-func holder(revs []Revision, fingerprint string, end int64) (uint32, bool) {
+func holder(revs []Revision, fingerprint string, end int64) (Revision, bool) {
 	for _, r := range revs {
 		if r.Fingerprint == fingerprint && r.Verified && r.countsAsSigner() && r.CoverageEnd == end {
-			return r.Obj, true
+			return r, true
 		}
 	}
-	return 0, false
+	return Revision{}, false
+}
+
+// redefinedIn reports whether the file as it stands no longer holds the record that re-verified in a prefix: no
+// well-formed record of that object number carries its ranges (plan-review W8). It is read from the whole file's
+// records, never inferred from which candidates were tried — the candidate cap can drop the record that would say the
+// object is unchanged (P02's phase-close review).
+func redefinedIn(revs []Revision, held Revision) bool {
+	for _, r := range revs {
+		if r.Obj == held.Obj && r.Cause == "" && slices.Equal(r.ByteRange, held.ByteRange) {
+			return false
+		}
+	}
+	return true
 }
 
 // laterNaming lists records naming the fingerprint whose signature claims to reach past end, or out of the file.
@@ -665,6 +863,7 @@ type signerProof struct {
 	encryption   asn1.ObjectIdentifier // DigestEncryptionAlgorithm
 	messageDigst []byte                // the messageDigest attribute; nil when absent
 	encapsulated bool                  // the SignedData carries its content (the `adbe.pkcs7.sha1` shape)
+	content      []byte                // a COPY of that content, kept only up to `maxEncapsulatedContent` bytes
 }
 
 // proofOf copies the single SignerInfo's proof out of p7, or nil when there is not exactly one named signer.
@@ -680,6 +879,9 @@ func proofOf(p7 *pkcs7.PKCS7) *signerProof {
 	si := p7.Signers[0]
 	pr := &signerProof{cert: own, signature: bytes.Clone(si.EncryptedDigest), digest: append(asn1.ObjectIdentifier(nil), si.DigestAlgorithm.Algorithm...),
 		encryption: append(asn1.ObjectIdentifier(nil), si.DigestEncryptionAlgorithm.Algorithm...), encapsulated: len(p7.Content) > 0}
+	if pr.encapsulated && len(p7.Content) <= maxEncapsulatedContent {
+		pr.content = bytes.Clone(p7.Content)
+	}
 	if len(si.AuthenticatedAttributes) == 0 {
 		return pr
 	}
@@ -784,9 +986,10 @@ func rangeCost(br []int64, size int) (int64, bool) {
 	return cost, true
 }
 
-// selected is the bytes a ByteRange selects, joined; the ranges must already have passed `rangeCost`.
-func selected(pdf []byte, br []int64) []byte {
-	var out []byte
+// selected is head followed by the bytes a ByteRange selects, joined into a new slice; the ranges must already have
+// passed `rangeCost`.
+func selected(head, pdf []byte, br []int64) []byte {
+	out := append([]byte(nil), head...)
 	for i := 0; i < len(br); i += 2 {
 		out = append(out, pdf[br[i]:br[i]+br[i+1]]...)
 	}

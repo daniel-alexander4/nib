@@ -86,6 +86,15 @@ upstream stored and never returned. It adds an accessor and changes no reading. 
 uses it to refuse a signature dictionary re-defined under its own object number in a later revision, whose
 unsigned /Reason and /Name the library would otherwise report under the original signer.
 
+7. (the PLAN-returned-document P02 phase-close review) The xref readers refuse, as a malformed xref, an
+xref stream /Size, an /Index pair or a classic subsection naming object numbers past `xrefLimit` —
+eight per byte of the file, at least 65,536, at most ISO 32000-1 Annex C.2's 8,388,607 — and a /W field
+wider than eight bytes. Upstream sized the table from the file's own /Size and grew it to any object
+number the file named, so a few hundred bytes were a fatal 48 GB allocation inside HasSignatureBlob,
+which runs on every save and every ceremony arrival with no pdfcpu gate in front of it (the ISO limit
+alone still left 2.9 GB from 438 bytes). An xref stream's /Index past its /Size now extends the table as
+the classic table already did, where upstream indexed past its length and panicked.
+
 internal/sign's FuzzThePatchedObjectStreamReaderMatchesTheOriginal (/pending 759) resolves random object
 streams through this reader and through v0.1.2 itself (a test-only copy under internal/sign/testdata)
 and allows exactly the first two classes of difference; it never generates the third or fourth, where

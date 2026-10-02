@@ -1,11 +1,11 @@
 diff --git a/internal/fontcode/codespace.go b/internal/fontcode/codespace.go
 --- a/internal/fontcode/codespace.go
 +++ b/internal/fontcode/codespace.go
-@@ -331,7 +331,6 @@
+@@ -344,7 +344,6 @@
  	c.tailOwn, o.tailOwn = false, false
  	c.count += o.count
  	c.Invalid = c.Invalid || o.Invalid
 -	c.Overspent = c.Overspent || o.Overspent
+ 	c.Overlong = c.Overlong || o.Overlong
  }
  
- // Clone is a copy a caller may Merge into without touching the original — **its shortest length included**, which is

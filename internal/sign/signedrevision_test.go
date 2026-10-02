@@ -218,6 +218,93 @@ func revisionShapes(t *testing.T) []revisionShape {
 		return build(heads, ends)
 	}
 	hiddenLast := fakesAfter(twiceSecondReplaced)
+
+	// P02's phase-close review (D): the I3 shape with B's dictionary ALSO replaced, so no record in the file as it
+	// stands names B and only the walk reaches B's version — whose prefix then fails `Revisions` on the erroring copy.
+	var bNum int
+	for _, r := range mustSweep(t, hB) {
+		if r.named == b.fp {
+			bNum = int(r.Obj)
+		}
+	}
+	i3walk := synthRevision(t, hB, []sobj{{num: 900, body: "<< /Foo 3 >>"}, {num: bNum, body: "<< /Foo 6 >>"}}, catalogOf(t, hB))
+	if _, revs, err := verifyIndexed(i3walk); err != nil || len(candidatesOf(i3walk, revs, err, b.fp)) != 0 {
+		t.Fatalf("stimulus: err %v — the main loop has candidates for B, so the walk is not what fails", err)
+	}
+	if _, err := Revisions(hB); err == nil {
+		t.Fatal("stimulus: B's version re-verifies on its own, so nothing fails")
+	}
+
+	// P02's phase-close review (C): more records naming A than `maxCandidateRecords`, all numbered BELOW A's genuine
+	// dictionary, and /SigFlags dropped so every one is a candidate — the cap drops A's genuine record, which the file
+	// as it stands still holds unchanged, and only the walk finds A's version.
+	var fill []sobj
+	for i := 0; i < maxCandidateRecords+5; i++ {
+		fill = append(fill, sobj{num: 900 + i, body: "<< /F 1 >>"})
+	}
+	sF := signAs(t, synthRevision(t, base, fill, root), a, "original")
+	fNum, fBody := victimDict(t, sF)
+	if fNum < 900+len(fill) {
+		t.Fatalf("stimulus: A's dictionary is object %d, not numbered after the %d copies", fNum, len(fill))
+	}
+	fAf := acroFormOf(t, sF)
+	capCopies := []sobj{{num: fAf, body: strings.TrimSpace(regexp.MustCompile(`/SigFlags\s+\d+`).ReplaceAllString(objectBody(t, sF, fAf), ""))}}
+	for i := range fill {
+		capCopies = append(capCopies, sobj{num: 900 + i, body: reByteRange.ReplaceAllString(fBody, "/ByteRange [0 10 20 30]")})
+	}
+	capped := synthRevision(t, sF, capCopies, catalogOf(t, sF))
+	if _, revs, err := verifyIndexed(capped); err != nil {
+		t.Fatalf("stimulus: the whole file did not read (%v), so RedefinedObj is withheld for that reason, not this one", err)
+	} else {
+		if _, hit := revisionCandidates(capped, revs, err, a.fp); !hit {
+			t.Fatal("stimulus: the candidate cap was not reached")
+		}
+		unchanged := false
+		for _, r := range revs {
+			if int(r.Obj) == fNum && r.Cause == "" && r.named == a.fp {
+				unchanged = true
+			}
+		}
+		if !unchanged {
+			t.Fatal("stimulus: the file as it stands does not hold A's dictionary well-formed, so it WAS redefined")
+		}
+	}
+	// (C) at the main loop under the cap: copies carrying A's EXACT ranges (refused — the gap is not theirs) fill the cap
+	// ahead of A's unchanged dictionary, so A's end is proposed only by refused records — and A's version, re-verified,
+	// is held by the dictionary the file as it stands still has.
+	exactCopies := []sobj{capCopies[0]}
+	for i := range fill {
+		exactCopies = append(exactCopies, sobj{num: 900 + i, body: fBody})
+	}
+	cappedExact := synthRevision(t, sF, exactCopies, catalogOf(t, sF))
+	if _, revs, err := verifyIndexed(cappedExact); err != nil {
+		t.Fatalf("stimulus: the whole file did not read (%v)", err)
+	} else if c, hit := revisionCandidates(cappedExact, revs, err, a.fp); !hit || len(c) != 1 || !c[0].onlyRefused {
+		t.Fatalf("stimulus: capped %v, candidates %+v — want the cap hit and A's end proposed only by refused copies", hit, c)
+	}
+	// The cap hit with NOTHING holding: more copies of A's dictionary than the cap, in a document only B signed, so A has
+	// no version anywhere — but records naming A went unconsidered, and any of them could have been it. That is
+	// could-not-check, never a claim about A (the re-review of P02's close: `cut := capped` had no row).
+	sBF := signAs(t, synthRevision(t, base, fill, root), b, "stranger")
+	bAf := acroFormOf(t, sBF)
+	strangerCopies := []sobj{{num: bAf, body: strings.TrimSpace(regexp.MustCompile(`/SigFlags\s+\d+`).ReplaceAllString(objectBody(t, sBF, bAf), ""))}}
+	for i := range fill {
+		strangerCopies = append(strangerCopies, sobj{num: 900 + i, body: reByteRange.ReplaceAllString(fBody, "/ByteRange [0 10 20 30]")})
+	}
+	cappedNone := synthRevision(t, sBF, strangerCopies, catalogOf(t, sBF))
+	if _, revs, err := verifyIndexed(cappedNone); err != nil {
+		t.Fatalf("stimulus: the whole file did not read (%v), so could-not-check would come from that, not the cap", err)
+	} else if _, hit := revisionCandidates(cappedNone, revs, err, a.fp); !hit {
+		t.Fatal("stimulus: the candidate cap was not reached")
+	}
+	// (C) at the main loop: the P01 attack on A's dictionary plus a LOWER-numbered copy carrying A's exact ranges — both
+	// refused, both proposing A's end, the copy first in xref order. The redefined object is A's, never the copy's.
+	ceF := mustSweep(t, sF)[0].CoverageEnd
+	lowCopy := synthRevision(t, sF, []sobj{{num: fNum, body: strings.Replace(fBody, "(original)", "(rewritten)", 1)}, {num: 900, body: fBody}}, catalogOf(t, sF))
+	_, lowRevs, lowErr := verifyIndexed(lowCopy)
+	if c := candidatesOf(lowCopy, lowRevs, lowErr, a.fp); len(c) == 0 || c[0].end != ceF || !c[0].onlyRefused || c[0].obj != 900 {
+		t.Fatalf("stimulus: candidates %+v — want A's end first, refused-only, first proposed by the copy (900)", c)
+	}
 	var tsaFP string
 	for _, r := range mustSweep(t, tsOnly) {
 		if r.Timestamp {
@@ -305,6 +392,32 @@ func revisionShapes(t *testing.T) []revisionShape {
 				}
 			}},
 		{name: "an erroring record inside the signed version (I3)", doc: i3, fp: b.fp, cause: RevisionPrefixFailed},
+		{name: "an erroring record inside the signed version, both later replaced (I3, the walk)", doc: i3walk, fp: b.fp, cause: RevisionPrefixFailed},
+		{name: "more naming records than the candidate cap ahead of an unchanged signature", doc: capped, fp: a.fp, want: sF,
+			check: func(t *testing.T, got SignedRevision) {
+				if got.RedefinedObj != 0 {
+					t.Errorf("RedefinedObj %d: the file as it stands holds that dictionary unchanged — the claim was inferred, not compared", got.RedefinedObj)
+				}
+				if !got.LaterUnchecked {
+					t.Error("records naming the signer went unconsidered and the result reads as the signer's last")
+				}
+			}},
+		{name: "more copies naming the signer than the cap, in a document they never signed", doc: cappedNone, fp: a.fp, cause: RevisionCouldNotCheck},
+		{name: "refused copies with the signer's exact ranges fill the cap ahead of an unchanged signature", doc: cappedExact, fp: a.fp, want: sF,
+			check: func(t *testing.T, got SignedRevision) {
+				if got.RedefinedObj != 0 {
+					t.Errorf("RedefinedObj %d: the file as it stands holds that dictionary unchanged", got.RedefinedObj)
+				}
+				if !got.LaterUnchecked {
+					t.Error("records naming the signer went unconsidered and the result reads as the signer's last")
+				}
+			}},
+		{name: "the P01 attack, plus a lower-numbered copy proposing the same end", doc: lowCopy, fp: a.fp, want: sF[:ceF],
+			check: func(t *testing.T, got SignedRevision) {
+				if got.RedefinedObj != uint32(fNum) {
+					t.Errorf("RedefinedObj %d, want %d: the object named is the first proposer, not the record that re-verified", got.RedefinedObj, fNum)
+				}
+			}},
 		{name: "an empty fingerprint matches nothing", doc: sA, fp: "", cause: RevisionNotYours},
 		{name: "a copy of the signer's dictionary claims a stranger's later end", doc: emptyPair, fp: a.fp, want: sA[:ce],
 			check: func(t *testing.T, got SignedRevision) {
@@ -407,7 +520,7 @@ func TestCopiesOfTheSignersBlobCannotCrowdOutTheirVersion(t *testing.T) {
 	if verr == nil {
 		t.Fatal("stimulus: the whole file verified, so the naming copies were never candidates")
 	}
-	cands := revisionCandidates(doc, revs, verr, a.fp)
+	cands := candidatesOf(doc, revs, verr, a.fp)
 	ahead := 0
 	for _, c := range cands {
 		if c.end > ce {
@@ -538,7 +651,7 @@ func TestWellFormedVersionsAreTriedBeforeRefusedCopies(t *testing.T) {
 		t.Fatal("stimulus: the whole file verified, so the copies were never candidates")
 	}
 	var hashed int64
-	for _, c := range revisionCandidates(doc, revs, verr, a.fp) {
+	for _, c := range candidatesOf(doc, revs, verr, a.fp) {
 		if c.onlyRefused {
 			for range c.proposers {
 				hashed += int64(len(doc) - 20 - copies)
@@ -592,7 +705,7 @@ func TestTheHelpersKeepTheirOwnContracts(t *testing.T) {
 		}
 	}
 	good := Revision{Obj: 7, Fingerprint: "ab", Verified: true, CoverageEnd: 100}
-	if obj, ok := holder([]Revision{good}, "ab", 100); !ok || obj != 7 {
+	if r, ok := holder([]Revision{good}, "ab", 100); !ok || r.Obj != 7 {
 		t.Fatal("stimulus: a verified, well-formed record does not hold")
 	}
 	for name, r := range map[string]Revision{
@@ -607,10 +720,10 @@ func TestTheHelpersKeepTheirOwnContracts(t *testing.T) {
 		}
 	}
 	unnamed := []Revision{{named: "", ByteRange: []int64{0, 1, 2, 3}, Verified: true}}
-	if c := revisionCandidates(make([]byte, 10), []Revision{{named: "ab", ByteRange: []int64{0, 1, 2, 3}, Verified: true}}, nil, "ab"); len(c) != 1 {
+	if c := candidatesOf(make([]byte, 10), []Revision{{named: "ab", ByteRange: []int64{0, 1, 2, 3}, Verified: true}}, nil, "ab"); len(c) != 1 {
 		t.Fatalf("stimulus: a verified record naming the fingerprint proposed %d candidates, not 1", len(c))
 	}
-	if c := revisionCandidates(make([]byte, 10), unnamed, nil, ""); c != nil {
+	if c := candidatesOf(make([]byte, 10), unnamed, nil, ""); c != nil {
 		t.Errorf("an empty fingerprint proposed %d candidates from an unnamed record", len(c))
 	}
 }
@@ -715,7 +828,7 @@ func TestAWellFormedProposerClearsRefusedOnly(t *testing.T) {
 	refused := Revision{Obj: 3, named: "ab", ByteRange: []int64{0, 1, 2, 3}, Verified: true, Cause: CauseContentsElsewhere}
 	good := Revision{Obj: 4, named: "ab", ByteRange: []int64{0, 1, 2, 3}, Verified: true}
 	for _, order := range [][]Revision{{refused, good}, {good, refused}} {
-		c := revisionCandidates(make([]byte, 10), order, nil, "ab")
+		c := candidatesOf(make([]byte, 10), order, nil, "ab")
 		if len(c) != 1 || c[0].onlyRefused || len(c[0].proposers) != 2 {
 			t.Errorf("order %d,%d: %+v, want one candidate, not refused-only, two proposers", order[0].Obj, order[1].Obj, c)
 		}
@@ -1072,7 +1185,7 @@ func TestRevisionBoundariesAreWhatTheXrefSays(t *testing.T) {
 	doc += "\n9 0 obj\n<< /Foo 1 >>\nstream\nstartxref\n" + strconv.Itoa(len(doc)+1) + "\n%%EOF\nendstream\nendobj\n" // names a non-xref object
 	doc += "startxref\n" + strconv.Itoa(xrefAt) + "\n%%EOF\r\n"                                                       // a second marker naming the first xref: collapses to the first
 	doc += "startxref\n0\n%%EOF\n"                                                                                    // a linearized first page names nothing
-	got := revisionBoundaries([]byte(doc))
+	got := boundariesOf([]byte(doc))
 	has := map[int64]bool{}
 	for _, e := range got {
 		has[e] = true
@@ -1175,7 +1288,37 @@ func TestTheBoundaryWalkIsBounded(t *testing.T) {
 
 // walkBoundariesCounted runs the walk the way SignedRevisionFor does, from nothing tried, and reports its screens.
 func walkBoundariesCounted(pdf []byte, fp string, verifies *int, budget *int64) (*SignedRevision, bool, int) {
-	return walkBoundaries(pdf, fp, map[int64]bool{}, 0, verifies, budget)
+	w := walkBoundaries(pdf, fp, map[int64]bool{}, 0, verifies, budget)
+	return w.found, w.cut, w.screens
+}
+
+// candidatesOf is `revisionCandidates` without its cap flag, for the tests that never reach the cap.
+func candidatesOf(pdf []byte, revs []Revision, err error, fp string) []candidate {
+	c, _ := revisionCandidates(pdf, revs, err, fp)
+	return c
+}
+
+// boundariesOf is `revisionBoundaries` with a budget nothing in these tests reaches.
+func boundariesOf(pdf []byte) []int64 {
+	budget := int64(1 << 50)
+	out, _ := revisionBoundaries(pdf, &budget)
+	return out
+}
+
+// rawByteRangeEnds is every literal ByteRange in pdf, by where its last pair ends — the production scan asked about
+// every end a file could have, so the tests read the same parser the walk does.
+func rawByteRangeEnds(pdf []byte) map[int64][]rawByteRange {
+	all := make([]int64, len(pdf))
+	for i := range all {
+		all[i] = int64(len(pdf) - i)
+	}
+	budget := int64(1 << 50)
+	lits, _ := rawByteRangesEndingAt(pdf, all, &budget)
+	out := map[int64][]rawByteRange{}
+	for _, l := range lits {
+		out[l.end] = append(out[l.end], l)
+	}
+	return out
 }
 
 // TestTheBoundaryScanIsLinear — one long white-space run named by every marker cost each marker the whole run (P02.S02's
@@ -1185,7 +1328,7 @@ func TestTheBoundaryScanIsLinear(t *testing.T) {
 	done := make(chan time.Duration, 1)
 	go func() {
 		t0 := time.Now()
-		revisionBoundaries([]byte(doc))
+		boundariesOf([]byte(doc))
 		done <- time.Since(t0)
 	}()
 	select {
@@ -1206,7 +1349,7 @@ func TestABoundaryEndsThroughEachLineEnding(t *testing.T) {
 		doc := head + "xref\n0 1\n0000000000 65535 f \ntrailer\n<<>>\nstartxref\n" + strconv.Itoa(at) + "\n%%EOF" + eol + "x"
 		want := int64(len(doc) - 1)
 		found := false
-		for _, e := range revisionBoundaries([]byte(doc)) {
+		for _, e := range boundariesOf([]byte(doc)) {
 			if e == want {
 				found = true
 			}
@@ -1242,8 +1385,15 @@ func TestThePrescreenAdmitsOnlyTheSignersOwnRanges(t *testing.T) {
 	if prescreen(forgeSignerInfo(t, sA), rawByteRangeEnds(forgeSignerInfo(t, sA))[end], a.fp, &budget) {
 		t.Error("a SignerInfo whose signature does not check passed")
 	}
-	other := []rawByteRange{{at: lits[0].at, br: []int64{0, 10, 20, end - 30}}}
-	if prescreen(sA, other, a.fp, &budget) {
+	// The signer's own blob in an object of its own whose literal selects other bytes of the same file.
+	rec := mustSweep(t, sA)[0]
+	elsewhere := append(append([]byte(nil), sA...), fmt.Sprintf(" 9 0 obj\n<< /ByteRange [0 10 20 %d] /Contents %s >>\nendobj\n",
+		end-30, sA[rec.gapStart:rec.gapEnd])...)
+	other := rawByteRangeEnds(elsewhere)[end-10]
+	if len(other) != 1 || other[0].at < len(sA) {
+		t.Fatalf("stimulus: %d literals end at %d, want the appended object's one", len(other), end-10)
+	}
+	if prescreen(elsewhere, other, a.fp, &budget) {
 		t.Error("ranges selecting other bytes passed against the signer's digest")
 	}
 	// A budget that covers the scans but not the hash: the hash must be refused BEFORE it runs (budget spent to -1).
@@ -1251,7 +1401,8 @@ func TestThePrescreenAdmitsOnlyTheSignersOwnRanges(t *testing.T) {
 	if !prescreen(sA, lits, a.fp, &full) {
 		t.Fatal("stimulus: the honest prescreen failed with an unbounded budget")
 	}
-	hashCost, _ := rangeCost(lits[0].br, len(sA))
+	br, _, _ := parseByteRange(sA, lits[0].at, nil)
+	hashCost, _ := rangeCost(br, len(sA))
 	scanCost := int64(1<<40) - full - hashCost
 	tight := scanCost + hashCost - 1
 	if prescreen(sA, lits, a.fp, &tight) || tight != -1 {

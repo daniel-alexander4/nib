@@ -56,6 +56,10 @@ const (
 	maxUnfold = 1 << 24
 	// maxPairDepth bounds `pairSteps`' recursion: three levels a compared pair (stream, /Resources, /XObject).
 	maxPairDepth = 1 << 12
+	// maxShapeDepth bounds `shape`'s recursion, as maxReferenceDepth bounds the reference door's: a form whose graph
+	// reaches a chain `N 0 obj [N+1 0 R]` under a key pdfcpu's validator never follows passed the door, and `shape`
+	// walked it to a fatal stack overflow at ~2,000,000 links (the phase-close review of PLAN-returned-document P02).
+	maxShapeDepth = 1 << 13
 )
 
 // ReadOptimized is nib's one `ReadValidateAndOptimize`: it reads and validates through `Validated` (so the reference door
@@ -182,7 +186,12 @@ func Unaffordable(ctx *model.Context) string {
 				"walks every one", maxOptimizeWalk)
 		}
 	}
-	if units := e.compareUnits(); units > maxOptimizeCompare {
+	units := e.compareUnits()
+	if e.tooDeep {
+		return fmt.Sprintf("its form XObjects reach a chain of objects more than %d deep, and the optimizer "+
+			"compares every link", maxShapeDepth)
+	}
+	if units > maxOptimizeCompare {
 		return fmt.Sprintf("comparing its form XObjects for duplicates would take more than %d steps "+
 			"(forms of one length that differ deep inside their resources)", maxOptimizeCompare)
 	}
@@ -195,6 +204,9 @@ type optimizeEstimate struct {
 	steps int
 	forms map[int]*types.StreamDict // every form XObject the walk reached, by object number
 	memo  map[int]objShape
+	// depth is `shape`'s current recursion depth; tooDeep is set once it passed maxShapeDepth, and refuses.
+	depth   int
+	tooDeep bool
 }
 
 // walk mirrors pdfcpu's `optimizeResources` over one resource dictionary (optimize.go:866): indirect XObjects,
@@ -453,6 +465,13 @@ type objShape struct {
 // its object number, so two cyclic graphs pdfcpu would call equal may count as distinct: the estimate grows,
 // never shrinks.
 func (e *optimizeEstimate) shape(o types.Object, onPath map[int]bool) objShape {
+	if e.depth >= maxShapeDepth {
+		// Cut, and counted as a cycle so the estimate only grows; Unaffordable refuses on tooDeep regardless.
+		e.tooDeep = true
+		return objShape{size: 1, cyclic: true}
+	}
+	e.depth++
+	defer func() { e.depth-- }()
 	h := fnv.New64a()
 	switch v := o.(type) {
 	case types.IndirectRef:

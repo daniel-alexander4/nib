@@ -546,7 +546,7 @@ deleted code were taken in S01/S02. Refs: D7.
 Acceptance: every conjunct and G1–G3 have a proof that goes red for its own assertion; the `/Kids` proof fails against
 the pre-S01 walk (taken before S02).
 
-### P02 — The route
+### P02 — The route *(done 2026-10-02, v1.179.6)*
 **Goal.** The bytes of the version you signed, over the wire, or a refusal that says which of four (D7 as amended 2026-09-29)
 things went wrong.
 
@@ -554,6 +554,31 @@ things went wrong.
 requested signer, or one of four named refusals; nothing calls it on document open. **(amended 2026-10-02, plan-review W6)**: where a later
 revision redefined the user's signature dictionary, the user's signed version is returned byte-identical. (The refusal set
 is four D7 causes plus `could-not-check`, pending Dan — C2.)
+
+**Phase close 2026-10-02 (v1.179.6) — acceptance ledger, every clause split on `and`, checked at the close's tree:**
+- ✅ `GET /api/document/revision` returns a prefix that parses — `TestTheRouteReturnsTheSignedVersionOrNamesWhyNot`: four
+  200 rows (returned untouched, a stranger co-signed to EOF, the signer's dictionary replaced later, upper-case
+  fingerprint), each byte-identical to the signed version, `application/pdf`, `no-store`.
+- ✅ …and re-verifies for the requested signer — `holder` returns only a record `Revisions(prefix)` VERIFIED, well-formed,
+  not a timestamp, with this fingerprint, at exactly the cut (`signedrevision.go`); `TestTheSignedVersionAcrossDocumentShapes`
+  (the spoof cannot be returned for the user; a forged SignerInfo reads `resaved`, never a version).
+- ✅ …or one of four named refusals — **as built, five** (C2's `could-not-check` is parked for Dan, below): the route test's
+  five 422 rows, one per cause; `signedrevision.test.mjs` tells the five apart, reading the list from Go's declarations.
+- ✅ Nothing calls it on document open — jsdom boot over a CHANGED signed open (`addedAfter`) sends no request to the
+  route; `fetchSignedRevision` has no caller (census, allow-list empty until P03); Go census
+  `TestTheSignedVersionIsWalkedOnlyOnDemand` (one site, in `handleDocumentRevision`). All three red-proved at the close.
+- ✅ (W6) Where a later revision redefined the user's signature dictionary, the user's signed version is returned
+  byte-identical — the route row "the signer's dictionary replaced later" (`earlierRevision`, `redefinedObj` = the
+  object), and the shape rows for the P01 attack, with `/SigFlags` dropped, with copies claiming later ends.
+- ⏸ (parenthetical) "The refusal set is four D7 causes plus `could-not-check`, pending Dan — C2": **parked**, built under
+  that name; in the closing batch.
+
+Review: `code-reviews/v1.179.5-p02-phase-close-2026-10-02.md` — 6 critical, all fixed in this close (two in-phase:
+a forged bare SignerInfo crowding out the version; the walk's uncharged scans), plus two re-review rounds. Out-of-phase
+findings filed as /pending 800 and 802–808 (801 fixed here); 578, 600, 631, 652 amended. Graduation pass:
+`instruments/returned-document.md` (63 rows: keep-live 47, deleted 3, declared gaps 13). Required-run gates: tiers 0–3;
+tiers 4 and 6 do not fire by `slicegate_test.go`'s list (no session/ceremony/delivery/discovery/p2p/rendezvous file),
+and tier 6 was run anyway because `HasSignatureBlob`, on the arrival gate, changed. Results are recorded in the close commit.
 
 **(plan-review pin: the user's signature can be absent from the latest xref, architect — 2026-09-28)** Both sweeps
 see only the newest definition of each object number, so a later revision that reuses the object number of the user's

@@ -977,3 +977,196 @@ func TestAnArrayNamedByReferenceIsExpandedOnce(t *testing.T) {
 		})
 	}
 }
+
+// sharedAnnotsDoc is m distinct pages sharing ONE /Annots array that names annotation 4 k times; 4's action chain is
+// n long and ends in JavaScript when risky. The cost the phase-close review of PLAN-returned-document P02 measured was
+// m·k·n: 26 KB at m=k=200, n=30 held Scan 6.4 s and StripActive 18.5 s.
+func sharedAnnotsDoc(m, k, n int, risky bool) []byte {
+	first := 5 + n
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		3: "[" + strings.Repeat("4 0 R ", k) + "]",
+		4: "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A 5 0 R >>",
+	}
+	var kids []string
+	for i := 0; i < m; i++ {
+		kids = append(kids, fmt.Sprintf("%d 0 R", first+i))
+		objs[first+i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots 3 0 R >>"
+	}
+	objs[2] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), m)
+	for i := 0; i < n; i++ {
+		act := fmt.Sprintf("<< /S /GoTo /D [%d 0 R /Fit] /Next %d 0 R >>", first, 6+i)
+		if i == n-1 {
+			act = fmt.Sprintf("<< /S /GoTo /D [%d 0 R /Fit] >>", first)
+			if risky {
+				act = "<< /S /JavaScript /JS (app.alert(1)) >>"
+			}
+		}
+		objs[5+i] = act
+	}
+	return testpdf.Assemble(objs)
+}
+
+// TestAnAnnotationSharedAcrossPagesIsWalkedOnce — every page-annotation walk goes through eachPageAnnot, which visits
+// a shared page, /Annots array or annotation once; the risky action at the chain's end is still found and stripped.
+func TestAnAnnotationSharedAcrossPagesIsWalkedOnce(t *testing.T) {
+	// Stimulus: one page and one slot, so nothing is shared — the action is found and stripped through the same path.
+	if !foundKind(t, sharedAnnotsDoc(1, 1, 30, true), "action") {
+		t.Fatal("stimulus: the JavaScript at the chain's end is not found even unshared, so this tests nothing")
+	}
+	doc := sharedAnnotsDoc(200, 200, 30, true)
+	start := time.Now()
+	rep, err := Scan(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("Scan took %v over %d bytes: the shared annotation was walked per page per slot", took, len(doc))
+	}
+	var actions int
+	for _, f := range rep.Findings {
+		if f.Kind == "action" {
+			actions++
+		}
+	}
+	if actions != 1 {
+		t.Fatalf("the shared annotation's JavaScript was reported %d times, want once", actions)
+	}
+	// StripActive is not timed: its validated read spends seconds in pdfcpu's own validator on this shape, which walks
+	// the chain once per slot (filed from the same review); what is asserted is that the strip still takes it.
+	out, err := StripActive(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foundKind(t, out, "action") {
+		t.Fatal("the shared annotation's JavaScript survived the strip")
+	}
+
+	// One page object the tree names 200 times, holding 200 DIRECT annotations: nothing has an object number to
+	// dedupe on but the page itself, which is walked once — 200 actions reported, not 40,000.
+	var kids, direct []string
+	for i := 0; i < 200; i++ {
+		kids = append(kids, "3 0 R")
+		direct = append(direct, "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A << /S /JavaScript /JS (1) >> >>")
+	}
+	dup := testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [" + strings.Join(kids, " ") + "] /Count 200 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(direct, " ") + "] >>",
+	})
+	rep, err = Scan(dup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions = 0
+	for _, f := range rep.Findings {
+		if f.Kind == "action" {
+			actions++
+		}
+	}
+	if actions != 200 {
+		t.Fatalf("a page named 200 times with 200 direct annotations reported %d actions, want 200", actions)
+	}
+
+	// 200 DISTINCT pages sharing one indirect array of 200 direct annotations: only the array has a number.
+	objs := map[int]string{1: "<< /Type /Catalog /Pages 2 0 R >>", 3: "[" + strings.Join(direct, " ") + "]"}
+	kids = kids[:0]
+	for i := 0; i < 200; i++ {
+		kids = append(kids, fmt.Sprintf("%d 0 R", 10+i))
+		objs[10+i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots 3 0 R >>"
+	}
+	objs[2] = "<< /Type /Pages /Kids [" + strings.Join(kids, " ") + "] /Count 200 >>"
+	if rep, err = Scan(testpdf.Assemble(objs)); err != nil {
+		t.Fatal(err)
+	}
+	actions = 0
+	for _, f := range rep.Findings {
+		if f.Kind == "action" {
+			actions++
+		}
+	}
+	if actions != 200 {
+		t.Fatalf("200 pages sharing one array of 200 direct annotations reported %d actions, want 200", actions)
+	}
+}
+
+// TestManyAnnotationsNamingOneWideActionGraphAreRefused — distinct annotations each naming the head of one wide action graph
+// (a /Next array, which the depth cap does not bound) walked it once each: k·n. The action budget is the whole scan's.
+func TestManyAnnotationsNamingOneWideActionGraphAreRefused(t *testing.T) {
+	// k·n is past the scan's budget (16 per live object plus 1,024) while staying cheap for pdfcpu's validator, which
+	// StripActive's read also runs.
+	const k, n = 40, 1000
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+	}
+	var annots []string
+	for i := 0; i < k; i++ {
+		annots = append(annots, fmt.Sprintf("<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A %d 0 R >>", 10))
+	}
+	// The last annotation is CHEAP — one direct action — so a budget that recovered after running out would end
+	// positive and read as a scan that finished: exhaustion has to stay exhausted.
+	cheap := "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A << /S /URI /URI (https://example.com) >> >>"
+	objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(annots, " ") + " " + cheap + "] >>"
+	// One action whose /Next array names n more: all at depth 1, so the depth cap does not bound a walk of it.
+	var next []string
+	for i := 0; i < n; i++ {
+		next = append(next, fmt.Sprintf("%d 0 R", 11+i))
+		objs[11+i] = "<< /S /GoTo /D [3 0 R /Fit] >>"
+	}
+	objs[10] = "<< /S /GoTo /D [3 0 R /Fit] /Next [" + strings.Join(next, " ") + "] >>"
+	doc := testpdf.Assemble(objs)
+	start := time.Now()
+	_, err := Scan(doc)
+	if !errors.Is(err, errActionWalkTooLarge) {
+		t.Fatalf("%d annotations naming one %d-action graph: want errActionWalkTooLarge, got %v", k, n, err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("refusing took %v", took)
+	}
+	if _, err := StripActive(doc); !errors.Is(err, errActionWalkTooLarge) {
+		t.Fatalf("StripActive: want errActionWalkTooLarge, got %v", err)
+	}
+	// 1,100 DIRECT annotations on one page, each with its own direct action, are linear in the file and read whole —
+	// the budget counts indirect objects, which these are not (the re-review refused them at 1,100).
+	var many []string
+	for i := 0; i < 1100; i++ {
+		many = append(many, "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A << /S /URI /URI (https://example.com) >> >>")
+	}
+	direct := testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(many, " ") + "] >>",
+	})
+	if _, err := Scan(direct); err != nil {
+		t.Fatalf("1,100 direct annotations, each with one direct action, were refused: %v", err)
+	}
+	if _, err := StripActive(direct); err != nil {
+		t.Fatalf("StripActive refused 1,100 direct annotations: %v", err)
+	}
+	// K direct annotations over ONE action whose /Next array names n things that resolve to nothing: each walk queues
+	// n entries it then drops for free, so the array's length is what has to be charged (the second re-review: 44 KB,
+	// 133 s, never refused).
+	var shared []string
+	for i := 0; i < 200; i++ {
+		shared = append(shared, "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A 4 0 R >>")
+	}
+	zeros := testpdf.Assemble(map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(shared, " ") + "] >>",
+		4: "<< /S /GoTo /D [3 0 R /Fit] /Next [" + strings.Repeat("0 ", 2000) + "] >>",
+	})
+	start = time.Now()
+	if _, err := Scan(zeros); !errors.Is(err, errActionWalkTooLarge) {
+		t.Fatalf("200 annotations over one action whose /Next names 2,000 nothings: want errActionWalkTooLarge, got %v", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("refusing took %v", took)
+	}
+	// And one annotation over the same chain is read whole: the budget is per file, not per chain.
+	objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + annots[0] + "] >>"
+	if _, err := Scan(testpdf.Assemble(objs)); err != nil {
+		t.Fatalf("one annotation over a %d-action graph was refused: %v", n, err)
+	}
+}

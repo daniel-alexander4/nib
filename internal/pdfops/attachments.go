@@ -161,18 +161,15 @@ func pageAttachmentName(pa pageFileAttachment) string {
 // the catalog name tree — and thus ListAttachments — does not cover.
 func pageFileAttachments(xt *model.XRefTable, root types.Dict) ([]pageFileAttachment, error) {
 	var out []pageFileAttachment
-	if err := eachPage(xt, root, func(page types.Dict, nr int) {
-		for _, a := range derefArray(xt, page["Annots"]) {
-			annot := derefDict(xt, a)
-			if annot == nil || nameVal(annot, "Subtype") != "FileAttachment" {
-				continue
-			}
-			fs := derefDict(xt, annot["FS"])
-			if fs == nil {
-				continue
-			}
-			out = append(out, pageFileAttachment{name: fileSpecName(xt, fs), page: nr, fs: fs})
+	if err := eachPageAnnot(xt, root, func(annot types.Dict, nr int) {
+		if nameVal(annot, "Subtype") != "FileAttachment" {
+			return
 		}
+		fs := derefDict(xt, annot["FS"])
+		if fs == nil {
+			return
+		}
+		out = append(out, pageFileAttachment{name: fileSpecName(xt, fs), page: nr, fs: fs})
 	}); err != nil {
 		return nil, err
 	}
@@ -1219,40 +1216,37 @@ func SignatureWidgets(pdf []byte) ([]SignatureWidget, error) {
 		return nil, err
 	}
 	var out []SignatureWidget
-	if err := eachPage(ctx.XRefTable, root, func(page types.Dict, nr int) {
-		for _, a := range derefArray(ctx.XRefTable, page["Annots"]) {
-			annot := derefDict(ctx.XRefTable, a)
-			if annot == nil || nameVal(annot, "Subtype") != "Widget" {
-				continue
-			}
-			// /FT is inheritable from ANY ancestor field (ISO 32000-1 Table 220), not only the
-			// widget's direct parent — `inheritedFieldType` is the one reading of it.
-			if inheritedFieldType(ctx.XRefTable, annot) != "Sig" {
-				continue
-			}
-			r := derefArray(ctx.XRefTable, annot["Rect"])
-			if len(r) != 4 {
-				continue
-			}
-			var rect [4]float64
-			ok := true
-			for i, v := range r {
-				f, isF := numeric(ctx.XRefTable, v)
-				if !isF {
-					ok = false
-					break
-				}
-				rect[i] = f
-			}
-			if !ok {
-				continue
-			}
-			out = append(out, SignatureWidget{
-				Page:  nr,
-				Rect:  rect,
-				HasAP: derefDict(ctx.XRefTable, annot["AP"]) != nil,
-			})
+	if err := eachPageAnnot(ctx.XRefTable, root, func(annot types.Dict, nr int) {
+		if nameVal(annot, "Subtype") != "Widget" {
+			return
 		}
+		// /FT is inheritable from ANY ancestor field (ISO 32000-1 Table 220), not only the
+		// widget's direct parent — `inheritedFieldType` is the one reading of it.
+		if inheritedFieldType(ctx.XRefTable, annot) != "Sig" {
+			return
+		}
+		r := derefArray(ctx.XRefTable, annot["Rect"])
+		if len(r) != 4 {
+			return
+		}
+		var rect [4]float64
+		ok := true
+		for i, v := range r {
+			f, isF := numeric(ctx.XRefTable, v)
+			if !isF {
+				ok = false
+				break
+			}
+			rect[i] = f
+		}
+		if !ok {
+			return
+		}
+		out = append(out, SignatureWidget{
+			Page:  nr,
+			Rect:  rect,
+			HasAP: derefDict(ctx.XRefTable, annot["AP"]) != nil,
+		})
 	}); err != nil {
 		return nil, err
 	}

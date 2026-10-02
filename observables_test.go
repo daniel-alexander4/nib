@@ -464,6 +464,14 @@ var unreadKnown = map[string]string{
 	"server.revisionFacts.RedefinedObj":    "gated — PLAN-returned-document.md P03.S02." + " the verdict names the rewritten dictionary (W8)",
 	"server.revisionFacts.LaterUnchecked":  "gated — PLAN-returned-document.md P03.S02." + " the verdict says whether this is the last version",
 	"server.revisionFacts.Truncated":       "gated — PLAN-returned-document.md P03.S02." + " the signer list says it was cut",
+	// The five below the matcher reported as read by COINCIDENCE (the P02 phase-close review): `obj` is `r.obj` on a
+	// refused signature, `end` a prefix of `data.ended`, `history` of `m.historyEvicted`, `later` and `earlier` bare
+	// words. Parked and gated like the four above, so P03.S02 cannot close without the surface reading each.
+	"server.revisionFacts.Obj":     "gated — PLAN-returned-document.md P03.S02." + " the verdict names which signature held",
+	"server.revisionFacts.End":     "gated — PLAN-returned-document.md P03.S02." + " the verdict says how far the signed version reaches",
+	"server.revisionFacts.Later":   "gated — PLAN-returned-document.md P03.S02." + " the signer list names later signatures of the same name",
+	"server.revisionFacts.Earlier": "gated — PLAN-returned-document.md P03.S02." + " the signer list names the earlier signatures",
+	"server.revisionFacts.History": "gated — PLAN-returned-document.md P03.S02." + " the verdict words the working copy's recorded history (W9)",
 
 	// ── internal/server, entered the day the scan could first see it (/pending 347) ──────────
 	//

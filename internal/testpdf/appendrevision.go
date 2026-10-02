@@ -19,7 +19,9 @@ var (
 // AppendRevision writes objs (object number → body) as one incremental update of prev, with an uncompressed xref
 // stream — a later revision built by hand, for tests of what a returned document can carry (PLAN-returned-document
 // P02.S03). prev's last `startxref`, `/Size` and `/Root` are read from its bytes, so prev must end in a revision this
-// function or a signer like pdfsign wrote. It is `sign`'s `synthRevision` without the object-stream half; `sign`
+// function or a signer like pdfsign wrote — and in an XREF STREAM: the update's `/Prev` names prev's xref, and the
+// digitorus reader follows `/Prev` only from stream to stream, so over a classic table the result reads as unreadable
+// (the P02 phase-close review). It is `sign`'s `synthRevision` without the object-stream half; `sign`
 // cannot be imported here (testpdf feeds its tests), so the server's tests build their fixtures with this.
 func AppendRevision(prev []byte, objs map[int]string) ([]byte, error) {
 	last := func(re *regexp.Regexp) (int, error) {

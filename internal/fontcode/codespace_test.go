@@ -336,3 +336,28 @@ func TestAWideCodespaceIsReadInLinearTime(t *testing.T) {
 		t.Fatalf("40,000 Identity merges: %d groups for %d ranges, want 1 group", len(rep.groups), rep.ranges())
 	}
 }
+
+// TestAnOverlongCodespaceRangeIsRefused — the tries recurse once per byte of a range, so one megabyte-long range
+// overflowed the goroutine stack (fatal: no `recover` holds it) on a CMap that compresses to 4 KB. It is refused by
+// name, in bounded time, wherever the codespace travels; a range at the bound still reads.
+func TestAnOverlongCodespaceRangeIsRefused(t *testing.T) {
+	const n = 1 << 20
+	long := ParseCodespace([]byte("1 begincodespacerange <" + strings.Repeat("00", n) + "> <" + strings.Repeat("FF", n) +
+		"> endcodespacerange"))
+	if !long.Overlong || long.ranges() != 0 {
+		t.Fatalf("a %d-byte range was read (overlong %v, %d ranges)", n, long.Overlong, long.ranges())
+	}
+	if c := long.Clone(); !c.Overlong {
+		t.Fatal("an overlong codespace stopped being refused once cloned")
+	}
+	chain := ParseCodespace([]byte("1 begincodespacerange <00> <7F> endcodespacerange")).Clone()
+	chain.Merge(long)
+	if !chain.Overlong {
+		t.Fatal("an overlong codespace stopped being refused once merged")
+	}
+	atBound := ParseCodespace([]byte("1 begincodespacerange <" + strings.Repeat("00", maxCodeRangeBytes) + "> <" +
+		strings.Repeat("FF", maxCodeRangeBytes) + "> endcodespacerange"))
+	if atBound.Overlong || atBound.ranges() != 1 {
+		t.Fatalf("a %d-byte range was refused (overlong %v, %d ranges)", maxCodeRangeBytes, atBound.Overlong, atBound.ranges())
+	}
+}
