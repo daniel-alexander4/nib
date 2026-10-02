@@ -36,6 +36,10 @@ type revisionFacts struct {
 	// arrived": a barrier operation clears undo without marking it evicted, and a save replaces the bytes with no
 	// history at all. P03 words it accordingly.
 	History string `json:"history"`
+	// Size is the length of the working copy the walk read — taken with `data`, under the same lock — so "your
+	// version is the whole file" and "N bytes were added after it" compare one snapshot (the P03.S02 review: the client
+	// had compared `end` with the size pdf.js loaded earlier, which a co-signature arriving in between makes false).
+	Size int64 `json:"size"`
 }
 
 // revisionRefusal is the 422 body: why there is no version, and what nib could not read.
@@ -86,7 +90,7 @@ func (s *Server) handleDocumentRevision(w http.ResponseWriter, r *http.Request) 
 		writeJSONStatus(w, http.StatusUnprocessableEntity, revisionRefusal{Cause: sr.Cause, Refused: sr.Refused, Attributed: sr.Attributed})
 		return
 	}
-	facts := revisionFacts{Obj: sr.Obj, End: sr.End, EarlierRevision: sr.EarlierRevision, RedefinedObj: sr.RedefinedObj,
+	facts := revisionFacts{Size: int64(len(data)), Obj: sr.Obj, End: sr.End, EarlierRevision: sr.EarlierRevision, RedefinedObj: sr.RedefinedObj,
 		Later: sr.Later, LaterUnchecked: sr.LaterUnchecked, Earlier: sr.Earlier, History: history}
 	if len(facts.Later) > maxRevisionFactList {
 		facts.Later, facts.Truncated = facts.Later[:maxRevisionFactList], true

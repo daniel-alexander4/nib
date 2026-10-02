@@ -879,11 +879,54 @@ document" return focus to whichever opened it, and the reader's scroll survives 
 keyboard-only operation holds ✅ (tier 3, Enter/Tab/Escape); focus restore holds ✅ (tier 3, both openers, and jsdom).
 /pending 652 closed (T01).
 
-#### P03.S02 — the verdict, told for a dispute
+#### P03.S02 — the verdict, told for a dispute *(done 2026-10-02, v1.180.0)*
 Scope: the three terminal states, and the signer list ordered around yours. Refs: D8, D9.
 Acceptance: a document co-signed by a stranger after your signature never reads as unqualified
 `✓ Untampered` on this surface; a re-saved file says the signed version is not inside it; an
 unsigned file says so without implying you never signed.
+
+Grill (2026-10-02; deepdive of the docResponse/`unverifiedSigners` seam and the client's signature renderers).
+Conclusions, each read at the line: **"you" is the SERVER's to say** — `selfFingerprint` is never loaded at boot
+(`app.js:1097`, written only by the peers modal and session receive), and the route that fills it (`/api/peers`)
+CREATES an identity on first use (`peers.go:50`), a write on what must be a read; the server already reads
+`v.Identity()` for the badge's count. **An imported external certificate is "you" too** — today it counts as "from
+someone you have not verified" (`server.go:1793` adds only the identity); the vault holds its `CertPEM`. **"Before or
+after yours" needs each signer's coverage end** — `Status.Signers` is in library (object-number) order, not coverage
+order (`verify.go:373-387`), and the record holds `CoverageEnd` at the join. **One "known" rule** (ADR-009): the count
+and the per-signer flag come from one door; `attestationView.Pinned` (`cosign.go:148`) is a named exemption — it means
+"a pinned PEER", and this machine is not its own peer. **A locked vault says so and asks nothing** (`requireUnlocked`
+would 401; the per-signer facts are nil). The sheet never calls the route without a fingerprint the server called yours.
+- T01 — server: `signerKin(v, st)` replaces `unverifiedSigners` — the count and a `signerWhose` list aligned with
+  `Signature.Signers` (`you` · `known` · ``), from one `PinnedPeers()` copy, the identity and the external certificate;
+  nil exactly when the count is nil. The badge's count now treats the external certificate as yours.
+- T02 — sign: `SignerInfo.CoverageEnd`, from the signer's own record (0 under a join error: position unknown).
+- T03 — the sheet's check, on open: no signature / locked / no signature of yours each say so without asking; otherwise
+  `fetchSignedRevision` once per distinct fingerprint of yours (the largest `end` wins, W3); `locked` swallowed.
+- T04 — the verdict: D8's three terminal states and the five causes in dispute language (W10 never "re-saved"; C1
+  `attributed`; I8 "as the file stands"), and every one of the nine `X-Nib-Revision` facts worded or deliberately
+  silent (W9 `none` says nothing — it is not "as it arrived").
+- T05 — the signer list around yours: ordered by coverage end, each with ✓/✗, "you" / "known to this machine" / "not
+  known to this machine" (D9), and before / after yours. The signer row is EXTRACTED from `openSigDetails` so the
+  details panel and the sheet share one renderer (ADR-009).
+- T06 — the censuses (nine Go rows, eight jsdom parks, the COINCIDENTAL `obj`), the D10 caller allow-list, Go tests
+  for `signerKin` (nil vs empty, alignment, external) and jsdom tests per state; tier 3 over a document signed in-app.
+
+**Built (v1.180.0):** T01–T06 as tasked. The review (`code-reviews/v1.179.7-p03s02-…`, 2 critical, 5 warning, 11 info,
+then a re-review of the fixes) found two places the sheet said more than nib knew, both fixed and red-proved: after a
+join error every fingerprint is empty and the sheet said "none is yours" — it now says Nib could not tell who signed;
+and a signature that only NAMES your certificate and fails read "yours" in the list under a verdict withholding that —
+it now reads "names your certificate, and does not verify". **Added beyond the Ts:** `X-Nib-Revision.size` (the walk's
+bytes, one snapshot with `end`), so "exactly the version you signed" and "N bytes were added after it" never compare the
+server's copy with what pdf.js loaded earlier; the signer list moved out of the live region with list semantics.
+**Hot path, measured and named to Dan:** `signerKin` on every document response costs 73 µs with the identity only
+(unchanged) and 176 µs with an imported external signer (goprobe). **Live:** a document signed in the real app, opened
+back, reads "This file is exactly the version you signed"; with bytes appended after its %%EOF, "The version you signed
+is inside this file, and N bytes were added after it" (tier 3, red when `signerKin` stops saying "you").
+**Acceptance ledger:** a document co-signed by a stranger after your signature never reads as unqualified `✓ Untampered`
+on this surface ✅ (the word appears nowhere on it; the stranger's row reads "not known to this machine · added after
+yours"; jsdom); a re-saved file says the signed version is not inside it ✅ ("The version you signed is not inside this
+file.", D8's sentence, with C1's two wordings; never "re-saved"); an unsigned file says so without implying you never
+signed ✅ ("as it stands … That does not mean nobody signed it"; asks nothing).
 
 #### P03.S03 — "see what changed"
 Scope: hand the recovered prefix to the shipped compare pipeline as bytes. Refs: D11.

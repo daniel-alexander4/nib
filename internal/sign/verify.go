@@ -77,6 +77,11 @@ type SignerInfo struct {
 	// could not establish who signed; a consumer must treat that as unrecognised and never as a
 	// match.
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// CoverageEnd is the byte offset this signature's ByteRange covers to — its signed version's length — from the same
+	// record as Fingerprint. Signers are listed in the library's (object-number) order, not coverage order, so this is
+	// what says whether one signature came before or after another (PLAN-returned-document P03.S02, D9). Zero means
+	// the position is unknown (a join error names no record).
+	CoverageEnd int64 `json:"coverageEnd,omitempty"`
 }
 
 // Status is the verification result surfaced to the UI.
@@ -381,6 +386,9 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 			fp = revs[at[i]].Fingerprint
 		}
 		si := signerInfo(&resp.Signers[i], fp)
+		if joinErr == nil {
+			si.CoverageEnd = revs[at[i]].CoverageEnd
+		}
 		if !si.Valid {
 			st.State = Invalid
 		}

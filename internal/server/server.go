@@ -635,10 +635,17 @@ type docResponse struct {
 	// no signers, or the vault is locked so the pinned set cannot be read. Zero means every
 	// signature is by a known identity. The badge may only say *Untampered* on zero, and must not
 	// say it on absent — a locked vault has not verified anything.
-	UnverifiedSigners *int            `json:"unverifiedSigners,omitempty"`
-	Flags             json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
-	CanUndo           bool            `json:"canUndo"`         // an undoable operation is on the stack
-	CanRedo           bool            `json:"canRedo"`         // an undone operation can be re-applied
+	UnverifiedSigners *int `json:"unverifiedSigners,omitempty"`
+	// SignerWhose says, for each of `Signature.Signers` in the same order, whose signature it is to this machine:
+	// "you" (this machine's identity, or the imported external signer's certificate), "known" (a peer the user has
+	// pinned), or "" (neither). It is present exactly when UnverifiedSigners is — the same door decides both
+	// (`signerKin`) — and it is what the returned-document sheet asks the signed version for (PLAN-returned-document
+	// P03.S02): "you" is the server's to say, because the client's own fingerprint is loaded only by a route that
+	// CREATES an identity.
+	SignerWhose []string        `json:"signerWhose,omitempty"`
+	Flags       json.RawMessage `json:"flags,omitempty"` // embedded sign/date/initial placeholders, if any
+	CanUndo     bool            `json:"canUndo"`         // an undoable operation is on the stack
+	CanRedo     bool            `json:"canRedo"`         // an undone operation can be re-applied
 
 	// HistoryEvicted distinguishes "your edit history was dropped to free memory"
 	// from "you have not edited this document" — states that canUndo:false reports
@@ -1730,7 +1737,7 @@ func (s *Server) docResponse(doc *document) docResponse {
 		}
 		s.mu.Unlock()
 	}
-	resp.UnverifiedSigners = unverifiedSigners(vlt, resp.Signature)
+	resp.UnverifiedSigners, resp.SignerWhose = signerKin(vlt, resp.Signature)
 
 	// Surface embedded signing placeholders so the recipient's UI can rebuild
 	// them on open (the read half of the flag round-trip; the write half is
@@ -1782,27 +1789,50 @@ func (s *Server) docResponse(doc *document) docResponse {
 // **`v.Identity()` and never `identity(v)`**: the latter GENERATES an identity when none exists,
 // which is a write, and this is a read path that answers /api/doc.
 func unverifiedSigners(v *vault.Vault, st sign.Status) *int {
+	n, _ := signerKin(v, st)
+	return n
+}
+
+// signerKin is the ONE door onto whose each signature is to this machine (ADR-009): the badge's count of signatures by
+// an identity this machine cannot vouch for, and, aligned with `st.Signers`, "you" / "known" / "" per signer — both
+// from one `PinnedPeers()` copy and one read of each of this machine's certificates. Both are nil exactly when nothing
+// is asked: no signers, or a locked vault.
+//
+// **"you" is this machine's identity OR the imported external signer's certificate** (P03.S02): a document signed with
+// the user's own imported PKCS#12 counted as "from someone you have not verified" while the identity alone was read.
+// `attestationView.Pinned` (`pinnedLabel`, cosign.go) is a named exemption: it means "a pinned PEER", and this machine
+// is not its own peer.
+func signerKin(v *vault.Vault, st sign.Status) (*int, []string) {
 	if len(st.Signers) == 0 || v == nil {
-		return nil // not asked: nothing signed it, or the vault is locked and cannot say
+		return nil, nil // not asked: nothing signed it, or the vault is locked and cannot say
 	}
-	known := map[string]bool{}
+	whose := map[string]string{}
 	for _, p := range v.PinnedPeers() {
-		known[strings.ToLower(hex.EncodeToString(p.Fingerprint))] = true
+		whose[strings.ToLower(hex.EncodeToString(p.Fingerprint))] = "known"
 	}
-	if cert, _, ok := v.Identity(); ok {
-		if fp, err := sign.Fingerprint(cert); err == nil {
-			known[strings.ToLower(hex.EncodeToString(fp))] = true // this machine's own signature
+	mine := func(certPEM []byte) {
+		if fp, err := sign.Fingerprint(certPEM); err == nil {
+			whose[strings.ToLower(hex.EncodeToString(fp))] = "you" // over "known": a pinned self is still you
 		}
 	}
-	n := 0
-	for _, sg := range st.Signers {
+	if cert, _, ok := v.Identity(); ok {
+		mine(cert)
+	}
+	if ext, ok := v.ExternalSigner(); ok {
+		mine(ext.CertPEM)
+	}
+	n, out := 0, make([]string, len(st.Signers))
+	for i, sg := range st.Signers {
 		// A signer with no fingerprint at all cannot be recognised, and counting it as known
 		// would make an unparseable identity the quiet way past this.
-		if !known[strings.ToLower(sg.Fingerprint)] {
+		if sg.Fingerprint != "" {
+			out[i] = whose[strings.ToLower(sg.Fingerprint)]
+		}
+		if out[i] == "" {
 			n++
 		}
 	}
-	return &n
+	return &n, out
 }
 
 // docName is the document's display name, and it is EMPTY for a path-less document

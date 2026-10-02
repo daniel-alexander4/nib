@@ -307,17 +307,6 @@ const EXCLUDED = {
 // one gets fixed; a NEW unread field cannot be parked here without someone writing a
 // line, which is the intended cost.
 const UNREAD_KNOWN = {
-  // PLAN-returned-document P02.S03 → P03.S02: the facts the verdict surface words. Parked by name, so each fails here the
-  // day a reader APPEARS (delete its row); a park cannot fail for a reader that never comes. That half is
-  // observables_test.go's, which gates all nine `revisionFacts` fields on P03.S02, so the slice cannot close over them.
-  'revisionFacts.end': 'P03.S02: the verdict says how far the signed version reaches',
-  'revisionFacts.earlierRevision': 'P03.S02: the verdict says the version came from an earlier revision',
-  'revisionFacts.redefinedObj': 'P03.S02: the verdict names the rewritten dictionary (W8)',
-  'revisionFacts.later': 'P03.S02: the signer list names later signatures of the same name',
-  'revisionFacts.laterUnchecked': 'P03.S02: the verdict says whether this is the last version',
-  'revisionFacts.earlier': 'P03.S02: the signer list names the earlier signatures',
-  'revisionFacts.truncated': 'P03.S02: the signer list says it was cut',
-  'revisionFacts.history': 'P03.S02: the verdict words the working copy\'s recorded history (W9)',
   // **`updateResponse.managed` was here and the FIELD is gone (/pending 350, v1.117.309).** This
   // entry had the argument already written — "a field consumed by the code that sets it has no
   // consumer at the far end, which is the whole property here" — and it sat as a park rather than
@@ -780,7 +769,6 @@ test('every field of every published shape has a reader in the file that declare
 // `TestTheConsentViewPublishesNoUnreadPeerFields` is what keeps them gone, because neither scan
 // can see them come back.
 const COINCIDENTAL = {
-  'revisionFacts.obj': 'P03.S02 is its reader (the verdict names which signature held). Its only match is `r.obj` in the line naming a refused signature (sign.RefusedSignature, app.js refusedLine).',
   'attestationView.signer': 'read in Go by the side that SETS it (internal/p2p), never at the far end; the client renders signer identity from sign.Status instead. Its only match is `pending.signer`, a pendingView.',
   'attestationView.fingerprint': 'as above. Every match is a peer / peersResponse / pendingView fingerprint; augmentSigDetails reads acceptedPeer, reason, matched, pinned, rosterHash and oneProceeding, not this.',
   'attestationView.when': 'as above. Matches are `q.when` (cosignQuote) and `s.when` (sign.SignerInfo).',
@@ -790,7 +778,6 @@ const COINCIDENTAL = {
   // attestation from them), which by this file\'s own updateResponse.managed doctrine is no
   // consumer at the far end; the client renders signer identity from attestationView instead.
   'sign.SignerInfo.reason': 'its ten matches are `pending.reason` (pendingView), `a.reason` (attestationView), `out.reason` (decryptResponse), `info.reason` (listDirResponse) and `ev.reason` (a PromiseRejectionEvent). openSigDetails never reads it.',
-  'sign.SignerInfo.fingerprint': 'the exact twin of attestationView.fingerprint, one type over. Every match is a peer / peersResponse / pendingView fingerprint.',
 };
 
 test('the deferred and coincidental lists describe fields that still exist', () => {

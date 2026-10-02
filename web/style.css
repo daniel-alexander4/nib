@@ -2038,6 +2038,12 @@ body.presenting .presentbar { display: flex; }
   padding: 10px 16px; border-bottom: 1px solid var(--surface1);
 }
 .sheethead h2 { margin: 0; font-size: 15px; font-weight: 600; }
+/* The returned-document sheet's verdict (PLAN-returned-document P03.S02): the headline sentence first, then the facts. */
+.rvverdict { font-weight: 600; margin: 0 0 8px; }
+.rvline { margin: 0 0 6px; }
+.rvchecking { color: var(--subtext1); }
+.rvsigners { margin-top: 12px; }
+.sigrow-kin { font-size: 12px; color: var(--subtext1); }
 .sheetheadbtns { display: flex; gap: 6px; }
 .sheetclose {
   background: none; border: 1px solid var(--surface1); color: var(--subtext1);
