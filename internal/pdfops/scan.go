@@ -72,9 +72,17 @@ var riskyActions = map[string]string{
 // `eachFormField`'s rule (`/pending 689`), and the depth cap stays for chains of direct dicts. A `/Next` that is a
 // reference to an ARRAY is followed too; it used to fall through to a dict dereference and hide its actions.
 func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Dict)) {
+	// Breadth-first, so an object is first reached at its SHALLOWEST depth (the re-review of the fix above): depth-first
+	// marked an action seen where a long chain reached it past the cap, unwalked, and the same action named at depth 1
+	// was then skipped — `/Next [<32-action chain> 50 0 R]` scanned clean with 50 a JavaScript action, and StripActive
+	// kept it. A node is cut only when every path to it is deeper than the cap.
+	type item struct {
+		d     types.Dict
+		depth int
+	}
 	seen := map[int]bool{}
-	var walk func(d types.Dict, depth int)
-	visit := func(o types.Object, depth int) {
+	queue := []item{{act, depth}}
+	enqueue := func(o types.Object, depth int) {
 		if ir, ok := o.(types.IndirectRef); ok {
 			n := ir.ObjectNumber.Value()
 			if seen[n] {
@@ -82,26 +90,30 @@ func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Di
 			}
 			seen[n] = true
 		}
-		walk(derefDict(xt, o), depth)
+		queue = append(queue, item{derefDict(xt, o), depth})
 	}
-	walk = func(d types.Dict, depth int) {
-		if d == nil || depth > 32 {
-			return
+	for len(queue) > 0 {
+		it := queue[0]
+		queue = queue[1:]
+		if it.d == nil || it.depth > 32 {
+			continue
 		}
-		fn(d)
-		next, ok := d["Next"]
+		fn(it.d)
+		next, ok := it.d["Next"]
 		if !ok {
-			return
+			continue
 		}
 		if arr := derefArray(xt, next); arr != nil {
-			for _, a := range arr {
-				visit(a, depth+1)
+			if !firstVisit(seen, next) {
+				continue
 			}
-			return
+			for _, a := range arr {
+				enqueue(a, it.depth+1)
+			}
+			continue
 		}
-		visit(next, depth+1)
+		enqueue(next, it.depth+1)
 	}
-	walk(act, depth)
 }
 
 // Scan reads the PDF and reports active or hidden content: auto-run hooks
@@ -274,9 +286,15 @@ func Scan(pdf []byte) (ScanReport, error) {
 // caller that marks what it finds by object number needs the reference. The depth cap is the larger
 // of the two the walks used (50), so neither caller lost reach by the merge.
 func eachFormField(xt *model.XRefTable, af types.Dict, fn func(o types.Object, f types.Dict)) {
+	// Breadth-first for eachAction's reason: depth-first marked a shared field seen where a deep path reached it at
+	// the cap, its /Kids cut, and the shallow path to it then skipped — so its subtree was never visited.
+	type item struct {
+		o     types.Object
+		depth int
+	}
 	seen := map[int]bool{}
-	var walk func(o types.Object, depth int)
-	walk = func(o types.Object, depth int) {
+	var queue []item
+	enqueue := func(o types.Object, depth int) {
 		if depth > 50 {
 			return
 		}
@@ -287,17 +305,25 @@ func eachFormField(xt *model.XRefTable, af types.Dict, fn func(o types.Object, f
 			}
 			seen[n] = true
 		}
-		f := derefDict(xt, o)
-		if f == nil {
-			return
-		}
-		fn(o, f)
-		for _, k := range derefArray(xt, f["Kids"]) {
-			walk(k, depth+1)
-		}
+		queue = append(queue, item{o, depth})
 	}
 	for _, f := range derefArray(xt, af["Fields"]) {
-		walk(f, 0)
+		enqueue(f, 0)
+	}
+	for len(queue) > 0 {
+		it := queue[0]
+		queue = queue[1:]
+		f := derefDict(xt, it.o)
+		if f == nil {
+			continue
+		}
+		fn(it.o, f)
+		if !firstVisit(seen, f["Kids"]) {
+			continue
+		}
+		for _, k := range derefArray(xt, f["Kids"]) {
+			enqueue(k, it.depth+1)
+		}
 	}
 }
 
@@ -661,7 +687,7 @@ func removeAllAttachments(ctx *model.Context) error {
 
 // errPageTreeTooLarge is eachPage's refusal of a tree whose walk would visit more nodes than the file could
 // honestly hold.
-var errPageTreeTooLarge = errors.New("pdfops: the page tree names its nodes more times than a document of this size can hold, so it was not walked")
+var errPageTreeTooLarge = errors.New("pdfops: the page tree is deeper, or names its nodes more times, than a document of this size can hold, so it was not walked")
 
 // eachPage invokes fn for each leaf page dict in document order (1-based),
 // walking the page tree directly so it needs no validated PageCount. A depth
@@ -677,7 +703,8 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 		return nil
 	}
 	nr := 0
-	budget := 16*len(xt.Table) + 1024
+	budget := pageWalkBudget(xt)
+	truncated := false
 	// onPath, not a global seen-set. The set was there to stop a malformed tree recursing
 	// forever, and it did — but it also SKIPPED a page object referenced twice, so the
 	// numbering diverged from the viewer's: pdf.js walks the tree without deduplicating and
@@ -690,7 +717,11 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 	onPath := map[int]bool{}
 	var walk func(node types.Dict, depth int)
 	walk = func(node types.Dict, depth int) {
-		if node == nil || depth > 50 || budget < 0 {
+		if node == nil || budget < 0 {
+			return
+		}
+		if depth > 50 {
+			truncated = true // a page tree 50 deep is not a document; skipping it silently is the failure above
 			return
 		}
 		budget--
@@ -716,10 +747,40 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 		}
 	}
 	walk(pages, 0)
-	if budget < 0 {
+	if budget < 0 || truncated {
 		return errPageTreeTooLarge
 	}
 	return nil
+}
+
+// firstVisit reports whether o is a direct object or an indirect one not yet in seen, marking it. An ARRAY named by
+// reference needs it as much as a dict does (the re-review of the breadth-first walks): `7 0 obj [<</Next 7 0 R>>
+// <</Next 7 0 R>>]` re-expanded the array from each direct dict inside it, 2^32 visits from 645 bytes, and a queue
+// holds that fan-out in memory where the old recursion only spun.
+func firstVisit(seen map[int]bool, o types.Object) bool {
+	ir, ok := o.(types.IndirectRef)
+	if !ok {
+		return true
+	}
+	n := ir.ObjectNumber.Value()
+	if seen[n] {
+		return false
+	}
+	seen[n] = true
+	return true
+}
+
+// pageWalkBudget is eachPage's visit budget: 16 per LIVE object plus a floor. A compressed xref stream can declare a
+// million free rows in a few kilobytes, and counting them handed a 40-level doubling chain ~16M visits (measured 4.9 s
+// past pdfcpu's own read) before refusing.
+func pageWalkBudget(xt *model.XRefTable) int {
+	live := 0
+	for _, e := range xt.Table {
+		if e != nil && !e.Free {
+			live++
+		}
+	}
+	return 16*live + 1024
 }
 
 func derefDict(xt *model.XRefTable, o types.Object) types.Dict {
