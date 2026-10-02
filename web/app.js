@@ -99,6 +99,7 @@ const els = {
   ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
   returnedBtn: $('returnedBtn'), returnedSheet: $('returnedSheet'), returnedHeading: $('returnedHeading'),
   returnedClose: $('returnedClose'), returnedDoc: $('returnedDoc'), returnedVerdict: $('returnedVerdict'),
+  returnedSigners: $('returnedSigners'),
   cerSetupBar: $('cerSetupBar'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
@@ -5018,6 +5019,36 @@ function timeLabel(s) {
   return 'No signing time recorded';
 }
 
+// signerRow is ONE signature's row — who, whether its bytes check out, when — for the signature details panel and the
+// returned-document sheet alike (P03.S02, ADR-009): two renderers of one signer would let the sheet say a word the
+// panel withholds. A caller appends what only it knows (the sheet: whose it is, and where it falls against yours).
+function signerRow(s) {
+  const row = document.createElement('div');
+  row.className = 'sigrow';
+  const who = document.createElement('div');
+  who.className = 'sigrow-who';
+  who.textContent = s.name || 'Unnamed signer';
+  row.appendChild(who);
+
+  const status = document.createElement('div');
+  status.className = s.valid ? 'sigrow-ok' : 'sigrow-bad';
+  // **Not the badge's word, and the difference is the point (/pending 390).** This row is about
+  // ONE signature — `SignerInfo.Valid` is "this signer's byte-range hash checks out" — and the
+  // badge's `Untampered` is a claim about the DOCUMENT. They were the same string, so a reader
+  // looking at a document the badge now warns about would find a column of green ticks each
+  // saying the word the badge had just withheld. Every one of them would be true, which is what
+  // makes it the wrong word here: an attacker's own self-signed signature checks out perfectly.
+  status.textContent = s.valid ? '✓ Signature checks out' : '⚠ Modified since signing';
+  row.appendChild(status);
+
+  const time = document.createElement('div');
+  time.className = 'sigrow-time';
+  time.textContent = timeLabel(s);
+  row.appendChild(time);
+
+  return row;
+}
+
 async function openSigDetails() {
   const signers = view.lastSig?.signers || [];
   const refused = view.lastSig?.refused || [];
@@ -5031,30 +5062,7 @@ async function openSigDetails() {
   const body = els.sigDetailsBody;
   body.innerHTML = '';
   const rows = signers.map((s) => {
-    const row = document.createElement('div');
-    row.className = 'sigrow';
-
-    const who = document.createElement('div');
-    who.className = 'sigrow-who';
-    who.textContent = s.name || 'Unnamed signer';
-    row.appendChild(who);
-
-    const status = document.createElement('div');
-    status.className = s.valid ? 'sigrow-ok' : 'sigrow-bad';
-    // **Not the badge's word, and the difference is the point (/pending 390).** This row is about
-    // ONE signature — `SignerInfo.Valid` is "this signer's byte-range hash checks out" — and the
-    // badge's `Untampered` is a claim about the DOCUMENT. They were the same string, so a reader
-    // looking at a document the badge now warns about would find a column of green ticks each
-    // saying the word the badge had just withheld. Every one of them would be true, which is what
-    // makes it the wrong word here: an attacker's own self-signed signature checks out perfectly.
-    status.textContent = s.valid ? '✓ Signature checks out' : '⚠ Modified since signing';
-    row.appendChild(status);
-
-    const time = document.createElement('div');
-    time.className = 'sigrow-time';
-    time.textContent = timeLabel(s);
-    row.appendChild(time);
-
+    const row = signerRow(s);
     body.appendChild(row);
     return row;
   });
@@ -15698,8 +15706,8 @@ function cerEls() {
 //
 // The sheet that answers "I signed this, sent it off, and it came back — what changed?". It is about ONE document,
 // captured here when it opens (ADR-001): every request it will make (P03.S02) names that id, and an active-tab change
-// closes it rather than leave it describing a document no longer on screen. Opening it fetches NOTHING — recovery is on
-// demand (D10) and the verdict is S02's; a sheet that showed a half-worded cause would be D8's degraded surface.
+// closes it rather than leave it describing a document no longer on screen. Opening it IS the demand D10 means:
+// `checkReturned` asks for the signed version then, and nothing else ever does (the jsdom caller census).
 //
 // returnedState (declared beside `els`, because activateView and closeDocument read it from boot on) is the open
 // sheet's capture.
@@ -15716,6 +15724,7 @@ function openReturnedSheet() {
   els.returnedSheet.hidden = false;
   els.viewerWrap.hidden = true;
   els.returnedHeading.focus();
+  checkReturned(returnedState);
 }
 
 // closeReturnedSheet puts the viewer back. restoreFocus returns focus to the control that opened the sheet; a tab switch
@@ -15728,6 +15737,189 @@ function closeReturnedSheet(restoreFocus = true) {
   els.viewerWrap.hidden = false;
   // AFTER the flip: focusing into a hidden subtree is a silent no-op (see parkCeremonySheet).
   if (restoreFocus && opener && opener.isConnected) opener.focus();
+}
+
+// ── The verdict, told for a dispute (P03.S02, D8, D9) ─────────────────────────────────────────────────────────────
+//
+// Whose each signature is comes from the SERVER (`signerWhose`, from `signerKin`): the client's own fingerprint is
+// loaded only by a route that creates an identity. The sheet asks the signed version once per distinct fingerprint of
+// yours — recovery on demand, here and nowhere else (D10) — and the largest `end` is your last (W3). The words follow
+// the badge's rules: a signature "checks out", the document is never "Untampered" here, nothing is "re-saved" (W10),
+// and a file with no signature says so "as it stands" (I8).
+const KIN_WORDS = { you: 'yours', known: 'known to this machine', '': 'not known to this machine' };
+
+async function checkReturned(state) {
+  const v = els.returnedVerdict;
+  v.textContent = '';
+  els.returnedSigners.textContent = '';
+  const say = (text, cls = 'rvline') => {
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = text;
+    v.appendChild(p);
+    return p;
+  };
+  const meta = state.view.docMeta || {};
+  const sig = meta.signature || {};
+  const signers = sig.signers || [];
+  const whose = meta.signerWhose;
+  const sayRefusedAndStamps = () => {
+    for (const r of sig.refused || []) say('A signature Nib refused is present — ' + refusedLine(r));
+    for (const t of sig.timestamps || []) say(`A document timestamp is present — object ${t.obj}. It names no signer.`);
+  };
+  if (!signers.length) {
+    // I8: about the file as it stands — never "nothing signed this" and never "you did not sign this". A file whose only
+    // signature-shaped things are refused, or timestamps, is not "unsigned", and says which.
+    if (sig.state === 'unsigned' || !sig.state) {
+      say('This file, as it stands, carries no signature Nib can check. That does not mean nobody signed it: only that '
+        + 'no signature survives in this copy, so Nib cannot recover the version you signed from it.', 'rvverdict');
+    } else {
+      say('This file, as it stands, carries nothing Nib accepts as a signature, so it cannot recover the version you '
+        + 'signed from it. That does not mean nobody signed it.', 'rvverdict');
+    }
+    sayRefusedAndStamps();
+    return;
+  }
+  if (!whose) {
+    say('Unlock Nib to check which of these signatures is yours.', 'rvverdict');
+    renderReturnedSigners(signers, null, 0);
+    return;
+  }
+  const mine = [...new Set(signers.filter((x, i) => whose[i] === 'you' && x.fingerprint)
+    .map((x) => x.fingerprint.toLowerCase()))];
+  if (!mine.length) {
+    // A signer Nib could not name might be you: "none is yours" is said only when every signer WAS named (the P03.S02
+    // review — a counterparty can make the join fail, which names nobody).
+    const unnamed = signers.filter((x) => !x.fingerprint).length;
+    say(unnamed
+      ? `Nib could not tell who made ${unnamed === signers.length ? 'these signatures' : unnamed + ' of these signatures'}, `
+        + 'so it cannot say whether one of them is yours.'
+      : 'None of this document\'s signatures, as it stands, is yours: none was made with this machine\'s identity or '
+        + 'with the signing certificate you imported.', 'rvverdict');
+    renderReturnedSigners(signers, whose, 0);
+    return;
+  }
+  say('Looking for the version you signed…', 'rvchecking');
+  let best = null;
+  const refusals = [];
+  for (const fp of mine) {
+    let r;
+    try {
+      r = await fetchSignedRevision(state.docId, fp);
+    } catch (e) {
+      if (returnedState !== state) return;
+      v.textContent = '';
+      say(e && e.message === 'locked'
+        ? 'Nib locked while it was checking. Unlock it, then open this check again.'
+        : 'Nib could not ask for the version you signed: ' + ((e && e.message) || 'it failed') + '.', 'rvverdict');
+      return;
+    }
+    if (returnedState !== state) return; // closed, or opened on another document, while it was asked
+    if (r.ok) { if (!best || r.facts.end > best.facts.end) best = r; } else refusals.push(r);
+  }
+  v.textContent = '';
+  if (best) {
+    sayFound(best, say);
+    // Two certificates of yours, one recovered: the other's refusal is not lost (the review).
+    // Worded as a NAME, not as signing (C1): the refusal may be a signature that only names the certificate.
+    if (refusals.length) say('A signature in this file names another of your certificates, and Nib could not recover a version for it.');
+  } else {
+    sayRefused(refusals[0], say);
+    if (refusals.length > 1) say('Nib could not recover a version for your other certificate either.');
+  }
+  renderReturnedSigners(signers, whose, best ? best.facts.end : 0);
+}
+
+// sayFound words a recovered version and every fact the route sent about it (the ten `X-Nib-Revision` fields). `size`
+// is the working copy the walk read, taken with `end` in one snapshot on the server.
+function sayFound(r, say) {
+  const f = r.facts || {};
+  if (f.size && f.end === f.size) {
+    say('This file is exactly the version you signed: your signature covers every byte of it.', 'rvverdict');
+  } else if (f.size && f.end < f.size) {
+    say(`The version you signed is inside this file, and ${f.size - f.end} bytes were added after it. Your signature `
+      + 'does not cover what was added.', 'rvverdict');
+  } else {
+    say('The version you signed is inside this file.', 'rvverdict');
+  }
+  say(`Your signature is object ${f.obj}, covering the first ${f.end} bytes.`);
+  if (f.earlierRevision) {
+    say(f.redefinedObj
+      ? `A later revision replaced your signature's dictionary (object ${f.redefinedObj}); your version was found in `
+        + 'the revision before it.'
+      : 'Your version was found in an earlier revision of this file.');
+  }
+  if (f.earlier && f.earlier.length) {
+    say(`You signed ${f.earlier.length === 1 ? 'an earlier version' : f.earlier.length + ' earlier versions'} too; this is the last one.`);
+  }
+  if (f.later && f.later.length) {
+    say(f.later.length === 1
+      ? 'A later signature naming your certificate does not verify against this file.'
+      : `${f.later.length} later signatures naming your certificate do not verify against this file.`);
+  }
+  if (f.laterUnchecked) {
+    say('Nib could not confirm this is the last version you signed: some signatures naming your certificate could '
+      + 'not be checked.');
+  }
+  if (f.truncated) say('The list of your other signatures was cut short.');
+  // W9: "none" is recorded history, not "as it arrived" — so it is never worded as a claim.
+  if (f.history === 'undo') say('You have edited this copy since opening it. The check reads the copy as it is now.');
+  else if (f.history === 'evicted') say('This copy was edited and its undo history dropped to save memory. The check reads the copy as it is now.');
+}
+
+// sayRefused words the 422 — D8's re-saved sentence first, and C1: a name in a SignerInfo is the signer's own claim.
+function sayRefused(r, say) {
+  const cause = r && r.cause;
+  if (cause === 'resaved') {
+    say('The version you signed is not inside this file.', 'rvverdict');
+    say(r.attributed
+      ? 'It holds a signature made with your key over different bytes, and that signature does not verify against this file.'
+      : 'It holds a signature naming your certificate that does not verify against this file — Nib cannot say it is yours.');
+  } else if (cause === 'not-your-signature') {
+    say('None of this file\'s signatures names your certificate.', 'rvverdict');
+  } else if (cause === 'no-signature') {
+    say('This file, as it stands, holds no signature Nib could read — so the version you signed cannot be recovered from it.', 'rvverdict');
+  } else if (cause === 'prefix-failed-reverify') {
+    say('Nib found a version of this file that looks like the one you signed, but your signature does not verify over '
+      + 'it on its own, so Nib will not show it as what you signed.', 'rvverdict');
+  } else {
+    say('Nib could not check this file well enough to find the version you signed.', 'rvverdict');
+  }
+  for (const x of (r && r.refused) || []) say('A signature Nib refused is present — ' + refusedLine(x));
+}
+
+// renderReturnedSigners lists every signature ordered by how far it reaches, each with whose it is to this machine and
+// where it falls against yours (D9). A position is unknown when Nib could not tie the signature to its record.
+function renderReturnedSigners(signers, whose, myEnd) {
+  const list = els.returnedSigners;
+  list.textContent = '';
+  const order = signers.map((x, i) => i).sort((a, b) => (signers[a].coverageEnd || Infinity) - (signers[b].coverageEnd || Infinity));
+  for (const i of order) {
+    const x = signers[i];
+    const row = signerRow(x);
+    row.setAttribute('role', 'listitem');
+    const kin = document.createElement('div');
+    kin.className = 'sigrow-kin';
+    // C1 on one sheet: a signature that NAMES your certificate and does not verify is not "yours" — the verdict above
+    // says Nib cannot say it is, and the row must not say otherwise (the P03.S02 review).
+    const mineButBad = whose && whose[i] === 'you' && !x.valid;
+    // A signer with no fingerprint is nobody Nib could name — not a stranger: the verdict says Nib could not tell.
+    const words = [!whose ? 'unlock to see whose it is'
+      : !x.fingerprint ? 'Nib could not tell who made it'
+        : mineButBad ? 'names your certificate, and does not verify' : KIN_WORDS[whose[i] || '']];
+    if (myEnd && x.coverageEnd) {
+      if (x.coverageEnd < myEnd) words.push('signed before yours');
+      else if (x.coverageEnd > myEnd) words.push('added after yours');
+      else if (whose && whose[i] === 'you' && x.valid) words.push('the version you signed');
+    } else if (whose && whose[i] === 'you' && x.valid && !myEnd) {
+      words.push('its version could not be recovered'); // under a refusal, so the two lines do not read against each other
+    } else if (!x.coverageEnd) {
+      words.push('Nib could not place it');
+    }
+    kin.textContent = words.join(' · ');
+    row.appendChild(kin);
+    list.appendChild(row);
+  }
 }
 
 if (els.returnedBtn) els.returnedBtn.onclick = () => openReturnedSheet();

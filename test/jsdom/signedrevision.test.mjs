@@ -106,7 +106,10 @@ test('the helper tells each of the five causes apart, pins the document, and rea
 
 // D10 holds by construction only while nothing calls the helper: the boot above drives ONE open, and a caller wired to
 // some other open-time event would pass it. The allow-list is empty until P03 builds the surface that asks on demand.
-const FETCH_CALLERS_ALLOWED = [];
+const FETCH_CALLERS_ALLOWED = [
+  // P03.S02: the returned-document sheet asks once per distinct fingerprint of yours, when the USER opens it.
+  'checkReturned — on demand, from the sheet the command opens',
+];
 test('fetchSignedRevision has no caller but the ones named here (D10)', () => {
   const calls = SRC.split('fetchSignedRevision(').length - 1 - 1; // less the declaration
   assert.equal(calls, FETCH_CALLERS_ALLOWED.length,

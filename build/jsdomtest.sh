@@ -133,7 +133,10 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 #
 # 90 since PLAN-returned-document P03.S01 (returnedsheet.test.mjs): the sheet for a document that came back — its own
 # file because it opens documents one after another and closes them all, which no other file's boot can share.
-Nib_expect_files=90
+#
+# 91 since PLAN-returned-document P03.S02 (returnedverdict.test.mjs): the verdict over stubbed answers — its own file
+# because each test re-opens a document with a different signature and a different route answer.
+Nib_expect_files=91
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

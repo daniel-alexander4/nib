@@ -145,6 +145,9 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 
 // pinnedLabel returns the label the given fingerprint is pinned under, and whether
 // it is pinned at all.
+// **Not `signerKin`'s rule, by name** (ADR-009, P03.S02): `Pinned` here means "a pinned PEER", and this machine is not
+// its own peer, so its own identity is not pinned. `signerKin` answers a different question — whose a signature is to
+// this machine — where the machine's own certificates are "you".
 func pinnedLabel(v *vault.Vault, fp []byte) (string, bool) {
 	for _, p := range v.PinnedPeers() {
 		if bytes.Equal(p.Fingerprint, fp) {

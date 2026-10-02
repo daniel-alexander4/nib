@@ -273,7 +273,9 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # re-rendered page — a second reader — which only a real browser renders.
 # 41 since PLAN-returned-document P03.S01 (returnedsheet.test.mjs): the returned-document sheet by keyboard alone —
 # where focus LANDS after the sheet goes, which jsdom cannot see.
-expect_files=41
+# 42 since PLAN-returned-document P03.S02 (returnedverdict.test.mjs): a document signed in-app, opened back, and the
+# sheet's verdict — the one place the whole chain (signerWhose, the route, the wording) runs for real.
+expect_files=42
 if [ "$files" -ne "$expect_files" ]; then
   echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
   echo "      If deliberate, update expect_files in this script." >&2

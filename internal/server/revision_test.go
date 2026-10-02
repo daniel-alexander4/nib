@@ -110,6 +110,7 @@ func TestTheRouteReturnsTheSignedVersionOrNamesWhyNot(t *testing.T) {
 		EarlierRevision bool   `json:"earlierRevision"`
 		RedefinedObj    uint32 `json:"redefinedObj"`
 		History         string `json:"history"`
+		Size            int64  `json:"size"`
 	}
 	for _, tc := range []struct {
 		name  string
@@ -159,6 +160,9 @@ func TestTheRouteReturnsTheSignedVersionOrNamesWhyNot(t *testing.T) {
 				}
 				if f.End != int64(len(tc.want)) || f.Obj == 0 || f.History != "none" {
 					t.Errorf("facts %+v: want end %d, the holder's object, history none", f, len(tc.want))
+				}
+				if f.Size != int64(len(tc.doc)) {
+					t.Errorf("facts size %d, want the %d bytes the walk read — one snapshot with end", f.Size, len(tc.doc))
 				}
 			} else {
 				if code != http.StatusUnprocessableEntity {
