@@ -150,20 +150,23 @@ func rejoinBroken(ctx *model.Context, layout pageLayout, pageNr int, lines [][]r
 		}
 		_, _, _, prevBreak := breakAt(ni - 1)
 		_, _, _, nextBreak := breakAt(ni + 1)
-		if (!drop && !keep) || prevBreak || nextBreak || h.face != t.face || h.font != t.font || h.tfSize != t.tfSize {
+		if (!drop && !keep) || prevBreak || nextBreak {
 			// The tail is not taken here: the next word is examined in its turn, as a head of its own or as itself.
 			out = append(out, h)
 			unsure = append(unsure, [2]int{len(out) - 1, len(out)})
 			continue
 		}
-		joined := emitWord{face: h.face, font: h.font, tfSize: h.tfSize}
-		hcodes, hkerns, hspacing, hwidth := h.codes, h.kerns, h.spacing, h.width
+		// Each glyph keeps its own font (P08.S06), so halves in two fonts join as well as halves in one; the word's own
+		// look is its last glyph's.
+		joined := emitWord{face: t.face, font: t.font, tfSize: t.tfSize}
+		hcodes, hkerns, hspacing, hlooks, hwidth := h.codes, h.kerns, h.spacing, h.looks, h.width
 		if drop {
 			// The hyphen glyph goes, with the kern before it and its advance.
 			g := head.glyphs[len(head.glyphs)-1]
 			n := len(hcodes) - 1
-			hcodes, hkerns, hspacing, hwidth = hcodes[:n], hkerns[:n-1], hspacing[:n], hwidth-g.kern-g.advance
+			hcodes, hkerns, hspacing, hlooks, hwidth = hcodes[:n], hkerns[:n-1], hspacing[:n], hlooks[:n], hwidth-g.kern-g.advance
 		}
+		joined.looks = append(append(joined.looks, hlooks...), t.looks...)
 		joined.codes = append(append(joined.codes, hcodes...), t.codes...)
 		joined.kerns = append(append(append(joined.kerns, hkerns...), 0), t.kerns...)
 		joined.spacing = append(append(joined.spacing, hspacing...), t.spacing...)

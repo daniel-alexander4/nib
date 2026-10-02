@@ -532,3 +532,26 @@ test('a hyphenated word rejoins when the edit moves it mid-line', async () => {
   assert.doesNotMatch(after, /accom-/, `the fragment is still on the page: ${after}`);
   assert.equal((after.match(/accommodate/g) || []).length, 2, `the word is not rejoined in the paragraph: ${after}`);
 });
+
+// P08.S06 through the binary: InDesign sets `Tf 1` and the size in `Tm`; a paragraph whose lines mix that with `Tf 14` under
+// an unscaled matrix was refused `mixed-state`. It is re-set now, and the new text reads in pdf.js at the paragraph's size.
+const SCALED = writeRawFixture('reflow-scaled.pdf', paragraphPDF(
+  'BT /F1 1 Tf 14 0 0 14 72 700 Tm (The quick brown fox jumps) Tj /F1 14 Tf 1 0 0 1 72 682 Tm (over the lazy dog and runs) Tj /F1 1 Tf 14 0 0 14 72 664 Tm (away from here.) Tj ET'));
+
+test('a paragraph sized by its text matrix is re-set, not refused', async () => {
+  await h.closeDocument();
+  await h.openDocument(SCALED, 1);
+  await page.waitForFunction(() => /lazy/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  await openReflow();
+  assert.equal(await page.$eval('#reflowGo', (b) => b.disabled), false,
+    `the dialog refused the paragraph before anything was typed: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.fill('#reflowText', 'The quick brown fox jumps over the tame dog and runs away from here.');
+  await page.click('#reflowGo');
+  await page.waitForFunction(() => document.getElementById('reflowModal').hidden || !document.getElementById('reflowWhy').hidden);
+  assert.equal(await page.$eval('#reflowModal', (m) => m.hidden), true,
+    `the paragraph was refused: ${await page.$eval('#reflowWhy', (p) => p.textContent)}`);
+  await page.waitForFunction(() => /tame/.test([...document.querySelectorAll('.viewerContainer:not([hidden]) .page .textLayer span')].map((s) => s.textContent).join(' ')));
+  const after = await pageText();
+  assert.match(after, /tame dog/, `the re-rendered page reads: ${after}`);
+  assert.doesNotMatch(after, /lazy/, `"lazy" is still on the page: ${after}`);
+});
