@@ -154,7 +154,7 @@ the walk sees it. **The fail-closed arm stays** — fixing the walk must not rem
 covered for it, which is exactly the "a warning goes quiet independently of the verdict" trap
 `verify.go:98-120` was written against.
 
-### D7 — ~~Five~~ Four named refusal causes, not one error *(settled 2026-09-08 via /grill; `kids-hidden` RETIRED 2026-09-29 by Dan — option A)*
+### D7 — ~~Five~~ ~~Four~~ Five named refusal causes, not one error *(settled 2026-09-08 via /grill; `kids-hidden` RETIRED 2026-09-29 by Dan — option A; `could-not-check` ADDED 2026-10-02 by Dan via /discuss — option A)*
 `no-signature` / ~~`kids-hidden`~~ / `resaved` / `not-your-signature` / `prefix-failed-reverify`. A
 lumped refusal reads backwards exactly when it matters, and each cause is a different sentence to
 the user. Attribution beats aggregation.
@@ -162,6 +162,10 @@ the user. Attribution beats aggregation.
 sees a `/Kids`-nested signature by construction, so the cause can never fire. The four remaining causes are the route's
 vocabulary; P01's record causes (`malformed-byterange`, `byterange-outside-file`, `contents-elsewhere`,
 `unsupported-filter`, `unparseable-contents`) are internal and each maps to exactly one of them at P02's route.
+**(superseded in part, 2026-10-02 — Dan via /discuss, option A)** `could-not-check` is the fifth cause, as built in P02:
+the whole file could not be checked and no candidate re-verified (plan-review C2). None of the four is true of such a
+file — "no signature" is false, "not your signature" unobserved, `resaved` an act nib never saw — and D8 forbids
+degrading one state into another. The route's vocabulary is five.
 
 ### D8 — Three terminal states, rendered honestly, never degraded *(settled 2026-09-08 via /grill — forensic-examiner seat)*
 Append-only → the full diff. Re-saved wholesale → **"the version you signed is not inside this
@@ -570,8 +574,8 @@ is four D7 causes plus `could-not-check`, pending Dan — C2.)
 - ✅ (W6) Where a later revision redefined the user's signature dictionary, the user's signed version is returned
   byte-identical — the route row "the signer's dictionary replaced later" (`earlierRevision`, `redefinedObj` = the
   object), and the shape rows for the P01 attack, with `/SigFlags` dropped, with copies claiming later ends.
-- ⏸ (parenthetical) "The refusal set is four D7 causes plus `could-not-check`, pending Dan — C2": **parked**, built under
-  that name; in the closing batch.
+- ✅ (parenthetical) "The refusal set is four D7 causes plus `could-not-check`, pending Dan — C2": **answered 2026-10-02**
+  (Dan via /discuss, option A) — D7 superseded in part: five causes, `could-not-check` as built.
 
 Review: `code-reviews/v1.179.5-p02-phase-close-2026-10-02.md` — 6 critical, all fixed in this close (two in-phase:
 a forged bare SignerInfo crowding out the version; the walk's uncharged scans), plus two re-review rounds. Out-of-phase
@@ -843,7 +847,9 @@ chain is offered in order.
   session-gated read of the user's own files, which S03's grill attacks.
 
 #### P03.S01 — the command and the sheet *(done 2026-10-02, v1.179.7)*
-Scope: `"Check a document that came back…"` in the `secure` tab's *Sign & Timestamp* card, with a
+Scope: `"Check a signed document that came back…"` (**worded 2026-10-02 by Dan via /discuss, option B** — the plan's
+`"Check a document that came back…"` plus "signed", which tells a user which documents it is for) in the `secure` tab's
+*Sign & Timestamp* card, with a
 `data-forward` alias into *Send & Receive*; the sheet itself. Refs: D12.
 Acceptance: reachable in both the sidebar and the collapsed toolbar without a second declaration;
 the id gates (`ids`, `modes`, `doccontrols`) pass; keyboard-only operation and focus restore hold.
@@ -918,8 +924,9 @@ and a signature that only NAMES your certificate and fails read "yours" in the l
 it now reads "names your certificate, and does not verify". **Added beyond the Ts:** `X-Nib-Revision.size` (the walk's
 bytes, one snapshot with `end`), so "exactly the version you signed" and "N bytes were added after it" never compare the
 server's copy with what pdf.js loaded earlier; the signer list moved out of the live region with list semantics.
-**Hot path, measured and named to Dan:** `signerKin` on every document response costs 73 µs with the identity only
-(unchanged) and 176 µs with an imported external signer (goprobe). **Live:** a document signed in the real app, opened
+**Hot path, measured, and KEPT by Dan 2026-10-02 via /discuss (option A, over caching the fingerprint in the vault):**
+`signerKin` on every document response costs 73 µs with the identity only (unchanged) and 176 µs with an imported
+external signer (goprobe). **Live:** a document signed in the real app, opened
 back, reads "This file is exactly the version you signed"; with bytes appended after its %%EOF, "The version you signed
 is inside this file, and N bytes were added after it" (tier 3, red when `signerKin` stops saying "you").
 **Acceptance ledger:** a document co-signed by a stranger after your signature never reads as unqualified `✓ Untampered`
