@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -795,4 +796,184 @@ func TestAnActionBehindAnIndirectNextArrayIsFound(t *testing.T) {
 		}
 	}
 	t.Errorf("the /Launch action behind an indirect /Next array was not found: %+v", rep.Findings)
+}
+
+// TestAnActionReachedFirstPastTheCapIsStillFound — the re-review of the P01 phase-close fix: eachAction marked an
+// action seen where a long chain first reached it past the depth cap, unwalked, so the same action named at depth 1
+// was skipped. Here /Next names a 32-action chain FIRST and then the JavaScript action the chain also ends in.
+func TestAnActionReachedFirstPastTheCapIsStillFound(t *testing.T) {
+	objs := map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [9 0 R] >>",
+		9:  "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 10 0 R >>",
+		10: "<< /S /GoTo /D [3 0 R /Fit] /Next [11 0 R 50 0 R] >>",
+		50: "<< /S /JavaScript /JS (app.alert(1)) >>",
+	}
+	for n := 11; n <= 42; n++ {
+		next := n + 1
+		if n == 42 {
+			next = 50
+		}
+		objs[n] = fmt.Sprintf("<< /S /GoTo /D [3 0 R /Fit] /Next %d 0 R >>", next)
+	}
+	pdf := testpdf.Assemble(objs)
+	// Stimulus: the chain really does reach 50 past the cap — without the depth-1 reference it is not found.
+	if found(t, testpdf.Assemble(withOverride(objs, 10, "<< /S /GoTo /D [3 0 R /Fit] /Next 11 0 R >>")), "JavaScript") {
+		t.Fatal("stimulus: the chain alone reaches the JavaScript action inside the cap, so this tests nothing")
+	}
+	if !found(t, pdf, "JavaScript") {
+		t.Fatal("the JavaScript action named at depth 1 was hidden by a chain that reached it past the cap")
+	}
+	out, err := StripActive(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found(t, out, "JavaScript") {
+		t.Error("StripActive kept the annotation's /A: the same walk decided it held nothing risky")
+	}
+}
+
+// TestASharedFieldReachedFirstAtTheCapKeepsItsKids — eachFormField's sibling of the above: a field first reached at
+// depth 50 had its /Kids cut, and the shallow /Fields entry naming it was then skipped, so its kid's /AA was never seen.
+func TestASharedFieldReachedFirstAtTheCapKeepsItsKids(t *testing.T) {
+	objs := map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+		5:  "<< /Fields [100 0 R 60 0 R] >>",
+		60: "<< /T (shared) /Kids [61 0 R] >>",
+		61: "<< /T (kid) /Parent 60 0 R /AA << /K << /S /JavaScript /JS (1) >> >> >>",
+	}
+	for n := 100; n <= 149; n++ {
+		kid := n + 1
+		if n == 149 {
+			kid = 60
+		}
+		objs[n] = fmt.Sprintf("<< /T (c%d) /Kids [%d 0 R] >>", n, kid)
+	}
+	// Stimulus: through the chain alone, the kid sits past the cap.
+	if foundKind(t, testpdf.Assemble(withOverride(objs, 5, "<< /Fields [100 0 R] >>")), "additionalActions") {
+		t.Fatal("stimulus: the chain alone reaches the kid inside the cap, so this tests nothing")
+	}
+	if !foundKind(t, testpdf.Assemble(objs), "additionalActions") {
+		t.Fatal("the kid of a field named at depth 0 was cut because a deep path reached the field first")
+	}
+}
+
+// TestAPageTreeDeeperThanTheCapIsRefused — eachPage's depth cap used to stop silently, which is the failure its own
+// budget refuses: a security scan that skipped pages.
+func TestAPageTreeDeeperThanTheCapIsRefused(t *testing.T) {
+	objs := map[int]string{1: "<< /Type /Catalog /Pages 2 0 R >>"}
+	const last = 2 + 52
+	for n := 2; n < last; n++ {
+		objs[n] = fmt.Sprintf("<< /Type /Pages /Kids [%d 0 R] /Count 1 >>", n+1)
+	}
+	objs[last] = fmt.Sprintf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 9 9] /AA << /O << /S /JavaScript /JS (1) >> >> >>", last-1)
+	if _, err := Scan(testpdf.Assemble(objs)); !errors.Is(err, errPageTreeTooLarge) {
+		t.Fatalf("a page tree 52 deep: want errPageTreeTooLarge, got %v", err)
+	}
+}
+
+// TestThePageBudgetCountsLiveObjectsOnly — free xref rows cost a few bytes each in a compressed xref stream.
+func TestThePageBudgetCountsLiveObjectsOnly(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.7\n")
+	off := map[int]int{}
+	w := func(n int, s string) { off[n] = b.Len(); fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", n, s) }
+	w(1, "<</Type/Catalog/Pages 2 0 R>>")
+	w(2, "<</Type/Pages/Kids[3 0 R]/Count 1>>")
+	w(3, "<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>")
+	const size = 1 << 16
+	x := 4
+	off[x] = b.Len()
+	var raw bytes.Buffer
+	for n := 0; n < size; n++ {
+		if o, ok := off[n]; ok {
+			raw.Write([]byte{1, byte(o >> 24), byte(o >> 16), byte(o >> 8), byte(o), 0, 0})
+		} else {
+			raw.Write([]byte{0, 0, 0, 0, 0, 0, 0})
+		}
+	}
+	fmt.Fprintf(&b, "%d 0 obj\n<</Type/XRef/Size %d/W[1 4 2]/Root 1 0 R/Length %d>>\nstream\n", x, size, raw.Len())
+	b.Write(raw.Bytes())
+	fmt.Fprintf(&b, "\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n", off[x])
+	ctx, err := api.ReadContext(bytes.NewReader(b.Bytes()), model.NewDefaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ctx.Table) < size/2 {
+		t.Fatalf("stimulus: the table holds %d rows, not the %d declared", len(ctx.Table), size)
+	}
+	if got := pageWalkBudget(ctx.XRefTable); got > 16*16+1024 {
+		t.Errorf("budget %d for a document of a handful of live objects: free rows are buying visits", got)
+	}
+}
+
+func withOverride(objs map[int]string, n int, v string) map[int]string {
+	out := make(map[int]string, len(objs))
+	for k, s := range objs {
+		out[k] = s
+	}
+	out[n] = v
+	return out
+}
+
+func found(t *testing.T, pdf []byte, detail string) bool {
+	t.Helper()
+	rep, err := Scan(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Kind == "action" && strings.Contains(f.Detail, detail) {
+			return true
+		}
+	}
+	return false
+}
+
+func foundKind(t *testing.T, pdf []byte, kind string) bool {
+	t.Helper()
+	rep, err := Scan(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// TestAnArrayNamedByReferenceIsExpandedOnce — the re-review of the breadth-first walks: a referenced array whose direct
+// dicts name it again was re-expanded from each, 2^32 visits from 645 bytes, held in the queue's memory.
+func TestAnArrayNamedByReferenceIsExpandedOnce(t *testing.T) {
+	for _, tc := range []struct{ name, annot, seven string }{
+		{"/Next", "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /GoTo /D [3 0 R /Fit] /Next 7 0 R >> >>",
+			"[<< /S /GoTo /D [3 0 R /Fit] /Next 7 0 R >> << /S /GoTo /D [3 0 R /Fit] /Next 7 0 R >>]"},
+		{"/Kids", "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] >>",
+			"[<< /T (a) /Kids 7 0 R >> << /T (b) /Kids 7 0 R >>]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			objs := map[int]string{
+				1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields 7 0 R >> >>",
+				2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+				3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [9 0 R] >>",
+				7: tc.seven,
+				9: tc.annot,
+			}
+			done := make(chan error, 1)
+			go func() { _, err := Scan(testpdf.Assemble(objs)); done <- err }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Scan did not return in 10 s: the referenced array is re-expanded from inside itself")
+			}
+		})
+	}
 }

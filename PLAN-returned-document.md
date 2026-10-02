@@ -12,7 +12,7 @@ badge already says that in three of four tamper classes — and in the fourth, t
 most, it says **`✓ Untampered`**. The plan is built against what was measured, not against the
 premise.
 
-**Status: unbuilt.** No slice has started. **(2026-09-28, P01 phase-open)** `/deepdive` and `/plan-review` of the
+~~**Status: unbuilt.** No slice has started.~~ **(2026-10-02)** P01 is done (v1.179.2). Paused 2026-09-30 and resumed on Dan's option A on 2026-10-02. P02 is next. **(2026-09-28, P01 phase-open)** `/deepdive` and `/plan-review` of the
 firmed P01 ran; their pins are in P01 and several "What is already true" bullets and standing caveats are superseded by
 them — marked below where they are. **There is no P00** — nib is twelve hundred commits old
 and needs no bootstrap.
@@ -224,7 +224,7 @@ this plan into that one.
 
 ## Build order
 
-### P01 — The revision index
+### P01 — The revision index *(done 2026-10-02, v1.179.2)*
 **Goal.** One walk over a document's signatures that knows, per signature, *who* signed and *how
 far their signature reaches*.
 
@@ -234,6 +234,24 @@ out-of-range ByteRange is refused rather than sliced; every existing `trailing_t
 green and `AddedAfter` keeps its fail-closed arm. **(amended 2026-09-28, phase-open, /pending 661 and 687 folded
 per Dan's /discuss on /pending 389)**: `AddedAfter` measures only verified, well-formed signatures; a signature whose
 ByteRange covers anything but the whole revision less its own `/Contents` is refused and is not a valid signer.
+
+**Phase close 2026-10-02 (v1.179.2) — acceptance ledger, every clause split on `and`, checked at HEAD a403ac12:**
+- ✅ Exactly one ByteRange walk exists — `sweep`, `internal/sign/revisions.go`; a repo-wide grep outside `internal/sign` finds only the test helper `internal/testpdf/copiedsig.go`.
+- ✅ …and a guard asserts it — `TestEverySignatureEnumerationIsTheSweep` PASS.
+- ✅ A `/Kids`-nested signature is seen — `TestAKidsNestedSignatureIsSeen` PASS.
+- ✅ A multi-gap ByteRange resolves to its last pair — **as amended by D5's PIN**: an abutting six-element array ends at its last pair (`TestAnAbuttingSixElementByteRangeEndsAtItsLastPair` PASS), and a true second gap is refused by conjunct (5) (`TestEachStructureConjunctRefusesItsOwnFixture`, "(5) two gaps").
+- ✅ An out-of-range ByteRange is refused rather than sliced — conjunct (6), `CauseByteRangeOutsideFile`: `TestEachStructureConjunctRefusesItsOwnFixture` "(6) one byte past EOF" and `TestAByteRangeThatReadsNothingIsARefusedRecordNotARefusedDocument` (length 999,999,999) PASS.
+- ✅ Every existing `trailing_test.go` test is green — all five PASS (`go test ./internal/sign/` ok).
+- ✅ `AddedAfter` keeps its fail-closed arm — `TestAddedAfterFailsClosed` PASS.
+- ✅ (amended) `AddedAfter` measures only verified, well-formed signatures — `coverage` over `bounds()` (ADR-059); S02's tests in the package run.
+- ✅ (amended) A signature whose ByteRange covers anything but the whole revision less its own `/Contents` is refused — conjuncts (1)-(11); the one shape the review found unrefused (the signer's own number redefined) is refused since v1.169.48 `cda73c99`, `TestADictionaryRedefinedUnderTheSignersNumberIsRefused` PASS.
+- ✅ (amended) …and is not a valid signer — `countsAsSigner` (ADR-060); the same test asserts it.
+
+Review: `code-reviews/v1.169.47-p01-phase-close-2026-09-30.md`, fully dispositioned. Its six criticals were fixed in
+`cda73c99`; the re-review of that commit found one critical it introduced (the Scan action walk, plus the field walk's
+sibling), fixed in this close. Out-of-phase findings filed as /pending 771-778 (770 merged into 735). Graduation pass:
+`instruments/returned-document.md` (68 rows: keep-live 46, deleted 7). Required-run gates: tiers 0-3, plus tiers 4 and 6,
+which fire because P01.S02 touched `internal/server/ceremonyid.go`. Results are recorded in the close commit.
 
 **PIN 2026-09-28 (phase-open, read at the lines — `deepdives/2026-09-29-p01-the-revision-index-and-the-byterange.md`, which
 is misdated in its filename).** Premises the code has moved past, amended here; no decision is struck.
