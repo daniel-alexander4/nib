@@ -930,7 +930,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 	// in two LOOKS (a font, a size, or a style: a stroked synthetic bold, a raised figure) is used only where EVERY longest
 	// alignment keeps it and keeps it in one look — an edit two alignments explain equally does not say which copy
 	// survived — and refuses everywhere else (law 3 — never guess). A new word is spelled in the first run's font from the
-	// codes it carries, preferring a code the paragraph already draws.
+	// codes it carries, preferring a code the paragraph already draws, and kerned as the page kerns its pairs (`kernsOf`).
 	known := map[string][]emitWord{}
 	var old []emitWord
 	var oldText []string
@@ -1042,6 +1042,7 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		return code, w0, ""
 	}
+	var kerns pageKerns // read on the first typed word: an edit that types none pays nothing for it
 	var words []emitWord
 	edited := editWords(text)
 	al := alignWords(oldText, edited)
@@ -1075,17 +1076,23 @@ func reflowParagraphIn(ctx *model.Context, layout pageLayout, pg pdfread.Page, p
 		}
 		sp := textSpacing{tc: fit.tc, tw: fit.tw, th: usual.th, ts: usual.ts, tr: usual.tr}
 		ew := emitWord{font: first.font, tfSize: first.state.tfSize, face: first.face}
-		for ri, r := range t {
+		for _, r := range t {
 			code, w0, why := pick(first.face, string(r), false)
 			if why != "" {
 				return reflowOutcome{cause: why}, nil
 			}
 			ew.width += (w0/1000*first.state.tfSize + sp.tc) * sp.th * first.state.scale
+			if n := len(ew.codes); n > 0 { // by code, not by the string's byte offset: a letter can take several bytes
+				if kerns == nil {
+					kerns = kernsOf(layout)
+				}
+				// The kern the page draws for this pair, where it draws it one way (P08.S05), under this word's scaling.
+				k := -kerns.lend(first.face, first.size, ew.codes[n-1], code) / 1000 * first.state.tfSize * sp.th * first.state.scale
+				ew.kerns = append(ew.kerns, k)
+				ew.width += k
+			}
 			ew.codes = append(ew.codes, code)
 			ew.spacing = append(ew.spacing, sp)
-			if ri > 0 {
-				ew.kerns = append(ew.kerns, 0)
-			}
 		}
 		words = append(words, ew)
 	}
@@ -1566,15 +1573,29 @@ func regularByte(c byte) bool {
 	return true
 }
 
+// minPitchEm is the smallest baseline step, in ems of the smaller of the two lines' sizes, that is a leading. Over the real-producer
+// corpus 7,083 of 7,875 steps inside a paragraph lie at 1.1 em or more and the rest scatter down to zero; set tighter than
+// 0.8 em, a line's descenders cross the next line's capitals.
+const minPitchEm = 0.8
+
 // paragraphPitch is how far apart paragraph pi's lines are set, baseline to baseline in user space: the median of its own
 // steps, or for a paragraph of one line the median step of its column's paragraphs set at its size — or 0 when neither
 // says, and a grown paragraph is refused rather than set at an invented leading.
+//
+// A step under minPitchEm of its paragraph's size is not a leading: it is two "lines" that grouping cut from one baseline
+// (a table row's cells drawn a fraction of a point apart, a raised figure). Counted, it set a one-line paragraph's second
+// line a quarter of a point under its first — on top of it — in 1,809 of the corpus's 17,936 one-line paragraphs (found
+// by P08.S05's census, which typed a word that grew one).
 func paragraphPitch(l pageLayout, pi int) float64 {
 	p := l.paragraphs[pi]
 	stepsOf := func(q textParagraph) []float64 {
 		var out []float64
 		for i := 1; i < len(q.lines); i++ {
-			out = append(out, q.lines[i-1].y-q.lines[i].y)
+			// The smaller of the two lines' sizes: a line's size is its largest run, and one large word on it must not
+			// raise the floor past the paragraph's real leading (S05's review, W2).
+			if step := q.lines[i-1].y - q.lines[i].y; step >= minPitchEm*math.Min(q.lines[i-1].size, q.lines[i].size) {
+				out = append(out, step)
+			}
 		}
 		return out
 	}

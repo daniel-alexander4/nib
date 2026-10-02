@@ -1044,11 +1044,45 @@ a body line on a shared left edge, a cell running into its neighbour, a label un
 keeps a centred heading's middle through the binary (red with the shift off). Review `code-reviews/v1.176.0-p08s04-…` (3
 critical, 2 warnings, 3 info; all dispositioned).
 
-#### P08.S05 — a typed word takes the document's kerning
+#### P08.S05 — a typed word takes the document's kerning *(done 2026-10-01, v1.177.0)*
 A new word's glyph pairs take the kern the page draws for that pair in that face and size — only where the page draws it
 one way; positional noise lends nothing. Acceptance: a typed word in a kerned paragraph reads back with the page's kerns;
 a word the paragraph already draws keeps its own (asserted, already true); Acrobat/Word-style inconsistent kerning lends
 none.
+
+**Tasks** (slice grill, 2026-10-01 — measured before it: leave-one-run-out over the corpus, each kerned pair predicted from
+the page's OTHER runs and compared with what the producer drew). T01 — `kernsOf` reads the page's lent pairs: adjacent
+glyphs inside one run, neither blank, the `TJ` adjustment taken back to thousandths of an em (so `Tz` and a stretched
+`Tm` do not change the number), an adjustment as wide as a word space (`wordGapEm`) not a kern, a form's run not read.
+T02 — a typed word's pair takes the lent kern, converted under the word's own `Tz`, and its width includes it (the breaker,
+justification and centring measure it). T03 — tests: a hand-built kerned paragraph (lent, unlent, drawn-under-support,
+kept words keep their own, plain and under `Tz 110`, a two-byte letter before the pair); a pair drawn two ways, a noisy
+face, a word-sized gap and too few pairs lend nothing; a centred heading stays on its axis with a typed kerned word; the
+corpus census with ceilings. **Grill defaults (rung 1/2)**: the pair is keyed on the codes (a typed word prefers the codes
+the paragraph draws, so the key meets); the size is the run's user-space size; a pair across two runs is not read (a run
+boundary is where Word and Acrobat position, and S01's join gap already rides there); a kept word is untouched — its own
+kerns, a one-off included.
+**PIN 2026-10-01 (review C2 — the thresholds, re-measured)**: the grill's first cut (support 2, a 10% noise gate) was chosen
+on a census that skipped exactly the runs that disagree with the rest; asked of every run, Acrobat lent 79 right and 47
+wrong, Word 110 and 20, and a tighter noise gate alone did not cure it (0.05: Acrobat 22/19). Built: a pair lends where the
+page draws it at least **three** times (`kernSupport`), every draw within **2** thousandths of an em (`kernTolerance`), in a
+face-and-size that draws at least **five** pairs one way so (`kernTable`) and has no more than **10%** of its kerned pairs
+drawn two ways (`kernNoise`). **Census at adoption** (lent right / off by more than the tolerance, leave-one-run-out over
+every run): InDesign 12,464 / 19, Antenna House 21,160 / 0, Ghostscript and the rest 0 lent, Acrobat 1 / 0, Word 8 / 1.
+**PIN 2026-10-01 (build — a defect on the growth path, fixed here)**: the census's typed word grew a one-line paragraph,
+and `paragraphPitch` set the new line **0.25 pt** under the first — the column's median step counted table rows grouping
+cut into two "lines" a fraction of a point apart. Measured: 1,809 of 17,936 one-line paragraphs had a pitch under half
+their size. A step under **0.8 em** of the smaller of its two lines' sizes is not a leading (`minPitchEm`; 7,083 of 7,875
+in-paragraph steps lie at 1.1 em or more); a paragraph with no step past it refuses `no-pitch` as before (the review
+measured 2,781 paragraphs moving from a sub-0.8 em pitch to that refusal, the samples table cells — law 3). A multi-line
+paragraph whose own steps are all jitter does not fall back to its column's pitch; that is a design question, not built.
+**Closed 2026-10-01.** Ledger: a typed word in a kerned paragraph reads back with the page's kerns — met (hand-built
+[0 −80 0], plain and under `Tz 110`; 40 corpus pages re-set a typed word and read back the lent kern exactly; tier 3 reads
+"AVAV" narrower than "VAAV" in pdf.js); a word the paragraph already draws keeps its own — met (kept Word −55, CAVE −80);
+Acrobat/Word-style inconsistent kerning lends none — met as measured (Acrobat 1 and Word 9 kerns lent over the whole
+corpus, 1 of them off; the hand-built two-way pair and noisy face lend nothing). `kernsOf` costs 0.50 ms mean, 2.0 ms worst
+(3,793 glyphs) per page, read only when a word is typed. Review `code-reviews/v1.177.0-p08s05-2026-10-01.md` (3 critical,
+2 warnings, 3 info; all dispositioned).
 
 #### P08.S07 — a word broken at a line's end rejoins when the break moves
 **Added 2026-09-30 at S03's grill, by measurement** — the phase-open pin put hyphenation out ("a justified producer's

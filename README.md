@@ -362,7 +362,9 @@ way a word processor would. Unlike Edit text, the **old words are removed**, not
 covered: they are gone from the page, from copy-and-paste and from Find. Every letter
 keeps the spacing it was set with — letter spacing, word spacing, condensed or raised
 type — so the words you did not change look exactly as they did, and a word you type
-takes the spacing of the text just before it. A **justified** paragraph stays justified: every line
+takes the spacing of the text just before it. A word you type is **kerned** the way the page
+kerns: a pair of letters the document always sets closer (an *AV*, a *To*) is set that close in
+your word too — and where the page places its letters inconsistently, nothing is borrowed. A **justified** paragraph stays justified: every line
 but the last is set out to the right margin again. A **centred** heading stays centred when you change its length.
 
 When the new text needs **more lines**, the paragraph grows down, at its own line
