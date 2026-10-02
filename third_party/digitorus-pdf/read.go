@@ -120,6 +120,35 @@ func (info *ReaderXrefInformation) PrintDebug() {
 	log.Printf("xref length (including trailer) in bytes: %d", info.IncludingTrailerLength)
 }
 
+// maxXrefEntries is ISO 32000-1 Annex C.2's limit on indirect objects in a file, 8,388,607, plus object 0. Upstream
+// sized the xref table from the file's own `/Size` and grew it to whatever object number an `/Index` or subsection
+// named, so `/Size 1500000000` in a ~60-byte xref stream was a fatal 48 GB allocation (the PLAN-returned-document P02
+// phase-close review; NOTICE.nib divergence 7).
+const maxXrefEntries = 1 << 23
+
+// xrefLimit is how many xref entries a file of `end` bytes may name: eight per byte, at least 2^16, at most
+// maxXrefEntries. The table is dense, indexed by object number, so the ISO limit alone still let a 438-byte file name
+// object 8,388,000 and allocate 2.9 GB (the re-review of the fix above); a number this far past the file's size names
+// no object the file can hold. Object streams compress, which is the eight.
+func xrefLimit(end int64) int64 {
+	l := 8 * end // the fork's module is go 1.17: no min/max built-ins
+	if l < 1<<16 {
+		l = 1 << 16
+	}
+	if l > maxXrefEntries {
+		l = maxXrefEntries
+	}
+	return l
+}
+
+// xrefSpan refuses a subsection or `/Index` pair naming object numbers past limit.
+func xrefSpan(start, n, limit int64) error {
+	if start < 0 || n < 0 || start > limit || n > limit-start {
+		return fmt.Errorf("xref names objects %d to %d, past the %d a file of this size may hold", start, start+n, limit)
+	}
+	return nil
+}
+
 type xref struct {
 	ptr      objptr
 	inStream bool
@@ -329,6 +358,9 @@ func readXrefStream(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref stream missing Size")
 	}
 
+	if err := xrefSpan(0, size, xrefLimit(r.end)); err != nil {
+		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref stream /Size: %v", err)
+	}
 	table := make([]xref, size)
 
 	table, err := readXrefStreamData(r, strm, table, size)
@@ -402,7 +434,9 @@ func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xre
 	var w []int
 	for _, x := range ww {
 		i, ok := x.(int64)
-		if !ok || int64(int(i)) != i {
+		// A field wider than eight bytes overflows decodeInt, and a width from the file sized the entry buffer
+		// below with no bound (divergence 7).
+		if !ok || i < 0 || i > 8 {
 			return nil, fmt.Errorf("invalid W array %v", objfmt(ww))
 		}
 		w = append(w, int(i))
@@ -425,6 +459,9 @@ func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xre
 			return nil, fmt.Errorf("malformed Index pair %v %v %T %T", objfmt(index[0]), objfmt(index[1]), index[0], index[1])
 		}
 		index = index[2:]
+		if err := xrefSpan(start, n, xrefLimit(r.end)); err != nil {
+			return nil, err
+		}
 		for i := 0; i < int(n); i++ {
 			_, err := io.ReadFull(data, buf)
 			if err != nil {
@@ -441,6 +478,9 @@ func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xre
 			x := int(start) + i
 			for cap(table) <= x {
 				table = append(table[:cap(table)], xref{})
+			}
+			if len(table) <= x {
+				table = table[:x+1] // as the classic table does: an /Index past /Size indexed past the length
 			}
 			if table[x].ptr != (objptr{}) {
 				continue
@@ -471,7 +511,7 @@ func decodeInt(b []byte) int {
 func readXrefTable(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 	var table []xref
 
-	table, err := readXrefTableData(b, table)
+	table, err := readXrefTableData(b, table, xrefLimit(r.end))
 	if err != nil {
 		return nil, objptr{}, nil, fmt.Errorf("malformed PDF: %v", err)
 	}
@@ -509,7 +549,7 @@ func readXrefTable(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 		if tok != keyword("xref") {
 			return nil, objptr{}, nil, fmt.Errorf("malformed PDF: xref Prev does not point to xref")
 		}
-		table, err = readXrefTableData(b, table)
+		table, err = readXrefTableData(b, table, xrefLimit(r.end))
 		if err != nil {
 			return nil, objptr{}, nil, fmt.Errorf("malformed PDF: %v", err)
 		}
@@ -545,7 +585,7 @@ func readXrefTable(r *Reader, b *buffer) ([]xref, objptr, dict, error) {
 	return table, objptr{}, trailer, nil
 }
 
-func readXrefTableData(b *buffer, table []xref) ([]xref, error) {
+func readXrefTableData(b *buffer, table []xref, limit int64) ([]xref, error) {
 	for {
 		tok := b.readToken()
 		if tok == keyword("trailer") {
@@ -556,6 +596,9 @@ func readXrefTableData(b *buffer, table []xref) ([]xref, error) {
 
 		if !ok1 || !ok2 {
 			return nil, fmt.Errorf("malformed xref table")
+		}
+		if err := xrefSpan(start, n, limit); err != nil {
+			return nil, err
 		}
 		for i := 0; i < int(n); i++ {
 			off, ok1 := b.readToken().(int64)

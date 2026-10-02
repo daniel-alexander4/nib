@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"nib/internal/pdfread"
+	"reflect"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -71,7 +72,19 @@ var riskyActions = map[string]string{
 // hung `Scan` — which reads with pdfcpu's unvalidated reader and so meets no `pdfread` loop check. This is
 // `eachFormField`'s rule (`/pending 689`), and the depth cap stays for chains of direct dicts. A `/Next` that is a
 // reference to an ARRAY is followed too; it used to fall through to a dict dereference and hide its actions.
-func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Dict)) {
+//
+// **The budget is the WHOLE scan's, shared by every call** (the phase-close review of PLAN-returned-document P02):
+// `seen` is per call, so K annotations naming one chain of N actions walked it K times, and pages sharing one
+// `/Annots` array multiplied that again — a 15 KB file held `Scan` for 3 min 46 s. Each action visited spends one;
+// past zero the walk stops and the budget reads negative — for good — which the caller refuses
+// (`errActionWalkTooLarge`). Each call first adds `actionAllowance`: the budget is sized by indirect objects, and a
+// DIRECT annotation's own direct action is no object, so 1,100 of them on one page were refused (the re-review) while
+// walking each costs only what the file holds. What the allowance does not cover is re-walking a SHARED graph.
+func eachAction(xt *model.XRefTable, act types.Dict, depth int, budget *int, fn func(types.Dict)) {
+	if *budget < 0 {
+		return
+	}
+	*budget += actionAllowance
 	// Breadth-first, so an object is first reached at its SHALLOWEST depth (the re-review of the fix above): depth-first
 	// marked an action seen where a long chain reached it past the cap, unwalked, and the same action named at depth 1
 	// was then skipped — `/Next [<32-action chain> 50 0 R]` scanned clean with 50 a JavaScript action, and StripActive
@@ -98,6 +111,11 @@ func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Di
 		if it.d == nil || it.depth > 32 {
 			continue
 		}
+		if *budget <= 0 {
+			*budget = -1
+			return
+		}
+		*budget--
 		fn(it.d)
 		next, ok := it.d["Next"]
 		if !ok {
@@ -106,6 +124,13 @@ func eachAction(xt *model.XRefTable, act types.Dict, depth int, fn func(types.Di
 		if arr := derefArray(xt, next); arr != nil {
 			if !firstVisit(seen, next) {
 				continue
+			}
+			// Queuing the array is work too: entries that resolve to nothing are dropped at dequeue for free, so K
+			// annotations over one action whose `/Next` names n of them cost K·n uncharged (the second re-review:
+			// 44 KB, 133 s). Every entry spends one.
+			if *budget -= len(arr); *budget < 0 {
+				*budget = -1
+				return
 			}
 			for _, a := range arr {
 				enqueue(a, it.depth+1)
@@ -133,6 +158,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 	}
 
 	var rep ScanReport
+	actions := pageWalkBudget(xt)
 	add := func(kind, sev, detail string, page int) {
 		rep.Findings = append(rep.Findings, Finding{Kind: kind, Severity: sev, Detail: detail, Page: page})
 	}
@@ -183,7 +209,7 @@ func Scan(pdf []byte) (ScanReport, error) {
 				add("additionalActions", "medium",
 					"Form field additional actions (keystroke, format, validate or calculate script)", 0)
 			}
-			eachAction(xt, derefDict(xt, f["A"]), 0, func(act types.Dict) {
+			eachAction(xt, derefDict(xt, f["A"]), 0, &actions, func(act types.Dict) {
 				if sev, ok := riskyActions[nameVal(act, "S")]; ok {
 					add("action", sev, actionDetail(nameVal(act, "S")), 0)
 				}
@@ -243,25 +269,26 @@ func Scan(pdf []byte) (ScanReport, error) {
 		if _, ok := page.Find("AA"); ok {
 			add("additionalActions", "medium", "Page additional actions (run on open or close)", nr)
 		}
-		for _, a := range derefArray(xt, page["Annots"]) {
-			annot := derefDict(xt, a)
-			if annot == nil {
-				continue
-			}
-			if nameVal(annot, "Subtype") == "FileAttachment" {
-				add("attachment", "medium", "File attached to a page", nr)
-			}
-			if _, ok := annot.Find("AA"); ok {
-				add("additionalActions", "medium", "Annotation additional actions", nr)
-			}
-			eachAction(xt, derefDict(xt, annot["A"]), 0, func(act types.Dict) {
-				if sev, ok := riskyActions[nameVal(act, "S")]; ok {
-					add("action", sev, actionDetail(nameVal(act, "S")), nr)
-				}
-			})
-		}
 	}); err != nil {
 		return ScanReport{}, err
+	}
+	if err := eachPageAnnot(xt, root, func(annot types.Dict, nr int) {
+		if nameVal(annot, "Subtype") == "FileAttachment" {
+			add("attachment", "medium", "File attached to a page", nr)
+		}
+		if _, ok := annot.Find("AA"); ok {
+			add("additionalActions", "medium", "Annotation additional actions", nr)
+		}
+		eachAction(xt, derefDict(xt, annot["A"]), 0, &actions, func(act types.Dict) {
+			if sev, ok := riskyActions[nameVal(act, "S")]; ok {
+				add("action", sev, actionDetail(nameVal(act, "S")), nr)
+			}
+		})
+	}); err != nil {
+		return ScanReport{}, err
+	}
+	if actions < 0 {
+		return ScanReport{}, errActionWalkTooLarge
 	}
 
 	return rep, nil
@@ -391,31 +418,33 @@ func StripActive(pdf []byte) ([]byte, error) {
 		}
 		if err := eachPage(xt, root, func(page types.Dict, _ int) {
 			dropKey(xt, page, "AA")
-			for _, a := range derefArray(xt, page["Annots"]) {
-				annot := derefDict(xt, a)
-				if annot == nil {
-					continue
-				}
-				dropKey(xt, annot, "AA")
-				if act := derefDict(xt, annot["A"]); act != nil {
-					risky := false
-					// The whole chain, not the head: a benign /GoTo whose /Next runs
-					// JavaScript is a risky action wearing a safe name. Dropping /A drops
-					// the chain with it, which is the only answer that cannot leave a
-					// dangling /Next — keeping the head and rewriting the chain would mean
-					// re-parenting actions this function has no way to validate.
-					eachAction(xt, act, 0, func(a types.Dict) {
-						if _, bad := riskyActions[nameVal(a, "S")]; bad {
-							risky = true
-						}
-					})
-					if risky {
-						dropKey(xt, annot, "A")
+		}); err != nil {
+			return err
+		}
+		actions := pageWalkBudget(xt)
+		if err := eachPageAnnot(xt, root, func(annot types.Dict, _ int) {
+			dropKey(xt, annot, "AA")
+			if act := derefDict(xt, annot["A"]); act != nil {
+				risky := false
+				// The whole chain, not the head: a benign /GoTo whose /Next runs
+				// JavaScript is a risky action wearing a safe name. Dropping /A drops
+				// the chain with it, which is the only answer that cannot leave a
+				// dangling /Next — keeping the head and rewriting the chain would mean
+				// re-parenting actions this function has no way to validate.
+				eachAction(xt, act, 0, &actions, func(a types.Dict) {
+					if _, bad := riskyActions[nameVal(a, "S")]; bad {
+						risky = true
 					}
+				})
+				if risky {
+					dropKey(xt, annot, "A")
 				}
 			}
 		}); err != nil {
 			return err
+		}
+		if actions < 0 {
+			return errActionWalkTooLarge
 		}
 		return removeAllAttachments(ctx)
 	})
@@ -751,6 +780,43 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 		return errPageTreeTooLarge
 	}
 	return nil
+}
+
+// actionAllowance is what every `eachAction` call adds to the shared budget before it walks: one chain of direct
+// actions to the depth cap, so each walk pays for what it alone reaches and only re-walked shared actions spend it.
+const actionAllowance = 33
+
+// errActionWalkTooLarge is the refusal of a document whose annotations' action chains would take more visits than the
+// file could hold (`eachAction`'s shared budget).
+var errActionWalkTooLarge = errors.New("pdfops: the document's annotations name their actions more times than a document of this size can hold, so they were not walked")
+
+// eachPageAnnot calls fn with each annotation of each page, in page order, ONCE: the one door every page-annotation
+// walk goes through (ADR-009). A page object the tree names several times, an `/Annots` array several pages name by
+// reference, and an annotation several slots name by reference are each walked at their first appearance only, so
+// the walk is linear in what the file holds. Without it, pages × slots was the cost: 1,000 pages sharing one
+// 1,000-entry `/Annots` array is a million visits from 15 KB (the phase-close review of PLAN-returned-document P02),
+// and every reader below it — action chains, attachment and widget lists — multiplied it again.
+func eachPageAnnot(xt *model.XRefTable, root types.Dict, fn func(annot types.Dict, nr int)) error {
+	pages, arrays, annots := map[uintptr]bool{}, map[int]bool{}, map[int]bool{}
+	return eachPage(xt, root, func(page types.Dict, nr int) {
+		// The dereferenced dict IS the xref table's object, so a page named twice is one map.
+		p := reflect.ValueOf(page).Pointer()
+		if pages[p] {
+			return
+		}
+		pages[p] = true
+		if !firstVisit(arrays, page["Annots"]) {
+			return
+		}
+		for _, a := range derefArray(xt, page["Annots"]) {
+			if !firstVisit(annots, a) {
+				continue
+			}
+			if annot := derefDict(xt, a); annot != nil {
+				fn(annot, nr)
+			}
+		}
+	})
 }
 
 // firstVisit reports whether o is a direct object or an indirect one not yet in seen, marking it. An ARRAY named by

@@ -27,14 +27,19 @@ const h = await boot({
   routes: {
     '/api/open': {
       id: 'test-epoch:3', name: 'signed.pdf', path: '/tmp/nib-harness/signed.pdf', canSave: true,
-      signature: { state: 'valid', signers: [{ name: 'Alice', valid: true, fingerprint: 'a'.repeat(64) }] },
+      // A document that CAME BACK CHANGED — signed, then added to — which is the obvious trigger for asking (the P02
+      // phase-close review): an open that fetched only for this shape would pass a guard that opened a clean one.
+      signature: {
+        state: 'valid', addedAfter: true, addedAfterCause: 'appended',
+        signers: [{ name: 'Alice', valid: true, fingerprint: 'a'.repeat(64) }],
+      },
       canUndo: false, canRedo: false,
     },
   },
 });
 const { document, calls, settle } = h;
 
-test('nothing asks for a signed version when the app starts or a signed document opens (D10)', async () => {
+test('nothing asks for a signed version when the app starts or a changed signed document opens (D10)', async () => {
   setNextDocument({ numPages: 2 });
   document.getElementById('pathInput').value = '/tmp/nib-harness/signed.pdf';
   document.getElementById('openGo').click();
@@ -61,7 +66,13 @@ test('the helper tells each of the five causes apart, pins the document, and rea
   const fetchSignedRevision = new Function('apiFetch', 'errText',
     `${functionText('fetchSignedRevision')}\nreturn fetchSignedRevision;`)(apiFetch, errText);
 
-  const causes = ['no-signature', 'resaved', 'not-your-signature', 'prefix-failed-reverify', 'could-not-check'];
+  // Read from Go's own declarations, so a sixth cause — or a renamed one — reaches this test (the P02 phase-close
+  // review: the list was typed here and nothing compared it with internal/sign/signedrevision.go).
+  const GO = fs.readFileSync(path.join(REPO, 'internal', 'sign', 'signedrevision.go'), 'utf8');
+  const causes = [...GO.matchAll(/^\s*Revision\w+\s+RevisionCause\s*=\s*"([a-z-]+)"/gm)].map((m) => m[1]);
+  assert.deepEqual([...causes].sort(),
+    ['could-not-check', 'no-signature', 'not-your-signature', 'prefix-failed-reverify', 'resaved'],
+    'the Go side declares a different set of causes; the client and P03\'s wording must cover each');
   const got = [];
   for (const cause of causes) {
     reply.status = 422;
@@ -91,4 +102,13 @@ test('the helper tells each of the five causes apart, pins the document, and rea
   reply.status = 500;
   reply.body = '{}';
   await assert.rejects(fetchSignedRevision('test-epoch:3', 'b'.repeat(64)), 'a 500 was read as a refusal or a version');
+});
+
+// D10 holds by construction only while nothing calls the helper: the boot above drives ONE open, and a caller wired to
+// some other open-time event would pass it. The allow-list is empty until P03 builds the surface that asks on demand.
+const FETCH_CALLERS_ALLOWED = [];
+test('fetchSignedRevision has no caller but the ones named here (D10)', () => {
+  const calls = SRC.split('fetchSignedRevision(').length - 1 - 1; // less the declaration
+  assert.equal(calls, FETCH_CALLERS_ALLOWED.length,
+    `fetchSignedRevision is called ${calls} time(s) in app.js; a caller is an on-demand action named here, never open or boot`);
 });

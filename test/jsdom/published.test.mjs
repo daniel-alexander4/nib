@@ -308,7 +308,8 @@ const EXCLUDED = {
 // line, which is the intended cost.
 const UNREAD_KNOWN = {
   // PLAN-returned-document P02.S03 → P03.S02: the facts the verdict surface words. Parked by name, so each fails here the
-  // day P03.S02 lands without reading it (observables_test.go gates the same four on P03.S02).
+  // day a reader APPEARS (delete its row); a park cannot fail for a reader that never comes. That half is
+  // observables_test.go's, which gates all nine `revisionFacts` fields on P03.S02, so the slice cannot close over them.
   'revisionFacts.end': 'P03.S02: the verdict says how far the signed version reaches',
   'revisionFacts.earlierRevision': 'P03.S02: the verdict says the version came from an earlier revision',
   'revisionFacts.redefinedObj': 'P03.S02: the verdict names the rewritten dictionary (W8)',

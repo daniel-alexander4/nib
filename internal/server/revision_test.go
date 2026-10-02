@@ -275,44 +275,54 @@ func TestConcurrentRequestsShareOneWalk(t *testing.T) {
 // TestAnEditMidWalkIsNeverAnsweredWithTheStaleBytes — the single-flight key carries the bytes' identity, so a request
 // made after an edit gets a walk over the new bytes, not the answer the walk over the old ones is about to give.
 func TestAnEditMidWalkIsNeverAnsweredWithTheStaleBytes(t *testing.T) {
-	ts, s := startServerWith(t)
-	c, _ := authedClient(t, ts)
 	base, err := testpdf.Form()
 	if err != nil {
 		t.Fatal(err)
 	}
-	release := make(chan struct{})
-	entered := make(chan struct{}, 2)
-	s.revisionFor = func(pdf []byte, fp string) sign.SignedRevision {
-		entered <- struct{}{}
-		if len(pdf) == len(base) {
-			<-release // the walk over the old bytes is held open
-		}
-		return sign.SignedRevision{Prefix: pdf, End: int64(len(pdf)), Obj: 1}
+	// Two edits: one that grows the file, and one that keeps its LENGTH (a form value (a) → (b)), which only the
+	// bytes' address in the key tells apart — the length alone would share the stale walk (the P02 phase-close review).
+	sameLength := bytes.Clone(base)
+	sameLength[len(sameLength)-2] ^= 1
+	for name, edited := range map[string][]byte{
+		"an edit that grows the file":   append(append([]byte(nil), base...), "\n% an edit\n"...),
+		"an edit that keeps its length": sameLength,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ts, s := startServerWith(t)
+			c, _ := authedClient(t, ts)
+			release := make(chan struct{})
+			entered := make(chan struct{}, 2)
+			s.revisionFor = func(pdf []byte, fp string) sign.SignedRevision {
+				entered <- struct{}{}
+				if bytes.Equal(pdf, base) {
+					<-release // the walk over the old bytes is held open
+				}
+				return sign.SignedRevision{Prefix: pdf, End: int64(len(pdf)), Obj: 1}
+			}
+			id := addDocument(s, base)
+			fp := strings.Repeat("a", 64)
+			done := make(chan []byte, 1)
+			go func() { _, body, _ := getRevision(t, c, ts.URL, id, fp); done <- body }()
+			<-entered
+			s.mu.Lock()
+			for _, d := range s.docs {
+				if d.id == id {
+					d.data = edited
+				}
+			}
+			s.mu.Unlock()
+			second := make(chan []byte, 1)
+			go func() { _, body, _ := getRevision(t, c, ts.URL, id, fp); second <- body }()
+			select {
+			case body := <-second:
+				if !bytes.Equal(body, edited) {
+					t.Errorf("a request after the edit got %d bytes, want the %d edited bytes", len(body), len(edited))
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("a request after the edit is waiting on the walk over the OLD bytes — it shares that walk's key")
+			}
+			close(release)
+			<-done
+		})
 	}
-	id := addDocument(s, base)
-	fp := strings.Repeat("a", 64)
-	done := make(chan []byte, 1)
-	go func() { _, body, _ := getRevision(t, c, ts.URL, id, fp); done <- body }()
-	<-entered
-	edited := append(append([]byte(nil), base...), "\n% an edit\n"...)
-	s.mu.Lock()
-	for _, d := range s.docs {
-		if d.id == id {
-			d.data = edited
-		}
-	}
-	s.mu.Unlock()
-	second := make(chan []byte, 1)
-	go func() { _, body, _ := getRevision(t, c, ts.URL, id, fp); second <- body }()
-	select {
-	case body := <-second:
-		if !bytes.Equal(body, edited) {
-			t.Errorf("a request after the edit got %d bytes, want the %d edited bytes", len(body), len(edited))
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("a request after the edit is waiting on the walk over the OLD bytes — it shares that walk's key")
-	}
-	close(release)
-	<-done
 }

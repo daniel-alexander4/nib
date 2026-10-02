@@ -40,9 +40,18 @@ type Codespace struct {
 	// Overspent is a codespace whose ranges cost the index more than `maxCodespaceWork` to hold. Its answers are
 	// NOT veraPDF's — ranges past the budget were not read — so a caller must refuse it rather than cut with it.
 	Overspent bool
+	// Overlong is a codespace range longer than `maxCodeRangeBytes`. The tries recurse once per byte of a range, so
+	// one megabyte-long range overflowed the goroutine's stack — fatal, not a panic, so no `recover` held it — on a
+	// CMap that compresses to 4 KB (measured). Its answers are not veraPDF's, so a caller refuses it.
+	Overlong bool
 	// work is what the index has spent so far, in trie nodes visited and intervals rebuilt.
 	work int
 }
+
+// maxCodeRangeBytes bounds a codespace range's length. ISO 32000-1 9.7.6.2 caps a code at four bytes and nib's
+// `bfrange` reader already refuses past four; this bound is looser, so no range a real font writes is refused, and
+// tight enough that the tries' recursion is shallow.
+const maxCodeRangeBytes = 32
 
 // maxCodespaceWork bounds what one codespace may cost to index (`/pending 724`). The tries answer as veraPDF's list
 // does and are near-linear for every CMap shape seen in practice — 32,768 disjoint four-byte ranges spend ~2/5 of it
@@ -284,7 +293,11 @@ func (c *Codespace) add(lo, hi []byte) {
 	if !valid {
 		r = codeRange{lo: []byte{}, hi: []byte{}}
 	}
-	if c.Overspent {
+	if c.Overspent || c.Overlong {
+		return
+	}
+	if len(lo) > maxCodeRangeBytes || len(hi) > maxCodeRangeBytes {
+		c.Overlong = true
 		return
 	}
 	cleared := map[*csNode]bool{}
@@ -332,6 +345,7 @@ next:
 	c.count += o.count
 	c.Invalid = c.Invalid || o.Invalid
 	c.Overspent = c.Overspent || o.Overspent
+	c.Overlong = c.Overlong || o.Overlong
 }
 
 // Clone is a copy a caller may Merge into without touching the original — **its shortest length included**, which is

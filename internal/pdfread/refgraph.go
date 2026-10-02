@@ -412,8 +412,13 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 	}
 	d := g.dict(o)
 	if d == nil {
-		if r == roleAction { // a `/Next` array
-			g.each(o, roleAction, at("Next"), emit)
+		// A `/Next` ARRAY only: `each` on anything else — `/Next 0`, `/Next [0]` — followed the value back into this
+		// branch, and the walk recursed until the stack died, fatally, inside `Validated` (the P02 phase close's
+		// second re-review: a 64 KB StripActive input).
+		if a := g.array(o); r == roleAction && a != nil {
+			for _, v := range a {
+				g.follow(v, roleAction, at("Next"), emit)
+			}
 		}
 		return
 	}

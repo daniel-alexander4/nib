@@ -361,6 +361,9 @@ func (d *Document) type0Codespace(gf *glyphFont) (*fontcode.Codespace, string) {
 	if cs.Invalid {
 		return nil, "a codespace range in the font's CMap has ends of different lengths, or a begin byte above its end"
 	}
+	if cs.Overlong {
+		return nil, "a codespace range in the font's CMap is longer than any character code a PDF may use"
+	}
 	if cs.Overspent {
 		return nil, "the font's CMap declares so many codespace ranges spanning one another's leading bytes that nib " +
 			"will not spend the time veraPDF's overlap rule costs to check them"
