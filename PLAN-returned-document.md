@@ -551,7 +551,9 @@ the pre-S01 walk (taken before S02).
 things went wrong.
 
 **Exit criteria.** `GET /api/document/revision` returns a prefix that parses and re-verifies for the
-requested signer, or one of four named refusals; nothing calls it on document open.
+requested signer, or one of four named refusals; nothing calls it on document open. **(amended 2026-10-02, plan-review W6)**: where a later
+revision redefined the user's signature dictionary, the user's signed version is returned byte-identical. (The refusal set
+is four D7 causes plus `could-not-check`, pending Dan — C2.)
 
 **(plan-review pin: the user's signature can be absent from the latest xref, architect — 2026-09-28)** Both sweeps
 see only the newest definition of each object number, so a later revision that reuses the object number of the user's
@@ -565,18 +567,151 @@ internal; each maps to exactly one D7 cause at this route. D7's `kids-hidden` is
 /pending 733 is open. The record type stays unexported; P02 exports a narrow projection (signers in coverage order, each
 with fingerprint, coverage end, verified).
 
-#### P02.S01 — `sign.SignedRevisionFor(pdf, fingerprint)`
-Scope: select by fingerprint, slice, then require the prefix to parse **and** that signer to
-re-verify standalone inside it. Refs: D1, D4.
-Acceptance: the reproduced spoof (a stranger co-signing to EOF) does not return that stranger's
-prefix for the user's fingerprint; a prefix that fails standalone re-verification is refused.
+**PIN 2026-10-02 (phase-open, firmed against HEAD ad036fb7 / v1.179.2 — read at the lines, not from the plan).**
+- **The record type is already exported** (`sign.Revision`, `revisions.go:57`; `sign.Revisions`, `:714`) — the 2026-09-28 pin's
+  "stays unexported" was written before P01 built it. What P02 adds is selection and recovery, not a new projection type:
+  `Revision` already carries `Fingerprint`, `CoverageEnd`, `Verified`, `Cause` and `Timestamp`, which is the projection the
+  pin asked for. P03 reads it; P02 does not invent a second shape of it.
+- **/pending 733 is CLOSED** (v1.169.5, `d714ab58`): a hybrid-reference file is no longer told "unsigned" by the blob check.
+  The pin's "while /pending 733 is open" condition is discharged; 740/741 (its residue) are not on this path.
+- **P01's phase close changed the redefinition case** (`cda73c99`, conjunct (11) now requires the owning header at the
+  xref's offset): a later revision that redefines the user's object number is now REFUSED `contents-elsewhere` in the latest
+  sweep, not silently read as the user. So the earlier-revision recovery in the first pin is no longer an edge case: it is
+  how the user's own signed version is found when a later party rewrote their dictionary. It gets its own slice (S02).
+- **There is no revision-boundary helper and no standalone prefix verifier** (grep of non-test `internal/sign` for
+  `startxref`/`%%EOF`: no hits; only `Verify(data)` over a whole buffer). Both are built here, the second by calling
+  `Revisions` on the prefix — the one door — never a second verifier.
+- **No existing route serves document-derived bytes through `sendDownload`**: `/api/pdf` (`handlePDF`, `server.go:1023`)
+  writes raw bytes with `Cache-Control: no-store` and is fetched by pdf.js, not `apiFetch` (ADR-004's named exception). The
+  new route is fetched by `apiFetch` (so `X-Nib-Doc` pins it) and answers bytes inline for the compare pipeline
+  (`getDocument({data: buf})`, `app.js:4417`), so it follows `handlePDF`'s headers, not `sendDownload`'s attachment
+  disposition — the route slice's "sendDownload's discipline" is read as *its filename quoting where a name is sent*, and no name is.
+- **Firmed: three slices**, S02 split out of S01 for the reason above, the route renumbered S03.
 
-#### P02.S02 — the route
-Scope: `GET /api/document/revision?signer=<fp>` through the existing mux block and `docFor`, served
-with `sendDownload`'s discipline, reached from the client only via `apiFetch` (so `X-Nib-Doc` is
-carried per ADR-004). Refs: D7, D10.
-Acceptance: each of the four causes is reachable and distinguishable at the client; the route is
-called from no boot or open path.
+**PIN 2026-10-02 (plan-review of the firmed P02, hand-off `plan-reviews/2026-10-02-p02-returned-document.md` — 3 critical,
+10 warning, 9 info; citations spot-checked at the lines by the arc).** These pins govern the slices below. Where a pin and a
+slice's text disagree, the pin wins.
+- **(C1) A named identity selects, never asserts.** `named` (unverified, `revisions.go:250`) may choose which prefix to
+  re-verify; D4's re-verification is the proof. A refusal built from it says *"a signature naming your certificate does not
+  verify against this file"*, never "your signature", and carries `attributed: false` unless the SignerInfo's own signature
+  over its signed attributes checks against the named certificate's key (remedy unrun — S01's grill reads whether
+  `digitorus/pkcs7` exposes those bytes).
+- **(C2) An error on the whole file is not a refusal.** `Revisions(full)` errors with no records in five places
+  (`verify.go:275`, `:291`, `:302`, `:351`, `:422`); measured, one appended negative-length copy of the user's `/Contents`
+  does it while `full[:end]` is the user's original and re-verifies. Candidates then come from `sweepRevisions(full)`: the
+  last-pair end of every record whose `named` is the fingerprint, refused ones included. Each is accepted only through
+  S01's re-verification. A whole-file error with no verifying candidate returns **`could-not-check`**, never
+  `no-signature` or `not-your-signature` — **parked for Dan as an amendment to D7 (a fifth cause); built under that name
+  until he answers.**
+- **(C3) The cause is a precedence over the record set, not a map over record causes.** In order: (1) a verified,
+  well-formed record for the fingerprint → its prefix; (2) else C2's candidates and S02's walk → the first that re-verifies;
+  (3) else a record naming the fingerprint → `resaved`, worded per C1 and W10; (4) else any signature-shaped record →
+  `not-your-signature`, with every refused record attached (`RefusedSignature`, `verify.go:167-196`); (5) else
+  `no-signature`. **S01's acceptance table iterates over DOCUMENT SHAPES** (the probe's six rows plus the spoof), not over
+  cause constants — the "each record cause maps to exactly one D7 cause" clause is struck as unsatisfiable; the
+  redefinition row must not read `resaved`, the corrupted-blob row must not read "you did not sign this".
+- **(W1) S02's boundaries end after the EOL.** A nib signature covers `%%EOF\n` (`pdfsign/sign/pdftrailer.go:64`), so a cut
+  at the end of `%%EOF` misses it by one byte (measured). Candidate ends: (a) the last-pair ends of sweep records naming the
+  fingerprint, raw `ByteRange` included; then (b) each `%%EOF` plus an optional `\r`, `\n` or `\r\n`, kept only where
+  `startxref`'s offset lands on `xref` or `N G obj`. Deduped, newest first. A prefix that errors is SKIPPED, never mapped.
+- **(W2) Screen before verifying.** Each S02 candidate is screened with `sweepRevisions` and only a prefix holding a record
+  naming the fingerprint pays `Revisions`; capped at 16 candidates and 16×len bytes, measured on a hostile fixture.
+- **(W3) "Last" is the largest `CoverageEnd`** (records come in object-number order, `read.go:452`). A later record naming
+  the user that fails is reported beside the prefix returned; the user's earlier signatures are listed too.
+- **(W4) The route is `requireUnlocked`**, as `/api/pdf` is (`server.go:452`) — not `requireSession`.
+- **(W5) A refusal is `422` with JSON `{cause, refused[]}`** — 409 triggers `apiFetch`'s reconcile (`app.js:429`). Facts
+  about returned bytes ride in an `X-Nib-Revision` header (object, end, found-in-earlier-revision, later-failed).
+- **(W6) Exit criteria gain:** where a later revision redefined the user's signature dictionary, the user's signed version
+  is returned byte-identical. **(W7)** S02's acceptance asserts that recovery and that the cause is neither `resaved` nor
+  `not-your-signature`.
+- **(W8)** The response names the object number a later revision redefined, so P03 can say so.
+- **(W9)** The response says whether the working copy has history (undo non-empty, or dropped per ADR-003), because the route
+  reads `doc.data`, not the file as it arrived; P03 words it. Which nib operations rewrite a signed document: unverified.
+- **(W10)** `resaved` stays the internal name; no surface may say "re-saved" — it alleges an act nib did not observe.
+- **Info folded:** I2 (the check that can fail is the record's, not the length), I3 (an unrelated record erroring in a prefix
+  gives `prefix-failed-reverify`, worded so), I4 (D10's "no boot or open path" gets a static guard), I5 (single-flight per
+  document id), I6 (reuse `RefusedSignature`), I7 (the 2026-09-28 "unverified until P02.S01" is S02's now), I8 (a
+  timestamp-only document is `no-signature`, never worded "nothing signed this"), I9 (counterparts — P03's wording).
+
+#### P02.S01 — `sign.SignedRevisionFor(pdf, fingerprint)` *(done 2026-10-02, v1.179.3)*
+Scope: select the requested signer's record by fingerprint among the latest sweep's well-formed, verified, non-timestamp
+records (the user's LAST signature where they signed more than once — the one "since I signed" means); slice
+`pdf[:CoverageEnd]` (bounds already proven by conjunct (6)); then require the prefix to pass `Revisions` with no error AND
+hold a record for that fingerprint that is verified, well-formed, and whose `CoverageEnd` is the prefix's length — the
+signature covers the whole prefix less its own `/Contents`. Return the prefix or one of D7's four causes as a typed error,
+with every P01 record cause mapped to exactly one of them. Refs: D1, D4, D7, D8.
+Acceptance: the reproduced spoof (a stranger co-signing to EOF) does not return that stranger's prefix for the user's
+fingerprint, and returns the user's own; a prefix that fails standalone re-verification is refused
+`prefix-failed-reverify`; an unsigned document is `no-signature`; a signed document the user never signed is
+`not-your-signature`; a document re-saved wholesale (the user's signature present and failing) is `resaved`; each P01
+record cause reaches exactly one D7 cause, asserted by a table over the cause constants.
+**(grill 2026-10-02, `grills/2026-10-02-p02s01-signedrevisionfor.md` — verdict AMENDED)** The last clause above is struck
+(plan-review C3). Three corrections to the pins, each measured in a goprobe prototype over 18 document shapes: **(a)** C2's
+candidates come from the records `verifyIndexed` returns BESIDE its error (it does at the overread, join and unseen sites),
+never from a second `sweepRevisions(full)`, which would run the digitorus reader on a file the pdfcpu gate refused
+(ADR-041); a pdfcpu or sweep failure is `could-not-check`. **(b)** The P01 redefinition attack keeps the user's ByteRange,
+and its refused record still verifies, so **S01 recovers it byte-identical**; S02 keeps the two redefinitions S01 gets wrong
+(ByteRange changed → reads `resaved`; replaced by a non-signature → reads `no-signature`). **(c)** C1's `attributed` IS
+buildable — `pkcs7`'s SignerInfo exposes its signed attributes and `EncryptedDigest`; measured true on the original and on a
+pdfcpu resave, false on a forged SignerInfo. A timestamp authority's fingerprint is never a candidate nor `resaved`.
+Tasks:
+- T01 — `RevisionCause` (five constants) and the `SignedRevision` result value (prefix, cause, obj, end, `RedefinedObj`,
+  `Later`, `Earlier`, `Refused`, `Attributed`).
+- T02 — `SignedRevisionFor` runs `verifyIndexed` once and takes candidates from what it returns.
+- T03 — `revisionCandidates`: the seam S02 extends — records naming the fingerprint, not timestamps, verified unless the
+  whole file errored; last-pair ends bounds-checked, deduped, newest first, capped at 16.
+- T04 — the prefix predicate: `Revisions(prefix)` with no error, holding a verified signer record for the fingerprint whose
+  `CoverageEnd` is the prefix's length.
+- T05 — the precedence: a candidate that holds, else `could-not-check`, `prefix-failed-reverify`, `resaved`,
+  `not-your-signature`, `no-signature`; every refusal carries the refused records.
+- T06 — `attributed`, computed only on the `resaved` branch.
+- T07 — the W3/W8 facts (`Later`, `Earlier`, `RedefinedObj`).
+- T08 — the acceptance table over document shapes; S02's two rows marked for S02 to flip.
+- T09 — the cost of 16 hostile candidates at ≥10 MB, measured.
+- T10 — guard: `sweepRevisions` has exactly one non-test caller.
+- T11 — `/redproof` over every predicate conjunct, candidate filter, bound and the cap.
+**Built 2026-10-02 (v1.179.3) — where the code went beyond or against the tasks, each measured:**
+- **T09 found a defect, not a cost.** 40 copies of the signer's own blob claiming later ends filled all 16 verify slots
+  ahead of the genuine version: `could-not-check` for a version in the file, 13 s at 40 MB. Added a SCREEN before any
+  re-verify — the SignerInfo must check against the named key and its ranges must hash to its signed `messageDigest` —
+  with a hashing budget of 16×len charged before hashing, and well-formed proposers tried first. Now 1.4 s and the
+  version. Declared residual: enough WELL-FORMED copies covering the whole file spend the budget → `could-not-check`.
+- **T10 re-scoped.** `sweepRevisions` has three non-test callers (`verifyIndexed`, `signedAsIntended` ×2), not one; the
+  guard asserts what the grill meant — every caller runs pdfcpu's read before its first sweep (ADR-041).
+- **Grill default 5 reversed** (P02.S01 review C1, measured +804 MB on a 4 MB file): `Revision` keeps a small COPIED
+  `signerProof`, never the parsed PKCS#7.
+- **Unchecked ≠ failed** (review C2): a record the library never enumerated (a later revision dropped `/SigFlags`) is
+  screened, not dropped as failed — it had read a false `resaved`.
+- **The signature check mirrors the library** (`pkcs7` `getSignatureAlgorithm`): SHA-1, Ed25519, curve OIDs, RSA OIDs
+  taking their hash from the digest algorithm, and SignerInfos with no signed attributes (checked over the ranges' bytes).
+  ByteRanges must be ascending and non-overlapping for the screen (783 ranges on disk: the 8 that are not are this
+  repo's own adversarial fixtures).
+- Review: `code-reviews/v1.179.3-p02s01-2026-10-02.md` (2 critical, 2 warning, 5 info; re-review 1 warning; all
+  dispositioned). Red-proof: targeted + blind pass; final 50+ mutations red, survivors declared equivalent in the
+  inventory. Live: every PDF on disk (361; 5 library-verified signers) — each signer's version returned byte-identical.
+**Acceptance ledger:** the spoof does not return the stranger's prefix for the user ✅ and returns the user's own ✅; a
+prefix failing standalone re-verification is `prefix-failed-reverify` ✅ (I3 row); unsigned is `no-signature` ✅; a
+document the user never signed is `not-your-signature` ✅; a document re-saved wholesale is `resaved` ✅ (worded per C1,
+`Attributed`); the per-record-cause table ~~✅~~ STRUCK (C3) — replaced by the 25-shape table ✅. Pins owned here: C1 ✅,
+C2 ✅ (the negative-length copy returns the original), C3 ✅, W3 ✅ (`Earlier`, `Later`), W8 ✅ (`RedefinedObj`). W1/W2/W6/W7
+are S02's; W4/W5/W9 are S03's.
+
+#### P02.S02 — the user's signed version when a later revision rewrote their dictionary
+Scope: when the latest sweep has no verified, well-formed record for the fingerprint, walk the file's earlier revision
+boundaries (each `%%EOF` that ends a cross-reference section, newest first, bounded) and run S01's selection on each prefix
+through the same door; the first that yields the user's verified record is the answer, and the route says it was found in
+an earlier revision. Refs: D1, D4, D8; the 2026-09-28 architect pin.
+Acceptance: a fixture where a later revision redefines the user's signature object (the P01 phase-close attack) recovers
+the user's original signed version byte-identical, not `not-your-signature`; a fixture with no such revision costs one
+sweep; the boundary walk is bounded in count and in bytes on a hostile file with many `%%EOF` markers (measured).
+
+#### P02.S03 — the route
+Scope: `GET /api/document/revision?signer=<fp>` through the existing mux block and `docFor`, behind `requireSession`
+(ADR-054), answering the prefix as `application/pdf` with `Cache-Control: no-store` (`handlePDF`'s headers) or a JSON
+refusal naming its cause, reached from the client only via `apiFetch` (so `X-Nib-Doc` is carried per ADR-004). Refs: D7,
+D10.
+Acceptance: each of the four causes is reachable and distinguishable at the client; the route is called from no boot or
+open path; `TestEveryRouteIsBehindTheSessionOrNamed` covers it without a new exemption.
 
 ### P03 — The surface
 **Goal.** The page the request asked for.
