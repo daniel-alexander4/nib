@@ -696,7 +696,7 @@ document the user never signed is `not-your-signature` ✅; a document re-saved 
 C2 ✅ (the negative-length copy returns the original), C3 ✅, W3 ✅ (`Earlier`, `Later`), W8 ✅ (`RedefinedObj`). W1/W2/W6/W7
 are S02's; W4/W5/W9 are S03's.
 
-#### P02.S02 — the user's signed version when a later revision rewrote their dictionary
+#### P02.S02 — the user's signed version when a later revision rewrote their dictionary *(done 2026-10-02, v1.179.4)*
 Scope: when the latest sweep has no verified, well-formed record for the fingerprint, walk the file's earlier revision
 boundaries (each `%%EOF` that ends a cross-reference section, newest first, bounded) and run S01's selection on each prefix
 through the same door; the first that yields the user's verified record is the answer, and the route says it was found in
@@ -704,6 +704,40 @@ an earlier revision. Refs: D1, D4, D8; the 2026-09-28 architect pin.
 Acceptance: a fixture where a later revision redefines the user's signature object (the P01 phase-close attack) recovers
 the user's original signed version byte-identical, not `not-your-signature`; a fixture with no such revision costs one
 sweep; the boundary walk is bounded in count and in bytes on a hostile file with many `%%EOF` markers (measured).
+**(grill 2026-10-02, `grills/2026-10-02-p02s02-boundary-walk.md` — verdict AMENDED, each change measured)** W1 as written
+found no nib boundary: pdfsign's `startxref` points one byte early, so the header is reached past white space; a header must
+be `xref` or an object whose dictionary says `/XRef`; markers naming one offset collapse to the earliest (5,000 appended
+markers otherwise queue ahead of the version); and only a boundary a literal ByteRange ends at is worth a look. W2's
+"screen with `sweepRevisions`" would be the first ungated sweep — the screen is pdfcpu's read then the sweep, in one
+function. The walk also runs when the whole file errored: two pdfcpu-refused shapes recover byte-identical. "Costs one
+sweep" is re-worded to the measured truth: no screen and no verify unless a ByteRange ends at an earlier boundary.
+Tasks: T01 `revisionBoundaries`; T02 `rawByteRangeEnds` (the intersection); T03 `boundaryCandidate` (gated); T04 the walk
+after S01's candidates, both paths, sharing the verify cap and budget, 16 screens; T05 `EarlierRevision`, `RedefinedObj`
+only where the whole file was read, a cut walk → `could-not-check`; T06 flip S01's two rows; T07 new shapes (two
+pdfcpu-refused files, 5,000 same-xref markers, more fakes than the cap, signed twice and both replaced); T08 unit tests of
+both scans; T09 screen counts; T10 the live pass; T11 `/redproof`.
+**Built (v1.179.4):** as tasked. `nameReaches` (a W8 refinement) was removed as dead — a latest record still reaching
+the found end would have been an S01 candidate. Measured on the built code: a 12 MB walk recovery 72 ms (one `Verify`
+47 ms); 20 distinct fake xref sections 1.2 s → exactly 16 screens, cut, `could-not-check`; 5,000 same-xref markers → one
+screen and the version; an untouched document → zero screens. Live: 361 PDFs, every verified signer still returned
+directly (no walk).
+**Review (`code-reviews/v1.179.4-p02s02-2026-10-02.md`; 3 critical, 1 warning, then a re-review critical), all fixed and
+red-proved:** the boundary scan is linear (a bounded white-space look — 33.8 s → < 2 s on 2,000 markers over 4 MiB); the
+walk also runs PAST a version S01 found, for the signer's LAST one (W3), and a version found while that search was cut
+carries `LaterUnchecked` (the certificate is public, so anyone can spend the walk's screens ahead of the last version);
+only ends actually re-verified count as tried; every bounded exit reads `could-not-check`. The "zero cost on an honest
+document" claim was false: signer 1 of N pays N-2 screens, ~3.5 ms each at 50 KB, ≤ 16 — results unchanged.
+Declared: a non-signer asking about an honest document with 17+ signed revisions reads `could-not-check`; the ByteRange
+regex misses `#`-escaped names and comments inside the array, and the boundary scan misses a comment before `%%EOF` or
+> 64 bytes after `startxref` — each makes the walk miss a version, which then reads a refusal; no file on disk shows one.
+**Acceptance ledger:** the P01 phase-close attack (a later revision redefines the signer's dictionary) recovers the
+original byte-identical ✅ (S01 already did; the ByteRange-changed and non-signature redefinitions now do too ✅, cause
+neither `resaved` nor `not-your-signature` ✅ — W7); a document with no such revision costs **no screen and no verify**
+when no ByteRange ends at an earlier boundary ✅ (re-worded from "one sweep"; zero screens on an untouched document,
+asserted) — and N-2 screens for signer 1 of N, measured; the walk is bounded in count (16 screens, the shared 16
+verifies) ✅ and in bytes (the shared 16×len budget, the linear scan) ✅ on hostile files with many `%%EOF` markers,
+measured (5,000 same-xref markers → one screen and the version; 20 distinct fakes at 12 MB → 1.2 s, 16 screens,
+`could-not-check`) ✅. W6's exit-criterion amendment ✅. W8 ✅ (`RedefinedObj` where the whole file was read).
 
 #### P02.S03 — the route
 Scope: `GET /api/document/revision?signer=<fp>` through the existing mux block and `docFor`, behind `requireSession`

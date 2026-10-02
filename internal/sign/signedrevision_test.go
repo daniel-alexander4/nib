@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,75 @@ func revisionShapes(t *testing.T) []revisionShape {
 	if _, revs, err := verifyIndexed(noSigFlagsCopies); err != nil || len(revs) == 0 || revs[0].libPos >= 0 {
 		t.Fatalf("stimulus: err %v — the library still enumerates the signatures, so nothing is unchecked", err)
 	}
+	garbageXref := append(append([]byte(nil), sA...), "\nstartxref\n99999999\n%%EOF\n"...)
+	brokenXref := append(append([]byte(nil), sA...), fmt.Sprintf("\nxref\n0 1\nZZZZ\ntrailer\n<< /Size 1 /Prev 0 >>\nstartxref\n%d\n%%%%EOF\n", len(sA)+1)...)
+	var twiceNums []sobj
+	for _, r := range mustSweep(t, twice) {
+		twiceNums = append(twiceNums, sobj{num: int(r.Obj), body: "<< /Foo 4 >>"})
+	}
+	twiceReplaced := synthRevision(t, twice, twiceNums, catalogOf(t, twice))
+	var twiceLast uint32
+	for _, r := range mustSweep(t, twice) {
+		if r.CoverageEnd == int64(len(twice)) {
+			twiceLast = r.Obj
+		}
+	}
+	// The review of P02.S02 — W3: only the LATER of two signatures replaced, so S01 alone returns the earlier one.
+	twiceSecondReplaced := synthRevision(t, twice, []sobj{{num: int(twiceLast), body: "<< /Foo 5 >>"}}, catalogOf(t, twice))
+	// C3: a copy of A's dictionary whose ranges end where A's version ends, screened out — it must not hide that end.
+	endsAtVersion := reByteRange.ReplaceAllString(vbody, fmt.Sprintf("/ByteRange [0 10 20 %d]", len(sA)-20))
+	copyHidesErr := synthRevision(t, synthRevision(t, redefinedNonSig, []sobj{{num: 900, body: reByteRange.ReplaceAllString(vbody, "/ByteRange [0 -5 10 10]")}}, root),
+		[]sobj{{num: 903, body: endsAtVersion}}, root)
+	noFlagsNonSig := synthRevision(t, redefinedNonSig, []sobj{{num: afNum, body: strings.TrimSpace(regexp.MustCompile(`/SigFlags\s+\d+`).ReplaceAllString(afBody, ""))}}, root)
+	copyHidesNoFlags := synthRevision(t, noFlagsNonSig, []sobj{{num: 903, body: endsAtVersion}}, root)
+	// W: a forged signature naming A, /SigFlags dropped, and copies whose ranges each select nearly the whole file —
+	// they spend the screen budget, so nib did not look at everything and must not answer `resaved`.
+	forgedNoFlags := synthRevision(t, forged, []sobj{{num: afNum, body: strings.TrimSpace(regexp.MustCompile(`/SigFlags\s+\d+`).ReplaceAllString(afBody, ""))}}, root)
+	drain := func(size int) []byte {
+		var objs []sobj
+		for i := 0; i < screenBudgetFactor+4; i++ {
+			objs = append(objs, sobj{num: 960 + i, body: reByteRange.ReplaceAllString(vbody, fmt.Sprintf("/ByteRange [0 10 %07d %07d]", 20+i, size-40-i))})
+		}
+		return synthRevision(t, forgedNoFlags, objs, root)
+	}
+	budgetSpent := drain(len(drain(0)))
+	// The same drain with no signature and no boundary a ByteRange ends at, so the walk has nothing to look at and the
+	// spent budget is S01's own to report.
+	baseNoFlags := base
+	if bytes.Contains(base, []byte("/SigFlags")) {
+		t.Fatal("stimulus: the base form carries /SigFlags, so the copies would be dropped as failed, not screened")
+	}
+	copiesOnly := func(size int) []byte {
+		var objs []sobj
+		for i := 0; i < screenBudgetFactor+4; i++ {
+			objs = append(objs, sobj{num: 960 + i, body: reByteRange.ReplaceAllString(vbody, fmt.Sprintf("/ByteRange [0 10 %07d %07d]", 20+i, size-40-i))})
+		}
+		return synthRevision(t, baseNoFlags, objs, catalogOf(t, baseNoFlags))
+	}
+	copiesOnlyDoc := copiesOnly(len(copiesOnly(0)))
+	// The re-review of P02.S02: the second signature's dictionary replaced AND more fake xref sections than the screen
+	// cap after it, each with a ByteRange ending at its own marker — the first version is genuine, but the search for
+	// the last was cut, and the result must say so.
+	fakesAfter := func(prev []byte) []byte {
+		k := maxBoundaryScreens + 2
+		build := func(heads, ends []int64) []byte {
+			var sb strings.Builder
+			for i := 0; i < k; i++ {
+				fmt.Fprintf(&sb, "%06d 0 obj\n<</Type/XRef>>/ByteRange [0 10 20 %012d]\nstartxref\n%012d\n%%%%EOF\n", 3000+i, ends[i]-20, heads[i])
+			}
+			return synthRevision(t, prev, []sobj{{num: 991, body: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", sb.Len(), sb.String())}}, catalogOf(t, prev))
+		}
+		heads, ends := make([]int64, k), make([]int64, k)
+		h := build(heads, ends)
+		for i, at := 0, len(prev); i < k; i++ {
+			hp := bytes.Index(h[at:], []byte(fmt.Sprintf("%06d 0 obj", 3000+i))) + at
+			ep := bytes.Index(h[hp:], []byte("%%EOF\n")) + hp
+			heads[i], ends[i] = int64(hp), int64(ep+6)
+			at = ep + 6
+		}
+		return build(heads, ends)
+	}
+	hiddenLast := fakesAfter(twiceSecondReplaced)
 	var tsaFP string
 	for _, r := range mustSweep(t, tsOnly) {
 		if r.Timestamp {
@@ -180,9 +250,41 @@ func revisionShapes(t *testing.T) []revisionShape {
 					t.Errorf("RedefinedObj %d, want %d: the rewrite is evidence and must be named", got.RedefinedObj, vnum)
 				}
 			}},
-		// S02 changes these two: the version is in the file, but S01 alone cannot find it.
-		{name: "a later revision rewrote the signer's ByteRange", doc: redefinedBR, fp: a.fp, cause: RevisionResaved},
-		{name: "a later revision replaced the signature with a non-signature", doc: redefinedNonSig, fp: a.fp, cause: RevisionNoSignature},
+		// P02.S02: no record in the file as it stands reaches these versions; the boundary walk does (W6, W7).
+		{name: "a later revision rewrote the signer's ByteRange", doc: redefinedBR, fp: a.fp, want: sA, check: foundEarlier(vnum)},
+		{name: "a later revision replaced the signature with a non-signature", doc: redefinedNonSig, fp: a.fp, want: sA, check: foundEarlier(vnum)},
+		{name: "a garbage startxref appended (pdfcpu refuses the whole file)", doc: garbageXref, fp: a.fp, want: sA, check: foundEarlier(0)},
+		{name: "a broken xref section appended (pdfcpu refuses the whole file)", doc: brokenXref, fp: a.fp, want: sA, check: foundEarlier(0)},
+		{name: "signed twice, then only the second dictionary replaced (W3)", doc: twiceSecondReplaced, fp: a.fp, want: twice,
+			check: func(t *testing.T, got SignedRevision) {
+				foundEarlier(int(twiceLast))(t, got)
+				if len(got.Earlier) != 1 || got.Earlier[0] != ce {
+					t.Errorf("Earlier %v, want [%d]", got.Earlier, ce)
+				}
+			}},
+		{name: "the last version hidden behind more fake xref sections than the screen cap", doc: hiddenLast, fp: a.fp, want: sA,
+			check: func(t *testing.T, got SignedRevision) {
+				if !got.LaterUnchecked {
+					t.Error("the search for a later version was cut and the result reads as the signer's last")
+				}
+			}},
+		{name: "signed twice, nothing hidden: the last version, and the search finished", doc: twice, fp: a.fp, want: twice,
+			check: func(t *testing.T, got SignedRevision) {
+				if got.LaterUnchecked {
+					t.Error("LaterUnchecked on a document with nothing to search past the version")
+				}
+			}},
+		{name: "a screened-out copy ends where the version ends, whole file unreadable (C3)", doc: copyHidesErr, fp: a.fp, want: sA, check: foundEarlier(0)},
+		{name: "a screened-out copy ends where the version ends, /SigFlags dropped (C3)", doc: copyHidesNoFlags, fp: a.fp, want: sA, check: foundEarlier(vnum)},
+		{name: "copies spend the screen budget around a forged signature (W)", doc: budgetSpent, fp: a.fp, cause: RevisionCouldNotCheck},
+		{name: "copies of a signer's dictionary in a document they never signed spend the budget", doc: copiesOnlyDoc, fp: a.fp, cause: RevisionCouldNotCheck},
+		{name: "signed twice, then both dictionaries replaced", doc: twiceReplaced, fp: a.fp, want: twice,
+			check: func(t *testing.T, got SignedRevision) {
+				foundEarlier(int(twiceLast))(t, got)
+				if len(got.Earlier) != 1 || got.Earlier[0] != ce {
+					t.Errorf("Earlier %v, want [%d]: the first signature is read from the recovered version", got.Earlier, ce)
+				}
+			}},
 		{name: "a negative-length copy appended (C2)", doc: negCopy, fp: a.fp, want: sA[:ce]},
 		{name: "a negative-length copy, asked as a stranger", doc: negCopy, fp: b.fp, cause: RevisionCouldNotCheck},
 		{name: "unsigned", doc: base, fp: a.fp, cause: RevisionNoSignature},
@@ -939,6 +1041,177 @@ func TestTheScreenResolvesAlgorithmsAsTheLibraryDoes(t *testing.T) {
 			if !proofOf(p7).attributed() {
 				t.Errorf("%s over digest %v: the library verifies it and the screen does not attribute it", name, digest)
 			}
+		}
+	}
+}
+
+// foundEarlier checks a version the boundary walk found: it says so, and names the redefined object when the whole file
+// was read — and names none (redef 0) when the file could not be read, since nothing is then known of what it redefined.
+func foundEarlier(redef int) func(t *testing.T, got SignedRevision) {
+	return func(t *testing.T, got SignedRevision) {
+		t.Helper()
+		if !got.EarlierRevision {
+			t.Error("the version came from an earlier revision and the result does not say so")
+		}
+		if got.RedefinedObj != uint32(redef) {
+			t.Errorf("RedefinedObj %d, want %d: the later revision's rewrite is evidence and must be named", got.RedefinedObj, redef)
+		}
+	}
+}
+
+// TestRevisionBoundariesAreWhatTheXrefSays — the walk's population, on bytes built to each rule.
+func TestRevisionBoundariesAreWhatTheXrefSays(t *testing.T) {
+	body := "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"
+	xrefAt := len(body)
+	doc := body + "xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Root 1 0 R >>\nstartxref\n" + strconv.Itoa(xrefAt) + "\n%%EOF\n"
+	first := len(doc)
+	streamAt := len(doc) + 1 // pdfsign's offset points one byte early, at the newline before the header
+	doc += "\n7 0 obj\n<< /Type /XRef /Size 8 >>\nstream\nx\nendstream\nendobj\nstartxref\n" + strconv.Itoa(streamAt-1) + "\n%%EOF"
+	second := len(doc)
+	doc += "\n9 0 obj\n<< /Foo 1 >>\nstream\nstartxref\n" + strconv.Itoa(len(doc)+1) + "\n%%EOF\nendstream\nendobj\n" // names a non-xref object
+	doc += "startxref\n" + strconv.Itoa(xrefAt) + "\n%%EOF\r\n"                                                       // a second marker naming the first xref: collapses to the first
+	doc += "startxref\n0\n%%EOF\n"                                                                                    // a linearized first page names nothing
+	got := revisionBoundaries([]byte(doc))
+	has := map[int64]bool{}
+	for _, e := range got {
+		has[e] = true
+	}
+	for name, e := range map[string]int64{"an xref stream reached past white space, bare": int64(second),
+		"a classic xref, through its \\n": int64(first)} {
+		if !has[e] {
+			t.Errorf("%s: end %d missing from %v", name, e, got)
+		}
+	}
+	if len(got) > 0 && got[0] < got[len(got)-1] {
+		t.Errorf("boundaries %v are not newest first", got)
+	}
+	for _, e := range got {
+		if e > int64(second)+2 {
+			t.Errorf("end %d: a marker naming a non-xref object, a repeat of the first xref, or startxref 0 was kept", e)
+		}
+	}
+	ends := rawByteRangeEnds([]byte("/ByteRange [0 10 20 30] /ByteRange[0 1 2 x] /ByteRange [0 10 20 -3] " +
+		"/ByteRange [0 1 + 2 4] /ByteRange [ 0 5 7 8 ]" + strings.Repeat(" ", 60)))
+	if !ends[50] || !ends[15] || len(ends) != 2 {
+		t.Errorf("rawByteRangeEnds %v, want {50, 15}: only whole, non-negative, all-integer literal arrays end anywhere", ends)
+	}
+}
+
+// TestTheBoundaryWalkIsBounded — markers a hostile file appends, measured by what the walk does with them.
+func TestTheBoundaryWalkIsBounded(t *testing.T) {
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newIdentity(t, "Alice")
+	sA := signAs(t, base, a, "original")
+	vnum, _ := victimDict(t, sA)
+	doc := synthRevision(t, sA, []sobj{{num: vnum, body: "<< /Foo 2 >>"}}, catalogOf(t, sA))
+	xo := bytes.LastIndex(sA, []byte("startxref"))
+	xref, err := strconv.Atoi(string(bytes.TrimSpace(sA[xo+9 : bytes.LastIndex(sA, []byte("%%EOF"))])))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each hostile marker sits inside a stream with a raw ByteRange literal ending exactly at it, so it survives both
+	// filters. build(end) is laid out twice so the numbers can name the final offsets (fixed-width).
+	hostile := func(k int, distinct bool) []byte {
+		build := func(ends []int64) []byte {
+			var sb strings.Builder
+			for i := 0; i < k; i++ {
+				target := xref
+				if distinct {
+					fmt.Fprintf(&sb, "%06d 0 obj\n<</Type/XRef>>", 2000+i)
+					target = 0 // patched below to the header's own offset
+				}
+				fmt.Fprintf(&sb, "/ByteRange [0 10 20 %012d]\nstartxref\n%012d\n%%%%EOF\n", ends[i]-20, target)
+			}
+			out := synthRevision(t, doc, []sobj{{num: 990, body: fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", sb.Len(), sb.String())}}, catalogOf(t, doc))
+			if distinct { // point each marker at its own fake header
+				for i, at := 0, 0; i < k; i++ {
+					h := bytes.Index(out[at:], []byte(fmt.Sprintf("%06d 0 obj", 2000+i))) + at
+					sx := bytes.Index(out[h:], []byte("startxref\n")) + h + 10
+					copy(out[sx:sx+12], fmt.Sprintf("%012d", h))
+					at = sx
+				}
+			}
+			return out
+		}
+		first := build(make([]int64, k))
+		var ends []int64
+		for i := len(doc); len(ends) < k; {
+			j := bytes.Index(first[i:], []byte("%%EOF\n")) + i
+			ends = append(ends, int64(j+6))
+			i = j + 6
+		}
+		return build(ends)
+	}
+	same := hostile(5000, false)
+	if n := len(rawByteRangeEnds(same)); n < 5000 {
+		t.Fatalf("stimulus: only %d literal ByteRanges end in the hostile file, so the markers never reach the walk", n)
+	}
+	got := SignedRevisionFor(same, a.fp)
+	if !bytes.Equal(got.Prefix, sA) {
+		t.Errorf("5,000 markers naming the genuine xref: cause %q — they queued ahead of the version", got.Cause)
+	}
+	verifies, budget := 0, int64(1<<40)
+	if _, _, screens := walkBoundariesCounted(same, a.fp, &verifies, &budget); screens > 1 {
+		t.Errorf("5,000 markers naming one xref cost %d screens; they collapse to the earliest, so one", screens)
+	}
+	distinct := hostile(maxBoundaryScreens+4, true)
+	got = SignedRevisionFor(distinct, a.fp)
+	if got.Prefix != nil || got.Cause != RevisionCouldNotCheck {
+		t.Errorf("more fake xref sections than the screen cap ahead of the version: cause %q, %d bytes; want could-not-check", got.Cause, len(got.Prefix))
+	}
+	verifies, budget = 0, int64(1<<40)
+	if _, cut, screens := walkBoundariesCounted(distinct, a.fp, &verifies, &budget); screens != maxBoundaryScreens || !cut {
+		t.Errorf("%d screens, cut %v; want exactly the cap, %d, and cut", screens, cut, maxBoundaryScreens)
+	}
+	verifies, budget = 0, int64(1<<40)
+	if _, _, screens := walkBoundariesCounted(sA, a.fp, &verifies, &budget); screens != 0 {
+		t.Errorf("an honest, untouched document cost %d screens; with no earlier ByteRange-ended boundary it costs none", screens)
+	}
+}
+
+// walkBoundariesCounted runs the walk the way SignedRevisionFor does, from nothing tried, and reports its screens.
+func walkBoundariesCounted(pdf []byte, fp string, verifies *int, budget *int64) (*SignedRevision, bool, int) {
+	return walkBoundaries(pdf, fp, map[int64]bool{}, 0, verifies, budget)
+}
+
+// TestTheBoundaryScanIsLinear — one long white-space run named by every marker cost each marker the whole run (P02.S02's
+// review: 33.8 s for 2,000 markers over 4 MiB, before any cap).
+func TestTheBoundaryScanIsLinear(t *testing.T) {
+	doc := "%PDF-1.7\n" + strings.Repeat(" ", 4<<20) + strings.Repeat("startxref\n9\n%%EOF\n", 2000)
+	done := make(chan time.Duration, 1)
+	go func() {
+		t0 := time.Now()
+		revisionBoundaries([]byte(doc))
+		done <- time.Since(t0)
+	}()
+	select {
+	case d := <-done:
+		if d > 2*time.Second {
+			t.Errorf("2,000 markers naming one 4 MiB white-space run took %v; each marker re-walked the run", d)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the boundary scan did not finish in 20 s")
+	}
+}
+
+// TestABoundaryEndsThroughEachLineEnding — a signer covers through whichever end-of-line its producer wrote.
+func TestABoundaryEndsThroughEachLineEnding(t *testing.T) {
+	head := "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n"
+	at := len(head)
+	for name, eol := range map[string]string{"bare": "", "\\r": "\r", "\\n": "\n", "\\r\\n": "\r\n"} {
+		doc := head + "xref\n0 1\n0000000000 65535 f \ntrailer\n<<>>\nstartxref\n" + strconv.Itoa(at) + "\n%%EOF" + eol + "x"
+		want := int64(len(doc) - 1)
+		found := false
+		for _, e := range revisionBoundaries([]byte(doc)) {
+			if e == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: the end through the line ending, %d, is not offered", name, want)
 		}
 	}
 }
