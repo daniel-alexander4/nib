@@ -610,14 +610,12 @@ func TestAKidsNestedSignatureIsSeen(t *testing.T) {
 	objs[3] = sobj{num: 4, body: "<</T(parent)/Kids[6 0 R]>>"}
 	objs = append(objs, sobj{num: 6, body: "<</FT/Sig/T(child)/Parent 4 0 R/V 5 0 R>>"})
 	doc := fillSig(t, synthRevision(t, nil, objs, 1), "1", nil, detached(t, a))
-	// STIMULUS: /Fields does not list the signature's field, and the remaining /Fields walk finds
-	// no signature in it. (Before P01.S02 this also asserted the deleted /Fields ByteRange walk
-	// returned saw=false — green at 11490690, the pre-S01 proof S04 records.)
+	// STIMULUS: /Fields does not list the signature's field directly. (Before P01.S02 this also
+	// asserted the deleted /Fields ByteRange walk returned saw=false — green at 11490690, the pre-S01
+	// proof S04 records; until the P08 phase-close review it asserted the remaining /Fields walk was
+	// blind to it too, which that review fixed — the sweep's independence is what this test holds.)
 	if listedInFields(t, doc, 5) {
 		t.Fatal("STIMULUS: /Fields lists the nested signature directly")
-	}
-	if signatureBlobPresent(doc) {
-		t.Fatal("STIMULUS: the /Fields blob walk found the nested signature")
 	}
 	revs, err := Revisions(doc)
 	if err != nil {

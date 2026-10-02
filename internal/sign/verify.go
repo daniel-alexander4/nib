@@ -677,8 +677,9 @@ func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
 // **A named exemption from the one-enumeration guard** (`TestEverySignatureEnumerationIsTheSweep`,
 // P01.S02): it walks `/Fields`, and re-expressing it over the sweep would NARROW it — the sweep keeps
 // only signature-shaped dictionaries, and this answers for any `FT /Sig` field with contents — which
-// moves a document towards `Unsigned`, the unsafe direction. `verifyIndexed` asks the sweep the same
-// question beside it (`anyCheckableBlob`), so a `/Kids`-nested blob this walk cannot see is still seen.
+// moves a document towards `Unsigned`, the unsafe direction. It walks `/Kids` with `/FT` inherited (the P08 phase-close
+// review: it once read the top level only, and only `Verify` — asking the sweep beside it — saw a nested blob; the gates
+// that call this alone did not).
 //
 // **Not behind ADR-041's gate, deliberately** (/pending 712 R6-2, decided 2026-09-30). The gate would
 // cost a pdfcpu read — +20-40 ms, as recorded when it was parked — on every save, undo, reflow and tag
@@ -727,18 +728,53 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 	if acro.IsNull() {
 		return false
 	}
+	// The WHOLE field tree, `/FT` inherited from a parent (ISO 32000-1 12.7.3.1, Table 220: FT is inheritable): a
+	// signature field whose widget kids carry the value, or whose type its parent states, is a signed field all the same.
+	// Reading `/Fields`' top level alone answered false for a validly signed document of either shape, and every gate on
+	// this answer — the reflow refusal (D11), tag writes, the co-sign arrival gate, undo's signature guard, the PDF/UA
+	// drop — treated it as unsigned (the P08 phase-close review, C1). A walk past its bounds (a /Kids cycle the library
+	// does not refuse, or a tree too large to be a form) answers from the byte scan, as every walk here that cannot finish.
 	fields := acro.Key("Fields") //sigwalk:exempt signatureBlobPresent
-	for i := 0; i < fields.Len(); i++ {
-		f := fields.Index(i)
-		if f.Key("FT").Name() != "Sig" {
-			continue
+	visited := 0
+	var walk func(f dpdf.Value, ft string, depth int) (found, bounded bool)
+	walk = func(f dpdf.Value, ft string, depth int) (bool, bool) {
+		visited++
+		if depth > maxFieldDepth || visited > maxFieldNodes {
+			return false, false
 		}
-		if len(f.Key("V").Key("Contents").RawString()) > 0 {
+		if t := f.Key("FT").Name(); t != "" {
+			ft = t
+		}
+		if ft == "Sig" && len(f.Key("V").Key("Contents").RawString()) > 0 {
+			return true, true
+		}
+		kids := f.Key("Kids")
+		for i := 0; i < kids.Len(); i++ {
+			if found, ok := walk(kids.Index(i), ft, depth+1); found || !ok {
+				return found, ok
+			}
+		}
+		return false, true
+	}
+	for i := 0; i < fields.Len(); i++ {
+		found, ok := walk(fields.Index(i), "", 0)
+		if !ok {
+			return scanForSignatureBlob(pdf)
+		}
+		if found {
 			return true
 		}
 	}
 	return false
 }
+
+// maxFieldDepth and maxFieldNodes bound signatureBlobPresent's walk of the field tree: no real form nests fields
+// deeper than a handful of levels, and a cycle through /Kids — which the library does not refuse — would otherwise walk
+// forever.
+const (
+	maxFieldDepth = 32
+	maxFieldNodes = 100000
+)
 
 // pdfcpuCanRead reports whether the parser nib uses for everything else can build a context from
 // pdf — i.e. whether this is a document nib can read at all. It is the guard on the one door into

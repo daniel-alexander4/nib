@@ -372,7 +372,7 @@ guessed. A word that changes **font** part-way — an italic word with a roman c
 number in another face, set smaller and raised — keeps each letter in its own font, size and height, and
 text whose size a publishing program set through its text matrix rather than its font size is re-set at
 that size too. A **justified** paragraph stays justified: every line
-but the last is set out to the right margin again. A **centred** heading stays centred when you change its length.
+but the last is set out to the right margin again. A **centred** heading stays centred when you change its length (as long as it stays one line).
 
 When the new text needs **more lines**, the paragraph grows down, at its own line
 spacing, and the paragraphs below it in its column move down with it into the free

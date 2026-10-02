@@ -875,7 +875,7 @@ follows it. **The S05 corpus read-back now reaches the real producers: 58 carrie
 S05's device-colour rule) is now what binds. Tier 3 drives a tagged flow through the binary and reads the element on page 2
 through `/api/tags/tree`. Review `code-reviews/v1.172.1-p07s07-2026-09-30.md` (3 warnings, 5 info; all dispositioned).
 
-### P08 — Typographic fidelity
+### P08 — Typographic fidelity *(done 2026-10-01, v1.179.1 — seven slices; ledger 5 clauses — 3 met, 1 met with a declared residue, 1 amended by measurement; gates below)*
 **Goal.** Justification, kerning from `TJ` arrays, and the text-state parameters the current edit
 path reads none of — `Tc`, `Tw`, `Tz`.
 
@@ -910,6 +910,43 @@ does not.**
   across text objects (BT/ET between lines — 2,900 refusals, not typographic). `/plan-review` did not fire: not security-,
   migration- or egress-heavy — no persisted or wire format changes (the cause list is the one wire surface, and only
   shrinks or gains a name).
+
+**Phase close 2026-10-01 (v1.179.1).** Full-repo review `code-reviews/v1.179.0-p08-phase-close-2026-10-01.md` — six reviewers,
+37 findings (3 critical): composition C1 and signing C1 fixed in-phase, server/web C1 filed /pending 791 (CRITICAL, outside the
+typography: unbaked overlays lost on every server-byte operation); the rest fixed or filed /pending 792-798.
+**PIN 2026-10-01 (phase close — supersedes S04's "a centred line that would need a second line refuses `no-pitch` as before")**:
+S05's pitch floor let a centred line at body size GROW, and a centred line written up to the room about its axis was wider than
+the door reads as centred, so the next edit lost the axis. A centred line's measure is capped at 70% of its column
+(`centredMaxWidth`, the door's own bound) and a centred line that would need a second line refuses `centred-grows`; a stack of
+centred lines sharing a left edge within 2 pt of the axis does not veto a centred reading (`centredStackTol`). Also fixed:
+`HasSignatureBlob` walks the whole field tree with `/FT` inherited (D11's refusal had let a signature nested under `/Kids`
+through); the space after a word is its body (largest) look — "¹⁴C" as well as "smoke¹³"; a sentence ending in a closing
+quote reads as a sentence end, and an empty word no longer panics the justification check; a typed word's lent kern is keyed
+across the baseline, as the table is.
+**Acceptance ledger** (exit criteria verbatim, split on `;` and `and`):
+1. *A justified paragraph re-wraps justified* — **met**: S03, hand-built by `Tw` and `TJ`, corpus 13 re-set with 50/50 lines
+   flush, tier 3; a sentence ending in a closing quote now reads justified (phase close).
+2. *kerned text keeps its kerning* — (a) a word the paragraph already draws keeps its own kerns — **met** (S01, asserted again
+   by S05: kept Word −55, CAVE −80); (b) a typed word takes the page's kerns where the page draws a pair one way — **met** (S05,
+   corpus 40 typed words read back with the lent kern; stretched matrices since the phase close).
+3. *a document using character or word spacing is not silently re-spaced* — **met with a declared residue**: every glyph keeps
+   its `Tc`/`Tw`/`Tz`/`Ts`/`Tr` (S01), spaces drawn as their own shows are the paragraph's (S02), sizes and spacing set by the
+   text matrix are restated exactly (S06, 3,879 word occurrences checked), the space after a figure is the body's (phase close).
+   Residue, filed: a run's trailing `TJ` adjustment dropped from a word joined across runs (≤ 0.012 pt in the corpus, /pending
+   798); five justified paragraphs re-break when an edit elsewhere leaves their words alone (/pending 797 — re-breaking, not
+   re-spacing, but the same silent family).
+4. Amended at S03: *an unedited justified paragraph still re-breaks in place* — **amended by measurement**: through production's
+   path 324 of 329 corpus justified paragraphs re-break in place (InDesign 33/35, Antenna House 272/273, Acrobat 17/19, Designer 2/2); the
+   census S03 cited measured a pre-S03 path (/pending 797).
+5. Added at S07: *a hyphenated break moved mid-line reads back as one word, one left at a line's end keeps its hyphen* — **met**
+   (S07: 53 rejoined, 67 refused unsure, 142/142 untouched breaks in place).
+**Graduation pass** (`instruments/text-reflow.md` P08): 53 rows, every one naming a standing test reader — all **keep-live**;
+0 `diagnostic, no standing reader`; the 11 hot-path rows (G1, G9, G10, B1, J1, J2, C1, C4, K1, H2, S1) are the feature's own
+per-request passes, each linear or measured (G10 57 ms at the 2,000-word bound, K1 2.0 ms worst, H2 13.7 ms only when a break is
+kept) — keep-live, nothing to silence. Not seen by the pass: a published field with no row (no reader scan over reflow's outcome
+fields exists; recorded, not built).
+**Required gates**: tiers 0–3 at v1.179.1 (recorded in the commit); tiers 4/6 do not fire — no file under
+`slicegate_test.go`'s prefixes changed in the phase (pdfops, mdpdf, sign, web/app.js's cause sentences, the reflow tier-3 file).
 
 #### P08.S01 — a word keeps the spacing it was drawn with *(done 2026-09-30, v1.174.0)*
 A paragraph whose runs differ in `Tc`, `Tw`, `Tz` or `Ts` is re-set word by word, each kept word under the state it was

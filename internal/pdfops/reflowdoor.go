@@ -73,7 +73,8 @@ type Refusal struct {
 //
 // **A paragraph that keeps its line count stays inside its own box**: the same baselines, and no line past the right edge
 // its lines already reach — so a NibFlag placed beside it still sits beside it (`/pending 457`'s decision for P06); a
-// paragraph of one line reaches its column's edge, short of anything drawn or annotated beside it. One that needs more
+// paragraph of one line reaches its column's edge, short of anything drawn or annotated beside it — and a centred line is
+// re-set about its axis, both sides of it (P08.S04), so a longer one starts left of its old box. One that needs more
 // lines GROWS DOWN (P07.S03): its new lines at its own pitch, the paragraphs below it in its column moved down by the
 // growth, and what no longer fits above the page's margin carried whole to the next page, which is pushed in turn (P07.S06).
 // What is anchored wholly inside what moves — an annotation, a flag, a destination — moves with it, across pages included
