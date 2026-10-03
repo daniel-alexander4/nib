@@ -277,13 +277,22 @@ func TestUndoAndRedoRefuseADocumentClosedMidCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := stripLineComments(string(src))
+	// Both routes move the history through ONE door, `stepHistory` (/pending 783), so the re-test is
+	// asserted there and each route is asserted to route through it (ADR-009).
+	door := strings.Index(code, "func (s *Server) stepHistory(")
+	if door < 0 {
+		t.Fatal("setup: stepHistory not found in undo.go")
+	}
+	if n := strings.Count(funcBodyFrom(code, door), "s.stillHeldLocked("); n < 2 {
+		t.Errorf("stepHistory re-tests registration %d times; it takes the lock twice around the verification and must re-test under each", n)
+	}
 	for _, h := range []string{"handleUndo", "handleRedo"} {
 		i := strings.Index(code, "func (s *Server) "+h+"(")
 		if i < 0 {
 			t.Fatalf("setup: %s not found in undo.go", h)
 		}
-		if !strings.Contains(funcBodyFrom(code, i), "s.stillHeldLocked(") {
-			t.Errorf("%s does not re-test registration under the lock that moves the history", h)
+		if !strings.Contains(funcBodyFrom(code, i), "s.stepHistory(") {
+			t.Errorf("%s does not move the history through stepHistory, so nothing here says it re-tests registration under the lock that moves it", h)
 		}
 	}
 }

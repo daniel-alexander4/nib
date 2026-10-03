@@ -300,11 +300,17 @@ type Server struct {
 	// Empty means this server published no record (a headless run, a test), and the
 	// route then refuses everything, which is the honest answer: there is nothing to
 	// identify against.
-	instanceToken string
+	//
+	// **Atomic, NOT under `s.mu`** (/pending 783). The probe is answered on a two-second
+	// budget, and every route that holds the global mutex for longer — a large commit, a
+	// verify — used to make a live Nib read as a dead one, so the next launch cleared its
+	// record and started a second Nib. Neither value is anything else's invariant, so
+	// nothing is lost by reading it without the lock.
+	instanceToken atomic.Pointer[string]
 
 	// handoffSecret authorises POST /api/handoff (D20). Separate from instanceToken:
-	// one proves identity, the other grants a verb.
-	handoffSecret string
+	// one proves identity, the other grants a verb. Atomic for instanceToken's reason.
+	handoffSecret atomic.Pointer[string]
 
 	// pendingOpens holds paths handed off while the vault was locked, drained by
 	// adoptVault. Memory only and bounded — see queuePendingOpen.
@@ -331,11 +337,19 @@ func New(web, legal fs.FS, configDir, version string) *Server {
 
 // SetInstanceToken tells the server which probe token identifies it. Called by main
 // after the rendezvous record is published and before the browser opens.
-func (s *Server) SetInstanceToken(tok string) {
-	s.mu.Lock()
-	s.instanceToken = tok
-	s.mu.Unlock()
+func (s *Server) SetInstanceToken(tok string) { s.instanceToken.Store(&tok) }
+
+// loadSecret reads one of the two atomically-held secrets; never set is "".
+func loadSecret(p *atomic.Pointer[string]) string {
+	if v := p.Load(); v != nil {
+		return *v
+	}
+	return ""
 }
+
+// isPrimary reports whether this process published the instance record — the one signal that
+// it owns `~/nib/ceremonies/` (P08.S03). One door for the two readers that act on it.
+func (s *Server) isPrimary() bool { return loadSecret(&s.instanceToken) != "" }
 
 // Handler builds the HTTP routes. Status and key enrollment/migration are public
 // so the UI can run its first-run wizard; every document and vault route is gated
@@ -959,9 +973,7 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 // path, no vault state — a probe is an identity question and the answer should not be a
 // place to learn anything else.
 func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	tok := s.instanceToken
-	s.mu.Unlock()
+	tok := loadSecret(&s.instanceToken) // lock-free: see the field
 	// No token means this server published no record. Refusing is the honest answer
 	// rather than a friendly one: something IS listening here, but it is not the
 	// instance any record names, so a caller must not treat it as one.

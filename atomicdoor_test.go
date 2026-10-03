@@ -58,6 +58,11 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 		//
 		// Recorded rather than routed, which is the choice this map exists to make visible.
 		"internal/ceremony/closeout.go": "renames a DIRECTORY, not a file — no temp, no bytes",
+		// `removeIf` moves the instance record ASIDE so it can judge the bytes it actually took
+		// before deleting them (/pending 630), and puts a record it should not have taken back.
+		// That is a compare-and-remove, not a write: the record itself is written through
+		// `atomicfile.CreateFrom`.
+		"internal/instance/instance.go": "moves the record aside to remove it only if it is the caller's — a removal, not a write",
 	}
 
 	fset := token.NewFileSet()

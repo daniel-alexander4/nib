@@ -136,13 +136,26 @@ func run() int {
 			// calling os.Exit — see main. A stale record is the case the next
 			// launch has to reason about, so leaving fewer of them is worth
 			// making the whole function defer-safe.
-			defer func() { _ = instance.Remove(cfgDir) }()
+			//
+			// **Only THIS instance's record** (/pending 630): by the time the deferred call
+			// runs, the listener is closed, so a launch can already have found this record
+			// stale and published its own. Removing by token leaves that one alone.
+			own := probeToken
+			defer func() {
+				removed, err := instance.Remove(cfgDir, own)
+				switch {
+				case err != nil:
+					log.Printf("could not remove the instance record: %v", err)
+				case !removed:
+					log.Printf("the instance record is no longer this Nib's; leaving it for the instance that published it")
+				}
+			}()
 		case errors.Is(err, instance.ErrExists):
 			// Another instance already published. P07.S02 decides what to do about
 			// it — hand the path over, or take over a stale record. Until then this
 			// is a note rather than a behaviour change: today's launch carries on and
 			// serves, exactly as it did before the record existed.
-			log.Printf("another Nib instance is already recorded; running alongside it")
+			log.Printf("another Nib instance is already recorded; running alongside it — this one publishes no record, so a later launch hands off to that one, never to this")
 			probeToken = ""
 		default:
 			log.Printf("could not publish the instance record: %v", err)
@@ -232,7 +245,7 @@ func run() int {
 		code = 1
 	// **The third exit CAUSE, and deliberately not a third teardown** (P01.S04, D6). The teardown
 	// below is four steps and only two of them are visible here: `DisarmSession()` and
-	// `srv.Close()` run inline, then the LIFO defers `stop()` and `instance.Remove(cfgDir)` — which
+	// `srv.Close()` run inline, then the LIFO defers `stop()` and `instance.Remove(cfgDir, own)` — which
 	// is the whole reason `main()` is `os.Exit(run())`. A cause that tore down for itself would be
 	// a second copy of that order, and the failure that prevents is the stale instance record
 	// returning by a new door (ADR-009).
@@ -280,20 +293,52 @@ func initialFile() string {
 func handedOff(cfgDir, path string) bool {
 	for attempt := 0; attempt < 2; attempt++ {
 		rec, err := instance.Read(cfgDir)
-		if err != nil {
-			// No record, or one too damaged to use. Unreadable is treated as ABSENT
-			// rather than as an error the user must clear by hand: a truncated write
-			// or a filled disk must never turn into "delete this file to start Nib".
-			return false
-		}
-		if !instance.Probe(rec) {
-			// Stale: the instance died and its record outlived it. Clear it and let
-			// the caller take over — or, if another launch clears it first and wins
-			// the create, find that on the next round.
-			_ = instance.Remove(cfgDir)
+		if errors.Is(err, instance.ErrDamaged) {
+			// One too damaged to use: a truncated write, a filled disk, a power loss. It is
+			// CLEARED, not merely treated as absent (/pending 813) — Create is exclusive, so a
+			// record left in place made every later launch skip the hand-off and run alongside,
+			// for good, which is "delete this file to start Nib" without the instruction.
+			removed, rerr := instance.RemoveDamaged(cfgDir)
+			if rerr != nil {
+				log.Printf("the instance record is unreadable (%v) and could not be cleared: %v", err, rerr)
+				return false
+			}
+			if removed {
+				log.Printf("cleared an unreadable instance record (%v)", err)
+			}
 			continue
 		}
+		if err != nil {
+			// No record: this launch is the first.
+			return false
+		}
+		switch instance.Probe(rec) {
+		case instance.Gone:
+			// Stale: the instance died and its record outlived it. Clear THAT record — by
+			// its token, so a record another launch published meanwhile survives — and let
+			// the caller take over, or find the winner on the next round.
+			if _, err := instance.Remove(cfgDir, rec.Token); err != nil {
+				log.Printf("could not clear the stale instance record: %v", err)
+			}
+			continue
+		case instance.Unknown:
+			// **Not stale, and never cleared** (/pending 783). Something holds that address
+			// and did not answer in time; treating that as dead is how a busy Nib lost its
+			// record to a second one, whose own record the first then deleted on exit. The
+			// cost of not knowing is a second Nib, so it is said here, where whoever reads
+			// the log can see why two are running.
+			log.Printf("a Nib is recorded at %s but did not answer within the probe's limit; leaving its record and starting a second Nib beside it", rec.Addr)
+			return false
+		}
 		result, reason, launch, err := instance.HandOff(rec, path, version)
+		if errors.Is(err, instance.ErrHandOffUnanswered) {
+			// The running Nib has the request and is still opening the file — the route does
+			// not stop when its caller gives up — so becoming the primary here would open the
+			// same document in two processes (/pending 783). Exit; the document appears in
+			// the window that instance already has.
+			log.Printf("handed off to the Nib at %s, which is still opening the document; not starting a second Nib", rec.Addr)
+			return true
+		}
 		if err != nil {
 			log.Printf("could not hand off to the running instance: %v", err)
 			return false

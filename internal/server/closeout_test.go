@@ -688,7 +688,7 @@ func TestANonPrimaryNibDoesNotCloseOut(t *testing.T) {
 
 	// ── The NON-PRIMARY arm: another Nib holds this machine's instance record.
 	srv.mu.Lock()
-	srv.instanceToken = ""
+	srv.SetInstanceToken("")
 	srv.mu.Unlock()
 	srv.closeOutEnded(v, time.Now())
 	if _, serr := os.Stat(live); serr != nil {
@@ -702,7 +702,7 @@ func TestANonPrimaryNibDoesNotCloseOut(t *testing.T) {
 	// ── The PRIMARY arm, from the same fixture: it DOES close out. Without this the assertion
 	// above is satisfied by a sweep that never moves anything.
 	srv.mu.Lock()
-	srv.instanceToken = "this-one"
+	srv.SetInstanceToken("this-one")
 	srv.mu.Unlock()
 	srv.closeOutEnded(v, time.Now())
 	if _, serr := os.Stat(live); !os.IsNotExist(serr) {

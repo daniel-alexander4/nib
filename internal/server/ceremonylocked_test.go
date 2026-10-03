@@ -158,7 +158,7 @@ func TestALockedReadRunsNoCloseOutSweep(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	srv := New(os.DirFS("."), os.DirFS("."), t.TempDir(), "test")
-	srv.instanceToken = "primary"
+	srv.SetInstanceToken("primary")
 	ts := serveTest(t, srv)
 	t.Cleanup(ts.Close)
 

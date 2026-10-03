@@ -215,7 +215,7 @@ const exitingMsg = "exiting: "
 //
 // **A channel and not a teardown call, and that is D6.** `run()`'s teardown is four steps and only
 // two of them are visible there — `DisarmSession()` and `srv.Close()` run inline, then the LIFO
-// defers `stop()` and `instance.Remove(cfgDir)` — which is why `main()` is `os.Exit(run())` at all.
+// defers `stop()` and `instance.Remove(cfgDir, own)` — which is why `main()` is `os.Exit(run())` at all.
 // A third *cause* that called teardown itself would be a third teardown, and the failure that
 // prevents is the stale instance record returning by a new door (ADR-009).
 func (s *Server) IdleExit() <-chan struct{} {

@@ -62,7 +62,7 @@ func TestTheRecordIsPrivateToItsOwner(t *testing.T) {
 
 func TestRemoveIsIdempotentAndReadRejectsAPartialRecord(t *testing.T) {
 	dir := t.TempDir()
-	if err := Remove(dir); err != nil {
+	if _, err := Remove(dir, "any"); err != nil {
 		t.Errorf("removing an absent record returned %v, want nil — a crash-then-cleanup and a clean exit must not be distinguishable", err)
 	}
 	if err := os.WriteFile(Path(dir), []byte(`{"addr":"127.0.0.1:9"}`), 0o600); err != nil {
@@ -93,14 +93,14 @@ func TestProbeAnswersForALiveInstanceAndNotForAStaleOne(t *testing.T) {
 	defer live.Close()
 	addr := strings.TrimPrefix(live.URL, "http://")
 
-	if !Probe(Record{Addr: addr, Token: tok}) {
+	if Probe(Record{Addr: addr, Token: tok}) != Alive {
 		t.Fatal("a live instance did not answer its own probe — every assertion below is meaningless without this")
 	}
 
 	// **A port that answers is not enough.** A random port freed by a dead Nib is
 	// reassigned to whatever asks next, so a bare connect would say "alive" to an
 	// unrelated service and a launch would hand it a document path.
-	if Probe(Record{Addr: addr, Token: "the-wrong-token"}) {
+	if Probe(Record{Addr: addr, Token: "the-wrong-token"}) == Alive {
 		t.Error("the probe accepted a wrong token — it is testing that SOMETHING is listening, not that it is our instance")
 	}
 
@@ -108,7 +108,7 @@ func TestProbeAnswersForALiveInstanceAndNotForAStaleOne(t *testing.T) {
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	deadAddr := strings.TrimPrefix(dead.URL, "http://")
 	dead.Close()
-	if Probe(Record{Addr: deadAddr, Token: tok}) {
+	if Probe(Record{Addr: deadAddr, Token: tok}) == Alive {
 		t.Error("the probe reported a closed instance as alive")
 	}
 }
@@ -125,13 +125,13 @@ func TestProbeRefusesANonLoopbackRecord(t *testing.T) {
 	defer remote.Close()
 	// The stimulus: this server DOES answer a probe when addressed as loopback, so a
 	// refusal below is the address check and not an unreachable host.
-	if !Probe(Record{Addr: strings.TrimPrefix(remote.URL, "http://"), Token: "t"}) {
+	if Probe(Record{Addr: strings.TrimPrefix(remote.URL, "http://"), Token: "t"}) != Alive {
 		t.Skip("the test server is not on a loopback address; nothing to distinguish")
 	}
 	reached = false
 
 	for _, addr := range []string{"203.0.113.5:1234", "example.com:80", "[2001:db8::1]:80"} {
-		if Probe(Record{Addr: addr, Token: "t"}) {
+		if Probe(Record{Addr: addr, Token: "t"}) == Alive {
 			t.Errorf("the probe accepted the non-loopback address %q", addr)
 		}
 	}

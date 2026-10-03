@@ -154,9 +154,7 @@ func (s *Server) closeOutEnded(v *vault.Vault, now time.Time) {
 	// Checked here rather than at the two call sites: ADR-009, one rule and one door. The unlock
 	// hook is `deliveryRearm`-gated and the route is `primary`-aware, and neither of those gates
 	// is this one.
-	s.mu.Lock()
-	primary := s.instanceToken != ""
-	s.mu.Unlock()
+	primary := s.isPrimary()
 	if !primary {
 		return
 	}
