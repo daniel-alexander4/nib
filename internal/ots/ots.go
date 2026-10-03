@@ -1,16 +1,17 @@
-// Package ots produces OpenTimestamps proofs. It submits a document's SHA-256
-// digest to public OpenTimestamps calendar servers and assembles their returned
-// commitments into a standard .ots proof file, which anchors the digest to the
-// Bitcoin blockchain and is independently verifiable by any OpenTimestamps tool —
+// Package ots produces and verifies OpenTimestamps proofs. It submits a document's
+// SHA-256 digest to public OpenTimestamps calendar servers and assembles their
+// returned commitments into a standard .ots proof file, which anchors the digest to
+// the Bitcoin blockchain and is independently verifiable by any OpenTimestamps tool —
 // with no certificate, no account, and no trust in Nib.
 //
 // Only the 32-byte digest ever leaves the machine, never the document.
 //
-// Nib produces proofs but does not verify them: verifying an .ots requires a
-// source of Bitcoin block headers (a node or a block explorer), which is out of
-// scope and a dependency Nib deliberately does not take. A freshly stamped proof
-// is "pending" and becomes verifiable a few hours after the next Bitcoin block
-// confirms it; anyone can then check it with the reference client or web tools.
+// A freshly stamped proof is "pending" and becomes verifiable a few hours after the
+// next Bitcoin block confirms it. VerifyProof (verify.go) then checks it: it upgrades
+// a pending commitment against its calendar in memory and compares the result with
+// the block header from Esplora block explorers — several independent ones that must
+// agree (DefaultMinAgree), or the user's own. Anyone can equally check the proof with
+// the reference client or web tools.
 //
 // The .ots wire format (header, varuint version, file-hash op, digest, then a
 // sequence of operations ending in an attestation) follows the OpenTimestamps
@@ -181,8 +182,14 @@ func appendVarbytes(b, v []byte) []byte {
 // sequence of operations terminating in a single pending (calendar) attestation,
 // with no trailing bytes — so a buggy or hostile calendar cannot make Nib emit a
 // corrupt or surprising proof.
+//
+// It admits exactly the operations compute executes (executable) under the same
+// argument and result bounds VerifyProof applies (readOpArg, opResultLen), so a
+// proof Nib writes is one Nib can verify (/pending 807: reverse and hexlify were
+// accepted here and refused there).
 func validatePendingSequence(b []byte) error {
 	c := &cursor{b: b}
+	msgLen := 32 // the sha256 file digest the sequence starts from
 	for {
 		tag, err := c.byte()
 		if err != nil {
@@ -205,15 +212,22 @@ func validatePendingSequence(b []byte) error {
 			}
 			return nil
 		}
-		switch tag {
-		case 0xf0, 0xf1: // append, prepend — each take a byte-string argument
-			if _, err := c.varbytes(); err != nil {
+		if !executable(tag) {
+			return fmt.Errorf("unsupported operation tag 0x%02x", tag)
+		}
+		o := op{tag: tag}
+		if tag == opAppend || tag == opPrepend {
+			arg, err := readOpArg(c)
+			if err != nil {
 				return err
 			}
-		case 0x02, 0x03, 0x08, 0x67, 0xf2, 0xf3: // sha1, ripemd160, sha256, keccak256, reverse, hexlify — no argument
-		default:
-			return fmt.Errorf("unknown operation tag 0x%02x", tag)
+			o.arg = arg
 		}
+		n, err := opResultLen(msgLen, o)
+		if err != nil {
+			return err
+		}
+		msgLen = n
 	}
 }
 
