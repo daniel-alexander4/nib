@@ -104,6 +104,15 @@ func ReadForInspection(pdf []byte) (*model.Context, error) {
 	if err != nil {
 		return nil, err
 	}
+	InheritResources(ctx)
+	return ctx, nil
+}
+
+// InheritResources puts on every page that has no `/Resources` of its own the ones it inherits — the half of pdfcpu's
+// per-page resource step a reader of a page's own dictionary depends on, for a context read with that step OFF
+// (`ReadForInspection`, and the accessibility checker's read, `/pending 782`). The nearest ancestor's dictionary, which
+// is what PDF's inheritance means; it never prunes, so every name the file binds is still bound.
+func InheritResources(ctx *model.Context) {
 	for _, pg := range Pages(ctx) {
 		if pg.Err != nil || pg.Dict == nil || pg.Attrs == nil || len(pg.Attrs.Resources) == 0 {
 			continue
@@ -112,7 +121,6 @@ func ReadForInspection(pdf []byte) (*model.Context, error) {
 			pg.Dict["Resources"] = pg.Attrs.Resources
 		}
 	}
-	return ctx, nil
 }
 
 func readOptimized(pdf []byte, conf *model.Configuration, strict bool) (*model.Context, error) {

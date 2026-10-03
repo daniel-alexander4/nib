@@ -267,12 +267,18 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		// oracle it is scored against. /pending 719. It is still read through pdfread's door, which bounds the join
 		// at `maxContentBytes` (`/pending 748`: one stream named six times ran this check 13.7 s at 3.2 GiB).
 		src, cerr := pdfread.PageContentAsPdfcpu(d.Ctx, page, p)
-		if cerr == model.ErrNoContent || len(src) == 0 {
+		// The error is asked BEFORE the length (`/pending 782`): a refusal returns no bytes, and asking the length
+		// first read a page whose content decodes past `maxContentBytes` as a page that draws nothing — NotApplicable.
+		// The optimize pass's own refusal had hidden it until the checker stopped running that pass's page step.
+		if cerr == model.ErrNoContent {
 			continue
 		}
 		if cerr != nil {
 			d.contentErr = fmt.Sprintf("page %d's content stream could not be read: %v", p, cerr)
 			return d.content, d.contentErr
+		}
+		if len(src) == 0 {
+			continue
 		}
 		spKey := -1
 		if sp, ok := d.intValue(page["StructParents"]); ok {
@@ -489,15 +495,32 @@ const (
 // 64 MiB form). Only the decoded BYTES are kept, never what a walk made of them: a form's reading depends on the
 // graphics state and marked-content stack it is drawn in, so every draw is still walked, and charged
 // (`maxContentBytes`). An inline stream (object number 0) has no key and is decoded where it is met.
+//
+// **A FAILED decode is cached too** (`/pending 780`). A failure charges nothing — there are no bytes to walk — so
+// caching only successes left a form that inflates past the budget and then refuses to be inflated again at every
+// `Do`, with nothing ever tripping `overBudget`: one 520 MiB form of spaces drawn 16 times ran 6.9 s, a decode a
+// draw. The answer cannot change within a check: a refusal at the limit stays one as the limit only shrinks, and
+// any other decode error is the stream's own bytes.
 func (d *Document) decodedContent(sd *types.StreamDict, objNr int) ([]byte, error) {
-	if src, ok := d.decoded[objNr]; ok && objNr != 0 {
-		return src, nil
+	if objNr != 0 {
+		if src, ok := d.decoded[objNr]; ok {
+			return src, nil
+		}
+		if err, ok := d.decodeFailed[objNr]; ok {
+			return nil, err
+		}
 	}
 	d.streamDecodes++
 	// Decoded only as far as the byte budget has left (`/pending 748`): the first walk charges the whole stream,
 	// so a stream past what is left can never be walked, and inflating it first was the cost — one 400 KB form
 	// inflated to 400 MiB before anything could refuse it.
 	if err := pdfread.DecodeWithin(sd, int64(maxContentBytes-d.contentBytes)); err != nil {
+		if objNr != 0 {
+			if d.decodeFailed == nil {
+				d.decodeFailed = map[int]error{}
+			}
+			d.decodeFailed[objNr] = err
+		}
 		return nil, err
 	}
 	if objNr != 0 {
@@ -618,7 +641,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 			// Only a DICTIONARY of a font subtype veraPDF builds rebinds it (`PDExtGState.getFont`, `PDFontFactory`); any
 			// other `/Font` leaves the font in force, as a missing one does (the P07.S02 re-review measured both).
 			if name := w.firstName(src, operands); len(name) > 1 {
-				egs := w.d.dict(w.d.dict(res["ExtGState"])[fontcode.Name([]byte(name[1:]))])
+				egs := w.d.dict(w.d.dict(res["ExtGState"])[nameKey(name)])
 				if arr, err := w.d.Ctx.DereferenceArray(egs["Font"]); err == nil && len(arr) > 0 {
 					if f := w.d.dict(arr[0]); f != nil && extGStateFontTypes[w.d.name(f["Subtype"])] {
 						ts.fontName = name + " (its ExtGState /Font)"
@@ -634,7 +657,7 @@ func (w walker) walkWithState(src []byte, res types.Dict, inherited []frame, cha
 				ts.fontName = name
 				ts.font, ts.fontObj = nil, 0
 				if fonts := w.d.dict(res["Font"]); fonts != nil && len(name) > 1 {
-					raw := fonts[fontcode.Name([]byte(name[1:]))]
+					raw := fonts[nameKey(name)]
 					ts.font = w.d.dict(raw)
 					if ir, ok := raw.(types.IndirectRef); ok {
 						ts.fontObj = ir.ObjectNumber.Value()
@@ -716,7 +739,7 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 		w.emit(stack, false, where+" (unresolvable XObject)")
 		return
 	}
-	raw := xobjs[name[1:]]
+	raw := xobjs[nameKey(name)]
 	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
 	if err != nil {
 		// Separated from `sd == nil` the way `walkAppearances` separates them (`/pending 507`): an
@@ -1019,7 +1042,7 @@ func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, de
 	if len(name) < 2 {
 		return
 	}
-	raw := w.d.dict(res["Pattern"])[name[1:]]
+	raw := w.d.dict(res["Pattern"])[nameKey(name)]
 	sd, _, err := w.d.Ctx.DereferenceStreamDict(raw)
 	if err != nil && raw != nil {
 		// **A SHADING pattern is a dictionary, not a stream**, and `DereferenceStreamDict` answers "wrong type"
@@ -1035,9 +1058,10 @@ func (w walker) enterPattern(name string, res types.Dict, chain map[int]bool, de
 	}
 	if err != nil || sd == nil {
 		// **A pattern name that resolves to nothing is a pattern nib did not read, never one that draws
-		// nothing** (P06.S05). pdfcpu's reader DROPS a page's `/Pattern` resource that the page's own
-		// content never selects — measured: a form with no `/Resources` inheriting the page's pattern loses
-		// it — so the name reaches here unbound although the file binds it. Since P06.S05 a pattern's `Do`s
+		// nothing** (P06.S05). pdfcpu's reader DROPPED a page's `/Pattern` resource that the page's own
+		// content never selects — measured: a form with no `/Resources` inheriting the page's pattern lost
+		// it — so the name reached here unbound although the file binds it. The checker no longer runs that
+		// pruning step (`checkerConfig`, `/pending 782`), but a name the file does not bind still lands here. Since P06.S05 a pattern's `Do`s
 		// are `7.20 t2`'s population, and returning quietly was a live false PASS: veraPDF FAILS a document
 		// whose inherited pattern draws a keyed form twice, and nib passed it. `doXObject` already refuses
 		// the same drop on the XObject route.
@@ -1240,20 +1264,20 @@ func (d *Document) markedContent(src []byte, operands []contentstream.Token, res
 		if len(names) == 0 {
 			return "", propertyList{}
 		}
-		return string(operands[names[len(names)-1]].Bytes(src)[1:]), propertyList{}
+		return nameKey(operands[names[len(names)-1]].Bytes(src)), propertyList{}
 	}
 	if dictAt >= 0 {
 		if len(names) == 0 {
 			return "", propertyList{}
 		}
-		return string(operands[names[len(names)-1]].Bytes(src)[1:]), propertyList{d: d, src: src, inline: operands[dictAt:]}
+		return nameKey(operands[names[len(names)-1]].Bytes(src)), propertyList{d: d, src: src, inline: operands[dictAt:]}
 	}
 	// `/Tag /MC0 BDC`: the tag is the argument before the property name, so one name alone is no tag.
 	if len(names) < 2 {
 		return "", propertyList{}
 	}
-	named := string(operands[names[len(names)-1]].Bytes(src)[1:])
-	return string(operands[names[len(names)-2]].Bytes(src)[1:]), propertyList{dict: d.dict(d.dict(res["Properties"])[named]), d: d}
+	named := nameKey(operands[names[len(names)-1]].Bytes(src))
+	return nameKey(operands[names[len(names)-2]].Bytes(src)), propertyList{dict: d.dict(d.dict(res["Properties"])[named]), d: d}
 }
 
 // propertyList is a marked-content property list read from one of its two spellings.
@@ -1304,7 +1328,6 @@ func (p propertyList) integer(key string) (int, bool) {
 // this property list's, and an `/Artifact << /BBox [ … ] >>`'s array must not swallow the key after it.
 func (p propertyList) at(key string) (contentstream.Token, bool) {
 	depth := 0
-	want := "/" + key
 	for i, tk := range p.inline {
 		switch tk.Kind {
 		case contentstream.DictOpen, contentstream.ArrayOpen:
@@ -1317,11 +1340,24 @@ func (p propertyList) at(key string) (contentstream.Token, bool) {
 			}
 			continue
 		}
-		if depth == 1 && tk.Kind == contentstream.Operand && string(tk.Bytes(p.src)) == want && i+1 < len(p.inline) {
+		if depth == 1 && tk.Kind == contentstream.Operand && nameKey(tk.Bytes(p.src)) == key && i+1 < len(p.inline) {
 			return p.inline[i+1], true
 		}
 	}
 	return contentstream.Token{}, false
+}
+
+// nameKey is the ONE door from a name token in a content stream — `/` and all — to the name it denotes, the
+// key every resource dictionary, marked-content tag and inline property list is read by (`/pending 782`, ADR-009).
+// A name's `#xx` escapes are decoded (ISO 32000-1 §7.3.5), as pdfcpu does for every name it parses and veraPDF for
+// every name in a content stream: measured on 1.30.2, `/Artif#61ct BMC` is an artifact and `/X#30 Do` draws `/X0`.
+// Six sites compared the raw bytes while `Tf` and `gs` decoded, so one escape meant two names in one walk.
+// Anything that is not a name is "", which no resource is keyed by.
+func nameKey[T ~string | ~[]byte](tok T) string {
+	if len(tok) < 2 || tok[0] != '/' {
+		return ""
+	}
+	return fontcode.Name([]byte(tok[1:]))
 }
 
 // firstName returns the first name operand, or "".

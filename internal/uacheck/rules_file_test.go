@@ -1171,8 +1171,9 @@ func spDoc(pages [][2]string, extra map[int]string) map[int]string {
 // before the rule was written or found by its review — 33 of the 38 documents measured, each with the
 // verdict veraPDF gave it (the other five: a string `/StructParents`, which pdfcpu refuses to open and the
 // rule declares; a reference to an integer, which veraPDF fails exactly as the null-reference row; the first
-// fused row spread over two pages, which veraPDF passes exactly as that row; and the page-reversed XObject
-// inheritance and a nested pattern inheritance, which nib refuses for the same reason as the rows here).
+// fused row spread over two pages, which veraPDF passes exactly as that row; and a nested pattern inheritance, which
+// nib refused for the same reason as the inheritance rows here until `/pending 782` — the page-reversed XObject
+// inheritance is a row now).
 //
 // The clause's message says *"contains MCIDs and is referenced more than once"*; its test reads neither
 // MCIDs nor the structure tree, only the `/StructParents` KEY and how often veraPDF builds the form — and
@@ -1214,13 +1215,10 @@ func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
 	// because is, for each CannotCheck row, a phrase its refusal must carry — so a refusal for some other
 	// reason does not pass as this one.
 	because := map[string]string{
-		"two equal keyed forms, each drawn once":                                         "equal to",
-		"two equal keyed forms, one drawn twice":                                         "equal to",
-		"two equal outer forms each drawing a keyed inner":                               "equal to",
-		"two keyed forms equal only one way round":                                       "equal to",
-		"an inherited pattern that draws the keyed form twice, bound on the FIRST page":  "could not resolve",
-		"an inherited pattern that draws the keyed form twice, bound on the SECOND page": "could not resolve",
-		"an inherited XObject binding, the drawing one on the first page":                "could not be read",
+		"two equal keyed forms, each drawn once":           "equal to",
+		"two equal keyed forms, one drawn twice":           "equal to",
+		"two equal outer forms each drawing a keyed inner": "equal to",
+		"two keyed forms equal only one way round":         "equal to",
 	}
 	for _, c := range []struct {
 		name string
@@ -1328,26 +1326,33 @@ func TestAFormWithStructParentsIsTalliedAsVeraPDFTraversesIt(t *testing.T) {
 				"missed the twin and FAILED this on 27 of 40 runs — the review's finding 1"},
 
 		// ── A form with no /Resources inherits its invoker's, and the FIRST traversal's binding is the one
-		// veraPDF keeps — measured both ways round. pdfcpu's reader drops the page's binding the form
-		// inherits, so nib cannot follow either and refuses; before the refusal the pattern route was a false pass.
+		// veraPDF keeps — measured both ways round. pdfcpu's per-page resource step dropped the page's binding the
+		// form inherits (its content never names it), so nib refused these until `/pending 782` turned that step
+		// off for the checker; before the refusal the pattern route was a false pass. Now each is veraPDF's answer.
 		{"an inherited pattern that draws the keyed form twice, bound on the FIRST page", spDoc([][2]string{
 			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 15 0 R >>"},
 			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 14 0 R >>"}},
 			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Pattern cs /P0 scn 0 0 5 5 re f"),
-				14: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "0 0 1 1 re f"), 15: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), CannotCheck,
+				14: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "0 0 1 1 re f"), 15: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), Fail,
 			"veraPDF FAILS (3 passed, 1 failed); nib PASSED it, reading nothing, until an unbound pattern became a refusal"},
 		{"an inherited pattern that draws the keyed form twice, bound on the SECOND page", spDoc([][2]string{
 			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 14 0 R >>"},
 			{"/A Do", "/XObject << /A 11 0 R >> /Pattern << /P0 15 0 R >>"}},
 			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Pattern cs /P0 scn 0 0 5 5 re f"),
-				14: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "0 0 1 1 re f"), 15: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), CannotCheck,
+				14: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "0 0 1 1 re f"), 15: spStream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), Pass,
 			"veraPDF PASSES (2 checks): A is traversed once, with page 1's binding, so the drawing pattern is never reached"},
 		{"an inherited XObject binding, the drawing one on the first page", spDoc([][2]string{
 			{"/A Do", "/XObject << /A 11 0 R /Y 13 0 R >>"},
 			{"/A Do", "/XObject << /A 11 0 R /Y 12 0 R >>"}},
 			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Y Do"), 12: spForm("", "0 0 1 1 re f"),
-				13: spForm("/Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), CannotCheck,
-			"veraPDF FAILS (4 passed, 1 failed), and passes the page-reversed file (3 checks)"},
+				13: spForm("/Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), Fail,
+			"veraPDF FAILS (4 passed, 1 failed)"},
+		{"an inherited XObject binding, the drawing one on the second page", spDoc([][2]string{
+			{"/A Do", "/XObject << /A 11 0 R /Y 12 0 R >>"},
+			{"/A Do", "/XObject << /A 11 0 R /Y 13 0 R >>"}},
+			map[int]string{10: spForm(SP, spMC), 11: spForm("", "/Y Do"), 12: spForm("", "0 0 1 1 re f"),
+				13: spForm("/Resources << /XObject << /K 10 0 R >> >>", "/K Do /K Do")}), Pass,
+			"veraPDF PASSES the page-reversed file (3 checks): A is traversed once, with page 1's binding"},
 		{"two equal keyed forms, one drawn three times", spDoc([][2]string{{"/X0 Do /X0 Do /X0 Do", "/XObject << /X0 10 0 R /X1 11 0 R >>"}},
 			map[int]string{10: spForm(SP, spMC), 11: spForm(SP, spMC)}), Fail,
 			"three reaches over two keys: one of them was reached twice whatever pdfcpu fused"},

@@ -69,3 +69,49 @@ func TestAHugeFormDrawnRepeatedlyIsStoppedPromptly(t *testing.T) {
 		t.Fatalf("80 draws of a 64 MiB form of spaces report %v (%s), want CannotCheck naming the content byte budget", got.Verdict, got.Why)
 	}
 }
+
+// /pending 780: the cache above kept only SUCCESSES. A form whose decode fails charged nothing, so it was inflated
+// again at every `Do` with nothing tripping the budget — one 520 MiB form of spaces drawn 16 times ran 6.9 s, a decode
+// a draw (the P07 phase-close review, measured). The failure is cached too; these count decodes, not seconds.
+
+// TestAFormPastTheBudgetDrawnRepeatedlyIsDecodedOnce is the measured shape at a size a test can afford: the budget is
+// spent down to 1 MiB first, so a 2 MiB form inflates past what is left and refuses — at every one of 16 draws, before.
+func TestAFormPastTheBudgetDrawnRepeatedlyIsDecodedOnce(t *testing.T) {
+	d, err := open(whitespaceFormDrawn(2<<20, 16))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	d.contentBytes = maxContentBytes - 1<<20
+	_, why := d.contentEvents()
+	if !strings.Contains(why, "could not be decoded") {
+		t.Fatalf("control: a 2 MiB form drawn with 1 MiB of budget left reports %q, want the decode refused", why)
+	}
+	if d.streamDecodes != 1 {
+		t.Fatalf("16 draws of one form whose decode refuses at the budget decoded it %d times, want once — a failed "+
+			"decode is cached per object as a successful one is", d.streamDecodes)
+	}
+}
+
+// TestAFormThatCannotBeDecodedDrawnRepeatedlyIsDecodedOnce is the other failure class: a stream whose own bytes do not
+// decode. It is just as deterministic, so it is just as cached.
+func TestAFormThatCannotBeDecodedDrawnRepeatedlyIsDecodedOnce(t *testing.T) {
+	page := strings.Repeat("/X0 Do ", 16)
+	bad := "this is not flate"
+	d, err := open(buildPDF(map[int]string{
+		1:   "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:   "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:   "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /X0 100 0 R >> >> /Contents 4 0 R >>",
+		4:   fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(page), page),
+		7:   "<< /Type /StructTreeRoot >>",
+		100: fmt.Sprintf("<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream", len(bad), bad),
+	}))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, why := d.contentEvents(); !strings.Contains(why, "could not be decoded") {
+		t.Fatalf("control: a form of corrupt flate reports %q, want its decode refused", why)
+	}
+	if d.streamDecodes != 1 {
+		t.Fatalf("16 draws of one form that cannot be decoded decoded it %d times, want once", d.streamDecodes)
+	}
+}

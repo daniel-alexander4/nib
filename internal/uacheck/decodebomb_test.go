@@ -59,8 +59,12 @@ func TestANestedStreamIsDecodedOnlyAsFarAsTheBudgetHasLeft(t *testing.T) {
 }
 
 // TestAPageNamingOneStreamRepeatedlyIsRefusedPromptly is the item's case through the checker's own entry: one
-// 100 MiB stream named six times. The optimize pass the checker reads through refuses it before decoding it six
-// times, and the check says so rather than reading 600 MiB of content.
+// 100 MiB stream named six times. The checker reads it once, through the page-content door bounded at
+// `maxContentBytes`, and the content rules say so rather than reading 600 MiB of content.
+//
+// **It was the optimize pass's refusal (`ErrUnaffordable`) until `/pending 782`**: the pass decoded page content
+// only for its per-page resource step, which the checker no longer runs (`checkerConfig`), so nothing in the read
+// decodes the stream and the refusal moved to where the decode is.
 func TestAPageNamingOneStreamRepeatedlyIsRefusedPromptly(t *testing.T) {
 	z := flatedSpacesUA(100 << 20)
 	pdf := buildPDF(map[int]string{
@@ -72,9 +76,19 @@ func TestAPageNamingOneStreamRepeatedlyIsRefusedPromptly(t *testing.T) {
 		7: "<< /Type /StructTreeRoot >>",
 	})
 	start := time.Now()
-	_, err := Check(pdf)
-	if !errors.Is(err, pdfread.ErrUnaffordable) {
-		t.Errorf("one 100 MiB stream named six times checked with %v, want ErrUnaffordable", err)
+	rep, err := Check(pdf)
+	if err != nil {
+		t.Fatalf("one 100 MiB stream named six times: Check: %v", err)
+	}
+	var got Result
+	for _, r := range rep.Results {
+		if r.Clause == "7.1 t3" {
+			got = r
+		}
+	}
+	if got.Verdict != CannotCheck || got.Why == "" {
+		t.Errorf("one 100 MiB stream named six times reports 7.1 t3 %v (%s), want CannotCheck saying the content was "+
+			"not read in full", got.Verdict, got.Why)
 	}
 	if el := time.Since(start); el > 15*time.Second {
 		t.Errorf("the check took %v to refuse it, want well under 15 s (one decode, not six)", el)
