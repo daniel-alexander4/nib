@@ -7,6 +7,7 @@ var (
 	DecodeOnce             = &decodeOnce
 	PassDecodesPageContent = passDecodesPageContent
 	ValidatorPaths         = validatorPaths // the reference door's walk (refgraph.go), without the budget
+	PathBudget             = pathBudget     // the reference door's budget (refgraph.go)
 )
 
 // WalkedInOnePass reports whether Pages answered from its one walk rather than asking PageDict page by page.

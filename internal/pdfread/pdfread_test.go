@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,5 +237,120 @@ func TestTheReferenceWalkIsSizedByObjectsNotByTheirNumbers(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	if got := after.TotalAlloc - before.TotalAlloc; got > 4<<20 {
 		t.Errorf("the walk allocated %d bytes over %d objects — it is sized by the highest object number", got, len(raw.Table))
+	}
+}
+
+// pagesSharing builds m pages that all name one indirect `/Annots` array of k slots, each naming annotation 4, whose
+// action chain is n long — and, when aa, give every page one shared `/AA` whose open action is that chain's head
+// instead. resources puts `/Resources << >>` on each page: the old door walked a page only when it had them.
+func pagesSharing(m, k, n int, aa, resources bool) []byte {
+	first := 5 + n
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		3: "[" + strings.Repeat("4 0 R ", k) + "]",
+		4: "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A 5 0 R >>",
+	}
+	res := ""
+	if resources {
+		res = " /Resources << >>"
+	}
+	var kids []string
+	for i := 0; i < m; i++ {
+		kids = append(kids, fmt.Sprintf("%d 0 R", first+i))
+		if aa {
+			objs[first+i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10]" + res + " /AA << /O 5 0 R >> >>"
+		} else {
+			objs[first+i] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10]" + res + " /Annots 3 0 R >>"
+		}
+	}
+	objs[2] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), m)
+	for i := 0; i < n; i++ {
+		act := fmt.Sprintf("<< /S /GoTo /D [%d 0 R /Fit] /Next %d 0 R >>", first, 6+i)
+		if i == n-1 {
+			act = fmt.Sprintf("<< /S /GoTo /D [%d 0 R /Fit] >>", first)
+		}
+		objs[5+i] = act
+	}
+	return testpdf.Assemble(objs)
+}
+
+// TestAPageIsCountedWhetherOrNotItHasResources — /pending 800. pdfcpu validates every page's `/Annots` and `/AA` once
+// per page; the door counted a page only when it carried `/Resources`, so 200 pages sharing one `/Annots` array that
+// names one annotation 200 times, its action chain 30 long, validated for 5.4 s and passed (measured), while the same
+// shape with `/Resources << >>` on each page was refused in milliseconds.
+func TestAPageIsCountedWhetherOrNotItHasResources(t *testing.T) {
+	conf := model.NewDefaultConfiguration()
+	// Stimulus: WITH resources the shape is refused — the door can see it at all, so the difference below is the gate.
+	if _, err := pdfread.Validated(pagesSharing(200, 200, 30, false, true), conf); !errors.Is(err, pdfread.ErrReferencePaths) {
+		t.Fatalf("setup: the shared-slot shape WITH /Resources was not refused (%v), so the door cannot see it at all", err)
+	}
+	for _, c := range []struct {
+		name string
+		pdf  []byte
+	}{
+		{"200 pages without /Resources sharing one /Annots of 200 slots over a 30-action chain", pagesSharing(200, 200, 30, false, false)},
+		{"1,200 pages without /Resources sharing one /AA whose open action heads a 300-action chain", pagesSharing(1200, 0, 300, true, false)},
+	} {
+		start := time.Now()
+		refusedAs(t, pdfread.ErrReferencePaths, c.name, func() error {
+			_, err := pdfread.Validated(c.pdf, conf)
+			return err
+		})
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("%s: refusing took %v — the door must answer before the validator's cost", c.name, d)
+		}
+	}
+	// The same shapes at a size pdfcpu validates quickly still read: a page is counted, not refused for being a page.
+	for _, pdf := range [][]byte{pagesSharing(20, 20, 30, false, false), pagesSharing(20, 0, 30, true, false)} {
+		if _, err := pdfread.Validated(pdf, conf); err != nil {
+			t.Errorf("a small shared shape was refused: %v", err)
+		}
+	}
+}
+
+// freeEntriesDoc is a three-object document whose classic xref also declares n FREE entries — about 20 bytes each.
+func freeEntriesDoc(n int) []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.7\n")
+	var off []int
+	for _, s := range []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
+	} {
+		off = append(off, b.Len())
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", len(off), s)
+	}
+	x := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", n+4)
+	for _, o := range off {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	for i := 0; i < n; i++ {
+		b.WriteString("0000000000 00001 f \n")
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", n+4, x)
+	return b.Bytes()
+}
+
+// TestFreeXrefEntriesDoNotRaiseThePathBudget — /pending 811. The budget grows per LIVE object, the population the
+// walk counts; counting every table entry let a file buy itself budget with free entries (1,000,000 of them took a
+// 3-object document from 262,208 paths to 16,262,208 — 62×, measured).
+func TestFreeXrefEntriesDoNotRaiseThePathBudget(t *testing.T) {
+	conf := model.NewDefaultConfiguration()
+	plain, err := api.ReadContext(bytes.NewReader(freeEntriesDoc(0)), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded, err := api.ReadContext(bytes.NewReader(freeEntriesDoc(100000)), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stimulus: the padded file really carries the entries, or the budgets below agree for the wrong reason.
+	if len(padded.Table) < 100000 {
+		t.Fatalf("setup: the padded table holds %d entries, not the 100,000 free ones declared", len(padded.Table))
+	}
+	if a, b := pdfread.PathBudget(plain), pdfread.PathBudget(padded); a != b {
+		t.Errorf("100,000 free xref entries moved the path budget from %d to %d — a file can buy itself validator time", a, b)
 	}
 }

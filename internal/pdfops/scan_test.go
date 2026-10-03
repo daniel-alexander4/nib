@@ -12,6 +12,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
+	"nib/internal/pdfread"
 	"nib/internal/testpdf"
 )
 
@@ -1032,9 +1033,18 @@ func TestAnAnnotationSharedAcrossPagesIsWalkedOnce(t *testing.T) {
 	if actions != 1 {
 		t.Fatalf("the shared annotation's JavaScript was reported %d times, want once", actions)
 	}
-	// StripActive is not timed: its validated read spends seconds in pdfcpu's own validator on this shape, which walks
-	// the chain once per slot (filed from the same review); what is asserted is that the strip still takes it.
-	out, err := StripActive(doc)
+	// StripActive's validated read is pdfcpu's validator, which walks the chain once per page per slot — 1,240,260
+	// paths here, 5.4 s before /pending 800 counted a page's /Annots whether or not it has /Resources. It is now
+	// refused at the reference door, at once.
+	start = time.Now()
+	if _, err := StripActive(doc); !errors.Is(err, pdfread.ErrReferencePaths) {
+		t.Fatalf("StripActive on 200 pages × 200 slots × a 30-action chain: want ErrReferencePaths, got %v", err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("refusing the shared-slot shape took %v", took)
+	}
+	// A shared shape the door admits (20 pages × 20 slots — 12,420 paths) is still stripped of its JavaScript.
+	out, err := StripActive(sharedAnnotsDoc(20, 20, 30, true))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -82,6 +82,7 @@ const (
 	roleRendition                  // a selector rendition's `/R` (media.go:1038 → :942)
 	roleMediaClip                  // a media clip section's `/D` (media.go:604 → :537)
 	roleTree                       // a name or number tree node with `/Limits`: `/Kids` — pdfcpu caps its depth, so a loop is its own; sharing is counted
+	rolePage                       // a page: roleResourced's `/Resources` and `/Annots`, and its `/AA` actions (page.go, annotation.go:1849)
 	numRoles
 )
 
@@ -144,9 +145,18 @@ func refuseUnboundedReferences(ctx *model.Context) error {
 	return nil
 }
 
-// pathBudget is `basePaths` plus `pathsPerObject` for each object in ctx.
+// pathBudget is `basePaths` plus `pathsPerObject` for each LIVE object in ctx — one that is not free and holds an
+// object, the population `validatorPaths` walks. Counting every table entry (/pending 811) let a document raise its
+// own budget with free xref entries: 1,000,000 of them in a 20 MB classic xref took a 3-object file's budget from
+// 262,208 to 16,262,208 paths (62×, measured), against a validator nothing else stops.
 func pathBudget(ctx *model.Context) uint64 {
-	return uint64(basePaths + pathsPerObject*len(ctx.Table))
+	live := 0
+	for _, e := range ctx.Table {
+		if e != nil && !e.Free && e.Object != nil {
+			live++
+		}
+	}
+	return uint64(basePaths + pathsPerObject*live)
 }
 
 // validatorPaths is the number of paths pdfcpu's validator takes along the edges below, or the loop or depth refusal
@@ -211,7 +221,15 @@ func rootRoles(o types.Object) []role {
 
 func dictRoles(d types.Dict) []role {
 	var rs []role
-	if _, ok := d["Resources"]; ok {
+	// **A page is walked whether or not it has `/Resources`** (/pending 800). pdfcpu validates every page's `/Annots`
+	// (`validatePagesAnnotations`, xReftable.go:1214) and its `/AA` actions (`validatePageDict` → page.go
+	// `validateAdditionalActions`) once per page, and the old gate — roleResourced only for a dict carrying
+	// `/Resources` — never counted either on a page without them: 200 pages sharing one `/Annots` array that names one
+	// annotation 200 times, its action chain 30 long, validated for 5.4 s and passed (measured), while the same shape
+	// with `/Resources << >>` on the page was refused in 12 ms.
+	if nameOf(d, "Type") == "Page" {
+		rs = append(rs, rolePage)
+	} else if _, ok := d["Resources"]; ok {
 		rs = append(rs, roleResourced)
 	}
 	if intOf(d, "FunctionType") == 3 {
@@ -423,7 +441,10 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 		return
 	}
 	switch r {
-	case roleResourced:
+	case roleResourced, rolePage:
+		if r == rolePage {
+			g.values(d["AA"], roleAction, at("AA"), emit) // a page's open/close actions (page.go → action.go:975)
+		}
 		if res := g.dict(d["Resources"]); res != nil {
 			for _, v := range g.dict(res["Pattern"]) {
 				if _, stream := g.deref(v).(types.StreamDict); stream {
