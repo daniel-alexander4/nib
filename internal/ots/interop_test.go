@@ -2,6 +2,7 @@ package ots
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"sort"
@@ -67,7 +68,7 @@ func TestSerializeFlattenedRealProof(t *testing.T) {
 		}
 		var out []string
 		for _, s := range p.seqs {
-			c, err := s.compute(p.digest)
+			c, err := s.compute(context.Background(), p.digest)
 			if err != nil {
 				t.Fatalf("compute: %v", err)
 			}
@@ -107,7 +108,7 @@ func TestComputeRIPEMD160(t *testing.T) {
 		{"", "9c1185a5c5e9fc54612808977ee8f548b2258d31"},
 		{"abc", "8eb208f7e05d987a9b044a8e98c6b087f15a0bfc"},
 	} {
-		got, err := (sequence{ops: []op{{tag: opRIPEMD160}}}).compute([]byte(tc.in))
+		got, err := (sequence{ops: []op{{tag: opRIPEMD160}}}).compute(context.Background(), []byte(tc.in))
 		if err != nil {
 			t.Fatalf("compute ripemd160(%q): %v", tc.in, err)
 		}
@@ -123,7 +124,7 @@ func TestComputeSHA1(t *testing.T) {
 		{"", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
 		{"abc", "a9993e364706816aba3e25717850c26c9cd0d89d"},
 	} {
-		got, err := (sequence{ops: []op{{tag: opSHA1}}}).compute([]byte(tc.in))
+		got, err := (sequence{ops: []op{{tag: opSHA1}}}).compute(context.Background(), []byte(tc.in))
 		if err != nil {
 			t.Fatalf("compute sha1(%q): %v", tc.in, err)
 		}
@@ -141,7 +142,7 @@ func TestComputeKeccak256(t *testing.T) {
 		{"", "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"},
 		{"abc", "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"},
 	} {
-		got, err := (sequence{ops: []op{{tag: opKeccak256}}}).compute([]byte(tc.in))
+		got, err := (sequence{ops: []op{{tag: opKeccak256}}}).compute(context.Background(), []byte(tc.in))
 		if err != nil {
 			t.Fatalf("compute keccak256(%q): %v", tc.in, err)
 		}
@@ -164,7 +165,7 @@ func TestComputeRealRipemd160Proof(t *testing.T) {
 	if len(p.seqs) != 1 {
 		t.Fatalf("want 1 sequence, got %d", len(p.seqs))
 	}
-	root, err := p.seqs[0].compute(p.digest)
+	root, err := p.seqs[0].compute(context.Background(), p.digest)
 	if err != nil {
 		t.Fatalf("compute (ripemd160 path): %v", err)
 	}

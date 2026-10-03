@@ -74,17 +74,16 @@ const maxPendingUpgrades = 8
 // spec's crypto ops, so compute handles all four — sha256, ripemd160, sha1, and
 // keccak256 — plus append/prepend. keccak256 (tag 0x67) is the *legacy* Keccak-256
 // (Ethereum-style), not NIST SHA3-256, pinned against python-opentimestamps's
-// OpKECCAK256 (Cryptodome keccak, digest_bits=256). These hash ops are size-safe:
-// each output is ≤32 bytes and append/prepend grow only by parsed argument bytes,
-// so a proof can't blow up memory during compute.
+// OpKECCAK256 (Cryptodome keccak, digest_bits=256). Each hash output is ≤32 bytes;
+// what bounds append/prepend is maxOpResult, below — not the argument cap, because
+// the RESULT is the running message and every op copies it (/pending 781).
 //
 // The parser also tolerates two transform ops, reverse (0xf2) and hexlify (0xf3),
 // that compute deliberately does NOT execute — it returns a clear "unsupported
-// operation" error instead. reverse is pending removal upstream and hexlify is
-// effectively unused; more to the point, hexlify *doubles* its input, so executing
-// it without a message-length cap (as the reference enforces) would let a tiny
-// .ots encode an exponential-size intermediate — a DoS the four hash ops can't
-// cause. If a real proof ever needs hexlify, add it with that bound, not without.
+// operation" error instead, and Stamp refuses a calendar response that uses them
+// (executable is the one list). reverse is pending removal upstream and hexlify is
+// effectively unused. If a real proof ever needs one, add it to executable and to
+// compute; maxOpResult already bounds hexlify's doubling.
 const (
 	opAppend    = 0xf0
 	opPrepend   = 0xf1
@@ -92,6 +91,97 @@ const (
 	opSHA1      = 0x02
 	opKeccak256 = 0x67
 )
+
+// maxOpResult is the longest message any operation may take or produce, in bytes:
+// python-opentimestamps' Op.MAX_RESULT_LENGTH and MAX_MSG_LENGTH, both 4096, read
+// from opentimestamps/core/op.py at master 3af46432. The reference raises
+// MsgValueError past it and computes every result while DESERIALIZING, so a proof
+// that crosses it is not one the reference will even load. Its binary-op argument
+// is varbytes of 1..MAX_RESULT_LENGTH, which readOpArg mirrors.
+//
+// /pending 781: the parser capped each argument (64 KiB) and the op count
+// (100,000) but not the result, and compute copies the running message on every
+// append and prepend — sixteen 64 KiB appends then 8,000 one-byte ones, a 1 MB
+// file, cost 1.8 s of CPU before any network, consulting no deadline. The cost is
+// ops × message length, so bounding the message is what bounds the work.
+const maxOpResult = 4096
+
+// executable reports whether compute walks tag. It is the one list: compute refuses
+// anything else, and Stamp accepts from a calendar only what this admits, so nib
+// never writes a .ots it cannot verify itself (/pending 807).
+func executable(tag byte) bool {
+	switch tag {
+	case opAppend, opPrepend, opSHA256, opRIPEMD160, opSHA1, opKeccak256:
+		return true
+	}
+	return false
+}
+
+// ErrOpResultTooLong refuses an operation whose message or result would exceed
+// maxOpResult. It wraps ErrProofTooComplex: a hostile shape, not a malformed one.
+var ErrOpResultTooLong = fmt.Errorf("%w: an operation's result is longer than %d bytes",
+	ErrProofTooComplex, maxOpResult)
+
+// opResultLen is the length o produces from a message of msgLen bytes, refusing
+// one past maxOpResult. It is the ONE door for that bound: the parse-time walk
+// (checkLengths) and compute both ask it, compute before it allocates. reverse and
+// hexlify get lengths so a branch using them is still checked at parse, though
+// compute will not run it.
+func opResultLen(msgLen int, o op) (int, error) {
+	var n int
+	switch o.tag {
+	case opAppend, opPrepend:
+		n = msgLen + len(o.arg)
+	case opSHA256, opKeccak256:
+		n = 32
+	case opRIPEMD160, opSHA1:
+		n = 20
+	case 0xf2: // reverse
+		n = msgLen
+	case 0xf3: // hexlify
+		n = 2 * msgLen
+	default:
+		return 0, fmt.Errorf("unknown operation tag 0x%02x", o.tag)
+	}
+	if msgLen > maxOpResult || n > maxOpResult {
+		return 0, ErrOpResultTooLong
+	}
+	return n, nil
+}
+
+// checkLengths walks s's lengths from the 32-byte file digest without computing
+// anything, so a proof whose results cross maxOpResult is refused when it is read —
+// as the reference refuses it — rather than one branch at a time inside compute.
+func (s sequence) checkLengths() error {
+	n := sha256.Size
+	for _, o := range s.ops {
+		var err error
+		if n, err = opResultLen(n, o); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readOpArg reads a binary op's argument as the reference does, which refuses an
+// empty one. Its upper bound, 1..MAX_RESULT_LENGTH there, needs no check of its own
+// here: the message is never shorter than 20 bytes, so any argument past
+// maxOpResult-20 already fails opResultLen. The proof parser and Stamp's calendar
+// check both read through it.
+func readOpArg(c *cursor) ([]byte, error) {
+	arg, err := c.varbytes()
+	if err != nil {
+		return nil, err
+	}
+	if len(arg) == 0 {
+		return nil, errors.New("an append or prepend argument is empty")
+	}
+	return arg, nil
+}
+
+// computeCheckEvery is how many operations compute runs between looks at its
+// context — at ≤ maxOpResult bytes an op, about a MiB of work.
+const computeCheckEvery = 256
 
 // VerifyResult is the outcome of checking an .ots proof against a document.
 type VerifyResult struct {
@@ -151,10 +241,25 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 			"fetched", ErrProofTooComplex, nPending, maxPendingUpgrades)
 	}
 
+	// The instructions an upgrade may splice in are charged against the proof's own
+	// maxProofInstructions, not granted afresh per calendar (/pending 781): each calendar's tail
+	// is parsed under its own 100,000 cap, so eight of them stacked eight times the bound onto a
+	// file that had already used it.
+	budget := maxProofInstructions
+	for _, s := range p.seqs {
+		budget -= len(s.ops)
+	}
+
 	var attested []sequence
 	updated := make([]sequence, 0, len(p.seqs)) // every sequence, upgraded where possible
 	pending := false
 	upgradedAny := false
+	// "Pending" is a calendar's answer, so it is reported only when one GAVE it (/pending 813).
+	// An upgrade that failed — DNS, refused, TLS, its own 20 s timeout, a tail nib refuses — is
+	// no answer at all, and folding it into "not yet" told the user their proof is unconfirmed
+	// when nib had simply failed to ask.
+	answeredNotYet := false
+	var upgradeErr error
 	for _, s := range p.seqs {
 		switch {
 		case s.height != 0:
@@ -162,11 +267,18 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 			updated = append(updated, s)
 		case s.calURL != "":
 			pending = true
-			if up, ok, err := upgrade(ctx, client, s, p.digest); err == nil && ok {
+			up, ok, err := upgrade(ctx, client, s, p.digest, budget)
+			switch {
+			case err != nil:
+				upgradeErr = err
+				updated = append(updated, s)
+			case ok:
+				budget -= len(up.ops) - len(s.ops)
 				attested = append(attested, up)
 				updated = append(updated, up)
 				upgradedAny = true
-			} else {
+			default:
+				answeredNotYet = true
 				updated = append(updated, s) // calendar hasn't confirmed yet — keep pending
 			}
 		}
@@ -179,6 +291,9 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	}
 	if len(attested) == 0 {
 		if pending {
+			if !answeredNotYet && upgradeErr != nil {
+				return nil, fmt.Errorf("could not ask the calendar server about this proof: %w", upgradeErr)
+			}
 			return &VerifyResult{State: StatePending}, nil
 		}
 		return nil, errors.New("proof carries no Bitcoin attestation")
@@ -222,7 +337,10 @@ func VerifyProof(ctx context.Context, client *http.Client, sources []BlockSource
 	var sawBranch bool
 
 	for _, s := range attested {
-		root, err := s.compute(p.digest)
+		root, err := s.compute(ctx, p.digest)
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, fmt.Errorf("verification ran out of time: %w", cerr)
+		}
 		if err != nil {
 			// A branch this build cannot walk (an op `compute` declines) is not a verdict
 			// about the document — a later branch may still confirm it.
@@ -383,9 +501,11 @@ func fetchAgreedHeader(ctx context.Context, sources []BlockSource, minAgree int,
 // upgrade folds a pending calendar commitment into a complete Bitcoin-attested
 // sequence by asking the calendar for the path to a block. It works in memory and
 // does not persist the upgraded proof. ok is false if the calendar has not yet
-// confirmed the commitment (still pending).
-func upgrade(ctx context.Context, client *http.Client, s sequence, digest []byte) (sequence, bool, error) {
-	commitment, err := s.compute(digest)
+// confirmed the commitment (still pending): only a 404 says that, as in the reference
+// client's calendar.get_timestamp; any other status is an error, not an answer.
+// budget is how many operations the calendar's tail may add (see VerifyProof).
+func upgrade(ctx context.Context, client *http.Client, s sequence, digest []byte, budget int) (sequence, bool, error) {
+	commitment, err := s.compute(ctx, digest)
 	if err != nil {
 		return s, false, err
 	}
@@ -415,8 +535,11 @@ func upgrade(ctx context.Context, client *http.Client, s sequence, digest []byte
 		return s, false, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode == http.StatusNotFound {
 		return s, false, nil // not yet confirmed
+	}
+	if resp.StatusCode != http.StatusOK {
+		return s, false, fmt.Errorf("calendar %s returned %d", cu.Host, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
@@ -428,7 +551,15 @@ func upgrade(ctx context.Context, client *http.Client, s sequence, digest []byte
 	}
 	for _, t := range tails {
 		if t.height != 0 {
-			return sequence{ops: append(append([]op{}, s.ops...), t.ops...), height: t.height}, true, nil
+			if len(t.ops) > budget {
+				return s, false, fmt.Errorf("%w: the calendar's path adds %d operations to a proof "+
+					"with room for %d", ErrProofTooComplex, len(t.ops), budget)
+			}
+			up := sequence{ops: append(append([]op{}, s.ops...), t.ops...), height: t.height}
+			if err := up.checkLengths(); err != nil {
+				return s, false, err
+			}
+			return up, true, nil
 		}
 	}
 	return s, false, nil // calendar responded but no block attestation yet
@@ -455,10 +586,23 @@ type proof struct {
 }
 
 // compute applies the sequence's operations to the digest and returns the result
-// — the calendar commitment (pending) or the block merkle root (Bitcoin).
-func (s sequence) compute(digest []byte) ([]byte, error) {
+// — the calendar commitment (pending) or the block merkle root (Bitcoin). Every op
+// passes opResultLen BEFORE it allocates, and ctx is consulted every
+// computeCheckEvery ops, so the caller's deadline bounds it (/pending 781).
+func (s sequence) compute(ctx context.Context, digest []byte) ([]byte, error) {
 	cur := append([]byte{}, digest...)
-	for _, o := range s.ops {
+	for i, o := range s.ops {
+		if i%computeCheckEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if !executable(o.tag) {
+			return nil, fmt.Errorf("proof uses unsupported operation 0x%02x", o.tag)
+		}
+		if _, err := opResultLen(len(cur), o); err != nil {
+			return nil, err
+		}
 		switch o.tag {
 		case opAppend:
 			cur = append(append([]byte{}, cur...), o.arg...)
@@ -478,8 +622,6 @@ func (s sequence) compute(digest []byte) ([]byte, error) {
 			h := sha3.NewLegacyKeccak256() // legacy Keccak, not NIST SHA3-256
 			h.Write(cur)
 			cur = h.Sum(nil)
-		default:
-			return nil, fmt.Errorf("proof uses unsupported operation 0x%02x", o.tag)
 		}
 	}
 	return cur, nil
@@ -507,6 +649,11 @@ func parseProof(b []byte) (*proof, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, s := range seqs {
+		if err := s.checkLengths(); err != nil {
+			return nil, err
+		}
+	}
 	return &proof{digest: append([]byte{}, digest...), seqs: seqs}, nil
 }
 
@@ -525,9 +672,10 @@ func parseProof(b []byte) (*proof, error) {
 // pop them). Real proofs carry tens of operations; this ceiling is four orders
 // above any of them and holds the parse to a few MiB.
 //
-// Note the sibling bound already in this file: compute's hash ops are size-safe by
-// construction, and hexlify is refused outright because it doubles its input. Same
-// reasoning, one layer down — this is the layer it had not been applied to.
+// Its sibling is maxOpResult, which holds each op's RESULT — what compute copies — so
+// the two together bound compute's work: this one the count, that one the bytes per
+// op. An upgrade's spliced calendar ops are charged against this same figure
+// (VerifyProof's budget), not given a second one of their own.
 const maxProofInstructions = 100_000
 
 // parseSequences walks the operation/attestation/checkpoint encoding into a set
@@ -608,7 +756,7 @@ func parseSequences(c *cursor) ([]sequence, error) {
 		default:
 			in := instr{tag: tag}
 			if tag == opAppend || tag == opPrepend {
-				arg, err := c.varbytes()
+				arg, err := readOpArg(c)
 				if err != nil {
 					return nil, err
 				}

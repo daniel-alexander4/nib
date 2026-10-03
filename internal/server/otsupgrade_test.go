@@ -62,7 +62,7 @@ func TestAPendingTimestampProofCanBeUpgradedAndSaved(t *testing.T) {
 
 	// LINK 1 — the pending path re-fetches from the calendar. This is the one the entry said did
 	// not exist.
-	if !strings.Contains(verify, "upgrade(ctx, client, s, p.digest)") {
+	if !strings.Contains(verify, "upgrade(ctx, client, s, p.digest, budget)") {
 		t.Error("VerifyProof no longer upgrades a pending sequence against its calendar. A .ots " +
 			"Nib wrote then reports `pending` on every verification forever, and the state a user " +
 			"means by \"once it is complete\" becomes unreachable — which is /pending 388 verbatim")

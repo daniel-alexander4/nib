@@ -33,7 +33,7 @@ func bitcoinSeqBytes(nonce []byte, height uint64) []byte {
 
 func TestComputeOps(t *testing.T) {
 	digest := []byte{0x01, 0x02}
-	got, err := sequence{ops: []op{{opAppend, []byte{0xaa}}, {opPrepend, []byte{0xbb}}}}.compute(digest)
+	got, err := sequence{ops: []op{{opAppend, []byte{0xaa}}, {opPrepend, []byte{0xbb}}}}.compute(context.Background(), digest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestComputeOps(t *testing.T) {
 	}
 
 	h := sha256.Sum256(digest)
-	got, _ = sequence{ops: []op{{opSHA256, nil}}}.compute(digest)
+	got, _ = sequence{ops: []op{{opSHA256, nil}}}.compute(context.Background(), digest)
 	if !bytes.Equal(got, h[:]) {
 		t.Fatalf("sha256: got %x want %x", got, h[:])
 	}
@@ -51,7 +51,7 @@ func TestComputeOps(t *testing.T) {
 	// sha1/keccak256/ripemd160 are now executed (see the Compute* vector tests);
 	// the transform ops reverse (0xf2) and hexlify (0xf3) stay deliberately
 	// unsupported, so an unknown/unexecuted tag must still surface a clear error.
-	if _, err := (sequence{ops: []op{{0xf3, nil}}}).compute(digest); err == nil {
+	if _, err := (sequence{ops: []op{{0xf3, nil}}}).compute(context.Background(), digest); err == nil {
 		t.Fatal("expected unsupported-op error for hexlify (0xf3)")
 	}
 }
@@ -83,8 +83,8 @@ func TestVerifyProofConfirmed(t *testing.T) {
 
 	// commitment the calendar will be asked about, and the merkle root the
 	// upgraded sequence computes to.
-	commitment, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(digest[:])
-	root, _ := sequence{ops: []op{{opAppend, tailNonce}, {opSHA256, nil}}}.compute(commitment)
+	commitment, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(context.Background(), digest[:])
+	root, _ := sequence{ops: []op{{opAppend, tailNonce}, {opSHA256, nil}}}.compute(context.Background(), commitment)
 
 	calendar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/timestamp/"+hex.EncodeToString(commitment) {
@@ -148,7 +148,7 @@ func TestVerifyProofAgreementThreshold(t *testing.T) {
 	digest := sha256.Sum256([]byte("threshold doc"))
 	const height = uint64(800001)
 	nonce := []byte{0x09, 0x08}
-	root, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(digest[:])
+	root, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(context.Background(), digest[:])
 
 	hdr := make([]byte, 80)
 	copy(hdr[36:68], root)
@@ -193,8 +193,8 @@ func TestVerifyProofPersistsUpgrade(t *testing.T) {
 	nonce := []byte{0x11, 0x22}
 	tailNonce := []byte{0x33, 0x44, 0x55}
 
-	commitment, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(digest[:])
-	root, _ := sequence{ops: []op{{opAppend, tailNonce}, {opSHA256, nil}}}.compute(commitment)
+	commitment, _ := sequence{ops: []op{{opAppend, nonce}, {opSHA256, nil}}}.compute(context.Background(), digest[:])
+	root, _ := sequence{ops: []op{{opAppend, tailNonce}, {opSHA256, nil}}}.compute(context.Background(), commitment)
 
 	calendar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/timestamp/"+hex.EncodeToString(commitment) {
@@ -356,7 +356,7 @@ func TestAPrependedUnresolvableAttestationDoesNotDenyAGenuineProof(t *testing.T)
 	const good = uint64(800000)
 	const bogus = uint64(99999999)
 	tail := []byte{0x01, 0x02, 0x03}
-	root, _ := sequence{ops: []op{{opAppend, tail}, {opSHA256, nil}}}.compute(digest[:])
+	root, _ := sequence{ops: []op{{opAppend, tail}, {opSHA256, nil}}}.compute(context.Background(), digest[:])
 
 	src := &countingSource{roots: map[uint64][]byte{good: root}, blockT: time.Unix(1_700_000_000, 0)}
 
@@ -395,7 +395,7 @@ func TestAProofCannotDriveAnUnboundedNumberOfLookups(t *testing.T) {
 	digest := sha256.Sum256([]byte("verify me"))
 	const height = uint64(800000)
 	tail := []byte{0x01, 0x02, 0x03}
-	root, _ := sequence{ops: []op{{opAppend, tail}, {opSHA256, nil}}}.compute(digest[:])
+	root, _ := sequence{ops: []op{{opAppend, tail}, {opSHA256, nil}}}.compute(context.Background(), digest[:])
 
 	t.Run("many attestations at one height cost one lookup", func(t *testing.T) {
 		// NON-matching tails, all at one height.
