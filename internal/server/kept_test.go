@@ -401,8 +401,8 @@ func TestTheOpenDocumentsKeptCopyIsFoundByTheServer(t *testing.T) {
 		s.mu.Unlock()
 		return id
 	}
-	get := func(id docID) (int, []byte, http.Header) {
-		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/document/kept-copy", nil)
+	ask := func(method string, id docID) (int, []byte, http.Header) {
+		req, _ := http.NewRequest(method, ts.URL+"/api/document/kept-copy", nil)
 		req.Header.Set("X-Nib-Doc", id.String())
 		resp, err := c.Do(req)
 		if err != nil {
@@ -423,7 +423,15 @@ func TestTheOpenDocumentsKeptCopyIsFoundByTheServer(t *testing.T) {
 		{what: "signed without the tick", data: otherBody, cause: "none-kept"},
 		{what: "unsigned", data: base, cause: "no-signature"},
 	} {
-		code, body, hdr := get(open(tc.data))
+		id := open(tc.data)
+		code, body, hdr := ask(http.MethodGet, id)
+		// HEAD is the Simple Sign checklist's probe (P04.S03): the same verdict, the cause in a header, and no bytes.
+		hcode, hbody, hhdr := ask(http.MethodHead, id)
+		// That no body travels is net/http's own HEAD rule (the client never reads one), so it is not asserted here.
+		_ = hbody
+		if hcode != code || hhdr.Get("X-Nib-Kept-Copy-Cause") != tc.cause {
+			t.Errorf("%s: HEAD answered %d, cause %q; want %d, %q", tc.what, hcode, hhdr.Get("X-Nib-Kept-Copy-Cause"), code, tc.cause)
+		}
 		if tc.cause != "" {
 			var ref keptCopyRefusal
 			json.Unmarshal(body, &ref)
@@ -559,6 +567,16 @@ func TestAnUnreadableKeptFolderSaysSo(t *testing.T) {
 		}
 	}
 	s.mu.Unlock()
+	head, _ := http.NewRequest(http.MethodHead, ts.URL+"/api/document/kept-copy", nil)
+	head.Header.Set("X-Nib-Doc", id.String())
+	hresp, err := c.Do(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hresp.Body.Close()
+	if hresp.StatusCode != http.StatusUnprocessableEntity || hresp.Header.Get("X-Nib-Kept-Copy-Cause") != "unreadable" {
+		t.Errorf("HEAD: %d, cause %q; want 422 unreadable", hresp.StatusCode, hresp.Header.Get("X-Nib-Kept-Copy-Cause"))
+	}
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/document/kept-copy", nil)
 	req.Header.Set("X-Nib-Doc", id.String())
 	resp, err := c.Do(req)
@@ -568,7 +586,7 @@ func TestAnUnreadableKeptFolderSaysSo(t *testing.T) {
 	defer resp.Body.Close()
 	var ref keptCopyRefusal
 	json.NewDecoder(resp.Body).Decode(&ref)
-	if resp.StatusCode != http.StatusUnprocessableEntity || ref.Cause != "unreadable" {
-		t.Errorf("%d %+v, want 422 unreadable", resp.StatusCode, ref)
+	if resp.StatusCode != http.StatusUnprocessableEntity || ref.Cause != "unreadable" || resp.Header.Get("X-Nib-Kept-Copy-Cause") != "unreadable" {
+		t.Errorf("%d %+v (header %q), want 422 unreadable", resp.StatusCode, ref, resp.Header.Get("X-Nib-Kept-Copy-Cause"))
 	}
 }

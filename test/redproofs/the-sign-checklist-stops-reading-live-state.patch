@@ -1,10 +1,10 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -9425,7 +9425,6 @@
+@@ -11763,7 +11763,6 @@
    const state = unsaved ? 'Unsaved changes' : 'Saved';
    els.docDirty.setAttribute('aria-label', state);
    els.docDirty.title = state;
 -  renderSignSteps();
+   if (simpleSignOpen()) refreshKeptProbe(false); // a load or a switch: asked only when the answer is not already held
  }
  
- // Undo/Redo enable from the server's per-document history flags (view.docMeta.canUndo/

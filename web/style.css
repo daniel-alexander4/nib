@@ -1968,6 +1968,12 @@ body.presenting .presentbar { display: flex; }
 .signstep[data-state="done"] { color: var(--text); }
 .signstep[data-state="done"] .signstep-mark { color: var(--green); }
 .signstep[data-state="untracked"] .signstep-mark { opacity: .5; }
+/* The kept-copy row's ○ carries a link to the list (P04.S03): a document re-saved after signing no
+   longer matches its kept copy, and the copy is still there to find by hand. */
+.signstep-extra {
+  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer; padding: 2px 0;
+  font: inherit; font-size: 11px; color: var(--blue); text-decoration: underline;
+}
 
 /* The consent preview's page wrapper and the signer's own block outline (P02.S03).
    `position: relative` is what the outline is measured against — without it the box would be

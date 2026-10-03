@@ -586,7 +586,11 @@ and ticked when Nib can see it is done. Steps Nib can't observe — whether you 
 hidden-content scan, where you saved an `.ots` — show a dash rather than a tick it can't back.
 You can also tick any step off yourself — a hand tick is shown as your claim rather than as
 something Nib saw. It's a checklist, not a wizard: nothing is enforced, but two of the steps
-(applying a redaction, and signing) are one-way doors, and the order says so.
+(applying a redaction, and signing) are one-way doors, and the order says so. One step, *A copy
+kept when you signed*, is asked of Nib when the card opens: ✓ when a copy you kept matches the open
+document (it is that copy, or begins with it), ○ when none does — with how many are kept and a link
+to them — and a dash when the document carries no signature, which includes right after Finalize,
+while the open document is still the unsigned one.
 
 **Settings** is its own tab. Identity & peers, authorized keys, vault backup/restore, the
 update preference, the theme toggle, About — and **Colours**, which sets the sidebar's card
