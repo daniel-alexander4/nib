@@ -2256,6 +2256,10 @@ red. The test asserts the state, so a call that touches the document and ignores
 it. Re-cut as the realistic regression — `ReadStored` actually *using* `ReadMirror` — which a planted
 non-PDF then makes fail. The lesson is the general one: a stimulus that changes nothing observable is
 not a stimulus, and the harness caught it rather than the reviewer.
+*Re-recorded at PLAN-returned-document P03.S03 (v1.180.2):* the patch had drifted 360 lines from `ReadStored` and
+was applying **by fuzz 2 into `ReadMirror`'s body** — the wrong function — so the staleness scan counted it as applying
+while it planted the defect somewhere the row does not name. Splitting `ReadMirror` into `readMirrorAt` broke the fuzzy
+match, which is how it surfaced. Re-cut in `ReadStored` at its id check; applies with no fuzz and `redproof.sh` re-proves it.
 
 `recorded` 181 → 184.
 

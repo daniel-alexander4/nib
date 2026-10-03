@@ -309,6 +309,66 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 	if err != nil {
 		return Record{}, nil, err
 	}
+	return readMirrorAt(dir, id, now)
+}
+
+// ReadMirrorFor reads this machine's stored copy of the proceeding `named` describes — the live folder first, then
+// `~/nib/ended/<id>` — and reports whether the ended folder answered.
+//
+// **Its reader is the surface for a document that came back (PLAN-returned-document P03.S03)**, and a dispute is asked
+// after a ceremony ends, by which time ADR-012 has moved its folder; `ReadMirror` alone would find nothing exactly when
+// somebody looks. The same argument as `readTerminationAt`'s fallback, in one door so neither copy can stop falling
+// back. Every check `ReadMirror` makes runs on whichever folder answers, because both go through `readMirrorAt`.
+//
+// **A folder holding a DIFFERENT proceeding is passed over, never answered** (`ErrDifferentProceeding` when nothing
+// else answers). An id is a plain field anyone can mint (see `WriteMirror`), and `refuseDifferentProceeding` guards only
+// the live folder, so after a close-out another proceeding can take the same id there while this one sits in `ended/`.
+// And the roster is compared BEFORE damage is reported: a damaged copy of someone else's proceeding is not this
+// document's copy, so it is never described as one. A record that will not verify cannot say whose it is; its error
+// is returned only when no folder holds this proceeding.
+func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended bool, err error) {
+	want, err := named.RosterHash()
+	if err != nil {
+		return nil, false, err
+	}
+	live, err := MirrorDir(root, named.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	dirs := []string{live}
+	if moved, eerr := EndedDir(root, named.ID); eerr == nil {
+		dirs = append(dirs, moved)
+	}
+	var unknown error
+	different := false
+	for i, dir := range dirs {
+		r, pdf, rerr := readMirrorAt(dir, named.ID, now)
+		if errors.Is(rerr, fs.ErrNotExist) {
+			continue
+		}
+		if r.ID == "" { // the record itself failed: nothing says which proceeding this folder holds
+			if unknown == nil {
+				unknown = rerr
+			}
+			continue
+		}
+		if got, herr := r.RosterHash(); herr != nil || !bytes.Equal(got, want) {
+			different = true
+			continue
+		}
+		return pdf, i == 1, rerr
+	}
+	switch {
+	case unknown != nil:
+		return nil, false, unknown
+	case different:
+		return nil, false, fmt.Errorf("%w: the ceremony stored under this id is another proceeding", ErrDifferentProceeding)
+	}
+	return nil, false, fs.ErrNotExist
+}
+
+// readMirrorAt is ReadMirror's body over a resolved folder — the live one or the ended one.
+func readMirrorAt(dir, id string, now time.Time) (Record, []byte, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
 	if err != nil {
 		return Record{}, nil, err

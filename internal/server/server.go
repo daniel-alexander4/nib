@@ -459,6 +459,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/pdf", s.requireUnlocked(s.handlePDF))
 	// The version a signer signed, recovered from the document's own bytes (PLAN-returned-document P02.S03).
 	mux.HandleFunc("GET /api/document/revision", s.requireUnlocked(s.handleDocumentRevision))
+	// This machine's stored copy of the ceremony the document belongs to — the dispute surface's second link (P03.S03).
+	mux.HandleFunc("GET /api/document/ceremony-copy", s.requireUnlocked(s.handleDocumentCeremonyCopy))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
 	mux.HandleFunc("GET /api/stamps", s.requireUnlocked(s.handleStamps))
 	mux.HandleFunc("GET /api/docs", s.requireUnlocked(s.handleDocs))

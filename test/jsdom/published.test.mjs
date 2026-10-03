@@ -79,6 +79,10 @@ const PUBLISHED = [
   // surface for a document that came back (P03.S02), parked below until it does.
   { type: 'revisionFacts', readers: ['web/app.js'] },
   { type: 'revisionRefusal', readers: ['web/app.js'] },
+  // This machine's ceremony copy (P03.S03): `ceremonyCopyLines` words all three facts — ended, signed, extends — and
+  // `CEREMONY_COPY_REFUSED` the 422's cause.
+  { type: 'ceremonyCopyFacts', readers: ['web/app.js'] },
+  { type: 'ceremonyCopyRefusal', readers: ['web/app.js'] },
   { type: 'attachmentsResponse', readers: ['web/app.js'] },
   { type: 'attestationsResponse', readers: ['web/app.js'] },
   { type: 'attestationView', readers: ['web/app.js'] },

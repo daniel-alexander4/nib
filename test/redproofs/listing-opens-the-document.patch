@@ -1,8 +1,7 @@
 diff --git a/internal/ceremony/mirror.go b/internal/ceremony/mirror.go
-index a098f77..6ca224e 100644
 --- a/internal/ceremony/mirror.go
 +++ b/internal/ceremony/mirror.go
-@@ -253,6 +253,12 @@ func ReadStored(root, id string, now time.Time) Stored {
+@@ -619,6 +619,12 @@
  		s.State, s.Reason = LoadUnparseable, "that is not a ceremony id"
  		return s
  	}
@@ -12,6 +11,6 @@ index a098f77..6ca224e 100644
 +		return s
 +	}
 +	s.Intent, s.Expires, s.Roster = r0.Intent, r0.Expires, r0.Roster
- 	b, err := os.ReadFile(filepath.Join(dir, "record.json"))
- 	if err != nil {
- 		s.State = LoadAbsent
+ 	// **Read here, before any of the `LoadState` branches below can return.** The note is about
+ 	// what this machine showed its user, not about whether the record parses — and the state a
+ 	// reader most wants it for, a party who has accepted and not yet signed, is precisely one of

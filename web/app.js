@@ -99,7 +99,9 @@ const els = {
   ceremonySheet: $('ceremonySheet'), cerSheetClose: $('cerSheetClose'),
   returnedBtn: $('returnedBtn'), returnedSheet: $('returnedSheet'), returnedHeading: $('returnedHeading'),
   returnedClose: $('returnedClose'), returnedDoc: $('returnedDoc'), returnedVerdict: $('returnedVerdict'),
-  returnedSigners: $('returnedSigners'),
+  returnedSigners: $('returnedSigners'), returnedCmpSigned: $('returnedCmpSigned'),
+  returnedCmpCeremony: $('returnedCmpCeremony'), returnedCmpCeremonyNote: $('returnedCmpCeremonyNote'),
+  returnedCmpFile: $('returnedCmpFile'),
   cerSetupBar: $('cerSetupBar'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
@@ -464,6 +466,19 @@ async function fetchSignedRevision(docId, fp) {
   }
   if (!res.ok) throw new Error(await errText(res, 'Could not recover the signed version'));
   const facts = JSON.parse(res.headers.get('X-Nib-Revision') || '{}');
+  return { ok: true, bytes: await res.arrayBuffer(), facts };
+}
+
+// fetchCeremonyCopy asks for this machine's stored copy of the signing ceremony document `docId` belongs to — found
+// from the record embedded in the document, handed over only when the stored ceremony is the same proceeding
+// (PLAN-returned-document P03.S03). Pinned to `docId` (ADR-001); asked only when the user presses for it (D10).
+// Resolves `{ ok: true, bytes, facts }` (the X-Nib-Ceremony-Copy facts) or `{ ok: false, cause }` for the 422.
+async function fetchCeremonyCopy(docId) {
+  const res = await apiFetch('/api/document/ceremony-copy', { docId });
+  if (res.status === 422) return { ok: false, cause: (await res.json().catch(() => ({}))).cause };
+  if (!res.ok) throw new Error(await errText(res, 'Could not read the ceremony\'s copy'));
+  let facts = {};
+  try { facts = JSON.parse(res.headers.get('X-Nib-Ceremony-Copy') || '{}'); } catch { /* worded as "no facts" */ }
   return { ok: true, bytes: await res.arrayBuffer(), facts };
 }
 
@@ -4364,6 +4379,11 @@ let cmpSeq = 0;      // render token — discards a stale paint if the user flip
 let cmpAlign = null; // [{a,b}] auto page-matching steps (null until computed / when not meaningful)
 let cmpAlignIdx = 0; // position within cmpAlign for lockstep nav
 let cmpAlignTried = false; // whether fingerprinting+alignment has run for this pair
+// cmpFromCompared: the compared copy is the BASELINE — the text diff reads from it to the open document, so "added"
+// means "in this file and not in that copy"; the page banners and the toolbar's +/− count read the same way. Set by openCompareWith (the returned-document sheet, P03.S03), where the
+// copy is what you signed or kept and the open file is what came back; the toolbar's Compare leaves it off.
+let cmpFromCompared = false;
+let cmpLoadSeq = 0;  // load token: a Compare load that a newer one, or a close, superseded installs nothing
 
 function closeCmpDoc() {
   cmpSeq++; // teardown participates in the render token: in-flight aligns/paints bail instead of reading the nulled doc
@@ -4384,6 +4404,8 @@ function autoActive() { return els.cmAuto.checked && cmpAlign && cmpAlign.length
 // (added = pages only in the compared doc, removed = pages only in the open doc,
 // moved = a page that simply changed position), or a "pages aligned" note when the
 // pagination matches 1:1. A moved page is counted once and excluded from add/remove.
+// With the compared copy as the baseline (cmpFromCompared) the two signs swap: "+" is a page only in the open
+// document — in this file and not in the copy — so the count reads the way the text diff and the banners do.
 function alignStat() {
   let added = 0, removed = 0, moved = 0;
   for (const s of cmpAlign) {
@@ -4393,6 +4415,7 @@ function alignStat() {
     else if (s.b == null) removed++;
   }
   if (!added && !removed && !moved) return 'pages aligned';
+  if (cmpFromCompared) [added, removed] = [removed, added];
   return [added ? `+${added}` : '', removed ? `−${removed}` : '', moved ? `⇄${moved}` : ''].filter(Boolean).join(' ');
 }
 
@@ -4431,6 +4454,8 @@ async function ensureAlignment() {
 }
 function openCompare() {
   if (!view.pdfDocument) return toast('Open a PDF first');
+  cmpFromCompared = false;
+  cmpLoadSeq++; // a load still parsing from an earlier opening is not this one's
   closeCmpDoc();
   els.compareTools.hidden = true;
   els.compareSummary.hidden = true;
@@ -4438,25 +4463,48 @@ function openCompare() {
   els.compareModal.hidden = false;
 }
 els.compareBtn.onclick = openCompare;
-els.compareClose.onclick = () => { els.compareModal.hidden = true; closeCmpDoc(); };
+els.compareClose.onclick = () => { els.compareModal.hidden = true; cmpLoadSeq++; closeCmpDoc(); };
 els.comparePick.onclick = () => els.compareInput.click();
 els.compareInput.onchange = async () => {
   const f = els.compareInput.files[0];
   els.compareInput.value = '';
   if (!f) return;
+  await loadCompared(() => f.arrayBuffer(), f.name);
+};
+
+// loadCompared puts a second document into Compare from its bytes — a picked file, or bytes the server supplied — and
+// shows the text diff. One door, so a copy handed over as bytes is compared exactly as a picked file is (D11).
+// A later load supersedes an earlier one still parsing (the sheet's buttons stay pressable while Compare loads, and
+// a large copy takes a while): the earlier document is destroyed when it arrives rather than installed under the
+// later one's name (`cmpLoadSeq`).
+async function loadCompared(getBytes, name) {
+  const seq = ++cmpLoadSeq;
   closeCmpDoc();
   els.compareBody.innerHTML = '<p class="scan-where">Loading…</p>';
+  let doc;
   try {
-    const buf = new Uint8Array(await f.arrayBuffer());
-    cmpDoc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: buf }).promise;
+    const buf = new Uint8Array(await getBytes());
+    doc = await pdfjsLib.getDocument({ ...PDFJS_OPTS, data: buf }).promise;
   } catch {
-    els.compareBody.innerHTML = '<p class="scan-where">Could not read that PDF.</p>';
+    if (seq === cmpLoadSeq) els.compareBody.innerHTML = '<p class="scan-where">Could not read that PDF.</p>';
     return;
   }
-  cmpName = f.name;
+  if (seq !== cmpLoadSeq) { doc.loadingTask.destroy().catch(() => {}); return; }
+  cmpDoc = doc;
+  cmpName = name;
   els.compareTools.hidden = false;
   setCompareMode('text'); // default to the text diff (instant; preserves prior behaviour)
-};
+}
+
+// openCompareWith opens Compare with `name`'s copy as the baseline (cmpFromCompared): with bytes it loads them, and
+// with none it asks the user for a file. The returned-document sheet's three ways to see what changed (P03.S03).
+function openCompareWith(bytes, name) {
+  openCompare();
+  if (els.compareModal.hidden) return; // no document open: openCompare said so
+  cmpFromCompared = true;
+  if (bytes) loadCompared(() => bytes.slice(0), name);
+  else els.compareInput.click();
+}
 
 // The mode toolbar: switch view, re-rendering the current page for the visual modes.
 for (const btn of document.querySelectorAll('.cmmode')) {
@@ -4505,9 +4553,18 @@ async function renderCompareText() {
   els.compareSummary.hidden = true;
   if (!cmpText) {
     els.compareBody.innerHTML = '<p class="scan-where">Comparing text…</p>';
-    cmpText = { a: await documentText(view.pdfDocument), b: await documentText(cmpDoc) };
+    // The render token (/pending 778): closeCmpDoc bumps cmpSeq, so a close, a view switch or a newer load across these
+    // awaits discards this extraction instead of caching one pair's text under the next pair.
+    const seq = cmpSeq;
+    const other = cmpDoc; // read before the first await: a close nulls it
+    const a = await documentText(view.pdfDocument);
+    if (seq !== cmpSeq) return;
+    const b = await documentText(other);
+    if (seq !== cmpSeq) return;
+    cmpText = { a, b };
   }
-  renderCompare(cmpText.a, cmpText.b, cmpName);
+  if (cmpFromCompared) renderCompare(cmpText.b, cmpText.a, cmpName, true);
+  else renderCompare(cmpText.a, cmpText.b, cmpName);
 }
 
 // Visual modes: rasterise the selected page of each document (lazily, one page at
@@ -4552,9 +4609,13 @@ async function renderCompareVisual(mode) {
     const ra = await renderPageCanvas(view.pdfDocument, cmpPageA, CMP_SCALE);
     if (seq !== cmpSeq) return;
     els.compareSummary.hidden = false;
-    els.compareSummary.textContent = step.movedTo != null
-      ? `Page ${cmpPageA} moved to page ${step.movedTo} of ${cmpName}.`
-      : `Page ${cmpPageA} is only in the open document (removed from ${cmpName}).`;
+    els.compareSummary.textContent = cmpFromCompared
+      ? (step.movedTo != null
+        ? `Page ${cmpPageA} of this file is page ${step.movedTo} of ${cmpName}.`
+        : `Page ${cmpPageA} of this file is not in ${cmpName}.`)
+      : step.movedTo != null
+        ? `Page ${cmpPageA} moved to page ${step.movedTo} of ${cmpName}.`
+        : `Page ${cmpPageA} is only in the open document (removed from ${cmpName}).`;
     els.compareBody.textContent = '';
     showCompareCanvases([[`Open document — page ${cmpPageA}`, ra.canvas]]);
     return;
@@ -4563,9 +4624,13 @@ async function renderCompareVisual(mode) {
     const rb = await renderPageCanvas(cmpDoc, cmpPageB, CMP_SCALE);
     if (seq !== cmpSeq) return;
     els.compareSummary.hidden = false;
-    els.compareSummary.textContent = step.movedFrom != null
-      ? `Page ${cmpPageB} of ${cmpName} moved from page ${step.movedFrom} of the open document.`
-      : `Page ${cmpPageB} was added in ${cmpName} (not in the open document).`;
+    els.compareSummary.textContent = cmpFromCompared
+      ? (step.movedFrom != null
+        ? `Page ${cmpPageB} of ${cmpName} is page ${step.movedFrom} of this file.`
+        : `Page ${cmpPageB} of ${cmpName} is not in this file.`)
+      : step.movedFrom != null
+        ? `Page ${cmpPageB} of ${cmpName} moved from page ${step.movedFrom} of the open document.`
+        : `Page ${cmpPageB} was added in ${cmpName} (not in the open document).`;
     els.compareBody.textContent = '';
     showCompareCanvases([[`${cmpName} — page ${cmpPageB}`, rb.canvas]]);
     return;
@@ -4759,7 +4824,9 @@ async function runPdfa(engine) {
 // green, unchanged text muted. Empty text on either side means a scan with no
 // text layer — say so rather than show a bogus all-changed diff. DOM is built
 // with textContent (never innerHTML) so PDF text can't inject markup.
-function renderCompare(a, b, name) {
+// renderCompare word-diffs a → b. `fromCompared` says the inputs arrive the other way round — a is the compared copy
+// (`name`) and b the open document — so the captions name the right side; the differ itself is unchanged (D11).
+function renderCompare(a, b, name, fromCompared = false) {
   const body = els.compareBody;
   body.textContent = '';
   const note = (msg) => {
@@ -4768,8 +4835,9 @@ function renderCompare(a, b, name) {
     p.textContent = msg;
     body.appendChild(p);
   };
-  if (!a.trim() || !b.trim()) {
-    note(!a.trim()
+  const openText = fromCompared ? b : a, otherText = fromCompared ? a : b;
+  if (!openText.trim() || !otherText.trim()) {
+    note(!openText.trim()
       ? 'The open document has no extractable text (a scan?). Run OCR on it first, then compare.'
       : `“${name}” has no extractable text (a scan?). Run OCR on it first, then compare.`);
     return;
@@ -4781,7 +4849,10 @@ function renderCompare(a, b, name) {
   }
   const dels = parts.filter((p) => p.removed).length;
   const adds = parts.filter((p) => p.added).length;
-  note(`Open document → “${name}”: ${dels} removed and ${adds} added section(s). Removed text is struck through in red, additions in green.`);
+  note(fromCompared
+    ? `“${name}” → this file: ${dels} removed and ${adds} added section(s). Red, struck through: in “${name}” and not `
+      + `in this file. Green: in this file and not in “${name}”.`
+    : `Open document → “${name}”: ${dels} removed and ${adds} added section(s). Removed text is struck through in red, additions in green.`);
   const pre = document.createElement('div');
   pre.className = 'difftext';
   for (const part of parts) {
@@ -15721,6 +15792,7 @@ function openReturnedSheet() {
   // A name off disk: text, never markup.
   els.returnedDoc.textContent = view.originalName || view.docMeta.name || view.docMeta.path || 'This document';
   els.returnedVerdict.textContent = '';
+  resetReturnedCompare();
   els.returnedSheet.hidden = false;
   els.viewerWrap.hidden = true;
   els.returnedHeading.focus();
@@ -15819,6 +15891,9 @@ async function checkReturned(state) {
   }
   v.textContent = '';
   if (best) {
+    // Held for "see what changed": the bytes already fetched, never a second request (D10's caller census).
+    state.recovered = best;
+    els.returnedCmpSigned.hidden = false;
     sayFound(best, say);
     // Two certificates of yours, one recovered: the other's refusal is not lost (the review).
     // Worded as a NAME, not as signing (C1): the refusal may be a signature that only names the certificate.
@@ -15921,6 +15996,91 @@ function renderReturnedSigners(signers, whose, myEnd) {
     list.appendChild(row);
   }
 }
+
+// ── See what changed (P03.S03, D11) ───────────────────────────────────────────────────────────────────────────────
+//
+// Every way out of the sheet into Compare takes the copy as the BASELINE (openCompareWith): what you signed or kept is
+// where the reading starts, and this file is what came back. The fallback chain is offered in the plan's order — the
+// copy kept at signing (P04.S02's slot, named and empty), this machine's ceremony copy, a file you choose — and the
+// version you signed, when the check recovered it, comes first of all. Each acts on the sheet's own document: the
+// sheet closes when the active document changes, and a press after an await re-checks that it is still the same sheet.
+
+// resetReturnedCompare clears what the previous opening of the sheet left in the region.
+function resetReturnedCompare() {
+  els.returnedCmpSigned.hidden = true;
+  els.returnedCmpCeremony.disabled = false;
+  els.returnedCmpCeremonyNote.textContent = '';
+}
+
+// CEREMONY_COPY_REFUSED words the route's 422 causes. A refusal names no other proceeding (the route says nothing about
+// one), and "no-record" allows that a program which re-saved the file dropped the record.
+const CEREMONY_COPY_REFUSED = {
+  'no-record': 'This file names no signing ceremony, so Nib cannot tell which ceremony copy to compare it with. A '
+    + 'program that re-saved it may have dropped that.',
+  'record-invalid': 'This file names a signing ceremony, but its ceremony record does not check out, so Nib will not '
+    + 'use it to choose a copy.',
+  'not-on-this-machine': 'This machine holds no copy of the signing ceremony this file names.',
+  'different-proceeding': 'The ceremony copy on this machine under that name belongs to a different ceremony, so Nib '
+    + 'will not compare against it.',
+  'damaged': 'This machine\'s copy of that ceremony is damaged, so Nib will not compare against it.',
+  'unreadable': 'Nib could not read this machine\'s copy of that ceremony.',
+};
+
+// ceremonyCopyLines words what the route said about the copy it handed over.
+function ceremonyCopyLines(f) {
+  const lines = [];
+  if (f.ended) lines.push('That ceremony has ended; this is the copy this machine kept when it closed.');
+  // The mirror is this machine's LAST HOP — what it stored as the ceremony went round — never the all-signed copy the
+  // delivery round hands out, so "signed" says only that it carries a signature.
+  lines.push(f.signed
+    ? 'It is the last copy this machine stored during the ceremony, and it carries a signature. It is not necessarily '
+      + 'the final copy everyone signed.'
+    : 'It is the document as the ceremony was convened, before anyone signed.');
+  lines.push(f.extends
+    ? 'This file begins with that copy byte for byte; everything after it was appended later — other parties\' '
+      + 'signatures can be part of that.'
+    : 'This file does not begin with that copy byte for byte.');
+  return lines;
+}
+
+async function compareWithCeremonyCopy() {
+  const state = returnedState;
+  if (!state || state.view !== view) return;
+  const note = els.returnedCmpCeremonyNote;
+  const btn = els.returnedCmpCeremony;
+  note.textContent = 'Reading this machine\'s copy…';
+  btn.disabled = true;
+  let r;
+  try {
+    r = await fetchCeremonyCopy(state.docId);
+  } catch (e) {
+    if (returnedState !== state) return;
+    btn.disabled = false;
+    note.textContent = e && e.message === 'locked'
+      ? 'Unlock Nib to read this machine\'s ceremony copy.'
+      : 'Nib could not read the ceremony copy: ' + ((e && e.message) || 'it failed') + '.';
+    return;
+  }
+  if (returnedState !== state) return; // closed, or another document, while it was asked
+  btn.disabled = false;
+  if (!r.ok) {
+    note.textContent = CEREMONY_COPY_REFUSED[r.cause] || 'Nib could not use this machine\'s copy of that ceremony.';
+    return;
+  }
+  note.textContent = ceremonyCopyLines(r.facts || {}).join(' ');
+  openCompareWith(r.bytes, 'this machine\'s ceremony copy');
+}
+
+els.returnedCmpSigned.onclick = () => {
+  const state = returnedState;
+  if (!state || state.view !== view || !state.recovered) return;
+  openCompareWith(state.recovered.bytes, 'the version you signed');
+};
+els.returnedCmpCeremony.onclick = () => compareWithCeremonyCopy();
+els.returnedCmpFile.onclick = () => {
+  if (!returnedState || returnedState.view !== view) return;
+  openCompareWith(null);
+};
 
 if (els.returnedBtn) els.returnedBtn.onclick = () => openReturnedSheet();
 if (els.returnedClose) els.returnedClose.onclick = () => closeReturnedSheet();

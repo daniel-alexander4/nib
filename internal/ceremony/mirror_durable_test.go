@@ -3,6 +3,7 @@ package ceremony
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"nib/internal/sign"
 	"os"
 	"path/filepath"
@@ -642,5 +643,96 @@ func TestAMirrorWriteMustExtendTheDocumentAlreadyStored(t *testing.T) {
 	if _, got, rerr := ReadMirror(root, rec.ID, mirrorNow); rerr != nil || len(got) != len(longer) {
 		t.Errorf("after two refusals the stored document is %d bytes (want %d), err %v — it "+
 			"refused after writing, which is no refusal at all", len(got), len(longer), rerr)
+	}
+}
+
+// TestReadMirrorForFindsAClosedOutCeremony — P03.S03: a dispute is asked after a ceremony ends, and ADR-012 has by
+// then moved its folder to `ended/`. The live folder answers first when both hold this proceeding; each answer says
+// which it was.
+func TestReadMirrorForFindsAClosedOutCeremony(t *testing.T) {
+	root := t.TempDir()
+	rec, doc := convened(t)
+	if _, err := WriteMirror(root, rec, doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ended, err := ReadMirrorFor(root, rec, time.Now()); err != nil || ended {
+		t.Fatalf("live: ended=%v err=%v; want the live folder", ended, err)
+	}
+	if err := CloseOutMirror(root, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	// SETUP: the plain reader must now miss it, or the fallback below is asked of a folder that never moved.
+	if _, _, err := ReadMirror(root, rec.ID, time.Now()); !os.IsNotExist(err) {
+		t.Fatalf("setup: ReadMirror after the close-out returned %v, want not-exist", err)
+	}
+	pdf, ended, err := ReadMirrorFor(root, rec, time.Now())
+	if err != nil || !ended || !bytes.Equal(pdf, doc) {
+		t.Fatalf("ended: ended=%v err=%v %d bytes; want the moved copy, byte for byte", ended, err, len(pdf))
+	}
+	// Both present — re-stored under the same id after a close-out: the live one answers.
+	again := append(append([]byte{}, doc...), "\n% hop 2\n"...)
+	if _, err := WriteMirror(root, rec, again); err != nil {
+		t.Fatal(err)
+	}
+	if pdf, ended, err := ReadMirrorFor(root, rec, time.Now()); err != nil || ended || !bytes.Equal(pdf, again) {
+		t.Fatalf("both: ended=%v err=%v; want the live copy", ended, err)
+	}
+	// Neither: not-exist, and not "ended".
+	other, _ := convened(t)
+	if _, ended, err := ReadMirrorFor(root, other, time.Now()); !errors.Is(err, fs.ErrNotExist) || ended {
+		t.Fatalf("neither: ended=%v err=%v; want not-exist", ended, err)
+	}
+	// A damaged ENDED copy is still damage, not absence: the checks run on whichever folder answers.
+	if err := os.Remove(filepath.Join(root, "ceremonies", rec.ID, "record.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ended", rec.ID, "document.pdf"), doc[:len(doc)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ended, err := ReadMirrorFor(root, rec, time.Now()); !errors.Is(err, ErrMirrorDamaged) || !ended {
+		t.Fatalf("damaged ended copy: ended=%v err=%v; want ErrMirrorDamaged from the ended folder", ended, err)
+	}
+}
+
+// TestReadMirrorForPassesOverAnotherProceeding — the id is a plain field, and `refuseDifferentProceeding` guards only
+// the live folder: after this proceeding closed out, another one took its id there. The ended copy is still found, and
+// a damaged copy of the OTHER proceeding is reported as another proceeding, never as this one's damage.
+func TestReadMirrorForPassesOverAnotherProceeding(t *testing.T) {
+	root := t.TempDir()
+	recA, docA := convened(t)
+	if _, err := WriteMirror(root, recA, docA); err != nil {
+		t.Fatal(err)
+	}
+	if err := CloseOutMirror(root, recA.ID); err != nil {
+		t.Fatal(err)
+	}
+	recB, docB := convened(t)
+	recB.ID = recA.ID
+	cert, key, fp := identity(t, "Attacker")
+	recB.Roster[0].Fingerprint = fp // the attacker convenes it, so it verifies under its own roster
+	if err := recB.Sign(cert, key); err != nil {
+		t.Fatal(err)
+	}
+	dirB, err := WriteMirror(root, recB, docB)
+	if err != nil {
+		t.Fatalf("setup: the other proceeding could not take the live folder (%v)", err)
+	}
+	// SETUP: the live record must VERIFY, or this drives the unreadable path rather than the roster comparison.
+	if _, _, err := ReadMirror(root, recA.ID, time.Now()); err != nil {
+		t.Fatalf("setup: the other proceeding's live record does not read back (%v)", err)
+	}
+	pdf, ended, err := ReadMirrorFor(root, recA, time.Now())
+	if err != nil || !ended || !bytes.Equal(pdf, docA) {
+		t.Fatalf("ended=%v err=%v %d bytes; want this proceeding's copy from ended/, past the other in the live folder", ended, err, len(pdf))
+	}
+	// Only the other proceeding, damaged: a different proceeding, never "damaged".
+	if err := os.RemoveAll(filepath.Join(root, "ended", recA.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirB, "document.pdf"), docB[:len(docB)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadMirrorFor(root, recA, time.Now()); !errors.Is(err, ErrDifferentProceeding) {
+		t.Fatalf("err=%v; want ErrDifferentProceeding — the damage is another proceeding's", err)
 	}
 }

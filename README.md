@@ -726,6 +726,28 @@ when you last saved it), verifying it once a Bitcoin block has confirmed it lets
 calendar server to verify, ever. You can also verify with any other OpenTimestamps
 tool (e.g. [opentimestamps.org](https://opentimestamps.org)) — the proof is standard.
 
+### A signed document that came back
+You signed a contract, sent it off, and it came back. **Sign & Timestamp → Check a signed document that came
+back…** (also under **Send & Receive**) opens a sheet about the open document that answers the questions a dispute
+asks, in words you could read out:
+
+- **Is the version you signed inside this file?** Nib looks for the signature made with your identity (or the
+  signing certificate you imported) and recovers the exact bytes it covers. *"This file is exactly the version you
+  signed"*, *"… and N bytes were added after it — your signature does not cover what was added"*, or *"The version you
+  signed is not inside this file"* when the file was rewritten wholesale and the signed bytes no longer exist in it.
+  A file with no signature says so *as it stands* — which never means nobody signed it.
+- **Who else signed, and when?** Every signature is listed in the order it covers the file, marked *yours*, *known to
+  this machine* or *not known to this machine*, and *before* or *after* yours. The word "Untampered" never appears
+  here: a stranger co-signing after you is exactly the case this sheet exists for.
+- **What changed?** *Compare the version you signed with this file* opens **Compare** with what you signed as the
+  starting point, so text in green is text that is in this file and was not in what you signed. When the signed
+  version cannot be recovered, the sheet offers other copies in order: a copy kept when you signed (not yet — Nib does
+  not keep one), **this machine's copy from the signing ceremony** the document belongs to (found from the ceremony
+  record inside it, and only when the stored ceremony is the same proceeding — the copy this machine last stored, which
+  is not necessarily the final copy everyone signed), or **a file you choose**.
+
+Nothing is checked until you open the sheet; opening a document never runs it.
+
 ### Co-sign with a peer
 Two people can sign the *same* document, each attesting — in a visible block and a
 cryptographically-signed reason — that they accept the other's identity. Nib pins
