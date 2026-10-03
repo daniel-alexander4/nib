@@ -92,6 +92,8 @@ type Reader struct {
 	// objStms caches each object stream's decoding and header between lookups (nib, /pending 758;
 	// see NOTICE.nib and objStmCache).
 	objStms map[string]*objStmCache
+	// inStmDepth counts the object-stream lookups open on the stack (nib, NOTICE.nib divergence 8).
+	inStmDepth int
 }
 
 type ReaderXrefInformation struct {
@@ -927,7 +929,17 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 		}
 		var obj object
 		if xref.inStream {
+			// nib (NOTICE.nib divergence 8): finding a member resolves its stream, and opening that stream
+			// resolves its /Length, /Filter and /DecodeParms — each of which may name a member again. A
+			// stream listed inside itself, two streams inside each other, or a stream whose /Length is its
+			// own member recursed until Go's stack limit, a fatal error no recover holds.
+			if r.inStmDepth >= objStmMaxNesting {
+				panic(ErrObjStmNested)
+			}
+			r.inStmDepth++
+			defer func() { r.inStmDepth-- }()
 			strm := r.resolve(parent, xref.stream)
+			var extended map[objptr]bool
 		Search:
 			for {
 				if strm.Kind() != Stream {
@@ -962,6 +974,16 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 				ext := strm.Key("Extends")
 				if ext.Kind() != Stream {
 					panic("cannot find object in stream")
+				}
+				// nib (NOTICE.nib divergence 9): a stream that /Extends itself, or a ring of them, looped
+				// here for ever. NewReader resolves /Encrypt before any caller can screen the document.
+				if extended == nil {
+					extended = map[objptr]bool{strm.data.(stream).ptr: true}
+				}
+				if p := ext.data.(stream).ptr; extended[p] {
+					panic(ErrObjStmExtendsCycle)
+				} else {
+					extended[p] = true
 				}
 				strm = ext
 			}
@@ -1359,6 +1381,21 @@ var ErrObjStmTooCostly = errors.New("malformed PDF: an object stream's members c
 // reaches the end a few times (the last token's delimiter, one look-ahead); objStmMaxEndReads is far
 // past that and far short of harm.
 var ErrObjStmRunsPastEnd = errors.New("malformed PDF: an object stream member runs past the end of its stream")
+
+// ErrObjStmNested is raised (as a panic) when resolving an object-stream member needs more than
+// objStmMaxNesting further members on the way (nib; NOTICE.nib divergence 8). ISO 32000-1 7.5.7 keeps a
+// stream, and an object stream's /Length, out of an object stream, so an honest lookup opens one stream
+// whose dictionary is direct, or at most a short chain; the shapes past the bound are cycles — a stream
+// listed inside itself, two inside each other, a /Length that is its own stream's member — which
+// recursed until Go's stack limit, a fatal error from a 400-byte file.
+var ErrObjStmNested = errors.New("malformed PDF: an object stream is reached only through other object streams' members")
+
+// ErrObjStmExtendsCycle is raised (as a panic) when an object stream's /Extends chain returns to a
+// stream it has already searched (nib; NOTICE.nib divergence 9), where upstream searched it again for ever.
+var ErrObjStmExtendsCycle = errors.New("malformed PDF: an object stream's /Extends chain returns to itself")
+
+// objStmMaxNesting is how many object-stream lookups may be open on the stack at once.
+const objStmMaxNesting = 32
 
 // objStmMaxEndReads is how many times one view may be told the stream has ended.
 const objStmMaxEndReads = 64

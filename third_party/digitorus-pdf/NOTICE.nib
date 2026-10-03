@@ -95,6 +95,23 @@ which runs on every save and every ceremony arrival with no pdfcpu gate in front
 alone still left 2.9 GB from 438 bytes). An xref stream's /Index past its /Size now extends the table as
 the classic table already did, where upstream indexed past its length and panicked.
 
+8. (/pending 803) The patched reader refuses, with a panic carrying ErrObjStmNested, a lookup that has more than
+32 object-stream lookups open on the stack. Finding a member resolves its stream, and opening that stream resolves
+its /Length (and /Filter, /DecodeParms), each of which may name a member again: a stream listed as a member of
+itself, two streams listed inside each other, or a stream whose /Length is its own member recursed until Go's 1 GB
+stack limit — `fatal error: stack overflow`, which no recover holds — from a ~400-byte file, inside
+HasSignatureBlob, which has no pdfcpu gate (pdfcpu refuses all three). ISO 32000-1 7.5.7 keeps streams and an
+object stream's /Length out of object streams, so an honest lookup is one or two deep.
+
+9. (/pending 803) The patched reader refuses, with a panic carrying ErrObjStmExtendsCycle, an /Extends chain that
+returns to a stream the lookup has already searched, where upstream searched the ring for ever. internal/sign's
+lookup-cost screen refuses such a cycle too, but only once a Reader exists, and NewReader resolves the trailer's
+/Encrypt first: an /Encrypt naming a member of a self-extending stream spun HasSignatureBlob indefinitely.
+
+internal/sign's TestAnObjectStreamReachedThroughItselfIsRefusedNotRecursed and
+TestAnExtendsCycleReachedBeforeTheScreenIsRefusedNotSpun hold 8 and 9; the fuzz test below never generates either
+(its streams are direct, with direct /Length, and /Extends one way), and the original never returns on both.
+
 internal/sign's FuzzThePatchedObjectStreamReaderMatchesTheOriginal (/pending 759) resolves random object
 streams through this reader and through v0.1.2 itself (a test-only copy under internal/sign/testdata)
 and allows exactly the first two classes of difference; it never generates the third or fourth, where

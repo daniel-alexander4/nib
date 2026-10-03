@@ -41,7 +41,8 @@ import (
 // **The figure is an upper bound on the reader's work, never an estimate below it.** A header this
 // parser cannot read as plain `int int` pairs, a member the header does not list, and a `/First` past
 // the header ceiling are all charged as a miss (every pair, the whole stream, and the `/Extends`
-// chain); a `/Extends` cycle — on which the reader's loop never terminates — is refused outright.
+// chain); a `/Extends` cycle — which upstream searched for ever, and the patched reader now refuses as it meets it
+// (NOTICE.nib divergence 9, for `NewReader`'s `/Encrypt`, which resolves before this runs) — is refused outright.
 //
 // # The ceiling, measured
 //

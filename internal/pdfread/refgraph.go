@@ -29,7 +29,8 @@ import (
 // WITHOUT a guard. Where pdfcpu marks an object before recursing through it — form and image XObjects
 // (xObject.go:763), fonts (font.go:1112-1124), an ExtGState's `/SMask` and every other `validateStreamDictEntry`
 // (object.go:1041), ICCBased streams (colorspace.go:183) — the walk stops, because pdfcpu handles a loop through
-// that object and refusing it would refuse files pdfcpu reads. Outlines, the page tree, form-field `/Kids`, the
+// that object and refusing it would refuse files pdfcpu reads — for loops and paths; how DEEP pdfcpu recurses through
+// them is bounded by a second pass that does follow them (`validatorDepth`, refdepth.go, ADR-077). Outlines, the page tree, form-field `/Kids`, the
 // structure tree and thread beads carry their own guards and are not followed at all — except that the page tree's
 // guard covers its `/Pages` nodes and NOT its leaves: a `/Page` is validated once per naming, so its count is
 // multiplied by how many times `/Kids` names it (`pageNamings`, /pending 816). Form fields are validated once
@@ -126,6 +127,9 @@ type refGraph struct {
 	count   []uint64
 	reached []bool // named by an edge the walk follows, so its paths are counted in whatever names it
 	opening *frame // the frame `open` is expanding, which `weigh` charges
+	// guarded adds the edges pdfcpu follows WITH a guard — form and image XObjects, Type 3 fonts, appearance streams,
+	// soft-mask groups — which the path count must not follow and the depth bound must (`validatorDepth`).
+	guarded bool
 }
 
 // slot is n's index in state and count, or -1 for an object number the table does not hold (which names nothing).
@@ -149,7 +153,7 @@ func refuseUnboundedReferences(ctx *model.Context) error {
 			"spaces, actions or trees, against a budget of %d), and pdfcpu's validator walks every one of them with "+
 			"no way to stop it", ErrReferencePaths, paths, budget)
 	}
-	return nil
+	return validatorDepth(ctx)
 }
 
 // pathBudget is `basePaths` plus `pathsPerObject` for each LIVE object in ctx — one that is not free and holds an
@@ -582,6 +586,23 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 			g.values(res["ColorSpace"], roleColorSpace, at("Resources /ColorSpace"), emit)
 			g.values(res["Shading"], roleShading, at("Resources /Shading"), emit)
 			g.values(res["ExtGState"], roleExtGState, at("Resources /ExtGState"), emit)
+			if g.guarded {
+				for _, v := range g.dict(res["XObject"]) {
+					if sd, ok := g.deref(v).(types.StreamDict); ok {
+						switch nameOf(sd.Dict, "Subtype") {
+						case "Form":
+							g.follow(v, roleResourced, at("Resources /XObject"), emit)
+						case "Image":
+							g.follow(v, roleImage, at("Resources /XObject"), emit)
+						}
+					}
+				}
+				for _, v := range g.dict(res["Font"]) {
+					if nameOf(g.dict(v), "Subtype") == "Type3" {
+						g.follow(v, roleResourced, at("Resources /Font"), emit)
+					}
+				}
+			}
 		}
 		for _, v := range g.array(d["Annots"]) {
 			g.follow(v, roleAnnot, at("Annots"), emit)
@@ -629,6 +650,11 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 		}
 	case roleSoftMask:
 		g.each(d["TR"], roleFunction, at("TR"), emit)
+		if g.guarded {
+			if gr, ok := d["G"]; ok {
+				g.follow(gr, roleResourced, at("G"), emit)
+			}
+		}
 	case roleHalftone:
 		if _, stream := g.deref(o).(types.StreamDict); !stream && g.int(d["HalftoneType"]) == 5 {
 			for _, k := range halftoneColorants {
@@ -641,6 +667,11 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 		if b, _ := g.deref(d["ImageMask"]).(types.Boolean); !b.Value() {
 			if _, stream := g.deref(d["Mask"]).(types.StreamDict); stream {
 				g.follow(d["Mask"], roleImage, at("Mask"), emit)
+			}
+		}
+		if g.guarded {
+			if sm, stream := g.deref(d["SMask"]).(types.StreamDict); stream && sm.Dict != nil {
+				g.follow(d["SMask"], roleImage, at("SMask"), emit)
 			}
 		}
 		if r == roleImage {
@@ -688,6 +719,16 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 		}
 		if st == "Widget" || st == "Screen" {
 			g.values(d["AA"], roleAction, at("AA"), emit)
+		}
+		if g.guarded {
+			ap := g.dict(d["AP"])
+			for _, k := range []string{"N", "R", "D"} {
+				if _, stream := g.deref(ap[k]).(types.StreamDict); stream {
+					g.follow(ap[k], roleResourced, at("AP /"+k), emit)
+				} else {
+					g.values(ap[k], roleResourced, at("AP /"+k), emit)
+				}
+			}
 		}
 	case roleRendition:
 		if nameOf(d, "S") == "SR" {

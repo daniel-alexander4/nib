@@ -355,6 +355,21 @@ func TestAnUnsignedDocumentNeverEntersTheThirdPartyParser(t *testing.T) {
 		t.Fatal("verifyIndexed's body has no closing brace at column 0")
 	}
 	body = body[:end]
+	// /pending 803 split the door at the sweep: verifyIndexed's own body ends handing its read to `verifySwept`, which
+	// runs the rest, so the order below is read across the two bodies, joined where the one calls the other.
+	hand := strings.Index(body, "return verifySwept(data, ctx, revs)")
+	if hand < 0 || hand < strings.Index(body, "sweepRevisions(data)") {
+		t.Fatal("verifyIndexed no longer ends by handing its gated read and sweep to verifySwept — the door moved, and this guard must follow it")
+	}
+	swept := strings.Index(code, "func verifySwept(data []byte, ctx *model.Context, revs []Revision)")
+	if swept < 0 {
+		t.Fatal("verify.go has no `func verifySwept(data []byte, ctx *model.Context, revs []Revision)`")
+	}
+	rest := code[swept:]
+	if e := strings.Index(rest, "\n}\n"); e >= 0 {
+		rest = rest[:e]
+	}
+	body = body[:hand] + rest
 	gate := strings.Index(body, "if !scanForSignatureBlob(data)")
 	parse := strings.Index(body, "libraryVerify(")
 	if gate < 0 || parse < 0 {
