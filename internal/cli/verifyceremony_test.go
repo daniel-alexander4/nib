@@ -391,8 +391,10 @@ func TestTheCeremonyVerdictRefusesWhatItUsedToCallComplete(t *testing.T) {
 	})
 
 	t.Run("a version skew must NOT refuse", func(t *testing.T) {
-		// The anti-proof. `oneProc` is false here and every party agreed; only the skew clause
-		// separates this from the row above.
+		// The anti-proof. `oneProc` is false here and every party agreed; the skew excused the
+		// signature it describes, so nothing READABLE contradicts (/pending 809 made the excuse
+		// per signature — `TestANewerTagExcusesAParseNeverTheRosterOrTheCommitment` drives it at
+		// the artifact).
 		c := ceremonyReport{present: true, claimed: 2, oneProc: false,
 			skew: "one or more signatures were written by a newer version of Nib"}
 		if c.disagrees() {

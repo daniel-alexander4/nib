@@ -125,11 +125,6 @@ const attestationTag = "[NibCoSign:1]"
 // "these people did not agree".
 const attestationTagVersion = 1
 
-// AttestationTagVersion is this build's attestation format number, exported so a VERIFIER outside
-// this package can tell "written by a newer Nib" from "these people disagree" (/pending 324).
-// The web client has drawn that distinction since D32; the CLI could not reach the constant.
-func AttestationTagVersion() int { return attestationTagVersion }
-
 // attestationTagRE matches the tag at any version, so a skew is legible rather than invisible.
 var attestationTagRE = regexp.MustCompile(`\[NibCoSign:([0-9]{1,4})\]`)
 
@@ -446,8 +441,9 @@ type SignerAttestation struct {
 	// RosterHash is the Ceremony Record commitment this signature carries ("" on an
 	// ordinary two-party co-sign, which has no record).
 	RosterHash string `json:"rosterHash,omitempty"`
-	// Unrostered is true when this signature claims the document's ceremony and its signer is on
-	// no roster line (/pending 324). It is the question `Completeness` does not ask: that counts
+	// Unrostered is true when this signature claims the document's ceremony — or carries a newer
+	// attestation tag this build could not read, which may (`UnreadTag`, /pending 809) — and its
+	// signer is on no roster line (/pending 324). It is the question `Completeness` does not ask: that counts
 	// how many OBLIGED signers signed, and can never exceed the roster, so an extra signature was
 	// invisible to it while the document still read "3 of 3 — ✓ Complete".
 	Unrostered bool `json:"unrostered,omitempty"`
@@ -619,6 +615,11 @@ func Attestations(st sign.Status, p Proceeding) []SignerAttestation {
 // token — copying it is what defeats that check — so this is the residue and not a second net.
 // If `markOneProceeding` is ever loosened, the non-claiming population goes dark and this scope
 // must be widened with it.
+//
+// **A newer tag counts as a claim** (/pending 809). Its fields are deliberately unparsed, so it has
+// no `RosterHash` to scope on, and a verifier excuses its empty commitment as a version skew —
+// which IS that loosening, for exactly the signatures carrying one. A rostered party on a newer
+// Nib is unaffected; a stranger typing the tag is named.
 func markUnrostered(atts []SignerAttestation, members []string) {
 	if len(members) == 0 {
 		return // no record: say nothing rather than accuse everyone
@@ -629,13 +630,36 @@ func markUnrostered(atts []SignerAttestation, members []string) {
 	}
 	for i := range atts {
 		a := &atts[i]
-		if !a.Valid || a.RosterHash == "" {
+		if !a.Valid || (a.RosterHash == "" && !a.UnreadTag()) {
 			continue
 		}
 		if !on[strings.ToLower(a.Fingerprint)] {
 			a.Unrostered = true
 		}
 	}
+}
+
+// UnreadTag reports a signature whose attestation tag is NEWER than this build's, so none of its
+// fields were parsed (P07.S09c). It replaces the exported `AttestationTagVersion()` the CLI
+// compared against by hand (/pending 324), so the comparison is written once.
+//
+// **It is the one predicate for "this build could not read it", and it excuses a PARSE only**
+// (/pending 809). The tag is text in `/Reason` the signer typed, so it is evidence of nothing about
+// who the signer is. `markUnrostered` therefore counts it as a CLAIM — an uninterpreted attestation
+// on a ceremony document may name the ceremony, and treating it as "claims nothing" let a stranger
+// type `[NibCoSign:2]` and fall out of both nets at once: no roster token for this check, and a
+// verifier excusing the empty commitment as a version difference.
+func (a SignerAttestation) UnreadTag() bool { return a.TagVersion > attestationTagVersion }
+
+// Commits reports whether this ONE signature is valid and commits to the ceremony record the
+// document carries — `markOneProceeding`'s per-signature test, exported so a verifier that excuses
+// some signatures (a version skew) can still hold every other one to it (/pending 809).
+func (p Proceeding) Commits(a SignerAttestation) bool {
+	return commitsTo(a, p.Commitment)
+}
+
+func commitsTo(a SignerAttestation, want string) bool {
+	return want != "" && a.Valid && strings.EqualFold(a.RosterHash, want)
 }
 
 // crossBind sets Matched on each attestation: an accepted peer counts only if some
@@ -693,7 +717,7 @@ func markOneProceeding(ats []SignerAttestation, want string) {
 			continue
 		}
 		n++
-		if !strings.EqualFold(a.RosterHash, want) {
+		if !commitsTo(a, want) {
 			return
 		}
 	}

@@ -1375,7 +1375,7 @@ isn't a known command (a PDF path, or nothing) still opens the app as usual.
 | `nib timestamp FILE…` | Write an OpenTimestamps proof (`FILE.ots`) for each file, skipping any file that already has one. |
 | `nib timestamp --force FILE…` | Re-stamp even where a proof exists, discarding it. |
 | `nib timestamp --verify FILE…` | Check each file against its `FILE.ots` proof. |
-| `nib verify [--json] FILE…` | Report each file's signature integrity, and the **ceremony** it belongs to if it has one — the roster, who was obliged to sign, who has, and whether every signature commits to the same proceeding. Exit `2` if any file is unsigned, modified, has content added after its last signature, carries a signature Nib refused, **or belongs to a ceremony an obliged party has not signed**. |
+| `nib verify [--json] FILE…` | Report each file's signature integrity, and the **ceremony** it belongs to if it has one — the roster, who was obliged to sign, who has, and whether every signature commits to the same proceeding. Exit `2` if any file is unsigned, modified, has content added after its last signature, carries a signature Nib refused, **or belongs to a ceremony an obliged party has not signed, whose signatures do not all commit to it, or that carries a signature from someone off its roster** — a signature written by a newer Nib excuses only its own unread attestation, never another signature and never the roster check. |
 | `nib optimize IN -o OUT` | Losslessly shrink a PDF (or `-w FILE…` to rewrite in place). |
 | `nib merge IN… -o OUT` | Concatenate PDFs, in order, into one. |
 | `nib sanitize IN -o OUT` | Strip identifying metadata and active content — JavaScript, auto-actions, embedded files (or `-w FILE…`). |
