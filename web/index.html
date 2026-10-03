@@ -491,6 +491,7 @@
         <button id="timestampBtn" title="Anchor this document in time with OpenTimestamps">Timestamp (OpenTimestamps)…</button>
         <button id="timestampVerifyBtn" title="Check a document against its .ots proof">Verify a timestamp…</button>
         <button id="returnedBtn" title="You signed this and it came back: what changed since your signature">Check a signed document that came back…</button>
+        <button id="keptBtn" type="button" title="The copies Finalize kept when you ticked “Keep a copy for my records”">Copies kept when you signed…</button>
       </div>
 
       
@@ -774,7 +775,8 @@
             <button id="returnedCmpSigned" type="button" hidden>Compare the version you signed with this file</button>
             <p class="rvline">Or compare this file with another copy of it:</p>
             <ol class="rvchain">
-              <li id="returnedCmpKept">A copy kept when you signed — Nib does not keep one yet.</li>
+              <li><button id="returnedCmpKept" type="button">A copy kept when you signed</button>
+                <div id="returnedCmpKeptNote" aria-live="polite"></div></li>
               <li><button id="returnedCmpCeremony" type="button">This machine's copy from the signing ceremony</button>
                 <div id="returnedCmpCeremonyNote" aria-live="polite"></div></li>
               <li><button id="returnedCmpFile" type="button">A file you choose…</button></li>
@@ -1402,6 +1404,22 @@
         <input id="compareInput" type="file" accept="application/pdf" hidden />
         <span class="grow"></span>
         <button id="compareClose" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Copies kept when you signed (PLAN-returned-document P04.S02, D15, ADR-073): listed from names and sizes alone,
+       each removable. They hold signed documents — PII by design — unencrypted, outside the vault. -->
+  <div id="keptModal" hidden>
+    <div class="sigcard">
+      <h3>Copies kept when you signed</h3>
+      <p class="libhint">Each is the exact file Finalize signed, saved unencrypted in ~/nib/signed when you ticked
+        “Keep a copy for my records”. A copy proves what you had when you signed, not what you sent.</p>
+      <div id="keptList" class="keptlist" role="list" aria-label="Copies kept when you signed"></div>
+      <p id="keptTotal" class="libhint"></p>
+      <div class="sigbtns">
+        <span class="grow"></span>
+        <button id="keptClose" class="primary">Close</button>
       </div>
     </div>
   </div>

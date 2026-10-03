@@ -15,12 +15,14 @@ let openAs = null;
 let revision = null; // a Response, or null when the test expects no request
 let ceremonyCopy = null; // a Response, or a function returning one (or a promise of one)
 let docNow = null; // the next /api/doc answer, or null for the boot stub's
+let keptCopy = null; // the next /api/document/kept-copy answer: a Response
 
 const h = await boot({
   routes: {
     '/api/open': () => ({ id: `test-epoch:${++n}`, name: `back${n}.pdf`, path: `/tmp/nib-harness/back${n}.pdf`, canSave: true,
       canUndo: false, canRedo: false, ...openAs }),
     '/api/document/revision': () => revision.clone(),
+    '/api/document/kept-copy': () => keptCopy.clone(),
     '/api/document/ceremony-copy': () => (typeof ceremonyCopy === 'function' ? ceremonyCopy() : ceremonyCopy.clone()),
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
     // The sheet's fresh snapshot (the P03 phase-close review); null answers like the boot stub — no id, so the load-time
@@ -64,7 +66,8 @@ test('the chain is offered in order — kept copy (named, empty), ceremony copy,
   await openSheet({ signature: { state: 'unsigned' } }, null);
   const items = [...$('returnedCompare').querySelectorAll('.rvchain > li')].map((li) => li.textContent.trim());
   assert.equal(items.length, 3, 'the fallback chain does not have its three links');
-  assert.match(items[0], /copy kept when you signed.*does not keep one yet/, 'the kept copy\'s slot is not first, or not named empty');
+  assert.match(items[0], /copy kept when you signed/, 'the kept copy is not the chain\'s first link (P04.S02)');
+  assert.ok($('returnedCmpKept') instanceof doc.defaultView.HTMLButtonElement, 'the kept copy\'s link is not a button any more');
   assert.match(items[1], /ceremony/, 'the ceremony copy is not second');
   assert.match(items[2], /file you choose/, 'a file you choose is not last');
   assert.equal($('returnedCmpSigned').hidden, true, 'an unsigned file offers "the version you signed"');
@@ -339,4 +342,42 @@ test('a file that IS the stored ceremony copy says so, and claims nothing append
   const note = $('returnedCmpCeremonyNote').textContent;
   assert.match(note, /This file is that copy, byte for byte/);
   assert.doesNotMatch(note, /appended/);
+});
+
+test('the kept copy is the chain\'s first link: asked on the press, pinned, worded, compared as the baseline (P04.S02)', async () => {
+  const KEPT = Uint8Array.from([7, 7, 7, 7]);
+  keptCopy = pdfResponse(KEPT, 'X-Nib-Kept-Copy', { document: 'lease',
+    keptAt: '2026-10-02 14:15:02', extends: true });
+  ceremonyCopy = pdfResponse(MIRROR_BYTES, 'X-Nib-Ceremony-Copy', {});
+  await openSheet({ signature: { state: 'unsigned' } }, null);
+  // Both a kept copy and a ceremony copy exist for this document: the kept one is offered first.
+  const links = [...$('returnedCompare').querySelectorAll('.rvchain > li button')].map((b) => b.id);
+  assert.deepEqual(links.slice(0, 2), ['returnedCmpKept', 'returnedCmpCeremony'], 'the chain is not kept copy, then ceremony copy');
+  const asked = calls.filter((c) => c.url.includes('/api/document/kept-copy')).length;
+  assert.equal(asked, 0, 'the kept copy was asked for on open (D10)');
+  pdfjs.setNextDocument({ numPages: 1, text: 'alpha beta' });
+  $('returnedCmpKept').click();
+  await settle();
+  await settle();
+  const ask = calls.filter((c) => c.url.includes('/api/document/kept-copy')).at(-1);
+  assert.equal(ask.headers['X-Nib-Doc'], `test-epoch:${n}`, 'the kept copy was not asked for the sheet\'s own document');
+  assert.match($('returnedCmpKeptNote').textContent, /kept when you signed on 2026-10-02 14:15:02/);
+  assert.match($('returnedCmpKeptNote').textContent, /begins with that copy/);
+  assert.deepEqual([...pdfjs.lastGetDocumentData], [...KEPT], 'Compare did not load the kept copy');
+  assert.match($('compareBody').textContent, /“the copy kept when you signed” → this file/);
+});
+
+test('each refusal of the kept copy has its own sentence, and "none matches" is not "nothing was kept"', async () => {
+  await openSheet({ signature: { state: 'unsigned' } }, null);
+  const want = { 'no-signature': /carries no signature/, 'none-kept': /No copy kept when you signed matches this file.*listed under/,
+    'unreadable': /could not read the copies kept/ };
+  for (const [cause, re] of Object.entries(want)) {
+    keptCopy = new Response(JSON.stringify({ cause }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+    $('compareModal').hidden = true;
+    $('returnedCmpKept').click();
+    await settle();
+    assert.match($('returnedCmpKeptNote').textContent, re, cause);
+    assert.equal($('compareModal').hidden, true, `${cause} opened Compare`);
+  }
+  assert.doesNotMatch($('returnedCmpKeptNote').textContent, /Nib does not keep/);
 });

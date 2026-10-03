@@ -1170,12 +1170,44 @@ returned as if the copy existed ✅ (no PDF bytes in the refusal); named `kept_�
 (grammar test: peer, delivered, escape, case and `_` names refused); the Finalize modal's tick only ✅ (Complete & sign
 sends no field — /pending 814); the ADR in S01's commit ✅ (ADR-073).
 
-#### P04.S02 — the copy is visible and removable
+#### P04.S02 — the copy is visible and removable *(done 2026-10-02, v1.182.1)*
 **(P03 phase-open PIN 2026-10-02)**: and the dispute surface offers the kept copy FIRST in its fallback chain, ahead of
 the ceremony mirror (inventory S5).
 Scope: listing and deletion. Refs: D15.
 Acceptance: a kept copy appears in a surface the user can reach and can be deleted from it. **(plan-review pin)**: and the dispute sheet
 offers the kept copy first, then the ceremony copy, then a file you choose — observed by the plant-both test.
+
+Grill (2026-10-02, light — the plan-review pins fix the shape; read at the lines: `sign.SignerInfo.CoverageEnd`, the
+open document's cached `doc.sig`). One refinement over the pin: the candidate ends come from the document's ALREADY-
+COMPUTED signature status (`doc.sig.Signers[].CoverageEnd`, set at open), not a fresh `sign.Revisions` sweep — the
+same ends, no second parse, nothing new behind the pdfcpu gate, and identity-independent as pinned. A kept copy's last
+record is the Finalize certification (a signer, not a DocTimeStamp: the TSA token rides inside its CMS), so its end
+is among them (S01's coverage tests).
+- T01 — `kept.go`: `listKept` (readdir, the grammar, Lstat regular files only, newest first), `removeKept` (the
+  door, Lstat, `os.Remove`, ENOENT = already gone), `keptCopyFor(data, ends)` (size → name digest → bytes).
+- T02 — routes: `GET /api/kept` (list + total bytes), `POST /api/kept/remove` `{name}`, `GET /api/document/kept-copy`
+  (pinned; 422 `no-signature` / `none-kept` / `unreadable`; `X-Nib-Kept-Copy` `{name, same, extends}`).
+- T03 — the sheet: `#returnedCmpKept` becomes the chain's first link (a button), worded "a copy kept when you signed".
+- T04 — the list surface: "Copies kept when you signed…" in Sign & Timestamp opens `#keptModal` — each copy's document,
+  kept-at time and size, the total, and Remove with a confirm that says permanent and not in backups; re-lists after.
+- T05 — the AST census (`kept_` only in `kept.go`; `os.Remove` in `internal/server` only in `kept.go` and the update
+  download); Go tests per door and route; jsdom for the chain's order (kept and ceremony both answering), the list and
+  the remove; the published-shape rows.
+
+**Built (v1.182.1):** T01-T05 as tasked. From the slice review (`code-reviews/v1.182.0-p04s02-…`, 0 critical, 3 warning,
+13 info): the LONGEST matching kept copy wins (a shorter one would call your own later signing "appended"); a candidate
+removed since it was listed is skipped, not a failed search; the census reads the AST (literal `kept_` and every
+`os.Remove`/`RemoveAll` call, and that kept.go's one removal is `os.Remove(path)` on `keptPathFor`'s output) — it cannot
+see a removal through another package or a syscall, declared; the unread `name` fact was dropped. **Declared:** the list
+is reached from the Sign & Timestamp card, so a document must be open (ADR-037) — ADR-073 says so. **Red-proof:** 19
+targeted conditions red (14 + 5 from the review's fixes), 9/9 blind kills. **Live:** the real binary — Finalize with
+the tick, save, append bytes, open it back: the sheet's FIRST link finds the kept copy and Compare opens over it; the
+list shows the copy and removes it after a confirm that says "permanent" (tier 3).
+**Acceptance ledger:** a kept copy appears in a surface the user can reach ✅ (the list, from Sign & Timestamp; tier 3)
+and can be deleted from it ✅ (Remove, confirm, the file gone and the list re-read; Go and tier 3); the dispute sheet
+offers the kept copy first ✅, then the ceremony copy ✅, then a file you choose ✅ (jsdom with both kept and ceremony
+answering — the chain's buttons in that order; tier 3 the kept link live). The matcher is ONE door (`keptCopyFor`,
+bytes not the name — the altered-copy test), the removal one door (the AST census).
 
 #### P04.S03 — the checklist step, and the ADR
 Scope: the Simple Sign row with a real probe; the ADR. Refs: D16, D13.

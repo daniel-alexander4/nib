@@ -85,6 +85,12 @@ const PUBLISHED = [
   { type: 'ceremonyCopyRefusal', readers: ['web/app.js'] },
   // A copy kept when you signed (P04.S01): the Finalize modal reads the refusal's error, cause and reason.
   { type: 'keptRefusal', readers: ['web/app.js'] },
+  // P04.S02: the list (`renderKeptList`), the removal's answer, and the open document's kept copy and its refusal.
+  { type: 'keptEntry', readers: ['web/app.js'] },
+  { type: 'keptListResponse', readers: ['web/app.js'] },
+  { type: 'keptRemoveResponse', readers: ['web/app.js'] },
+  { type: 'keptCopyFacts', readers: ['web/app.js'] },
+  { type: 'keptCopyRefusal', readers: ['web/app.js'] },
   { type: 'attachmentsResponse', readers: ['web/app.js'] },
   { type: 'attestationsResponse', readers: ['web/app.js'] },
   { type: 'attestationView', readers: ['web/app.js'] },
@@ -250,6 +256,7 @@ const EXCLUDED = {
   removeKeyRequest: 'request body, read by its handler',
   pinPeerRequest: 'request body, read by its handler',
   removePeerRequest: 'request body, read by its handler',
+  keptRemoveRequest: 'request body, read by its handler',  // P04.S02
   armRequest: 'request body, read by its handler',
   stampReq: 'request body, read by its handler',
   cosignParams: 'request body, read by its handler',

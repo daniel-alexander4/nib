@@ -1,14 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -103,4 +106,125 @@ func refuseUnkept(w http.ResponseWriter, err error) {
 		Reason: err.Error(),
 		Full:   errors.Is(err, syscall.ENOSPC),
 	})
+}
+
+// keptEntry is one copy kept when you signed, as the list shows it: read from the NAME and a stat, never by opening the
+// file — a list that parsed each copy would cost the total bytes kept every time it is shown (the plan-review's perf seat).
+type keptEntry struct {
+	Name     string `json:"name"`     // the file name, which is also what the remove route takes
+	Document string `json:"document"` // the document's slug, as the name carries it
+	KeptAt   string `json:"keptAt"`   // when the copy was written (local time, from the name), "YYYY-mm-dd HH:MM:SS"
+	Size     int64  `json:"size"`
+}
+
+// keptListResponse is GET /api/kept's answer: every kept copy, newest first, and what they occupy together.
+type keptListResponse struct {
+	Kept       []keptEntry `json:"kept"`
+	TotalBytes int64       `json:"totalBytes"`
+}
+
+// listKept reads ~/nib/signed for the names keptGrammar accepts that are regular files — a symlink, a directory, a
+// staging file, a peer's received document and a delivered ceremony copy are all left out — newest first.
+func listKept() ([]keptEntry, error) {
+	dir := filepath.Join(defaultOutputDir(), keptSubdir)
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []keptEntry
+	for _, e := range ents {
+		m := keptGrammar.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		fi, err := os.Lstat(filepath.Join(dir, e.Name()))
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		at := m[2]
+		out = append(out, keptEntry{Name: e.Name(), Document: m[1], Size: fi.Size(),
+			KeptAt: at[0:4] + "-" + at[4:6] + "-" + at[6:8] + " " + at[9:11] + ":" + at[11:13] + ":" + at[13:15]})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].KeptAt != out[j].KeptAt {
+			return out[i].KeptAt > out[j].KeptAt
+		}
+		return out[i].Name > out[j].Name
+	})
+	return out, nil
+}
+
+// removeKept deletes the kept copy called name. Only through the door, only a regular file, never RemoveAll; a copy
+// already gone is not a failure (a retried remove converges). It reports whether it removed anything.
+func removeKept(name string) (bool, error) {
+	path, err := keptPathFor(name)
+	if err != nil {
+		return false, err
+	}
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return false, fmt.Errorf("%s is not a kept copy Nib wrote (not a regular file), so Nib will not remove it", name)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	return true, nil
+}
+
+// keptCopyFor finds the copy kept when you signed that data IS or BEGINS WITH — the one match door (ADR-009), read by the
+// returned-document sheet's first link (and, from P04.S03, by the Simple Sign row). The LONGEST match wins: a copy kept
+// at a later signing is the tighter baseline, and "everything after it was appended" must not include your own later
+// signing (the slice review). ends are the coverage ends of data's own signatures:
+// a kept copy is Finalize's output, which its last signature covers to its last byte, so it can only match at one of
+// them. A copy is read only when its size equals an end AND the name's 8-hex digest equals that prefix's — and the match
+// itself is byte equality, because the name's digest is an index and never evidence (ADR-073).
+func keptCopyFor(data []byte, ends []int64) (keptEntry, []byte, error) {
+	kept, err := listKept()
+	if err != nil {
+		return keptEntry{}, nil, err
+	}
+	bySize := map[int64][]keptEntry{}
+	for _, k := range kept {
+		bySize[k.Size] = append(bySize[k.Size], k)
+	}
+	sorted := append([]int64(nil), ends...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] > sorted[j] })
+	seen := map[int64]bool{}
+	for _, end := range sorted {
+		if end <= 0 || end > int64(len(data)) || seen[end] || len(bySize[end]) == 0 {
+			continue
+		}
+		seen[end] = true
+		sum := sha256.Sum256(data[:end])
+		digest := hex.EncodeToString(sum[:4])
+		for _, k := range bySize[end] {
+			if !strings.HasSuffix(k.Name, "-"+digest+".pdf") {
+				continue
+			}
+			path, err := keptPathFor(k.Name)
+			if err != nil {
+				continue
+			}
+			b, err := os.ReadFile(path)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // removed since it was listed (another window's Remove): not a reason to fail the search
+			}
+			if err != nil {
+				return keptEntry{}, nil, err
+			}
+			if bytes.Equal(b, data[:end]) {
+				return k, b, nil
+			}
+		}
+	}
+	return keptEntry{}, nil, nil
 }

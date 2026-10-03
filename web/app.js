@@ -101,7 +101,8 @@ const els = {
   returnedClose: $('returnedClose'), returnedDoc: $('returnedDoc'), returnedVerdict: $('returnedVerdict'),
   returnedSigners: $('returnedSigners'), returnedCmpSigned: $('returnedCmpSigned'),
   returnedCmpCeremony: $('returnedCmpCeremony'), returnedCmpCeremonyNote: $('returnedCmpCeremonyNote'),
-  returnedCmpFile: $('returnedCmpFile'),
+  returnedCmpFile: $('returnedCmpFile'), returnedCmpKept: $('returnedCmpKept'), returnedCmpKeptNote: $('returnedCmpKeptNote'),
+  keptBtn: $('keptBtn'), keptModal: $('keptModal'), keptList: $('keptList'), keptTotal: $('keptTotal'), keptClose: $('keptClose'),
   cerSetupBar: $('cerSetupBar'),
   thumbs: $('thumbs'), outline: $('outline'),
   outlineModal: $('outlineModal'), outlineEditList: $('outlineEditList'),
@@ -467,6 +468,18 @@ async function fetchSignedRevision(docId, fp) {
   if (!res.ok) throw new Error(await errText(res, 'Could not recover the signed version'));
   let facts = {};
   try { facts = JSON.parse(res.headers.get('X-Nib-Revision') || '{}'); } catch { /* worded as "no facts" */ }
+  return { ok: true, bytes: await res.arrayBuffer(), facts };
+}
+
+// fetchKeptCopy asks for the copy kept when you signed that document `docId` is or begins with — matched on the server
+// against the document's own signatures, so the client never names a file (P04.S02, ADR-073). Pinned (ADR-001); asked
+// only on the press (D10). Resolves `{ ok: true, bytes, facts }` or `{ ok: false, cause }` for the 422.
+async function fetchKeptCopy(docId) {
+  const res = await apiFetch('/api/document/kept-copy', { docId });
+  if (res.status === 422) return { ok: false, cause: (await res.json().catch(() => ({}))).cause };
+  if (!res.ok) throw new Error(await errText(res, 'Could not read the kept copy'));
+  let facts = {};
+  try { facts = JSON.parse(res.headers.get('X-Nib-Kept-Copy') || '{}'); } catch { /* worded as "no facts" */ }
   return { ok: true, bytes: await res.arrayBuffer(), facts };
 }
 
@@ -16050,6 +16063,8 @@ function renderReturnedSigners(signers, whose, myEnd) {
 // resetReturnedCompare clears what the previous opening of the sheet left in the region.
 function resetReturnedCompare() {
   els.returnedCmpSigned.hidden = true;
+  els.returnedCmpKept.disabled = false;
+  els.returnedCmpKeptNote.textContent = '';
   els.returnedCmpCeremony.disabled = false;
   els.returnedCmpCeremonyNote.textContent = '';
 }
@@ -16086,6 +16101,48 @@ function ceremonyCopyLines(f) {
   return lines;
 }
 
+// KEPT_COPY_REFUSED words the kept-copy route's 422 causes. "None matches" is not "nothing was kept": a copy kept before
+// a file was rewritten wholesale cannot be matched to it, and the list is where it is still found by hand.
+const KEPT_COPY_REFUSED = {
+  'no-signature': 'This file carries no signature to match a kept copy against.',
+  'none-kept': 'No copy kept when you signed matches this file. If this file was rewritten after you signed, a copy you '
+    + 'kept cannot be matched to it — your copies are listed under Sign & Timestamp → Copies kept when you signed.',
+  'unreadable': 'Nib could not read the copies kept when you signed.',
+};
+
+// compareWithKeptCopy is the chain's first link: the copy Finalize kept, matched to this file by the server.
+async function compareWithKeptCopy() {
+  const state = returnedState;
+  if (!state || state.view !== view) return;
+  const note = els.returnedCmpKeptNote;
+  const btn = els.returnedCmpKept;
+  note.textContent = 'Looking for a copy kept when you signed…';
+  btn.disabled = true;
+  let r;
+  try {
+    r = await fetchKeptCopy(state.docId);
+  } catch (e) {
+    if (returnedState !== state) return;
+    btn.disabled = false;
+    note.textContent = e && e.message === 'locked'
+      ? 'Unlock Nib to look for a copy kept when you signed.'
+      : 'Nib could not read the kept copy: ' + ((e && e.message) || 'it failed') + '.';
+    return;
+  }
+  if (returnedState !== state) return; // closed, or another document, while it was asked
+  btn.disabled = false;
+  if (!r.ok) {
+    note.textContent = KEPT_COPY_REFUSED[r.cause] || 'Nib could not use the copies kept when you signed.';
+    return;
+  }
+  const f = r.facts || {};
+  note.textContent = `The copy kept when you signed${f.keptAt ? ' on ' + f.keptAt : ''}`
+    + (f.document ? ` (“${f.document}”)` : '') + '. '
+    + (f.same ? 'This file is that copy, byte for byte.'
+      : 'This file begins with that copy byte for byte; everything after it was appended later.');
+  openCompareWith(r.bytes, 'the copy kept when you signed');
+}
+
 async function compareWithCeremonyCopy() {
   const state = returnedState;
   if (!state || state.view !== view) return;
@@ -16120,10 +16177,77 @@ els.returnedCmpSigned.onclick = () => {
   openCompareWith(state.recovered.bytes, 'the version you signed');
 };
 els.returnedCmpCeremony.onclick = () => compareWithCeremonyCopy();
+els.returnedCmpKept.onclick = () => compareWithKeptCopy();
 els.returnedCmpFile.onclick = () => {
   if (!returnedState || returnedState.view !== view) return;
   openCompareWith(null);
 };
+
+// ── Copies kept when you signed (P04.S02, D15, ADR-073) ───────────────────────────────────────────────────────────
+//
+// The list is built on the server from names and sizes alone; each copy is removable, through the one route that
+// deletes a user's file. The confirm says what removal does NOT reach, because a user deleting PII needs to know.
+
+async function openKeptList() {
+  els.keptModal.hidden = false;
+  await renderKeptList();
+}
+
+async function renderKeptList() {
+  const list = els.keptList;
+  list.textContent = 'Loading…';
+  els.keptTotal.textContent = '';
+  let out;
+  try {
+    const res = await apiFetch('/api/kept');
+    if (!res.ok) throw new Error(await errText(res, 'it failed'));
+    out = await res.json();
+  } catch (e) {
+    list.textContent = 'Nib could not list the copies kept when you signed: ' + ((e && e.message) || 'it failed') + '.';
+    return;
+  }
+  list.textContent = '';
+  const kept = out.kept || [];
+  if (!kept.length) {
+    list.textContent = 'No copies kept yet. Tick “Keep a copy for my records” when you Finalize & sign to keep one.';
+    return;
+  }
+  for (const k of kept) {
+    const row = document.createElement('div');
+    row.className = 'keptrow';
+    row.setAttribute('role', 'listitem');
+    const what = document.createElement('span');
+    what.className = 'grow';
+    what.textContent = `${k.document} — kept ${k.keptAt} — ${fmtBytes(k.size)}`; // server text: textContent only
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.textContent = 'Remove';
+    rm.setAttribute('aria-label', `Remove the copy of ${k.document} kept ${k.keptAt}`);
+    rm.onclick = () => removeKeptCopy(k);
+    row.append(what, rm);
+    list.appendChild(row);
+  }
+  els.keptTotal.textContent = `${kept.length} ${kept.length === 1 ? 'copy' : 'copies'}, ${fmtBytes(out.totalBytes || 0)} in all.`;
+}
+
+async function removeKeptCopy(k) {
+  if (!window.confirm(`Remove the copy of “${k.document}” kept ${k.keptAt}?\n\nThis is permanent. It does not reach `
+    + 'any backup, or any copy you saved elsewhere.')) return;
+  try {
+    const res = await apiFetch('/api/kept/remove', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: k.name }),
+    });
+    if (!res.ok) throw new Error(await errText(res, 'it failed'));
+    const out = await res.json();
+    toast(out.removed ? 'Removed.' : 'That copy was already gone.');
+  } catch (e) {
+    toast('Could not remove it: ' + ((e && e.message) || 'it failed'));
+  }
+  await renderKeptList();
+}
+
+if (els.keptBtn) els.keptBtn.onclick = () => openKeptList();
+if (els.keptClose) els.keptClose.onclick = () => { els.keptModal.hidden = true; };
 
 if (els.returnedBtn) els.returnedBtn.onclick = () => openReturnedSheet();
 if (els.returnedClose) els.returnedClose.onclick = () => closeReturnedSheet();

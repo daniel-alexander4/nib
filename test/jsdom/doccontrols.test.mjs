@@ -86,6 +86,9 @@ const EXEMPT = new Set([
   // only visible while the answer is no. Requiring a document would mean the one control that
   // repairs "I can't open my .docx" is disabled exactly when nothing can be opened.
   'officeRecheck',
+  // Lists the copies kept when you signed (P04.S02, ADR-073) — files on this machine, not the open document; requiring
+  // one would mean removing your kept PII waits on opening something unrelated.
+  'keptBtn',
   // Gated by their own state, not by the registry: saveBtn follows canSave, the find
   // buttons follow the search results, and closeAllBtn is hidden below two documents.
   'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',

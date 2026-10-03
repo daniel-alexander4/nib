@@ -461,6 +461,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/document/revision", s.requireUnlocked(s.handleDocumentRevision))
 	// This machine's stored copy of the ceremony the document belongs to — the dispute surface's second link (P03.S03).
 	mux.HandleFunc("GET /api/document/ceremony-copy", s.requireUnlocked(s.handleDocumentCeremonyCopy))
+	// A copy kept when you signed (P04.S02, ADR-073): the open document's, the list, and the one route that removes one.
+	mux.HandleFunc("GET /api/document/kept-copy", s.requireUnlocked(s.handleDocumentKeptCopy))
+	mux.HandleFunc("GET /api/kept", s.requireUnlocked(s.handleKeptList))
+	mux.HandleFunc("POST /api/kept/remove", s.requireUnlocked(s.handleKeptRemove))
 	mux.HandleFunc("GET /api/doc", s.requireUnlocked(s.handleDoc))
 	mux.HandleFunc("GET /api/stamps", s.requireUnlocked(s.handleStamps))
 	mux.HandleFunc("GET /api/docs", s.requireUnlocked(s.handleDocs))
