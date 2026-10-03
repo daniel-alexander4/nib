@@ -88,6 +88,9 @@ type Document struct {
 	// times is decoded once (`decodedContent`); streamDecodes counts the decodes that door performed.
 	decoded       map[int][]byte
 	streamDecodes int
+	// decodeFailed is each such stream whose decode FAILED, with why, so a form that cannot be decoded is not
+	// inflated again at every draw (`/pending 780`).
+	decodeFailed map[int]error
 	// glyphs is every distinct (font, code) a text-showing operator draws — veraPDF's `Glyph` (`glyphs.go`) —
 	// gathered by the same walk; glyphSeen dedupes it, glyphFonts reads each font once, and glyphCodes counts
 	// the codes read against `maxGlyphCodes`.
@@ -234,6 +237,14 @@ type roleResolution struct {
 // drawn once on each from Fail to Pass (`TestThePdfcpuConfigOnThisMachineDoesNotMoveTheAnswer`). The P06
 // phase-close review then found the pin covered that one field: `optimize: false` would switch off the
 // form fusion `formTwins` exists to account for, and `validationMode` decides which files open at all.
+//
+// **`OptimizeResourceDicts` is OFF** (`/pending 782`). That step prunes each page's `/Resources` to the names
+// pdfcpu's own content scan sees (`consolidateResources`), and that scan does not decode a name's `#xx` escapes:
+// `/X#30 Do` kept a resource called `X#30`, which does not exist, and DELETED `/X0`, the one it draws — so no reader
+// here could find it, however it decoded the name. Every reader here looks a resource up by the name the content
+// uses, so the unpruned dictionary answers every lookup the pruned one did; the step's other half, putting
+// inherited `/Resources` on the page, is done by `open` (`pdfread.InheritResources`). The form and font fusion is not this step's
+// (`optimizeFontAndImages`, which no setting gates), so `formTwins` still sees it.
 func checkerConfig() *model.Configuration {
 	conf := model.NewDefaultConfiguration()
 	conf.Reader15 = true
@@ -241,7 +252,7 @@ func checkerConfig() *model.Configuration {
 	conf.ValidationMode = model.ValidationRelaxed
 	conf.ValidateLinks = false
 	conf.Optimize = true
-	conf.OptimizeResourceDicts = true
+	conf.OptimizeResourceDicts = false
 	conf.OptimizeDuplicateContentStreams = false
 	conf.Limits = model.DefaultResourceLimits()
 	return conf
@@ -265,6 +276,8 @@ func open(pdf []byte) (*Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("uacheck: the document could not be read: %w", err)
 	}
+	// The resource step is off (`checkerConfig`), so its inheritance half is done here, without its pruning.
+	pdfread.InheritResources(ctx)
 	cat, cerr := ctx.XRefTable.Catalog()
 	if cerr != nil {
 		return nil, fmt.Errorf("uacheck: the document has no catalog: %w", cerr)

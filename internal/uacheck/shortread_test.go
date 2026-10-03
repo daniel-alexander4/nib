@@ -314,6 +314,10 @@ func annotOf(d *Document, page types.Dict) types.Dict {
 // `/Parent` climb the bound guards runs ZERO times, whatever the page tree's depth. The bound stays as the
 // cycle guard it is, and this test is here so the overturn is not an assertion in a comment: if pdfcpu
 // stops flattening, the climb matters again and this goes red with the reason.
+//
+// **Since `/pending 782` the flattening is nib's, not pdfcpu's**: the checker reads with pdfcpu's per-page resource
+// step OFF (it pruned names it could not decode), and `open` puts the inherited `/Resources` on the page through
+// `pdfread.InheritResources`. The name is kept for `docs/red-proofs.md`; the measurement it pins is unchanged.
 func TestPdfcpuGivesThePageItsInheritedResources(t *testing.T) {
 	// One page under a chain of 70 /Pages nodes, with /Resources only on the root of that chain.
 	objs := map[int]string{
@@ -344,7 +348,7 @@ func TestPdfcpuGivesThePageItsInheritedResources(t *testing.T) {
 		t.Fatalf("page 1 does not resolve: %v", perr)
 	}
 	if d.dict(page["Resources"]) == nil {
-		t.Fatalf("pdfcpu no longer puts the inherited /Resources on the page dictionary, so resourcesOf's "+
+		t.Fatalf("open no longer puts the inherited /Resources on the page dictionary, so resourcesOf's "+
 			"/Parent climb now runs for real and its %d-level bound is reachable again — /pending 507's fourth "+
 			"case was overturned on this measurement and needs re-opening", maxWalkDepth)
 	}

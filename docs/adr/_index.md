@@ -596,3 +596,7 @@ home today.
   bytes, durable at 0600, written before they are sent, a failed write a 500 `copy-not-kept` that refuses the signing;
   `kept_<slug>_<ts>-<8hex>.pdf`, a grammar no other `~/nib/signed` writer produces, named only through `keptPathFor`;
   the name's digest is never evidence.
+- **[ADR-074 — the accessibility checker reads every resource the file binds, never pdfcpu's pruned set](074-the-checker-reads-every-resource-the-file-binds.md)**
+  — `/pending 782`. pdfcpu's per-page resource step pruned by an undecoded name scan and deleted the resource `/X#30`
+  draws; the checker turns it off, keeps the inheritance half as `pdfread.InheritResources`, keeps form/font fusion, and
+  decodes every content name through `nameKey`.
