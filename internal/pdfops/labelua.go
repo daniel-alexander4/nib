@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -26,6 +27,7 @@ var (
 	ErrUANoLanguage          = errors.New("the document declares no language")
 	ErrUANoTitle             = errors.New("the document has no dc:title, or does not ask viewers to display it")
 	ErrUANoPacket            = errors.New("the document has no metadata packet nib wrote to add the identification to")
+	ErrUAFontNotEmbedded     = errors.New("the document is set in fonts it does not embed, which PDF/UA requires (7.21.4.1) — nib's own faces could not be installed on this computer, so the conversion fell back to the Base-14 core fonts")
 )
 
 const uaIdentificationXML = `<rdf:Description rdf:about="" xmlns:pdfuaid="` + pdfuaidNS + `"><pdfuaid:part>1</pdfuaid:part></rdf:Description>`
@@ -48,6 +50,14 @@ func LabelUA(pdf []byte, langAsserted bool) ([]byte, error) {
 	}
 	return writeMutated(pdf, func(ctx *model.Context) error {
 		xt := ctx.XRefTable
+		// **The measurement the claim rests on was taken with nib's faces installed** (`/pending 820`).
+		// `ConvertDocToPDF` degrades to the Base-14 core fonts when they cannot be — a read-only or full
+		// font directory — and a core font is by definition not embedded, which fails 7.21.4.1 however
+		// correct the rest of the document is. That degraded conversion is not the one veraPDF measured,
+		// so it earns no label. Asked of the bytes, not of the install, because the bytes are the claim.
+		if missing := nonEmbeddedFonts(xt); len(missing) > 0 {
+			return fmt.Errorf("%w: %s", ErrUAFontNotEmbedded, strings.Join(missing, ", "))
+		}
 		root, err := xt.Catalog()
 		if err != nil {
 			return err

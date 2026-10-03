@@ -600,3 +600,7 @@ home today.
   — `/pending 782`. pdfcpu's per-page resource step pruned by an undecoded name scan and deleted the resource `/X#30`
   draws; the checker turns it off, keeps the inheritance half as `pdfread.InheritResources`, keeps form/font fusion, and
   decodes every content name through `nameKey`.
+- **[ADR-075 — the PDF/UA label needs every font embedded](075-a-label-needs-every-font-embedded.md)**
+  — /pending 820; extends ADR-033, whose five refusals become six. A Markdown conversion that degraded to the Base-14
+  core fonts (the faces could not be installed) fails 7.21.4.1 and is not the conversion veraPDF measured; `LabelUA`
+  refuses it as `ErrUAFontNotEmbedded`, asked of the bytes through `nonEmbeddedFonts`.
