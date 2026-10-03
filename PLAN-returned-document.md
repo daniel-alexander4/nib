@@ -1039,23 +1039,117 @@ one in practice.
 
 **Exit criteria.** A tick at signing, default off, writes the signed output to `~/nib/signed/`; a
 failed write fails the signing; the copy is listed and deletable; the Simple Sign checklist gains a
-probed step; an ADR records the retention decision.
+probed step; an ADR records the retention decision. **(plan-review pin)**: the dispute sheet offers the kept copy first, then
+the ceremony copy, then a file you choose (the P03 PIN's deferred clause, observed by S02's plant-both test).
+
+**PIN 2026-10-02 (phase-open, firmed against HEAD `1ce25f1a` / v1.181.2 — a deepdive of the Finalize path, `~/nib/signed/`'s
+writers, the Simple Sign checklist and the sheet's kept-copy slot; every premise below READ at the line).**
+- **Finalize persists nothing today and signs in one request**: `handleFinalize` (`finalize.go:38`) watermarks, signs and
+  `sendDownload`s (`:132`); the client then Save-As's the blob (`app.js:8663`). So the write sits between the sign
+  (`:121`) and the response, and D14 holds by construction: a failed write answers non-2xx with no bytes.
+- **D13's "named on `receivedName`'s shape, no new naming convention" cannot hold as written** — `~/nib/signed/` already
+  has two writers (`saveReceived`, `session.go:2156`, every signed arrival; `saveDelivered`, `delivery.go:297`), and a
+  name in `receivedName`'s alphabet (`labelSlug`: `[a-z0-9-]`, `session.go:2238`) is one a peer's label can produce, so
+  D15's list-and-delete could reach a peer's document or a delivered ceremony copy — and `alreadyDelivered`
+  (`delivery.go:374`) re-arms on a stat of that folder. **Amended (a pin, not a strike — D13's decision is the opt-in, which
+  stands):** same folder, same timestamp+digest shape, prefixed `kept_` — an underscore `labelSlug` never emits — so
+  `kept_<YYYYmmdd-HHMMSS>-<sha256[:4] hex>.pdf` is a name no other writer produces, and ONE door (`keptPathFor`) is the
+  only way any route reaches a file in that folder by name (ADR-009).
+- **Two web callers reach `/api/finalize`**: the Finalize modal and the recipient's Complete & sign (`completeAndSign`,
+  `app.js:10284`), which has no modal. S01 offers the tick in the Finalize modal (D13 names that flow); Complete & sign is
+  filed as /pending 814 rather than given a modal here. The CLI signs in-process to a path the user names (`cli/commands.go:1116`) and
+  gets no retention option.
+- **D16's "filesystem probe" can only answer for an OPENED signed document.** After Finalize the open view is still the
+  unsigned document (the signed bytes went to Save As), and no byte relation joins the two; a signed document opened
+  later IS joinable — its own `[0, CoverageEnd)` for your signature hashes to a kept copy's digest, or it begins with a
+  kept copy. **S03's acceptance is amended**: the row ticks ✓ when the open signed document has a kept copy, ○ when it has
+  none, and `—` when the open document carries no signature of yours (nothing to probe) — "signed before this shipped"
+  has no observable in the code and reads ○, honestly, because nothing was kept.
+- **Firmed: three slices, as sketched**, with the pins folded in. `/plan-review` FIRES: the phase persists PII by design
+  and adds the repo's first route that deletes a user's file.
+
+**(plan-review pins, 2026-10-02 — `plan-reviews/2026-10-02-p04-retention.md`; 8 seats, 1 critical, all adopted at rung 1; the
+critical is the "or its prefix" scan below. Remedies naming a mechanism were read at the cited line; the ones marked
+UNVERIFIED are the slice's to prove.)**
+- **P04 depends on P01-P03** (the preamble's "No dependency on P01–P03" is false since P03: S02 fills P03.S03's slot and
+  the match reads P01's `sign.Revisions`).
+- **One user-facing noun: "a copy kept when you signed"** — the list, the sheet's slot, the checklist row and the ADR; the
+  tick keeps D13's "Keep a copy for my records"; never "sent" or "the original" (a counterparts copy is this party's,
+  D17); code says `kept`. "Retained" only as the ADR's word for the rule.
+- **The name grammar, v1: `kept_<slug>_<YYYYmmdd-HHMMSS>-<first 8 hex digits of sha256, sum[:4]>.pdf`**, `<slug>` =
+  `labelSlug` of the document name the client sends (`labelSlug` never emits `_`, `session.go:2244`, so the name parses
+  unambiguously and no other writer produces it); `document` when the slug is empty. A future grammar takes a NEW prefix;
+  a reader ignores names it does not parse. The name's digest is an index hint and **never evidence** — Save As can
+  overwrite a kept file (`saveas.go:154`), and 32 bits are minutes of work to collide.
+- **S01 — the write**: `Keep bool` in `finalizeParams` (absent = false, so Complete & sign and any other caller keep
+  nothing); after the sign's error check (`finalize.go:121`) and before `sendDownload` (`:132`), `os.MkdirAll(signed,
+  0o755)` then `atomicfile.WriteDurable(keptPathFor(name), signed, 0o600)` — the pair `saveReceived`/`saveDelivered` use
+  (READ `session.go:2157-2170`, `delivery.go:305-311`) — over the SAME `signed` slice `sendDownload` sends, no
+  re-serialisation. A failure answers **500 `{cause:"copy-not-kept", reason}`, never 422** (the modal reads 422 as a wrong
+  passphrase, READ `app.js:8659`) and no PDF bytes. The modal stays open and says the document was NOT signed, why
+  (a full disk named as one), and that unticking signs without a copy; "Could not finalize" stays only for unnamed causes.
+- **S01 — the tick**: off every time the modal opens, never remembered; its hint says the copy is saved UNENCRYPTED to
+  `~/nib/signed`, readable by anyone who can read your files and by your backups (D13's opt-in is informed only if it says so).
+- **S01 — its tests**, one redirected HOME, each clause red-proved separately: ticked writes exactly one `kept_` file,
+  0600, byte-identical to the response body (the control); unticked writes none; a params with no keep field writes
+  none; `~/nib/signed` planted as a regular FILE (works under root, unlike chmod — `receivedwrite_test.go:59`) → non-2xx,
+  no PDF bytes, no `kept_` and no `.nib-*.tmp`. And `sign.Revisions(kept)`'s last record ends at `len(kept)` for the
+  native and external signers (UNVERIFIED for a TSA-stamped signing — measured where a TSA test exists, else declared).
+- **S01 — the ADR (073) lands in S01's commit**, beside the first write (D13: "in the same change"), with its
+  `_index.md` entry; S03 cites it. It records the grammar, the one-door rule, the residue below and that the remove
+  route widens nothing a session could not already do (`/api/write`, `/api/open` reach the folder). S01's close measures
+  Finalize wall time, tick on/off, at 1, 50 and 500 MB, into the inventory; a gap over ~1 s at 50 MB goes to Dan.
+- **Declared residue**: an interrupted write's `.nib-*.tmp` in `~/nib/signed/` (a full signed document) — not listed,
+  not removable from the UI, not swept (a sweep could race a live `saveReceived`).
+- **S02 — ONE match door, `keptCopyFor(doc)`, built in S02** and called by S02's sheet slot AND S03's row (ADR-009): the
+  candidate ends are the coverage ends of the document's own signature-shaped records (`sign.Revisions`; identity-
+  independent, so a locked vault or an imported certificate changes nothing); a kept file is a candidate only when its
+  Lstat size equals one of those ends L and `sha256(doc[:L])[:4]` equals its name's digest; a match is `doc[:L]` equal
+  to the file BYTE FOR BYTE. Cost: one hash pass per distinct end, one readdir + stat per entry — never a read of a kept
+  file that is not already a size-and-digest candidate. "Or it begins with a kept copy" is this same test (a kept copy
+  ends at its own last coverage end).
+- **S02 — the sheet's link**: `GET /api/document/kept-copy`, the `ceremonycopy.go` shape (pinned `resolveDoc`,
+  registration in the hold, 422 causes, facts in a header, NO name parameter); bytes read only on the press;
+  `#returnedCmpKept` becomes the link (replaced, not appended beside); the chain is kept copy → ceremony copy → a file
+  you choose, proved by a test that plants both a kept copy and a mirror for one document.
+- **S02 — the list and the remove**: one readdir filtered by `keptPathFor`'s grammar + Lstat (regular files only); no
+  kept file is opened to list it; shows the slug, "kept at" time, size and the total kept bytes; re-lists after every
+  remove. Remove is `POST /api/kept/remove` `{name}` behind `requireUnlocked` (the `keys/remove` convention): the full
+  grammar match (anchored, no separator), the path rebuilt from the parts, Lstat refuses a non-regular file, `os.Remove`
+  never `RemoveAll`, ENOENT answers 2xx "already gone". Its table test refuses `../x`, an absolute path, a
+  `receivedName`- and a `deliveredName`-shaped file and a `kept_` symlink — each file still there afterwards. The confirm
+  dialog names the document and says the removal is permanent and reaches no backup or copy saved elsewhere.
+- **S02 — the guard**: an AST census — the literal `kept_` only inside `kept.go`'s grammar, and every `os.Remove` in
+  `internal/server` either on `keptPathFor`'s output or on the update download's named temp files.
+- **S03 — the row**: a cached answer per document id, fetched on demand (Simple Sign card open, document switch, a
+  ticked Finalize, a remove — the `refreshProfileFilled` shape, `app.js:13786`), applied only while the active view still
+  has the id it asked for (ADR-001); never computed inside `docResponse` or synchronously in `renderSignSteps`. ✓ "a copy
+  kept when you signed matches this file"; ○ "no kept copy matches this file" with how many are kept and a link to the
+  list (a re-saved document's copy is still findable by hand); `—` with its OWN hover, "this document carries no
+  signature", not the generic untracked one; a probe error renders `—`, never a stale value. Right after Finalize the open
+  view is unsigned, so the row stays `—` — declared in the ADR; no flag from the Finalize response may tick it (ADR-027).
+  The probed ✓ and a hand ✓ carry different labels. Fixtures for ✓, ○ and `—`, each weakened separately.
+- **Inventory**: S01 and S02 reconcile rows P7, P8, G6 and S5 by name; P7's reader re-pointed to P04.S01 and S03.
+- **Complete & sign offers no kept copy**: filed as /pending 814.
 
 #### P04.S01 — the tick and the write
 Scope: the checkbox, the write, the naming. Refs: D13, D14.
 Acceptance: unticked signs and writes nothing; ticked writes exactly one file; a write failure is
-surfaced at signing and the signature is not silently returned as if the copy existed.
+surfaced at signing and the signature is not silently returned as if the copy existed. **(phase-open PIN)**: named `kept_…` through
+the one `keptPathFor` door; the Finalize modal's tick only (Complete & sign filed).
 
 #### P04.S02 — the copy is visible and removable
 **(P03 phase-open PIN 2026-10-02)**: and the dispute surface offers the kept copy FIRST in its fallback chain, ahead of
 the ceremony mirror (inventory S5).
 Scope: listing and deletion. Refs: D15.
-Acceptance: a kept copy appears in a surface the user can reach and can be deleted from it.
+Acceptance: a kept copy appears in a surface the user can reach and can be deleted from it. **(plan-review pin)**: and the dispute sheet
+offers the kept copy first, then the ceremony copy, then a file you choose — observed by the plant-both test.
 
 #### P04.S03 — the checklist step, and the ADR
 Scope: the Simple Sign row with a real probe; the ADR. Refs: D16, D13.
-Acceptance: the row ticks from a filesystem probe and shows `—` for documents signed before this
-shipped; the ADR is in the same commit.
+Acceptance: ~~the row ticks from a filesystem probe and shows `—` for documents signed before this
+shipped; the ADR is in the same commit.~~ *(superseded by the phase-open PIN and the plan-review pins: the ADR is S01's)* **(phase-open PIN, amends the line before)**: ✓ / ○ for an open document carrying a
+signature of yours, by whether a kept copy is its signed version or its prefix; `—` when it carries none.
 
 ---
 
