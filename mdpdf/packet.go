@@ -103,19 +103,7 @@ func ImageToPDF(img []byte) (pdf []byte, err error) {
 
 // mergePDFs concatenates already-validated PDFs, first as the base.
 func mergePDFs(parts [][]byte) ([]byte, error) {
-	rsc := make([]io.ReadSeeker, len(parts))
-	for i, p := range parts {
-		rs, err := pdfread.Reader(p, nil)
-		if err != nil {
-			return nil, err
-		}
-		rsc[i] = rs
-	}
-	var out bytes.Buffer
-	if err := api.MergeRaw(rsc, &out, false, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return pdfread.MergeRaw(parts)
 }
 
 // exhibitToPDF converts one exhibit into a standalone validated PDF, or
@@ -156,9 +144,9 @@ func normalizePDF(pdf []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Refused, not skipped, past the budget: this round-trip exists to prove the exhibit survives the merge,
-	// and `api.MergeRaw` then runs pdfcpu's optimize pass with no budget of its own (ADR-055).
-	if err := pdfread.OptimizeOrRefuse(ctx); err != nil {
+	// Skipped, not refused, past the budget (ADR-082): the merge's own closing pass is budgeted now
+	// (`pdfread.MergeRaw`), so an exhibit too costly to deduplicate is kept as it is rather than left out.
+	if err := pdfread.Optimize(ctx); err != nil {
 		return nil, err
 	}
 	ctx.EnsureVersionForWriting()

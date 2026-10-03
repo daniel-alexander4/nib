@@ -24,11 +24,7 @@ type OutlineItem struct {
 // Outline reads the document outline as a flat, depth-first leveled list. An empty
 // result (no outline) is not an error.
 func Outline(pdf []byte) ([]OutlineItem, error) {
-	rs, err := pdfread.Reader(pdf, nil)
-	if err != nil {
-		return nil, err
-	}
-	bms, err := api.Bookmarks(rs, nil)
+	bms, err := pdfread.Bookmarks(pdf)
 	if err != nil {
 		return nil, err
 	}

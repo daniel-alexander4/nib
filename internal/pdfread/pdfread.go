@@ -14,19 +14,17 @@
 // (`api.ReadContext`) follows none of them, so they are looked for there, in the raw object graph, and the
 // document is refused before the validator is reached (`refuseUnboundedReferences`, ADR-069).
 //
-// Two shapes, one check:
-//   - `Validated` (and `ReadOptimized` over it) is `api.ReadAndValidate` with the check between its read and
-//     its validation — the same context, so it costs no second parse.
-//   - `Reader` is for pdfcpu's `api` functions that take a reader and do their own read: nib cannot step
-//     between their read and their validation, so it reads once more, unvalidated, and hands the reader over
-//     only when that read passes the check.
+// `Validated` (and `ReadOptimized` over it) is `api.ReadAndValidate` with the check between its read and its
+// validation — the same context, so it costs no second parse. pdfcpu's `api` functions that take a reader and do their
+// own read are restated over it (`apiread.go`, ADR-082): nib cannot step between their read and their validation, nor
+// budget the optimize pass most of them run, so no reader of a PDF is handed to pdfcpu at all.
 //
 // It is also the one door to a page's decoded content (`PageContent`, `pagecontent.go`, ADR-056): pdfcpu joins a
 // `/Contents` array with no separator, which fuses tokens across a legal division.
 //
 // `TestEveryValidatingReadRoutesThroughTheDoor` (in this package) is the guard: outside this package no
-// source file may call pdfcpu's validating reads or its optimize pass, or hand a reader it built itself to a
-// pdfcpu `api` call, except at the named not-a-PDF sites.
+// source file may call pdfcpu's validating reads or its optimize pass, or any `api` function that reads a document
+// itself (except `api.ReadContext`, the unvalidated read, and a call passing nil where the document would go).
 package pdfread
 
 import (
@@ -64,24 +62,4 @@ func Validated(pdf []byte, conf *model.Configuration) (ctx *model.Context, err e
 		}
 	}
 	return ctx, nil
-}
-
-// Reader returns a reader over pdf for a pdfcpu `api` function that reads and validates it itself, once an
-// unvalidated read under the same configuration passes the reference door. conf may be nil where the `api`
-// call's is (pdfcpu then uses its default). When the unvalidated read fails, the reader is returned anyway:
-// the `api` call's own read is the same read and fails at the same step, before its validator runs, so the
-// caller keeps the error pdfcpu has always given it.
-func Reader(pdf []byte, conf *model.Configuration) (*bytes.Reader, error) {
-	c := model.NewDefaultConfiguration()
-	if conf != nil {
-		cp := *conf // pdfcpu's read may write to the configuration it is given; the caller's is not ours
-		c = &cp
-	}
-	ctx, err := api.ReadContext(bytes.NewReader(pdf), c)
-	if err == nil {
-		if err := refuseUnboundedReferences(ctx); err != nil {
-			return nil, err
-		}
-	}
-	return bytes.NewReader(pdf), nil
 }

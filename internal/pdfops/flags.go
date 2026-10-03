@@ -73,9 +73,10 @@ var errFlagsRoundTrip = errors.New("flags did not round-trip after embedding")
 // hand-mangled property can never break opening a document.
 func FlagsJSON(pdf []byte) ([]byte, error) {
 	// `api.Properties` restated over the read door (pkg/api/property.go:29, v0.13.0: `LISTPROPERTIES`, then the
-	// context's properties), because the server runs this on every document it answers for: `pdfread.Reader`
-	// in front of the wrapper would parse each file twice (measured +30-85% here on 100 KB-6 MB producer
+	// context's properties), because the server runs this on every document it answers for: the reader door that
+	// once stood in front of the wrapper parsed each file twice (measured +30-85% here on 100 KB-6 MB producer
 	// files), where the door checks for reference loops on the read it already makes (`/pending 675`, `/pending 764`).
+	// Every reader-taking `api` function is restated so now (ADR-082, `pdfread/apiread.go`).
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.LISTPROPERTIES
 	ctx, err := pdfread.ReadOptimized(pdf, conf)

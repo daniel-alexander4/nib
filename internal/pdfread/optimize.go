@@ -88,7 +88,8 @@ func ReadOptimizedOrRefuse(pdf []byte, conf *model.Configuration) (*model.Contex
 //
 // The step (`optimizeResourceDicts`, optimize.go:1592, v0.13.0) calls `PageDict(i, true)` for every page, which on a
 // flat page tree dereferences every kid before the one it wants: quadratic in pages, ~15 s of a 7,059-page document's
-// prepare. It does two things. It prunes each page's `/Resources` to the names its content uses — a reader that
+// prepare. (`optimize` now reshapes the tree for the pass so the step is not quadratic — `pagebalance.go`,
+// `/pending 825` — but a reader still has no use for what the step does, so it still skips it.) It does two things. It prunes each page's `/Resources` to the names its content uses — a reader that
 // looks names up from the content sees the same objects — and it puts inherited `/Resources` on the page, which a
 // reader of a page's own dictionary does see, so that half is restored here from one `Pages` walk (the nearest
 // ancestor's dictionary, which is what PDF's inheritance means; pdfcpu merges every ancestor's, and the difference
@@ -158,13 +159,6 @@ func Optimize(ctx *model.Context) error {
 	return optimize(ctx, false)
 }
 
-// OptimizeOrRefuse is Optimize for a caller whose pass is the POINT — a normalization that proves a document
-// survives what comes after it — so an unaffordable pass is refused (ErrUnaffordable) rather than skipped. Skipping
-// would admit the document into a later pdfcpu write that runs the pass unbounded (`mdpdf`'s merge).
-func OptimizeOrRefuse(ctx *model.Context) error {
-	return optimize(ctx, true)
-}
-
 // optimize is Optimize, refusing past the budget when strict (`ReadOptimizedOrRefuse`) as well as when the
 // pass is the operation.
 func optimize(ctx *model.Context, strict bool) error {
@@ -176,6 +170,10 @@ func optimize(ctx *model.Context, strict bool) error {
 			return fmt.Errorf("%w: %s", ErrUnaffordable, why)
 		}
 		return nil
+	}
+	if ctx.Conf != nil && ctx.Conf.OptimizeResourceDicts {
+		// The step walks the page tree from its root once per page (`pagebalance.go`, `/pending 825`).
+		defer balancePageTreeForPass(ctx)()
 	}
 	return api.OptimizeContext(ctx)
 }

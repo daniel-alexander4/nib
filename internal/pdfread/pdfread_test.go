@@ -75,7 +75,7 @@ func TestAUseCMapLoopIsRefusedBeforeTheValidator(t *testing.T) {
 		conf := model.NewDefaultConfiguration()
 		refusedWithin(t, "Validated over "+name, func() error { _, err := pdfread.Validated(c.PDF, conf); return err })
 		refusedWithin(t, "ReadOptimized over "+name, func() error { _, err := pdfread.ReadOptimized(c.PDF, conf); return err })
-		refusedWithin(t, "Reader over "+name, func() error { _, err := pdfread.Reader(c.PDF, nil); return err })
+		refusedWithin(t, "Bookmarks over "+name, func() error { _, err := pdfread.Bookmarks(c.PDF); return err })
 	}
 }
 
@@ -88,12 +88,8 @@ func TestAUseCMapChainThatEndsStillReads(t *testing.T) {
 	if _, err := pdfread.Validated(pdf, model.NewDefaultConfiguration()); err != nil {
 		t.Errorf("Validated refused a /UseCMap chain with no loop: %v", err)
 	}
-	rs, err := pdfread.Reader(pdf, nil)
-	if err != nil {
-		t.Fatalf("Reader refused a /UseCMap chain with no loop: %v", err)
-	}
-	if n, err := api.PageCount(rs, model.NewDefaultConfiguration()); err != nil || n != 1 {
-		t.Errorf("pdfcpu over Reader's reader: %d pages, %v; want 1", n, err)
+	if dims, err := pdfread.PageDims(pdf, nil); err != nil || len(dims) != 1 {
+		t.Errorf("PageDims over a /UseCMap chain with no loop: %d pages, %v; want 1", len(dims), err)
 	}
 }
 
@@ -119,7 +115,14 @@ func TestEveryUnguardedReferenceLoopIsRefusedBeforeTheValidator(t *testing.T) {
 			continue
 		}
 		refusedAs(t, pdfread.ErrReferenceCycle, "Validated over "+c.Edge, func() error { _, err := pdfread.Validated(c.Loop, conf); return err })
-		refusedAs(t, pdfread.ErrReferenceCycle, "Reader over "+c.Edge, func() error { _, err := pdfread.Reader(c.Loop, nil); return err })
+		refusedAs(t, pdfread.ErrReferenceCycle, "NUp over "+c.Edge, func() error {
+			nup, err := api.PDFNUpConfig(2, "", nil)
+			if err != nil {
+				return err
+			}
+			_, err = pdfread.NUp(c.Loop, nup, nil)
+			return err
+		})
 	}
 }
 

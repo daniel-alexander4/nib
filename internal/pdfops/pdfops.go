@@ -89,19 +89,7 @@ func ImagesToPDF(pages []RasterPage) ([]byte, error) {
 	if len(segs) == 1 {
 		return segs[0], nil
 	}
-	readers := make([]io.ReadSeeker, len(segs))
-	for i, b := range segs {
-		rs, err := pdfread.Reader(b, nil)
-		if err != nil {
-			return nil, err
-		}
-		readers[i] = rs
-	}
-	var out bytes.Buffer
-	if err := api.MergeRaw(readers, &out, false, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return pdfread.MergeRaw(segs)
 }
 
 // imageToPage builds a one-page PDF whose page is exactly p.W×p.H points, with the
@@ -748,18 +736,14 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	// re-parses the whole document, so the per-page loop this replaces was O(n²) on the
 	// security-critical path: redacting one page of a 200-page file meant 199 full parses.
 	// Runs make it O(number of runs) — two, for a single redacted page in the middle.
-	segments := make([]io.ReadSeeker, 0, n)
+	segments := make([][]byte, 0, n)
 	for i := 1; i <= n; {
 		if page, ok := raster[i]; ok {
 			seg, err := ImagesToPDF([]RasterPage{page})
 			if err != nil {
 				return nil, err
 			}
-			rs, err := pdfread.Reader(seg, nil)
-			if err != nil {
-				return nil, err
-			}
-			segments = append(segments, rs)
+			segments = append(segments, seg)
 			i++
 			continue
 		}
@@ -779,18 +763,10 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		rs, err := pdfread.Reader(seg, nil)
-		if err != nil {
-			return nil, err
-		}
-		segments = append(segments, rs)
+		segments = append(segments, seg)
 		i = j
 	}
-	var out bytes.Buffer
-	if err := api.MergeRaw(segments, &out, false, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return pdfread.MergeRaw(segments)
 }
 
 // PageCount returns the number of pages in the PDF: `api.PageCount` (pkg/api/page.go:213, v0.13.0 — a
@@ -821,11 +797,7 @@ type SplitPart struct {
 // per-bookmark PageThru: the read path neither sorts nor enforces page order, and
 // the last bookmark's PageThru is left 0, so trusting it is fragile.
 func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
-	rs, err := pdfread.Reader(pdf, nil)
-	if err != nil {
-		return nil, err
-	}
-	bms, err := api.Bookmarks(rs, nil)
+	bms, err := pdfread.Bookmarks(pdf)
 	if err != nil {
 		return nil, err
 	}
@@ -994,12 +966,8 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	rs, err := pdfread.Reader(pdf, conf)
+	nupped, err := pdfread.NUp(pdf, nup, conf)
 	if err != nil {
-		return nil, err
-	}
-	if err := api.NUp(rs, &out, nil, nil, nup, conf); err != nil {
 		return nil, err
 	}
 	// **Carry the tag tree if it can be carried; be honest if it cannot.**
@@ -1029,7 +997,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// `/AcroForm` whose widgets went with the page dictionaries the composition removed** — measured
 	// at 2 fields and 0 widgets through `NUp(2)`, a form a reader offers and nobody can fill
 	// (`/pending 573`). Both corrections share this one parse; see the door's own note.
-	raw, err := withoutUAClaimOrOrphanedForm(out.Bytes())
+	raw, err := withoutUAClaimOrOrphanedForm(nupped)
 	if err != nil {
 		return nil, err
 	}
@@ -2493,15 +2461,7 @@ func LangTag(s string) (string, error) {
 
 // ExportFormJSON returns the form field data of pdf as pdfcpu's JSON.
 func ExportFormJSON(pdf []byte) ([]byte, error) {
-	var out bytes.Buffer
-	rs, err := pdfread.Reader(pdf, nil)
-	if err != nil {
-		return nil, err
-	}
-	if err := api.ExportFormJSON(rs, &out, "nib", nil); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return pdfread.ExportFormJSON(pdf, "nib")
 }
 
 // ExportFormCSV returns the form field data as two columns: field name and value.
@@ -2603,11 +2563,7 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 				err = fmt.Errorf("image extraction panicked: %v", r)
 			}
 		}()
-		rs, err := pdfread.Reader(pdf, nil)
-		if err != nil {
-			return err
-		}
-		return api.ExtractImages(rs, pages, digest, model.NewDefaultConfiguration())
+		return pdfread.ExtractImages(pdf, pages, digest)
 	}
 
 	if !perPage {

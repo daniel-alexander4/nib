@@ -1,12 +1,14 @@
 package pdfops
 
 import (
+	"bytes"
 	"fmt"
 	"nib/internal/pdfread"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
@@ -180,3 +182,76 @@ func TestAnOrdinaryDocumentIsStillOptimized(t *testing.T) {
 
 // The routing guard that lived here — nothing reaches pdfcpu's pass around the budget — is module-wide now,
 // with the budget itself in `internal/pdfread` (`/pending 714`): `TestEveryValidatingReadRoutesThroughTheDoor`.
+
+// TestEveryOperationOverAnApiReadFinishesOnHostileForms — `/pending 716`. Each of these operations handed a pdfcpu
+// `api` function a reader, and the function ran its own read-validate-OPTIMIZE with no budget: measured on the
+// 400-form chain (68 KB) before the restatement, every one but NUp and NormalizePageSizes (whose `api` reads run no
+// pass) was still running at 30 s. Each now reads through `pdfread` (`apiread.go`), so the pass is skipped past the
+// budget — or, for image extraction, refused.
+func TestEveryOperationOverAnApiReadFinishesOnHostileForms(t *testing.T) {
+	pdf := formChain(400)
+	conf := model.NewAESConfiguration("pw", "pw", 256)
+	conf.Optimize = false // the fixture's own encryption must not run the unbudgeted pass this test is about
+	var enc bytes.Buffer
+	if err := api.Encrypt(bytes.NewReader(pdf), &enc, conf); err != nil {
+		t.Fatalf("setup: encrypting the fixture: %v", err)
+	}
+	png := onePixelPNG()
+	ops := []struct {
+		name string
+		run  func() error
+	}{
+		{"Outline", func() error { _, err := Outline(pdf); return err }},
+		{"SplitByBookmarks", func() error { _, err := SplitByBookmarks(pdf, "x"); return err }},
+		{"StampTextLayer", func() error {
+			_, err := StampTextLayer(pdf, []Word{{Page: 1, Rect: [4]float64{10, 10, 50, 20}, Text: "hello"}}, "eng")
+			return err
+		}},
+		{"StampImages", func() error {
+			_, err := StampImages(pdf, []Stamp{{Page: 1, Rect: [4]float64{10, 10, 50, 50}, PNG: png}})
+			return err
+		}},
+		{"FillFormCSV", func() error { _, err := FillFormCSV(pdf, []byte("a\n1\n"), ""); return err }},
+		{"ExportFormJSON", func() error { _, err := ExportFormJSON(pdf); return err }},
+		{"ExtractImagesZip", func() error { _, _, err := ExtractImagesZip(pdf); return err }},
+		{"Encrypt", func() error { _, err := Encrypt(pdf, "pw"); return err }},
+		{"RemovePassword", func() error { _, err := RemovePassword(enc.Bytes(), "pw"); return err }},
+		{"RedactPages", func() error {
+			_, err := RedactPages(pdf, map[int]RasterPage{2: {Image: png, W: 612, H: 792}})
+			return err
+		}},
+		{"NUp", func() error { _, err := NUp(pdf, 2, false); return err }},
+		{"NormalizePageSizes", func() error { _, err := NormalizePageSizes(pdf); return err }},
+	}
+	for _, op := range ops {
+		var err error
+		st := time.Now()
+		finishesWithin(t, 20, op.name+" over a chain of 400 forms", func() { err = op.run() })
+		// What each answers is its own business (the chain has no fields, outline or images); that it ANSWERS is
+		// this test's. The answer is logged so a changed one is visible.
+		t.Logf("%s: %v (%v)", op.name, err, time.Since(st).Round(time.Millisecond))
+	}
+	// The ones whose answer is not "nothing to do": the document's bytes come back, every form still in them.
+	for name, run := range map[string]func() ([]byte, error){
+		"Encrypt":        func() ([]byte, error) { return Encrypt(pdf, "pw") },
+		"RemovePassword": func() ([]byte, error) { return RemovePassword(enc.Bytes(), "pw") },
+		"StampImages": func() ([]byte, error) {
+			return StampImages(pdf, []Stamp{{Page: 1, Rect: [4]float64{10, 10, 50, 50}, PNG: png}})
+		},
+	} {
+		out, err := run()
+		if err != nil {
+			t.Errorf("%s over the chain: %v", name, err)
+			continue
+		}
+		if name == "Encrypt" {
+			if out, err = RemovePassword(out, "pw"); err != nil {
+				t.Errorf("the chain Encrypt wrote does not decrypt: %v", err)
+				continue
+			}
+		}
+		if got := formObjects(t, out); got < 401 { // a watermark adds its own form
+			t.Errorf("%s over the chain wrote %d form XObjects, want all 401 kept", name, got)
+		}
+	}
+}

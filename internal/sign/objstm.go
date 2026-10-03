@@ -57,6 +57,12 @@ import (
 // `maxLookupWork` is kept as the backstop it was, and a 1,000-stream chain under 1,000 members (6.2 s a
 // pass) is past it. `TestNoProducerDocumentReachesTheLookupCeiling` holds the corpus under it.
 //
+// **Re-measured 2026-10-03 (/pending 762)** as thread CPU over member lookups only, on a machine at load ~20 (wall
+// time there inflates every figure 2-3x, so CPU is the honest unit): every shape was charged above its cost except
+// many streams of one member each (0.56x) — the per-stream decoder setup was charged by no term — so a fifth term,
+// `lookupStreamWeight`, charges each stream's first decode. `TestTheLookupModelChargesAtLeastWhatALookupCosts` holds
+// three shapes at 1.1x or more; census-p60-280 now sits at 0.21 of the ceiling.
+//
 // A member's own extent is not charged here, and need not be (/pending 760): honest members do not
 // overlap, so a stream's lookups together read about what it decodes to, which the byte term charges.
 // The shapes that read more — many header ids naming one offset, offsets overlapping into one nested
@@ -69,9 +75,14 @@ import (
 // 3^d reads a lookup; d = 8 was 27 s a pass). It panics `dpdf.ErrObjStmIndirectKey` instead (/pending 768,
 // ADR-070), as pdfcpu already refused such streams ("obj stream dict missing entry First").
 const (
-	lookupPairWeight     = 200
-	lookupByteWeight     = 100
-	lookupVisitWeight    = 15_000
+	lookupPairWeight  = 200
+	lookupByteWeight  = 100
+	lookupVisitWeight = 15_000
+	// lookupStreamWeight is a stream's first decode — the decoder and its buffers, set up once per stream a pass
+	// opens (/pending 762). Re-measured as thread CPU over member lookups only, 4,000 streams of one member each
+	// cost ~34-39 µs a lookup against the ~19 µs the other terms charged (0.56x), where one stream of 4,000
+	// members cost ~14 µs (1.46x): the difference is the per-stream setup, which no term charged.
+	lookupStreamWeight   = 30_000
 	lookupDictByteWeight = 50
 	maxLookupWork        = 6_000_000_000
 	// maxDecodedObjStmBytes is what the byte term alone admits, and so the most the patched reader can
@@ -100,16 +111,19 @@ type lookupCost struct {
 	bytes     int64 // decoded bytes, once per stream
 	visits    int64 // object streams visited by a lookup, each a fresh read of its dictionary
 	dictBytes int64 // the text of those dictionaries
+	streams   int64 // object streams decoded at all, each a decoder set up once
 }
 
 func (c lookupCost) work() int64 {
-	return c.pairs*lookupPairWeight + c.bytes*lookupByteWeight + c.visits*lookupVisitWeight + c.dictBytes*lookupDictByteWeight
+	return c.pairs*lookupPairWeight + c.bytes*lookupByteWeight + c.visits*lookupVisitWeight + c.dictBytes*lookupDictByteWeight +
+		c.streams*lookupStreamWeight
 }
 
 func (c lookupCost) over() bool {
 	// Each term alone first, so no product can overflow before the sum is compared.
 	return c.bytes > maxDecodedObjStmBytes || c.pairs > maxLookupWork/lookupPairWeight ||
 		c.visits > maxLookupWork/lookupVisitWeight || c.dictBytes > maxLookupWork/lookupDictByteWeight ||
+		c.streams > maxLookupWork/lookupStreamWeight ||
 		c.work() > maxLookupWork
 }
 
@@ -127,12 +141,17 @@ type objStmInfo struct {
 	v        dpdf.Value
 	// Charged so far: the reader lexes and decodes each stream once, as far as it has been asked.
 	pairsDone, bytesDone int64
+	opened               bool // charged its first decode
 }
 
 type objStmSlot struct{ pair, off int64 }
 
 // charge adds what reaching pair p and decoded byte b of s costs beyond what is already charged.
 func (s *objStmInfo) charge(c *lookupCost, p, b int64) {
+	if !s.opened {
+		s.opened = true
+		c.streams++
+	}
 	if p > s.pairsDone {
 		c.pairs += p - s.pairsDone
 		s.pairsDone = p

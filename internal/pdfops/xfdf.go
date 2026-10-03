@@ -11,9 +11,7 @@ import (
 
 	"golang.org/x/text/encoding/ianaindex"
 
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // XFDF (XML Forms Data Format, ISO 19444-1) is the form-data interchange format
@@ -109,11 +107,7 @@ func FillFormXFDF(pdf, data []byte) ([]byte, error) {
 	if len(values) == 0 {
 		return nil, fmt.Errorf("the XFDF has no field values")
 	}
-	rs, err := pdfread.Reader(pdf, nil)
-	if err != nil {
-		return nil, err
-	}
-	skeleton, err := api.ExportForm(rs, "nib", model.NewDefaultConfiguration())
+	skeleton, err := pdfread.ExportForm(pdf, "nib")
 	if err != nil {
 		return nil, err
 	}

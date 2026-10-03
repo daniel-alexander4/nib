@@ -623,3 +623,8 @@ home today.
   every keeps-geometry rewrite is driven over flagged documents. That census found pdfcpu's stamp turning a turned page
   about the origin, so a page whose box does not start there left its box on OCR, bake, watermark and page numbers;
   `stampInPlace` is now the one door every pdfcpu stamp runs through, turning about the box's corner.
+- **[ADR-082 — no reader of a PDF is handed to pdfcpu; its reader-taking `api` functions are restated in `pdfread`](082-no-reader-of-a-pdf-is-handed-to-pdfcpu.md)**
+  — /pending 716, 717; supersedes ADR-055 decision 1 in part. `pdfread.Reader` handed pdfcpu a reader and the `api`
+  function ran its own optimize pass unbudgeted (every one past 30 s on the 400-form chain). Each is restated over
+  `Validated`/`ReadOptimized` (`apiread.go`); `MergeRaw`'s closing pass is budgeted, so exhibits skip rather than refuse;
+  the guard bans every reader-taking `api` function read from pdfcpu's source, so where a reader was built is moot.

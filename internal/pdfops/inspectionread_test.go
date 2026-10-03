@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"nib/internal/pdfread"
@@ -164,13 +166,36 @@ func TestReadOnlySitesAgreeAcrossReadings(t *testing.T) {
 		saved := inspectionRead
 		inspectionRead = read
 		defer func() { inspectionRead = saved }()
+		// Every (site, document) answer is independent, so they are asked on every core (`/pending 763`: one at a
+		// time this was ~2 min of pdfops' tier-1 run, 495 s on a loaded machine). Nothing writes `inspectionRead`
+		// until every worker has returned.
+		type job struct{ site, name string }
+		jobs := make(chan job)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
 		out := map[string]map[string]any{}
-		for site, ask := range inspectionSites {
+		for site := range inspectionSites {
 			out[site] = map[string]any{}
-			for name, pdf := range docs {
-				out[site][name] = ask(pdf)
+		}
+		for w := 0; w < runtime.GOMAXPROCS(0); w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobs {
+					a := inspectionSites[j.site](docs[j.name])
+					mu.Lock()
+					out[j.site][j.name] = a
+					mu.Unlock()
+				}
+			}()
+		}
+		for site := range inspectionSites {
+			for name := range docs {
+				jobs <- job{site, name}
 			}
 		}
+		close(jobs)
+		wg.Wait()
 		return out
 	}
 	want, again, got := answers(full), answers(full), answers(pdfread.ReadForInspection)
