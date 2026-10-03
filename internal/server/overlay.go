@@ -57,7 +57,9 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 			covers = append(covers, pdfops.Stamp{Page: q.Page, Rect: q.Rect, PNG: b})
 		}
 		var err error
-		if pdfBytes, err = pdfops.StampImages(pdfBytes, covers); err != nil {
+		if pdfBytes, err = pdfops.StampImages(pdfBytes, covers); wrotePageRangeRefusal(w, err) {
+			return
+		} else if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not stamp covers: "+err.Error())
 			return
 		}
@@ -71,7 +73,7 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, fits, err := pdfops.StampFields(pdfBytes, fields)
-	if wroteStampTextError(w, err) {
+	if wroteStampTextError(w, err) || wrotePageRangeRefusal(w, err) {
 		return
 	}
 	writeFitReport(w, fits)
@@ -117,6 +119,9 @@ func (s *Server) handleBake(w http.ResponseWriter, r *http.Request) {
 			stamps = append(stamps, pdfops.Stamp{Page: q.Page, Rect: q.Rect, PNG: png})
 		}
 		out, err = pdfops.StampImages(out, stamps)
+		if wrotePageRangeRefusal(w, err) {
+			return
+		}
 		if err != nil {
 			httpError(w, http.StatusInternalServerError, "could not stamp images: "+err.Error())
 			return

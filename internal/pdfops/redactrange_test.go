@@ -14,7 +14,7 @@ import (
 // skipped by the 1..n loop, so RedactPages succeeded and the page it meant kept its vector text
 // (/pending 819). Measured before the fix on the one-page form fixture: keys 2, 0 and -1 each
 // returned err=nil with "fullName" still present. Every such key — and an empty raster — must now
-// refuse with ErrRedactPageOutOfRange and return no bytes.
+// refuse with ErrPageNotInDocument and return no bytes.
 func TestRedactPagesRefusesAPageTheDocumentDoesNotHave(t *testing.T) {
 	form, err := testpdf.Form()
 	if err != nil {
@@ -30,10 +30,10 @@ func TestRedactPagesRefusesAPageTheDocumentDoesNotHave(t *testing.T) {
 		// Alone, and beside a valid key: the valid one must not carry the bad one through.
 		for _, raster := range []map[int]RasterPage{{k: page}, {1: page, k: page}} {
 			out, err := RedactPages(form, raster)
-			if !errors.Is(err, ErrRedactPageOutOfRange) {
-				t.Fatalf("key %d (raster of %d): err = %v, want ErrRedactPageOutOfRange", k, len(raster), err)
+			if !errors.Is(err, ErrPageNotInDocument) {
+				t.Fatalf("key %d (raster of %d): err = %v, want ErrPageNotInDocument", k, len(raster), err)
 			}
-			var pe *RedactPageError
+			var pe *PageRangeError
 			if !errors.As(err, &pe) || pe.Page != k || pe.Pages != 1 {
 				t.Errorf("key %d: refusal = %#v, want Page %d of 1", k, pe, k)
 			}
@@ -42,7 +42,7 @@ func TestRedactPagesRefusesAPageTheDocumentDoesNotHave(t *testing.T) {
 			}
 		}
 	}
-	if out, err := RedactPages(form, map[int]RasterPage{}); !errors.Is(err, ErrRedactPageOutOfRange) || out != nil {
+	if out, err := RedactPages(form, map[int]RasterPage{}); !errors.Is(err, ErrPageNotInDocument) || out != nil {
 		t.Errorf("empty raster: (%d bytes, %v), want a refusal and no bytes", len(out), err)
 	}
 

@@ -1371,9 +1371,9 @@ func TestSelectPagesRefusesASelectionItCannotHonour(t *testing.T) {
 		want string
 	}{
 		{"nothing named", nil, "does not name any page"},
-		{"past the end", []int{3}, "is not in this document"},
-		{"zero", []int{0}, "is not in this document"},
-		{"negative", []int{-1}, "is not in this document"},
+		{"past the end", []int{3}, "not a page of this document"},
+		{"zero", []int{0}, "not a page of this document"},
+		{"negative", []int{-1}, "not a page of this document"},
 	} {
 		_, err := writeMutated(src, func(ctx *model.Context) error {
 			_, serr := selectPages(ctx, c.keep, false, keepUnreadable)

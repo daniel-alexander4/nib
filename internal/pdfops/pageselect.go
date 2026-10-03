@@ -313,8 +313,8 @@ func selectPages(ctx *model.Context, keep []int, carry bool, policy unreadablePo
 		return false, fmt.Errorf("pdfops: that selection does not name any page of this document")
 	}
 	for _, n := range keep {
-		if n < 1 || n > len(leaves) {
-			return false, fmt.Errorf("pdfops: page %d is not in this document, which has %d page(s)", n, len(leaves))
+		if err := pageInDocument(n, len(leaves)); err != nil {
+			return false, err
 		}
 	}
 	if len(leaves) == 1 && leaves[0].ref.ObjectNumber.Value() == pagesRef.ObjectNumber.Value() {
@@ -584,6 +584,16 @@ func clonePage(xt *model.XRefTable, src types.Dict, parent types.IndirectRef) (*
 	if len(annots) > 0 {
 		cloned := make(types.Array, 0, len(annots))
 		for _, a := range annots {
+			// **One copy per distinct annotation, not per slot** (`/pending 804`). An `/Annots` naming one
+			// object K times is K slots and one annotation, and cloning per slot made `selectionCeiling`'s
+			// bound on pages no bound on output: page 1 × 100 of a page naming one link 1,000 times wrote
+			// 99,001 annotation objects. The copy names each annotation once — a repeated slot draws the
+			// same annotation over itself, so nothing a reader shows is lost.
+			if ar, isRef := a.(types.IndirectRef); isRef {
+				if _, done := annotOf[ar.ObjectNumber.Value()]; done {
+					continue
+				}
+			}
 			ad := derefDict(xt, a)
 			if ad == nil {
 				continue

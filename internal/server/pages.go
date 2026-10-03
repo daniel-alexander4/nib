@@ -180,7 +180,7 @@ func (s *Server) handlePages(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "unknown page operation")
 		return
 	}
-	if wroteStampTextError(w, err) {
+	if wroteStampTextError(w, err) || wrotePageRangeRefusal(w, err) {
 		return
 	}
 	if err != nil {

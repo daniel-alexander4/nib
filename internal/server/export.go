@@ -35,6 +35,9 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := pdfops.Collect(pdfBytes, pages)
+	if wrotePageRangeRefusal(w, err) {
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not extract pages: "+err.Error())
 		return

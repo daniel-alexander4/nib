@@ -41,5 +41,10 @@ func TestCheckPageOrderAgreesWithTheDigestOnTheCorpora(t *testing.T) {
 			t.Errorf("%s: ContentDigest ambiguous=%v, CheckPageOrder ambiguous=%v", f, dig, chk)
 		}
 	}
+	// A corpus present and NOTHING compared is a red, never a pass (`/pending 804`, R2): the agreement this test
+	// holds is a claim about the documents it read, and a count of zero is no evidence about any of them.
+	if read == 0 {
+		t.Fatalf("%d corpus document(s) found and none compared — ContentDigest refused every one, so the agreement is unchecked", len(files))
+	}
 	t.Logf("%d corpus documents compared", read)
 }

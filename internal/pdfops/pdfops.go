@@ -129,6 +129,9 @@ func Rotate(pdf []byte, pages []string, deg int) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.ROTATE
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		if err := selectionInDocument(pages, ctx.PageCount); err != nil {
+			return err
+		}
 		sel, err := api.PagesForPageSelection(ctx.PageCount, pages, true, true)
 		if err != nil {
 			return err
@@ -224,6 +227,10 @@ func selectionError(err error) error {
 // RemovePages drops the given pages from the PDF.
 func RemovePages(pdf []byte, pages []string) ([]byte, error) {
 	return subsetCarrying(pdf, func(total int) ([]int, error) {
+		// A removal that names no page used to remove nothing and report success (`/pending 823`).
+		if err := selectionInDocument(pages, total); err != nil {
+			return nil, err
+		}
 		remaining, err := api.RemainingPagesForPageRemoval(total, pages, false)
 		if err != nil {
 			return nil, selectionError(err)
@@ -260,6 +267,9 @@ func Collect(pdf []byte, order []string) ([]byte, error) {
 // prevent.
 func collectPick(order []string) func(int) ([]int, error) {
 	return func(total int) ([]int, error) {
+		if err := selectionInDocument(order, total); err != nil {
+			return nil, err
+		}
 		keep, err := api.PagesForPageCollection(total, order)
 		if err != nil {
 			return nil, selectionError(err)
@@ -636,8 +646,8 @@ func InsertPDF(pdf, other []byte, page int, before bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if page < 1 || page > n {
-		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	if err := pageInDocument(page, n); err != nil {
+		return nil, err
 	}
 	if before {
 		return splice(pdf, page-1, page, n, other)
@@ -654,8 +664,8 @@ func DuplicatePage(pdf []byte, page int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if page < 1 || page > n {
-		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	if err := pageInDocument(page, n); err != nil {
+		return nil, err
 	}
 	return Collect(pdf, []string{fmt.Sprintf("1-%d", page), fmt.Sprintf("%d-", page)})
 }
@@ -707,24 +717,6 @@ func Combine(pdfs [][]byte) ([]byte, error) {
 	return mergeDocs(pdfs)
 }
 
-// ErrRedactPageOutOfRange is RedactPages' refusal of a raster that does not name pages of the
-// document it was posted with. It is a fact about the request against THESE bytes, not a failed
-// rebuild, so the server answers it 422 rather than 500.
-var ErrRedactPageOutOfRange = errors.New("pdfops: a redacted page is not a page of this document")
-
-// RedactPageError names the key RedactPages refused and the page count it was checked against.
-type RedactPageError struct {
-	Page  int // the key the caller gave
-	Pages int // how many pages the document has
-}
-
-func (e *RedactPageError) Error() string {
-	return fmt.Sprintf("%v: page %d, and the document has %d", ErrRedactPageOutOfRange, e.Page, e.Pages)
-}
-
-// Unwrap makes errors.Is(err, ErrRedactPageOutOfRange) hold.
-func (e *RedactPageError) Unwrap() error { return ErrRedactPageOutOfRange }
-
 // RedactPages rebuilds a PDF so that each page given in raster (1-based page
 // number -> a RasterPage: a PNG of that page with the redaction boxes already
 // painted in, plus the page's true point size) is replaced by that flat image,
@@ -737,19 +729,19 @@ func (e *RedactPageError) Unwrap() error { return ErrRedactPageOutOfRange }
 // posted bytes, off by one, or a page count changed under the view — used to be skipped in silence:
 // the call succeeded, the caller reported the redaction applied, and the page it meant kept its
 // vector text. On the guarantee-of-removal surface an unmatched key is a refusal, and so is an empty
-// map, which would return the document unredacted under the same success. The refusal wraps
-// ErrRedactPageOutOfRange so a caller can tell it from a failed rebuild.
+// map, which would return the document unredacted under the same success. The refusal is the package's one
+// page-range door (`pageInDocument`, ErrPageNotInDocument), so a caller can tell it from a failed rebuild.
 func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	n, err := PageCount(original)
 	if err != nil {
 		return nil, err
 	}
 	if len(raster) == 0 {
-		return nil, fmt.Errorf("%w: no pages were given to redact", ErrRedactPageOutOfRange)
+		return nil, fmt.Errorf("%w: no pages were given to redact", ErrPageNotInDocument)
 	}
 	for k := range raster {
-		if k < 1 || k > n {
-			return nil, &RedactPageError{Page: k, Pages: n}
+		if err := pageInDocument(k, n); err != nil {
+			return nil, err
 		}
 	}
 	// One Collect per contiguous RUN of untouched pages, not per page. Each Collect
@@ -1105,8 +1097,8 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if page < 1 || page > n {
-		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	if err := pageInDocument(page, n); err != nil {
+		return nil, err
 	}
 
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
@@ -1298,8 +1290,8 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if page < 1 || page > n {
-		return nil, fmt.Errorf("page %d out of range (1-%d)", page, n)
+	if err := pageInDocument(page, n); err != nil {
+		return nil, err
 	}
 
 	// **`collectWithoutStructure`: this is a real subset of a tagged source feeding a composition.**
@@ -1329,21 +1321,11 @@ func SplitRegions(pdf []byte, page int, rects [][4]float64) ([]byte, error) {
 			pageH = h
 		}
 	}
-	tiles := make([][]byte, 0, len(rects))
-	for _, r := range rects {
-		tile, err := cropToRect(norm, r, pageW, pageH)
-		if err != nil {
-			return nil, err
-		}
-		tiles = append(tiles, tile)
+	tiles, err := cropToRects(norm, rects, pageW, pageH)
+	if err != nil {
+		return nil, err
 	}
-	merged := tiles[0]
-	for _, t := range tiles[1:] {
-		if merged, err = Append(merged, t); err != nil {
-			return nil, err
-		}
-	}
-	return replacePage(pdf, page, n, merged)
+	return replacePage(pdf, page, n, tiles)
 }
 
 // Crop reduces each target page (pages: a 1-based selection like []string{"2"};
@@ -1394,6 +1376,9 @@ func Crop(pdf []byte, frac [4]float64, pages []string) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.CROP
 	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		if err := selectionInDocument(pages, ctx.PageCount); err != nil {
+			return err
+		}
 		targets, err := api.PagesForPageSelection(ctx.PageCount, pages, true, false)
 		if err != nil {
 			return err
@@ -1497,35 +1482,80 @@ func normalizePage(pdf []byte) ([]byte, error) {
 	return collectWithoutStructure(buf.Bytes(), []string{"2-"}, keepUnreadable) // drop CutPage's outline page
 }
 
-// cropToRect returns a one-page PDF: normPage cropped to rect (PDF points,
-// bottom-left origin, relative to the page's display-box origin), centred at its
-// native scale on a standardized pageW×pageH page (padded with blank space so
-// every region shares one output size). normPage must already be rotation-
-// flattened (see normalizePage).
-func cropToRect(normPage []byte, rect [4]float64, pageW, pageH float64) ([]byte, error) {
-	w, h := rect[2]-rect[0], rect[3]-rect[1]
-	if w <= 1 || h <= 1 {
-		return nil, fmt.Errorf("region too small")
-	}
-	if w > maxRegionPt || h > maxRegionPt {
-		return nil, fmt.Errorf("region too large")
+// cropToRects returns a PDF of one page per rect, in order: normPage cropped to
+// that rect (PDF points, bottom-left origin, relative to the page's display-box
+// origin), centred at its native scale on a standardized pageW×pageH page (padded
+// with blank space so every region shares one output size). normPage must already
+// be rotation-flattened (see normalizePage).
+//
+// **One read, every region in it** (`/pending 603`). Each region used to be a fresh
+// read of normPage, wrapped, written, and merged one at a time onto the growing
+// result — a parse and a merge per region, of a page that can carry a scan's worth
+// of image. Here each region is a `clonePage` of the one page read (its own
+// dictionary and annotations; content and resources shared, as they are read-only),
+// wrapped in place. Measured on a page drawing a 360 KB image: one region 19 MB
+// allocated, sixteen 139 MB before and 33 MB now — most of the old cost was the
+// merge-one-at-a-time, the rest the read per region.
+func cropToRects(normPage []byte, rects [][4]float64, pageW, pageH float64) ([]byte, error) {
+	for _, rect := range rects {
+		w, h := rect[2]-rect[0], rect[3]-rect[1]
+		if w <= 1 || h <= 1 {
+			return nil, fmt.Errorf("region too small")
+		}
+		if w > maxRegionPt || h > maxRegionPt {
+			return nil, fmt.Errorf("region too large")
+		}
 	}
 	ctx, err := pdfread.ReadOptimized(normPage, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
 	}
-	d, _, attrs, err := ctx.PageDict(1, false)
+	xt := ctx.XRefTable
+	src, _, attrs, err := ctx.PageDict(1, false)
 	if err != nil {
 		return nil, err
+	}
+	root, err := xt.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	pagesRef, ok := root["Pages"].(types.IndirectRef)
+	if !ok {
+		return nil, fmt.Errorf("pdfops: the page to split has no page tree")
+	}
+	pagesNode := derefDict(xt, pagesRef)
+	if pagesNode == nil {
+		return nil, fmt.Errorf("pdfops: the page to split has no page tree")
+	}
+	// Every copy is taken BEFORE any is wrapped: wrapping replaces a page's /Contents, and a copy of a wrapped page
+	// would draw its neighbour's clip.
+	dicts := make([]types.Dict, len(rects))
+	kids := make(types.Array, len(rects))
+	for i := range rects {
+		ref, _, cerr := clonePage(xt, src, pagesRef)
+		if cerr != nil {
+			return nil, cerr
+		}
+		if dicts[i] = derefDict(xt, *ref); dicts[i] == nil {
+			return nil, fmt.Errorf("pdfops: a region's page could not be read back")
+		}
+		kids[i] = *ref
 	}
 	// The client's coordinates are relative to the display-box origin; add the
 	// box's lower-left so an offset (e.g. cropped) page still maps correctly.
 	// Centre the region on the standardized page.
 	mb := attrs.MediaBox
-	dx, dy := (pageW-w)/2, (pageH-h)/2
-	if err := wrapPageToBox(ctx, d, 1, mb.LL.X+rect[0], mb.LL.Y+rect[1], w, h, 1.0, pageW, pageH, dx, dy); err != nil {
-		return nil, err
+	for i, rect := range rects {
+		w, h := rect[2]-rect[0], rect[3]-rect[1]
+		dx, dy := (pageW-w)/2, (pageH-h)/2
+		if err := wrapPageToBox(ctx, dicts[i], i+1, mb.LL.X+rect[0], mb.LL.Y+rect[1], w, h, 1.0, pageW, pageH, dx, dy); err != nil {
+			return nil, err
+		}
 	}
+	// The source page is left out of the tree, and its annotations with it: every region is a copy.
+	pagesNode["Kids"] = kids
+	pagesNode["Count"] = types.Integer(len(kids))
+	ctx.PageCount = len(kids)
 	var out bytes.Buffer
 	if err := api.WriteContext(ctx, &out); err != nil {
 		return nil, err
@@ -2023,9 +2053,11 @@ func StampFields(pdf []byte, fields []Field) ([]byte, []Fit, error) {
 			if err != nil {
 				return err
 			}
+			// A field keyed to a page the document does not have is refused, never moved onto page 1
+			// (`/pending 823`): that put the text where nobody placed it, under a success.
 			page := f.Page
-			if page < 1 {
-				page = 1
+			if err := pageInDocument(page, ctx.PageCount); err != nil {
+				return err
 			}
 			wms[page] = append(wms[page], wm)
 			fits = append(fits, fitFor(i, f, page, outcome, wPt, boxPt))
@@ -2080,24 +2112,30 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		page := s.Page
-		if page < 1 {
-			page = 1
-		}
-		wms[page] = append(wms[page], wm)
+		wms[s.Page] = append(wms[s.Page], wm)
 	}
 	if len(wms) == 0 {
 		return pdf, nil
 	}
-	var out bytes.Buffer
-	rs, err := pdfread.Reader(pdf, nil)
+	// The read-stamp-write is `api.AddWatermarksSliceMap`'s own sequence, run through the package's rewrite so
+	// the page count is in hand: a stamp keyed to a page the document does not have is refused (`/pending 823`)
+	// — page 0 used to be moved onto page 1, under a success — and the configuration is the text stamp's
+	// (`stampTextWatermarks`), so the two stamp kinds read a document the same way.
+	conf := model.NewDefaultConfiguration()
+	conf.Cmd = model.ADDWATERMARKS
+	conf.OptimizeDuplicateContentStreams = false
+	out, err := rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+		for page := range wms {
+			if err := pageInDocument(page, ctx.PageCount); err != nil {
+				return err
+			}
+		}
+		return pdfcpu.AddWatermarksSliceMap(ctx, wms)
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := api.AddWatermarksSliceMap(rs, &out, wms, model.NewDefaultConfiguration()); err != nil {
-		return nil, err
-	}
-	return honestOptionalContent(out.Bytes()), nil
+	return honestOptionalContent(out), nil
 }
 
 // WatermarkStyle controls how StampWatermark renders the label.
@@ -2647,8 +2685,8 @@ func PageBox(pdf []byte, page int) (llx, lly, urx, ury float64, err error) {
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
-	if page < 1 || page > ctx.PageCount {
-		return 0, 0, 0, 0, fmt.Errorf("page %d is outside this document's %d page(s)", page, ctx.PageCount)
+	if err := pageInDocument(page, ctx.PageCount); err != nil {
+		return 0, 0, 0, 0, err
 	}
 	_, _, attrs, err := ctx.PageDict(page, false)
 	if err != nil {

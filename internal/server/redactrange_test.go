@@ -64,7 +64,7 @@ func TestRedactRouteRefusesAPageTheDocumentDoesNotHave(t *testing.T) {
 		page int
 	}{{[]string{"2"}, 2}, {[]string{"0"}, 0}, {[]string{"-1"}, -1}, {[]string{"1", "2"}, 2}} {
 		resp := post(tc.nums...)
-		var got redactRefusal
+		var got pageRefusal
 		decErr := json.NewDecoder(resp.Body).Decode(&got)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusUnprocessableEntity {
