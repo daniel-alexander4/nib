@@ -336,7 +336,8 @@ func TestEveryALPNConfigSiteOffersTheSameList(t *testing.T) {
 	// `len(sessionALPN) != 2` until `alpn3` was minted; `SpeaksNamedRefusals`' own doc cites this
 	// hard pin as the reason a capability predicate could rot in place beside a list that cannot
 	// change without a deliberate edit. This is that edit.
-	want := []string{alpn3, alpn2, alpn}
+	// It fired again for ADR-076 (`alpn4`, the spoken check's verdict).
+	want := []string{alpn4, alpn3, alpn2, alpn}
 	if len(sessionALPN) != len(want) {
 		t.Errorf("sessionALPN is %v, want %v — most preferred first, and every older protocol "+
 			"still offered so an older peer negotiates rather than failing the handshake",

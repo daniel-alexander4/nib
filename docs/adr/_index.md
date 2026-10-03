@@ -604,3 +604,8 @@ home today.
   — /pending 820; extends ADR-033, whose five refusals become six. A Markdown conversion that degraded to the Base-14
   core fonts (the faces could not be installed) fails 7.21.4.1 and is not the conversion veraPDF measured; `LabelUA`
   refuses it as `ErrUAFontNotEmbedded`, asked of the bytes through `nonEmbeddedFonts`.
+- **[ADR-076 — the spoken check's verdict crosses the wire](076-the-spoken-checks-verdict-crosses-the-wire.md)**
+  — /pending 802; ALPN `nib/3` → `nib/4`, extends ADR-028. After its gate each side sends a one-byte verdict (one code
+  for decline and timeout) and a confirming side waits for the peer's before any document byte; a rejection arrives as
+  `p2p.ErrPeerDidNotConfirm`, never a transport loss, so it is no longer re-raced. Read concurrently with the local gate
+  and lingered on by the decliner, because a QUIC close destroys an unread frame.

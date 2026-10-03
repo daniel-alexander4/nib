@@ -978,8 +978,9 @@ func (a consentAnchor) armIn(se *session) *arm {
 // A — signed B, while A's goroutine sat on a channel nobody would write to until its timeout. The
 // incumbent wins for `setVerify`'s reason: the user may be reading it and about to answer. The
 // newcomer is refused with `errConsentBusy`, which on a co-signature reaches its peer BY NAME
-// (refusal code 17, `p2p.ErrConsentBusy`, /pending 744 — it used to cross as a bare EOF, like
-// `errVerifyBusy` still does; a one-way transfer's one-byte receipt still has no room for it), and a
+// (refusal code 17, `p2p.ErrConsentBusy`, /pending 744 — it used to cross as a bare EOF, as
+// `errVerifyBusy` did until it became the spoken check's not-confirmed verdict on `nib/4`, ADR-076;
+// a one-way transfer's one-byte receipt still has no room for it), and a
 // delivery arm that refused stays
 // armed — its accept loop `continue`s after a served hop — so B can be served once A is answered.
 //
@@ -1512,6 +1513,20 @@ func (sv sessionVerifier) noteVerification(presented, confirmed bool) {
 	}
 }
 
+// peerDidNotConfirmSentence is what a user who CONFIRMED the words is told when the other side
+// did not (/pending 802, `p2p.ErrPeerDidNotConfirm`). `outcome` names what therefore did not
+// happen in this flow. One door for the dialing handlers and the receiving arm's notice, so the
+// three cannot come to disagree about what the far end's "no" means.
+//
+// It cannot say WHICH of decline or timeout it was — the wire carries one code for both, on
+// purpose — so it names both, and gives the retry warning the decline deserves.
+func peerDidNotConfirmSentence(outcome string) string {
+	return "the other side did not confirm the safety words — they said the words did not match, " +
+		"or nobody answered there — so " + outcome + ". If they said the words did not match, a " +
+		"machine may be sitting between you: do not retry blindly; check the four words with them " +
+		"over a channel you trust first."
+}
+
 // errVerifyBusy is returned when another session's spoken check is already on screen.
 var errVerifyBusy = errors.New("another co-signing session is already waiting for the spoken check — finish or cancel that one first")
 
@@ -2028,6 +2043,18 @@ func (s *Server) serveOneSession(anchor consentAnchor, cer *ceremonyID, conn *p2
 	var saw reached
 	// The accepted request's id, for the caller to settle after it opens the arrival (/pending 750).
 	defer func() { answered = saw.answeredID() }()
+	// **The far end's "no" to the words reaches THIS user too (/pending 802).** The receiving arm
+	// has no response to write into, so a decided outcome it did not decide itself goes on the
+	// status notice — the one door both arms (`runSession`, `runCeremonyReceive`) pass through.
+	// Before ADR-076 this arrived as EOF, the arm re-accepted, and the user who had confirmed the
+	// words was never told the other person had rejected them.
+	defer func() {
+		if errors.Is(err, p2p.ErrPeerDidNotConfirm) {
+			s.sess.noteFailure(anchor.kind, "words-not-confirmed",
+				"The other side did not confirm the safety words, so nothing was exchanged.",
+				peerDidNotConfirmSentence("nothing was exchanged"))
+		}
+	}()
 	ch := conn.Channel
 	// ── The arm's POLICY, checked against the dial's declared role (/pending 385, ADR-028) ──
 	//
@@ -3472,12 +3499,21 @@ func (s *Server) runHopDial(w http.ResponseWriter, r *http.Request, v *vault.Vau
 			// for a local timeout is not a wording nicety: it cost a tier-4d investigation its
 			// first hour, sending it to read the peer's code for a gate the peer never had.
 			//
-			// The peer's own failure to confirm arrives as a closed connection, deliberately — see
-			// `ErrVerificationDeclined`'s doc on why the two must stay indistinguishable on the
-			// wire — so there is no error here that could honestly name the far end.
+			// The peer's own failure to confirm is a DIFFERENT sentinel, `p2p.ErrPeerDidNotConfirm`,
+			// lifted below — and it cannot say whether the far end declined or timed out, because the
+			// wire carries one code for both (see `ErrVerificationDeclined`'s doc).
 			httpError(w, http.StatusConflict, "nobody confirmed the safety words on THIS machine in "+
 				"time, so nothing was signed. The words were shown here and went unanswered; if you "+
 				"were not at the screen, that is why.")
+			return
+		}
+		if errors.Is(err, p2p.ErrPeerDidNotConfirm) {
+			// **The other side's "no", which used to arrive as a broken pipe (/pending 802).** This
+			// user confirmed; the far end did not. Before ADR-076 the far end said so by closing, so
+			// this read as a transport loss: the glare loop above re-raced it and the fallthrough
+			// below rendered a 502 with a D19 network cause — retrying, and advising a retry, under
+			// the one verdict that may mean someone is sitting between the two machines.
+			httpError(w, http.StatusConflict, peerDidNotConfirmSentence("nothing was signed"))
 			return
 		}
 		// **A contribution refusal is not a connect failure either (P07.S03b).** The three
@@ -3612,6 +3648,24 @@ func (s *Server) handleSessionSend(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, p2p.ErrNotStored) {
 			writeJSON(w, sendResult{Sent: false, NotStored: true})
+			return
+		}
+		// **The spoken check's three outcomes are answers, not send failures (/pending 802).** They
+		// fell through to the 502 below — "send did not complete" is the sentence a dead peer earns,
+		// and `verify.go` says what it must never be said about: a words-don't-match verdict.
+		if errors.Is(err, p2p.ErrPeerDidNotConfirm) {
+			httpError(w, http.StatusConflict, peerDidNotConfirmSentence("nothing was sent"))
+			return
+		}
+		if errors.Is(err, p2p.ErrVerificationDeclined) {
+			httpError(w, http.StatusConflict, "the safety words did not match — this can mean a "+
+				"machine is sitting between you and the other party, so nothing was sent. Do not "+
+				"retry blindly: check the four words with them over a channel you trust first.")
+			return
+		}
+		if errors.Is(err, p2p.ErrVerificationTimedOut) {
+			httpError(w, http.StatusConflict, "nobody confirmed the safety words on THIS machine in "+
+				"time, so nothing was sent.")
 			return
 		}
 		httpError(w, http.StatusBadGateway, "send did not complete: "+err.Error())
