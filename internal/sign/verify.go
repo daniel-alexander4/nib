@@ -295,6 +295,13 @@ func verifyIndexed(data []byte) (Status, []Revision, error) {
 	if sweepErr != nil {
 		return Status{State: Invalid, AddedAfter: true, AddedAfterCause: AddedAfterCouldNotCheck, Unchecked: sweepUnchecked(sweepErr)}, nil, sweepErr
 	}
+	return verifySwept(data, ctx, revs)
+}
+
+// verifySwept is `verifyIndexed` from the population check on, over a document pdfcpu has read (ctx) and the sweep has
+// enumerated (revs) — both of them already paid, with no error. Its one other caller is the boundary walk, which has
+// just read a prefix exactly this way to screen it (`boundaryCandidate`) and used to pay both again (/pending 803).
+func verifySwept(data []byte, ctx *model.Context, revs []Revision) (Status, []Revision, error) {
 	// **The population the verdict is over is checked against the one pdfcpu read** (/pending 749).
 	// The sweep enumerates as the library does, so a signature the library's reader never reaches
 	// — a hybrid file's `/XRefStm`-only object, the /pending 733 shape — is missing from both, and

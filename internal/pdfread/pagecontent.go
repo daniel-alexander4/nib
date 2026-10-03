@@ -127,7 +127,11 @@ func needsSeparator(prev, next []byte) bool {
 	}
 	last := prev[len(prev)-1]
 	// An end-of-line ends every token, a comment included. This and the `%` test below are short-cuts that spare the
-	// tokenize: removing either leaves every answer unchanged (probed), so neither is load-bearing.
+	// tokenize: removing either leaves every answer unchanged (probed), so neither carries CORRECTNESS — but both carry
+	// COST (/pending 803). The tokenize builds every token of prev (24 bytes each) to read the last: measured, a 32 MB
+	// stream of `a ` behind a `%` costs this join 2.3 s and 4.7 GB allocated, against 38 ms without the `%`. It is
+	// bounded, not removed: each element is tokenized once, as prev, so the whole page's joins tokenize at most
+	// `MaxPageContentBytes` — what every caller then tokenizes again over the joined page (1.3 s on that page).
 	if last == '\n' || last == '\r' {
 		return false
 	}

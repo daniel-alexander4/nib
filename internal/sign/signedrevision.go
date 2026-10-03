@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"github.com/digitorus/pkcs7"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // RevisionCause names why the version a signer signed could not be handed back (D7, as amended by the P02
@@ -316,7 +317,8 @@ func walkBoundaries(pdf []byte, fingerprint string, tried map[int64]bool, after 
 			continue
 		}
 		*verifies++
-		prs, err := Revisions(prefix)
+		// The read `boundaryCandidate` screened with, carried through rather than paid again (/pending 803).
+		_, prs, err := verifySwept(prefix, c.ctx, c.revs)
 		if err != nil {
 			w.failed = true
 			continue
@@ -342,14 +344,15 @@ func walkBoundaries(pdf []byte, fingerprint string, tried map[int64]bool, after 
 // `TestEverySweepRunsBehindThePdfcpuGate` reads this function) — and proposes it if a record naming the signer ends
 // exactly there. Nil when pdfcpu or the sweep refuses the prefix, or nothing names the signer at its end.
 func boundaryCandidate(prefix []byte, fingerprint string) *candidate {
-	if _, err := pdfcpuRead(prefix); err != nil {
+	ctx, err := pdfcpuRead(prefix)
+	if err != nil {
 		return nil
 	}
 	revs, err := sweepRevisions(prefix)
 	if err != nil {
 		return nil
 	}
-	c := &candidate{end: int64(len(prefix))}
+	c := &candidate{end: int64(len(prefix)), ctx: ctx, revs: revs}
 	for i := range revs {
 		r := &revs[i]
 		if r.named != fingerprint || r.Timestamp {
@@ -661,6 +664,10 @@ type candidate struct {
 	// checked is true when a proposer was verified by the library over a file that verified: the screen is then the
 	// library's own, and exact.
 	checked bool
+	// ctx and revs are the gated read and sweep of the prefix a walk boundary was screened from (`boundaryCandidate`),
+	// which its re-verify continues from (`verifySwept`); nil for a candidate of the whole file.
+	ctx  *model.Context
+	revs []Revision
 }
 
 // screen reports whether any record proposing this end could hold (`couldHold`). Once a record would overrun the

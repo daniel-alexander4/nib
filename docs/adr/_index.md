@@ -609,3 +609,7 @@ home today.
   for decline and timeout) and a confirming side waits for the peer's before any document byte; a rejection arrives as
   `p2p.ErrPeerDidNotConfirm`, never a transport loss, so it is no longer re-raced. Read concurrently with the local gate
   and lingered on by the decliner, because a QUIC close destroys an unread frame.
+- **[ADR-077 — the reference door bounds depth through the edges pdfcpu guards, too](077-the-reference-door-bounds-depth-through-guarded-edges.md)**
+  — /pending 803; extends ADR-069. A loop-free chain of form XObjects passed the door whole (it stops at guarded
+  objects) and 700,000 links overflowed pdfcpu's validator stack, fatally. A depth-only pass over guarded and unguarded
+  edges, SCC-weighted as an upper bound over pdfcpu's map order, refuses past 8,192 as `ErrReferenceDepth`.
