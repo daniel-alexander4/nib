@@ -121,7 +121,9 @@ func TestPdfcpuStillWritesTheCIDSetTheDoorRemoves(t *testing.T) {
 		t.Fatal("the raw conversion embeds no font program at all")
 	}
 	if withCIDSet == 0 {
-		t.Skipf("SKIP (a finding, not a pass): pdfcpu no longer writes a /CIDSet for its %d "+
+		// RED, as the comment above promises (`/pending 804`, R2): a skip here read as a pass in every
+		// summary, which is the very rot this test exists to report.
+		t.Fatalf("pdfcpu no longer writes a /CIDSet for its %d "+
 			"embedded font(s), so dropCIDSets is now a no-op and can be retired — check "+
 			"PDF/UA 7.21.4.2 against a fresh output before removing it", embedded)
 	}

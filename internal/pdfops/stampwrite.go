@@ -75,8 +75,9 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 				return add(ctx, emb)
 			}(); err != nil {
 				// Text no face can bake (`stampText`) is the caller's error, not the face's: retrying it in
-				// Base-14 reads the document twice and logs a face failure that did not happen.
-				if emb && !errors.Is(err, ErrStampTextUnrepresentable) {
+				// Base-14 reads the document twice and logs a face failure that did not happen. So is a field
+				// on a page the document does not have (`/pending 823`).
+				if emb && !errors.Is(err, ErrStampTextUnrepresentable) && !errors.Is(err, ErrPageNotInDocument) {
 					return embeddedStampError{err}
 				}
 				return err

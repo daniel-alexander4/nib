@@ -71,15 +71,7 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := pdfops.RedactPages(pdfBytes, raster)
-	// A page number that names no page of the posted bytes is a fact about THIS document's
-	// contents (ADR-072): 422 with a cause, never 409 (ADR-004's "not that document", which makes
-	// the client reconcile its tabs) and never 500. pdfops is the one door that checks the range;
-	// this only words its refusal. Nothing is committed on this path.
-	var pageErr *pdfops.RedactPageError
-	if errors.As(err, &pageErr) {
-		writeJSONStatus(w, http.StatusUnprocessableEntity, redactRefusal{
-			Cause: "page-not-in-document", Page: pageErr.Page, Pages: pageErr.Pages,
-		})
+	if wrotePageRangeRefusal(w, err) { // nothing is committed on this path
 		return
 	}
 	if err != nil {
@@ -109,12 +101,33 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.docResponse(doc))
 }
 
-// redactRefusal is /api/redact's 422 body: the raster named a page the posted document does not
-// have, so nothing was redacted and nothing was written.
-type redactRefusal struct {
+// pageRefusal is the 422 body of every route whose request named a page the posted document does
+// not have — a redaction key, a rotate/delete/crop/reorder/extract selection, a stamp's page — so
+// nothing was changed and nothing was written. `error` is the sentence the client already shows for
+// a failed operation, and it names the refused selection term where the request was a selection —
+// a separate `term` field had no reader and was dropped at landing.
+type pageRefusal struct {
+	Error string `json:"error"`
 	Cause string `json:"cause"`
 	Page  int    `json:"page"`
 	Pages int    `json:"pages"`
+}
+
+// wrotePageRangeRefusal answers pdfops' page-range refusal and reports whether it did. A page that
+// names no page of the posted bytes is a fact about THIS document's contents (ADR-072): 422 with a
+// cause, never 409 (ADR-004's "not that document", which makes the client reconcile its tabs) and
+// never 500. pdfops is the one door that checks the range (`/pending 819`, `/pending 823`); this is
+// the one place that words it, and every route that hands pdfops a page calls it.
+func wrotePageRangeRefusal(w http.ResponseWriter, err error) bool {
+	var pageErr *pdfops.PageRangeError
+	if !errors.As(err, &pageErr) {
+		return false
+	}
+	writeJSONStatus(w, http.StatusUnprocessableEntity, pageRefusal{
+		Error: err.Error(), Cause: "page-not-in-document",
+		Page: pageErr.Page, Pages: pageErr.Pages,
+	})
+	return true
 }
 
 // maxPageDim is PDF's largest legal page side in points (200 inches); any larger

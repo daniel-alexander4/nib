@@ -892,13 +892,24 @@ var errPageTreeTooLarge = errors.New("pdfops: the page tree is deeper, or names 
 // is walked twice — see below — so a chain of `/Pages` nodes each listing the next twice is 2^depth leaves from a
 // couple of kilobytes, and `Scan` reads without `pdfread`'s path budget. Past 16 visits per object in the file (plus
 // a floor) the walk stops and says so: a truncated walk would be a security scan that silently skipped pages.
+//
+// **The budget is charged per KID, not per node** (`/pending 804`). Charging a node visit left the loop over its
+// `/Kids` free, and a node revisited up to the budget re-iterated its whole array each time — a Pages node whose
+// `/Kids` is a 160,000-entry array of references back to itself took 1.19 s from 960 KB before refusing. Every
+// step of the walk now spends the budget, so "past 16 visits per object the walk stops" is true of the work done.
 func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr int)) error {
+	_, err := walkPageTree(xt, root, pageWalkBudget(xt), fn)
+	return err
+}
+
+// walkPageTree is eachPage with the budget given and the steps it took reported, so the bound is testable as a
+// count rather than a stopwatch.
+func walkPageTree(xt *model.XRefTable, root types.Dict, budget int, fn func(page types.Dict, nr int)) (int, error) {
 	pages := derefDict(xt, root["Pages"])
 	if pages == nil {
-		return nil
+		return 0, nil
 	}
-	nr := 0
-	budget := pageWalkBudget(xt)
+	nr, steps := 0, 0
 	truncated := false
 	// onPath, not a global seen-set. The set was there to stop a malformed tree recursing
 	// forever, and it did — but it also SKIPPED a page object referenced twice, so the
@@ -920,6 +931,7 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 			return
 		}
 		budget--
+		steps++
 		kids := derefArray(xt, node["Kids"])
 		if len(kids) == 0 {
 			nr++
@@ -927,6 +939,10 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 			return
 		}
 		for _, k := range kids {
+			if budget--; budget < 0 {
+				return
+			}
+			steps++
 			n := -1
 			if ir, ok := k.(types.IndirectRef); ok {
 				n = ir.ObjectNumber.Value()
@@ -943,9 +959,9 @@ func eachPage(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, nr 
 	}
 	walk(pages, 0)
 	if budget < 0 || truncated {
-		return errPageTreeTooLarge
+		return steps, errPageTreeTooLarge
 	}
-	return nil
+	return steps, nil
 }
 
 // actionAllowance is what every `eachAction` call adds to the shared budget before it walks: one chain of direct

@@ -39,8 +39,8 @@ func Paragraphs(pdf []byte, page int) ([]Paragraph, error) {
 	if err != nil {
 		return nil, err
 	}
-	if page < 1 || page > ctx.PageCount {
-		return nil, fmt.Errorf("pdfops: there is no page %d", page)
+	if err := pageInDocument(page, ctx.PageCount); err != nil {
+		return nil, err
 	}
 	// The page is resolved once for the layout and every paragraph's refusal, not once per paragraph (/pending 756).
 	pg := pageAt(ctx, nil, page)
@@ -83,8 +83,8 @@ type Refusal struct {
 func ReflowParagraph(pdf []byte, page, index int, original, text string) ([]byte, Refusal, error) {
 	var refusal Refusal
 	out, err := writeMutated(pdf, func(ctx *model.Context) error {
-		if page < 1 || page > ctx.PageCount {
-			return fmt.Errorf("pdfops: there is no page %d", page)
+		if err := pageInDocument(page, ctx.PageCount); err != nil {
+			return err
 		}
 		pg := pageAt(ctx, nil, page) // once, for the read, the rewrite and the write (/pending 756)
 		l, err := readPageGlyphLayout(ctx, pg)
