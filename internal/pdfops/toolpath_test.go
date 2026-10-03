@@ -140,7 +140,7 @@ func TestRunnableIsNotAStatCheck(t *testing.T) {
 	}
 }
 
-// The cache's asymmetry IS the feature: a hit is kept for the process, an empty answer is
+// The cache's asymmetry IS the feature: a hit is kept while it still runs, an empty answer is
 // re-probed on every call. Without that, a user who installs the converter while Nib is
 // running stays refused until the process ends — and "restart Nib" is not simple here, because
 // a relaunch hands off to the running instance.
@@ -163,11 +163,22 @@ func TestAnEmptyAnswerIsReprobedAndAHitIsKept(t *testing.T) {
 			"'Check again' is built on this, and without it that button is a lie", got, planted)
 	}
 
-	// And now it sticks, so the common case costs one probe rather than one per request.
+	// And now it sticks, so the common case costs a stat rather than a probe: a candidate that
+	// would win a fresh probe — it comes FIRST — is not consulted while the cached hit still runs.
+	earlier := filepath.Join(dir, "earlier")
+	if err := os.WriteFile(earlier, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.find([]string{"nib-no-such-tool"}, []string{earlier, planted}); got != planted {
+		t.Errorf("a found path that still runs was re-probed: got %q, want the cached %q", got, planted)
+	}
+
+	// The user uninstalls it (/pending 812). A cached path that no longer runs is not an answer:
+	// the cache re-probes, so the UI stops offering a conversion that would fail at exec.
 	if err := os.Remove(planted); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.find([]string{"nib-no-such-tool"}, []string{planted}); got != planted {
-		t.Errorf("a found path was re-probed and lost: got %q, want the cached %q", got, planted)
+	if got := c.find([]string{"nib-no-such-tool"}, []string{planted}); got != "" {
+		t.Errorf("a cached path whose tool was removed is still reported: got %q, want \"\"", got)
 	}
 }

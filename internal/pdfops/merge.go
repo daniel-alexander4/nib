@@ -112,6 +112,17 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 			return nil, false, pdfcpu.ErrUnsupportedVersion
 		}
 		want += src.PageCount
+		// **A source's signature does not come with its pages** (`/pending 812`). Its /ByteRange covers the
+		// file it was signed in, never this one, so carried in it could only read as a signature that FAILS —
+		// and on a host that was never signed, that turned the merged document `invalid`: a document that
+		// looks tampered with, which `p2p.ContributionProgress` then hard-refuses (measured: Append and Combine
+		// both carried the blob; InsertPDF, through `splice`'s page selection, already erased it). Erased the
+		// way every page operation erases one, through `dropSignature`, before the graft reads the pages. The
+		// HOST's own signature is not this door's to touch — whether an edit of a signed document breaks or
+		// erases it is `/pending 455`'s settled rule, applied at the commit.
+		if err := dropSourceSignatures(src.XRefTable); err != nil {
+			return nil, false, err
+		}
 		var gs *graftSource
 		if host != nil {
 			gs = prepareGraft(src, host, dest.XRefTable)
@@ -154,6 +165,21 @@ func mergeOnce(pdfs [][]byte, graft bool, finish func(ctx *model.Context, host *
 		return nil, false, err
 	}
 	return buf.Bytes(), grafted, nil
+}
+
+// dropSourceSignatures erases every signature a merge SOURCE carries, through `dropSignature` and over EVERY
+// one of its pages, so a widget on any of them is reached.
+func dropSourceSignatures(xt *model.XRefTable) error {
+	root, err := xt.Catalog()
+	if err != nil {
+		return err
+	}
+	var pages []types.Dict
+	if err := eachPage(xt, root, func(p types.Dict, _ int) { pages = append(pages, p) }); err != nil {
+		return err
+	}
+	dropSignature(xt, root, pages)
+	return nil
 }
 
 // readHostTree returns the destination's tree when a graft can extend it: a structure tree root with

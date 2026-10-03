@@ -1,13 +1,12 @@
 diff --git a/internal/pdfops/pdfops.go b/internal/pdfops/pdfops.go
-index 04cc724..94e2195 100644
 --- a/internal/pdfops/pdfops.go
 +++ b/internal/pdfops/pdfops.go
-@@ -831,7 +831,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
- 	// `/ParentTree` key claimed by the annotation's `/StructParent`, so with the annotation gone the
- 	// key is `unowned-key` and `completeOrHonest` abandons the whole carry. Putting the notes back
- 	// first is what lets the completeness gate below see an owned key. ADR-045, `annotcarry.go`.
--	raw, _ = carryNoteAnnots(pdf, raw)
-+	_ = carryNoteAnnots
- 	if !inspectTags(raw).orphaned() {
- 		return raw, nil
+@@ -1052,7 +1052,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
+ 	// figure rather than a silence — ADR-045's declared boundary (only `/Text` travels) and an abandoned carry
+ 	// (every note) both land in `left` — and NUp used to drop the figure on the floor. It is logged, as
+ 	// `carryAttachments`' figure is for the other page operations.
+-	raw, carry := carryNoteAnnots(pdf, raw)
++	carry, _ := noteCarry{}, carryNoteAnnots
+ 	if msg := carry.residue(); msg != "" {
+ 		log.Printf("n-up: %s", msg)
  	}

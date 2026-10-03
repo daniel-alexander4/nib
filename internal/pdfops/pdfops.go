@@ -14,6 +14,7 @@ import (
 	_ "image/jpeg" // register decoders for image.DecodeConfig
 	_ "image/png"
 	"io"
+	"log"
 	"math"
 	"regexp"
 	"sort"
@@ -1046,7 +1047,15 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// `/ParentTree` key claimed by the annotation's `/StructParent`, so with the annotation gone the
 	// key is `unowned-key` and `completeOrHonest` abandons the whole carry. Putting the notes back
 	// first is what lets the completeness gate below see an owned key. ADR-045, `annotcarry.go`.
-	raw, _ = carryNoteAnnots(pdf, raw)
+	//
+	// **What it left behind is said, not discarded** (`/pending 812`). `noteCarry` exists so the residue is a
+	// figure rather than a silence — ADR-045's declared boundary (only `/Text` travels) and an abandoned carry
+	// (every note) both land in `left` — and NUp used to drop the figure on the floor. It is logged, as
+	// `carryAttachments`' figure is for the other page operations.
+	raw, carry := carryNoteAnnots(pdf, raw)
+	if msg := carry.residue(); msg != "" {
+		log.Printf("n-up: %s", msg)
+	}
 	if !inspectTags(raw).orphaned() {
 		return raw, nil
 	}
@@ -2312,8 +2321,8 @@ type PageLabelRange struct {
 // page box and thumbnails, independent of the physical sequence. pdfcpu exposes
 // no page-label API, so the number tree is built by hand and spliced onto the
 // catalog — the same read→build-dict→IndRefForNewObject→assign shape AddBookmarks
-// uses for /Outlines. The ranges need not start at page 1 (pages before the first
-// range simply carry no label).
+// uses for /Outlines. The ranges need not start at page 1: pages before the first
+// range carry the empty label, written as an explicit entry at index 0.
 func SetPageLabels(pdf []byte, ranges []PageLabelRange) ([]byte, error) {
 	n, err := PageCount(pdf)
 	if err != nil {
@@ -2327,6 +2336,14 @@ func SetPageLabels(pdf []byte, ranges []PageLabelRange) ([]byte, error) {
 	sort.Slice(rs, func(i, j int) bool { return rs[i].Start < rs[j].Start })
 
 	nums := types.Array{}
+	// **The tree starts at page index 0, always** (`/pending 598`): ISO 32000-1 §12.4.2 — "The tree shall
+	// include a value for page index 0". A labelling that begins later used to leave the leading pages to each
+	// reader's guess. They carry no label, which is what the user asked for, and saying so takes an entry: a
+	// /PageLabel with neither /S nor /P is the empty label, the shape `carriedPageLabels` writes for a page the
+	// source's tree does not reach.
+	if rs[0].Start > 1 {
+		nums = append(nums, types.Integer(0), types.Dict{"Type": types.Name("PageLabel")})
+	}
 	prev := 0
 	for _, r := range rs {
 		s, ok := pageLabelStyles[r.Style]
@@ -2522,15 +2539,12 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 		if img.Reader == nil || img.FileType == "" || seen[img.ObjNr] {
 			return nil // unsupported/empty render, or a repeat of one already written
 		}
-		seen[img.ObjNr] = true
-		fw, err := zw.Create(fmt.Sprintf("image-%03d-obj%d.%s", count+1, img.ObjNr, img.FileType))
+		n, err := addZipImage(zw, fmt.Sprintf("image-%03d-obj%d.%s", count+1, img.ObjNr, img.FileType), img)
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(fw, img); err != nil {
-			return err
-		}
-		count++
+		seen[img.ObjNr] = true
+		count += n
 		return nil
 	}
 	// run does one extraction pass over a page selection (nil = whole doc). The
@@ -2580,6 +2594,27 @@ func extractImages(pdf []byte, perPage bool) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	return buf.Bytes(), count, nil
+}
+
+// addZipImage writes one extracted image as the entry name, and writes NOTHING when the image cannot be read
+// whole (`/pending 599`). The bytes are read before the entry is created because a zip entry, once created,
+// cannot be withdrawn: a decode that failed part-way used to leave a truncated file in the archive, and the
+// per-page fallback in extractImages then carried on past it, so the user received a broken image the
+// archive presented as extracted. The image is marked seen only after it is written, so a later page naming
+// the same object may still supply it. It returns how many entries it wrote.
+func addZipImage(zw *zip.Writer, name string, img io.Reader) (int, error) {
+	data, err := io.ReadAll(img)
+	if err != nil {
+		return 0, err
+	}
+	fw, err := zw.Create(name)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
 
 // Optimize losslessly shrinks a PDF: pdfcpu deduplicates repeated embedded fonts

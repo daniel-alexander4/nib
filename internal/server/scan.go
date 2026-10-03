@@ -74,7 +74,15 @@ func (s *Server) handleSanitize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	residual, _ := pdfops.Scan(result)
+	// **A residual that could not be scanned is not an empty one** (`/pending 600`). Scan refuses a page tree
+	// or an action graph too large to walk honestly, and an ignored error here reached the page as zero
+	// findings — "Cleaned — nothing hidden remains" over a document nobody had looked at. Not-ok, and the
+	// open document untouched, as for a removal that failed.
+	residual, serr := pdfops.Scan(result)
+	if serr != nil {
+		writeJSON(w, sanitizeResponse{docResponse: s.docResponse(doc), Ok: false})
+		return
+	}
 	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
 		return
 	}

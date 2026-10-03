@@ -83,6 +83,14 @@ type noteCarry struct {
 	left    int // annotations of any other subtype, which an n-up drops
 }
 
+// residue words what the carry left behind, or "" when it left nothing.
+func (c noteCarry) residue() string {
+	if c.left == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d annotation(s) were not carried onto the sheets (%d sticky note(s) were)", c.left, c.carried)
+}
+
 // matrix is a PDF transformation matrix [a b c d e f], applied to a row vector:
 // x' = a·x + c·y + e, y' = b·x + d·y + f.
 type matrix [6]float64
