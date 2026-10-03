@@ -225,9 +225,9 @@ var inPackageOnlyRecorded = []string{
 	// instance.Record — at /pending 808 R5 the second launch (`cmd/nib/main.go`, `rec.Addr`) was named
 	// as the reader, taking Addr OFF this list; Token and Handoff came ON, because the only outside
 	// "reader" they had was `.Token` as a prefix of `.TokenMatches`. The second launch hands the record
-	// to Probe and HandOff, which read them in-package — true, and what this list records.
+	// to Probe and HandOff, which read them in-package — true, and what this list records. Token left it again
+	// at /pending 630 (v1.182.18): the launch's exit removal passes its own `rec.Token` to `instance.Remove`.
 	"instance.Record.Handoff",
-	"instance.Record.Token",
 	"instance.Record.Version",
 	// p2p.Channel  // shape declared internal, with a reason
 	"p2p.Channel.Export",
