@@ -27,7 +27,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { boot, REPO } from './boot.mjs';
-import { setNextDocument } from './stub-pdfjs.mjs';
+import { setNextDocument, setDataGate } from './stub-pdfjs.mjs';
 
 const APP = fs.readFileSync(path.join(REPO, 'web', 'app.js'), 'utf8');
 
@@ -39,6 +39,7 @@ const meta = (id, name) => ({
 
 // A queue of held responses for /api/attestations, released one at a time by the test.
 const held = [];
+const heldLists = []; // /api/attachments, likewise
 const h = await boot({
   routes: {
     '/api/open': (opts) => {
@@ -48,10 +49,20 @@ const h = await boot({
     '/api/attestations': (opts) => new Promise((resolve) => {
       held.push({ doc: opts.headers['X-Nib-Doc'], release: resolve });
     }),
+    // /pending 806 and 625: a list held until the test releases it, and the two routes whose request
+    // must name the document the operation began on.
+    '/api/attachments': (opts) => new Promise((resolve) => {
+      heldLists.push({ doc: opts.headers['X-Nib-Doc'], release: resolve });
+    }),
+    '/api/attachments/extract': () => new Response('bytes', { status: 200 }),
+    '/api/split-pages': () => ({ count: 1, dir: '/tmp/nib-harness/out' }),
+    '/api/listdir': () => ({ path: '/tmp/nib-harness', parent: '', dirs: [], files: [] }),
   },
 });
 const { document: doc, calls, settle } = h;
 const tabs = () => [...doc.querySelectorAll('#tabstrip .tab')];
+const activeName = () => doc.querySelector('#tabstrip .tab.active .tabname').textContent;
+const ID_OF = { 'a.pdf': 'rp:1', 'b.pdf': 'rp:2' }; // what the /api/open stub answers
 
 test('two opens overlapping each get their own tab — neither loads over the other', async () => {
   let release;
@@ -110,6 +121,99 @@ test('a signature-details panel never shows another document\'s verdicts', async
     'the panel\'s own verdict was dropped too, so the guard above passes by showing nothing');
 });
 
+// /pending 806. An attachment id means something only against the document that listed it — the
+// two lists below give the SAME id, which is the real shape (`page:1:0` on every document) — so
+// a list answered late must not render into the other document's dialog, and an Extract must name
+// the document its row came from.
+test('an attachment list answered after a switch never feeds the other document\'s Extract', async () => {
+  assert.equal(tabs().length, 2, 'setup: two documents are not open');
+  const body = doc.getElementById('attachBody');
+  const first = activeName();
+  doc.getElementById('attachBtn').click();
+  await settle();
+  assert.equal(heldLists.length, 1, 'setup: the dialog did not ask for the first document\'s list');
+
+  tabs().find((t) => t.querySelector('.tabname').textContent !== first).click();
+  await settle();
+  doc.getElementById('attachBtn').click();
+  await settle();
+  assert.equal(heldLists.length, 2, 'setup: the reopened dialog did not ask for the second document\'s list');
+  assert.notEqual(heldLists[0].doc, heldLists[1].doc, 'setup: the two lists did not ask about two documents');
+
+  // The second document answers first; the first document's answer lands after it.
+  heldLists[1].release({ attachments: [{ id: 'page:1:0', name: 'second.txt' }] });
+  await settle();
+  heldLists[0].release({ attachments: [{ id: 'page:1:0', name: 'first.txt' }] });
+  await settle();
+  assert.ok(!/first\.txt/.test(body.textContent),
+    'the first document\'s late list rendered into the second document\'s dialog — its ids now extract from the wrong file');
+  assert.match(body.textContent, /second\.txt/, 'the dialog\'s own list was dropped too');
+
+  // And the Extract names the document whose list it came from.
+  const before = calls.length;
+  body.querySelector('.attachrow button').click();
+  await settle();
+  const ex = calls.slice(before).find((c) => c.url.includes('/api/attachments/extract'));
+  assert.ok(ex, 'setup: Extract sent nothing');
+  assert.equal(ex.headers['X-Nib-Doc'], heldLists[1].doc, 'Extract is not addressed to the document that listed the id');
+  doc.getElementById('saveAsModal').hidden = true;
+  doc.getElementById('attachmentsModal').hidden = true;
+});
+
+test('an Extract names the document its row was listed from, even after a switch', async () => {
+  const body = doc.getElementById('attachBody');
+  doc.getElementById('attachBtn').click();
+  await settle();
+  const listed = heldLists[heldLists.length - 1];
+  listed.release({ attachments: [{ id: 'page:1:0', name: 'listed.txt' }] });
+  await settle();
+  const btn = body.querySelector('.attachrow button');
+  assert.ok(btn, 'setup: the list rendered no Extract button');
+  // An arrival switches the tab while the row is on screen; the click is already on its way.
+  const active = activeName();
+  tabs().find((t) => t.querySelector('.tabname').textContent !== active).click();
+  await settle();
+  const before = calls.length;
+  btn.click();
+  await settle();
+  const ex = calls.slice(before).find((c) => c.url.includes('/api/attachments/extract'));
+  assert.ok(ex, 'setup: Extract sent nothing');
+  assert.equal(ex.headers['X-Nib-Doc'], listed.doc,
+    'Extract sent another document\'s id with this list\'s attachment id — `page:1:0` names a file in every document');
+  doc.getElementById('saveAsModal').hidden = true;
+});
+
+// /pending 625. The split's only guard against a part overwriting its SOURCE is the addressed
+// document's path, so a switch during the bake must not move the request to the other document.
+test('a page split whose bake straddles a switch is addressed to the document it baked', async () => {
+  const startName = activeName();
+  const startId = ID_OF[startName];
+  assert.ok(startId, `setup: no id known for ${startName}`);
+  doc.getElementById('exportPageSplitBtn').click();
+  await settle();
+  doc.getElementById('psDir').value = '/tmp/nib-harness/out';
+  let release;
+  setDataGate(new Promise((r) => { release = r; }));
+  const before = calls.length;
+  try {
+    doc.getElementById('psGo').click();
+    await settle();
+    // Mid-bake: an arrival activates the other tab.
+    tabs().find((t) => t.querySelector('.tabname').textContent !== startName).click();
+    await settle();
+    assert.notEqual(activeName(), startName, 'setup: the switch did not happen');
+    assert.ok(!calls.slice(before).some((c) => c.url.includes('/api/split-pages')), 'setup: the bake was not held');
+  } finally {
+    setDataGate(null);
+    release();
+  }
+  await settle(20);
+  const sp = calls.slice(before).find((c) => c.url.includes('/api/split-pages'));
+  assert.ok(sp, 'setup: the split was never sent');
+  assert.equal(sp.headers['X-Nib-Doc'], startId,
+    'the split was addressed to the document active when the bake FINISHED — its bytes are the other one\'s, and the overwrite guard checked the wrong path');
+});
+
 // ── The shape scan ──────────────────────────────────────────────────────────────────────────────
 //
 // Each named site must capture `const owner = view;` before its first await, and after that await
@@ -155,6 +259,9 @@ const SITES = [
   'els.autofillBtn.onclick = async () => {',
   'els.rtFind.onclick = async () => {',
   'els.applyBoxSplitBtn.onclick = async () => {',
+  // /pending 625: the two folder splits, whose server-side overwrite guard is the addressed path.
+  'async function pageSplitGo() {',
+  'async function bookmarkSplitGo() {',
 ];
 
 test('the shape scan detects a live-view read after an await — its own stimulus', () => {

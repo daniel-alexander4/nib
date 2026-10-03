@@ -385,6 +385,94 @@ test('no mutating call is unpinned', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The READ half of the request law (/pending 806, 625, 607).
+//
+// MUTATING is "a misaddressed request DAMAGES the addressed document", and that left every route
+// that merely READS one outside any guard — and a read can do the damage one step later. An
+// attachment id from document A's list (`page:1:0` repeats across documents) extracted with B's
+// header saved B's embedded file under A's name; `/api/split-pages` commits nothing, but its only
+// guard against a part overwriting the source is the ADDRESSED document's path. Both were sent with
+// whatever was current at send time.
+//
+// **So membership is read from the server, not listed:** a route is document-scoped when its handler
+// resolves a document (`s.resolveDoc(` or `s.docFor(`) itself or through one `s.helper(` of its own
+// (`hopTarget`). Every apiFetch to such a route names its document with `docId`, GETs included, or
+// is a named exemption below with its reason. `unpinned: true` does not satisfy it — on a document
+// route that IS the unaddressed request — except where the exemption says so.
+function documentRoutes(mux, goFiles) {
+  const bodies = new Map();
+  for (const src of goFiles) {
+    for (const m of src.matchAll(/^func \(s \*Server\) (\w+)\([^]*?^\}$/gm)) bodies.set(m[1], m[0]);
+  }
+  const resolves = (name, depth) => {
+    const body = bodies.get(name);
+    if (!body) return false;
+    if (/\bs\.(?:resolveDoc|docFor)\(/.test(body)) return true;
+    return depth > 0 && [...body.matchAll(/\bs\.(\w+)\(/g)].some((m) => m[1] !== name && resolves(m[1], depth - 1));
+  };
+  const out = new Set();
+  for (const m of mux.matchAll(/"(?:GET|POST|DELETE|PUT|HEAD) (\/api\/[^"]+)",[^\n]*?s\.(handle\w+)\)/g)) {
+    if (resolves(m[2], 1)) out.add(m[1]);
+  }
+  return [...out];
+}
+
+// route → [site, reason]. A site is the name `siteName` gives it, so a rename fails here by name.
+const DOCUMENT_ROUTE_EXEMPT = [
+  ['/api/close', 'requestClose',
+    'Close is CLOSE ALL (handleClose: setDoc(nil)); the header only lets a stale id 409, and the current id is the one the confirm was about'],
+  ['/api/doc', 'openArrivalInNewView',
+    'the one session question apiFetch\'s `unpinned` exists for — "what is active NOW" — which a pinned call cannot ask'],
+];
+
+function scanUnpinnedDocumentReads(src, routes) {
+  const out = [];
+  for (const site of apiFetchSites(src)) {
+    const hit = site.routes.filter((r) => routes.includes(r));
+    if (!hit.length) continue;
+    const args = site.args.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+    if (/\bdocId\s*[,:}\s]/.test(args)) continue;
+    const name = siteName(src, site.index);
+    if (DOCUMENT_ROUTE_EXEMPT.some(([r, n]) => r === hit[0] && n === name)) continue;
+    out.push({ name, route: hit[0], line: site.line });
+  }
+  return out;
+}
+
+test('every call to a document-scoped route names its document — reads included', () => {
+  const dir = path.join(REPO, 'internal', 'server');
+  const mux = fs.readFileSync(path.join(dir, 'server.go'), 'utf8');
+  const goFiles = fs.readdirSync(dir).filter((f) => f.endsWith('.go') && !f.endsWith('_test.go'))
+    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'));
+
+  // Stimulus: a planted handler resolving through a helper, and an unpinned read of it, are found.
+  const planted = documentRoutes(
+    'mux.HandleFunc("GET /api/planted", s.requireUnlocked(s.handlePlanted))',
+    ['func (s *Server) handlePlanted(w http.ResponseWriter, r *http.Request) {\n\ts.target(w, r)\n}',
+      'func (s *Server) target(w http.ResponseWriter, r *http.Request) {\n\tdoc, ok := s.resolveDoc(w, r)\n}'],
+  );
+  assert.deepEqual(planted, ['/api/planted'], 'the route reader cannot find a handler that resolves through a helper');
+  assert.deepEqual(
+    scanUnpinnedDocumentReads("async function r() {\n  const res = await apiFetch('/api/planted', { unpinned: true });\n}", planted)
+      .map((f) => f.name), ['r'],
+    'an unpinned read of a document route is waved through — `unpinned: true` must not count as a pin');
+
+  const routes = documentRoutes(mux, goFiles);
+  // The population first: an empty report is also what a reader that found no routes produces.
+  for (const r of ['/api/attachments', '/api/attachments/extract', '/api/split-pages', '/api/ceremony/hop', '/api/save']) {
+    assert.ok(routes.includes(r), `${r} resolves a document but the route reader did not find it — the scan is blind`);
+  }
+  for (const [r, n] of DOCUMENT_ROUTE_EXEMPT) {
+    assert.ok(routes.includes(r), `the exemption for ${r} names a route that is no longer document-scoped — remove it`);
+    assert.ok(apiFetchSites(APP).some((s) => s.routes.includes(r) && siteName(APP, s.index) === n),
+      `the exemption ${r} @ ${n} names a call site that no longer exists — remove it`);
+  }
+  const found = scanUnpinnedDocumentReads(APP, routes);
+  assert.deepEqual(found.map((f) => `${f.name} → ${f.route} at app.js:${f.line}`), [],
+    'a call to a document-scoped route that does not name its document — it is answered about whichever tab is current when it goes out');
+});
+
+// ---------------------------------------------------------------------------
 // The RELOAD half of the same law (ADR-001), and the half that had no guard.
 //
 // scanUnpinned above asks which document a request is ADDRESSED to. This asks which

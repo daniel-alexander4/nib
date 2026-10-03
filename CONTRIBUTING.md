@@ -270,7 +270,11 @@ a local `CLAUDE.md`.
    the id before the first `await` and pass it as `apiFetch`'s `docId`.
    *Guarded by* `test/jsdom/pinning.test.mjs` — "no mutating call is unpinned" (every
    `apiFetch(` call site, wherever it sits) and "every route whose handler commits into
-   a document is in the MUTATING inventory" (read from `internal/server`). The request
+   a document is in the MUTATING inventory" (read from `internal/server`). A READ is
+   held too — "every call to a document-scoped route names its document — reads
+   included" takes every route whose handler resolves a document from `internal/server`,
+   because an id listed from one document (an attachment's `page:1:0`) names something
+   else in another. The request
    is only half of it: an operation that captures nothing, awaits, and then reads the
    live `view` — to bake, write marks, open a dialog or append a verdict — breaks the
    law with every request correctly addressed. *Guarded by* `test/jsdom/racepins.test.mjs`.
