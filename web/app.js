@@ -189,6 +189,7 @@ const els = {
   imageGrid: $('imageGrid'), saveForSigningBtn: $('saveForSigningBtn'),
   signCompleteBtn: $('signCompleteBtn'),
   signBanner: $('signBanner'), signMsg: $('signMsg'), signAction: $('signAction'), signDone: $('signDone'),
+  signKeep: $('signKeep'), signKeepHint: $('signKeepHint'), fzKeepHint: $('fzKeepHint'),
   sigModal: $('sigModal'), sigCanvas: $('sigCanvas'),
   sigClear: $('sigClear'), sigCancel: $('sigCancel'), sigSave: $('sigSave'),
   sigDetailsBtn: $('sigDetailsBtn'), sigDetailsModal: $('sigDetailsModal'),
@@ -3159,6 +3160,7 @@ function repaintForActiveView() {
 
   paintStale();
   els.signBanner.hidden = !view.signTotal;
+  els.signKeep.checked = false; // the tick was for the document just left, never carried to this one (D13)
   if (view.signTotal) setSignBanner(); // NOT showSignBanner — that resets a recipient's progress
 
   reflectRedact(); reflectEdit(); reflectSplitBox(); reflectCrop();
@@ -8701,6 +8703,24 @@ els.fzGo.onclick = async () => {
   els.fzGo.disabled = true;
   try { await finalizeGo(); } finally { els.fzGo.disabled = false; }
 };
+// keptRefusal is the one wording of D14's refusal for both callers of /api/finalize — the Finalize modal and the
+// recipient's Complete & sign (/pending 814): the document was NOT signed, why, and that unticking signs without a
+// copy. null when the refusal is not a copy that could not be kept, so each caller words its own generic failure.
+function keptRefusal(body) {
+  if (!body || body.cause !== 'copy-not-kept') return null;
+  return `Not signed: Nib could not keep the copy you asked for (${body.reason || 'no reason given'}). `
+    + (body.full ? 'Free some disk space' : 'Check that Nib can write to its "signed" folder')
+    + ', or untick "Keep a copy" to sign without one.';
+}
+// announceKept says where a kept copy landed, for both callers of /api/finalize, and re-asks the checklist row.
+function announceKept(res) {
+  const kept = res.headers.get('X-Nib-Kept');
+  if (!kept) return;
+  toast(`A copy was kept when you signed: ~/nib/signed/${kept}`);
+  // The folder changed. The open view is still the document as it was BEFORE this signing, so the row reads `—` for
+  // an unsigned one and ○ for one already signed by someone else — the copy just kept is of the new bytes.
+  if (simpleSignOpen()) refreshKeptProbe(true);
+}
 async function finalizeGo() {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
@@ -8732,24 +8752,13 @@ async function finalizeGo() {
     // A copy that could not be kept refuses the signing (D14): say THAT, and what to do, rather than a generic failure
     // — the modal stays open so unticking and signing again is one press away.
     const body = await res.json().catch(() => ({}));
-    if (body.cause === 'copy-not-kept') {
-      toast(`Not signed: Nib could not keep the copy you asked for (${body.reason || 'no reason given'}). `
-        + (body.full ? 'Free some disk space' : 'Check that Nib can write to its "signed" folder')
-        + ', or untick "Keep a copy" to sign without one.');
-      return;
-    }
-    toast(body.error ? 'Could not finalize: ' + body.error : 'Could not finalize');
+    const refused = keptRefusal(body);
+    toast(refused || (body.error ? 'Could not finalize: ' + body.error : 'Could not finalize'));
     return;
   }
   els.finalizeModal.hidden = true;
   els.fzPassphrase.value = '';
-  const kept = res.headers.get('X-Nib-Kept');
-  if (kept) {
-    toast(`A copy was kept when you signed: ~/nib/signed/${kept}`);
-    // The folder changed. The open view is still the document as it was BEFORE this signing, so the row reads `—` for
-    // an unsigned one and ○ for one already signed by someone else — the copy just kept is of the new bytes.
-    if (simpleSignOpen()) refreshKeptProbe(true);
-  }
+  announceKept(res);
   openSaveAs(await res.blob(), exportName + '-finalized.pdf', 'Save finalized PDF');
 }
 
@@ -10312,6 +10321,7 @@ function showSignBanner(owner = view) {
   if (owner !== view) return;
   if (!owner.signTotal) { els.signBanner.hidden = true; return; }
   els.signBanner.hidden = false;
+  els.signKeep.checked = false; // opt-in at every opening, never remembered (D13, ADR-078)
   setSignBanner();
 }
 
@@ -10338,6 +10348,10 @@ function setSignBanner() {
   els.signDone.hidden = false;
   els.signDone.onclick = completeAndSign;
 }
+
+// The banner's disclosure is the Finalize modal's, read from it once: one source for the words that make the opt-in
+// informed (ADR-073 D13), so the two ticks cannot drift into saying different things about the same copy.
+els.signKeepHint.textContent = els.fzKeepHint.textContent;
 
 function signNext() {
   view.signStarted = true;
@@ -10371,28 +10385,34 @@ async function saveForSigning() {
 // filled flags (bakedBytes strips the NibFlags property so the file won't reopen
 // in signing mode), then applies a tamper-evident certification signature via the
 // same /api/finalize path Finalize & sign uses. The baked-then-signed file is
-// flat and frozen — any later edit breaks the signature.
+// flat and frozen — any later edit breaks the signature. The banner's "Keep a copy
+// for my records" rides along as `keep`, exactly as the modal's does (ADR-078).
 async function completeAndSign() {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
   const empty = markerFields().length;
   if (empty && !confirm(`${empty} field${empty === 1 ? '' : 's'} still empty — complete and sign anyway?`)) return;
+  // Read at entry with the export name: the tick the user saw when they pressed is the one that is sent.
+  const keep = els.signKeep.checked;
+  // Drop the "-for-signing" the preparer's save added, so the file lands as
+  // <doc>.signed.pdf rather than <doc>-for-signing.signed.pdf — and the kept copy is named for the same document.
+  const base = exportName.replace(/-for-signing$/i, '');
   els.signAction.disabled = true; els.signDone.disabled = true;
   try {
     const form = await bakedForm(); // baked, flag-stripped bytes as the "pdf" part
-    form.append('params', JSON.stringify({ reason: 'Signed in Nib', watermark: { text: '' }, tsaUrl: '' }));
+    form.append('params', JSON.stringify({ reason: 'Signed in Nib', watermark: { text: '' }, tsaUrl: '', keep, name: base }));
     const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
     if (!res.ok) {
-      // The server's sentence when it has one — a document already signed is refused with one (/pending 810).
+      // The server's sentence when it has one — a document already signed is refused with one (/pending 810). A copy
+      // that could not be kept is Finalize's refusal word for word (keptRefusal); the banner stays up, tick and all.
       const body = await res.json().catch(() => ({}));
-      toast(body.error ? 'Could not complete and sign: ' + body.error : 'Could not complete and sign');
+      toast(keptRefusal(body) || (body.error ? 'Could not complete and sign: ' + body.error : 'Could not complete and sign'));
       return;
     }
-    // Drop the "-for-signing" the preparer's save added, so the file lands as
-    // <doc>.signed.pdf rather than <doc>-for-signing.signed.pdf.
-    const base = exportName.replace(/-for-signing$/i, '');
+    announceKept(res);
     openSaveAs(await res.blob(), base + '.signed.pdf', 'Save completed & signed PDF');
     els.signBanner.hidden = true;
+    els.signKeep.checked = false;
   } catch (e) {
     toast('could not complete: ' + e.message);
   } finally {

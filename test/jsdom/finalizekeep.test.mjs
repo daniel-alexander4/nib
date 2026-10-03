@@ -18,11 +18,12 @@ let opens = 0;
 let openSig = { state: 'unsigned' };
 let openCanUndo = false;
 let undoSig = { state: 'unsigned' };
+let openFlags; // a document prepared for signing carries its flags in the open answer (/pending 814)
 let probeAnswer = () => new Response(null, { status: 422, headers: { 'X-Nib-Kept-Copy-Cause': 'no-signature' } });
 const h = await boot({
   routes: {
     '/api/open': () => { opens++; return { id: 'test-epoch:1', name: 'Lease.pdf', path: '/tmp/nib-harness/Lease.pdf', canSave: true,
-      canUndo: openCanUndo, canRedo: false, signature: openSig }; },
+      canUndo: openCanUndo, canRedo: false, signature: openSig, flags: openFlags }; },
     // A server operation that changes the signatures (an undo of a signing), answered with the document's new meta.
     '/api/undo': () => ({ id: 'test-epoch:1', name: 'Lease.pdf', path: '/tmp/nib-harness/Lease.pdf', canSave: true,
       canUndo: false, canRedo: true, signature: undoSig }),
@@ -481,4 +482,82 @@ test('with the sidebar shut the checklist sits in the toolbar, and is asked ther
   assert.equal(keptRow().dataset.state, 'todo', 'the row kept the answer from before it left the screen');
   $('toggleSidebarBtn').click();
   await settle();
+});
+
+// ── /pending 814: Complete & sign's tick, in the signing banner (ADR-078) ───────────────────────────────────────────
+//
+// The recipient's one-press flow keeps a copy only when its own tick says so: off at every opening of the banner, sent
+// as `keep` exactly as the modal sends it, and refused in the modal's own words.
+async function openForSigning() {
+  openFlags = [{ page: 1, frac: [0.1, 0.1, 0.3, 0.15], type: 'date' }];
+  await reopen();
+  openFlags = undefined;
+  assert.equal($('signBanner').hidden, false, 'stimulus: a document with a flag did not show the signing banner');
+}
+async function completeAndSign() {
+  doc.defaultView.confirm = () => true; // "1 field still empty — complete and sign anyway?"
+  $('signDone').click(); // Finish & sign: the flag is unfilled, so this is the one-press entry
+  await settle();
+  await settle();
+  await settle();
+}
+
+test('Complete & sign\'s tick is off at every opening of the banner and says what the modal says', async () => {
+  await openForSigning();
+  assert.equal($('signKeep').checked, false, 'the banner\'s tick started ON');
+  assert.equal($('signKeepHint').textContent, $('fzKeepHint').textContent,
+    'the banner\'s disclosure is not the Finalize modal\'s — two sources for the words that make the opt-in informed');
+  assert.match($('signKeepHint').textContent, /unencrypted/);
+  $('signKeep').checked = true;
+  await openForSigning();
+  assert.equal($('signKeep').checked, false, 'a tick from the last opening of the banner was remembered');
+});
+
+test('Complete & sign sends the tick as keep, with the document\'s name, and says where the copy went', async () => {
+  finalizeAnswer = new Response(new Uint8Array([37, 80, 68, 70]), { status: 200,
+    headers: { 'Content-Type': 'application/pdf', 'X-Nib-Kept': 'kept_lease_20261003-120000-0011aabb.pdf' } });
+  await openForSigning();
+  const before = posted.length;
+  $('signKeep').checked = true;
+  await completeAndSign();
+  assert.equal(posted.length, before + 1, 'stimulus: Complete & sign did not post');
+  const params = JSON.parse(posted.at(-1).get('params'));
+  assert.equal(params.keep, true, 'the banner\'s tick did not reach the request');
+  assert.match(params.name, /Lease/, 'the document\'s name did not reach the request');
+  assert.match($('toast').textContent, /A copy was kept when you signed: ~\/nib\/signed\/kept_lease_/);
+  assert.equal($('saveAsModal').hidden, false, 'stimulus: the signed file was not offered to save');
+  $('saveAsCancel').click();
+  await settle();
+
+  finalizeAnswer = new Response(new Uint8Array([37, 80, 68, 70]), { status: 200, headers: { 'Content-Type': 'application/pdf' } });
+  await openForSigning();
+  await completeAndSign();
+  assert.equal(JSON.parse(posted.at(-1).get('params')).keep, false, 'an unticked banner asked for a copy');
+  $('saveAsCancel').click();
+  await settle();
+});
+
+test('a copy Complete & sign could not keep is refused in the Finalize modal\'s words, and the banner stays', async () => {
+  const refusal = () => new Response(JSON.stringify({ error: 'the document was not signed: Nib could not keep the copy you asked for',
+    cause: 'copy-not-kept', reason: 'mkdir /home/x/nib/signed: not a directory' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  finalizeAnswer = refusal();
+  await openModal();
+  $('fzKeep').checked = true;
+  $('fzGo').click();
+  await settle();
+  await settle();
+  const modalSaid = $('toast').textContent;
+  assert.match(modalSaid, /Not signed/, 'setup: the modal did not word the refusal');
+  $('fzCancel').click();
+
+  finalizeAnswer = refusal();
+  await openForSigning();
+  $('toast').textContent = '';
+  $('signKeep').checked = true;
+  await completeAndSign();
+  assert.equal($('toast').textContent, modalSaid, 'Complete & sign worded the refusal differently from Finalize');
+  assert.doesNotMatch($('toast').textContent, /Could not complete and sign/);
+  assert.equal($('signBanner').hidden, false, 'the banner went away — unticking and signing again is no longer one press away');
+  assert.equal($('signKeep').checked, true, 'the refusal cleared the tick it tells the user to untick');
+  assert.equal($('saveAsModal').hidden, true, 'a refused signing offered a file to save');
 });

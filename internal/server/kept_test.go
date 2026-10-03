@@ -58,7 +58,7 @@ func keptFiles(t *testing.T) (kept, other []string) {
 
 // TestFinalizeKeepsExactlyTheCopyAskedFor is P04.S01's acceptance at the route (D13, D14): ticked writes exactly one
 // kept copy, byte-identical to what was returned, 0600, named in X-Nib-Kept; unticked writes nothing, and so does a
-// request that does not send the field at all (Complete & sign's shape). The ticked row is the control that makes the
+// request that does not send the field at all (an older client's, or the CLI's, shape). The ticked row is the control that makes the
 // other two mean something — they run in the same HOME.
 func TestFinalizeKeepsExactlyTheCopyAskedFor(t *testing.T) {
 	ts, _ := startServer(t)
@@ -104,7 +104,7 @@ func TestFinalizeKeepsExactlyTheCopyAskedFor(t *testing.T) {
 
 	for _, tc := range []struct{ name, params string }{
 		{"unticked", `{"reason":"r","keep":false,"name":"x.pdf"}`},
-		{"no keep field (Complete & sign's shape)", `{"reason":"r"}`},
+		{"no keep field (a caller that never sends it)", `{"reason":"r"}`},
 		{"no params at all", ""},
 	} {
 		resp, body := finalizeWith(t, c, csrf, ts.URL, pdf, tc.params)

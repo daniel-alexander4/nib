@@ -24,7 +24,8 @@ type finalizeParams struct {
 	SignAs     string         `json:"signAs"`     // "" / "native" (default) | "external"
 	Passphrase string         `json:"passphrase"` // PKCS#12 passphrase when signAs == "external"
 	// Keep writes the signed output to ~/nib/signed/ as well (D13: opt-in; absent is false, so a caller that does not
-	// send it — Complete & sign — keeps nothing). Name is the document's name for the kept copy's slug; untrusted.
+	// send it keeps nothing). Both web callers send it — the Finalize modal and Complete & sign's banner (ADR-078).
+	// Name is the document's name for the kept copy's slug; untrusted.
 	Keep bool   `json:"keep"`
 	Name string `json:"name"`
 }
