@@ -30,8 +30,9 @@ func TestASignatureNibCannotReadBackIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Only the co-signer: a certification over a signed document is refused before the library runs (/pending 810),
+	// which the control below asserts.
 	signs := map[string]func([]byte) ([]byte, error){
-		"Sign":         func(d []byte) ([]byte, error) { return Sign(d, b.certPEM, b.keyPEM, Options{Name: "B"}) },
 		"SignApproval": func(d []byte) ([]byte, error) { return SignApproval(d, b.certPEM, b.keyPEM, Options{Name: "B"}) },
 	}
 
@@ -139,6 +140,16 @@ func TestASignatureNibCannotReadBackIsRefused(t *testing.T) {
 			if st := Verify(out); st.State != Valid || len(st.Signers) != 2 {
 				t.Errorf("%s: state=%s signers=%d, want valid/2", name, st.State, len(st.Signers))
 			}
+		}
+		certified, err := Sign(base, b.certPEM, b.keyPEM, Options{Name: "B"})
+		if err != nil {
+			t.Fatalf("honest certification of an unsigned document refused: %v", err)
+		}
+		if st := Verify(certified); st.State != Valid || len(st.Signers) != 1 {
+			t.Errorf("Sign: state=%s signers=%d, want valid/1", st.State, len(st.Signers))
+		}
+		if _, err := Sign(once, b.certPEM, b.keyPEM, Options{Name: "B"}); !errors.Is(err, ErrAlreadySigned) {
+			t.Errorf("Sign over a nib-signed document: err=%v, want ErrAlreadySigned (/pending 810)", err)
 		}
 	})
 }

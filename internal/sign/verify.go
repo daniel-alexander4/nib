@@ -683,7 +683,7 @@ func HasSignatureBlob(pdf []byte) bool { return signatureBlobPresent(pdf) }
 // claim that it was never signed.
 //
 // **A named exemption from the one-enumeration guard** (`TestEverySignatureEnumerationIsTheSweep`,
-// P01.S02): it walks `/Fields`, and re-expressing it over the sweep would NARROW it — the sweep keeps
+// P01.S02), through `sigFieldWalk`: it walks `/Fields`, and re-expressing it over the sweep would NARROW it — the sweep keeps
 // only signature-shaped dictionaries, and this answers for any `FT /Sig` field with contents — which
 // moves a document towards `Unsigned`, the unsafe direction. It walks `/Kids` with `/FT` inherited (the P08 phase-close
 // review: it once read the top level only, and only `Verify` — asking the sweep beside it — saw a nested blob; the gates
@@ -725,24 +725,65 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 	if _, err := libraryLookupCost(r); err != nil {
 		return scanForSignatureBlob(pdf)
 	}
+	return blobIn(pdf, r)
+}
+
+// blobIn is `signatureBlobPresent`'s answer over a reader already open: the field tree's, or the byte scan's where
+// the reader could not give one. pdf is the bytes r reads.
+func blobIn(pdf []byte, r *dpdf.Reader) bool {
+	present, err := signedFieldIn(r)
+	if err != nil {
+		return scanForSignatureBlob(pdf)
+	}
+	return present
+}
+
+// signedFieldIn is the field tree's answer to "is a signature field filled", over a reader already open, and an
+// error where the reader could not answer: a panic from its lazy dereferences, a catalog it did not find, a walk that
+// could not finish. `blobIn` answers those from the byte scan; the certifying paths' precondition (`refuseSigned`,
+// /pending 810) refuses them as unreadable instead, because "already signed" would be a claim about a document nib
+// did not read — and it asks the reader `libraryReader` opened, so the answer costs no second parse.
+func signedFieldIn(r *dpdf.Reader) (present bool, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			present, err = false, readPanicErr(rec)
+		}
+	}()
 	// **A parse that found no catalog is not a parse that found no signatures** (/pending 733): a
 	// trailer `/Root` the library resolves to null, or to something that is neither typed `/Catalog`
 	// nor carries the catalog's required `/Pages`, is a document it did not read.
 	root := r.Trailer().Key("Root")
 	if root.Key("Type").Name() != "Catalog" && root.Key("Pages").IsNull() {
-		return scanForSignatureBlob(pdf)
+		return false, errors.New("read pdf: no document catalog")
 	}
 	acro := root.Key("AcroForm")
 	if acro.IsNull() {
-		return false
+		return false, nil
 	}
-	// The WHOLE field tree, `/FT` inherited from a parent (ISO 32000-1 12.7.3.1, Table 220: FT is inheritable): a
-	// signature field whose widget kids carry the value, or whose type its parent states, is a signed field all the same.
-	// Reading `/Fields`' top level alone answered false for a validly signed document of either shape, and every gate on
-	// this answer — the reflow refusal (D11), tag writes, the co-sign arrival gate, undo's signature guard, the PDF/UA
-	// drop — treated it as unsigned (the P08 phase-close review, C1). A walk past its bounds (a /Kids cycle the library
-	// does not refuse, or a tree too large to be a form) answers from the byte scan, as every walk here that cannot finish.
-	fields := acro.Key("Fields") //sigwalk:exempt signatureBlobPresent
+	found, bounded := sigFieldWalk(acro, func(f dpdf.Value) bool {
+		return len(f.Key("V").Key("Contents").RawString()) > 0
+	})
+	if !bounded {
+		return false, errFieldTreeUnbounded
+	}
+	return found, nil
+}
+
+// errFieldTreeUnbounded is a form whose field tree `sigFieldWalk` could not finish: deeper or larger than any form.
+var errFieldTreeUnbounded = errors.New("read pdf: the form's field tree is too deep or too large to read")
+
+// sigFieldWalk is the one walk of a form's field tree for its signature fields: it calls visit on every field whose
+// `/FT` is `/Sig`, its own or inherited, and stops at the first visit that answers true. bounded is false when the walk
+// gave up — a `/Kids` cycle the library does not refuse, or a tree too large to be a form — and then found says nothing.
+//
+// The WHOLE field tree, `/FT` inherited from a parent (ISO 32000-1 12.7.3.1, Table 220: FT is inheritable): a
+// signature field whose widget kids carry the value, or whose type its parent states, is a signed field all the same.
+// Reading `/Fields`' top level alone answered false for a validly signed document of either shape, and every gate on
+// `HasSignatureBlob` — the reflow refusal (D11), tag writes, the co-sign arrival gate, undo's signature guard, the PDF/UA
+// drop — treated it as unsigned (the P08 phase-close review, C1). The certification refusal kept its own top-level copy
+// of the walk, with the same blindness (/pending 734); both questions are asked here now, so they cannot diverge again.
+func sigFieldWalk(acro dpdf.Value, visit func(f dpdf.Value) bool) (found, bounded bool) {
+	fields := acro.Key("Fields") //sigwalk:exempt sigFieldWalk
 	visited := 0
 	var walk func(f dpdf.Value, ft string, depth int) (found, bounded bool)
 	walk = func(f dpdf.Value, ft string, depth int) (bool, bool) {
@@ -753,7 +794,7 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 		if t := f.Key("FT").Name(); t != "" {
 			ft = t
 		}
-		if ft == "Sig" && len(f.Key("V").Key("Contents").RawString()) > 0 {
+		if ft == "Sig" && visit(f) {
 			return true, true
 		}
 		kids := f.Key("Kids")
@@ -765,18 +806,14 @@ func signatureBlobPresent(pdf []byte) (present bool) {
 		return false, true
 	}
 	for i := 0; i < fields.Len(); i++ {
-		found, ok := walk(fields.Index(i), "", 0)
-		if !ok {
-			return scanForSignatureBlob(pdf)
-		}
-		if found {
-			return true
+		if found, ok := walk(fields.Index(i), "", 0); found || !ok {
+			return found, ok
 		}
 	}
-	return false
+	return false, true
 }
 
-// maxFieldDepth and maxFieldNodes bound signatureBlobPresent's walk of the field tree: no real form nests fields
+// maxFieldDepth and maxFieldNodes bound sigFieldWalk's walk of the field tree: no real form nests fields
 // deeper than a handful of levels, and a cycle through /Kids — which the library does not refuse — would otherwise walk
 // forever.
 const (

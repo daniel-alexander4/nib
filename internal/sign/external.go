@@ -39,7 +39,7 @@ func ParseP12(p12 []byte, passphrase string) (leaf *x509.Certificate, chain []*x
 // It mirrors Sign (a certification signature, DocMDP locking the document) and is
 // the solo-Finalize path for an imported identity. It is deliberately NOT used for
 // co-signing: co-signing always uses the native vault identity, whose SPKI is the
-// pinned peer fingerprint.
+// pinned peer fingerprint. Like Sign, it refuses a document already signed (`ErrAlreadySigned`).
 func SignExternal(pdfBytes, p12 []byte, passphrase string, opts Options) ([]byte, error) {
 	key, leaf, chain, err := decodeP12(p12, passphrase)
 	if err != nil {
@@ -69,7 +69,7 @@ func SignExternal(pdfBytes, p12 []byte, passphrase string, opts Options) ([]byte
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}
 	}
-	return runSign(pdfBytes, data, nil)
+	return runSign(pdfBytes, data, refuseSigned)
 }
 
 // decodeP12 wraps the PKCS#12 decode, mapping a wrong password to the ErrWrongPassphrase sentinel

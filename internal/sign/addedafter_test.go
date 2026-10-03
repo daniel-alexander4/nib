@@ -595,9 +595,9 @@ func TestEverySignatureEnumerationIsTheSweep(t *testing.T) {
 // sigwalkExempt is the declared exemption list: name → the file it may sit in.
 var sigwalkExempt = map[string]string{
 	// Re-expressed over the sweep it would NARROW towards `Unsigned` (it answers for any FT /Sig).
-	"signatureBlobPresent": "verify.go",
-	// Reads /Reference for DocMDP; its /Kids blindness is declared at the site (/pending 734).
-	"certifiedIn": "identity.go",
+	// It serves `signatureBlobPresent` (any FT /Sig field with contents) and `certifiedIn` (a /Reference
+	// naming DocMDP), one walk for both since /pending 734 found the second copy blind under /Kids.
+	"sigFieldWalk": "verify.go",
 	// /pending 749's population cross-check: pdfcpu's table, and the one shape test on each entry. It
 	// records nothing and can only route a verdict to could-not-check (ADR-063).
 	"unseenSignatures":       "verify.go",
@@ -810,7 +810,7 @@ func TestTheSigwalkGuardSeesEveryBypass(t *testing.T) {
 		{"a constant declared in another file", "zz.go", "func zzC3(v dpdf.Value) dpdf.Value { return v.Key(zzOtherFileKey) }", "\nconst zzOtherFileKey = \"ByteRange\"\n", `.Key("ByteRange") outside`},
 		{"a local constant argument", "zz.go", "func zzC2(v dpdf.Value) dpdf.Value { const k = \"Fields\"; return v.Key(k) }", "", `.Key("Fields") outside`},
 		{"a plain second walk", "zz.go", `func zzD(v dpdf.Value) dpdf.Value { return v.Key("ByteRange") }`, "", `.Key("ByteRange") outside`},
-		{"a borrowed exemption", "zz.go", `func zzE(v dpdf.Value) dpdf.Value { return v.Key("Fields") } //sigwalk:exempt signatureBlobPresent`, "", "not an exemption declared for this file"},
+		{"a borrowed exemption", "zz.go", `func zzE(v dpdf.Value) dpdf.Value { return v.Key("Fields") } //sigwalk:exempt sigFieldWalk`, "", "not an exemption declared for this file"},
 		{"a method value of Key", "zz.go", `func zzF(v dpdf.Value) dpdf.Value { k := v.Key; return k("ByteRange") }`, "", "method value"},
 		{"a second verdict caller", "zz.go", "var zzG = addedAfterVerdict", "", "addedAfterVerdict is named from"},
 		{"strings.Index in revisions.go", "", "", "\nfunc zzH(s string) int { return strings.Index(s, \"x\") }\n", "strings.Index"},

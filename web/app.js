@@ -10339,7 +10339,12 @@ async function completeAndSign() {
     const form = await bakedForm(); // baked, flag-stripped bytes as the "pdf" part
     form.append('params', JSON.stringify({ reason: 'Signed in Nib', watermark: { text: '' }, tsaUrl: '' }));
     const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
-    if (!res.ok) { toast('Could not complete and sign'); return; }
+    if (!res.ok) {
+      // The server's sentence when it has one — a document already signed is refused with one (/pending 810).
+      const body = await res.json().catch(() => ({}));
+      toast(body.error ? 'Could not complete and sign: ' + body.error : 'Could not complete and sign');
+      return;
+    }
     // Drop the "-for-signing" the preparer's save added, so the file lands as
     // <doc>.signed.pdf rather than <doc>-for-signing.signed.pdf.
     const base = exportName.replace(/-for-signing$/i, '');
