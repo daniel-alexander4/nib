@@ -940,6 +940,13 @@
       </div>
       <div id="signBanner" hidden>
         <span id="signMsg"></span>
+        <!-- The recipient's "Keep a copy for my records" (/pending 814, ADR-078): the same opt-in as the Finalize modal's
+             #fzKeep, off at every opening of the banner. #signKeepHint is filled from #fzKeepHint at start-up, so the
+             disclosure has one source. -->
+        <span class="signkeep">
+          <label class="check"><input id="signKeep" type="checkbox" aria-describedby="signKeepHint" /> Keep a copy for my records</label>
+          <span id="signKeepHint"></span>
+        </span>
         <button id="signDone" hidden>Finish &amp; sign</button>
         <button id="signAction" class="primary"></button>
       </div>

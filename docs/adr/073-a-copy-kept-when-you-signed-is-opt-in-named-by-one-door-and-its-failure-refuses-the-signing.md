@@ -2,7 +2,8 @@
 
 **Status:** accepted. `PLAN-returned-document.md` P04.S01 (2026-10-02), decisions D13-D17 as amended by P04's
 phase-open PIN and plan-review pins. Extends ADR-009 (one door per rule) and ADR-027/029 (a step is ticked only where
-Nib observes it).
+Nib observes it). **Superseded in part by ADR-078** (decision 1's "Complete & sign … offer[s] no tick": its
+banner now carries one).
 
 ## Context
 

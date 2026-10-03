@@ -613,3 +613,8 @@ home today.
   — /pending 803; extends ADR-069. A loop-free chain of form XObjects passed the door whole (it stops at guarded
   objects) and 700,000 links overflowed pdfcpu's validator stack, fatally. A depth-only pass over guarded and unguarded
   edges, SCC-weighted as an upper bound over pdfcpu's map order, refuses past 8,192 as `ErrReferenceDepth`.
+- **[ADR-078 — Complete & sign offers the kept copy, in its banner](078-complete-and-sign-offers-the-kept-copy-in-its-banner.md)**
+  — /pending 814; supersedes ADR-073 decision 1's "Complete & sign offers no tick". The recipient's tick sits in the
+  signing banner beside both of Complete & sign's buttons, off at every opening, its disclosure read from the Finalize
+  modal's; the request carries `keep` as the modal's does and a `copy-not-kept` refusal is worded by the one
+  `keptRefusal`. The CLI still offers none.
