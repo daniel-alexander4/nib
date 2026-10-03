@@ -84,14 +84,11 @@ func (s *Server) handleDocumentKeptCopy(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	s.mu.Lock()
-	if !s.isRegisteredLocked(doc) {
-		s.mu.Unlock()
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	var data []byte
+	var sig sign.Status
+	if !s.snapshotRegistered(w, doc, func() { data, sig = doc.data, doc.sig }) {
 		return
 	}
-	data, sig := doc.data, doc.sig
-	s.mu.Unlock()
 	refuse := func(cause string) {
 		// The cause rides in a header as well as the body, because the Simple Sign checklist asks with HEAD — it
 		// needs the answer, never the bytes (P04.S03) — and a HEAD response carries no body.

@@ -48,25 +48,17 @@ import (
 const endedDir = "ended"
 
 var (
-	// ErrRootNotAbsolute refuses a destructive operation under a relative root.
+	// ErrRootNotAbsolute refuses a ceremony store under a relative root (`storeDir`, every folder).
 	//
 	// **`defaultOutputDir` returns a bare `"nib"` when `os.UserHomeDir()` fails**, and that string
 	// reaches twenty-four production call sites. Everywhere else it is merely wrong — a document
 	// saved beside the binary. Here it would make the rename relative to whatever the process's
 	// working directory happens to be, which for a desktop launcher is not a thing the user chose.
 	//
-	// **The refusal lives at this one door and not at the resolver** (ADR-009: a rule gets one
-	// door, and the guard checks the door). Changing `defaultOutputDir` to return an error would
-	// touch all twenty-four sites to guard the one that is destructive.
+	// **The refusal lives at the store's one join (`storeDir`) and not at the resolver** (ADR-009:
+	// a rule gets one door, and the guard checks the door). Changing `defaultOutputDir` to return an
+	// error would touch all twenty-four sites, most of which are not ceremony stores.
 	ErrRootNotAbsolute = errors.New("this operation needs an absolute output directory")
-
-	// ErrAlreadyClosedOut reports a destination that already exists.
-	//
-	// Refused rather than merged or overwritten. A second close-out of the same id means either a
-	// re-run over a ceremony already dealt with — where the first move's contents are the ones to
-	// keep — or an id collision, where overwriting destroys the earlier party's contribution. The
-	// two are indistinguishable from here and both want the same answer.
-	ErrAlreadyClosedOut = errors.New("this ceremony has already been closed out")
 
 	// ErrReceiptConflict reports a second receipt naming a different end state. See WriteReceipt.
 	ErrReceiptConflict = errors.New("this ceremony is already recorded locally as having ended " +
@@ -81,10 +73,7 @@ func EndedDir(root, id string) (string, error) {
 	if err := ValidID(id); err != nil {
 		return "", err
 	}
-	if !filepath.IsAbs(root) {
-		return "", fmt.Errorf("%w: %q", ErrRootNotAbsolute, root)
-	}
-	return filepath.Join(root, endedDir, id), nil
+	return storeDir(root, endedDir, id)
 }
 
 // writeDir is the ONE directory a late write into a ceremony's folder resolves to — the live
@@ -97,8 +86,8 @@ func EndedDir(root, id string) (string, error) {
 // `termination.json` sits in `ended/<id>/`. Where the live folder is absent and the ended one
 // exists, the write goes where the ceremony now lives.
 //
-// The live folder wins when it exists, so a ceremony that was never closed out is untouched, and
-// an `EndedDir` refusal (a relative root) leaves the live answer it always gave. **Declared, not
+// The live folder wins when it exists, so a ceremony that was never closed out is untouched; a
+// relative root is refused by `MirrorDir` before `EndedDir` is asked (`storeDir`). **Declared, not
 // closed:** a write that resolves the live folder an instant before the move still lands there;
 // closing that needs the move and the writers under one lock, and the sweep already stops
 // listening before it moves (`server/closeout.go`). `WriteMirror` is not routed here: a document
@@ -142,15 +131,68 @@ func CloseOutMirror(root, id string) error {
 		}
 		return serr
 	}
-	if _, derr := os.Stat(dst); derr == nil {
-		return fmt.Errorf("%w: %s already exists", ErrAlreadyClosedOut, dst)
-	} else if !os.IsNotExist(derr) {
-		return derr
+	// **A destination that already exists is never merged or overwritten, and the source still
+	// moves** (/pending 813). Both folders existing is NOT a re-run — a re-run finds no source and
+	// returned above — it is a second folder under a closed-out id: another proceeding that took
+	// the id (an id is a plain field anyone can mint, see `WriteMirror`), or a document that arrived
+	// after the close-out and re-created the live folder. This used to refuse, and the server read
+	// the refusal as "already moved": every unlock re-ran the vault teardown and left the second
+	// folder in the live set for good. It moves beside the first under a numbered name instead —
+	// out of the live set, still on disk, and asked by `ReadMirrorFor` after the first.
+	for n := 2; ; n++ {
+		if _, derr := os.Stat(dst); os.IsNotExist(derr) {
+			break
+		} else if derr != nil {
+			return derr
+		}
+		if n > maxSetAside {
+			return fmt.Errorf("%d folders are already closed out under ceremony %s; refusing to add another",
+				maxSetAside, id)
+		}
+		if dst, err = setAsideDir(root, id, n); err != nil {
+			return err
+		}
 	}
 	if merr := os.MkdirAll(filepath.Dir(dst), 0o700); merr != nil {
 		return merr
 	}
 	return os.Rename(src, dst)
+}
+
+// maxSetAside bounds the numbered folders one id can collect in `ended/`. A real machine sees a
+// second at most; the bound is there so a run of re-used ids cannot make the probe for a free
+// name, here and in `endedDirs`, unbounded.
+const maxSetAside = 64
+
+// setAsideDir is the n-th (n >= 2) folder closed out under an id whose `EndedDir` was already
+// taken. The `.n` suffix fails `ValidID`, so `ListEnded` passes it over; it holds no receipt in
+// any case, because the receipt is one per id and lives in `EndedDir`.
+func setAsideDir(root, id string, n int) (string, error) {
+	if err := ValidID(id); err != nil {
+		return "", err
+	}
+	return storeDir(root, endedDir, fmt.Sprintf("%s.%d", id, n))
+}
+
+// endedDirs is every folder a closed-out id may occupy — `EndedDir`, then each numbered one that
+// exists — in the order `CloseOutMirror` filled them.
+func endedDirs(root, id string) ([]string, error) {
+	first, err := EndedDir(root, id)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{first}
+	for n := 2; n <= maxSetAside; n++ {
+		dir, derr := setAsideDir(root, id, n)
+		if derr != nil {
+			return nil, derr
+		}
+		if _, serr := os.Stat(dir); serr != nil {
+			break
+		}
+		out = append(out, dir)
+	}
+	return out, nil
 }
 
 // A Receipt is what this machine observed about how a ceremony ended, and when.
@@ -391,7 +433,11 @@ func ReadReceipt(root, id string) (Receipt, error) {
 // contribution is still there for a user told the path. Absence here is incompleteness, never
 // corruption — the same reading `ErrNoTermination` gets one file over.
 func ListEnded(root string) ([]Receipt, error) {
-	ents, err := os.ReadDir(filepath.Join(root, endedDir))
+	dir, err := storeDir(root, endedDir)
+	if err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // nothing has ended yet is not a failure

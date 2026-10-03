@@ -246,6 +246,14 @@ func (s *Server) handleCeremonyConvene(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
+	// **The convener's document is this ceremony's baton from here** (/pending 813). `doc.ceremony`
+	// had one writer, `installCeremonyResult`, so the document the convener had just convened read
+	// `inCeremony:false` — the signature-details button and the permanence notice stayed hidden on
+	// exactly the "0 of N have signed" document they exist for — and hop 1's result opened BESIDE it
+	// rather than replacing it, the accumulation P07.S05's relay door exists to stop.
+	s.mu.Lock()
+	doc.ceremony = out.Record.ID
+	s.mu.Unlock()
 
 	// **The draft is consumed here, and "here" is BELOW the commit — corrected at P03's phase
 	// close, having shipped one slice earlier claiming the opposite.**

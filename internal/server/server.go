@@ -106,7 +106,8 @@ type document struct {
 	sig  sign.Status
 
 	// ceremony is the id of the ceremony this document is the baton for, or "" for every
-	// ordinary document (P07.S05).
+	// ordinary document (P07.S05). Written by `installCeremonyResult` and, on the convener's own
+	// document, by the convene route.
 	//
 	// **It exists so a relay REPLACES rather than accumulates.** Each hop of an N-party ceremony
 	// used to arrive through `addDoc`, which opens a document alongside whatever is already
@@ -729,11 +730,10 @@ type docResponse struct {
 	// document whose "0 of 2 obliged signers have signed" the user needs to read. The route
 	// published the counts and nothing could open them.
 	//
-	// **Its limit, declared rather than discovered:** it is `doc.ceremony != ""`, whose one writer
-	// is `installCeremonyResult` — a hop's result arriving. Convening does NOT set it (the convene
-	// commits through `commitBarrier`), and a ceremony document OPENED COLD from disk does not
-	// either, so the button stays hidden on both (corrected at the P03 phase close; /pending files
-	// the convener's case). Making it exact
+	// **Its limit, declared rather than discovered:** it is `doc.ceremony != ""`, whose writers
+	// are `installCeremonyResult` — a hop's result arriving — and the convene route, on the
+	// document it convened (/pending 813). A ceremony document OPENED COLD from disk sets
+	// neither, so the button stays hidden there. Making it exact
 	// costs a pdfcpu parse at every door that installs a document, and those doors are fourteen
 	// — ADR-009's one door would have to be built first. The narrow version is honest about
 	// which documents it covers; a parse per install would be a much larger change than the
@@ -1936,6 +1936,25 @@ func (s *Server) docBytes(doc *document) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return doc.data
+}
+
+// snapshotRegistered is docBytes for a handler that must also know the document is STILL open: it
+// checks the registration and runs read in the same hold, or answers ADR-004's 409 and reports false
+// (/pending 813). read copies fields out and nothing more — it runs under s.mu.
+//
+// **One door, because the shape was written four times** (ADR-009) — the revision, ceremony-copy,
+// kept-copy and hop routes each took s.mu themselves beside docBytes, because docBytes cannot check
+// registration in its hold. `TestTheRegisteredSnapshotHasOneDoor` holds the census.
+func (s *Server) snapshotRegistered(w http.ResponseWriter, doc *document, read func()) bool {
+	s.mu.Lock()
+	if !s.isRegisteredLocked(doc) {
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return false
+	}
+	read()
+	s.mu.Unlock()
+	return true
 }
 
 // holdsBytes reports whether some open document's bytes are exactly data — the one question Save As can

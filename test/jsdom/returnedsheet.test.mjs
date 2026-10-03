@@ -120,6 +120,43 @@ test('Escape with focus on <body> still leaves, and focus returns to the twin th
   assert.equal(doc.activeElement, twin, 'focus did not return to the twin — the opener was not captured');
 });
 
+// /pending 813: the find bar and an open menu each close on Escape and mark it handled; the sheet must not ALSO take it.
+test('an Escape the find bar or a menu takes does not also leave the sheet', async () => {
+  $('returnedBtn').click();
+  assert.ok(sheetShown(), 'stimulus: the sheet is open');
+  $('findToggle').click();
+  const input = doc.querySelector('.tbfind input');
+  assert.equal(doc.querySelector('.tbfind').hidden, false, 'stimulus: the find bar did not open');
+  input.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(doc.querySelector('.tbfind').hidden, true, 'stimulus: Escape did not close the find bar');
+  assert.ok(sheetShown(), 'the Escape that closed the find bar also took the sheet down');
+  const top = doc.querySelector('.menutop');
+  top.click();
+  assert.ok(top.closest('.open'), 'stimulus: the menu did not open');
+  doc.body.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(top.closest('.open'), null, 'stimulus: Escape did not close the menu');
+  assert.ok(sheetShown(), 'the Escape that closed a menu also took the sheet down');
+  $('returnedClose').click();
+});
+
+// /pending 813: an opener whose pane is hidden while the sheet is up cannot take focus back — it lands on the other entry.
+test('focus returns to a shown entry when the opener was hidden under the sheet', async () => {
+  const twin = doc.querySelector('[data-forward="returnedBtn"]');
+  twin.focus();
+  twin.click();
+  assert.ok(sheetShown(), 'stimulus: the sheet is open');
+  const pane = twin.closest('.tbgroup');
+  pane.hidden = true; // the opener's pane goes away without a mode change
+  try {
+    $('returnedClose').click();
+    assert.ok(sheetGone(), 'stimulus: the sheet did not close');
+    assert.notEqual(doc.activeElement, twin, 'focus was sent to an opener inside a hidden pane');
+    assert.equal(doc.activeElement, $('returnedBtn'), 'focus did not land on the entry that is still shown');
+  } finally {
+    pane.hidden = false;
+  }
+});
+
 test('a mode change takes the sheet down: the new mode acts on the viewer, and its opener is now hidden', async () => {
   $('returnedBtn').click();
   assert.ok(sheetShown(), 'stimulus: the sheet is open');

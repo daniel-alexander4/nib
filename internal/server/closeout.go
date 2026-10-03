@@ -78,15 +78,12 @@ func closeOutStores(v *vault.Vault, id, why string) error {
 // ceremony the pins no longer support back in front of the sweep to try again forever.
 func (s *Server) closeOutCeremony(v *vault.Vault, id, state string, now time.Time) error {
 	root := defaultOutputDir()
+	// A second pass over a ceremony the previous one moved finds no live folder, and
+	// `CloseOutMirror` answers nil for it — so the stores below, which are idempotent, finish a
+	// close-out interrupted between the two halves without a special case here. A live folder
+	// beside an already-ended one is moved aside rather than refused (/pending 813).
 	if err := ceremony.CloseOutMirror(root, id); err != nil {
-		if errors.Is(err, ceremony.ErrAlreadyClosedOut) {
-			// A second pass over a ceremony the previous one moved. The stores below are
-			// idempotent, so falling through finishes a close-out interrupted between the two
-			// halves rather than reporting a fault about work already done.
-			log.Printf("close-out %s: already moved; finishing the vault teardown", id)
-		} else {
-			return fmt.Errorf("could not move this ceremony's folder out of the live set: %w", err)
-		}
+		return fmt.Errorf("could not move this ceremony's folder out of the live set: %w", err)
 	}
 	// **The receipt is written between the two halves**, not after both. It is what the sweep
 	// reads to know this ceremony has been dealt with, and a close-out whose vault teardown fails

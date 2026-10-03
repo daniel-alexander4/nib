@@ -13,10 +13,13 @@ import (
 	"time"
 )
 
-// Nib fetches remote bytes for three user-triggered features: open-by-URL,
-// add-image-by-URL, and (validation only) the finalize timestamp authority. Every
-// such URL is user-supplied, so it goes through safeFetch / requireHTTPScheme:
-// only http and https are ever dialed, including across redirects. These paths sit
+// Nib takes user-typed URLs at three doors, each of which checks requireHTTPScheme:
+// open-by-URL (`handleOpenURL`, the one caller of safeFetch), the finalize timestamp
+// authority (`finalize.go`, validation only — the signing library dials it), and a custom block
+// explorer for timestamp verification (`timestamp.go`, dialed through httpFetchClient,
+// whose CheckRedirect re-checks the scheme). Only http and https are ever dialed,
+// including across redirects. (/pending 813: this listed an add-image-by-URL feature
+// that does not exist and routed all three through safeFetch, which one uses.) These paths sit
 // behind the CSRF + loopback-origin gate, so the threat is narrow; the scheme guard
 // keeps a stray file:// (or a future custom protocol) from reaching the transport.
 //

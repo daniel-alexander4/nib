@@ -209,6 +209,33 @@ func TestBuiltinSignaturesInjected(t *testing.T) {
 	}
 }
 
+// The vault Create and Migrate hand back carries the builtin signatures in the SAME session, as an
+// unlock's does (/pending 813): `newSealed` built one without them, so a fresh embedkeys vault showed
+// its builtin signatures only after the next unlock.
+func TestASealedVaultCarriesTheBuiltinSignatures(t *testing.T) {
+	pub := withBuiltinInSSH(t)
+	data, err := json.Marshal([]Image{{ID: "builtin-sig-1", Name: "Sig", MIME: "image/png", Data: []byte("PNGBYTES")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := sshkey.WrapMulti(data, []string{pub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBlob := builtinSignaturesBlob
+	builtinSignaturesBlob = blob
+	t.Cleanup(func() { builtinSignaturesBlob = oldBlob })
+
+	own, keyPath := newKey(t)
+	v, err := Create(t.TempDir(), own, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.Image("builtin-sig-1"); !ok {
+		t.Error("the vault Create returned does not carry the builtin signatures until the next unlock")
+	}
+}
+
 func TestAutoSetupNoLocalKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // empty ~/.ssh
 	other, _ := newKey(t)         // builtin whose private half is not in ~/.ssh

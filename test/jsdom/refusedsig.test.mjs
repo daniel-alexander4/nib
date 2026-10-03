@@ -157,6 +157,11 @@ test('a failed signer beside a refusal is still "modified since signing"', async
   await openWith({ state: 'invalid', signers: [{ ...alice[0], valid: false }], refused: [decoy] });
   assert.match(badge().textContent, /Modified since signing/, `a failed signer lost its verdict: ${badge().textContent}`);
   assert.match(badge().textContent, /a signature Nib refused is present/, `the refusal is gone: ${badge().textContent}`);
+  // The details panel's ROW for that signer says what Nib measured — the check failed — in the returned-document
+  // sheet's word, through signerRow's one wording (/pending 813): a failed signature is not a modification.
+  await openDetails();
+  const row = doc.querySelector('#sigDetailsBody .sigrow-bad');
+  assert.equal(row?.textContent, '⚠ Does not verify', `the failing signer's row reads: ${row?.textContent}`);
 });
 
 // ── /pending 749 ─────────────────────────────────────────────────────────────────────────────
