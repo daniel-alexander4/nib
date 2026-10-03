@@ -196,7 +196,9 @@ func finishStep(ctx *model.Context, st flowStep, seqs []markedSeq, in *carriedBl
 }
 
 // nextPageFor is the page after pg with its layout — or the reason a flow cannot land there: there is none, it is not a
-// single column, or it draws no paragraph to land on.
+// single column, or it draws no paragraph to land on. A running header set apart from the body (`runningLinesOf`) is the
+// page's first paragraph but in a cluster of its own, so its region is bounded by the margin and would take the block in
+// its place: it refuses as a running header in the body's column does (`pushDown`, `roomBelowContent`).
 func nextPageFor(ctx *model.Context, pg pdfread.Page) (pdfread.Page, pageLayout, string, error) {
 	if pg.Nr >= ctx.PageCount {
 		return pdfread.Page{}, pageLayout{}, causePageFull, nil
@@ -206,7 +208,7 @@ func nextPageFor(ctx *model.Context, pg pdfread.Page) (pdfread.Page, pageLayout,
 	if err != nil {
 		return pdfread.Page{}, pageLayout{}, "", err
 	}
-	if nl.columns != 1 || len(nl.paragraphs) == 0 {
+	if nl.columns != 1 || len(nl.paragraphs) == 0 || nl.paragraphs[0].running {
 		return pdfread.Page{}, pageLayout{}, causePageFull, nil
 	}
 	return next, nl, "", nil
