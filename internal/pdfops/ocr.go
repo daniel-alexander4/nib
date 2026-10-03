@@ -94,11 +94,13 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 			return nil, err
 		}
 		wm.RenderMode = draw.RenderMode(3) // invisible: a real Tj run that paints nothing
-		page := w.Page
-		if page < 1 {
-			page = 1
+		// A page below 1 is REFUSED, not read as page 1 (`/pending 597`): a word placed on a page the
+		// engine never read it from is a false text layer — Find lands on page 1 for text that is not
+		// there — and TagOCRLayer groups by the raw number, so the coerced word also broke the tree.
+		if w.Page < 1 {
+			return nil, fmt.Errorf("an OCR word names page %d; pages are numbered from 1", w.Page)
 		}
-		wms[page] = append(wms[page], wm)
+		wms[w.Page] = append(wms[w.Page], wm)
 	}
 	if len(wms) == 0 {
 		return pdf, nil

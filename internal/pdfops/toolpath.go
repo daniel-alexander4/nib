@@ -92,8 +92,8 @@ func lookTool(names []string, candidates []string) string {
 	return ""
 }
 
-// toolCache caches a FOUND path for the process lifetime and re-probes an empty answer on
-// every call.
+// toolCache caches a FOUND path for as long as it stays runnable and re-probes an empty answer
+// on every call.
 //
 // **The asymmetry is the whole design.** A `sync.Once` cached both answers, so a user who
 // installed the tool while nib was running stayed refused until the process ended — and
@@ -119,7 +119,10 @@ type toolCache struct {
 func (c *toolCache) find(names []string, candidates []string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.path != "" {
+	// A hit is kept only while it is still there to run (`/pending 812`): a converter uninstalled or moved
+	// while nib runs was otherwise reported available for the rest of the process, and every conversion then
+	// failed at exec. `runnable` is one stat, not the probe, so the common case stays cheap.
+	if c.path != "" && runnable(c.path) {
 		return c.path
 	}
 	c.path = lookTool(names, candidates)

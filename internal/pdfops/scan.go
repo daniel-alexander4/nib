@@ -238,8 +238,18 @@ func Scan(pdf []byte) (ScanReport, error) {
 	}
 
 	// XMP metadata stream.
-	if _, ok := root.Find("Metadata"); ok {
+	_, catalogXMP := root.Find("Metadata")
+	if catalogXMP {
 		add("metadata", "low", "XMP metadata stream", 0)
+	}
+	// And every other holder (`/pending 595`): an image's or a form's own XMP names the camera, the tool and
+	// often the person, and a scan that looked only at the catalog passed a metadata strip that had left them.
+	others := len(metadataHolders(xt))
+	if catalogXMP {
+		others--
+	}
+	if others > 0 {
+		add("metadata", "low", fmt.Sprintf("XMP metadata on %d page(s), image(s), form(s) or font(s)", others), 0)
 	}
 
 	// Document information dictionary: identifying properties (author, title, …).
@@ -463,8 +473,11 @@ func StripActive(pdf []byte) ([]byte, error) {
 // everything else — including interactivity and any active code — untouched. It
 // cannot corrupt page content, so it is the gentle middle option between
 // StripActive (removes all active content) and the guaranteed flatten.
+//
+// Like StripActive's, its result is re-scanned by a second reader (`/pending 812`): an embedded file or a
+// media annotation still present is a refusal, never "cleaned".
 func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
-	return writeMutated(pdf, func(ctx *model.Context) error {
+	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		if err := removeAllAttachments(ctx); err != nil {
 			return err
 		}
@@ -474,6 +487,27 @@ func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
 		}
 		return removeMediaAnnots(ctx.XRefTable, root)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyRemoved(out, ErrFilesOrMediaRemain, filesOrMedia); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// filesOrMedia is RemoveFilesAndMedia's remit as Scan reports it: the embedded-files tree, and every kind in
+// mediaAnnots — read from that table, so a subtype added there is verified here without a second list.
+func filesOrMedia(f Finding) bool {
+	if f.Kind == "attachment" {
+		return true
+	}
+	for _, m := range mediaAnnots {
+		if m.kind == f.Kind {
+			return true
+		}
+	}
+	return false
 }
 
 // mediaAnnot is how Scan reports one media annotation subtype.
@@ -537,8 +571,8 @@ func removeMediaAnnots(xt *model.XRefTable, root types.Dict) error {
 }
 
 // StripMetadata removes the document's identifying metadata: it drops the whole
-// /Info dictionary (Author, Creator, Title, Subject, Keywords, …), deletes the XMP
-// /Metadata stream from the catalog and every page, and regenerates the trailer
+// /Info dictionary (Author, Creator, Title, Subject, Keywords, …), deletes every XMP
+// /Metadata stream — the catalog's, the pages', and any image's, form's or font's own — and regenerates the trailer
 // /ID so the original permanent identifier no longer travels with the file.
 //
 // One residue is unavoidable through pdfcpu's writer: for PDFs older than 2.0 it
@@ -547,22 +581,57 @@ func removeMediaAnnots(xt *model.XRefTable, root types.Dict) error {
 // personally identifying fields are gone. Like the other Secure-tab removals it
 // rewrites the file, so the result is a new, unsigned PDF.
 func StripMetadata(pdf []byte) ([]byte, error) {
-	return writeMutated(pdf, func(ctx *model.Context) error {
+	out, err := writeMutated(pdf, func(ctx *model.Context) error {
 		xt := ctx.XRefTable
-		root, err := xt.Catalog()
-		if err != nil {
-			return err
-		}
 		ctx.Info = nil // ensureInfoDict re-adds only Producer/dates for <PDF2.0; nothing reads the cleared fields
 		ctx.ID = nil   // nil forces a fresh pair; otherwise /ID[0] is preserved as a permanent tracker
-		dropKey(xt, root, "Metadata")
-		if err := eachPage(xt, root, func(page types.Dict, _ int) {
-			dropKey(xt, page, "Metadata") // page-level XMP duplicates dc:title/creator too
-		}); err != nil {
-			return err
+		// EVERY holder, not only the catalog and the pages: ISO 32000-1 §14.3.2 lets any stream or dictionary
+		// carry its own /Metadata, and an image or form XObject's — a camera's, an authoring tool's — names its
+		// maker as the document's does (`/pending 595`). metadataHolders is the one enumeration and Scan reports
+		// through it, so what this removes and what the residual scan sees cannot drift apart.
+		for _, d := range metadataHolders(xt) {
+			dropKey(xt, d, "Metadata")
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Checked by a second reader, as StripActive's removal is: "metadata removed" is a claim the user acts on
+	// before sending the file, so it is made only over a result that scans without any.
+	if err := verifyRemoved(out, ErrMetadataRemains, identifying); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// identifying is StripMetadata's remit as Scan reports it.
+func identifying(f Finding) bool { return f.Kind == "metadata" || f.Kind == "info" }
+
+// metadataHolders is every dictionary in the file that carries a /Metadata key — the catalog, pages, and every
+// image, form, font or ICC stream with an XMP packet of its own (§14.3.2). It is the ONE enumeration (ADR-009):
+// Scan counts through it and StripMetadata removes through it. The holders are collected before anything is
+// changed, because dropKey frees objects in the table this walks.
+func metadataHolders(xt *model.XRefTable) []types.Dict {
+	var out []types.Dict
+	for _, e := range xt.Table {
+		if e == nil || e.Free || e.Object == nil {
+			continue
+		}
+		var d types.Dict
+		switch o := e.Object.(type) {
+		case types.Dict:
+			d = o
+		case types.StreamDict:
+			d = o.Dict
+		default:
+			continue
+		}
+		if _, ok := d.Find("Metadata"); ok {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // ErrWrongPassword and ErrNotEncrypted classify the two expected failures of
@@ -704,25 +773,46 @@ var strippedExempt = map[string]bool{"metadata": true, "info": true}
 // rewrite's `ReadOptimized`, so it is a second reader rather than the writer checking itself — and refuses
 // any finding outside strippedExempt. A scan that fails is a refusal too: an unverified claim is not made.
 func verifyStripped(out []byte) error {
+	return verifyRemoved(out, ErrActiveContentRemains, active)
+}
+
+// active is StripActive's remit as Scan reports it: everything outside strippedExempt.
+func active(f Finding) bool { return !strippedExempt[f.Kind] }
+
+// ErrFilesOrMediaRemain and ErrMetadataRemains are the other two removals' refusals, for the reason
+// ErrActiveContentRemains is StripActive's: the result still scans as carrying what the removal claims to
+// have taken out.
+var (
+	ErrFilesOrMediaRemain = errors.New("embedded files or media remain after removal")
+	ErrMetadataRemains    = errors.New("identifying metadata remains after removal")
+)
+
+// verifyRemoved is the ONE re-scan every Secure-tab removal makes of its own output (ADR-009, `/pending 812`):
+// Scan reads through `api.ReadContext`, a second reader, and any finding inside the removal's remit is a
+// refusal wrapped in refused. A scan that fails is a refusal too — an unverified claim is not made.
+func verifyRemoved(out []byte, refused error, remit func(Finding) bool) error {
 	rep, err := Scan(out)
 	if err != nil {
-		return fmt.Errorf("%w: the result could not be re-scanned: %v", ErrActiveContentRemains, err)
+		return fmt.Errorf("%w: the result could not be re-scanned: %v", refused, err)
 	}
-	return activeResidue(rep)
+	return residue(rep, refused, remit)
 }
 
 // activeResidue is verifyStripped's judgment over a report, apart from the scan that produced it.
-func activeResidue(rep ScanReport) error {
+func activeResidue(rep ScanReport) error { return residue(rep, ErrActiveContentRemains, active) }
+
+// residue is verifyRemoved's judgment over a report: every finding inside remit, named, wrapped in refused.
+func residue(rep ScanReport, refused error, remit func(Finding) bool) error {
 	var left []string
 	for _, f := range rep.Findings {
-		if !strippedExempt[f.Kind] {
+		if remit(f) {
 			left = append(left, f.Kind+" ("+f.Detail+")")
 		}
 	}
 	if len(left) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %s", ErrActiveContentRemains, strings.Join(left, "; "))
+	return fmt.Errorf("%w: %s", refused, strings.Join(left, "; "))
 }
 
 // writeMutated reads pdf into a validated, optimized context (so WriteContext
@@ -730,8 +820,12 @@ func activeResidue(rep ScanReport) error {
 // caches are populated), applies fn, and writes the result back. The optimize
 // pass is skipped where it would be unbounded (`pdfread.ReadOptimized`, `/pending 706`). It is the
 // shared read→mutate→write shape for the surgical removals.
+//
+// Through rewriteWithConf, and so under its `fault.Catch` (`/pending 596`): pdfcpu reports some failures by
+// panicking with a `fault.Panic`, and every sibling door — the merge, the `api` wrappers — turns that into an
+// error, so a mutation reached through this one was the only kind that escaped as a panic.
 func writeMutated(pdf []byte, fn func(*model.Context) error) ([]byte, error) {
-	return rewriteContext(pdf, model.NewDefaultConfiguration(), fn)
+	return rewriteWithConf(pdf, model.NewDefaultConfiguration(), fn)
 }
 
 // rewriteWithConf is the shape of a pdfcpu `api` wrapper — read with ITS configuration (the `Cmd` it
@@ -765,16 +859,25 @@ func rewriteContext(pdf []byte, conf *model.Configuration, fn func(*model.Contex
 	return out.Bytes(), nil
 }
 
-// removeAllAttachments deletes every embedded file, treating "no attachments" as
-// success rather than an error (RemoveAttachments errors when the name tree is
-// absent).
+// removeAllAttachments deletes every embedded file by taking the embedded-files name tree off the catalog's
+// /Names — the key and the object graph behind it (dropKey). "No attachments" is success.
+//
+// **It does not ask pdfcpu what is attached first** (`/pending 812`). It used to call `ListAttachments` and read
+// any error as "nothing attached", so a tree pdfcpu could not list stayed and the removal succeeded; and a
+// filespec with no /EF — an ordinary reference to an EXTERNAL file, legal under §7.11.3 — does not error there
+// but nil-dereferences (`attach.go:155`, measured), so the removal panicked instead. Removing the files is the
+// remit, parsing them is not: the key goes whatever the tree holds.
 func removeAllAttachments(ctx *model.Context) error {
-	aa, err := ctx.ListAttachments()
-	if err != nil || len(aa) == 0 {
-		return nil
+	xt := ctx.XRefTable
+	root, err := xt.Catalog()
+	if err != nil {
+		return err
 	}
-	_, err = ctx.RemoveAttachments(nil)
-	return err
+	if names := derefDict(xt, root["Names"]); names != nil {
+		dropKey(xt, names, "EmbeddedFiles")
+	}
+	delete(xt.Names, "EmbeddedFiles")
+	return nil
 }
 
 // errPageTreeTooLarge is eachPage's refusal of a tree whose walk would visit more nodes than the file could

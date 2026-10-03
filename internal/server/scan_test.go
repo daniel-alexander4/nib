@@ -1,9 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"nib/internal/pdfops"
+	"nib/internal/testpdf"
 )
 
 // The scan endpoint reports active/hidden content for the open document and the
@@ -77,5 +85,61 @@ func TestSanitizeUnknownMethod(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unknown method status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// A residual that could not be scanned is not an empty one (`/pending 600`). The removal succeeds here — it
+// takes out no attachments, which the file has none of — but Scan refuses the result's action graph as too
+// large to walk honestly, and the handler used to ignore that error and answer ok with ZERO findings: the
+// page's "Cleaned — nothing hidden remains" over a document nobody had looked at. It is not-ok now, and the
+// open document is left as it was.
+func TestSanitizeIsNotOkOverAResidualItCouldNotScan(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	// Forty link annotations each naming the head of one 1000-wide /Next array: past Scan's action budget,
+	// cheap for pdfcpu's validator (pdfops' TestManyAnnotationsNamingOneWideActionGraphAreRefused).
+	objs := map[int]string{
+		1: "<< /Type /Catalog /Pages 2 0 R >>",
+		2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+	}
+	var annots, next []string
+	for i := 0; i < 40; i++ {
+		annots = append(annots, "<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /A 10 0 R >>")
+	}
+	objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Annots [" + strings.Join(annots, " ") + "] >>"
+	for i := 0; i < 1000; i++ {
+		next = append(next, fmt.Sprintf("%d 0 R", 11+i))
+		objs[11+i] = "<< /S /GoTo /D [3 0 R /Fit] >>"
+	}
+	objs[10] = "<< /S /GoTo /D [3 0 R /Fit] /Next [" + strings.Join(next, " ") + "] >>"
+	doc := testpdf.Assemble(objs)
+	if _, err := pdfops.Scan(doc); err == nil {
+		t.Fatal("setup: Scan reads this document, so the handler's error branch is not reached")
+	}
+	path := filepath.Join(t.TempDir(), "wide.pdf")
+	if err := os.WriteFile(path, doc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	openByPath(t, ts.URL, c, csrf, path)
+	before := fetchPDF(t, ts, c)
+
+	// Every removal now re-scans its own result (pdfops' verifyRemoved) and refuses here first; the handler's
+	// own branch is the backstop for a removal that does not. Through either, the answer is not-ok.
+	for _, method := range []string{"metadata", "safe"} {
+		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/sanitize?method="+method, "", nil)
+		var out sanitizeResponse
+		err := json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || err != nil {
+			t.Fatalf("%s: sanitize status = %d (%v), want 200", method, resp.StatusCode, err)
+		}
+		if out.Ok {
+			t.Errorf("%s: sanitize reported ok with %d residual findings over a result Scan refused to read",
+				method, len(out.Residual.Findings))
+		}
+	}
+	if after := fetchPDF(t, ts, c); !bytes.Equal(before, after) {
+		t.Error("a sanitize whose result could not be checked replaced the open document")
 	}
 }
