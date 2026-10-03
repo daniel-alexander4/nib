@@ -884,9 +884,9 @@ func SplitByBookmarks(pdf []byte, prefix string) ([]SplitPart, error) {
 // document with thousands of top-level bookmarks — can't spew thousands of files, each a full parse.
 const maxSplitParts = 500
 
-// refuseTooManyParts is the cap's one door (ADR-009): both page-sequence splitters call it. It bound
-// only `SplitBySpans` until `/pending 709` R2-6, so a bookmark split was parts × a full parse with no
-// ceiling at all.
+// refuseTooManyParts is the cap's one door (ADR-009): both page-sequence splitters and the CSV mail merge
+// (`/pending 765`) call it. It bound only `SplitBySpans` until `/pending 709` R2-6, so a bookmark split
+// was parts × a full parse with no ceiling at all.
 func refuseTooManyParts(n int) error {
 	if n > maxSplitParts {
 		return fmt.Errorf("too many output files (%d, max %d)", n, maxSplitParts)

@@ -75,7 +75,7 @@ import (
 // What is never done is keep the stale one. An explicit destination names the dropped page by
 // indirect reference, pdfcpu writes by reachability, and a kept node still holding one would put the
 // removed page's dictionary and its `/Contents` back into the output — the identical hazard
-// `unlinkDestinations` exists for one door over.
+// `unlinkDroppedPages` exists for one door over.
 //
 // # The surviving order is the SOURCE's, not the new page order
 //
