@@ -136,7 +136,10 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 #
 # 91 since PLAN-returned-document P03.S02 (returnedverdict.test.mjs): the verdict over stubbed answers — its own file
 # because each test re-opens a document with a different signature and a different route answer.
-Nib_expect_files=91
+#
+# 92 since PLAN-returned-document P03.S03 (returnedcompare.test.mjs): the sheet's "see what changed" region — its own
+# file because it drives Compare's module-level state, which a file sharing its boot would inherit.
+Nib_expect_files=92
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

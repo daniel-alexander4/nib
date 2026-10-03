@@ -935,11 +935,76 @@ yours"; jsdom); a re-saved file says the signed version is not inside it ✅ ("T
 file.", D8's sentence, with C1's two wordings; never "re-saved"); an unsigned file says so without implying you never
 signed ✅ ("as it stands … That does not mean nobody signed it"; asks nothing).
 
-#### P03.S03 — "see what changed"
+#### P03.S03 — "see what changed" *(done 2026-10-02, v1.181.0)*
 Scope: hand the recovered prefix to the shipped compare pipeline as bytes. Refs: D11.
 Acceptance: the diff renders from server-supplied bytes with no change to the differ; the fallback
 chain — kept copy → ceremony mirror → pick your own file — is offered in that order. **(phase-open PIN 2026-10-02)**: the
 kept copy's link is P04.S02's; P03 offers mirror → own file in that order, the kept copy's slot named and empty.
+
+Grill (2026-10-02; deepdive of the mirror read seam — every `ReadMirror` caller, `Extract`/`CheckRecord`, the `ended/`
+fallback, the route pattern). Conclusions, each read at the line: **nothing maps an open document to its ceremony** —
+`doc.ceremony` (`server.go:116`) has one writer, `installCeremonyResult` (`server.go:1569`), called only when a hop's
+result arrives (`session.go:3497`) — not even convene sets it — so a document opened cold (which a document that came back
+is) has none, and `docResponse` sends only the boolean `inCeremony`; the one identification that
+works is the record EMBEDDED in the document (`ceremony.Extract`, `embed.go:170`). **An embedded id is attacker-chosen**:
+`Record.Verify` is internal consistency (`mirror.go:323-331`), so a record minted whole names any id — traversal is closed
+by `ValidID`, but a planted id would pick WHICH stored ceremony gets compared. The copy is therefore handed over only when
+the stored record's roster commitment equals the embedded one's (`refuseDifferentProceeding`'s comparison,
+`mirror.go:752`). **`ReadMirror` has no `ended/` fallback** (`mirror.go:307`, `MirrorDir` only) and ADR-012 moves every
+ended ceremony there, so a dispute — which happens after the ceremony ends — would find nothing; the fallback is ONE door
+in `internal/ceremony` beside `readTerminationAt`'s. **The mirror is this machine's LAST hop** (`refuseRewind`; writers
+`convene.go:164`, `ceremonyid.go:522/1089`), usually the version this machine signed, never the all-signed delivery in
+`~/nib/signed/` — so it is named "this machine's copy of the ceremony's document" and says whether it is signed, and
+whether this file begins with it. **`requireUnlocked`, though it reads no vault store** (`ReadMirror` reads files only):
+every route that reads an open document is behind it (`server.go:459-462`), and one that answered while the rest refuse
+would be the door that differs; a locked Nib's sheet says so on the button's press. **Compare's text diff reads from the copy to this file** — "added" must mean added AFTER what
+you had, so the copy is the baseline; the differ is untouched (D11), its two inputs are passed the other way round and the
+caption says so. The recovered version is the bytes S02 already holds (no second `fetchSignedRevision` caller, D10).
+Declared: a document whose record was stripped names no ceremony (the chain falls to "a file you choose"); no
+single-flight on the route (`Extract` re-parses a document the open already parsed; the button is disabled in flight).
+- T01 — ceremony: `ReadMirrorFor(root, named, now)` — `ReadMirror`'s body behind one `readMirrorAt(dir, id, now)`; the
+  live folder first, then `ended/<id>`, a folder holding another proceeding passed over and the roster compared BEFORE
+  damage is reported (the slice review: built first as `ReadMirrorOrEnded`, which let a live impostor hide the ended
+  copy and reported another proceeding's damage); reports which folder answered. `ReadMirror` unchanged.
+- T02 — server: `GET /api/document/ceremony-copy` (session, pinned, ADR-004): the open document's record → its stored copy,
+  roster commitment equal, or 422 `{cause}` — `no-record` · `record-invalid` · `not-on-this-machine` ·
+  `different-proceeding` · `damaged` · `unreadable` (ADR-072); `X-Nib-Ceremony-Copy` carries `{ended, signed,
+  extends}`.
+- T03 — client: `fetchCeremonyCopy(docId)` the one door; the sheet's "See what changed" region — "Compare the version you
+  signed with this file" when S02 recovered one, then the chain IN ORDER: the kept copy's slot (named, empty — P04.S02's),
+  this machine's ceremony copy, a file you choose.
+- T04 — Compare takes bytes: `openCompareWith(bytes, name)` through the shipped modal; the text mode reads from the copy to
+  the open file, captioned.
+- T05 — tests: Go per cause + success + a planted id + the `ended/` fallback; jsdom for the region's order, the primary
+  only with a recovered version, the bytes reaching Compare, the direction caption, each cause's sentence, the censuses;
+  tier 3 — a document signed in the app, bytes appended, compared: the appended text reads as ADDED.
+  **PIN 2026-10-02 (slice review):** tier 3 cannot append VISIBLE text after an in-app signature — the harness has no PDF
+  writer, and an app edit after signing is a structural write — so tier 3 drives the real chain (route → pdf.js →
+  differ, "No text differences" over a comment-only append) and the real ceremony route's refusal; byte identity and
+  the direction are tier 2's (`lastGetDocumentData`, the direction, banner and count tests).
+
+**Built (v1.181.0):** T01–T05 as tasked, with three departures, each above or here: the door is `ReadMirrorFor` (the
+review found `ReadMirrorOrEnded` let another proceeding in the live folder hide this one's ended copy and reported that
+proceeding's damage); the header carries three facts, not five (the id and size had no reader); tier 3's direction claim
+is tier 2's (PIN above). **Added beyond the Ts:** Compare's page banners and `+/−` count read baseline-first too (the
+review's one critical — a page added after signing read "removed from the version you signed"); Compare loads and
+`renderCompareText` carry tokens (/pending 778's render-token half, amended); the jsdom pdf.js stub detaches what it is
+handed, as the worker transfer does. Review `code-reviews/v1.180.1-p03s03-…` (1 critical, 9 warning, 9 info, all
+dispositioned). Red-proof: 47 targeted conditions — two survivors, both real holes in the new tests, fixed and then red;
+one proven equivalent — and 8/8 blind kills (`instruments/returned-document.md` P03.S03). A red-proof row
+(`listing-opens-the-document`) had been applying BY FUZZ into `ReadMirror`; re-cut in `ReadStored`.
+**Live:** the real binary in a real browser — a document signed in the app, bytes appended, opened back: the sheet offers
+the chain in order (kept slot named and empty, the ceremony copy, a file you choose), "Compare the version you signed with
+this file" opens Compare over the route's bytes and pdf.js and the differ run over them; the ceremony link over the real
+route says this solo-signed file names no ceremony and opens nothing (tier 3, 2/2).
+**Acceptance ledger:** the diff renders from server-supplied bytes ✅ (tier 3, the route's bytes through the real pdf.js
+into the shipped differ; tier 2, byte-identical `lastGetDocumentData`); with no change to the differ ✅ (`diffWords`,
+`documentText`, `pageTexts` absent from the diff; only `renderCompare`'s caption and argument order moved); the fallback
+chain is offered in order ✅ on P03's links — the kept copy's slot named and empty, then the ceremony mirror, then pick your
+own file (jsdom order test + red-proved markup swap; tier 3); the kept copy at its head is P04.S02's (phase-open PIN).
+Seam rows S3-1, S3-6, S3-8 moved live; S3-2…S3-5, S3-7, S3-9 are tier 1/2 only — `not exercised` in a browser: a
+real ceremony mirror needs a convened ceremony the tier-3 harness does not build (tier 6's territory), and this is not
+the slice's point.
 
 ### P04 — Retention at signing *(Dan's option C)*
 **Goal.** Make the dispute answerable in the case the file itself cannot answer.

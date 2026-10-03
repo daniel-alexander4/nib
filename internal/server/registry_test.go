@@ -132,8 +132,10 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// paragraph by the text it read as well as by the document.
 	// 35: `handleDocumentRevision` (PLAN-returned-document P02.S03) reads the open document's bytes and history to recover
 	// the version a signer signed — read-only, like `handlePDF`, whose headers it shares.
-	if resolveSites != 35 {
-		t.Errorf("expected 35 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 36: `handleDocumentCeremonyCopy` (P03.S03) reads the open document's bytes for the ceremony record it embeds and
+	// hands back this machine's stored copy — read-only, the same shape as `handleDocumentRevision`.
+	if resolveSites != 36 {
+		t.Errorf("expected 36 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

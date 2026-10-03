@@ -766,6 +766,20 @@
           <p id="returnedDoc" class="cerdocline"></p>
           <!-- The verdict, in dispute language, and the signer list around yours: P03.S02. -->
           <div id="returnedVerdict" aria-live="polite"></div>
+          <!-- See what changed (P03.S03, D11): the version you signed, when the check recovered one, then the fallback
+               chain IN ORDER — the copy kept at signing (P04.S02's; named and empty until then), this machine's copy from
+               the signing ceremony, a file you choose. Each opens the shipped Compare with that copy as the baseline. -->
+          <div id="returnedCompare" class="rvcompare" role="group" aria-labelledby="returnedCompareHeading">
+            <h3 id="returnedCompareHeading">See what changed</h3>
+            <button id="returnedCmpSigned" type="button" hidden>Compare the version you signed with this file</button>
+            <p class="rvline">Or compare this file with another copy of it:</p>
+            <ol class="rvchain">
+              <li id="returnedCmpKept">A copy kept when you signed — Nib does not keep one yet.</li>
+              <li><button id="returnedCmpCeremony" type="button">This machine's copy from the signing ceremony</button>
+                <div id="returnedCmpCeremonyNote" aria-live="polite"></div></li>
+              <li><button id="returnedCmpFile" type="button">A file you choose…</button></li>
+            </ol>
+          </div>
           <!-- Outside the live region: the verdict is announced, the list is read when the user goes to it. -->
           <div id="returnedSigners" class="rvsigners" role="list" aria-label="Every signature, in the order they cover the file"></div>
         </div>

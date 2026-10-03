@@ -107,8 +107,19 @@ export function setNextDocument(opts) {
 // The URL the last getDocument() was asked for, so a test can read which request a preview named.
 export let lastGetDocumentUrl = null;
 
+// The bytes the last getDocument() was handed (`data`), so a test can read that a copy the server supplied is what
+// Compare loaded (PLAN-returned-document P03.S03). Copied, and then the caller's buffer is DETACHED, as real pdf.js
+// does when it transfers `data` to its worker — so a caller that hands over bytes it means to use again fails here
+// rather than only in a real browser.
+export let lastGetDocumentData = null;
+
 export function getDocument(opts) {
   lastGetDocumentUrl = (opts && opts.url) || null;
+  lastGetDocumentData = null;
+  if (opts && opts.data) {
+    lastGetDocumentData = new Uint8Array(opts.data);
+    if (opts.data.buffer && opts.data.buffer.byteLength) structuredClone(opts.data.buffer, { transfer: [opts.data.buffer] });
+  }
   const cfg = nextDocument;
   const task = { destroy: async () => {} };
   if (cfg === null) {

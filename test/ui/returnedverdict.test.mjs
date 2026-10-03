@@ -65,3 +65,37 @@ test('a document signed here and opened back: the sheet finds your version, and 
   assert.match(grew, /The version you signed is inside this file, and \d+ bytes were added after it/,
     `the grown file read: ${grew}`);
 });
+
+// P03.S03 — "see what changed", live: the version the route recovered is handed to the shipped Compare as bytes and the
+// real pdf.js parses it; the chain is offered in its order. The appended bytes are a comment, so the text is identical —
+// which is the point here: the differ ran over the server's bytes. Which way the diff reads is tier 2's
+// (`returnedcompare.test.mjs`), where the two texts can differ.
+test('the recovered version opens in Compare from the server\'s bytes, and the chain is offered in order', async () => {
+  assert.ok(fs.existsSync(GREW), 'setup: the grown file from the test above is missing');
+  await h.openDocument(GREW, 1);
+  await h.mode('secure');
+  await h.group('Sign & Timestamp');
+  await page.click('#returnedBtn');
+  await page.waitForSelector('#returnedCmpSigned:not([hidden])', { timeout: 30000 });
+  const chain = await page.$$eval('#returnedCompare .rvchain > li', (lis) => lis.map((li) => li.textContent.trim()));
+  assert.equal(chain.length, 3);
+  assert.match(chain[0], /copy kept when you signed/);
+  assert.match(chain[1], /ceremony/);
+  assert.match(chain[2], /file you choose/);
+  await page.click('#returnedCmpSigned');
+  await page.waitForSelector('#compareModal:not([hidden])');
+  await page.waitForFunction(() => /No text differences|→ this file/.test(document.getElementById('compareBody').textContent),
+    null, { timeout: 30000 });
+  const body = await page.textContent('#compareBody');
+  assert.match(body, /No text differences/, `Compare over the recovered version read: ${body}`);
+  assert.equal(await page.isVisible('#compareTools'), true, 'the compared document did not load');
+  await page.click('#compareClose');
+  // The ceremony link over the real route: this document was signed solo, so it names no ceremony and says so.
+  await page.click('#returnedCmpCeremony');
+  await page.waitForFunction(() => /ceremony/.test(document.getElementById('returnedCmpCeremonyNote').textContent),
+    null, { timeout: 30000 });
+  assert.match(await page.textContent('#returnedCmpCeremonyNote'), /names no signing ceremony/);
+  assert.equal(await page.isVisible('#compareModal'), false, 'a refused ceremony copy opened Compare');
+  await page.click('#returnedClose');
+  await h.closeDocument();
+});
