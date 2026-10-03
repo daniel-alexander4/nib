@@ -66,6 +66,13 @@ func (s *Server) handleDocumentRevision(w http.ResponseWriter, r *http.Request) 
 	}
 	// The bytes and their history in ONE hold: a mutation between two reads would pair history with other bytes.
 	s.mu.Lock()
+	if !s.isRegisteredLocked(doc) {
+		// Closed between `resolveDoc` and this hold: ADR-004's "not that document", never the bytes of one the server no
+		// longer holds (the P03 phase-close review).
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	data := doc.data
 	history := "none"
 	switch {

@@ -340,7 +340,7 @@ func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended 
 		dirs = append(dirs, moved)
 	}
 	var unknown error
-	different := false
+	different, empty := false, false
 	for i, dir := range dirs {
 		r, pdf, rerr := readMirrorAt(dir, named.ID, now)
 		if errors.Is(rerr, fs.ErrNotExist) {
@@ -356,9 +356,19 @@ func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended 
 			different = true
 			continue
 		}
+		if rerr == nil && len(pdf) == 0 {
+			// This proceeding's record with no document beside it — a state `WriteMirror` accepts and no production caller
+			// writes (the document lands before the record, and the close-out is one rename). It holds no copy to hand
+			// over, so the other folder is asked; with nothing there it is reported as damage, which is what the route
+			// called an empty copy before this door existed (the P03 phase-close review).
+			empty = true
+			continue
+		}
 		return pdf, i == 1, rerr
 	}
 	switch {
+	case empty:
+		return nil, false, fmt.Errorf("%w: its record has no document beside it", ErrMirrorDamaged)
 	case unknown != nil:
 		return nil, false, unknown
 	case different:

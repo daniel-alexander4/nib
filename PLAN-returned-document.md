@@ -810,7 +810,7 @@ without a new exemption ✅ (`requireUnlocked` wraps `requireSession`; live 403)
 header), W9 ✅ (recorded history, the gap declared), I4 ✅, I5 ✅ (single-flight, proved by count and by an edit
 mid-walk), I6 ✅.
 
-### P03 — The surface
+### P03 — The surface *(done 2026-10-02, v1.181.1)*
 **Goal.** The page the request asked for.
 
 **Exit criteria.** One command opens one sheet showing the document, the verdict in dispute
@@ -845,6 +845,31 @@ chain is offered in order.
 - **Firmed: three slices, as sketched**, with the amendments above folded into their acceptance. `/plan-review` does
   not fire: P03 is a UI surface — no security, migration or egress change; the mirror read route is a same-user,
   session-gated read of the user's own files, which S03's grill attacks.
+
+**Phase close (2026-10-02, v1.181.1).** Full-repo review `code-reviews/v1.181.0-p03-phase-close-2026-10-02.md` (7
+reviewers, 0 critical): 11 in-phase findings on the surface — the sheet survived a reload of its own document, read
+whose-signature from load time, said "modified" where Nib only knows "does not verify", and called an identical file
+"appended" — fixed, red-proved, re-reviewed once; out-of-phase filed /pending 809-813 (809 a self-named tag silences
+`nib verify`'s roster checks, 810 Finalize certifies an already-signed document, 811 free xref entries raise the
+validator budget), 691 and 774 amended. Graduation pass: 27 rows keep-live, 1 hot-path row (Dan's, kept), 0 diagnostic.
+Closure sweep: /pending 389 amended (the page is built; stays open for P04), 778 amended, 475 seen again.
+**Acceptance ledger** (exit criteria split on every `and`):
+- one command opens one sheet ✅ — `#returnedBtn` and its `data-forward` twin are one command (S01; tier 3, both openers);
+- showing the document ✅ — the sheet names it and stands in place of the viewer (D12), "Back to the document" one press
+  away (S01; read as D12 reads it: the sheet is ABOUT the document, not a second rendering of it);
+- the verdict in dispute language ✅ — D8's states, the five causes, never "Untampered", never "re-saved" (S02; jsdom 11 + tier 3);
+- every signature with its position relative to yours ✅ — ordered by coverage end, before/after yours, "could not place
+  it" when the join failed (S02);
+- and whether this machine knows the signer ✅ — yours / known / not known, from a snapshot taken when the sheet opens
+  (S02; fresh at the phase close);
+- and the changes ✅ — Compare over the recovered version, the ceremony copy or a chosen file, read from the copy to
+  this file (S03; tier 3 real route → pdf.js → differ; tier 2 direction);
+- the three terminal states each render their own sentence ✅ — "exactly / inside, N bytes added", "not inside this
+  file", "as it stands … does not mean nobody signed it" (S02; tier 3 the first two in-app);
+- the fallback chain is offered in order ✅ on P03's links — the kept copy's slot named and empty, then the ceremony copy,
+  then a file you choose (S03); the kept copy at its head is P04.S02's (phase-open PIN), checked at P04's close.
+**Required gates at v1.181.1:** tiers 0-3, and tiers 4 and 6 (S03 and the close touch `internal/ceremony`) — results
+in the closing commit.
 
 #### P03.S01 — the command and the sheet *(done 2026-10-02, v1.179.7)*
 Scope: `"Check a signed document that came back…"` (**worded 2026-10-02 by Dan via /discuss, option B** — the plan's

@@ -16,7 +16,7 @@ import (
 // ceremonyCopyFacts is what the X-Nib-Ceremony-Copy header says about the bytes the route returns: the body is this
 // machine's stored copy of the ceremony's document, so everything else about it rides beside it (ADR-072's shape).
 //
-// Three facts, each worded by the sheet (`ceremonyCopyLines`). The ceremony's id and the open file's size were here and
+// Four facts, each worded by the sheet (`ceremonyCopyLines`). The ceremony's id and the open file's size were here and
 // were dropped before shipping: the client read neither, and a published field with no reader is the class
 // `published.test.mjs` exists to refuse.
 type ceremonyCopyFacts struct {
@@ -25,8 +25,11 @@ type ceremonyCopyFacts struct {
 	// Signed reports whether the stored copy carries a signature at all. The mirror is this machine's LAST hop, so an
 	// unsigned one is the convened original — before anybody signed.
 	Signed bool `json:"signed,omitempty"`
-	// Extends is true when the open document begins with the stored copy byte for byte: everything in the open file
-	// past `len(copy)` was appended after the version this machine held.
+	// Same is true when the open document IS the stored copy, byte for byte.
+	Same bool `json:"same,omitempty"`
+	// Extends is true when the open document begins with the stored copy byte for byte and is LONGER: everything past
+	// `len(copy)` was appended after the version this machine held. Never true with Same (the P03 phase-close review:
+	// an identical file read as "everything after it was appended").
 	Extends bool `json:"extends,omitempty"`
 }
 
@@ -66,7 +69,14 @@ func (s *Server) handleDocumentCeremonyCopy(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	// The bytes and the registration in one hold, as `handleDocumentRevision` takes them: a document closed since
+	// `resolveDoc` is ADR-004's 409, never answered.
 	s.mu.Lock()
+	if !s.isRegisteredLocked(doc) {
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return
+	}
 	data := doc.data
 	s.mu.Unlock()
 	refuse := func(c ceremonyCopyCause) {
@@ -97,12 +107,9 @@ func (s *Server) handleDocumentCeremonyCopy(w http.ResponseWriter, r *http.Reque
 		refuse(copyUnreadable)
 		return
 	}
-	if len(pdf) == 0 {
-		// A record with no document beside it: the folder was torn before its document landed.
-		refuse(copyDamaged)
-		return
-	}
-	facts := ceremonyCopyFacts{Ended: ended, Signed: sign.HasSignatureBlob(pdf), Extends: bytes.HasPrefix(data, pdf)}
+	same := bytes.Equal(data, pdf)
+	facts := ceremonyCopyFacts{Ended: ended, Signed: sign.HasSignatureBlob(pdf), Same: same,
+		Extends: !same && bytes.HasPrefix(data, pdf)}
 	hdr, err := json.Marshal(facts)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not describe the ceremony's copy")

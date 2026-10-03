@@ -628,8 +628,9 @@ func ceremonyFreeze(docBytes []byte) error {
 	// the exemption a convened document could never be brought into line with its own file. The
 	// two MUTATION doors never reach that branch; they change the document by construction.
 	return fmt.Errorf("%w: it belongs to ceremony %s, and the other parties were invited to "+
-		"sign this exact document — so Nib will not write different bytes over it. The "+
-		"ceremony's own copy is at ~/nib/ceremonies/%s/document.pdf", ErrCeremonyFrozen, rec.ID, rec.ID)
+		"sign this exact document — so Nib will not write different bytes over it. This "+
+		"machine's copy is at ~/nib/ceremonies/%s/document.pdf, or at ~/nib/ended/%s/document.pdf "+
+		"once the ceremony has ended", ErrCeremonyFrozen, rec.ID, rec.ID, rec.ID)
 }
 
 // noteTaggingFate records that an operation removed this document's tagging claim — the NOTICE half

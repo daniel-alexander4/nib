@@ -711,9 +711,11 @@ type docResponse struct {
 	// document whose "0 of 2 obliged signers have signed" the user needs to read. The route
 	// published the counts and nothing could open them.
 	//
-	// **Its limit, declared rather than discovered:** it is `doc.ceremony != ""`, which this
-	// process sets when it convenes a ceremony or installs a hop's result. A ceremony document
-	// OPENED COLD from disk does not set it, so the button stays hidden there. Making it exact
+	// **Its limit, declared rather than discovered:** it is `doc.ceremony != ""`, whose one writer
+	// is `installCeremonyResult` — a hop's result arriving. Convening does NOT set it (the convene
+	// commits through `commitBarrier`), and a ceremony document OPENED COLD from disk does not
+	// either, so the button stays hidden on both (corrected at the P03 phase close; /pending files
+	// the convener's case). Making it exact
 	// costs a pdfcpu parse at every door that installs a document, and those doors are fourteen
 	// — ADR-009's one door would have to be built first. The narrow version is honest about
 	// which documents it covers; a parse per install would be a much larger change than the

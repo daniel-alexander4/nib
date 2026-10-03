@@ -80,6 +80,9 @@ test('a re-saved file: the version you signed is not inside it, and nothing says
   assert.match(text, /The version you signed is not inside this file\./);
   assert.match(text, /naming your certificate.*cannot say it is yours/, 'an unattributed name was worded as yours (C1)');
   assert.doesNotMatch(text, /re-?saved/i, 'W10: the surface alleges a re-save nib never observed');
+  // A failing signature "does not verify" here — the details panel's "Modified since signing" says more than Nib measured.
+  assert.match($('returnedSigners').textContent, /Does not verify/);
+  assert.doesNotMatch($('returnedSigners').textContent, /Modified since signing/);
   const attributed = await check({
     signature: { state: 'invalid', signers: [{ name: 'You', valid: false, fingerprint: YOU, coverageEnd: 500 }] },
     signerWhose: ['you'], unverifiedSigners: 0,
