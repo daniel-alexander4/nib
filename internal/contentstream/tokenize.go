@@ -1,9 +1,6 @@
 package contentstream
 
-import (
-	"bytes"
-	"fmt"
-)
+import "fmt"
 
 // Tokenize splits a decoded content stream into tokens covering it **completely and without
 // overlap**: `tokens[0].Start == 0`, each token's `End` is the next one's `Start`, and the last
@@ -21,7 +18,15 @@ import (
 // by every PDF writer that has ever existed; and refusing buys nothing, because a caller that
 // splices nothing still gets its bytes back unchanged.
 func Tokenize(src []byte) []Token {
+	out, _ := tokenize(src)
+	return out
+}
+
+// tokenize is Tokenize, returning as well the scanner that found every inline image's end, so a test can
+// read what those searches cost (`/pending 817`). The scanner is nil when the stream holds no `BI`.
+func tokenize(src []byte) ([]Token, *imageScanner) {
 	var out []Token
+	var s *imageScanner // made at the first `BI`: most streams, and every image dictionary, have none
 	i := 0
 	for i < len(src) {
 		start := i
@@ -108,7 +113,16 @@ func Tokenize(src []byte) []Token {
 				break
 			}
 			if string(word) == "BI" {
-				end := scanInlineImage(src, start)
+				if s == nil {
+					s = newImageScanner(src)
+				}
+				end := s.scanInlineImage(start)
+				if end <= i {
+					// Defensive, like the guard above: every end rule answers past `ID`, so this cannot be
+					// reached — but the answers now come partly from memos (`/pending 817`), and a wrong
+					// one must cost a junk token, never a loop that walks backwards forever.
+					end = len(src)
+				}
 				out = append(out, Token{InlineImage, start, end})
 				i = end
 				break
@@ -116,7 +130,7 @@ func Tokenize(src []byte) []Token {
 			out = append(out, Token{Operator, start, i})
 		}
 	}
-	return out
+	return out, s
 }
 
 // isNumberish reports whether a regular-character run is a number rather than a keyword.
@@ -216,7 +230,8 @@ func scanHexString(src []byte, i int) int {
 // a property of the format. What this package guarantees is narrower and still useful — it will not
 // SILENTLY reinterpret the binary as operators, because everything from `BI` to whatever it takes to
 // be `EI` is one opaque token that the writer copies verbatim.
-func scanInlineImage(src []byte, i int) int {
+func (s *imageScanner) scanInlineImage(i int) int {
+	src := s.src
 	// Find the `ID` that starts the binary payload. Before it the image's dictionary is ordinary
 	// tokens, so a plain scan for the keyword is safe only if it is a keyword — hence the
 	// delimiter checks on each side.
@@ -239,10 +254,10 @@ func scanInlineImage(src []byte, i int) int {
 	if j < len(src) && isWhite(src[j]) {
 		j++
 	}
-	if end, ok := asciiEncodedImageEnd(src, i+2, idAt, j); ok {
+	if end, ok := s.asciiEncodedImageEnd(i+2, idAt, j); ok {
 		return end
 	}
-	if end, ok := declaredLengthImageEnd(src, i+2, idAt, j); ok {
+	if end, ok := s.declaredLengthImageEnd(i+2, idAt, j); ok {
 		return end
 	}
 	for j+1 < len(src) {
@@ -266,7 +281,8 @@ func scanInlineImage(src []byte, i int) int {
 // can imitate it. Any other filter, or none, leaves ok false and the caller's whitespace rule decides.
 //
 // dictFrom and idAt bound the image dictionary; data is the first payload byte.
-func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
+func (s *imageScanner) asciiEncodedImageEnd(dictFrom, idAt, data int) (int, bool) {
+	src := s.src
 	if idAt < dictFrom {
 		return 0, false
 	}
@@ -275,20 +291,20 @@ func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
 	if !ok {
 		return 0, false // no filter key, or a value shape this cannot read
 	}
-	var eod []byte
+	var m *eodMemo
 	switch string(filter.Bytes(dict)) {
 	case "/AHx", "/ASCIIHexDecode":
-		eod = []byte(">")
+		m = &s.hexEOD
 	case "/A85", "/ASCII85Decode":
-		eod = []byte("~>")
+		m = &s.a85EOD
 	default:
 		return 0, false
 	}
-	at := bytes.Index(src[data:], eod)
+	at := s.nextEOD(m, data)
 	if at < 0 {
 		return 0, false
 	}
-	return imageEndsAt(src, data+at+len(eod))
+	return s.imageEndsAt(at + len(m.marker))
 }
 
 // declaredLengthImageEnd ends an inline image where its own dictionary says the data stops: `/L`, or
@@ -312,7 +328,8 @@ func asciiEncodedImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
 // changes, and that is what made it safe to take a reading at all.
 //
 // dictFrom and idAt bound the image dictionary; data is the first payload byte.
-func declaredLengthImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
+func (s *imageScanner) declaredLengthImageEnd(dictFrom, idAt, data int) (int, bool) {
+	src := s.src
 	if idAt < dictFrom {
 		return 0, false
 	}
@@ -325,7 +342,7 @@ func declaredLengthImageEnd(src []byte, dictFrom, idAt, data int) (int, bool) {
 	if !ok || n > len(src)-data {
 		return 0, false
 	}
-	return imageEndsAt(src, data+n)
+	return s.imageEndsAt(data + n)
 }
 
 // declaredLength reads a `/L` value: a plain non-negative integer and nothing else. `+8` and `8.0` are
@@ -352,11 +369,9 @@ func declaredLength(b []byte) (int, bool) {
 // **This is the corroboration both exact rules rest on** (ADR-009: one door, called by each). Neither an
 // end-of-data marker nor a declared length is believed on its own — each proposes an end, and an end with
 // no `EI` at it is not an end.
-func imageEndsAt(src []byte, after int) (int, bool) {
-	m := after
-	for m < len(src) && isWhite(src[m]) {
-		m++
-	}
+func (s *imageScanner) imageEndsAt(after int) (int, bool) {
+	src := s.src
+	m := s.skipWhite(after)
 	if m+1 < len(src) && src[m] == 'E' && src[m+1] == 'I' && (m+2 >= len(src) || !isRegular(src[m+2])) {
 		return m + 2, true
 	}
