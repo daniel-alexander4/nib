@@ -270,7 +270,7 @@ test('the stylesheet, the server and this file name the same themes, and no pick
   for (const m of CSS.matchAll(/:root\[data-appearance="([a-z]+)"\] \{/g)) inCss.add(m[1]);
 
   const go = fs.readFileSync(path.join(REPO, 'internal', 'server', 'settings.go'), 'utf8');
-  const caseLine = go.match(/case ((?:"[a-z]+"(?:, )?)+):\n\s*cur\.Appearance/);
+  const caseLine = go.match(/switch \*req\.Appearance \{[^}]*?case ((?:"[a-z]+"(?:, )?)+):/);
   assert.ok(caseLine, 'the appearance whitelist is not in settings.go in the shape this scan reads');
   const inGo = new Set([...caseLine[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
 
@@ -378,7 +378,7 @@ test('the stylesheet, the server and the picker name the same card hues', () => 
   const inCss = new Set([...CSS.matchAll(/:root\[data-cardhue="([a-z]+)"\]\s*\{\s*--card-hue/g)].map((m) => m[1]));
 
   const go = fs.readFileSync(path.join(REPO, 'internal', 'server', 'settings.go'), 'utf8');
-  const caseLine = go.match(/case ((?:"[a-z]+"(?:, )?)+):\n\s*cur\.CardHue/);
+  const caseLine = go.match(/switch \*req\.CardHue \{[^}]*?case ((?:"[a-z]+"(?:, )?)+):/);
   assert.ok(caseLine, 'the cardHue whitelist is not in settings.go in the shape this scan reads');
   const inGo = new Set([...caseLine[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
   inGo.delete('all'); // the rotation is the ABSENCE of a hue, so it has no stylesheet block
