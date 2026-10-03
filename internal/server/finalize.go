@@ -23,6 +23,10 @@ type finalizeParams struct {
 	TSAURL     string         `json:"tsaUrl"`
 	SignAs     string         `json:"signAs"`     // "" / "native" (default) | "external"
 	Passphrase string         `json:"passphrase"` // PKCS#12 passphrase when signAs == "external"
+	// Keep writes the signed output to ~/nib/signed/ as well (D13: opt-in; absent is false, so a caller that does not
+	// send it — Complete & sign — keeps nothing). Name is the document's name for the kept copy's slug; untrusted.
+	Keep bool   `json:"keep"`
+	Name string `json:"name"`
 }
 
 // watermarkParam is the label text plus its style. Empty text means no watermark.
@@ -129,6 +133,17 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// PDFs; pdfcpu's Encrypt is signature-unaware). Confidentiality and certification
 	// are mutually exclusive here — if password protection is ever wanted, it belongs
 	// in a separate, signature-free export, not bolted onto finalize.
+	//
+	// The kept copy is these exact bytes, written BEFORE they are sent, so a failed write refuses the signing with
+	// nothing downloaded (D14). The name rides in a header for the confirmation the user sees, and nothing else.
+	if p.Keep {
+		name, kerr := saveKept(p.Name, signed, time.Now())
+		if kerr != nil {
+			refuseUnkept(w, kerr)
+			return
+		}
+		w.Header().Set("X-Nib-Kept", name)
+	}
 	sendDownload(w, "finalized.pdf", "application/pdf", signed)
 }
 

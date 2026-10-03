@@ -532,6 +532,13 @@ text), with adjustable opacity, colour, size, and angle and a live preview —
 optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signature
 — that's the point. Export your public certificate so others can verify it's you.
 
+**Keep a copy for my records.** Off unless you tick it, every time. When ticked, Finalize also saves the exact signed
+file to `~/nib/signed/` (named `kept_<document>_<date-time>-<code>.pdf`) before handing it to you, so if a signed
+document ever comes back changed and the file itself can no longer show what you signed, the copy you kept can. The
+copy is saved **unencrypted**, outside Nib's vault — anyone who can read your files, and your backups, can read it. If
+it cannot be saved, Finalize does not sign, and says why. A kept copy proves what you had when you signed, not what you
+sent.
+
 **Sign with your own certificate.** By default Finalize uses Nib's self-signed
 identity (integrity, not third-party trust). If you have a CA-issued credential,
 import it under **Settings → Identity & peers → Signing certificate** (a PKCS#12

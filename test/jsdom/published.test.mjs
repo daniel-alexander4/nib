@@ -83,6 +83,8 @@ const PUBLISHED = [
   // `CEREMONY_COPY_REFUSED` the 422's cause.
   { type: 'ceremonyCopyFacts', readers: ['web/app.js'] },
   { type: 'ceremonyCopyRefusal', readers: ['web/app.js'] },
+  // A copy kept when you signed (P04.S01): the Finalize modal reads the refusal's error, cause and reason.
+  { type: 'keptRefusal', readers: ['web/app.js'] },
   { type: 'attachmentsResponse', readers: ['web/app.js'] },
   { type: 'attestationsResponse', readers: ['web/app.js'] },
   { type: 'attestationView', readers: ['web/app.js'] },

@@ -591,3 +591,8 @@ home today.
   — PLAN-returned-document P02.S03. 409 stays ADR-004's "not that document" (it reconciles the tabs); a contents
   refusal is 422 + `{cause}`; facts about returned bytes ride in one JSON header, lists capped; a malformed parameter is
   400 after normalisation.
+- **[ADR-073 — a copy kept when you signed is opt-in, named by one door, and its failure refuses the signing](073-a-copy-kept-when-you-signed-is-opt-in-named-by-one-door-and-its-failure-refuses-the-signing.md)**
+  — PLAN-returned-document P04.S01. Off at every opening, with an unencrypted-on-disk disclosure; the exact signed
+  bytes, durable at 0600, written before they are sent, a failed write a 500 `copy-not-kept` that refuses the signing;
+  `kept_<slug>_<ts>-<8hex>.pdf`, a grammar no other `~/nib/signed` writer produces, named only through `keptPathFor`;
+  the name's digest is never evidence.

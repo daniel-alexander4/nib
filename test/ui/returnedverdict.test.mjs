@@ -99,3 +99,26 @@ test('the recovered version opens in Compare from the server\'s bytes, and the c
   await page.click('#returnedClose');
   await h.closeDocument();
 });
+
+// P04.S01 — "Keep a copy for my records", live: Finalize with the tick on the real binary. The confirmation is sent only
+// after the server's durable write landed (`X-Nib-Kept` follows `saveKept`), and the tick is off again at the next opening.
+test('Finalize with "Keep a copy" keeps one and says so; the tick is off at the next opening', async () => {
+  await h.openDocument(DOC, 1);
+  await h.mode('secure');
+  await h.group('Sign & Timestamp');
+  await page.click('#finalizeBtn');
+  await page.waitForFunction(() => !document.getElementById('finalizeModal').hidden);
+  assert.equal(await page.isChecked('#fzKeep'), false, 'the tick started ON');
+  await page.check('#fzKeep');
+  await page.click('#fzGo');
+  await page.waitForFunction(() => /A copy was kept when you signed/.test(document.getElementById('toast')?.textContent || ''),
+    null, { timeout: 30000 });
+  assert.match(await page.textContent('#toast'), /~\/nib\/signed\/kept_returnedverdict_\d{8}-\d{6}-[0-9a-f]{8}\.pdf/);
+  await page.waitForFunction(() => !document.getElementById('saveAsModal').hidden, null, { timeout: 30000 });
+  await page.click('#saveAsCancel');
+  await page.click('#finalizeBtn');
+  await page.waitForFunction(() => !document.getElementById('finalizeModal').hidden);
+  assert.equal(await page.isChecked('#fzKeep'), false, 'the tick was remembered from the last opening');
+  await page.click('#fzCancel');
+  await h.closeDocument();
+});

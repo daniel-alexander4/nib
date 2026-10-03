@@ -1093,7 +1093,9 @@ UNVERIFIED are the slice's to prove.)**
 - **S01 — its tests**, one redirected HOME, each clause red-proved separately: ticked writes exactly one `kept_` file,
   0600, byte-identical to the response body (the control); unticked writes none; a params with no keep field writes
   none; `~/nib/signed` planted as a regular FILE (works under root, unlike chmod — `receivedwrite_test.go:59`) → non-2xx,
-  no PDF bytes, no `kept_` and no `.nib-*.tmp`. And `sign.Revisions(kept)`'s last record ends at `len(kept)` for the
+  no PDF bytes, no `kept_` and no `.nib-*.tmp`. *(Narrowed at S01's review: the planted file fails the folder's
+  creation, before any staging file can exist; a failure mid-write relies on `atomicfile.WriteDurable`'s deferred
+  removal, `atomicfile.go:316`, untested here — declared.)* And `sign.Revisions(kept)`'s last record ends at `len(kept)` for the
   native and external signers (UNVERIFIED for a TSA-stamped signing — measured where a TSA test exists, else declared).
 - **S01 — the ADR (073) lands in S01's commit**, beside the first write (D13: "in the same change"), with its
   `_index.md` entry; S03 cites it. It records the grammar, the one-door rule, the residue below and that the remove
@@ -1132,11 +1134,41 @@ UNVERIFIED are the slice's to prove.)**
 - **Inventory**: S01 and S02 reconcile rows P7, P8, G6 and S5 by name; P7's reader re-pointed to P04.S01 and S03.
 - **Complete & sign offers no kept copy**: filed as /pending 814.
 
-#### P04.S01 — the tick and the write
+#### P04.S01 — the tick and the write *(done 2026-10-02, v1.182.0)*
 Scope: the checkbox, the write, the naming. Refs: D13, D14.
 Acceptance: unticked signs and writes nothing; ticked writes exactly one file; a write failure is
 surfaced at signing and the signature is not silently returned as if the copy existed. **(phase-open PIN)**: named `kept_…` through
 the one `keptPathFor` door; the Finalize modal's tick only (Complete & sign filed).
+
+Grill (2026-10-02, light — the phase-open deepdive traced the Finalize path; read at the lines: `finalize.go:38-132`,
+`app.js:8635-8664`, `index.html:1073-1086`). Conclusions: the document name the client already computes for Save As
+(`exportBase()`, `app.js:8637`) is what the slug is made from — UNTRUSTED text, so it goes through `labelSlug` and a
+48-character cap (the delivered name's cap, `delivery.go:276`) and can only ever narrow the name; the response names
+the kept file in `X-Nib-Kept` for the confirmation the user sees, and nothing else reads it (the data seat's pin: no
+client state records "kept"). The 422 branch stays the passphrase's alone. Tiers 4/6 do not fire (no slicegate prefix).
+- T01 — `internal/server/kept.go`: `keptName(docName, signed, now)`, `keptPathFor(name)` (the grammar, anchored, the path
+  rebuilt from the parsed parts), `saveKept`; `finalizeParams` gains `Keep` and `Name`; the write between the sign and
+  `sendDownload`; 500 `{cause:"copy-not-kept", reason}`; `X-Nib-Kept` on success.
+- T02 — the modal: `#fzKeep` (off at every open) with its disclosure hint; `keep`/`name` in params; the failure branch on
+  the cause; the confirmation toast from `X-Nib-Kept`.
+- T03 — ADR-073 and its `_index.md` line.
+- T04 — Go: the table test (ticked/unticked/absent; the planted-file failure; byte identity; 0600) and the coverage-end
+  equality for native and external; the grammar's refusals. jsdom: the tick resets, params carry it, the failure words.
+- T05 — Finalize wall time, tick on/off, at 1, 50 and 500 MB, into the inventory.
+
+**Built (v1.182.0):** T01-T05 as tasked. **Departures:** the D14 test reaches the folder's creation failing, not a
+mid-write failure (pin narrowed above); the refusal carries `full` so only a full disk is told to free space, and only
+a `.pdf` extension is dropped from the slug (both from the slice review, `code-reviews/v1.181.3-p04s01-…`, 0 critical,
+3 warning, 5 info, all dispositioned). **Measured** (the durable write the tick adds, NVMe): 1 MB 15-16 ms, 50 MB
+166-185 ms, 500 MB 1.6-1.7 s — under the ~1 s-at-50 MB line. **Red-proof:** 19 targeted conditions all red, 6/6 blind
+kills. **Live:** the real binary in a real browser, Finalize with the tick keeps a copy named from the document, confirms
+it, and the tick is off at the next opening (tier 3).
+**Acceptance ledger:** unticked signs ✅ and writes nothing ✅ (the unticked, no-field and no-params rows, in the ticked
+row's HOME); ticked writes exactly one file ✅ (byte-identical, 0600, named in `X-Nib-Kept`); a write failure is surfaced
+at signing ✅ (500 `copy-not-kept`, the modal says "Not signed" and stays open) and the signature is not silently
+returned as if the copy existed ✅ (no PDF bytes in the refusal); named `kept_…` through the one `keptPathFor` door ✅
+(grammar test: peer, delivered, escape, case and `_` names refused); the Finalize modal's tick only ✅ (Complete & sign
+sends no field — /pending 814); the ADR in S01's commit ✅ (ADR-073).
 
 #### P04.S02 — the copy is visible and removable
 **(P03 phase-open PIN 2026-10-02)**: and the dispute surface offers the kept copy FIRST in its fallback chain, ahead of
