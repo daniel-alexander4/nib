@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -59,10 +60,28 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "could not read page image")
 			return
 		}
+		// A page posted twice would keep only the later image, and whatever boxes the earlier one
+		// carried would be dropped under a success (/pending 819). nib's client groups marks by page
+		// and never sends one, so this is a malformed request: 400, per ADR-072 §3.
+		if _, dup := raster[n]; dup {
+			httpError(w, http.StatusBadRequest, "page "+strconv.Itoa(n)+" was posted twice")
+			return
+		}
 		raster[n] = pdfops.RasterPage{Image: b, W: pw, H: ph}
 	}
 
 	result, err := pdfops.RedactPages(pdfBytes, raster)
+	// A page number that names no page of the posted bytes is a fact about THIS document's
+	// contents (ADR-072): 422 with a cause, never 409 (ADR-004's "not that document", which makes
+	// the client reconcile its tabs) and never 500. pdfops is the one door that checks the range;
+	// this only words its refusal. Nothing is committed on this path.
+	var pageErr *pdfops.RedactPageError
+	if errors.As(err, &pageErr) {
+		writeJSONStatus(w, http.StatusUnprocessableEntity, redactRefusal{
+			Cause: "page-not-in-document", Page: pageErr.Page, Pages: pageErr.Pages,
+		})
+		return
+	}
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "redaction failed: "+err.Error())
 		return
@@ -88,6 +107,14 @@ func (s *Server) handleRedact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))
+}
+
+// redactRefusal is /api/redact's 422 body: the raster named a page the posted document does not
+// have, so nothing was redacted and nothing was written.
+type redactRefusal struct {
+	Cause string `json:"cause"`
+	Page  int    `json:"page"`
+	Pages int    `json:"pages"`
 }
 
 // maxPageDim is PDF's largest legal page side in points (200 inches); any larger
