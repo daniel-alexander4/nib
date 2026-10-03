@@ -292,6 +292,12 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw,
 		if rec.res == nil {
 			continue
 		}
+		// A page that names no XObject draws no form — `drawForm` returns at this same lookup for every `Do` it
+		// would find — so its content is not decoded and tokenized to learn nothing (`/pending 763`: 4.6 s of 15.3 s
+		// of the carry gate over a 7,059-page Markdown conversion, whose pages name fonts only).
+		if xobjs, err := ctx.DereferenceDict(rec.res["XObject"]); err != nil || len(xobjs) == 0 {
+			continue
+		}
 		src, cerr := pdfread.PageContent(ctx, rec.dict, rec.nr)
 		if cerr != nil || len(src) == 0 {
 			continue

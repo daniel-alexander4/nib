@@ -105,8 +105,8 @@ func TestTheOptimizePassIsSkippedWhenItsPageContentDecodesPastTheBudget(t *testi
 	if alloc > 400<<20 {
 		t.Errorf("the estimate allocated %d MiB, want one decode's worth (under 400 MiB)", alloc>>20)
 	}
-	if err := pdfread.OptimizeOrRefuse(ctx); !errors.Is(err, pdfread.ErrUnaffordable) {
-		t.Errorf("OptimizeOrRefuse over it answered %v, want ErrUnaffordable", err)
+	if err := pdfread.Optimize(ctx); err != nil {
+		t.Errorf("Optimize over it answered %v, want the pass skipped", err)
 	}
 	small, _ := namedRepeatedly(t, 1<<20, 6)
 	if why := pdfread.Unaffordable(small); why != "" {

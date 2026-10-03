@@ -667,18 +667,14 @@ func Encrypt(pdf []byte, password string) ([]byte, error) {
 		return nil, errors.New("a password is required to protect the document")
 	}
 	conf := protectConfig(password)
-	var out bytes.Buffer
-	rs, err := pdfread.Reader(pdf, conf)
+	out, err := pdfread.Encrypt(pdf, conf)
 	if err != nil {
-		return nil, err
-	}
-	if err := api.Encrypt(rs, &out, conf); err != nil {
 		if strings.Contains(err.Error(), "this file is encrypted") {
 			return nil, ErrAlreadyEncrypted
 		}
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // protectConfig is Encrypt's configuration: what the protection promises — AES-256, both passwords, and every
@@ -707,12 +703,8 @@ func RemovePassword(pdf []byte, password string) ([]byte, error) {
 	// supplying the typed secret as both accepts whichever one it actually is.
 	conf.UserPW = password
 	conf.OwnerPW = password
-	var out bytes.Buffer
-	rs, err := pdfread.Reader(pdf, conf)
+	out, err := pdfread.Decrypt(pdf, conf)
 	if err != nil {
-		return nil, err
-	}
-	if err := api.Decrypt(rs, &out, conf); err != nil {
 		if errors.Is(err, pdfcpu.ErrWrongPassword) || strings.Contains(err.Error(), "correct password") {
 			return nil, ErrWrongPassword
 		}
@@ -721,7 +713,7 @@ func RemovePassword(pdf []byte, password string) ([]byte, error) {
 		}
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return out, nil
 }
 
 // clip shortens s to at most max runes, appending an ellipsis when it truncates.

@@ -22,11 +22,7 @@ import (
 // orientation rather than rotating landscape content to fit one literal box.
 func NormalizePageSizes(pdf []byte) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
-	rs, err := pdfread.Reader(pdf, conf)
-	if err != nil {
-		return nil, err
-	}
-	dims, err := api.PageDims(rs, conf)
+	dims, err := pdfread.PageDims(pdf, conf)
 	if err != nil {
 		return nil, err
 	}
