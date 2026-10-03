@@ -63,6 +63,10 @@ func TestEveryHandRolledAtomicWriteIsDeclared(t *testing.T) {
 		// That is a compare-and-remove, not a write: the record itself is written through
 		// `atomicfile.CreateFrom`.
 		"internal/instance/instance.go": "moves the record aside to remove it only if it is the caller's — a removal, not a write",
+		// `reclaimStranded` moves a stranded zero-byte placeholder ASIDE so it deletes only the inode
+		// it judged (/pending 807 R8) — instance.go's compare-and-remove, applied to the vault's name.
+		// The vault itself is written through `writeFileAtomic` (atomicfile.WriteDurable).
+		"internal/vault/vault.go": "moves a stranded placeholder aside to remove it only if it is the file judged — a removal, not a write",
 	}
 
 	fset := token.NewFileSet()

@@ -1271,8 +1271,8 @@ func (d *Document) type1Of(font types.Dict) (p *type1Program, known bool, why, t
 	key := dictID(sd.Dict)
 	r, done := d.type1Reads[key]
 	if !done {
-		if sd.Content == nil && sd.Decode() != nil {
-			r = &type1Program{state: ttUnknown, why: "its embedded Type 1 program could not be decoded"}
+		if why := d.decodeFontStream(sd, "its embedded Type 1 program"); why != "" {
+			r = &type1Program{state: ttUnknown, why: why}
 		} else {
 			prog := readType1(sd.Content, &d.type1Spent)
 			r = &prog

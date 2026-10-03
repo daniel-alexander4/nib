@@ -226,8 +226,8 @@ func (d *Document) parseProgramStream(sd *types.StreamDict) trueTypeProgram {
 		return p
 	}
 	var p trueTypeProgram
-	if sd.Decode() != nil {
-		p = trueTypeProgram{state: ttUnknown, why: "its program stream could not be decoded"}
+	if why := d.decodeFontStream(sd, "its program stream"); why != "" {
+		p = trueTypeProgram{state: ttUnknown, why: why}
 	} else {
 		p = readTrueType(sd.Content, maxTrueTypeReads-d.ttReads)
 		d.ttReads += p.reads

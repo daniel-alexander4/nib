@@ -296,8 +296,8 @@ func (d *Document) readToUnicodeLink(sd *types.StreamDict, hop int, open map[uin
 	// document of many CMaps cannot hold 34 MB of range index apiece (the P07.S02 re-review: 32 fonts, 1.56 GB).
 	tu, cached := d.toUnicodes[dictID(sd.Dict)]
 	if !cached {
-		if sd.Content == nil && sd.Decode() != nil {
-			return toUnicodeChain{why: "its /ToUnicode stream could not be decoded"}, true
+		if why := d.decodeFontStream(sd, "its /ToUnicode stream"); why != "" {
+			return toUnicodeChain{why: why}, true
 		}
 		if d.toUnicodes == nil {
 			d.toUnicodes = map[uintptr]*fontcode.ToUnicode{}
@@ -382,8 +382,8 @@ func (d *Document) cmapCodespace(c cmapRef) (*fontcode.Codespace, string) {
 		}
 		return nil, fmt.Sprintf("the font's CMap %q is neither embedded nor a predefined name", c.name)
 	}
-	if c.stream.Content == nil && c.stream.Decode() != nil {
-		return nil, "the font's embedded CMap could not be decoded"
+	if why := d.decodeFontStream(c.stream, "the font's embedded CMap"); why != "" {
+		return nil, why
 	}
 	cs := fontcode.ParseCodespace(c.stream.Content)
 	if cs.Malformed {

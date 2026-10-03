@@ -358,6 +358,21 @@ func progressFrom(st sign.Status, r Roster) (Progress, error) {
 				"not a valid signer of this document", ErrPrefixUnproven, i+1,
 				shortFP(a.Fingerprint))
 		}
+		// **And the peer it names is its PREDECESSOR, not merely some signer** (/pending 807 R7).
+		//
+		// `Matched` asks whether the accepted party signed this document AT ALL, so a signature
+		// naming its successor, or an earlier signer two places back, passed — measured: a roster
+		// (a, b, c) where b named c and c named a read `Complete` with nobody vouching for a. The
+		// readme printed into every ceremony document says "every signature after the first names
+		// the signer before it", and this is the line that makes the sentence true of what the
+		// gate admits rather than only of what Nib's own `StampCommitment` writes. Only a rostered
+		// signer signing outside Nib can produce the shape. `signing[i-1]` is already proven to be
+		// signature i-1's own signer by the identity check above on the previous pass.
+		if i > 0 && !strings.EqualFold(a.AcceptedPeer, signing[i-1].Fingerprint) {
+			return Progress{}, fmt.Errorf("%w: signature %d (%s) accepts %s, and the signer "+
+				"before it is %s", ErrPrefixUnproven, i+1, shortFP(a.Fingerprint),
+				shortFP(a.AcceptedPeer), shortFP(signing[i-1].Fingerprint))
+		}
 		if r.Commitment != "" && a.RosterHash != "" &&
 			!strings.EqualFold(a.RosterHash, r.Commitment) {
 			return Progress{}, fmt.Errorf("%w: signature %d commits to proceeding %s and this "+

@@ -399,8 +399,8 @@ func checkCMapWMode(d *Document) Result {
 			if v, ok := d.intValue(c.stream.Dict["WMode"]); ok {
 				dictW = int64(v)
 			}
-			if derr := c.stream.Decode(); derr != nil {
-				held.hold("an embedded CMap could not be decoded: "+derr.Error(), c.where)
+			if why := d.decodeFontStream(c.stream, "an embedded CMap"); why != "" {
+				held.hold(why, c.where)
 				continue
 			}
 			progW, ok := cmapProgramWMode(c.stream.Content)

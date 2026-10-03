@@ -456,6 +456,51 @@ func strandedPlaceholder(fi os.FileInfo) bool {
 	return fi.Mode().IsRegular() && fi.Size() == 0 && time.Since(fi.ModTime()) > placeholderStale
 }
 
+// beforeReclaimMove runs between reclaimStranded's judgement and its move — a test seam for the
+// interleaving the move exists to survive; nil in production.
+var beforeReclaimMove func()
+
+// reclaimStranded moves a placeholder a dead Create stranded out of the vault's name, and reports
+// whether the name is now free to claim.
+//
+// **It never deletes BY NAME** (/pending 807 R8). The reclaim was Lstat, then `os.Remove(path)`, then
+// O_EXCL — and the remove acts on whatever is at the name when it runs, not on the file the Lstat
+// judged. Between the two, a second first-run process could reclaim the same placeholder, claim the
+// name and `persist()` a REAL vault there (a rename), and the first one's remove then deleted it —
+// with the content key just minted inside it — and claimed the name itself, both reporting success.
+// The O_EXCL ordered the two creates and did nothing about the remove before them.
+//
+// So the file is RENAMED aside, which moves exactly one inode, and the moved inode is then compared
+// with the one judged: the same zero-byte file is deleted; anything else is put back through
+// `os.Link`, which refuses to replace a name somebody claimed meanwhile. Where it cannot be put
+// back, it is left beside the vault under its aside name rather than deleted — a file this process
+// did not judge is never removed by it.
+func reclaimStranded(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !strandedPlaceholder(fi) {
+		return false
+	}
+	// Pins the judged file's identity now: on Windows `os.SameFile` loads it lazily, by path,
+	// and after the rename that path names something else.
+	os.SameFile(fi, fi)
+	if beforeReclaimMove != nil {
+		beforeReclaimMove()
+	}
+	aside := fmt.Sprintf("%s.stranded-%d-%s", path, os.Getpid(), newID())
+	if err := os.Rename(path, aside); err != nil {
+		return false
+	}
+	moved, err := os.Lstat(aside)
+	if err == nil && os.SameFile(fi, moved) && moved.Size() == 0 {
+		_ = os.Remove(aside)
+		return true
+	}
+	if os.Link(aside, path) == nil {
+		_ = os.Remove(aside)
+	}
+	return false
+}
+
 // Slots returns the enrolled key slots (for status display) without unlocking.
 func Slots(dir string) ([]Slot, error) {
 	env, err := readEnvelope(dir)
@@ -491,13 +536,10 @@ func Create(dir, pubLine, keyPath string) (*Vault, error) {
 	// placeholder is zero bytes; Save overwrites it a moment later through the atomic path,
 	// which is what gives the real contents their durability.
 	f, err := os.OpenFile(Path(dir), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil && os.IsExist(err) {
-		// A placeholder a dead Create stranded is reclaimed, and the claim is made again through
-		// O_EXCL — so of two processes reclaiming it at once, the kernel still admits one.
-		if fi, serr := os.Lstat(Path(dir)); serr == nil && strandedPlaceholder(fi) {
-			_ = os.Remove(Path(dir))
-			f, err = os.OpenFile(Path(dir), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		}
+	if err != nil && os.IsExist(err) && reclaimStranded(Path(dir)) {
+		// The claim is made again through O_EXCL, so of two processes that each moved a stranded
+		// placeholder aside, the kernel admits one.
+		f, err = os.OpenFile(Path(dir), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	}
 	if err != nil {
 		if os.IsExist(err) {
@@ -1119,8 +1161,10 @@ func (v *Vault) SetIdentityIfAbsent(certPEM, keyPEM []byte) (cert, key []byte, e
 	// Leave no identity behind that the disk does not have: a later caller must mint again rather
 	// than inherit one this process failed to persist. That restore was hand-rolled here; it is
 	// the door's now (/pending 510), which is why this site no longer names `save`.
+	// Copied in, `AddImage`'s rule (/pending 567, 807 R8): the vault must not hold a slice its caller
+	// still has.
 	if serr := v.mutateLocked(func() {
-		v.contents.Identity = &Identity{CertPEM: certPEM, KeyPEM: keyPEM}
+		v.contents.Identity = &Identity{CertPEM: append([]byte(nil), certPEM...), KeyPEM: append([]byte(nil), keyPEM...)}
 	}); serr != nil {
 		return nil, nil, serr
 	}
@@ -1147,8 +1191,14 @@ func (v *Vault) ExternalSigner() (*ExternalSigner, bool) {
 func (v *Vault) SetExternalSigner(p12, certPEM, chainPEM []byte) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	// Copied in, `AddImage`'s rule (/pending 567, 807 R8): the vault must not hold a slice its caller
+	// still has, and this one is a private key bundle.
 	return v.mutateLocked(func() {
-		v.contents.ExternalSigner = &ExternalSigner{P12: p12, CertPEM: certPEM, ChainPEM: chainPEM}
+		v.contents.ExternalSigner = &ExternalSigner{
+			P12:      append([]byte(nil), p12...),
+			CertPEM:  append([]byte(nil), certPEM...),
+			ChainPEM: append([]byte(nil), chainPEM...),
+		}
 	})
 }
 
@@ -1296,6 +1346,11 @@ func (v *Vault) PruneCeremonyPeers(ceremony string) (int, error) {
 		if len(p.Ceremonies) > 0 {
 			kept = append(kept, p) // another ceremony still needs this peer
 		}
+	}
+	if n == 0 {
+		// Nothing touched: `PruneCeremonyInvitations`' reason — every close-out runs all three
+		// prunes, and a save() here would be a durable whole-vault write per close-out (/pending 807).
+		return 0, nil
 	}
 	if err := v.mutateLocked(func() { v.contents.PinnedPeers = kept }); err != nil {
 		return 0, err
@@ -1989,6 +2044,9 @@ func (v *Vault) PruneCeremonySecrets(ceremony string) (int, error) {
 			continue
 		}
 		kept = append(kept, s)
+	}
+	if n == 0 {
+		return 0, nil // nothing matched, so nothing to write — `PruneCeremonyInvitations`' reason
 	}
 	// **Zero only once the removal is DURABLE.** The first draft zeroed inside the loop, so a
 	// failing save() left the on-disk vault still holding every secret while the in-memory

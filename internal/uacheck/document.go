@@ -91,6 +91,10 @@ type Document struct {
 	// decodeFailed is each such stream whose decode FAILED, with why, so a form that cannot be decoded is not
 	// inflated again at every draw (`/pending 780`).
 	decodeFailed map[int]error
+	// fontDecoded is every byte the font-program and CMap door has decoded (`decodeFontStream`), against
+	// `maxFontBytesDecoded`; fontDecodeFailed is each stream it refused, with why, so it is not inflated twice.
+	fontDecoded      int
+	fontDecodeFailed map[uintptr]string
 	// glyphs is every distinct (font, code) a text-showing operator draws — veraPDF's `Glyph` (`glyphs.go`) —
 	// gathered by the same walk; glyphSeen dedupes it, glyphFonts reads each font once, and glyphCodes counts
 	// the codes read against `maxGlyphCodes`.

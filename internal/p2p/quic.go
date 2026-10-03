@@ -516,26 +516,7 @@ func (l *quicListener) acceptLoop() {
 				return // Promote closed the connection on its error path
 			}
 			// Buffered hand-off, like the TCP side — see tlsListener.loop.
-			select {
-			case l.ready <- conn:
-				// Buffered, so this does not block and the slot is released at once.
-			case <-l.done:
-				conn.Close()
-			default:
-				// The queue is full: `maxConcurrentHandshakes` connections are already
-				// waiting for a serial accept loop that serves one session. This one is
-				// not going to be served, and holding it would cost the slot that lets
-				// the NEXT peer handshake at all.
-				//
-				// **What is dropped here is a PINNED peer's connection**, not a stranger's
-				// — nothing else can reach this line, because a failed handshake returned
-				// above. That sounds worse than it is and the argument is worth stating:
-				// the only thing that can fill this queue is a peer connecting far faster
-				// than one session can be served, which is our own racer (P05.S03) and is
-				// bounded well below the buffer. A genuine peer that is dropped sees a
-				// closed connection and redials, against a listener that is still armed.
-				conn.Close()
-			}
+			l.offer(conn)
 		}()
 	}
 }

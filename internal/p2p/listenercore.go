@@ -78,8 +78,8 @@ func newListenerCore() listenerCore {
 
 // Close stops the accept loop and releases anything blocked in Accept.
 //
-// `done` is closed BEFORE `shut` runs, so a handshake finishing in the same instant offers
-// into a channel nobody is reading and closes the connection instead of leaking it.
+// `done` is closed BEFORE `shut` runs, so a handshake finishing at any point after it is
+// closed by `offer` instead of leaking.
 // Idempotent, because a session teardown and an explicit disarm can both reach it — the
 // same reason the announcer's Close is.
 func (l *listenerCore) Close() error {
@@ -97,21 +97,67 @@ func (l *listenerCore) Close() error {
 	err := l.shut()
 	// Drain what the handshake goroutines queued. `ready` is buffered since P05.S02, so
 	// a completed connection can be sitting in it when the session ends; nothing else
-	// will ever take it.
-	//
-	// **The residual is declared rather than closed**: a goroutine that wins the race
-	// between `<-l.done` and the buffered send in the same instant as this drain leaves
-	// one connection queued. It is bounded by the buffer, it costs one fd until the
-	// process reclaims it, and closing it deterministically would mean blocking Close
-	// until every handshake goroutine has returned — on a path the user reaches by
-	// pressing Cancel.
+	// will ever take it. A handshake that completes AFTER this drain is `offer`'s to close:
+	// it re-checks `done` after its send, and `done` is closed before this line runs.
+	l.drain()
+	return err
+}
+
+// drain closes every connection queued in `ready`, without blocking.
+func (l *listenerCore) drain() {
 	for {
 		select {
 		case c := <-l.ready:
 			c.Close()
 		default:
-			return err
+			return
 		}
+	}
+}
+
+// offer hands a completed handshake to the accept loop — the ONE hand-off both transports'
+// handshake goroutines use (ADR-009).
+//
+// **After `Close`, nothing queued here is ever taken, and `select` does not prefer `done`.** The
+// two copies this replaced selected between the buffered send and `<-l.done`; once Close has run,
+// `done` is closed AND `ready` has room, and Go picks uniformly between ready cases — so a
+// handshake finishing any time after Close's drain queued its connection with probability 1/2
+// and leaked it, not only one finishing "in the same instant" as the comment there claimed (the
+// returned-document P02 phase-close review, /pending 807 R7). A handshake can finish up to
+// `handshakeTimeout` after Close, because `shut` closes only the listener beneath.
+//
+// So `done` is asked first, and asked AGAIN after a successful send: Close closes `done` before it
+// drains, so a send that landed after that drain is seen here and drained by this goroutine. Every
+// interleaving ends with the connection closed or with an accept loop that is still live.
+func (l *listenerCore) offer(conn *Conn) {
+	select {
+	case <-l.done:
+		conn.Close()
+		return
+	default:
+	}
+	select {
+	case l.ready <- conn:
+		// Buffered, so this does not block and the slot is released at once.
+		select {
+		case <-l.done:
+			l.drain()
+		default:
+		}
+	default:
+		// The queue is full: `maxConcurrentHandshakes` connections are already
+		// waiting for a serial accept loop that serves one session. This one is
+		// not going to be served, and holding it would cost the slot that lets
+		// the NEXT peer handshake at all.
+		//
+		// **What is dropped here is a PINNED peer's connection**, not a stranger's
+		// — nothing else can reach this line, because a failed handshake returned
+		// above. That sounds worse than it is and the argument is worth stating:
+		// the only thing that can fill this queue is a peer connecting far faster
+		// than one session can be served, which is our own racer (P05.S03) and is
+		// bounded well below the buffer. A genuine peer that is dropped sees a
+		// closed connection and redials, against a listener that is still armed.
+		conn.Close()
 	}
 }
 

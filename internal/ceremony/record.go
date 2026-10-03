@@ -588,9 +588,8 @@ func (r Record) Convener() (Party, bool) {
 // wrong. `convene.go`'s ErrDuplicateParty reasoning also turns on it — a duplicate
 // collapses two parties into one invitation "while Hops() still counts both".
 //
-// It has no production caller and that is recorded rather than hidden: nothing in this
-// tree can see a zero-caller export (/pending 445), so this note is the only thing that
-// would tell the next reader.
+// It has no production caller and that is recorded rather than hidden: the root
+// `zerocaller_test.go` names it, with this reason, among the exports allowed none.
 func (r Record) Hops() int {
 	if len(r.Roster) < 2 {
 		return 0

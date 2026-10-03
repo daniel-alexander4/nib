@@ -535,6 +535,12 @@ func mapViaUPnP(ctx context.Context, proto Protocol, internalPort uint16, leaseS
 		if err != nil {
 			continue
 		}
+		if herr := upnpPortHeldByAnother(ctx, client, ctl, st, proto, internalPort, internalIP); herr != nil {
+			if refused == nil {
+				refused = herr
+			}
+			continue
+		}
 		wrote, addErr := soapAddPortMapping(ctx, client, ctl, st, proto, internalIP, internalPort, internalPort, leaseSec)
 		// Record BEFORE reading the external IP, and record a written-but-unanswered POST too.
 		// Two leaks close here: a 200 followed by a failed GetExternalIP (the mapping exists and
@@ -599,6 +605,32 @@ func unmapViaUPnP(ctx context.Context, controlURL, serviceType string, proto Pro
 		return nil
 	}
 	return soapDeletePortMapping(ctx, client, controlURL, serviceType, proto, externalPort)
+}
+
+// upnpPortHeldByAnother asks the IGD who holds an external port BEFORE this client claims it, and
+// refuses when the answer names somebody else (/pending 807 R7).
+//
+// `AddPortMapping` claims external = internal port, and a conformant IGD refuses a port another
+// LAN host holds (718 ConflictInMappingEntry). A non-conformant one OVERWRITES it, handing Nib
+// that host's mapping — the case the delete side was hardened against (`verifiedUPnPEntry`) and
+// the add side was not. Refused as `ErrResultCode`, because it is the answer a conformant IGD
+// would have given, and `Map` already words that as the gateway saying no.
+//
+// **Only evidence refuses.** No answer at all (714 NoSuchEntry, an IGD without the action, a
+// timeout) proceeds to the add exactly as before, and so does an answer with neither a client nor
+// a description: `extractTag` returns "" for a missing tag and an unparsed body alike, and a
+// router that answers an absent entry with an empty 200 must not lose its only mapping tier. An
+// entry that is this host's own Nib mapping is a renewal and proceeds.
+func upnpPortHeldByAnother(ctx context.Context, client *http.Client, controlURL, serviceType string, proto Protocol, port uint16, me netip.Addr) error {
+	desc, holder, _, _, err := soapGetPortMappingEntry(ctx, client, controlURL, serviceType, proto, port)
+	if err != nil || (holder == "" && desc == "") {
+		return nil
+	}
+	if holder == me.String() && desc == upnpMappingDescription {
+		return nil
+	}
+	return fmt.Errorf("%w: external port %d is already mapped to %s (%q), so claiming it would "+
+		"take another host's mapping", ErrResultCode, port, holder, desc)
 }
 
 // errEntryNotOurs is the refusal: the IGD answered, and what it holds on that external port is
