@@ -706,16 +706,50 @@ func Combine(pdfs [][]byte) ([]byte, error) {
 	return mergeDocs(pdfs)
 }
 
+// ErrRedactPageOutOfRange is RedactPages' refusal of a raster that does not name pages of the
+// document it was posted with. It is a fact about the request against THESE bytes, not a failed
+// rebuild, so the server answers it 422 rather than 500.
+var ErrRedactPageOutOfRange = errors.New("pdfops: a redacted page is not a page of this document")
+
+// RedactPageError names the key RedactPages refused and the page count it was checked against.
+type RedactPageError struct {
+	Page  int // the key the caller gave
+	Pages int // how many pages the document has
+}
+
+func (e *RedactPageError) Error() string {
+	return fmt.Sprintf("%v: page %d, and the document has %d", ErrRedactPageOutOfRange, e.Page, e.Pages)
+}
+
+// Unwrap makes errors.Is(err, ErrRedactPageOutOfRange) hold.
+func (e *RedactPageError) Unwrap() error { return ErrRedactPageOutOfRange }
+
 // RedactPages rebuilds a PDF so that each page given in raster (1-based page
 // number -> a RasterPage: a PNG of that page with the redaction boxes already
 // painted in, plus the page's true point size) is replaced by that flat image,
 // while every other page is kept as-is. Because a
 // redacted page becomes a pure image, the underlying text/content is genuinely
 // gone — not merely covered. This is the guaranteed-removal redaction.
+//
+// **Every key must name a page of `original`, or nothing is written** (`/pending 819`). The loop
+// below visits 1..n only, so a key outside that range — a client numbering that disagrees with the
+// posted bytes, off by one, or a page count changed under the view — used to be skipped in silence:
+// the call succeeded, the caller reported the redaction applied, and the page it meant kept its
+// vector text. On the guarantee-of-removal surface an unmatched key is a refusal, and so is an empty
+// map, which would return the document unredacted under the same success. The refusal wraps
+// ErrRedactPageOutOfRange so a caller can tell it from a failed rebuild.
 func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 	n, err := PageCount(original)
 	if err != nil {
 		return nil, err
+	}
+	if len(raster) == 0 {
+		return nil, fmt.Errorf("%w: no pages were given to redact", ErrRedactPageOutOfRange)
+	}
+	for k := range raster {
+		if k < 1 || k > n {
+			return nil, &RedactPageError{Page: k, Pages: n}
+		}
 	}
 	// One Collect per contiguous RUN of untouched pages, not per page. Each Collect
 	// re-parses the whole document, so the per-page loop this replaces was O(n²) on the
