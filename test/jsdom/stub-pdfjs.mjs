@@ -113,6 +113,12 @@ export let lastGetDocumentUrl = null;
 // rather than only in a real browser.
 export let lastGetDocumentData = null;
 
+// setDataGate holds every document's `getData()` — the bake's first await — until the promise
+// resolves; null releases it. Added for /pending 625: a bake that finishes in one microtask cannot
+// straddle a tab switch, and the split's defect lives exactly in that window.
+let dataGate = null;
+export function setDataGate(p) { dataGate = p; }
+
 export function getDocument(opts) {
   lastGetDocumentUrl = (opts && opts.url) || null;
   lastGetDocumentData = null;
@@ -161,7 +167,7 @@ export function getDocument(opts) {
     getPage: async (n) => makePage(n, cfg.renders === true,
       Array.isArray(cfg.text) ? (cfg.text[n - 1] || '') : (cfg.text || '')),
     getOutline: async () => cfg.outline,
-    getData: async () => new Uint8Array(),
+    getData: async () => { if (dataGate) await dataGate; return new Uint8Array(); },
     saveDocument: async () => new Uint8Array(),
     destroy: async () => {},
   };

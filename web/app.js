@@ -373,11 +373,18 @@ async function apiFetch(url, opts = {}) {
   // first await is operation pinning (P04) — the same value while there is one
   // view, a different one the moment there are several.
   //
-  // `opts.unpinned` opts one call out. It exists for exactly one question — "what is
-  // the active document now?" — which is about the SESSION rather than about a
-  // document, and which a pinned call cannot ask: pinning it means asking after the
-  // document the client already knows about, which is never the one it needs to learn.
-  // See openArrivalInNewView.
+  // `opts.unpinned` opts one call out: no header, AND no tab reconcile on its 409. It is for
+  // a request that is not about a document. Two kinds, and only two (/pending 607, which
+  // found "exactly one question" here over sixteen callers):
+  //   - the SESSION questions a pinned call cannot ask — "what is active now?"
+  //     (openArrivalInNewView: pinning it asks after the document the client already knows,
+  //     never the one it needs to learn) and "which documents exist?" (reconcileWithServer);
+  //   - routes that address no document at all — the ceremony rail, peers, status, the
+  //     network test, the authed downloads — where a 409 is the route's own refusal (a
+  //     ceremony that moved on), not "that tab is gone", and must not reconcile the strip.
+  // It never goes on a route whose handler resolves a document: there it IS the unaddressed
+  // request. `pinning.test.mjs` reads those routes from the server and refuses any call to
+  // one without a `docId`, with `openArrivalInNewView` its one named exemption.
   //
   // `opts.docId` is the other direction, and it is operation pinning itself (D7): the
   // caller captured a document id BEFORE its first await and names it explicitly, so
@@ -1405,6 +1412,7 @@ async function sessionInit() {
   const opDoc = owner.docMeta;
   const fingerprint = els.sinPeer.value;
   if (!fingerprint) return;
+  if (!opDoc || !opDoc.id) { toast('Open a PDF first'); return; } // the quote below is pinned to it too
   // P05.S12: an empty address is the LADDER default, not an error — the server's LAN browse (and, for
   // an invited ceremony, the DHT) finds the armed peer. The typed address is the manual fallback (D8
   // tier 5), reachable from the Advanced disclosure. A failure now carries S11's D19 diagnosis in the
@@ -1415,7 +1423,7 @@ async function sessionInit() {
   // we sign and send (unlike the receive flow, which signs the peer's document).
   const qr = await apiFetch('/api/cosign/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fingerprint, intent }),
+    body: JSON.stringify({ fingerprint, intent }), docId: opDoc && opDoc.id,
   });
   if (!qr.ok) { toast(await errText(qr, 'could not start co-signing')); return; }
   const q = await qr.json();
@@ -5501,15 +5509,20 @@ function renderScanReport(rep) {
   }
 }
 
+// openScan and openUACheck name the document they report on (ADR-001), and drop an answer that
+// lands after a switch: the switch closed the modal, and a report rendered into it on a reopen
+// would describe the other document beside a Flatten that acts on this one.
 async function openScan() {
-  if (!view.pdfDocument) return toast('Open a PDF first');
+  const owner = view;
+  if (!owner.pdfDocument) return toast('Open a PDF first');
   els.scanBody.innerHTML = '<p class="scan-where">Scanning…</p>';
   els.scanModal.hidden = false;
   try {
-    const res = await apiFetch('/api/scan');
+    const res = await apiFetch('/api/scan', { docId: owner.docMeta && owner.docMeta.id });
     if (!res.ok) throw new Error('scan');
-    renderScanReport(await res.json());
-  } catch { els.scanModal.hidden = true; toast('scan failed'); }
+    const rep = await res.json();
+    if (owner === view) renderScanReport(rep);
+  } catch { if (owner === view) { els.scanModal.hidden = true; toast('scan failed'); } }
 }
 els.scanBtn.onclick = openScan;
 els.scanClose.onclick = () => { els.scanModal.hidden = true; };
@@ -5585,15 +5598,17 @@ function renderUAReport(rep) {
 }
 
 async function openUACheck() {
-  if (!view.pdfDocument) return toast('Open a PDF first');
+  const owner = view; // pinned, and a late answer dropped — see openScan
+  if (!owner.pdfDocument) return toast('Open a PDF first');
   els.uaSummary.textContent = 'Checking…';
   els.uaBody.innerHTML = '';
   els.uaModal.hidden = false;
   try {
-    const res = await apiFetch('/api/uacheck');
+    const res = await apiFetch('/api/uacheck', { docId: owner.docMeta && owner.docMeta.id });
     if (!res.ok) throw new Error('uacheck');
-    renderUAReport(await res.json());
-  } catch { els.uaModal.hidden = true; toast('accessibility check failed'); }
+    const rep = await res.json();
+    if (owner === view) renderUAReport(rep);
+  } catch { if (owner === view) { els.uaModal.hidden = true; toast('accessibility check failed'); } }
 }
 els.uaBtn.onclick = openUACheck;
 els.uaClose.onclick = () => { els.uaModal.hidden = true; };
@@ -6272,15 +6287,33 @@ els.scanFlattenBtn.onclick = async () => {
 // --- embedded attachments: list / extract / add ------------------------------
 // Lists the document's embedded files; each row extracts to a saved file, and
 // "Attach a file…" embeds one (a doc mutation, reloaded like the page ops).
-async function loadAttachments() {
+//
+// **The list, its Extract buttons and the add are one operation on ONE document (ADR-001,
+// /pending 806).** An attachment id means something only against the document that listed it —
+// `page:1:0` is the first file annotation on page 1 of EVERY document — so an Extract that took its
+// id from A's list and sent the current tab's header saved B's embedded file under A's name. A
+// switch closes this modal (DOC_BOUND_MODALS), but it does not cancel a list still in flight: an
+// arrival during the fetch and a reopen on B let A's late answer render over B's. So the list is
+// pinned to the view it was asked for, a late answer for any other is dropped, and every row carries
+// that document's id into its Extract.
+let attachSeq = 0;
+async function loadAttachments(owner = view) {
+  const seq = ++attachSeq;
+  const opDoc = owner.docMeta;
+  const current = () => seq === attachSeq && owner === view;
   els.attachBody.innerHTML = '<p class="scan-where">Loading…</p>';
+  let items;
   try {
-    const res = await apiFetch('/api/attachments');
+    const res = await apiFetch('/api/attachments', { docId: opDoc && opDoc.id });
     if (!res.ok) throw new Error('list');
-    renderAttachments((await res.json()).attachments || []);
-  } catch { els.attachBody.innerHTML = '<p class="scan-where">Could not list attachments</p>'; }
+    items = (await res.json()).attachments || [];
+  } catch {
+    if (current()) els.attachBody.innerHTML = '<p class="scan-where">Could not list attachments</p>';
+    return;
+  }
+  if (current()) renderAttachments(items, opDoc.id);
 }
-function renderAttachments(items) {
+function renderAttachments(items, docId) {
   const body = els.attachBody;
   body.innerHTML = '';
   if (!items.length) {
@@ -6320,15 +6353,16 @@ function renderAttachments(items) {
     btn.textContent = 'Extract';
     // By the server's id, never the name: two entries may SHOW one name, and the name picked
     // whichever came first (/pending 745). The name is only what the save dialog offers.
-    btn.onclick = () => extractAttachment(a.id, a.name);
+    btn.onclick = () => extractAttachment(docId, a.id, a.name);
     row.append(meta, btn);
     body.appendChild(row);
   }
 }
-async function extractAttachment(id, name) {
+// extractAttachment names the document whose list the id came from — see loadAttachments.
+async function extractAttachment(docId, id, name) {
   const form = new FormData();
   form.append('id', id);
-  const res = await apiFetch('/api/attachments/extract', { method: 'POST', body: form });
+  const res = await apiFetch('/api/attachments/extract', { method: 'POST', body: form, docId });
   if (!res.ok) return toast('extract failed');
   openSaveAs(await res.blob(), name, 'Save attachment');
 }
@@ -6355,7 +6389,7 @@ els.attachInput.onchange = async () => {
   // fallback throws that away. The fallback stays for the case the server sends nothing.
   if (!res.ok) return toast(await errText(res, 'could not attach the file (a same-named attachment may already exist)'));
   await setDocumentFromServer(await res.json(), owner);
-  await loadAttachments();
+  await loadAttachments(owner);
   toast('File attached');
 };
 
@@ -6884,10 +6918,12 @@ function pnPreview() {
 // stamp it is trying to prevent.
 async function warnIfStamped(el) {
   el.hidden = true;
+  const owner = view; // pinned; an answer about another document says nothing about this dialog
   try {
-    const res = await apiFetch('/api/stamps');
+    const res = await apiFetch('/api/stamps', { docId: owner.docMeta && owner.docMeta.id });
     if (!res.ok) return;
-    el.hidden = !(await res.json()).stamped;
+    const { stamped } = await res.json();
+    if (owner === view) el.hidden = !stamped;
   } catch { /* offline or refused — the dialog opens either way */ }
 }
 
@@ -7894,13 +7930,18 @@ async function pageSplitGo() {
   const count = psSpans().length;
   if (!count) return toast('Enter page ranges like 1-3, 4-8.');
   if (!confirm(`Write ${count} file${count === 1 ? '' : 's'} to ${dir}? Files with the same name will be replaced.`)) return;
-  const form = await bakedForm();
+  // Captured before the bake, as bookmarkSplitGo does (/pending 625). The server's only guard against
+  // a part overwriting the SOURCE is the addressed document's path (/pending 569), so an arrival during
+  // the bake used to split A's bytes while guarding B's path — A's own file was then unprotected.
+  const owner = view;
+  const opDoc = owner.docMeta;
+  const form = await bakedForm(owner);
   form.append('dir', dir);
   form.append('mode', psMode());
   form.append('prefix', els.psPrefix.value);
   if (psMode() === 'every') form.append('every', String(Math.max(1, parseInt(els.psEvery.value, 10) || 1)));
   else form.append('ranges', els.psRanges.value);
-  const res = await apiFetch('/api/split-pages', { method: 'POST', body: form });
+  const res = await apiFetch('/api/split-pages', { method: 'POST', body: form, docId: opDoc && opDoc.id });
   if (!res.ok) { toast(await errText(res, 'could not split')); return; }
   const meta = await res.json();
   els.pageSplitModal.hidden = true;
@@ -8508,8 +8549,9 @@ els.exportTableOdsBtn.onclick = () => exportTable('ods');
 els.exportImagesBtn.onclick = async () => {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
+  const opDoc = view.docMeta;
   if (!view.pdfDocument) return toast('Open a PDF first');
-  const res = await apiFetch('/api/extract-images', { method: 'POST' });
+  const res = await apiFetch('/api/extract-images', { method: 'POST', docId: opDoc && opDoc.id });
   if (!res.ok) { toast('Could not extract images'); return; }
   if (res.headers.get('X-Image-Count') === '0') { toast('No extractable images found'); return; }
   openSaveAs(await res.blob(), exportName + '-images.zip', 'Export embedded images (ZIP)');
@@ -8529,7 +8571,8 @@ els.exportImagesBtn.onclick = async () => {
 async function exportFormData(format, ext) {
   if (!view.pdfDocument) return toast('Open a PDF first');
   const exportName = exportBase();
-  const res = await apiFetch('/api/form-data?format=' + format);
+  const opDoc = view.docMeta; // and the document itself, by id rather than by whichever is current
+  const res = await apiFetch('/api/form-data?format=' + format, { docId: opDoc && opDoc.id });
   if (!res.ok) { toast(await errText(res, 'Could not export the form data')); return; }
   openSaveAs(await res.blob(), exportName + '-form.' + ext, 'Export form data');
 }
@@ -15746,13 +15789,19 @@ function ceremonyCallNext(c, who) {
   const say = document.createElement('span');
   say.className = 'cercallstate';
   btn.addEventListener('click', async () => {
+    // **Both requests name the document open at the click (ADR-001).** The server signs the
+    // ADDRESSED document's bytes (`hopTarget`), and between the quote and the dial sit a render
+    // and the user — so a switch in that window addressed the dial to whatever was current, and
+    // only the ceremony-id check in `hopTarget` stood between it and another document.
+    const opDoc = view.docMeta;
+    if (!opDoc || !opDoc.id) { say.textContent = 'Open the ceremony’s document first.'; return; }
     btn.disabled = true;
     say.textContent = 'Working out whose turn it is…';
     try {
       // 1. The quote. The server names the party and, when THIS machine signs at this hop, the
       //    lines of the block to draw.
       const q = await (await apiFetch(
-        `/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { unpinned: false })).json();
+        `/api/ceremony/hop?ceremony=${encodeURIComponent(c.id)}`, { docId: opDoc.id })).json();
       if (q.error) { say.textContent = q.error; btn.disabled = false; return; }
       if (q.mine) {
         // The convener's own turn: nobody to call. Said rather than dialled — a signing convener is
@@ -15788,6 +15837,7 @@ function ceremonyCallNext(c, who) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ceremony: c.id, appearance, when: q.when }),
+          docId: opDoc.id,
         });
         const body = await res.json();
         if (!res.ok) { say.textContent = body.error || `The call failed (${res.status}).`; btn.disabled = false; return; }
