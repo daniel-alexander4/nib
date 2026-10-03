@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"nib/internal/sign"
 	"strconv"
 )
 
@@ -46,7 +47,7 @@ func (s *Server) handleKeptRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed, err := removeKept(req.Name)
-	if errors.Is(err, errNotAKeptName) {
+	if errors.Is(err, errNotAKeptName) || errors.Is(err, errNotAKeptCopy) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -104,10 +105,15 @@ func (s *Server) handleDocumentKeptCopy(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if len(ends) == 0 {
-		refuse("no-signature")
-		return
+		if !sign.HasSignatureBlob(data) { // the one signedness door (ADR-013's gates, /pending 456) — never the verdict's state
+			refuse("no-signature")
+			return
+		}
+		// Signed, but the verdict could not place its signatures (a refused library read, an exhausted sweep, a join
+		// that disagreed): that is the document that came back hostile, so it is matched without them — never told
+		// it carries no signature (the phase-close review).
 	}
-	k, b, err := keptCopyFor(data, ends)
+	k, b, err := keptCopyFor(data, ends, len(ends) > 0)
 	if err != nil {
 		refuse("unreadable")
 		return

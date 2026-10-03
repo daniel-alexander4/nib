@@ -316,8 +316,8 @@ func TestTheRemovalReachesOnlyAKeptCopy(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(filepath.Dir(keptPath), link)); err != nil {
 		t.Fatal(err)
 	}
-	if code, out := remove(link); code/100 == 2 || out.Removed {
-		t.Errorf("a kept-named symlink was removed (%d, %+v)", code, out)
+	if code, out := remove(link); code != http.StatusBadRequest || out.Removed {
+		t.Errorf("a kept-named symlink answered %d (%+v), want 400 — a refusal, not a server fault", code, out)
 	}
 	for _, p := range append(others, target, keptPath) {
 		if _, err := os.Stat(p); err != nil {
@@ -346,17 +346,21 @@ func TestKeptCopyForMatchesByBytesNotByName(t *testing.T) {
 	end := int64(len(k))
 	grown := append(append([]byte{}, k...), "% a later signature\n"...)
 	for _, tc := range []struct {
-		what string
-		data []byte
-		ends []int64
-		want bool
+		what   string
+		data   []byte
+		ends   []int64
+		placed bool
+		want   bool
 	}{
-		{"the kept copy itself", k, []int64{end}, true},
-		{"the kept copy with bytes appended", grown, []int64{end, int64(len(grown))}, true},
-		{"the right bytes at an end the signatures do not have", grown, []int64{int64(len(grown))}, false},
-		{"no ends at all", k, nil, false},
+		{"the kept copy itself", k, []int64{end}, true, true},
+		{"the kept copy with bytes appended", grown, []int64{end, int64(len(grown))}, true, true},
+		{"the right bytes at an end the signatures do not have", grown, []int64{int64(len(grown))}, true, false},
+		{"no ends at all", k, nil, true, false},
+		// The verdict could not place the signatures (the phase-close review): matched by size, tail and bytes.
+		{"unplaced, the kept copy with bytes appended", grown, nil, false, true},
+		{"unplaced, a different document of the same size", []byte("%PDF-1.7 the signed lease %%EOF\r"), nil, false, false},
 	} {
-		got, b, err := keptCopyFor(tc.data, tc.ends)
+		got, b, err := keptCopyFor(tc.data, tc.ends, tc.placed)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.what, err)
 		}
@@ -370,7 +374,7 @@ func TestKeptCopyForMatchesByBytesNotByName(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(defaultOutputDir(), keptSubdir, name), altered, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, b, _ := keptCopyFor(k, []int64{end}); b != nil {
+	if _, b, _ := keptCopyFor(k, []int64{end}, true); b != nil {
 		t.Errorf("an altered kept file matched by its name's digest — the digest was treated as evidence")
 	}
 }
@@ -538,7 +542,7 @@ func TestTheLongestKeptCopyWins(t *testing.T) {
 	plantKept(t, keptName("Lease", a, time.Now()), a)
 	plantKept(t, keptName("Lease", b, time.Now().Add(time.Second)), b)
 	data := append(append([]byte{}, b...), "% came back with this\n"...)
-	_, got, err := keptCopyFor(data, []int64{int64(len(a)), int64(len(b))})
+	_, got, err := keptCopyFor(data, []int64{int64(len(a)), int64(len(b))}, true)
 	if err != nil || !bytes.Equal(got, b) {
 		t.Fatalf("matched %d bytes (%v), want the longer %d-byte copy", len(got), err, len(b))
 	}
@@ -588,5 +592,50 @@ func TestAnUnreadableKeptFolderSaysSo(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&ref)
 	if resp.StatusCode != http.StatusUnprocessableEntity || ref.Cause != "unreadable" || resp.Header.Get("X-Nib-Kept-Copy-Cause") != "unreadable" {
 		t.Errorf("%d %+v (header %q), want 422 unreadable", resp.StatusCode, ref, resp.Header.Get("X-Nib-Kept-Copy-Cause"))
+	}
+}
+
+// TestASignedDocumentWhoseSignaturesCouldNotBePlacedStillFindsItsKeptCopy — the phase-close review: a document that came
+// back so changed the verdict could not place its signatures (no Signers, or no coverage ends) is Invalid, not unsigned;
+// the route must still match its kept copy by size, tail and bytes, and never tell the user it carries no signature.
+// Signedness is `sign.HasSignatureBlob`'s answer about the bytes, so the injected verdict below is only the "unplaced" half.
+func TestASignedDocumentWhoseSignaturesCouldNotBePlacedStillFindsItsKeptCopy(t *testing.T) {
+	ts, s := startServerWith(t)
+	c, csrf := authedClient(t, ts)
+	base, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, keptBody := finalizeWith(t, c, csrf, ts.URL, base, `{"reason":"r","keep":true,"name":"Lease"}`)
+	_, otherBody := finalizeWith(t, c, csrf, ts.URL, base, `{"reason":"r"}`)
+	ask := func(data []byte, sig sign.Status) (int, []byte, string) {
+		id := addDocument(s, data)
+		s.mu.Lock()
+		for _, d := range s.docs {
+			if d.id == id {
+				d.sig = sig
+			}
+		}
+		s.mu.Unlock()
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/document/kept-copy", nil)
+		req.Header.Set("X-Nib-Doc", id.String())
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b, resp.Header.Get("X-Nib-Kept-Copy-Cause")
+	}
+	unplaced := sign.Status{State: sign.Invalid} // the library refused it: no Signers, so no coverage ends
+	returned := append(append([]byte{}, keptBody...), "\n% came back changed\n"...)
+	if code, b, cause := ask(returned, unplaced); code != http.StatusOK || !bytes.Equal(b, keptBody) {
+		t.Errorf("an unplaced signed document: %d (%s), %d bytes; want 200 and its kept copy", code, cause, len(b))
+	}
+	if code, _, cause := ask(otherBody, unplaced); code != http.StatusUnprocessableEntity || cause != "none-kept" {
+		t.Errorf("an unplaced document no copy was kept for: %d %q, want 422 none-kept — never no-signature", code, cause)
+	}
+	if code, _, cause := ask(base, sign.Status{State: sign.Unsigned}); cause != "no-signature" {
+		t.Errorf("an unsigned document: %d %q, want 422 no-signature", code, cause)
 	}
 }

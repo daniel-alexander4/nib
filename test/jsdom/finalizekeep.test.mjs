@@ -16,11 +16,16 @@ let removeAnswer = true;
 const probes = [];
 let opens = 0;
 let openSig = { state: 'unsigned' };
+let openCanUndo = false;
+let undoSig = { state: 'unsigned' };
 let probeAnswer = () => new Response(null, { status: 422, headers: { 'X-Nib-Kept-Copy-Cause': 'no-signature' } });
 const h = await boot({
   routes: {
     '/api/open': () => { opens++; return { id: 'test-epoch:1', name: 'Lease.pdf', path: '/tmp/nib-harness/Lease.pdf', canSave: true,
-      canUndo: false, canRedo: false, signature: openSig }; },
+      canUndo: openCanUndo, canRedo: false, signature: openSig }; },
+    // A server operation that changes the signatures (an undo of a signing), answered with the document's new meta.
+    '/api/undo': () => ({ id: 'test-epoch:1', name: 'Lease.pdf', path: '/tmp/nib-harness/Lease.pdf', canSave: true,
+      canUndo: false, canRedo: true, signature: undoSig }),
     '/api/identity/external': { present: false },
     '/api/listdir': { path: '/home/someone/nib', parent: '/home/someone', dirs: [], files: [] },
     '/api/finalize': (opts) => { posted.push(opts.body); return finalizeAnswer.clone(); },
@@ -329,6 +334,10 @@ test('a load in another mode asks nothing — the checklist is not on screen', a
   assert.equal(probes.length, n, 'a load asked the server while the checklist was in a mode not on screen');
   doc.querySelector('.modetab[data-tab="collaborate"]').click();
   await settle();
+  await settle();
+  // Back in the sidebar's Signing mode the card lands CLOSED (Secure opened its own card), so no row is on screen
+  // until it is opened — and opening it is the forced ask.
+  assert.equal(simpleSignHead().getAttribute('aria-expanded'), 'false', 'the checklist is on screen without having been asked');
   openSig = { state: 'unsigned' };
 });
 
@@ -360,4 +369,116 @@ test('a load whose signature VERDICT changed asks again, even where the coverage
   assert.equal(probes.length, n + 1, 'a document whose signature broke, at the same coverage end, was not asked again');
   assert.equal(keptRow().dataset.state, 'todo');
   openSig = { state: 'unsigned' };
+});
+
+// ── The P04 phase-close review's fixes ─────────────────────────────────────────────────────────────────────────────
+
+test('nothing but the probe ticks the row after a kept Finalize — not even while the probe is still out', async () => {
+  probeAnswer = answer(422, 'no-signature');
+  await reopenCard();
+  let release;
+  probeAnswer = () => new Promise((r) => { release = () => r(new Response(null, { status: 422, headers: { 'X-Nib-Kept-Copy-Cause': 'no-signature' } })); });
+  finalizeAnswer = new Response(new Uint8Array([37, 80, 68, 70]), { status: 200,
+    headers: { 'Content-Type': 'application/pdf', 'X-Nib-Kept': 'kept_lease_20261003-100000-0011aabb.pdf' } });
+  await openModal();
+  $('fzKeep').checked = true;
+  $('fzGo').click();
+  await settle();
+  await settle();
+  assert.ok(release, 'stimulus: the kept Finalize did not ask the server');
+  assert.notEqual(keptRow().dataset.state, 'done', 'the row ticked from the Finalize response while its own check was still out');
+  release();
+  await settle();
+  await settle();
+  assert.equal(keptRow().dataset.state, 'untracked');
+  $('saveAsCancel').click();
+  await settle();
+});
+
+test('a second press of Finalize while the first is signing signs nothing more', async () => {
+  let answerIt;
+  const held = new Promise((r) => { answerIt = r; });
+  const before = posted.length;
+  finalizeAnswer = { clone: () => held }; // the route hands back what clone() returns, so the request stays open
+  await openModal();
+  $('fzKeep').checked = true;
+  $('fzGo').click();
+  await settle();
+  $('fzGo').click();
+  await settle();
+  assert.equal(posted.length, before + 1, 'a second press signed again while the first signing was in flight');
+  assert.equal($('fzGo').disabled, true, 'the button stayed live while a signing was in flight');
+  answerIt(new Response(new Uint8Array([37, 80, 68, 70]), { status: 200, headers: { 'Content-Type': 'application/pdf' } }));
+  await settle();
+  await settle();
+  assert.equal($('fzGo').disabled, false, 'the button was not given back after the signing answered');
+  $('saveAsCancel').click();
+  await settle();
+});
+
+test('a server operation that changes the signatures asks the row again, off the NEW signatures', async () => {
+  openSig = { state: 'valid', signers: [{ coverageEnd: 500, name: 'Me' }] };
+  openCanUndo = true;
+  await reopen();
+  probeAnswer = answer(200);
+  await reopenCard();
+  assert.equal(keptRow().dataset.state, 'done', 'setup');
+  const n = probes.length;
+  undoSig = { state: 'unsigned' };
+  probeAnswer = answer(422, 'no-signature');
+  setNextDocument({ numPages: 1 });
+  doc.defaultView.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  await settle();
+  await settle();
+  assert.ok(probes.length > n, 'stimulus: the undo that removed the signature did not ask the row again');
+  assert.equal(keptRow().dataset.state, 'untracked', 'the row still answers for the signatures the undo removed');
+  assert.match(keptRow().querySelector('.signstep-mark').title, /carries no signature/);
+  openSig = { state: 'unsigned' };
+  openCanUndo = false;
+  await reopen();
+});
+
+test('a failed check is asked again on the next load — a failure is not a held answer', async () => {
+  probeAnswer = answer(500);
+  await reopenCard();
+  assert.equal(keptRow().dataset.state, 'untracked', 'setup');
+  const n = probes.length;
+  await reopen(); // the same key, at once: a load runs on every overlay edit, so a failure is not retried immediately
+  assert.equal(probes.length, n, 'a load re-asked a check that had just failed — every edit would re-ask a broken folder');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 11000; // past the back-off
+  try {
+    probeAnswer = answer(200);
+    await reopen();
+  } finally { Date.now = realNow; }
+  assert.ok(probes.length > n, 'a load after the back-off did not ask the failed check again');
+  assert.equal(keptRow().dataset.state, 'done');
+});
+
+test('with the sidebar shut the checklist sits in the toolbar, and is asked there — on the shutting and on a mode switch', async () => {
+  probeAnswer = answer(422, 'no-signature');
+  await reopenCard();
+  simpleSignHead().click(); // CLOSE the card first: in the toolbar it must count as on screen without being open
+  await settle();
+  assert.equal(doc.querySelector('.tbgroup[data-label="Simple Sign"]').classList.contains('open'), false, 'setup: the card is still open');
+  let n = probes.length;
+  probeAnswer = answer(200);
+  $('toggleSidebarBtn').click(); // shut: the panes move into the toolbar, where every group shows
+  await settle();
+  await settle();
+  assert.ok(doc.querySelector('#toolbar .tbgroup[data-label="Simple Sign"]'), 'stimulus: the checklist did not move into the toolbar');
+  assert.ok(probes.length > n, 'shutting the sidebar put the checklist in the toolbar without asking');
+  assert.equal(keptRow().dataset.state, 'done');
+  doc.querySelector('.modetab[data-tab="secure"]').click();
+  await settle();
+  n = probes.length;
+  probeAnswer = answer(422, 'none-kept');
+  doc.querySelector('.modetab[data-tab="collaborate"]').click(); // back to the checklist, which never closed
+  await settle();
+  await settle();
+  assert.ok(probes.length > n, 'returning to the mode that shows the checklist did not ask again');
+  assert.equal(keptRow().dataset.state, 'todo', 'the row kept the answer from before it left the screen');
+  $('toggleSidebarBtn').click();
+  await settle();
 });

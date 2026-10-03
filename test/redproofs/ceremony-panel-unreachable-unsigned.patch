@@ -1,12 +1,12 @@
 diff --git a/web/app.js b/web/app.js
 --- a/web/app.js
 +++ b/web/app.js
-@@ -4900,7 +4900,7 @@
+@@ -5067,7 +5067,7 @@
    // Details only exist for a signed document (valid or modified) — OR for a document in a
    // ceremony, which has an obliged-signer count to report before anyone has signed at all —
    // OR for one carrying a signature Nib refused, which the panel names (P01.S02).
 -  els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length && !sig?.unchecked;
 +  els.sigDetailsBtn.hidden = !signers.length && !refused.length && !timestamps.length && !sig?.unchecked;
- }
- 
- // addedAfterSuffix is the badge's words for `sign.Status.addedAfterCause`. A refused signature
+   // The checklist reads the verdict this just stored: a server operation (a co-sign, an undo of a signing) sets the
+   // dirty flag BEFORE the badge, so the render and the kept-copy ask that rode on it read the old signatures (the P04
+   // phase-close review). Re-read them here, off the new `lastSig`.
