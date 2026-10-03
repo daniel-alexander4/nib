@@ -618,3 +618,8 @@ home today.
   signing banner beside both of Complete & sign's buttons, off at every opening, its disclosure read from the Finalize
   modal's; the request carries `keep` as the modal's does and a `copy-not-kept` refusal is worded by the one
   `keptRefusal`. The CLI still offers none.
+- **[ADR-079 — a stamp leaves a turned page where it was, and a flag needs no anchor while every rewrite keeps its place](079-a-stamp-leaves-a-turned-page-where-it-was-and-a-flag-needs-no-anchor.md)**
+  — /pending 457. No content anchor in `NibFlags`: every route that commits a rewrite is classified for its flags and
+  every keeps-geometry rewrite is driven over flagged documents. That census found pdfcpu's stamp turning a turned page
+  about the origin, so a page whose box does not start there left its box on OCR, bake, watermark and page numbers;
+  `stampInPlace` is now the one door every pdfcpu stamp runs through, turning about the box's corner.

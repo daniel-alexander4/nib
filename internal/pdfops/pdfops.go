@@ -2117,25 +2117,33 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 	if len(wms) == 0 {
 		return pdf, nil
 	}
-	// The read-stamp-write is `api.AddWatermarksSliceMap`'s own sequence, run through the package's rewrite so
-	// the page count is in hand: a stamp keyed to a page the document does not have is refused (`/pending 823`)
-	// — page 0 used to be moved onto page 1, under a success — and the configuration is the text stamp's
-	// (`stampTextWatermarks`), so the two stamp kinds read a document the same way.
+	// One door for the stamp (`addWatermarks`): a stamp keyed to a page the document does not have is refused
+	// (`/pending 823`) — page 0 used to be moved onto page 1, under a success — and a turned page is turned about
+	// its own box's corner (`/pending 457`).
+	out, err := addWatermarks(pdf, wms)
+	if err != nil {
+		return nil, err
+	}
+	return honestOptionalContent(out), nil
+}
+
+// addWatermarks is `api.AddWatermarksSliceMap`'s own read-stamp-write, run through the package's rewrite so the page
+// count is in hand and the stamp goes through stampInPlace, which `api` cannot reach: a page the document does not
+// have is refused (`/pending 823`), and a turned page's drawing is turned about its own box's corner rather than the
+// origin (`/pending 457`). The configuration is the text stamp's (`stampTextWatermarks`), so the stamp kinds read a
+// document the same way.
+func addWatermarks(pdf []byte, wms map[int][]*model.Watermark) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.ADDWATERMARKS
 	conf.OptimizeDuplicateContentStreams = false
-	out, err := rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
+	return rewriteWithConf(pdf, conf, func(ctx *model.Context) error {
 		for page := range wms {
 			if err := pageInDocument(page, ctx.PageCount); err != nil {
 				return err
 			}
 		}
-		return pdfcpu.AddWatermarksSliceMap(ctx, wms)
+		return stampInPlace(ctx, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
 	})
-	if err != nil {
-		return nil, err
-	}
-	return honestOptionalContent(out), nil
 }
 
 // WatermarkStyle controls how StampWatermark renders the label.
