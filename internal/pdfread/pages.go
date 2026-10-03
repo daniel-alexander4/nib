@@ -32,7 +32,8 @@ type Page struct {
 // Every caller was written against `PageDict`'s answer, and several write what they read (a crop, a tab order, a
 // language), so this must never re-decide what a page is. The walk mirrors pdfcpu's own
 // (`processPageTreeForPageDictDepth`, `model/xreftable.go`, v0.13.0) for every page at once, and wherever the two
-// could part company it gives up and asks `PageDict` page by page, at the old cost:
+// could part company it gives up and takes the tolerant walk (pagesim.go), which replays pdfcpu page by page with
+// the work shared between pages (/pending 818):
 //
 //   - a node's `/Count` (as `IntEntry` reads it) that is absent or disagrees with the pages beneath it. pdfcpu
 //     SKIPS a subtree by its count, so a wrong one moves which page a number reaches; and where it is absent it
@@ -52,17 +53,17 @@ func Pages(ctx *model.Context) []Page {
 	return out
 }
 
-// PagesWalked is Pages, also saying whether the one walk answered (true) or pdfcpu was asked page by page (false).
-// Only an instrument reads the flag; the pages are the same answer either way.
+// PagesWalked is Pages, also saying whether the one walk answered (true) or the tree took the tolerant walk
+// (false). Only an instrument reads the flag; the pages are the same answer either way.
+//
+// The tolerant walk (`simulatePages`, pagesim.go) replays pdfcpu's per-page algorithm with the work shared between
+// pages. It replaced asking `PageDict` page by page (/pending 818), which re-walked the tree from the root for every
+// page: one leaf's `/Count -1` on a flat 20,000-page tree cost 1m40-2m per call.
 func PagesWalked(ctx *model.Context) ([]Page, bool) {
 	if out, ok := walkPages(ctx.XRefTable); ok {
 		return out, true
 	}
-	out := make([]Page, 0, max(ctx.PageCount, 0))
-	for p := 1; p <= ctx.PageCount; p++ {
-		d, ref, attrs, err := ctx.PageDict(p, false)
-		out = append(out, Page{Nr: p, Dict: d, Ref: ref, Attrs: attrs, Err: err})
-	}
+	out, _ := simulatePages(ctx)
 	return out, false
 }
 

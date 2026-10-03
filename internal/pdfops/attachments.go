@@ -416,6 +416,13 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 		return "", err
 	}
 	st.fastPath = pages != nil
+	// The fallback asks `pdfread.Pages`, which answers `PageDict(i, false)` for every page — not `PageDict` per page,
+	// which re-walks the tree from the root each time: a `/Kids []` leaf sends this loop here, and on a flat 20,000-page
+	// tree that was 1m40-2m of ceremony hashing (/pending 818).
+	var fallback []pdfread.Page
+	if pages == nil {
+		fallback = pdfread.Pages(ctx)
+	}
 	for i := 1; i <= ctx.PageCount; i++ {
 		// `pages` is nil whenever the one-pass walk was not usable, and a nil SLICE must not be
 		// indexed — the first cut wrote `pages[i-1]` unguarded, which panics on exactly the
@@ -426,7 +433,11 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 		}
 		if d == nil {
 			var err error
-			d, _, _, err = ctx.PageDict(i, false)
+			if i-1 < len(fallback) {
+				d, err = fallback[i-1].Dict, fallback[i-1].Err
+			} else {
+				d, _, _, err = ctx.PageDict(i, false)
+			}
 			if err != nil {
 				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
 			}

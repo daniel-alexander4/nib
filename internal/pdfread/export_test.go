@@ -8,6 +8,8 @@ var (
 	PassDecodesPageContent = passDecodesPageContent
 	ValidatorPaths         = validatorPaths // the reference door's walk (refgraph.go), without the budget
 	PathBudget             = pathBudget     // the reference door's budget (refgraph.go)
+	SimulatePages          = simulatePages  // the tolerant page walk (pagesim.go), with the work it spent
+	SimBudget              = simBudget
 )
 
 // WalkedInOnePass reports whether Pages answered from its one walk rather than asking PageDict page by page.
