@@ -2204,7 +2204,7 @@ func transferReason(doc []byte) string {
 
 // receivedName builds a stable, filesystem-safe name for a received document; the
 // wire carries no original filename, so the sender's label and the arrival time
-// identify it. labelSlug falls back to a short fingerprint when the label is empty
+// identify it. fileSlug falls back to a short fingerprint when the label is empty
 // or unprintable.
 //
 // # The document's own digest, added at P08.S05d (/pending 342)
@@ -2226,18 +2226,25 @@ func transferReason(doc []byte) string {
 // The timestamp stays, because it is what a person scans a directory by; it is no longer what
 // makes the name unique.
 func receivedName(peerLabel string, peerFP, doc []byte) string {
-	slug := labelSlug(peerLabel)
-	if slug == "" {
-		slug = hex.EncodeToString(peerFP)[:8]
-	}
+	slug := fileSlug(peerLabel, hex.EncodeToString(peerFP)[:8])
 	sum := sha256.Sum256(doc)
 	return slug + "-" + time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(sum[:4]) + ".pdf"
 }
 
-// labelSlug reduces a peer label to lowercase alphanumerics-and-dashes for a filename.
-func labelSlug(label string) string {
+// fileSlugMax caps the human half of every name `fileSlug` makes; `keptGrammar` is built from it.
+const fileSlugMax = 48
+
+// fileSlug is the ONE door from untrusted text — a peer's label, a ceremony's intent, the client's
+// document name — to the human half of a file name under ~/nib: lowercase alphanumerics and
+// dashes, at most fileSlugMax bytes, and fallback when nothing survives.
+//
+// **One door, because the cap had been copied twice and missed once (/pending 821).** `deliveredName`
+// and `keptName` each capped at 48 by hand and `receivedName` did not cap at all, so a long peer
+// label made a name the filesystem refuses (NAME_MAX is 255 bytes) — after the sender had been
+// told the document arrived. ADR-009: the rule is written here and every writer calls it.
+func fileSlug(text, fallback string) string {
 	var b strings.Builder
-	for _, r := range strings.ToLower(label) {
+	for _, r := range strings.ToLower(text) {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
@@ -2245,7 +2252,14 @@ func labelSlug(label string) string {
 			b.WriteRune('-')
 		}
 	}
-	return strings.Trim(b.String(), "-")
+	slug := strings.Trim(b.String(), "-")
+	if len(slug) > fileSlugMax {
+		slug = strings.TrimRight(slug[:fileSlugMax], "-")
+	}
+	if slug == "" {
+		return fallback
+	}
+	return slug
 }
 
 // --- HTTP handlers (all behind requireUnlocked: vault-unlocked, CSRF, loopback origin) ---

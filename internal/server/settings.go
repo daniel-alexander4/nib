@@ -107,7 +107,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := vaultFrom(r)
-	cur := v.Settings()
+	// set collects ONE assignment per field the request names; they are applied to the vault's
+	// CURRENT settings inside the door, never to a copy read here (/pending 624, 805).
+	var set []func(*vault.Settings)
+	apply := func(f func(*vault.Settings)) { set = append(set, f) }
 	if req.Appearance != nil {
 		switch *req.Appearance {
 		// Two Catppuccin flavours: "dark" is Mocha and "light" is Latte. Frappé and Macchiato
@@ -115,7 +118,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// still HOLD one, and the client normalises it to dark on the way in (applyAppearance),
 		// so what is rejected here is only a new save of a flavour that no longer has a palette.
 		case "dark", "light":
-			cur.Appearance = *req.Appearance
+			a := *req.Appearance
+			apply(func(s *vault.Settings) { s.Appearance = a })
 		default:
 			httpError(w, http.StatusBadRequest, "invalid appearance")
 			return
@@ -128,17 +132,20 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// test/jsdom/theme.test.mjs compares the three lists, for the same reason it compares the
 		// theme ones: each disagreement fails silently and differently.
 		case "all", "blue", "mauve", "green", "peach", "red", "yellow":
-			cur.CardHue = *req.CardHue
+			h := *req.CardHue
+			apply(func(s *vault.Settings) { s.CardHue = h })
 		default:
 			httpError(w, http.StatusBadRequest, "invalid cardHue")
 			return
 		}
 	}
 	if req.CheckUpdatesOnStartup != nil {
-		cur.DisableAutoUpdate = !*req.CheckUpdatesOnStartup
+		off := !*req.CheckUpdatesOnStartup
+		apply(func(s *vault.Settings) { s.DisableAutoUpdate = off })
 	}
 	if req.RecentHighlightColors != nil {
-		cur.RecentHighlightColors = sanitizeHighlightColors(*req.RecentHighlightColors)
+		colors := sanitizeHighlightColors(*req.RecentHighlightColors)
+		apply(func(s *vault.Settings) { s.RecentHighlightColors = colors })
 	}
 	if req.ViewLayout != nil {
 		// **"pages" is stored as EMPTY, which is the whole reason this is a switch and not an
@@ -149,9 +156,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// so this build cannot be handed a layout name it does not implement.
 		switch *req.ViewLayout {
 		case "continuous":
-			cur.ViewLayout = "continuous"
+			apply(func(s *vault.Settings) { s.ViewLayout = "continuous" })
 		case "pages", "":
-			cur.ViewLayout = ""
+			apply(func(s *vault.Settings) { s.ViewLayout = "" })
 		// **"presentation" is refused rather than stored.** It is something you are doing for the
 		// next ten minutes, not how you like to read, and an app that reopened full screen because
 		// of a meeting last Tuesday would be wrong in a way the user cannot diagnose. The client
@@ -169,16 +176,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "invalid readAloudVoice")
 			return
 		}
-		cur.ReadAloudVoice = name
+		apply(func(s *vault.Settings) { s.ReadAloudVoice = name })
 	}
 	if req.ReadAloudRate != nil {
 		// 1 is the default and is stored as absence, for ViewLayout's reason. The range is the one the
 		// client offers; a rate outside it is refused rather than clamped into a speed nobody chose.
 		switch rate := *req.ReadAloudRate; {
 		case rate == 1:
-			cur.ReadAloudRate = 0
+			apply(func(s *vault.Settings) { s.ReadAloudRate = 0 })
 		case rate >= minReadAloudRate && rate <= maxReadAloudRate:
-			cur.ReadAloudRate = rate
+			apply(func(s *vault.Settings) { s.ReadAloudRate = rate })
 		default:
 			httpError(w, http.StatusBadRequest, "invalid readAloudRate")
 			return
@@ -205,10 +212,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// Empty is stored as absence, per `HiddenModes`' own rule: nothing hidden and never asked
 		// are one state, and both mean every mode shows.
 		if len(out) == 0 {
-			cur.HiddenModes = nil
-		} else {
-			cur.HiddenModes = out
+			out = nil
 		}
+		apply(func(s *vault.Settings) { s.HiddenModes = out })
 	}
 	if req.Advanced != nil {
 		// **Refused while a proceeding is live**, and this is the whole of what `/pending 451`
@@ -217,6 +223,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// running ceremony this way would have to be recorded as `abandoned` or `stopped` — both
 		// false statements to every other party, which is the class `/pending 428` closed on. The
 		// only outcome the record can express is to refuse the change and say what is running.
+		//
+		// Read outside the door, because `hasLiveCeremony` reads the filesystem and nothing inside
+		// the door may be slow or call back into `v`. Stale in the harmless direction only: a
+		// switch-off racing a switch-on is refused or allowed as if it landed first.
+		cur := v.Settings()
 		if cur.Advanced != nil && cur.Advanced.Ceremony && !req.Advanced.Ceremony && hasLiveCeremony() {
 			httpError(w, http.StatusConflict,
 				"a signing ceremony on this machine has not finished, so switching ceremonies off "+
@@ -224,12 +235,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 					"it first, then switch this off")
 			return
 		}
-		cur.Advanced = &vault.Advanced{
+		adv := vault.Advanced{
 			Ceremony:   req.Advanced.Ceremony,
 			Discovery:  req.Advanced.Discovery,
 			Rendezvous: req.Advanced.Rendezvous,
 			Timestamp:  req.Advanced.Timestamp,
 		}
+		apply(func(s *vault.Settings) { s.Advanced = &adv })
 	}
 	// **Applied under ONE hold of the lock (`/pending 519`).** Everything above is validation and
 	// refusal — five branches answer 4xx and return, and the advanced branch reads the filesystem
@@ -237,12 +249,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	// the settled values. `UpdateSettings` runs this function while holding the vault's mutex, which
 	// is not reentrant: nothing in here may call back into `v`.
 	//
-	// `cur` was read at the top of the handler and the fields the request did not name still carry
-	// what was stored then, so this assigns the whole struct rather than the changed fields — which
-	// is what `SetSettings` did. The difference the door makes is that a concurrent writer can no
-	// longer land between that read and this write; the seed, the other writer, now no-ops under the
-	// same lock when the user has already answered.
-	if err := v.UpdateSettings(func(s *vault.Settings) { *s = cur }); err != nil {
+	// **Only the fields the request NAMED are written, onto the settings as they stand inside the
+	// door (/pending 624, 805).** This comment used to say a concurrent writer "can no longer land
+	// between that read and this write" while the handler read a snapshot at its top and assigned
+	// the whole of it back here — so two partial POSTs (a theme toggle and a layout change), or a
+	// `SeedAdvanced` landing between, lost whichever wrote first. A field the request did not name is
+	// now never touched, so it keeps whatever the vault holds at the moment of the write.
+	if err := v.UpdateSettings(func(s *vault.Settings) {
+		for _, f := range set {
+			f(s)
+		}
+	}); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not save settings")
 		return
 	}

@@ -1470,6 +1470,35 @@ func (s *Server) addDocCapped(doc *document) (*document, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.addDocCappedLocked(doc)
+}
+
+// addDocCappedOrFocus is addDocCapped for a door that must not open one path twice (D16, the
+// hand-off): if a document opened from `path` is already registered it is activated and returned
+// with focused true, and doc is not installed. **The lookup and the install share ONE hold** — two
+// hand-offs of one file, or a hand-off racing the unlock drain, each found the path absent under
+// one hold, read the file, and registered under another, so both installed (/pending 590, 821). An
+// empty path never matches, for docForPath's reason.
+func (s *Server) addDocCappedOrFocus(doc *document, path string) (installed *document, focused bool, err error) {
+	if doc == nil {
+		return nil, false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if path != "" {
+		for _, d := range s.docs {
+			if d.path == path {
+				s.activeID = d.id
+				return d, true, nil
+			}
+		}
+	}
+	installed, err = s.addDocCappedLocked(doc)
+	return installed, false, err
+}
+
+// addDocCappedLocked is addDocCapped's body. Caller holds s.mu.
+func (s *Server) addDocCappedLocked(doc *document) (*document, error) {
 	if len(s.docs) >= maxOpenDocs {
 		return nil, ErrTooManyOpen
 	}

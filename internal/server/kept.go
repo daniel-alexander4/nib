@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,9 +33,9 @@ import (
 const keptSubdir = "signed"
 
 // keptGrammar is version 1 of a kept copy's name: `kept_<slug>_<YYYYmmdd-HHMMSS>-<first 8 hex of sha256>.pdf`. The slug
-// is `labelSlug`'s alphabet, which never holds `_` (it maps `_` to `-`), so the name parses one way and no peer label or
+// is `fileSlug`'s alphabet and cap, which never holds `_` (it maps `_` to `-`), so the name parses one way and no peer label or
 // ceremony intent can produce it. A later grammar takes a NEW prefix; a reader ignores names it does not parse.
-var keptGrammar = regexp.MustCompile(`^kept_([a-z0-9-]{1,48})_([0-9]{8}-[0-9]{6})-([0-9a-f]{8})\.pdf$`)
+var keptGrammar = regexp.MustCompile(`^kept_([a-z0-9-]{1,` + strconv.Itoa(fileSlugMax) + `})_([0-9]{8}-[0-9]{6})-([0-9a-f]{8})\.pdf$`)
 
 // errNotAKeptName is the refusal of a name the grammar does not accept.
 var errNotAKeptName = errors.New("that is not the name of a copy kept when you signed")
@@ -44,20 +45,14 @@ var errNotAKeptName = errors.New("that is not the name of a copy kept when you s
 var errNotAKeptCopy = errors.New("that is not a copy kept when you signed")
 
 // keptName is the name for a copy of signed, kept at now, of the document the client called docName. docName is the
-// client's text and untrusted: it only ever narrows to `labelSlug`'s alphabet, capped at 48 like a delivered name.
+// client's text and untrusted: it only ever narrows through `fileSlug`, the door every name in this folder takes.
 func keptName(docName string, signed []byte, now time.Time) string {
 	// Only a `.pdf` extension is dropped: the client sends a name without one, and stripping any extension cut
 	// "Contract v1.2" to "contract-v1" (the slice review).
 	if strings.EqualFold(filepath.Ext(docName), ".pdf") {
 		docName = strings.TrimSuffix(docName, filepath.Ext(docName))
 	}
-	slug := labelSlug(docName)
-	if len(slug) > 48 {
-		slug = strings.TrimRight(slug[:48], "-")
-	}
-	if slug == "" {
-		slug = "document"
-	}
+	slug := fileSlug(docName, "document")
 	sum := sha256.Sum256(signed)
 	return "kept_" + slug + "_" + now.Format("20060102-150405") + "-" + hex.EncodeToString(sum[:4]) + ".pdf"
 }

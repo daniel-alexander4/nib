@@ -5863,7 +5863,7 @@ One row, tier 1, and it is recorded against a hole that was measured rather than
 
 | the defect, restored | prove it | what goes red |
 |---|---|---|
-| `the-cli-writes-through-a-non-durable-door-not-named-write` — `writeSplitFiles` reaches `atomicfile.WriteFrom`, a door whose own comment says it is *"ATOMIC, and deliberately not durable, the same choice `Write` makes and for the same reason"* | `go test ./internal/cli/ -run TestTheInPlaceRewriteIsDurableNotMerelyAtomic` | `reaches a NON-DURABLE atomicfile door` |
+| `the-cli-writes-through-a-non-durable-door-not-named-write` — `writeSplitFiles` reaches `atomicfile.CreateFrom` (named `WriteFrom` when the row was written), a door whose own comment says it is *"ATOMIC, and deliberately not durable, the same choice `Write` makes and for the same reason"* | `go test ./internal/cli/ -run TestTheInPlaceRewriteIsDurableNotMerelyAtomic` | `reaches a NON-DURABLE atomicfile door` |
 
 **The row exists because the guard could not see this patch.** `atomicdurable_test.go` tested
 `strings.Contains(src, "atomicfile.Write(")`, and `atomicfile.WriteFrom(` does not contain that

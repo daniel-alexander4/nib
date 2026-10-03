@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -109,6 +110,37 @@ func TestSettingsSanitizesHighlightColors(t *testing.T) {
 // settingsRequest's nil-means-absent contract holds. Re-homed onto a field the client
 // actually sends, which makes it a stronger test than it was: a regression here now breaks
 // something a user would see.
+// TestConcurrentPartialSettingsLoseNothing — /pending 624/805. The handler read a snapshot at its top
+// and wrote the WHOLE of it back inside the door, so a POST naming only `cardHue` that read before a
+// concurrent `appearance` POST committed put the old appearance back. Sequential partial updates (the
+// test below) could never see it. Pairs are fired together and each pair's two answers checked.
+func TestConcurrentPartialSettingsLoseNothing(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+	looks := []string{"dark", "light"}
+	hues := []string{"blue", "green"}
+	for i := 0; i < 60; i++ {
+		look, hue := looks[i%2], hues[i%2]
+		var wg sync.WaitGroup
+		for _, body := range []map[string]any{{"appearance": look}, {"cardHue": hue}} {
+			wg.Add(1)
+			go func(body map[string]any) {
+				defer wg.Done()
+				r := write(t, c, csrf, "POST", ts.URL+"/api/settings", "application/json", jsonBody(body))
+				r.Body.Close()
+				if r.StatusCode != http.StatusOK {
+					t.Errorf("settings status = %d, want 200", r.StatusCode)
+				}
+			}(body)
+		}
+		wg.Wait()
+		if st := fetchStatus(t, c, ts); st.Appearance != look || st.CardHue != hue {
+			t.Fatalf("round %d: sent appearance %q and cardHue %q together, vault holds %q and %q — "+
+				"one partial update wrote back a field it did not name", i, look, hue, st.Appearance, st.CardHue)
+		}
+	}
+}
+
 func TestSettingsPartialUpdatePreservesOtherFields(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)

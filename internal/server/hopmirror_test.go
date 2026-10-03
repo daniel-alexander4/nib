@@ -27,7 +27,7 @@ import (
 // # Why the closure gets a guard rather than a sentence
 //
 // The item is closed on a property of the code, and a property nothing checks is one a later change
-// undoes silently. Switching `ContributionProgress(doc.data, …)` to the mirror's bytes is a
+// undoes silently. Switching `ContributionProgress(data, …)` (the open document's bytes) to the mirror's bytes is a
 // one-token edit that would make 438 live again with nothing to notice — and it would look like a
 // simplification, because `ReadMirror` is already being called two lines above.
 //
@@ -50,7 +50,8 @@ func TestTheHopRouteDoesNotAuthoriseFromTheMirror(t *testing.T) {
 	}
 
 	// The turn is computed over the OPEN DOCUMENT. This is the clause 438 turns on.
-	if !strings.Contains(body, "p2p.ContributionProgress(doc.data,") {
+	if !strings.Contains(body, "p2p.ContributionProgress(data,") ||
+		!strings.Contains(body, "data := doc.data") {
 		t.Error("the hop's turn is no longer computed over the open document's bytes. If it now " +
 			"reads the mirror's document instead, /pending 438 is live again: the mirror's " +
 			"`DocHash` check runs only while a document is UNSIGNED and its sidecar is a damage " +

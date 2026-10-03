@@ -103,7 +103,8 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 
 	// D16: a path already open is activated, not opened twice. Two tabs on one path are
 	// two independent working copies of the same file, and whichever saves last silently
-	// discards the other's work.
+	// discards the other's work. This check only spares the file read: the AUTHORITATIVE one
+	// is inside openHandedOff's install, under the hold that registers (/pending 590).
 	if s.focusPath(path) {
 		writeJSON(w, handoffResponse{Result: "focused", Launch: s.MintLaunchKey()})
 		return
@@ -119,8 +120,13 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, handoffResponse{Result: "queued", Launch: s.MintLaunchKey()})
 		return
 	}
-	if err := s.openHandedOff(path); err != nil {
+	focused, err := s.openHandedOff(path)
+	if err != nil {
 		writeJSON(w, handoffResponse{Result: "refused", Reason: err.Error(), Launch: s.MintLaunchKey()})
+		return
+	}
+	if focused {
+		writeJSON(w, handoffResponse{Result: "focused", Launch: s.MintLaunchKey()})
 		return
 	}
 	writeJSON(w, handoffResponse{Result: "opened", Launch: s.MintLaunchKey()})
@@ -132,7 +138,10 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 // less-checked way to install a document: no LooksLikePDF (so any readable file becomes
 // the open document with canSave true, and Save clobbers it), no size cap, no document
 // cap.
-func (s *Server) openHandedOff(path string) error {
+//
+// Reports focused when path was found already open AT THE INSTALL and activated instead —
+// see addDocCappedOrFocus for why the caller's earlier focusPath is not enough.
+func (s *Server) openHandedOff(path string) (focused bool, err error) {
 	data, converted, ref := readInstallablePDF(path)
 	if ref != nil {
 		// Its own wording, kept deliberately. This door is the OS handing Nib a file the
@@ -141,20 +150,20 @@ func (s *Server) openHandedOff(path string) error {
 		// does not require every site to print the same sentence.
 		switch ref.kind {
 		case refuseTooLarge:
-			return errHandoff("that PDF is too large")
+			return false, errHandoff("that PDF is too large")
 		case refuseUnreadable:
-			return errHandoff("that file could not be read")
+			return false, errHandoff("that file could not be read")
 		case refuseNotPDF:
-			return errHandoff("that file isn't a PDF")
+			return false, errHandoff("that file isn't a PDF")
 		case refuseConvertible:
 			// **Handled explicitly, because the `default` below would have swallowed it.** A new
 			// refusalKind does not fail to compile here — Go has no exhaustive switch — so it
 			// would have degraded to "that file could not be opened" for a document nib actually
 			// converts, and the drift would have passed every test. /pending 541 named this arm as
 			// the trap in its own fix.
-			return errHandoff(convertibleRefusal(filepath.Base(path)))
+			return false, errHandoff(convertibleRefusal(filepath.Base(path)))
 		default:
-			return errHandoff("that file could not be opened")
+			return false, errHandoff("that file could not be opened")
 		}
 	}
 	// **An image hand-off installs PATHLESS**, for the reason `readInstallablePDF` states: the
@@ -165,10 +174,8 @@ func (s *Server) openHandedOff(path string) error {
 	if converted {
 		doc = &document{path: "", name: filepath.Base(path), data: data, sig: sign.Verify(data)}
 	}
-	if _, err := s.addDocCapped(doc); err != nil {
-		return err
-	}
-	return nil
+	_, focused, err = s.addDocCappedOrFocus(doc, path)
+	return focused, err
 }
 
 type errHandoff string
@@ -256,7 +263,7 @@ func (s *Server) drainPendingOpens() {
 		if s.docForPath(path) != nil {
 			continue
 		}
-		if err := s.openHandedOff(path); err != nil {
+		if _, err := s.openHandedOff(path); err != nil {
 			// Logged rather than surfaced: the user is at the unlock screen and has no
 			// place to receive it yet. The document simply does not appear, which is
 			// the same outcome as the refusal they would have seen while unlocked.

@@ -1,6 +1,6 @@
 # docs/red-proofs.md, tier 1: "the CLI writes through a non-durable door not named Write" (/pending 550)
 #
-# The defect: `internal/cli` reaches `atomicfile.WriteFrom` — a door whose own comment says it is
+# The defect: `internal/cli` reaches `atomicfile.CreateFrom` (then named `WriteFrom`) — a door whose own comment says it is
 # *"ATOMIC, and deliberately not durable, the same choice `Write` makes and for the same reason"* —
 # for a file the user named. A crash inside the writeback window then leaves a truncated file where
 # the original was, after the command has printed that it was written.

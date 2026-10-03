@@ -526,7 +526,7 @@ func TestOnlyTheKeptDoorNamesAKeptCopyOrRemovesAFile(t *testing.T) {
 	}
 	for f, n := range removes {
 		switch {
-		case f == "kept.go" && n == 1, f == "updatedownload.go" && n == 2:
+		case f == "kept.go" && n == 1, f == "updatedownload.go" && n == 1: // the short-read removal; the dead `.part` remove went with /pending 821
 		default:
 			t.Errorf("%s calls os.Remove/os.RemoveAll %d time(s): a file removal outside kept.go's door (or a new update-download cleanup) needs naming here", f, n)
 		}
