@@ -126,8 +126,25 @@ test('Finalize with "Keep a copy" keeps one and says so; the tick is off at the 
 // P04.S02 — the whole loop, live: Finalize with the tick and save the result; append bytes (the document "came back");
 // open it, and the sheet's FIRST link finds the copy kept when you signed and compares against it. Then the list shows
 // that copy and removes it after the confirm.
+// P04.S03's row reads that same match: the Simple Sign checklist, asked through the one door.
+const keptRowState = async () => {
+  await h.mode('collaborate');
+  await h.card('Simple Sign');
+  const want = 'A copy kept when you signed';
+  await page.waitForFunction((l) => [...document.getElementById('signSteps').children]
+    .some((r) => r.querySelector('.signstep-label').textContent === l && r.querySelector('.signstep-mark').title
+      && !/not checked this document yet/.test(r.querySelector('.signstep-mark').title)), want, { timeout: 15000 });
+  return page.evaluate((l) => {
+    const r = [...document.getElementById('signSteps').children].find((x) => x.querySelector('.signstep-label').textContent === l);
+    return { state: r.dataset.state, by: r.dataset.by, title: r.querySelector('.signstep-mark').title };
+  }, want);
+};
+
 test('a document kept when signed and returned changed is matched to its kept copy, which the list then removes', async () => {
   await h.openDocument(DOC, 1);
+  const unsigned = await keptRowState();
+  assert.equal(unsigned.state, 'untracked', 'the checklist row ticked for a document that carries no signature');
+  assert.match(unsigned.title, /carries no signature/);
   await h.mode('secure');
   await h.group('Sign & Timestamp');
   await page.click('#finalizeBtn');
@@ -147,6 +164,9 @@ test('a document kept when signed and returned changed is matched to its kept co
   fs.writeFileSync(KEPT_OUT, Buffer.concat([fs.readFileSync(saved), Buffer.from('\n% came back with this added\n')]));
 
   await h.openDocument(KEPT_OUT, 1);
+  const matched = await keptRowState();
+  assert.equal(matched.state, 'done', `the checklist row did not find the copy kept when this was signed (${matched.title})`);
+  assert.equal(matched.by, 'nib');
   await h.mode('secure');
   await h.group('Sign & Timestamp');
   await page.click('#returnedBtn');
@@ -167,5 +187,8 @@ test('a document kept when signed and returned changed is matched to its kept co
   assert.equal(h.dialogs.length, asked + 1, 'the removal asked for no confirmation');
   assert.match(h.dialogs.at(-1), /permanent/);
   await page.click('#keptClose');
+  // The copy is gone; coming back to the checklist re-asks, and the row reads ○ — never the ✓ it showed before.
+  const after = await keptRowState();
+  assert.equal(after.state, 'todo', `the row still reads ${after.state} after its kept copy was removed (${after.title})`);
   await h.closeDocument();
 });

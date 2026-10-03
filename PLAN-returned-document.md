@@ -1209,11 +1209,47 @@ offers the kept copy first ✅, then the ceremony copy ✅, then a file you choo
 answering — the chain's buttons in that order; tier 3 the kept link live). The matcher is ONE door (`keptCopyFor`,
 bytes not the name — the altered-copy test), the removal one door (the AST census).
 
-#### P04.S03 — the checklist step, and the ADR
+#### P04.S03 — the checklist step, and the ADR *(done 2026-10-03, v1.182.2)*
 Scope: the Simple Sign row with a real probe; the ADR. Refs: D16, D13.
 Acceptance: ~~the row ticks from a filesystem probe and shows `—` for documents signed before this
 shipped; the ADR is in the same commit.~~ *(superseded by the phase-open PIN and the plan-review pins: the ADR is S01's)* **(phase-open PIN, amends the line before)**: ✓ / ○ for an open document carrying a
 signature of yours, by whether a kept copy is its signed version or its prefix; `—` when it carries none.
+
+Grill (2026-10-03, light — the pins fix the shape; read at the lines: `renderSignSteps`/`SIGN_STEPS` `app.js:13893-14030`,
+`refreshProfileFilled` `:13951`, `reflectDocTitle` `:11750`, `handleDocumentKeptCopy` `keptroutes.go:80`, `keptCopyFor`
+`kept.go:190`; deepdive does NOT fire — the one seam touched is S02's own route). Conclusions: (1) the probe asks with
+**HEAD** — the route returns the kept copy's BYTES on a match, and a checklist wanting a verdict must not move up to the
+document's size on every card open; Go's `GET` pattern serves HEAD with the body discarded, so the match is the same
+door. HEAD carries no body, so the 422 cause is ALSO set as `X-Nib-Kept-Copy-Cause` (ADR-072's body is unchanged).
+(2) "Of yours" in the PIN: the route matches every signature's coverage end (identity-independent, as S02 pinned), so
+`—` means the document carries no signature at all — the pin's own hover wording. (3) The cache key is the doc id PLUS
+the signatures' coverage ends: a per-id answer alone would keep a ✓ after an edit that broke the signatures (same id,
+different bytes); a load while the card is open re-asks only when that key moved. Rung 1 over the pin's "per doc id".
+- T01 — `keptroutes.go`: the cause header on every refusal; HEAD documented as the checklist's probe.
+- T02 — `app.js`: `refreshKeptProbe` (HEAD, pinned, keyed, dedupes an in-flight ask, applies only to the view and key
+  it asked about), the row after "Finalize & sign" with its own hovers (`why`) and the ○ row's link to the list
+  (`extra`); triggers: card open (forced), `reflectDocTitle` while the card is open, a Finalize that kept a copy, a removal.
+- T03 — tests: Go HEAD parity over the four route cases + `unreadable`; jsdom ✓ / ○ / `—`, error never stale, HEAD and
+  pinned, on-demand only, re-ask on Finalize-kept and remove, a late answer about the old signatures dropped.
+
+**Built (v1.182.2):** T01-T03 as tasked. From the slice review (`code-reviews/v1.182.1-p04s03-…`, 0 critical, 2 warning,
+6 info, all fixed): the marker's accessible name carries the row's own account; a generation counter so only the
+NEWEST ask's answer applies; the key carries the signature VERDICT beside the ends (a `/ByteRange` number can survive
+a rewrite that breaks it); the card counts as open only in the mode on screen; a forced re-ask clears the held answer
+while it waits (found by the live run — the old ✓ would have stood until the reply). **Departure:** a "returning to
+Signing re-asks" hook was built and removed — every mode but Signing lands on its own first card and closes Simple
+Sign, so returning lands with it closed and opening it is the forced ask. **Red-proof:** 16 conditions, 15 red; the
+survivor (dropping the apply-time key check) is equivalent — `keptProbeNow` renders only an answer whose key is the
+active view's. **Live:** tier 3 drives the row on the real binary — `—` on an unsigned document, ✓ on a document
+kept when signed and returned changed, ○ after that copy is removed (`returnedverdict.test.mjs`).
+**Acceptance ledger:** ✓ for an open document carrying a signature, by whether a kept copy is its signed version ✅
+(the copy itself — Go `same`) or its prefix ✅ (tier 3, bytes appended; Go `extends`); ○ when none is ✅ (jsdom, tier 3
+after the removal); `—` when it carries none ✅ (jsdom, tier 3 on the unsigned document). Plan-review pins: cached per
+document, on demand, applied only while the view has the id ✅ (K8); never in `docResponse` or `renderSignSteps` ✅
+(grep: 0 asks in the render; the four trigger sites); the ○ count and link ✅; `—`'s own hover ✅; a probe error renders
+`—` ✅; no tick from the Finalize response ✅ (jsdom); probed and hand ✓ labelled apart ✅ (`data-by`); fixtures for ✓, ○
+and `—`, each weakened separately ✅ (M13, M15, M7, M8). The ADR clause is S01's (ADR-073, which already declares the
+post-Finalize `—`).
 
 ---
 

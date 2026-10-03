@@ -76,7 +76,8 @@ type keptCopyRefusal struct {
 // handleDocumentKeptCopy answers GET /api/document/kept-copy: the copy kept when you signed that the open document is
 // or begins with, matched by keptCopyFor against the coverage ends of the document's own signatures — the status
 // computed when it was opened, so no second parse. Pinned (ADR-004), registration checked in the same hold as the
-// bytes, no name parameter: the client cannot choose the file. On demand only (D10).
+// bytes, no name parameter: the client cannot choose the file. On demand only (D10). HEAD (which the GET pattern
+// also matches) is the checklist's probe: the same match, the same status and headers, no body sent.
 func (s *Server) handleDocumentKeptCopy(w http.ResponseWriter, r *http.Request) {
 	doc, ok := s.resolveDoc(w, r)
 	if !ok {
@@ -91,6 +92,9 @@ func (s *Server) handleDocumentKeptCopy(w http.ResponseWriter, r *http.Request) 
 	data, sig := doc.data, doc.sig
 	s.mu.Unlock()
 	refuse := func(cause string) {
+		// The cause rides in a header as well as the body, because the Simple Sign checklist asks with HEAD — it
+		// needs the answer, never the bytes (P04.S03) — and a HEAD response carries no body.
+		w.Header().Set("X-Nib-Kept-Copy-Cause", cause)
 		writeJSONStatus(w, http.StatusUnprocessableEntity, keptCopyRefusal{Cause: cause})
 	}
 	var ends []int64

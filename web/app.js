@@ -8689,7 +8689,10 @@ els.fzGo.onclick = async () => {
   els.finalizeModal.hidden = true;
   els.fzPassphrase.value = '';
   const kept = res.headers.get('X-Nib-Kept');
-  if (kept) toast(`A copy was kept when you signed: ~/nib/signed/${kept}`);
+  if (kept) {
+    toast(`A copy was kept when you signed: ~/nib/signed/${kept}`);
+    if (simpleSignOpen()) refreshKeptProbe(true); // the folder changed; the open view is still unsigned, so this reads "—"
+  }
   openSaveAs(await res.blob(), exportName + '-finalized.pdf', 'Save finalized PDF');
 };
 
@@ -11761,6 +11764,7 @@ function reflectDocTitle() {
   els.docDirty.setAttribute('aria-label', state);
   els.docDirty.title = state;
   renderSignSteps();
+  if (simpleSignOpen()) refreshKeptProbe(false); // a load or a switch: asked only when the answer is not already held
 }
 
 // Undo/Redo enable from the server's per-document history flags (view.docMeta.canUndo/
@@ -13813,7 +13817,10 @@ function buildSidebarAccordion() {
       openCard(g, head);
       // The steps list is read the moment its card opens, so that is when the profile signal is
       // re-read and the rows repainted. Cheap for every other card: the label check short-circuits.
-      if ((g.dataset.label || '') === 'Simple Sign') refreshProfileFilled().then(renderSignSteps);
+      if ((g.dataset.label || '') === 'Simple Sign') {
+        refreshProfileFilled().then(renderSignSteps);
+        if (g.classList.contains('open')) refreshKeptProbe(true);
+      }
     };
     g._head = head;
   }
@@ -13923,6 +13930,11 @@ const SIGN_STEPS = [
 
   { label: 'Finalize & sign', need: 'required', hint: 'Seals the document — any later edit breaks it',
     done: () => isSigned(), go: () => goCard('secure', 'Sign & Timestamp') },
+  // P04.S03 (ADR-073): asked of the SERVER, through the one match door, never from the Finalize response — right after
+  // Finalize the open view is still the unsigned document, so this row reads "—" there, and that is declared.
+  { label: 'A copy kept when you signed', need: 'optional', hint: 'Tick "Keep a copy for my records" when you Finalize',
+    done: () => keptStepSeen(), why: () => keptStepWhy(), extra: () => keptStepExtra(),
+    go: () => goCard('secure', 'Sign & Timestamp') },
   { label: 'Timestamp (OpenTimestamps)', need: 'optional', hint: 'A sidecar .ots — safe AFTER signing, and only after',
     done: null, go: () => goCard('secure', 'Sign & Timestamp') },
   { label: 'Save or export the signed file', need: 'required', hint: null,
@@ -13953,6 +13965,103 @@ async function refreshProfileFilled() {
     const res = await apiFetch('/api/profile');
     profileFilled = res.ok && Object.keys(await res.json() || {}).length > 0;
   } catch { /* leave it as it was; a failed read is not evidence of an empty profile */ }
+}
+
+// ── The kept-copy row (P04.S03, ADR-073) ──
+//
+// One cached answer, for one document AS IT IS: keyed on the document id and its signatures' coverage ends, so a
+// document whose signatures changed (a later signing, a rewrite that broke them) is asked again rather than shown an
+// answer about bytes it no longer has. Asked with HEAD through `GET /api/document/kept-copy` — the ONE match door
+// (`keptCopyFor`) — so the server matches and nothing is sent back but the verdict. Asked on demand only: the Simple
+// Sign card opening, a load or switch while that card is open, a Finalize that kept a copy, a removal. Never inside
+// `renderSignSteps`, which only reads the answer.
+//
+// `state` is `match` (✓), `none` (○), `nosig` (`—`, the 422 `no-signature`) or `error` (`—`: a probe that failed is
+// never shown as the last answer it gave).
+let keptProbe = { key: '', state: '', count: 0, error: '' };
+let keptProbeAsking = '';
+let keptProbeGen = 0; // each ask's number; only the newest ask's answer is applied (two forced asks can cross)
+
+// The verdict is in the key beside the ends because a coverage end is the `/ByteRange`'s literal value: a rewrite that
+// breaks a signature can leave the number where it was, and it is the state that moves (the slice review, I3).
+function keptProbeKey(v) {
+  const sig = v.lastSig || {};
+  const ends = (sig.signers || []).map((x) => x.coverageEnd || 0).join(',');
+  return `${(v.docMeta && v.docMeta.id) || ''}|${sig.state || ''}|${ends}`;
+}
+
+function simpleSignOpen() {
+  const g = [...all('#commands .tbgroup')].find((x) => (x.dataset.label || '') === 'Simple Sign');
+  // Open AND in the mode on screen: switching mode does not close a card, and a checklist nobody can see is not demand.
+  return !!(g && g.classList.contains('open') && g.closest('.tbtab.active'));
+}
+
+// refreshKeptProbe asks for the active document. `force` re-asks an answer already held (the card opening, a kept
+// copy written or removed — the folder changed, not the document); without it a held answer for the same key stands.
+async function refreshKeptProbe(force) {
+  const v = view;
+  const id = v.docMeta && v.docMeta.id;
+  if (!v.pdfDocument || !id) { keptProbe = { key: '', state: '', count: 0, error: '' }; return; }
+  const key = keptProbeKey(v);
+  if (!force && (keptProbe.key === key || keptProbeAsking === key)) return;
+  // A forced ask is asked BECAUSE the held answer may be wrong now (the folder changed), so it is not shown meanwhile.
+  if (force && keptProbe.key) { keptProbe = { key: '', state: '', count: 0, error: '' }; renderSignSteps(); }
+  keptProbeAsking = key;
+  const gen = ++keptProbeGen;
+  let next;
+  try {
+    const res = await apiFetch('/api/document/kept-copy', { method: 'HEAD', docId: id });
+    if (res.ok) next = { state: 'match', count: 0, error: '' };
+    else if (res.status === 422) {
+      const cause = res.headers.get('X-Nib-Kept-Copy-Cause') || '';
+      if (cause === 'no-signature') next = { state: 'nosig', count: 0, error: '' };
+      else if (cause === 'none-kept') {
+        // How many ARE kept, so a re-saved document's copy can still be found by hand from the list.
+        const lr = await apiFetch('/api/kept');
+        const list = lr.ok ? await lr.json() : null;
+        next = list ? { state: 'none', count: (list.kept || []).length, error: '' }
+          : { state: 'error', count: 0, error: 'the list of kept copies could not be read' };
+      } else next = { state: 'error', count: 0,
+        error: cause === 'unreadable' ? 'the copies kept when you signed could not be read' : `an answer Nib does not know (${cause || 'none'})` };
+    } else next = { state: 'error', count: 0, error: `the check failed (${res.status})` };
+  } catch (e) {
+    next = { state: 'error', count: 0, error: (e && e.message) || 'the check failed' };
+  }
+  if (keptProbeAsking === key) keptProbeAsking = '';
+  // ADR-001: an answer applies only to the document, as it was, that it was asked about.
+  if (gen !== keptProbeGen || view !== v || keptProbeKey(v) !== key) return;
+  keptProbe = { key, ...next };
+  renderSignSteps();
+}
+
+// The answer for the active document, or null when the held one is about another document or another state of it.
+function keptProbeNow() {
+  return view.pdfDocument && keptProbe.key && keptProbe.key === keptProbeKey(view) ? keptProbe : null;
+}
+function keptStepSeen() {
+  const p = keptProbeNow();
+  return p && p.state === 'match' ? true : p && p.state === 'none' ? false : null;
+}
+function keptStepWhy() {
+  const p = keptProbeNow();
+  if (!view.pdfDocument) return 'Open a signed document to check it against the copies kept when you signed';
+  if (!p) return 'Nib has not checked this document yet';
+  if (p.state === 'match') return 'A copy kept when you signed matches this file';
+  if (p.state === 'none') return `No kept copy matches this file — ${p.count} ${p.count === 1 ? 'copy is' : 'copies are'} kept`;
+  if (p.state === 'nosig') return 'This document carries no signature, so there is nothing to match a kept copy against';
+  return `Nib could not check: ${p.error}`;
+}
+// The ○ row links to the list: a document re-saved after signing no longer begins with its kept copy, but the copy is
+// still there to find by hand.
+function keptStepExtra() {
+  const p = keptProbeNow();
+  if (!p || p.state !== 'none' || !p.count) return null;
+  const a = document.createElement('button');
+  a.type = 'button';
+  a.className = 'signstep-extra';
+  a.textContent = `${p.count} kept — see them`;
+  a.onclick = () => openKeptList();
+  return a;
 }
 
 // goCard / goPanel are how a row navigates: switch mode, then reveal the surface. They go through
@@ -13998,12 +14107,14 @@ function renderSignSteps() {
     mark.type = 'button';
     mark.className = 'signstep-mark';
     mark.textContent = state === 'done' ? '✓' : state === 'todo' ? '○' : '–';
+    const why = step.why ? step.why() : null;      // a row's own account of what Nib saw, where it has one
     mark.title = byHand && !seen ? 'You marked this done — click to clear'
+      : why ? (seen ? why : `${why} — click to mark this done yourself`)
       : seen ? 'Nib can see this is done'
       : 'Click to mark this done yourself';
     mark.setAttribute('aria-pressed', String(state === 'done'));
     mark.setAttribute('aria-label',
-      `${step.label}: ${state === 'done' ? (seen ? 'done' : 'marked done by you') : state === 'todo' ? 'not done yet' : 'Nib cannot tell'}`);
+      `${step.label}: ${byHand && !seen ? 'marked done by you' : why || (state === 'done' ? 'done' : state === 'todo' ? 'not done yet' : 'Nib cannot tell')}`);
     mark.onclick = () => {
       if (manualSteps.has(step.label)) manualSteps.delete(step.label);
       else manualSteps.add(step.label);
@@ -14016,7 +14127,7 @@ function renderSignSteps() {
     label.type = 'button';
     label.className = 'signstep-label';
     label.textContent = step.label;
-    label.title = [step.hint, state === 'untracked' && !byHand ? 'Nib cannot tell whether this is done' : null]
+    label.title = [step.hint, why || (state === 'untracked' && !byHand ? 'Nib cannot tell whether this is done' : null)]
       .filter(Boolean).join(' — ');
     label.onclick = step.go;
 
@@ -14024,7 +14135,8 @@ function renderSignSteps() {
     need.className = 'signstep-need';
     need.textContent = step.need === 'required' ? 'required' : 'optional';
 
-    row.append(mark, label, need);
+    const extra = step.extra ? step.extra() : null; // a row's own link, before the need so the need stays at the edge
+    row.append(...[mark, label, extra, need].filter(Boolean));
     host.append(row);
   }
 }
@@ -16244,6 +16356,7 @@ async function removeKeptCopy(k) {
     toast('Could not remove it: ' + ((e && e.message) || 'it failed'));
   }
   await renderKeptList();
+  if (simpleSignOpen()) refreshKeptProbe(true);
 }
 
 if (els.keptBtn) els.keptBtn.onclick = () => openKeptList();
