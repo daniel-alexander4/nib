@@ -50,6 +50,9 @@ type textLine struct {
 type textParagraph struct {
 	lines  []textLine
 	column int
+	// running is a running header or footer set apart from the page's one body column (`runningLinesOf`): in a cluster of
+	// its own, so no body geometry reads it, and not counted in `pageLayout.columns`.
+	running bool
 }
 
 func (p textParagraph) text() string {
@@ -63,7 +66,9 @@ func (p textParagraph) text() string {
 // pageLayout is a page grouped into paragraphs in reading order.
 type pageLayout struct {
 	paragraphs []textParagraph
-	columns    int
+	// columns counts the body's columns; a running header or footer keeps a cluster (`textParagraph.column`) of its own
+	// and is not counted (`runningLinesOf`).
+	columns int
 	// unsupported says why the page's layout is outside what this rule can read, or is empty. It is
 	// set, not guessed around: exit criterion 3 lets a layout be handled OR reported, never silently
 	// mis-ordered.
@@ -133,9 +138,14 @@ func groupRuns(runs []textRun) pageLayout {
 	if len(segments) == 0 {
 		return pageLayout{noText: true}
 	}
-	columns := columnsOf(segments)
+	columns, running := runningLinesOf(columnsOf(segments))
 	var out pageLayout
 	out.columns = len(columns)
+	for _, r := range running {
+		if r {
+			out.columns-- // a running header or footer is not a column (/pending 787)
+		}
+	}
 	// **Rotated text is reported, not read as upright** (`/pending 503`). Every rule below measures a line
 	// as a horizontal baseline with x growing rightward. A run whose baseline turns — a vertical margin
 	// label, a landscape table on a portrait page — was grouped as if it were upright and nothing said so,
@@ -151,7 +161,11 @@ func groupRuns(runs []textRun) pageLayout {
 				noteUnsupported(&out, "text sits side by side on one baseline in a way the grouping cannot separate into columns")
 			}
 		}
-		out.paragraphs = append(out.paragraphs, paragraphsOf(col, ci)...)
+		ps := paragraphsOf(col, ci)
+		for i := range ps {
+			ps[i].running = running != nil && running[ci]
+		}
+		out.paragraphs = append(out.paragraphs, ps...)
 	}
 	return out
 }
@@ -258,6 +272,90 @@ func columnsOf(segments []textLine) [][]textLine {
 		out[i] = c.lines
 	}
 	return out
+}
+
+// runningLinesMax is the most lines a cluster may have and still be read as a running header or footer.
+const runningLinesMax = 2
+
+// runningLinesOf says which of a page's clusters are running lines — a header or footer set apart from ONE body column —
+// and orders them as the page reads: headers, the body, footers (/pending 787). It returns cols unchanged and nil when
+// nothing qualifies.
+//
+// A centred "Page N of 2" at y 30, or a "1" at y 60, overlaps no body line horizontally when the body is narrower than the
+// page, so `columnsOf` makes it a cluster of its own — and a page counted as several columns never flows (reflow's
+// `layout.columns != 1` gate, `nextPageFor`), so a growth that needed the next page refused `page-full` on an ordinary
+// contract. Every cluster but the body must be a running line: at most `runningLinesMax` lines, narrower than the body,
+// and wholly above the body's first baseline or below its last by at least an em — two columns side by side share
+// heights, which is what keeps them apart. It is all or nothing: a page that keeps a second column keeps every count and
+// order it had. The body is the one cluster with the most lines; a tie is two bodies, and nothing is a running line.
+//
+// A running line keeps its OWN cluster and is not counted in `pageLayout.columns`. Folding it into the body's cluster
+// was tried and refused: the paragraph rule reads a column's right edge, so a page number past the body's right made
+// every body line "stop short" and each became a paragraph; and the column's extent is what a centred axis and a
+// justified right edge are read against.
+//
+// Measured before it shipped, over the generated, real-producer and veraPDF PDF/UA-1 corpora (571 pages): one page's
+// count changed — census-p60-280 p5, a "Contents" title set 17pt above and left of a single-column contents list, 2 → 1,
+// paragraphs and reading order unchanged.
+func runningLinesOf(cols [][]textLine) ([][]textLine, []bool) {
+	if len(cols) < 2 {
+		return cols, nil
+	}
+	body, most, tie := -1, 0, false
+	for i, c := range cols {
+		switch {
+		case len(c) > most:
+			body, most, tie = i, len(c), false
+		case len(c) == most:
+			tie = true
+		}
+	}
+	if tie {
+		return cols, nil
+	}
+	extent := func(c []textLine) (x0, x1 float64, top, bottom textLine) {
+		x0, x1 = math.Inf(1), math.Inf(-1)
+		top, bottom = c[0], c[0]
+		for _, l := range c {
+			x0, x1 = math.Min(x0, l.x0), math.Max(x1, l.x1)
+			if l.y > top.y {
+				top = l
+			}
+			if l.y < bottom.y {
+				bottom = l
+			}
+		}
+		return x0, x1, top, bottom
+	}
+	bx0, bx1, btop, bbot := extent(cols[body])
+	var headers, footers [][]textLine
+	for i, c := range cols {
+		if i == body {
+			continue
+		}
+		x0, x1, top, bottom := extent(c)
+		if len(c) > runningLinesMax || x1-x0 >= bx1-bx0 {
+			return cols, nil
+		}
+		size := 0.0
+		for _, l := range c {
+			size = math.Max(size, l.size)
+		}
+		switch {
+		case top.y <= bbot.y-math.Max(size, bbot.size):
+			footers = append(footers, c)
+		case bottom.y >= btop.y+math.Max(size, btop.size):
+			headers = append(headers, c)
+		default:
+			return cols, nil
+		}
+	}
+	out := append(append(append([][]textLine(nil), headers...), cols[body]), footers...)
+	running := make([]bool, len(out))
+	for i := range running {
+		running[i] = i != len(headers)
+	}
+	return out, running
 }
 
 // paragraphsOf breaks one column's lines (top to bottom) into paragraphs.

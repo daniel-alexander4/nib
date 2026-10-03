@@ -306,13 +306,34 @@ func regionOf(l pageLayout, pi int, page [4]float64) flowRegion {
 		}
 	}
 	r.floor, r.bound = r.bottom, roomBelowMargin // a page with no box to measure gives no room
+	margin := math.Inf(-1)
 	if page[3] > page[1] {
 		r.floor = math.Max(page[1], page[1]+(page[3]-math.Min(top, page[3])))
+		margin = r.floor
+	}
+	// below raises the floor to an em above what is drawn at top. What lies wholly inside the bottom margin — a page number
+	// within an em of the margin's edge — keeps its em but leaves the MARGIN binding, as one further down does: it is a
+	// footer, and nothing is read after it (/pending 787: a "1" at y 60 made a full page refuse to flow).
+	below := func(top float64) {
+		if top+em > r.floor {
+			r.floor = top + em
+			if top > margin {
+				r.bound = roomBelowContent
+			}
+		}
 	}
 	// The highest obstacle below the region, across its column: an em above its top is the floor when that is higher.
 	for _, o := range obstacles {
-		if o.box[0] < r.x1 && r.x0 < o.box[2] && o.box[3] <= r.bottom && !math.IsInf(o.box[1], -1) && o.box[3]+em > r.floor {
-			r.floor, r.bound = o.box[3]+em, roomBelowContent
+		if o.box[0] < r.x1 && r.x0 < o.box[2] && o.box[3] <= r.bottom && !math.IsInf(o.box[1], -1) {
+			below(o.box[3])
+		}
+	}
+	// A running footer (`runningLinesOf`) bounds the floor wherever it sits across the page: it is not in the column, but
+	// it is the page's, and the body growing past it would put the page number among the text — the band below, which is
+	// the page's width on a page of one column, would otherwise meet it and refuse a growth it has room for (/pending 787).
+	for i, q := range l.paragraphs {
+		if b := paragraphBox(q); q.running && !owned[i] && b[3] <= r.bottom {
+			below(b[3])
 		}
 	}
 	r.room = math.Max(0, r.bottom-r.floor)

@@ -381,8 +381,8 @@ runs out of room, the last paragraphs move whole to the top of the next page, pu
 its text down in turn, page after page — on single-column pages, only where nothing but
 margin lies below the text (a signature block or a footnote below it stops the flow
 rather than being jumped), onto a next page that opens with body text rather than a
-running header, and not past the last page. (A page number drawn apart from the column
-can make a page read as two columns, and then the flow is refused too.) Notes, links, form fields, signing flags and bookmarks on or beside the
+running header, and not past the last page. (A page number or running header drawn
+apart from the column is read as just that, not as a second column.) Notes, links, form fields, signing flags and bookmarks on or beside the
 paragraphs that move go with them, onto the next page too — and in a document tagged
 for accessibility, so does each paragraph's tag, so a screen reader finds it on its new
 page. If something cannot move with the text — a line or picture drawn there, a note or
