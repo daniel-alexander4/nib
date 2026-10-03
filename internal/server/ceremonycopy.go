@@ -55,8 +55,8 @@ type ceremonyCopyRefusal struct {
 // ceremony the open document belongs to, or a 422 naming why there are none (PLAN-returned-document P03.S03). It is the
 // second link of the dispute surface's fallback chain, asked only when the user presses it — never on open (D10).
 //
-// **The ceremony is found from the record EMBEDDED in the document**, because `doc.ceremony` has one writer,
-// `installCeremonyResult`, reached only when a hop's result arrives — and a document that came back is opened cold. **And it is handed over only when
+// **The ceremony is found from the record EMBEDDED in the document**, because `doc.ceremony` is set only by a hop's
+// result arriving and by the convene route — and a document that came back is opened cold. **And it is handed over only when
 // the stored record's roster commitment equals the embedded one's** (`ceremony.ReadMirrorFor`, which compares before it
 // reports damage): `Record.Verify` is an internal-consistency check, so a record minted whole may name any id it likes,
 // and without the comparison a planted id would choose which stored ceremony this document is compared with — or which
@@ -71,14 +71,10 @@ func (s *Server) handleDocumentCeremonyCopy(w http.ResponseWriter, r *http.Reque
 	}
 	// The bytes and the registration in one hold, as `handleDocumentRevision` takes them: a document closed since
 	// `resolveDoc` is ADR-004's 409, never answered.
-	s.mu.Lock()
-	if !s.isRegisteredLocked(doc) {
-		s.mu.Unlock()
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	var data []byte
+	if !s.snapshotRegistered(w, doc, func() { data = doc.data }) {
 		return
 	}
-	data := doc.data
-	s.mu.Unlock()
 	refuse := func(c ceremonyCopyCause) {
 		writeJSONStatus(w, http.StatusUnprocessableEntity, ceremonyCopyRefusal{Cause: c})
 	}

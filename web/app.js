@@ -5128,12 +5128,16 @@ function timeLabel(s) {
   return 'No signing time recorded';
 }
 
+// SIGNATURE_FAILS_WORD is what a signer's row says when its signature does not check out — on the details panel and the
+// returned-document sheet alike (/pending 813). It was "Modified since signing" in the panel and "Does not verify" on the
+// sheet, and a failed signature (ADR-058/060) is not a modification: Nib knows the check failed, not why.
+const SIGNATURE_FAILS_WORD = '⚠ Does not verify';
+
 // signerRow is ONE signature's row — who, whether its bytes check out, when — for the signature details panel and the
 // returned-document sheet alike (P03.S02, ADR-009): two renderers of one signer would let the sheet say a word the
 // panel withholds. A caller appends what only it knows (the sheet: whose it is, and where it falls against yours).
-// `badWord` replaces the failing signature's word where a surface must say less than "modified" — the returned-document
-// sheet, built to be quoted, says "does not verify" (ADR-058/060: a failed signature is not a modification).
-function signerRow(s, { badWord = '⚠ Modified since signing' } = {}) {
+// A failing signature's word is SIGNATURE_FAILS_WORD on both surfaces (/pending 813).
+function signerRow(s) {
   const row = document.createElement('div');
   row.className = 'sigrow';
   const who = document.createElement('div');
@@ -5149,7 +5153,7 @@ function signerRow(s, { badWord = '⚠ Modified since signing' } = {}) {
   // looking at a document the badge now warns about would find a column of green ticks each
   // saying the word the badge had just withheld. Every one of them would be true, which is what
   // makes it the wrong word here: an attacker's own self-signed signature checks out perfectly.
-  status.textContent = s.valid ? '✓ Signature checks out' : badWord;
+  status.textContent = s.valid ? '✓ Signature checks out' : SIGNATURE_FAILS_WORD;
   row.appendChild(status);
 
   const time = document.createElement('div');
@@ -10618,7 +10622,9 @@ document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) clos
 // request is in flight — and the four words stayed up with no key that could answer them.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  closeMenu();
+  // A menu that was open owns this Escape: say so, so a later listener (the returned-document sheet's) does not take
+  // the same key as its own (/pending 813).
+  if (openMenu) { closeMenu(); e.preventDefault(); }
   const top = topModal();
   if (!top) return;
   e.preventDefault();
@@ -16067,8 +16073,13 @@ function closeReturnedSheet(restoreFocus = true) {
   returnedState = null;
   els.returnedSheet.hidden = true;
   els.viewerWrap.hidden = false;
-  // AFTER the flip: focusing into a hidden subtree is a silent no-op (see parkCeremonySheet).
-  if (restoreFocus && opener && opener.isConnected) opener.focus();
+  // AFTER the flip: focusing into a hidden subtree is a silent no-op (see parkCeremonySheet). And for the same reason an
+  // opener whose pane was hidden while the sheet was up (a card or panel closed without a mode change) is passed over
+  // for whichever entry to the sheet is still shown, so focus lands somewhere rather than nowhere (/pending 813).
+  if (!restoreFocus) return;
+  const shown = (el) => el && el.isConnected && !el.disabled && !el.closest('[hidden]');
+  const target = [opener, els.returnedBtn, document.querySelector('[data-forward="returnedBtn"]')].find(shown);
+  if (target) target.focus();
 }
 
 // ── The verdict, told for a dispute (P03.S02, D8, D9) ─────────────────────────────────────────────────────────────
@@ -16242,9 +16253,7 @@ function renderReturnedSigners(signers, whose, myEnd) {
   const order = signers.map((x, i) => i).sort((a, b) => (signers[a].coverageEnd || Infinity) - (signers[b].coverageEnd || Infinity));
   for (const i of order) {
     const x = signers[i];
-    // "Modified since signing" is the details panel's word for a failing signature; on a surface built to be quoted it
-    // says more than Nib measured — a failed signature (ADR-058/060) is not a modification (the P03 phase-close review).
-    const row = signerRow(x, { badWord: '⚠ Does not verify' });
+    const row = signerRow(x);
     row.setAttribute('role', 'listitem');
     const kin = document.createElement('div');
     kin.className = 'sigrow-kin';
@@ -16472,9 +16481,10 @@ if (els.keptClose) els.keptClose.onclick = () => { els.keptModal.hidden = true; 
 if (els.returnedBtn) els.returnedBtn.onclick = () => openReturnedSheet();
 if (els.returnedClose) els.returnedClose.onclick = () => closeReturnedSheet();
 // Escape leaves the sheet wherever focus is — clicking its text leaves focus on <body>, outside the sheet — unless a
-// modal is up, whose Escape it is.
+// modal is up, whose Escape it is, or something else already took the key: the find bar's input and an open menu each
+// close on it and mark it handled, and one key press closing two things lost the sheet with the find bar (/pending 813).
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || !returnedState || topModal()) return;
+  if (e.key !== 'Escape' || e.defaultPrevented || !returnedState || topModal()) return;
   e.preventDefault();
   closeReturnedSheet();
 });

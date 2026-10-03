@@ -107,10 +107,11 @@ func (s *Server) hopTarget(w http.ResponseWriter, r *http.Request, id string) (
 		return rec, nil, next, false, false
 	}
 	// **Asked of the DOCUMENT'S OWN BYTES, not of `document.ceremony` — and the first cut used the
-	// field and was wrong.** That field is set in exactly one place, `installCeremonyResult`, which
-	// runs when a hop's RESULT arrives. The convene route commits the record into the open document
-	// and never sets it, so on the convener's machine — the only machine this route runs on — it is
-	// empty for the whole of hop 1. Measured: the control case in `ceremonyhop_test.go` failed with
+	// field and was wrong.** That field was set in exactly one place, `installCeremonyResult`, which
+	// runs when a hop's RESULT arrives. The convene route committed the record into the open document
+	// and never set it, so on the convener's machine — the only machine this route runs on — it was
+	// empty for the whole of hop 1 (convene sets it since /pending 813; a document opened cold still
+	// has none, so the bytes stay the question). Measured: the control case in `ceremonyhop_test.go` failed with
 	// *"the open document is not the one this ceremony is running over"* against a document that
 	// was exactly the right one.
 	//
@@ -124,14 +125,10 @@ func (s *Server) hopTarget(w http.ResponseWriter, r *http.Request, id string) (
 	// bare read races them, and three bare reads let `Extract`, `ContributionProgress` and the hop
 	// itself each see a different version of the document (ADR-001). A document closed since
 	// `resolveDoc` is ADR-004's 409.
-	s.mu.Lock()
-	if !s.isRegisteredLocked(doc) {
-		s.mu.Unlock()
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	var data []byte
+	if !s.snapshotRegistered(w, doc, func() { data = doc.data }) {
 		return rec, nil, next, false, false
 	}
-	data := doc.data
-	s.mu.Unlock()
 	inDoc, xerr := ceremony.Extract(data)
 	if xerr != nil {
 		httpError(w, http.StatusConflict,

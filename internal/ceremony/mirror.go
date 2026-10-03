@@ -73,12 +73,16 @@ func ValidID(id string) error {
 // is what actually happened and what the user can act on.
 var ErrMirrorDamaged = errors.New("this ceremony's stored document does not match its record")
 
-// MirrorDir returns the directory for a ceremony, under root (normally ~/nib).
+// liveDir is the folder under the store root that holds live ceremonies.
+const liveDir = "ceremonies"
+
+// MirrorDir returns the directory for a ceremony, under root (normally ~/nib). A relative root is
+// refused (`storeDir`).
 func MirrorDir(root, id string) (string, error) {
 	if err := ValidID(id); err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "ceremonies", id), nil
+	return storeDir(root, liveDir, id)
 }
 
 // WriteMirror creates the ceremony's directory and writes the record and the document.
@@ -313,7 +317,8 @@ func ReadMirror(root, id string, now time.Time) (Record, []byte, error) {
 }
 
 // ReadMirrorFor reads this machine's stored copy of the proceeding `named` describes — the live folder first, then
-// `~/nib/ended/<id>` — and reports whether the ended folder answered.
+// `~/nib/ended/<id>` and any numbered folder `CloseOutMirror` set aside beside it — and reports whether an ended
+// folder answered.
 //
 // **Its reader is the surface for a document that came back (PLAN-returned-document P03.S03)**, and a dispute is asked
 // after a ceremony ends, by which time ADR-012 has moved its folder; `ReadMirror` alone would find nothing exactly when
@@ -335,10 +340,11 @@ func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended 
 	if err != nil {
 		return nil, false, err
 	}
-	dirs := []string{live}
-	if moved, eerr := EndedDir(root, named.ID); eerr == nil {
-		dirs = append(dirs, moved)
+	moved, err := endedDirs(root, named.ID)
+	if err != nil {
+		return nil, false, err
 	}
+	dirs := append([]string{live}, moved...)
 	var unknown error
 	different, empty := false, false
 	for i, dir := range dirs {
@@ -364,7 +370,7 @@ func ReadMirrorFor(root string, named Record, now time.Time) (pdf []byte, ended 
 			empty = true
 			continue
 		}
-		return pdf, i == 1, rerr
+		return pdf, i > 0, rerr
 	}
 	switch {
 	case empty:
@@ -781,7 +787,11 @@ func ReadStored(root, id string, now time.Time) Stored {
 // A name that is not a ceremony id is skipped silently rather than reported: the directory is under
 // the user's own `~/nib`, and anything else in there is theirs, not a broken ceremony.
 func ListStored(root string, now time.Time) ([]Stored, error) {
-	ents, err := os.ReadDir(filepath.Join(root, "ceremonies"))
+	dir, err := storeDir(root, liveDir)
+	if err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // no ceremonies yet is not a failure

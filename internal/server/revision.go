@@ -65,23 +65,21 @@ func (s *Server) handleDocumentRevision(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// The bytes and their history in ONE hold: a mutation between two reads would pair history with other bytes.
-	s.mu.Lock()
-	if !s.isRegisteredLocked(doc) {
-		// Closed between `resolveDoc` and this hold: ADR-004's "not that document", never the bytes of one the server no
-		// longer holds (the P03 phase-close review).
-		s.mu.Unlock()
-		httpError(w, http.StatusConflict, "that document is no longer open")
+	// Closed between `resolveDoc` and this hold: ADR-004's "not that document", never the bytes of one the server no
+	// longer holds (the P03 phase-close review).
+	var data []byte
+	history := "none"
+	if !s.snapshotRegistered(w, doc, func() {
+		data = doc.data
+		switch {
+		case len(doc.undo) > 0:
+			history = "undo"
+		case doc.historyEvicted:
+			history = "evicted"
+		}
+	}) {
 		return
 	}
-	data := doc.data
-	history := "none"
-	switch {
-	case len(doc.undo) > 0:
-		history = "undo"
-	case doc.historyEvicted:
-		history = "evicted"
-	}
-	s.mu.Unlock()
 	// doc.data is replaced wholesale and never mutated in place, so the slice is safe outside the lock; its address
 	// is in the key so an edit landing mid-walk never shares a stale answer (I5).
 	key := fmt.Sprintf("%s|%s|%p|%d", doc.id, fp, unsafe.SliceData(data), len(data))

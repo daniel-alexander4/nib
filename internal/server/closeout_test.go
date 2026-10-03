@@ -118,12 +118,13 @@ func TestTheCloseOutRefusesARelativeRootBeforeItMovesAnything(t *testing.T) {
 	}
 }
 
-// TestASecondCloseOutIsRefusedRatherThanOverwriting.
+// TestASecondCloseOutMovesAsideRatherThanOverwriting.
 //
-// Two ways to reach it and both want the same answer: a re-run over a ceremony already dealt with,
-// where the first move's contents are the ones to keep, and an id collision, where overwriting
-// destroys the earlier party's contribution. They are indistinguishable from inside the function.
-func TestASecondCloseOutIsRefusedRatherThanOverwriting(t *testing.T) {
+// A live folder under an id `ended/` already holds is another proceeding that took the id, or a
+// document that re-created the folder after the close-out. Overwriting destroys the earlier party's
+// contribution; refusing (the old answer) left the second folder in the live set for good, because
+// a re-run never reaches this — it finds no live folder at all.
+func TestASecondCloseOutMovesAsideRatherThanOverwriting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := defaultOutputDir()
@@ -147,8 +148,17 @@ func TestASecondCloseOutIsRefusedRatherThanOverwriting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ceremony.CloseOutMirror(root, rec.ID); !errors.Is(err, ceremony.ErrAlreadyClosedOut) {
-		t.Errorf("a second close-out over an existing destination was not refused: %v", err)
+	// The second folder is MOVED, beside the first, never merged into it (/pending 813): this used to
+	// refuse, and the server read the refusal as "already moved" and left the second folder live.
+	if err := ceremony.CloseOutMirror(root, rec.ID); err != nil {
+		t.Errorf("a second close-out over an existing destination failed: %v", err)
+	}
+	if _, serr := os.Stat(live); !os.IsNotExist(serr) {
+		t.Errorf("the second live folder is still in the live set after its close-out (%v)", serr)
+	}
+	aside, err := os.ReadFile(filepath.Join(filepath.Dir(ended), rec.ID+".2", "document.pdf"))
+	if err != nil || string(aside) != "a different party" {
+		t.Errorf("the second folder was not preserved beside the first: %q, %v", aside, err)
 	}
 	again, err := os.ReadFile(filepath.Join(ended, "document.pdf"))
 	if err != nil {

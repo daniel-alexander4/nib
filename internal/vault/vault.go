@@ -795,6 +795,10 @@ func unwrapSlot(slot Slot, passphrase []byte) (key []byte, ok bool, err error) {
 
 // newSealed builds a Vault with a fresh content key sealed to pubLine and to
 // each builtin key (so it also opens on the machines holding those keys).
+//
+// **It loads the builtin signatures too, as both unlock paths do** (/pending 813). Without them a
+// vault returned by Create or Migrate showed an embedkeys build's signatures only after the next
+// unlock: the same session that sealed the vault to the builtin keys could not use what they open.
 func newSealed(path, pubLine, keyPath string, c Contents) (*Vault, error) {
 	key := make([]byte, keyLen)
 	if _, err := rand.Read(key); err != nil {
@@ -810,11 +814,12 @@ func newSealed(path, pubLine, keyPath string, c Contents) (*Vault, error) {
 	}
 	slots := sealBuiltins(key, []Slot{{PubKey: pubLine, KeyPath: keyPath, Wrapped: wrapped}})
 	return &Vault{
-		path:     path,
-		key:      key,
-		ssh:      slots,
-		current:  pubLine,
-		contents: c,
+		path:          path,
+		key:           key,
+		ssh:           slots,
+		current:       pubLine,
+		contents:      c,
+		builtinImages: loadBuiltinSignatures(),
 	}, nil
 }
 
