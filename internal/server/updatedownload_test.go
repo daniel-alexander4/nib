@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -97,10 +98,16 @@ func waitForDownload(t *testing.T, srv *Server, want string) downloadEvent {
 // serves the asset itself.
 func stubRelease(t *testing.T, version string, body []byte) {
 	t.Helper()
-	assets := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	stubReleaseWith(t, version, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
 		_, _ = w.Write(body)
-	}))
+	})
+}
+
+// stubReleaseWith is stubRelease with the asset server's behaviour supplied by the test.
+func stubReleaseWith(t *testing.T, version string, serveAsset http.HandlerFunc) {
+	t.Helper()
+	assets := httptest.NewServer(serveAsset)
 	t.Cleanup(assets.Close)
 	// The asset name must match what assetURL looks for on this machine, or the handler answers
 	// "no download matches this system" and every assertion below is about the wrong refusal.
@@ -228,5 +235,132 @@ func TestRevealRefusesWhenThereIsNoFinishedDownload(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("reveal with nothing downloaded answered %d, want 409", resp.StatusCode)
+	}
+}
+
+// silentAsset is an asset host that accepts the request and never sends a header until the test ends
+// or the client goes away — the shape /pending 589 named.
+//
+// **It gives up by itself after 15 s**, past every assertion's 10 s deadline. Without that a FAILING
+// run deadlocks rather than reporting: `assets.Close` (registered later, so run earlier) waits for
+// this handler, and the handler waits on a client the defect never lets go.
+func silentAsset(t *testing.T) http.HandlerFunc {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		case <-time.After(15 * time.Second):
+		}
+	}
+}
+
+// postDownloadAsync starts the download POST on its own goroutine, because the case under test is
+// one where it may not return.
+func postDownloadAsync(t *testing.T, ts *httptest.Server, c *http.Client, csrf, dir string) <-chan int {
+	t.Helper()
+	got := make(chan int, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/update/download",
+			strings.NewReader(url.Values{"dir": {dir}}.Encode()))
+		if err != nil {
+			got <- -1
+			return
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", csrf)
+		resp, err := c.Do(req)
+		if err != nil {
+			got <- -1
+			return
+		}
+		resp.Body.Close()
+		got <- resp.StatusCode
+	}()
+	return got
+}
+
+// TestASilentReleaseHostIsGivenUpOn — /pending 589/805/821. The header wait had no deadline: a host
+// that accepted the connection and never answered held the handler, and the dialog said "Starting…"
+// for as long as the kernel kept the socket.
+func TestASilentReleaseHostIsGivenUpOn(t *testing.T) {
+	old := downloadHeaderTimeout
+	downloadHeaderTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { downloadHeaderTimeout = old })
+	ts, srv, c, csrf := downloadServer(t)
+	stubReleaseWith(t, "99.0.0", silentAsset(t))
+
+	got := postDownloadAsync(t, ts, c, csrf, t.TempDir())
+	select {
+	case code := <-got:
+		if code != http.StatusGatewayTimeout {
+			t.Errorf("a silent release host answered %d, want 504", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the download handler is still waiting on a host that never answers — nothing bounds the header phase")
+	}
+	waitForDownload(t, srv, "failed")
+}
+
+// TestCancelReachesTheHeaderPhase — /pending 821. `cancel` was registered only after the headers, so
+// a Cancel while the host had not answered reported "nothing running" and stopped nothing.
+func TestCancelReachesTheHeaderPhase(t *testing.T) {
+	ts, srv, c, csrf := downloadServer(t)
+	stubReleaseWith(t, "99.0.0", silentAsset(t))
+
+	got := postDownloadAsync(t, ts, c, csrf, t.TempDir())
+	deadline := time.Now().Add(10 * time.Second)
+	for !srv.dl.snapshot().Active {
+		if time.Now().After(deadline) {
+			t.Fatal("the download never claimed the slot while waiting for headers, so Cancel has nothing to reach")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download/cancel", "application/json", strings.NewReader("{}"))
+	var out struct{ Cancelled bool }
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if !out.Cancelled {
+		t.Error("Cancel during the header wait reported nothing to cancel")
+	}
+	select {
+	case <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Cancel did not release the handler waiting on the host")
+	}
+	waitForDownload(t, srv, "cancelled")
+}
+
+// TestADownloadDoesNotReplaceAFileThatAppearedWhileItRan — /pending 821. The 412 is a stat before
+// the transfer; the door used to rename over whatever appeared at the name meanwhile.
+func TestADownloadDoesNotReplaceAFileThatAppearedWhileItRan(t *testing.T) {
+	ts, srv, c, csrf := downloadServer(t)
+	dir := t.TempDir()
+	name := fmt.Sprintf("nib-%s-%s-%s", "99.0.0", runtime.GOOS, runtime.GOARCH)
+	planted := []byte("the user's own file")
+	stubReleaseWith(t, "99.0.0", func(w http.ResponseWriter, r *http.Request) {
+		// Appears after the handler's stat and before the bytes land.
+		if err := os.WriteFile(filepath.Join(dir, name), planted, 0o644); err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write([]byte("release bytes"))
+	})
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/update/download",
+		"application/x-www-form-urlencoded", strings.NewReader(url.Values{"dir": {dir}}.Encode()))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download answered %d, want 200", resp.StatusCode)
+	}
+	waitForDownload(t, srv, "failed")
+	got, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(planted) {
+		t.Fatalf("the download replaced a file that appeared at its name while it ran: now %q", got)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".nib-*.tmp")); len(left) != 0 {
+		t.Errorf("the refused download left its temp behind: %v", left)
 	}
 }

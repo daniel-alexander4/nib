@@ -13,7 +13,7 @@
  	}
  	for i, p := range parts {
 -		if err := writeNamedMode(outs[i], p.Data, pdfops.SplitPartMode); err != nil {
-+		if _, err := atomicfile.WriteFrom(outs[i], nil, pdfops.SplitPartMode, int64(len(p.Data)), nil); err != nil {
++		if _, err := atomicfile.CreateFrom(outs[i], nil, pdfops.SplitPartMode, int64(len(p.Data)), nil); err != nil {
  			errf("%v", err)
  			return 1
  		}

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"nib/internal/instance"
@@ -358,5 +360,53 @@ func TestTheVaultIsAdoptedInExactlyOnePlace(t *testing.T) {
 	}
 	if sites != 1 {
 		t.Errorf("s.vault is assigned in %d places (%v), want 1 — the pending-open drain hangs off adoptVault, so a second unlock route means a handed-off document opens when the user unlocks one way and silently never opens when they unlock the other", sites, where)
+	}
+}
+
+// TestConcurrentHandoffsOfOnePathOpenOneDocument — /pending 590/821. The "already open?" check and the
+// install used to take two holds around the file read, so hand-offs of one file landing together (a
+// double double-click, or a hand-off racing the unlock drain) each found the path absent and each
+// registered a tab. Driven at the door both callers share, many at once from a barrier.
+func TestConcurrentHandoffsOfOnePathOpenOneDocument(t *testing.T) {
+	ts, srv := startServerWith(t)
+	authedClient(t, ts) // enrol, so the vault is open and the hand-off installs directly
+	path := pdfOnDisk(t)
+
+	const n = 6
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var opened, focused atomic.Int32
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			f, err := srv.openHandedOff(path)
+			if err != nil {
+				t.Errorf("hand-off refused: %v", err)
+				return
+			}
+			if f {
+				focused.Add(1)
+			} else {
+				opened.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	srv.mu.Lock()
+	same := 0
+	for _, d := range srv.docs {
+		if d.path == path {
+			same++
+		}
+	}
+	srv.mu.Unlock()
+	if same != 1 || opened.Load() != 1 || focused.Load() != n-1 {
+		t.Fatalf("%d concurrent hand-offs of one path left %d documents on it (%d opened, %d focused), "+
+			"want 1 (1 opened, %d focused) — two tabs on one path are two working copies, and whichever "+
+			"saves last discards the other's work (D16)", n, same, opened.Load(), focused.Load(), n-1)
 	}
 }

@@ -119,7 +119,7 @@ func TestTheInPlaceRewriteIsDurableNotMerelyAtomic(t *testing.T) {
 				"makes lands on a path the user named on the command line, or one derived inside "+
 				"a directory they named — for -w, the only copy — so it takes a durable door "+
 				"(WriteDurable / ReplaceDurable / CreateDurable), normally through writeNamed. "+
-				"Write and WriteFrom are atomic and NOT durable: a crash in the writeback window "+
+				"Write and CreateFrom are atomic and NOT durable: a crash in the writeback window "+
 				"leaves a truncated file where the original was, after \"rewritten\" was printed. "+
 				"A door this guard does not know is refused until it is classified in `durable`.",
 				n, strings.Join(bad, ", "))

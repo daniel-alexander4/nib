@@ -30,11 +30,20 @@ type hopFixture struct {
 	id      string
 	me      string
 	pdfPath string
+	srv     *Server
 }
 
 func newHopFixture(t *testing.T, expiresIn time.Duration) *hopFixture {
 	t.Helper()
-	ts, pdfPath := startServer(t)
+	ts, srv := startServerWith(t)
+	data, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfPath := filepath.Join(t.TempDir(), "form.pdf")
+	if err := os.WriteFile(pdfPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	c, csrf := authedClient(t, ts)
 	if code, body := postForCode(t, c, csrf, ts.URL+"/api/open", openRequest{Path: pdfPath}); code != http.StatusOK {
 		t.Fatalf("open: %d %s", code, body)
@@ -56,7 +65,7 @@ func newHopFixture(t *testing.T, expiresIn time.Duration) *hopFixture {
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatal(err)
 	}
-	return &hopFixture{c: c, csrf: csrf, base: ts.URL, id: out.Ceremony, me: me, pdfPath: pdfPath}
+	return &hopFixture{c: c, csrf: csrf, base: ts.URL, id: out.Ceremony, me: me, pdfPath: pdfPath, srv: srv}
 }
 
 // quote calls the GET, optionally pinned to a document other than the active one.
@@ -168,6 +177,46 @@ func TestTheHopRouteRefusesBeforeItDials(t *testing.T) {
 			t.Fatalf("a hop with no ceremony answered %d, want 400", code)
 		}
 	})
+}
+
+// TestTheHopReadsTheDocumentUnderTheLock — /pending 622/821: `hopTarget` read `doc.data` three times
+// with no hold of `s.mu`, while `installCeremonyResult` and every commit door replace it under one.
+//
+// **A `-race` test, and only `-race` can fail it.** The writer stores the same bytes back each time
+// (a fresh slice, as every real writer does), so the answer never changes and nothing but the race
+// detector can see the difference between one hold and none.
+func TestTheHopReadsTheDocumentUnderTheLock(t *testing.T) {
+	f := newHopFixture(t, 48*time.Hour)
+	f.srv.mu.Lock()
+	doc := f.srv.activeDocLocked()
+	f.srv.mu.Unlock()
+	if doc == nil {
+		t.Fatal("no active document after the fixture opened one")
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			f.srv.mu.Lock()
+			doc.data = append([]byte(nil), doc.data...)
+			f.srv.mu.Unlock()
+		}
+	}()
+	for i := 0; i < 5; i++ {
+		if code, body := f.quote(t, ""); code != http.StatusOK {
+			close(stop)
+			<-done
+			t.Fatalf("the quote was refused %d: %s", code, body)
+		}
+	}
+	close(stop)
+	<-done
 }
 
 // TestTheConvenersOwnTurnIsNotADial — a signing convener is FIRST, so their turn has nobody to call.

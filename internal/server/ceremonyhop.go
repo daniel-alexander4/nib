@@ -118,7 +118,21 @@ func (s *Server) hopTarget(w http.ResponseWriter, r *http.Request, id string) (
 	// document, and `ReadMirror` below re-reads and VERIFIES the machine's own copy. Two different
 	// questions — "is this the right document open?" and "what does this ceremony say?" — and the
 	// second is the one that must be signature-checked.
-	inDoc, xerr := ceremony.Extract(doc.data)
+	//
+	// **The bytes are taken ONCE, with the registration, under one hold** — as `handleDocumentRevision`
+	// takes them. `installCeremonyResult` and every commit door replace `doc.data` under `s.mu`, so a
+	// bare read races them, and three bare reads let `Extract`, `ContributionProgress` and the hop
+	// itself each see a different version of the document (ADR-001). A document closed since
+	// `resolveDoc` is ADR-004's 409.
+	s.mu.Lock()
+	if !s.isRegisteredLocked(doc) {
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "that document is no longer open")
+		return rec, nil, next, false, false
+	}
+	data := doc.data
+	s.mu.Unlock()
+	inDoc, xerr := ceremony.Extract(data)
 	if xerr != nil {
 		httpError(w, http.StatusConflict,
 			"the open document is not part of a signing ceremony, so there is no hop to run")
@@ -156,7 +170,7 @@ func (s *Server) hopTarget(w http.ResponseWriter, r *http.Request, id string) (
 	// is the one implementation (ADR-009); a second derivation here is how two surfaces come to
 	// disagree about which party is being called.
 	roster := l3RosterFrom(rec.Roster, rosterHashHex(rec), rec.Intent)
-	pr, perr := p2p.ContributionProgress(doc.data, roster)
+	pr, perr := p2p.ContributionProgress(data, roster)
 	if perr != nil {
 		httpError(w, http.StatusConflict,
 			"this ceremony's document could not be read against its roster: "+perr.Error())
@@ -190,7 +204,7 @@ func (s *Server) hopTarget(w http.ResponseWriter, r *http.Request, id string) (
 		return rec, nil, next, false, false
 	}
 	mine = strings.EqualFold(hex.EncodeToString(myFP), next.Fingerprint)
-	return rec, doc.data, next, mine, true
+	return rec, data, next, mine, true
 }
 
 // rosterLabel is the human name for a party, falling back to a short fingerprint.

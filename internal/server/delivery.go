@@ -272,14 +272,7 @@ func (s *Server) checkDelivered(cer *ceremonyID, pdf []byte) error {
 // rather than by opening it. The id goes LAST and in full: a truncated id is a collision nobody
 // can see, and the human half is the part a user scans.
 func deliveredName(rec ceremony.Record) string {
-	slug := labelSlug(rec.Intent)
-	if len(slug) > 48 {
-		slug = strings.TrimRight(slug[:48], "-")
-	}
-	if slug == "" {
-		slug = "ceremony"
-	}
-	return slug + "-" + rec.ID + ".pdf"
+	return fileSlug(rec.Intent, "ceremony") + "-" + rec.ID + ".pdf"
 }
 
 // saveDelivered writes the delivered document under ~/nib, OUTSIDE ~/nib/ceremonies/.

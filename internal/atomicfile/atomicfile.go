@@ -19,6 +19,7 @@ package atomicfile
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -59,7 +60,7 @@ import (
 //
 // So `internal/cli`'s `atomicdurable_test.go` keeps its refusal and gains no exemption door. It
 // did gain something else: it tested for the literal `atomicfile.Write(` and so could not see
-// `WriteFrom`, which is this door's own choice under another name.
+// `WriteFrom` (now `CreateFrom`), which is this door's own choice under another name.
 //
 // So: re-derivable output takes this. Anything that is the only copy takes `WriteDurable`, and
 // says so at the call site.
@@ -97,9 +98,10 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmpName, path)
 }
 
-// WriteFrom streams src to path via a temp file and a rename: ATOMIC, and deliberately not durable,
-// the same choice `Write` makes and for the same reason — a caller that can re-derive its output
-// does not need an fsync. Nib's use is a release artifact, which is re-downloadable by definition.
+// CreateFrom streams src to a NEW file at path, never replacing: ATOMIC, and deliberately not
+// durable, the same choice `Write` makes and for the same reason — a caller that can re-derive its
+// output does not need an fsync. Nib's use is a release artifact, which is re-downloadable by
+// definition.
 //
 // **The fourth door exists because the other three take `[]byte`, and some writes cannot.** The
 // release download is ~95 MB (measured); buffering it whole to reach an atomic door would spend the
@@ -109,20 +111,29 @@ func Write(path string, data []byte, perm os.FileMode) error {
 // exemption: `atomicroute_test.go` has no exemption mechanism at all — it fails on any `os.Rename`
 // in `internal/server` — so the only honest answer was to move the rename into the door.
 //
+// **It refuses an existing path AT THE MOMENT THE BYTES LAND, and that is why it is not `WriteFrom`
+// any more (/pending 821).** It used to rename over the destination, so its one caller's 412
+// "already there" — a stat taken before a minute of streaming — promised nothing about the file
+// that appeared meanwhile, which the rename then replaced. The finished temp is now HARD-LINKED to
+// path, which the kernel refuses if anything is there; where the filesystem has no hard links
+// (FAT, some network shares) it falls back to an O_EXCL create followed by a rename over that
+// placeholder, which narrows the window from the whole transfer to the two calls. The error for an
+// existing path satisfies os.IsExist / errors.Is(err, fs.ErrExist).
+//
 // onProgress, when non-nil, is called with the running total after each chunk. It is the caller's
 // throttle point, not this door's: it fires per read, and a caller that turns every call into an
 // event will flood whatever it is feeding.
 //
 // limit bounds what will be written; a source exceeding it stops with ErrTooLarge and leaves
 // nothing behind. A remote `Content-Length` is a claim, and a stream that trusts it fills the disk.
-func WriteFrom(path string, src io.Reader, perm os.FileMode, limit int64, onProgress func(int64)) (int64, error) {
+func CreateFrom(path string, src io.Reader, perm os.FileMode, limit int64, onProgress func(int64)) (int64, error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".nib-*.tmp")
 	if err != nil {
 		return 0, err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds; the cleanup on every failure path
+	defer os.Remove(tmpName) // after a link, the temp is a second name to drop; on failure, the cleanup
 	buf := make([]byte, 256<<10)
 	var total int64
 	for {
@@ -156,10 +167,24 @@ func WriteFrom(path string, src io.Reader, perm os.FileMode, limit int64, onProg
 	if err := tmp.Close(); err != nil {
 		return total, err
 	}
-	return total, os.Rename(tmpName, path)
+	lerr := os.Link(tmpName, path)
+	if lerr == nil || errors.Is(lerr, fs.ErrExist) {
+		return total, lerr
+	}
+	// No hard links on this filesystem: claim the name, then replace only the claim.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return total, err
+	}
+	f.Close()
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(path) // the placeholder is this call's own: O_EXCL created it
+		return total, err
+	}
+	return total, nil
 }
 
-// ErrTooLarge is returned by WriteFrom when the source exceeds the caller's limit.
+// ErrTooLarge is returned by CreateFrom when the source exceeds the caller's limit.
 var ErrTooLarge = errors.New("atomicfile: source exceeds the write limit")
 
 // CreateDurable creates path holding data, REFUSING if anything already exists there, and syncs

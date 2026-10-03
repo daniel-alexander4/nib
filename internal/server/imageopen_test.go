@@ -268,7 +268,7 @@ func TestTheHandOffSpeaksForAConvertibleDocumentRatherThanFallingThrough(t *test
 	}
 
 	// The hand-off's own door, not the HTTP route: that is the surface with the `default` arm.
-	err := srv.openHandedOff(p)
+	_, err := srv.openHandedOff(p)
 	if err == nil {
 		t.Fatal("the hand-off accepted a .docx as a document")
 	}
