@@ -461,11 +461,12 @@ let reconciling = false;
 async function fetchSignedRevision(docId, fp) {
   const res = await apiFetch(`/api/document/revision?signer=${encodeURIComponent(fp)}`, { docId });
   if (res.status === 422) {
-    const body = await res.json();
+    const body = await res.json().catch(() => ({}));
     return { ok: false, cause: body.cause, refused: body.refused || [], attributed: !!body.attributed };
   }
   if (!res.ok) throw new Error(await errText(res, 'Could not recover the signed version'));
-  const facts = JSON.parse(res.headers.get('X-Nib-Revision') || '{}');
+  let facts = {};
+  try { facts = JSON.parse(res.headers.get('X-Nib-Revision') || '{}'); } catch { /* worded as "no facts" */ }
   return { ok: true, bytes: await res.arrayBuffer(), facts };
 }
 
@@ -3415,6 +3416,15 @@ async function setDocumentFromServer(meta, target = view) {
     console.error('setDocumentFromServer got a refusal, not a document:', meta);
     return;
   }
+  // The returned-document sheet is about the bytes it checked: a reload of ITS document — undo, a page operation, an
+  // install — leaves its verdict and the version it holds describing bytes no longer there, so it closes (the P03
+  // phase-close review; reopening it checks the new bytes).
+  // Focus goes back to the opener only when it was IN the sheet: a background reload (`recheckDisk` on window focus, an
+  // arriving ceremony result) must not pull focus from wherever the user is, Compare included.
+  if (returnedState && returnedState.view === target) {
+    closeReturnedSheet(els.returnedSheet.contains(document.activeElement));
+    toast('The document reloaded, so its check closed — open it again to check the new bytes.');
+  }
   const gen = ++target.docGen;
   // Every arrival through this sink is a server-side change to the document — the
   // twenty page operations, undo, redo, OCR, sanitize, decrypt, flatten. Set HERE, at
@@ -5093,7 +5103,9 @@ function timeLabel(s) {
 // signerRow is ONE signature's row — who, whether its bytes check out, when — for the signature details panel and the
 // returned-document sheet alike (P03.S02, ADR-009): two renderers of one signer would let the sheet say a word the
 // panel withholds. A caller appends what only it knows (the sheet: whose it is, and where it falls against yours).
-function signerRow(s) {
+// `badWord` replaces the failing signature's word where a surface must say less than "modified" — the returned-document
+// sheet, built to be quoted, says "does not verify" (ADR-058/060: a failed signature is not a modification).
+function signerRow(s, { badWord = '⚠ Modified since signing' } = {}) {
   const row = document.createElement('div');
   row.className = 'sigrow';
   const who = document.createElement('div');
@@ -5109,7 +5121,7 @@ function signerRow(s) {
   // looking at a document the badge now warns about would find a column of green ticks each
   // saying the word the badge had just withheld. Every one of them would be true, which is what
   // makes it the wrong word here: an attacker's own self-signed signature checks out perfectly.
-  status.textContent = s.valid ? '✓ Signature checks out' : '⚠ Modified since signing';
+  status.textContent = s.valid ? '✓ Signature checks out' : badWord;
   row.appendChild(status);
 
   const time = document.createElement('div');
@@ -15831,7 +15843,18 @@ async function checkReturned(state) {
     v.appendChild(p);
     return p;
   };
-  const meta = state.view.docMeta || {};
+  // One snapshot, taken NOW (the P03 phase-close review): `view.docMeta` is the answer from when the document loaded, and
+  // importing a certificate, unlocking, or a save since then changes whose each signature is and what it says. Pinned
+  // to the sheet's document; the load-time answer stands only when the server cannot give a fresh one.
+  let meta = state.view.docMeta || {};
+  try {
+    const res = await apiFetch('/api/doc', { docId: state.docId });
+    if (res.ok) {
+      const fresh = await res.json();
+      if (fresh && !fresh.error && fresh.id === state.docId) meta = fresh;
+    }
+  } catch { /* the load-time answer stands */ }
+  if (returnedState !== state) return; // closed, or another document, while it was asked
   const sig = meta.signature || {};
   const signers = sig.signers || [];
   const whose = meta.signerWhose;
@@ -15971,7 +15994,9 @@ function renderReturnedSigners(signers, whose, myEnd) {
   const order = signers.map((x, i) => i).sort((a, b) => (signers[a].coverageEnd || Infinity) - (signers[b].coverageEnd || Infinity));
   for (const i of order) {
     const x = signers[i];
-    const row = signerRow(x);
+    // "Modified since signing" is the details panel's word for a failing signature; on a surface built to be quoted it
+    // says more than Nib measured — a failed signature (ADR-058/060) is not a modification (the P03 phase-close review).
+    const row = signerRow(x, { badWord: '⚠ Does not verify' });
     row.setAttribute('role', 'listitem');
     const kin = document.createElement('div');
     kin.className = 'sigrow-kin';
@@ -16036,10 +16061,11 @@ function ceremonyCopyLines(f) {
     ? 'It is the last copy this machine stored during the ceremony, and it carries a signature. It is not necessarily '
       + 'the final copy everyone signed.'
     : 'It is the document as the ceremony was convened, before anyone signed.');
-  lines.push(f.extends
-    ? 'This file begins with that copy byte for byte; everything after it was appended later — other parties\' '
-      + 'signatures can be part of that.'
-    : 'This file does not begin with that copy byte for byte.');
+  lines.push(f.same ? 'This file is that copy, byte for byte.'
+    : f.extends
+      ? 'This file begins with that copy byte for byte; everything after it was appended later — other parties\' '
+        + 'signatures can be part of that.'
+      : 'This file does not begin with that copy byte for byte.');
   return lines;
 }
 

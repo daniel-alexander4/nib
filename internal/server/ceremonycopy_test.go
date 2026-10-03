@@ -129,7 +129,7 @@ func TestTheCeremonyCopyIsTheStoredOneOrNamesWhyNot(t *testing.T) {
 		{name: "came back co-signed by a stranger", doc: returned, want: docA,
 			facts: ceremonyCopyFacts{Extends: true}},
 		{name: "the ceremony has ended", doc: docE, want: docE,
-			facts: ceremonyCopyFacts{Ended: true, Extends: true}},
+			facts: ceremonyCopyFacts{Ended: true, Same: true}},
 		{name: "a planted id names another proceeding", doc: docP, cause: copyDifferentProceeding},
 		{name: "no ceremony record", doc: base, cause: copyNoRecord},
 		{name: "a record that does not verify", doc: badDoc, cause: copyRecordInvalid},
@@ -195,7 +195,7 @@ func TestTheCeremonyCopySaysWhenItIsSignedAndWhenTheFileDoesNotBeginWithIt(t *te
 		want ceremonyCopyFacts
 	}{
 		{name: "the file is the stored copy", open: mine,
-			want: ceremonyCopyFacts{Signed: true, Extends: true}},
+			want: ceremonyCopyFacts{Signed: true, Same: true}},
 		{name: "the file is the convened original, before this machine's signature", open: doc,
 			want: ceremonyCopyFacts{Signed: true}},
 	} {

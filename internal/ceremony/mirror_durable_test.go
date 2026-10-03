@@ -725,6 +725,27 @@ func TestReadMirrorForPassesOverAnotherProceeding(t *testing.T) {
 	if err != nil || !ended || !bytes.Equal(pdf, docA) {
 		t.Fatalf("ended=%v err=%v %d bytes; want this proceeding's copy from ended/, past the other in the live folder", ended, err, len(pdf))
 	}
+	// A live folder holding THIS proceeding's record and no document — torn, or caught mid-rename by the close-out sweep —
+	// does not hide the whole copy in ended/; with no ended copy it is damage, never absence.
+	recC, docC := convened(t)
+	if _, err := WriteMirror(root, recC, docC); err != nil {
+		t.Fatal(err)
+	}
+	if err := CloseOutMirror(root, recC.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteMirror(root, recC, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pdf, ended, err := ReadMirrorFor(root, recC, time.Now()); err != nil || !ended || !bytes.Equal(pdf, docC) {
+		t.Fatalf("document-less live folder: ended=%v err=%v %d bytes; want the whole copy from ended/", ended, err, len(pdf))
+	}
+	if err := os.RemoveAll(filepath.Join(root, "ended", recC.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadMirrorFor(root, recC, time.Now()); !errors.Is(err, ErrMirrorDamaged) {
+		t.Fatalf("document-less live folder alone: err=%v; want ErrMirrorDamaged", err)
+	}
 	// Only the other proceeding, damaged: a different proceeding, never "damaged".
 	if err := os.RemoveAll(filepath.Join(root, "ended", recA.ID)); err != nil {
 		t.Fatal(err)

@@ -14,6 +14,7 @@ let n = 0;
 let openAs = null;
 let revision = null; // a Response, or null when the test expects no request
 let ceremonyCopy = null; // a Response, or a function returning one (or a promise of one)
+let docNow = null; // the next /api/doc answer, or null for the boot stub's
 
 const h = await boot({
   routes: {
@@ -22,6 +23,11 @@ const h = await boot({
     '/api/document/revision': () => revision.clone(),
     '/api/document/ceremony-copy': () => (typeof ceremonyCopy === 'function' ? ceremonyCopy() : ceremonyCopy.clone()),
     '/api/close': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
+    // The sheet's fresh snapshot (the P03 phase-close review); null answers like the boot stub — no id, so the load-time
+    // answer stands.
+    '/api/doc': () => docNow || { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
+    '/api/undo': () => ({ id: `test-epoch:${n}`, name: `back${n}.pdf`, path: `/tmp/nib-harness/back${n}.pdf`, canSave: true,
+      canUndo: false, canRedo: true, signature: { state: 'unsigned' } }),
   },
 });
 const { document: doc, settle, calls } = h;
@@ -248,4 +254,89 @@ test('a Compare closed while its copy was still loading installs nothing when th
   assert.doesNotMatch($('compareBody').textContent, /→ this file|No text differences/,
     'a superseded load rendered its comparison into a closed Compare');
   assert.equal($('compareTools').hidden, true, 'a superseded load revealed the compare tools');
+});
+
+test('the sheet reads whose each signature is NOW, not from when the document loaded', async () => {
+  // Loaded before the certificate was imported: nothing is "yours". The fresh snapshot says the signature is.
+  const loaded = {
+    signature: { state: 'valid', signers: [{ name: 'You', valid: true, fingerprint: YOU, coverageEnd: 10 }] },
+    signerWhose: [''], unverifiedSigners: 1,
+  };
+  docNow = { id: `test-epoch:${n + 1}`, name: 'back.pdf', path: '/tmp/nib-harness/back.pdf', canSave: true, ...loaded,
+    signerWhose: ['you'], unverifiedSigners: 0 };
+  const before = calls.filter((c) => c.url.includes('/api/document/revision')).length;
+  try {
+    await openSheet(loaded, pdfResponse(SIGNED_BYTES, 'X-Nib-Revision', { obj: 7, end: 10, size: 10, history: 'none' }));
+  } finally {
+    docNow = null;
+  }
+  const docAsks = calls.filter((c) => c.url.includes('/api/doc') && !c.url.includes('/api/document'));
+  assert.equal(docAsks.at(-1).headers['X-Nib-Doc'], `test-epoch:${n}`, 'the snapshot was not asked for the sheet\'s document');
+  assert.equal(calls.filter((c) => c.url.includes('/api/document/revision')).length, before + 1,
+    'the load-time "not yours" was used: the signed version was never asked for');
+  assert.match($('returnedVerdict').textContent, /exactly the version you signed/);
+});
+
+test('a reload of the sheet\'s document (undo) closes the sheet rather than leave a verdict about other bytes', async () => {
+  await openSheet({ signature: { state: 'unsigned' }, canUndo: true }, null);
+  assert.equal($('returnedSheet').hidden, false, 'stimulus: the sheet did not open');
+  doc.defaultView.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+  await settle();
+  await settle();
+  assert.ok(calls.some((c) => c.url.includes('/api/undo')), 'stimulus: Ctrl+Z never reached the server');
+  assert.equal($('returnedSheet').hidden, true, 'the sheet stayed open over the undone bytes');
+});
+
+test('a reload the user did not make from the sheet closes it without pulling focus back to the command', async () => {
+  await openSheet({ signature: { state: 'unsigned' }, canUndo: true }, null);
+  const elsewhere = $('pathInput'); // focus is somewhere outside the sheet when the reload lands
+  elsewhere.focus();
+  assert.equal(doc.activeElement, elsewhere, 'stimulus: focus did not leave the sheet');
+  doc.defaultView.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+  await settle();
+  await settle();
+  assert.equal($('returnedSheet').hidden, true, 'stimulus: the reload did not close the sheet');
+  assert.equal(doc.activeElement, elsewhere, 'a reload pulled focus back to the command that opened the sheet');
+});
+
+test('a snapshot that answers about another document is not used', async () => {
+  const loaded = { signature: { state: 'valid', signers: [{ name: 'You', valid: true, fingerprint: YOU, coverageEnd: 10 }] },
+    signerWhose: [''], unverifiedSigners: 1 };
+  docNow = { id: 'test-epoch:999', name: 'other.pdf', ...loaded, signerWhose: ['you'], unverifiedSigners: 0 };
+  const before = calls.filter((c) => c.url.includes('/api/document/revision')).length;
+  try {
+    await openSheet(loaded, null);
+  } finally {
+    docNow = null;
+  }
+  assert.ok(calls.some((c) => c.url.includes('/api/doc') && !c.url.includes('/api/document')), 'stimulus: no snapshot was asked');
+  assert.equal(calls.filter((c) => c.url.includes('/api/document/revision')).length, before,
+    'another document\'s "yours" was used to ask for a signed version');
+  assert.match($('returnedVerdict').textContent, /None of this document's signatures/);
+});
+
+test('a refusal or a facts header the client cannot parse is worded, never shown as a parser error', async () => {
+  const mine = { signature: { state: 'valid', signers: [{ name: 'You', valid: true, fingerprint: YOU, coverageEnd: 10 }] },
+    signerWhose: ['you'], unverifiedSigners: 0 };
+  await openSheet(mine, new Response('<html>proxy</html>', { status: 422 }));
+  assert.match($('returnedVerdict').textContent, /could not check this file well enough/);
+  assert.doesNotMatch($('returnedVerdict').textContent, /Unexpected token|JSON/);
+  await openSheet(mine, new Response(SIGNED_BYTES.slice(), { status: 200, headers: { 'X-Nib-Revision': '{not json' } }));
+  assert.match($('returnedVerdict').textContent, /The version you signed is inside this file/);
+  assert.doesNotMatch($('returnedVerdict').textContent, /Unexpected token|JSON/);
+  ceremonyCopy = new Response('<html>proxy</html>', { status: 422 });
+  $('returnedCmpCeremony').click();
+  await settle();
+  assert.match($('returnedCmpCeremonyNote').textContent, /could not use this machine's copy/);
+});
+
+test('a file that IS the stored ceremony copy says so, and claims nothing appended', async () => {
+  ceremonyCopy = pdfResponse(MIRROR_BYTES, 'X-Nib-Ceremony-Copy', { signed: true, same: true });
+  await openSheet({ signature: { state: 'unsigned' } }, null);
+  $('returnedCmpCeremony').click();
+  await settle();
+  await settle();
+  const note = $('returnedCmpCeremonyNote').textContent;
+  assert.match(note, /This file is that copy, byte for byte/);
+  assert.doesNotMatch(note, /appended/);
 });

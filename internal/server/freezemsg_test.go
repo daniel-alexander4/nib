@@ -61,6 +61,10 @@ func TestTheFreezeRefusalIsTrueOfEveryCallerAndSaysWhereTheDocumentIs(t *testing
 	if !strings.Contains(msg, want) {
 		t.Errorf("the refusal does not name the ceremony's own copy (%s), so a user whose Save is refused cannot find the document that was actually signed.\n  got: %s", want, msg)
 	}
+	// ADR-012 moves an ended ceremony's folder, so the refusal names where it goes too (the P03 phase-close review).
+	if moved := "~/nib/ended/" + rec.ID + "/document.pdf"; !strings.Contains(msg, moved) {
+		t.Errorf("the refusal does not name where the copy goes once the ceremony ends (%s).\n  got: %s", moved, msg)
+	}
 	// The ceremony id still leads the sentence: it is what makes both halves about the same
 	// proceeding rather than a generic complaint.
 	if !strings.Contains(msg, "ceremony "+rec.ID) {
