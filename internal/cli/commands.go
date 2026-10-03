@@ -1228,7 +1228,7 @@ func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("nib verify", flag.ContinueOnError)
 	var asJSON bool
 	fs.BoolVar(&asJSON, "json", false, "emit one JSON object per file instead of a text report")
-	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, carries a signature Nib refused, or belongs to a ceremony some\nobliged party has not signed.")
+	fs.Usage = usageFunc(fs, "nib verify [--json] FILE...", "Report each file's signature integrity, and the ceremony it belongs to if it has one.\nExit 2 if any file is unsigned, modified, has content added after its last\nsignature, carries a signature Nib refused, or belongs to a ceremony some\nobliged party has not signed, whose signatures do not all commit to it, or\nthat carries a signature from someone off its roster.")
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}

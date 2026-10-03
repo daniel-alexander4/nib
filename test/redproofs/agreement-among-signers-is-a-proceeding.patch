@@ -1,8 +1,6 @@
-diff --git a/internal/p2p/attestation.go b/internal/p2p/attestation.go
-index ff6335d..78d962a 100644
 --- a/internal/p2p/attestation.go
 +++ b/internal/p2p/attestation.go
-@@ -352,16 +352,21 @@ func shortFingerprint(hexFP string) string {
+@@ -708,16 +708,21 @@
  // An empty `want` therefore disqualifies: a caller that cannot say which ceremony this document
  // belongs to must not be able to produce the ✓.
  func markOneProceeding(ats []SignerAttestation, want string) {
@@ -16,7 +14,7 @@ index ff6335d..78d962a 100644
  			continue
  		}
  		n++
--		if !strings.EqualFold(a.RosterHash, want) {
+-		if !commitsTo(a, want) {
 +		if a.RosterHash == "" {
 +			return
 +		}

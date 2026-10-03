@@ -61,6 +61,16 @@ type ceremonyReport struct {
 	// predicate exits 2 on a newer-tag document and on a record-format skew, where every party
 	// agreed.
 	skew string
+	// contradicted is set when a signature this build COULD read does not commit to the document's
+	// record (/pending 809).
+	//
+	// **A skew excuses the signatures it describes, never the document.** `skew` used to switch the
+	// whole proceeding check off, and the tag that sets it is text the signer typed: one signature
+	// saying `[NibCoSign:2]` excused every other signature on the file, including a stranger's that
+	// committed to nothing. So the excuse is per signature — an unread tag, or a record format other
+	// than the one the comparison is made in — and every valid signature it does not cover is held
+	// to `Proceeding.Commits`, the same test `markOneProceeding` applies.
+	contradicted bool
 	// unrostered names the signers who claim this ceremony and are on no roster line. NAMED and
 	// not counted, per this package's own rule: the reader's next action is about a person.
 	unrostered []string
@@ -135,6 +145,15 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport 
 	out.oneProc = len(atts) > 0
 	newerTag, versions := false, map[int]bool{}
 	for _, a := range atts {
+		if a.RosterVersion > 0 {
+			versions[a.RosterVersion] = true
+		}
+	}
+	// A record-format skew exists only BETWEEN signatures (the D32 branch, as it was): one format
+	// throughout is compared as it always was, so a document whose every signature names a format
+	// other than its record's still disagrees rather than being excused wholesale.
+	formatSkew := len(versions) > 1
+	for _, a := range atts {
 		if !a.OneProceeding {
 			out.oneProc = false
 		}
@@ -156,18 +175,22 @@ func ceremonyReportOf(pdf []byte, st sign.Status, now time.Time) ceremonyReport 
 		// D32's two discriminators, ported clause-for-clause from the web client, which has had
 		// them since P07 and which the CLI never grew. A signature this build cannot parse and a
 		// signature that disagrees are different facts and want opposite advice.
-		if a.TagVersion > p2p.AttestationTagVersion() {
+		//
+		// **Each excuses its OWN signature and nothing else** (/pending 809) — see `contradicted`.
+		unread := a.UnreadTag()
+		otherFormat := formatSkew && a.RosterVersion > 0 && a.RosterVersion != rec.Version
+		if unread {
 			newerTag = true
 		}
-		if a.RosterVersion > 0 {
-			versions[a.RosterVersion] = true
+		if !unread && !otherFormat && a.Valid && !proc.Commits(a) {
+			out.contradicted = true
 		}
 	}
 	switch {
 	case newerTag:
 		out.skew = "one or more signatures were written by a newer version of Nib, so this build " +
 			"did not read their attestation — that is a version difference, not a disagreement"
-	case len(versions) > 1:
+	case formatSkew:
 		out.skew = "the signatures carry more than one record format, so this build cannot compare " +
 			"them all — that is a version difference, not a disagreement"
 	}
@@ -201,13 +224,17 @@ func (c ceremonyReport) incomplete() bool {
 // disagrees reports signatures that name DIFFERENT proceedings — and every clause in it was earned
 // by measurement (/pending 324).
 //
-// `claimed > 0` because `oneProc` is false on a document with no signatures at all. `skew == ""`
-// because a version difference is not a disagreement, and without that clause `nib verify` was
-// measured exiting 2 on a newer-tag document and on a record-format skew — under the README's own
-// `nib verify contract.pdf && echo "signature intact"` idiom, where a non-zero exit breaks a
-// script over something no party did wrong. `unreadable == ""` for `incomplete`'s stated reason.
+// `claimed > 0 || skew != ""` because nothing on a document no signature claims has disagreed
+// with anything — an unread newer tag counts, being an attestation this build could not read
+// rather than none. A version difference is not a disagreement, and without excusing it `nib
+// verify` was measured exiting 2 on a newer-tag document and on a record-format skew — under the
+// README's own `nib verify contract.pdf && echo "signature intact"` idiom, where a non-zero exit
+// breaks a script over something no party did wrong. **But the excuse is per signature**
+// (`contradicted`, /pending 809): it used to be `skew == ""` here, which let one signer's typed tag
+// silence the check for every signature on the document. `unreadable == ""` for `incomplete`'s
+// stated reason.
 func (c ceremonyReport) disagrees() bool {
-	return c.present && c.unreadable == "" && c.claimed > 0 && c.skew == "" && !c.oneProc
+	return c.present && c.unreadable == "" && (c.claimed > 0 || c.skew != "") && c.contradicted
 }
 
 // hasUnrostered reports a signature claiming this ceremony from someone the roster does not name.
@@ -222,6 +249,15 @@ func (c ceremonyReport) hasUnrostered() bool { return len(c.unrostered) > 0 }
 // was added to this same condition to close, recorded three paragraphs down from it.
 func (c ceremonyReport) refuses() bool {
 	return c.incomplete() || c.disagrees() || c.hasUnrostered()
+}
+
+// complete is `--json`'s `complete`: `refuses()` negated, over a ceremony there is something to be
+// complete about (/pending 649). It was its own conjunction, which folded in `hasUnrostered()` and
+// dropped `disagrees()` — a document whose signatures named different proceedings exited 2 and
+// told a script `"complete": true`. Built FROM the door, so a predicate added to `refuses()`
+// reaches both channels or neither.
+func (c ceremonyReport) complete() bool {
+	return c.present && c.unreadable == "" && c.obliged > 0 && !c.refuses()
 }
 
 // lines renders the human report, one line per output row.
@@ -242,14 +278,21 @@ func (c ceremonyReport) lines() []string {
 	}
 	// The proceeding verdict, and it is not the same question as completeness: a document can be
 	// fully signed by parties who committed to DIFFERENT records.
-	switch {
-	case c.skew != "":
+	//
+	// The skew is said FIRST and no longer INSTEAD (/pending 809): it excuses the signatures it
+	// describes, so a disagreement among the others is still one and is printed beside it.
+	if c.skew != "" {
 		out = append(out, "ceremony: "+c.skew)
-	case c.claimed == 0:
-		// Nothing claims this ceremony yet, so there is no agreement to report either way.
-	case !c.oneProc:
+	}
+	switch {
+	case c.disagrees():
 		out = append(out, "signatures do NOT all commit to this document's ceremony")
-	default:
+	case c.claimed == 0:
+		// Nothing this build can read claims this ceremony, so there is no agreement to report.
+	case c.skew != "":
+		// Only what was read can be vouched for, and the line says so rather than "every".
+		out = append(out, "every signature this build could read commits to this document's ceremony")
+	case c.oneProc:
 		out = append(out, "every signature commits to this document's ceremony")
 	}
 	for _, name := range c.unrostered {
@@ -301,8 +344,7 @@ func (c ceremonyReport) json() *ceremonyReportJSON {
 	out := &ceremonyReportJSON{
 		ID: c.id, Unreadable: c.unreadable, Intent: c.intent,
 		Obliged: c.obliged, Signed: c.signed,
-		Complete: c.unreadable == "" && c.obliged > 0 && c.signed >= c.obliged &&
-			!c.hasUnrostered(),
+		Complete:      c.complete(),
 		OneProceeding: c.oneProc,
 		Skew:          c.skew,
 		Unrostered:    c.unrostered,
