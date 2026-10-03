@@ -1,8 +1,6 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index ad0a7a0..48f4ae2 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -2914,37 +2914,6 @@ func (s *Server) handleSessionInitiate(w http.ResponseWriter, r *http.Request) {
+@@ -3476,37 +3476,6 @@
  				"the request was shown and went unanswered, so nothing was signed")
  			return
  		}
@@ -29,14 +27,14 @@ index ad0a7a0..48f4ae2 100644
 -			// for a local timeout is not a wording nicety: it cost a tier-4d investigation its
 -			// first hour, sending it to read the peer's code for a gate the peer never had.
 -			//
--			// The peer's own failure to confirm arrives as a closed connection, deliberately — see
--			// `ErrVerificationDeclined`'s doc on why the two must stay indistinguishable on the
--			// wire — so there is no error here that could honestly name the far end.
+-			// The peer's own failure to confirm is a DIFFERENT sentinel, `p2p.ErrPeerDidNotConfirm`,
+-			// lifted below — and it cannot say whether the far end declined or timed out, because the
+-			// wire carries one code for both (see `ErrVerificationDeclined`'s doc).
 -			httpError(w, http.StatusConflict, "nobody confirmed the safety words on THIS machine in "+
 -				"time, so nothing was signed. The words were shown here and went unanswered; if you "+
 -				"were not at the screen, that is why.")
 -			return
 -		}
- 		// **A contribution refusal is not a connect failure either (P07.S03b).** The three
- 		// branches above lift the refusals that had sentinels; P07.S03a gave sentinels to nine
- 		// more and they fell straight through to here, where `writeConnectDiagnosis` renders a
+ 		if errors.Is(err, p2p.ErrPeerDidNotConfirm) {
+ 			// **The other side's "no", which used to arrive as a broken pipe (/pending 802).** This
+ 			// user confirmed; the far end did not. Before ADR-076 the far end said so by closing, so

@@ -491,6 +491,16 @@ const (
 	// yields "unexpected receipt from peer" — uninformative, but not an accusation, and D32's rule
 	// is that a version difference must not be reported as tampering.
 	ackNotStored = 5
+	// ackWordsNotConfirmed is the spoken check's negative VERDICT (/pending 802, ADR-076): this
+	// side's user did not confirm the four words — they said no, nobody answered, or the gate
+	// could not be shown. Its positive counterpart is `ackOK`. It travels only in the verdict slot
+	// `runVerification` opens on `alpn4`, never as a receipt, so no older reader meets it.
+	//
+	// **One byte for every way of not confirming, and that is the security half of it.** The words
+	// gate is the one whose subject is that the peer may be a man-in-the-middle, and `verify.go`'s
+	// sentinels record why a decline and a timeout must not be told apart on the wire. One code for
+	// both keeps that; what the code adds is only the fact the closed connection already carried.
+	ackWordsNotConfirmed = 6
 )
 
 // Refusal codes. **Append only, and never renumber**: a code is a wire value, and a build that

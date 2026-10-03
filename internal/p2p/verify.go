@@ -7,8 +7,10 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"time"
 
 	"nib/internal/pairing"
+	"nib/internal/safe"
 	"nib/internal/sign"
 )
 
@@ -216,25 +218,99 @@ var (
 	// error — "could not connect" invites a retry, which is the worst possible advice
 	// when someone is sitting between you.
 	//
-	// No wire code: DELIBERATE, and it is a security decision rather than an omission. This
-	// gate runs BEFORE a single document byte crosses (`runVerification` in `Receive`), and
-	// its whole subject is that the party on the other end may not be who they claim. Telling
-	// that party *which* check failed hands a man-in-the-middle the one bit they want — whether
-	// the human noticed. The peer gets a closed connection, which is what an attacker would see
-	// from an absent machine, and this side's user gets the sentence.
+	// On the wire it is `ackWordsNotConfirmed` in the verdict slot, to a peer that negotiated
+	// `alpn4`, and a closed connection to one that did not (/pending 802, ADR-076). **This used
+	// to carry no wire code at all, deliberately**, on the argument that telling the peer which
+	// check failed "hands a man-in-the-middle the one bit they want — whether the human noticed".
+	// It never withheld that bit: the peer has just completed a commit-and-reveal with this
+	// machine, so a close straight after the gate IS the answer, and the attacker reads it
+	// whether or not a byte accompanies it. What the silence did withhold was the same fact from
+	// an HONEST peer, whose user had confirmed — its next read failed as a broken pipe,
+	// `IsTransportLoss` called that a lost channel, and its server re-raced or re-accepted a
+	// session whose other half had rejected the words. Measured over loopback TCP by the
+	// v1.179.5 review (R7).
+	//
+	// No wire code: not a refusal receipt, so not `refusalAck`'s — it is raised before any document
+	// frame, and its wire form is the verdict byte `settleVerdicts` writes, not a code.
 	ErrVerificationDeclined = errors.New("the verification words were not confirmed")
 	// ErrVerificationTimedOut: nobody answered. Distinct from declining, because it means
 	// something different to the user and to whoever reads the log.
 	//
-	// No wire code: same gate, same reason as its sibling above — and the pair must stay
-	// indistinguishable on the wire, or the absence of a code becomes the code.
+	// **The SAME wire code as its sibling above**, and that is the half of the old reasoning that
+	// stands: the pair must stay indistinguishable on the wire, or the code becomes a report of
+	// whether the person was at their screen.
+	//
+	// No wire code: same gate, same verdict byte as its sibling above, never a receipt.
 	ErrVerificationTimedOut = errors.New("nobody confirmed the verification words in time")
+	// ErrPeerDidNotConfirm: THIS side's user confirmed the words and the OTHER side's did not —
+	// they declined, nobody answered there, or the gate could not be shown. Which of those it
+	// was is deliberately not on the wire (see `ackWordsNotConfirmed`).
+	//
+	// **A decided outcome, so it must never read as a lost channel.** It is an ordinary error and
+	// falls through `IsTransportLoss`'s whitelist, which is the whole point of minting it: before
+	// it existed this outcome arrived as EOF or a broken pipe, and the server retried a session
+	// the other person had just said was talking to the wrong machine.
+	//
+	// No wire code: it is what this side DECODES from the peer's verdict byte, so it is never
+	// sent — a side that did not confirm reports its own sentinel, not this one.
+	ErrPeerDidNotConfirm = errors.New("the other side did not confirm the verification words")
 )
+
+// verdictLinger bounds how long a side that did NOT confirm waits for its verdict to be read
+// before returning to a caller that will close the connection.
+//
+// **QUIC is why it exists.** A TCP close flushes, so a verdict written and then closed on is
+// delivered. A quic-go `CloseWithError` abandons what is unacknowledged, and a stream that has seen
+// the connection close returns the close error ahead of any data still buffered in it
+// (`ReceiveStream.readImpl` checks `closeForShutdownErr` before dequeuing) — so a verdict the peer
+// had not yet read is lost, and the peer reports a lost channel, which is the defect. The peer
+// reads its verdict CONCURRENTLY with its own gate (see `runVerification`), so it consumes the
+// frame within a round trip of its arrival; waiting for the peer's own verdict or close, bounded by
+// the listener's existing `closeGrace`, is what lets that happen. It returns at once when the peer
+// has already answered, which is the ordinary case of two people comparing words on one call.
+const verdictLinger = closeGrace
+
+// verdict is what the concurrent reader brings back: the peer's one-byte verdict frame, or why
+// there is none.
+type verdict struct {
+	frame []byte
+	err   error
+}
+
+// readVerdict starts reading the peer's verdict frame and returns where it will arrive.
+//
+// **Concurrent with this side's own gate, on purpose** — see verdictLinger: a verdict sitting
+// unread in a QUIC stream is destroyed by the connection close that follows it, and this side's
+// user may still be reading the words when it arrives. The goroutine reads exactly ONE frame and
+// always terminates: on that frame, on the deadline the entry point armed before the exchange, or
+// on the caller's close. Nothing else reads the stream until it has reported, because
+// `runVerification` either waits for it or returns an error that ends the session.
+func readVerdict(s Stream) <-chan verdict {
+	out := make(chan verdict, 1)
+	go func() {
+		defer safe.Recover("verification verdict read")
+		// Reported from a defer so a panic still delivers SOMETHING: `settleVerdicts` waits on
+		// this channel, and a recovered goroutine that sent nothing would hold it forever.
+		got := verdict{err: errors.New("the verification verdict could not be read")}
+		defer func() { out <- got }()
+		got.frame, got.err = readFrameMax(s, 1)
+	}()
+	return out
+}
 
 // runVerification is the gate every document-carrying entry point passes through.
 //
 // ch.Stream must already carry a deadline — see verificationExchange. Every caller in
 // this package sets exchangeDeadline before anything crosses the wire.
+//
+// # The verdict round (`alpn4`, /pending 802, ADR-076)
+//
+// To a peer that speaks it, each side then tells the other what its user said: `ackOK` or
+// `ackWordsNotConfirmed`, one byte, and a side that confirmed waits for the peer's before any
+// document byte moves. It costs no new deadline arm: the two gates run CONCURRENTLY from the end of
+// the exchange, each bounded by `PeerGateWindow`, so the peer's verdict lands inside the
+// `exchangeDeadline` the entry point armed before it — the arm `SessionBudget` already names "the
+// spoken verification gate".
 func runVerification(ch Channel, initiator bool, myFP []byte, v Verifier) error {
 	if v == nil {
 		// A nil Verifier is not "skip the check" — it is a caller that forgot, and the
@@ -246,14 +322,59 @@ func runVerification(ch Channel, initiator bool, myFP []byte, v Verifier) error 
 	if err != nil {
 		return err
 	}
-	ok, err := v.ConfirmVerification(words)
-	if err != nil {
-		return err
+	var peer <-chan verdict
+	if ch.SpeaksVerdict() {
+		peer = readVerdict(ch.Stream)
 	}
-	if !ok {
+	ok, err := v.ConfirmVerification(words)
+	if peer == nil {
+		// An older peer: no verdict slot, and a decline is the closed connection it always was.
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrVerificationDeclined
+		}
+		return nil
+	}
+	return settleVerdicts(ch.Stream, ok && err == nil, err, peer)
+}
+
+// settleVerdicts sends this side's verdict and reads the peer's. `mine` is whether this side's
+// user confirmed; `gateErr` is the gate's own error, returned unchanged when there is one.
+func settleVerdicts(s Stream, mine bool, gateErr error, peer <-chan verdict) error {
+	if !mine {
+		_ = writeFrame(s, []byte{ackWordsNotConfirmed}) // best-effort: the outcome stands either way
+		select {
+		case <-peer:
+		case <-time.After(verdictLinger):
+		}
+		if gateErr != nil {
+			return gateErr
+		}
 		return ErrVerificationDeclined
 	}
-	return nil
+	// Written before the read, and its failure does not end the round: a peer that declined first
+	// and closed makes this write fail, and its verdict is still waiting to be read. Reading it is
+	// the difference between "they rejected the words" and a broken pipe.
+	werr := writeFrame(s, []byte{ackOK})
+	got := <-peer
+	if got.err == nil {
+		switch {
+		case len(got.frame) == 1 && got.frame[0] == ackWordsNotConfirmed:
+			return ErrPeerDidNotConfirm
+		case len(got.frame) == 1 && got.frame[0] == ackOK:
+			if werr != nil {
+				return fmt.Errorf("send verification verdict: %w", werr)
+			}
+			return nil
+		}
+		return errors.New("the peer answered the verification with something that is not a verdict")
+	}
+	if werr != nil {
+		return fmt.Errorf("send verification verdict: %w", werr)
+	}
+	return fmt.Errorf("receive verification verdict: %w", got.err)
 }
 
 // ownFingerprint is this user's SPKI fingerprint from their identity PEM.

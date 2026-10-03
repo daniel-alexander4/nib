@@ -234,3 +234,22 @@ func (c Channel) SpeaksRoleFrame() bool {
 	}
 	return r >= floor
 }
+
+// SpeaksVerdict reports whether the peer negotiated a session protocol on which each side tells the
+// other whether its user confirmed the four words (/pending 802, ADR-076).
+//
+// **A FLOOR in the same list, failing CLOSED, for `SpeaksRoleFrame`'s reason.** The verdict is a
+// frame in both directions, so sending one to a peer that will not read it desynchronises the
+// exchange — the dialer's verdict would be read as the document. An unrankable peer, or `alpn4`
+// leaving the offer list, must read as "does not speak it".
+func (c Channel) SpeaksVerdict() bool {
+	floor := protoRank(alpn4)
+	if floor == 0 {
+		return false // this build no longer offers it: nobody speaks it
+	}
+	r := protoRank(c.Proto)
+	if r == 0 {
+		return false // not one of ours: an older peer, or a future one this build cannot rank
+	}
+	return r >= floor
+}

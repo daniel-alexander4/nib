@@ -55,9 +55,20 @@ const alpn2 = "nib/2"
 // pre-role behaviour, which is exactly what it expects.
 const alpn3 = "nib/3"
 
+// alpn4 is the session protocol version on which the spoken check's VERDICT crosses the wire
+// (/pending 802, ADR-076).
+//
+// **A negotiated version, for `alpn3`'s reason exactly.** The verdict is a one-byte frame in BOTH
+// directions, between the four words and the first document frame. A build that predates it reads
+// the dialer's verdict as the document — a one-byte "PDF" handed to its consent gate — and the
+// dialer would read the receiver's verdict as the start of a co-signed document. Neither fails
+// cleanly, so the frame goes only to a peer that has said it can read one, and a peer that has not
+// gets this build's pre-verdict behaviour: a decline is a closed connection, as it always was.
+const alpn4 = "nib/4"
+
 // sessionALPN is the offer list, most preferred first. One list, set at every config site, so the
 // two transports cannot drift into offering different things (ADR-009).
-var sessionALPN = []string{alpn3, alpn2, alpn}
+var sessionALPN = []string{alpn4, alpn3, alpn2, alpn}
 
 // ProtocolSkewError is D32's sentence for the one version skew the ALPN cannot negotiate away
 // (P07.S09c).
