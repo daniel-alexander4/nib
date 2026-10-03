@@ -10,6 +10,9 @@ import { setNextDocument } from './stub-pdfjs.mjs';
 
 let finalizeAnswer = null; // a Response
 const posted = [];
+let keptNow = { kept: [], totalBytes: 0 };
+const removed = [];
+let removeAnswer = true;
 const h = await boot({
   routes: {
     '/api/open': () => ({ id: 'test-epoch:1', name: 'Lease.pdf', path: '/tmp/nib-harness/Lease.pdf', canSave: true,
@@ -17,6 +20,8 @@ const h = await boot({
     '/api/identity/external': { present: false },
     '/api/listdir': { path: '/home/someone/nib', parent: '/home/someone', dirs: [], files: [] },
     '/api/finalize': (opts) => { posted.push(opts.body); return finalizeAnswer.clone(); },
+    '/api/kept': () => keptNow,
+    '/api/kept/remove': (opts) => { removed.push(JSON.parse(opts.body).name); return { removed: removeAnswer }; },
   },
 });
 const { document: doc, settle } = h;
@@ -91,4 +96,44 @@ test('a full disk, and only a full disk, is told to free some space', async () =
   await settle();
   assert.match(toasts(), /Free some disk space/);
   $('fzCancel').click();
+});
+
+test('the list shows each copy kept when you signed and removes one only after a confirm that says what it cannot reach', async () => {
+  keptNow = { kept: [
+    { name: 'kept_deed_20261002-090000-0011aabb.pdf', document: 'deed', keptAt: '2026-10-02 09:00:00', size: 2048 },
+    { name: 'kept_lease_20261001-090000-2233ccdd.pdf', document: 'lease', keptAt: '2026-10-01 09:00:00', size: 1024 },
+  ], totalBytes: 3072 };
+  $('keptBtn').click();
+  await settle();
+  assert.equal($('keptModal').hidden, false, 'the list did not open');
+  const rows = [...$('keptList').querySelectorAll('.keptrow')];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /deed — kept 2026-10-02 09:00:00/);
+  assert.match($('keptTotal').textContent, /2 copies/);
+  const win = doc.defaultView;
+  let asked = '';
+  win.confirm = (msg) => { asked = msg; return false; };
+  rows[1].querySelector('button').click();
+  await settle();
+  assert.match(asked, /permanent/);
+  assert.match(asked, /does not reach any backup/);
+  assert.equal(removed.length, 0, 'a declined confirm still removed the copy');
+  win.confirm = () => true;
+  keptNow = { kept: [keptNow.kept[0]], totalBytes: 2048 };
+  rows[1].querySelector('button').click();
+  await settle();
+  await settle();
+  assert.deepEqual(removed, ['kept_lease_20261001-090000-2233ccdd.pdf'], 'the remove did not name the copy by its name');
+  assert.equal($('keptList').querySelectorAll('.keptrow').length, 1, 'the list was not refreshed after the remove');
+  removeAnswer = false;
+  $('keptList').querySelector('button').click();
+  await settle();
+  await settle();
+  assert.match(toasts(), /already gone/);
+  keptNow = { kept: [], totalBytes: 0 };
+  $('keptClose').click();
+  $('keptBtn').click();
+  await settle();
+  assert.match($('keptList').textContent, /No copies kept yet/);
+  $('keptClose').click();
 });

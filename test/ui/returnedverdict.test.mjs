@@ -122,3 +122,50 @@ test('Finalize with "Keep a copy" keeps one and says so; the tick is off at the 
   await page.click('#fzCancel');
   await h.closeDocument();
 });
+
+// P04.S02 — the whole loop, live: Finalize with the tick and save the result; append bytes (the document "came back");
+// open it, and the sheet's FIRST link finds the copy kept when you signed and compares against it. Then the list shows
+// that copy and removes it after the confirm.
+test('a document kept when signed and returned changed is matched to its kept copy, which the list then removes', async () => {
+  await h.openDocument(DOC, 1);
+  await h.mode('secure');
+  await h.group('Sign & Timestamp');
+  await page.click('#finalizeBtn');
+  await page.waitForFunction(() => !document.getElementById('finalizeModal').hidden);
+  await page.check('#fzKeep');
+  await page.click('#fzGo');
+  await page.waitForFunction(() => !document.getElementById('saveAsModal').hidden, null, { timeout: 30000 });
+  const KEPT_OUT = path.join(OUT_DIR, 'kept-then-returned.pdf');
+  await page.fill('#saveAsName', 'kept-signed.pdf');
+  await page.fill('#saveAsDir', OUT_DIR);
+  await page.click('#saveAsGo');
+  const saved = path.join(OUT_DIR, 'kept-signed.pdf');
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(saved) && Date.now() < deadline) await page.waitForTimeout(200);
+  assert.ok(fs.existsSync(saved), 'setup: the finalized document was not saved');
+  await h.closeDocument();
+  fs.writeFileSync(KEPT_OUT, Buffer.concat([fs.readFileSync(saved), Buffer.from('\n% came back with this added\n')]));
+
+  await h.openDocument(KEPT_OUT, 1);
+  await h.mode('secure');
+  await h.group('Sign & Timestamp');
+  await page.click('#returnedBtn');
+  await page.waitForSelector('#returnedSheet:not([hidden])');
+  await page.click('#returnedCmpKept');
+  await page.waitForSelector('#compareModal:not([hidden])', { timeout: 30000 });
+  assert.match(await page.textContent('#returnedCmpKeptNote'), /begins with that copy/);
+  await page.click('#compareClose');
+  await page.click('#returnedClose');
+  // The list lives in the Sign & Timestamp card, which the menu strip shows once a document is open (ADR-037).
+  await page.click('#keptBtn');
+  await page.waitForSelector('#keptModal:not([hidden]) .keptrow', { timeout: 15000 });
+  const before = await page.$$eval('#keptList .keptrow', (rows) => rows.length);
+  assert.ok(before >= 1, 'the list shows no kept copy');
+  const asked = h.dialogs.length;
+  await page.click('#keptList .keptrow button'); // the harness accepts the confirm and records what it said
+  await page.waitForFunction((n) => document.querySelectorAll('#keptList .keptrow').length === n - 1, before, { timeout: 15000 });
+  assert.equal(h.dialogs.length, asked + 1, 'the removal asked for no confirmation');
+  assert.match(h.dialogs.at(-1), /permanent/);
+  await page.click('#keptClose');
+  await h.closeDocument();
+});

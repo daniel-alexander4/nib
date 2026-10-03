@@ -57,5 +57,8 @@ Two facts constrained where a kept copy can live and how it is named:
 - **Right after Finalize the checklist row cannot tick**: the open view is still the unsigned document (the signed
   bytes went to Save As), and no byte relation joins them. The row answers for an opened signed document (P04.S03);
   no flag from the Finalize response may tick it (ADR-027).
+- **The list is reached from the Sign & Timestamp card**, which the menu strip shows once a document is open (ADR-037)
+  and the user has not cut from the menu (ADR-036) — so reaching your copies means opening some document first. D15's
+  "listable and deletable in the UI" holds; a document-free entry point is not built (P04.S02, declared).
 - **The removal widens nothing a session could not already do** — `/api/write` and `/api/open` reach the folder — and
   its only property is that it cannot reach a file that is not a kept copy.

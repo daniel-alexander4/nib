@@ -538,6 +538,9 @@ document ever comes back changed and the file itself can no longer show what you
 copy is saved **unencrypted**, outside Nib's vault — anyone who can read your files, and your backups, can read it. If
 it cannot be saved, Finalize does not sign, and says why. A kept copy proves what you had when you signed, not what you
 sent.
+Your copies are listed under **Sign & Timestamp → Copies kept when you signed…**, where each can be removed — permanently,
+and not from any backup. When a signed document comes back, **Check a signed document that came back…** offers the
+matching kept copy first among the copies to compare against.
 
 **Sign with your own certificate.** By default Finalize uses Nib's self-signed
 identity (integrity, not third-party trust). If you have a CA-issued credential,
@@ -748,8 +751,8 @@ asks, in words you could read out:
   here: a stranger co-signing after you is exactly the case this sheet exists for.
 - **What changed?** *Compare the version you signed with this file* opens **Compare** with what you signed as the
   starting point, so text in green is text that is in this file and was not in what you signed. When the signed
-  version cannot be recovered, the sheet offers other copies in order: a copy kept when you signed (not yet — Nib does
-  not keep one), **this machine's copy from the signing ceremony** the document belongs to (found from the ceremony
+  version cannot be recovered, the sheet offers other copies in order: **a copy kept when you signed** (if you ticked
+  "Keep a copy for my records"), **this machine's copy from the signing ceremony** the document belongs to (found from the ceremony
   record inside it, and only when the stored ceremony is the same proceeding — the copy this machine last stored, which
   is not necessarily the final copy everyone signed), or **a file you choose**.
 
