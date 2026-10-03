@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -90,7 +91,7 @@ var (
 // key file stays encrypted on disk — that's the at-rest hardening), returning
 // ErrWrongPassphrase if the passphrase doesn't fit.
 func Unwrap(wrapped []byte, keyPath, pubLine string, passphrase []byte) ([]byte, error) {
-	pemBytes, err := os.ReadFile(keyPath)
+	pemBytes, err := readKeyFile(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +194,7 @@ func Generate(privPath string) (pubLine string, err error) {
 // A ".pub" that names a DIFFERENT key is refused by name rather than silently overridden, so the
 // user learns their files disagree before anything is sealed.
 func PublicKeyLine(keyPath string) (string, error) {
-	pubFile, pubErr := os.ReadFile(keyPath + ".pub")
+	pubFile, pubErr := readKeyFile(keyPath + ".pub")
 	derived, derr := derivePublicKey(keyPath)
 	if derr != nil {
 		if pubErr == nil {
@@ -219,9 +220,50 @@ func (e ErrPublicKeyMismatch) Error() string {
 		"it; run 'ssh-keygen -y -f " + e.KeyPath + " > " + e.KeyPath + ".pub' to rewrite it from the key"
 }
 
+// maxKeyFileBytes bounds a key file read. An SSH private key is a few hundred bytes to a few KB
+// (a 16384-bit RSA key in PEM is about 12 KB), so this is generous and still not a heap.
+const maxKeyFileBytes = 64 << 10
+
+// readKeyFile is the ONE read of a key file, private or public (/pending 807 R8).
+//
+// **The path is not always the user's.** An imported vault backup carries each slot's `KeyPath`,
+// and `Validate` unwraps every slot from the untrusted file — so the file being imported chooses
+// what this reads. `os.ReadFile` reads to EOF: `/dev/zero` grows the heap without bound and a FIFO
+// hangs the import, and the unlock path would then re-read the same path at every launch. So only
+// a regular file is opened (a symlink to one is followed — keys are commonly linked from a dotfiles
+// checkout), the opened handle is checked again, and at most `maxKeyFileBytes` are read.
+func readKeyFile(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file, so it is not a key", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, err = f.Stat(); err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file, so it is not a key", path)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxKeyFileBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes, so it is not a key", path, maxKeyFileBytes)
+	}
+	return b, nil
+}
+
 // derivePublicKey reads the public half out of the private key file itself.
 func derivePublicKey(keyPath string) (ssh.PublicKey, error) {
-	b, err := os.ReadFile(keyPath)
+	b, err := readKeyFile(keyPath)
 	if err != nil {
 		return nil, err
 	}

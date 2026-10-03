@@ -48,7 +48,7 @@ func (d *Document) type3Metrics(g glyph) glyphMetrics {
 			if !read {
 				// Once per procedure, a failed decode included: one token may be the whole stream, and many codes and
 				// fonts may name one procedure.
-				if sd.Content == nil && sd.Decode() != nil {
+				if d.decodeFontStream(sd, "the glyph procedure") != "" {
 					r.undecodable = true
 				} else {
 					r.w = type3Width(sd.Content)

@@ -46,6 +46,14 @@ import (
 // on its own and a separate nonce would add a field without adding a property. The
 // substance of the pin — that the string derives only over values committed before either
 // side saw the other's — is unchanged.
+//
+// **And it carries no domain label, deliberately** (/pending 813, crypto C1). A label separates
+// two message classes that could otherwise hash to the same digest; this preimage is 32 fresh
+// uniform bytes that appear in no other message nib hashes, and the commitment is compared only
+// against its own reveal on this channel, so there is no second class for a label to separate. The
+// hash whose output IS relied on — the derivation below — is labelled `nib-verification-v1`.
+// Adding one here would change the wire commitment, which needs a negotiated version and a
+// per-version branch in the one exchange the spoken check rests on, to buy no property.
 
 // contributionLen is 32 bytes of uniform randomness: the per-session secret each side
 // commits to before either reveals.

@@ -832,8 +832,8 @@ func (d *Document) cidMapOf(font types.Dict) (fontcode.CIDChain, string) {
 		switch {
 		case c.stream != nil:
 			if part = d.cidMaps[dictID(c.stream.Dict)]; part == nil {
-				if c.stream.Content == nil && c.stream.Decode() != nil {
-					return nil, "the font's embedded CMap could not be decoded"
+				if why := d.decodeFontStream(c.stream, "the font's embedded CMap"); why != "" {
+					return nil, why
 				}
 				part = fontcode.ParseCIDMap(c.stream.Content)
 				d.cidAsks += part.Entries()
@@ -1116,9 +1116,10 @@ func (d *Document) openTypeProgram(desc types.Dict) (ttState, string) {
 		return r.st, r.why
 	}
 	r := openTypeRead{ttUnknown, "its OpenType program holds a \"CFF \" table, which nib does not read inside an OpenType wrapper"}
+	why := d.decodeFontStream(sd, "its OpenType program stream")
 	switch {
-	case sd.Content == nil && sd.Decode() != nil:
-		r.why = "its OpenType program stream could not be decoded"
+	case why != "":
+		r.why = why
 	case !openTypeHasCFFTable(sd.Content):
 		r = openTypeRead{ttFailed, "its OpenType program has no \"CFF \" table, which is where veraPDF reads a CFF-flavoured one"}
 	}

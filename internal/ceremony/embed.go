@@ -241,7 +241,8 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 // zero-caller fact correctly and treats the comparison as the shape a future caller wants. What
 // is corrected here is the description: a sentence naming callers that do not exist is how a
 // reader concludes a gate is enforced somewhere it is not (/pending 458, found by the 2026-09-09
-// deepdive; nothing in this tree can see a zero-caller export — /pending 445).
+// deepdive; the root `zerocaller_test.go` now names `CheckDocument` among the exports allowed
+// none — /pending 445).
 func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 	r, err := Extract(pdf)
 	if err != nil {

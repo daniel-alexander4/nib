@@ -87,6 +87,39 @@ func EndedDir(root, id string) (string, error) {
 	return filepath.Join(root, endedDir, id), nil
 }
 
+// writeDir is the ONE directory a late write into a ceremony's folder resolves to — the live
+// folder, or the ended one once a close-out has moved it there (/pending 585, 807 R8).
+//
+// **A write after ADR-012's move used to re-create the live folder.** `WriteName`, `WriteMe` and
+// `WriteTermination` each `MkdirAll` their `MirrorDir`, so a write landing after the close-out
+// conjured an empty `ceremonies/<id>/` that `ListStored` then showed as a live, record-less
+// ceremony — and a late termination there escaped the write-once check, because the moved
+// `termination.json` sits in `ended/<id>/`. Where the live folder is absent and the ended one
+// exists, the write goes where the ceremony now lives.
+//
+// The live folder wins when it exists, so a ceremony that was never closed out is untouched, and
+// an `EndedDir` refusal (a relative root) leaves the live answer it always gave. **Declared, not
+// closed:** a write that resolves the live folder an instant before the move still lands there;
+// closing that needs the move and the writers under one lock, and the sweep already stops
+// listening before it moves (`server/closeout.go`). `WriteMirror` is not routed here: a document
+// arriving after the close-out is a party's signature, and resurrecting a live ceremony around
+// it is the louder and safer outcome than filing it away unseen.
+func writeDir(root, id string) (string, error) {
+	live, err := MirrorDir(root, id)
+	if err != nil {
+		return "", err
+	}
+	if _, serr := os.Stat(live); serr == nil {
+		return live, nil
+	}
+	if ended, eerr := EndedDir(root, id); eerr == nil {
+		if fi, serr := os.Stat(ended); serr == nil && fi.IsDir() {
+			return ended, nil
+		}
+	}
+	return live, nil
+}
+
 // CloseOutMirror moves a ceremony's directory out of the live set, preserving everything in it.
 //
 // The two refusals come FIRST and neither is advisory: a relative root and an id `ValidID` rejects
@@ -238,7 +271,7 @@ const verificationFile = "verification.json"
 // would mean a ceremony this machine is not party to could be conjured into the listing by a
 // stray session. A missing directory is therefore an error the caller logs, not a directory.
 func WriteVerification(root, id string, v Verification) error {
-	dir, err := MirrorDir(root, id)
+	dir, err := writeDir(root, id)
 	if err != nil {
 		return err
 	}
@@ -425,7 +458,7 @@ const nameFile = "name"
 // readable, resumable and signable exactly as before — the panel simply cannot say "you are party 3
 // of 4" until the next write. Refusing an accept over it would trade a whole ceremony for a label.
 func WriteMe(root, id, fingerprint string) error {
-	dir, err := MirrorDir(root, id)
+	dir, err := writeDir(root, id)
 	if err != nil {
 		return err
 	}
@@ -461,7 +494,7 @@ const MaxCeremonyNameLen = 120
 // Empty deletes rather than storing a blank, so "clear the name" and "never named" are the same
 // state on disk and the panel has one thing to render rather than two.
 func WriteName(root, id, name string) error {
-	dir, err := MirrorDir(root, id)
+	dir, err := writeDir(root, id)
 	if err != nil {
 		return err
 	}

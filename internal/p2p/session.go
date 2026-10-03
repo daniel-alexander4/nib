@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -1021,9 +1022,6 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 	if !inCeremony && len(ats) != 1 {
 		return nil, fmt.Errorf("%w: got %d", ErrWrongPriorSignerCount, len(ats))
 	}
-	if !inCeremony && len(ats) == 0 {
-		return nil, ErrWrongPriorSignerCount
-	}
 	// **The peer who handed this over is the LAST signer, not the first.**
 	//
 	// The two bindings below ask whether the document was signed by the connected peer and
@@ -1083,10 +1081,10 @@ func coSignExchange(myCertPEM, myKeyPEM, peerFP []byte, peerLabel string, inboun
 		// Outside a ceremony there is no roster and no ordering, so the pairwise binding is all
 		// there is: the document's signer must be the very identity the TLS handshake pinned —
 		// not just any valid signature — and that signer must have accepted *this* user.
-		if peer.Fingerprint != hex.EncodeToString(peerFP) {
+		if !strings.EqualFold(peer.Fingerprint, hex.EncodeToString(peerFP)) {
 			return nil, ErrNotTheConnectedPeer
 		}
-		if peer.AcceptedPeer != hex.EncodeToString(myFP) {
+		if !strings.EqualFold(peer.AcceptedPeer, hex.EncodeToString(myFP)) {
 			return nil, ErrPeerDoesNotAcceptYou
 		}
 	}
@@ -1233,20 +1231,20 @@ func confirmCoSigned(final, peerFP, myFP []byte, inCeremony bool) error {
 	peer, me := hex.EncodeToString(peerFP), hex.EncodeToString(myFP)
 	var gotPeer, gotMe bool
 	for _, a := range ReadAttestations(final) {
-		switch a.Fingerprint {
-		case peer:
+		switch {
+		case strings.EqualFold(a.Fingerprint, peer):
 			if !a.Valid {
 				return errors.New("peer's returned signature does not verify")
 			}
-			if a.AcceptedPeer != me {
+			if !strings.EqualFold(a.AcceptedPeer, me) {
 				return errors.New("peer's signature does not accept you")
 			}
 			gotPeer = true
-		case me:
+		case strings.EqualFold(a.Fingerprint, me):
 			if !a.Valid {
 				return errors.New("your own signature is missing or altered in the returned document")
 			}
-			if !inCeremony && a.AcceptedPeer != peer {
+			if !inCeremony && !strings.EqualFold(a.AcceptedPeer, peer) {
 				return errors.New("your signature in the returned document does not accept the peer")
 			}
 			gotMe = true
@@ -1291,6 +1289,12 @@ func readFrame(r io.Reader) ([]byte, error) { return readFrameMax(r, maxFrame) }
 //
 // So every fixed-size frame reads with its own bound and the general reader keeps the
 // document's.
+//
+// **And the buffer grows as bytes ARRIVE, never to the declared length up front** (/pending 807
+// R7, 784 (5)). Under the cap the declaration is still the peer's word: it allocated 128 MiB on
+// four header bytes, and a peer that then stalls holds that until the session deadline. Past
+// `frameEagerBytes` the buffer starts small and at most doubles, never past what was declared,
+// so memory tracks what the peer has actually sent.
 func readFrameMax(r io.Reader, max uint32) ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
@@ -1300,9 +1304,33 @@ func readFrameMax(r io.Reader, max uint32) ([]byte, error) {
 	if n > max {
 		return nil, fmt.Errorf("declared frame too large: %d bytes (max %d)", n, max)
 	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
+	if n <= frameEagerBytes {
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	}
+	buf := make([]byte, 0, frameEagerBytes)
+	for len(buf) < int(n) {
+		if len(buf) == cap(buf) {
+			buf = slices.Grow(buf, min(cap(buf), int(n)-len(buf)))
+		}
+		m, err := r.Read(buf[len(buf):min(cap(buf), int(n))])
+		buf = buf[:len(buf)+m]
+		if err != nil {
+			if len(buf) == int(n) {
+				break
+			}
+			if err == io.EOF && len(buf) > 0 {
+				err = io.ErrUnexpectedEOF // io.ReadFull's reading of a body cut short
+			}
+			return nil, err
+		}
 	}
 	return buf, nil
 }
+
+// frameEagerBytes is the declared length below which a frame is allocated whole: every
+// fixed-size frame and every refusal, where growing in steps would buy nothing.
+const frameEagerBytes = 64 << 10

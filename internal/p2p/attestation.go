@@ -666,13 +666,19 @@ func commitsTo(a SignerAttestation, want string) bool {
 // OTHER signer with a VALID signature actually holds that fingerprint on this
 // document, and this signer's own signature is valid too — a tampered signature
 // attests to nothing, so it must not produce a "mutually co-signed" verdict.
+//
+// **Case-folded, like every other fingerprint comparison in this package** (/pending 648). The
+// accepted peer is a roster entry's fingerprint (`PredecessorOf`), which reaches the roster from
+// JSON un-normalised, and `safeHex` validates it without lowercasing it — so an uppercase roster
+// signed an uppercase token into `/Reason`, `==` against the library's lowercase fingerprint never
+// matched, and L3 refused every hop after the first, permanently, because the token is signed.
 func crossBind(atts []SignerAttestation) {
 	for i := range atts {
 		if atts[i].AcceptedPeer == "" || !atts[i].Valid {
 			continue
 		}
 		for j := range atts {
-			if j != i && atts[j].Valid && atts[j].Fingerprint == atts[i].AcceptedPeer {
+			if j != i && atts[j].Valid && strings.EqualFold(atts[j].Fingerprint, atts[i].AcceptedPeer) {
 				atts[i].Matched = true
 				break
 			}

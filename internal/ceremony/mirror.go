@@ -869,11 +869,15 @@ const terminationFile = "termination.json"
 // clobbered: two conveners' worth of end state under one id is exactly the substitution
 // /pending 318 exists against, and silently taking the later one would pick the attacker's.
 func WriteTermination(root string, t Termination) error {
-	dir, err := MirrorDir(root, t.Ceremony)
+	dir, err := writeDir(root, t.Ceremony)
 	if err != nil {
 		return err
 	}
-	if prev, rerr := readTerminationRaw(dir); rerr == nil {
+	// Checked through the READ door, which falls back to `ended/` (/pending 807 R8): checking only
+	// the folder being written let a termination written after the close-out sit beside the moved
+	// one, and `readTerminationAt` then preferred the newer — a second end state superseding the one
+	// the receipt was based on.
+	if prev, rerr := readTerminationAt(root, t.Ceremony); rerr == nil {
 		if prev.State == t.State && prev.RosterHash == t.RosterHash {
 			return nil // idempotent: the same end state, written again
 		}

@@ -128,8 +128,8 @@ func (d *Document) cffRead(sd *types.StreamDict, subset bool) (c *cffProgram, kn
 	}
 	r := type1CRead{known: true}
 	throws = ""
-	if sd.Content == nil && sd.Decode() != nil {
-		r = type1CRead{why: "its embedded CFF program could not be decoded"}
+	if why := d.decodeFontStream(sd, "its embedded CFF program"); why != "" {
+		r = type1CRead{why: why}
 	} else {
 		prog := readCFF(sd.Content, subset, &d.cffSpent)
 		switch {
