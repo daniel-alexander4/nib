@@ -257,6 +257,10 @@ const EXCLUDED = {
   pinPeerRequest: 'request body, read by its handler',
   removePeerRequest: 'request body, read by its handler',
   keptRemoveRequest: 'request body, read by its handler',  // P04.S02
+  // /pending 819 (v1.182.4): /api/redact's 422 when a raster names a page the posted document does not have. The page
+  // rasterises only pages it has, so it cannot provoke this — the reader is the server's own `redactrange_test.go`, and
+  // a page that ever did would show the generic redaction failure. Parked here rather than read for show.
+  redactRefusal: 'a 422 the page cannot provoke; asserted by redactrange_test.go',
   armRequest: 'request body, read by its handler',
   stampReq: 'request body, read by its handler',
   cosignParams: 'request body, read by its handler',
