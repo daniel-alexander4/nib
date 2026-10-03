@@ -312,10 +312,10 @@ func targetRefusal(ctx *model.Context, dst pdfread.Page) string {
 	case !written:
 		key = parentTreeKeyFloor(ctx, root) // what `allocParentTreeKey` hands out, read without caching it
 	}
-	if _, single, _ := parentTreeKey(ctx, tree, key); single {
+	if _, single := parentTreeKey(ctx, tree, key); single {
 		return causeTaggedAcross
 	}
-	if _, _, err := parentTreePlace(ctx, tree, key); err != nil {
+	if _, _, _, err := parentTreePlace(ctx, tree, key); err != nil {
 		return causeTaggedAcross
 	}
 	return ""

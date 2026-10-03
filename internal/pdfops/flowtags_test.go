@@ -704,7 +704,7 @@ func TestANewKeyRaisesEveryLimitOnItsWay(t *testing.T) {
 		25: "<< /Limits [0 0] /Nums [0 [21 0 R]] >>",
 		26: "<< /Limits [1 1] /Nums [1 [22 0 R]] >>",
 	})
-	leaf, err := parentTreeDict(ctx, tree, 5)
+	leaf, _, err := parentTreeDict(ctx, tree, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
