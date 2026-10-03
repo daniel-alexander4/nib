@@ -1251,37 +1251,57 @@ func roleMapOf(t *testing.T, pdf []byte) map[string]string {
 // the conjunct removed, the whole `internal/pdfops` suite still passed. It is not inert (it returns
 // a non-empty list on the right input); it simply had no input.
 //
-// The stimulus is a kept page's annotation whose `/P` names a page the subset DROPPED. Nothing
-// prunes an annotation's `/P` — it is a malformed source rather than a shape nib produces — and
-// pdfcpu writes by reachability, so the dropped page's dictionary and its `/Contents` reach the
-// output while the TREE stays clean, which is precisely the gap the five tree conditions cannot see.
+// The stimulus used to be a page selection: a kept annotation whose `/P` named a dropped page, which
+// nothing pruned. `unlinkDroppedPages` now re-points that `/P` at the kept page (`/pending 726`), so a
+// selection can no longer produce one — which this asserts first, since it is the leak closing. The
+// conjunct still guards the doors that are not selections (the merge and splice grafts call
+// `carryIsComplete` too), so its stimulus is now built by hand: the selection's own clean, carried
+// output, with an extra `/Type /Page` hung off a kept annotation's `/P`. The TREE stays clean, which is
+// precisely the gap the five tree conditions cannot see.
 func TestTheOrphanPageConditionDECIDESTheGate(t *testing.T) {
 	objs := subsetFixtureObjects()
-	// The Link on kept page 1, repointed at dropped page 3 — and its /Dest removed, so
-	// `unlinkDestinations` is not what catches this.
+	// The Link on kept page 1, repointed at dropped page 3, with no destination of its own.
 	objs[20] = "<< /Type /Annot /Subtype /Link /Rect [72 690 300 720] /Border [0 0 0] " +
 		"/P 7 0 R /StructParent 4 >>"
 	src := assembleFixture(objs)
 	if v, d, _, _ := carryOf(t, src); v != "carried" || len(d) > 0 {
 		t.Fatalf("setup: the fixture is %s with %d defect(s)", v, len(d))
 	}
-	out, err := Collect(src, []string{"1", "2"}) // page 3 goes, and the annotation still names it
+	out, err := Collect(src, []string{"1", "2"}) // page 3 goes, and the annotation named it
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The gate refused, so the claim went with it — the honest loss.
-	if s := inspectTags(out); s.tree || s.marked {
-		t.Errorf("the output claims tagging (tree=%v marked=%v) over a document that still holds a "+
-			"page the subset removed", s.tree, s.marked)
+	if bytes.Contains(everyDecodedByte(t, out), []byte("ZZPAGETHREE")) {
+		t.Error("the dropped page's text is in the output: a kept annotation's /P still reached it")
 	}
-	// And the conjunct is what decided it: the TREE was clean.
-	ctx, rerr := api.ReadValidateAndOptimize(bytes.NewReader(out), model.NewDefaultConfiguration())
-	if rerr != nil {
-		t.Fatal(rerr)
+	if !carryIsComplete(out) {
+		t.Fatal("setup: the selection's output is not a complete carry, so the stimulus below is not " +
+			"the only thing wrong with it")
 	}
-	if orphans := orphanPageObjects(ctx, livePages(ctx)); len(orphans) == 0 {
-		t.Error("no orphan page object in the output, so the condition under test had nothing to " +
+
+	// The stimulus: the same document with pages 3 and 4 already gone from its page tree and from its
+	// structure tree — so the tree is clean — while page 3's dictionary is still reachable through the
+	// link's /P. That is the shape a selection used to write.
+	objs[2] = "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>"
+	objs[31] = "<< /Type /StructElem /S /Document /P 30 0 R /K [32 0 R 33 0 R 34 0 R] >>"
+	objs[30] = "<< /Type /StructTreeRoot /K [31 0 R] /ParentTree 39 0 R /RoleMap 38 0 R /ParentTreeNextKey 5 >>"
+	objs[39] = "<< /Nums [0 [32 0 R] 1 [33 0 R] 4 34 0 R] >>"
+	objs[42] = "<< /Names [] >>"
+	for _, nr := range []int{9, 10, 22, 35, 36, 37} {
+		delete(objs, nr)
+	}
+	objs[7] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 11 0 R >> >> /Contents 8 0 R >>"
+	orphaned := assembleFixture(objs)
+	octx, oerr := api.ReadValidateAndOptimize(bytes.NewReader(orphaned), model.NewDefaultConfiguration())
+	if oerr != nil {
+		t.Fatal(oerr)
+	}
+	if orphans := orphanPageObjects(octx, livePages(octx)); len(orphans) == 0 {
+		t.Fatal("no orphan page object in the stimulus, so the condition under test had nothing to " +
 			"fire on and this test would pass with the conjunct deleted")
+	}
+	if carryIsComplete(orphaned) {
+		t.Error("carryIsComplete certified a document holding a page outside its page tree")
 	}
 }
 

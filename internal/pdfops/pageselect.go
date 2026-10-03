@@ -467,9 +467,11 @@ func selectPages(ctx *model.Context, keep []int, carry bool, policy unreadablePo
 	// `keptPages` holds the object number of each original placed AND of each clone made, so a page
 	// the selection named twice contributes both numbers to it and neither to this set.
 	dropped := make(map[int]bool, len(leaves))
+	var droppedDicts []types.Dict
 	for _, l := range leaves {
 		if nr := l.ref.ObjectNumber.Value(); !keptPages[nr] {
 			dropped[nr] = true
+			droppedDicts = append(droppedDicts, l.dic)
 		}
 	}
 	optional := carryOptionalContent(xt, root, dropped)
@@ -490,7 +492,6 @@ func selectPages(ctx *model.Context, keep []int, carry bool, policy unreadablePo
 	if err := pruneNames(xt, root, keptPages); err != nil {
 		return false, err
 	}
-	unlinkDestinations(xt, keptDicts, keptPages)
 	// Re-added ON TOP of the allowlist, never into it — the shape the structure keys already use.
 	// Each of the four appears only when the thing it names survived: an outline that lost every
 	// entry leaves no empty root behind, `/OCProperties` is nil where its subtree reached a dropped
@@ -531,27 +532,29 @@ func selectPages(ctx *model.Context, keep []int, carry bool, policy unreadablePo
 		}
 	}
 
-	if !carried {
-		return false, nil
+	if carried {
+		root["StructTreeRoot"] = treeRoot
+		// `/MarkInfo` goes WITH the tree and is not invented: a document whose tree carried no
+		// `/MarkInfo /Marked true` does not gain one here.
+		if markInfo != nil {
+			root["MarkInfo"] = markInfo
+		}
+		// **A failure here drops the carry rather than the operation.** Its errors are nib's own and it
+		// runs after the structure keys are back, so returning one would add a failure mode
+		// `carryStructure`'s header disclaims and leave state to roll back; taking the keys away again
+		// produces exactly the honest loss the rest of the carry produces.
+		if !carryTitleFloor(ctx, root, title, showTitle) {
+			delete(root, "StructTreeRoot")
+			delete(root, "MarkInfo")
+			delete(root, "Metadata")
+			delete(root, "ViewerPreferences")
+			carried = false
+		}
 	}
-	root["StructTreeRoot"] = treeRoot
-	// `/MarkInfo` goes WITH the tree and is not invented: a document whose tree carried no
-	// `/MarkInfo /Marked true` does not gain one here.
-	if markInfo != nil {
-		root["MarkInfo"] = markInfo
-	}
-	// **A failure here drops the carry rather than the operation.** Its errors are nib's own and it
-	// runs after the structure keys are back, so returning one would add a failure mode
-	// `carryStructure`'s header disclaims and leave state to roll back; taking the keys away again
-	// produces exactly the honest loss the rest of the carry produces.
-	if !carryTitleFloor(ctx, root, title, showTitle) {
-		delete(root, "StructTreeRoot")
-		delete(root, "MarkInfo")
-		delete(root, "Metadata")
-		delete(root, "ViewerPreferences")
-		return false, nil
-	}
-	return true, nil
+	// **LAST, after every key that can name a page is back on the catalog** (`/pending 726`, `/pending
+	// 765`): the one door that cuts every road from what was kept to a page that was not.
+	unlinkDroppedPages(xt, root, pages, droppedDicts, dropped, keptPages)
+	return carried, nil
 }
 
 // clonePage produces a genuinely separate page object: its own dictionary, its own /Annots array,
@@ -703,7 +706,7 @@ func dropSignature(xt *model.XRefTable, root types.Dict, pages []types.Dict) {
 	}, 0)
 	delete(form, "SigFlags")
 	delete(form, "XFA")
-	pruneFieldRefs(xt, form, "CO", doomed)
+	pruneCalculationOrder(xt, form)
 }
 
 // maxFieldAncestry bounds the /Parent climb `inheritedFieldType` makes. The field walk's own depth
@@ -829,24 +832,38 @@ func keepFieldsMemo(xt *model.XRefTable, fields types.Array, keep func(nr int, d
 	return out
 }
 
-// pruneFieldRefs filters an AcroForm array of field references (/CO) to the ones still present.
-func pruneFieldRefs(xt *model.XRefTable, form types.Dict, key string, doomed map[int]bool) {
-	arr := derefArray(xt, form[key])
+// pruneCalculationOrder filters `/AcroForm /CO` to the fields still in the form's rebuilt field tree,
+// and is the one rule for it at every door that rebuilds `/Fields` (ADR-009, `/pending 765` (2)).
+//
+// `/CO` names FIELDS — the dictionaries carrying a calculate action — and a field is a widget only when
+// the two are merged. Both callers used to test the entries against the set of WIDGET numbers on the
+// surviving pages, so a field separate from its widgets (a parent with `/Kids`, which is how a field
+// with more than one widget is always written) lost its calculation-order entry while it survived, and
+// its sum stopped recalculating. Asking the rebuilt tree is right for both shapes and for the
+// signature erase, which removes its fields from the same tree. An entry that is not an indirect
+// reference cannot name a field in the tree and goes.
+func pruneCalculationOrder(xt *model.XRefTable, form types.Dict) {
+	arr := derefArray(xt, form["CO"])
 	if len(arr) == 0 {
 		return
 	}
+	inTree := map[int]bool{}
+	eachFormField(xt, form, func(o types.Object, _ types.Dict) {
+		if r, ok := o.(types.IndirectRef); ok {
+			inTree[r.ObjectNumber.Value()] = true
+		}
+	})
 	live := make(types.Array, 0, len(arr))
 	for _, o := range arr {
-		if r, ok := o.(types.IndirectRef); ok && doomed[r.ObjectNumber.Value()] {
-			continue
+		if r, ok := o.(types.IndirectRef); ok && inTree[r.ObjectNumber.Value()] {
+			live = append(live, o)
 		}
-		live = append(live, o)
 	}
 	if len(live) == 0 {
-		delete(form, key)
+		delete(form, "CO")
 		return
 	}
-	form[key] = live
+	form["CO"] = live
 }
 
 // pruneAcroForm keeps only the fields that still have a widget on a surviving page, mirroring what
@@ -873,13 +890,7 @@ func pruneAcroForm(xt *model.XRefTable, root types.Dict, keptPages []types.Dict)
 	}
 	form["Fields"] = kept
 	pruneDefaultResources(xt, form)
-	dead := map[int]bool{}
-	for _, o := range derefArray(xt, form["CO"]) {
-		if r, ok := o.(types.IndirectRef); ok && !live[r.ObjectNumber.Value()] {
-			dead[r.ObjectNumber.Value()] = true
-		}
-	}
-	pruneFieldRefs(xt, form, "CO", dead)
+	pruneCalculationOrder(xt, form)
 	return nil
 }
 
@@ -942,45 +953,6 @@ func derefString(xt *model.XRefTable, o types.Object) (string, bool) {
 		return string(b), err == nil
 	}
 	return "", false
-}
-
-// unlinkDestinations removes a link's destination when it names a page this subset dropped.
-//
-// A dangling destination is not merely untidy here. The annotation lives on a page that SURVIVES,
-// so the dropped page's dictionary stays reachable through it — and pdfcpu writes by reachability,
-// which would put the removed page's /Contents back into the output. pdfcpu's own migration does
-// not solve this either: it patches the reference through a lookup the dropped page is absent from,
-// which yields `0 0 R`.
-//
-// **The question is `destReachesAKeptPage`'s, never a narrower one** (ADR-009, `/pending 709` R2-4).
-// This used to ask `destNamesAKeptPage`, which cannot resolve a NAMED destination — so every link
-// written as `/Dest (name)`, `/Dest /name` or `/A << /S /GoTo /D (name) >>`, which is how Word and
-// LaTeX's hyperref write internal links, lost its target even when the page it named was kept, while
-// the outline carry answered the same question correctly one file over. It runs after `pruneNames`,
-// so a name still in the tree names a kept page, and a name that went resolves to nothing.
-//
-// A name is also the one shape that cannot re-anchor a dropped page on its own: it is a string, and
-// the page is reached only through the tree `pruneNames` has already cut.
-func unlinkDestinations(xt *model.XRefTable, keptPages []types.Dict, kept map[int]bool) {
-	for _, page := range keptPages {
-		for _, a := range derefArray(xt, page["Annots"]) {
-			ad := derefDict(xt, a)
-			if ad == nil {
-				continue
-			}
-			if _, has := ad["Dest"]; has && !destReachesAKeptPage(xt, ad["Dest"], kept) {
-				delete(ad, "Dest")
-			}
-			action := derefDict(xt, ad["A"])
-			if action == nil {
-				continue
-			}
-			if _, has := action["D"]; has && !destReachesAKeptPage(xt, action["D"], kept) {
-				delete(ad, "A")
-			}
-		}
-	}
-	unlinkAnnotationThreads(xt, keptPages)
 }
 
 // unlinkAnnotationThreads cuts a kept annotation's reference to an annotation that is not on a kept
@@ -1090,7 +1062,7 @@ func pruneNames(xt *model.XRefTable, root types.Dict, keptPages map[int]bool) er
 		// and the same document comes through clean.
 		//
 		// Freeing was never needed here: this file turns on pdfcpu writing by REACHABILITY, which is
-		// why `unlinkDestinations` unlinks rather than deletes and why the allowlist drops catalog
+		// why `unlinkDroppedPages` unlinks rather than deletes and why the allowlist drops catalog
 		// keys rather than their objects. An unreferenced destination array is not written.
 		if _, _, err := node.Remove(nil, k); err != nil {
 			return err

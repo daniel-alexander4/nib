@@ -34,7 +34,7 @@ import (
 //
 // # It is the same predicate, deliberately
 //
-// `keepFields` walks the field tree and `pruneFieldRefs` cleans `/CO`, exactly as the page
+// `keepFields` walks the field tree and `pruneCalculationOrder` cleans `/CO`, exactly as the page
 // selection's prune does. What differs is only where the live set comes from: there, the pages a
 // selection kept; here, every page the composed document actually has.
 //
@@ -81,12 +81,6 @@ func pruneOrphanedAcroForm(ctx *model.Context) (bool, error) {
 		return true, nil
 	}
 	form["Fields"] = kept
-	doomed := map[int]bool{}
-	for _, o := range derefArray(xt, form["CO"]) {
-		if r, ok := o.(types.IndirectRef); ok && !live[r.ObjectNumber.Value()] {
-			doomed[r.ObjectNumber.Value()] = true
-		}
-	}
-	pruneFieldRefs(xt, form, "CO", doomed)
+	pruneCalculationOrder(xt, form)
 	return true, nil
 }

@@ -118,6 +118,12 @@ func FillFormCSV(pdf, data []byte, nameCol string) ([]SplitPart, error) {
 	if len(rows) < 2 {
 		return nil, fmt.Errorf("CSV needs a header row of field names and at least one data row")
 	}
+	// Each record is a full fill and parse, and the CSV is user input: the splitters' cap is the
+	// same question — how many files may one request produce — so it is the same door (ADR-009,
+	// `/pending 765` (3)), asked before the form is read at all.
+	if err := refuseTooManyParts(len(rows) - 1); err != nil {
+		return nil, err
+	}
 	header := rows[0]
 	colOf := map[string]int{}
 	for i, h := range header {
