@@ -9,27 +9,38 @@ package pdfops
 //
 // # A flag is a PAGE COORDINATE and is not anchored to content (/pending 457)
 //
-// `frac` is a fraction of the page, so a flag says WHERE on the page, never WHAT it was placed
-// beside. Nothing in this tree cross-checks one against page content: the named grep
-// `NibFlags|FlagsJSON|flagsKey` over `internal/` non-test returns this file and a slice-identity
-// cache in `internal/server/server.go`, and `reconstructFlags` in the client clamps to `[0,1]`
-// and to the page count and validates nothing else.
+// `frac` is a fraction of the page as the viewer shows it, so a flag says WHERE on the page, never WHAT it was
+// placed beside. Nothing cross-checks one against page content: `reconstructFlags` in the client clamps to
+// `[0,1]` and to the page count and validates nothing else.
 //
-// **Measured**: after a rewrite that changed a page's text — `ContentDigest` moved —
-// `FlagsJSON` returned a byte-identical flag set. It survives because `writeMutated` and
-// `api.WriteContext` carry `ctx.Info` through unchanged. So a flag placed on "sign here" points
-// at whatever now occupies that fraction of the page.
+// It survives every rewrite because `writeMutated` and `api.WriteContext` carry `ctx.Info` through unchanged,
+// so a flag placed on "sign here" points at whatever occupies that fraction of the page afterwards. That is
+// correct exactly when the rewrite moves nothing the page draws, or moves the flag with what it moves.
 //
-// **Live today at small scale**, on any `writeMutated` route reached with a flagged document
-// open — `/api/ocr`, `/api/sanitize`, `/api/attachments/add`. Those rewrites move text by a
-// little or not at all, so the flag usually still lands somewhere defensible, which is why this
-// has not been seen.
+// # No anchor, because every rewrite that reaches a flag keeps its place (/pending 457)
 //
-// **It becomes load-bearing for `PLAN-text-reflow.md`'s P05**, whose whole job is to move the
-// text a flag was placed beside. Making it DETECTABLE means carrying a content anchor beside the
-// coordinate, and that is a change to a persisted, document-travelling format rather than a
-// local fix — so it belongs with the phase that needs it, grilled there, not bolted on here.
-// Recorded at the line meanwhile, because the hazard is invisible from the struct.
+// An anchor beside the coordinate would make a moved flag DETECTABLE, at the price of a format change to the
+// one persisted, document-travelling coordinate nib has. It is not built, because nothing that rewrites a
+// flagged document moves what a flag sits beside — and that is held, not assumed:
+//
+//   - Measured 2026-10-03: the OCR layer, all three sanitize methods and an added attachment, over twelve
+//     documents (two government fillable forms, LaTeX, a scan, a tagged conversion), kept the boxes
+//     and rotation of the first three pages and rendered them pixel-identical at 40 dpi, annotations shown
+//     and hidden (StripMetadata drops the flag with the rest of the Info dictionary); a crop, a turn
+//     and a visible stamp, run as controls, all differed.
+//   - The same census then found the one shape that DID move: a turned page whose box does not start at the
+//     origin. pdfcpu folds `/Rotate` into the content to stamp it and turned the drawing about the origin, so
+//     the OCR layer — and every bake, watermark and page number — carried the whole page out of its box. That
+//     is repaired at the stamp door (`stampInPlace`), not here: a flag was the least of what it moved.
+//   - `internal/server`'s TestEveryRewriteOfAHeldDocumentIsClassifiedForItsFlags requires every route that
+//     commits a rewrite to say how a flag keeps its place (keeps geometry, carries the flag through the reflow
+//     door in anchormove.go, never receives one, or installs the file's own), and
+//     TestEveryRewriteOfAHeldDocumentKeepsWhatAFlagWasPlacedBeside drives each keeps-geometry rewrite over
+//     flagged documents, a turned and cropped page among them.
+//
+// A rewrite that moves drawn content on one of those routes turns the census red, and that is when the anchor
+// is owed: an optional field, an old blob without it read as "unknown" (never invalid), every writer and the
+// round-trip guard updated, and an ADR, because it changes a blob that travels in documents already sent.
 
 import (
 	"bytes"

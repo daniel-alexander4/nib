@@ -1,9 +1,7 @@
 package pdfops
 
 import (
-	"bytes"
 	"fmt"
-	"nib/internal/pdfread"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -105,16 +103,12 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 	if len(wms) == 0 {
 		return pdf, nil
 	}
-	var out bytes.Buffer
-	rs, err := pdfread.Reader(pdf, nil)
+	out, err := addWatermarks(pdf, wms)
 	if err != nil {
-		return nil, err
-	}
-	if err := api.AddWatermarksSliceMap(rs, &out, wms, model.NewDefaultConfiguration()); err != nil {
 		return nil, err
 	}
 	// The text layer is drawn in a font nib supplied and pdfcpu embedded, so the same rule applies
 	// here as to authored Markdown: see dropCIDSets. The scan itself is the user's document and
 	// nothing else about it is touched.
-	return honestOptionalContent(embeddedFacesAreHonest(out.Bytes(), []string{fontName})), nil
+	return honestOptionalContent(embeddedFacesAreHonest(out, []string{fontName})), nil
 }

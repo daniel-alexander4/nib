@@ -72,7 +72,7 @@ func stampTextWatermarks(pdf []byte, embedded bool, faces []string, add func(ctx
 			}
 			if err := func() (err error) {
 				defer fault.Catch(&err)
-				return add(ctx, emb)
+				return stampInPlace(ctx, func() error { return add(ctx, emb) })
 			}(); err != nil {
 				// Text no face can bake (`stampText`) is the caller's error, not the face's: retrying it in
 				// Base-14 reads the document twice and logs a face failure that did not happen. So is a field
