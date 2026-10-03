@@ -42,12 +42,17 @@ the gate's, and 40 minutes is the one the slice-close suite runs already use.
 Add `node --check web/app.js` after editing JavaScript, and `go test -race
 ./internal/server/` after touching anything concurrent.
 
-Tiers 2, 3 and 4 **skip cleanly** when their dependencies are absent — they print a
+Tiers 2 to 6 **skip cleanly** when their dependencies are absent — they print a
 line saying which one is missing and exit 0. A fresh clone therefore runs 0 and 1
-with no setup at all. To enable the other two: `npm install` (jsdom and
-playwright-core, dev-only, `node_modules/` is git-ignored) and have a
-Chromium-family browser on `PATH` — the same browser Nib itself needs to show its
-UI, so if Nib runs at all, tier 3 can run.
+with no setup at all. **A skip is not a pass**, and exit 0 cannot say which it was:
+set `NIB_REQUIRE_TIERS=1` and a skip exits **77** instead — so any caller fails it
+and one that cares can tell "looked at nothing" from "red" — as does a tier-2 or
+tier-3 test file whose every test skipped (`build/tiergate.sh`). To enable tiers 2
+and 3: `npm install` (jsdom and playwright-core, dev-only, `node_modules/` is
+git-ignored) and have a Chromium-family browser on `PATH` — the same browser Nib
+itself needs to show its UI, so if Nib runs at all, tier 3 can run. Tiers 4 and 6
+need `go`, `curl` and `python3` (6 also `sha256sum`); tier 5 and `--lan` need
+`unshare` and `ip` (`--lan` also `nft`) and unprivileged network namespaces.
 
 **The accessibility checker is scored against veraPDF over two local corpora it does not ship**, both
 inside tier 1 and both a SKIP that says so when absent (veraPDF itself is required too — `NIB_VERAPDF`, `verapdf` on

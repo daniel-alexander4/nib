@@ -13,14 +13,22 @@ import (
 //
 // # The defect this exists to catch, which happened
 //
-// `requireUnlocked` applies the CSRF check and the loopback-origin check to **non-GET methods
-// only**. So every GET behind that gate runs on a request from any page in the user's browser —
-// an `<img src="http://127.0.0.1:PORT/api/…">` is enough, and it does not even need to read the
-// response. Harmless for a pure read; a live vulnerability for a handler that writes.
-//
-// P08.S06 hung the close-out sweep — which **moves ceremony directories and drops vault pins** —
-// off `GET /api/ceremonies` behind `requireUnlocked`. P06.S01 found it and moved that route onto
+// When this guard was written, `requireUnlocked` applied the CSRF check and the loopback-origin
+// check to **non-GET methods only**, so every GET behind it ran on a request from any page in the
+// user's browser — an `<img src="http://127.0.0.1:PORT/api/…">` was enough. P08.S06 hung the
+// close-out sweep — which **moves ceremony directories and drops vault pins** — off
+// `GET /api/ceremonies` that way. P06.S01 found it and moved that route onto
 // `requirePublicLoopback`, which refuses `Sec-Fetch-Site: cross-site` before the handler runs.
+//
+// # Why it still holds after ADR-054
+//
+// ADR-054 put every route but three behind `requireSession`, which needs the per-process token on
+// GETs too, so a cross-site `<img src>` without the token no longer reaches any handler. The door is
+// now DEFENCE IN DEPTH rather than the only guard, and for two reasons it is not redundant:
+// `requireSession` origin-checks writes only (`launch.go`), and a GET may carry the token in its
+// `auth` query parameter — a URL, which lands in history and logs, where a header never does. A GET
+// that writes is the one place a leaked URL turns into a mutation, so it keeps the origin check
+// `auth.go` says `requirePublicLoopback` stays on GETs to provide (/pending 808 R9).
 //
 // # The rule, and why the guard checks the DOOR
 //
@@ -135,11 +143,11 @@ func TestEveryMutatingGETIsBehindTheLoopbackDoor(t *testing.T) {
 				}
 				mutating++
 				t.Errorf("%s answers %s behind %s and calls %s.\n"+
-					"requireUnlocked applies CSRF and the origin check to non-GET methods ONLY, "+
-					"so this write runs on a request from any page in the user's browser — an "+
-					"<img src> is enough. P08.S06 hung a close-out sweep off a GET exactly this "+
-					"way. Wrap the registration in requirePublicLoopback, which refuses a "+
-					"cross-site request before the handler runs, or make the route a POST.",
+					"requireSession origin-checks writes only, and a GET may carry its token in the "+
+					"`auth` query — a URL, which history and logs keep — so this write runs for any "+
+					"page that holds such a URL. P08.S06 hung a close-out sweep off a GET when no "+
+					"token was needed at all. Wrap the registration in requirePublicLoopback, which "+
+					"refuses a cross-site request before the handler runs, or make the route a POST.",
 					name, r.route, r.gate, w)
 			}
 			return true

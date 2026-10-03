@@ -12,7 +12,8 @@
 # Requires Node and a `npm install` (jsdom is the only dependency, dev-only, and
 # node_modules/ is git-ignored). Skips cleanly without either, the same way the
 # poppler/Ghostscript/veraPDF tests and build/winrepro.sh do — a fresh clone runs
-# everything else without setting this up.
+# everything else without setting this up. NIB_REQUIRE_TIERS=1 turns that skip into
+# exit 77 (build/tiergate.sh).
 #
 # Ceiling: jsdom models the DOM, not a rendering engine — no layout, no canvas, no
 # media queries, and pdf.js itself is stubbed. build/uirepro.sh (tier 3) covers
@@ -20,23 +21,21 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-command -v node >/dev/null 2>&1 || { echo "node not installed; skipping the front-end tests"; exit 0; }
-[ -d node_modules/jsdom ] || { echo "jsdom not installed (run: npm install); skipping the front-end tests"; exit 0; }
+. "$(dirname "$0")/tiergate.sh" # nib_skip, nib_population — what this tier's verdict means
+command -v node >/dev/null 2>&1 || nib_skip "node not installed; skipping the front-end tests"
+[ -d node_modules/jsdom ] || nib_skip "jsdom not installed (run: npm install); skipping the front-end tests"
 
-Nib_out="$(node --test test/jsdom/ 2>&1)"
+Nib_out="$(node --test "${NIB_FILECOUNT[@]}" test/jsdom/ 2>&1)"
 Nib_code=$?
 echo "$Nib_out"
 
 # A runner that discovers NO tests also exits 0, and would look exactly like a
 # passing suite forever — the harness reporting health about a population it never
-# had. So the count is checked, not just the exit code. (This is the harness
-# applying to itself the rule it exists to enforce; the failure it prevents is the
-# one nobody would ever see.)
-Nib_n="$(printf '%s\n' "$Nib_out" | sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' | tail -1)"
-if [ -z "$Nib_n" ] || [ "$Nib_n" -eq 0 ]; then
-  echo "FAIL: the front-end suite ran but discovered no tests — a green with nothing in it" >&2
-  exit 1
-fi
+# had. So the count is checked, not just the exit code — PER FILE since /pending 822,
+# in `nib_population` (build/tiergate.sh), because a total could not see one file
+# contributing nothing while another contributed two. (This is the harness applying
+# to itself the rule it exists to enforce; the failure it prevents is the one nobody
+# would ever see.)
 
 # A floor of one is not an inventory. The argument above — "a runner that discovers
 # NO tests looks exactly like a passing suite" — applies just as well to a runner
@@ -49,7 +48,6 @@ fi
 # be worse than nothing — it goes red on every legitimate new test and trains the
 # next person to bump the number, which is how V11's equality assertion rotted. A
 # file count changes only when someone adds or deletes a file, which is deliberate.
-Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # One boot per file is this tier's standing rule — restore.test.mjs needs its own because
 # its restore runs at module-evaluation time, and the same holds for every file since.
 # Sixteen since P01.S02 added peername.test.mjs (v1.109.41). Bumping this literal is the
@@ -143,14 +141,6 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 # 93 since PLAN-returned-document P04.S01 (finalizekeep.test.mjs): the Finalize modal's "Keep a copy" — its own file
 # because it drives the modal against a stubbed /api/finalize that no other file's boot answers.
 Nib_expect_files=93
-if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
-  echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
-  echo "      If deliberate, update Nib_expect_files in this script." >&2
-  exit 1
-fi
-if [ "$Nib_n" -lt "$Nib_files" ]; then
-  echo "FAIL: $Nib_n tests ran across $Nib_files files — a file contributed nothing, so its tests are silently not running" >&2
-  exit 1
-fi
+nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

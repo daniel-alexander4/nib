@@ -233,7 +233,25 @@ func embeddedStreamBytes(xt *model.XRefTable, o types.Object) ([]byte, error) {
 // AddAttachment embeds data as a new attachment named name (a basename — any
 // path is stripped). A name that already exists is rejected rather than letting
 // pdfcpu silently store a mangled duplicate key. It mutates the document.
+//
+// **It refuses CeremonyRecordName** (/pending 822). This is the door a user's attach reaches (the
+// attachments route, `nib attach`), and given that name it wrote exactly the shape
+// ceremonyRecordEntry excludes from ContentDigest — key, /F and /UF all the record's name — so a
+// file a user attached left the digest. EmbedCeremonyRecord is the one writer of that shape.
 func AddAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
+	if attachmentName(name) == CeremonyRecordName {
+		return nil, fmt.Errorf("%q is the name of a ceremony record, which only convening a ceremony attaches — rename the file", CeremonyRecordName)
+	}
+	return addAttachment(pdf, name, data)
+}
+
+// EmbedCeremonyRecord attaches a ceremony record in the one shape ContentDigest leaves out
+// (ceremonyRecordEntry). `ceremony.Embed` is its caller.
+func EmbedCeremonyRecord(pdf, record []byte) ([]byte, error) {
+	return addAttachment(pdf, CeremonyRecordName, record)
+}
+
+func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 	name = attachmentName(name)
 	if name == "" {
 		return nil, fmt.Errorf("attachment needs a file name")
@@ -720,8 +738,9 @@ func hashFileSpec(xt *model.XRefTable, o types.Object, h hash.Hash, sc *streamMe
 // record, or -1 when none is.
 //
 // **The exclusion is the SHAPE nib writes, not a name an author can type.** `ceremony.Embed` goes
-// through `AddAttachment`, which keys the tree `nib-ceremony.json` and writes the filespec's /F and
-// /UF as that same string (pdfcpu's `NewFileSpecDict(id, id, …)`). An entry is the record only if
+// through `EmbedCeremonyRecord`, which keys the tree `nib-ceremony.json` and writes the filespec's /F
+// and /UF as that same string (pdfcpu's `NewFileSpecDict(id, id, …)`) — and `AddAttachment`, the
+// user's door, refuses that name, so nib writes the shape for a record and nothing else. An entry is the record only if
 // all three agree; an ordinary entry that merely CALLS itself the record — by its /UF, by its /F,
 // or by its key alone — is hashed like any other, so the name buys an attacker no hiding place.
 //

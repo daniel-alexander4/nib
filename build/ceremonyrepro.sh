@@ -31,27 +31,36 @@
 # (`pairrepro.sh`). (This paragraph said "No hop completes here" until /pending 505, for a whole
 # phase after CLAUSE 22 made it false; `verify_test.go` was pinning the false sentence.)
 #
-# It skips cleanly when its dependencies are absent, like tiers 2 and 3.
+# It skips cleanly when its dependencies are absent, like tiers 2 and 3 (and, like them, exits 77
+# instead under NIB_REQUIRE_TIERS=1 — build/tiergate.sh).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO="$PWD"
+. "$(dirname "$0")/tiergate.sh" # nib_skip
 
-command -v curl >/dev/null 2>&1 || { echo "SKIP: curl is not installed"; exit 0; }
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 is not installed"; exit 0; }
+command -v curl >/dev/null 2>&1 || nib_skip "curl is not installed"
+command -v python3 >/dev/null 2>&1 || nib_skip "python3 is not installed"
 # The transfer clause hashes both legs' documents. Undeclared, this SKIPS cleanly on a host
 # without it (macOS ships `shasum -a 256`); undeclared and unchecked, both `$(sha256sum …)` expand
 # to empty, compare equal, and the clause FAILS with a false reason — which is worse than skipping.
-command -v sha256sum >/dev/null 2>&1 || { echo "SKIP: sha256sum is not installed"; exit 0; }
+command -v sha256sum >/dev/null 2>&1 || nib_skip "sha256sum is not installed"
 
 WORK="$(mktemp -d)"
 # ONE trap, set once (/pending 505). A second `trap … EXIT` further down used to REPLACE this one,
 # dropping the `rm -rf` — every run leaked its work dir — and neither ever stopped the locked
 # instance CLAUSE 12 starts. And never `kill ${X_PID:-0}`: `kill 0` signals the whole process
 # GROUP, so a build failure before any instance started sent SIGTERM to whatever ran this script.
+#
+# **A red run keeps the work dir** (/pending 808 R9): every instance's log and home is in it, and a
+# failed slice-close gate deleted its own diagnosis. Same split as pairrepro.sh's `cleanup`.
 reap() {
-  local p
+  local st=$? p
   for p in ${A_PID:-} ${B_PID:-} ${L_PID:-} ${LOCK_PID:-}; do kill "$p" 2>/dev/null; done
   wait 2>/dev/null
+  if [ "$st" != 0 ]; then
+    echo "the run failed — work dir PRESERVED at $WORK (one <name>.log per instance)" >&2
+    return
+  fi
   rm -rf "$WORK"
 }
 trap reap EXIT
@@ -67,13 +76,17 @@ no(){ echo "  FAIL — $1"; echo "        $2"; FAIL=$((FAIL+1)); }
 start() { # $1 = name -> sets ${1}_BASE, ${1}_CSRF, ${1}_HOME
   local n=$1 h="$SP/home_$1"
   rm -rf "$h"; mkdir -p "$h/.config"
-  local port=$((20000 + RANDOM % 20000))
   # NIB_NO_UPDATE_CHECK makes this tier HERMETIC — without it the app calls out to a
   # release feed and a green run would depend on somebody else's uptime.
+  #
+  # **Port 0, and the kernel's answer read back from the log** (/pending 808 R9, 813). This took
+  # `20000 + RANDOM % 20000`, which overlaps the ephemeral range (32768+ by default, 10000+ on some
+  # hosts) with no retry — a port any outbound connection could be holding.
   HOME="$h" XDG_CONFIG_HOME="$h/.config" NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 \
-    NIB_ADDR="127.0.0.1:$port" "$SP/nib" >"$SP/$n.log" 2>&1 &
+    NIB_ADDR="127.0.0.1:0" "$SP/nib" >"$SP/$n.log" 2>&1 &
   eval "${n}_PID=$!"
-  local base="http://127.0.0.1:$port"
+  local base; base="$(launch_base "$SP/$n.log")"
+  [ -n "$base" ] || { echo "$n: never said where it serves: $(cat "$SP/$n.log")"; exit 1; }
   for _ in $(seq 1 150); do nib_answers "$base" && break; sleep 0.1; done
   # The token first (ADR-054): every route but three requires it, the enrol included.
   local csrf; csrf="$(launch_token "$base" "$SP/$n.log")"
@@ -641,11 +654,10 @@ if [ ! -d "$L_HOME/nib/ceremonies" ] || [ -z "$(ls -A "$L_HOME/nib/ceremonies" 2
 elif [ -e "$L_HOME/id_ed25519" ]; then
   no "locked-read setup" "the signing key is still there, so the instance below will not be locked"
 else
-  LOCK_PORT=$((20000 + RANDOM % 20000))
   HOME="$L_HOME" XDG_CONFIG_HOME="$L_HOME/.config" NIB_NO_BROWSER=1 NIB_NO_UPDATE_CHECK=1 \
-    NIB_ADDR="127.0.0.1:$LOCK_PORT" "$SP/nib" >"$SP/locked.log" 2>&1 &
+    NIB_ADDR="127.0.0.1:0" "$SP/nib" >"$SP/locked.log" 2>&1 &
   LOCK_PID=$!
-  LOCK_BASE="http://127.0.0.1:$LOCK_PORT"
+  LOCK_BASE="$(launch_base "$SP/locked.log")"
   for _ in $(seq 1 150); do nib_answers "$LOCK_BASE" && break; sleep 0.1; done
   # With the token (ADR-054), so the 401 below is the VAULT answering and not the missing
   # credential: a caller without it is refused 403 whatever state the vault is in.

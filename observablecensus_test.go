@@ -152,10 +152,7 @@ func inPackageOnlyFields(t *testing.T, shapes map[string]observable) []string {
 					continue
 				}
 				s := src(r)
-				if strings.Contains(s, "."+f) ||
-					(sh.tag[f] != "" && strings.Contains(s, "."+sh.tag[f])) ||
-					(sh.tag[f] != "" && (strings.HasSuffix(r, ".js") || strings.HasSuffix(r, ".sh")) &&
-						mentionsWord(s, sh.tag[f])) {
+				if readerMentions(s, r, f, sh.tag[f]) {
 					outside = true
 					break
 				}
@@ -192,6 +189,8 @@ var inPackageOnlyRecorded = []string{
 	"ceremony.CandidateRecord.Addrs",
 	"ceremony.CandidateRecord.CeremonyID",
 	"ceremony.CandidateRecord.SPKI",
+	// `Sig` joined at /pending 808 R5: its out-of-package "reader" was `.Sig` as a PREFIX of `.Signature`.
+	"ceremony.CandidateRecord.Sig",
 	"ceremony.CandidateRecord.Version",
 	// ceremony.Invitation
 	"ceremony.Invitation.ConvenerFingerprint",
@@ -223,8 +222,12 @@ var inPackageOnlyRecorded = []string{
 	"ceremony.Termination.RosterHash",
 	// discovery.Announcement
 	"discovery.Announcement.Nonce",
-	// instance.Record
-	"instance.Record.Addr",
+	// instance.Record — at /pending 808 R5 the second launch (`cmd/nib/main.go`, `rec.Addr`) was named
+	// as the reader, taking Addr OFF this list; Token and Handoff came ON, because the only outside
+	// "reader" they had was `.Token` as a prefix of `.TokenMatches`. The second launch hands the record
+	// to Probe and HandOff, which read them in-package — true, and what this list records.
+	"instance.Record.Handoff",
+	"instance.Record.Token",
 	"instance.Record.Version",
 	// p2p.Channel  // shape declared internal, with a reason
 	"p2p.Channel.Export",

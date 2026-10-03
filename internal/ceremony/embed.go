@@ -123,7 +123,7 @@ func Embed(pdf []byte, r Record) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pdfops.AddAttachment(pdf, AttachmentName, b)
+	return pdfops.EmbedCeremonyRecord(pdf, b)
 }
 
 // ProceedingOf is what a document claims about the ceremony it belongs to, in the form

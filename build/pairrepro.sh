@@ -215,9 +215,11 @@ FLAGS=""
 [ "$V6" = "1" ] && FLAGS="$FLAGS --v6"
 FLAGS="$FLAGS -n $N"
 
+# A skip exits 0, or 77 under NIB_REQUIRE_TIERS=1 (build/tiergate.sh) — so a caller can tell a
+# tier that looked at nothing from one that passed.
+. "$(dirname "${BASH_SOURCE[0]}")/tiergate.sh"
 for dep in go curl python3; do
-  command -v "$dep" >/dev/null 2>&1 || {
-    echo "$dep not installed; skipping the two-instance ceremony tests"; exit 0; }
+  command -v "$dep" >/dev/null 2>&1 || nib_skip "$dep not installed; skipping the two-instance ceremony tests"
 done
 
 # ── LAN mode: a ceremony with no address typed anywhere ──────────────────────
@@ -241,9 +243,9 @@ done
 # 0 before, 2 after a connect to 1.1.1.1.
 if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
   for dep in unshare ip nft; do
-    command -v "$dep" >/dev/null 2>&1 || { echo "SKIP: $dep is not installed (--lan needs it)"; exit 0; }
+    command -v "$dep" >/dev/null 2>&1 || nib_skip "$dep is not installed (--lan needs it)"
   done
-  unshare -rn true 2>/dev/null || { echo "SKIP: unprivileged network namespaces are unavailable here"; exit 0; }
+  unshare -rn true 2>/dev/null || nib_skip "unprivileged network namespaces are unavailable here"
   echo "building nib outside the namespace…"
   PREBUILT="$(mktemp -d)/nib"
   go build -o "$PREBUILT" ./cmd/nib || { echo "FAIL: could not build nib" >&2; exit 1; }
@@ -268,7 +270,7 @@ if [ "$LAN" = "1" ] && [ "${NIB_LAN_NS:-}" != "1" ]; then
       ip daddr != 224.0.0.0/4 counter comment "offlink4"
     nft add rule inet egress out ip6 daddr != fd00:9::/64 ip6 daddr != ::1 \
       ip6 daddr != ff00::/8 ip6 daddr != fe80::/10 counter comment "offlink6"
-    NIB_LAN_NS=1 NIB_PAIR_WANT_N="$4" NIB_PAIR_BIN="$1" exec "$2" $3
+    NIB_LAN_NS=1 NIB_PAIR_WANT_N="$4" NIB_PAIR_BIN="$1" NIB_PAIR_BIN_OWNED="$1" exec "$2" $3
   ' _ "$PREBUILT" "$0" "$FLAGS" "$N"
 fi
 
@@ -708,7 +710,16 @@ if [ -n "${NIB_PAIR_BIN:-}" ]; then
   # trap, so it is the one that can own it. `cleanup` removes it on success and PRESERVES it
   # with `$WORK` on failure, which is the same rule and the same reason: a failed run's
   # evidence is worth more than the disk.
-  PREBUILT_DIR="$(dirname "$NIB_PAIR_BIN")"
+  #
+  # **But only a directory the --lan arm MADE** (/pending 808 R9). `NIB_PAIR_BIN` is honoured on
+  # every run, so this used to adopt — and on a pass, `rm -rf` — the directory of ANY binary named
+  # there: `NIB_PAIR_BIN=~/bin/nib` deleted `~/bin`. The arm says which path it handed over in a
+  # second variable, and a run adopts the directory only when both name the same binary and that
+  # binary is all the directory holds — the shape `mktemp -d` + one `go build` leaves.
+  if [ "${NIB_PAIR_BIN_OWNED:-}" = "$NIB_PAIR_BIN" ] &&
+    [ "$(ls -A "$(dirname "$NIB_PAIR_BIN")")" = "$(basename "$NIB_PAIR_BIN")" ]; then
+    PREBUILT_DIR="$(dirname "$NIB_PAIR_BIN")"
+  fi
 else
   echo "building nib…"
   go build -o "$WORK/nib" ./cmd/nib || fail "could not build nib"
