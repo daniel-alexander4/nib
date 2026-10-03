@@ -139,7 +139,10 @@ Nib_files="$(find test/jsdom -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')
 #
 # 92 since PLAN-returned-document P03.S03 (returnedcompare.test.mjs): the sheet's "see what changed" region — its own
 # file because it drives Compare's module-level state, which a file sharing its boot would inherit.
-Nib_expect_files=92
+#
+# 93 since PLAN-returned-document P04.S01 (finalizekeep.test.mjs): the Finalize modal's "Keep a copy" — its own file
+# because it drives the modal against a stubbed /api/finalize that no other file's boot answers.
+Nib_expect_files=93
 if [ "$Nib_files" -ne "$Nib_expect_files" ]; then
   echo "FAIL: expected $Nib_expect_files jsdom test files, found $Nib_files — a test file was added or dropped." >&2
   echo "      If deliberate, update Nib_expect_files in this script." >&2

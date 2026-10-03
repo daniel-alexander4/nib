@@ -212,7 +212,7 @@ const els = {
   pdfaGo: $('pdfaGo'), pdfaGsGo: $('pdfaGsGo'), pdfaClose: $('pdfaClose'),
   exportCertBtn: $('exportCertBtn'), printBtn: $('printBtn'), closeBtn: $('closeBtn'),
   finalizeModal: $('finalizeModal'), fzText: $('fzText'), fzDate: $('fzDate'),
-  fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'),
+  fzTsa: $('fzTsa'), fzTsaOn: $('fzTsaOn'), fzCancel: $('fzCancel'), fzGo: $('fzGo'), fzKeep: $('fzKeep'),
   fzOpacity: $('fzOpacity'), fzSize: $('fzSize'), fzAngle: $('fzAngle'), fzColor: $('fzColor'),
   fzSignAs: $('fzSignAs'), fzPassphrase: $('fzPassphrase'),
   timestampBtn: $('timestampBtn'), timestampModal: $('timestampModal'), tsCancel: $('tsCancel'), tsGo: $('tsGo'),
@@ -8573,6 +8573,7 @@ els.printBtn.onclick = async () => {
 els.finalizeBtn.onclick = async () => {
   if (!view.pdfDocument) return;
   await refreshSignAs();
+  els.fzKeep.checked = false; // opt-in every time, never remembered (D13)
   els.finalizeModal.hidden = false;
   warnIfStamped(els.fzStamped);
 };
@@ -8653,13 +8654,29 @@ els.fzGo.onclick = async () => {
     tsaUrl: els.fzTsaOn.checked ? els.fzTsa.value.trim() : '',
     signAs,
     passphrase: signAs === 'external' ? els.fzPassphrase.value : '',
+    keep: els.fzKeep.checked,
+    name: exportName,
   }));
   const res = await apiFetch('/api/finalize', { method: 'POST', body: form });
   // 422 for the same reason as the certificate import above: a 401 never reaches this line.
   if (res.status === 422) { els.fzPassphrase.focus(); els.fzPassphrase.select(); return toast('Wrong certificate passphrase'); }
-  if (!res.ok) { toast('Could not finalize'); return; }
+  if (!res.ok) {
+    // A copy that could not be kept refuses the signing (D14): say THAT, and what to do, rather than a generic failure
+    // — the modal stays open so unticking and signing again is one press away.
+    const body = await res.json().catch(() => ({}));
+    if (body.cause === 'copy-not-kept') {
+      toast(`Not signed: Nib could not keep the copy you asked for (${body.reason || 'no reason given'}). `
+        + (body.full ? 'Free some disk space' : 'Check that Nib can write to its "signed" folder')
+        + ', or untick "Keep a copy" to sign without one.');
+      return;
+    }
+    toast(body.error ? 'Could not finalize: ' + body.error : 'Could not finalize');
+    return;
+  }
   els.finalizeModal.hidden = true;
   els.fzPassphrase.value = '';
+  const kept = res.headers.get('X-Nib-Kept');
+  if (kept) toast(`A copy was kept when you signed: ~/nib/signed/${kept}`);
   openSaveAs(await res.blob(), exportName + '-finalized.pdf', 'Save finalized PDF');
 };
 

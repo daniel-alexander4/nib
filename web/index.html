@@ -1080,6 +1080,12 @@
         <select id="fzSignAs"><option value="native">Nib identity (self-signed)</option></select>
         <input id="fzPassphrase" type="password" placeholder="Certificate passphrase" autocomplete="off" hidden />
       </div>
+      <!-- A copy kept when you signed (PLAN-returned-document P04.S01, D13, ADR-073): opt-in and off at every opening.
+           The hint is the disclosure that makes the opt-in informed — the copy sits outside the vault. -->
+      <div class="fzfield">
+        <label class="check"><input id="fzKeep" type="checkbox" aria-describedby="fzKeepHint" /> Keep a copy for my records</label>
+        <p id="fzKeepHint" class="libhint">Saved unencrypted in ~/nib/signed — anyone who can read your files, and your backups, can read it.</p>
+      </div>
       <div class="sigbtns">
         <span class="grow"></span>
         <button id="fzCancel">Cancel</button>
