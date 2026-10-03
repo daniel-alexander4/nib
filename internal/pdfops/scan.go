@@ -273,8 +273,8 @@ func Scan(pdf []byte) (ScanReport, error) {
 		return ScanReport{}, err
 	}
 	if err := eachPageAnnot(xt, root, func(annot types.Dict, nr int) {
-		if nameVal(annot, "Subtype") == "FileAttachment" {
-			add("attachment", "medium", "File attached to a page", nr)
+		if m, ok := mediaAnnots[nameVal(annot, "Subtype")]; ok {
+			add(m.kind, m.severity, m.detail, nr)
 		}
 		if _, ok := annot.Find("AA"); ok {
 			add("additionalActions", "medium", "Annotation additional actions", nr)
@@ -412,8 +412,9 @@ func StripActive(pdf []byte) ([]byte, error) {
 		// tier and used to leave them: a Screen or Movie annotation survived the strip
 		// while the gentle option removed it, so "remove all active content" left behind
 		// the annotations whose whole purpose is to play something. The hierarchy has to
-		// hold in the direction users are told it does.
-		if _, err := pdfcpu.RemoveAnnotations(ctx, nil, []string{"FileAttachment", "Sound", "Movie", "Screen", "3D"}, nil, false); err != nil {
+		// hold in the direction users are told it does. Through the one door both tiers
+		// share (removeMediaAnnots, `/pending 815`).
+		if err := removeMediaAnnots(xt, root); err != nil {
 			return err
 		}
 		if err := eachPage(xt, root, func(page types.Dict, _ int) {
@@ -457,19 +458,81 @@ func StripActive(pdf []byte) ([]byte, error) {
 	return out, nil
 }
 
-// RemoveFilesAndMedia removes embedded files and dangerous media annotations
-// (file attachments, sound, movie, screen, 3D) through pdfcpu's own removal
-// APIs, leaving everything else — including interactivity and any active code —
-// untouched. It cannot corrupt page content, so it is the gentle middle option
-// between StripActive (removes all active content) and the guaranteed flatten.
+// RemoveFilesAndMedia removes embedded files and the media annotations named in
+// mediaAnnots (file attachments, sound, movie, screen, rich media, 3D), leaving
+// everything else — including interactivity and any active code — untouched. It
+// cannot corrupt page content, so it is the gentle middle option between
+// StripActive (removes all active content) and the guaranteed flatten.
 func RemoveFilesAndMedia(pdf []byte) ([]byte, error) {
 	return writeMutated(pdf, func(ctx *model.Context) error {
 		if err := removeAllAttachments(ctx); err != nil {
 			return err
 		}
-		mediaTypes := []string{"FileAttachment", "Sound", "Movie", "Screen", "3D"}
-		_, err := pdfcpu.RemoveAnnotations(ctx, nil, mediaTypes, nil, false)
-		return err
+		root, err := ctx.XRefTable.Catalog()
+		if err != nil {
+			return err
+		}
+		return removeMediaAnnots(ctx.XRefTable, root)
+	})
+}
+
+// mediaAnnot is how Scan reports one media annotation subtype.
+type mediaAnnot struct{ kind, severity, detail string }
+
+// mediaAnnots is the ONE list of annotation subtypes whose purpose is to play, run or carry something (ADR-009,
+// `/pending 815`): Scan reports each, and StripActive and RemoveFilesAndMedia both remove each through
+// removeMediaAnnots. It used to be three lists — Scan's (FileAttachment only) and the two removal lists — and none
+// named `RichMedia`, so a RichMedia annotation activated on page open (`/RichMediaSettings /Activation /Condition
+// /PO`) scanned clean, survived both tiers, and StripActive's own re-scan (verifyStripped) passed it; a `3D`
+// annotation with `/3DD /OnInstantiate` JavaScript was removed by StripActive but never reported. A subtype the scan
+// does not name is one the verifier cannot see, so the scan and the removals read the same table.
+//
+// RichMedia and 3D are high for the reason Rendition is: both carry their own scripts (RichMedia assets and
+// `/RichMediaSettings` activation, a 3D stream's `/OnInstantiate` JavaScript) and both can start without a click.
+var mediaAnnots = map[string]mediaAnnot{
+	"FileAttachment": {"attachment", "medium", "File attached to a page"},
+	"Sound":          {"media", "medium", "Sound annotation (plays embedded audio)"},
+	"Movie":          {"media", "medium", "Movie annotation (plays embedded video)"},
+	"Screen":         {"media", "medium", "Screen annotation (plays media)"},
+	"RichMedia":      {"media", "high", "Rich media annotation (embedded video, Flash or scripts; can start when the page opens)"},
+	"3D":             {"media", "high", "3D annotation (can run its own JavaScript)"},
+}
+
+// removeMediaAnnots takes every mediaAnnots subtype out of every page's /Annots array — nib's own removal, not
+// pdfcpu's `RemoveAnnotations`, for two reasons read in pdfcpu v0.13.0: its type table (`model.AnnotTypes`) has no
+// `RichMedia`, so the name is taken as an annotation ID and removes nothing; and it works off `ctx.PageAnnots`, which
+// holds only annotations reached by indirect reference, so a DIRECT media annotation dict survived both tiers. The
+// annotation is unlinked rather than freed: `DeleteObject` follows every key, `/P` included, which names the page.
+// An object nothing names any longer is not written.
+//
+// The walk is the page-annotation door's (eachPageAnnots, ADR-009): a page the tree names twice, and an /Annots array
+// several pages share, are each filtered once, under eachPage's visit budget.
+func removeMediaAnnots(xt *model.XRefTable, root types.Dict) error {
+	return eachPageAnnots(xt, root, func(page types.Dict, raw types.Object, _ int) {
+		annots := derefArray(xt, raw)
+		kept := make(types.Array, 0, len(annots))
+		for _, a := range annots {
+			if annot := derefDict(xt, a); annot != nil {
+				if _, media := mediaAnnots[nameVal(annot, "Subtype")]; media {
+					continue
+				}
+			}
+			kept = append(kept, a)
+		}
+		if len(kept) == len(annots) {
+			return
+		}
+		if ir, ok := raw.(types.IndirectRef); ok {
+			if e, found := xt.FindTableEntryForIndRef(&ir); found && e != nil {
+				e.Object = kept
+				return
+			}
+		}
+		if len(kept) == 0 {
+			page.Delete("Annots")
+			return
+		}
+		page["Annots"] = kept
 	})
 }
 
@@ -797,18 +860,9 @@ var errActionWalkTooLarge = errors.New("pdfops: the document's annotations name 
 // 1,000-entry `/Annots` array is a million visits from 15 KB (the phase-close review of PLAN-returned-document P02),
 // and every reader below it — action chains, attachment and widget lists — multiplied it again.
 func eachPageAnnot(xt *model.XRefTable, root types.Dict, fn func(annot types.Dict, nr int)) error {
-	pages, arrays, annots := map[uintptr]bool{}, map[int]bool{}, map[int]bool{}
-	return eachPage(xt, root, func(page types.Dict, nr int) {
-		// The dereferenced dict IS the xref table's object, so a page named twice is one map.
-		p := reflect.ValueOf(page).Pointer()
-		if pages[p] {
-			return
-		}
-		pages[p] = true
-		if !firstVisit(arrays, page["Annots"]) {
-			return
-		}
-		for _, a := range derefArray(xt, page["Annots"]) {
+	annots := map[int]bool{}
+	return eachPageAnnots(xt, root, func(_ types.Dict, raw types.Object, nr int) {
+		for _, a := range derefArray(xt, raw) {
 			if !firstVisit(annots, a) {
 				continue
 			}
@@ -816,6 +870,27 @@ func eachPageAnnot(xt *model.XRefTable, root types.Dict, fn func(annot types.Dic
 				fn(annot, nr)
 			}
 		}
+	})
+}
+
+// eachPageAnnots is the door beneath eachPageAnnot: it calls fn with each page's /Annots value AS THE PAGE NAMES IT
+// (a reference or a direct array), once per distinct page and once per array named by reference. It exists for the
+// one walk that must edit the array rather than read its annotations — removeMediaAnnots (`/pending 815`) — so that
+// walk shares the dedup and the visit budget instead of re-deriving them.
+func eachPageAnnots(xt *model.XRefTable, root types.Dict, fn func(page types.Dict, annots types.Object, nr int)) error {
+	pages, arrays := map[uintptr]bool{}, map[int]bool{}
+	return eachPage(xt, root, func(page types.Dict, nr int) {
+		// The dereferenced dict IS the xref table's object, so a page named twice is one map.
+		p := reflect.ValueOf(page).Pointer()
+		if pages[p] {
+			return
+		}
+		pages[p] = true
+		raw := page["Annots"]
+		if raw == nil || !firstVisit(arrays, raw) {
+			return
+		}
+		fn(page, raw, nr)
 	})
 }
 

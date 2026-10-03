@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestEveryPageAnnotationWalkGoesThroughTheOneDoor — `eachPageAnnot` is the one walk over pages' annotations
+// TestEveryPageAnnotationWalkGoesThroughTheOneDoor — `eachPageAnnots` (and `eachPageAnnot`, built on it) is the one walk over pages' annotations
 // (ADR-009): it visits a shared page, `/Annots` array or annotation once. A function that walks pages with
 // `eachPage` and reads `/Annots` itself rebuilds the pages × slots cost the phase-close review of
 // PLAN-returned-document P02 measured (15 KB held Scan for 3 min 46 s). The page-set operations walk pdfcpu's
@@ -53,7 +53,10 @@ func TestEveryPageAnnotationWalkGoesThroughTheOneDoor(t *testing.T) {
 				continue
 			}
 			checked++
-			if fn.Name.Name == "eachPageAnnot" {
+			// The door is eachPageAnnots, the array-level walk; eachPageAnnot is built on it and no longer
+			// calls eachPage itself (`/pending 815`: the media removal edits the array, so the door moved
+			// down a level rather than gaining a sibling).
+			if fn.Name.Name == "eachPageAnnots" {
 				door++
 				continue
 			}

@@ -475,7 +475,8 @@ your machine** — the second PDF never leaves your computer.
 **Secure → Scan for hidden content** lists what's lurking in a PDF that you can't
 see on the page: auto-run hooks (OpenAction, additional actions), JavaScript,
 risky link/widget actions (launch a program, submit a form, open a URL),
-embedded files, optional-content layers, XMP metadata, and the document's
+embedded files, media annotations (sound, video, rich media and 3D — the last
+two can carry their own scripts), optional-content layers, XMP metadata, and the document's
 identifying properties (author, title, creator…). Then remove it four
 ways, strongest fidelity-preserving first:
 - **Strip active content** — neutralises every auto-run hook, script and risky
@@ -487,8 +488,9 @@ ways, strongest fidelity-preserving first:
   document's tracking identifier, leaving the visible content untouched. (pdfcpu
   re-stamps a generic producer and the current date on write, so the file names
   Nib, not you.)
-- **Remove files & media** — deletes only embedded files and media annotations,
-  leaving all other interactivity untouched.
+- **Remove files & media** — deletes only embedded files and media annotations
+  (file attachments, sound, movie, screen, rich media, 3D), leaving all other
+  interactivity untouched.
 - **Flatten to images** — the guaranteed-inert floor: turns every page into an
   image so nothing active can remain (selectable text is lost).
 

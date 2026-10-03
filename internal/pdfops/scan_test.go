@@ -469,12 +469,13 @@ func TestStripActiveIsAtLeastAsStrongAsRemoveFilesAndMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// INDIRECT references, not direct dicts, and this is load-bearing rather than style.
-	// pdfcpu's RemoveAnnotations works off ctx.PageAnnots, a cache that validation fills
-	// only for annotations reached through an indirect reference — so with direct dicts
-	// NEITHER tier removes anything and this test passes without the fix it exists for.
-	// Measured that way first: the earlier draft was green against the unfixed code.
-	// Real-world PDFs use indirect refs, so this fixture is also the honest one.
+	// INDIRECT references, not direct dicts. When this test was written both tiers removed
+	// media through pdfcpu's RemoveAnnotations, which works off ctx.PageAnnots — a cache
+	// holding only annotations reached through an indirect reference — so with direct dicts
+	// NEITHER tier removed anything and this test passed without the fix it existed for.
+	// Both now go through removeMediaAnnots, which sees direct dicts too (/pending 815;
+	// TestBothTiersRemoveEveryMediaAnnotation drives both shapes). Real-world PDFs use
+	// indirect refs, so this fixture stays the honest one.
 	screen, err := ctx.XRefTable.IndRefForNewObject(types.Dict{
 		"Type": types.Name("Annot"), "Subtype": types.Name("Screen"), "Rect": types.NewNumberArray(0, 0, 10, 10)})
 	if err != nil {
