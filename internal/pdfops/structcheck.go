@@ -182,8 +182,13 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 // what small documents happen to produce. A reader that handled only `/Nums` would report every
 // entry of a large document as missing — the loudest possible wrong answer, which is at least
 // better than the quiet one, but still wrong.
+//
+// **Each key's entry is the one `parentTreeLookup` finds** (`/pending 786`), the pair the writers write and a reader
+// reads — not the last pair met in a walk of every node, which a `/Limits` or a repeated key made a different pair. The
+// keys are every key any node holds; one no lookup reaches has no entry.
 func parentTreeEntries(ctx *model.Context, tree *structTree) (arrays map[int][]int, singles map[int]int) {
 	arrays, singles = map[int][]int{}, map[int]int{}
+	keys := map[int]bool{}
 	var walk func(o types.Object, depth int)
 	walk = func(o types.Object, depth int) {
 		if depth > maxStructDepth {
@@ -195,23 +200,8 @@ func parentTreeEntries(ctx *model.Context, tree *structTree) (arrays map[int][]i
 		}
 		if nums, e := ctx.DereferenceArray(d["Nums"]); e == nil && nums != nil {
 			for i := 0; i+1 < len(nums); i += 2 {
-				n, ok := nums[i].(types.Integer)
-				if !ok {
-					continue
-				}
-				val := nums[i+1]
-				if arr, ae := ctx.DereferenceArray(val); ae == nil && arr != nil {
-					slots := make([]int, len(arr))
-					for j, x := range arr {
-						if ind, isInd := x.(types.IndirectRef); isInd {
-							slots[j] = ind.ObjectNumber.Value()
-						}
-					}
-					arrays[n.Value()] = slots
-					continue
-				}
-				if ind, isInd := val.(types.IndirectRef); isInd {
-					singles[n.Value()] = ind.ObjectNumber.Value()
+				if n, ok := numsKey(ctx, nums[i]); ok {
+					keys[n] = true
 				}
 			}
 		}
@@ -222,5 +212,28 @@ func parentTreeEntries(ctx *model.Context, tree *structTree) (arrays map[int][]i
 		}
 	}
 	walk(tree.root["ParentTree"], 0)
+
+	r := &parentTreeReader{ctx: ctx}
+	for key := range keys {
+		holder, at := r.lookup(tree.root["ParentTree"], key)
+		if holder == nil {
+			continue
+		}
+		nums, _ := ctx.DereferenceArray(holder["Nums"])
+		val := nums[at]
+		if arr, ae := ctx.DereferenceArray(val); ae == nil && arr != nil {
+			slots := make([]int, len(arr))
+			for j, x := range arr {
+				if ind, isInd := x.(types.IndirectRef); isInd {
+					slots[j] = ind.ObjectNumber.Value()
+				}
+			}
+			arrays[key] = slots
+			continue
+		}
+		if ind, isInd := val.(types.IndirectRef); isInd {
+			singles[key] = ind.ObjectNumber.Value()
+		}
+	}
 	return arrays, singles
 }

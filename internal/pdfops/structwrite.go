@@ -3,6 +3,7 @@ package pdfops
 import (
 	"fmt"
 	"math"
+	"reflect"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -126,7 +127,7 @@ func pageRow(ctx *model.Context, tree *structTree, pageDict types.Dict, pageNr i
 		return 0, 0, fmt.Errorf("pdfops: page %d declares a /StructParents that is not a key (%v) — refusing to overwrite it",
 			pageNr, pageDict["StructParents"])
 	}
-	slots, isSingle, _ := parentTreeKey(ctx, tree, key)
+	slots, isSingle := parentTreeKey(ctx, tree, key)
 	if isSingle {
 		return 0, 0, fmt.Errorf("pdfops: page %d declares /StructParents %d and that "+
 			"ParentTree entry is a single element, not an array — this document's tree is "+
@@ -160,15 +161,31 @@ func parentTreeKeyValue(xt *model.XRefTable, o types.Object) (int, bool) {
 	return int(v), true
 }
 
-// parentTreeKey reports one key's `/ParentTree` entry — how many slots its array has, or whether it
-// is a single reference — and the next key no entry uses.
+// parentTreeKey reports one key's `/ParentTree` entry — how many slots its array has, or whether it is a single
+// reference — as `parentTreeLookup` finds it, so a writer sizes an MCID from the very pair `setParentTreeSlot` then
+// writes (`/pending 786`: it read the last pair holding the key while the writer wrote the first).
 //
-// **It exists because the writers call it once per marked run.** `parentTreeEntries` builds every
-// key's slot list, so calling it per run made tagging quadratic in the document: a 20,000-clause
-// Markdown file (tier 4d's interrupt fixture) took over twenty minutes to convert where the untagged
-// render takes seconds. This walks the same `/Nums` and `/Kids` and dereferences only the one value
+// **It exists because the writers call it once per marked run.** `parentTreeEntries` builds every key's slot list, so
+// calling it per run made tagging quadratic in the document: a 20,000-clause Markdown file (tier 4d's interrupt fixture)
+// took over twenty minutes to convert where the untagged render takes seconds. This dereferences only the one value
 // asked about.
-func parentTreeKey(ctx *model.Context, tree *structTree, key int) (slots int, single bool, next int) {
+func parentTreeKey(ctx *model.Context, tree *structTree, key int) (slots int, single bool) {
+	holder, at := parentTreeLookup(ctx, tree.root["ParentTree"], key)
+	if holder == nil {
+		return 0, false
+	}
+	nums, _ := ctx.DereferenceArray(holder["Nums"])
+	val := nums[at]
+	if arr, ae := ctx.DereferenceArray(val); ae == nil && arr != nil {
+		return len(arr), false
+	}
+	_, isInd := val.(types.IndirectRef)
+	return 0, isInd
+}
+
+// parentTreeNextKey is the next key no `/ParentTree` entry uses — past every key in every node, whether or not a lookup
+// would reach it: a key a node holds is spent for allocation even where `/Limits` hide it from a reader.
+func parentTreeNextKey(ctx *model.Context, tree *structTree) (next int) {
 	var walk func(o types.Object, depth int)
 	walk = func(o types.Object, depth int) {
 		if depth > maxStructDepth {
@@ -180,23 +197,8 @@ func parentTreeKey(ctx *model.Context, tree *structTree, key int) (slots int, si
 		}
 		if nums, e := ctx.DereferenceArray(d["Nums"]); e == nil && nums != nil {
 			for i := 0; i+1 < len(nums); i += 2 {
-				n, ok := nums[i].(types.Integer)
-				if !ok {
-					continue
-				}
-				if n.Value() >= next {
-					next = n.Value() + 1
-				}
-				if n.Value() != key {
-					continue
-				}
-				val := nums[i+1]
-				if arr, ae := ctx.DereferenceArray(val); ae == nil && arr != nil {
-					slots = len(arr)
-					continue
-				}
-				if _, isInd := val.(types.IndirectRef); isInd {
-					single = true
+				if n, ok := numsKey(ctx, nums[i]); ok && n >= next {
+					next = n + 1
 				}
 			}
 		}
@@ -207,7 +209,126 @@ func parentTreeKey(ctx *model.Context, tree *structTree, key int) (slots int, si
 		}
 	}
 	walk(tree.root["ParentTree"], 0)
-	return slots, single, next
+	return next
+}
+
+// parentTreeLookup is THE lookup of one `/ParentTree` key in this package (ADR-009; `/pending 786`): the node holding
+// key and the index, in that node's `/Nums`, of the VALUE the key names — or nil and -1. Every writer acts on the pair
+// it names (`setParentTreeSlot`, `clearParentTreeSlot`, `parentTreePlace`) and every reader reads it (`parentTreeKey`,
+// `rowFor`, `parentTreeEntries`), so what a writer writes is what a reader reads. They disagreed: the writers took the
+// FIRST pair holding a key in the first node holding it anywhere, `parentTreeKey` the LAST pair seen in a walk of every
+// node, and on `0 [21] 0 [21 21]` `addMCIDTo` sized MCID 2 from one pair and wrote it into the other, where nothing reads.
+//
+// # The reading is uacheck's, which is veraPDF's
+//
+// `uacheck`'s `parentTreeEntry` measured it on veraPDF 1.30.2 (RR2-1): a depth-first search taking the FIRST node that
+// holds the key and, within that node's `/Nums`, the LAST pair — veraPDF reads one /Nums into a map. A node with a
+// `/Nums` key answers from it and its `/Kids` are never read; a node whose `/Limits` hold two integers excludes every key
+// outside them, from itself and everything below. A key is an integer, direct or indirect, as uacheck reads it.
+//
+// ISO 32000-1 §7.9.7 (deferring to §7.9.6's name-tree rules) requires a number tree's keys sorted in ascending order and
+// says nothing of a key that appears twice, so a repeat is malformed and which pair counts is the reader's choice.
+// pdfcpu makes none — `validateNumberTreeDictNumsEntry` checks each key is an integer and never compares two — so the
+// choice that decides what a user is told is the checker's, and nib's writers take it.
+//
+// A node already searched without finding the key is not searched again, so a `/Kids` DAG costs each node once per
+// lookup (uacheck's RR3-1, which changes no answer), and a node met again inside itself is not re-entered.
+func parentTreeLookup(ctx *model.Context, ptObj types.Object, key int) (holder types.Dict, at int) {
+	return (&parentTreeReader{ctx: ctx}).lookup(ptObj, key)
+}
+
+// parentTreeReader is `parentTreeLookup` with each node's `/Nums` parsed once across many lookups — for a reader that
+// asks every key (`parentTreeEntries`) and writes nothing in between. A writer never keeps one across a write: the
+// parse is of the `/Nums` as it was.
+type parentTreeReader struct {
+	ctx    *model.Context
+	parsed map[uintptr]map[int]int
+}
+
+func (r *parentTreeReader) lookup(ptObj types.Object, key int) (types.Dict, int) {
+	searched, inside := map[uintptr]bool{}, map[uintptr]bool{}
+	var search func(o types.Object, depth int) (types.Dict, int)
+	search = func(o types.Object, depth int) (types.Dict, int) {
+		if depth > maxStructDepth {
+			return nil, -1
+		}
+		d, err := r.ctx.DereferenceDict(o)
+		if err != nil || d == nil {
+			return nil, -1
+		}
+		id := reflect.ValueOf(d).Pointer()
+		if searched[id] || inside[id] {
+			return nil, -1
+		}
+		if lo, hi, limited := numberTreeLimits(r.ctx, d); limited && (key < lo || key > hi) {
+			return nil, -1
+		}
+		if _, leaf := d["Nums"]; leaf {
+			if at, ok := r.index(d, id)[key]; ok {
+				return d, at
+			}
+			searched[id] = true
+			return nil, -1 // a node with /Nums answers from it; its /Kids are never read
+		}
+		inside[id] = true
+		kids, _ := r.ctx.DereferenceArray(d["Kids"])
+		for _, k := range kids {
+			if h, at := search(k, depth+1); h != nil {
+				return h, at
+			}
+		}
+		delete(inside, id)
+		searched[id] = true
+		return nil, -1
+	}
+	return search(ptObj, 0)
+}
+
+// index is node's `/Nums` as key → index of the value of the LAST pair holding it; a /Nums that is not an array is empty.
+func (r *parentTreeReader) index(d types.Dict, id uintptr) map[int]int {
+	if m, done := r.parsed[id]; done {
+		return m
+	}
+	m := map[int]int{}
+	nums, _ := r.ctx.DereferenceArray(d["Nums"])
+	for i := 0; i+1 < len(nums); i += 2 {
+		if k, ok := numsKey(r.ctx, nums[i]); ok {
+			m[k] = i + 1
+		}
+	}
+	if r.parsed == nil {
+		r.parsed = map[uintptr]map[int]int{}
+	}
+	r.parsed[id] = m
+	return m
+}
+
+// numsKey reads a number tree's key or bound: an integer, direct or indirect, as uacheck's `intValue` reads one.
+func numsKey(ctx *model.Context, o types.Object) (int, bool) {
+	if o == nil {
+		return 0, false
+	}
+	i, err := ctx.DereferenceInteger(o)
+	if err != nil || i == nil {
+		return 0, false
+	}
+	return i.Value(), true
+}
+
+// numberTreeLimits is node's `/Limits` as a reader honours it: its first two entries when both are integers (uacheck's
+// `ptParse`, after veraPDF's `parseLimitsArray`), else no limits at all. `widenLimits` reads it here too, so a bound the
+// lookup honours is one the writer raises.
+func numberTreeLimits(ctx *model.Context, node types.Dict) (lo, hi int, limited bool) {
+	lim, _ := ctx.DereferenceArray(node["Limits"])
+	if len(lim) < 2 {
+		return 0, 0, false
+	}
+	a, aok := numsKey(ctx, lim[0])
+	b, bok := numsKey(ctx, lim[1])
+	if !aok || !bok {
+		return 0, 0, false
+	}
+	return a, b, true
 }
 
 // appendToRootKids adds an element to `/StructTreeRoot`'s `/K`, normalising the single-entry form.
@@ -255,88 +376,95 @@ func appendToRootKids(ctx *model.Context, tree *structTree, ref types.IndirectRe
 //
 // A new key INSIDE a nested tree's range is still refused: placing it means choosing a leaf and splitting or re-sorting
 // it, which nothing nib does asks for.
-func parentTreeDict(ctx *model.Context, tree *structTree, key int) (types.Dict, error) {
+func parentTreeDict(ctx *model.Context, tree *structTree, key int) (node types.Dict, at int, err error) {
 	if _, has := tree.root["ParentTree"]; !has {
 		ptRef, err := ctx.IndRefForNewObject(types.Dict{"Nums": types.Array{}})
 		if err != nil {
-			return nil, err
+			return nil, -1, err
 		}
 		tree.root["ParentTree"] = *ptRef
 	}
-	path, holder, err := parentTreePlace(ctx, tree, key)
+	path, holder, at, err := parentTreePlace(ctx, tree, key)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	if holder != nil {
-		return holder, nil
+		return holder, at, nil
 	}
 	// Every node on the way down — the root included, when it carries `/Limits` (P07 phase-close review) — now spans key.
 	for _, node := range path {
 		widenLimits(ctx, node, key)
 	}
-	return path[len(path)-1], nil
+	return path[len(path)-1], -1, nil
 }
 
 // parentTreePlace is where parentTreeDict would write key, WITHOUT writing anything — the one predicate the writer and a
 // carry's up-front check (`targetRefusal`) both ask (P07 phase-close review; ADR-009: the check restated one of these
-// refusals and missed the rest). holder is the node already holding key, if one does; else path is the nodes from the
-// `/ParentTree` down to the leaf the entry goes in, or the refusal. A document with no `/ParentTree` places every key in the
-// flat one the writer creates.
-func parentTreePlace(ctx *model.Context, tree *structTree, key int) (path []types.Dict, holder types.Dict, err error) {
+// refusals and missed the rest). holder is the node already holding key as a reader finds it (`parentTreeLookup`), and at
+// the index of its value in holder's `/Nums`; else path is the nodes from the `/ParentTree` down to the leaf the entry goes
+// in, or the refusal. A document with no `/ParentTree` places every key in the flat one the writer creates.
+//
+// **A node with a `/Nums` is a leaf**, root included, whatever `/Kids` it also has — a reader answers from its /Nums and
+// never reads its /Kids, so a key written below one would be unreachable (`/pending 786`).
+//
+// A flat tree's key the lookup does not reach — its root's `/Limits` exclude it — gets a NEW pair, which `insertNum` puts
+// after any pair already holding the key and `widenLimits` brings into range, so the new pair is the one a reader then
+// takes. Writing into the hidden pair instead would size an MCID from one pair and write it into another.
+func parentTreePlace(ctx *model.Context, tree *structTree, key int) (path []types.Dict, holder types.Dict, at int, err error) {
 	ptObj, has := tree.root["ParentTree"]
 	if !has {
-		return []types.Dict{{}}, nil, nil
+		return []types.Dict{{}}, nil, -1, nil
 	}
 	pt, err := ctx.DereferenceDict(ptObj)
 	if err != nil || pt == nil {
-		return nil, nil, fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
+		return nil, nil, -1, fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
 	}
-	if _, nested := pt["Kids"]; !nested {
-		return []types.Dict{pt}, nil, nil
+	if h, i := parentTreeLookup(ctx, ptObj, key); h != nil {
+		return nil, h, i, nil
 	}
-	if h := parentTreeHolder(ctx, pt, key); h != nil {
-		return nil, h, nil
+	_, leaf := pt["Nums"]
+	if _, nested := pt["Kids"]; leaf || !nested {
+		return []types.Dict{pt}, nil, -1, nil
 	}
-	if _, _, next := parentTreeKey(ctx, tree, -1); key < next {
-		return nil, nil, fmt.Errorf("pdfops: /ParentTree key %d falls inside a NESTED number tree's range, and placing it "+
+	if key < parentTreeNextKey(ctx, tree) {
+		return nil, nil, -1, fmt.Errorf("pdfops: /ParentTree key %d falls inside a NESTED number tree's range, and placing it "+
 			"means choosing and re-sorting a leaf — refusing rather than writing an entry a reader following /Limits "+
 			"would never find", key)
 	}
 	node := pt
 	path = []types.Dict{pt}
 	for depth := 0; ; depth++ {
+		if _, leaf := node["Nums"]; leaf && depth > 0 {
+			return path, nil, -1, nil
+		}
 		kids, _ := ctx.DereferenceArray(node["Kids"])
 		if len(kids) == 0 {
-			if _, leaf := node["Nums"]; leaf || depth > 0 {
-				return path, nil, nil
+			if depth > 0 {
+				return path, nil, -1, nil
 			}
-			return nil, nil, fmt.Errorf("pdfops: the nested /ParentTree has an empty /Kids and no leaf to write key %d in", key)
+			return nil, nil, -1, fmt.Errorf("pdfops: the nested /ParentTree has an empty /Kids and no leaf to write key %d in", key)
 		}
 		if depth > maxStructDepth {
-			return nil, nil, fmt.Errorf("pdfops: the nested /ParentTree is deeper than %d", maxStructDepth)
+			return nil, nil, -1, fmt.Errorf("pdfops: the nested /ParentTree is deeper than %d", maxStructDepth)
 		}
 		child, cerr := ctx.DereferenceDict(kids[len(kids)-1])
 		if cerr != nil || child == nil {
-			return nil, nil, fmt.Errorf("pdfops: the nested /ParentTree's last kid does not resolve: %w", cerr)
+			return nil, nil, -1, fmt.Errorf("pdfops: the nested /ParentTree's last kid does not resolve: %w", cerr)
 		}
 		node = child
 		path = append(path, child)
 	}
 }
 
-// widenLimits makes node's `/Limits`, when it carries them, span key. A `/Limits` of more than two entries is read by its
-// first two, as uacheck reads it, and written back as two; one whose bounds are not integers is left alone.
+// widenLimits makes node's `/Limits`, when a reader honours them (`numberTreeLimits`), span key. A `/Limits` of more than
+// two entries is read by its first two and written back as two; one whose bounds are not integers is no limit, and is
+// left alone.
 func widenLimits(ctx *model.Context, node types.Dict, key int) {
-	lim, _ := ctx.DereferenceArray(node["Limits"])
-	if len(lim) < 2 {
+	lo, hi, limited := numberTreeLimits(ctx, node)
+	if !limited {
 		return
 	}
-	lo, lok := lim[0].(types.Integer)
-	hi, hok := lim[1].(types.Integer)
-	if !lok || !hok {
-		return
-	}
-	node["Limits"] = types.Array{types.Integer(min(lo.Value(), key)), types.Integer(max(hi.Value(), key))}
+	node["Limits"] = types.Array{types.Integer(min(lo, key)), types.Integer(max(hi, key))}
 }
 
 // insertNum puts the pair (key, val) into a number tree's flat `[key value …]` array before the first larger key, so the
@@ -356,33 +484,8 @@ func insertNum(nums types.Array, key int, val types.Object) types.Array {
 	return append(out, nums[at:]...)
 }
 
-// parentTreeHolder is the node under node whose `/Nums` holds key, or nil — depth-bounded as `parentTreeKey` is.
-func parentTreeHolder(ctx *model.Context, node types.Dict, key int) types.Dict {
-	var walk func(d types.Dict, depth int) types.Dict
-	walk = func(d types.Dict, depth int) types.Dict {
-		if d == nil || depth > maxStructDepth {
-			return nil
-		}
-		nums, _ := ctx.DereferenceArray(d["Nums"])
-		for i := 0; i+1 < len(nums); i += 2 {
-			if n, ok := nums[i].(types.Integer); ok && n.Value() == key {
-				return d
-			}
-		}
-		kids, _ := ctx.DereferenceArray(d["Kids"])
-		for _, k := range kids {
-			kd, _ := ctx.DereferenceDict(k)
-			if h := walk(kd, depth+1); h != nil {
-				return h
-			}
-		}
-		return nil
-	}
-	return walk(node, 0)
-}
-
 // setParentTreeSlot puts ref at index mcid of the array for key, growing the array and creating the
-// entry as needed.
+// entry as needed. The array is the one a reader finds (`parentTreeLookup`): of a key `/Nums` repeats, the LAST pair.
 //
 // **Growing means filling**, not appending: the array is indexed BY MCID, so making room for MCID 7
 // in a four-slot array creates slots 4, 5 and 6 as nulls. An append would put the element at index 4
@@ -394,20 +497,11 @@ func parentTreeHolder(ctx *model.Context, node types.Dict, key int) types.Dict {
 // whose MCIDs already exist and are not contiguous needs, so it is driven directly by
 // `TestAGapInTheParentTreeArrayIsFilledNotAppended` rather than left as an untested claim.
 func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref types.IndirectRef) error {
-	pt, err := parentTreeDict(ctx, tree, key)
+	pt, at, err := parentTreeDict(ctx, tree, key)
 	if err != nil {
 		return err
 	}
 	nums, _ := ctx.DereferenceArray(pt["Nums"])
-
-	// Find the key's slot in the flat [key, value, key, value…] array.
-	at := -1
-	for i := 0; i+1 < len(nums); i += 2 {
-		if n, ok := nums[i].(types.Integer); ok && n.Value() == key {
-			at = i + 1
-			break
-		}
-	}
 	var arr types.Array
 	if at >= 0 {
 		if a, aerr := ctx.DereferenceArray(nums[at]); aerr == nil && a != nil {
@@ -431,42 +525,34 @@ func setParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int, ref 
 // clearParentTreeSlot empties index mcid of the array for key — the content that slot named is no
 // longer owned by any element (`PLAN-accessibility.md` P09.S03's artifact edit). A tree with no
 // ParentTree, no entry for key, or a slot past the array's end has nothing to clear, and one is not
-// created to be emptied.
+// created to be emptied. The array is the one a reader finds (`parentTreeLookup`).
 func clearParentTreeSlot(ctx *model.Context, tree *structTree, key, mcid int) error {
 	if _, has := tree.root["ParentTree"]; !has {
 		return nil
 	}
-	root, err := ctx.DereferenceDict(tree.root["ParentTree"])
-	if err != nil || root == nil {
+	if root, err := ctx.DereferenceDict(tree.root["ParentTree"]); err != nil || root == nil {
 		return fmt.Errorf("pdfops: /ParentTree does not resolve to a dictionary: %w", err)
 	}
-	pt := parentTreeHolder(ctx, root, key)
+	pt, at := parentTreeLookup(ctx, tree.root["ParentTree"], key)
 	if pt == nil {
 		return nil
 	}
 	nums, _ := ctx.DereferenceArray(pt["Nums"])
-	for i := 0; i+1 < len(nums); i += 2 {
-		n, ok := nums[i].(types.Integer)
-		if !ok || n.Value() != key {
-			continue
-		}
-		arr, aerr := ctx.DereferenceArray(nums[i+1])
-		if aerr != nil || arr == nil || mcid < 0 || mcid >= len(arr) {
-			return nil
-		}
-		arr = append(types.Array{}, arr...)
-		arr[mcid] = nil
-		// An indirect slot array is updated where it lives, or the entry keeps pointing at the old one.
-		if ind, isInd := nums[i+1].(types.IndirectRef); isInd {
-			if en, found := ctx.XRefTable.FindTableEntryForIndRef(&ind); found && en != nil {
-				en.Object = arr
-				return nil
-			}
-		}
-		nums[i+1] = arr
-		pt["Nums"] = nums
+	arr, aerr := ctx.DereferenceArray(nums[at])
+	if aerr != nil || arr == nil || mcid < 0 || mcid >= len(arr) {
 		return nil
 	}
+	arr = append(types.Array{}, arr...)
+	arr[mcid] = nil
+	// An indirect slot array is updated where it lives, or the entry keeps pointing at the old one.
+	if ind, isInd := nums[at].(types.IndirectRef); isInd {
+		if en, found := ctx.XRefTable.FindTableEntryForIndRef(&ind); found && en != nil {
+			en.Object = arr
+			return nil
+		}
+	}
+	nums[at] = arr
+	pt["Nums"] = nums
 	return nil
 }
 
@@ -582,7 +668,7 @@ func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.Indi
 		return 0, fmt.Errorf("pdfops: page %d has no /StructParents, so it owns no ParentTree "+
 			"entry to add a marked-content id to", pageNr)
 	}
-	mcid, _, _ := parentTreeKey(ctx, tree, key)
+	mcid, _ := parentTreeKey(ctx, tree, key)
 
 	e, found := ctx.XRefTable.FindTableEntryForIndRef(&elem)
 	if !found || e == nil || e.Object == nil {
@@ -620,18 +706,19 @@ func addMCIDTo(ctx *model.Context, tree *structTree, pageNr int, elem types.Indi
 // kind of object — `readStructTree` distinguishes them and `checkStructConsistency` reports the
 // mismatch, which is why the distinction is two functions rather than one with a flag.
 func setParentTreeSingle(ctx *model.Context, tree *structTree, key int, ref types.IndirectRef) error {
-	pt, err := parentTreeDict(ctx, tree, key)
+	pt, _, err := parentTreeDict(ctx, tree, key)
 	if err != nil {
 		return err
 	}
 	nums, _ := ctx.DereferenceArray(pt["Nums"])
 	for i := 0; i+1 < len(nums); i += 2 {
-		n, ok := nums[i].(types.Integer)
-		if !ok || n.Value() != key {
+		n, ok := numsKey(ctx, nums[i])
+		if !ok || n != key {
 			continue
 		}
 		// An existing entry at this key is the caller having picked a key that is already taken.
-		// Overwriting it would silently re-point whatever owned it at this element.
+		// Overwriting it would silently re-point whatever owned it at this element. Every pair in the
+		// node counts, not only the one `parentTreeLookup` reads: a refusal may be wider than a read.
 		return fmt.Errorf("pdfops: /ParentTree key %d is already taken — overwriting it would "+
 			"re-point whatever owns it at a different element", key)
 	}
@@ -687,7 +774,7 @@ func allocParentTreeKey(ctx *model.Context, tree *structTree) int {
 // (ADR-009): the merge kept its own copy, which read only the first two, so a host whose page claimed a
 // key above its rows handed the grafted document that key and the collision cost it the graft.
 func parentTreeKeyFloor(ctx *model.Context, root types.Dict) int {
-	_, _, floor := parentTreeKey(ctx, &structTree{root: root}, -1)
+	floor := parentTreeNextKey(ctx, &structTree{root: root})
 	if nk, ok := pdfNumber(ctx.XRefTable, root["ParentTreeNextKey"]); ok && int(nk) > floor {
 		floor = int(nk)
 	}
