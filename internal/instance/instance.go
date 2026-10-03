@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"nib/internal/addrscope"
+	"nib/internal/atomicfile"
 )
 
 // Name is the record's filename inside the config directory — the same directory the
@@ -105,12 +107,20 @@ func NewToken() (string, error) {
 
 // Create publishes the record, refusing if one is already present.
 //
-// **O_EXCL, not a plain write**, because the refusal is the useful outcome: two nibs
+// **Exclusive, not a plain write**, because the refusal is the useful outcome: two nibs
 // starting at once must not both believe they are the primary, and last-writer-wins
 // would leave the loser serving on a port nothing points at. The caller that gets
 // ErrExists probes the incumbent and either hands off or, finding it stale, removes the
 // record and tries again — which is a decision the caller must make explicitly rather
 // than one this function should make for it.
+//
+// **The record lands WHOLE, through `atomicfile.CreateFrom`** (/pending 606, 813): written to a
+// temp file and hard-linked into place, which the kernel refuses while a record is there. It used
+// to be an O_EXCL create followed by a write, so a launch reading in between saw an empty file —
+// and since an unreadable record is now cleared rather than run beside (RemoveDamaged), a reader
+// must never be able to mistake a record being written for a damaged one. Deliberately not
+// durable: a power loss that eats the record also ate the process it described, and whatever it
+// leaves — nothing, or an empty file — is exactly what the next launch now clears.
 //
 // 0600 for the same reason the vault directory is private: the token is a secret, and a
 // world-readable one is not.
@@ -122,33 +132,29 @@ func Create(dir string, rec Record) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(Path(dir), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
+	if _, err := atomicfile.CreateFrom(Path(dir), bytes.NewReader(data), 0o600, 0, nil); err != nil {
+		if errors.Is(err, fs.ErrExist) {
 			return ErrExists
 		}
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(Path(dir))
-		return err
-	}
-	return f.Close()
+	return nil
 }
 
-// Read returns the published record, or an error when there is none.
+// ErrDamaged means a record is on disk and cannot be used: not JSON, or missing the address or
+// the token a probe needs. It is the caller's cue for RemoveDamaged — never for "absent".
+var ErrDamaged = errors.New("the instance record is damaged")
+
+// Read returns the published record, or an error when there is none. A record that is there and
+// cannot be used is ErrDamaged.
 func Read(dir string) (Record, error) {
-	var rec Record
 	data, err := os.ReadFile(Path(dir))
 	if err != nil {
-		return rec, err
+		return Record{}, err
 	}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return rec, err
-	}
-	if rec.Addr == "" || rec.Token == "" {
-		return rec, errors.New("instance record is incomplete")
+	rec, err := parse(data)
+	if err != nil {
+		return rec, fmt.Errorf("%w: %v", ErrDamaged, err)
 	}
 	// Handoff may be empty on a record written by an older build. Probing still works;
 	// handing off does not, and the caller finds that out when it tries — which is
@@ -156,14 +162,88 @@ func Read(dir string) (Record, error) {
 	return rec, nil
 }
 
-// Remove deletes the record. Absent is success: a clean exit and a crash-then-cleanup
-// should not be distinguishable to the caller, and neither is an error.
-func Remove(dir string) error {
-	err := os.Remove(Path(dir))
-	if err != nil && os.IsNotExist(err) {
-		return nil
+// parse is the one reading of a record's bytes, shared by Read and RemoveDamaged so "damaged"
+// means the same thing to the launch that finds it and the door that clears it.
+func parse(data []byte) (Record, error) {
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return rec, err
 	}
-	return err
+	if rec.Addr == "" || rec.Token == "" {
+		return rec, errors.New("instance record is incomplete")
+	}
+	return rec, nil
+}
+
+// Remove deletes the record ONLY if it still carries token, and reports whether it did.
+//
+// **It used to delete whatever record was on disk (/pending 630, 606)**, while each of its two
+// callers is removing ONE PARTICULAR record: an exiting instance its own, a launch the stale one
+// it just probed. Neither may take a record somebody else has published since. The live failure:
+// a launch's probe finds an exiting instance's listener already closed (`srv.Close()` runs before
+// the deferred removal), clears that record and publishes its own — and the exiting instance's
+// deferred Remove then deleted the NEW one, so the next launch found nothing and started a third
+// primary beside a running Nib that no longer owned the rendezvous.
+//
+// Absent is (false, nil): a clean exit and a crash-then-cleanup should not be distinguishable to
+// the caller, and neither is an error.
+func Remove(dir, token string) (bool, error) {
+	return removeIf(dir, func(data []byte) bool {
+		rec, err := parse(data)
+		return err == nil && token != "" && TokenMatches(rec.Token, token)
+	})
+}
+
+// RemoveDamaged deletes the record only if it is STILL unreadable, and reports whether it did
+// (/pending 813).
+//
+// **An unreadable record used to be "treated as absent" and left in place**, which is not absent
+// at all: Create is exclusive, so every later launch found it, skipped the hand-off, failed to
+// publish, and ran alongside whatever else was running — for good. The comment said a damaged
+// record must never become "delete this file to start Nib", and leaving it there made it exactly
+// that, minus the instruction. Clearing it is safe only because Create lands a record whole: an
+// unreadable file is never one being written.
+func RemoveDamaged(dir string) (bool, error) {
+	return removeIf(dir, func(data []byte) bool {
+		_, err := parse(data)
+		return err != nil
+	})
+}
+
+// removeIf is the one door that deletes the record, and it judges the bytes it actually REMOVED
+// rather than a read taken beforehand (ADR-009: Remove and RemoveDamaged both route here).
+//
+// A read-then-delete leaves a window in which another process replaces the record and the delete
+// takes the replacement. So the record is first RENAMED aside — atomic, and afterwards this call
+// holds the only name for those bytes — and judged there. A record that fails the judgement is
+// put back by hard link, which refuses if a new record has landed meanwhile (that newer one is the
+// live one, and the moved-aside bytes are dropped). Where the filesystem has no hard links it is
+// put back by rename when the name is still free, which narrows the window to two calls rather
+// than closing it — the same fallback `atomicfile.CreateFrom` declares.
+func removeIf(dir string, remove func(data []byte) bool) (bool, error) {
+	path := Path(dir)
+	suffix, err := NewToken()
+	if err != nil {
+		return false, err
+	}
+	aside := filepath.Join(dir, ".instance-"+suffix[:16]+".tmp")
+	if err := os.Rename(path, aside); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	data, rerr := os.ReadFile(aside)
+	if rerr == nil && remove(data) {
+		return true, os.Remove(aside)
+	}
+	if lerr := os.Link(aside, path); lerr == nil || errors.Is(lerr, fs.ErrExist) {
+		return false, os.Remove(aside)
+	}
+	if _, serr := os.Lstat(path); os.IsNotExist(serr) {
+		return false, os.Rename(aside, path)
+	}
+	return false, os.Remove(aside)
 }
 
 // TokenMatches compares a presented token against the expected one in constant time.
@@ -180,7 +260,15 @@ func TokenMatches(presented, expected string) bool {
 // answering immediately or not there, so the only thing this really bounds is the
 // pathological case — a port taken by something that accepts and then says nothing. A
 // launch must not hang behind that: the user double-clicked a file.
-const probeTimeout = 2 * time.Second
+//
+// **That premise needs the route to take no lock, and it used to take the global one**
+// (/pending 783): `handleInstance` read its token under `s.mu`, so any request holding `s.mu`
+// for two seconds made a live Nib answer like a dead one. The token is now read lock-free. And
+// running out of time is reported as Unknown, never as Gone, so the bound costs a launch at most
+// a second Nib beside the first — announced in the log — and never the first one's record.
+//
+// A var only so a test can shorten it.
+var probeTimeout = 2 * time.Second
 
 // ErrNotLoopback refuses a record naming anything but a loopback host:port.
 var ErrNotLoopback = errors.New("the instance record does not name a loopback address")
@@ -200,6 +288,32 @@ func checkLoopback(addr string) error {
 	return nil
 }
 
+// Liveness is Probe's answer. There are three because "not alive" was two different facts and
+// one of them must never remove a record.
+type Liveness int
+
+const (
+	// Alive: a Nib answered at the recorded address with the recorded token.
+	Alive Liveness = iota
+	// Gone: nothing is there (refused, reset, closed), or something that is not this record's
+	// Nib answered. The record is stale and may be cleared.
+	Gone
+	// Unknown: the address did not answer within probeTimeout. Something may be there and busy,
+	// so the record is NOT stale — clearing it is how a slow Nib lost its rendezvous to a
+	// second one (/pending 783, 630).
+	Unknown
+)
+
+func (l Liveness) String() string {
+	switch l {
+	case Alive:
+		return "alive"
+	case Gone:
+		return "gone"
+	}
+	return "unknown"
+}
+
 // Probe asks whether the instance the record names is alive AND is a Nib holding this
 // record's token.
 //
@@ -213,26 +327,55 @@ func checkLoopback(addr string) error {
 // It works against a LOCKED instance, because /api/instance is public. A probe that
 // needed an unlocked vault would report a locked Nib as dead, and the taking-over launch
 // would replace the user's session with a fresh locked one.
-func Probe(rec Record) bool {
+//
+// **It answers one of THREE things, not alive-or-not** (/pending 783): "did not answer in time"
+// used to fold into "not alive", and the caller removes a record that is not alive.
+func Probe(rec Record) Liveness {
 	if rec.Addr == "" || rec.Token == "" {
-		return false
+		return Gone
 	}
 	if checkLoopback(rec.Addr) != nil {
-		return false
+		return Gone
 	}
 	req, err := http.NewRequest(http.MethodGet, "http://"+rec.Addr+"/api/instance", nil)
 	if err != nil {
-		return false
+		return Gone
 	}
 	req.Header.Set(HeaderToken, rec.Token)
 	c := &http.Client{Timeout: probeTimeout}
 	resp, err := c.Do(req)
 	if err != nil {
-		return false
+		if isTimeout(err) {
+			return Unknown
+		}
+		return Gone
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode == http.StatusOK {
+		return Alive
+	}
+	return Gone
 }
+
+// isTimeout reports a deadline, as distinct from a refusal. Read off net.Error rather than a
+// platform errno, because "connection refused" is ECONNREFUSED on one OS and WSAECONNREFUSED on
+// another, while a timeout is the same interface everywhere.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// ErrHandOffUnanswered means the hand-off request was sent to a Nib that had just answered a probe,
+// and no reply came within handoffTimeout. The request is still being served there — the route
+// does not stop when its caller does — so the document opens in that Nib, and the caller must NOT
+// become a second primary and open it again (/pending 783).
+var ErrHandOffUnanswered = errors.New("the running Nib took the hand-off but did not answer in time")
+
+// handoffTimeout bounds the wait for a hand-off's reply. Longer than a probe's on purpose: the
+// route reads, converts, verifies and installs the file inside the request, so its reply is as
+// slow as the document is large, and the reply is only needed for the launch key of the window
+// the caller opens next. A var only so a test can shorten it.
+var handoffTimeout = 30 * time.Second
 
 // HandOff asks the instance the record names to open path (empty means "just surface
 // yourself"), and reports what it did.
@@ -268,9 +411,12 @@ func HandOff(rec Record, path, myVersion string) (result, reason, launch string,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(HeaderHandoff, rec.Handoff)
-	c := &http.Client{Timeout: probeTimeout}
+	c := &http.Client{Timeout: handoffTimeout}
 	resp, err := c.Do(req)
 	if err != nil {
+		if isTimeout(err) {
+			return "", "", "", fmt.Errorf("%w: %v", ErrHandOffUnanswered, err)
+		}
 		return "", "", "", err
 	}
 	defer resp.Body.Close()

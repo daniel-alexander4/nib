@@ -486,29 +486,89 @@ func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
-	s.mu.Lock()
-	if !s.stillHeldLocked(w, doc) {
-		return
-	}
-	if doc == nil || len(doc.undo) == 0 {
+	s.stepHistory(w, doc, func(d *document) (from, to *[][]byte) { return &d.undo, &d.redo })
+}
+
+// historyVerifyAttempts bounds stepHistory's verify-then-recheck loop. Each retry means another
+// request moved this document's history while the signature was being checked, which is progress
+// elsewhere; past the bound the step verifies under the lock rather than spin.
+const historyVerifyAttempts = 4
+
+// historyVerify is sign.Verify, held in a variable so a test can observe the lock from inside the
+// verification — the one way to prove it runs outside `s.mu` without timing anything.
+var historyVerify = sign.Verify
+
+// stepHistory moves the top of `from` into doc.data and doc.data onto `to` — undo and redo are
+// the same step with the stacks swapped, and this is the one door both take. Caller has resolved
+// doc; this takes s.mu itself and writes the reply.
+//
+// **The signature is verified OUTSIDE `s.mu` (/pending 783)**, as `commitMutation`,
+// `commitBarrier` and `installCeremonyResult` already do. Both routes used to run `sign.Verify`
+// inside the hold, and that is a full parse plus one digest over the document per signature —
+// measured at 50–110 ms for one signature on 3.3–5 MB and 140–295 ms for three, growing with
+// both, while every other route and the instance probe waited. The snapshot to verify is read
+// under the lock, verified without it, and committed only if it is STILL the top of the stack:
+// history entries are never mutated in place, so the same backing array means the same bytes and
+// the verdict still describes them. If the stack moved, the step starts again on what is there.
+//
+// Trimmed after the push, for both directions: ADR-003 bounds the undo+redo PAIR against one
+// global budget, and the push is not byte-neutral — undoing a large OCR or optimize result moves a
+// big doc.data onto redo while popping a small snapshot, so without the trim the total walks past
+// the ceiling with nothing evicting.
+func (s *Server) stepHistory(w http.ResponseWriter, doc *document, stacks func(*document) (from, to *[][]byte)) {
+	for attempt := 0; ; attempt++ {
+		s.mu.Lock()
+		if !s.stillHeldLocked(w, doc) {
+			return
+		}
+		if doc == nil {
+			s.mu.Unlock()
+			writeJSON(w, s.docResponse(doc))
+			return
+		}
+		from, to := stacks(doc)
+		if len(*from) == 0 {
+			s.mu.Unlock()
+			writeJSON(w, s.docResponse(doc))
+			return
+		}
+		next := (*from)[len(*from)-1]
+		var sig sign.Status
+		if attempt < historyVerifyAttempts {
+			s.mu.Unlock()
+			sig = historyVerify(next)
+			s.mu.Lock()
+			if !s.stillHeldLocked(w, doc) {
+				return
+			}
+			from, to = stacks(doc)
+			if len(*from) == 0 || !sameSnapshot((*from)[len(*from)-1], next) {
+				s.mu.Unlock()
+				continue
+			}
+		} else {
+			// The named fallback: the history kept moving under four verifications in a row.
+			sig = historyVerify(next)
+		}
+		last := len(*from) - 1
+		(*from)[last] = nil
+		*from = (*from)[:last]
+		*to = append(*to, doc.data)
+		s.trimHistoryLocked(doc)
+		doc.data = next
+		doc.sig = sig
 		s.mu.Unlock()
 		writeJSON(w, s.docResponse(doc))
 		return
 	}
-	last := len(doc.undo) - 1
-	prev := doc.undo[last]
-	doc.undo[last] = nil
-	doc.undo = doc.undo[:last]
-	doc.redo = append(doc.redo, doc.data)
-	// Trimmed here as handleRedo trims on its own push. ADR-003 bounds the undo+redo
-	// PAIR against one global budget, and this push is not byte-neutral: undoing a large
-	// OCR or optimize result moves a big doc.data onto redo while popping a small prev,
-	// so without this the total walks past the ceiling with nothing evicting.
-	s.trimHistoryLocked(doc)
-	doc.data = prev
-	doc.sig = sign.Verify(prev)
-	s.mu.Unlock()
-	writeJSON(w, s.docResponse(doc))
+}
+
+// sameSnapshot reports whether two history entries are the same snapshot — the same backing
+// array, not merely equal bytes. Identity is the right test and the cheap one: entries are never
+// written in place, and comparing a few hundred MB byte-by-byte under the lock would put back the
+// cost stepHistory moved out of it.
+func sameSnapshot(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 // handleRedo re-applies the last undone operation, moving the current state back
@@ -524,25 +584,7 @@ func (s *Server) handleRedo(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "that document is no longer open")
 		return
 	}
-	s.mu.Lock()
-	if !s.stillHeldLocked(w, doc) {
-		return
-	}
-	if doc == nil || len(doc.redo) == 0 {
-		s.mu.Unlock()
-		writeJSON(w, s.docResponse(doc))
-		return
-	}
-	last := len(doc.redo) - 1
-	next := doc.redo[last]
-	doc.redo[last] = nil
-	doc.redo = doc.redo[:last]
-	doc.undo = append(doc.undo, doc.data)
-	s.trimHistoryLocked(doc)
-	doc.data = next
-	doc.sig = sign.Verify(next)
-	s.mu.Unlock()
-	writeJSON(w, s.docResponse(doc))
+	s.stepHistory(w, doc, func(d *document) (from, to *[][]byte) { return &d.redo, &d.undo })
 }
 
 // --- D29's freeze -------------------------------------------------------------

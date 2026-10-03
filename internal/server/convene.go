@@ -646,9 +646,7 @@ func (s *Server) handleCeremonies(w http.ResponseWriter, r *http.Request) {
 			"the ceremonies folder could not be read: "+err.Error())
 		return
 	}
-	s.mu.Lock()
-	primary := s.instanceToken != ""
-	s.mu.Unlock()
+	primary := s.isPrimary()
 	// Best-effort: a ceremonies folder that reads and an `ended/` that does not is still a
 	// listing worth answering, and the live half is the one a user is acting on.
 	ended, _ := ceremony.ListEnded(defaultOutputDir())

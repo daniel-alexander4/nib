@@ -171,7 +171,7 @@ func TestTheCloseOutSweepReleasesTheArmToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.mu.Lock()
-	srv.instanceToken = "this-one"
+	srv.SetInstanceToken("this-one")
 	srv.mu.Unlock()
 
 	// The arm this ceremony holds. Placed through the session's own setter rather than by opening

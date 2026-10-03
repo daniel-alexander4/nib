@@ -45,11 +45,7 @@ type handoffResponse struct {
 
 // SetHandoffSecret tells the server which secret authorises POST /api/handoff. Empty
 // means this instance published no record, and the route then refuses everything.
-func (s *Server) SetHandoffSecret(secret string) {
-	s.mu.Lock()
-	s.handoffSecret = secret
-	s.mu.Unlock()
-}
+func (s *Server) SetHandoffSecret(secret string) { s.handoffSecret.Store(&secret) }
 
 // handleHandoff takes a path from another launch of this application and opens it here.
 //
@@ -64,14 +60,14 @@ func (s *Server) SetHandoffSecret(secret string) {
 // phase's own failure mode, triggered by its commonest input. The path is queued instead
 // and opens when the user unlocks, which they were about to do anyway.
 func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	secret := s.handoffSecret
-	unlocked := s.vault != nil
-	s.mu.Unlock()
+	secret := loadSecret(&s.handoffSecret)
 	if secret == "" || !instance.TokenMatches(r.Header.Get(instance.HeaderHandoff), secret) {
 		httpError(w, http.StatusForbidden, "not this instance")
 		return
 	}
+	s.mu.Lock()
+	unlocked := s.vault != nil
+	s.mu.Unlock()
 	// **D4's second cancel, and it is the race the grill surfaced.** Close the last window and
 	// relaunch immediately, and the file is handed to a process already counting down to exit —
 	// which would open the document, tear the server down a moment later, and leave the user
@@ -120,6 +116,10 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, handoffResponse{Result: "queued", Launch: s.MintLaunchKey()})
 		return
 	}
+	// **The request's context is deliberately NOT honoured from here on** (/pending 783). A large
+	// file outlasts the launch's wait, and the launch then exits on `ErrHandOffUnanswered` trusting
+	// this instance to finish — so an install that stopped when its caller gave up would open the
+	// document nowhere, and a launch that did not trust it would open the document twice.
 	focused, err := s.openHandedOff(path)
 	if err != nil {
 		writeJSON(w, handoffResponse{Result: "refused", Reason: err.Error(), Launch: s.MintLaunchKey()})

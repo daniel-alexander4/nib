@@ -151,7 +151,7 @@ func TestAStaleRecordIsTakenOverWithoutUserAction(t *testing.T) {
 	if got, err := instance.Read(nibDir); err != nil || got.Addr != deadAddr {
 		t.Fatalf("setup: the stale record did not land (%+v, %v)", got, err)
 	}
-	if instance.Probe(stale) {
+	if instance.Probe(stale) == instance.Alive {
 		t.Fatal("setup: the supposedly dead address answered a probe; the port was reused between closing it and now")
 	}
 
@@ -179,7 +179,7 @@ func TestAStaleRecordIsTakenOverWithoutUserAction(t *testing.T) {
 	if live.Addr == "" {
 		t.Fatal("the launch never replaced the stale record — it either exited believing it had handed off to a dead instance, or it served without publishing, leaving the next launch to find the same dead address")
 	}
-	if !instance.Probe(live) {
+	if instance.Probe(live) != instance.Alive {
 		t.Errorf("the record now names %s, but nothing answers a probe there — the rendezvous points at a process that is not serving", live.Addr)
 	}
 
