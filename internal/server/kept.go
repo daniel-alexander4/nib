@@ -39,6 +39,10 @@ var keptGrammar = regexp.MustCompile(`^kept_([a-z0-9-]{1,48})_([0-9]{8}-[0-9]{6}
 // errNotAKeptName is the refusal of a name the grammar does not accept.
 var errNotAKeptName = errors.New("that is not the name of a copy kept when you signed")
 
+// errNotAKeptCopy refuses a name the grammar accepts whose entry is not a regular file (a symlink, a directory): a
+// refusal about the request, answered 400 like the grammar's, never a server fault (the phase-close review).
+var errNotAKeptCopy = errors.New("that is not a copy kept when you signed")
+
 // keptName is the name for a copy of signed, kept at now, of the document the client called docName. docName is the
 // client's text and untrusted: it only ever narrows to `labelSlug`'s alphabet, capped at 48 like a delivered name.
 func keptName(docName string, signed []byte, now time.Time) string {
@@ -140,7 +144,11 @@ func listKept() ([]keptEntry, error) {
 		if m == nil {
 			continue
 		}
-		fi, err := os.Lstat(filepath.Join(dir, e.Name()))
+		path, err := keptPathFor(e.Name()) // the one door builds every kept path, the listing's too (ADR-073)
+		if err != nil {
+			continue
+		}
+		fi, err := os.Lstat(path)
 		if err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
@@ -172,7 +180,7 @@ func removeKept(name string) (bool, error) {
 		return false, err
 	}
 	if !fi.Mode().IsRegular() {
-		return false, fmt.Errorf("%s is not a kept copy Nib wrote (not a regular file), so Nib will not remove it", name)
+		return false, fmt.Errorf("%w: %s is not a regular file, so Nib will not remove it", errNotAKeptCopy, name)
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
@@ -187,7 +195,13 @@ func removeKept(name string) (bool, error) {
 // a kept copy is Finalize's output, which its last signature covers to its last byte, so it can only match at one of
 // them. A copy is read only when its size equals an end AND the name's 8-hex digest equals that prefix's — and the match
 // itself is byte equality, because the name's digest is an index and never evidence (ADR-073).
-func keptCopyFor(data []byte, ends []int64) (keptEntry, []byte, error) {
+//
+// **placed=false means the verdict could not place the signatures** — the library refused the file, the sweep ran out of
+// budget, or the join disagreed — which is exactly the document that came back hostile, so it is not "unsigned" (the
+// phase-close review). Then every kept size that fits is a candidate, and a candidate's last keptTail bytes must equal
+// data's at that size before anything is hashed: a kept copy's tail is its own trailer, so this costs one small read
+// per kept copy and lets at most the true copy through to a hash pass.
+func keptCopyFor(data []byte, ends []int64, placed bool) (keptEntry, []byte, error) {
 	kept, err := listKept()
 	if err != nil {
 		return keptEntry{}, nil, err
@@ -195,6 +209,21 @@ func keptCopyFor(data []byte, ends []int64) (keptEntry, []byte, error) {
 	bySize := map[int64][]keptEntry{}
 	for _, k := range kept {
 		bySize[k.Size] = append(bySize[k.Size], k)
+	}
+	if !placed {
+		ends = nil
+		for size, ks := range bySize {
+			var fit []keptEntry
+			for _, k := range ks {
+				if size <= int64(len(data)) && keptTailMatches(k, data[:size]) {
+					fit = append(fit, k)
+				}
+			}
+			if len(fit) > 0 {
+				bySize[size] = fit
+				ends = append(ends, size)
+			}
+		}
 	}
 	sorted := append([]int64(nil), ends...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] > sorted[j] })
@@ -227,4 +256,28 @@ func keptCopyFor(data []byte, ends []int64) (keptEntry, []byte, error) {
 		}
 	}
 	return keptEntry{}, nil, nil
+}
+
+// keptTail is how much of a kept copy's end keptCopyFor compares before it hashes a prefix: past the last signature's
+// /Contents, so it holds the trailer and the final xref offset, which no other kept copy of another document shares.
+const keptTail = 64
+
+// keptTailMatches reports whether kept copy k's last keptTail bytes equal prefix's. A copy it cannot read is not a
+// candidate here; the byte comparison that follows is what decides a match.
+func keptTailMatches(k keptEntry, prefix []byte) bool {
+	path, err := keptPathFor(k.Name)
+	if err != nil {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	n := min(int64(keptTail), int64(len(prefix)))
+	buf := make([]byte, n)
+	if _, err := f.ReadAt(buf, int64(len(prefix))-n); err != nil {
+		return false
+	}
+	return bytes.Equal(buf, prefix[int64(len(prefix))-n:])
 }

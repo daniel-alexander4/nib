@@ -5068,6 +5068,11 @@ function updateBadge(sig, inCeremony, unverified) {
   // ceremony, which has an obliged-signer count to report before anyone has signed at all —
   // OR for one carrying a signature Nib refused, which the panel names (P01.S02).
   els.sigDetailsBtn.hidden = !signers.length && !view.inCeremony && !refused.length && !timestamps.length && !sig?.unchecked;
+  // The checklist reads the verdict this just stored: a server operation (a co-sign, an undo of a signing) sets the
+  // dirty flag BEFORE the badge, so the render and the kept-copy ask that rode on it read the old signatures (the P04
+  // phase-close review). Re-read them here, off the new `lastSig`.
+  renderSignSteps();
+  if (simpleSignOpen()) refreshKeptProbe(false);
 }
 
 // addedAfterSuffix is the badge's words for `sign.Status.addedAfterCause`. A refused signature
@@ -8646,7 +8651,14 @@ all('.wmpreset').forEach((b) => {
   el.addEventListener('input', () => { syncWmPresets(); drawPreview(); });
 });
 drawPreview();
+// One signing at a time: a second press while the first is in flight (seconds, with a TSA) would sign twice and, with
+// "Keep a copy" ticked, leave a second unencrypted copy in ~/nib/signed (the P04 phase-close review).
 els.fzGo.onclick = async () => {
+  if (els.fzGo.disabled) return;
+  els.fzGo.disabled = true;
+  try { await finalizeGo(); } finally { els.fzGo.disabled = false; }
+};
+async function finalizeGo() {
   // Export name captured at operation entry — see exportBase (D7).
   const exportName = exportBase();
   const signAs = els.fzSignAs.value;
@@ -8691,10 +8703,12 @@ els.fzGo.onclick = async () => {
   const kept = res.headers.get('X-Nib-Kept');
   if (kept) {
     toast(`A copy was kept when you signed: ~/nib/signed/${kept}`);
-    if (simpleSignOpen()) refreshKeptProbe(true); // the folder changed; the open view is still unsigned, so this reads "—"
+    // The folder changed. The open view is still the document as it was BEFORE this signing, so the row reads `—` for
+    // an unsigned one and ○ for one already signed by someone else — the copy just kept is of the new bytes.
+    if (simpleSignOpen()) refreshKeptProbe(true);
   }
   openSaveAs(await res.blob(), exportName + '-finalized.pdf', 'Save finalized PDF');
-};
+}
 
 // OpenTimestamps: stamp the current document's hash into the Bitcoin blockchain
 // and save the .ots proof as a sidecar. The proof is over the same baked bytes
@@ -13640,6 +13654,7 @@ function setMode(tab) {
   all('.modetab').forEach((b) => setSelected(b, b.dataset.tab === tab));
   all('.tbtab').forEach((g) => g.classList.toggle('active', g.dataset.tab === tab));
   syncSidebarForMode(tab);
+  keptRowCameIntoView(); // false at boot (Signing is not the first mode), so the probe's state is never touched early
 }
 all('.modetab').forEach((b) => { b.onclick = () => setMode(b.dataset.tab); });
 
@@ -13980,6 +13995,7 @@ async function refreshProfileFilled() {
 // never shown as the last answer it gave).
 let keptProbe = { key: '', state: '', count: 0, error: '' };
 let keptProbeAsking = '';
+const KEPT_RETRY_MS = 10000; // how soon a FAILED kept-copy ask may be repeated by a load (a forced ask never waits)
 let keptProbeGen = 0; // each ask's number; only the newest ask's answer is applied (two forced asks can cross)
 
 // The verdict is in the key beside the ends because a coverage end is the `/ByteRange`'s literal value: a rewrite that
@@ -13990,10 +14006,19 @@ function keptProbeKey(v) {
   return `${(v.docMeta && v.docMeta.id) || ''}|${sig.state || ''}|${ends}`;
 }
 
+// The Simple Sign checklist is on screen when its mode is, and then either its card is open in the sidebar or the
+// sidebar is shut and the panes sit in the toolbar (`moveCommandsHome`), where a group is shown or, folded on a narrow
+// window, one ⋯ More press away — close enough to on screen that its answer should already be there when it opens.
 function simpleSignOpen() {
-  const g = [...all('#commands .tbgroup')].find((x) => (x.dataset.label || '') === 'Simple Sign');
-  // Open AND in the mode on screen: switching mode does not close a card, and a checklist nobody can see is not demand.
-  return !!(g && g.classList.contains('open') && g.closest('.tbtab.active'));
+  const g = [...all('.tbgroup')].find((x) => (x.dataset.label || '') === 'Simple Sign');
+  if (!g || !g.closest('.tbtab.active')) return false;
+  return g.classList.contains('open') || !!g.closest('#toolbar');
+}
+
+// keptRowCameIntoView is the checklist arriving on screen by a door other than its card header — a mode switch, the
+// sidebar shutting or opening. Forced: a copy kept or removed while it was off screen changed the folder.
+function keptRowCameIntoView() {
+  if (simpleSignOpen()) refreshKeptProbe(true);
 }
 
 // refreshKeptProbe asks for the active document. `force` re-asks an answer already held (the card opening, a kept
@@ -14003,7 +14028,12 @@ async function refreshKeptProbe(force) {
   const id = v.docMeta && v.docMeta.id;
   if (!v.pdfDocument || !id) { keptProbe = { key: '', state: '', count: 0, error: '' }; return; }
   const key = keptProbeKey(v);
-  if (!force && (keptProbe.key === key || keptProbeAsking === key)) return;
+  // A failed ask is not a held answer: a later load asks again (unlocking, say, is not a change of key) — but not
+  // sooner than KEPT_RETRY_MS, because a load runs on every overlay edit and a folder that cannot be read fails the same
+  // way each time (the phase-close re-review).
+  const held = keptProbe.key === key
+    && (keptProbe.state !== 'error' || Date.now() - keptProbe.at < KEPT_RETRY_MS);
+  if (!force && (held || keptProbeAsking === key)) return;
   // A forced ask is asked BECAUSE the held answer may be wrong now (the folder changed), so it is not shown meanwhile.
   if (force && keptProbe.key) { keptProbe = { key: '', state: '', count: 0, error: '' }; renderSignSteps(); }
   keptProbeAsking = key;
@@ -14030,7 +14060,7 @@ async function refreshKeptProbe(force) {
   if (keptProbeAsking === key) keptProbeAsking = '';
   // ADR-001: an answer applies only to the document, as it was, that it was asked about.
   if (gen !== keptProbeGen || view !== v || keptProbeKey(v) !== key) return;
-  keptProbe = { key, ...next };
+  keptProbe = { key, at: Date.now(), ...next };
   renderSignSteps();
 }
 
@@ -14235,6 +14265,7 @@ function setSidebarCollapsed(collapsed) {
   $('sidebar').classList.toggle('collapsed', collapsed);
   $('toggleSidebarBtn').title = collapsed ? 'Show sidebar' : 'Hide sidebar';
   moveCommandsHome();
+  keptRowCameIntoView();
 }
 function toggleSidebar() {
   // Through the one setter, so the tooltip cannot drift from the state (ADR-009).
@@ -16251,7 +16282,8 @@ async function compareWithKeptCopy() {
   note.textContent = `The copy kept when you signed${f.keptAt ? ' on ' + f.keptAt : ''}`
     + (f.document ? ` (“${f.document}”)` : '') + '. '
     + (f.same ? 'This file is that copy, byte for byte.'
-      : 'This file begins with that copy byte for byte; everything after it was appended later.');
+      : f.extends ? 'This file begins with that copy byte for byte; everything after it was appended later.'
+        : 'Nib did not say how this file relates to that copy.');
   openCompareWith(r.bytes, 'the copy kept when you signed');
 }
 

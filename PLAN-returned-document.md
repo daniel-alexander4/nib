@@ -1031,7 +1031,7 @@ Seam rows S3-1, S3-6, S3-8 moved live; S3-2…S3-5, S3-7, S3-9 are tier 1/2 only
 real ceremony mirror needs a convened ceremony the tier-3 harness does not build (tier 6's territory), and this is not
 the slice's point.
 
-### P04 — Retention at signing *(Dan's option C)*
+### P04 — Retention at signing *(Dan's option C)* *(done 2026-10-03, v1.182.3)*
 **Goal.** Make the dispute answerable in the case the file itself cannot answer.
 
 **No dependency on P01–P03** — it can move earlier if the re-saved case turns out to be the common
@@ -1041,6 +1041,22 @@ one in practice.
 failed write fails the signing; the copy is listed and deletable; the Simple Sign checklist gains a
 probed step; an ADR records the retention decision. **(plan-review pin)**: the dispute sheet offers the kept copy first, then
 the ceremony copy, then a file you choose (the P03 PIN's deferred clause, observed by S02's plant-both test).
+
+**Phase close (2026-10-03, v1.182.3).** Full-repo review `code-reviews/v1.182.2-p04-phase-close-2026-10-03.md`: 5 critical,
+all OUTSIDE P04's code (filed /pending 815-818); P04's own code drew 11 warning/info, all fixed here — chiefly a signed
+document the verdict could not place was told it carries no signature and never matched its kept copy (now matched by
+size, tail and bytes; only `unsigned` is `no-signature`), Finalize's double press, and the checklist row tracking the
+verdict and the screen (`updateBadge`, the toolbar host, mode/sidebar switches, a failed ask retried after a back-off).
+One re-review round on the fixes (0 critical; the back-off came from it). Graduation pass: 15 rows, 0 actionable, all
+keep-live. **Acceptance ledger** (split on every `and`): a tick at signing ✅, default off ✅ (jsdom, every opening), writes
+the signed output to `~/nib/signed/` ✅ (`TestFinalizeKeepsExactlyTheCopyAskedFor`, byte-identical, 0600); a failed write
+fails the signing ✅ (`TestAFailedKeepRefusesTheSigning`, 500 `copy-not-kept`, no bytes); the copy is listed ✅ and
+deletable ✅ (`GET /api/kept`, `POST /api/kept/remove`, tier 3); the Simple Sign checklist gains a probed step ✅ (S03, HEAD
+on the one match door, tier 3 `—`/✓/○); an ADR records the retention decision ✅ (ADR-073); the dispute sheet offers the kept
+copy first ✅, then the ceremony copy ✅, then a file you choose ✅ (jsdom plant-both, tier 3 the kept link live).
+**Required gates:** tiers 0-3 green at v1.182.3 (recorded in the commit); tiers 4 and 6 do NOT fire — no changed file
+matches `slicegate_test.go`'s prefixes (finalize, kept*, server.go, registry_test only). **Closure sweep:** /pending 389
+closed with P04; 814 amended and stands.
 
 **PIN 2026-10-02 (phase-open, firmed against HEAD `1ce25f1a` / v1.181.2 — a deepdive of the Finalize path, `~/nib/signed/`'s
 writers, the Simple Sign checklist and the sheet's kept-copy slot; every premise below READ at the line).**
