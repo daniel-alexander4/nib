@@ -24,12 +24,16 @@ import (
 //   - **Depth** without a loop still grows the stack, one set of pdfcpu frames per level.
 //
 // The edge table below is pdfcpu's own recursion, traced from its source (call graph over `validate/`, every
-// cycle's guard read; `memory/instruments/pending-763-764.md`). An edge is followed only where pdfcpu follows it
+// cycle's guard read; `memory/instruments/pending-763-764.md`; a page's every key re-read for /pending 816). An edge
+// is followed only where pdfcpu follows it
 // WITHOUT a guard. Where pdfcpu marks an object before recursing through it — form and image XObjects
 // (xObject.go:763), fonts (font.go:1112-1124), an ExtGState's `/SMask` and every other `validateStreamDictEntry`
 // (object.go:1041), ICCBased streams (colorspace.go:183) — the walk stops, because pdfcpu handles a loop through
 // that object and refusing it would refuse files pdfcpu reads. Outlines, the page tree, form-field `/Kids`, the
-// structure tree and thread beads carry their own guards and are not followed at all.
+// structure tree and thread beads carry their own guards and are not followed at all — except that the page tree's
+// guard covers its `/Pages` nodes and NOT its leaves: a `/Page` is validated once per naming, so its count is
+// multiplied by how many times `/Kids` names it (`pageNamings`, /pending 816). Form fields are validated once
+// (`SetValid` on entry, form.go:527; `IsValid` before each recursion, :483, :547).
 //
 // A loop is a repeated (object, role) on the current path: the role is how pdfcpu reached the object (an object
 // named as a pattern is validated as a pattern whatever it is), and pdfcpu recurses on the role, not the shape.
@@ -82,7 +86,9 @@ const (
 	roleRendition                  // a selector rendition's `/R` (media.go:1038 → :942)
 	roleMediaClip                  // a media clip section's `/D` (media.go:604 → :537)
 	roleTree                       // a name or number tree node with `/Limits`: `/Kids` — pdfcpu caps its depth, so a loop is its own; sharing is counted
-	rolePage                       // a page: roleResourced's `/Resources` and `/Annots`, and its `/AA` actions (page.go, annotation.go:1849)
+	rolePage                       // a page: roleResourced's `/Resources` and `/Annots`, its `/AA` actions, `/Group /CS`, `/SeparationInfo /ColorSpace` and `/VP` (page.go:808, annotation.go:1849)
+	roleViewport                   // a `/VP` viewport: `/Measure` (page.go:719)
+	roleMeasure                    // a measure: its number-format arrays, weighed rather than followed (page.go:638)
 	numRoles
 )
 
@@ -119,6 +125,7 @@ type refGraph struct {
 	state   []uint8     // 0 unvisited, 1 on the path, 2 done
 	count   []uint64
 	reached []bool // named by an edge the walk follows, so its paths are counted in whatever names it
+	opening *frame // the frame `open` is expanding, which `weigh` charges
 }
 
 // slot is n's index in state and count, or -1 for an object number the table does not hold (which names nothing).
@@ -187,14 +194,111 @@ func validatorPaths(ctx *model.Context) (uint64, error) {
 			roots = append(roots, g.slot(node{nr, r}))
 		}
 	}
+	namings := g.pageNamings()
 	var total uint64
 	for _, i := range roots {
-		if !g.reached[i] {
-			total = min(total+g.count[i], saturate)
+		if g.reached[i] {
+			continue
 		}
+		c := g.count[i]
+		if nr := nrs[i/int(numRoles)]; role(i%int(numRoles)) == rolePage && namings[nr] > 1 {
+			// pdfcpu validates a leaf once per NAMING (/pending 816): every path from it, and its own flat entries, again.
+			k := namings[nr]
+			c = min(mulSat(c, k)+mulSat(k-1, g.flat(nr)), saturate)
+		}
+		total = min(total+c, saturate)
 	}
 	return total, nil
 }
+
+func mulSat(a, b uint64) uint64 {
+	if a != 0 && b > saturate/a {
+		return saturate
+	}
+	return min(a*b, saturate)
+}
+
+// pageNamings is how many times each leaf `/Page` is named in the `/Kids` of the page tree under the catalog's
+// `/Pages` — /pending 816. pdfcpu's validator refuses a `/Pages` node met twice (PageTreeVisit, model/recursion.go:72)
+// but validates a leaf at EVERY naming (`processPagesKids`, validate/page.go:1043-1053, and `validatePagesAnnotations`,
+// annotation.go:1884), so one page named 200 times was 200 validations of everything it reaches, counted as one: 5.2 KB
+// over a 200-slot `/Annots` and a 30-action chain passed the door and validated for 4.8 s (measured), linear in the
+// namings. Each `/Pages` node is walked once, as pdfcpu does, and iteratively, so a deep tree holds no Go stack.
+func (g *refGraph) pageNamings() map[int]uint64 {
+	out := map[int]uint64{}
+	root, err := g.ctx.Pages()
+	if err != nil || root == nil {
+		return out
+	}
+	entered := map[int]bool{}
+	stack := []types.IndirectRef{*root}
+	for len(stack) > 0 {
+		ref := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if entered[ref.ObjectNumber.Value()] {
+			continue
+		}
+		entered[ref.ObjectNumber.Value()] = true
+		for _, k := range g.array(g.dict(ref)["Kids"]) {
+			kr, ok := k.(types.IndirectRef)
+			if !ok || kr.ObjectNumber.Value() == 0 { // pdfcpu skips object 0 (page.go:1015)
+				continue
+			}
+			switch nameOf(g.dict(kr), "Type") {
+			case "Pages":
+				stack = append(stack, kr)
+			case "Page":
+				out[kr.ObjectNumber.Value()]++
+			}
+		}
+	}
+	return out
+}
+
+// flat is the work one validation of page nr does on its own entries that reaches no other object's validation: one
+// per element of every array and dictionary it holds directly, its top-level entries read through their references
+// (an indirect `/Contents` or `/Annots` array is walked slot by slot at every naming). `/Parent` is the tree's, not
+// the page's. A page named once is charged none of it — that is linear in the file — only its repeats are.
+func (g *refGraph) flat(nr int) uint64 {
+	var n uint64 = 1
+	e, ok := g.ctx.Table[nr]
+	if !ok || e == nil || e.Free {
+		return n
+	}
+	for k, v := range g.dict(e.Object) {
+		if k != "Parent" {
+			n = min(n+directSize(g.deref(v), 0), saturate)
+		}
+	}
+	return n
+}
+
+// directSize counts the elements of o's direct structure, not following references.
+func directSize(o types.Object, depth int) uint64 {
+	if depth > maxDirectDepth {
+		return 1
+	}
+	var n uint64
+	switch v := o.(type) {
+	case types.Array:
+		n = uint64(len(v))
+		for _, x := range v {
+			n += directSize(x, depth+1)
+		}
+	case types.Dict:
+		n = uint64(len(v))
+		for _, x := range v {
+			n += directSize(x, depth+1)
+		}
+	case types.StreamDict:
+		return directSize(v.Dict, depth)
+	}
+	return min(n, saturate)
+}
+
+// maxDirectDepth bounds directSize's recursion, so no nesting of direct objects can exhaust the stack; past it an
+// element counts once.
+const maxDirectDepth = 1 << 8
 
 // rootRoles are the roles an object is walked from, by its own shape. An object reached only through another
 // (a GoToE target, a DeviceN attributes dict) is walked from whatever reaches it.
@@ -315,7 +419,9 @@ func (g *refGraph) open(n node) *frame {
 	g.state[g.slot(n)] = 1
 	f := &frame{n: n}
 	if e, ok := g.ctx.Table[n.nr]; ok && e != nil && !e.Free {
+		g.opening = f
 		g.expand(e.Object, n.role, "", func(to node, key string) { f.edges = append(f.edges, edge{to, key}) })
+		g.opening = nil
 	}
 	return f
 }
@@ -444,6 +550,25 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 	case roleResourced, rolePage:
 		if r == rolePage {
 			g.values(d["AA"], roleAction, at("AA"), emit) // a page's open/close actions (page.go → action.go:975)
+			// /pending 816: every other key of `validatePageDict` (page.go:808-889) that recurses. A colour space
+			// through `/Group /CS` (page.go:267 → xObject.go:840) and `/SeparationInfo /ColorSpace` (page.go:483 →
+			// colorspace.go:546), each a Separation's tint transform away from a type 3 chain; and every `/VP`
+			// viewport, which validates its `/Measure` afresh (page.go:751 → :739). The rest are scalars, names,
+			// rectangles, flat arrays (`/Contents`, `/B`, `/PieceInfo`, `/BoxColorInfo`), a guarded stream (`/Thumb`,
+			// xObject.go:763) or `/Metadata`, which is never decoded — none reaches another object's validation.
+			if grp := g.dict(d["Group"]); grp != nil {
+				if cs, ok := grp["CS"]; ok {
+					g.follow(cs, roleColorSpace, at("Group /CS"), emit)
+				}
+			}
+			if si := g.dict(d["SeparationInfo"]); si != nil {
+				if cs, ok := si["ColorSpace"]; ok {
+					g.follow(cs, roleColorSpace, at("SeparationInfo /ColorSpace"), emit)
+				}
+			}
+			for _, v := range g.array(d["VP"]) {
+				g.follow(v, roleViewport, at("VP"), emit)
+			}
 		}
 		if res := g.dict(d["Resources"]); res != nil {
 			for _, v := range g.dict(res["Pattern"]) {
@@ -580,6 +705,30 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 		for _, v := range g.array(d["Kids"]) {
 			g.follow(v, roleTree, at("Kids"), emit)
 		}
+	case roleViewport:
+		if m, ok := d["Measure"]; ok {
+			g.follow(m, roleMeasure, at("Measure"), emit)
+		}
+	case roleMeasure:
+		// A measure's number formats are validated one by one wherever it is reached, and recurse no further, so they
+		// are weighed onto the path rather than followed: 1,000 viewports naming one measure of 1,000 formats is
+		// 10^6 validations from 59 KB (measured 7.3 s under load), where following them as edges would count them
+		// only if each were indirect.
+		var w uint64
+		for _, k := range measureArrays {
+			w += uint64(len(g.array(d[k])))
+		}
+		g.weigh(w)
+	}
+}
+
+// measureArrays are a measure dictionary's number-format arrays (page.go:669-699).
+var measureArrays = []string{"X", "Y", "D", "A", "T", "S"}
+
+// weigh adds w paths to the object the walk is opening: work pdfcpu does there that reaches no further object.
+func (g *refGraph) weigh(w uint64) {
+	if g.opening != nil {
+		g.opening.sum = min(g.opening.sum+w, saturate)
 	}
 }
 
