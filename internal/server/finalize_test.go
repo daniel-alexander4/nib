@@ -65,6 +65,35 @@ func TestFinalizeWithVisibleStamp(t *testing.T) {
 	}
 }
 
+// TestFinalizeRefusesADocumentAlreadySigned — /pending 810. Finalize certifies, and a certification may only be a
+// document's first signature; over a signed document it answered 200 with a second certification Acrobat reports as
+// violating the first. The refusal is the signer's, and it reaches the user as a 400 carrying its sentence — not 422,
+// which the modal reads as a wrong passphrase, and not the 500 an unexpected failure is.
+func TestFinalizeRefusesADocumentAlreadySigned(t *testing.T) {
+	ts, _ := startServer(t)
+	c, csrf := authedClient(t, ts)
+
+	pdf, _ := testpdf.Form()
+	cert, key, _ := sign.GenerateIdentity("Earlier Signer")
+	signed, err := sign.SignApproval(pdf, cert, key, sign.Options{Name: "Earlier Signer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("pdf", "doc.pdf")
+	fw.Write(signed)
+	mw.WriteField("params", `{"reason":"Finalized in Nib"}`)
+	mw.Close()
+
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/finalize", mw.FormDataContentType(), &buf)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "already signed") {
+		t.Fatalf("finalize over a signed document = %d: %s, want 400 naming it already signed", resp.StatusCode, body)
+	}
+}
+
 func TestFinalizeRejectsBadTSAURL(t *testing.T) {
 	ts, _ := startServer(t)
 	c, csrf := authedClient(t, ts)

@@ -533,6 +533,8 @@ identity kept in your vault and bakes in a visible watermark — a preset like
 text), with adjustable opacity, colour, size, and angle and a live preview —
 optionally with a trusted RFC-3161 timestamp. Any later edit breaks the signature
 — that's the point. Export your public certificate so others can verify it's you.
+A certification can only be a document's first signature, so Finalize (and `nib sign`)
+refuses a document that is already signed rather than break the signature it carries.
 
 **Keep a copy for my records.** Off unless you tick it, every time. When ticked, Finalize also saves the exact signed
 file to `~/nib/signed/` (named `kept_<document>_<date-time>-<code>.pdf`) before handing it to you, so if a signed

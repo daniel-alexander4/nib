@@ -119,6 +119,9 @@ type Options struct {
 // using the given PEM identity. Any later edit invalidates it — that is the
 // tamper-evidence. The signature is invisible; callers bake any visible mark
 // into the page content before signing. This is the solo-Finalize path.
+//
+// It refuses a document that is already signed (`ErrAlreadySigned`, /pending 810): a certification
+// may only be a document's first signature.
 func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 	cert, signer, err := ParseIdentity(certPEM, keyPEM)
 	if err != nil {
@@ -137,7 +140,7 @@ func Sign(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error) {
 	if opts.TSAURL != "" {
 		data.TSA = sign.TSA{URL: opts.TSAURL}
 	}
-	return runSign(pdfBytes, data, nil)
+	return runSign(pdfBytes, data, refuseSigned)
 }
 
 // SignApproval applies an approval signature to pdf. Unlike Sign it asserts no
@@ -195,7 +198,8 @@ func SignApproval(pdfBytes, certPEM, keyPEM []byte, opts Options) ([]byte, error
 // nothing this door signs reaches `digitorus/pdf` unless pdfcpu read it first.
 //
 // refuse, when set, is a caller's own precondition over the document the library is about to sign,
-// asked of the SAME reader so the gate is paid once — `SignApproval`'s certification refusal.
+// asked of the SAME reader so the gate is paid once — `SignApproval`'s certification refusal, and the
+// certifying paths' refusal of a document already signed.
 func runSign(pdfBytes []byte, data sign.SignData, refuse func(*dpdf.Reader) error) ([]byte, error) {
 	in, err := readableBySigner(pdfBytes)
 	if err != nil {
@@ -459,16 +463,19 @@ func mentionsTimestamp(err error) bool {
 // signature — the "no changes allowed" kind a later approval signature would
 // break for strict validators. Nib's own Verify is purely cryptographic and
 // does not surface the signature type, so we read it from the PDF structure:
-// an AcroForm signature field whose /V has a /Reference with /TransformMethod
-// /DocMDP. (Top-level signature fields only — the conventional placement.)
+// the catalog's `/Perms /DocMDP` (ISO 32000-1 12.8.4, Table 258 — the entry that makes a document
+// certified), or a signature field whose /V has a /Reference with /TransformMethod /DocMDP, which is
+// all `digitorus/pdfsign` writes for nib's own certifications (it writes no `/Perms`).
 //
-// **Declared: it is blind to a certification signature nested under `/Kids`** (/pending 734), because
-// it walks `/Fields` rather than the revision sweep. It is also blind to one reachable only through a
-// hybrid-reference `/XRefStm`, by the same reader — and that one cannot be co-signed over: runSign
-// refuses every SIGNED hybrid file (`readableBySigner`, /pending 740), certified or not, so the
-// blindness costs a less specific refusal, never a signature. It is a named exemption from the one-enumeration
-// guard (`TestEverySignatureEnumerationIsTheSweep`), not a second coverage walk: it reads `/Reference`,
-// never a `/ByteRange`.
+// **The field half is `sigFieldWalk`, the whole field tree with `/FT` inherited** (/pending 734). It
+// walked `/Fields`' top level alone, so a certification nested under `/Kids` was invisible and
+// SignApproval added an approval signature a DocMDP P=1 certification forbids. Widening it refuses
+// more co-signs, and every one it adds is a co-sign a strict validator would report as breaking the
+// certification. A tree the walk cannot finish is an error, refused like any unreadable document.
+// It is still blind to a certification reachable only through a hybrid-reference `/XRefStm`, by
+// the same reader — and that one cannot be co-signed over: runSign refuses every SIGNED hybrid file
+// (`readableBySigner`, /pending 740), certified or not, so the blindness costs a less specific refusal,
+// never a signature.
 //
 // A panic in the walk is returned as an error (/pending 502): the same lazy dereferences that needed
 // a recover in signatureBlobPresent panic here on corrupt input, and an unreadable document is one
@@ -483,24 +490,27 @@ func certifiedIn(r *dpdf.Reader) (certified bool, err error) {
 			certified, err = false, fmt.Errorf("read pdf: %v", rec)
 		}
 	}()
-	acro := r.Trailer().Key("Root").Key("AcroForm")
+	root := r.Trailer().Key("Root")
+	if !root.Key("Perms").Key("DocMDP").IsNull() {
+		return true, nil
+	}
+	acro := root.Key("AcroForm")
 	if acro.IsNull() {
 		return false, nil
 	}
-	fields := acro.Key("Fields") //sigwalk:exempt certifiedIn
-	for i := 0; i < fields.Len(); i++ {
-		f := fields.Index(i)
-		if f.Key("FT").Name() != "Sig" {
-			continue
-		}
+	found, bounded := sigFieldWalk(acro, func(f dpdf.Value) bool {
 		refs := f.Key("V").Key("Reference")
 		for j := 0; j < refs.Len(); j++ {
 			if refs.Index(j).Key("TransformMethod").Name() == "DocMDP" {
-				return true, nil
+				return true
 			}
 		}
+		return false
+	})
+	if !bounded {
+		return false, errFieldTreeUnbounded
 	}
-	return false, nil
+	return found, nil
 }
 
 // refuseCertified is `SignApproval`'s precondition, run by `runSign` over the reader it opened.
@@ -511,6 +521,42 @@ func refuseCertified(r *dpdf.Reader) error {
 	}
 	if certified {
 		return errors.New("document is certified (no changes allowed); it cannot be co-signed")
+	}
+	return nil
+}
+
+// ErrAlreadySigned refuses to certify a document that already carries a signature (/pending 810).
+var ErrAlreadySigned = errors.New("this document is already signed, and a certification (Finalize) can only be " +
+	"a document's first signature — adding one now would be reported as breaking the signature already " +
+	"there, so nothing was signed")
+
+// refuseSigned is the certifying paths' precondition (`Sign`, `SignExternal`), run by `runSign` over the reader
+// it opened: ISO 32000-1 12.8.2.2 allows a certification signature only as the document's FIRST signature, and
+// over a certified "no changes" document it is also a forbidden change. Both certify with DocMDP P=1, so before
+// this a document already signed came back with a second certification that Acrobat reports as violating the
+// first, while nib's `Verify` — which does not judge DocMDP — called it valid.
+//
+// **Refused, not downgraded to an approval signature.** The fallback signs, but it is not what the user asked
+// for: Finalize promises a document locked against any change, and an approval signature locks nothing.
+//
+// "Signed" is `HasSignatureBlob`'s field-tree answer (`signedFieldIn`, over the same reader), which every other
+// gate on a signed document reads, plus a certification the field tree does not hold — the catalog's `/Perms
+// /DocMDP`. Where the reader cannot answer, the reader's error is the refusal: `HasSignatureBlob` falls back to a
+// byte scan for `/ByteRange` there, and that is right for "is this unsigned" and would be a false sentence here.
+func refuseSigned(r *dpdf.Reader) error {
+	signed, err := signedFieldIn(r)
+	if err != nil {
+		return err
+	}
+	if signed {
+		return ErrAlreadySigned
+	}
+	certified, err := certifiedIn(r)
+	if err != nil {
+		return err
+	}
+	if certified {
+		return ErrAlreadySigned
 	}
 	return nil
 }
