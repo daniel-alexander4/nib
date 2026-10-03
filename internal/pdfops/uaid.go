@@ -230,17 +230,19 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 	return true, nil
 }
 
-// withoutUAClaim is the tail for an operation that must keep pdfcpu's own read path — a merge or an
-// n-up, which read without the optimize pass `writeMutated` uses and whose output the tag-fate census
-// measures. It costs a parse, measured at 43 ms against `Rotate`'s 55 ms on a 190 KB document, and a
-// rewrite only when there was a claim to drop.
+// withoutUAClaim drops the claim from bytes this package already wrote. Its one caller today
+// (/pending 822, `grep 'withoutUAClaim('`): `rewriteOrDropClaim`, when `writeMutated` could not
+// write. The merges no longer use it — `mergeOnce` drops
+// inside its write (merge.go) — and NUp takes `withoutUAClaimOrOrphanedForm`. It costs a parse,
+// measured at 43 ms against `Rotate`'s 55 ms on a 190 KB document, and a rewrite only when there was
+// a claim to drop.
 func withoutUAClaim(pdf []byte) ([]byte, error) {
 	out, _, err := dropUAIdentificationBytes(pdf)
 	return out, err
 }
 
-// withoutUAClaimOrOrphanedForm is `withoutUAClaim` for a COMPOSITION — an n-up or a page split,
-// where the source catalog is carried onto pages it never described (/pending 573).
+// withoutUAClaimOrOrphanedForm is `withoutUAClaim` for NUp's COMPOSITION, where the source catalog is
+// carried onto pages it never described (/pending 573).
 //
 // **One parse, because the composition's tail is already paying for one.**
 // `dropUAIdentificationBytes` reads the document unconditionally and writes only when there was a
@@ -249,9 +251,12 @@ func withoutUAClaim(pdf []byte) ([]byte, error) {
 // a 22-page document — to correct a catalog the first pass already has open. That is ADR-032's rule
 // applied one key over: the correction goes *inside the rewrite the change already performs*.
 //
-// **Only the composing doors call it.** A merge keeps the FIRST document's catalog and that
-// document's pages, so its widgets come through with them and its form is consistent; it is a
-// composition that destroys pages while keeping the catalog that produces the orphan.
+// **NUp is its one caller.** A merge keeps the FIRST document's catalog and that document's pages, so
+// its widgets come through with them and its form is consistent; it is a composition that destroys
+// pages while keeping the catalog that produces the orphan. SplitPage, the other composing door, does
+// not need it: it reassembles through `splice`, whose page selection takes a dropped page's fields
+// with it — measured, not inferred, by `TestASplitPageDoesNotLeaveAFormClaimingFieldsNothingDraws`
+// (1 field against 1 widget after splitting the page that held the other).
 func withoutUAClaimOrOrphanedForm(pdf []byte) ([]byte, error) {
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {

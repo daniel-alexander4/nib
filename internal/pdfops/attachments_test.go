@@ -278,7 +278,7 @@ func TestPageOperationsKeepWhatIsNotPageIndexed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err = AddAttachment(doc, "nib-ceremony.json", []byte(`{"id":"abc"}`))
+	doc, err = EmbedCeremonyRecord(doc, []byte(`{"id":"abc"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -904,7 +904,7 @@ func TestTheCeremonyRecordIsNotInItsOwnDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withRecord, err := AddAttachment(base, CeremonyRecordName, []byte(`{"id":"whatever"}`))
+	withRecord, err := EmbedCeremonyRecord(base, []byte(`{"id":"whatever"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -921,6 +921,31 @@ func TestTheCeremonyRecordIsNotInItsOwnDigest(t *testing.T) {
 		t.Errorf("attaching %s moved the digest (%s -> %s) — the record contains this digest, so "+
 			"a digest that covers the record is a fixed point and no party could ever recompute it",
 			CeremonyRecordName, before[:16], after[:16])
+	}
+}
+
+// TestAUserAttachCannotWriteTheRecordShape — /pending 822. The user's attach door given the record's
+// name wrote the one shape ContentDigest excludes, so a file attached by hand left the digest. It is
+// refused there — with a path in front too, since the door keeps the basename — while the record's
+// own door still writes it.
+func TestAUserAttachCannotWriteTheRecordShape(t *testing.T) {
+	base, err := testpdf.Text("the lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{CeremonyRecordName, "some/dir/" + CeremonyRecordName} {
+		if out, err := AddAttachment(base, name, []byte("a schedule")); err == nil {
+			d0, _ := ContentDigest(base)
+			d1, _ := ContentDigest(out)
+			t.Errorf("AddAttachment(%q) was accepted; digest before %.16s after %.16s — a user's file "+
+				"in the record's exact shape is left out of ContentDigest", name, d0, d1)
+		}
+	}
+	if _, err := AddAttachment(base, "nib-ceremony.json.txt", []byte("x")); err != nil {
+		t.Errorf("a name that only resembles the record's was refused: %v", err)
+	}
+	if _, err := EmbedCeremonyRecord(base, []byte(`{"id":"x"}`)); err != nil {
+		t.Errorf("the record's own door refused: %v", err)
 	}
 }
 

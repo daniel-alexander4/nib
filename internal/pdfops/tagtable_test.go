@@ -154,6 +154,9 @@ var tagFates = map[string]tagFate{
 	"StampWatermark":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StampWatermark(b, "DRAFT", WatermarkStyle{}) }},
 	"AddNotes":         {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddNotes(b, []Note{{Page: 1, X: 10, Y: 10, Text: "n"}}) }},
 	"AddAttachment":    {verdict: "carried", drive: func(b []byte) ([]byte, error) { return AddAttachment(b, "a.txt", []byte("hi")) }},
+	"EmbedCeremonyRecord": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		return EmbedCeremonyRecord(b, []byte(`{"id":"x"}`))
+	}},
 	"StampImages": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		return StampImages(b, []Stamp{{Page: 1, Rect: [4]float64{10, 10, 60, 60}, PNG: onePixelPNG()}})
 	}},

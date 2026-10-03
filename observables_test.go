@@ -143,6 +143,18 @@ var published = map[string][]string{
 	// been laundering — the sweep's own client prose happens to contain the words `heard` and
 	// `windowMs`, and a bare-name scan cannot tell that from a read.
 	"server.lanHeardResponse": {"build/pairrepro.sh"},
+	// **Three shapes the word-bounded matcher (/pending 808 R5) found satisfied by coincidence.**
+	// The bare-word arm accepted `transport` and `launch` wherever they appeared in web/app.js, so
+	// these read as covered by the client while their real readers were named nowhere:
+	//   - `lanHeard` is the element of `lanHeardResponse.Heard`, read by the same `link_report`
+	//     (`h["transport"]`), and not by the client at all.
+	//   - `handoffResponse` is read by the SECOND LAUNCH, `instance.Handoff`, never by the page.
+	//   - `armRequest.Transport` is set by the tier-4 and tier-6 harnesses only — the GUI's arm
+	//     sends no `transport`, so a GUI arm is always TCP. Named rather than parked because a
+	//     harness that sets a request field is this table's idea of a reader (`lanHeardResponse`).
+	"server.lanHeard":        {"build/pairrepro.sh"},
+	"server.handoffResponse": {"internal/instance/instance.go"},
+	"server.armRequest":      {"web/app.js", "build/ceremonyrepro.sh"},
 	// Derived from the tree, not guessed: for each shape, the files that actually mention
 	// its fields with comments stripped. A first draft of this table was written from
 	// memory and named four wrong files — the scan reporting a false orphan is worse than
@@ -277,9 +289,12 @@ var published = map[string][]string{
 	// `ceremony.Party.Capacity` below for what that entry's prose had to be corrected to say.
 	"ceremony.Party":    {"internal/ceremony/record.go", "internal/ceremony/invitation.go", "internal/server/convene.go"},
 	"ceremony.Endpoint": {"internal/server/ceremonynet.go", "internal/ceremony/candidate.go"},
-	"instance.Record":   {"internal/instance/instance.go", "internal/server/handoff.go"},
-	"ots.VerifyResult":  {"internal/server/timestamp.go"},
-	"sign.Status":       {"web/app.js", "internal/server/server.go"},
+	// `cmd/nib/main.go` replaced `internal/server/handoff.go` at /pending 808 R5: handoff.go reads no
+	// field of a Record — it matched only because `.Token` was a PREFIX of `.TokenMatches`. The second
+	// launch is the real out-of-package reader (`rec.Addr`, and the record handed to Probe/HandOff).
+	"instance.Record":  {"internal/instance/instance.go", "cmd/nib/main.go"},
+	"ots.VerifyResult": {"internal/server/timestamp.go"},
+	"sign.Status":      {"web/app.js", "internal/server/server.go"},
 	// PLAN-returned-document P02.S03: the route projects every field into its header or its 422 body.
 	"sign.SignedRevision": {"internal/server/revision.go"},
 	// `internal/server/attachments.go` removed /pending 558: it EMBEDS the shape in a response
@@ -461,27 +476,15 @@ var internalShapes = map[string]string{
 var unreadKnown = map[string]string{
 	// ── internal/server, entered the day the scan could first see it (/pending 347) ──────────
 	//
-	// **Eleven of these are one fact, not eleven**: P06 has not built the ceremony surface. Named
-	// search, 2026-09-01: `/api/ceremony/convene`, `/api/ceremony/accept` and the ceremonies list
-	// route have **zero** references in `web/app.js`. So every field on a convene or accept shape
-	// is unread because there is no client flow to read or set it — which is a schedule fact about
-	// P06, not a field somebody forgot. They are parked BY NAME rather than covered by a blanket
-	// exclusion, so that when P06 lands, each one fails here until its surface actually uses it.
+	// **Eleven parks stood here, one fact: P06 had not built the ceremony surface.** They were parked
+	// BY NAME so that each would fail once its surface used it — and none ever did, because a park is
+	// consulted before the reader loop and the fixed-park arm below reads only parks that cite a
+	// `/pending` item. P06 shipped and every one of them gained a real reader (`renderAccepted`,
+	// `renderInvitations`, `invitationRow`, the ceremony panel's `data.primary`, the convene body's
+	// `convenerSigns`). Deleted at /pending 808 R5, when the matcher was word-bounded and every park
+	// was re-checked. **A park that names a SCHEDULE is a /pending claim without the number**, and it
+	// rots exactly as one does.
 	//
-	// That is the whole point of parking them individually: a wildcard would go green the moment
-	// the routes were called at all, whether or not the fields reached a user.
-	"server.acceptedParty.Capacity":        "P06: no accept surface — /api/ceremony/accept has zero references in web/app.js",
-	"server.acceptedParty.Convener":        "P06: no accept surface",
-	"server.acceptedParty.Signs":           "P06: no accept surface",
-	"server.ceremoniesResponse.Ceremonies": "P06: the ceremonies list has no surface (P08.S03 built the route; nothing calls it)",
-	"server.ceremoniesResponse.Primary":    "P06: the ceremonies list has no surface",
-	"server.conveneInvite.Signs":           "P06: no convene surface — /api/ceremony/convene has zero references in web/app.js",
-	"server.convenePartyRequest.Capacity":  "P06: no convene surface, so nothing SETS this request field",
-	"server.convenePartyRequest.Signs":     "P06: no convene surface, so nothing SETS this request field",
-	"server.conveneRequest.ConvenerSigns":  "P06: no convene surface, so nothing SETS this request field",
-	"server.conveneResponse.Invites":       "P06: no convene surface",
-	"server.conveneResponse.Warnings":      "P06: no convene surface — and this is the one to wire FIRST when it lands: it carries the sitting warning P08.S05b computes, which is the only place a convener is told their deadline is tight",
-
 	// **Two were real, were filed rather than parked, and are now CLOSED** — /pending 349 (the D19
 	// diagnosis gained a reader) and /pending 350 (the field was deleted). Both entries are gone
 	// from this map, which is what an item's close is supposed to look like here; the two arms
@@ -705,14 +708,6 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 			found := false
 			for _, r := range readers {
 				src := readerSrc(t, r)
-				if strings.Contains(src, "."+f) {
-					found = true
-					break
-				}
-				if jt := sh.tag[f]; jt != "" && strings.Contains(src, "."+jt) {
-					found = true
-					break
-				}
 				// **A JavaScript reader is also matched on the BARE tag, and the reason is the
 				// language rather than laxity (/pending 347).** `.field` is how a RESPONSE is
 				// consumed, but a REQUEST is built as an object literal, and the client writes
@@ -738,7 +733,11 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 				// states is *what decides the idiom is the file doing the reading*, and a `.sh`
 				// reader is a second language with the same property; keying this on `.js` alone
 				// was the rule stated for one of its two cases.
-				if jt := sh.tag[f]; jt != "" && (strings.HasSuffix(r, ".js") || strings.HasSuffix(r, ".sh")) && mentionsWord(src, jt) {
+				//
+				// **And it is matched as a KEY, not as any word (/pending 808 R5)** — `readerMentions`
+				// says which shapes count. A bare word anywhere satisfied `armRequest.transport` and
+				// `handoffResponse.launch` from prose-shaped code that read neither.
+				if readerMentions(src, r, f, sh.tag[f]) {
 					found = true
 					break
 				}
@@ -767,8 +766,8 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 			// park saying "/pending N keeps this unread" is a CLAIM ABOUT A DEFECT, and when the
 			// item closes the entry has to go or the list stops describing anything. A park
 			// saying "no product surface reports where a block landed" is a JUDGEMENT, and this
-			// arm cannot adjudicate it: the matcher is deliberately loose — it accepts a bare
-			// word in a JavaScript reader, and it accepts a mention in the shape's own defining
+			// arm cannot adjudicate it: the matcher is deliberately loose — it accepts a key
+			// of the same name on another shape, and a mention in the shape's own defining
 			// package — so run over design parks it reports fixes that are not fixes. Measured on
 			// first run: three flagged, and two were `pdfops.SignatureWidget.Page` and
 			// `ceremony.Party.Capacity`, both correct as they stand.
@@ -794,9 +793,7 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 			}
 			for _, r := range readers {
 				src := readerSrc(t, r)
-				if strings.Contains(src, "."+f) ||
-					(sh.tag[f] != "" && strings.Contains(src, "."+sh.tag[f])) ||
-					(sh.tag[f] != "" && strings.HasSuffix(r, ".js") && mentionsWord(src, sh.tag[f])) {
+				if readerMentions(src, r, f, sh.tag[f]) {
 					fixed = append(fixed, k)
 					break
 				}
@@ -923,9 +920,7 @@ func TestEveryPublishedObservableHasANamedReader(t *testing.T) {
 			src := readerSrc(t, r)
 			live := false
 			for _, f := range sh.fields {
-				if strings.Contains(src, "."+f) ||
-					(sh.tag[f] != "" && strings.Contains(src, "."+sh.tag[f])) ||
-					(sh.tag[f] != "" && (strings.HasSuffix(r, ".js") || strings.HasSuffix(r, ".sh")) && mentionsWord(src, sh.tag[f])) {
+				if readerMentions(src, r, f, sh.tag[f]) {
 					live = true
 					break
 				}
@@ -1152,25 +1147,92 @@ func discoverObservables(t *testing.T) map[string]observable {
 	return out
 }
 
-// mentionsWord reports whether src contains tok as a whole identifier, so `id` does not match
-// inside `docId` and `lines` does not match inside `linesUsed`.
-func mentionsWord(src, tok string) bool {
-	isWord := func(b byte) bool {
-		return b == '_' || b == '$' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+// readerMentions is the ONE answer to "does this reader file mention this field" (ADR-009), for
+// every arm of this census and for `observablecensus_test.go`. It was five copies that disagreed:
+// the fixed-park arm took the bare tag from a `.js` reader only while the other three took `.sh`
+// too, and every copy matched `.f` as a PREFIX — so `.end` was satisfied by `.ended` and `.id` by
+// `.idle`, and a park could be "read" by a different field (/pending 808, R5).
+//
+//   - `.Field` or `.tag` as a SELECTOR, bounded after: a response consumed in Go or JavaScript.
+//   - In a JavaScript or shell reader, the tag as a KEY — `tag:`, a shorthand `{ tag, … }`, or a
+//     quoted `"tag"` / `'tag'` — which is how a request literal is written and how a harness reads
+//     JSON (`d.get("note")`, `d["heard"]`). A bare word anywhere else is not a reading of the field:
+//     `state` in `if (state)` says nothing about a response's `state`.
+//
+// It still proves only that a NAME is mentioned in a named file, as the scan has always said of
+// itself; what it no longer does is let one name stand in for another.
+func readerMentions(src, reader, field, tag string) bool {
+	if mentionsSelector(src, field) || (tag != "" && mentionsSelector(src, tag)) {
+		return true
 	}
+	if tag == "" || !(strings.HasSuffix(reader, ".js") || strings.HasSuffix(reader, ".sh")) {
+		return false
+	}
+	return mentionsKey(src, tag)
+}
+
+// mentionsSelector reports whether src contains `.tok` with tok ending at an identifier boundary.
+func mentionsSelector(src, tok string) bool {
+	return eachWord(src, tok, func(j int) bool { return j > 0 && src[j-1] == '.' })
+}
+
+// mentionsKey reports whether src uses tok as an object key or a quoted name: `tok:`, a shorthand or
+// destructured `{ tok, … }` / `{ tok = dflt }`, or tok between matching quotes — where an escaped
+// closing quote counts, so a JSON body written inside a shell string (`\"transport\":`) is seen.
+func mentionsKey(src, tok string) bool {
+	return eachWord(src, tok, func(j int) bool {
+		end := j + len(tok)
+		if j > 0 && (src[j-1] == '"' || src[j-1] == '\'') {
+			q := src[j-1]
+			if end < len(src) && src[end] == q {
+				return true
+			}
+			if end+1 < len(src) && src[end] == '\\' && src[end+1] == q {
+				return true
+			}
+		}
+		k := end
+		for k < len(src) && (src[k] == ' ' || src[k] == '\t') {
+			k++
+		}
+		if k < len(src) && src[k] == ':' && (k+1 >= len(src) || src[k+1] != ':') {
+			return true
+		}
+		i := j - 1
+		for i >= 0 && (src[i] == ' ' || src[i] == '\t' || src[i] == '\n') {
+			i--
+		}
+		if i < 0 || (src[i] != '{' && src[i] != ',') || k >= len(src) {
+			return false
+		}
+		switch src[k] {
+		case ',', '}', '\n':
+			return true
+		case '=':
+			return k+1 >= len(src) || (src[k+1] != '=' && src[k+1] != '>')
+		}
+		return false
+	})
+}
+
+// eachWord calls ok at every whole-identifier occurrence of tok in src and reports whether any
+// returned true.
+func eachWord(src, tok string, ok func(j int) bool) bool {
 	for i := 0; ; {
 		j := strings.Index(src[i:], tok)
 		if j < 0 {
 			return false
 		}
 		j += i
-		before := j == 0 || !isWord(src[j-1])
-		after := j+len(tok) >= len(src) || !isWord(src[j+len(tok)])
-		if before && after {
+		if (j == 0 || !isWordByte(src[j-1])) && (j+len(tok) >= len(src) || !isWordByte(src[j+len(tok)])) && ok(j) {
 			return true
 		}
 		i = j + 1
 	}
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || b == '$' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // embedName is the bare type name of an embedded field — `Announcement`, `p2p.Channel`'s
@@ -1258,4 +1320,32 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// TestReaderMentionsIsWordBounded pins the matcher every arm above shares (/pending 808 R5). Each
+// row is a shape this census met: `.Token` satisfying a read through `.TokenMatches`, a bare
+// `transport` in code that read no response, and the destructuring and escaped-JSON forms the
+// tightened matcher must still see.
+func TestReaderMentionsIsWordBounded(t *testing.T) {
+	for _, c := range []struct {
+		src, reader, field, tag string
+		want                    bool
+	}{
+		{"instance.TokenMatches(h, s)", "x.go", "Token", "token", false},
+		{"if r.Token == \"\" {", "x.go", "Token", "token", true},
+		{"st.ended = true", "a.js", "End", "end", false},
+		{"return st.end;", "a.js", "End", "end", true},
+		{"if (transport) go();", "a.js", "Transport", "transport", false},
+		{"body: JSON.stringify({ fingerprint, transport })", "a.js", "Transport", "transport", true},
+		{"const { docs = [], activeId = '' } = await res.json();", "a.js", "ActiveID", "activeId", true},
+		{"if (activeId == x) {}", "a.js", "ActiveID", "activeId", false},
+		{`post B /x "{\"transport\":\"tcp\"}"`, "a.sh", "Transport", "transport", true},
+		{`print(h["transport"])`, "a.sh", "Transport", "transport", true},
+		{`echo transport`, "a.sh", "Transport", "transport", false},
+		{`x := "transport"`, "x.go", "Transport", "transport", false},
+	} {
+		if got := readerMentions(c.src, c.reader, c.field, c.tag); got != c.want {
+			t.Errorf("readerMentions(%q, %s, %s/%s) = %v, want %v", c.src, c.reader, c.field, c.tag, got, c.want)
+		}
+	}
 }

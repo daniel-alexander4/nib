@@ -29,14 +29,16 @@
 # Skips cleanly without any of them — separately, because a missing driver and a
 # missing browser are different fixes and one message covering both would send
 # the reader at the wrong one. Same convention as build/winrepro.sh and the
-# poppler/Ghostscript/veraPDF tests.
+# poppler/Ghostscript/veraPDF tests. NIB_REQUIRE_TIERS=1 turns a skip into exit 77
+# (build/tiergate.sh), because "no browser found" exiting 0 read exactly like a pass.
 #
 # --keep leaves the work dir and the server running for poking at by hand.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-command -v node >/dev/null 2>&1 || { echo "node not installed; skipping the browser UI tests"; exit 0; }
-[ -d node_modules/playwright-core ] || { echo "playwright-core not installed (run: npm install); skipping the browser UI tests"; exit 0; }
+. "$(dirname "$0")/tiergate.sh" # nib_skip, nib_population — what this tier's verdict means
+command -v node >/dev/null 2>&1 || nib_skip "node not installed; skipping the browser UI tests"
+[ -d node_modules/playwright-core ] || nib_skip "playwright-core not installed (run: npm install); skipping the browser UI tests"
 
 # The candidate order is nib's own, from internal/browser.chromiumCandidates() —
 # testing a browser users never get would be worse than not testing at all. It is
@@ -48,10 +50,8 @@ if [ -z "$BROWSER" ]; then
     if p="$(command -v "$c" 2>/dev/null)"; then BROWSER="$p"; break; fi
   done
 fi
-[ -n "$BROWSER" ] || {
-  echo "no Chromium-family browser found (looked for google-chrome, google-chrome-stable, chromium, chromium-browser, microsoft-edge, brave-browser); skipping the browser UI tests"
-  exit 0
-}
+[ -n "$BROWSER" ] ||
+  nib_skip "no Chromium-family browser found (looked for google-chrome, google-chrome-stable, chromium, chromium-browser, microsoft-edge, brave-browser); skipping the browser UI tests"
 
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
@@ -72,19 +72,28 @@ SERVER_PID=""
 LOCKED_PID=""
 
 cleanup() {
-  # --keep means BOTH halves survive: the work dir and the running server. Killing
-  # the server anyway would make the flag a half-truth — the doc comment above
-  # promises a server you can still poke at, and a leftover data dir with nothing
-  # serving it is not that.
+  local st="${1:-0}"
+  # --keep means BOTH halves survive: the work dir and the running servers — BOTH of them, named,
+  # because the locked one holds PORT+1 and the next run's preflight refuses it (/pending 650).
+  # Killing them anyway would make the flag a half-truth — the doc comment above promises a server
+  # you can still poke at, and a leftover data dir with nothing serving it is not that.
   if [ "$KEEP" = "1" ]; then
-    echo "--keep: nib still running at $BASE (pid $SERVER_PID), work dir $WORK"
+    echo "--keep: nib still running at $BASE (pid $SERVER_PID) and, locked, at $LOCKED_BASE (pid ${LOCKED_PID:-none}); work dir $WORK"
     return
   fi
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1
   [ -n "$LOCKED_PID" ] && kill "$LOCKED_PID" >/dev/null 2>&1
+  # **A red run keeps its work dir** (/pending 808 R9): the two nib logs and the data dirs are the
+  # whole diagnosis of a failed slice-close gate, and this deleted them pass or fail. Same rule as
+  # pairrepro.sh's `cleanup` and mcastrepro.sh's `teardown`.
+  if [ "$st" != "0" ]; then
+    echo "the run failed — work dir PRESERVED at $WORK (nib.log, nib.locked.log)" >&2
+    return
+  fi
   rm -rf "$WORK"
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup $?' EXIT
+trap 'cleanup 1; trap - EXIT; exit 130' INT TERM
 
 # Refuse a port someone else already holds, BEFORE building or enrolling anything.
 # Without this the failure surfaces four steps later and blames the wrong thing: a
@@ -94,11 +103,18 @@ trap cleanup EXIT INT TERM
 # none of it is what is wrong — and worse, the tier then reports on a binary it did
 # not build.
 . "$(dirname "$0")/launchkey.sh"
-if nib_answers "$BASE"; then
-  echo "FAIL: something is already serving $BASE — a leftover --keep run?" >&2
-  echo "      stop it (or set NIB_UI_PORT to a free port) and re-run." >&2
-  exit 1
-fi
+#
+# **Both ports** (/pending 650). This probed only $BASE, so a leftover --keep run's LOCKED server
+# kept PORT+1, this run's locked bind failed silently, every curl to $LOCKED_BASE reached the OLD
+# process, and lockedpanel.test.mjs ran against a previous build — passing the anti-vacuity check
+# below, because that stale process was never enrolled either.
+for b in "$BASE" "$LOCKED_BASE"; do
+  if nib_answers "$b"; then
+    echo "FAIL: something is already serving $b — a leftover --keep run?" >&2
+    echo "      stop it (or set NIB_UI_PORT / NIB_UI_LOCKED_PORT to a free port) and re-run." >&2
+    exit 1
+  fi
+done
 
 echo "building nib…"
 go build -o "$WORK/nib" ./cmd/nib || { echo "FAIL: could not build nib" >&2; exit 1; }
@@ -213,7 +229,7 @@ export NIB_UI_CSRF="$UI_CSRF" NIB_UI_LOCKED_CSRF="$LOCKED_CSRF"
 # --test-timeout: a tier-3 test that fails before its `shutdown` leaves its browser open, and the file
 # then never exits — `node --test` waited on one for two hours (/pending 704's gate). Five minutes per
 # test turns that into a named failure; the slowest file measured here is well under a minute a test.
-out="$(node --test --test-concurrency=1 --test-timeout=300000 test/ui/ 2>&1)"
+out="$(node --test --test-concurrency=1 --test-timeout=300000 "${NIB_FILECOUNT[@]}" test/ui/ 2>&1)"
 code=$?
 echo "$out"
 
@@ -232,18 +248,12 @@ if [ "$code" -ne 0 ]; then
 fi
 
 # Same trap tier 2 found: a runner that discovers no tests also exits 0, and would
-# read as a passing suite forever.
-n="$(printf '%s\n' "$out" | sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' | tail -1)"
-if [ -z "$n" ] || [ "$n" -eq 0 ]; then
-  echo "FAIL: the browser UI suite ran but discovered no tests — a green with nothing in it" >&2
-  exit 1
-fi
+# read as a passing suite forever. `nib_population` (build/tiergate.sh) checks it per file.
 
 # The same population pin tier 2 carries, and for the same reason: a floor of one
 # cannot tell 10 tests from 1, so a silently-dropped test file reads as a pass. The
 # file count is the external number; a per-test literal would go red on every new
 # test and train the next person to bump it.
-files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # Five: smoke, lifecycle and redactbounds, plus tabs.test.mjs (P06.S01, where P05's
 # carried acceptance clause — re-fit and dpr-heal on activation — finally gets driven;
 # both halves are about layout and a device pixel ratio, neither of which exists at
@@ -276,14 +286,6 @@ files="$(find test/ui -maxdepth 1 -name '*.test.mjs' | wc -l | tr -d ' ')"
 # 42 since PLAN-returned-document P03.S02 (returnedverdict.test.mjs): a document signed in-app, opened back, and the
 # sheet's verdict — the one place the whole chain (signerWhose, the route, the wording) runs for real.
 expect_files=42
-if [ "$files" -ne "$expect_files" ]; then
-  echo "FAIL: expected $expect_files browser UI test files, found $files — a test file was added or dropped." >&2
-  echo "      If deliberate, update expect_files in this script." >&2
-  exit 1
-fi
-if [ "$n" -lt "$files" ]; then
-  echo "FAIL: $n tests ran across $files files — a file contributed nothing, so its tests are silently not running" >&2
-  exit 1
-fi
+nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

@@ -24,7 +24,7 @@ func withAttachments(t *testing.T, files [][2]string, rename map[string]string) 
 		t.Fatal(err)
 	}
 	for _, f := range files {
-		if pdf, err = AddAttachment(pdf, f[0], []byte(f[1])); err != nil {
+		if pdf, err = addAttachment(pdf, f[0], []byte(f[1])); err != nil {
 			t.Fatal(err)
 		}
 	}

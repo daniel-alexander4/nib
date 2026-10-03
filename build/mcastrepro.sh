@@ -73,13 +73,14 @@ teardown() {
 trap teardown EXIT
 
 # Skip cleanly and separately, because a missing unshare and a missing ip are
-# different fixes — the same rule tiers 2 and 3 follow for their own dependencies.
+# different fixes — the same rule tiers 2 and 3 follow for their own dependencies,
+# through the same door: exit 0, or 77 under NIB_REQUIRE_TIERS=1 (build/tiergate.sh).
+. "$(dirname "$0")/tiergate.sh"
 for dep in go unshare ip; do
-  command -v "$dep" >/dev/null 2>&1 || { echo "SKIP: $dep is not installed"; exit 0; }
+  command -v "$dep" >/dev/null 2>&1 || nib_skip "$dep is not installed"
 done
 if ! unshare -rn true 2>/dev/null; then
-  echo "SKIP: unprivileged network namespaces are unavailable here (kernel or seccomp policy)"
-  exit 0
+  nib_skip "unprivileged network namespaces are unavailable here (kernel or seccomp policy)"
 fi
 
 echo "building the discovery tests…"

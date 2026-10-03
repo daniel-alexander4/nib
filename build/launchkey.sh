@@ -26,6 +26,20 @@ launch_key() {
 	[ -n "$key" ] && printf '%s\n' "$key"
 }
 
+# launch_base <log> — the `http://127.0.0.1:PORT` a headless Nib says it serves on. Lets a harness
+# start Nib on `NIB_ADDR=127.0.0.1:0` and take the port the KERNEL chose, which no other process can
+# hold — where a port picked by `$RANDOM` can be anyone's, the ephemeral range included (/pending 808).
+# Retried for the same reason `launch_key` is.
+launch_base() {
+	local base="" _
+	for _ in $(seq 1 100); do
+		base="$(sed -n 's|.*open Nib at \(http://[^/#]*\)/.*|\1|p' "$1" | tail -1)"
+		[ -n "$base" ] && break
+		sleep 0.1
+	done
+	[ -n "$base" ] && printf '%s\n' "$base"
+}
+
 # launch_token <base> <log> — trade the logged key at POST /api/launch and print the token. A key
 # trades once, so each call needs a fresh line in the log (a restarted process writes one).
 launch_token() {
