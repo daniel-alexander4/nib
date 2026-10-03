@@ -83,6 +83,20 @@ func TestLabelUARefusesEachMissingConditionByName(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The degrade `ConvertDocToPDF` takes when nib's faces cannot be installed (`/pending 820`), forced
+	// deterministically: no base faces is exactly what `convert` falls to, and the result is still tagged,
+	// titled and declared — so the font condition is the only one it fails.
+	coreFonts, err := tagMarkdown([]byte("# Notes\n\nA paragraph.\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coreFonts, err = TitleFromName(coreFonts, "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+	if coreFonts, err = SetLang(coreFonts, "en"); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, c := range []struct {
 		name     string
 		pdf      []byte
@@ -93,6 +107,7 @@ func TestLabelUARefusesEachMissingConditionByName(t *testing.T) {
 		{"an untagged document", untaggedTitled, true, ErrUAUntagged},
 		{"no declared language", noLang, true, ErrUANoLanguage},
 		{"no title", noTitle, true, ErrUANoTitle},
+		{"a conversion set in the Base-14 core fonts", coreFonts, true, ErrUAFontNotEmbedded},
 	} {
 		out, err := LabelUA(c.pdf, c.asserted)
 		if !errors.Is(err, c.want) {
