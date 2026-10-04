@@ -35,6 +35,12 @@ func NormalizePageSizes(pdf []byte) ([]byte, error) {
 		if err != nil {
 			return err
 		}
+		// pdfcpu's resize rewrites each page from its own bare join of `/Contents` (resize.go:276), which fuses a
+		// divided page's text into an unknown operator; separated first, it joins as `pdfread.PageContent` does
+		// (`/pending 728`, ADR-084).
+		if err := pdfread.SeparateContents(ctx, nil); err != nil {
+			return err
+		}
 		return pdfcpu.Resize(ctx, pages, res)
 	})
 }

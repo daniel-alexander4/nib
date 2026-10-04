@@ -82,9 +82,10 @@ func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
 		if e != nil || ir == nil {
 			return nil, false
 		}
-		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** This is matched byte for byte against the form
-		// `api.NUp` wrote from pdfcpu's OWN join, so it must be that join (`TestANUpCarriesTheNoteOfADividedPage`).
-		b, cerr := ctx.PageContent(d, p) //pagecontent:exempt tagcarry-nup
+		// **Through the door** (ADR-084, superseding ADR-057's exemption). This is matched byte for byte against the
+		// form the n-up wrote, and `nUpSeparated` makes pdfcpu write that form as the door joins
+		// (`TestANUpCarriesTheTagsOfADividedPage`).
+		b, cerr := pdfread.PageContent(ctx, d, p)
 		if cerr != nil || len(b) == 0 {
 			continue // an empty page has no marked content to re-anchor
 		}

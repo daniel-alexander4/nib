@@ -115,14 +115,6 @@ func TestEveryUnguardedReferenceLoopIsRefusedBeforeTheValidator(t *testing.T) {
 			continue
 		}
 		refusedAs(t, pdfread.ErrReferenceCycle, "Validated over "+c.Edge, func() error { _, err := pdfread.Validated(c.Loop, conf); return err })
-		refusedAs(t, pdfread.ErrReferenceCycle, "NUp over "+c.Edge, func() error {
-			nup, err := api.PDFNUpConfig(2, "", nil)
-			if err != nil {
-				return err
-			}
-			_, err = pdfread.NUp(c.Loop, nup, nil)
-			return err
-		})
 	}
 }
 

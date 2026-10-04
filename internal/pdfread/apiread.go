@@ -54,23 +54,6 @@ func write(ctx *model.Context) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// NUp is `api.NUp` over a PDF (nup.go:95): no optimize pass, but one parse where the reader door made two.
-func NUp(pdf []byte, nup *model.NUp, conf *model.Configuration) (out []byte, err error) {
-	defer fault.Catch(&err)
-	ctx, err := Validated(pdf, apiConf(conf, model.NUP))
-	if err != nil {
-		return nil, err
-	}
-	pages, err := api.PagesForPageSelection(ctx.PageCount, nil, true, true)
-	if err != nil {
-		return nil, err
-	}
-	if err := pdfcpu.NUpFromPDF(ctx, pages, nup); err != nil {
-		return nil, err
-	}
-	return write(ctx)
-}
-
 // PageDims is `api.PageDims` (page.go:240).
 func PageDims(pdf []byte, conf *model.Configuration) (pd []types.Dim, err error) {
 	defer fault.Catch(&err)

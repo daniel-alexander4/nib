@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
 	"nib/internal/contentstream"
 	"nib/internal/pdfread"
@@ -49,11 +50,83 @@ func TestADividedPageReadsItsText(t *testing.T) {
 	}
 }
 
-// TestANUpCarriesTheNoteOfADividedPage — the P05 phase-close review's regression. `api.NUp` writes each source page into
-// a form from pdfcpu's OWN join of its `/Contents`, and the note carry identifies a placement by comparing that form with
-// the source page's content. Read through ADR-056's door, a fused page's content gains a separator pdfcpu's join lacks,
-// the comparison fails, and the note is dropped. The carry compares against what pdfcpu wrote, so it reads pdfcpu's join
-// — a named exemption — and this is the fixture it is exempt for.
+// TestPdfcpusPageOperationsKeepADividedPagesText — `/pending 728`, ADR-084. pdfcpu's n-up, resize and cut read a page
+// through pdfcpu's own bare join of `/Contents` and write what they read into the output, so a page divided `(A) Tj` |
+// `ET` came out of all four doors built on them as the unknown operator `TjET` — measured, pdftotext read the input's
+// text and none of the outputs'. Every stream of every output is asserted: no fused operator, every `BT` closed by an
+// `ET` (the comment shape swallows the `ET`), and the text still shown by a `Tj`.
+func TestPdfcpusPageOperationsKeepADividedPagesText(t *testing.T) {
+	for _, shape := range []struct {
+		name  string
+		shape testpdf.JoinShape
+	}{{"fused operators", testpdf.JoinRegular}, {"a trailing comment", testpdf.JoinComment}} {
+		pdf, _, err := testpdf.SplitContents("Hello divided world", shape.shape)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, op := range map[string]func() ([]byte, error){
+			"n-up":    func() ([]byte, error) { return NUp(pdf, 2, false) },
+			"resize":  func() ([]byte, error) { return NormalizePageSizes(pdf) },
+			"split":   func() ([]byte, error) { return SplitPage(pdf, 1, 2, 1, false) },
+			"regions": func() ([]byte, error) { return SplitRegions(pdf, 1, [][4]float64{{0, 0, 612, 792}}) },
+		} {
+			t.Run(shape.name+"/"+name, func(t *testing.T) {
+				out, err := op()
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, err := pdfread.Validated(out, model.NewDefaultConfiguration())
+				if err != nil {
+					t.Fatal(err)
+				}
+				shown := false
+				for nr, e := range ctx.Table {
+					sd, ok := e.Object.(types.StreamDict)
+					if !ok || e.Free {
+						continue
+					}
+					if err := sd.Decode(); err != nil {
+						continue
+					}
+					src, depth, last := sd.Content, 0, ""
+					for _, tk := range contentstream.Tokenize(src) {
+						if tk.Kind != contentstream.Operator {
+							if tk.Kind != contentstream.Whitespace {
+								last = string(tk.Bytes(src))
+							}
+							continue
+						}
+						switch op := string(tk.Bytes(src)); op {
+						case "BT":
+							depth++
+						case "ET":
+							depth--
+						case "Tj":
+							shown = shown || last == "(Hello divided world)"
+						default:
+							if strings.HasPrefix(op, "Tj") {
+								t.Errorf("object %d holds the fused operator %q", nr, op)
+							}
+						}
+					}
+					if depth != 0 {
+						t.Errorf("object %d leaves %d text object(s) open — an `ET` was swallowed", nr, depth)
+					}
+				}
+				if !shown {
+					t.Errorf("no stream of the output shows the page's text")
+				}
+			})
+		}
+	}
+}
+
+// TestANUpCarriesTheNoteOfADividedPage — the P05 phase-close review's regression. The n-up writes each source page into
+// a form, and the note carry identifies a placement by comparing that form with the source page's content. When the
+// form held pdfcpu's bare join and the carry read through ADR-056's door, a fused page's content gained a separator the
+// form lacked, the comparison failed, and the note was dropped (ADR-057's exemption). Since ADR-084 the n-up hands
+// pdfcpu a separated page, so the form holds the door's join and the carry reads the door; this is the fixture for
+// both halves agreeing.
 func TestANUpCarriesTheNoteOfADividedPage(t *testing.T) {
 	pdf, _, err := testpdf.SplitContents("a divided page with a note", testpdf.JoinRegular)
 	if err != nil {
@@ -84,9 +157,9 @@ func TestANUpCarriesTheNoteOfADividedPage(t *testing.T) {
 }
 
 // TestANUpCarriesTheTagsOfADividedPage — the tag half of the same regression. `carryTagsThroughNUp` matches each
-// n-up form byte for byte against its source page's content, and the form holds pdfcpu's join. This is
+// n-up form byte for byte against its source page's content, so the form and the carry must read one join. This is
 // `collidingMCIDFixture` with page 1's `/Contents` divided between `Tj` and `ET` with no white-space — legal, and a
-// join the door separates — so read through the door the match fails and page 1's tags are not carried.
+// join the door separates — so with the form and the carry on different joins, page 1's tags are not carried.
 func TestANUpCarriesTheTagsOfADividedPage(t *testing.T) {
 	must := mustFn(t)
 	a := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (ALPHA) Tj"

@@ -635,3 +635,8 @@ home today.
   function ran its own optimize pass unbudgeted (every one past 30 s on the 400-form chain). Each is restated over
   `Validated`/`ReadOptimized` (`apiread.go`); `MergeRaw`'s closing pass is budgeted, so exhibits skip rather than refuse;
   the guard bans every reader-taking `api` function read from pdfcpu's source, so where a reader was built is moot.
+- **[ADR-084 — pdfcpu's page operations are handed separated contents, and the n-up carries read the door](084-pdfcpus-page-operations-are-handed-separated-contents.md)**
+  — /pending 728; supersedes ADR-057. pdfcpu's n-up, resize and cut wrote their own bare join of a divided page, so its
+  text became the unknown operator `TjET`; `pdfread.SeparateContents` puts a `\n` stream wherever the door separates,
+  before every such call (census-guarded), so the carries read the door again. The census also sees `/Contents` key
+  reads (`resourceprune.go` was invisible), and the door decodes a repeated stream once.
