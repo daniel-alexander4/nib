@@ -54,7 +54,7 @@ export const REPO = path.resolve(HERE, '..', '..');
 // Anything NOT listed here throws by name rather than returning a bland default —
 // so a new endpoint on the boot path shows up as a loud failure instead of a
 // silent `{}` that the app mis-parses later.
-const BOOT_ROUTES = {
+export const BOOT_ROUTES = {
   // `advanced` is all ON here and OFF in production, and that is deliberate — the same divergence
   // `authedClient` carries on the Go side, for the same reason. `/pending 451` made the exotic
   // features default off; this harness's files are about the ceremony panel, the re-issue box and
@@ -221,6 +221,15 @@ export async function boot({ routes = {}, search = '', token = 'test-csrf' } = {
         }
       }
       return delivered;
+    },
+    // failWindowStream fires the stream's `onerror`, as a browser does on every dropped connection
+    // and every failed reconnect. Returns whether a handler was there, for pushWindowEvent's reason.
+    failWindowStream() {
+      let fired = false;
+      for (const es of windowStreams) {
+        if (typeof es.onerror === 'function') { es.onerror(new dom.window.Event('error')); fired = true; }
+      }
+      return fired;
     },
     document: dom.window.document,
     // The URLs the page opened its window stream at — ADR-054 puts the token in it, since an

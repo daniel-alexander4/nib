@@ -520,11 +520,10 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 
 // handleQuit is the explicit Quit action (P01.S06, D5/D6).
 //
-// **Guarded by `requirePublicLoopback` and NOT `requireUnlocked`**, which is D3's argument reaching
-// one route further: a window sitting on the unlock screen is a real window, and a locked Nib is
-// still a Nib its user wants to quit. There is no CSRF token before the vault unlocks, so a
-// loopback Origin is the only write guard this route can apply — the same one `/api/handoff` and
-// the window stream itself rely on.
+// **Guarded by `requireSession` and NOT `requireUnlocked`**, which is D3's argument reaching one
+// route further: a window sitting on the unlock screen is a real window, and a locked Nib is still
+// a Nib its user wants to quit. The session token is the page's from launch, independent of the
+// vault (ADR-054), so a locked window holds it too.
 //
 // **It decides nothing about what would be lost.** The confirmation is the client's, because the
 // client is where the user is and where the wording lives (D5); this end is the mechanism. A

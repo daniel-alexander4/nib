@@ -403,6 +403,10 @@ type Vault struct {
 	// from a built-in key. They appear in the library read-only and are never
 	// persisted (Save writes only contents).
 	builtinImages []Image
+	// replaced is set by Replace once another vault has been written over this one's file. From
+	// then on save() refuses with ErrReplaced, so a holder of this value cannot write it back over
+	// the import. Guarded by mu.
+	replaced bool
 }
 
 // Path returns the vault file location within dir.
@@ -1584,6 +1588,10 @@ func checkEnvelopeVersion(v int) error {
 
 // save is Save without locking, for callers that already hold v.mu.
 func (v *Vault) save() error {
+	// A vault whose file has been replaced by an import writes nothing. See Replace.
+	if v.replaced {
+		return ErrReplaced
+	}
 	// Stamp the payload version on every write, so a file this build saves is readable back
 	// as this build's. Set here rather than at each mutator for the reason save() is the one
 	// door they all pass through.
@@ -1794,24 +1802,43 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-// WriteFileAtomicDurable is writeFileAtomic, exported for the one caller outside this
-// package that writes a VAULT (handleVaultImport). Anything that is NOT a vault should call
-// internal/atomicfile directly and choose its own mode.
+// ErrReplaced is what a vault refuses every write with once an imported backup has been written
+// over its file. The change it was asked to store is not in the vault Nib now has open.
+var ErrReplaced = errors.New("this vault was replaced by an imported backup, so the change was " +
+	"not stored")
+
+// Replace writes raw — a backup the caller has already validated — over the vault file at path,
+// and RETIRES held, the vault open on that file, inside the same critical section. It is the one
+// door for writing a vault from outside this package (handleVaultImport); anything that is NOT a
+// vault calls internal/atomicfile directly and chooses its own mode.
 //
-// **`internal/server` HAD a function of the same name with a different contract** — it renamed
-// atomically and never fsynced — and `handleVaultImport` used it to replace `vault.nib`, so the
-// rename was atomic and the data blocks were not durable: a power loss inside the writeback window
-// left the vault present and garbage while the original, the only copy of the identity, was
-// already gone. Two same-named functions with different durability contracts is also how nobody
-// noticed.
+// **Why the retirement is inside the write, not beside it (/pending 731).** This was
+// `WriteFileAtomicDurable` — the bytes and nothing else — and the import then dropped the server's
+// pointer to the old vault. Nothing retired the old value, and three kinds of holder outlive that
+// pointer: a request that took `vaultFrom(r)` before the import, a delivery round, and a close-out
+// sweep. Any one of them saving afterwards re-encrypted the OLD contents over the import, so the
+// running process showed the imported vault and the next launch opened the one the user replaced.
+// Taking held's lock first means a save already in flight finishes before the import lands, and
+// every save after it refuses with ErrReplaced (mutateLocked puts memory back, as on any failed
+// write). held is nil when no vault is open; then there is nothing to retire.
 //
-// **That twin is gone (/pending 287, 2026-08-27).** Its four callers now name their own mode at
-// the call site — `atomicfile.WriteDurable` for the three that hold the only copy of something
-// (in-place save, save-as, a document a peer sent) and `atomicfile.Write` for the one that does
-// not (a split export, re-derivable from a document still open). The paragraph above is kept in
-// the past tense rather than deleted, because the shape it describes is the reason this comment
-// exists and a reader arriving at a third copy needs to know it has happened before.
-func WriteFileAtomicDurable(path string, data []byte) error { return writeFileAtomic(path, data) }
+// **It is still the vault's durable writer.** `internal/server` once had a function of the same
+// name as this one's predecessor with a different contract — it renamed atomically and never
+// fsynced — and the import used it to replace `vault.nib`, so a power loss inside the writeback
+// window left the vault present and garbage while the original, the only copy of the identity, was
+// already gone (/pending 287). That twin is gone; this keeps the fsync on the file and its parent.
+func Replace(path string, held *Vault, raw []byte) error {
+	if held == nil {
+		return writeFileAtomic(path, raw)
+	}
+	held.mu.Lock()
+	defer held.mu.Unlock()
+	if err := writeFileAtomic(path, raw); err != nil {
+		return err
+	}
+	held.replaced = true
+	return nil
+}
 
 // writeFileAtomic is the vault's durable write: 0600, via internal/atomicfile.
 //

@@ -5,6 +5,7 @@
 // environment. This module only opens a browser page against it, so a test file
 // stays about behaviour rather than plumbing.
 import { chromium } from 'playwright-core';
+import { closeAllInPage } from './closeall.mjs';
 
 export const BASE = process.env.NIB_UI_BASE;
 // The second, never-enrolled nib (P06.S07). The vault has no lock route, so the locked state is
@@ -382,20 +383,11 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // file inherits, and it loops because a close racing an in-flight open would otherwise leave
     // one behind. Returning the count makes it observable: a caller can assert the tier starts
     // from nothing.
+    //
+    // The in-page half lives in `closeall.mjs`, where it can be run without a browser; a refusal
+    // (anything but a 401 from `/api/docs`, or a refused close) throws, and `shutdown` lets it.
     async closeAll() {
-      return page.evaluate(async () => {
-        const count = async () => {
-          const r = await nibFetch('/api/docs');
-          if (!r.ok) return 0; // locked, or a server that never held one: nothing to close
-          return ((await r.json()).docs || []).length;
-        };
-        if ((await count()) === 0) return 0;
-        const token = sessionStorage.getItem('nib-token') || '';
-        for (let i = 0; i < 5 && (await count()) > 0; i++) {
-          await fetch('/api/close', { method: 'POST', headers: { 'X-CSRF-Token': token } });
-        }
-        return count();
-      });
+      return page.evaluate(closeAllInPage);
     },
 
     // closeDocument clicks Close — from File mode, for the reason above.

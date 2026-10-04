@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -146,7 +147,16 @@ func (s *Server) handleCeremonyStop(w http.ResponseWriter, r *http.Request) {
 	// the attestation because `DeliversDocument` says a stopped ceremony has no finished file. The
 	// bytes are passed rather than nil so the round's own reading of what it carries stays in one
 	// place instead of being split between here and there.
-	out, rerr := s.runDeliveryRound(r.Context(), v, rec, pdf, nil)
+	//
+	// **And on a context the page cannot cancel (/pending 731).** `/pending 355` gave the round
+	// the request's context so a disconnected client stops it, on the reasoning that every party
+	// not reached is reached by a re-run — and for Deliver that holds, because the re-run is the
+	// same button. Here it does not: by this line the stop is attested and write-once, so a
+	// reload or a dropped connection mid-round left the parties untold, the 409 that says so went
+	// to a page that was gone, and pressing Stop again answers "already ended". The round still
+	// ends with the process, and each leg is bounded by `connectDeadline`; `holdRound` keeps a
+	// Deliver press from walking the same parties beside it.
+	out, rerr := s.runDeliveryRound(context.WithoutCancel(r.Context()), v, rec, pdf, nil)
 	if rerr != nil {
 		// The attestation IS written, so the stop happened even though the telling did not. Said in
 		// those terms rather than as a bare failure: the user's next action is to re-run delivery,

@@ -459,9 +459,11 @@ func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUnlock unlocks a vault whose enrolled SSH key is passphrase-protected,
-// using the passphrase the user supplied. Like enroll/migrate it runs pre-unlock
-// (no CSRF token exists yet), guarded by a loopback Origin. The passphrase is
-// used only to decrypt the key in memory for this unlock and is never persisted.
+// using the passphrase the user supplied. Like enroll/migrate it runs pre-unlock,
+// and like every route but three it is behind `requireSession` (ADR-054): the token
+// is the page's from launch, independent of the vault, so "before the vault opens" is
+// not "before there is a credential". The passphrase is used only to decrypt the key
+// in memory for this unlock and is never persisted.
 func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Passphrase string `json:"passphrase"`
@@ -470,7 +472,14 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Under setupMu, as every open of the vault file is: handleVaultImport replaces the file under
+	// it, and an open of the OLD file adopted after the import would write it back (/pending 731).
+	s.setupMu.Lock()
 	v, err := vault.OpenSSHWithPassphrase(s.configDir, []byte(req.Passphrase))
+	if err == nil {
+		s.adoptVault(v)
+	}
+	s.setupMu.Unlock()
 	if err != nil {
 		if errors.Is(err, vault.ErrWrongPassphrase) {
 			httpError(w, http.StatusUnauthorized, "wrong passphrase")
@@ -479,7 +488,6 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not unlock")
 		return
 	}
-	s.adoptVault(v)
 	writeJSON(w, s.currentStatus())
 }
 
@@ -488,10 +496,10 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request) {
 // Explorer double-click, an "Open with", and a shortcut, so a relative path recorded at
 // enrollment resolves differently every launch.
 //
-// Public (pre-unlock) and loopback-guarded, exactly like unlock and enroll: there is no
-// CSRF token before the vault opens, so a loopback Origin is the only write guard
-// available. It grants nothing a local caller does not already have — unlocking still
-// requires possessing a private key that unwraps a slot.
+// Pre-unlock, exactly like unlock and enroll, and behind `requireSession` like them (ADR-054):
+// the session token exists from launch, before the vault opens. It grants nothing a session
+// holder does not already have — unlocking still requires possessing a private key that
+// unwraps a slot.
 func (s *Server) handleRepoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		KeyPath    string `json:"keyPath"`
@@ -513,7 +521,13 @@ func (s *Server) handleRepoint(w http.ResponseWriter, r *http.Request) {
 	if req.Passphrase != "" {
 		pass = []byte(req.Passphrase)
 	}
+	// Under setupMu for handleUnlock's reason.
+	s.setupMu.Lock()
 	v, err := vault.OpenSSHAt(s.configDir, keyPath, pass)
+	if err == nil {
+		s.adoptVault(v)
+	}
+	s.setupMu.Unlock()
 	if err != nil {
 		switch {
 		case errors.Is(err, vault.ErrWrongPassphrase):
@@ -534,7 +548,6 @@ func (s *Server) handleRepoint(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.adoptVault(v)
 	writeJSON(w, s.currentStatus())
 }
 
@@ -582,16 +595,29 @@ func (s *Server) handleVaultImport(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// The vault's OWN writer, not this package's same-named one — see
-	// vault.WriteFileAtomicDurable. This write replaces the only copy of the signing
-	// identity, so it gets fsync on the file and on the parent directory.
-	if err := vault.WriteFileAtomicDurable(vault.Path(s.configDir), raw); err != nil {
+	// **The open vault is retired in the same step as its file is replaced** (/pending 731).
+	// Dropping `s.vault` alone left the old value alive in every holder that took it earlier — a
+	// request's `vaultFrom(r)`, a delivery round, a close-out sweep — and the first of them to save
+	// wrote the old contents back over the import. `vault.Replace` takes the old vault's lock
+	// around the write and refuses its every later save.
+	//
+	// Under `setupMu`, which is what every open of the vault file runs under (`ensureUnlocked`), so
+	// the vault read here is the only live one and none can be opened from the old file between
+	// the read and the write. Read under it rather than taken from `vaultFrom(r)`: a second import
+	// racing this one would otherwise retire the vault the FIRST import replaced, and leave live
+	// the one opened from it.
+	s.setupMu.Lock()
+	err = vault.Replace(vault.Path(s.configDir), s.unlockedVault(), raw)
+	if err == nil {
+		s.mu.Lock()
+		s.vault = nil
+		s.mu.Unlock()
+	}
+	s.setupMu.Unlock()
+	if err != nil {
 		httpError(w, http.StatusInternalServerError, "could not write vault")
 		return
 	}
-	s.mu.Lock()
-	s.vault = nil
-	s.mu.Unlock()
 	s.ensureUnlocked()
 	writeJSON(w, s.currentStatus())
 }
