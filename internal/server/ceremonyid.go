@@ -843,7 +843,9 @@ func (c *ceremonyID) checkArrival(pdf []byte, now time.Time) error {
 	// It is bounded — the unsigned window is hop 1 only, so once per ceremony per side, and it
 	// scales with the document — and it is parked rather than assumed: see `/pending 359`.
 	if !sign.HasSignatureBlob(pdf) {
-		got, herr := ceremony.DocumentHash(pdf)
+		// Under the rule the record names (ADR-080): `CheckRecord` above has already refused a rule
+		// this build cannot compute, so `herr` here is the document's, never a version skew.
+		got, herr := ceremony.DocumentHashFor(pdf, rec)
 		switch {
 		case herr != nil:
 			// Named, because `DocumentHash` fails on an unreadable page and that reaches a user at

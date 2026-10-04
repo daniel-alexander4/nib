@@ -146,8 +146,8 @@ func writeGolden(t *testing.T, path, header string, rows []goldenRow) {
 // The error text is flattened, because two of pdfcpu's carry an embedded newline and a row is one
 // line. It is flattened on BOTH sides — writing and comparing — or the stored value and the
 // recomputed one differ by the flattening itself, which is a test failure that says nothing.
-func digestOrError(pdf []byte) string {
-	d, err := ContentDigest(pdf)
+func digestOrError(pdf []byte, rule int) string {
+	d, err := ContentDigestAt(pdf, rule)
 	if err != nil {
 		return flattenRowValue("ERROR:" + err.Error())
 	}
@@ -275,20 +275,39 @@ func generatedDigestCorpus(t *testing.T) []struct {
 	return out
 }
 
+// digestRules is every rule this build computes, with the golden-file suffix it is pinned under (ADR-080).
+//
+// **v4's goldens are the files v4 shipped with, unregenerated.** That is the whole of the claim that a record
+// written under v4 is still checked by v4: if the legacy arm moved one byte, these rows would say so. They are
+// never to be regenerated — a v4 row that has to move is a v4 record that would read as tampering.
+var digestRules = []struct {
+	rule   int
+	suffix string
+}{
+	{legacyContentDigestVersion, ""},
+	{ContentDigestVersion, "-v5"},
+}
+
 func TestContentDigestIsByteIdenticalAcrossTheGeneratedCorpus(t *testing.T) {
-	path := filepath.Join("testdata", "digest-generated.golden")
+	for _, r := range digestRules {
+		t.Run(fmt.Sprintf("rule %d", r.rule), func(t *testing.T) { generatedGolden(t, r.rule, r.suffix) })
+	}
+}
+
+func generatedGolden(t *testing.T, rule int, suffix string) {
+	path := filepath.Join("testdata", "digest-generated"+suffix+".golden")
 	docs := generatedDigestCorpus(t)
 
-	if os.Getenv(digestGoldenUpdateEnv) != "" {
+	if os.Getenv(digestGoldenUpdateEnv) != "" && rule == ContentDigestVersion {
 		rows := make([]goldenRow, 0, len(docs))
 		for _, d := range docs {
-			got := digestOrError(d.PDF)
+			got := digestOrError(d.PDF, rule)
 			if _, unstable := digestUnstable[d.Name]; unstable {
 				got = unstableDigest
 			}
 			rows = append(rows, goldenRow{name: d.Name, input: "-", digest: got})
 		}
-		writeGolden(t, path, "# ContentDigest over the generated corpus — /pending 488, ADR-013.\n"+
+		writeGolden(t, path, fmt.Sprintf("# ContentDigest rule %d over the generated corpus — /pending 488, ADR-013, ADR-080.\n", rule)+
 			"# <name>\\t<input sha256, `-` where the generator is not byte-stable>\\t<ContentDigest output>\n"+
 			"# Regenerate with "+digestGoldenUpdateEnv+"=1; a regeneration is a "+
 			"ContentDigestVersion decision, not a test fix.\n", rows)
@@ -309,11 +328,11 @@ func TestContentDigestIsByteIdenticalAcrossTheGeneratedCorpus(t *testing.T) {
 				"document is unpinned", d.Name)
 			continue
 		}
-		got := digestOrError(d.PDF)
+		got := digestOrError(d.PDF, rule)
 		// Every document asserts this, pinned or not: the same BYTES digest the same way. It is
 		// the one property the timestamped rows keep, and it is where an object-number-keyed memo
 		// that leaked between calls would show up first.
-		if second := digestOrError(d.PDF); second != got {
+		if second := digestOrError(d.PDF, rule); second != got {
 			t.Errorf("%s: the SAME bytes digested twice gave %s then %s — ContentDigest is not a "+
 				"function of the document", d.Name, got, second)
 		}
@@ -344,6 +363,12 @@ func TestContentDigestIsByteIdenticalAcrossTheGeneratedCorpus(t *testing.T) {
 }
 
 func TestContentDigestIsByteIdenticalAcrossTheExternalCorpus(t *testing.T) {
+	for _, r := range digestRules {
+		t.Run(fmt.Sprintf("rule %d", r.rule), func(t *testing.T) { externalGolden(t, r.rule, r.suffix) })
+	}
+}
+
+func externalGolden(t *testing.T, rule int, suffix string) {
 	root := os.Getenv(externalCorpusEnv)
 	if root == "" {
 		root = defaultExternalCorpus()
@@ -374,8 +399,8 @@ func TestContentDigestIsByteIdenticalAcrossTheExternalCorpus(t *testing.T) {
 		t.Skipf("no PDFs under %s", root)
 	}
 
-	path := filepath.Join("testdata", "digest-external.golden")
-	if os.Getenv(digestGoldenUpdateEnv) != "" {
+	path := filepath.Join("testdata", "digest-external"+suffix+".golden")
+	if os.Getenv(digestGoldenUpdateEnv) != "" && rule == ContentDigestVersion {
 		rows := make([]goldenRow, 0, len(files))
 		for _, f := range files {
 			b, err := os.ReadFile(f)
@@ -383,9 +408,9 @@ func TestContentDigestIsByteIdenticalAcrossTheExternalCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			rel, _ := filepath.Rel(root, f)
-			rows = append(rows, goldenRow{name: filepath.ToSlash(rel), input: sha256Hex(b), digest: digestOrError(b)})
+			rows = append(rows, goldenRow{name: filepath.ToSlash(rel), input: sha256Hex(b), digest: digestOrError(b, rule)})
 		}
-		writeGolden(t, path, "# ContentDigest over veraPDF's PDF/UA-1 corpus — /pending 488, ADR-013.\n"+
+		writeGolden(t, path, fmt.Sprintf("# ContentDigest rule %d over veraPDF's PDF/UA-1 corpus — /pending 488, ADR-013, ADR-080.\n", rule)+
 			"# <path under the corpus root>\\t<sha256 of the file>\\t<ContentDigest output>\n"+
 			"# Regenerate with "+digestGoldenUpdateEnv+"=1; a regeneration is a "+
 			"ContentDigestVersion decision, not a test fix.\n", rows)
@@ -418,7 +443,7 @@ func TestContentDigestIsByteIdenticalAcrossTheExternalCorpus(t *testing.T) {
 			continue
 		}
 		checked++
-		if got := digestOrError(b); got != want.digest {
+		if got := digestOrError(b, rule); got != want.digest {
 			t.Errorf("%s: ContentDigest returned\n  %s\nand the stored commitment is\n  %s\n"+
 				"ADR-013: the digest's OUTPUT is a commitment, so this is a coverage change, "+
 				"whatever it was meant to be.", name, got, want.digest)

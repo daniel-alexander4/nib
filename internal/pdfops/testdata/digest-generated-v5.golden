@@ -1,0 +1,18 @@
+# ContentDigest rule 5 over the generated corpus — /pending 488, ADR-013, ADR-080.
+# <name>\t<input sha256, `-` where the generator is not byte-stable>\t<ContentDigest output>
+# Regenerate with NIB_UPDATE_DIGEST_GOLDENS=1; a regeneration is a ContentDigestVersion decision, not a test fix.
+attachment	-	6d887cef00a7b17091201d86484669197b3b5162ab5be22947886054053f4bf6
+cropped	-	c3343fde4b940ae63a3f43400d54af6e135d284d9d2e940e149d79532c0c4b68
+filled-form	-	ed326ef61c6c2b89425544f2753913337fee157b8473f1edd0816eeea094cdf6
+form	-	4b749a9f21747749eec24526e1cad800fae3f018b42b749c8dbf1c38ea2d4fcc
+notes-on-every-page	-	#unstable
+notes-then-nup	-	#unstable
+nup2	-	24df4869fddddf63bad9f2ee94ff048b8185a638dd9fef38d30c9299c987d7f2
+optimized	-	7a81beaada4d282ce2da2e2d5a7af558cbcf8e95a98d51234b5344afb81c644f
+rotated	-	196bead5765423c67b44b5f6af4a9d70f2c74be4be03f9968a69775178e42090
+tagged-handbuilt	-	485ab20f5130d1369f7f6f98a3c851e8069bdbca3e1f13d37d2d800e53696d38
+text-1page	-	5a303752880dc8f07932af2b4c05993cf66bbe9b63ee1b27c23647ba9eb44620
+text-3page	-	7a81beaada4d282ce2da2e2d5a7af558cbcf8e95a98d51234b5344afb81c644f
+title	-	5a303752880dc8f07932af2b4c05993cf66bbe9b63ee1b27c23647ba9eb44620
+uaid	-	5a303752880dc8f07932af2b4c05993cf66bbe9b63ee1b27c23647ba9eb44620
+watermark	-	#unstable

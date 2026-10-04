@@ -106,8 +106,27 @@ func ShortHash(h string) string { return short(h) }
 // the mechanism the plan adopted for it — byte prefix plus `AddedAfter == false` — was
 // measured at this slice's grill to PASS on a document whose first page had been blacked out
 // by the last signer. See the grill record before relying on it.
+//
+// # It is the WRITING side only (ADR-080)
+//
+// DocumentHash is the current rule, which is what a new record commits to (`Convene`, its one
+// production caller). A record is CHECKED by DocumentHashFor, under the rule its own signed
+// `DigestVersion` names — so a record written by the previous build is compared with the number that
+// build computed, not with this build's.
 func DocumentHash(pdf []byte) (string, error) {
 	return pdfops.ContentDigest(pdf)
+}
+
+// DocumentHashFor is the value r's DocHash should hold for these bytes: the content digest under the
+// rule r was written under (ADR-080). Every site that COMPARES a DocHash computes it here — a
+// comparison under any other rule is a tampering sentence for a version difference.
+//
+// A rule this build does not compute is ErrDigestVersion (digestRuleSkew), never a number.
+func DocumentHashFor(pdf []byte, r Record) (string, error) {
+	if err := digestRuleSkew(r); err != nil {
+		return "", err
+	}
+	return pdfops.ContentDigestAt(pdf, r.DigestVersion)
 }
 
 // Embed attaches the record to the document.
@@ -193,7 +212,7 @@ func CheckDocument(pdf []byte, now time.Time) (Record, error) {
 	if err != nil {
 		return r, err
 	}
-	got, err := DocumentHash(pdf)
+	got, err := DocumentHashFor(pdf, r)
 	if err != nil {
 		return r, err
 	}
@@ -267,12 +286,13 @@ func CheckRecord(pdf []byte, now time.Time) (Record, error) {
 }
 
 // digestRuleSkew is the one door for D32's digest-rule skew: nil when r's DocHash was computed
-// under this build's `pdfops.ContentDigestVersion`, else an ErrDigestVersion naming both rules.
-// Every site that compares a DocHash asks it FIRST (CheckRecord above, ReadMirror), because a
+// under a rule this build can still compute (`pdfops.ContentDigestRuleReadable` — the current rule
+// and the one before it, ADR-080), else an ErrDigestVersion naming both rules. Every site that
+// compares a DocHash asks it FIRST (CheckRecord above, ReadMirror, DocumentHashFor), because a
 // comparison across rules produces a tampering sentence for a version difference — /pending 725's
 // bump to rule 4 would otherwise have reported every stored unsigned mirror as damaged.
 func digestRuleSkew(r Record) error {
-	if r.DigestVersion == pdfops.ContentDigestVersion {
+	if pdfops.ContentDigestRuleReadable(r.DigestVersion) {
 		return nil
 	}
 	return fmt.Errorf("%w: this ceremony's document hash was computed under Nib's "+

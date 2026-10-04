@@ -123,12 +123,16 @@ func TestContentDigestHashesAMalformedTreeTheTwoReadingsAgreeOn(t *testing.T) {
 	for name, objs := range agreeingTrees() {
 		t.Run(name, func(t *testing.T) {
 			pdf := testpdf.Assemble(objs)
-			d, err := ContentDigest(pdf)
+			_, err := ContentDigest(pdf)
 			if err != nil {
 				t.Fatalf("ContentDigest refused a tree both readings order the same way: %v", err)
 			}
-			if want, err := referenceContentDigest(pdf); err != nil || d != want {
-				t.Errorf("digest %s, reference walk %s (%v) — the value moved", short16(d), short16(want), err)
+			if _, err := ContentDigestAt(pdf, legacyContentDigestVersion); err != nil {
+				t.Fatalf("rule 4 refused a tree rule %d hashed: %v", ContentDigestVersion, err)
+			}
+			// The reference walk is rule 4's body (ADR-080), so the value it pins is rule 4's.
+			if want, err := referenceContentDigest(pdf); err != nil || reportDigest(pdf) != want {
+				t.Errorf("rule 4 digest %s, reference walk %s (%v) — the value moved", short16(reportDigest(pdf)), short16(want), err)
 			}
 		})
 	}

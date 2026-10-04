@@ -1,10 +1,11 @@
 diff --git a/internal/pdfops/attachments.go b/internal/pdfops/attachments.go
 --- a/internal/pdfops/attachments.go
 +++ b/internal/pdfops/attachments.go
-@@ -409,7 +409,6 @@
+@@ -600,7 +600,6 @@
  	// Sorted so the digest is a property of the document rather than of the tree's layout;
  	// key and filespec are hashed as separate length-prefixed chunks, so a rename and an edit
  	// cannot be made to cancel out.
 -	hashEmbeddedFiles(ctx, h, sc)
- 	return hex.EncodeToString(h.Sum(nil)), nil
- }
+ 	if v5 {
+ 		hashCatalogBehaviour(ctx.XRefTable, h, sc)
+ 	}

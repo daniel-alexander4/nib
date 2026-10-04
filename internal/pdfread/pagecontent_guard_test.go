@@ -19,7 +19,9 @@ import (
 // through the import's local name) are counted, so a census that stopped seeing them reads red, not green.
 func TestEveryPageContentReadRoutesThroughTheDoor(t *testing.T) {
 	exempt := map[string]string{
-		"ContentDigest": "internal/pdfops/attachments.go", // ADR-013: the digest's coverage is a format
+		// `ContentDigest` was an exemption until ADR-080: rule 5 reads through the door, and rule 4 — kept to check v4
+		// records — reads `PageContentAsPdfcpu`, the door's own bounded copy of pdfcpu's join, which this census does
+		// not need to excuse. The checker reads through the door since /pending 719 measured veraPDF's join.
 		// Both compare with the form `api.NUp` wrote from pdfcpu's own join, so they must read that join.
 		"annotcarry-nup": "internal/pdfops/annotcarry.go",
 		"tagcarry-nup":   "internal/pdfops/tagcarry.go",

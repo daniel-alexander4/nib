@@ -492,7 +492,7 @@ func readMirrorAt(dir, id string, now time.Time) (Record, []byte, error) {
 		if err := digestRuleSkew(r); err != nil {
 			return r, nil, err
 		}
-		got, herr := DocumentHash(pdf)
+		got, herr := DocumentHashFor(pdf, r)
 		if errors.Is(herr, pdfops.ErrPageTreeAmbiguous) {
 			// Named, never "damaged" (/pending 755): the copy is intact, and it is the document's
 			// own page tree that two readers order differently — true of every copy of it, so
