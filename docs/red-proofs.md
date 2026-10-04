@@ -6410,3 +6410,22 @@ and `/ByteRange` and a rewritten `/Reason`: the gap's nearest header was the ori
 read the new definition. `structure-conjunct-11-gap-owner-unchecked` was re-recorded against the widened condition.
 
 `recorded` 525 → 526.
+
+## /pending 736 and 738 — conjunct (11) owns forward; the consent screen names a refusal
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `structure-conjunct-11-owner-lexed-without-strings` — the owner's lex reads a literal string's contents as tokens | `TestTextBeforeContentsCannotMoveTheOwner`, tier 1 | "text before its /Contents moved the owner" |
+| `structure-conjunct-11-planted-gap-lifts-the-floor` — a gap no header precedes lifts the floor over a genuine signer | `TestTextBeforeContentsCannotMoveTheOwner`, tier 1 | "text before its /Contents moved the owner" |
+| `the-consent-screen-omits-a-refused-signature` — the consent view handed the signers and not the refusals | `consentroster.test.mjs`, tier 2 | "the consent screen does not say so (/pending 738)" |
+
+Conjunct (11) no longer scans BACK from a gap to the nearest `N G obj`; it reads the header at the record's xref offset
+and lexes FORWARD to the gap, strings and comments as such. **`structure-conjunct-11-offset-unchecked` is retired**, not
+re-recorded: the only header read is the one at the xref's offset, so "the owner is not required to sit there" has no
+separable check left to disable — a redefinition's offset lies after the gap, which the candidate filter, `headerFor`'s
+limit and `ownsGap` each refuse on their own. Its test, `TestADictionaryRedefinedUnderTheSignersNumberIsRefused`, still
+runs and is still driven red by `structure-conjunct-11-gap-owner-unchecked`. That row and the three consent rows
+(`consent-screen-names-only-the-caller`, `the-consent-screen-drops-an-invalid-signature`,
+`the-consent-screen-names-one-party`) were re-recorded against the moved lines.
+
+`recorded` 526 → 528.

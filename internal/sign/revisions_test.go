@@ -530,12 +530,19 @@ func TestEachStructureConjunctRefusesItsOwnFixture(t *testing.T) {
 		return doc
 	})
 	add("(11) the gap is preceded by another key", 11, CauseContentsElsewhere, d, wrote())
-	// (11) header-shaped text between the header and /Contents names another object — the G10
-	// residual's shape, refused (attributed to object 9, not 5).
-	g10 := "<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/adbe.pkcs7.detached/Reason(see 9 0 obj)/ByteRange[" +
-		brSlot("1", 64) + "]/Contents" + contentsSlot("1") + ">>"
-	d = one(g10, nil, nil, nil)
-	add("(11) a nearer header names another object", 11, CauseContentsElsewhere, d, wrote())
+	// (11) an object boundary between the header and /Contents: the dictionary is closed and another
+	// object begins before the gap, so the hex string is not this object's. (Header-shaped text
+	// INSIDE a string is not a boundary — /pending 736, TestTextBeforeContentsCannotMoveTheOwner.)
+	d = one(std, []sobj{{num: 9, body: "<</X 1/Contents" + contentsSlot("dup") + ">>"}}, func(g geo) string {
+		s := g.at(t, "/X 1/Contents<") + int64(len("/X 1/Contents"))
+		return ints(0, s, s+synthHexLen+2, g.size-s-synthHexLen-2)
+	}, func(doc []byte) []byte {
+		i := bytes.Index(doc, []byte("/Contents<")) + len("/Contents")
+		j := bytes.Index(doc, []byte("/X 1/Contents<")) + len("/X 1/Contents")
+		copy(doc[j:j+synthHexLen+2], doc[i:i+synthHexLen+2])
+		return doc
+	})
+	add("(11) an object boundary before the gap", 11, CauseContentsElsewhere, d, wrote())
 
 	// STIMULUS for the real case: a direct four-element array whose last element is a real, so
 	// the only (1) sub-condition it can fail is "all integers".
@@ -982,25 +989,89 @@ func TestTheGapScanIsBoundedPerRecord(t *testing.T) {
 	}
 }
 
-// TestTheGapScanCountsEveryByteItWalks — `examined` is the budget tests' evidence, so it must count
-// the walk-back of a candidate that fails early as well as one that fails late. Each `x5 obj ` walks
-// back over its space and its digit and then fails at `x` (not a second white-space run): two bytes a
-// count taken only on the late exit would miss.
+// TestTheGapScanCountsEveryByteItWalks — `examined` is the budget tests' evidence, so the forward lex
+// must count every byte from the body to the gap, strings and comments included, on success and on an
+// early exit alike.
 func TestTheGapScanCountsEveryByteItWalks(t *testing.T) {
 	const r = 1000
-	data := []byte("5 0 obj\n<</A[" + strings.Repeat("x5 obj ", r) + "]/Contents<00>>>")
+	data := []byte("5 0 obj\n<</A[" + strings.Repeat("(x5 0 obj) ", r) + "]%9 0 obj\n/Contents<00>>>")
 	gs := bytes.Index(data, []byte("<00>"))
-	keyAt := gs - len("/Contents")
-	obj, _, ok, examined := gapOwner(data, gs, 0)
-	// STIMULUS: the owner is found, past r near-miss candidates.
-	if !ok || obj != 5 || bytes.Count(data, []byte("x5 obj ")) != r {
-		t.Fatalf("STIMULUS: owner %d ok %v over %d candidates", obj, ok, bytes.Count(data, []byte("x5 obj ")))
+	body, ok := headerFor(data, 0, gs, 5)
+	// STIMULUS: the header is read and the body begins after `obj`.
+	if !ok || string(data[body-3:body]) != "obj" {
+		t.Fatalf("STIMULUS: header ok %v body %d", ok, body)
 	}
-	// The keyword loop visits every position from keyAt-3 down to the header's `o` at 4; each
-	// candidate walks back two bytes; the header's own walk-back is `5 0 ` (four bytes).
-	want := (keyAt - 3 - 4 + 1) + 2*r + 4
-	if examined != want {
-		t.Errorf("gapOwner examined %d bytes, want %d — a walk-back that exits early went uncounted", examined, want)
+	owns, examined := ownsGap(data, body, gs)
+	if !owns {
+		t.Fatal("object 5 does not own its own /Contents past header-shaped text in strings and a comment")
+	}
+	if examined != gs-body {
+		t.Errorf("ownsGap examined %d bytes, want %d — every byte from the body to the gap", examined, gs-body)
+	}
+	// An early exit counts what it read: a closed dictionary and `endobj` before the gap.
+	cut := []byte("5 0 obj\n<</A 1>>\nendobj\n" + strings.Repeat(" ", 100) + "<00>")
+	gs = bytes.Index(cut, []byte("<00>"))
+	body, _ = headerFor(cut, 0, gs, 5)
+	owns, examined = ownsGap(cut, body, gs)
+	if owns || examined != bytes.Index(cut, []byte("endobj"))+len("endobj")-body {
+		t.Errorf("an object boundary before the gap: owns %v, examined %d, want false and the bytes up to `endobj`", owns, examined)
+	}
+}
+
+// TestTextBeforeContentsCannotMoveTheOwner — /pending 736. Conjunct (11) used to find a gap's owner
+// by scanning BACK to the nearest `N G obj`, so text a third-party producer writes before /Contents
+// (the IRS files' /Reason and /Name; nib's own writes them after) could refuse a genuine signer
+// `contents-elsewhere` — "its byte range surrounds another object's signature", which nib had not
+// established — in two ways, both measured on the pre-fix tree:
+//
+//   - header-shaped text in the signer's own literal string: `/Reason(see 9 0 obj)`;
+//   - a LATER party, with no help from the signer: an appended record whose gap is a hex token inside
+//     the signer's dictionary (`/Prop<…>`, as a UTF-16 `/Name<FEFF…>` is), which lifted the scan
+//     floor over the signer's header.
+//
+// Owned forward from the xref's header, each signer is well-formed and verified, and the planted
+// record is the one refused.
+func TestTextBeforeContentsCannotMoveTheOwner(t *testing.T) {
+	a := newIdentity(t, "Alice")
+	blob := detached(t, a)
+	h := strings.ToUpper(hex.EncodeToString(blob([]byte("x"))))
+	for _, tc := range []struct {
+		name, before string
+		plant        bool
+	}{
+		{"a header in a literal string", "/Reason(see 9 0 obj)", false},
+		{"a header behind an escaped parenthesis", `/Reason(\) 9 0 obj \()`, false},
+		{"endobj in a nested string", "/Reason(a (b) endobj 9 0 obj)", false},
+		{"a later record's gap inside the dictionary", "/Prop<" + h + ">", true},
+	} {
+		sig := "<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/adbe.pkcs7.detached" + tc.before + "/ByteRange[" +
+			brSlot("1", 64) + "]/Contents" + contentsSlot("1") + ">>"
+		doc := fillSig(t, synthRevision(t, nil, baseObjs(sig), 1), "1", nil, blob)
+		if tc.plant {
+			doc = synthRevision(t, doc, []sobj{{num: 9, body: "<</Type/Sig/Filter/Adobe.PPKLite/ByteRange[" +
+				brSlot("9", 48) + "]/Contents<" + h + ">>>"}}, 1)
+			gs := int64(bytes.Index(doc, []byte("/Prop<")) + len("/Prop"))
+			ge := gs + int64(len(h)) + 2
+			q := bytes.Index(doc, []byte("@BR9@"))
+			copy(doc[q:q+48], fmt.Sprintf("%-48s", ints(0, gs, ge, int64(len(doc))-ge)))
+		}
+		revs, err := Revisions(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r := recordFor(t, revs, 5); r.conjunct != 0 || r.Cause != "" || !r.Verified {
+			t.Errorf("%s: the signer reads conjunct %d cause %q verified %v, want a well-formed, verified "+
+				"signature — text before its /Contents moved the owner", tc.name, r.conjunct, r.Cause, r.Verified)
+		}
+		if tc.plant {
+			// STIMULUS: the planted record reached (11) — its gap passed the ten local checks.
+			if r := recordFor(t, revs, 9); r.conjunct != 11 || r.Cause != CauseContentsElsewhere {
+				t.Errorf("%s: the planted record reads conjunct %d cause %q, want 11 %q", tc.name, r.conjunct, r.Cause, CauseContentsElsewhere)
+			}
+		}
+		if st := Verify(doc); st.State != Valid || len(st.Signers) != 1 || st.Signers[0].Fingerprint != a.fp {
+			t.Errorf("%s: Verify reads %s with %d signer(s), want valid, Alice", tc.name, st.State, len(st.Signers))
+		}
 	}
 }
 

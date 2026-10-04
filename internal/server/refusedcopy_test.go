@@ -60,10 +60,10 @@ func TestARefusedCopyIsNobodyToTheServersSignerReaders(t *testing.T) {
 		} else {
 			unverified = fmt.Sprint(*u)
 		}
-		return unverified, fmt.Sprintf("%+v", signersSoFar(doc))
+		return unverified, fmt.Sprintf("%+v", firstOf(signersSoFar(doc)))
 	}
 	wantU, wantRows := outcomes(untouched)
-	if wantU != "0" || len(signersSoFar(untouched)) != 1 || signersSoFar(untouched)[0].Fingerprint != hex.EncodeToString(afp) {
+	if wantU != "0" || len(firstOf(signersSoFar(untouched))) != 1 || firstOf(signersSoFar(untouched))[0].Fingerprint != hex.EncodeToString(afp) {
 		t.Fatalf("setup: the untouched file reads unverified=%s rows=%s, want 0 and Alice alone", wantU, wantRows)
 	}
 
@@ -91,5 +91,18 @@ func TestARefusedCopyIsNobodyToTheServersSignerReaders(t *testing.T) {
 		if rows != wantRows {
 			t.Errorf("%s: signersSoFar %s on the copy, %s on the untouched file — the consent screen lists a refused copy", tc.name, rows, wantRows)
 		}
+		// /pending 738: not a signer, and not silent either. The badge, the details panel and `nib
+		// verify` name the refusal; the consent screen is told it too, with its cause.
+		_, refused := signersSoFar(doc)
+		if len(refused) != 1 || refused[0].Cause == "" {
+			t.Errorf("%s: the consent screen is told of %d refused signature(s) %+v, want the one copy with its cause — "+
+				"a party consenting to co-sign is the one reader of the document's signatures left saying nothing about it", tc.name, len(refused), refused)
+		}
+	}
+	if _, refused := signersSoFar(untouched); len(refused) != 0 {
+		t.Errorf("the untouched file reports %d refused signature(s): %+v", len(refused), refused)
 	}
 }
+
+// firstOf is signersSoFar's signer list, for the readers here that compare only that.
+func firstOf(s []pendingSigner, _ []sign.RefusedSignature) []pendingSigner { return s }

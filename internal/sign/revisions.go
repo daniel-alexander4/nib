@@ -41,9 +41,9 @@ const (
 
 const ppkLite = "Adobe.PPKLite"
 
-// gapScanWindow bounds conjunct (11)'s backward scan. The header of the dictionary that owns a gap
+// gapScanWindow bounds how far below its gap a record's own header may sit for conjunct (11). The header of the dictionary that owns a gap
 // sits a few hundred bytes before it on every producer measured (199 B on nib's, 501 B on the IRS
-// files); 64 KiB is the plan-review's bound, and the previous gap's end tightens it further.
+// files); 64 KiB is the plan-review's bound, and the previous candidate gap's end tightens it further.
 const gapScanWindow = 64 << 10
 
 // Revision is one signature-shaped dictionary in the document: who signed it, how far the
@@ -120,7 +120,7 @@ type Revision struct {
 
 // sweepStats is what the sweep can say about its own cost; read by the budget tests.
 type sweepStats struct {
-	// scanned counts the bytes conjunct (11)'s backward scans examined, over the whole document.
+	// scanned counts the bytes conjunct (11) examined — headers read and spans lexed — over the whole document.
 	scanned int
 	// forward counts the bytes conjuncts (7) and (8) examined: each distinct gap's token walked
 	// once and decoded at most once, plus the bytes of every `/Contents` compared against a
@@ -417,29 +417,42 @@ func structureOf(data []byte, v, br dpdf.Value, vals []int64, allInts, inObjStm 
 
 // assignGapOwners is conjunct (11): the gap belongs to THIS object. It returns the bytes scanned.
 //
-// Scanning back from the gap through bytes the signature itself covers, the nearest `N G obj`
-// header must be the record's own object number AT THE OFFSET THE XREF GIVES IT (`headerAt`), and only
-// `/Contents` and white space may sit immediately before the `<`. A verbatim copy of the victim's dictionary
-// under any other number finds the victim's header, because those bytes are the victim's signed bytes; a copy
-// REUSING the victim's number also finds the victim's header, but the xref now points at the copy, so the
-// offsets disagree (this used to be called harmless — it let a later revision rewrite the victim's unsigned
-// `/Reason` and `/Name`). The scan is still a backward scan of signed bytes, and nothing searches the whole
-// file; the patched reader exposes the xref offset for the comparison (NOTICE.nib divergence 6).
+// **The owner is found FORWARD from the header the xref names, never backward from the gap.** A
+// record's candidate header is the `N G obj` at its own xref offset (white space before it allowed),
+// naming its own object number; from there one string-aware lexer pass (`ownsGap`) must reach the
+// gap at a token boundary, at the top level of the object's own dictionary, straight after the name
+// `/Contents`, crossing no object boundary on the way. A verbatim copy of the victim's dictionary
+// under any other number is defined in an appended revision, so its header lies AFTER the victim's
+// gap and it is no candidate; a copy REUSING the victim's number moves the xref offset to the copy,
+// which lies after the gap too (this used to be called harmless — it let a later revision rewrite the
+// victim's unsigned `/Reason` and `/Name`); an xref entry pointing another number at the victim's
+// header names the wrong number. The patched reader exposes the xref offset (NOTICE.nib divergence 6).
 //
-// **Nearest, never "our own number anywhere"**: nearest makes gap → owner a FUNCTION, so no gap
-// has two well-formed owners. **Linear, never a regex or a lexer**: a regex over the window
-// measured 3.2 ms per IRS signature and a candidate-by-candidate lexer went quadratic (609 ms for
-// one 52 KB record). **Bounded below by the previous distinct gap's end**, and memoised per gap,
-// so total work across every record is O(len(data)) however many records the attacker writes: a
-// header between an earlier gap and this one belongs to a later object than the earlier gap's.
+// **Why forward (/pending 736).** The scan used to walk BACK from the gap to the nearest
+// `N G obj`, which cannot tell a header from the same bytes inside a string, so text a third-party
+// producer writes before `/Contents` — `/Reason`, `/Name`, the IRS files' order; nib's own puts them
+// after — refused the signer `contents-elsewhere` whenever it held `9 0 obj`; and a later party could
+// do it without the signer's help, by appending a record whose gap is a hex token inside the signer's
+// dictionary (a UTF-16 `/Name <FEFF…>`), which raised the scan floor above the signer's header. Both
+// told an examiner the signature's byte range "surrounds another object's signature", which nib had
+// not established. A forward lex from a KNOWN start knows what is a string and what is a comment;
+// backwards it cannot, which is why a backward token lexer was measured beatable with a `%`.
 //
-// **Declared residual (G10, /pending 736)**: where a third-party producer writes attacker-
-// influenced text (`/Reason`, `/Name`) BEFORE `/Contents` — the IRS files do, nib does not —
-// header-shaped text there can move which object a gap is attributed to. Coverage, identity and
-// the signer count cannot move: the hash binds the ranges and the SignerInfo the key.
+// **Nearest claimer, one lex per distinct gap**: per gap, the candidate is the claiming record whose
+// header is nearest below it, so gap → owner stays a FUNCTION and no gap has two well-formed owners;
+// every other claimer is refused. **Linear, never a regex**: the floor for a gap's candidate is the
+// end of the previous gap that HAD one — honest dictionaries do not nest, so the next owner's header
+// follows the last owned gap — which makes the lexed spans disjoint and their sum at most the file.
+// A gap nobody's header precedes (every claimer appended after it) moves no floor, so a planted gap
+// cannot lift one over a genuine header. **Bounded per record** by `gapScanWindow`.
+//
+// **Declared residual**: a signer whose own dictionary carries, before `/Contents`, a second complete
+// `M 0 obj <<…/ByteRange…` that an appended xref then names as object M, is refused by that record
+// being nearer — text of the signer's own choosing, which can only remove that signer.
 func assignGapOwners(data []byte, revs []Revision) (scanned int) {
 	var starts []int64
 	ends := map[int64]int64{}
+	claim := map[int64][]int{}
 	for i := range revs {
 		rv := &revs[i]
 		if rv.Cause != "" || rv.conjunct != 0 {
@@ -451,135 +464,182 @@ func assignGapOwners(data []byte, revs []Revision) (scanned int) {
 		// Distinct gaps are disjoint — a gap that passed (7) is one hex token, so no other
 		// token's `<` falls inside it, and one start has one end.
 		ends[rv.gapStart] = rv.gapEnd
+		claim[rv.gapStart] = append(claim[rv.gapStart], i)
 	}
 	sort.Slice(starts, func(a, b int) bool { return starts[a] < starts[b] })
-	type owned struct {
-		obj uint32
-		at  int // where the owning header begins
-		ok  bool
-	}
-	owner := make(map[int64]owned, len(starts))
-	var prevEnd int64
+	owner := make(map[int64]int, len(starts)) // gap start → owning record index
+	var floor int64
 	for _, gs := range starts {
-		floor := gs - gapScanWindow
-		if floor < prevEnd {
-			floor = prevEnd
+		best, bestBody := -1, 0
+		for _, i := range claim[gs] {
+			o := revs[i].offset
+			if o < floor || o >= gs || gs-o > gapScanWindow {
+				continue
+			}
+			body, ok := headerFor(data, int(o), int(gs), revs[i].Obj)
+			scanned += body - int(o)
+			if ok && (best < 0 || o > revs[best].offset) {
+				best, bestBody = i, body
+			}
 		}
-		if floor < 0 {
-			floor = 0
+		if best < 0 {
+			continue
 		}
-		if floor > gs {
-			floor = gs
-		}
-		obj, at, ok, n := gapOwner(data, int(gs), int(floor))
+		ok, n := ownsGap(data, bestBody, int(gs))
 		scanned += n
-		owner[gs] = owned{obj, at, ok}
-		prevEnd = ends[gs]
+		if ok {
+			owner[gs] = best
+		}
+		floor = ends[gs]
 	}
 	for i := range revs {
 		rv := &revs[i]
 		if rv.Cause != "" || rv.conjunct != 0 {
 			continue
 		}
-		if o := owner[rv.gapStart]; !o.ok || o.obj != rv.Obj || !headerAt(data, rv.offset, o.at) {
+		if o, ok := owner[rv.gapStart]; !ok || o != i {
 			rv.conjunct = 11
 		}
 	}
 	return scanned
 }
 
-// headerAt reports whether the xref's offset for a record names the header the gap's owner was found at: equal,
-// or earlier by white space only (a producer whose offset lands on the line break before `N G obj`).
-//
-// **Same number is not same object** (the P01 phase-close review): an appended revision that re-defines the
-// signer's object number with the same `/Contents` and `/ByteRange` finds the ORIGINAL header behind the gap —
-// those are the signed bytes — while the library reads `/Name`, `/Reason` and `/M` from the definition the xref
-// now points at. So a later party could rewrite an earlier signer's reason (which carries the co-sign attestation
-// token) and it verified as that signer's. The owner must be the object the xref names, at its offset.
-func headerAt(data []byte, offset int64, at int) bool {
-	if offset < 0 || offset > int64(at) || int64(at) > int64(len(data)) {
-		return false
-	}
-	for _, c := range data[offset:at] {
-		if !isPDFSpace(c) {
-			return false
+// headerSpace caps each white-space run `headerFor` walks; a producer's offset lands at most on the
+// line break before `N G obj`.
+const headerSpace = 32
+
+// headerFor reads the `N G obj` header at the xref's offset — white space first, then the record's
+// own object number — and returns where the object's body begins. It reads nothing at or past limit,
+// and at most a header's length — each white-space run is capped at headerSpace bytes, or records
+// pointed into one long run would each walk it: the caller charges `body - offset` to the scan.
+func headerFor(data []byte, offset, limit int, obj uint32) (body int, ok bool) {
+	i := offset
+	space := func() bool {
+		start := i
+		for i < limit && isPDFSpace(data[i]) && i-start < headerSpace {
+			i++
 		}
+		return i > start && (i >= limit || !isPDFSpace(data[i]))
 	}
-	return true
+	if i < limit && isPDFSpace(data[i]) && !space() {
+		return i, false
+	}
+	num := func() (uint64, bool) {
+		start := i
+		var n uint64
+		for i < limit && isDigit(data[i]) && i-start < 10 {
+			n = n*10 + uint64(data[i]-'0')
+			i++
+		}
+		return n, i > start && (i >= limit || !isDigit(data[i]))
+	}
+	n, ok := num()
+	if !ok || n != uint64(obj) || !space() {
+		return i, false
+	}
+	if _, ok := num(); !ok || !space() {
+		return i, false
+	}
+	if i+3 > limit || string(data[i:i+3]) != "obj" {
+		return i, false
+	}
+	i += 3
+	if i < limit && !isPDFSpace(data[i]) && !isPDFDelimiter(data[i]) {
+		return i, false // `objx` is not the keyword
+	}
+	return i, true
 }
 
-// gapOwner finds the object that wrote the hex string starting at gs: `/Contents` and white space
-// immediately before it, then the nearest `N G obj` header, looking no lower than floor. It never
-// reads below floor, and the bytes it examines are returned for the budget tests.
-func gapOwner(data []byte, gs, floor int) (obj uint32, at int, ok bool, examined int) {
-	const key = "/Contents"
-	i := gs - 1
-	for i >= floor && isPDFSpace(data[i]) {
-		i--
-		examined++
+// ownsGap lexes forward from an object's body to the gap at gs and reports whether the hex string
+// there is this object's own `/Contents`: reached at a token boundary, directly after the name
+// `/Contents`, inside exactly one dictionary and no array, with no object boundary keyword on the
+// way. Literal strings (balanced parentheses, backslash escapes) and comments are skipped as such, so
+// nothing written inside them can end the object early. It never reads at or past gs, and returns the
+// bytes it examined.
+func ownsGap(data []byte, from, gs int) (ok bool, examined int) {
+	i, dict, arr := from, 0, 0
+	last := ""
+	defer func() { examined = i - from }()
+	for i < gs {
+		c := data[i]
+		switch {
+		case isPDFSpace(c):
+			i++
+			continue
+		case c == '%':
+			for i < gs && data[i] != '\n' && data[i] != '\r' {
+				i++
+			}
+			continue
+		case c == '(':
+			depth := 0
+			for i < gs {
+				switch data[i] {
+				case '\\':
+					i++
+				case '(':
+					depth++
+				case ')':
+					depth--
+				}
+				i++
+				if depth == 0 {
+					break
+				}
+			}
+			if depth != 0 {
+				return false, 0 // the gap is inside a string, from this object's point of view
+			}
+		case c == '<' && i+1 < gs && data[i+1] == '<':
+			dict++
+			i += 2
+		case c == '>' && i+1 < gs && data[i+1] == '>':
+			if dict--; dict < 0 {
+				return false, 0
+			}
+			i += 2
+		case c == '<':
+			for i < gs && data[i] != '>' {
+				i++
+			}
+			if i >= gs {
+				return false, 0 // a hex string running into the gap
+			}
+			i++
+		case c == '[':
+			arr++
+			i++
+		case c == ']':
+			if arr--; arr < 0 {
+				return false, 0
+			}
+			i++
+		case c == '/':
+			start := i
+			i++
+			for i < gs && !isPDFSpace(data[i]) && !isPDFDelimiter(data[i]) {
+				i++
+			}
+			last = string(data[start:i])
+			continue
+		case c == ')' || c == '>' || c == '{' || c == '}':
+			return false, 0
+		default:
+			start := i
+			for i < gs && !isPDFSpace(data[i]) && !isPDFDelimiter(data[i]) {
+				i++
+			}
+			if i == start {
+				return false, 0 // a delimiter no case above names: never spin on it
+			}
+			switch string(data[start:i]) {
+			case "obj", "endobj", "stream", "endstream", "xref", "trailer", "startxref":
+				return false, 0
+			}
+		}
+		last = ""
 	}
-	keyAt := i + 1 - len(key)
-	if keyAt < floor || string(data[keyAt:i+1]) != key {
-		return 0, 0, false, examined
-	}
-	for j := keyAt - 3; j >= floor; j-- {
-		examined++
-		if data[j] != 'o' || data[j+1] != 'b' || data[j+2] != 'j' {
-			continue
-		}
-		if c := data[j+3]; !isPDFSpace(c) && !isPDFDelimiter(c) {
-			continue // `objx` is not the keyword
-		}
-		// Walk back over `N ws+ G ws+`. The runs are disjoint across candidates (a candidate's
-		// run holds no `j`), so the walks add up to at most the window once more. Every exit
-		// from the walk counts the bytes it read, so `examined` is what the scan cost.
-		k := j - 1
-		mark := k
-		for k >= floor && isPDFSpace(data[k]) {
-			k--
-		}
-		if k == mark {
-			continue
-		}
-		mark = k
-		for k >= floor && isDigit(data[k]) {
-			k--
-		}
-		if k == mark {
-			examined += j - 1 - k
-			continue
-		}
-		mark = k
-		for k >= floor && isPDFSpace(data[k]) {
-			k--
-		}
-		if k == mark {
-			examined += j - 1 - k
-			continue
-		}
-		numEnd := k
-		for k >= floor && isDigit(data[k]) {
-			k--
-		}
-		examined += j - 1 - k
-		if k == numEnd || numEnd-k > 10 {
-			continue
-		}
-		// The number must start at a token boundary; a digit below the floor means the header
-		// straddles it and is not wholly in the window.
-		if k >= 0 && !isPDFSpace(data[k]) && !isPDFDelimiter(data[k]) {
-			continue
-		}
-		var n uint64
-		for _, c := range data[k+1 : numEnd+1] {
-			n = n*10 + uint64(c-'0')
-		}
-		if n > 1<<32-1 {
-			continue
-		}
-		return uint32(n), k + 1, true, examined
-	}
-	return 0, 0, false, examined
+	return i == gs && dict == 1 && arr == 0 && last == "/Contents", 0
 }
 
 // errLibraryWouldOverread refuses a document before the library copies its byte ranges.

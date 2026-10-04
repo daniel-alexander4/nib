@@ -69,7 +69,10 @@ func TestTheConsentScreenIsToldEveryPartyThatHasAlreadySigned(t *testing.T) {
 		t.Fatalf("setup: the three-signature fixture does not parse: %v", err)
 	}
 
-	got := signersSoFar(doc)
+	got, refused := signersSoFar(doc)
+	if len(refused) != 0 {
+		t.Errorf("three honest signatures report %d refused: %+v", len(refused), refused)
+	}
 	if len(got) != 3 {
 		t.Fatalf("the consent screen is told about %d signer(s) on a document carrying 3. A "+
 			"party asked to sign is shown who they are joining, and a short list is a document "+
@@ -140,7 +143,7 @@ func TestAnUnsignedDocumentSaysSoRatherThanListingNobody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := signersSoFar(base)
+	got, _ := signersSoFar(base)
 	if len(got) != 0 {
 		t.Errorf("an unsigned document reports %d signer(s)", len(got))
 	}
