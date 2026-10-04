@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"nib/internal/pdfread"
+	"strconv"
 	"strings"
 
 	"hash"
@@ -300,7 +301,40 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 // carrying a path hashed a constant, and any entry naming itself `nib-ceremony.json` was skipped as
 // the record. v4 hashes each entry from its own filespec and excludes the record only in the exact
 // shape nib writes — see hashEmbeddedFiles and ceremonyRecordEntry.
-const ContentDigestVersion = 4
+//
+// **Bumped to 5 (2026-10-03, ADR-080), and v4 is still COMPUTED, not merely recognised.** Every bump
+// before this one replaced the rule, so a build reading a record written under the previous one could
+// only say "update Nib" — a halted ceremony — which is why ADR-013 called a coverage change one that
+// reads as tampering across a point release, and why /pending 718, 720, 578 and 616 were filed rather
+// than fixed. `Record.DigestVersion` is inside the convener's signature, so the rule a record names
+// cannot be swapped by anyone else, and a build that can still compute that rule checks the record by
+// it. See ContentDigestAt and ContentDigestRuleReadable. v5 changes four things:
+//
+//   - a page's content is `pdfread.PageContent`'s token-boundary join (ADR-056), not pdfcpu's bare one,
+//     so `[(A) Tj, ET]` and `(A) TjET` no longer digest alike (/pending 718);
+//   - a page object reached from inside the walk — an annotation's /P, a link's /Dest, /OpenAction —
+//     hashes as its POSITION, never as its dictionary, so the digest stops covering a content stream's
+//     /Length and /Filter on every page something links to (/pending 720);
+//   - /MediaBox, /CropBox, /Rotate and /Resources are the page's EFFECTIVE values, inherited through the
+//     page tree, as every reader shows them — v4 read the page's own key, so /Rotate on a /Pages node
+//     moved nothing (/pending 578) — and page /UserUnit and /AA are covered;
+//   - the catalog's /OpenAction, /AA, /OCProperties and /Names /JavaScript are covered (/pending 616).
+const ContentDigestVersion = 5
+
+// legacyContentDigestVersion is the one earlier rule this build still computes (ADR-080).
+//
+// One, not every rule ever shipped: v3 and earlier were never computable side by side, records under them
+// are already reported as a skew by every build since v4, and nothing in the field depends on them.
+const legacyContentDigestVersion = 4
+
+// ContentDigestRuleReadable reports whether this build can compute ContentDigest under rule v — the
+// current rule or the retained legacy one. A record naming any other rule is a version skew (D32).
+func ContentDigestRuleReadable(v int) bool {
+	return v == ContentDigestVersion || v == legacyContentDigestVersion
+}
+
+// ErrDigestRuleUnknown is ContentDigestAt's refusal of a rule this build does not compute.
+var ErrDigestRuleUnknown = errors.New("pdfops: this build does not compute that content-digest rule")
 
 // CeremonyRecordName is the one embedded file ContentDigest must NOT hash.
 //
@@ -335,12 +369,20 @@ const CeremonyRecordName = "nib-ceremony.json"
 //
 // # What it covers, and the exclusion list that outlived its own truth
 //
-// **Covered:** page count; per page the content stream, MediaBox/CropBox/Rotate, the page
-// resources followed into font and XObject streams, and /Annots in full; and the catalog's
-// embedded-files name tree entry by entry — each key with its own filespec and streams —
-// minus the ceremony record (see CeremonyRecordName).
+// **Covered (rule 5, ADR-080):** page count; per page the content stream (joined at token
+// boundaries), the EFFECTIVE MediaBox/CropBox/Rotate and resources — inherited through the page
+// tree — with the resources followed into font and XObject streams, /UserUnit, /AA, and /Annots in
+// full (a page an annotation names hashes as its position); the catalog's embedded-files name tree
+// entry by entry — each key with its own filespec and streams — minus the ceremony record (see
+// CeremonyRecordName); and the catalog's /OpenAction, /AA, /OCProperties and /Names /JavaScript.
 //
-// **Not covered:** document metadata, and the AcroForm structure outside page /Annots.
+// **Not covered, and each is a decision rather than an oversight:** document metadata (/Info,
+// /Metadata — a title is not the agreement); the AcroForm
+// dictionary outside page /Annots (every field a reader shows is a widget under /Annots, and a
+// signature rewrites /AcroForm by design); outlines, page labels, named destinations and viewer
+// preferences (navigation, not content); the structure tree (accessibility, not what is drawn).
+// The AcroForm's /XFA is the one of these that can change what some readers DRAW, and it is
+// filed rather than covered.
 //
 // This comment used to carry an exclusion list reading "annotations, form field values,
 // attachments, and metadata", justified by "tamper-evidence for everything else is what the
@@ -385,6 +427,18 @@ func ContentDigest(pdf []byte) (string, error) {
 	return d, err
 }
 
+// ContentDigestAt is ContentDigest computed under rule `version`: the value a record written under that
+// rule holds for these bytes. It is how a record is CHECKED — by the rule its signed `DigestVersion`
+// names — while ContentDigest, the current rule, is how one is WRITTEN (ADR-080). A rule this build does
+// not compute is ErrDigestRuleUnknown, never a digest under some other rule.
+func ContentDigestAt(pdf []byte, version int) (string, error) {
+	if !ContentDigestRuleReadable(version) {
+		return "", fmt.Errorf("%w: rule %d", ErrDigestRuleUnknown, version)
+	}
+	d, _, err := contentDigestAt(pdf, version)
+	return d, err
+}
+
 // digestStats is what one ContentDigest call DID, as counters rather than as elapsed time.
 //
 // **It exists because the two costs this function was rewritten to remove are both quadratic in
@@ -406,12 +460,16 @@ type digestStats struct {
 }
 
 func contentDigest(pdf []byte) (string, *digestStats, error) {
+	return contentDigestAt(pdf, ContentDigestVersion)
+}
+
+func contentDigestAt(pdf []byte, version int) (string, *digestStats, error) {
 	st := &digestStats{}
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return "", st, err
 	}
-	d, err := digestReadContext(ctx, st)
+	d, err := digestRule(ctx, newStreamMemo(st), st, version)
 	return d, st, err
 }
 
@@ -422,14 +480,22 @@ func digestReadContext(ctx *model.Context, st *digestStats) (string, error) {
 // digestWithMemo takes the memo as an argument so a test can hand it one that is already at its
 // budget — the "stop storing" arm no real corpus document reaches.
 func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string, error) {
+	return digestRule(ctx, sc, st, ContentDigestVersion)
+}
+
+// digestRule is the digest under rule `version` — ContentDigestVersion or legacyContentDigestVersion, which
+// its callers have already checked. **v4's arm is v4 byte for byte** (ADR-080): the external and generated
+// goldens are pinned under both rules, because a record written under v4 is checked by this arm for as long
+// as v4 is readable.
+func digestRule(ctx *model.Context, sc *streamMemo, st *digestStats, version int) (string, error) {
 	h := sha256.New()
 	// Every field is length-prefixed through these two helpers — see hashChunk. The first
 	// draft wrote the resource kind and name unprefixed, which is injective by luck rather
 	// than by construction (C3).
 	hashChunk(h, []byte("nib-content-digest"))
-	hashUint(h, ContentDigestVersion)
+	hashUint(h, uint64(version))
 	hashUint(h, uint64(ctx.PageCount))
-	pages, err := digestPageDicts(ctx)
+	pages, answers, err := digestPageDicts(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -437,24 +503,39 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	// The fallback asks `pdfread.Pages`, which answers `PageDict(i, false)` for every page — not `PageDict` per page,
 	// which re-walks the tree from the root each time: a `/Kids []` leaf sends this loop here, and on a flat 20,000-page
 	// tree that was 1m40-2m of ceremony hashing (/pending 818).
-	var fallback []pdfread.Page
 	if pages == nil {
-		fallback = pdfread.Pages(ctx)
+		answers = pdfread.Pages(ctx)
+	}
+	v5 := version >= 5
+	if v5 {
+		// Every page's POSITION by object number, BEFORE any page is hashed: page 1's annotations may name page 9.
+		// A page pdfcpu answered without a reference is not in the map and is walked as v4 walked it.
+		sc.pageAt = map[int]int{}
+		for i, a := range answers {
+			if a.Ref != nil {
+				sc.pageAt[a.Ref.ObjectNumber.Value()] = i + 1
+			}
+		}
+		defer func() { sc.pageAt = nil }()
 	}
 	for i := 1; i <= ctx.PageCount; i++ {
 		// `pages` is nil whenever the one-pass walk was not usable, and a nil SLICE must not be
 		// indexed — the first cut wrote `pages[i-1]` unguarded, which panics on exactly the
 		// malformed documents the fallback exists for, turning a safety valve into a crash.
 		var d types.Dict
+		var attrs *model.InheritedPageAttrs
 		if i-1 < len(pages) {
 			d = pages[i-1]
 		}
+		if i-1 < len(answers) {
+			attrs = answers[i-1].Attrs
+		}
 		if d == nil {
 			var err error
-			if i-1 < len(fallback) {
-				d, err = fallback[i-1].Dict, fallback[i-1].Err
+			if i-1 < len(answers) {
+				d, err = answers[i-1].Dict, answers[i-1].Err
 			} else {
-				d, _, _, err = ctx.PageDict(i, false)
+				d, _, attrs, err = ctx.PageDict(i, false)
 			}
 			if err != nil {
 				return "", fmt.Errorf("page %d is unreadable: %w", i, err)
@@ -466,10 +547,15 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 					"number, though it counts %d", i, ctx.PageCount)
 			}
 		}
-		// **Exempt from `pdfread.PageContent` (ADR-056), by name.** The digest hashes pdfcpu's bare join, and what it
-		// covers is a format (ADR-013): hashing the token-boundary join instead would move `DocHash` on a divided
-		// page and read as tampering, so it is a `ContentDigestVersion` bump or nothing. /pending 718.
-		c, err := ctx.PageContent(d, i) //pagecontent:exempt ContentDigest
+		// v5 reads the page through ADR-056's door, which separates two streams only where a bare join would fuse
+		// them (/pending 718). v4 reads pdfcpu's bare join — the bytes it always hashed, now bounded as the door
+		// bounds (`PageContentAsPdfcpu` is byte-identical to pdfcpu's join below `MaxPageContentBytes`).
+		var c []byte
+		if v5 {
+			c, err = pdfread.PageContent(ctx, d, i)
+		} else {
+			c, err = pdfread.PageContentAsPdfcpu(ctx, d, i)
+		}
 		if err != nil && err != model.ErrNoContent {
 			return "", fmt.Errorf("page %d content: %w", i, err)
 		}
@@ -477,11 +563,15 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 		// GEOMETRY, which the first draft did not cover at all. Shrinking /CropBox to
 		// excise a paragraph, or setting /Rotate 90, changes what every reader displays.
 		// It is per-page, and it is exactly what a general reviewer reads past.
-		for _, key := range []string{"MediaBox", "CropBox", "Rotate"} {
-			hashChunk(h, []byte(key))
-			hashObject(ctx.XRefTable, d[key], h, 0, sc)
+		if v5 {
+			hashEffectivePage(ctx.XRefTable, d, attrs, h, sc)
+		} else {
+			for _, key := range []string{"MediaBox", "CropBox", "Rotate"} {
+				hashChunk(h, []byte(key))
+				hashObject(ctx.XRefTable, d[key], h, 0, sc)
+			}
+			hashPageResources(ctx.XRefTable, d, h, sc)
 		}
-		hashPageResources(ctx.XRefTable, d, h, sc)
 		// ANNOTATIONS, because the exclusion's premise is false in the window this digest
 		// is checked in. The argument was "everything else is covered by the signatures" —
 		// but CheckDocument exists for the pre-FIRST-signature hop, where there are none,
@@ -511,7 +601,94 @@ func digestWithMemo(ctx *model.Context, sc *streamMemo, st *digestStats) (string
 	// key and filespec are hashed as separate length-prefixed chunks, so a rename and an edit
 	// cannot be made to cancel out.
 	hashEmbeddedFiles(ctx, h, sc)
+	if v5 {
+		hashCatalogBehaviour(ctx.XRefTable, h, sc)
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashEffectivePage is v5's page geometry and resources: what a reader SHOWS for the page, inherited
+// through the page tree where the page does not say (/pending 578, ADR-080).
+//
+// v4 hashed each key from the page's OWN dictionary, so a `/Rotate 90` on the `/Pages` node — which every
+// reader applies to every page beneath it — left the digest where `/Rotate 0` had it. pdfcpu's inherited
+// attributes (`pdfread.Pages`' `Attrs`, the answer every nib page operation reads) are the effective
+// values: the nearest node on the page's path that sets each key. Rectangles are hashed as their four
+// numbers, so `[0 0 612 792]` written on the page and the same box inherited from a parent hash alike —
+// a reader cannot tell them apart either.
+//
+// `/UserUnit` (PDF 1.6) scales every unit on the page and `/AA` runs actions on opening and closing it;
+// both are page-only keys, hashed as written (/pending 616).
+func hashEffectivePage(xt *model.XRefTable, d types.Dict, attrs *model.InheritedPageAttrs, h hash.Hash, sc *streamMemo) {
+	if attrs == nil {
+		// pdfcpu answered the page with no attributes; hashed as such, never as an empty page.
+		hashChunk(h, []byte("#noattrs"))
+		attrs = &model.InheritedPageAttrs{}
+	}
+	hashChunk(h, []byte("MediaBox"))
+	hashRect(h, attrs.MediaBox)
+	hashChunk(h, []byte("CropBox"))
+	hashRect(h, attrs.CropBox)
+	hashChunk(h, []byte("Rotate"))
+	hashChunk(h, []byte(strconv.Itoa(attrs.Rotate)))
+	for _, key := range []string{"UserUnit", "AA"} {
+		hashChunk(h, []byte(key))
+		hashObject(xt, d[key], h, 0, sc)
+	}
+	hashResourceDict(xt, attrs.Resources, h, sc)
+}
+
+// hashRect writes a rectangle's four numbers, or a marker for none.
+func hashRect(h hash.Hash, r *types.Rectangle) {
+	if r == nil {
+		hashChunk(h, []byte("#nil"))
+		return
+	}
+	for _, f := range []float64{r.LL.X, r.LL.Y, r.UR.X, r.UR.Y} {
+		hashChunk(h, []byte(strconv.FormatFloat(f, 'g', -1, 64)))
+	}
+}
+
+// hashCatalogBehaviour is v5's catalog axis: what the document DOES and what it hides, as opposed to
+// what its pages draw (/pending 616, ADR-080).
+//
+//   - `/OCProperties` decides which optional content is visible: `/D /OFF [...]` hides page content
+//     without touching a byte of any page, so a digest of the pages alone covers content nobody sees.
+//   - `/OpenAction` and `/AA` run on opening, closing, saving and printing.
+//   - `/Names /JavaScript` is document-level script, entry by entry and sorted, as the embedded files
+//     are — the tree's layout is not the document.
+//
+// Each is hashed as written, under v5's page-position rule: an `/OpenAction` naming a page hashes that
+// page's position. What is still NOT covered is declared in ContentDigest's doc.
+func hashCatalogBehaviour(xt *model.XRefTable, h hash.Hash, sc *streamMemo) {
+	hashChunk(h, []byte("catalog"))
+	root, err := xt.Catalog()
+	if err != nil || root == nil {
+		hashChunk(h, []byte("#nocatalog"))
+		return
+	}
+	for _, key := range []string{"AA", "OCProperties", "OpenAction"} {
+		hashChunk(h, []byte(key))
+		hashObject(xt, root[key], h, 0, sc)
+	}
+	hashChunk(h, []byte("JavaScript"))
+	entries, err := nameTreeEntries(xt, "JavaScript")
+	if err != nil {
+		hashChunk(h, []byte("#unreadable-tree"))
+		return
+	}
+	sums := make([][]byte, 0, len(entries))
+	for _, e := range entries {
+		eh := sha256.New()
+		hashChunk(eh, []byte(e.key))
+		hashObject(xt, e.fs, eh, 0, sc)
+		sums = append(sums, eh.Sum(nil))
+	}
+	sort.Slice(sums, func(i, j int) bool { return bytes.Compare(sums[i], sums[j]) < 0 })
+	hashUint(h, uint64(len(sums)))
+	for _, s := range sums {
+		hashChunk(h, s)
+	}
 }
 
 // ErrPageTreeAmbiguous is ContentDigest's refusal of a page tree that two readings order differently.
@@ -546,7 +723,7 @@ func CheckPageOrder(pdf []byte) error {
 	if err != nil {
 		return nil
 	}
-	_, err = digestPageDicts(ctx)
+	_, _, err = digestPageDicts(ctx)
 	return err
 }
 
@@ -591,28 +768,30 @@ func pageTreeAmbiguous(page int) error {
 //
 // **A nil slice means "ask pdfcpu for every page"**: a count disagreement, or a tree `collectLeaves` refuses
 // (a cycle, depth past 50), hashes exactly as before this function existed, at the old cost.
-func digestPageDicts(ctx *model.Context) ([]types.Dict, error) {
+func digestPageDicts(ctx *model.Context) ([]types.Dict, []pdfread.Page, error) {
 	root, err := ctx.XRefTable.Catalog()
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	leaves, _, err := collectLeaves(ctx.XRefTable, root)
 	if err != nil || len(leaves) != ctx.PageCount {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pdfcpu := pdfread.Pages(ctx)
 	if len(pdfcpu) != len(leaves) {
-		return nil, pageTreeAmbiguous(min(len(pdfcpu), len(leaves)) + 1)
+		return nil, nil, pageTreeAmbiguous(min(len(pdfcpu), len(leaves)) + 1)
 	}
 	out := make([]types.Dict, 0, len(leaves))
 	for i, l := range leaves {
 		p := pdfcpu[i]
 		if p.Err != nil || p.Dict == nil || p.Ref == nil || *p.Ref != l.ref {
-			return nil, pageTreeAmbiguous(i + 1)
+			return nil, nil, pageTreeAmbiguous(i + 1)
 		}
 		out = append(out, l.dic)
 	}
-	return out, nil
+	// pdfcpu's answers come back too: v5 reads each page's inherited attributes and reference from them
+	// (ADR-080), and a second `pdfread.Pages` would walk the tree twice.
+	return out, pdfcpu, nil
 }
 
 // embeddedEntry is one key/value pair of the catalog's /Names /EmbeddedFiles tree, as the tree
@@ -796,13 +975,19 @@ func ceremonyRecordEntry(xt *model.XRefTable, entries []embeddedEntry) (idx int,
 // /UF, /F or /Desc matches, so which entry answered was chosen by strings a document's author
 // writes; nothing in this package may reach an embedded file that way again.
 func treeEntries(xt *model.XRefTable) ([]embeddedEntry, error) {
-	if xt.Names["EmbeddedFiles"] == nil && !xt.Valid {
-		if err := xt.LocateNameTree("EmbeddedFiles", false); err != nil {
+	return nameTreeEntries(xt, "EmbeddedFiles")
+}
+
+// nameTreeEntries is treeEntries for any catalog name tree: the `/Names /JavaScript` tree v5 hashes is
+// read by the same walk, so a malformed tree is read the same way on both axes.
+func nameTreeEntries(xt *model.XRefTable, tree string) ([]embeddedEntry, error) {
+	if xt.Names[tree] == nil && !xt.Valid {
+		if err := xt.LocateNameTree(tree, false); err != nil {
 			return nil, err
 		}
 	}
 	var entries []embeddedEntry
-	if root := xt.Names["EmbeddedFiles"]; root != nil {
+	if root := xt.Names[tree]; root != nil {
 		_ = root.Process(xt, func(_ *model.XRefTable, k string, v *types.Object) error {
 			entries = append(entries, embeddedEntry{key: k, fs: *v})
 			return nil
@@ -879,6 +1064,9 @@ func hashUint(h hash.Hash, v uint64) {
 // looks: `ReadMirror` compares a stored digest through `Record.Verify`, and `Verify` never reads
 // `DigestVersion` at all — so a bumped build reading an in-flight ceremony reports "the copy on this
 // machine is damaged or incomplete", which is the false accusation that constant exists to prevent.
+// (True when written; `ReadMirror` has asked `digestRuleSkew` since /pending 725, and since ADR-080 a
+// record under the previous rule is checked BY that rule — so a bump is no longer unsafe, which is how
+// rule 5 changed what a reached page contributes. Per-call `seen` scope is unchanged by it.)
 func hashObject(xt *model.XRefTable, o types.Object, h hash.Hash, depth int, sc *streamMemo) {
 	hashObjectSeen(xt, o, h, depth, map[int]int{}, sc, 0)
 }
@@ -895,6 +1083,16 @@ func hashObjectSeen(xt *model.XRefTable, o types.Object, h hash.Hash, depth int,
 	}
 	if ir, ok := o.(types.IndirectRef); ok {
 		num = ir.ObjectNumber.Value()
+		// v5 (ADR-080, /pending 720): a PAGE reached from inside the walk is its position, never its
+		// dictionary. Expanded, an annotation's /P reached the page's /Contents stream DICTIONARY — /Length,
+		// /Filter — so a re-encode that changed no content moved the digest on 21 of 35 real documents, and
+		// through /Parent it walked the whole page tree from every such annotation. Everything the page's
+		// dictionary says is already hashed by the page loop, under its own position.
+		if pg, isPage := sc.pageOf(num); isPage {
+			hashChunk(h, []byte("#page"))
+			hashUint(h, uint64(pg))
+			return
+		}
 		if idx, met := seen[num]; met {
 			// Met already in this walk: record THAT it recurred and where it first appeared, so
 			// "the same object again" stays distinguishable from "a different object here" without
@@ -982,6 +1180,18 @@ type streamMemo struct {
 	body  map[int]decodedStream // object numbers reached twice or more, with their decode
 	spent int64
 	st    *digestStats
+	// pageAt is not part of the memo: it is v5's page identity (object number → 1-based position), carried
+	// here because this is the one per-call value every hash function already threads. Nil under v4.
+	pageAt map[int]int
+}
+
+// pageOf reports the position of page object `num`, under a rule that hashes pages by position.
+func (sc *streamMemo) pageOf(num int) (int, bool) {
+	if sc == nil || sc.pageAt == nil {
+		return 0, false
+	}
+	pg, ok := sc.pageAt[num]
+	return pg, ok
 }
 
 type decodedStream struct {
@@ -1077,6 +1287,12 @@ var resourceKinds = []string{"Font", "XObject"}
 // rather than the file.
 func hashPageResources(xt *model.XRefTable, page types.Dict, h hash.Hash, sc *streamMemo) {
 	res, _ := xt.DereferenceDict(page["Resources"])
+	hashResourceDict(xt, res, h, sc)
+}
+
+// hashResourceDict is hashPageResources over a resource dictionary already found — the page's own (v4) or
+// its effective, inherited one (v5).
+func hashResourceDict(xt *model.XRefTable, res types.Dict, h hash.Hash, sc *streamMemo) {
 	if res == nil {
 		hashChunk(h, []byte("#nores"))
 		return

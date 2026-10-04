@@ -45,7 +45,9 @@ func referenceContentDigest(pdf []byte) (string, error) {
 func referenceDigestBody(ctx *model.Context) (string, error) {
 	h := sha256.New()
 	hashChunk(h, []byte("nib-content-digest"))
-	hashUint(h, ContentDigestVersion)
+	// v4's body: the rule the one-pass walk and the memo were measured against. v5 reads its pages from the
+	// same walk and the same memo, so their equivalence is a property of the walk, not of the rule (ADR-080).
+	hashUint(h, legacyContentDigestVersion)
 	hashUint(h, uint64(ctx.PageCount))
 	for i := 1; i <= ctx.PageCount; i++ {
 		d, _, _, err := ctx.PageDict(i, false)
@@ -73,7 +75,7 @@ func referenceDigestBody(ctx *model.Context) (string, error) {
 }
 
 func reportDigest(pdf []byte) string {
-	d, err := ContentDigest(pdf)
+	d, err := ContentDigestAt(pdf, legacyContentDigestVersion)
 	if err != nil {
 		return flattenRowValue("ERROR:" + err.Error())
 	}

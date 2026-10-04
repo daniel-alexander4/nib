@@ -262,11 +262,13 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		if ir, e := pa.Ref, pa.Err; e == nil && ir != nil {
 			objNr = ir.ObjectNumber.Value()
 		}
-		// **pdfcpu's join, not `pdfread.PageContent`'s (ADR-056).** The checker reads as veraPDF does (ADR-052), and
-		// how veraPDF joins a divided `/Contents` is unmeasured; a join nib chose here could make it disagree with the
-		// oracle it is scored against. /pending 719. It is still read through pdfread's door, which bounds the join
-		// at `maxContentBytes` (`/pending 748`: one stream named six times ran this check 13.7 s at 3.2 GiB).
-		src, cerr := pdfread.PageContentAsPdfcpu(d.Ctx, page, p)
+		// **Through `pdfread.PageContent`'s token-boundary join (ADR-056), because that is veraPDF's** (/pending 719,
+		// ADR-080). The checker reads as veraPDF does (ADR-052), and measured, veraPDF separates the streams of a
+		// `/Contents` array: `["… re", "f"]` and `["… EMC % c", "0 0 1 1 re f"]` each fail 7.1 t3 there, where
+		// pdfcpu's bare join — which this read until then — fused them into a page drawing nothing untagged and
+		// passed (`TestTheCheckerJoinsADividedPageAsVeraPDFDoes`). The door also bounds the join at
+		// `maxContentBytes` (`/pending 748`: one stream named six times ran this check 13.7 s at 3.2 GiB).
+		src, cerr := pdfread.PageContent(d.Ctx, page, p)
 		// The error is asked BEFORE the length (`/pending 782`): a refusal returns no bytes, and asking the length
 		// first read a page whose content decodes past `maxContentBytes` as a page that draws nothing — NotApplicable.
 		// The optimize pass's own refusal had hidden it until the checker stopped running that pass's page step.

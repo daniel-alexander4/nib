@@ -44,9 +44,10 @@ func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error
 }
 
 // PageContentAsPdfcpu is `PageContent` joined as pdfcpu joins — the streams of a `/Contents` array appended
-// with nothing between them — and bounded as `PageContent` is. It is for the named exemptions from ADR-056's
-// join that must read pdfcpu's bytes (the checker, ADR-052: how veraPDF joins is unmeasured, /pending 719), so
-// that keeping pdfcpu's join does not also mean keeping its unbounded one.
+// with nothing between them — and bounded as `PageContent` is. Its one caller is `ContentDigest`'s rule 4
+// (ADR-080), which hashed pdfcpu's join and is kept to check the records written under it; keeping pdfcpu's join
+// there does not also mean keeping its unbounded one. (The checker read it until /pending 719 measured that
+// veraPDF separates a `/Contents` array's streams, as `PageContent` does.)
 func PageContentAsPdfcpu(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error) {
 	return pageContent(ctx, page, pageNr, false)
 }

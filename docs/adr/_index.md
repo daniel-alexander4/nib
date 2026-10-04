@@ -623,6 +623,13 @@ home today.
   every keeps-geometry rewrite is driven over flagged documents. That census found pdfcpu's stamp turning a turned page
   about the origin, so a page whose box does not start there left its box on OCR, bake, watermark and page numbers;
   `stampInPlace` is now the one door every pdfcpu stamp runs through, turning about the box's corner.
+- **[ADR-080 — a record is checked by the digest rule it names, and rule 5 covers what the reader sees](080-a-record-is-checked-by-the-digest-rule-it-names.md)**
+  — /pending 718, 719, 720, 578, 616; supersedes ADR-013's "a coverage change reads as tampering" and ADR-056/057's
+  exemption list in part. `ContentDigestVersion` 4 → 5, and rule 4 is still COMPUTED: every comparing site calls
+  `ceremony.DocumentHashFor`, under the record's signed `DigestVersion`, so a bump no longer halts a ceremony in
+  flight. Rule 5 joins at token boundaries, hashes a reached page as its position, reads effective (inherited)
+  geometry and resources, and covers `/OCProperties`, `/OpenAction`, `/AA`, `/Names /JavaScript`, `/UserUnit`. The
+  checker reads `pdfread.PageContent` because veraPDF separates an array's streams (measured).
 - **[ADR-082 — no reader of a PDF is handed to pdfcpu; its reader-taking `api` functions are restated in `pdfread`](082-no-reader-of-a-pdf-is-handed-to-pdfcpu.md)**
   — /pending 716, 717; supersedes ADR-055 decision 1 in part. `pdfread.Reader` handed pdfcpu a reader and the `api`
   function ran its own optimize pass unbudgeted (every one past 30 s on the 400-form chain). Each is restated over

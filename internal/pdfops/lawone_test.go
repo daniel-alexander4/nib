@@ -384,8 +384,8 @@ func noOpRewrite(t *testing.T, pdf []byte) (out []byte, rewritten, separated int
 
 // annotsReachAPage reports whether anything reachable from a page's `/Annots` — an annotation's `/P`, a link's
 // `/Dest`, an action's `/D` — references a page object. `ContentDigest` hashes `/Annots` by following references and
-// hashes a stream's DICTIONARY with its body, so such a document's digest covers its pages' content-stream encoding
-// (`/Length`, `/Filter`) as well as their content (/pending 720).
+// hashes a stream's DICTIONARY with its body, so under rule 4 such a document's digest covers its pages' content-stream
+// encoding (`/Length`, `/Filter`) as well as their content (/pending 720). Rule 5 hashes a reached page as its position.
 func annotsReachAPage(ctx *model.Context) bool {
 	pages := map[int]bool{}
 	for i := 1; i <= ctx.PageCount; i++ {
@@ -448,17 +448,18 @@ func annotsReachAPage(ctx *model.Context) bool {
 // **The stimulus is asserted first**: every document must have had pages rewritten AND its bytes must have moved,
 // or "the digest held" is a statement about a write that never happened.
 //
-// **And the digest is not only content** (/pending 720): where anything under `/Annots` references a page, the digest
-// reaches that page's content-stream DICTIONARY, whose `/Length` a re-encode moves. Measured at the slice: 21 of 35
-// real-producer documents, exactly those whose annotations reach a page. So the law is asserted where it lives — each
-// page's decoded content, re-read from the written document, is the bytes the walk wrote — and the digest is required
-// to hold on every document whose annotations reach no page and to MOVE on every one whose do, pinning 720's partition
-// so that closing it turns this red on purpose.
+// **Under rule 5 the digest holds on EVERY document** (ADR-080). Under rule 4 it did not, in two measured ways, and
+// the test still pins both against the legacy arm — that arm checks every v4 record for as long as v4 is readable,
+// so its known behaviour is pinned rather than forgotten:
 //
-// **A page the door had to separate is the other expected difference**: the digest hashes pdfcpu's bare join
-// (ADR-056's named exemption, /pending 718), so a fused page's digest moves when the repaired join is written back.
-// The generated corpus carries two such pages and the test requires their digests to MOVE — the exemption's cost,
-// pinned so that closing 718 turns this red on purpose.
+//   - /pending 720: where anything under `/Annots` references a page, v4 reaches that page's content-stream
+//     DICTIONARY, whose `/Length` a re-encode moves. Measured at the slice: 21 of 35 real-producer documents, exactly
+//     those whose annotations reach a page. v5 hashes a reached page as its position.
+//   - /pending 718: v4 hashes pdfcpu's bare join, so a fused page's digest moves when the repaired join is written
+//     back. The generated corpus carries two such pages. v5 hashes `pdfread.PageContent`'s join.
+//
+// The law itself is asserted where it lives too: each page's decoded content, re-read from the written document, is
+// the bytes the walk wrote.
 func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 	gen := lawOneCorpus{name: "generated", docs: runCorpus(t)}
 	for _, s := range []testpdf.JoinShape{testpdf.JoinRegular, testpdf.JoinComment, testpdf.JoinSafe} {
@@ -481,6 +482,10 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 		docs, pages, moved, held, encoding := 0, 0, 0, 0, 0
 		for _, doc := range corp.docs {
 			before, err := ContentDigest(doc.pdf)
+			before4, err4 := ContentDigestAt(doc.pdf, legacyContentDigestVersion)
+			if err == nil {
+				err = err4
+			}
 			if err != nil {
 				t.Logf("%s / %s: no digest (%v)", corp.name, doc.name, err)
 				continue
@@ -518,42 +523,53 @@ func TestANoOpWalkKeepsTheDigest(t *testing.T) {
 				continue
 			}
 			after, err := ContentDigest(out)
+			after4, err4 := ContentDigestAt(out, legacyContentDigestVersion)
+			if err == nil {
+				err = err4
+			}
 			if err != nil {
 				t.Errorf("%s / %s: the rewritten document has no digest: %v", corp.name, doc.name, err)
 				continue
 			}
 			docs++
 			pages += rewritten
+			// Rule 5: the law, on every document.
+			if after != before {
+				t.Errorf("%s / %s: a no-op walk of %d page(s) moved ContentDigest %s → %s (rule %d; annotations reach "+
+					"a page: %v; fused joins repaired: %d) — /pending 718 and 720 are closed by this rule",
+					corp.name, doc.name, rewritten, before, after, ContentDigestVersion, reaches, separated)
+			} else {
+				held++
+			}
+			// Rule 4: the partition it was measured to have, which the legacy arm must keep.
 			switch {
-			case separated > 0 && after == before:
-				t.Errorf("%s / %s: %d fused page(s) were repaired and the digest did not move — /pending 718's "+
-					"premise is gone; close it and drop this arm", corp.name, doc.name, separated)
+			case separated > 0 && after4 == before4:
+				t.Errorf("%s / %s: rule 4 held over %d repaired fused page(s) — the legacy arm no longer hashes "+
+					"pdfcpu's bare join, so it is not rule 4", corp.name, doc.name, separated)
 			case separated > 0:
 				moved++
-			case reaches && after == before:
-				t.Errorf("%s / %s: its annotations reach a page and the digest held — /pending 720's premise is "+
-					"gone; close it and drop this arm", corp.name, doc.name)
+			case reaches && after4 == before4:
+				t.Errorf("%s / %s: rule 4 held though its annotations reach a page — the legacy arm no longer "+
+					"expands a reached page, so it is not rule 4", corp.name, doc.name)
 			case reaches:
 				encoding++
-			case after != before:
-				t.Errorf("%s / %s: a no-op walk of %d page(s) moved ContentDigest %s → %s, and no annotation reaches "+
-					"a page", corp.name, doc.name, rewritten, before, after)
-			default:
-				held++
+			case after4 != before4:
+				t.Errorf("%s / %s: a no-op walk moved rule 4's digest %s → %s, and no annotation reaches a page",
+					corp.name, doc.name, before4, after4)
 			}
 		}
 		if docs == 0 {
 			t.Errorf("%s: not one document was rewritten and digested — the corpus exercised nothing", corp.name)
 		}
 		if corp.name == gen.name && moved != 2 {
-			t.Errorf("generated: %d document(s) with a repaired join moved their digest, want the 2 fused fixtures", moved)
+			t.Errorf("generated: %d document(s) with a repaired join moved rule 4's digest, want the 2 fused fixtures", moved)
 		}
 		if held == 0 {
-			t.Errorf("%s: no document held its digest — the half of the law the digest can see was never asserted", corp.name)
+			t.Errorf("%s: no document held its digest — the law was never asserted", corp.name)
 		}
-		t.Logf("%s: %d documents, %d pages rewritten through setPageContent; digest held on %d, moved on %d whose "+
-			"annotations reach a page (/pending 720), on %d with a repaired join (/pending 718)",
-			corp.name, docs, pages, held, encoding, moved)
+		t.Logf("%s: %d documents, %d pages rewritten through setPageContent; rule %d held on %d; rule 4 moved on %d "+
+			"whose annotations reach a page (/pending 720) and on %d with a repaired join (/pending 718)",
+			corp.name, docs, pages, ContentDigestVersion, held, encoding, moved)
 	}
 	if len(absent) > 0 {
 		t.Logf("NOTE (a narrower population, not a pass over it): %s", strings.Join(absent, "; "))
