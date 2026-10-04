@@ -199,7 +199,10 @@ func inspectTags(pdf []byte) tagState {
 		live[n] = true
 		// `ErrNoContent` from an absent `/Contents` is the inserted-blank-page case and is not a
 		// gap: a page with nothing on it has nothing to tag.
-		if b, cerr := pdfread.PageContent(ctx, d, p); cerr == nil && len(b) > 0 {
+		// Only that error (/pending 727): a page whose content could not be READ is not known to be
+		// blank, so it counts as content, and a tree that does not describe it is `undescribed` — the
+		// unknown reads as the gap it may be, never as the blank page it may not be.
+		if b, cerr := pdfread.PageContent(ctx, d, p); (cerr == nil && len(b) > 0) || (cerr != nil && cerr != model.ErrNoContent) {
 			hasContent[n] = true
 		}
 		if a, aerr := ctx.DereferenceArray(d["Annots"]); aerr == nil {

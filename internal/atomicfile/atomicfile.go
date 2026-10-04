@@ -359,7 +359,10 @@ func WriteDurable(path string, data []byte, perm os.FileMode) error {
 	}
 	// Persist the directory entry so the rename itself survives a crash. Best-effort: the
 	// rename has already succeeded, and a caller that cannot open its own directory has a
-	// bigger problem than this sync.
+	// bigger problem than this sync. **Its error is dropped on purpose** (/pending 727 asked):
+	// returning it would report a failed write for bytes that are already in place under the
+	// final name — ADR-073's kept copy would refuse a signing whose copy exists — and Windows
+	// cannot flush a directory handle at all, so every durable write there would fail.
 	d, err := os.Open(dir)
 	if err != nil {
 		return nil

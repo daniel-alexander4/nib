@@ -166,36 +166,37 @@ test('nothing bypasses apiFetch to reach a document route', () => {
 
   // Allowed, each for a stated reason — an unexplained entry is how a real bypass
   // gets parked here and forgotten.
+  //
+  // Re-stated against ADR-054 (/pending 727). Every reason below used to say "there is no CSRF
+  // token before the vault unlocks" or "requirePublicLoopback guards it"; since ADR-054 the page
+  // holds its token from launch, and the four /api/ssh/* routes are `requireSession` only. The
+  // update check and quit had no surviving reason and now go through apiFetch.
   const allowed = new Set([
-    // Pre-unlock and vault-scoped: no document exists yet, or the route is not
-    // about one. These cannot carry a document id and must not.
-    // /api/ssh/repoint is the key-missing recovery (v1.108.14): it runs BEFORE the vault
-    // opens, so there is no CSRF token for apiFetch to attach and no document to name.
-    // Guarded server-side by requirePublicLoopback, like its three neighbours here.
-    '/api/status', '/api/ssh/unlock', '/api/ssh/enroll', '/api/ssh/migrate', '/api/ssh/repoint',
-    '/api/update/check', '/api/vault/export', '/api/identity',
+    // Raw fetch, carrying the token through authed(): these answer a WRONG CREDENTIAL with 401
+    // (`handleUnlock`, `handleMigrate`, `handleRepoint`), and apiFetch reads every 401 as "the
+    // vault locked" — it throws and repaints the lock screen over the error the user needs to see.
+    // They run on the lock screen, where no document is open to name. (enroll shares migrate's
+    // ternary-built URL, `const url = …; fetch(url, …)`.)
+    '/api/ssh/unlock', '/api/ssh/enroll', '/api/ssh/migrate', '/api/ssh/repoint',
+    // refreshStatus's raw fetch: apiFetch's 401 path calls refreshStatus, so routing it there
+    // would recurse. checkSession reaches the same route through apiFetch.
+    '/api/status',
+    // Not bypasses: passed as a VARIABLE to downloadAuthed, which calls apiFetch(url, unpinned),
+    // so the literal is not apiFetch's first argument and this scan cannot see through it.
+    '/api/vault/export', '/api/identity',
     // The page's credentials (ADR-053): the launch-key trade runs BEFORE there is a token for
     // apiFetch to attach, and it is about the process, never a document.
     '/api/launch',
     // pdf.js issues these fetches itself, so the id rides in the URL rather than a
-    // header — D15, decided rather than overlooked.
+    // header — D15, decided rather than overlooked; the token rides as withAuth's `auth` query.
     '/api/pdf', '/api/session/pending-pdf',
-    // An <img> src, not a fetch, and the image library is not document-scoped.
+    // An <img> src, not a fetch, and the image library is not document-scoped (token via withAuth).
     '/api/images/',
-    // The window's own liveness stream (P01.S01). Not a document route: it says "a
-    // window exists", which is true of the process and of no document — a window with
-    // nothing open still holds it, and so does one sitting on the unlock screen, which
-    // is why it is public-loopback (D3). It also *could not* be pinned if we wanted it
-    // to be: EventSource cannot set request headers at all, so neither X-Nib-Doc nor a
-    // CSRF token can ride on it. Structural, like the pdf.js pair above, rather than an
-    // omission.
+    // The window's own liveness stream (P01.S01). Not a document route: it says "a window
+    // exists", which is true of the process and of no document. EventSource cannot set request
+    // headers, so X-Nib-Doc cannot ride on it; the token does, as withAuth's `auth` query, which
+    // ADR-054 accepts on a GET.
     '/api/window',
-    // Quit (P01.S06). Not a document route — it ends the PROCESS, which is true of no document —
-    // and it deliberately cannot be pinned or CSRF'd: it is `requirePublicLoopback` for D3's
-    // reason reaching one route further, that a locked Nib is still a Nib its user wants to quit,
-    // and there IS no CSRF token before the vault unlocks. Structural, like the window stream
-    // above, rather than an omission.
-    '/api/quit',
   ]);
 
   // The stimulus: an empty result would read as "no bypasses" forever, including

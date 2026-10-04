@@ -20,7 +20,7 @@ import (
 func (s *Server) handleTimestamp(w http.ResponseWriter, r *http.Request) {
 	// **Refused BEFORE the body is read**, so a switched-off feature costs no upload: the refusal
 	// is about this machine's settings and nothing in the request can change it.
-	if refuseIfOff(w, s.unlockedVault(), featTimestamp) {
+	if refuseIfOff(w, vaultFrom(r), featTimestamp) { // the request's pinned vault (/pending 500, 727)
 		return
 	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
@@ -56,7 +56,7 @@ var timestampVerifyBudget = 2 * time.Minute
 func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 	// Verifying reaches the public block explorers, so it is the same feature and the same door —
 	// gating only the stamping half would leave the switch half-true.
-	if refuseIfOff(w, s.unlockedVault(), featTimestamp) {
+	if refuseIfOff(w, vaultFrom(r), featTimestamp) { // the request's pinned vault (/pending 500, 727)
 		return
 	}
 	cleanup, ok := parseMultipart(w, r, maxPDFBytes)
@@ -80,6 +80,12 @@ func (s *Server) handleTimestampVerify(w http.ResponseWriter, r *http.Request) {
 	if custom := strings.TrimSpace(r.FormValue("explorer")); custom != "" {
 		if u, err := url.Parse(custom); err != nil || requireHTTPScheme(u) != nil {
 			httpError(w, http.StatusBadRequest, "block explorer must be an http(s) URL")
+			return
+		} else if strings.ContainsAny(custom, "?#") {
+			// `ots.NewEsplora` APPENDS `/block-height/N` to the base, so a `?` or `#` in it turns
+			// that fixed path into a query or a fragment and every lookup asks the wrong thing
+			// (/pending 727). The base is an API root; say so rather than send it.
+			httpError(w, http.StatusBadRequest, "block explorer must be the API's base URL, with no ? or # part")
 			return
 		}
 		explorers = []string{custom}

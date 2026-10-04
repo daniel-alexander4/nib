@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"mime/multipart"
 	"net/http"
@@ -80,6 +81,7 @@ func TestTimestampVerifyEndsWithinItsBudget(t *testing.T) {
 	mw.WriteField("explorer", explorer.URL)
 	mw.Close()
 	req := httptest.NewRequest(http.MethodPost, "/api/timestamp/verify", &body)
+	req = req.WithContext(context.WithValue(req.Context(), vaultCtxKey{}, v)) // requireUnlocked's pin
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
 

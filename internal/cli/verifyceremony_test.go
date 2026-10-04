@@ -32,6 +32,11 @@ import (
 // The unit tests would have passed against it. Live verification is what caught it, which is the
 // step's whole argument.
 
+// convenedNames are the roster labels `convenedFixture` writes; a test that needs a hostile label
+// swaps one in and restores it (the package's tests do not run in parallel).
+var convenedNames = []string{"Alice Tenant", "Bob Landlord", "Carol Guarantor", "Dan Witness",
+	"Erin Trustee", "Frank Director", "Grace Attorney", "Heidi Executor", "Ivan Surveyor"}
+
 // convenedFixture writes a real convened ceremony of n parties with `signedBy` of them signing.
 func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 	t.Helper()
@@ -40,8 +45,7 @@ func convenedFixture(t *testing.T, dir string, n, signedBy int) string {
 		cert, key []byte
 		fp        string
 	}
-	names := []string{"Alice Tenant", "Bob Landlord", "Carol Guarantor", "Dan Witness",
-		"Erin Trustee", "Frank Director", "Grace Attorney", "Heidi Executor", "Ivan Surveyor"}
+	names := convenedNames
 	if n > len(names) {
 		t.Fatalf("fixture supports at most %d parties", len(names))
 	}

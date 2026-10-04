@@ -77,7 +77,14 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// alive indefinitely by poking this route. Counted apart from the window cause because D4 says
 	// so and because the two fail differently: a window cancel is the ordinary reload, this one is
 	// a launch that would otherwise be lost.
-	s.cancelIdleExit(idleExitCauseHandoff)
+	//
+	// **And a process that has already decided to exit refuses** (/pending 727): it would open the
+	// document and then tear down under it. A non-200 sends the launch on to serve the file itself
+	// (`handedOff` in cmd/nib), which is the one outcome where the document is not lost.
+	if !s.keepAliveForHandoff() {
+		httpError(w, http.StatusServiceUnavailable, "this Nib is exiting")
+		return
+	}
 
 	var req handoffRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {

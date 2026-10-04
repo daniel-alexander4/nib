@@ -743,6 +743,7 @@ function applyStatus(st) {
 
 async function refreshStatus() {
   try {
+    // Raw, not apiFetch: apiFetch answers a 401 by calling THIS, so routing it there would recurse.
     const res = await fetch('/api/status', authed());
     if (res.status === 403) {
       // Only the session's own refusal means the connection is gone (#6); any other 403 is said as it is.
@@ -764,6 +765,7 @@ els.authForm.addEventListener('submit', async (e) => {
   els.authError.textContent = '';
   // Passphrase unlock: the enrolled key is encrypted; send only the passphrase.
   if (authState === 'key-locked') {
+    // Raw, not apiFetch: a wrong passphrase is a 401, which apiFetch reads as "the vault locked".
     const res = await fetch('/api/ssh/unlock', authed({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ passphrase: els.authPw.value }),
@@ -927,7 +929,7 @@ async function runUpdateCheck(auto) {
   updateChecking = true;
   let d;
   try {
-    const res = await fetch('/api/update/check', authed());
+    const res = await apiFetch('/api/update/check', { unpinned: true });
     if (!res.ok) throw new Error();
     d = await res.json();
   } catch {
@@ -14601,7 +14603,7 @@ async function quitNib() {
   if (lose.length && !confirm(`Quit Nib? ${lose.join(', and ')}. Quitting ends ${lose.length > 1 ? 'them' : 'it'}.`)) {
     return;
   }
-  try { await fetch('/api/quit', authed({ method: 'POST' })); } catch { /* the process is going; a dropped response is the expected shape */ }
+  try { await apiFetch('/api/quit', { method: 'POST', unpinned: true }); } catch { /* the process is going; a dropped response is the expected shape */ }
 }
 els.quitBtn.onclick = () => quitNib();
 

@@ -196,6 +196,12 @@ const (
 func (s *Server) RequestExit(cause string) {
 	s.idle.mu.Lock()
 	defer s.idle.mu.Unlock()
+	s.requestExitLocked(cause)
+}
+
+// requestExitLocked is RequestExit's body, for a caller that already holds `idle.mu` and must
+// decide AND record the exit in one hold (`idleGraceElapsed`). Same door, not a second one.
+func (s *Server) requestExitLocked(cause string) {
 	if s.idle.exited {
 		return
 	}
@@ -287,9 +293,12 @@ func (s *Server) idleGraceElapsed() {
 		log.Printf("%s (%d open)", idleExitStoodDownMsg, live)
 		return
 	}
-	s.idle.mu.Unlock()
+	// **Decided and recorded under ONE hold** (/pending 727). Releasing `idle.mu` before
+	// RequestExit left a gap in which a hand-off found no grace to cancel and no exit recorded,
+	// answered "opened" — and the process then exited with the handed-off document in it.
 	log.Printf("%s", idleExitFiringMsg)
-	s.RequestExit(exitCauseLastWindow)
+	s.requestExitLocked(exitCauseLastWindow)
+	s.idle.mu.Unlock()
 }
 
 // idleExitStoodDownMsg is the line a grace that found a window at its end leaves behind — the only
@@ -313,6 +322,22 @@ func (s *Server) windowArrived() int64 {
 	s.idle.mu.Unlock()
 	logIdleCancel(t, at, idleExitCauseWindow)
 	return n
+}
+
+// keepAliveForHandoff is the hand-off's cancel: it stops a running grace exactly as
+// cancelIdleExit does, and reports false when the process has ALREADY decided to exit — read under
+// the same hold that records that decision, so no hand-off can slip between the two (/pending 727).
+// A hand-off it refuses is answered with an error, and the launch then serves the document itself.
+func (s *Server) keepAliveForHandoff() bool {
+	s.idle.mu.Lock()
+	if s.idle.exited {
+		s.idle.mu.Unlock()
+		return false
+	}
+	t, at := s.stopIdleExitLocked(idleExitCauseHandoff)
+	s.idle.mu.Unlock()
+	logIdleCancel(t, at, idleExitCauseHandoff)
+	return true
 }
 
 // cancelIdleExit stops a running grace and counts WHY. Returns whether there was one to stop, so an

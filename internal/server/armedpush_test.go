@@ -390,7 +390,10 @@ func TestOnlyRequestExitClosesTheExitSignal(t *testing.T) {
 		t.Fatal("setup: the scan did not find RequestExit, so it is not reading this package " +
 			"and an empty closer list proves nothing")
 	}
-	if len(closers) != 1 || !strings.HasPrefix(closers[0], "RequestExit ") {
+	// The one closer is `requestExitLocked`, RequestExit's body (/pending 727): the idle grace must
+	// decide AND record its exit under one hold of `idle.mu`, so the body is reachable with the lock
+	// held. Still one writer of the signal — this guard's question — and RequestExit routes through it.
+	if len(closers) != 1 || !strings.HasPrefix(closers[0], "requestExitLocked ") {
 		t.Fatalf("the exit signal must be closed by RequestExit and nowhere else — a second "+
 			"closer is a second exit path in everything but name, and D6's rule is that every "+
 			"exit path runs the same teardown in the same order (ADR-009: a rule gets one door, "+

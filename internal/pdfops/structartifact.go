@@ -120,6 +120,17 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 		}
 		edit := contentstream.NewEdit(src)
 		found := map[int]bool{}
+		// Every sequence another element owns, by where it opens, so "does one open inside mine" is a
+		// binary search and not a scan of the page (/pending 727: the scan was O(owned × all) per page —
+		// measured 1.1 s at 4,000 sequences and 10.9 s at 16,000, half of them owned).
+		type opening struct{ start, mcid int }
+		var others []opening
+		for _, other := range pr.sequences {
+			if !other.inForm && !mine[other.mcid] {
+				others = append(others, opening{other.opener.start, other.mcid})
+			}
+		}
+		sort.Slice(others, func(i, j int) bool { return others[i].start < others[j].start })
 		for _, s := range pr.sequences {
 			if !mine[s.mcid] {
 				continue
@@ -127,13 +138,10 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 			if s.inForm || s.drawsForm {
 				return fmt.Errorf("%w (page %d, /MCID %d)", errCommitInForm, pg, s.mcid)
 			}
-			for _, other := range pr.sequences {
-				if other.inForm || mine[other.mcid] {
-					continue
-				}
-				if other.opener.start > s.opener.start && (s.close == (opSpan{}) || other.opener.start < s.close.start) {
-					return fmt.Errorf("%w: element %d's content on page %d encloses content another element owns (/MCID %d)", ErrTagsReview, e.objNr, pg, other.mcid)
-				}
+			// The first opening strictly after mine; it is inside me if I never close or close after it.
+			k := sort.Search(len(others), func(i int) bool { return others[i].start > s.opener.start })
+			if k < len(others) && (s.close == (opSpan{}) || others[k].start < s.close.start) {
+				return fmt.Errorf("%w: element %d's content on page %d encloses content another element owns (/MCID %d)", ErrTagsReview, e.objNr, pg, others[k].mcid)
 			}
 			edit.Replace(s.opener.start, s.opener.end, []byte("/Artifact BMC"))
 			found[s.mcid] = true

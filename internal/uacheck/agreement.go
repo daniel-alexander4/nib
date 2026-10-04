@@ -45,8 +45,11 @@ func AgreedClauses() int {
 // It claims only what was measured: the same verdict wherever a document exercises the rule. It does not claim every rule
 // was exercised by every corpus — seven are settled on no real-producer file (the P08 phase-close review, R1-3).
 func Agreement() string {
+	// "wherever nib reached one" (/pending 727): every harness skips a CannotCheck rather than scoring it
+	// (`veracorpus_test`, `producers_test`), so a document nib refused is not one it agreed on, and the sentence must
+	// not read as though it were.
 	s := fmt.Sprintf("nib agrees with veraPDF on %d of the %d rules it checks — the same verdict on every document that "+
-		"exercises the rule in veraPDF's own PDF/UA-1 test corpus, in nib's generated test documents and in documents from "+
+		"exercises the rule, wherever nib reached one, in veraPDF's own PDF/UA-1 test corpus, in nib's generated test documents and in documents from "+
 		"real producers; it is known to disagree on %d (%s)", AgreedClauses(), len(Clauses()),
 		len(knownDisagreements), clauseList(knownDisagreements))
 	if len(unexercised) > 0 {
