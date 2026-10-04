@@ -6,11 +6,17 @@
 // the session — a bad origin, a switched-off feature — must stay the caller's (R7-6).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './boot.mjs';
+import { boot, BOOT_ROUTES } from './boot.mjs';
 
 let answer = 'ok';
+let nibGone = false;
 const h = await boot({
   routes: {
+    // A Nib that has quit answers nothing: fetch rejects with a TypeError, as a browser's does.
+    '/api/status': () => {
+      if (nibGone) throw new TypeError('Failed to fetch');
+      return BOOT_ROUTES['/api/status'];
+    },
     '/api/settings': () => (answer === 'ok' ? {}
       : new Response(JSON.stringify({ error: answer }), { status: 403 })),
   },
@@ -37,6 +43,26 @@ test('a 403 that is not the session leaves the screen down', async () => {
   assert.ok(h.calls.some((c) => c.url.endsWith('/api/settings') && c.method === 'POST'), 'no write was made');
   assert.equal(h.document.getElementById('launchOverlay').hidden, true,
     'a refusal that belongs to the caller put up "Open Nib again"');
+});
+
+// /pending 731 (7): the window stream's error asks `checkSession`, which swallowed a fetch that got
+// no answer at all — so a window whose Nib had quit or crashed never said so. A drop Nib DOES answer
+// after (a reconnect blip) must leave the screen down; that half is the control.
+test('a window stream drop with Nib still answering leaves the screen down', async () => {
+  assert.ok(h.failWindowStream(), 'setup: the page set no onerror on its window stream');
+  await h.settle();
+  assert.equal(h.document.getElementById('launchOverlay').hidden, true,
+    'a stream blip Nib answered after put up "Open Nib again"');
+});
+
+test('a window stream drop with Nib gone says Nib could not be reached', async () => {
+  nibGone = true;
+  assert.ok(h.failWindowStream(), 'setup: the page set no onerror on its window stream');
+  await h.settle();
+  nibGone = false;
+  assert.equal(h.document.getElementById('launchOverlay').hidden, false,
+    'the stream dropped and nothing answered, and the window still looks usable');
+  assert.match(h.document.getElementById('launchText').textContent, /Could not reach Nib/);
 });
 
 test('a 403 "no session" puts up the screen, with the words for a lost connection', async () => {

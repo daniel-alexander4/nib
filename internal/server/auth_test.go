@@ -3,12 +3,15 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"nib/internal/vault"
 )
 
 func getStatus(t *testing.T, c *http.Client, baseURL string) statusResponse {
@@ -353,5 +356,52 @@ func TestASubResourceGetCannotReachTheVault(t *testing.T) {
 				t.Errorf("originIsLoopback = %v, want %v — %s", got, c.wantPass, c.why)
 			}
 		})
+	}
+}
+
+// TestAnImportRetiresTheVaultItReplaced — /pending 731 (1).
+//
+// `handleVaultImport` wrote the backup over `vault.nib` and dropped the server's pointer, and nothing
+// retired the old `*vault.Vault`. A request that took `vaultFrom(r)` before the import, a delivery
+// round or a close-out sweep still held it, and its next save re-encrypted the OLD contents over the
+// import: the running process showed the import and the next launch opened the vault the user had
+// replaced. The stimulus is exactly that holder — the vault value from before the import — saving
+// after it.
+func TestAnImportRetiresTheVaultItReplaced(t *testing.T) {
+	s, old := unlockedServer(t)
+	backup, err := os.ReadFile(vault.Path(s.configDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The live vault moves on from the backup, so a write-back of it is distinguishable on disk.
+	if err := old.AddRecent("/before-the-import.pdf"); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	s.handleVaultImport(rr, httptest.NewRequest(http.MethodPost, "/api/vault/import", bytes.NewReader(backup)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("import = %d %s, want 200", rr.Code, rr.Body.String())
+	}
+	if s.unlockedVault() == old {
+		t.Fatal("setup: the import left the replaced vault installed, so nothing below is the holder case")
+	}
+
+	// The holder saves after the import.
+	if err := old.AddRecent("/after-the-import.pdf"); !errors.Is(err, vault.ErrReplaced) {
+		t.Errorf("a save through the vault the import replaced = %v, want vault.ErrReplaced", err)
+	}
+	onDisk, err := os.ReadFile(vault.Path(s.configDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, backup) {
+		t.Error("the file on disk is no longer the imported backup: a holder of the replaced vault " +
+			"wrote it back, so the next launch opens the vault the user replaced")
+	}
+	for _, p := range s.unlockedVault().Recent() {
+		if p == "/before-the-import.pdf" || p == "/after-the-import.pdf" {
+			t.Errorf("the vault open after the import carries %q, which only the replaced vault held", p)
+		}
 	}
 }

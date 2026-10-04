@@ -23,7 +23,7 @@
 //   2. A BACKGROUNDED page held past the ~5-minute automatic threshold, which is the state a
 //      minimised window actually reaches.
 import { chromium } from 'playwright-core';
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -46,11 +46,13 @@ const opens = () => { const m = [...logText().matchAll(/window (connected|gone) 
 
 // Up means "answers at all": /api/status requires the token (ADR-054), so an up Nib answers it 403.
 for (let i = 0; i < 80; i++) { try { await fetch(`${BASE}/api/status`); break; } catch {} await sleep(250); }
-// The window is opened through the launch key the headless Nib logs (build/launchkey.sh reads the same
-// line), because a page without it shows "Open Nib again" and opens no stream — the thing measured
-// here (the P08 phase-close review, R8-9).
+// The window is opened through the launch key the headless Nib logs, because a page without it shows
+// "Open Nib again" and opens no stream — the thing measured here (the P08 phase-close review, R8-9).
+// Read through build/launchkey.sh's `launch_key`, the ONE reader of that line (ADR-009): this file
+// carried its own copy of the regex, so a rewording of the log would have broken it separately
+// (/pending 731). `launch_key` does its own retrying.
 let key = '';
-for (let i = 0; i < 40 && !key; i++) { key = (logText().match(/open Nib at [^#\s]*#k=([A-Za-z0-9_-]+)/) || [])[1] || ''; if (!key) await sleep(100); }
+try { key = execFileSync('bash', ['-c', '. build/launchkey.sh && launch_key "$1"', 'bash', log], { encoding: 'utf8' }).trim(); } catch {}
 if (!key) { console.log('SETUP FAILED — nib logged no launch key'); process.exit(2); }
 
 const browser = await chromium.launch({ executablePath: BROWSER, headless: true });

@@ -265,3 +265,49 @@ func TestTheNextAnswerStillSaysComplete(t *testing.T) {
 		t.Errorf("the next answer for a finished document is %q (%s), want \"complete\"", got.State, got.Reason)
 	}
 }
+
+// TestAStopTellsThePartiesWhenThePageGoesAway — /pending 731 (3).
+//
+// Stop attests the end state and then runs the delivery round inline, on the request's context, so
+// a reload or a dropped connection mid-round cancelled every remaining leg: the stop was written,
+// the parties were never told, and pressing Stop again answers "already ended". The stimulus is a
+// request whose context is already cancelled when the round starts — the round's loop guard then
+// skips every party with "the request that started this round ended", which is the observable. The
+// party here has no stored secret, so a round that DOES walk it fails at the invitation instead,
+// quickly and for a reason that names the party, not the request.
+func TestAStopTellsThePartiesWhenThePageGoesAway(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, v := unlockedServer(t)
+	rec, unsigned, _ := finishedCeremony(t, v)
+	if _, err := ceremony.WriteMirror(defaultOutputDir(), rec, unsigned); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"ceremony": rec.ID})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the page went away
+	req := httptest.NewRequest(http.MethodPost, "/api/ceremony/stop", strings.NewReader(string(body))).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", s.csrf)
+	rr := httptest.NewRecorder()
+	s.requireUnlocked(s.handleCeremonyStop)(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stop answered %d %s, want 200", rr.Code, rr.Body.String())
+	}
+	if got := terminationState(t, rec); got != ceremony.StateStopped {
+		t.Fatalf("setup: the stop attested %q, want %q", got, ceremony.StateStopped)
+	}
+	var resp ceremonyStopResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Parties) == 0 {
+		t.Fatal("setup: the round walked nobody, so nothing below is about a leg")
+	}
+	for _, p := range resp.Parties {
+		if strings.Contains(p.Reason, "the request that started this round ended") {
+			t.Errorf("party %s was skipped because the page went away (%q). The stop is attested "+
+				"and write-once, so nothing will ever tell this party — pressing Stop again is "+
+				"refused as already ended", p.Fingerprint, p.Reason)
+		}
+	}
+}

@@ -322,9 +322,14 @@ async function downloadAuthed(url, fallbackName) {
 // checkSession asks whether this page's token still works, after a load the browser made by itself
 // failed — pdf.js, an <img>, the window stream — since those never pass through apiFetch and a 403
 // "no session" there would otherwise read as "could not render the document" (#6). apiFetch raises
-// the screen on the answer; nothing else is needed.
+// the screen on an ANSWER. **No answer at all is this function's to say (/pending 731)**: fetch
+// rejects with a TypeError when nothing is listening, apiFetch never sees a status, and this caught
+// it silently — so a window whose Nib had quit or crashed sat there looking usable, its stream's
+// every reconnect swallowed here. Any other throw is apiFetch's, and it has already spoken.
 async function checkSession() {
-  try { await apiFetch('/api/status', { unpinned: true }); } catch { /* apiFetch said what there is to say */ }
+  try { await apiFetch('/api/status', { unpinned: true }); } catch (e) {
+    if (e instanceof TypeError) showLaunchOverlay('unreachable');
+  }
 }
 let authState = 'setup'; // setup | migrate | key-missing | key-locked | vault-unreadable | ready
 

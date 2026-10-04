@@ -494,7 +494,9 @@ func publishLoop(ctx context.Context, first, every time.Duration, publish func(c
 //   - **The delivery round passes the request's context.** Nobody is waiting: the round is
 //     synchronous under the request, its result is a response the disconnected client will never
 //     read, and every party it did not reach is reached by the re-run, which is what `wasDelivered`
-//     exists for.
+//     exists for. **Except Stop's inline round** (`/pending 731`), which detaches: the stop is
+//     already attested by then and pressing Stop again is refused, so there is no re-run on the
+//     button the user pressed — `handleCeremonyStop` says why at the call.
 //   - **A ceremony HOP passes `context.Background()`, unchanged.** A browser tab closing must not
 //     abandon a hop mid-flight, possibly after the far party has consented and signed. That party
 //     keeps its contribution and the re-delivery window, but "the user closed a tab" is not
