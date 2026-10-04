@@ -302,7 +302,7 @@ func TestVerifyContractIsTrue(t *testing.T) {
 		// an edit that does not HAVE to happen is an edit that does not happen. So the
 		// count is bounded on both sides now. It still fails when a row disappears, and it
 		// fails when the set outgrows it, naming the number to write.
-		const recorded = 528
+		const recorded = 548
 		if len(rows) < recorded {
 			t.Errorf("test/redproofs holds %d replayable row(s), want at least %d; "+
 				"build/redproof.sh reports no error on an empty directory, so a row that "+
@@ -1261,6 +1261,71 @@ func TestEveryReplayableLedgerRowNamesAFileThatExists(t *testing.T) {
 			replayable)
 	}
 	_ = dead
+}
+
+// TestEveryReplayableRowIsNamedInTheLedger — the other direction (/pending 637, 700).
+//
+// The guard above asks whether every name the ledger gives has a file. Nothing asked whether every
+// file has a name in the ledger, and fifty-five rows were recorded as a `.sh` + `.patch` pair with
+// no mention in `docs/red-proofs.md` at all — a reader of the ledger could not know they existed, and
+// the tests they prove were listed as unrecorded in the backlog. A name counts when it appears as a
+// backtick token anywhere in the file, which is how every table and prose row writes one.
+func TestEveryReplayableRowIsNamedInTheLedger(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("docs", "red-proofs.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := filepath.Glob(filepath.Join("test", "redproofs", "*.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) < 100 {
+		t.Fatalf("setup: only %d replayable row(s) found — the glob is not reading test/redproofs", len(rows))
+	}
+	for _, r := range rows {
+		name := strings.TrimSuffix(filepath.Base(r), ".sh")
+		if !bytes.Contains(body, []byte("`"+name+"`")) {
+			t.Errorf("test/redproofs/%s.sh is a replayable row that docs/red-proofs.md never names — "+
+				"add a row naming `%s` (the defect, the check, what it said), or a reader of the ledger "+
+				"cannot know the proof exists", name, name)
+		}
+	}
+}
+
+// TestTheLedgerStatesNoCurrentReplayCount — /pending 651.
+//
+// The ledger's preamble said "Nineteen rows are replayable" and "the set is now 117" while the
+// directory held 487, in the paragraph that argues a count in prose beside a growing set is the
+// statement nobody updates. The count lives in `const recorded` above; the preamble (everything before
+// the first `---`) may describe the set but never number it. A sentence that says "replayable" and
+// carries a number — digits, or a number written out — is refused.
+func TestTheLedgerStatesNoCurrentReplayCount(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("docs", "red-proofs.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre, _, ok := strings.Cut(string(body), "\n---\n")
+	if !ok || !strings.Contains(pre, "redproof.sh") {
+		t.Fatal("setup: docs/red-proofs.md has no preamble ending in `---` that describes the replay set")
+	}
+	number := regexp.MustCompile(`(?i)\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|` +
+		`thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|` +
+		`seventy|eighty|ninety|hundred)\b`)
+	sentences := regexp.MustCompile(`[.!?]\s+`).Split(strings.Join(strings.Fields(pre), " "), -1)
+	var checked int
+	for _, s := range sentences {
+		if !strings.Contains(strings.ToLower(s), "replayable") {
+			continue
+		}
+		checked++
+		if n := number.FindString(s); n != "" {
+			t.Errorf("docs/red-proofs.md's preamble numbers the replay set (%q in %q) — the count is "+
+				"`const recorded` in verify_test.go; ask ./build/redproof.sh rather than restate it", n, s)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("setup: no preamble sentence mentions the replayable rows, so this guard read nothing")
+	}
 }
 
 // TestPackageShipsTheLicenceAndNotices — MPL-2.0 §3.2 for a `.deb`-only recipient.

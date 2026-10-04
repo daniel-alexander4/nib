@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"nib/internal/p2p"
-	"nib/internal/rendezvous"
 	"nib/internal/sign"
 	"nib/internal/udpmux"
 )
@@ -188,7 +187,7 @@ func TestASharedEndpointSurvivesItsListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer end.Close()
-	rz, err := rendezvous.Open(end.DHT(), t.TempDir())
+	rz, err := openRendezvous(end.DHT(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

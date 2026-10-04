@@ -9,7 +9,6 @@ import (
 	"go/token"
 	"io/fs"
 	"net"
-	"nib/internal/rendezvous"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,10 +36,9 @@ import (
 
 // sinkConfigDir writes a node cache naming one loopback UDP socket, and counts what reaches it.
 func sinkConfigDir(t *testing.T) (string, func() int64) {
-	// The sink is a loopback node, which production's cache rule refuses (/pending 707): opened
-	// through it, the cache is empty and the traversal goes to the shipped seeds on the internet.
-	openRendezvous = rendezvous.OpenAdmittingLoopback
-	t.Cleanup(func() { openRendezvous = rendezvous.Open })
+	// The sink is a loopback node, which production's cache rule refuses (/pending 707). TestMain's
+	// hermetic opener admits loopback and nothing else (/pending 699), so the cache below counts and
+	// a traversal has nowhere to go but the sink.
 	t.Helper()
 	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {

@@ -313,15 +313,31 @@ func Open(conn net.PacketConn, dir string) (*Server, error) {
 	return open(conn, dir, addrscope.Seed)
 }
 
-// OpenAdmittingLoopback is Open with a node-cache rule widened by loopback, and nothing else.
+// OpenAdmittingLoopback is Open made hermetic: its whole world is loopback.
 //
 // **For tests only.** A test whose whole DHT is one loopback socket — the server package's
 // rendezvous-switch sink — needs its cache to count, and production's rule (`addrscope.Seed`)
-// correctly refuses loopback (/pending 707), which would send that test to the shipped seeds on
-// the public internet. `TestOnlyTestsOpenAdmittingLoopback` holds that no non-test file calls it.
+// correctly refuses loopback (/pending 707). So the rule here is loopback and NOTHING else, for the
+// cache and for every query the socket sends, and the shipped seeds are never consulted: a test
+// whose cache is empty has nowhere to start, rather than starting from strangers on the public
+// internet. A query aimed anywhere else is refused and counted in `Stats.RefusedSends`, which the
+// server package's `TestMain` reads to fail a run that tried.
+//
+// **It widened production's rule by loopback until /pending 699**, which left the public internet
+// and the shipped seeds in reach of every test that opened with an empty cache — and the server
+// package's ceremonies opened through plain `Open`, so a tier-1 run sent datagrams to every shipped
+// seed (measured with strace). `TestOnlyTestsOpenAdmittingLoopback` holds that no non-test file
+// calls it.
 func OpenAdmittingLoopback(conn net.PacketConn, dir string) (*Server, error) {
-	return open(conn, dir, seedOrLoopback)
+	return openWith(conn, dir, onlyLoopback, noShippedSeeds)
 }
+
+// onlyLoopback is the hermetic opener's whole address rule: loopback at any port.
+func onlyLoopback(ap netip.AddrPort) bool { return ap.Addr().Unmap().IsLoopback() }
+
+// noShippedSeeds is the hermetic opener's seed list: none, so a cold test cache is a start with
+// nowhere to start from, never a traversal of the public DHT.
+func noShippedSeeds() []*net.UDPAddr { return nil }
 
 // seedOrLoopback is addrscope.Seed widened by loopback at any port: private, link-local and
 // reserved space stay refused.
@@ -331,6 +347,11 @@ func seedOrLoopback(ap netip.AddrPort) bool {
 
 // open is Open with the cache's address rule named. See Server.scope.
 func open(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool) (*Server, error) {
+	return openWith(conn, dir, scope, seedNodes)
+}
+
+// openWith is open with the shipped seed list named too; only the hermetic test opener replaces it.
+func openWith(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool, shipped func() []*net.UDPAddr) (*Server, error) {
 	// Refused explicitly, because the failure is silent otherwise: dht.NewServer
 	// opens its OWN socket when Conn is nil (server.go:1046). That DHT would work
 	// perfectly — and its self-address probe would measure a NAT mapping belonging
@@ -374,7 +395,7 @@ func open(conn net.PacketConn, dir string, scope func(netip.AddrPort) bool) (*Se
 	// so a machine that has ever spoken to the DHT never touches them again.
 	var seeds []*net.UDPAddr
 	if len(nodes) == 0 {
-		seeds = seedNodes()
+		seeds = shipped()
 		s.seeds = len(seeds)
 	}
 

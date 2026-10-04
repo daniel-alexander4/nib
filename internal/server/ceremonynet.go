@@ -641,9 +641,9 @@ func (s *Server) feedCeremonyRace(ctx context.Context, cer *ceremonyID, cands []
 
 // openRendezvous is the one opener the server's three rendezvous sites call (here,
 // `setupSharedEndpoint` and `openSharedRendezvous`). It is `rendezvous.Open` in every build; it is
-// a variable only so the rendezvous-switch sink tests can open through
-// `rendezvous.OpenAdmittingLoopback`, whose cache counts a loopback node (/pending 707 made
-// production's refuse one).
+// a variable only so this package's `TestMain` can open every test rendezvous hermetically, through
+// `rendezvous.OpenAdmittingLoopback` — loopback only, no shipped seeds (/pending 699; see
+// `hermeticdht_test.go`).
 var openRendezvous = rendezvous.Open
 
 // dialerCeremony gives the DIALING side a ceremony identity and a DHT to fetch from.

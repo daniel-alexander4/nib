@@ -1,0 +1,17 @@
+--- a/internal/server/auth.go
++++ b/internal/server/auth.go
+@@ -337,7 +337,13 @@
+ 
+ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+ 	s.ensureUnlocked()
+-	writeJSON(w, s.currentStatus())
++	s.mu.Lock()
++	tok := s.csrf
++	s.mu.Unlock()
++	writeJSON(w, struct {
++		statusResponse
++		CSRF string `json:"csrf"`
++	}{s.currentStatus(), tok})
+ }
+ 
+ // --- enroll / migrate --------------------------------------------------------

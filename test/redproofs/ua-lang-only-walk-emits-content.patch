@@ -1,0 +1,12 @@
+--- a/internal/uacheck/content.go
++++ b/internal/uacheck/content.go
+@@ -1015,9 +1015,6 @@
+ // fully tagged page — a false FAIL of 7.1 t3 on an ordinary document, and it falsified this file's own claim
+ // that nothing in those streams is a content item.
+ func (w walker) emit(stack []frame, text bool, where string) {
+-	if w.langOnly {
+-		return
+-	}
+ 	w.d.content = append(w.d.content, w.event(stack, text, where))
+ }
+ 

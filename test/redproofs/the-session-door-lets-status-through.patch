@@ -1,0 +1,11 @@
+--- a/internal/server/launch.go
++++ b/internal/server/launch.go
+@@ -122,7 +122,7 @@
+ // **Every method, GETs included** — the defect this closes was as much the reads as the token.
+ func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
+ 	return func(w http.ResponseWriter, r *http.Request) {
+-		if !s.authenticated(r) {
++		if !s.authenticated(r) && r.URL.Path != "/api/status" {
+ 			httpError(w, http.StatusForbidden, "no session")
+ 			return
+ 		}

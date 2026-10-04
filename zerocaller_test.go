@@ -103,10 +103,10 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"WithEmbedded": "test-support — a testpdf fixture builder that hand-writes the /EmbeddedFiles " +
 			"tree shapes pdfcpu refuses to create (a shared /UF, a duplicated key), for /pending 745's " +
 			"tests in pdfops, ceremony and server.",
-		"OpenAdmittingLoopback": "test-support — `rendezvous.Open` with the node-cache rule widened by " +
-			"loopback, for the server's rendezvous-switch sink tests (/pending 707 made production's " +
-			"rule refuse loopback). A production caller would reopen 707; " +
-			"`TestOnlyTestsOpenAdmittingLoopback` fails on one.",
+		"OpenAdmittingLoopback": "test-support — `rendezvous.Open` made hermetic: loopback is the whole " +
+			"address rule and no shipped seed is consulted, so the server package's tests never reach the " +
+			"public DHT (/pending 699; /pending 707 made production's rule refuse loopback). A production " +
+			"caller would reopen 707; `TestOnlyTestsOpenAdmittingLoopback` fails on one.",
 		"WriteTokens": "test-support — the round-trip law's entry point. `Edit.Apply` with no " +
 			"edits returns the original slice WITHOUT touching tokens, so it cannot prove the " +
 			"tokenization is total and faithful; writing the tokens back is what does, and that " +

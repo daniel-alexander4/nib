@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -14484,7 +14484,6 @@
+ const TOKEN_KEY = 'nib-token';
+ async function establishSession() {
+   const m = /(?:^#|&)k=([^&]+)/.exec(location.hash);
+-  if (m) history.replaceState(null, '', location.pathname + location.search);
+   if (m) {
+     let res;
+     try {

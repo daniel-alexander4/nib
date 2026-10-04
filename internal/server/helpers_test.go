@@ -47,7 +47,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("XDG_CONFIG_HOME", dir)
+	// Every rendezvous this package opens is hermetic (/pending 699) — see hermeticdht_test.go.
+	openRendezvous = openHermeticRendezvous
 	code := m.Run()
+	if code == 0 {
+		code = reportOffHostDHTQueries(os.Stderr)
+	}
 	os.RemoveAll(dir)
 	os.Exit(code)
 }

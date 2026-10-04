@@ -34,13 +34,22 @@ that no longer re-proves, said so in its own comment, and stayed a known gap for
 running the set meant hand-rolling a shell loop. The first person to actually run it found eight
 invalid rows of eighty-one (v1.117.156).
 
-**Nineteen rows are replayable** (v1.117.43; nine at v1.117.26, six added at v1.117.39). Ask
-`./build/redproof.sh` with no argument rather than reading a list here — **this sentence said
-"nine" while the directory held fifteen**, because a count written into prose beside a set that
-grows is a second statement of one fact, and it is the one nobody updates. The count is guarded in
-`verify_test.go` with a floor that **moves with the set** — left at two while the set grew,
-it would have tolerated losing four of six silently, which is the same defect as the prose
-count it replaced. Raising the floor is the tax a new row pays.
+**How many rows are replayable is not written here.** Ask `./build/redproof.sh` with no argument,
+or read `const recorded` in `verify_test.go`. This paragraph used to state the figure, and it was
+wrong every time anyone read it — "nine" while the directory held fifteen, then "nineteen" and,
+further down, "117" while it held 487 (/pending 651) — because a count written into prose beside a
+set that grows is a second statement of one fact, and it is the one nobody updates. The count is
+guarded in `verify_test.go` as both floor and ceiling, so it **moves with the set**: left at two
+while the set grew, it would have tolerated losing four of six silently, which is the same defect
+as the prose count it replaced. Raising it is the tax a new row pays.
+
+**And every replayable row is named in this file.** `TestEveryReplayableRowIsNamedInTheLedger`
+fails on a `test/redproofs/<name>.sh` whose name appears nowhere here, which is the direction
+`TestEveryReplayableLedgerRowNamesAFileThatExists` could not see: a row recorded as a patch and
+never written down was invisible to a reader. Fifty-five were, until /pending 637 and 700; they
+are indexed at the end, under the title their own `.sh` gives them. A `recorded A → B` line in a
+section below is history — the count when that section was written — and is never a claim about
+now.
 
 The rest of this file is still prose. That is the honest state and the gap is the same one
 named below: a row recorded as prose has been proven red **once**, and nothing re-checks it.
@@ -75,13 +84,13 @@ Each row's defect is generated with `git diff`, never typed: a hand-written diff
 numbers wrong and then fails as "stale" for a reason that has nothing to do with the code —
 the one failure this script must not invent.
 
-**Not every row is recorded, and the sentence saying so has to keep its own number.** It began
-at two (`empty-state-message`, tier 2; `risky-actions-rendition`, tier 1) — enough to prove the
-shape, not to finish the job — and the set is now **117** replayable pairs against a ledger of
-prose rows that still outnumber them. The rest can be added one `.sh` + `.patch` pair at a time.
-Saying so is the point — a partially-mechanised ledger that claimed to be complete would be
-the same failure this file exists to fix, and the count is pinned in `verify_test.go` rather
-than here so that a stale sentence cannot be the only thing that knows.
+**Not every row is recorded.** The replay set began at two (`empty-state-message`, tier 2;
+`risky-actions-rendition`, tier 1) — enough to prove the shape, not to finish the job — and prose
+rows recorded before it existed still have no patch. The rest can be added one `.sh` + `.patch`
+pair at a time. Saying so is the point — a partially-mechanised ledger that claimed to be
+complete would be the same failure this file exists to fix — and the count is pinned in
+`verify_test.go` rather than here so that a stale sentence cannot be the only thing that knows.
+`TestTheLedgerStatesNoCurrentReplayCount` fails if this preamble states one again.
 
 ---
 
@@ -6429,3 +6438,128 @@ runs and is still driven red by `structure-conjunct-11-gap-owner-unchecked`. Tha
 `the-consent-screen-names-one-party`) were re-recorded against the moved lines.
 
 `recorded` 526 → 528.
+## Probes run by hand and never recorded — /pending 685, 686, 690 and P04.S04/P05.S01 (/pending 637, 700)
+
+Each fix below was red-proved when it landed, in a ledger or a plan, and none left a row here. These
+are those proofs made replayable: each patch is one hunk in one file, expressing the item's own
+defect against the tree this section was written on, and each was replayed with
+`./build/redproof.sh <name>` before it was recorded.
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `status-carries-the-token` — `/api/status` carries the token again — any caller holding the session reads it back, and the defect /pending 685 closed was exactly a status read that handed it out (/pending 685, v1.167.0) | `go test ./internal/server/ -run TestStatusNeverCarriesTheToken -count=1`, tier 1 | "GET /api/status carries the token" |
+| `the-session-door-lets-status-through` — `requireSession` lets a stranger read `/api/status` — the read that listed SSH key paths and ran first-run setup for any local process (/pending 685, ADR-054) | `go test ./internal/server/ -run TestStatusNeverCarriesTheToken -count=1`, tier 1 | "GET /api/status to a stranger = 200" |
+| `a-traded-launch-key-is-not-retired` — a traded launch key stays good — a fragment left in browser history opens a second session (/pending 685) | `go test ./internal/server/ -run TestALaunchKeyTradesOnce -count=1`, tier 1 | "second trade of the same key = 200, want 403" |
+| `any-launch-key-trades` — a key nobody minted trades for the token (/pending 685) | `go test ./internal/server/ -run TestALaunchKeyTradesOnce -count=1`, tier 1 | "second trade of the same key = 200, want 403" |
+| `a-windowless-handoff-gets-no-key` — a hand-off with no document answers "window" and no launch key, so the window it opens has no way to get the token (/pending 685) | `go test ./internal/server/ -run TestAWindowlessHandoffGetsAKeyForThisInstance -count=1`, tier 1 | "a hand-off with no document = 200/"window" launch=false" |
+| `an-untraded-launch-key-never-expires` — the launch key's TTL is ignored — a key minted for a window that never opened trades forever (/pending 685) | `go test ./internal/server/ -run TestAnUntradedKeyExpires -count=1`, tier 1 | "an expired key traded: 200, want 403" |
+| `the-launch-fragment-stays-in-the-address-bar` — the launch key is traded while it is still in the address bar, so a reload or a bookmark replays a spent key (/pending 685) | `node --test test/jsdom/launchkey.test.mjs`, tier 2 | "actual: '#k=the-launch-key'" |
+| `the-traded-token-is-not-kept` — the traded token is not kept where a reload of the tab finds it (/pending 685) | `node --test test/jsdom/launchkey.test.mjs`, tier 2 | "not ok 3 - the token is kept where a reload of this tab finds it" |
+| `the-launch-screen-leaves-the-page-live` — the open-Nib-again screen goes up over a page that still takes focus and clicks (/pending 685, review R7-3) | `node --test test/jsdom/launchnone.test.mjs`, tier 2 | "menubar is still reachable behind the screen" |
+| `a-termination-label-is-not-compared` — `VerifyAgainst` never compares a termination's unsigned label with the anchor's id — ceremony A's valid end state verifies against ceremony B (/pending 686, v1.166.7) | `go test ./internal/ceremony/ -run TestATerminationIsRefusedWhenItsLabelNamesAnotherCeremony -count=1`, tier 1 | "verified against ceremony" |
+| `an-end-state-labelled-for-another-ceremony-is-filed` — the same defect at the receive path: a relabelled end state is accepted and written, write-once, into the other ceremony's folder (/pending 686, v1.166.7) | `go test ./internal/server/ -run TestAnEndStateLabelledForAnotherCeremonyIsNotAccepted -count=1`, tier 1 | "was accepted — its save writes it into" |
+| `the-dht-fetch-drops-the-doors-refusal` — the fetch calls the switch's door and throws its refusal away — the candidate feed reaches the DHT with remote rendezvous OFF (/pending 690, ADR-011) | `go test ./internal/server/ -run TestTheCandidateFeedHonoursTheRendezvousSwitch -count=1`, tier 1 | "the candidate feed sent 1 datagram(s) to a DHT node" |
+| `the-pre-hop-pull-drops-the-doors-refusal` — the same dropped refusal, reached from the pre-hop party's end-state pull — the second of /pending 690's three roads (/pending 690, ADR-011) | `go test ./internal/server/ -run TestThePreHopEndStatePullHonoursTheRendezvousSwitch -count=1`, tier 1 | "the pre-hop end-state pull sent" |
+| `the-dht-publish-ignores-the-switch` — the publish goes around the switch's door — the round's end state is published to strangers with remote rendezvous OFF (/pending 690, ADR-011) | `go test ./internal/server/ -run TestTheRoundsEndStatePublishHonoursTheRendezvousSwitch -count=1`, tier 1 | "the round's end-state publish sent 1 datagram(s) to a DHT node" |
+| `a-fourth-road-to-the-dht` — a DHT verb called outside `dhtPublish`/`dhtFetch` — how three roads went around the switch (/pending 690, ADR-009) | `go test ./internal/server/ -run TestTheDHTVerbsHaveExactlyOneDoorEach -count=1`, tier 1 | "rz.Fetch must be called from dhtFetch and nowhere else" |
+| `ua-lang-only-walk-emits-content` — the lang-only walk records drawing events — an inline image in a Type 3 glyph reads as uncovered content, a false FAIL of 7.1 t3 on an ordinary tagged page (P04.S04, v1.148.0) | `go test ./internal/uacheck/ -run TestADrawnPatternAndGlyphContributeNoSubjectAndNoEvent -count=1`, tier 1 | "operator #28 `BI … EI` (inline image)" — veraPDF makes no content item there" |
+| `ua-tagged-content-is-any-mcid` — `taggedContent` counts any resolved `/MCID` as tagged, without asking whether its element reaches the structure tree root — a detached element passes 7.1 t3 (P04.S04, v1.148.0) | `go test ./internal/uacheck/ -run TestAnMCIDIsNotTaggedContentUntilItReachesTheRoot -count=1`, tier 1 | "an element detached from the structure tree: 7.1 t3 = pass" |
+| `ua-lang-only-does-not-enter-a-form` — `langOnly` stops at a form XObject boundary — a form drawn from a pattern or a glyph procedure reads as semantic content (P04.S04, v1.148.0) | `go test ./internal/uacheck/ -run TestADrawnPatternAndGlyphContributeNoSubjectAndNoEvent -count=1`, tier 1 | "form-in-pattern: a drawing operator inside a nested stream reached the content events" |
+| `ua-annot-exclusion-drops-widget` — 7.18.1 t1's exclusion list loses its `Widget` arm (a P05.S01 survivor until the review added the fixture) (P05.S01, v1.149.0) | `go test ./internal/uacheck/ -run TestTheAnnotationRulesAgreeWithWhatVeraPDFMeasured -count=1`, tier 1 | "a visible widget with no /StructParent, excluded from t1: 7.18.1 t1 = fail" |
+| `ua-annot-exclusion-drops-printermark` — 7.18.1 t1's exclusion list loses its `PrinterMark` arm (a P05.S01 survivor until the review added the fixture) (P05.S01, v1.149.0) | `go test ./internal/uacheck/ -run TestTheTypedAnnotationRulesAgreeWithWhatVeraPDFMeasured -count=1`, tier 1 | "an untagged printer's mark: 7.18.1 t1 = fail" |
+
+**Two of /pending 685's probes became different rows than they were.** "`requireSession` skips GETs"
+cannot be a row: with every GET let through, `TestEveryRouteIsBehindTheSessionOrNamed` opens the
+window stream as a stranger and waits on it until the package timeout — a hang, not a red. The row
+narrows it to the read the fix was about (`the-session-door-lets-status-through`). And "any key
+trades" fires at the second-trade assertion, not the unminted-key one, because the retired key is
+then itself "any key"; the test is `Fatalf`, so the line after it never runs. Both still go red for an
+assertion about the defect, which is what a row has to show.
+
+**/pending 690's three roads share two doors**: the candidate feed and the pre-hop end-state pull
+both reach the DHT through `dhtFetch`, so their two rows carry one patch and name different checks.
+
+**What from PLAN-ua-coverage.md is still prose.** P04.S04's ten-plus-three and P05.S01's seventeen
+were recorded in the plan's slice pins and the seam inventory (`instruments/ua-coverage.md`), which
+live in the project's memory rather than this repository. Five are now rows: the lang-only walk's
+event suppression (now ONE door, `emit`), its descent into a form, `taggedContent`'s root check, and
+the `Widget` and `PrinterMark` arms of 7.18.1 t1's exclusion list. **Measured while recording them:**
+removing the `langOnly` return in `emit` is caught by one unit test
+(`TestADrawnPatternAndGlyphContributeNoSubjectAndNoEvent`, the inline-image and unresolvable-XObject
+arms) and by the real-producer corpus (`pdflatex/tagged.pdf`, 7.1 t3), and by nothing else in the
+package. The per-stream lang-walk memo (a cost, which a replay would judge by a clock), P05.S01's other
+survivors-turned-tests (t2's exemption guard, `missed` → CannotCheck for both new clauses, the crop
+box's upper-right half, the role map's CannotCheck, `annotElement`'s definite-versus-refusal split),
+P05.S01's **declared survivor** — a non-dict `/Annots` entry, which pdfcpu's reader deletes before any
+rule sees it, so no file can reach the arm — and P06.S05's 21 targeted and 5 blind mutations (the
+scratch harness's M01–M22, B1–B5) remain proven once and not replayable. Each can still become a row
+one `.sh` + `.patch` pair at a time.
+
+`recorded` 526 → 546.
+
+## Index — replayable rows the ledger described without naming them (/pending 637, 700)
+
+Fifty-five `test/redproofs/` rows were recorded as a `.sh` + `.patch` pair while the section that
+described them named the code under test (`runContinuousPagenum`, say) or quoted a title rather than the
+row, so `./build/redproof.sh <name>` had a name no reader of this file was ever given.
+`TestEveryReplayableRowIsNamedInTheLedger` now fails on a row the file does not name. Each line below
+is generated from its own `.sh` — the title in its header comment, its `PROVE` and its `EXPECT` — so it
+says what the replay asserts, not what a summary remembers.
+
+| Row | Check that fired | What it said |
+|---|---|---|
+| `a-contribution-repaints-an-earlier-block` — A signature repaints a mark already signed for (/pending 302, v1.117.212) | `./build/uirepro.sh`, tier 3 | "inside the five EARLIER blocks" |
+| `a-folder-filling-writer-arrives-with-no-door-and-no-exemption` — a sixth folder-filling writer arrives asking neither question (/pending 569, ADR-009, v1.135.x) | `go test . -run TestEveryFolderFillingWriterAsksWhetherItIsAboutToWriteItsOwnSource -count=1`, tier 1 | "creates a destination folder and fills it with derived names" |
+| `a-split-part-is-private-from-one-door-only` — a split part's mode depends on which surface produced it (/pending 570, v1.135.x) | `go test ./internal/server/ -run TestASplitPartIsReadableByTheAccountTheUserGaveItTo -count=1`, tier 1 | "a part written by the GUI is" |
+| `a-stranger-renews-the-dht-hold` — A stranger's announcement renews the arm's DHT hold (P07.S05e, v1.117.207) | `go test ./internal/server/ -run TestTheDHTHoldRenewsOnEvidenceAndLapsesWithout`, tier 1 | "a stranger's announcement renewed the DHT hold" |
+| `an-authored-field-announces-nothing` — an authored field announces nothing (/pending 476) | `./build/uirepro.sh`, tier 3 | "no /TU was written at all" |
+| `announced-transport-ignored` — The announced transport ignored (ADR-010) | `go test ./internal/server/ -run TestAQUICArmedPeerIsDialledOverQUIC`, tier 1 | "the candidate's transport is" |
+| `arm-releases-before-it-has-heard` — An arm that is watching but has heard nothing YET releases (P07.S05e, v1.117.207) | `go test ./internal/server/ -run TestAnArmThatIsWatchingButHasHeardNothingStillHolds`, tier 1 | "has not heard its peer YET" |
+| `arrival-gate-ignores-the-document-bytes` — the arrival gate never looks at the document's bytes (P08.S03, C04, v1.117.328) | `go test ./internal/server/ -run TestAnUnsignedArrivalIsAnchoredToItsOwnRecord -count=1`, tier 1 | "ADMITTED a different document" |
+| `attestation-tag-skew-is-invisible` — The fourth skew surface, and the silent one (P07.S09c, D32, v1.117.227) | `go test ./internal/p2p/ -run TestANewerAttestationTagIsLegibleAsASkewRatherThanAsSilence`, tier 1 | "reports TagVersion 0, want 1" |
+| `block-falls-off-the-page` — A block that draws nothing a reader can see (/pending 302, v1.117.212) | `./build/uirepro.sh`, tier 3 | "changed no pixel on the page it placed its block on" |
+| `block-frame-draws-but-text-does-not` — A signature block with a frame and no attestation (/pending 305, v1.117.214) | `./build/uirepro.sh`, tier 3 | "the attestation text is not" |
+| `block-index-counts-non-signers` — A block's index counts non-signing roster entries (P07.S06, v1.117.210) | `go test ./internal/p2p/ -run TestTheBlockIndexIsTheRosterPositionNotASignatureCount`, tier 1 | "burning a block slot" |
+| `block-is-drawn-white-on-white` — The signature block, drawn white on white (/pending 305, v1.117.214) | `./build/uirepro.sh`, tier 3 | "drew nothing visible on it" |
+| `block-line-stack-overflows-its-frame` — The attestation runs into its own frame (/pending 305, v1.117.214) | `./build/uirepro.sh`, tier 3 | "running into its own frame" |
+| `block-lines-share-one-baseline` — Five attestation lines on one baseline (/pending 305, v1.117.214) | `./build/uirepro.sh`, tier 3 | "not laid out one line per row of the block" |
+| `block-placed-but-never-drawn` — The block is placed and never drawn (P07.S06, v1.117.210) | `go test ./internal/p2p/ -run TestABlockIsActuallyDRAWNWhereItWasPlaced`, tier 1 | "never drawn" |
+| `blocks-overlap-and-the-ink-does-not-fill` — An appearance that fills half its own rectangle (/pending 302, v1.117.212) | `./build/uirepro.sh`, tier 3 | "of its own widget rect" |
+| `bootstrap-flag-only-on-success` — bootstrapDone is set only when the bootstrap SUCCEEDS (P07.S05d, v1.117.203) | `go test ./internal/server/ -run TestTheBootstrapDoorSetsItsFlagEvenWhenTheBootstrapFAILS`, tier 1 | "gated forever on the machine that most needs it" |
+| `browse-burns-its-window` — The browse's early exit removed | `go test ./internal/server/ -run TestABrowseStopsOnceTheLinkGoesQuiet`, tier 1 | "after hearing its answer" |
+| `candidate-feed-skips-the-lan-window` — The candidate feed fetches before the link has answered (P07.S05d, v1.117.203) | `go test ./internal/server/ -run TestTheFeedDoesNotTouchTheDHTInsideTheLANWindow`, tier 1 | "reached the DHT" |
+| `capacity-read-off-the-wrong-party` — Every party signs in party 1's capacity (P07.S07a, v1.117.216) | `go test ./internal/p2p/ -run TestACapacityRendersOnlyForThePartyThatHasOne`, tier 1 | "the entry is being read by the wrong index" |
+| `ceremony-block-names-one-neighbour` — A ceremony block that names one neighbour (P07.S07a, C09, v1.117.216) | `go test ./internal/p2p/ -run TestNineBlocksNameNinePartiesAndNotOneOfThemIsNibUser`, tier 1 | "names one neighbour inside a ceremony" |
+| `ceremony-recital-defaults-instead-of-refusing` — Nib invents the sentence the parties are bound by (P07.S07b, v1.117.219) | `go test ./internal/p2p/ -run TestACeremonySignatureWithNoRecitalIsRefusedRatherThanDefaulted`, tier 1 | "a ceremony hop with no recital signed anyway" |
+| `ceremony-signature-signs-the-typed-intent` — Each hop signs its own sentence (P07.S07b, C15, v1.117.219) | `go test ./internal/p2p/ -run TestAPartysTypedIntentIsDiscardedInsideACeremony`, tier 1 | "the signed /Reason carries what this party typed" |
+| `content-anchor-refuses-an-honest-signed-hop` — the content anchor runs on signed arrivals too (P08.S03, C04, v1.117.328) | `go test ./internal/server/ -run TestAnUnsignedArrivalIsAnchoredToItsOwnRecord -count=1`, tier 1 | "refused a SIGNED arrival" |
+| `decline-branch-records-nobody` — the decline branch ends the ceremony and records nobody (P08.S05e, v1.117.322) | `go test ./internal/server/ -run TestTheDeclineBranchRecordsWhoEndedIt -count=1`, tier 1 | "does not record WHICH party" |
+| `dht-hold-never-lapses` — The DHT hold renews from now instead of from the last sighting (P07.S05e, v1.117.207) | `go test ./internal/server/ -run TestTheDHTHoldRenewsOnEvidenceAndLapsesWithout`, tier 1 | "the hold never lapsed" |
+| `dial-side-never-reconciles-its-invitation` — C17 at the door nobody checked (P07.S07b, v1.117.219) | `go test ./internal/server/ -run TestTheDialSideAlsoRoutesThroughTheArrivalCheck`, tier 1 | "never reconciles its invitation against the document" |
+| `discover-verdict-order` — `nib discover`'s verdict checks Sent before Own | `go test ./internal/cli/ -run TestNothingSentIsDiagnosedBeforeNothingReturned`, tier 1 | "the verdict does not say so" |
+| `disjoint-protocol-stays-a-tls-alert` — A version difference reported as a network failure (P07.S09c, D32, v1.117.227) | `go test ./internal/p2p/ -run TestADisjointProtocolIsASentenceNotATLSAlert`, tier 1 | "a raw TLS alert on the connect path" |
+| `every-block-on-the-last-page` — Every block stacks on the last page, indexed by a signature count (P07.S06, v1.117.210) | `go test ./internal/p2p/ -run TestEveryBlockLandsOnItsOwnAllocatedPageAndInsideIt`, tier 1 | "is on page" |
+| `invitation-does-not-carry-the-recital` — The reconciliation passes and the recital is empty (P07.S07b, v1.117.219) | `go test ./internal/ceremony/ -run TestTheInvitationCarriesTheRecordsRecital`, tier 1 | "the signing path reads the recital from the invitation" |
+| `invitation-recital-is-not-compared` — A recital nothing reconciles (P07.S07b, C17, v1.117.219) | `go test ./internal/ceremony/ -run TestAnInvitationWhoseRecitalDiffersIsRefusedByName`, tier 1 | "an invitation whose recital differs from the record's was accepted" |
+| `l3roster-drops-the-display-fields` — The signing roster drops what the block needs (P07.S07a, v1.117.216) | `go test ./internal/server/ -run TestTheInvitationsLabelsAndCapacitiesReachTheSigningRoster`, tier 1 | "a label dropped here is a block that says" |
+| `lan-found-peer-races-a-timer` — A peer found on the link still races a two-second timer (P07.S05d, v1.117.203) | `go test ./internal/server/ -run TestALANFoundPeerHoldsTheDHTPastTheBrowseWindow`, tier 1 | "reached the public DHT" |
+| `law-figure-declared-in-the-tunable-block` — The punch ceiling moves into the tuning block (P07.S09a, D33, v1.117.223) | `go test ./internal/server/ -run TestNeitherLawFigureIsReachableFromTheTunableBlock`, tier 1 | "That figure is LAW" |
+| `law-figure-drifts-away-from-its-structure` — A law figure that has left home without arriving anywhere (P07.S09a, v1.117.223) | `go test ./internal/server/ -run TestTheLawFiguresLiveWithTheStructureTheyBound`, tier 1 | "D33's split puts it with the STRUCTURE it bounds" |
+| `law-figure-hand-copied-into-the-tunable-block` — A law figure an operator can edit (P07.S09a, D33, v1.117.223) | `go test ./internal/server/ -run TestNeitherLawFigureIsReachableFromTheTunableBlock`, tier 1 | "reachable from the tunable block by hand-copy" |
+| `loopback-bind-announced` — The loopback rule removed from `startAnnouncing` | `go test ./internal/server/ -run TestALoopbackBindIsNotAnnouncedOnTheLink`, tier 1 | "is loopback and was announced" |
+| `ordinary-document-called-a-ceremony-of-nobody` — A ceremony of nobody on every ordinary co-sign (P07.S10, v1.117.231) | `go test ./internal/cli/ -run TestVerifyOnAnOrdinaryDocumentSaysNothingAboutCeremonies`, tier 1 | "was described as having one" |
+| `panel-accuses-the-parties-over-a-tag-skew` — The panel accuses over an upgrade (P07.S09c, D32, v1.117.227) | `./build/jsdomtest.sh`, tier 2 | "was reported as not being one proceeding" |
+| `panel-drops-the-first-signer` — Eight rows for nine signatures (P07.S07c, C09/C14, v1.117.221) | `./build/jsdomtest.sh`, tier 2 | "attestation row(s) for 9 signatures" |
+| `proceeding-denominator-counts-rows-drawn` — A denominator that counts the panel's own rows (P07.S07c, v1.117.221) | `./build/jsdomtest.sh`, tier 2 | "the denominator is not the 10 signatures Go reports" |
+| `punch-budget-per-ceremonyid-not-per-side` — A law figure emitted twice per side (P07.S09b, D33, v1.117.225) | `go test ./internal/server/ -run TestBothPunchLoopsOfOneHopSpendOneBudget`, tier 1 | "hold DIFFERENT packet budgets" |
+| `punch-drops-are-never-reported` — Drop-and-report, without the report (P07.S09b, D33, v1.117.225) | `go test ./internal/server/ -run TestAnExhaustedBudgetReachesTheDiagnosis`, tier 1 | "reports nothing to the user" |
+| `quote-rect-has-a-second-rule` — A quote route sizes the block by its own rule (P07.S06, v1.117.210) | `go test ./internal/server/ -run TestEveryQuoteRouteSizesFromTheOneDoor`, tier 1 | "sizes its block by some other rule" |
+| `sighting-inherits-the-answer-rate-limit` — The link sighting is reported below the answer rate limit (P07.S05e, v1.117.207) | `go test ./internal/server/ -run TestTheSightingIsReportedBeforeTheAnswerRateLimit`, tier 1 | "the hook is BELOW the answer rate limit" |
+| `split-compares-path-strings-not-file-identity` — the self-overwrite check compares path strings, so a link walks straight past it (/pending 569, v1.135.x) | `go test ./internal/cli/ -run TestASplitSeesThroughASymlinkToItsOwnInput -count=1`, tier 1 | "sent the part through it" |
+| `split-writes-over-its-own-input` — a split part silently replaces the document it was cut from (/pending 569, v1.135.x) | `go test ./internal/cli/ -run TestASplitNeverWritesOverTheDocumentItIsSplitting -count=1`, tier 1 | "the split overwrote the document it was splitting" |
+| `the-gui-split-does-not-know-its-own-documents-path` — the GUI split has no source to compare against, so it replaces the open document's own file (/pending 569, v1.135.x) | `go test ./internal/server/ -run TestTheGUISplitNeverWritesOverTheDocumentItIsSplitting -count=1`, tier 1 | "replaced the open document's own file" |
+| `two-party-verdict-over-a-nine-party-deed` — A nine-party deed described as a private exchange (P07.S07c, C09, v1.117.221) | `./build/jsdomtest.sh`, tier 2 | "described as a mutual exchange between two people" |
+| `unfinished-ceremony-exits-zero` — A script waved through a half-signed deed (P07.S10, v1.117.231) | `go test ./internal/cli/ -run TestVerifyNamesWhoHasNotSignedAndExitsNonZero`, tier 1 | "exited 0 on a ceremony four obliged parties never signed" |
+| `unlabelled-party-falls-back-to-the-constant` — The fallback invents a person (P07.S07a, v1.117.216) | `go test ./internal/p2p/ -run TestAnUnlabelledPartyFallsBackToItsFingerprintAndNeverToAConstant`, tier 1 | "the fallback is the constant" |
+| `verify-says-nothing-about-the-ceremony` — valid (5 signer(s)), and nothing else (P07.S10, v1.117.231) | `go test ./internal/cli/ -run TestVerifyNamesWhoHasNotSignedAndExitsNonZero`, tier 1 | "does not say how many of the roster have signed" |
+| `waiting-arm-says-nothing` — a waiting arm says nothing (/pending 349, v1.117.309) | `./build/jsdomtest.sh`, tier 2 | "the blank wait is what the user got" |
