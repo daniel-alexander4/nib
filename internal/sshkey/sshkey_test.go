@@ -52,6 +52,32 @@ func TestGenerateRefusesOverwrite(t *testing.T) {
 	}
 }
 
+// A failed ".pub" write must not leave the private key behind, or every retry fails
+// os.ErrExist and first-run setup cannot complete at that path (/pending 647).
+func TestGenerateConvergesAfterAFailedPubWrite(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	// A directory where the sidecar goes makes its write fail after the key is written.
+	if err := os.Mkdir(keyPath+".pub", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(keyPath); err == nil {
+		t.Fatal("Generate succeeded with an unwritable .pub")
+	}
+	if _, err := os.Stat(keyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the private key outlived the failed call (stat err %v), so a retry cannot converge", err)
+	}
+	if err := os.Remove(keyPath + ".pub"); err != nil {
+		t.Fatal(err)
+	}
+	pubLine, err := Generate(keyPath)
+	if err != nil {
+		t.Fatalf("retry after the cause was cleared: %v", err)
+	}
+	if got, err := PublicKeyLine(keyPath); err != nil || got != pubLine {
+		t.Fatalf("PublicKeyLine = %q, %v; want %q", got, err, pubLine)
+	}
+}
+
 func TestUnwrapWrongKeyFails(t *testing.T) {
 	dir := t.TempDir()
 	p1 := filepath.Join(dir, "k1")

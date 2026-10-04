@@ -200,7 +200,7 @@ var (
 //   - **An XObject name that does not resolve to an image.** A resource dictionary nib cannot read is
 //     not a page full of pictures, and counting it would switch a door off over a document the door
 //     handles. This is a declared gap: `uacheck` recurses further and `nib ua` still reports it.
-func uncoveredDrawingSpans(src []byte, images map[string]bool) ([]opSpan, []drawnForm) {
+func uncoveredDrawingSpans(xt *model.XRefTable, res types.Dict, src []byte, images map[string]bool) ([]opSpan, []drawnForm) {
 	var (
 		out          []opSpan
 		forms        []drawnForm
@@ -244,12 +244,20 @@ func uncoveredDrawingSpans(src []byte, images map[string]bool) ([]opSpan, []draw
 		}
 		switch {
 		case op == "BMC" || op == "BDC":
+			// Covered by an `/Artifact` tag, or by an MCID read through `bdcMCID` — which resolves a property
+			// list NAMED in `/Properties` as well as an inline one (/pending 644).
 			c := false
+			first := -1
 			for j := i - 1; j >= 0 && toks[j].Start >= start; j-- {
-				switch string(toks[j].Bytes(src)) {
-				case "/Artifact", "/MCID":
+				if toks[j].Kind != contentstream.Whitespace {
+					first = j
+				}
+				if string(toks[j].Bytes(src)) == "/Artifact" {
 					c = true
 				}
+			}
+			if !c && op == "BDC" && first >= 0 && first+1 < i && bdcMCID(xt, res, toks[first+1:i], src) >= 0 {
+				c = true
 			}
 			covered = append(covered, c)
 		case op == "EMC":
@@ -380,7 +388,7 @@ func uncoveredDrawings(pdf []byte) (int, error) {
 // `mcrcarry_test.go` already pins for the run reader.
 func countDrawings(ctx *model.Context, src []byte, res types.Dict, depth int, visiting map[int]bool,
 	budget *formWalkBudget) int {
-	here, forms := uncoveredDrawingSpans(src, imageXObjectNames(ctx, res))
+	here, forms := uncoveredDrawingSpans(ctx.XRefTable, res, src, imageXObjectNames(ctx, res))
 	n := len(here)
 	// The depth cut is charged only where there is a form to go into: a leaf at the limit loses nothing.
 	if res == nil || len(forms) == 0 || !budget.deeper(depth, maxFormDepth) {

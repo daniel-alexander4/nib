@@ -96,7 +96,7 @@ func (s *Server) handleReflow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: false, Refusal: pdfops.Refusal{Cause: pdfops.ReflowCauseInvalidOutput}})
 		return
 	}
-	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, reflowResponse{docResponse: s.docResponse(doc), Ok: true})

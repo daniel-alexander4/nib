@@ -103,7 +103,7 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ocr: could not set document language %q: %v", tag, lerr)
 		}
 	}
-	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

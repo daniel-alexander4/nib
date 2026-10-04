@@ -212,7 +212,7 @@ func artifactUncoveredDrawings(ctx *model.Context, pg pdfread.Page) error {
 	if attrs != nil {
 		res = attrs.Resources
 	}
-	drawings, _ := uncoveredDrawingSpans(src, imageXObjectNames(ctx, res))
+	drawings, _ := uncoveredDrawingSpans(ctx.XRefTable, res, src, imageXObjectNames(ctx, res))
 	if len(drawings) == 0 {
 		return nil
 	}

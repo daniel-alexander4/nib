@@ -125,6 +125,13 @@ func checkStructConsistencyOn(ctx *model.Context, tree *structTree, pages []page
 			// with whatever else on the page shares its MCID — silently, and in the user's Tags
 			// panel. Nothing else looks: neither this function nor `structureCarriedCompletely`
 			// read `/Stm` at all before P02.S08's review (/pending 536).
+			if k.stmMalformed {
+				add(fmt.Sprintf("stm-not-a-reference obj=%d mcid=%d", e.objNr, k.mcid),
+					"an element of type /%s says its /MCID %d lives in another stream, and its /Stm is not "+
+						"an indirect reference (ISO 32000-1 Table 324 requires one) — the content it describes "+
+						"cannot be found", e.kind, k.mcid)
+				continue
+			}
 			if k.stm != 0 {
 				sd, _, serr := ctx.DereferenceStreamDict(*types.NewIndirectRef(k.stm, 0))
 				if serr != nil || sd == nil {

@@ -29,7 +29,8 @@ type armProgress struct {
 	// progressing when nothing of theirs has been seen.
 	Link string `json:"link,omitempty"`
 	// DHT is the rendezvous tier: "holding" while ADR-011's window has not elapsed, "reaching"
-	// once the bootstrap has been attempted.
+	// once the bootstrap has been attempted, "off" when this machine has the public rendezvous
+	// switched off and so will never reach it.
 	//
 	// **"holding" is the state the screen has never had a word for**, and it is the one that
 	// lasts longest on a LAN. It is not a failure and not a delay to apologise for: it is the
@@ -71,7 +72,18 @@ func (c *ceremonyID) armProgressOf(now time.Time) *armProgress {
 		// client because the wire value is where the choice actually lives.
 		out.Link = "found"
 	}
-	if c.bootstrapDone.Load() {
+	if c.rzOn != nil && !c.rzOn() {
+		// **"off" is ADR-011's door's third exit (/pending 646).** `ensureBootstrapped` refuses a
+		// switched-off DHT BEFORE its Once, so `bootstrapDone` is never set and this used to fall
+		// through to "holding" — telling the user the product was waiting out a window when it was
+		// never going to reach the DHT at all. First, because a switch turned off after a bootstrap
+		// leaves `bootstrapDone` true and "reaching" would be just as false.
+		//
+		// The DIAGNOSIS stays gated on `bootstrapDone` and so stays silent here, deliberately:
+		// `classifyD19` reads a DHT that never answered as a network fact, and with the switch off
+		// that would accuse the user's network of the user's own setting. This line is the answer.
+		out.DHT = "off"
+	} else if c.bootstrapDone.Load() {
 		out.DHT = "reaching"
 	} else if out.Link != "" {
 		// **"holding" is only claimed where something is actually holding.** An arm that is not

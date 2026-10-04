@@ -76,10 +76,11 @@ func artifactElement(ctx *model.Context, tree *structTree, e *structElem) error 
 			case kidOBJR:
 				return fmt.Errorf("%w: element %d describes an annotation or form field, which is not page content an artifact can hold", ErrTagsReview, x.objNr)
 			case kidMCID, kidMCR:
-				if d, derr := ctx.DereferenceDict(k.raw); derr == nil && d != nil {
-					if _, inStream := d["Stm"]; inStream {
-						return fmt.Errorf("%w (element %d, /MCID %d)", errCommitInForm, x.objNr, k.mcid)
-					}
+				// The parsed field, not a re-read of `/Stm` (/pending 644): one reading of the key, so a
+				// malformed one is refused here AND reported by the checker, never page content to one and
+				// form content to the other.
+				if k.stm != 0 || k.stmMalformed {
+					return fmt.Errorf("%w (element %d, /MCID %d)", errCommitInForm, x.objNr, k.mcid)
 				}
 				pg := pageNr[k.pgObj]
 				if pg == 0 {

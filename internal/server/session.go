@@ -3022,19 +3022,20 @@ func (s *Server) handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		}
 		appearance = b
 	}
-	// **Bounded exactly as the initiating side bounds its own (ADR-009: one rule, both paths).**
+	// **Bounded exactly as the initiating side bounds its own, through the same door (ADR-009).**
 	// `when` is signed into the attestation, so an unbounded value lets a caller mint a
-	// co-signature dated years back or forward and have Nib's key vouch for it —
-	// `cosignAttestation`'s own words, and `maxWhenSkew` is the same constant. Out of range is
-	// dropped rather than refused: the signature then carries the signing clock, which is the
-	// behaviour every build before this had.
+	// co-signature dated years back or forward and have Nib's key vouch for it. Out of range or
+	// unreadable is REFUSED (/pending 646): it used to be dropped for the signing clock, which signs
+	// a date the block the party consented to does not show. Only on an acceptance — a decline signs
+	// nothing, and refusing it over a time it never uses would leave the request stuck.
 	var when time.Time
-	if req.When != "" {
-		if t, perr := time.Parse(time.RFC3339, req.When); perr == nil {
-			if d := time.Since(t); d > -maxWhenSkew && d < maxWhenSkew {
-				when = t
-			}
+	if req.Accept {
+		t, werr := signedWhen(req.When, time.Now())
+		if werr != nil {
+			httpError(w, http.StatusBadRequest, werr.Error())
+			return
 		}
+		when = t
 	}
 	// **The ID of the request the page was shown, and it is required (/pending 660).** An answer
 	// that names no request is an answer to whatever happens to be parked, which is the defect.

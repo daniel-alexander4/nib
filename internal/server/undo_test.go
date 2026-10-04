@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -140,7 +141,7 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 	// altered ordinary trimming.
 	doc := s.activeDoc()
 	for i := 0; i < maxUndoDepth+5; i++ {
-		s.commitMutation(doc, pdf, pdf, false)
+		s.commitMutation(doc, postedBase(pdf), pdf, false)
 	}
 	if len(doc.undo) != maxUndoDepth {
 		t.Errorf("undo depth = %d, want %d (oldest evicted)", len(doc.undo), maxUndoDepth)
@@ -157,5 +158,44 @@ func TestCommitBarrierAndTrim(t *testing.T) {
 	// redaction cost them their undo history for memory reasons.
 	if doc.historyEvicted {
 		t.Error("commitBarrier marked the document as history-evicted")
+	}
+}
+
+// TestASecondOperationOnTheSameSnapshotIsRefused — /pending 646 #3.
+//
+// Two operations that read the same `doc.data` both used to commit: the second silently replaced
+// the first's result, and the undo entry it pushed was the state before the FIRST, so undo could
+// not recover the lost edit. The second must be refused, and the first's result and history kept.
+func TestASecondOperationOnTheSameSnapshotIsRefused(t *testing.T) {
+	pdf, err := testpdf.Form()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openTestServer(t, pdf)
+	doc := s.activeDoc()
+	before := s.docBytes(doc)
+	first := append([]byte(nil), before...)
+	second := append([]byte(nil), before...)
+
+	if err := s.commitMutation(doc, snapshotBase(before), first, false); err != nil {
+		t.Fatalf("the first operation was refused: %v", err)
+	}
+	if err := s.commitMutation(doc, snapshotBase(before), second, false); !errors.Is(err, errDocChanged) {
+		t.Fatalf("a second operation computed from the bytes the first replaced answered %v, want "+
+			"errDocChanged — the first edit is lost and undo cannot bring it back", err)
+	}
+	if !sameSlice(s.docBytes(doc), first) {
+		t.Error("the refused operation still replaced the document")
+	}
+	if len(doc.undo) != 1 || !sameSlice(doc.undo[0], before) {
+		t.Errorf("undo holds %d entries after one landed commit; the refused one pushed history", len(doc.undo))
+	}
+	// The negative control: an operation that snapshots AFTER the first lands commits.
+	if err := s.commitMutation(doc, snapshotBase(s.docBytes(doc)), second, false); err != nil {
+		t.Errorf("an operation on the current bytes was refused: %v", err)
+	}
+	// And posted bytes keep last-writer-wins: the server cannot know what they were built on.
+	if err := s.commitMutation(doc, postedBase(before), first, false); err != nil {
+		t.Errorf("a posted-bytes commit was refused: %v", err)
 	}
 }

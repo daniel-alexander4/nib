@@ -81,7 +81,7 @@ func waitForDownload(t *testing.T, srv *Server, want string) downloadEvent {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		ev := srv.dl.snapshot()
-		if !ev.Active && ev.Status != "" {
+		if !ev.active() && ev.Status != "" {
 			if ev.Status != want {
 				t.Fatalf("the download ended %q (%s), want %q", ev.Status, ev.Problem, want)
 			}
@@ -311,7 +311,7 @@ func TestCancelReachesTheHeaderPhase(t *testing.T) {
 
 	got := postDownloadAsync(t, ts, c, csrf, t.TempDir())
 	deadline := time.Now().Add(10 * time.Second)
-	for !srv.dl.snapshot().Active {
+	for !srv.dl.snapshot().active() {
 		if time.Now().After(deadline) {
 			t.Fatal("the download never claimed the slot while waiting for headers, so Cancel has nothing to reach")
 		}
@@ -362,5 +362,36 @@ func TestADownloadDoesNotReplaceAFileThatAppearedWhileItRan(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(dir, ".nib-*.tmp")); len(left) != 0 {
 		t.Errorf("the refused download left its temp behind: %v", left)
+	}
+}
+
+// TestALengthlessDownloadStillReportsProgress — /pending 646 #4.
+//
+// With no `Content-Length` the percent is 0 forever, and the percent was the only throttle key, so
+// no progress frame was ever emitted. A whole MiB crossed must wake the windows; a chunk inside one
+// must not (the throttle the percent exists for).
+func TestALengthlessDownloadStillReportsProgress(t *testing.T) {
+	var d downloadState
+	if !d.begin(func() {}, "/tmp/x", 0) {
+		t.Fatal("setup: the slot was not claimed")
+	}
+	woke := func(done int64) bool {
+		ch := d.changes()
+		d.progress(done)
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}
+	if woke(4096) {
+		t.Error("a chunk inside the first MiB woke the windows — the throttle is gone")
+	}
+	if !woke(3<<20 + 1) {
+		t.Error("crossing into the fourth MiB of a length-less transfer woke nobody — no progress is ever shown")
+	}
+	if got := d.snapshot().Done; got != 3<<20+1 {
+		t.Errorf("Done = %d, want %d", got, 3<<20+1)
 	}
 }

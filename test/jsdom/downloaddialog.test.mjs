@@ -102,6 +102,12 @@ test('progress from the window stream reaches the dialog, and an unchanged line 
   push({ active: true, status: 'running', done: 40, total: 100, percent: 40 });
   await settle();
   assert.match(progress(), /40%/, 'a changed percentage did not reach the dialog');
+
+  // No stated length: no percent exists, so the bytes so far are the progress (/pending 646).
+  push({ status: 'running', done: 7 * 1048576 + 5, total: 0, percent: 0 });
+  await settle();
+  assert.match(progress(), /7 MB so far/,
+    'a transfer whose server stated no length shows no progress — "Downloading…" for its whole run');
 });
 
 test('a finished download names the file and offers the folder, never a way to run it', async () => {

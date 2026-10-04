@@ -130,8 +130,8 @@ func TestCloseViewReleasesTheClosedDocumentsRings(t *testing.T) {
 	s.registerLocked(doomed)
 	s.mu.Unlock()
 
-	s.commitMutation(doomed, pdf, pdf, false)
-	s.commitMutation(keep, pdf, pdf, false)
+	s.commitMutation(doomed, postedBase(pdf), pdf, false)
+	s.commitMutation(keep, postedBase(pdf), pdf, false)
 	// The stimulus: both rings hold something, so an empty ring afterwards is a release
 	// and not a ring that was never filled.
 	if len(doomed.undo) == 0 || len(keep.undo) == 0 {

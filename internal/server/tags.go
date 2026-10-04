@@ -159,7 +159,7 @@ func (s *Server) handleTagsCommit(w http.ResponseWriter, r *http.Request) {
 	if tagWriteFailed(w, err, "could not write the structure") {
 		return
 	}
-	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))
@@ -190,7 +190,7 @@ func (s *Server) handleTagsEdit(w http.ResponseWriter, r *http.Request) {
 	if tagWriteFailed(w, err, "could not edit the structure") {
 		return
 	}
-	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

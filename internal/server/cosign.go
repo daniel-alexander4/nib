@@ -53,6 +53,32 @@ type cosignQuote struct {
 // server's own clock. See the use in cosignAttestation.
 const maxWhenSkew = 24 * time.Hour
 
+// signedWhen is the ONE reading of a client-named attestation time (ADR-009, /pending 646): the
+// initiating side's `cosignAttestation` and the responder's `handleSessionRespond` both call it.
+//
+// **Refused, not clamped.** Both used to fall back to the server's clock on a value that did not
+// parse or sat outside `maxWhenSkew` — fifteen lines below the refuse-not-clamp rule
+// `cosignAttestation` applies to `intent`. `When` is signed into the attestation AND is one of the
+// lines the quote handed the client to rasterize, so a silent substitution signed a `/Reason` whose
+// date disagrees with the block drawn above it: the drift the quote exists to prevent. A refusal
+// sends the user back to a fresh quote instead.
+//
+// Empty is not a refusal: it returns the zero time and the caller supplies its own clock, which is
+// what a caller that never quoted has always had.
+func signedWhen(raw string, now time.Time) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("the signing time %q is not a time Nib can read, so nothing was signed; quote the block again", raw)
+	}
+	if d := t.Sub(now); d <= -maxWhenSkew || d >= maxWhenSkew {
+		return time.Time{}, fmt.Errorf("the signing time %s is more than %v from this machine's clock, so nothing was signed; quote the block again", raw, maxWhenSkew)
+	}
+	return t, nil
+}
+
 // cosignAttestation builds the attestation both calls sign over, from the same
 // inputs, so the rendered block and the signed /Reason always agree. It refuses
 // any peer the user hasn't pinned out-of-band (the honest-trust requirement) and
@@ -85,13 +111,13 @@ func (s *Server) cosignAttestation(w http.ResponseWriter, v *vault.Vault, p cosi
 	// attestation, so an unbounded value lets a caller mint a co-signature dated years
 	// back or forward and have Nib's own key vouch for it. Bounded to a day either side
 	// of now — enough for clock skew and a slow consent, not enough to backdate.
-	when := time.Now()
-	if p.When != "" {
-		if t, err := time.Parse(time.RFC3339, p.When); err == nil {
-			if d := t.Sub(when); d > -maxWhenSkew && d < maxWhenSkew {
-				when = t
-			}
-		}
+	when, werr := signedWhen(p.When, time.Now())
+	if werr != nil {
+		httpError(w, http.StatusBadRequest, werr.Error())
+		return p2p.Attestation{}, false
+	}
+	if when.IsZero() {
+		when = time.Now()
 	}
 	att := p2p.Attestation{
 		Signer:            "Nib User",

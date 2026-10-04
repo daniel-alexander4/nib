@@ -62,7 +62,19 @@ const (
 // belongs here and not in the caller because only this function holds the lock
 // across the test and the write; a caller that tested the document first would leave a
 // window for a close to land in between, which is the very defect.
-func (s *Server) commitMutation(doc *document, input, result []byte, acceptSignatureLoss bool) error {
+//
+// **The base says whether a lost update can be detected (/pending 646).** Nothing serialises
+// mutations per document, so two operations snapshotting the same `doc.data` both used to commit:
+// the second won, and the undo entry it pushed was the state before the FIRST, so undo could not
+// recover the lost edit either. A `snapshotBase` is bytes the server itself handed out through
+// `docBytes`; every writer of `doc.data` installs a new slice, so "the document still holds that
+// slice" is exact, costs a pointer compare under the lock, and a mismatch is refused as
+// errDocChanged before anything is pushed. A `postedBase` is the CLIENT's bytes (the page and
+// outline routes, which work from a posted PDF carrying the client's own overlays): the server
+// cannot know what they were derived from, so those routes stay last-writer-wins — the declared
+// gap, closable only by the client sending the revision it built on.
+func (s *Server) commitMutation(doc *document, base mutationBase, result []byte, acceptSignatureLoss bool) error {
+	input := base.data
 	sig := sign.Verify(result)
 	if err := s.refuseSignatureErasure(doc, result, acceptSignatureLoss); err != nil {
 		return err
@@ -104,6 +116,9 @@ func (s *Server) commitMutation(doc *document, input, result []byte, acceptSigna
 	if doc == nil || !s.isRegisteredLocked(doc) {
 		return errDocClosed
 	}
+	if base.snapshot && !sameSlice(doc.data, input) {
+		return errDocChanged
+	}
 	if err := s.byteCapLocked(doc, result); err != nil {
 		return err
 	}
@@ -119,6 +134,31 @@ func (s *Server) commitMutation(doc *document, input, result []byte, acceptSigna
 	noteTaggingFate(doc, input, result)
 	return nil
 }
+
+// mutationBase is what an operation transformed, and whether the server can tell if the document
+// has moved on since. See commitMutation.
+type mutationBase struct {
+	data     []byte
+	snapshot bool
+}
+
+// snapshotBase is bytes this operation read from the document with `docBytes`.
+func snapshotBase(b []byte) mutationBase { return mutationBase{data: b, snapshot: true} }
+
+// postedBase is bytes the client posted; the server cannot know what they were built on.
+func postedBase(b []byte) mutationBase { return mutationBase{data: b} }
+
+// sameSlice reports whether a and b are the same bytes in memory — not equal content, the SAME
+// slice. Every writer of `doc.data` assigns a new slice, so this is the document's revision. An
+// undo that reinstalls a slice an operation snapshotted compares equal, and correctly: the
+// document then holds exactly what the operation was computed from.
+func sameSlice(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
+// errDocChanged refuses an operation computed from bytes the document no longer holds.
+var errDocChanged = errors.New("this document changed while the operation was running, so its " +
+	"result was not applied and nothing was lost — run it again")
 
 // errDocClosed is the commit doors' other refusal: the target document was closed while the
 // operation was running. Named rather than a bare false, because the doors now have two
