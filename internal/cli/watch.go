@@ -218,7 +218,8 @@ func scanOnce(dir string, seen map[string]fileState, processed map[string]bool, 
 			errf("%s: %v", path, err)
 		} else {
 			processed[path] = true
-			fmt.Printf("%s: %s\n", path, status)
+			// The name is whatever was dropped in the folder, not something the user typed (/pending 727).
+			fmt.Printf("%s: %s\n", termText(path), termText(status))
 		}
 	}
 }

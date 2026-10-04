@@ -260,7 +260,9 @@ func (c ceremonyReport) complete() bool {
 	return c.present && c.unreadable == "" && c.obliged > 0 && !c.refuses()
 }
 
-// lines renders the human report, one line per output row.
+// lines renders the human report, one line per output row. A party's label, a signer's name and the
+// unreadable cause are the document's own text, so the caller prints each row through `termText`
+// and no row may carry a newline of its own.
 func (c ceremonyReport) lines() []string {
 	if !c.present {
 		return nil
@@ -269,10 +271,12 @@ func (c ceremonyReport) lines() []string {
 		return []string{"ceremony: this document carries a ceremony record Nib could not read — " + c.unreadable}
 	}
 	head := fmt.Sprintf("ceremony %s: %d of %d obliged signer(s) have signed", short12(c.id), c.signed, c.obliged)
-	if c.intent != "" {
-		head += fmt.Sprintf("\n  recital: %q", c.intent)
-	}
 	out := []string{head}
+	if c.intent != "" {
+		// Its own row, not a "\n" inside the head: the caller puts every row through `termText`,
+		// which escapes a newline (/pending 727).
+		out = append(out, fmt.Sprintf("  recital: %q", c.intent))
+	}
 	if c.signed < c.obliged {
 		out = append(out, fmt.Sprintf("INCOMPLETE — %d obliged party(ies) have not signed", c.obliged-c.signed))
 	}

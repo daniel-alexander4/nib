@@ -1,12 +1,12 @@
 diff --git a/internal/cli/commands.go b/internal/cli/commands.go
 --- a/internal/cli/commands.go
 +++ b/internal/cli/commands.go
-@@ -1230,9 +1230,7 @@
- 			for _, line := range refusedLines(st) {
- 				fmt.Printf("  %s\n", line)
+@@ -1265,9 +1265,7 @@
+ 			for _, line := range timestampLines(st) {
+ 				fmt.Printf("  %s\n", termText(line))
  			}
 -			for _, line := range cer.lines() {
--				fmt.Printf("  %s\n", line)
+-				fmt.Printf("  %s\n", termText(line))
 -			}
 +
  		}

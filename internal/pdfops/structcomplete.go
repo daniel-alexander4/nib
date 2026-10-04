@@ -288,6 +288,7 @@ func formDrawCounts(ctx *model.Context) (map[int]formDraw, error) {
 func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw, error) {
 	counts := map[int]formDraw{}
 	budget := newFormWalkBudget(len(pages))
+	var unread error
 	for _, rec := range pages {
 		if rec.res == nil {
 			continue
@@ -299,6 +300,12 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw,
 			continue
 		}
 		src, cerr := pdfread.PageContent(ctx, rec.dict, rec.nr)
+		// Only an absent `/Contents` is a page that draws nothing (/pending 727). A page whose content
+		// could not be READ may draw any form any number of times, so the counts are of part of the
+		// document — the budget's own reason for erroring — and the caller is told.
+		if cerr != nil && cerr != model.ErrNoContent && unread == nil {
+			unread = fmt.Errorf("page %d's content could not be read, so the forms it draws were not counted: %w", rec.nr, cerr)
+		}
 		if cerr != nil || len(src) == 0 {
 			continue
 		}
@@ -307,7 +314,10 @@ func formDrawCountsOn(ctx *model.Context, pages []pageRecord) (map[int]formDraw,
 		// count.
 		countFormDraws(ctx, src, rec.res, counts, map[int]bool{}, 0, budget)
 	}
-	return counts, budget.err()
+	if err := budget.err(); err != nil {
+		return counts, err
+	}
+	return counts, unread
 }
 
 // countFormDraws walks one content stream, counting the forms it paints.

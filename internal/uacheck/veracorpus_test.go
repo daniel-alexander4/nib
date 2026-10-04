@@ -317,6 +317,11 @@ func TestTheCheckerAgreesWithVeraPDFsOwnCorpus(t *testing.T) {
 			}
 			v, listed := vera[i][r.Clause]
 			if !listed {
+				// An error, as the oracle and producer harnesses already make it (/pending 727): veraPDF's job
+				// lists every rule of its profile, 0/0 included, so an implemented clause it does not list is a
+				// spelling drifted from veraPDF's — and skipping it scored that clause on no file, silently.
+				t.Errorf("%s: veraPDF's report does not list %s at all, so there is nothing to agree with — "+
+					"the clause spelling may have drifted from veraPDF's", names[i], r.Clause)
 				continue
 			}
 			if r.Verdict == Pass || r.Verdict == Fail {

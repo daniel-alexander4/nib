@@ -163,7 +163,8 @@ func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
 	for _, r := range rep.Results {
 		line := fmt.Sprintf("%-14s %-12s %s", r.Verdict, r.Clause, uacheck.SummaryOf(r.Clause))
 		if r.Verdict != uacheck.Pass && r.Why != "" {
-			line += " — " + r.Why
+			// A reason can quote the document (a font's or a role's name), so it is the file's text.
+			line += " — " + termText(r.Why)
 		}
 		table = append(table, line)
 	}
@@ -177,7 +178,7 @@ func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
 		return table, notes, true, nil
 	}
 	for _, reason := range refusals {
-		notes = append(notes, "not PDF/UA: "+reason)
+		notes = append(notes, "not PDF/UA: "+termText(reason))
 	}
 	return table, notes, false, nil
 }
@@ -1058,12 +1059,13 @@ func cmdAttachments(args []string) int {
 		for _, a := range aa {
 			// The id where it is not the name (/pending 745): two files may SHOW one name,
 			// and --extract reaches each by its id.
-			line := a.Name
+			// Every part is the document's own text, so each goes through `termText` (/pending 727).
+			line := termText(a.Name)
 			if a.ID != a.Name {
-				line += " [id: " + a.ID + "]"
+				line += " [id: " + termText(a.ID) + "]"
 			}
 			if a.Desc != "" {
-				line += " — " + a.Desc
+				line += " — " + termText(a.Desc)
 			}
 			fmt.Println(line)
 		}
@@ -1108,7 +1110,7 @@ func cmdOutline(args []string) int {
 		return 0
 	}
 	for _, it := range items {
-		fmt.Printf("%s%s (p %d)\n", strings.Repeat("  ", it.Level), it.Title, it.Page)
+		fmt.Printf("%s%s (p %d)\n", strings.Repeat("  ", it.Level), termText(it.Title), it.Page)
 	}
 	return 0
 }
@@ -1255,14 +1257,16 @@ func cmdVerify(args []string) int {
 			fmt.Println(string(b))
 		} else {
 			fmt.Printf("%s: %s\n", p, describeStatus(st))
+			// Every row below can carry the document's own text (a party's label, a signer's
+			// name), so each goes through `termText` (/pending 727).
 			for _, line := range refusedLines(st) {
-				fmt.Printf("  %s\n", line)
+				fmt.Printf("  %s\n", termText(line))
 			}
 			for _, line := range timestampLines(st) {
-				fmt.Printf("  %s\n", line)
+				fmt.Printf("  %s\n", termText(line))
 			}
 			for _, line := range cer.lines() {
-				fmt.Printf("  %s\n", line)
+				fmt.Printf("  %s\n", termText(line))
 			}
 		}
 		// **An unfinished ceremony exits non-zero too (P07.S10).**

@@ -339,9 +339,11 @@ func usageFunc(fs *flag.FlagSet, synopsis, help string) func() {
 	}
 }
 
-// errf prints a CLI error to stderr with the nib: prefix.
+// errf prints a CLI error to stderr with the nib: prefix. The message goes through `termText`
+// whole: an error routinely wraps a document's own text (a name, a path inside the file, a file
+// name found by `nib watch`), and no format string here carries a control character of its own.
 func errf(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "nib: "+format+"\n", a...)
+	fmt.Fprintln(os.Stderr, "nib: "+termText(fmt.Sprintf(format, a...)))
 }
 
 // safeClient is the HTTP client for the timestamp paths. It blocks connections

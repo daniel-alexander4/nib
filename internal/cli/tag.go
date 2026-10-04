@@ -208,7 +208,9 @@ func tagTree(args []string) int {
 		if t := strings.TrimSpace(e.Text); t != "" {
 			line += "  " + clipRunes(t, 60)
 		}
-		fmt.Println(line)
+		// The role, alt text, scope and text are all the document's own (/pending 727); nib's
+		// parts of the line carry no control character, so the whole line goes through the door.
+		fmt.Println(termText(line))
 	}
 	if tree.Unaddressable > 0 {
 		errf("%d element(s) are written inline (id 0) and cannot be named by an edit", tree.Unaddressable)
@@ -245,7 +247,7 @@ func tagPropose(args []string) int {
 		return printTagJSON(prop)
 	}
 	for _, e := range prop.Elements {
-		fmt.Printf("%-4d %-3s p%-3d %s\n", e.ID, e.Role, e.Page, clipRunes(strings.TrimSpace(e.Text), 70))
+		fmt.Println(termText(fmt.Sprintf("%-4d %-3s p%-3d %s", e.ID, e.Role, e.Page, clipRunes(strings.TrimSpace(e.Text), 70))))
 	}
 	for _, u := range prop.Unsupported {
 		errf("page %d: %s — check its order carefully", u.Page, u.Reason)

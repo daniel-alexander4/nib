@@ -329,9 +329,9 @@ func (d *Document) walkAppearances() {
 			if ad["AP"] != nil {
 				// An /AP that is there and does not resolve to a dictionary is an appearance nib did not
 				// read, not an annotation without one (`/pending 507`).
-				d.contentErr = fmt.Sprintf("page %d annotation %d carries an /AP that is not a dictionary, "+
-					"so its appearance streams were never walked", p, i)
-				return
+				d.appearanceUnread(fmt.Sprintf("page %d annotation %d carries an /AP that is not a dictionary, "+
+					"so its appearance streams were never walked", p, i))
+				continue
 			}
 			continue
 		}
@@ -352,9 +352,9 @@ func (d *Document) walkAppearances() {
 					// appearance to walk. Measured against pdfcpu v0.13.0, `open`'s validator refuses every
 					// non-stream /AP entry ahead of the rules, on every annotation subtype tried
 					// ("DereferenceStreamDict: wrong type"), so nothing reaches this today.
-					d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s entry is not a stream nib can "+
-						"read, so what it draws was never walked: %v", p, i, key, serr)
-					return
+					d.appearanceUnread(fmt.Sprintf("page %d annotation %d's /AP /%s entry is not a stream nib can "+
+						"read, so what it draws was never walked: %v", p, i, key, serr))
+					continue
 				}
 				if sd == nil {
 					continue
@@ -365,8 +365,8 @@ func (d *Document) walkAppearances() {
 				}
 				src, derr := d.decodedContent(sd, apNr)
 				if derr != nil {
-					d.contentErr = fmt.Sprintf("page %d annotation %d's /AP /%s stream could not be decoded: %v", p, i, key, derr)
-					return
+					d.appearanceUnread(fmt.Sprintf("page %d annotation %d's /AP /%s stream could not be decoded: %v", p, i, key, derr))
+					continue
 				}
 				res := d.dict(sd.Dict["Resources"])
 				if res == nil {
@@ -395,6 +395,18 @@ func (d *Document) walkAppearances() {
 	// FIRST failure in page order — which is the one the early return this replaced used to report.
 	if missed != "" && d.contentErr == "" {
 		d.contentErr = missed + ", so the appearance streams there were never walked"
+	}
+}
+
+// appearanceUnread records an appearance nib could not read, and the walk goes on to the next one
+// (/pending 727). It used to `return`, so one unreadable `/AP` ended the walk of every annotation after
+// it — and the rules that judge what WAS walked before reading `contentErr` (7.2 t29's marked-content
+// `/Lang`, the marked-content rules) lost every failure past it, answering CannotCheck where veraPDF
+// fails. The first reason stands, as everywhere else that sets `contentErr`, so it still names the first
+// unread appearance in page order.
+func (d *Document) appearanceUnread(why string) {
+	if d.contentErr == "" {
+		d.contentErr = why
 	}
 }
 
@@ -800,7 +812,11 @@ func (w walker) doXObject(name string, res types.Dict, stack []frame, chain map[
 	}
 	src, derr := w.d.decodedContent(sd, objNr)
 	if derr != nil {
-		w.d.contentErr = fmt.Sprintf("form XObject %s (object %d) could not be decoded: %v", name, objNr, derr)
+		// Guarded like every sibling (/pending 838): an earlier reason — a budget's, above all — is the more
+		// informative one, and overwriting it named the decode a budget refusal caused.
+		if w.d.contentErr == "" {
+			w.d.contentErr = fmt.Sprintf("form XObject %s (object %d) could not be decoded: %v", name, objNr, derr)
+		}
 		return
 	}
 	formRes := w.d.dict(sd.Dict["Resources"])

@@ -515,6 +515,11 @@ var historyVerify = sign.Verify
 // global budget, and the push is not byte-neutral — undoing a large OCR or optimize result moves a
 // big doc.data onto redo while popping a small snapshot, so without the trim the total walks past
 // the ceiling with nothing evicting.
+//
+// **`byteCapLocked` is NOT asked here, and that is ADR-008's named exemption** (ADR-009): the step
+// restores bytes this server already held and counted in ADR-003's pool, and refusing an undo
+// because the state it returns to is large would strand the user one step from a document they
+// were just looking at. (/pending 727 re-raised it as a gap; it is the decision.)
 func (s *Server) stepHistory(w http.ResponseWriter, doc *document, stacks func(*document) (from, to *[][]byte)) {
 	for attempt := 0; ; attempt++ {
 		s.mu.Lock()
