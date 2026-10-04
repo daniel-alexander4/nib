@@ -803,3 +803,57 @@ func TestTheIdentificationPartIsAnIntegerOverTheWholeText(t *testing.T) {
 		t.Errorf("<pdfuaid:part rdf:value=\"1\"/> reports %v (%s), want Pass — measured on veraPDF", got.Verdict, got.Why)
 	}
 }
+
+// TestADocumentTitleIsALanguageAlternativeItem — /pending 694. 7.1 t9's subject is an ITEM of dc:title that carries
+// a language, and its value is never read. Every row is veraPDF 1.30.2's verdict on that dc:title, measured by
+// mutating `ghostscript/pdflatex-article.pdf` (the producer corpus's Ghostscript re-distil of pdfLaTeX output, which
+// writes one EMPTY x-default item — nib failed it, veraPDF passed it). The rows marked "false pass" are shapes nib
+// read as titled, from their text, where veraPDF fails them.
+func TestADocumentTitleIsALanguageAlternativeItem(t *testing.T) {
+	titled, err := pdfops.SetTitle(plainDoc(t), "A named document")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const li = `<rdf:li xml:lang="x-default">`
+	for _, c := range []struct {
+		name, body string
+		want       Verdict
+	}{
+		{"Ghostscript's one empty x-default item", `<dc:title><rdf:Alt>` + li + `</rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"a whitespace item", `<dc:title><rdf:Alt>` + li + ` </rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"a self-closed item", `<dc:title><rdf:Alt><rdf:li xml:lang="x-default"/></rdf:Alt></dc:title>`, Pass},
+		{"an en-only empty item", `<dc:title><rdf:Alt><rdf:li xml:lang="en"></rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"an empty language", `<dc:title><rdf:Alt><rdf:li xml:lang="">T</rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"a second item with one", `<dc:title><rdf:Alt><rdf:li>T</rdf:li><rdf:li xml:lang="en"></rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"a Seq item with one", `<dc:title><rdf:Seq><rdf:li xml:lang="en">T</rdf:li></rdf:Seq></dc:title>`, Pass},
+		{"a Bag item with one", `<dc:title><rdf:Bag><rdf:li xml:lang="en">T</rdf:li></rdf:Bag></dc:title>`, Pass},
+		{"on the item's rdf:value (Resource)", `<dc:title><rdf:Alt><rdf:li rdf:parseType="Resource"><rdf:value xml:lang="en">T</rdf:value></rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"on the item's rdf:value (Description)", `<dc:title><rdf:Alt><rdf:li><rdf:Description><rdf:value xml:lang="en">T</rdf:value></rdf:Description></rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"an xml:lang qualifier element", `<dc:title><rdf:Alt><rdf:li rdf:parseType="Resource"><rdf:value>T</rdf:value><xml:lang>en</xml:lang></rdf:li></rdf:Alt></dc:title>`, Pass},
+		{"no dc:title", `<dc:format>application/pdf</dc:format>`, Fail},
+		{"an empty Alt", `<dc:title><rdf:Alt></rdf:Alt></dc:title>`, Fail},
+		{"a self-closed Alt", `<dc:title><rdf:Alt/></dc:title>`, Fail},
+		{"an empty item with no language", `<dc:title><rdf:Alt><rdf:li></rdf:li></rdf:Alt></dc:title>`, Fail},
+		{"an empty simple title", `<dc:title></dc:title>`, Fail},
+		{"false pass: a simple title", `<dc:title>T</dc:title>`, Fail},
+		{"false pass: a simple title with a language", `<dc:title xml:lang="en">T</dc:title>`, Fail},
+		{"false pass: an Alt item with no language", `<dc:title><rdf:Alt><rdf:li>T</rdf:li></rdf:Alt></dc:title>`, Fail},
+		{"false pass: a Bag item with no language", `<dc:title><rdf:Bag><rdf:li>T</rdf:li></rdf:Bag></dc:title>`, Fail},
+		{"false pass: the language on the Alt", `<dc:title><rdf:Alt xml:lang="en"><rdf:li>T</rdf:li></rdf:Alt></dc:title>`, Fail},
+		{"false pass: the language on the property", `<dc:title xml:lang="en"><rdf:Alt><rdf:li>T</rdf:li></rdf:Alt></dc:title>`, Fail},
+		{"false pass: a Resource title's rdf:value", `<dc:title rdf:parseType="Resource"><rdf:value xml:lang="en">T</rdf:value></dc:title>`, Fail},
+	} {
+		got := verdictOf(t, withPacketBody(t, titled, c.body), "7.1 t9")
+		if got.Verdict != c.want {
+			t.Errorf("%s: 7.1 t9 = %v (%s), want %v — veraPDF's verdict on this dc:title", c.name, got.Verdict, got.Why, c.want)
+		}
+	}
+	// An attribute-form title on the rdf:Description — a false pass too, and the one shape the body cannot write.
+	attr := withRawPacket(t, titled, `<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>`+
+		`<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
+		`<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" dc:format="application/pdf" dc:title="T"/>`+
+		`</rdf:RDF></x:xmpmeta><?xpacket end="w"?>`)
+	if got := verdictOf(t, attr, "7.1 t9"); got.Verdict != Fail {
+		t.Errorf("an attribute-form dc:title: 7.1 t9 = %v (%s), want Fail — veraPDF's verdict", got.Verdict, got.Why)
+	}
+}

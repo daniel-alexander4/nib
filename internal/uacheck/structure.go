@@ -588,6 +588,7 @@ func (d *Document) structNodes() ([]structNode, string) {
 			// past the ceiling every rule reading the nodes refuses.
 			if entriesRead++; entriesRead > maxStructEntries {
 				if d.nodesErr == "" {
+					d.nodesCut = len(out)
 					d.nodesErr = fmt.Sprintf("the structure tree reaches more than %d /K entries (an array shared by "+
 						"many parents is read once per parent); nib stops reading there, so the elements beyond were "+
 						"never read", maxStructEntries)
@@ -607,6 +608,7 @@ func (d *Document) structNodes() ([]structNode, string) {
 			}
 			if depth > maxWalkDepth {
 				if d.nodesErr == "" {
+					d.nodesCut = len(out)
 					d.nodesErr = fmt.Sprintf("the structure tree nests deeper than %d levels; nib stops reading there, "+
 						"so the elements below were never read", maxWalkDepth)
 				}
@@ -624,6 +626,23 @@ func (d *Document) structNodes() ([]structNode, string) {
 	d.nodes = out
 	d.nodesBuild.finish()
 	return d.nodes, d.nodesErr
+}
+
+// structPrefix is the part of `structNodes` known to be the tree's own pre-order prefix, and why the rest was not
+// read — the whole walk and "" when nothing was cut (/pending 692).
+//
+// **For a rule whose verdict on an element depends on the elements BEFORE it** (7.4.2 t1's heading sequence), a
+// failure inside the prefix is definite: every element ahead of it in tree order was read. Past the cut the two stops
+// differ — the `/K`-entry budget reads nothing more, the depth bound skips one subtree and resumes at its parent's
+// next sibling — so an element after the cut is NOT preceded by everything before it, and a failure there is no
+// verdict: the skipped subtree may hold the heading that changes it. A build that stopped on an internal error kept no
+// nodes at all, so its prefix is empty.
+func (d *Document) structPrefix() ([]structNode, string) {
+	nodes, why := d.structNodes()
+	if why == "" {
+		return nodes, ""
+	}
+	return nodes[:min(d.nodesCut, len(nodes))], why
 }
 
 // firstNonEmpty is the first of its arguments that is not "".

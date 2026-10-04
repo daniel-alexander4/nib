@@ -5571,13 +5571,18 @@ function renderUAReport(rep) {
   const count = (v) => results.filter((r) => r.verdict === v).length;
   const fails = count('fail');
   const unchecked = count('cannot check') + count('not run');
+  // The verdict is the server door's classification (`uacheck.Report.Standing`, /pending 698), never the rows':
+  // "Not PDF/UA" only over a failing clause — a clause nib could not check is not a breach, so a report whose only
+  // problem is one says PDF/UA is not established.
+  const failing = rep.standing === 'fails';
   if (rep.allCheckedPass) {
     els.uaSummary.textContent = 'Every clause Nib checks passes — Nib checks only part of PDF/UA, so this is not a conformance certificate.';
   } else {
     const parts = [];
     if (fails) parts.push(fails + (fails === 1 ? ' clause fails' : ' clauses fail'));
     if (unchecked) parts.push(unchecked + (unchecked === 1 ? ' clause nib could not check' : ' clauses nib could not check'));
-    els.uaSummary.textContent = 'Not PDF/UA' + (parts.length ? ' — ' + parts.join(', ') : '') + '.';
+    if (!failing) parts.push('none of the clauses Nib checked fails');
+    els.uaSummary.textContent = (failing ? 'Not PDF/UA' : 'PDF/UA not established') + (parts.length ? ' — ' + parts.join(', ') : '') + '.';
   }
   const body = els.uaBody;
   body.innerHTML = '';
@@ -5614,7 +5619,7 @@ function renderUAReport(rep) {
   if ((rep.refusals || []).length) {
     const list = document.createElement('ul');
     list.className = 'ua-refusals';
-    list.setAttribute('aria-label', 'Why this document is not PDF/UA');
+    list.setAttribute('aria-label', failing ? 'Why this document is not PDF/UA' : 'Why PDF/UA is not established');
     for (const line of rep.refusals) {
       const li = document.createElement('li');
       li.textContent = line;

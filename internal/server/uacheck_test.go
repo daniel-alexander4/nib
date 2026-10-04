@@ -52,6 +52,10 @@ func TestTheUAReportRouteReachesTheDoorAndPublishesEveryVerdictAsAWord(t *testin
 	if !strings.Contains(strings.Join(rep.Refusals, "\n"), " fails: ") {
 		t.Errorf("no refusal names a failing clause: %q", rep.Refusals)
 	}
+	// The page words its summary from the door's classification (/pending 698), so it travels too.
+	if rep.Standing != uacheck.StandingFails {
+		t.Errorf("standing = %q for a report with a failing clause, want %q", rep.Standing, uacheck.StandingFails)
+	}
 	// D4: the user is told where the structure came from — and a fixture nib did not tag records nothing.
 	if !strings.Contains(rep.Structure, "no record") {
 		t.Errorf("the report's structure line for an untagged fixture reads %q", rep.Structure)

@@ -1,11 +1,14 @@
 package uacheck
 
 import (
+	"archive/zip"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -232,6 +235,129 @@ func veraPDFBatch(t *testing.T, vp string, files []string) []map[string]veraStat
 		t.Fatalf("the veraPDF report did not parse: %v\n%.500s", err, out)
 	}
 	return veraStates(rep, links)
+}
+
+// resolveCapped re-asks veraPDF, per file, about every rule its batch report left `veraUnrecorded`, with a profile
+// holding ONLY those rules — /pending 697. A capped report (veraUnrecorded) keeps the no-false-pass property but loses
+// law 5's Pass-versus-no-subject strictness on that rule; a reduced profile records fewer checks, so it stays under the
+// cap. A subset that caps again is split in halves until each part records whole; a single rule cannot cap to 0/0 (it is
+// the rule whose checks filled the cap), and is left unrecorded if it somehow does. Measured before it existed: 14 of
+// 36 producer files capped, and `acrobat/fda-170357.pdf`'s 7.1 t6/t7 then read 2064 passed, 7.18.1 t1 72, 7.3 t1 22.
+//
+// The profile is veraPDF's own `PDFUA-1.xml`, read out of its jar beside the launcher, with every `<rule>` but the
+// subset's removed and its `<variables>` kept. Without the jar the states stay as the batch read them, and it says so.
+func resolveCapped(t *testing.T, vp string, files []string, states []map[string]veraState) {
+	t.Helper()
+	var capped []int
+	for i, st := range states {
+		for _, s := range st {
+			if s == veraUnrecorded {
+				capped = append(capped, i)
+				break
+			}
+		}
+	}
+	if len(capped) == 0 {
+		return
+	}
+	head, rules, tail, err := veraProfile(vp)
+	if err != nil {
+		t.Logf("NOTE (not a pass): %d capped report(s) stay \"passed or no subject\" — veraPDF's ua1 profile could not be read: %v", len(capped), err)
+		return
+	}
+	dir := t.TempDir()
+	runs := 0
+	var ask func(i int, clauses []string)
+	ask = func(i int, clauses []string) {
+		var body strings.Builder
+		for _, c := range clauses {
+			body.WriteString(rules[c])
+		}
+		prof := filepath.Join(dir, fmt.Sprintf("p%04d.xml", runs))
+		runs++
+		if err := os.WriteFile(prof, []byte(head+body.String()+tail), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		abs, _ := filepath.Abs(files[i])
+		out, _ := exec.Command(vp, "--profile", prof, "--passed", abs).Output()
+		var rep veraReport
+		if err := xml.Unmarshal(out, &rep); err != nil {
+			t.Fatalf("the reduced-profile veraPDF report did not parse: %v\n%.500s", err, out)
+		}
+		got := veraStates(rep, []string{abs})[0]
+		var again []string
+		for _, c := range clauses {
+			switch s, ok := got[c]; {
+			case !ok:
+				t.Errorf("%s: veraPDF's reduced profile did not list %s, which it was given", files[i], c)
+			case s == veraUnrecorded:
+				again = append(again, c)
+			default:
+				states[i][c] = s
+			}
+		}
+		if len(again) > 1 {
+			ask(i, again[:len(again)/2])
+			ask(i, again[len(again)/2:])
+		}
+	}
+	for _, i := range capped {
+		var clauses []string
+		for c, s := range states[i] {
+			if s == veraUnrecorded {
+				if _, ok := rules[c]; !ok {
+					t.Errorf("%s: %s is capped and veraPDF's profile has no such rule", files[i], c)
+					continue
+				}
+				clauses = append(clauses, c)
+			}
+		}
+		sort.Strings(clauses)
+		ask(i, clauses)
+	}
+	t.Logf("%d capped report(s) re-asked over %d reduced-profile run(s)", len(capped), runs)
+}
+
+// veraProfile reads veraPDF's ua1 profile from the jar beside vp and splits it: the text before the first rule, each
+// rule's own text keyed "<clause> t<test>", and the text after the last.
+func veraProfile(vp string) (head string, rules map[string]string, tail string, err error) {
+	jars, _ := filepath.Glob(filepath.Join(filepath.Dir(vp), "bin", "cli-*.jar"))
+	if len(jars) != 1 {
+		return "", nil, "", fmt.Errorf("want one cli-*.jar beside %s, found %d", vp, len(jars))
+	}
+	z, err := zip.OpenReader(jars[0])
+	if err != nil {
+		return "", nil, "", err
+	}
+	defer z.Close()
+	var raw []byte
+	for _, f := range z.File {
+		if f.Name == "org/verapdf/pdfa/validation/PDFUA-1.xml" {
+			rc, oerr := f.Open()
+			if oerr != nil {
+				return "", nil, "", oerr
+			}
+			raw, err = io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return "", nil, "", err
+			}
+		}
+	}
+	s := string(raw)
+	first, last := strings.Index(s, "<rule "), strings.LastIndex(s, "</rule>")
+	if first < 0 || last < 0 {
+		return "", nil, "", fmt.Errorf("%s holds no PDFUA-1.xml rules", jars[0])
+	}
+	last += len("</rule>")
+	id := regexp.MustCompile(`clause="([^"]+)" testNumber="([0-9]+)"`)
+	rules = map[string]string{}
+	for _, part := range strings.SplitAfter(s[first:last], "</rule>") {
+		if m := id.FindStringSubmatch(part); m != nil {
+			rules[m[1]+" t"+m[2]] = part
+		}
+	}
+	return s[:first], rules, s[last:], nil
 }
 
 func corpusDir() string {

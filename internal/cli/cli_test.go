@@ -1702,10 +1702,11 @@ func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(src)
-	// The report's sentences are composed in uaReport, which `nib ua` and `nib watch --do ua` share (P10.S03).
-	i := strings.Index(body, "func uaReport(")
+	// The report's sentences are composed in composeUAReport, under uaReport, which `nib ua` and `nib watch --do ua`
+	// share (P10.S03).
+	i := strings.Index(body, "func composeUAReport(")
 	if i < 0 {
-		t.Fatal("uaReport is gone, so this guard is reading nothing")
+		t.Fatal("composeUAReport is gone, so this guard is reading nothing")
 	}
 	j := strings.Index(body[i:], "\n}\n")
 	fn := body[i : i+j]
@@ -1714,6 +1715,43 @@ func TestUAExitZeroSaysItIsNotACertificate(t *testing.T) {
 	}
 	if strings.Contains(fn, "is PDF/UA\"") || strings.Contains(fn, "conforms to PDF/UA") {
 		t.Error("cmdUA claims conformance somewhere in its output")
+	}
+}
+
+// TestNibUASaysNotPDFUAOnlyOverAFailure — /pending 698. A clause nib could not check is not a breach, so `nib ua` and
+// `nib watch --do ua` say "not PDF/UA" only when a checked clause FAILS; a report whose only refusals are unsettled
+// clauses says PDF/UA is not established. Both read the door's classification (`uacheck.Report.Standing`).
+func TestNibUASaysNotPDFUAOnlyOverAFailure(t *testing.T) {
+	pdf, err := testpdf.Text("refusal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsettled := uacheck.Report{Results: []uacheck.Result{
+		{Clause: "7.1 t11", Verdict: uacheck.Pass},
+		{Clause: "7.21.7 t1", Verdict: uacheck.CannotCheck, Why: "an unmeasured font"},
+	}}
+	failing := uacheck.Report{Results: []uacheck.Result{
+		{Clause: "7.1 t11", Verdict: uacheck.Fail, Why: "no tree"},
+		{Clause: "7.21.7 t1", Verdict: uacheck.CannotCheck, Why: "an unmeasured font"},
+	}}
+	_, notes, standing := composeUAReport(pdf, unsettled, uacheck.Refusals(unsettled))
+	joined := strings.Join(notes, "\n")
+	if standing != uacheck.StandingNotEstablished {
+		t.Fatalf("stimulus: a refusal-only report classifies as %q", standing)
+	}
+	if strings.Contains(joined, "not PDF/UA") || !strings.Contains(joined, "PDF/UA not established: 7.21.7 t1 could not be checked") {
+		t.Errorf("a report whose only problem is a clause nib could not check reads:\n%s", joined)
+	}
+	if got := watchUAStatus(standing, "/x/doc.pdf"); strings.Contains(got, "not PDF/UA") || !strings.Contains(got, "not established") {
+		t.Errorf("the watch status for it reads %q", got)
+	}
+	_, notes, standing = composeUAReport(pdf, failing, uacheck.Refusals(failing))
+	joined = strings.Join(notes, "\n")
+	if !strings.Contains(joined, "not PDF/UA: 7.1 t11 fails") || !strings.Contains(joined, "not PDF/UA: 7.21.7 t1 could not be checked") {
+		t.Errorf("a report with a failing clause reads:\n%s", joined)
+	}
+	if got := watchUAStatus(standing, "/x/doc.pdf"); !strings.Contains(got, "not PDF/UA") {
+		t.Errorf("the watch status for a failing report reads %q", got)
 	}
 }
 

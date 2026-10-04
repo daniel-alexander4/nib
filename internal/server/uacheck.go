@@ -26,9 +26,12 @@ type uaResultView struct {
 // — `Report.Conformant`'s narrow sense — and a wire key named "conformant" states law 2's forbidden claim to
 // anyone who reads the JSON. Only nib's own page reads it.
 type uaReportResponse struct {
-	AllCheckedPass bool           `json:"allCheckedPass"`
-	Results        []uaResultView `json:"results"`
-	Refusals       []string       `json:"refusals"`
+	AllCheckedPass bool `json:"allCheckedPass"`
+	// Standing is the door's three-way classification (`uacheck.Report.Standing`, /pending 698): the page says "Not
+	// PDF/UA" only when it is "fails", because a clause nib could not check is not a breach.
+	Standing uacheck.Standing `json:"standing"`
+	Results  []uaResultView   `json:"results"`
+	Refusals []string         `json:"refusals"`
 	// Structure says which of D4's tiers produced the tree, in `pdfops.DescribeStructureSource`'s words.
 	Structure string `json:"structure"`
 }
@@ -51,7 +54,8 @@ func (s *Server) handleUACheck(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnprocessableEntity, "could not check the document: "+err.Error())
 		return
 	}
-	out := uaReportResponse{AllCheckedPass: rep.Conformant(), Refusals: refusals, Structure: pdfops.DescribeStructureSource(pdf)}
+	out := uaReportResponse{AllCheckedPass: rep.Conformant(), Standing: rep.Standing(), Refusals: refusals,
+		Structure: pdfops.DescribeStructureSource(pdf)}
 	if out.Refusals == nil {
 		out.Refusals = []string{}
 	}

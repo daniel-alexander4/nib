@@ -76,11 +76,12 @@ func checkHeadingStyles(d *Document, onH bool) Result {
 
 // checkHeadingNesting evaluates ua1 7.4.2 t1.
 func checkHeadingNesting(d *Document) Result {
-	nodes, unread := d.structNodes()
-	if unread != "" {
-		// The order of the headings past the bound is unknown, so no heading sequence can be said to hold.
-		return Result{Verdict: CannotCheck, Why: unread}
-	}
+	// **Only the read prefix is judged, and a failure inside it is definite** (/pending 692): a heading's verdict
+	// depends on the headings before it, and inside the prefix every one of those was read. Past the cut the sequence
+	// is unknown — a skipped subtree may hold the heading that changes it — so the refusal is answered only when the
+	// prefix holds no failure: the package's "a definite failure beats a refusal" (`heldRefusal`) in the one form an
+	// ORDER-dependent rule can take.
+	nodes, unread := d.structPrefix()
 	// **An element on a role-map loop is NOT a heading, and this rule answers over the rest** (the P07 phase
 	// close, R4-10). It refused here — "an element nib cannot type may be a heading" — but veraPDF types such an
 	// element as nothing standard, the reading `typedAs` already gives. Measured on 1.30.2, seven documents: a
@@ -113,6 +114,10 @@ func checkHeadingNesting(d *Document) Result {
 			}
 		}
 		prev = level
+	}
+	if unread != "" {
+		// The order of the headings past the cut is unknown, so no heading sequence can be said to hold.
+		return Result{Verdict: CannotCheck, Why: unread}
 	}
 	if prev == 0 {
 		return Result{Verdict: NotApplicable, Why: "the structure tree has no numbered heading (H1–H6)"}

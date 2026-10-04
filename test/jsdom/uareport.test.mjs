@@ -43,14 +43,14 @@ const row = (clause) => [...doc.querySelectorAll('#uaBody .ua-row')].find((r) =>
 
 test('the button reaches the report route, and the modal opens', async () => {
   await openDoc();
-  await showReport({ allCheckedPass: false, results: [{ clause: '7.1 t11', summary: 's', verdict: 'fail', why: 'no tree' }], refusals: ['7.1 t11 fails: no tree'] });
+  await showReport({ allCheckedPass: false, standing: 'fails', results: [{ clause: '7.1 t11', summary: 's', verdict: 'fail', why: 'no tree' }], refusals: ['7.1 t11 fails: no tree'] });
   assert.ok(calls.some((c) => c.url.includes('/api/uacheck')), 'the button did not ask the server — the UI would be deciding conformance itself');
   assert.equal(doc.getElementById('uaModal').hidden, false, 'the report modal did not open');
 });
 
 test('the report shows the server\'s sentence about where the structure came from', async () => {
   const sentence = 'This document\'s structure was read from a scan by text recognition (OCR).';
-  await showReport({ allCheckedPass: false, results: [{ clause: '7.1 t11', summary: 's', verdict: 'fail', why: 'no tree' }], refusals: ['x'], structure: sentence });
+  await showReport({ allCheckedPass: false, standing: 'fails', results: [{ clause: '7.1 t11', summary: 's', verdict: 'fail', why: 'no tree' }], refusals: ['x'], structure: sentence });
   const shown = doc.querySelector('#uaBody .ua-provenance');
   assert.ok(shown, 'the report shows no provenance line — D4 says the user is told which tier produced the tree');
   assert.equal(shown.textContent, sentence, 'the provenance line is not the server\'s own sentence');
@@ -59,6 +59,7 @@ test('the report shows the server\'s sentence about where the structure came fro
 test('a clause nib could not check is never drawn the way a pass is', async () => {
   await showReport({
     allCheckedPass: false,
+    standing: 'fails',
     results: [
       { clause: '7.1 t11', summary: 'tree', verdict: 'pass' },
       { clause: '7.21.7 t1', summary: 'unicode', verdict: 'cannot check', why: 'an unmeasured font', where: 'page 1' },
@@ -86,6 +87,7 @@ test('a clause nib could not check is never drawn the way a pass is', async () =
 test('the summary never says the document conforms while a clause is unchecked', async () => {
   await showReport({
     allCheckedPass: false,
+    standing: 'not-established',
     results: [
       { clause: '7.1 t11', summary: 'tree', verdict: 'pass' },
       { clause: '7.21.7 t1', summary: 'unicode', verdict: 'cannot check', why: 'unmeasured' },
@@ -96,6 +98,11 @@ test('the summary never says the document conforms while a clause is unchecked',
   assert.ok(!/passes|conform/i.test(summary) || /not/i.test(summary),
     `the summary reads "${summary}" for a report with an unchecked clause and no failure`);
   assert.ok(summary.includes('could not check'), `the summary does not name the unchecked clause: "${summary}"`);
+  // /pending 698: and never says "Not PDF/UA" either — a clause nib could not check is not a breach.
+  assert.ok(summary.startsWith('PDF/UA not established') && !/not pdf\/ua/i.test(summary),
+    `a report whose only problem is an unchecked clause is summarised as "${summary}"`);
+  assert.equal(doc.querySelector('#uaBody .ua-refusals').getAttribute('aria-label'), 'Why PDF/UA is not established',
+    'the refusal list is labelled as reasons the document is not PDF/UA');
   // And the door's own refusal sentences are shown, not recomposed.
   assert.ok(doc.querySelector('#uaBody .ua-refusals').textContent.includes('7.21.7 t1 could not be checked'),
     'the refusals from the door are not shown');
@@ -112,7 +119,7 @@ test('only a report whose every checked clause passes is summarised as passing',
   assert.ok(/not a conformance certificate/.test(passing),
     `the passing summary "${passing}" does not say it is not a certificate — nib checks part of PDF/UA`);
   assert.ok(!/\bconforms\b|\bis PDF\/UA\b/i.test(passing), `the passing summary claims conformance: "${passing}"`);
-  await showReport({ allCheckedPass: false, results: [{ clause: '7.1 t11', summary: 'tree', verdict: 'pass' }], refusals: ['x'] });
+  await showReport({ allCheckedPass: false, standing: 'fails', results: [{ clause: '7.1 t11', summary: 'tree', verdict: 'pass' }], refusals: ['x'] });
   assert.ok(doc.getElementById('uaSummary').textContent.startsWith('Not PDF/UA'),
-    'the summary followed the rows instead of the server\'s conformance');
+    'the summary followed the rows instead of the server\'s classification');
 });

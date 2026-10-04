@@ -15,6 +15,7 @@ import (
 	"nib/internal/atomicfile"
 	"nib/internal/ots"
 	"nib/internal/pdfops"
+	"nib/internal/uacheck"
 	"syscall"
 )
 
@@ -306,7 +307,7 @@ func watchUA(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	table, notes, passed, err := uaReport(data)
+	table, notes, standing, err := uaReport(data)
 	if err != nil {
 		return "", err
 	}
@@ -319,10 +320,19 @@ func watchUA(path string) (string, error) {
 	if err := atomicfile.WriteDurable(path+".ua.txt", []byte(body), 0o644); err != nil {
 		return "", err
 	}
-	if passed {
-		return "checked (every clause nib checks passes)", nil
+	return watchUAStatus(standing, path), nil
+}
+
+// watchUAStatus is the watch's status line for a report's standing. "not PDF/UA" only over a failing clause: a clause
+// nib could not settle is not a breach (/pending 698).
+func watchUAStatus(standing uacheck.Standing, path string) string {
+	switch standing {
+	case uacheck.StandingAllCheckedPass:
+		return "checked (every clause nib checks passes)"
+	case uacheck.StandingFails:
+		return "checked (not PDF/UA — see " + filepath.Base(path) + ".ua.txt)"
 	}
-	return "checked (not PDF/UA — see " + filepath.Base(path) + ".ua.txt)", nil
+	return "checked (PDF/UA not established — see " + filepath.Base(path) + ".ua.txt)"
 }
 
 func watchTransform(path string, fn func([]byte) ([]byte, error), done string) (string, error) {

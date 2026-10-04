@@ -71,6 +71,34 @@ func Refusals(rep Report) []string {
 	return out
 }
 
+// Standing is what a report establishes about PDF/UA, in the three answers a surface may give — /pending 698.
+//
+// **A refusal is not a failure, so "not PDF/UA" needs a failing clause.** Both surfaces said "Not PDF/UA" whenever a
+// clause was unsettled, which over a document whose only problem is a clause nib could not check is a verdict nib
+// cannot back — law 2 forbids the positive claim, and this is its mirror. So the door classifies and each surface
+// words it: `StandingFails` is a document that breaches a clause nib checks; `StandingNotEstablished` is one where
+// nothing nib checked failed but something stayed unsettled (or nothing was checked); `StandingAllCheckedPass` is
+// `Report.Conformant`'s narrow sense and still not a PDF/UA verdict. The values travel on the wire as they are.
+type Standing string
+
+const (
+	StandingFails          Standing = "fails"
+	StandingNotEstablished Standing = "not-established"
+	StandingAllCheckedPass Standing = "all-checked-pass"
+)
+
+// Standing classifies the report; see the type.
+func (r Report) Standing() Standing {
+	switch {
+	case r.Conformant():
+		return StandingAllCheckedPass
+	case len(r.Failures()) > 0:
+		return StandingFails
+	default:
+		return StandingNotEstablished
+	}
+}
+
 // wherePart renders a result's location for a refusal sentence.
 func wherePart(r Result) string {
 	if r.Where == "" {
