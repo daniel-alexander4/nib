@@ -630,18 +630,24 @@ home today.
   flight. Rule 5 joins at token boundaries, hashes a reached page as its position, reads effective (inherited)
   geometry and resources, and covers `/OCProperties`, `/OpenAction`, `/AA`, `/Names /JavaScript`, `/UserUnit`. The
   checker reads `pdfread.PageContent` because veraPDF separates an array's streams (measured).
+- **[ADR-081 — a cyclic component is charged by its guarded targets and its unguarded path](081-a-cyclic-component-is-charged-by-its-guarded-targets-and-its-unguarded-path.md)**
+  — /pending 803's regression; supersedes ADR-077's `((n+2)/2)²` in part. That charge was the worst split of n, so it
+  refused 2,000 forms naming their own dictionary (2,000 levels) and passed a pattern/form shape pdfcpu walks k(k+1)/2
+  deep. A component is now (g+1)·l — guarded targets inside it, longest unguarded path — measured at ~1,081 bytes of
+  stack a level on all three shapes; the 8,192 bound stays, ~60× under the usable stack. An indirect dictionary of
+  guarded entries is a node of its own and no level, so sharing one is 2n edges, not n² (22 s → 29 ms at 4,000 forms).
 - **[ADR-082 — no reader of a PDF is handed to pdfcpu; its reader-taking `api` functions are restated in `pdfread`](082-no-reader-of-a-pdf-is-handed-to-pdfcpu.md)**
   — /pending 716, 717; supersedes ADR-055 decision 1 in part. `pdfread.Reader` handed pdfcpu a reader and the `api`
   function ran its own optimize pass unbudgeted (every one past 30 s on the 400-form chain). Each is restated over
   `Validated`/`ReadOptimized` (`apiread.go`); `MergeRaw`'s closing pass is budgeted, so exhibits skip rather than refuse;
   the guard bans every reader-taking `api` function read from pdfcpu's source, so where a reader was built is moot.
-- **[ADR-084 — pdfcpu's page operations are handed separated contents, and the n-up carries read the door](084-pdfcpus-page-operations-are-handed-separated-contents.md)**
-  — /pending 728; supersedes ADR-057. pdfcpu's n-up, resize and cut wrote their own bare join of a divided page, so its
-  text became the unknown operator `TjET`; `pdfread.SeparateContents` puts a `\n` stream wherever the door separates,
-  before every such call (census-guarded), so the carries read the door again. The census also sees `/Contents` key
-  reads (`resourceprune.go` was invisible), and the door decodes a repeated stream once.
 - **[ADR-083 — a PDF/A identification survives only what nib verified, through ADR-032's door](083-a-pdfa-identification-survives-only-what-nib-verified.md)**
   — /pending 641; extends ADR-032, supersedes ADR-082 in part. `pdfaid` is dropped by the one door that drops
   `pdfuaid` (measured: `Rotate` kept it on both PDF/A writers' output); `PreparePDFA` and `ConvertPDFAGhostscript` are
   its writing doors. `Encrypt`/`RemovePassword` now rewrite through `rewriteWithConf`, and the census refuses a row
   that changes a document and is asked by no drive.
+- **[ADR-084 — pdfcpu's page operations are handed separated contents, and the n-up carries read the door](084-pdfcpus-page-operations-are-handed-separated-contents.md)**
+  — /pending 728; supersedes ADR-057. pdfcpu's n-up, resize and cut wrote their own bare join of a divided page, so its
+  text became the unknown operator `TjET`; `pdfread.SeparateContents` puts a `\n` stream wherever the door separates,
+  before every such call (census-guarded), so the carries read the door again. The census also sees `/Contents` key
+  reads (`resourceprune.go` was invisible), and the door decodes a repeated stream once.

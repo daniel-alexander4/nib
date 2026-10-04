@@ -2,6 +2,7 @@
 
 **Status:** accepted. `/pending 803` (2026-10-03), from the P02 phase-close review of `PLAN-returned-document.md`.
 Extends ADR-069: its walk still stops at a guarded object for loops and paths; a second, depth-only pass does not.
+**Superseded in part by ADR-081** (the `((n+2)/2)²` charge for a cyclic component).
 
 ## Context
 

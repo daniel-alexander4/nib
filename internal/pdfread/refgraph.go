@@ -90,6 +90,17 @@ const (
 	rolePage                       // a page: roleResourced's `/Resources` and `/Annots`, its `/AA` actions, `/Group /CS`, `/SeparationInfo /ColorSpace` and `/VP` (page.go:808, annotation.go:1849)
 	roleViewport                   // a `/VP` viewport: `/Measure` (page.go:719)
 	roleMeasure                    // a measure: its number-format arrays, weighed rather than followed (page.go:638)
+
+	// The depth pass's pass-through roles (`passThrough`): an INDIRECT dictionary that only holds guarded edges, made a
+	// node of its own so that n objects naming one dictionary of n entries are 2n edges, not n². Measured before them:
+	// 4,000 forms naming their own `/XObject` dictionary (~300 KB) took the depth pass 22 s. pdfcpu reads through such
+	// a dictionary in the same frames it reads a direct one in, so it costs no level (1,081 bytes of stack a form
+	// level either way, measured; ADR-081). Only `refGraph.guarded` emits them: the path count never sees one.
+	roleSharedResources // an indirect `/Resources`: its `/XObject` and `/Font`
+	roleXObjects        // an indirect `/XObject` dict: its forms and images
+	roleFonts           // an indirect `/Font` dict: its Type 3 fonts
+	roleAP              // an indirect `/AP`: its `/N`, `/R`, `/D`
+	roleAppearances     // an indirect appearance subdictionary: its streams by state
 	numRoles
 )
 
@@ -587,21 +598,7 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 			g.values(res["Shading"], roleShading, at("Resources /Shading"), emit)
 			g.values(res["ExtGState"], roleExtGState, at("Resources /ExtGState"), emit)
 			if g.guarded {
-				for _, v := range g.dict(res["XObject"]) {
-					if sd, ok := g.deref(v).(types.StreamDict); ok {
-						switch nameOf(sd.Dict, "Subtype") {
-						case "Form":
-							g.follow(v, roleResourced, at("Resources /XObject"), emit)
-						case "Image":
-							g.follow(v, roleImage, at("Resources /XObject"), emit)
-						}
-					}
-				}
-				for _, v := range g.dict(res["Font"]) {
-					if nameOf(g.dict(v), "Subtype") == "Type3" {
-						g.follow(v, roleResourced, at("Resources /Font"), emit)
-					}
-				}
+				g.follow(d["Resources"], roleSharedResources, at("Resources"), emit)
 			}
 		}
 		for _, v := range g.array(d["Annots"]) {
@@ -721,14 +718,49 @@ func (g *refGraph) expand(o types.Object, r role, via string, emit emitFn) {
 			g.values(d["AA"], roleAction, at("AA"), emit)
 		}
 		if g.guarded {
-			ap := g.dict(d["AP"])
-			for _, k := range []string{"N", "R", "D"} {
-				if _, stream := g.deref(ap[k]).(types.StreamDict); stream {
-					g.follow(ap[k], roleResourced, at("AP /"+k), emit)
-				} else {
-					g.values(ap[k], roleResourced, at("AP /"+k), emit)
+			if ap, ok := d["AP"]; ok {
+				g.follow(ap, roleAP, at("AP"), emit)
+			}
+		}
+	case roleSharedResources:
+		if g.guarded {
+			g.follow(d["XObject"], roleXObjects, at("XObject"), emit)
+			g.follow(d["Font"], roleFonts, at("Font"), emit)
+		}
+	case roleXObjects:
+		if g.guarded {
+			for _, v := range d {
+				if sd, ok := g.deref(v).(types.StreamDict); ok {
+					switch nameOf(sd.Dict, "Subtype") {
+					case "Form":
+						g.follow(v, roleResourced, via, emit)
+					case "Image":
+						g.follow(v, roleImage, via, emit)
+					}
 				}
 			}
+		}
+	case roleFonts:
+		if g.guarded {
+			for _, v := range d {
+				if nameOf(g.dict(v), "Subtype") == "Type3" {
+					g.follow(v, roleResourced, via, emit)
+				}
+			}
+		}
+	case roleAP:
+		if g.guarded {
+			for _, k := range []string{"N", "R", "D"} {
+				if _, stream := g.deref(d[k]).(types.StreamDict); stream {
+					g.follow(d[k], roleResourced, at(k), emit)
+				} else if d[k] != nil {
+					g.follow(d[k], roleAppearances, at(k), emit)
+				}
+			}
+		}
+	case roleAppearances:
+		if g.guarded {
+			g.values(o, roleResourced, via, emit)
 		}
 	case roleRendition:
 		if nameOf(d, "S") == "SR" {
