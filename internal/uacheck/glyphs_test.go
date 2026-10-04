@@ -395,10 +395,10 @@ func TestAWalkThatDidNotFinishIsNotAWalkThatFoundNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, why := d.contentEvents(); why != "" || !d.contentFinished {
-		t.Fatalf("control: a walk that returned reports %q (finished %v)", why, d.contentFinished)
+	if _, why := d.contentEvents(); why != "" || !d.contentBuild.finished {
+		t.Fatalf("control: a walk that returned reports %q (finished %v)", why, d.contentBuild.finished)
 	}
-	d.contentFinished = false
+	d.contentBuild.finished = false
 	if _, why := d.contentEvents(); !strings.Contains(why, "stopped part-way") {
 		t.Errorf("a walk that never returned reads as complete (%q)", why)
 	}

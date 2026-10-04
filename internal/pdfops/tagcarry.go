@@ -53,8 +53,11 @@ type pageSource struct {
 //
 // **Taken from the INPUT, before `api.NUp` runs**, because the output no longer contains the
 // original page objects — only their content, inside Form XObjects.
+//
+// It reads through `nupSourceRead`, the read `api.NUp` performs, because the content captured here is matched
+// byte for byte against the forms that read produced.
 func capturePageSources(pdf []byte) (map[int]pageSource, bool) {
-	ctx, err := inspectionRead(pdf)
+	ctx, err := nupSourceRead(pdf)
 	if err != nil {
 		return nil, false
 	}

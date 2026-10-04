@@ -385,7 +385,7 @@ func (d *Document) cmapCodespace(c cmapRef) (*fontcode.Codespace, string) {
 	if why := d.decodeFontStream(c.stream, "the font's embedded CMap"); why != "" {
 		return nil, why
 	}
-	cs := fontcode.ParseCodespace(c.stream.Content)
+	cs := d.cmapCodespaceOf(c.stream)
 	if cs.Malformed {
 		return nil, "the font's embedded CMap holds an entry of the wrong kind, where veraPDF discards it whole"
 	}

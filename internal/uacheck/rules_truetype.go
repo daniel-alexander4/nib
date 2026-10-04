@@ -83,10 +83,9 @@ type ttFont struct {
 // trueTypeFonts is the one door every 7.21.6 clause, 7.21.4.1 t1 and the glyph fallback read a TrueType font
 // through. An unresolved font refuses, as `type0Fonts` does: it may be a TrueType font nib never saw.
 func (d *Document) trueTypeFonts() ([]*ttFont, string) {
-	if d.ttDone {
-		return d.ttList, d.ttErr
+	if built, why := d.ttBuild.again(d.ttErr, "the TrueType font read"); built {
+		return d.ttList, why
 	}
-	d.ttDone = true
 	used, why := d.usedFonts()
 	if why != "" {
 		d.ttErr = why
@@ -155,6 +154,7 @@ func (d *Document) trueTypeFonts() ([]*ttFont, string) {
 	for _, k := range order {
 		d.resolveShareGroup(groups[k])
 	}
+	d.ttBuild.finish()
 	return d.ttList, ""
 }
 

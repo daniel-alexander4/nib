@@ -559,12 +559,12 @@ var maxStructEntries = 1 << 22
 // skipped a level under seventy `Div`s passed 7.4.2 t1: the elements past it read as elements that are not
 // there. It trips only on an ELEMENT past the bound — a leaf's MCID kid at that depth is not unread structure.
 func (d *Document) structNodes() ([]structNode, string) {
-	if d.nodesDone {
-		return d.nodes, d.nodesErr
+	if built, why := d.nodesBuild.again(d.nodesErr, "the structure walk"); built {
+		return d.nodes, why
 	}
-	d.nodesDone = true
 	root := d.dict(d.Catalog["StructTreeRoot"])
 	if root == nil {
+		d.nodesBuild.finish()
 		return nil, ""
 	}
 	var out []structNode
@@ -622,6 +622,7 @@ func (d *Document) structNodes() ([]structNode, string) {
 	walk(root["K"], 0)
 	d.nodeEntries = entriesRead
 	d.nodes = out
+	d.nodesBuild.finish()
 	return d.nodes, d.nodesErr
 }
 

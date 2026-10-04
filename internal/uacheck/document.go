@@ -35,9 +35,9 @@ type Document struct {
 	ptSpent   string
 	// nodes is every structure element reached from the root, built on first use by structNodes, and
 	// nodesErr is why part of the tree was not read, when part was not.
-	nodes     []structNode
-	nodesErr  string
-	nodesDone bool
+	nodes      []structNode
+	nodesErr   string
+	nodesBuild population
 	// nodeEntries and ptNodes are what `structNodes` and `parentTreeEntry` read — `/K` entries, repeats included, and
 	// parent-tree node reads across every lookup — kept so a test can assert the stimulus of their bounds (R3-8, RR3-1).
 	nodeEntries int
@@ -72,10 +72,8 @@ type Document struct {
 	// in. `inheritedLang` stops at that boundary where `parentsTags` and the struct parent cross it.
 	streams int
 	// contentErr is why content could not be read, or not all of it, when it could not.
-	contentErr  string
-	contentDone bool
-	// contentFinished is set when the walk RETURNS; contentDone when it starts. A panic leaves only the second.
-	contentFinished bool
+	contentErr   string
+	contentBuild population
 	// formWalks counts the form XObjects the content walk has entered, and contentOver records that it spent
 	// its budget (`overBudget`).
 	formWalks   int
@@ -95,6 +93,12 @@ type Document struct {
 	// `maxFontBytesDecoded`; fontDecodeFailed is each stream it refused, with why, so it is not inflated twice.
 	fontDecoded      int
 	fontDecodeFailed map[uintptr]string
+	// fontDecodedContent is each stream's decoded bytes, keyed like fontDecodeFailed, and fontDecodes counts the
+	// decodes that door performed (`/pending 730`): `DereferenceStreamDict` hands every caller a fresh COPY of the
+	// stream dictionary, so `sd.Content` set on one font's copy was nil on the next font's, and a stream eight fonts
+	// named was inflated — and charged to the document's budget — eight times.
+	fontDecodedContent map[uintptr][]byte
+	fontDecodes        int
 	// glyphs is every distinct (font, code) a text-showing operator draws — veraPDF's `Glyph` (`glyphs.go`) —
 	// gathered by the same walk; glyphSeen dedupes it, glyphFonts reads each font once, and glyphCodes counts
 	// the codes read against `maxGlyphCodes`.
@@ -105,7 +109,7 @@ type Document struct {
 	ttList   []*ttFont
 	ttByDict map[uintptr]*ttFont
 	ttErr    string
-	ttDone   bool
+	ttBuild  population
 	// ttUnresolved is the first used font that did not resolve — a refusal the TrueType clauses give only where no
 	// font nib did read fails; ttPrograms is each program stream's parse, once, and ttReads their shared budget.
 	ttUnresolved string
@@ -123,10 +127,12 @@ type Document struct {
 	// cidSetJudged counts the /CIDSet reads that reached the program's population (RR1-3).
 	cidSets      map[uintptr]cidSetRead
 	cidSetJudged int
-	// cmapMalformedRead is each embedded CMap stream's "malformed" answer for 7.21.3.3 t2, parsed once; the parses are
-	// counted in cmapMalformedParses (RR1-4).
-	cmapMalformedRead   map[uintptr]bool
-	cmapMalformedParses int
+	// cmapCodespaces is each embedded CMap stream's `fontcode.ParseCodespace`, parsed once however many fonts and
+	// chains name it — 7.21.3.3 t2's "malformed" answer (RR1-4) and the glyph door's codespace (`/pending 730`) read
+	// the one parse; the parses are counted in cmapCodespaceParses. cmapWModes is each stream's program /WMode.
+	cmapCodespaces      map[uintptr]*fontcode.Codespace
+	cmapCodespaceParses int
+	cmapWModes          map[uintptr]cmapWMode
 	openTypeCFF         map[uintptr]openTypeRead
 	// drawnUnrecorded is every font a pattern or Type 3 procedure draws — glyphs recorded, font events not.
 	drawnUnrecorded map[uintptr]bool
@@ -178,21 +184,21 @@ type Document struct {
 	xmpDone bool
 	// clipList is every media clip dictionary the document's actions reach, built on first use by
 	// `mediaClips`; clipsErr is why the population may be short.
-	clipList  []mediaClip
-	clipsErr  string
-	clipsDone bool
+	clipList   []mediaClip
+	clipsErr   string
+	clipsBuild population
 	// annotList is every annotation on every page, built on first use by `annots` — the ONE door
 	// (ADR-009); annotsErr is why the population may be short, when it may be.
-	annotList  []annotSubject
-	annotsErr  string
-	annotsDone bool
+	annotList   []annotSubject
+	annotsErr   string
+	annotsBuild population
 	// tableSlots is every grid slot the document's tables have asked for so far (`maxDocumentTableSlots`).
 	tableSlots int64
 	// specList is every file specification carrying an /EF, built on first use by `fileSpecs` — the ONE
 	// door (ADR-009); specsErr is why the population may be short, when it may be.
-	specList  []fileSpec
-	specsErr  string
-	specsDone bool
+	specList   []fileSpec
+	specsErr   string
+	specsBuild population
 	// drawnForms is every form XObject the content walk actually entered — `7.20 t1`'s population,
 	// which is what the document DRAWS rather than what it holds; drawnSeen dedups by identity.
 	drawnForms []formXObject
@@ -406,3 +412,30 @@ func (d *Document) dict(obj types.Object) types.Dict {
 	}
 	return res
 }
+
+// population is the build state of one population a Document builds on first use — the content walk, the
+// annotations, the file specifications, the media clips, the TrueType fonts and the structure nodes.
+//
+// **Started is not finished.** A panic inside a build (recovered per rule by `runOne`) leaves the population half
+// built with no error, and every LATER rule read it as whole — the P07.S02 re-review measured 7.1 t3 going from Fail
+// to NotApplicable that way on the content walk, which alone was fixed; `/pending 730` found five more populations
+// marked done BEFORE they were built. One door now, so a seventh population cannot be added in the old shape.
+type population struct{ started, finished bool }
+
+// again reports whether the population's build has begun before, and if so what its reader is to answer: err as it
+// stands, or — when the build never returned and recorded no error — why the population is not whole. The first call
+// marks the build started; the build calls `finish` on its way out.
+func (p *population) again(err, what string) (bool, string) {
+	if !p.started {
+		p.started = true
+		return false, ""
+	}
+	if !p.finished && err == "" {
+		return true, what + " stopped part-way on an internal error, so what it had not reached was never read"
+	}
+	return true, err
+}
+
+// finish marks the build returned. Called on RETURN only — never deferred, since a deferred call runs while a panic
+// unwinds too. A return that records an error need not call it: the error is already what `again` answers.
+func (p *population) finish() { p.finished = true }
