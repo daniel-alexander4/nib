@@ -667,7 +667,8 @@ func Encrypt(pdf []byte, password string) ([]byte, error) {
 		return nil, errors.New("a password is required to protect the document")
 	}
 	conf := protectConfig(password)
-	out, err := pdfread.Encrypt(pdf, conf)
+	conf.Cmd = model.ENCRYPT
+	out, err := protectRewrite(pdf, conf)
 	if err != nil {
 		if strings.Contains(err.Error(), "this file is encrypted") {
 			return nil, ErrAlreadyEncrypted
@@ -703,7 +704,8 @@ func RemovePassword(pdf []byte, password string) ([]byte, error) {
 	// supplying the typed secret as both accepts whichever one it actually is.
 	conf.UserPW = password
 	conf.OwnerPW = password
-	out, err := pdfread.Decrypt(pdf, conf)
+	conf.Cmd = model.DECRYPT
+	out, err := protectRewrite(pdf, conf)
 	if err != nil {
 		if errors.Is(err, pdfcpu.ErrWrongPassword) || strings.Contains(err.Error(), "correct password") {
 			return nil, ErrWrongPassword
@@ -714,6 +716,16 @@ func RemovePassword(pdf []byte, password string) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// protectRewrite is `api.Encrypt` and `api.Decrypt` (crypto.go:30, :101 — both `api.Optimize` under the
+// command conf carries) through this package's rewrite door, so adding or removing a password drops a
+// conformance identification as every other change does (ADR-032, ADR-083; `/pending 641`). They used to
+// call pdfread's restatements of the same read-optimize-write, which have no place for the drop, so a
+// labelled document came back from Encrypt → RemovePassword still claiming PDF/UA. The drop runs on the
+// plaintext context: after the read has decrypted it, before the write encrypts it.
+func protectRewrite(pdf []byte, conf *model.Configuration) ([]byte, error) {
+	return rewriteWithConf(pdf, conf, func(*model.Context) error { return nil })
 }
 
 // clip shortens s to at most max runes, appending an ellipsis when it truncates.

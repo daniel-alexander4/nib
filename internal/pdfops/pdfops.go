@@ -440,7 +440,13 @@ func carryLang(src, dst []byte) ([]byte, error) {
 	// so the user could no longer open, save or sign it.
 	// And a HEX string too (`/pending 489`): the dereferencing call used here before refused a
 	// `HexLiteral`, so a page operation silently dropped a language written that way.
-	lang := readLang(sctx.XRefTable, sroot["Lang"])
+	return withLang(dst, readLang(sctx.XRefTable, sroot["Lang"]))
+}
+
+// withLang writes lang as dst's catalog `/Lang`, the one writer of a carried language (`carryLang`, and
+// `RedactPages` for a raster first segment, which reads the language off its own read of the source). An
+// empty lang leaves dst as it is.
+func withLang(dst []byte, lang string) ([]byte, error) {
 	if lang == "" {
 		return dst, nil
 	}
@@ -721,9 +727,15 @@ func Combine(pdfs [][]byte) ([]byte, error) {
 // map, which would return the document unredacted under the same success. The refusal is the package's one
 // page-range door (`pageInDocument`, ErrPageNotInDocument), so a caller can tell it from a failed rebuild.
 func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
-	n, err := PageCount(original)
+	// PageCount's read, kept open for the catalog's language (`/pending 642`): see the first segment below.
+	octx, err := pdfread.Validated(original, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
+	}
+	n := octx.PageCount
+	lang := ""
+	if root, cerr := octx.XRefTable.Catalog(); cerr == nil {
+		lang = readLang(octx.XRefTable, root["Lang"])
 	}
 	if len(raster) == 0 {
 		return nil, fmt.Errorf("%w: no pages were given to redact", ErrPageNotInDocument)
@@ -743,6 +755,16 @@ func RedactPages(original []byte, raster map[int]RasterPage) ([]byte, error) {
 			seg, err := ImagesToPDF([]RasterPage{page})
 			if err != nil {
 				return nil, err
+			}
+			// **The merge keeps the FIRST segment's catalog** (`/pending 642`, /pending 472's defect on the
+			// route that fix missed): with page 1 redacted that is ImagesToPDF's, which has no `/Lang`, so the
+			// output lost the document's language (7.2 t34) while a redaction of page 2 kept it. A kept run
+			// carries it already (`subset`). The language goes on the one-page raster, not on the merged
+			// result, so it costs a rewrite of one image page rather than of the whole document.
+			if i == 1 {
+				if seg, err = withLang(seg, lang); err != nil {
+					return nil, err
+				}
 			}
 			segments = append(segments, seg)
 			i++

@@ -95,6 +95,8 @@ var conformanceAllowed = []struct{ file, fragment, why string }{
 		"ADR-032: describes the claim nib DROPS"},
 	{"README.md", "Nib cannot tell whether an edit kept the document conformant",
 		"ADR-032: a refusal to claim, stated as one"},
+	{"internal/testpdf/uaid.go", "<pdfaid:conformance>B</pdfaid:conformance>",
+		"ADR-083: the test fixture's PDF/A claim, written so the drop of it can be tested"},
 	{"README.md", "falsely claims conformance",
 		"PDF/A: the refusal to produce a file that would claim it"},
 	{"docs/accessibility-parity.md", "Agreement is the claim; conformance is not.",

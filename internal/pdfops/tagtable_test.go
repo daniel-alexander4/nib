@@ -14,6 +14,9 @@ import (
 	"testing"
 
 	"nib/internal/testpdf"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 // The tag-fate table and its guard — `PLAN-accessibility.md` P01.S03, law 2.
@@ -66,6 +69,39 @@ type tagFate struct {
 	// identification census): an operation that takes a page out refuses the one-page fixture outright, and
 	// a refusal is logged, never measured. The veraPDF differential drives its own document and ignores it.
 	twoPages bool
+	// uaDrive is the identification census's drive where `drive` cannot serve it — an output this table's
+	// oracle cannot read back, or an input the corpus does not carry (`/pending 641`). It returns bytes the
+	// census can read. uaWhy is the reason a row that changes a document is asked by neither; the census
+	// refuses a row with no drive, no uaDrive and no uaWhy, because a `continue` on a nil drive is what
+	// let Encrypt and RemovePassword keep a claim with the census green.
+	uaDrive func([]byte) ([]byte, error)
+	uaWhy   string
+}
+
+// rawEncrypt and rawDecrypt are pdfcpu's own password operations, which drop nothing: the census reads
+// what nib's Encrypt wrote through the one, and hands nib's RemovePassword a document still carrying its
+// claims through the other.
+func rawEncrypt(b []byte, pw string) ([]byte, error) {
+	var out bytes.Buffer
+	err := api.Encrypt(bytes.NewReader(b), &out, model.NewAESConfiguration(pw, pw, 256))
+	return out.Bytes(), err
+}
+
+func rawDecrypt(b []byte, pw string) ([]byte, error) {
+	var out bytes.Buffer
+	conf := model.NewDefaultConfiguration()
+	conf.UserPW, conf.OwnerPW = pw, pw
+	err := api.Decrypt(bytes.NewReader(b), &out, conf)
+	return out.Bytes(), err
+}
+
+// censusRaster is a redaction's raster for a drive, which has no *testing.T to build one with.
+func censusRaster() RasterPage {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 400, 400))); err != nil {
+		panic(err)
+	}
+	return RasterPage{Image: buf.Bytes(), W: 200, H: 200}
 }
 
 // tagFates is the table. Every document-touching operation in this package must appear.
@@ -295,10 +331,25 @@ var tagFates = map[string]tagFate{
 	}},
 
 	// ── Declared but not driven, each with the reason. The completeness half still covers them.
-	"Encrypt":        {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream"},
-	"RemovePassword": {verdict: "carried", why: "needs an already-encrypted input, which the corpus does not carry"},
-	"FillFormJSON":   {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the fill door is driven on an authored form by `TestFillingAFormKeepsTheCatalogMetadata`, since it no longer shares AuthorForm's write path"},
-	"FillFormXFDF":   {verdict: "carried", why: "as FillFormJSON"},
+	"Encrypt": {verdict: "carried", why: "the encrypted output cannot be parsed without the password, so the oracle cannot read it back — the keys are inside the encrypted stream",
+		uaDrive: func(b []byte) ([]byte, error) {
+			enc, err := Encrypt(b, "census")
+			if err != nil {
+				return nil, err
+			}
+			return rawDecrypt(enc, "census")
+		}},
+	"RemovePassword": {verdict: "carried", why: "needs an already-encrypted input, which the corpus does not carry",
+		uaDrive: func(b []byte) ([]byte, error) {
+			enc, err := rawEncrypt(b, "census")
+			if err != nil {
+				return nil, err
+			}
+			return RemovePassword(enc, "census")
+		}},
+	"FillFormJSON": {verdict: "carried", why: "pdfcpu refuses the fixture's single text field (`no form fields affected`); the fill door is driven on an authored form by `TestFillingAFormKeepsTheCatalogMetadata`, since it no longer shares AuthorForm's write path",
+		uaWhy: "as `why`: `TestFillingAFormKeepsTheCatalogMetadata` asserts the drop on an authored form; the fill writes through rewriteWithConf, the drop's own door"},
+	"FillFormXFDF": {verdict: "carried", why: "as FillFormJSON", uaWhy: "as FillFormJSON"},
 	"StampTextLayer": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
 		// It needs no more setup than any other row: the words are the drive's own, and the font
 		// registry is forced inside StampTextLayer itself. Left undriven, the OCR path was the one
@@ -306,9 +357,20 @@ var tagFates = map[string]tagFate{
 		// like the four it could.
 		return StampTextLayer(b, []Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice"}}, "eng")
 	}},
-	"ConvertPDFAGhostscript": {verdict: "dropped", why: "shells out to Ghostscript, which is optional and absent on most machines"},
-	"PreparePDFA":            {verdict: "carried", why: "its output is unreadable to the oracle on the minimal fixture; measured `carried` on the LibreOffice document (D9)"},
+	"ConvertPDFAGhostscript": {verdict: "dropped", why: "shells out to Ghostscript, which is optional and absent on most machines",
+		uaDrive: ConvertPDFAGhostscript},
+	"PreparePDFA": {verdict: "carried", why: "its output is unreadable to the oracle on the minimal fixture; measured `carried` on the LibreOffice document (D9)",
+		uaDrive: func(b []byte) ([]byte, error) {
+			out, blockers, err := PreparePDFA(b)
+			if err == nil && len(blockers) > 0 {
+				err = fmt.Errorf("refused: %v", blockers)
+			}
+			return out, err
+		}},
 	"RedactPages": {
+		uaDrive: func(b []byte) ([]byte, error) {
+			return RedactPages(b, map[int]RasterPage{1: censusRaster()})
+		},
 		verdict: "dropped",
 		why: "needs a raster map. Dispositioned as a DECISION per P01.S04, not an oversight: it " +
 			"destroys page content by design — it replaces pages with rasters, so no structure it " +

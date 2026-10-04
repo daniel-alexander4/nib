@@ -640,3 +640,8 @@ home today.
   text became the unknown operator `TjET`; `pdfread.SeparateContents` puts a `\n` stream wherever the door separates,
   before every such call (census-guarded), so the carries read the door again. The census also sees `/Contents` key
   reads (`resourceprune.go` was invisible), and the door decodes a repeated stream once.
+- **[ADR-083 — a PDF/A identification survives only what nib verified, through ADR-032's door](083-a-pdfa-identification-survives-only-what-nib-verified.md)**
+  — /pending 641; extends ADR-032, supersedes ADR-082 in part. `pdfaid` is dropped by the one door that drops
+  `pdfuaid` (measured: `Rotate` kept it on both PDF/A writers' output); `PreparePDFA` and `ConvertPDFAGhostscript` are
+  its writing doors. `Encrypt`/`RemovePassword` now rewrite through `rewriteWithConf`, and the census refuses a row
+  that changes a document and is asked by no drive.

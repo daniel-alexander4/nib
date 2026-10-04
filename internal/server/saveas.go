@@ -188,7 +188,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	// the signature) — see DropUAIdentificationUnlessSigned.
 	if !s.holdsBytes(data) {
 		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); derr != nil {
-			log.Printf("save as: the PDF/UA identification could not be checked, so the bytes are written as posted: %v", derr)
+			log.Printf("save as: the PDF/UA or PDF/A identification could not be checked, so the bytes are written as posted: %v", derr)
 		} else {
 			data = dropped
 		}

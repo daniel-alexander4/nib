@@ -1144,7 +1144,7 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		// (`/pending 492`). Before the write, so the file and the document agree. An unchanged save is
 		// not an edit and keeps its claim.
 		if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(data, sign.HasSignatureBlob(data)); derr != nil {
-			log.Printf("save: the PDF/UA identification could not be checked, so the bytes are saved as posted: %v", derr)
+			log.Printf("save: the PDF/UA or PDF/A identification could not be checked, so the bytes are saved as posted: %v", derr)
 		} else {
 			data = dropped
 		}

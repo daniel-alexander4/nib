@@ -19,10 +19,23 @@ import (
 
 const uaNS = "http://www.aiim.org/pdfua/ns/id/"
 
+// pdfaNS is the PDF/A identification's namespace, dropped by the same rule (ADR-083).
+const pdfaNS = "http://www.aiim.org/pdfa/ns/id/"
+
 // WithUAIdentification returns pdf with `pdfuaid:part 1` added to its catalog XMP packet, written
 // DIRECTLY through pdfcpu — not through nib's own write path, which removes exactly this. pdf must already
 // carry a packet (a titled document does).
 func WithUAIdentification(pdf []byte) ([]byte, error) {
+	return withIdentification(pdf, `<rdf:Description rdf:about="" xmlns:pdfuaid="`+uaNS+`"><pdfuaid:part>1</pdfuaid:part></rdf:Description>`)
+}
+
+// WithPDFAIdentification is WithUAIdentification for `pdfaid:part 2` / `pdfaid:conformance B` — the claim
+// alone, over a document that need not conform, which is exactly the shape the rule is about.
+func WithPDFAIdentification(pdf []byte) ([]byte, error) {
+	return withIdentification(pdf, `<rdf:Description rdf:about="" xmlns:pdfaid="`+pdfaNS+`"><pdfaid:part>2</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance></rdf:Description>`)
+}
+
+func withIdentification(pdf []byte, description string) ([]byte, error) {
 	ctx, err := pdfread.ReadOptimized(pdf, model.NewDefaultConfiguration())
 	if err != nil {
 		return nil, err
@@ -46,8 +59,7 @@ func WithUAIdentification(pdf []byte) ([]byte, error) {
 	if !strings.Contains(s, "</rdf:RDF>") {
 		return nil, errors.New("testpdf: the packet has no rdf:RDF to add a Description to")
 	}
-	sd.Content = []byte(strings.Replace(s, "</rdf:RDF>",
-		`<rdf:Description rdf:about="" xmlns:pdfuaid="`+uaNS+`"><pdfuaid:part>1</pdfuaid:part></rdf:Description></rdf:RDF>`, 1))
+	sd.Content = []byte(strings.Replace(s, "</rdf:RDF>", description+"</rdf:RDF>", 1))
 	if err := sd.Encode(); err != nil {
 		return nil, err
 	}
@@ -97,7 +109,12 @@ func ClaimsUA(pdf []byte) (bool, error) {
 // after the point this one stopped. On a decode error the answer falls back to whether the namespace
 // is named at all, which over-reports (a PDF/A extension schema names it and claims nothing) and so can
 // fail a test, never pass one.
-func PacketClaimsUA(packet string) bool {
+func PacketClaimsUA(packet string) bool { return packetClaims(packet, uaNS) }
+
+// PacketClaimsPDFA is PacketClaimsUA for the PDF/A identification, failing closed the same way.
+func PacketClaimsPDFA(packet string) bool { return packetClaims(packet, pdfaNS) }
+
+func packetClaims(packet, ns string) bool {
 	dec := xml.NewDecoder(strings.NewReader(packet))
 	for {
 		tok, err := dec.Token()
@@ -105,17 +122,17 @@ func PacketClaimsUA(packet string) bool {
 			return false
 		}
 		if err != nil {
-			return strings.Contains(packet, uaNS)
+			return strings.Contains(packet, ns)
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
 		}
-		if se.Name.Space == uaNS {
+		if se.Name.Space == ns {
 			return true
 		}
 		for _, a := range se.Attr {
-			if a.Name.Space == uaNS {
+			if a.Name.Space == ns {
 				return true
 			}
 		}
