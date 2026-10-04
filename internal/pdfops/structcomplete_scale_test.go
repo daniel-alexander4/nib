@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 )
 
 // flatTaggedDoc is n pages under ONE `/Pages` — the flat tree pdfcpu's writer and nib's Markdown conversion
@@ -43,28 +44,24 @@ func flatTaggedDoc(n int) []byte {
 // prepare. The gate now reads without that one step (see `carryIsComplete`), so four times the pages must cost
 // nowhere near sixteen times the time.
 func TestTheCarryGateIsLinearInPagesOnAFlatTree(t *testing.T) {
-	gate := func(n int) time.Duration {
-		pdf := flatTaggedDoc(n)
-		// STIMULUS: a tagged document the gate answers complete — the whole gate runs, not an early false.
-		if !carryIsComplete(pdf) {
-			t.Fatalf("setup: the gate refused the %d-page flat tagged fixture", n)
+	docs := map[int][]byte{}
+	prep := func(n int) func() {
+		pdf, ok := docs[n]
+		if !ok {
+			pdf = flatTaggedDoc(n)
+			// STIMULUS: a tagged document the gate answers complete — the whole gate runs, not an early false.
+			if !carryIsComplete(pdf) {
+				t.Fatalf("setup: the gate refused the %d-page flat tagged fixture", n)
+			}
+			docs[n] = pdf
 		}
-		best := time.Duration(1 << 62)
-		for i := 0; i < 5; i++ {
-			st := time.Now()
-			carryIsComplete(pdf)
-			best = min(best, time.Since(st))
-		}
-		return best
+		return func() { carryIsComplete(pdf) }
 	}
+	// Counted first (a `PageDict` per page allocates per kid it passes), then timed through `scaling`'s
+	// interleaved rounds for a quadratic that does not allocate (/pending 799).
 	const n = 1500
-	small, large := gate(n), gate(4*n)
-	ratio := float64(large) / float64(small)
-	t.Logf("%d pages %v, %d pages %v: %.1fx for 4x the pages", n, small, 4*n, large, ratio)
-	if ratio > 8 {
-		t.Errorf("the carry gate is superlinear in pages on a flat tree: %d pages took %.1fx the time of %d "+
-			"(%v vs %v) — its re-read walks the page tree once per page", 4*n, ratio, n, large, small)
-	}
+	scaling.AllocsGrowLinearly(t, "carryIsComplete", n, 4*n, 8, prep)
+	scaling.GrowsLinearly(t, "carryIsComplete", n, 4*n, 8, func(n int) time.Duration { return scaling.TimeOnce(prep(n)) })
 }
 
 // TestTheCarryGateSeesAFormDrawnTwiceThroughInheritedResources — the half of `optimizeResourceDicts` the gate

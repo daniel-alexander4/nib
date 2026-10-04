@@ -88,6 +88,13 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 		"AppendRevision": "test-support — testpdf's hand-built incremental update, for the server's returned-document " +
 			"fixtures (P02.S03); `sign` keeps its own `synthRevision` because testpdf feeds sign's tests.",
 		"SignatureDictionary": "test-support — the signer's dictionary text a returned-document fixture redefines or copies.",
+		"GrowsLinearly": "test-support — `internal/scaling`, the one door for a cost-shape test that only a clock can see " +
+			"(/pending 785, 799); interleaved rounds, the least ratio.",
+		"AllocsGrowLinearly": "test-support — `internal/scaling`'s counted twin of GrowsLinearly: heap allocations, which " +
+			"no load moves, for a quadratic that allocates (every page-tree walk) (/pending 799).",
+		"WithinFactor": "test-support — `internal/scaling`'s door for a budget-bounded cost, judged against an honest " +
+			"base measured in the same rounds rather than an absolute ceiling (/pending 799).",
+		"TimeOnce": "test-support — `internal/scaling`'s clock: a collection, then one timed run, for GrowsLinearly's callers.",
 		"AmbiguousPageTrees": "test-support — the four page-tree shapes two readings order differently " +
 			"(/pending 755), shared by pdfops' ContentDigest tests and ceremony's Convene refusal test.",
 		"Assemble": "test-support — testpdf's hand-assembler for page-tree shapes pdfcpu will not write " +

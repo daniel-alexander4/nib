@@ -5,12 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -192,27 +192,27 @@ func flatDoc(n int) []byte {
 
 // The cost: doubling the pages must not much more than double the time. On `PageDict` per page it quadruples.
 func TestPagesIsLinearInThePageCount(t *testing.T) {
-	best := func(n int) time.Duration {
-		ctx, err := pdfread.Validated(flatDoc(n), model.NewDefaultConfiguration())
-		if err != nil {
-			t.Fatal(err)
+	// 4× the pages: linear is ×4, the per-page root walk ×16; ×8 is the midpoint on a log scale. (It was 2×
+	// against ×3 — alone ×2.1, but millisecond timings tipped ×3.66 once under a loaded full suite; measured one
+	// size after the other at ×4 it still ranged ×2.1-×4.8 at load ~15.) Counted first — `PageDict` allocates per
+	// kid it passes, so a per-page walk is ×16 in allocations whatever the load — then timed through `scaling`'s
+	// interleaved rounds, for a quadratic that does not allocate (/pending 799).
+	ctxs := map[int]*model.Context{}
+	prep := func(n int) func() {
+		ctx, ok := ctxs[n]
+		if !ok {
+			var err error
+			if ctx, err = pdfread.Validated(flatDoc(n), model.NewDefaultConfiguration()); err != nil {
+				t.Fatal(err)
+			}
+			ctxs[n] = ctx
 		}
-		b := time.Duration(1 << 62)
-		for i := 0; i < 5; i++ {
-			runtime.GC()
-			t0 := time.Now()
+		return func() {
 			if got := len(pdfread.Pages(ctx)); got != n {
 				t.Fatalf("%d pages answered for %d", got, n)
 			}
-			b = min(b, time.Since(t0))
 		}
-		return b
 	}
-	// 4× the pages: linear is ×4, the per-page root walk ×16; ×8 is the midpoint on a log scale. (It was 2×
-	// against ×3 — alone ×2.1, but millisecond timings tipped ×3.66 once under a loaded full suite.)
-	small, large := best(3000), best(12000)
-	t.Logf("3,000 pages %v, 12,000 pages %v (×%.2f)", small, large, float64(large)/float64(small))
-	if large > 8*small {
-		t.Fatalf("4x the pages cost ×%.2f (%v → %v): the walk is not linear", float64(large)/float64(small), small, large)
-	}
+	scaling.AllocsGrowLinearly(t, "pdfread.Pages", 3000, 12000, 8, prep)
+	scaling.GrowsLinearly(t, "pdfread.Pages", 3000, 12000, 8, func(n int) time.Duration { return scaling.TimeOnce(prep(n)) })
 }

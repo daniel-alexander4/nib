@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/scaling"
 )
 
 // refCodespace is the codespace as it stood before /pending 724 — every range in one list, `add` checking each
@@ -254,50 +256,50 @@ func bigCMap(n int) []byte {
 	return []byte(src.String())
 }
 
-// readCost parses an n-range CMap and cuts 8 KB of text with it, and is the best of three runs.
-func readCost(t *testing.T, n int) time.Duration {
-	src := bigCMap(n)
-	shown := make([]byte, 8192)
-	r := rand.New(rand.NewSource(1))
-	for i := 0; i < len(shown); i += 4 {
-		v := uint32(r.Intn(n))<<16 | uint32(0x2000+r.Intn(0x6000))
-		if r.Intn(2) == 0 {
-			v = r.Uint32() // mostly a miss, which is the partial scan's worst case
+// readCost returns a measurement of parsing an n-range CMap and cutting 8 KB of text with it; the fixture is built
+// once per size, outside the clock.
+func readCost(t *testing.T) func(n int) time.Duration {
+	type fixture struct{ src, shown []byte }
+	built := map[int]fixture{}
+	return func(n int) time.Duration {
+		f, ok := built[n]
+		if !ok {
+			f = fixture{bigCMap(n), make([]byte, 8192)}
+			r := rand.New(rand.NewSource(1))
+			for i := 0; i < len(f.shown); i += 4 {
+				v := uint32(r.Intn(n))<<16 | uint32(0x2000+r.Intn(0x6000))
+				if r.Intn(2) == 0 {
+					v = r.Uint32() // mostly a miss, which is the partial scan's worst case
+				}
+				f.shown[i], f.shown[i+1], f.shown[i+2], f.shown[i+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
+			}
+			built[n] = f
 		}
-		shown[i], shown[i+1], shown[i+2], shown[i+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
+		return scaling.TimeOnce(func() {
+			cs := ParseCodespace(f.src)
+			if cs.Overspent || cs.ranges() != n {
+				t.Fatalf("an %d-range CMap kept %d of its disjoint ranges (overspent %v)", n, cs.ranges(), cs.Overspent)
+			}
+			cs.Codes(f.shown, func([]byte, int) bool { return true })
+		})
 	}
-	best := time.Duration(0)
-	for run := 0; run < 3; run++ {
-		start := time.Now()
-		cs := ParseCodespace(src)
-		if cs.Overspent || cs.ranges() != n {
-			t.Fatalf("an %d-range CMap kept %d of its disjoint ranges (overspent %v)", n, cs.ranges(), cs.Overspent)
-		}
-		cs.Codes(shown, func([]byte, int) bool { return true })
-		if spent := time.Since(start); run == 0 || spent < best {
-			best = spent
-		}
-	}
-	return best
 }
 
 // TestAWideCodespaceIsReadInLinearTime — /pending 724's own case. A 32k-range CMap took seconds to parse and to cut
 // 8 KB with, because `add` compared each range with every earlier one and `Codes` scanned every range per byte.
 //
 // Bounded by SCALING, not by the clock, because the clock is the machine's load: at load ~10 the list read 32k ranges
-// and 8 KB in 4.2 s and at load ~30 in 12.9 s, while the index reads them in ~0.16 s. Four times the ranges cost the
-// list ~16 times the time and cost the index ~4; the bound is 8.
+// and 8 KB in 4.2 s and at load ~30 in 12.9 s, while the index reads them in ~0.16 s. Eight times the ranges cost the
+// list ~64 times the time and cost the index ~8; the bound is 20. Measured one size after the other it ranged
+// ×5.7-×12.6 at load ~15, so the sizes are interleaved through `scaling` (/pending 799).
 func TestAWideCodespaceIsReadInLinearTime(t *testing.T) {
-	small, big := readCost(t, 4096), readCost(t, 32768)
-	t.Logf("4,096 ranges %v, 32,768 ranges %v: ×%.1f", small, big, float64(big)/float64(small))
-	if big > 20*small {
-		t.Fatalf("eight times the codespace ranges cost ×%.1f the time (%v against %v) — quadratic in its ranges",
-			float64(big)/float64(small), big, small)
-	}
+	cost := readCost(t)
+	scaling.GrowsLinearly(t, "codespace read", 4096, 32768, 20, cost)
 
 	// The shape the tries are quadratic in, as veraPDF's list is: narrow ranges fanning out into distinct subtrees,
 	// then wide ones spanning every one of them. Refused by the budget, in bounded time, rather than read for
-	// minutes (45 s unbudgeted at this size and load ~30, measured).
+	// minutes (45 s unbudgeted at this size and load ~30, measured). "Bounded" is against the honest 32k-range read in the
+	// same rounds: an absolute 6 s took 9.96 s at load ~8 and 1.15 s alone (/pending 799).
 	var adv strings.Builder
 	fmt.Fprintf(&adv, "%d begincodespacerange\n", 2*4096)
 	for i := 0; i < 4096; i++ {
@@ -307,13 +309,12 @@ func TestAWideCodespaceIsReadInLinearTime(t *testing.T) {
 		fmt.Fprintf(&adv, "<0000%02X%02X> <FFFF%02X%02X>\n", 0x80+i/256, i%256, 0x80+i/256, i%256)
 	}
 	adv.WriteString("endcodespacerange\n")
-	start := time.Now()
-	wide := ParseCodespace([]byte(adv.String()))
+	advSrc, wide := []byte(adv.String()), (*Codespace)(nil)
+	scaling.WithinFactor(t, "refusing an overspent codespace", 12,
+		func() time.Duration { return cost(32768) },
+		func() time.Duration { return scaling.TimeOnce(func() { wide = ParseCodespace(advSrc) }) })
 	if !wide.Overspent {
 		t.Fatalf("a codespace quadratic in the index was read whole (%d ranges, work %d)", wide.ranges(), wide.work)
-	}
-	if spent := time.Since(start); spent > 6*time.Second {
-		t.Fatalf("refusing an overspent codespace took %v", spent)
 	}
 	// Refused wherever it travels: into a chain, and into the clone a chain starts from.
 	chain := ParseCodespace([]byte("1 begincodespacerange <00> <7F> endcodespacerange")).Clone()
