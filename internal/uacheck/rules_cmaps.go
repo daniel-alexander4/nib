@@ -403,7 +403,7 @@ func checkCMapWMode(d *Document) Result {
 				held.hold(why, c.where)
 				continue
 			}
-			progW, ok := cmapProgramWMode(c.stream.Content)
+			progW, ok := d.cmapProgramWModeOf(c.stream)
 			if !ok {
 				held.hold("an embedded CMap's /WMode is not an integer nib can read", c.where)
 				continue
@@ -438,20 +438,48 @@ func checkCMapWMode(d *Document) Result {
 	return Result{Verdict: Pass}
 }
 
-// cmapMalformed is `fontcode.ParseCodespace(...).Malformed` for one embedded CMap stream, parsed ONCE however many fonts
-// and chains name it (the re-review, RR1-4: it was re-parsed per font). `cmapMalformedParses` counts the parses.
+// cmapMalformed is `fontcode.ParseCodespace(...).Malformed` for one embedded CMap stream (`cmapCodespaceOf`).
 func (d *Document) cmapMalformed(sd *types.StreamDict) bool {
+	return d.cmapCodespaceOf(sd).Malformed
+}
+
+// cmapCodespaceOf is one decoded embedded CMap stream's `fontcode.ParseCodespace`, parsed ONCE however many fonts and
+// chains name it — the re-review (RR1-4) found 7.21.3.3 t2 re-parsing per font, and `/pending 730` the glyph door
+// (`cmapCodespace`) doing the same: 670 ms a font on an 8 MB CMap. `cmapCodespaceParses` counts the parses. The
+// answer is shared, so a caller that merges into it clones it first (`type0Codespace` does).
+func (d *Document) cmapCodespaceOf(sd *types.StreamDict) *fontcode.Codespace {
 	id := dictID(sd.Dict)
-	if m, done := d.cmapMalformedRead[id]; done {
-		return m
+	if cs, done := d.cmapCodespaces[id]; done {
+		return cs
 	}
-	d.cmapMalformedParses++
-	m := fontcode.ParseCodespace(sd.Content).Malformed
-	if d.cmapMalformedRead == nil {
-		d.cmapMalformedRead = map[uintptr]bool{}
+	d.cmapCodespaceParses++
+	cs := fontcode.ParseCodespace(sd.Content)
+	if d.cmapCodespaces == nil {
+		d.cmapCodespaces = map[uintptr]*fontcode.Codespace{}
 	}
-	d.cmapMalformedRead[id] = m
-	return m
+	d.cmapCodespaces[id] = cs
+	return cs
+}
+
+// cmapWMode is one embedded CMap program's `cmapProgramWMode` answer.
+type cmapWMode struct {
+	w  int64
+	ok bool
+}
+
+// cmapProgramWModeOf is `cmapProgramWMode` over one decoded embedded CMap stream, tokenized once however many fonts
+// name it (`/pending 730`: 234 ms a font on an 8 MB CMap).
+func (d *Document) cmapProgramWModeOf(sd *types.StreamDict) (int64, bool) {
+	id := dictID(sd.Dict)
+	if m, done := d.cmapWModes[id]; done {
+		return m.w, m.ok
+	}
+	w, ok := cmapProgramWMode(sd.Content)
+	if d.cmapWModes == nil {
+		d.cmapWModes = map[uintptr]cmapWMode{}
+	}
+	d.cmapWModes[id] = cmapWMode{w, ok}
+	return w, ok
 }
 
 // cmapProgramWMode scans a CMap program's PostScript for `/WMode <int> def`, the last one winning as a later

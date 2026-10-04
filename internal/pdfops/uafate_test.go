@@ -16,7 +16,13 @@ import (
 // the shared test helper, not through writeMutated, which now removes exactly this.
 func labelledFixture(t *testing.T) []byte {
 	t.Helper()
-	titled, err := SetTitle(taggedFixture(), "Census")
+	return labelled(t, taggedFixture())
+}
+
+// labelled is base titled and carrying `pdfuaid:part 1`.
+func labelled(t *testing.T, base []byte) []byte {
+	t.Helper()
+	titled, err := SetTitle(base, "Census")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +59,10 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 	if !claimsUA(t, catalogPacket(t, src)) {
 		t.Fatal("setup: the labelled fixture does not claim PDF/UA, so every row below would pass on a build that keeps the claim")
 	}
+	two := labelled(t, taggedTwoPageFixture())
+	if !claimsUA(t, catalogPacket(t, two)) {
+		t.Fatal("setup: the labelled two-page fixture does not claim PDF/UA")
+	}
 	driven := 0
 	var kept []string
 	names := make([]string, 0, len(tagFates))
@@ -70,7 +80,11 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		if name == "LabelUA" {
 			continue
 		}
-		out, err := f.drive(src)
+		in := src
+		if f.twoPages {
+			in = two
+		}
+		out, err := f.drive(in)
 		if err != nil {
 			t.Logf("%s: not exercised on this fixture (%v)", name, err)
 			continue
@@ -78,7 +92,7 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		driven++
 		// An operation with nothing to do returns the document's OWN bytes (`ClearFlags` on an unflagged
 		// file, `DeclareAuthoredProseLang` with nothing to bracket). Nothing changed, so the claim stands.
-		if bytes.Equal(out, src) {
+		if bytes.Equal(out, in) {
 			continue
 		}
 		if claimsUA(t, catalogPacket(t, out)) {

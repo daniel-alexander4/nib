@@ -62,6 +62,10 @@ type tagFate struct {
 	why string
 	// drive runs the operation on a tagged fixture. Nil means "not driven" and then `why` must say so.
 	drive func([]byte) ([]byte, error)
+	// twoPages drives the row on `taggedTwoPageFixture` in this file's two censuses (this one and the UA
+	// identification census): an operation that takes a page out refuses the one-page fixture outright, and
+	// a refusal is logged, never measured. The veraPDF differential drives its own document and ignores it.
+	twoPages bool
 }
 
 // tagFates is the table. Every document-touching operation in this package must appear.
@@ -191,16 +195,13 @@ var tagFates = map[string]tagFate{
 	// prune, `RemovePages` is not even driven here (it would remove the document's only page), and
 	// the multi-page readers are in `subsetcarry_test.go` and in the veraPDF census.
 	"Collect": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return Collect(b, []string{"1"}) }},
-	// **`RemovePages`' drive reaches one of this table's two readers and not the other**, and saying
-	// so is the point: the corpus fixture is ONE page, so removing page 1 leaves no document and
-	// `TestEveryDeclaredFateIsTheMEASUREDFate` logs "not exercised" — while the veraPDF differential
-	// drives the same row on the 8-page census document, where it measures a real deletion and is
-	// the reason this row's `knownUA1Deltas` entry exists. The slice's own readers
-	// (`TestASubsetKeepsAnElementWhoseOwnPageIsGone`, `TestACarriedTreeKeepsItsRoleMap`) drive it on
-	// documents a page can come out of. Nilling the drive to satisfy the undriven-must-say-why rule
-	// was tried and is wrong: it took the row out of the differential too, which is the stronger
-	// measurement of the two.
-	"RemovePages":   {verdict: "carried", drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
+	// **`RemovePages` is driven on the TWO-page fixture** (`/pending 730`). On the one-page fixture
+	// removing page 1 leaves no document, so this census and the UA identification census both logged
+	// "not exercised" and moved on — a declared `carried` nothing measured. The veraPDF differential
+	// drives the same drive on the 8-page census document, where it measures a real deletion and is
+	// the reason this row's `knownUA1Deltas` entry exists; nilling the drive was tried and is wrong,
+	// because it took the row out of the differential too.
+	"RemovePages":   {verdict: "carried", twoPages: true, drive: func(b []byte) ([]byte, error) { return RemovePages(b, []string{"1"}) }},
 	"DuplicatePage": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return DuplicatePage(b, 1) }},
 	// `Booklet` is `InsertBlank`×pad → `Collect` → `NUp`: it dropped only because `Collect` did, and
 	// it carries now because `Collect` carries and `NUp` has carried since P01.S06.
@@ -378,12 +379,20 @@ func TestEveryDeclaredFateIsTheMEASUREDFate(t *testing.T) {
 		t.Fatal("setup: the corpus fixture is not a tagged document, so every assertion below would " +
 			"pass on a build that does nothing at all")
 	}
+	two := taggedTwoPageFixture()
+	if s := inspectTags(two); !s.claims() || s.anchored < 2 {
+		t.Fatal("setup: the two-page fixture is not tagged on both pages, so its rows measure nothing")
+	}
 	driven := 0
 	for name, f := range tagFates {
 		if f.drive == nil {
 			continue
 		}
-		out, err := f.drive(src)
+		in := src
+		if f.twoPages {
+			in = two
+		}
+		out, err := f.drive(in)
 		if err != nil {
 			// An operation that refuses the fixture outright cannot lie about it. Recorded rather
 			// than failed: the corpus is one document and not every operation applies to it.

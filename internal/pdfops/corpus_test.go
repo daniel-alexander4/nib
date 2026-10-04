@@ -3,6 +3,8 @@ package pdfops
 import (
 	"bytes"
 	"fmt"
+
+	"nib/internal/testpdf"
 )
 
 // The tag corpus — `PLAN-accessibility.md` D12.
@@ -32,6 +34,29 @@ import (
 // re-run against a real LibreOffice-produced PDF for exactly that reason. The recipe is recorded at
 // D9 in the plan and is one `libreoffice --headless --convert-to` away; it is deliberately not
 // committed, because a 28 KB producer blob is the opaque fixture this package's own comment refuses.
+// taggedTwoPageFixture is taggedFixture with a second tagged page — its own run, element and parent-tree
+// entry — so an operation that takes a page out can be driven on a document that survives it (`/pending 730`:
+// on the one-page fixture `RemovePages` refused "every page" and both censuses logged it and moved on).
+func taggedTwoPageFixture() []byte {
+	content := func(s string) string {
+		c := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (" + s + ") Tj ET\nEMC\n"
+		return fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(c), c)
+	}
+	return testpdf.Assemble(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R /Lang (en-GB) >>",
+		2:  "<< /Type /Pages /Kids [3 0 R 10 0 R] /Count 2 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /StructParents 0 >>",
+		4:  content("Tagged heading"),
+		5:  "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		7:  "<< /Type /StructTreeRoot /K [8 0 R 12 0 R] /ParentTree 9 0 R /ParentTreeNextKey 2 >>",
+		8:  "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R /K [0] >>",
+		9:  "<< /Nums [0 [8 0 R] 1 [12 0 R]] >>",
+		10: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 11 0 R /StructParents 1 >>",
+		11: content("Second page"),
+		12: "<< /Type /StructElem /S /P /P 7 0 R /Pg 10 0 R /K [0] >>",
+	})
+}
+
 func taggedFixture() []byte {
 	content := "/P <</MCID 0>> BDC\nBT /F1 24 Tf 72 700 Td (Tagged heading) Tj ET\nEMC\n"
 	objs := map[int]string{

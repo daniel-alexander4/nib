@@ -181,6 +181,29 @@ func TestAVerdictThatCannotSayWhyIsReported(t *testing.T) {
 	}
 }
 
+// TestEveryVerdictThatIsNotAConformanceSaysWhy — `/pending 730`: `Result`'s doc requires `Why` for Fail, CannotCheck
+// and NotRun and says it is checked; `runOne` filled it only for NotRun, so a Fail with no reason reached the report
+// as an empty string.
+func TestEveryVerdictThatIsNotAConformanceSaysWhy(t *testing.T) {
+	for _, v := range []Verdict{Fail, CannotCheck, NotRun} {
+		res := runOne(Rule{
+			Clause:  "9.9 t7",
+			Summary: "a rule that gives no reason",
+			Check:   func(*Document) Result { return Result{Verdict: v} },
+		}, nil)
+		if res.Verdict != v {
+			t.Errorf("a %v with no reason came back as %v; the verdict must stand", v, res.Verdict)
+		}
+		if res.Why == "" {
+			t.Errorf("a %v verdict carries no reason", v)
+		}
+	}
+	// A conformance needs none, and is not given one.
+	if res := runOne(Rule{Clause: "9.9 t7", Check: func(*Document) Result { return Result{Verdict: Pass} }}, nil); res.Why != "" {
+		t.Errorf("a Pass was given a reason: %q", res.Why)
+	}
+}
+
 // TestARuleThatPanicsBecomesCannotCheckRatherThanVanishing.
 //
 // A malformed document can make a reader panic deep inside pdfcpu — `handleOCR` already recovers one

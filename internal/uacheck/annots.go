@@ -76,10 +76,9 @@ func (a annotSubject) subtype(d *Document) string { return d.name(a.dict["Subtyp
 // read. It is a CannotCheck reason for every rule over annotations and never an empty population: a
 // page that does not resolve is not a page with no annotations (`/pending 507`).
 func (d *Document) annots() ([]annotSubject, string) {
-	if d.annotsDone {
-		return d.annotList, d.annotsErr
+	if built, why := d.annotsBuild.again(d.annotsErr, "the annotation walk"); built {
+		return d.annotList, why
 	}
-	d.annotsDone = true
 	for _, pa := range pdfread.Pages(d.Ctx) {
 		p, page, inh, err := pa.Nr, pa.Dict, pa.Attrs, pa.Err
 		if err != nil || page == nil {
@@ -114,6 +113,7 @@ func (d *Document) annots() ([]annotSubject, string) {
 			d.annotList = append(d.annotList, s)
 		}
 	}
+	d.annotsBuild.finish()
 	return d.annotList, d.annotsErr
 }
 

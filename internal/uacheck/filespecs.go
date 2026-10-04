@@ -171,15 +171,15 @@ func (d *Document) eachObjectDict(visit func(dict types.Dict, where string)) str
 // fileSpecs is every file specification in the document, over the one object-graph door. specsErr is
 // why the population may be short, when it may be.
 func (d *Document) fileSpecs() ([]fileSpec, string) {
-	if d.specsDone {
-		return d.specList, d.specsErr
+	if built, why := d.specsBuild.again(d.specsErr, "the file-specification walk"); built {
+		return d.specList, why
 	}
-	d.specsDone = true
 	d.specsErr = d.eachObjectDict(func(dict types.Dict, where string) {
 		if isFileSpec(d, dict) {
 			d.specList = append(d.specList, fileSpec{dict: dict, where: where})
 		}
 	})
+	d.specsBuild.finish()
 	return d.specList, d.specsErr
 }
 

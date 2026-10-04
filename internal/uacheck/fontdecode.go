@@ -31,6 +31,10 @@ const (
 //
 // A stream already decoded (by this door or any other) is not decoded again. A refusal is remembered, so a stream
 // many fonts name is inflated toward its ceiling once.
+//
+// **Remembered by the stream, not by the copy** (`/pending 730`): `DereferenceStreamDict` returns a fresh copy of
+// the stream dictionary to every caller, so a decode written into one copy's `sd.Content` is not in the next. The
+// copies share their `Dict`, which is what `dictID` keys, so the bytes decoded once are handed to every later copy.
 func (d *Document) decodeFontStream(sd *types.StreamDict, what string) string {
 	if sd.Content != nil {
 		return ""
@@ -39,6 +43,11 @@ func (d *Document) decodeFontStream(sd *types.StreamDict, what string) string {
 	if why, failed := d.fontDecodeFailed[key]; failed {
 		return why
 	}
+	if b, done := d.fontDecodedContent[key]; done {
+		sd.Content = b
+		return ""
+	}
+	d.fontDecodes++
 	limit := min(maxFontStreamDecoded, maxFontBytesDecoded-d.fontDecoded)
 	why := ""
 	if err := pdfread.DecodeWithin(sd, int64(limit)); err != nil {
@@ -59,5 +68,9 @@ func (d *Document) decodeFontStream(sd *types.StreamDict, what string) string {
 		return why
 	}
 	d.fontDecoded += len(sd.Content)
+	if d.fontDecodedContent == nil {
+		d.fontDecodedContent = map[uintptr][]byte{}
+	}
+	d.fontDecodedContent[key] = sd.Content
 	return ""
 }

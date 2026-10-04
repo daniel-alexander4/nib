@@ -242,16 +242,10 @@ var (
 // recorded in `contentErr`, and the rules turn that into `CannotCheck` — nib failing to read a stream
 // is not the stream being untagged.
 func (d *Document) contentEvents() ([]contentEvent, string) {
-	if d.contentDone {
-		// **A walk that did not finish must not read as a complete one.** A panic inside it (recovered per rule by
-		// `runOne`) left the population half built with no error, and every LATER rule read it as whole — the P07.S02
-		// re-review measured 7.1 t3 going from Fail to NotApplicable that way.
-		if !d.contentFinished && d.contentErr == "" {
-			return d.content, "the content walk stopped part-way on an internal error, so what it had not reached was never read"
-		}
-		return d.content, d.contentErr
+	// **A walk that did not finish must not read as a complete one** (`population`).
+	if built, why := d.contentBuild.again(d.contentErr, "the content walk"); built {
+		return d.content, why
 	}
-	d.contentDone = true
 	for _, pa := range pdfread.Pages(d.Ctx) {
 		p, page, err := pa.Nr, pa.Dict, pa.Err
 		if err != nil || page == nil {
@@ -297,8 +291,7 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		w.walk(src, d.resourcesOf(page), nil, map[int]bool{}, 0)
 	}
 	d.walkAppearances()
-	// Set on RETURN only — never deferred, since a deferred assignment runs while a panic unwinds too.
-	d.contentFinished = true
+	d.contentBuild.finish()
 	return d.content, d.contentErr
 }
 

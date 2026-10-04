@@ -63,6 +63,40 @@ type embeddedFile struct {
 // it fails by name rather than the whole listing failing (pdfcpu's `ListAttachments` did).
 func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
 	xt := ctx.XRefTable
+	out, err := treeFiles(xt)
+	if err != nil {
+		return nil, err
+	}
+	root, err := ctx.Catalog()
+	if err != nil {
+		return nil, err
+	}
+	nth := map[int]int{}
+	pas, err := pageFileAttachments(xt, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, pa := range pas {
+		n := nth[pa.page]
+		nth[pa.page]++
+		out = append(out, embeddedFile{
+			info: AttachmentInfo{
+				ID:   fmt.Sprintf("page:%d:%d", pa.page, n),
+				Name: pageAttachmentName(pa),
+				Desc: fmt.Sprintf("Attached to page %d", pa.page),
+			},
+			fs: pa.fs,
+		})
+	}
+	return out, nil
+}
+
+// treeFiles is the name-tree half of embeddedFiles, and it is nib's ONLY listing of that tree: pdfcpu's
+// `ListAttachments` (and every pdfcpu reader built on the same `fileSpecStreamDictInfo` — `ExtractAttachments`,
+// `SearchEmbeddedFilesNameTreeNodeByContent`, `pdfcpu.Info`) nil-dereferences on a filespec with no /EF, which
+// is an ordinary reference to an EXTERNAL file and legal under ISO 32000-1 §7.11.3 (`model/attach.go:155`,
+// measured). `TestNothingAsksPdfcpuWhatIsAttached` holds every other site off those readers.
+func treeFiles(xt *model.XRefTable) ([]embeddedFile, error) {
 	entries, err := treeEntries(xt)
 	if err != nil {
 		return nil, err
@@ -94,27 +128,6 @@ func embeddedFiles(ctx *model.Context) ([]embeddedFile, error) {
 		out = append(out, embeddedFile{
 			info: AttachmentInfo{ID: e.key, Name: name, Desc: desc, Ceremony: i == record},
 			fs:   fs,
-		})
-	}
-	root, err := ctx.Catalog()
-	if err != nil {
-		return nil, err
-	}
-	nth := map[int]int{}
-	pas, err := pageFileAttachments(xt, root)
-	if err != nil {
-		return nil, err
-	}
-	for _, pa := range pas {
-		n := nth[pa.page]
-		nth[pa.page]++
-		out = append(out, embeddedFile{
-			info: AttachmentInfo{
-				ID:   fmt.Sprintf("page:%d:%d", pa.page, n),
-				Name: pageAttachmentName(pa),
-				Desc: fmt.Sprintf("Attached to page %d", pa.page),
-			},
-			fs: pa.fs,
 		})
 	}
 	return out, nil
@@ -258,12 +271,14 @@ func addAttachment(pdf []byte, name string, data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("attachment needs a file name")
 	}
 	return writeMutated(pdf, func(ctx *model.Context) error {
-		existing, err := ctx.ListAttachments()
+		// Read through treeFiles, never pdfcpu's ListAttachments: that panics on a tree holding an
+		// external-file reference, so attaching anything to such a document crashed the route.
+		existing, err := treeFiles(ctx.XRefTable)
 		if err != nil {
 			return err
 		}
-		for _, a := range existing {
-			if a.FileName == name || a.ID == name {
+		for _, f := range existing {
+			if f.info.Name == name || f.info.ID == name {
 				return fmt.Errorf("an attachment named %q already exists", name)
 			}
 		}

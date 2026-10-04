@@ -164,8 +164,8 @@ func TestAMalformedCMapIsParsedOncePerStream(t *testing.T) {
 	if got := checkCMapWMode(d); got.Verdict != CannotCheck || !strings.Contains(got.Why, "wrong kind") {
 		t.Fatalf("7.21.3.3 t2 = %v (%s), want the malformed CMap's refusal", got.Verdict, got.Why)
 	}
-	if d.cmapMalformedParses != 1 {
-		t.Errorf("one malformed CMap named by %d fonts was parsed %d times, want once", n, d.cmapMalformedParses)
+	if d.cmapCodespaceParses != 1 {
+		t.Errorf("one malformed CMap named by %d fonts was parsed %d times, want once", n, d.cmapCodespaceParses)
 	}
 }
 

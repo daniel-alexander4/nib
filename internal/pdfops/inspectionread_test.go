@@ -51,10 +51,6 @@ var inspectionSites = map[string]func(pdf []byte) any{
 	},
 	"CeremonyRecord":   func(pdf []byte) any { b, err := CeremonyRecord(pdf); return []any{b, failed(err)} },
 	"SignatureWidgets": func(pdf []byte) any { w, err := SignatureWidgets(pdf); return []any{w, failed(err)} },
-	"capturePageSources": func(pdf []byte) any {
-		m, ok := capturePageSources(pdf)
-		return []any{m, ok}
-	},
 	"watermarkMarkersBefore": func(pdf []byte) any {
 		n, err := PageCount(pdf)
 		if err != nil {

@@ -165,6 +165,25 @@ type noteSource struct {
 	left    int            // annotations of another subtype on this page
 }
 
+// nupSourceRead is how an n-up carry reads its SOURCE — the one door both captures (`captureNoteAnnots`,
+// `capturePageSources`) go through, held by `TestTheNUpCarriesReadTheSourceAsNUpDoes`.
+//
+// **`ReadAndValidate`, because that is the read `api.NUp` itself performs** (`api/nup.go:116`), and each
+// capture's whole job is to hold the bytes that read produced up against the forms it built out of them.
+// Matching it is correctness before it is cost: the verification is byte equality on a decoded content
+// stream, so a read path that normalised the stream differently would abandon every carry. Until
+// `/pending 730` the tag carry read through `inspectionRead` — the OPTIMIZING read — and agreed only
+// because pdfcpu's optimize pass does not touch content streams today.
+//
+// It is also the cheapest read that can be used at all. Measured on a 40-page document, 30 calls each,
+// interleaved in three rounds: `ReadContext` 1.6 ms, `ReadAndValidate` 9.6 ms, `ReadValidateAndOptimize`
+// 15.7 ms. **`ReadContext` is not an option** — pdfcpu fills `ctx.PageCount` during validation, so a plain
+// read reports zero pages and a capture visits none; it was tried, and the carry abandoned silently until
+// the suffix check turned it red.
+func nupSourceRead(pdf []byte) (*model.Context, error) {
+	return pdfread.Validated(pdf, model.NewDefaultConfiguration())
+}
+
 // captureNoteAnnots records what an n-up is about to discard, per 1-based source page.
 //
 // **The dictionaries are deep-copied here rather than referenced.** They live in the SOURCE
@@ -173,18 +192,7 @@ type noteSource struct {
 // them against the source and rebuilds them; an annotation it cannot rebuild is counted as left
 // behind rather than carried half-resolved.
 func captureNoteAnnots(pdf []byte) (map[int]*noteSource, int, bool) {
-	// **`ReadAndValidate`, because that is the read `api.NUp` itself performs** (`api/nup.go:116`),
-	// and this function's whole job is to hold the bytes that read produced up against the forms it
-	// built out of them. Matching it is correctness before it is cost: the verification below is
-	// byte equality on a decoded content stream, so a read path that normalised the stream
-	// differently would abandon every carry.
-	//
-	// It is also the cheapest read that can be used at all. Measured on a 40-page document,
-	// 30 calls each, interleaved in three rounds: `ReadContext` 1.6 ms, `ReadAndValidate` 9.6 ms,
-	// `ReadValidateAndOptimize` 15.7 ms. **`ReadContext` is not an option** — pdfcpu fills
-	// `ctx.PageCount` during validation, so a plain read reports zero pages and this walk visits
-	// none; it was tried, and the carry abandoned silently until the suffix check turned it red.
-	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	ctx, err := nupSourceRead(pdf)
 	if err != nil {
 		return nil, 0, false
 	}

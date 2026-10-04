@@ -600,23 +600,29 @@ func TextMap(src []byte) map[string]string {
 	toks := contentstream.Tokenize(src)
 	mode := ""
 	var items []cmapItem
+	// broken is a block that met an operand that is not a string — a NAME destination, say. pdf.js, the reader nib's
+	// viewer is, throws there and keeps what the block mapped before it (`parseBfChar`'s `expectString`); TextMap
+	// skipped the token and paired what followed one place out of step, so `<41> /A <42> <0042>` mapped 0x41 to
+	// "B" (`/pending 730`).
+	broken := false
 	for i := 0; i < len(toks); i++ {
 		t := toks[i]
 		switch t.Kind {
 		case contentstream.Whitespace:
 			continue
-		case contentstream.HexString:
-			if mode != "" {
-				items = append(items, cmapItem{b: Hex(t.Bytes(src))})
+		case contentstream.HexString, contentstream.LiteralString:
+			// A literal string is a string to pdf.js as a hex one is, and its bytes are the destination.
+			if mode != "" && !broken {
+				items = append(items, cmapItem{b: String(t.Bytes(src))})
 			}
 			continue
 		case contentstream.ArrayOpen:
 			end := MatchingClose(toks, i, contentstream.ArrayOpen, contentstream.ArrayClose)
-			if mode != "" {
+			if mode != "" && !broken {
 				var arr [][]byte
 				for _, at := range toks[i+1 : end] {
-					if at.Kind == contentstream.HexString {
-						arr = append(arr, Hex(at.Bytes(src)))
+					if at.Kind == contentstream.HexString || at.Kind == contentstream.LiteralString {
+						arr = append(arr, String(at.Bytes(src)))
 					}
 				}
 				items = append(items, cmapItem{arr: arr, isArr: true})
@@ -626,9 +632,9 @@ func TextMap(src []byte) map[string]string {
 		}
 		switch string(t.Bytes(src)) {
 		case "beginbfchar":
-			mode, items = "char", nil
+			mode, items, broken = "char", nil, false
 		case "beginbfrange":
-			mode, items = "range", nil
+			mode, items, broken = "range", nil, false
 		case "endbfchar":
 			for j := 0; j+1 < len(items); j += 2 {
 				if !items[j].isArr && !items[j+1].isArr {
@@ -645,6 +651,10 @@ func TextMap(src []byte) map[string]string {
 				expandBFRange(out, lo.b, hi.b, items[j+2], &budget)
 			}
 			mode, items = "", nil
+		default:
+			if mode != "" {
+				broken = true
+			}
 		}
 	}
 	return out
@@ -710,9 +720,13 @@ func expandBFRange(out map[string]string, lo, hi []byte, dst cmapItem, budget *e
 
 // utf16Text decodes a CMap destination, which is UTF-16BE and may carry surrogate pairs or several
 // characters (a ligature maps to two).
+//
+// **An odd-length destination is read as pdf.js reads it**: a zero byte in front, then UTF-16BE — so one byte is
+// its ISO-8859-1 character. It came back as the raw bytes, which for any byte past 0x7F is not even UTF-8
+// (`/pending 730`).
 func utf16Text(b []byte) string {
 	if len(b)%2 == 1 {
-		return string(b)
+		b = append([]byte{0}, b...)
 	}
 	u := make([]uint16, len(b)/2)
 	for i := range u {

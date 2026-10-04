@@ -351,7 +351,7 @@ func TestAnUntypedDictionaryCarryingAnEmbeddedFileIsASpecification(t *testing.T)
 			}
 		}
 		// Reset the memoised population so the rule re-walks and sees the untyped shape.
-		d.specList, d.specsDone, d.specsErr = nil, false, ""
+		d.specList, d.specsBuild, d.specsErr = nil, population{}, ""
 		return n
 	}
 

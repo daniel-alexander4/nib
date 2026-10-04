@@ -57,10 +57,9 @@ type mediaClip struct {
 
 // mediaClips is every media clip dictionary in the document, with why the population may be short.
 func (d *Document) mediaClips() ([]mediaClip, string) {
-	if d.clipsDone {
-		return d.clipList, d.clipsErr
+	if built, why := d.clipsBuild.again(d.clipsErr, "the media-clip walk"); built {
+		return d.clipList, why
 	}
-	d.clipsDone = true
 	seen := map[uintptr]bool{}
 	// clipOne adds the clip one action carries, if it is a Rendition action carrying one.
 	clipOne := func(action types.Dict, where string) {
@@ -182,6 +181,7 @@ func (d *Document) mediaClips() ([]mediaClip, string) {
 	}
 	// An outline item has no `/AA` in veraPDF's model — `GFPDOutline` links its `/A` alone.
 	d.outlineActions(func(item types.Dict, where string) { actionsOf(item, true, nil, where) })
+	d.clipsBuild.finish()
 	return d.clipList, d.clipsErr
 }
 

@@ -256,8 +256,16 @@ func runOne(rule Rule, d *Document) (res Result) {
 		// A value outside the enum has answered nothing a reader can interpret; it is reported as what it is.
 		res.Verdict, res.Why = NotRun, fmt.Sprintf("the rule returned verdict %d, which is none of the five", int(res.Verdict))
 	}
-	if res.Verdict == NotRun && res.Why == "" {
-		res.Why = "the rule returned no verdict"
+	// `Why` is required for every verdict that is not a conformance, and this is where it is checked
+	// (`/pending 730`: the Result doc said so and only NotRun was filled). The verdict stands — a Fail
+	// with no reason is still a Fail — and the reason names the defect rather than leaving it empty.
+	if res.Why == "" {
+		switch res.Verdict {
+		case NotRun:
+			res.Why = "the rule returned no verdict"
+		case Fail, CannotCheck:
+			res.Why = fmt.Sprintf("the rule answered %s without saying why, which is a defect in nib's checker", res.Verdict)
+		}
 	}
 	return res
 }
