@@ -1465,3 +1465,28 @@ func TestNibsOwnNUpPassesAndItsFusedCarryFails(t *testing.T) {
 		t.Errorf("the fused carry reports %v (%s), want Fail — veraPDF fails it", got.Verdict, got.Why)
 	}
 }
+
+// TestAUsageRightsEFIsNotAnEmbeddedFile — /pending 695. A usage-rights signature's `/TransformParams` carries
+// `/EF [/Create /Delete /Import /Modify]`, the rights over embedded files, and nib read any `/EF` as a file
+// specification: Adobe Designer's IRS forms in the producer corpus (`designer/irs-fw9.pdf`, `designer/irs-f1040.pdf`)
+// failed 7.11 t1 where veraPDF 1.30.2 does not. The control is the same dictionary typed `/Filespec`, which veraPDF
+// FAILS (measured on irs-fw9.pdf with `/Type/TransformParams` rewritten, with the `/EF` array and with a dictionary).
+func TestAUsageRightsEFIsNotAnEmbeddedFile(t *testing.T) {
+	doc := func(params string) []byte {
+		return buildPDF(map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R /Perms << /UR3 5 0 R >> >>",
+			2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+			5: "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Reference [<< /Type /SigRef " +
+				"/TransformMethod /UR3 /TransformParams " + params + " >>] >>",
+		})
+	}
+	const rights = "/EF [/Create /Delete /Import /Modify] /Annots [/Create] /V /2.2"
+	if got := verdictOf(t, doc("<< /Type /Filespec "+rights+" >>"), "7.11 t1"); got.Verdict != Fail {
+		t.Fatalf("control: the dictionary typed /Filespec reports %v (%s), want Fail — veraPDF's verdict", got.Verdict, got.Why)
+	}
+	if got := verdictOf(t, doc("<< /Type /TransformParams "+rights+" >>"), "7.11 t1"); got.Verdict != NotApplicable {
+		t.Errorf("a usage-rights /TransformParams reports %v (%s), want NotApplicable — its /EF is a list of rights, "+
+			"not an embedded file", got.Verdict, got.Why)
+	}
+}

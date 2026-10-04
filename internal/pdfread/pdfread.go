@@ -30,10 +30,12 @@ package pdfread
 import (
 	"bytes"
 	"errors"
+	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 )
 
 // Validated is `api.ReadAndValidate` (pkg/api/api.go:171, v0.13.0) with the reference door between
@@ -47,7 +49,10 @@ func Validated(pdf []byte, conf *model.Configuration) (ctx *model.Context, err e
 	if err := refuseUnboundedReferences(ctx); err != nil {
 		return nil, err
 	}
-	if err := api.ValidateContext(ctx); err != nil {
+	restore := escapeInfoKeys(ctx)
+	err = api.ValidateContext(ctx)
+	restore()
+	if err != nil {
 		return nil, err
 	}
 	if conf.Cmd == model.REMOVESIGNATURES || ctx.RemoveSignatures && conf.Cmd.AllowRemoveSignatures() {
@@ -62,4 +67,48 @@ func Validated(pdf []byte, conf *model.Configuration) (ctx *model.Context, err e
 		}
 	}
 	return ctx, nil
+}
+
+// escapeInfoKeys re-escapes, for the validator only, every document-information key holding a `#`, and returns what
+// puts the dictionary back as it was parsed (/pending 696).
+//
+// pdfcpu decodes a name's `#xx` escapes when it parses it, so the information dictionary's keys are already decoded;
+// its validator then decodes each custom key AGAIN (`validate/info.go` `handleProperties`, v0.13.0) to fill
+// `ctx.Properties`. A key whose decoded name holds a `#` — Acrobat PDFMaker writes SharePoint columns such as
+// `/Document#20#23`, "Document #" — failed the whole read ("not enough characters after #", or "encoding/hex: invalid
+// byte" for "Tags (option #1)"), and one that merely looked escaped ("A#41") was recorded as "AA". Encoding the key
+// once more makes the second decode yield the name the document wrote. The keys go back after validation, because
+// everything else that reads the dictionary — nib's readers and pdfcpu's writer — expects it as parsed.
+func escapeInfoKeys(ctx *model.Context) (restore func()) {
+	restore = func() {}
+	if ctx.Info == nil {
+		return restore
+	}
+	d, err := ctx.DereferenceDict(*ctx.Info)
+	if err != nil || d == nil {
+		return restore // the validator reports a malformed /Info itself
+	}
+	renamed := map[string]string{} // escaped key -> the key as parsed
+	for k := range d {
+		if !strings.Contains(k, "#") {
+			continue
+		}
+		e := types.EncodeName(k)
+		if _, taken := d[e]; taken {
+			continue // the escaped spelling is a key of its own; leave both as the validator finds them
+		}
+		renamed[e] = k
+	}
+	for e, k := range renamed {
+		d[e] = d[k]
+		delete(d, k)
+	}
+	return func() {
+		for e, k := range renamed {
+			if v, ok := d[e]; ok {
+				d[k] = v
+				delete(d, e)
+			}
+		}
+	}
 }

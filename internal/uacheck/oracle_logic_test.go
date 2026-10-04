@@ -1,9 +1,73 @@
 package uacheck
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestEveryVeraPDFRunReadByVeraStatesAsksForPassedChecks — /pending 697. `veraStates` reads a 0/0 rule as "no subject"
+// and tells a capped report by its job total exceeding the rules' sum, so it is only right over a report run with
+// `--passed`: without it no passed rule is listed, the sum is 0, and every report would read capped — the
+// "passed or no subject" that agrees with anything but a Fail, silently where it used to be a loud unlisted clause.
+// Every function that runs veraPDF and reads the result through `veraStates` must ask for it.
+func TestEveryVeraPDFRunReadByVeraStatesAsksForPassedChecks(t *testing.T) {
+	files, _ := filepath.Glob("*_test.go")
+	fset := token.NewFileSet()
+	sites := 0
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := parser.ParseFile(fset, f, src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			var reads bool
+			var runs []*ast.CallExpr
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fun := call.Fun.(type) {
+				case *ast.Ident:
+					reads = reads || fun.Name == "veraStates"
+				case *ast.SelectorExpr:
+					if x, ok := fun.X.(*ast.Ident); ok && x.Name == "exec" && fun.Sel.Name == "Command" {
+						runs = append(runs, call)
+					}
+				}
+				return true
+			})
+			if !reads {
+				continue
+			}
+			for _, call := range runs {
+				sites++
+				text := string(src[fset.Position(call.Pos()).Offset:fset.Position(call.End()).Offset])
+				if !strings.Contains(text, `"--passed"`) {
+					t.Errorf("%s: %s runs veraPDF without --passed and reads it through veraStates: %s", f, fn.Name.Name, text)
+				}
+			}
+		}
+	}
+	// A guard that found no site checks nothing: the oracle, the corpus batch, the 7.4 semantic test, the glyph door's
+	// veraAsk and the capped re-run all read this way.
+	if sites < 5 {
+		t.Errorf("only %d veraPDF run(s) read through veraStates were found — the scan is reading nothing", sites)
+	}
+}
 
 // The guard's judgment, driven without veraPDF — `PLAN-accessibility.md` P07.S05.
 

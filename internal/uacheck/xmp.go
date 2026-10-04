@@ -30,11 +30,11 @@ import (
 // # What this reader does NOT cover, stated rather than discovered later
 //
 // It walks elements and namespaces and reads character data. It does not resolve
-// `rdf:parseType="Resource"` shorthand, attribute-form properties (`<rdf:Description dc:title="x"/>`
-// rather than `<dc:title>`), or `rdf:Alt` entries beyond taking the first non-empty one. A packet
-// using any of those reads as *absent* here, which is the safe direction for a checker — it yields
-// `Fail` or `CannotCheck` rather than a pass nib did not establish — but it is a disagreement with
-// veraPDF that law 5's guard will surface, and it is written down so the surfacing is expected.
+// `rdf:parseType="Resource"` shorthand in general — only where a clause was measured against it (the
+// identification's `rdf:value`, a `dc:title` item's language) — and a packet using it elsewhere reads as
+// *absent* here, which is the safe direction for a checker — it yields `Fail` or `CannotCheck` rather than a
+// pass nib did not establish — but it is a disagreement with veraPDF that law 5's guard will surface, and it
+// is written down so the surfacing is expected.
 
 // xmpFacts is what the rules need to know about a document's metadata packet.
 type xmpFacts struct {
@@ -50,8 +50,21 @@ type xmpFacts struct {
 	// does not contain either entry Type with…".
 	StreamType    string
 	StreamSubtype string
-	// Title is the first non-empty `dc:title` value found.
-	Title string
+	// TitledInALanguage is whether a `dc:title` holds an ITEM carrying a language — an `rdf:li` with an `xml:lang`,
+	// written on the item, on its `rdf:value`, or as an `xml:lang` qualifier element (/pending 694). It is 7.1 t9's
+	// whole subject, and it is not "the title has text".
+	//
+	// **Measured on veraPDF 1.30.2**, by mutating the dc:title of `ghostscript/pdflatex-article.pdf` (Ghostscript's
+	// re-distil, which writes an `rdf:Alt` holding ONE EMPTY `x-default` item): PASSED with an empty item, a
+	// whitespace one, a self-closed one, an `en`-only one, an `rdf:Seq` or `rdf:Bag` item with a language, an item
+	// whose `rdf:value` carries it (as `parseType="Resource"` or as an inner `rdf:Description`), and an item with an
+	// `xml:lang` qualifier element; FAILED with no dc:title, an empty `rdf:Alt`, an `rdf:Alt` or `rdf:Bag` item with
+	// no language, a simple-valued `<dc:title>T</dc:title>` (with or without `xml:lang` on the property), an
+	// attribute-form `dc:title="T"`, a language on the `rdf:Alt` or the property rather than the item, and a
+	// `parseType="Resource"` title whose `rdf:value` carries one. veraPDF asks for the title's language
+	// alternative (`VeraPDFXMPNode.getLanguageAlternative`), and the value is never read. Reading "the first
+	// non-empty text" made the empty item a false FAIL and the last five shapes with text false PASSES.
+	TitledInALanguage bool
 	// UAPart is the `pdfuaid:part` value, empty when the identification schema is absent.
 	UAPart string
 	// UAProps is every property in the PDF/UA identification namespace, keyed by its local name and
@@ -77,6 +90,17 @@ type xmpFacts struct {
 	LangAlts [][]string
 	// Why carries the reason when Readable is false.
 	Why string
+}
+
+// hasXMLLang reports whether attrs carry an `xml:lang`, its prefix resolved rather than trusted (the const block's
+// contract). Its value is not read: an empty language is still a language to veraPDF's 7.1 t9 (measured, /pending 694).
+func hasXMLLang(attrs []xml.Attr, resolve func(string) string) bool {
+	for _, a := range attrs {
+		if a.Name.Local == "lang" && a.Name.Space != "" && a.Name.Space != "xmlns" && resolve(a.Name.Space) == nsXML {
+			return true
+		}
+	}
+	return false
 }
 
 // xmpProp is one property as the packet wrote it: the namespace prefix it used, and its character data.
@@ -220,6 +244,8 @@ func parseXMP(d *Document) xmpFacts {
 		// uaAnchor is the index of the nearest identification-property frame, this one included, or -1: the
 		// property an `rdf:value` attribute on this element belongs to. It does not stop at `dc:title`.
 		uaAnchor int
+		// titleItem is the index of the open `dc:title` item (`rdf:li`) this element is in, this one included, or -1.
+		titleItem int
 	}
 	var path []frame
 	// bufs holds each identification property's text as it grows; `p.own += raw` per run was the quadratic.
@@ -267,9 +293,10 @@ func parseXMP(d *Document) xmpFacts {
 					"stopped reading it rather than spend the whole document's budget on one packet", maxXMPDepth)
 				return f
 			}
-			fr := frame{raw: t.Name, anchor: -1, uaAnchor: -1}
+			fr := frame{raw: t.Name, anchor: -1, uaAnchor: -1, titleItem: -1}
 			if len(path) > 0 {
-				fr.anchor, fr.uaAnchor = path[len(path)-1].anchor, path[len(path)-1].uaAnchor
+				top := path[len(path)-1]
+				fr.anchor, fr.uaAnchor, fr.titleItem = top.anchor, top.uaAnchor, top.titleItem
 			}
 			for _, a := range t.Attr {
 				// `xmlns="U"` arrives as a bare local name; `xmlns:p="U"` as Space "xmlns", Local "p".
@@ -294,18 +321,43 @@ func parseXMP(d *Document) xmpFacts {
 			// length-preserving mutation of `5-t03-pass-a.pdf`, veraPDF passes all five clause-5 tests
 			// on an attribute-form identification while nib, reading start elements only, reported
 			// `5 t1` Fail and the other four NotApplicable — a live false fail on a whole serialisation.
+			//
+			// An attribute-form `dc:title="T"` is NOT read: it is simple-valued, it has no item to carry a
+			// language, and veraPDF fails 7.1 t9 on it (measured, /pending 694 — reading it was a false pass).
 			for _, a := range t.Attr {
+				if !uaAttr(a) {
+					continue
+				}
+				if f.UAProps == nil {
+					f.UAProps = map[string]xmpProp{}
+				}
+				if _, seen := f.UAProps[a.Name.Local]; !seen {
+					f.UAProps[a.Name.Local] = xmpProp{Prefix: a.Name.Space, Value: a.Value}
+				}
+			}
+
+			// **7.1 t9's subject: an item of a `dc:title` carrying a language** (`TitledInALanguage`). The item is an
+			// `rdf:li` in a container directly inside the title; its language is an `xml:lang` on the item, on an
+			// `rdf:value` inside it (directly, or through one `rdf:Description`), or an `xml:lang` qualifier element
+			// in the same places — the shapes measured to pass. A language anywhere else is not the item's.
+			if len(path) >= 2 && fr.space == nsRDF && t.Name.Local == "li" && path[len(path)-1].space == nsRDF {
+				if p := path[len(path)-2]; p.space == nsDC && p.raw.Local == "title" {
+					fr.titleItem = len(path)
+				}
+			}
+			if i := fr.titleItem; i >= 0 && !f.TitledInALanguage {
+				// inItem is whether this element sits where the item's value or qualifiers are written: the item
+				// itself, or its child, or a child of the one `rdf:Description` inside it.
+				parent := path[len(path)-1]
+				inItem := len(path) == i+1 ||
+					(len(path) == i+2 && parent.space == nsRDF && parent.raw.Local == "Description")
 				switch {
-				case uaAttr(a):
-					if f.UAProps == nil {
-						f.UAProps = map[string]xmpProp{}
-					}
-					if _, seen := f.UAProps[a.Name.Local]; !seen {
-						f.UAProps[a.Name.Local] = xmpProp{Prefix: a.Name.Space, Value: a.Value}
-					}
-				case a.Name.Space != "" && a.Name.Space != "xmlns" && a.Name.Local == "title" &&
-					resolve(a.Name.Space) == nsDC && f.Title == "":
-					f.Title = a.Value
+				case len(path) == i && hasXMLLang(t.Attr, resolve):
+					f.TitledInALanguage = true
+				case inItem && fr.space == nsRDF && t.Name.Local == "value" && hasXMLLang(t.Attr, resolve):
+					f.TitledInALanguage = true
+				case inItem && fr.space == nsXML && t.Name.Local == "lang":
+					f.TitledInALanguage = true
 				}
 			}
 
@@ -409,14 +461,13 @@ func parseXMP(d *Document) xmpFacts {
 			if len(path) == 0 {
 				continue
 			}
-			// The identification property keeps its character data RAW and WHOLE; `dc:title` keeps its first
-			// trimmed run, as it always has. The difference is measured, not stylistic (the P06 phase-close
+			// The identification property keeps its character data RAW and WHOLE; `dc:title`'s is not read at all
+			// (`TitledInALanguage`, /pending 694). The rawness is measured, not stylistic (the P06 phase-close
 			// review): veraPDF reads `pdfuaid:part` as all of the element's text, untrimmed, parsed as an
 			// integer — `01` and `+1` pass `5 t2`, while ` 1 `, a newline-wrapped `1` and `1<!---->1` (two runs,
 			// "11") fail it. Trimming made the second group false PASSES and the string compare made the first
 			// false FAILS.
 			raw := string(t)
-			text := strings.TrimSpace(raw)
 			// The property is the nearest ancestor in a namespace we care about — `dc:title`
 			// wraps an `rdf:Alt` wrapping an `rdf:li`, so the character data is three levels
 			// down from the element that names the property.
@@ -431,9 +482,8 @@ func parseXMP(d *Document) xmpFacts {
 			switch i := top.anchor; {
 			case i < 0:
 			case path[i].space == nsDC && path[i].raw.Local == "title":
-				if f.Title == "" && text != "" {
-					f.Title = text
-				}
+				// A title's text is no part of 7.1 t9's subject; the frame stays an anchor so a run inside it
+				// never lands on an identification property enclosing it.
 			default: // an identification property
 				// **The property's OWN text, or — if it is qualified — its `rdf:value`'s, and nothing else.**
 				// Measured by the R1 re-review on veraPDF: the qualified form pretty-printed, and one with a

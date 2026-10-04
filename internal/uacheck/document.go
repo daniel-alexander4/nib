@@ -38,6 +38,9 @@ type Document struct {
 	nodes      []structNode
 	nodesErr   string
 	nodesBuild population
+	// nodesCut is how many of nodes the walk had appended when nodesErr was first set: the tree-order prefix in which
+	// every element was preceded by everything before it (`structPrefix`).
+	nodesCut int
 	// nodeEntries and ptNodes are what `structNodes` and `parentTreeEntry` read — `/K` entries, repeats included, and
 	// parent-tree node reads across every lookup — kept so a test can assert the stimulus of their bounds (R3-8, RR3-1).
 	nodeEntries int

@@ -57,6 +57,27 @@ func TestAClauseNibCouldNotCheckIsARefusalNotASilence(t *testing.T) {
 	}
 }
 
+// TestARefusalAloneIsNotAFailure — /pending 698. "Not PDF/UA" is a breach nib found; a report whose only refusals are
+// clauses nib could not settle has established nothing either way, and an empty one likewise.
+func TestARefusalAloneIsNotAFailure(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		rep  Report
+		want Standing
+	}{
+		{"every clause passes", Report{Results: []Result{{Clause: "a", Verdict: Pass}, {Clause: "b", Verdict: NotApplicable}}}, StandingAllCheckedPass},
+		{"one could not be checked", Report{Results: []Result{{Clause: "a", Verdict: Pass}, {Clause: "b", Verdict: CannotCheck}}}, StandingNotEstablished},
+		{"one was not run", Report{Results: []Result{{Clause: "a", Verdict: Pass}, {Clause: "b", Verdict: NotRun}}}, StandingNotEstablished},
+		{"nothing was checked", Report{}, StandingNotEstablished},
+		{"one fails beside a refusal", Report{Results: []Result{{Clause: "a", Verdict: Fail}, {Clause: "b", Verdict: CannotCheck}}}, StandingFails},
+		{"one fails", Report{Results: []Result{{Clause: "a", Verdict: Pass}, {Clause: "b", Verdict: Fail}}}, StandingFails},
+	} {
+		if got := c.rep.Standing(); got != c.want {
+			t.Errorf("%s: standing %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestAConformantReportRefusesNothingAndAnEmptyOneRefuses.
 func TestAConformantReportRefusesNothingAndAnEmptyOneRefuses(t *testing.T) {
 	ok := Report{Results: []Result{{Clause: "7.1 t11", Verdict: Pass}, {Clause: "7.18.4 t1", Verdict: NotApplicable}}}

@@ -79,6 +79,75 @@ func headingTreeMapped(roleMap string, kinds ...string) []byte {
 	return buildPDF(objs)
 }
 
+// headingTreeWith is headingTree with each root kid written as given — a reference to one of the elements below, or
+// an inline element.
+func headingTreeWith(kids ...string) []byte {
+	return buildPDF(map[int]string{
+		1:  "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>",
+		2:  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		3:  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		7:  "<< /Type /StructTreeRoot /K [" + strings.Join(kids, " ") + "] >>",
+		10: "<< /Type /StructElem /S /H2 /P 7 0 R /Pg 3 0 R >>",
+		11: "<< /Type /StructElem /S /H1 /P 7 0 R /Pg 3 0 R >>",
+		12: "<< /Type /StructElem /S /H3 /P 7 0 R /Pg 3 0 R >>",
+		13: "<< /Type /StructElem /S /P /P 7 0 R /Pg 3 0 R >>",
+	})
+}
+
+// TestAHeadingFailureBeforeTheCutIsDefinite — /pending 692. 7.4.2 t1 refused whenever the structure walk was cut,
+// before looking at what it HAD read; every other rule holds "a definite failure beats a refusal" (`heldRefusal`).
+// For this ORDER-dependent rule a failure is definite exactly when every element before it was read — inside the
+// walk's prefix — and a failure after a skipped subtree is not, because the subtree may hold the heading that
+// changes it. Both of the walk's cuts are driven: the depth bound (a Div chain past `maxWalkDepth`) and the
+// `/K`-entry budget.
+func TestAHeadingFailureBeforeTheCutIsDefinite(t *testing.T) {
+	deep := "[]"
+	for i := 0; i < maxWalkDepth+3; i++ {
+		deep = "<< /S /Div /K " + deep + " >>"
+	}
+	for _, c := range []struct {
+		name string
+		kids []string
+		want Verdict
+	}{
+		{"the first heading is H2, then a subtree too deep to read", []string{"10 0 R", deep}, Fail},
+		{"H1 then H3, then a subtree too deep to read", []string{"11 0 R", "12 0 R", deep}, Fail},
+		// The controls: the same failures AFTER the cut are not definite — the skipped subtree may hold an H1 or H2.
+		{"a subtree too deep to read, then H2", []string{deep, "10 0 R"}, CannotCheck},
+		{"H1, a subtree too deep to read, then H3", []string{"11 0 R", deep, "12 0 R"}, CannotCheck},
+		{"H1 then a subtree too deep to read", []string{"11 0 R", deep}, CannotCheck},
+	} {
+		got := verdictOf(t, headingTreeWith(c.kids...), "7.4.2 t1")
+		if got.Verdict != c.want {
+			t.Errorf("%s: 7.4.2 t1 = %v (%s), want %v", c.name, got.Verdict, got.Why, c.want)
+		}
+		if c.want == CannotCheck && !strings.Contains(got.Why, "nests deeper") {
+			t.Errorf("%s: the refusal %q is not the depth cut this fixture supplies", c.name, got.Why)
+		}
+	}
+
+	// The `/K`-entry budget: the walk reads nothing past it.
+	saved := maxStructEntries
+	t.Cleanup(func() { maxStructEntries = saved })
+	maxStructEntries = 2
+	for _, c := range []struct {
+		name string
+		kids []string
+		want Verdict
+	}{
+		{"H2 inside the budget", []string{"10 0 R", "13 0 R", "13 0 R", "13 0 R"}, Fail},
+		{"H2 past the budget", []string{"13 0 R", "13 0 R", "13 0 R", "10 0 R"}, CannotCheck},
+	} {
+		got := verdictOf(t, headingTreeWith(c.kids...), "7.4.2 t1")
+		if got.Verdict != c.want {
+			t.Errorf("%s: 7.4.2 t1 = %v (%s), want %v", c.name, got.Verdict, got.Why, c.want)
+		}
+		if c.want == CannotCheck && !strings.Contains(got.Why, "/K entries") {
+			t.Errorf("%s: the refusal %q is not the entry budget this fixture supplies", c.name, got.Why)
+		}
+	}
+}
+
 // TestAnElementOnARoleMapLoopIsNoHeading — R4-10. 7.4.2 t1 refused on any role-map loop, because the looped
 // element "may be a heading"; veraPDF types it as nothing standard, so the sequence is judged without it. Every
 // row is veraPDF 1.30.2's verdict on exactly this document (the P07 phase close).

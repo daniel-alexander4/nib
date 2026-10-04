@@ -141,9 +141,9 @@ could not be checked.
 evaluates, so a document can pass every clause Nib checks and still fail one it does not — though no such document is
 known today: veraPDF passes all 140 files of its own PDF/UA-1 test corpus on which every clause Nib checks passes, and
 the one rule Nib does not check is one veraPDF has never been seen to fail. On the rules it does check, Nib agrees with
-veraPDF on 100 of the 105 — the same verdict on every document that exercises the rule, wherever Nib reached one, in veraPDF's own test corpus, in
+veraPDF on 102 of the 105 — the same verdict on every document that exercises the rule, wherever Nib reached one, in veraPDF's own test corpus, in
 Nib's generated test documents and in documents from real producers (Word, Acrobat, LibreOffice and others). It is
-known to disagree on 5, each filed. Where a glyph or CharSet check needs a font program
+known to disagree on 3, each filed. Where a glyph or CharSet check needs a font program
 Nib cannot read (an OpenType-wrapped one holding CFF outlines) it says "could not check" rather than
 passing; the embedding check opens such a program far enough to see whether it holds a font at all, as veraPDF
 does, and fails it when it does not. Nib's verdicts are tested, not proven, and that is also why Nib never

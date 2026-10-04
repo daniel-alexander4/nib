@@ -133,7 +133,7 @@ func cmdUA(args []string) int {
 		errf("%v", err)
 		return 1
 	}
-	table, notes, passed, err := uaReport(pdf)
+	table, notes, standing, err := uaReport(pdf)
 	if err != nil {
 		errf("%v", err)
 		return 1
@@ -145,7 +145,7 @@ func cmdUA(args []string) int {
 	for _, n := range notes {
 		errf("%s", n)
 	}
-	if passed {
+	if standing == uacheck.StandingAllCheckedPass {
 		return 0
 	}
 	return 1
@@ -154,12 +154,21 @@ func cmdUA(args []string) int {
 // uaReport is `nib ua`'s report: the table, one line per clause, and the sentences meant for a person —
 // the provenance line and the verdict. cmdUA prints the table on stdout and the notes on stderr; `nib watch
 // --do ua` writes both into a sidecar, which has no stderr (P10.S03). One composition, so the two cannot
-// drift. passed is true only when no checked clause fails or could not be checked.
-func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
+// drift. standing is the door's classification (`uacheck.Report.Standing`): every checked clause passes, one
+// fails, or nothing failed but something stayed unsettled.
+func uaReport(pdf []byte) (table, notes []string, standing uacheck.Standing, err error) {
 	rep, refusals, err := uacheck.CheckForUA(pdf)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, "", err
 	}
+	table, notes, standing = composeUAReport(pdf, rep, refusals)
+	return table, notes, standing, nil
+}
+
+// composeUAReport is uaReport's composition over a report already made — split out so the wording of each standing
+// can be driven with a report no real document is known to produce (a refusal and no failure, /pending 698).
+func composeUAReport(pdf []byte, rep uacheck.Report, refusals []string) (table, notes []string, standing uacheck.Standing) {
+	standing = rep.Standing()
 	for _, r := range rep.Results {
 		line := fmt.Sprintf("%-14s %-12s %s", r.Verdict, r.Clause, uacheck.SummaryOf(r.Clause))
 		if r.Verdict != uacheck.Pass && r.Why != "" {
@@ -172,15 +181,21 @@ func uaReport(pdf []byte) (table, notes []string, passed bool, err error) {
 	notes = append(notes, pdfops.DescribeStructureSource(pdf))
 	// Law 2's figure, in the one sentence that states it (`uacheck.Agreement`).
 	notes = append(notes, uacheck.Agreement())
-	if len(refusals) == 0 {
+	if standing == uacheck.StandingAllCheckedPass {
 		notes = append(notes, fmt.Sprintf("every clause nib checks passes (%d of PDF/UA-1's rules) — this is not a PDF/UA certificate; "+
 			"a document can still fail a rule nib does not check", len(rep.Results)))
-		return table, notes, true, nil
+		return table, notes, standing
+	}
+	// **"not PDF/UA" only over a failing clause** (/pending 698). A clause nib could not check is no evidence the
+	// document breaches it, so a report whose only refusals are unsettled clauses says PDF/UA is not established.
+	prefix := "not PDF/UA: "
+	if standing != uacheck.StandingFails {
+		prefix = "PDF/UA not established: "
 	}
 	for _, reason := range refusals {
-		notes = append(notes, "not PDF/UA: "+termText(reason))
+		notes = append(notes, prefix+termText(reason))
 	}
-	return table, notes, false, nil
+	return table, notes, standing
 }
 
 // cmdOffice converts a document to PDF: Markdown natively, office documents

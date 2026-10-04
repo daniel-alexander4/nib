@@ -134,11 +134,12 @@ func checkDocumentTitle(d *Document) Result {
 	if !x.Readable {
 		return Result{Verdict: CannotCheck, Why: x.Why, Where: "catalog /Metadata"}
 	}
-	if x.Title == "" {
+	if !x.TitledInALanguage {
 		return Result{
 			Verdict: Fail,
-			Why:     "the metadata packet carries no dc:title, so a reader has no name for this document but its file name",
-			Where:   "catalog /Metadata, dc:title",
+			Why: "the metadata packet carries no dc:title written as a language alternative (an item with an xml:lang), " +
+				"so a reader has no name for this document but its file name",
+			Where: "catalog /Metadata, dc:title",
 		}
 	}
 	return Result{Verdict: Pass}

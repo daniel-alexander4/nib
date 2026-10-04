@@ -349,3 +349,58 @@ func TestFreeXrefEntriesDoNotRaiseThePathBudget(t *testing.T) {
 		t.Errorf("100,000 free xref entries moved the path budget from %d to %d — a file can buy itself validator time", a, b)
 	}
 }
+
+// infoDoc is a one-page document whose trailer's /Info is info.
+func infoDoc(info string) []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.7\n")
+	objs := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+		info,
+	}
+	off := make([]int, len(objs))
+	for i, s := range objs {
+		off[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, s)
+	}
+	x := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, o := range off {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R /Info 4 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, x)
+	return b.Bytes()
+}
+
+// TestAnInfoKeyWhoseNameDecodesToAHashIsRead — /pending 696. pdfcpu decodes a name's `#xx` escapes when it parses
+// it, and its validator decodes the document-information keys a SECOND time (`validate/info.go`, `handleProperties`),
+// so a custom property named `/Document#20#23` — "Document #", which Acrobat PDFMaker writes for a SharePoint column —
+// failed the whole read with "not enough characters after #", and `/Tags#20#28option#20#231#29` ("Tags (option #1)")
+// with "encoding/hex: invalid byte". `acrobat/fda-176439.pdf` in the producer corpus carries both; veraPDF validates
+// it, and nib could not open it through any door. A key whose decoded name merely LOOKS escaped (`/A#2341`, "A#41")
+// was silently read as "AA". The key is read once, and the dictionary is left as it was parsed.
+func TestAnInfoKeyWhoseNameDecodesToAHashIsRead(t *testing.T) {
+	for _, c := range []struct{ key, want string }{
+		{"/Document#20#23", "Document #"},
+		{"/Tags#20#28option#20#231#29", "Tags (option #1)"},
+		{"/A#2341", "A#41"},
+	} {
+		ctx, err := pdfread.Validated(infoDoc("<< "+c.key+" (v) /Title (t) >>"), model.NewDefaultConfiguration())
+		if err != nil {
+			t.Errorf("%s: the read failed: %v", c.key, err)
+			continue
+		}
+		if got := ctx.Properties[c.want]; got != "v" {
+			t.Errorf("%s: the property %q reads %q, want \"v\" — properties %v", c.key, c.want, got, ctx.Properties)
+		}
+		d, derr := ctx.DereferenceDict(*ctx.Info)
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		if _, ok := d[c.want]; !ok {
+			t.Errorf("%s: the information dictionary no longer holds the parsed key %q: %v", c.key, c.want, d)
+		}
+	}
+}

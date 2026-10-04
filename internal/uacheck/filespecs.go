@@ -199,11 +199,25 @@ func (d *Document) resolve(o types.Object) types.Object {
 // carrying an embedded file is graded by veraPDF exactly as a typed one is, and a TYPED specification
 // with no embedded file is still a SUBJECT — it satisfies the profile's first disjunct and is reported
 // as a PASSING check rather than an absent one.
+//
+// **An `/EF` makes a dictionary a specification only when it is the embedded-file DICTIONARY** (/pending 695).
+// A usage-rights signature's `/TransformParams` carries `/EF [/Create /Delete /Import /Modify]` — the rights over
+// embedded files, an array of names — and reading any `/EF` made Adobe Designer's IRS forms
+// (`designer/irs-fw9.pdf` object 1075, `designer/irs-f1040.pdf` object 2448 in the producer corpus) fail 7.11 t1,
+// which veraPDF 1.30.2 does not. Measured beside it: that same dictionary with `/Type /Filespec` added fails on
+// veraPDF, so a TYPED specification stays a subject whatever its `/EF` is; and a specification whose `/EF` is an
+// array is a file veraPDF refuses to parse at all, so the narrowing passes nothing veraPDF fails.
+//
+// Declared, not closed: an UNTYPED dictionary whose `/EF` IS a dictionary is a subject here wherever it hangs, while
+// veraPDF grades one only in a holder position — measured, `/EF << /F … >>` written into that `/TransformParams`
+// draws no 7.11 check. No producer is known to write it; closing it would mean enumerating holders, which is the
+// shape this door exists to refuse (the comment at the top of this file).
 func isFileSpec(d *Document, v types.Dict) bool {
-	if _, hasEF := v["EF"]; hasEF {
+	if d.name(v["Type"]) == "Filespec" {
 		return true
 	}
-	return d.name(v["Type"]) == "Filespec"
+	ef, hasEF := v["EF"]
+	return hasEF && d.dict(ef) != nil
 }
 
 // maxSpecNodes bounds how many objects and values the walk will visit in total. The document's object

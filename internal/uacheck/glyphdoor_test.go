@@ -37,29 +37,23 @@ func veraAsk(t *testing.T, docs [][]byte) []map[string]string {
 	if err := xml.Unmarshal(out, &rep); err != nil {
 		t.Fatalf("the veraPDF report did not parse: %v", err)
 	}
+	// Read through `veraStates`, the one reading of a veraPDF report (/pending 697, ADR-009): a second reading here had
+	// no cap detection, and would have read a capped report's unrecorded rule as "none". Such a rule reads "unrecorded",
+	// which no caller's expectation matches, so it is loud rather than a silent no-subject.
+	states := veraStates(rep, files)
+	words := map[veraState]string{veraFailed: "failed", veraPassed: "passed", veraNoSubject: "none", veraUnrecorded: "unrecorded"}
 	res := make([]map[string]string, len(docs))
-	seen := 0
-	for _, j := range rep.Jobs {
-		for i, f := range files {
-			if filepath.Base(j.Item.Name) != filepath.Base(f) {
-				continue
-			}
-			seen++
-			if len(j.Report.Details.Rules) == 0 {
-				continue // no report
-			}
-			res[i] = map[string]string{}
-			for _, r := range j.Report.Details.Rules {
-				st := r.Status
-				if st == "passed" && r.Passed == "0" && r.Failed == "0" {
-					st = "none"
-				}
-				res[i][r.Clause+" t"+r.Test] = st
-			}
+	for i, st := range states {
+		if st == nil {
+			t.Fatalf("veraPDF returned no job for document %d of %d", i, len(files))
 		}
-	}
-	if seen != len(files) {
-		t.Fatalf("veraPDF returned %d job(s) for %d document(s)", seen, len(files))
+		if len(st) == 0 {
+			continue // no report
+		}
+		res[i] = map[string]string{}
+		for c, s := range st {
+			res[i][c] = words[s]
+		}
 	}
 	return res
 }

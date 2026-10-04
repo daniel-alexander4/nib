@@ -36,11 +36,8 @@ var producerDisagreements = map[string]string{
 	"libreoffice/writer-untagged.pdf / 7.2 t30": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
 	"libreoffice/writer-untagged.pdf / 7.2 t31": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
 	"libreoffice/writer-untagged.pdf / 7.2 t32": "/pending 674 — nib answers Pass on a page with no marked content where veraPDF has no subject; P08.S04",
-	// Measured at P08.S03/S04 over the sourced files (build/producers/sourced.tsv), once the capped-report reading was right.
-	"designer/irs-fw9.pdf / 7.11 t1":            "/pending 695 — nib fails an embedded-file spec with no /F that veraPDF does not fail",
-	"designer/irs-f1040.pdf / 7.11 t1":          "/pending 695 — nib fails an embedded-file spec with no /F that veraPDF does not fail",
-	"acrobat/fda-176439.pdf / open":             "/pending 696 — nib cannot open an Acrobat PDFMaker 25 document veraPDF validates",
-	"ghostscript/pdflatex-article.pdf / 7.1 t9": "/pending 694 — a live false fail: nib fails a missing dc:title that veraPDF passes on Ghostscript's re-distil of pdfLaTeX output; P08.S04",
+	// The P08.S03/S04 rows over the sourced files (build/producers/sourced.tsv) — 7.11 t1 on the IRS forms, the
+	// unopenable FDA document and 7.1 t9 on the Ghostscript re-distil — were closed by /pending 694, 695 and 696.
 }
 
 // refusedWhole is whether nib refused every clause of a document — the shape a recovered panic and `reportsNothing`
@@ -148,6 +145,9 @@ func TestTheCheckerAgreesWithVeraPDFOnRealProducers(t *testing.T) {
 			"verapdf on PATH, or install to ~/verapdf.")
 	}
 	vera := veraPDFBatch(t, vp, files)
+	// A capped report reads a rule it did not record as "passed or no subject"; re-asked with a profile of just those
+	// rules, it is judged with law 5's full strictness (/pending 697).
+	resolveCapped(t, vp, files, vera)
 	reports := make([]*Report, len(files))
 	unopened := map[string]string{}
 	perProducer := map[string]int{}

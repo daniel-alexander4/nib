@@ -12,11 +12,9 @@ import (
 // `corpusStrict`, `corpusAllow`); the oracle admits none. So this list is complete wherever the corpora exist, and
 // `TestTheAgreementFigureIsTheHarnesssOwn` keeps it equal to the clauses the harnesses name.
 var knownDisagreements = map[string]string{
-	"7.1 t9":  "/pending 694",
 	"7.2 t30": "/pending 674",
 	"7.2 t31": "/pending 674",
 	"7.2 t32": "/pending 674",
-	"7.11 t1": "/pending 695",
 }
 
 // unexercised is every clause nib implements that no corpus has SETTLED (Pass or Fail) on any document — "no
