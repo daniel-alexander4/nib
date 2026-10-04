@@ -1,0 +1,12 @@
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -349,9 +349,6 @@
+ // The switch is re-read on every call, because the user can turn it back on while a ceremony is
+ // open and the next tick should see that.
+ func (c *ceremonyID) dhtPublish(ctx context.Context, seed, salt, value []byte) error {
+-	if err := c.ensureBootstrapped(ctx); errors.Is(err, errRendezvousOff) || errors.Is(err, errNoCeremony) {
+-		return err
+-	}
+ 	return c.rz.Publish(ctx, seed, salt, value)
+ }
+ 

@@ -1,0 +1,13 @@
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -357,9 +357,7 @@
+ 
+ // dhtFetch is dhtPublish's read half — see there.
+ func (c *ceremonyID) dhtFetch(ctx context.Context, seed, salt []byte) ([]byte, int64, error) {
+-	if err := c.ensureBootstrapped(ctx); errors.Is(err, errRendezvousOff) || errors.Is(err, errNoCeremony) {
+-		return nil, 0, err
+-	}
++	_ = c.ensureBootstrapped(ctx)
+ 	return c.rz.Fetch(ctx, seed, salt)
+ }
+ 

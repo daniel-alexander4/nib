@@ -1,0 +1,10 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -14516,7 +14516,6 @@
+ function showLaunchOverlay(reason) {
+   els.launchText.textContent = LAUNCH_WORDS[reason] || LAUNCH_WORDS.none;
+   if (!els.launchOverlay.hidden) return;
+-  for (const el of document.body.children) if (el !== els.launchOverlay) el.inert = true;
+   // And anything added later — a modal built after the screen went up (#6).
+   new MutationObserver((ms) => {
+     for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1 && n !== els.launchOverlay) n.inert = true;

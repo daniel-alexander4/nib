@@ -1,0 +1,11 @@
+--- a/internal/uacheck/rules_annots.go
++++ b/internal/uacheck/rules_annots.go
+@@ -29,7 +29,7 @@
+ // (`p-no-subtype`), because a null subtype equals none of the three names.
+ func annotTagExcluded(subtype string) bool {
+ 	switch subtype {
+-	case "Widget", "PrinterMark", "Link":
++	case "PrinterMark", "Link":
+ 		return true
+ 	}
+ 	return false

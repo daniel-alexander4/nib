@@ -154,7 +154,8 @@ func TestTheBootstrapDoorSetsItsFlagEvenWhenTheBootstrapFAILS(t *testing.T) {
 
 // armedCeremony builds a real ceremony with a live rendezvous over a loopback socket — the same
 // path `sharedsocket_test.go` uses, because a fake rendezvous cannot answer the question these
-// tests ask, which is whether the DHT was CONTACTED.
+// tests ask, which is whether the DHT was CONTACTED. Its cache is empty, and the rendezvous is
+// hermetic (TestMain, /pending 699): a bootstrap from it has nowhere to start, never the public DHT.
 func armedCeremony(t *testing.T) (*ceremonyID, []byte) {
 	t.Helper()
 	return armedCeremonyAt(t, t.TempDir())

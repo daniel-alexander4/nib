@@ -1,0 +1,11 @@
+--- a/web/app.js
++++ b/web/app.js
+@@ -14494,7 +14494,7 @@
+     }
+     if (res.ok) {
+       csrf = (await res.json()).csrf || null;
+-      try { sessionStorage.setItem(TOKEN_KEY, csrf || ''); } catch { /* storage refused: this load still works */ }
++      try { sessionStorage.setItem(TOKEN_KEY, ''); } catch { /* storage refused: this load still works */ }
+       return csrf ? 'ok' : 'none';
+     }
+   }

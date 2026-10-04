@@ -1,0 +1,10 @@
+--- a/internal/server/launch.go
++++ b/internal/server/launch.go
+@@ -93,7 +93,6 @@
+ 		return false
+ 	}
+ 	fresh := time.Since(s.launchKeys[hit].minted) < launchKeyTTL
+-	s.launchKeys = append(s.launchKeys[:hit:hit], s.launchKeys[hit+1:]...)
+ 	return fresh
+ }
+ 

@@ -1,0 +1,11 @@
+--- a/internal/uacheck/content.go
++++ b/internal/uacheck/content.go
+@@ -915,7 +915,7 @@
+ 	}
+ 	top := &stack[len(stack)-1]
+ 	if top.structElem != nil {
+-		return d.reachesStructTreeRoot(top.structElem)
++		return true, ""
+ 	}
+ 	return false, top.structUnread
+ }

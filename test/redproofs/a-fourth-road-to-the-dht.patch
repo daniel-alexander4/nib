@@ -1,0 +1,12 @@
+--- a/internal/server/ceremonyid.go
++++ b/internal/server/ceremonyid.go
+@@ -320,6 +320,9 @@
+ 	if c.rzOn != nil && !c.rzOn() {
+ 		return errRendezvousOff
+ 	}
++	if false {
++		_, _, _ = c.rz.Fetch(ctx, nil, nil)
++	}
+ 	c.bootstrapOnce.Do(func() {
+ 		bctx, cancel := context.WithTimeout(ctx, bootstrapBudget)
+ 		defer cancel()

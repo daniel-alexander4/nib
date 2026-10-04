@@ -72,7 +72,9 @@ hermetic tier can show that: two `anacrolix/dht` servers on loopback do set the 
 `ip` field, so a local test proves the plumbing and nothing about the network. It is
 deliberately out of the routine loop for the same reason tier 3 was made hermetic —
 a check that reaches the public internet imports every stranger's outage into your
-build. Run it when touching `internal/rendezvous`, the seed list, NAT
+build. Tier 1 is held to that: `internal/server`'s `TestMain` opens every test rendezvous
+loopback-only with no shipped seeds, and fails the run naming any test that aimed a DHT query
+off the machine (`hermeticdht_test.go`, /pending 699). Run it when touching `internal/rendezvous`, the seed list, NAT
 classification, or **the candidate path** — it also drives a sealed `CandidateRecord`
 the whole way: published to the public DHT, fetched by a second server, opened and
 checked by the real gate, and the surviving endpoint dialled by the production racer.

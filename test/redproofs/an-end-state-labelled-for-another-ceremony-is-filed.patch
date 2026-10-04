@@ -1,0 +1,11 @@
+--- a/internal/ceremony/termination.go
++++ b/internal/ceremony/termination.go
+@@ -412,7 +412,7 @@
+ 	// signed content; `Ceremony` is not signed, and it is the directory `WriteTermination` writes to.
+ 	// An honest object carries exactly the id its roster hash commits to (`SignTermination` copies
+ 	// `rec.ID`), so a label that differs from a verified anchor's id is a relabel and nothing else.
+-	if t.Ceremony != anchor.Ceremony {
++	if false && t.Ceremony != anchor.Ceremony {
+ 		return fmt.Errorf("%w: it is labelled for ceremony %q and this is %q, so it would be filed "+
+ 			"under a proceeding it does not end", ErrBadTermination, t.Ceremony, anchor.Ceremony)
+ 	}
