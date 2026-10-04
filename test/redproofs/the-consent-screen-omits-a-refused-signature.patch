@@ -5,7 +5,7 @@
    // recital two lines up, for the same reason.
    setPermanence(document.getElementById('srvPermanence'), !!pending.recital);
 -  renderConsentSigners(pending.signers || [], pending.refused || []);
-+  renderConsentSigners((pending.signers || []).filter((x) => x.valid), pending.refused || []);
++  renderConsentSigners(pending.signers || []);
    showRecvView('srvConsent');
    loadPendingPreview(recvPoll, pending.block || null, recvPendingId);
  }

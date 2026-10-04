@@ -42,6 +42,8 @@ const h = await boot({
           fingerprint: 'a'.repeat(64),
           reason: 'I agree to co-sign the lease',
           signers: SIGNERS,
+          // /pending 738: a refused signature is not a signer, and the screen says it is there.
+          refused: [{ obj: 31, filter: 'Adobe.PPKLite', cause: 'contents-elsewhere' }],
         },
       }
       : { armed: false }),
@@ -88,6 +90,11 @@ test('the consent screen names every party already on the document, not one', as
   for (const who of ['Ada Landlord', 'Bo Surveyor', 'Cy Witness']) {
     assert.ok(text.includes(who), `the consent screen omits ${who}`);
   }
+  assert.match(text, /A signature Nib refused is present — Object 31 \(Adobe\.PPKLite\): its byte range surrounds another object's signature/,
+    'the document carries a signature Nib refused, and the consent screen does not say so (/pending 738). ' +
+    'The badge, the details panel and `nib verify` all name it; the screen where a party decides to add ' +
+    'their name was the one reader left silent.');
+  assert.equal(rows, 3, 'the refused signature was drawn as a signer row');
   assert.match(text, /does not verify/,
     'the third signature does not verify and the screen does not say so. Dropping it would make ' +
     'the list shorter and the document look cleaner than it is, on the one screen where the user ' +

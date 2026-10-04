@@ -1,0 +1,10 @@
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -483,6 +483,7 @@
+ 			}
+ 		}
+ 		if best < 0 {
++			floor = ends[gs]
+ 			continue
+ 		}
+ 		ok, n := ownsGap(data, bestBody, int(gs))

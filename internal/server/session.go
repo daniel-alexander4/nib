@@ -1332,10 +1332,10 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
 	ch := make(chan sessionDecision, 1)
 	view := pendingView{
 		Signer: peer.Signer, Fingerprint: peer.Fingerprint, Reason: peer.Reason,
-		// Every party already on the document, not just the one on the other end of the socket
-		// (P07.S07c).
-		Signers: signersSoFar(doc),
 	}
+	// Every party already on the document, not just the one on the other end of the socket
+	// (P07.S07c) — and every signature Nib refused on it (/pending 738), from the one verify.
+	view.Signers, view.Refused = signersSoFar(doc)
 	// Inside a ceremony the recital travels with the consent request; outside one there is no
 	// ceremony to have a recital and the field stays empty, which is what the client branches on.
 	view.Recital = recitalFor(sc.cer)
@@ -2486,6 +2486,15 @@ type pendingView struct {
 	// screen states rather than a list it omits: "nobody has signed this yet" and "we did not
 	// look" must not render the same.
 	Signers []pendingSigner `json:"signers"`
+	// Refused is every signature-shaped dictionary on the document that Nib refused (ADR-059's
+	// `Status.Refused`), with its cause (/pending 738).
+	//
+	// **A refused signature is not a signer (ADR-060), so `Signers` cannot carry it** — and before
+	// this field the consent screen was the one reader of a document's signatures that said nothing
+	// about one: the badge, the details panel and `nib verify` all name it. A party deciding whether
+	// to add their name is the reader who most needs to be told that something on the document
+	// claims to be a signature and is not one Nib accepted. Absent when there is none.
+	Refused []sign.RefusedSignature `json:"refused,omitempty"`
 	// Block is where this party's own visible attestation will land on the document being
 	// reviewed — the page and the rect, in PDF points.
 	//
@@ -2513,19 +2522,20 @@ type pendingSigner struct {
 	Valid       bool   `json:"valid"`
 }
 
-// signersSoFar reads the signatures already on a document.
+// signersSoFar reads the signatures already on a document, and the ones Nib refused on it.
 //
 // `sign.Verify` rather than `p2p.Attestations`: the question is who has signed, which the
 // signature list answers directly, and the attestation machinery would additionally parse
 // /Reason and cross-bind — work whose answers this screen does not show. The consent gate is a
-// human pause, not a hot path, but a verify it does not use is still a verify.
-func signersSoFar(doc []byte) []pendingSigner {
+// human pause, not a hot path, but a verify it does not use is still a verify — so the refusals
+// (/pending 738) come from the same one.
+func signersSoFar(doc []byte) ([]pendingSigner, []sign.RefusedSignature) {
 	st := sign.Verify(doc)
 	out := make([]pendingSigner, 0, len(st.Signers))
 	for _, s := range st.Signers {
 		out = append(out, pendingSigner{Signer: s.Name, Fingerprint: s.Fingerprint, Valid: s.Valid})
 	}
-	return out
+	return out, st.Refused
 }
 
 func (s *Server) handleSessionArm(w http.ResponseWriter, r *http.Request) {

@@ -1,11 +1,11 @@
 --- a/web/app.js
 +++ b/web/app.js
-@@ -1553,7 +1553,7 @@
+@@ -1945,7 +1945,7 @@
    // D12's statement, with its ceremony half only when there is one — same discriminator as the
    // recital two lines up, for the same reason.
    setPermanence(document.getElementById('srvPermanence'), !!pending.recital);
--  renderConsentSigners(pending.signers || []);
-+  renderConsentSigners((pending.signers || []).slice(0, 1));
+-  renderConsentSigners(pending.signers || [], pending.refused || []);
++  renderConsentSigners((pending.signers || []).slice(0, 1), pending.refused || []);
    showRecvView('srvConsent');
-   loadPendingPreview(recvPoll, pending.block || null);
+   loadPendingPreview(recvPoll, pending.block || null, recvPendingId);
  }

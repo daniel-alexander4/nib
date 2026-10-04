@@ -1,0 +1,11 @@
+--- a/internal/sign/revisions.go
++++ b/internal/sign/revisions.go
+@@ -571,7 +571,7 @@
+ 				i++
+ 			}
+ 			continue
+-		case c == '(':
++		case c == 0x7f:
+ 			depth := 0
+ 			for i < gs {
+ 				switch data[i] {

@@ -1,13 +1,11 @@
-diff --git a/internal/server/session.go b/internal/server/session.go
-index 1fd2157..7bbadbd 100644
 --- a/internal/server/session.go
 +++ b/internal/server/session.go
-@@ -435,7 +435,7 @@ func (sc sessionConfirmer) Confirm(peer p2p.SignerAttestation, doc []byte) (bool
- 		Signer: peer.Signer, Fingerprint: peer.Fingerprint, Reason: peer.Reason,
- 		// Every party already on the document, not just the one on the other end of the socket
- 		// (P07.S07c).
--		Signers: signersSoFar(doc),
-+
+@@ -1335,7 +1335,7 @@
  	}
- 	// The request is held so the defer can name it: an unconditional clear drops whatever
- 	// is pending when it fires, which after a disarm-and-rearm is a LATER session's consent.
+ 	// Every party already on the document, not just the one on the other end of the socket
+ 	// (P07.S07c) — and every signature Nib refused on it (/pending 738), from the one verify.
+-	view.Signers, view.Refused = signersSoFar(doc)
++
+ 	// Inside a ceremony the recital travels with the consent request; outside one there is no
+ 	// ceremony to have a recital and the field stays empty, which is what the client branches on.
+ 	view.Recital = recitalFor(sc.cer)

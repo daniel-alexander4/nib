@@ -1952,7 +1952,7 @@ function showConsent(pending) {
   // D12's statement, with its ceremony half only when there is one — same discriminator as the
   // recital two lines up, for the same reason.
   setPermanence(document.getElementById('srvPermanence'), !!pending.recital);
-  renderConsentSigners(pending.signers || []);
+  renderConsentSigners(pending.signers || [], pending.refused || []);
   showRecvView('srvConsent');
   loadPendingPreview(recvPoll, pending.block || null, recvPendingId);
 }
@@ -1973,7 +1973,12 @@ function showConsent(pending) {
 // An INVALID signature is listed and marked, never dropped: a document arriving with a broken
 // signature on it is exactly what the user needs to see before adding theirs, and silently
 // omitting it would make the list shorter and the document look cleaner than it is.
-function renderConsentSigners(signers) {
+//
+// **A signature Nib refused is not a signer (ADR-060), and it is not left unsaid either** (/pending
+// 738): the badge, the details panel and `nib verify` name it, so the screen where a party decides
+// whether to add their name does too — one line per refused object, in `refusedLine`'s words, after
+// the signers. Its filter is the document's own text, so it is only ever set as textContent.
+function renderConsentSigners(signers, refused = []) {
   const box = els.srvSigners;
   if (!box) return;
   box.innerHTML = '';
@@ -1984,9 +1989,12 @@ function renderConsentSigners(signers) {
   if (!signers.length) {
     const p = document.createElement('p');
     p.className = 'libhint';
-    p.textContent = 'Nobody yet — you would be the first to sign this document.';
+    // With a refusal present, "you would be the first" says more than Nib checked: something on the
+    // document claims to be a signature, and Nib only knows it is not one it accepts.
+    p.textContent = refused.length
+      ? 'Nobody Nib could accept.'
+      : 'Nobody yet — you would be the first to sign this document.';
     box.appendChild(p);
-    return;
   }
   for (const s of signers) {
     const row = document.createElement('div');
@@ -2010,6 +2018,12 @@ function renderConsentSigners(signers) {
       bad.textContent = ' — this signature does not verify';
       row.appendChild(bad);
     }
+    box.appendChild(row);
+  }
+  for (const r of refused) {
+    const row = document.createElement('div');
+    row.className = 'sigatt-warn';
+    row.textContent = '⚠ A signature Nib refused is present — ' + refusedLine(r);
     box.appendChild(row);
   }
 }
