@@ -7,14 +7,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"nib/internal/scaling"
 )
 
 // TestFillingATableIsNotQuadratic — /pending 711 R5-2. Both expiring tables swept the whole
 // map on every insert, under the write lock the read loop takes per datagram, so filling
 // either was quadratic in how many entries a remote host chose to create (every QUIC Initial
-// registers an id and every reply learns a destination). The bound is on SCALING, best of
-// five: four times the entries must cost well under the sixteen times a per-insert sweep
-// costs.
+// registers an id and every reply learns a destination). The bound is on what an insert costs
+// against the table it lands in: a batch into a table sixteen times fuller must cost nowhere
+// near the sixteen times a per-insert sweep makes it.
 func TestFillingATableIsNotQuadratic(t *testing.T) {
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -28,45 +30,73 @@ func TestFillingATableIsNotQuadratic(t *testing.T) {
 	// attacker's case (every entry is fresh), and sweeps still come due on schedule.
 	tick := func() { mu.Lock(); now = now.Add(time.Microsecond); mu.Unlock() }
 
-	fill := map[string]func(i int){
-		"RegisterConnectionID": func(i int) {
-			var id [8]byte
-			binary.BigEndian.PutUint64(id[:], uint64(i))
-			m.RegisterConnectionID(id[:])
+	// Each table: insert is the door under test; hold empties the table and fills it with held
+	// entries directly, untimed and sweep-free, so even a regressed insert pays nothing to set up.
+	type table struct {
+		insert func(i int)
+		hold   func(held int)
+	}
+	fill := map[string]table{
+		"RegisterConnectionID": {
+			insert: func(i int) {
+				var id [8]byte
+				binary.BigEndian.PutUint64(id[:], uint64(i))
+				m.RegisterConnectionID(id[:])
+			},
+			hold: func(held int) {
+				m.cidMu.Lock()
+				m.cids = make(map[string]time.Time, held)
+				mu.Lock()
+				exp := now.Add(peerTTL)
+				mu.Unlock()
+				for i := 0; i < held; i++ {
+					var id [8]byte
+					binary.BigEndian.PutUint64(id[:], uint64(1<<62+i))
+					m.cids[string(id[:])] = exp
+				}
+				m.cidMu.Unlock()
+			},
 		},
-		"learn": func(i int) {
-			m.learn(&net.UDPAddr{IP: net.IPv4(10, byte(i>>16), byte(i>>8), byte(i)), Port: 4000 + i%1000})
+		"learn": {
+			insert: func(i int) {
+				m.learn(&net.UDPAddr{IP: net.IPv4(10, byte(i>>16), byte(i>>8), byte(i)), Port: 4000 + i%1000})
+			},
+			hold: func(held int) {
+				m.mu.Lock()
+				m.peers = make(map[netip.AddrPort]time.Time, held)
+				mu.Lock()
+				exp := now.Add(peerTTL)
+				mu.Unlock()
+				for i := 0; i < held; i++ {
+					m.peers[netip.AddrPortFrom(netip.AddrFrom4([4]byte{11, byte(i >> 16), byte(i >> 8), byte(i)}), 5000)] = exp
+				}
+				m.mu.Unlock()
+			},
 		},
 	}
-	const small = 2000
+	// The batch's cost against the table it lands in, not a fill's cost against its size: a healthy
+	// fill is itself superlinear once the table outgrows the cache, ×3.9-×9.9 for 4x the entries at
+	// load ~20 (measured), so the ×8 a 4× fill was held to sat inside a healthy table's own spread —
+	// and best-of-five per size, one size after the other, failed 2 of 8 runs against good code at
+	// that load (/pending 799). A batch into a fuller table pays the cache once and a sweep per
+	// insert sixteen times; `scaling` interleaves the two and brackets the emptier one.
+	const batch, emptier, fuller = 5000, 5000, 80000
 	offset := 0
-	for name, insert := range fill {
-		cost := func(n int) time.Duration {
-			best := time.Duration(1<<63 - 1)
-			for r := 0; r < 5; r++ {
-				// Fresh keys every round, so each round grows the table by n.
-				m.mu.Lock()
-				m.peers = map[netip.AddrPort]time.Time{}
-				m.mu.Unlock()
-				m.cidMu.Lock()
-				m.cids = map[string]time.Time{}
-				m.cidMu.Unlock()
-				start := time.Now()
-				for i := 0; i < n; i++ {
-					insert(offset + i)
-					tick()
-				}
-				if d := time.Since(start); d < best {
-					best = d
-				}
-				offset += n
+	for name, tb := range fill {
+		cost := func(held int) func() time.Duration {
+			return func() time.Duration {
+				tb.hold(held)
+				base := offset
+				offset += batch
+				return scaling.TimeOnce(func() {
+					for i := 0; i < batch; i++ {
+						tb.insert(base + i)
+						tick()
+					}
+				})
 			}
-			return best
 		}
-		a, b := cost(small), cost(4*small)
-		if b > 8*a {
-			t.Errorf("%s: %d inserts took %v and %d took %v (%.1fx for 4x the entries) — an insert "+
-				"is paying for the table's size again", name, small, a, 4*small, b, float64(b)/float64(a))
-		}
+		scaling.WithinFactor(t, name+": a batch into a table 16x fuller (an insert paying for the table's size again)",
+			5, cost(emptier), cost(fuller))
 	}
 }

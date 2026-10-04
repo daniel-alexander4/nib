@@ -32,11 +32,11 @@ import (
 //
 // # What this is NOT
 //
-// Not a benchmark and not a threshold. It RECORDS, with `-v`, and asserts only the two shape
-// properties that can rot: that a signed document skips the digest, and that `NextContributor`
-// costs ONE bare verify and not two — because if either stops holding, the arithmetic above is a
-// story about a different program. Wall-clock numbers are machine facts and pinning one would be a
-// test that goes red on a busy laptop.
+// Not a benchmark and not a threshold. It RECORDS, with `-v`, and asserts only that its fixture is
+// what it claims (the "signed" readings carry a signature). The shape property the arithmetic above
+// rests on — `NextContributor` costs ONE bare verify and not two — is held structurally by
+// `TestEveryVerifyingDoorReachesOneVerify`; a ratio of two clocks held it here until it went red on a
+// busy machine (/pending 785). Wall-clock numbers are machine facts.
 func TestWhatTheCeremonyListingCostsPerCeremony(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing under -short is a measurement of the scheduler")
@@ -87,31 +87,13 @@ func TestWhatTheCeremonyListingCostsPerCeremony(t *testing.T) {
 		t.Logf("%4d pages, %7d bytes: verify(unsigned) %8v ±%v | verify(signed) %8v ±%v | NextContributor %8v ±%v",
 			pages, len(prepared), unsignedVerify, uvSpread, signedVerify, svSpread, nextCost, ncSpread)
 
-		// **The shape property, asserted only where the signal is above the noise.**
-		//
-		// `NextContributor` ran `sign.Verify` twice — once for the Invalid test and once inside
-		// `ReadAttestations` — and since /pending 711 R5-7 runs it once, over which both read the
-		// same Status. Measured on the day it changed, 200 pages: 51.4 ms against a bare verify's
-		// 51.7 ms. So the property is now "about one verify, well short of two". At ONE page the medians are
-		// 1.34 ms against 1.41 ms with a spread of ±16 ms on the second: the small end is entirely
-		// scheduler noise, and asserting there produced a red on the very first run against
-		// perfectly good code. Measured at the top of the range instead, where the readings are
-		// 71.8 ms against 19.3 ms and the ratio is unmistakable. Recording all three sizes and
-		// asserting on one is the honest split: a number below its own noise floor is not a
-		// measurement, and a test that pretends otherwise is a flake with a rationale.
-		if pages < 200 {
-			continue
-		}
-		if nextCost > signedVerify*8/5 {
-			t.Errorf("%d pages: NextContributor (%v) costs %.1fx the single sign.Verify it should "+
-				"call once (%v) — the document is being verified twice again (/pending 711 R5-7)",
-				pages, nextCost, float64(nextCost)/float64(signedVerify), signedVerify)
-		}
-		if nextCost < signedVerify/2 {
-			t.Errorf("%d pages: NextContributor (%v) is well under the sign.Verify it calls (%v) — "+
-				"the fixture carries no signatures and every number above measures an empty document",
-				pages, nextCost, signedVerify)
-		}
+		// **The shape property is not asserted here, because it is not a time.** `NextContributor`
+		// ran `sign.Verify` twice — once for the Invalid test and once inside `ReadAttestations` —
+		// and since /pending 711 R5-7 runs it once. This file held that with a ratio (NextContributor
+		// under 1.6× a bare verify, at 200 pages): healthy ~1.0, spread ±60-130%, two medians taken in
+		// back-to-back windows, and it went red at 1.7× with jsdom alongside against good code
+		// (/pending 785). How many verifies a door reaches is read off its code instead —
+		// `TestEveryVerifyingDoorReachesOneVerify` — and the readings above stay a record.
 	}
 
 	// The floor for the whole file: the fixture really does carry a signature, so "signed" and

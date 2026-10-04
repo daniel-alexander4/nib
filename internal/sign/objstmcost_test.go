@@ -5,11 +5,14 @@ import (
 	"compress/zlib"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"nib/internal/scaling"
 
 	dpdf "github.com/digitorus/pdf"
 )
@@ -216,11 +219,39 @@ func resolveEvery(t *testing.T, doc []byte) time.Duration {
 	if err != nil {
 		t.Fatalf("STIMULUS: the reader refuses the fixture: %v", err)
 	}
-	t0 := time.Now()
+	return scaling.TimeOnce(func() {
+		for i := range r.Xref() {
+			resolveMember(r, i)
+		}
+	})
+}
+
+// countingReaderAt counts the bytes read through it.
+type countingReaderAt struct {
+	r io.ReaderAt
+	n int64
+}
+
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	k, err := c.r.ReadAt(p, off)
+	c.n += int64(k)
+	return k, err
+}
+
+// fileBytesResolvingEvery is resolveEvery's pass, counting the bytes it reads from the file (opening the
+// Reader excluded).
+func fileBytesResolvingEvery(t *testing.T, doc []byte) int64 {
+	t.Helper()
+	f := &countingReaderAt{r: bytes.NewReader(doc)}
+	r, err := dpdf.NewReader(f, int64(len(doc)))
+	if err != nil {
+		t.Fatalf("STIMULUS: the reader refuses the fixture: %v", err)
+	}
+	f.n = 0
 	for i := range r.Xref() {
 		resolveMember(r, i)
 	}
-	return time.Since(t0)
+	return f.n
 }
 
 // TestAnObjectStreamOfTwentyThousandMembersVerifies is /pending 751's own case, re-pinned by /pending
@@ -256,51 +287,54 @@ func TestAnObjectStreamOfTwentyThousandMembersVerifies(t *testing.T) {
 }
 
 // TestVerifyIsNotQuadraticInObjectStreamMembers: four times the members must cost well under sixteen
-// times the time. Best of three per size, so a loaded machine cannot fake a pass or a failure; the
-// pre-fix tree measured ~16x (2,000 → 8,000 members: 1.1 s → 17 s).
+// times the time; the pre-fix tree measured ~16x (2,000 → 8,000 members: 1.1 s → 17 s).
+//
+// Linear is x4 and the unpatched library's quadratic x16 (measured x14.3 on it); x8 is the midpoint on a
+// log scale. Alone this measures x3.2-x4.3; best-of-N per size, one size after the other, tipped x6.1 under
+// a loaded full suite, so the sizes are interleaved through `scaling` (/pending 799).
 func TestVerifyIsNotQuadraticInObjectStreamMembers(t *testing.T) {
 	a := newIdentity(t, "Alice")
-	best := func(n int) time.Duration {
-		doc := memberDoc(t, a, n)
-		var b time.Duration
-		for i := 0; i < 5; i++ {
-			t0 := time.Now()
-			Verify(doc)
-			if d := time.Since(t0); i == 0 || d < b {
-				b = d
-			}
+	docs := map[int][]byte{}
+	scaling.GrowsLinearly(t, "Verify over one object stream", 2000, 8000, 8, func(n int) time.Duration {
+		if docs[n] == nil {
+			docs[n] = memberDoc(t, a, n)
 		}
-		return b
-	}
-	small, large := best(2000), best(8000)
-	ratio := float64(large) / float64(small)
-	t.Logf("2000 members %v, 8000 members %v: x%.2f", small, large, ratio)
-	// Linear is x4 and the unpatched library's quadratic x16 (measured x14.3 on it); x8 is the midpoint on a
-	// log scale. Alone this measures x3.2-x4.3; x6 tipped once under a loaded full suite (x6.1), best of 3.
-	if ratio > 8 {
-		t.Errorf("4x the object-stream members cost %.1fx the time (%v → %v) — the reader's lookup is quadratic and nothing bounds it", ratio, small, large)
-	}
+		return scaling.TimeOnce(func() { Verify(docs[n]) })
+	})
 }
 
 // TestTheReaderResolvesAnObjectStreamInLinearTime is the patch's own scaling case, below Verify (whose
 // fixed costs would hide a quadratic at small sizes): one pass over a 5,000- and a 20,000-member stream.
-// Unpatched, measured: 3.2 s → 66 s (21x). Four times the members must cost under six times the time.
+// Unpatched, measured: 3.2 s → 66 s (21x). Four times the members must cost under eight times the time —
+// it was six, best of three per size one size after the other, and failed at 6.1x under load against
+// good code (/pending 799); x8 is the log midpoint of x4 and x16.
+//
+// **Counted first, timed second.** The decode half of the patch is WORK the reader does on the file, so it is
+// counted: the bytes one pass reads from the file, which a reader that re-decodes the stream per lookup (as
+// upstream did) multiplies by the members and the patched reader does not. That count is the machine's to
+// neither help nor hinder; the clock under it stays for a CPU-only quadratic the file never sees (a header
+// re-lexed per lookup from cached bytes), and the clock alone passed the re-decode at load ~30 (/pending 799).
 func TestTheReaderResolvesAnObjectStreamInLinearTime(t *testing.T) {
 	a := newIdentity(t, "Alice")
-	best := func(n int) time.Duration {
-		doc := memberDoc(t, a, n)
-		var b time.Duration
-		for i := 0; i < 3; i++ {
-			if d := resolveEvery(t, doc); i == 0 || d < b {
-				b = d
-			}
+	docs := map[int][]byte{}
+	read := func(n int) int64 {
+		if docs[n] == nil {
+			docs[n] = memberDoc(t, a, n)
 		}
-		return b
+		return fileBytesResolvingEvery(t, docs[n])
 	}
-	small, large := best(5000), best(20000)
-	if ratio := float64(large) / float64(small); ratio > 6 {
-		t.Errorf("4x the object-stream members cost %.1fx the time (%v → %v) — the reader's object-stream lookup is not linear", ratio, small, large)
+	small, large := read(1000), read(4000)
+	t.Logf("one pass reads %d file bytes at 1,000 members and %d at 4,000 (x%.2f)", small, large, float64(large)/float64(small))
+	if small <= 0 || float64(large)/float64(small) > 8 {
+		t.Fatalf("4x the object-stream members read x%.1f the file bytes (%d → %d) — the reader decodes the stream again per lookup",
+			float64(large)/float64(small), small, large)
 	}
+	scaling.GrowsLinearly(t, "resolving every member", 5000, 20000, 8, func(n int) time.Duration {
+		if docs[n] == nil {
+			docs[n] = memberDoc(t, a, n)
+		}
+		return resolveEvery(t, docs[n])
+	})
 }
 
 // TestAMemberBeforeACorruptTailStillResolves: the patched reader decodes an object stream only as far

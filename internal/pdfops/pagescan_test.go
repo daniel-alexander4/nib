@@ -2,12 +2,12 @@ package pdfops
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"nib/internal/pdfread"
+	"nib/internal/scaling"
 	"nib/internal/testpdf"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -36,30 +36,24 @@ func flatPages(t *testing.T, n int) *model.Context {
 // seven doors build. Doubling the pages must not much more than double their cost; per-page `PageDict` on this
 // tree quadruples it.
 func TestThePerPageSweepsAreLinearInThePageCount(t *testing.T) {
-	best := func(n int) time.Duration {
+	// 4× the pages: linear ×4, a per-page root walk ×16; ×8 is the log midpoint. (It was 2× against ×3, and
+	// tipped ×4.07 once in a loaded parallel run; measured one size after the other it still ranged ×2.1-×6.8 at
+	// load ~15, so it is counted first and the clock's sizes are interleaved through `scaling` — /pending 799.)
+	prep := func(n int) func() {
 		ctx := flatPages(t, n)
-		b := time.Duration(1 << 62)
-		for i := 0; i < 5; i++ {
-			runtime.GC()
-			t0 := time.Now()
+		return func() {
 			if got := len(scanPages(ctx)); got != n {
 				t.Fatalf("scanPages found %d of %d pages", got, n)
 			}
 			if got := len(livePageObjects(ctx)); got != n {
 				t.Fatalf("livePageObjects found %d of %d pages", got, n)
 			}
-			b = min(b, time.Since(t0))
 		}
-		return b
 	}
-	// 4× the pages: linear ×4, a per-page root walk ×16; ×8 is the log midpoint. (It was 2× against ×3, and
-	// tipped ×4.07 once in a loaded parallel run — the same fragility pdfread's walk test had.)
-	small, large := best(3000), best(12000)
-	t.Logf("3,000 pages %v, 12,000 pages %v (×%.2f)", small, large, float64(large)/float64(small))
-	if large > 8*small {
-		t.Fatalf("4x the pages cost ×%.2f (%v → %v): a per-page sweep walks the page tree per page",
-			float64(large)/float64(small), small, large)
-	}
+	scaling.AllocsGrowLinearly(t, "scanPages+livePageObjects", 3000, 12000, 8, prep)
+	scaling.GrowsLinearly(t, "scanPages+livePageObjects", 3000, 12000, 8, func(n int) time.Duration {
+		return scaling.TimeOnce(prep(n))
+	})
 }
 
 // The fold must not move what the sweeps see: every record is exactly PageDict's and PageDictIndRef's answer.

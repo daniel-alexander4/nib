@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"nib/internal/scaling"
 	"os"
 	"path/filepath"
 	"sort"
@@ -225,24 +226,17 @@ func TestTheReshapingIsGoneWhenThePassReturns(t *testing.T) {
 // TestTheResourceStepIsLinearInPagesOnAFlatTree — `/pending 825`: measured before the reshaping, ReadOptimized over a
 // clean flat tree cost 4.1 s at 5,000 pages, quadratic. Four times the pages must cost nowhere near sixteen times.
 func TestTheResourceStepIsLinearInPagesOnAFlatTree(t *testing.T) {
-	read := func(n int) time.Duration {
-		pdf := flatInherited(n)
-		best := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			st := time.Now()
-			if _, err := ReadOptimized(pdf, model.NewDefaultConfiguration()); err != nil {
+	// Through the one clock door (`internal/scaling`): interleaved rounds, the least ratio — this test's own
+	// best-of-three per size, measured one size after the other, went red at 8.6x under suite load.
+	pdfs := map[int][]byte{}
+	scaling.GrowsLinearly(t, "ReadOptimized over a flat tree", 1500, 6000, 8, func(n int) time.Duration {
+		if pdfs[n] == nil {
+			pdfs[n] = flatInherited(n)
+		}
+		return scaling.TimeOnce(func() {
+			if _, err := ReadOptimized(pdfs[n], model.NewDefaultConfiguration()); err != nil {
 				t.Fatal(err)
 			}
-			best = min(best, time.Since(st))
-		}
-		return best
-	}
-	const n = 1500
-	small, large := read(n), read(4*n)
-	ratio := float64(large) / float64(small)
-	t.Logf("%d pages %v, %d pages %v: %.1fx for 4x the pages", n, small, 4*n, large, ratio)
-	if ratio > 8 {
-		t.Errorf("ReadOptimized is superlinear in pages on a flat tree: %d pages took %.1fx the time of %d (%v vs %v)",
-			4*n, ratio, n, large, small)
-	}
+		})
+	})
 }

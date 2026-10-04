@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"nib/internal/scaling"
+
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -162,25 +164,22 @@ func TestMarkingARunCostsTheSameHoweverManyRunsCameBefore(t *testing.T) {
 	// the two sizes are measured INTERLEAVED — see below.
 	once := func(elements int) time.Duration {
 		var took time.Duration
-		{
-			if _, err := writeMutatedTree(t, taggedFixture(), func(ctx *model.Context, tree *structTree) error {
-				start := time.Now()
-				for i := 0; i < elements; i++ {
-					_, ref, aerr := addMarkedElementUnder(ctx, tree, 1, "P", nil)
-					if aerr != nil {
-						return aerr
+		if _, err := writeMutatedTree(t, taggedFixture(), func(ctx *model.Context, tree *structTree) error {
+			var err error
+			took = scaling.TimeOnce(func() {
+				for i := 0; i < elements && err == nil; i++ {
+					var ref *types.IndirectRef
+					if _, ref, err = addMarkedElementUnder(ctx, tree, 1, "P", nil); err != nil {
+						return
 					}
-					for k := 0; k < 3; k++ {
-						if _, merr := addMCIDTo(ctx, tree, 1, *ref); merr != nil {
-							return merr
-						}
+					for k := 0; k < 3 && err == nil; k++ {
+						_, err = addMCIDTo(ctx, tree, 1, *ref)
 					}
 				}
-				took = time.Since(start)
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
+			})
+			return err
+		}); err != nil {
+			t.Fatal(err)
 		}
 		return took
 	}
@@ -217,23 +216,14 @@ func TestMarkingARunCostsTheSameHoweverManyRunsCameBefore(t *testing.T) {
 	// grow as the document does). A third, a package-level counter, was rejected for the opposite
 	// reason — it leaked state across rounds, so later rounds started slow and the ratio flattened,
 	// which would have condemned this shape for an artefact of the probe.
-	best := 0.0
-	var small, large time.Duration
-	for round := 0; round < 3; round++ {
-		s, l := once(1000), once(4000)
-		if s <= 0 {
-			t.Fatal("marking 1000 runs took no measurable time, so the ratio below compares nothing")
-		}
-		if r := float64(l) / float64(s); best == 0 || r < best {
-			best, small, large = r, s, l
-		}
-	}
-	ratio := best
-	t.Logf("4× the runs cost %.1f× the time (%v → %v)", ratio, small, large)
-	if ratio > 8 {
-		t.Errorf("4× the runs cost %.1f× the time (%v → %v) — the writers have gone superlinear in the "+
-			"runs already on the page", ratio, small, large)
-	}
+	//
+	// That shape is now `internal/scaling`'s, the one door every clock-bound cost-shape test goes through
+	// (/pending 799): up to five rounds rather than three, stopping at the first within bound.
+	//
+	// And the writers' quadratic (a slot list rebuilt per call) allocates, so the runs are COUNTED first —
+	// heap allocations, which no load moves — and the clock stays for one that does not.
+	scaling.AllocsGrowLinearly(t, "marking runs", 1000, 4000, 8, func(n int) func() { return func() { once(n) } })
+	scaling.GrowsLinearly(t, "marking runs", 1000, 4000, 8, once)
 }
 
 // TestAddingToAPageWithNoStructParentsCreatesTheKey: the page's side of the invariant, which is the
