@@ -70,6 +70,16 @@ test('the pre-bootstrap wait is described rather than left blank', async () => {
     'the product deliberately not touching the public network until the link has had its chance');
 });
 
+test('a switched-off rendezvous says so rather than claiming a wait (/pending 646)', async () => {
+  progress = { link: 'watching', dht: 'off' };
+  const host = await poll();
+  assert.match(host.textContent, /switched off/,
+    'dht=off renders nothing. The DHT tier is OFF by default, and without its own line the ' +
+    'screen either says nothing or — as before the server learned the word — that it is waiting');
+  assert.doesNotMatch(host.textContent, /Not using the internet yet/,
+    'a switched-off rendezvous is described as the ADR-011 hold, which is a wait that never ends');
+});
+
 test('the router opening names its port', async () => {
   progress = { link: 'found', dht: 'reaching', router: 'open', port: 41234 };
   const host = await poll();

@@ -252,7 +252,7 @@ func TestUncoveredPathSpansSkipsWhatIsAlreadyMarkedOrUnpainted(t *testing.T) {
 		{"begun inside an artifact, painted outside", "/Artifact BMC 0 0 m EMC 10 10 l S", 0},
 		{"begun outside, painted inside an artifact", "0 0 m /Artifact BMC 10 10 l S EMC", 0},
 	} {
-		sp, _ := uncoveredDrawingSpans([]byte(c.src), nil)
+		sp, _ := uncoveredDrawingSpans(nil, nil, []byte(c.src), nil)
 		if got := len(sp); got != c.want {
 			t.Errorf("%s: %d span(s), want %d", c.name, got, c.want)
 		}
@@ -262,7 +262,7 @@ func TestUncoveredPathSpansSkipsWhatIsAlreadyMarkedOrUnpainted(t *testing.T) {
 		// `n` ends the clip's path object, so the next path's bracket does not swallow the clip.
 		"0 0 10 10 re W n 5 5 m 6 6 l S": "5 5 m 6 6 l S",
 	} {
-		if sp, _ := uncoveredDrawingSpans([]byte(src), nil); len(sp) != 1 || src[sp[0].start:sp[0].end] != want {
+		if sp, _ := uncoveredDrawingSpans(nil, nil, []byte(src), nil); len(sp) != 1 || src[sp[0].start:sp[0].end] != want {
 			t.Errorf("%q: the span does not enclose exactly the path object %q: %v", src, want, sp)
 		}
 	}

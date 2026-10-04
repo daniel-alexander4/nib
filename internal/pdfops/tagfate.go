@@ -188,7 +188,9 @@ func inspectTags(pdf []byte) tagState {
 		if perr != nil || d == nil {
 			continue
 		}
-		if _, ok := d["StructParents"]; ok {
+		// Through the one reader (/pending 644): this counts pages that DECLARE a key, which is its
+		// `written`, whether or not the value is one.
+		if _, _, written := structParentsOf(ctx.XRefTable, d); written {
 			s.pagesSP++
 		}
 		ir, e := pa.Ref, pa.Err

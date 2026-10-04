@@ -83,6 +83,68 @@ func TestCosignSignRefusesUnpinned(t *testing.T) {
 	}
 }
 
+// TestASigningTimeOutOfBoundsIsRefusedNotReplaced — /pending 646 #2.
+//
+// `when` is signed into the attestation and is one of the lines the quote hands the client to
+// rasterize. Both doors used to replace an unreadable or out-of-skew value with the server's clock,
+// so the signed `/Reason` could carry a date the drawn block does not show. Both the initiating
+// door (`cosignAttestation`, via the quote) and the responder's (`/api/session/respond`) must
+// refuse, and an in-bounds time must still be honoured exactly.
+func TestASigningTimeOutOfBoundsIsRefusedNotReplaced(t *testing.T) {
+	ts, pdfPath := startServer(t)
+	c, csrf := authedClient(t, ts)
+	fp := strings.Repeat("ab", 32)
+	pinPeer(t, c, csrf, ts.URL, fp)
+	resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/open", "application/json",
+		jsonBody(openRequest{Path: pdfPath}))
+	resp.Body.Close()
+
+	quote := func(when string) (int, cosignQuote) {
+		resp := write(t, c, csrf, http.MethodPost, ts.URL+"/api/cosign/quote", "application/json",
+			jsonBody(cosignParams{Fingerprint: fp, Intent: "ok", When: when}))
+		defer resp.Body.Close()
+		var q cosignQuote
+		json.NewDecoder(resp.Body).Decode(&q)
+		return resp.StatusCode, q
+	}
+	for _, bad := range []string{
+		time.Now().Add(-3 * 24 * time.Hour).UTC().Format(time.RFC3339),
+		time.Now().Add(3 * 24 * time.Hour).UTC().Format(time.RFC3339),
+		"last Tuesday",
+	} {
+		if code, q := quote(bad); code != http.StatusBadRequest {
+			t.Errorf("quote with when=%q answered %d (when=%q), want 400 — a time the block will not "+
+				"show was replaced rather than refused", bad, code, q.When)
+		}
+	}
+	// The negative control: in bounds is honoured to the second, not replaced by the clock.
+	good := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if code, q := quote(good); code != http.StatusOK || q.When != good {
+		t.Errorf("quote with an in-bounds when=%q answered %d with when=%q", good, code, q.When)
+	}
+
+	// The responder's door. No request is pending, so a time that passes answers 409 from the
+	// pending check; one that does not must be refused before it.
+	respond := func(accept bool, when string) int {
+		rr := write(t, c, csrf, http.MethodPost, ts.URL+"/api/session/respond", "application/json",
+			jsonBody(map[string]any{"id": "q1", "accept": accept, "intent": "ok", "when": when}))
+		rr.Body.Close()
+		return rr.StatusCode
+	}
+	if code := respond(true, "last Tuesday"); code != http.StatusBadRequest {
+		t.Errorf("an acceptance with an unreadable when answered %d, want 400", code)
+	}
+	if code := respond(true, time.Now().Add(-3*24*time.Hour).UTC().Format(time.RFC3339)); code != http.StatusBadRequest {
+		t.Errorf("an acceptance with an out-of-skew when answered %d, want 400", code)
+	}
+	if code := respond(true, good); code == http.StatusBadRequest {
+		t.Errorf("an acceptance with an in-bounds when was refused")
+	}
+	if code := respond(false, "last Tuesday"); code == http.StatusBadRequest {
+		t.Errorf("a DECLINE was refused over a time it never signs")
+	}
+}
+
 // Quote returns the canonical attestation lines and a placement whose constant
 // size (280×84) is what the client sizes the rasterized block to.
 func TestCosignQuoteReturnsLinesAndRect(t *testing.T) {

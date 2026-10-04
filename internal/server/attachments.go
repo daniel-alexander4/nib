@@ -56,7 +56,7 @@ func (s *Server) handleAttachmentAdd(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "could not add attachment: "+err.Error())
 		return
 	}
-	if err := s.commitMutation(doc, before, result, false); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, snapshotBase(before), result, false); wroteCommitFailure(w, err) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))

@@ -168,7 +168,16 @@ func Generate(privPath string) (pubLine string, err error) {
 		return "", err
 	}
 	pubLine = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub)))
+	// A failed sidecar write takes back the key this call created (/pending 647). Returning the
+	// error with the key left on disk meant every retry failed os.ErrExist above, so a full disk
+	// between the two writes stranded first-run setup at the default path until the user deleted
+	// the file by hand. Nothing has been sealed to the key yet — both callers seal only after this
+	// returns — so removing it loses nothing, and the call is all-or-nothing as a retry needs.
+	// A partially written ".pub" is left: the retry's write replaces it.
 	if err := os.WriteFile(privPath+".pub", []byte(pubLine+"\n"), 0o644); err != nil {
+		if rerr := os.Remove(privPath); rerr != nil {
+			return "", fmt.Errorf("%w; and the new key at %s could not be removed: %v", err, privPath, rerr)
+		}
 		return "", err
 	}
 	return pubLine, nil

@@ -246,7 +246,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	// a signed copy with an unsigned file is exactly the loss the door exists to ask about. The
 	// client's automatic path stays silent on the refusal; the button asks.
 	acceptLoss := r.FormValue("acceptSignatureLoss") == "1"
-	if err := s.commitMutation(doc, before, data, acceptLoss); wroteCommitFailure(w, err) {
+	if err := s.commitMutation(doc, snapshotBase(before), data, acceptLoss); wroteCommitFailure(w, err) {
 		return
 	}
 	s.mu.Lock()

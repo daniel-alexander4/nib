@@ -83,6 +83,7 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			// images is the page's `/XObject` names that resolve to an image, which is what tells
 			// `uncoveredDrawingSpans` an uncovered `Do` is a picture and not a form.
 			images map[string]bool
+			res    types.Dict
 		}
 		pages := map[int]*committedPage{}
 		var order []int
@@ -148,6 +149,7 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			pages[pg].src = src
 			pages[pg].edit = contentstream.NewEdit(src)
 			pages[pg].images = imageXObjectNames(ctx, res)
+			pages[pg].res = res
 		}
 
 		// mark brackets runs as one element of structType under parent.
@@ -245,7 +247,7 @@ func commitProposal(pdf []byte, elements []proposedElement, alsoPages ...int) ([
 			// committed page with one underline failed 7.1 t3 under the claim this writer makes. Since
 			// `/pending 514` the same is true of a picture, a shading and an inline image: 495 left
 			// those out and 514 measured that leaving them out fixes nothing (`uncoveredDrawingSpans`).
-			drawings, _ := uncoveredDrawingSpans(cp.src, cp.images)
+			drawings, _ := uncoveredDrawingSpans(ctx.XRefTable, cp.res, cp.src, cp.images)
 			for _, sp := range drawings {
 				cp.edit.InsertBefore(sp.start, []byte("/Artifact BMC\n"))
 				cp.edit.InsertBefore(sp.end, []byte("\nEMC"))

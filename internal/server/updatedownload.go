@@ -58,16 +58,22 @@ const maxAssetBytes = 512 << 20
 //
 // `Percent` is the throttle key, not a decoration: a frame per `io.Copy` chunk would push thousands
 // of events into a stream every window holds open and re-announce an aria-live region continuously.
+//
+// **Every published field has a reader (/pending 646).** `active` and `name` were sent and never
+// read, and `published.test.mjs` passed them only because `.active` is a CSS class in app.js. Both
+// are gone: "active" was exactly `status == "running"` (begin is its only writer of running, and
+// every exit goes through finish), so it is now that method; the name was set and read by nothing.
 type downloadEvent struct {
-	Active  bool   `json:"active"`
-	Status  string `json:"status"` // running | done | failed | cancelled
-	Name    string `json:"name,omitempty"`
+	Status  string `json:"status"`         // running | done | failed | cancelled
 	Path    string `json:"path,omitempty"` // the full destination, shown to the user
-	Done    int64  `json:"done"`
-	Total   int64  `json:"total"` // 0 when the server did not state a length
+	Done    int64  `json:"done"`           // bytes so far; the only progress a length-less transfer has
+	Total   int64  `json:"total"`          // 0 when the server did not state a length
 	Percent int    `json:"percent"`
 	Problem string `json:"problem,omitempty"` // a sentence, when Status is failed
 }
+
+// active reports whether the download slot is held — the state `begin` claims and `finish` releases.
+func (e downloadEvent) active() bool { return e.Status == "running" }
 
 // downloadState is the process's one download, broadcast to every window.
 //
@@ -114,13 +120,13 @@ func (d *downloadState) set(ev downloadEvent) {
 
 // begin claims the single download slot. It refuses a second one rather than racing two writers
 // onto one path — a refusal a user can act on, where two interleaved streams is a corrupt file.
-func (d *downloadState) begin(cancel context.CancelFunc, name, path string, total int64) bool {
+func (d *downloadState) begin(cancel context.CancelFunc, path string, total int64) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.ev.Active {
+	if d.ev.active() {
 		return false
 	}
-	d.ev = downloadEvent{Active: true, Status: "running", Name: name, Path: path, Total: total}
+	d.ev = downloadEvent{Status: "running", Path: path, Total: total}
 	d.cancel = cancel
 	d.changedLocked()
 	return true
@@ -131,21 +137,34 @@ func (d *downloadState) begin(cancel context.CancelFunc, name, path string, tota
 func (d *downloadState) finish(status, problem string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.ev.Active = false
 	d.ev.Status = status
 	d.ev.Problem = problem
 	d.cancel = nil
 	d.changedLocked()
 }
 
-// progress records bytes and wakes the windows ONLY when the whole percent moves.
+// progress records bytes and wakes the windows ONLY when the whole percent moves — or, with no
+// stated length, when a whole MiB is crossed.
+//
+// **The length-less half (/pending 646).** With `Total` 0 the percent is 0 forever, so the throttle
+// returned on every chunk and a transfer whose server sent no `Content-Length` emitted no progress
+// at all: "Downloading…" for ninety-odd megabytes. A MiB is the unit the dialog shows, so it is the
+// unit that moves the line.
 func (d *downloadState) progress(done int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.ev.Active {
+	if !d.ev.active() {
 		return
 	}
+	prev := d.ev.Done
 	d.ev.Done = done
+	if d.ev.Total <= 0 {
+		if done>>20 == prev>>20 {
+			return
+		}
+		d.changedLocked()
+		return
+	}
 	pct := 0
 	if d.ev.Total > 0 {
 		pct = int(done * 100 / d.ev.Total)
@@ -162,7 +181,7 @@ func (d *downloadState) progress(done int64) {
 func (d *downloadState) setTotal(total int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.ev.Active {
+	if !d.ev.active() {
 		return
 	}
 	d.ev.Total = total
@@ -177,7 +196,7 @@ var downloadHeaderTimeout = 30 * time.Second
 func (d *downloadState) stop() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.ev.Active || d.cancel == nil {
+	if !d.ev.active() || d.cancel == nil {
 		return false
 	}
 	d.cancel()
@@ -291,7 +310,7 @@ func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
 	// "nothing running" over it. Now a Cancel in that phase cancels the request, and a host that
 	// sends no headers within `downloadHeaderTimeout` is given up on. Only the HEADERS are timed —
 	// a ~95 MB body on a slow line is legitimate, and Cancel reaches it.
-	if !s.dl.begin(cancel, name, target, 0) {
+	if !s.dl.begin(cancel, target, 0) {
 		cancel()
 		httpError(w, http.StatusConflict, "a download is already running")
 		return
@@ -351,7 +370,7 @@ func (s *Server) runDownload(resp *http.Response, target string) {
 	// what is at `target` may be a file the door REFUSED to replace, so deleting it here would be the
 	// overwrite the door exists to prevent, done by other means.
 	defer func() {
-		if s.dl.snapshot().Active {
+		if s.dl.snapshot().active() {
 			s.dl.finish("failed", "the download stopped unexpectedly")
 		}
 	}()

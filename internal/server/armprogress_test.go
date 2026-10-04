@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -41,6 +43,32 @@ func TestTheArmProgressIsNotGatedOnTheBootstrap(t *testing.T) {
 		t.Errorf("dht=%q, want holding — the wait is not a failure and not a delay to apologise "+
 			"for: it is the product deliberately not touching the public network until the link "+
 			"has had its chance, and it is the state the screen has never had a word for", p.DHT)
+	}
+}
+
+// TestASwitchedOffDHTIsReportedOffNotHolding — /pending 646 #1.
+//
+// `ensureBootstrapped` refuses a switched-off DHT before its Once, so `bootstrapDone` is never set
+// and the tier fell through to "holding": a claim that the product was waiting out ADR-011's window
+// when it was never going to reach the DHT. Both prior states are driven, because a switch turned
+// off after a bootstrap leaves the flag true and "reaching" is just as false.
+func TestASwitchedOffDHTIsReportedOffNotHolding(t *testing.T) {
+	on := false
+	cer := &ceremonyID{rzOn: func() bool { return on }}
+	cer.watchingLink(time.Now())
+	if err := cer.ensureBootstrapped(context.Background()); err != nil && !errors.Is(err, errRendezvousOff) && !errors.Is(err, errNoCeremony) {
+		t.Fatalf("setup: %v", err)
+	}
+	if got := cer.armProgressOf(time.Now()).DHT; got != "off" {
+		t.Errorf("DHT switched off, never bootstrapped: dht=%q, want off", got)
+	}
+	cer.bootstrapDone.Store(true) // bootstrapped while on, then switched off
+	if got := cer.armProgressOf(time.Now()).DHT; got != "off" {
+		t.Errorf("DHT switched off after a bootstrap: dht=%q, want off", got)
+	}
+	on = true
+	if got := cer.armProgressOf(time.Now()).DHT; got != "reaching" {
+		t.Errorf("negative control — DHT on and bootstrapped: dht=%q, want reaching", got)
 	}
 }
 

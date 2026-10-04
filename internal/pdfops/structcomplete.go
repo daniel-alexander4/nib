@@ -380,7 +380,11 @@ func drawForm(ctx *model.Context, name string, res types.Dict, counts map[int]fo
 	// drawing itself took 92 s here and returned no error (`/pending 742`, measured).
 	d := counts[nr]
 	if d.count == 0 {
-		d.mcid = carriesMCID(budget.formContent(sd, obj))
+		own, oerr := ctx.DereferenceDict(sd.Dict["Resources"])
+		if oerr != nil || own == nil {
+			own = res // as below: a form with no resources of its own inherits the invoking stream's
+		}
+		d.mcid = carriesMCID(ctx.XRefTable, own, budget.formContent(sd, obj))
 	}
 	d.count++
 	counts[nr] = d
@@ -479,12 +483,32 @@ func carryIsComplete(pdf []byte) bool {
 }
 
 // carriesMCID reports whether a content stream marks any content with an `/MCID` — the property that
-// makes a doubly-drawn form a structural problem rather than a repeated picture.
-func carriesMCID(src []byte) bool {
-	for _, tk := range contentstream.Tokenize(src) {
-		if tk.Kind == contentstream.Operand && string(tk.Bytes(src)) == "/MCID" {
-			return true
+// makes a doubly-drawn form a structural problem rather than a repeated picture. Each `BDC`'s property
+// list is read through `bdcMCID`, so one NAMED in res's `/Properties` counts (/pending 644).
+func carriesMCID(xt *model.XRefTable, res types.Dict, src []byte) bool {
+	toks := contentstream.Tokenize(src)
+	start := -1 // the first operand token since the last operator
+	for i, tk := range toks {
+		if tk.Kind == contentstream.Whitespace {
+			continue
 		}
+		if tk.Kind != contentstream.Operator {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if string(tk.Bytes(src)) == "BDC" && start >= 0 {
+			// The first operand is the tag; the property list is everything after it.
+			tag := start
+			for tag < i && toks[tag].Kind == contentstream.Whitespace {
+				tag++
+			}
+			if tag+1 < i && bdcMCID(xt, res, toks[tag+1:i], src) >= 0 {
+				return true
+			}
+		}
+		start = -1
 	}
 	return false
 }

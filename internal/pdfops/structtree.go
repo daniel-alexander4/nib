@@ -77,8 +77,17 @@ type structKid struct {
 	//
 	// Read only from an indirect reference, because Table 324 says `/Stm` *"shall be an indirect
 	// reference"* — a direct stream there is a document nib does not guess at.
+	//
+	// The generation is not kept, and need not be: pdfcpu's `FindTableEntry` takes a generation and
+	// ignores it, resolving by object number alone (v0.13.0, `model/xreftable.go`), so a reference
+	// rebuilt at generation 0 reaches the same object (/pending 644 #3, measured).
 	stm int
-	raw types.Object
+	// stmMalformed is a `/Stm` that is PRESENT and is not an indirect reference. stm is 0 for it, which
+	// means "the page's own stream" — so without this the checker and the Tags panel read the kid as page
+	// content while the artifact edit, re-reading the key, refused it as form content (/pending 644). It is
+	// the one reading: every consumer asks this field, never `raw`.
+	stmMalformed bool
+	raw          types.Object
 }
 
 // structElem is one `/StructElem`.
@@ -363,11 +372,16 @@ func (t *structTree) readKid(ctx *model.Context, raw types.Object, parent *struc
 		if n := d.IntEntry("MCID"); n != nil {
 			mcid = *n
 		}
-		stm := 0
-		if ind, ok := d["Stm"].(types.IndirectRef); ok {
-			stm = ind.ObjectNumber.Value()
+		stm, stmMalformed := 0, false
+		if o, has := d["Stm"]; has {
+			if ind, ok := o.(types.IndirectRef); ok {
+				stm = ind.ObjectNumber.Value()
+			} else {
+				stmMalformed = true
+			}
 		}
-		return &structKid{kind: kidMCR, mcid: mcid, pgObj: pg, pgLive: livePages[pg], stm: stm, raw: raw}, nil
+		return &structKid{kind: kidMCR, mcid: mcid, pgObj: pg, pgLive: livePages[pg], stm: stm,
+			stmMalformed: stmMalformed, raw: raw}, nil
 	case "OBJR":
 		obj := 0
 		if ind, ok := d["Obj"].(types.IndirectRef); ok {

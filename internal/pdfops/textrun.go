@@ -630,34 +630,60 @@ func (w *runWalker) currentStm() int {
 }
 
 // markedContentID reads `/MCID` from a `BDC` property list, written inline or named in the resources'
-// `/Properties`.
+// `/Properties`, through `bdcMCID`.
 func (w *runWalker) markedContentID(o runOperand, res types.Dict, src []byte) int {
 	if o.opaque {
-		for j := 0; j < len(o.dict); j++ {
-			if o.dict[j].Kind != contentstream.Operand || string(o.dict[j].Bytes(src)) != "/MCID" {
+		return bdcMCID(w.xt, res, o.dict, src)
+	}
+	if _, ok := o.name(src); !ok {
+		return -1
+	}
+	return bdcMCID(w.xt, res, []contentstream.Token{o.tok}, src)
+}
+
+// bdcMCID is the ONE reading of a `BDC` property list's `/MCID` (ADR-009, /pending 644): props are the
+// operand tokens between the tag and the operator — an inline dictionary's, or the one name of an entry in
+// res's `/Properties`. It answers the MCID, or -1 for none.
+//
+// **Three readers had three answers.** The run walker resolved a NAMED property list; `carriesMCID` and
+// the claim door's coverage scan token-scanned for a literal `/MCID` operand, so a form marking its content
+// through `/Span /MC0 BDC` read as carrying none — and `structureCarriedCompletely`'s condition 4 passed a
+// doubly-drawn form having looked at nothing, while the claim door counted covered drawings as uncovered.
+// xt and res may be nil: a named list then resolves to nothing, which is the answer for a stream read
+// without its resources.
+func bdcMCID(xt *model.XRefTable, res types.Dict, props []contentstream.Token, src []byte) int {
+	var ops []contentstream.Token
+	for _, t := range props {
+		if t.Kind != contentstream.Whitespace {
+			ops = append(ops, t)
+		}
+	}
+	if len(ops) == 0 {
+		return -1
+	}
+	// A dictionary arrives with or without its `<<` (the run walker keeps only the body); a lone name is
+	// the only other shape a property list has.
+	if ops[0].Kind == contentstream.DictOpen || len(ops) > 1 {
+		for k := 0; k+1 < len(ops); k++ {
+			if ops[k].Kind != contentstream.Operand || string(ops[k].Bytes(src)) != "/MCID" {
 				continue
 			}
-			for k := j + 1; k < len(o.dict); k++ {
-				if o.dict[k].Kind == contentstream.Whitespace {
-					continue
-				}
-				if v, err := strconv.Atoi(string(o.dict[k].Bytes(src))); err == nil && v >= 0 {
-					return v
-				}
-				break
+			if v, err := strconv.Atoi(string(ops[k+1].Bytes(src))); err == nil && v >= 0 && ops[k+1].Kind == contentstream.Operand {
+				return v
 			}
+			return -1
 		}
 		return -1
 	}
-	name, ok := o.name(src)
-	if !ok || res == nil {
+	b := ops[0].Bytes(src)
+	if len(ops) != 1 || ops[0].Kind != contentstream.Operand || len(b) < 2 || b[0] != '/' || res == nil || xt == nil {
 		return -1
 	}
-	props, err := w.xt.DereferenceDict(res["Properties"])
-	if err != nil || props == nil {
+	propsDict, err := xt.DereferenceDict(res["Properties"])
+	if err != nil || propsDict == nil {
 		return -1
 	}
-	d, derr := w.xt.DereferenceDict(props[name])
+	d, derr := xt.DereferenceDict(propsDict[fontcode.Name(b[1:])])
 	if derr != nil || d == nil {
 		return -1
 	}

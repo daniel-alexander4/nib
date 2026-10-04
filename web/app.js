@@ -899,9 +899,10 @@ function applyDownloadEvent(ev) {
   if (els.downloadModal.hidden) return;
   let line = '';
   if (ev.status === 'running') {
-    line = ev.total > 0
-      ? `Downloading — ${ev.percent}% of ${Math.round(ev.total / 1048576)} MB`
-      : 'Downloading…';
+    // With no stated length there is no percent, only bytes so far (/pending 646).
+    if (ev.total > 0) line = `Downloading — ${ev.percent}% of ${Math.round(ev.total / 1048576)} MB`;
+    else if (ev.done >= 1048576) line = `Downloading — ${Math.floor(ev.done / 1048576)} MB so far`;
+    else line = 'Downloading…';
   } else if (ev.status === 'done') {
     line = `Downloaded to ${ev.path}`;
     els.dlReveal.hidden = false;
@@ -17450,6 +17451,7 @@ const TIER_WORDS = {
   'link:found': 'Found the other party on your local network.',
   'dht:holding': 'Not using the internet yet \u2014 giving your local network its chance first.',
   'dht:reaching': 'Looking for the other party through the public rendezvous.',
+  'dht:off': 'Not looking over the internet \u2014 remote peer rendezvous is switched off on this machine.',
   // The router tier's states, and they are separate because the next action differs. Silence may
   // mean there is no gateway to ask; a refusal means the router is reachable and said no; an
   // unroutable answer means a second layer of NAT and points at a VPN rather than a port-forward.

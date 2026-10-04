@@ -325,7 +325,7 @@ func TestGrowingAnOpenDocumentIsBoundedByTheSameCeiling(t *testing.T) {
 
 	// STIMULUS: a commit that does NOT grow past the ceiling still lands. Without this, a
 	// commitMutation that had simply started refusing everything would pass the assertion.
-	if err := s.commitMutation(doc, pdf, pdf, false); err != nil {
+	if err := s.commitMutation(doc, postedBase(pdf), pdf, false); err != nil {
 		t.Fatalf("an ordinary commit was refused: %v", err)
 	}
 
@@ -333,7 +333,7 @@ func TestGrowingAnOpenDocumentIsBoundedByTheSameCeiling(t *testing.T) {
 	// already open crosses it.
 	grown := make([]byte, 33<<10)
 	copy(grown, pdf)
-	if err := s.commitMutation(doc, pdf, grown, false); !errors.Is(err, ErrTooManyBytes) {
+	if err := s.commitMutation(doc, postedBase(pdf), grown, false); !errors.Is(err, ErrTooManyBytes) {
 		t.Fatalf("growing an open document past the aggregate ceiling returned %v, want "+
 			"ErrTooManyBytes — ADR-005 bounds the open documents' bytes, not the bytes that "+
 			"arrived through one particular door", err)
@@ -349,7 +349,7 @@ func TestGrowingAnOpenDocumentIsBoundedByTheSameCeiling(t *testing.T) {
 	}
 	// Shrinking is never refused — the check is on the total after the write, not the delta.
 	small := append([]byte(nil), pdf...)
-	if err := s.commitMutation(doc, grown, small, false); err != nil {
+	if err := s.commitMutation(doc, postedBase(grown), small, false); err != nil {
 		t.Fatalf("a commit that makes the document SMALLER was refused: %v", err)
 	}
 }

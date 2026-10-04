@@ -175,7 +175,7 @@ func TestUncoveredDrawingSpansReadsEveryKindOfDrawing(t *testing.T) {
 		{"a stroked path", "0 0 m 10 10 l S", 1, 0, "0 0 m 10 10 l S"},
 		{"a `Do` with no name operand", "Do", 0, 0, ""},
 	} {
-		sp, forms := uncoveredDrawingSpans([]byte(c.src), images)
+		sp, forms := uncoveredDrawingSpans(nil, nil, []byte(c.src), images)
 		if len(sp) != c.spans || len(forms) != c.forms {
 			t.Errorf("%s: %d span(s) and %d form(s), want %d and %d", c.name, len(sp), len(forms), c.spans, c.forms)
 			continue
@@ -186,10 +186,10 @@ func TestUncoveredDrawingSpansReadsEveryKindOfDrawing(t *testing.T) {
 	}
 	// A covered `Do` is still reported as a form, with the cover recorded — that is how the counter
 	// knows not to walk into it, and getting the flag backwards would double-count an n-up's sheets.
-	if _, forms := uncoveredDrawingSpans([]byte("/Artifact BMC /Fm0 Do EMC"), images); !forms[0].covered {
+	if _, forms := uncoveredDrawingSpans(nil, nil, []byte("/Artifact BMC /Fm0 Do EMC"), images); !forms[0].covered {
 		t.Error("a `Do` inside an /Artifact sequence is not reported as covered")
 	}
-	if _, forms := uncoveredDrawingSpans([]byte("/Fm0 Do"), images); forms[0].covered {
+	if _, forms := uncoveredDrawingSpans(nil, nil, []byte("/Fm0 Do"), images); forms[0].covered {
 		t.Error("a bare `Do` is reported as covered")
 	}
 }
