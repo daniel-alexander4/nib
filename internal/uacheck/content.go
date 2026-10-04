@@ -283,7 +283,7 @@ func (d *Document) contentEvents() ([]contentEvent, string) {
 		// A page's content is a stream veraPDF traverses once per object KEY: two pages naming one
 		// content stream traverse it once, and an array names no key at all (`retraversal`).
 		contentsNr := 0
-		if ir, ok := page["Contents"].(types.IndirectRef); ok {
+		if ir, ok := page["Contents"].(types.IndirectRef); ok { //pagecontent:key its object number only; the content is read above
 			contentsNr = ir.ObjectNumber.Value()
 		}
 		w := walker{d: d, where: fmt.Sprintf("page %d (object %d)", p, objNr), spKey: spKey, stream: d.nextStream(),

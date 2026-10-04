@@ -45,7 +45,7 @@ func PageContent(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error
 
 // PageContentAsPdfcpu is `PageContent` joined as pdfcpu joins — the streams of a `/Contents` array appended
 // with nothing between them — and bounded as `PageContent` is. Its one caller is `ContentDigest`'s rule 4
-// (ADR-080), which hashed pdfcpu's join and is kept to check the records written under it; keeping pdfcpu's join
+// (ADR-084), which hashed pdfcpu's join and is kept to check the records written under it; keeping pdfcpu's join
 // there does not also mean keeping its unbounded one. (The checker read it until /pending 719 measured that
 // veraPDF separates a `/Contents` array's streams, as `PageContent` does.)
 func PageContentAsPdfcpu(ctx *model.Context, page types.Dict, pageNr int) ([]byte, error) {
@@ -53,39 +53,62 @@ func PageContentAsPdfcpu(ctx *model.Context, page types.Dict, pageNr int) ([]byt
 }
 
 func pageContent(ctx *model.Context, page types.Dict, pageNr int, separate bool) ([]byte, error) {
+	out, _, err := joinContent(ctx, page, pageNr, separate)
+	return out, err
+}
+
+// joinContent is pageContent, also reporting — for an array — the index of every element a separator was put in
+// front of, which is what SeparateContents writes into the page.
+//
+// **Each distinct stream is decoded once per page** (`/pending 728`). An array may name one stream any number of
+// times, and the byte bound cannot see the cost when the stream decodes to little or nothing: measured, a page
+// naming one EMPTY flate stream 100,000 times — a file of about 1 KB, the array compressed in an object stream —
+// took 5.5 s and allocated 3.9 GB here while producing no content at all, linear in the count (each decode sets up
+// a fresh inflater). A repeat reuses the first decode; what it contributes to the join, and so the bound, is
+// unchanged.
+func joinContent(ctx *model.Context, page types.Dict, pageNr int, separate bool) ([]byte, []int, error) {
 	o, _ := page.Find("Contents")
 	if o == nil {
-		return nil, model.ErrNoContent
+		return nil, nil, model.ErrNoContent
 	}
 	resolved, err := ctx.Dereference(o)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	arr, isArray := resolved.(types.Array)
 	if !isArray {
 		b, err := ctx.PageContent(page, pageNr) //pagecontent:door
 		if err == nil && len(b) > MaxPageContentBytes {
-			return nil, pageTooLarge(pageNr)
+			return nil, nil, pageTooLarge(pageNr)
 		}
-		return b, err
+		return b, nil, err
 	}
 	var out, prev []byte
-	for _, e := range arr {
+	var seps []int
+	decoded := map[int][]byte{}
+	for i, e := range arr {
 		if e == nil {
 			continue
 		}
-		// pdfcpu refuses an element that is not a stream; handed one alone, its call would accept a nested array.
-		if r, _ := ctx.Dereference(e); r != nil {
-			if _, nested := r.(types.Array); nested {
-				return nil, fmt.Errorf("page %d content: a /Contents array holds an array, not a stream", pageNr)
+		ir, isRef := e.(types.IndirectRef)
+		b, seen := decoded[ir.ObjectNumber.Value()]
+		if !isRef || !seen {
+			// pdfcpu refuses an element that is not a stream; handed one alone, its call would accept a nested array.
+			if r, _ := ctx.Dereference(e); r != nil {
+				if _, nested := r.(types.Array); nested {
+					return nil, nil, fmt.Errorf("page %d content: a /Contents array holds an array, not a stream", pageNr)
+				}
 			}
-		}
-		b, err := ctx.PageContent(types.Dict{"Contents": e}, pageNr) //pagecontent:door
-		if err == model.ErrNoContent {
-			continue
-		}
-		if err != nil {
-			return nil, err
+			b, err = ctx.PageContent(types.Dict{"Contents": e}, pageNr) //pagecontent:door
+			if err == model.ErrNoContent {
+				b, err = nil, nil
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			if isRef {
+				decoded[ir.ObjectNumber.Value()] = b
+			}
 		}
 		if len(b) == 0 {
 			continue
@@ -95,18 +118,83 @@ func pageContent(ctx *model.Context, page types.Dict, pageNr int, separate bool)
 		// whole page at every join — quadratic, measured at 13.8 s for 1,000 streams against pdfcpu's 10 ms.
 		sep := separate && needsSeparator(prev, b)
 		if n := len(out) + len(b); n > MaxPageContentBytes || sep && n+1 > MaxPageContentBytes {
-			return nil, pageTooLarge(pageNr)
+			return nil, nil, pageTooLarge(pageNr)
 		}
 		if sep {
 			out = append(out, '\n')
+			seps = append(seps, i)
 		}
 		out = append(out, b...)
 		prev = b
 	}
 	if len(out) == 0 {
-		return nil, model.ErrNoContent
+		return nil, nil, model.ErrNoContent
 	}
-	return out, nil
+	return out, seps, nil
+}
+
+// SeparateContents makes pdfcpu's OWN join of a page's `/Contents` read as this door's (`/pending 728`, ADR-084).
+//
+// pdfcpu's page operations — `NUpFromPDF` (nup.go:328), `Resize` (resize.go:276), `CutPage` (cut.go:175/263/353) —
+// read a page through their own bare join and write what they read into the document nib hands back, so a page
+// divided `(A) Tj` | `ET` came out of every one of them as the unknown operator `TjET`, its text gone (measured:
+// pdftotext reads the input and none of the outputs). Handing those operations a context they join correctly is
+// the one fix that reaches all of them: wherever the door puts a `\n` between two elements, a stream holding only
+// `\n` is put into the array. pdfcpu's join of the result is then byte-identical to the door's join of the
+// original, so a carry comparing pdfcpu's output with the source page reads the source through the door.
+//
+// Nothing is rewritten where no separator is due — every document measured at ADR-056 — and no stream is edited,
+// so a stream shared between pages, or named twice in one array, is untouched. pageNrs names the pages to
+// separate; nil is every page. A page the door refuses is refused here: it is the page the operation was about to
+// read unbounded.
+func SeparateContents(ctx *model.Context, pageNrs []int) error {
+	want := map[int]bool{}
+	for _, n := range pageNrs {
+		want[n] = true
+	}
+	var sepRef *types.IndirectRef
+	for _, pa := range Pages(ctx) {
+		if pa.Err != nil || pa.Dict == nil || pageNrs != nil && !want[pa.Nr] {
+			continue
+		}
+		_, seps, err := joinContent(ctx, pa.Dict, pa.Nr, true)
+		if err == model.ErrNoContent {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if len(seps) == 0 {
+			continue
+		}
+		if sepRef == nil {
+			sd, err := ctx.NewStreamDictForBuf([]byte{'\n'})
+			if err != nil {
+				return err
+			}
+			if err := sd.Encode(); err != nil {
+				return err
+			}
+			if sepRef, err = ctx.IndRefForNewObject(*sd); err != nil {
+				return err
+			}
+		}
+		o, _ := pa.Dict.Find("Contents")
+		r, _ := ctx.Dereference(o)
+		arr, _ := r.(types.Array) // joinContent reported separators, so it read an array
+		out := make(types.Array, 0, len(arr)+len(seps))
+		for i, e := range arr {
+			if len(seps) > 0 && seps[0] == i {
+				out = append(out, *sepRef)
+				seps = seps[1:]
+			}
+			out = append(out, e)
+		}
+		// The page's own array, never the object it named: an indirect `/Contents` array may be shared with a page
+		// this call was not asked to separate.
+		pa.Dict["Contents"] = out
+	}
+	return nil
 }
 
 // pageTooLarge is the refusal of a page whose content decodes past MaxPageContentBytes.
@@ -134,6 +222,11 @@ func needsSeparator(prev, next []byte) bool {
 	// bounded, not removed: each element is tokenized once, as prev, so the whole page's joins tokenize at most
 	// `MaxPageContentBytes` — what every caller then tokenizes again over the joined page (1.3 s on that page).
 	if last == '\n' || last == '\r' {
+		return false
+	}
+	// The same end-of-line at the start of the later stream ends the comment as well, and it is what makes
+	// SeparateContents idempotent: a `\n` stream it put after a comment is not separated again.
+	if next[0] == '\n' || next[0] == '\r' {
 		return false
 	}
 	if (regular(last) || last == '/') && regular(next[0]) {

@@ -146,7 +146,7 @@ func turnAboutTheCorner(ctx *model.Context, turned []turnedOffset) error {
 // firstContentStream is the stream pdfcpu prefixes: the page's `/Contents` when it is one stream, its first
 // element when it is an array (`stamp.go` `updatePageContentsForWM`).
 func firstContentStream(ctx *model.Context, page types.Dict) (types.IndirectRef, *types.StreamDict, error) {
-	o, _ := page.Find("Contents")
+	o, _ := page.Find("Contents") //pagecontent:exempt stamp-prefix
 	if arr, ok := o.(types.Array); ok {
 		if len(arr) == 0 {
 			return types.IndirectRef{}, nil, nil

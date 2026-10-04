@@ -275,8 +275,13 @@ func (p *resourcePruner) ownerOrMerge(ref types.Object, holder types.Dict, names
 
 // pageContentNames is the name set of a page's /Contents — one stream or an array of them. A page
 // with no /Contents draws nothing and names nothing.
+//
+// **Exempt from `pdfread.PageContent` (ADR-056), by name** (`/pending 728`). Each stream is tokenized on its own,
+// which is the door's meaning exactly: the door puts a separator only at a stream boundary, and a per-stream
+// tokenize treats every boundary as one — so no name is fused across a join or swallowed by a comment here either.
+// What the door would add is a per-page decode; `streamNames` memoizes each stream across every kept page instead.
 func (p *resourcePruner) pageContentNames(page types.Dict) (map[string]bool, bool) {
-	c, has := page["Contents"]
+	c, has := page["Contents"] //pagecontent:exempt resourceprune-names
 	if !has || c == nil {
 		return map[string]bool{}, true
 	}

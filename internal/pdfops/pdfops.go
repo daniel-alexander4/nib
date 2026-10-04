@@ -28,6 +28,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/form"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -966,7 +967,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	nupped, err := pdfread.NUp(pdf, nup, conf)
+	out, err := nUpSeparated(pdf, nup, conf)
 	if err != nil {
 		return nil, err
 	}
@@ -997,7 +998,7 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// `/AcroForm` whose widgets went with the page dictionaries the composition removed** — measured
 	// at 2 fields and 0 widgets through `NUp(2)`, a form a reader offers and nobody can fill
 	// (`/pending 573`). Both corrections share this one parse; see the door's own note.
-	raw, err := withoutUAClaimOrOrphanedForm(nupped)
+	raw, err := withoutUAClaimOrOrphanedForm(out)
 	if err != nil {
 		return nil, err
 	}
@@ -1037,6 +1038,36 @@ func NUp(pdf []byte, n int, border bool) ([]byte, error) {
 	// keeps the predicate and the strip from drifting apart, and it is what its own doc comment
 	// claims — a shortcut that falsifies a comment is not a saving.
 	return honest(raw)
+}
+
+// nUpSeparated is `api.NUp` (api/nup.go:95, v0.13.0) for a PDF source, step for step — the same read
+// (`ReadAndValidate`, as `pdfread.Validated`, which puts the reference door inside it as `pdfread.Reader` did in
+// front of it), every page selected, `NUpFromPDF`, the same `api.Write` — with one step added before the
+// composition: `pdfread.SeparateContents`. `NUpFromPDF` builds each sheet's forms from
+// pdfcpu's bare join of the page's `/Contents` (nup.go:328), so a divided page came out fused (`/pending 728`,
+// ADR-084). The carries read the source through `pdfread.PageContent` and match these forms because of this step.
+func nUpSeparated(pdf []byte, nup *model.NUp, conf *model.Configuration) (out []byte, err error) {
+	defer fault.Catch(&err)
+	conf.Cmd = model.NUP
+	ctx, err := pdfread.Validated(pdf, conf)
+	if err != nil {
+		return nil, err
+	}
+	pages, err := api.PagesForPageSelection(ctx.PageCount, nil, true, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := pdfread.SeparateContents(ctx, nil); err != nil {
+		return nil, err
+	}
+	if err := pdfcpu.NUpFromPDF(ctx, pages, nup); err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := api.Write(ctx, &buf, conf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // SplitPage splits page p (1-based) of pdf into a cols×rows grid of sub-pages in
@@ -1083,7 +1114,7 @@ func SplitPage(pdf []byte, page, cols, rows int, resize bool) ([]byte, error) {
 	for j := range vert {
 		vert[j] = float64(j) / float64(cols)
 	}
-	ctxDest, err := pdfcpu.CutPage(ctx, page, &model.Cut{Hor: hor, Vert: vert})
+	ctxDest, err := cutSeparated(ctx, page, &model.Cut{Hor: hor, Vert: vert})
 	if err != nil {
 		return nil, err
 	}
@@ -1428,6 +1459,17 @@ func cropWindow(attrs *model.InheritedPageAttrs, frac [4]float64) (*types.Rectan
 	return r, nil
 }
 
+// cutSeparated is `pdfcpu.CutPage` on a page whose `/Contents` pdfcpu will join as `pdfread.PageContent` does.
+// CutPage writes every tile from its own bare join (cut.go:175/263/353), so a divided page came out with its text
+// fused into an unknown operator (`/pending 728`, ADR-084). Both cut sites — the grid split and the region split's
+// normalisation — go through here.
+func cutSeparated(ctx *model.Context, page int, cut *model.Cut) (*model.Context, error) {
+	if err := pdfread.SeparateContents(ctx, []int{page}); err != nil {
+		return nil, err
+	}
+	return pdfcpu.CutPage(ctx, page, cut)
+}
+
 // normalizePage flattens a single-page PDF's /Rotate into its content and
 // resolves CropBox→MediaBox by running it through CutPage as a trivial 1×1 cut
 // (which already does both), then dropping CutPage's outline page. The result is
@@ -1438,7 +1480,7 @@ func normalizePage(pdf []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctxDest, err := pdfcpu.CutPage(ctx, 1, &model.Cut{Hor: []float64{0}, Vert: []float64{0}})
+	ctxDest, err := cutSeparated(ctx, 1, &model.Cut{Hor: []float64{0}, Vert: []float64{0}})
 	if err != nil {
 		return nil, err
 	}

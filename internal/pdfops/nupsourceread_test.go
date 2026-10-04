@@ -41,7 +41,10 @@ func TestTheNUpCarriesReadTheSourceAsNUpDoes(t *testing.T) {
 						t.Errorf("%s reads its source through inspectionRead, the optimizing read api.NUp does not perform", fn)
 					}
 				case *ast.SelectorExpr:
-					if id, ok := x.X.(*ast.Ident); ok && id.Name == "pdfread" && x.Sel.Name != "Pages" {
+					if id, ok := x.X.(*ast.Ident); ok && id.Name == "pdfread" && x.Sel.Name != "Pages" && x.Sel.Name != "PageContent" {
+						// Pages and PageContent read a page OF the context nupSourceRead built — PageContent is
+						// the join door both carries match the n-up's forms through since /pending 728 — not a
+						// second read of the document.
 						t.Errorf("%s calls pdfread.%s itself; read the n-up source through nupSourceRead", fn, x.Sel.Name)
 					}
 				}

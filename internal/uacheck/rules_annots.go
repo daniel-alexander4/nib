@@ -112,7 +112,7 @@ func checkAnnotationsCarryADescription(d *Document) Result {
 		if a.subtype(d) == "Widget" || d.annotExempt(a) {
 			continue
 		}
-		if s, ok := d.text(a.dict["Contents"]); ok && s != "" {
+		if s, ok := d.text(a.dict["Contents"]); ok && s != "" { //pagecontent:key an annotation's text
 			continue
 		}
 		elem, _, _, unread := d.annotElement(a)
@@ -254,7 +254,7 @@ func checkLinksCarryTheirOwnContents(d *Document) Result {
 		if d.annotExempt(a) {
 			continue
 		}
-		if s, ok := d.text(a.dict["Contents"]); ok && s != "" {
+		if s, ok := d.text(a.dict["Contents"]); ok && s != "" { //pagecontent:key an annotation's text
 			continue
 		}
 		return Result{

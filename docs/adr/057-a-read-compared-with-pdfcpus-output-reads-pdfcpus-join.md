@@ -1,6 +1,6 @@
 # ADR-057 — a read compared with pdfcpu's own output reads pdfcpu's join
 
-**Status:** accepted. Supersedes ADR-056 in part (its list of exemptions). `PLAN-text-reflow.md` P05 phase close.
+**Status:** accepted. **Superseded by ADR-084** (`/pending 728`: the n-up now hands pdfcpu separated contents, so its exemptions are withdrawn). Supersedes ADR-056 in part (its list of exemptions). `PLAN-text-reflow.md` P05 phase close.
 
 ## Context
 

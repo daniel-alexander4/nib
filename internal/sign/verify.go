@@ -518,7 +518,7 @@ func unseenSignatures(ctx *model.Context, revs []Revision) bool {
 		if !signatureShaped(name(d, "Filter"), name(d, "Type"), d["ByteRange"] != nil) { //sigwalk:exempt unseenSignatures-shape
 			continue
 		}
-		switch c := d["Contents"].(type) {
+		switch c := d["Contents"].(type) { //pagecontent:key a signature dictionary's blob, not a page
 		case nil:
 			continue
 		case types.HexLiteral:
