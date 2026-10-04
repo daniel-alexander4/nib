@@ -92,7 +92,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// A failed check signs the bytes as they were, and ADR-032 says so — "passed through too, logged".
 	// It was not logged here (`/pending 504`), so a claim the signature then sealed left no trace.
 	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdfBytes, sign.HasSignatureBlob(pdfBytes)); derr != nil {
-		log.Printf("finalize: the PDF/UA identification could not be checked, so the document is signed "+
+		log.Printf("finalize: the PDF/UA or PDF/A identification could not be checked, so the document is signed "+
 			"as it was read — if it claims PDF/UA, the signature now seals that claim: %v", derr)
 	} else {
 		pdfBytes = dropped

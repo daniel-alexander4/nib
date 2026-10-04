@@ -23,7 +23,9 @@ import (
 // `SplitByBookmarks`, `StampTextLayer`, `StampImages`, `FillFormCSV`, `FillFormXFDF`, `ExportFormJSON`, image
 // extraction, `Encrypt`, `RemovePassword` and `RedactPages` (through `MergeRaw`'s closing pass) each ran past 30 s.
 // Restated, each reads once, through `Validated` and the budgeted pass, and then does exactly what the `api`
-// function did with the context (pkg/api, v0.13.0; the line is cited on each).
+// function did with the context (pkg/api, v0.13.0; the line is cited on each). `Encrypt` and `RemovePassword` are
+// no longer restated here: they are `pdfops`' rewrite door under the command (`protectRewrite`), over the same
+// `ReadOptimized`, because a password change must drop a conformance identification (`/pending 641`).
 //
 // There is no longer any door that hands pdfcpu a reader of a PDF: `TestEveryValidatingReadRoutesThroughTheDoor`
 // refuses a call outside this package to any `api` function that reads a PDF from a reader, wherever the reader
@@ -151,32 +153,6 @@ func ExtractImages(pdf []byte, selectedPages []string, digest func(model.Image, 
 		}
 	}
 	return nil
-}
-
-// Encrypt is `api.Encrypt` (crypto.go:30, which is `api.Optimize` under `model.ENCRYPT`). conf carries the passwords.
-func Encrypt(pdf []byte, conf *model.Configuration) ([]byte, error) {
-	if conf == nil {
-		return nil, errors.New("pdfcpu: missing configuration for encryption")
-	}
-	return rewrite(pdf, apiConf(conf, model.ENCRYPT))
-}
-
-// Decrypt is `api.Decrypt` (crypto.go:101).
-func Decrypt(pdf []byte, conf *model.Configuration) ([]byte, error) {
-	if conf == nil {
-		return nil, errors.New("pdfcpu: missing configuration for decryption")
-	}
-	return rewrite(pdf, apiConf(conf, model.DECRYPT))
-}
-
-// rewrite is `api.Optimize` (optimize.go:32) without its stats file: read, optimize, write.
-func rewrite(pdf []byte, conf *model.Configuration) (out []byte, err error) {
-	defer fault.Catch(&err)
-	ctx, err := ReadOptimized(pdf, conf)
-	if err != nil {
-		return nil, err
-	}
-	return write(ctx)
 }
 
 // MergeRaw is `api.MergeRaw` without a divider page (merge.go:61): the first document is the destination and each

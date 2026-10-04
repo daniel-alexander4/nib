@@ -50,7 +50,7 @@ func TestFinalizingLogsAClaimItCouldNotCheck(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("finalize status %d: %s — ADR-032: a failed check never costs the signature", resp.StatusCode, body)
 	}
-	if !strings.Contains(logged.String(), "PDF/UA identification could not be checked") {
+	if !strings.Contains(logged.String(), "PDF/UA or PDF/A identification could not be checked") {
 		t.Errorf("the check failed and the document was signed with nothing logged (log %q)", logged.String())
 	}
 }

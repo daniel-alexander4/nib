@@ -1157,7 +1157,7 @@ func cmdSign(args []string) int {
 	// This dropped the error silently (`/pending 504`), so a claim the signature then sealed permanently
 	// left no trace. Warned, not refused: the ADR decides a metadata step never costs the signature.
 	if dropped, derr := pdfops.DropUAIdentificationUnlessSigned(pdf, sign.HasSignatureBlob(pdf)); derr != nil {
-		errf("warning: the PDF/UA identification could not be checked, so %s is signed as it was read — "+
+		errf("warning: the PDF/UA or PDF/A identification could not be checked, so %s is signed as it was read — "+
 			"if it claims PDF/UA, the signature now seals that claim: %v", inputName(in), derr)
 	} else {
 		pdf = dropped

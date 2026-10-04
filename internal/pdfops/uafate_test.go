@@ -55,16 +55,24 @@ func TestAFailedCorrectionStillDropsTheClaim(t *testing.T) {
 // The claim is the element or attribute, never the namespace string: a PDF/A extension-schema block names
 // the namespace as text while claiming nothing (measured on veraPDF's corpus).
 func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
-	src := labelledFixture(t)
-	if !claimsUA(t, catalogPacket(t, src)) {
-		t.Fatal("setup: the labelled fixture does not claim PDF/UA, so every row below would pass on a build that keeps the claim")
+	// Both identifications at once (ADR-083): a PDF/UA file is often a PDF/A one too, and the two are
+	// dropped by one door, so one drive asks both questions.
+	src, err := testpdf.WithPDFAIdentification(labelledFixture(t))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
 	}
-	two := labelled(t, taggedTwoPageFixture())
-	if !claimsUA(t, catalogPacket(t, two)) {
-		t.Fatal("setup: the labelled two-page fixture does not claim PDF/UA")
+	if p := catalogPacket(t, src); !claimsUA(t, p) || !testpdf.PacketClaimsPDFA(p) {
+		t.Fatal("setup: the labelled fixture does not claim both PDF/UA and PDF/A, so every row below would pass on a build that keeps a claim")
+	}
+	two, err := testpdf.WithPDFAIdentification(labelled(t, taggedTwoPageFixture()))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if p := catalogPacket(t, two); !claimsUA(t, p) || !testpdf.PacketClaimsPDFA(p) {
+		t.Fatal("setup: the labelled two-page fixture does not claim both PDF/UA and PDF/A")
 	}
 	driven := 0
-	var kept []string
+	var kept, keptA, unasked []string
 	names := make([]string, 0, len(tagFates))
 	for n := range tagFates {
 		names = append(names, n)
@@ -72,19 +80,29 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 	sort.Strings(names)
 	for _, name := range names {
 		f := tagFates[name]
-		if f.drive == nil {
+		drive := f.uaDrive
+		if drive == nil {
+			drive = f.drive
+		}
+		if drive == nil {
+			// A row that returns no document has nothing to carry a claim; any other row is asked here,
+			// or says why it is not. A silent `continue` here is how /pending 641 hid two operations.
+			if f.verdict != "untouched" && strings.TrimSpace(f.uaWhy) == "" {
+				unasked = append(unasked, name)
+			}
 			continue
 		}
-		// The one exemption, by name: `LabelUA` is the door that WRITES the identification, on nib's own
-		// Markdown conversion, with veraPDF's measurement behind it (ADR-033). Every other row must drop it.
-		if name == "LabelUA" {
-			continue
-		}
+		// The writing doors, by name, each for its own claim only: `LabelUA` writes PDF/UA's on nib's own
+		// Markdown conversion, with veraPDF's measurement behind it (ADR-033); `PreparePDFA` and
+		// `ConvertPDFAGhostscript` write PDF/A's, as a candidate the user is told to verify (ADR-083).
+		// Every other row must drop both.
+		exemptUA := name == "LabelUA"
+		exemptA := name == "PreparePDFA" || name == "ConvertPDFAGhostscript"
 		in := src
 		if f.twoPages {
 			in = two
 		}
-		out, err := f.drive(in)
+		out, err := drive(in)
 		if err != nil {
 			t.Logf("%s: not exercised on this fixture (%v)", name, err)
 			continue
@@ -95,9 +113,22 @@ func TestNoOperationCarriesAnIdentificationItDidNotVerify(t *testing.T) {
 		if bytes.Equal(out, in) {
 			continue
 		}
-		if claimsUA(t, catalogPacket(t, out)) {
+		p := catalogPacket(t, out)
+		if !exemptUA && claimsUA(t, p) {
 			kept = append(kept, name)
 		}
+		if !exemptA && testpdf.PacketClaimsPDFA(p) {
+			keptA = append(keptA, name)
+		}
+	}
+	if len(unasked) > 0 {
+		t.Errorf("%d operation(s) change a document and are asked by neither drive nor uaDrive, with no uaWhy: %s",
+			len(unasked), strings.Join(unasked, ", "))
+	}
+	if len(keptA) > 0 {
+		t.Errorf("%d operation(s) change a PDF/A-labelled document and keep its PDF/A identification: %s.\n"+
+			"nib verifies none of PDF/A's rules, so any change drops the claim (ADR-083) — through the same door as PDF/UA's.",
+			len(keptA), strings.Join(keptA, ", "))
 	}
 	if driven < 20 {
 		t.Errorf("only %d operation(s) were driven; the census is reporting coverage it barely has", driven)

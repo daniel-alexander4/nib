@@ -36,11 +36,22 @@ import (
 // to bind `pdfuaid` to anything, or the schema to another prefix.
 const pdfuaidNS = "http://www.aiim.org/pdfua/ns/id/"
 
-// errUnparsedClaim means a packet names the identification schema and could not be rewritten.
-var errUnparsedClaim = errors.New("the metadata packet names the PDF/UA identification schema and is not well-formed XML")
+// pdfaidNS is the PDF/A identification schema's namespace (ISO 19005), dropped by the same door for the
+// same reason (ADR-083, `/pending 641`): `pdfaid:part` claims the whole document conforms, nib verifies
+// none of PDF/A's rules, and pdfcpu carries the packet through every write — measured, `Rotate` kept it
+// on `PreparePDFA`'s output and on Ghostscript's. Its extension-schema neighbours (`.../pdfa/ns/extension/`,
+// `/schema#`, `/property#`) are other URIs, describe a schema and claim nothing, so they stay.
+const pdfaidNS = "http://www.aiim.org/pdfa/ns/id/"
 
-// withoutUAIdentification returns the packet with every element and attribute in the identification
-// namespace removed, and whether anything was.
+// isIdentificationNS reports whether uri is one of the conformance identifications nothing may carry
+// through a change nib did not verify.
+func isIdentificationNS(uri string) bool { return uri == pdfuaidNS || uri == pdfaidNS }
+
+// errUnparsedClaim means a packet names an identification schema and could not be rewritten.
+var errUnparsedClaim = errors.New("the metadata packet names the PDF/UA or PDF/A identification schema and is not well-formed XML")
+
+// withoutUAIdentification returns the packet with every element and attribute in either identification
+// namespace (PDF/UA's and PDF/A's, `isIdentificationNS`) removed, and whether anything was.
 //
 // **Token by token, re-serialised by hand**, because `encoding/xml`'s encoder rewrites namespace
 // declarations and escapes whitespace as character references — a packet's padding and prefixes would
@@ -95,7 +106,7 @@ func withoutUAIdentification(packet []byte) ([]byte, bool, error) {
 				skipDepth++
 				continue
 			}
-			if resolve(t.Name.Space) == pdfuaidNS {
+			if isIdentificationNS(resolve(t.Name.Space)) {
 				skipDepth = 1
 				removed = true
 				continue
@@ -104,10 +115,10 @@ func withoutUAIdentification(packet []byte) ([]byte, bool, error) {
 			writeRawName(&out, t.Name)
 			for _, a := range t.Attr {
 				isDecl := a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns")
-				if isDecl && a.Value == pdfuaidNS {
+				if isDecl && isIdentificationNS(a.Value) {
 					continue // the declaration alone claims nothing; it goes with what it declared
 				}
-				if !isDecl && a.Name.Space != "" && resolve(a.Name.Space) == pdfuaidNS {
+				if !isDecl && a.Name.Space != "" && isIdentificationNS(resolve(a.Name.Space)) {
 					removed = true
 					continue
 				}
@@ -179,12 +190,15 @@ func escapeXML(s string, attr bool) string {
 	return r.Replace(s)
 }
 
-// dropUAIdentification removes the identification from a parsed document's catalog packet, and reports
-// whether the document carried one.
+// dropUAIdentification removes the conformance identifications — PDF/UA's and, since ADR-083, PDF/A's —
+// from a parsed document's catalog packet, and reports whether the document carried one. The name is
+// PDF/UA's because that one came first; it is the one door for both.
 //
 // **A packet that names the schema and cannot be parsed loses the whole `/Metadata` stream.** A claim nib
 // cannot edit is still a claim, and keeping it would be the defect this exists to end; a title lost with
-// it is a visible loss.
+// it is a visible loss. The key goes through `dropKey` (`/pending 739`): pdfcpu's `DeleteDictEntry`
+// refused on a dangling reference anywhere under the stream's dictionary, and that refusal failed the
+// WHOLE rewrite — a rotation, a save, a signature — for a reason the user could not act on.
 func dropUAIdentification(ctx *model.Context) (bool, error) {
 	xt := ctx.XRefTable
 	root, err := xt.Catalog()
@@ -206,12 +220,13 @@ func dropUAIdentification(ctx *model.Context) (bool, error) {
 		// the Flate it declares with "zlib: invalid header". So no edit reaches a packet this line would skip.
 		return false, nil
 	}
-	if !bytes.Contains(sd.Content, []byte(pdfuaidNS)) {
+	if !bytes.Contains(sd.Content, []byte(pdfuaidNS)) && !bytes.Contains(sd.Content, []byte(pdfaidNS)) {
 		return false, nil
 	}
 	clean, removed, err := withoutUAIdentification(sd.Content)
 	if errors.Is(err, errUnparsedClaim) {
-		return true, xt.DeleteDictEntry(root, "Metadata")
+		dropKey(xt, root, "Metadata")
+		return true, nil
 	}
 	if err != nil || !removed {
 		return false, err
@@ -303,6 +318,8 @@ func rewriteOrDropClaim(pdf []byte, fn func(*model.Context) error) []byte {
 // DropUAIdentificationUnlessSigned is the door for bytes that change a document OUTSIDE this package —
 // a browser's edits posted back to be saved, a document about to be signed. The caller supplies whether
 // the document already carries a signature (`sign.HasSignatureBlob`; this package does not import sign).
+// It drops a PDF/A identification too (ADR-083): signing a PDF/A file is a change nib cannot verify kept
+// it conformant, exactly as for PDF/UA.
 //
 // **A signed document is returned unchanged, and that is a declared gap, not an oversight.** Dropping the
 // claim is a full rewrite, and a full rewrite of a signed document destroys the signature it carries — the
@@ -322,7 +339,7 @@ func DropUAIdentificationUnlessSigned(pdf []byte, signed bool) ([]byte, error) {
 	return out, nil
 }
 
-// dropUAIdentificationBytes returns pdf without its PDF/UA identification, and whether it carried one. A
+// dropUAIdentificationBytes returns pdf without its PDF/UA or PDF/A identification, and whether it carried one. A
 // document that carried none comes back as the SAME bytes, unwritten — a caller holding a signed document
 // that carries no claim must not pay a rewrite for asking.
 //

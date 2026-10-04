@@ -217,6 +217,11 @@ Either way, because no pure-Go PDF/A validator exists, Nib can't certify the res
 itself — it produces a *candidate* you should **verify with
 [veraPDF](https://verapdf.org/)** before relying on it for archival.
 
+For the same reason, **any later change Nib makes to a PDF/A file removes its PDF/A identification** — an edit, a
+page operation, adding or removing a password, or signing it — because Nib cannot tell whether the changed file
+still meets the standard. Convert (and verify) again after the last change. A document that is already signed keeps its
+identification, since rewriting it would destroy the signature.
+
 ### Open an image
 
 Open a **PNG, JPEG, TIFF or WebP** the way you open a PDF — by path, by dragging it

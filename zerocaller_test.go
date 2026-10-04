@@ -136,6 +136,10 @@ func TestEveryExportedFunctionUnderInternalHasAProductionCaller(t *testing.T) {
 			"identification directly, which is exactly what production must never do unverified.",
 		"ClaimsUA": "test-support — /pending 492's namespace-aware claim reader for those same tests. " +
 			"Production drops a claim and never needs to ask whether one survived.",
+		"WithPDFAIdentification": "test-support — ADR-083's PDF/A-labelled fixture, WithUAIdentification's " +
+			"twin for the census that asks every operation about both claims.",
+		"PacketClaimsPDFA": "test-support — ADR-083's namespace-aware PDF/A claim reader for that census, " +
+			"failing closed as PacketClaimsUA does.",
 		"UseCMapLoops": "test-support — /pending 675's two /UseCMap loops, shared by the pdfread, pdfops and " +
 			"uacheck tests so every read door is tested against the same documents.",
 		"UseCMapChain": "test-support — /pending 675's legitimate /UseCMap chain, the no-false-refusal half of " +

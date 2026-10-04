@@ -56,7 +56,7 @@ func xmpPDFA2B(title string) []byte {
 	b.WriteString("<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" +
 		"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n" +
 		" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" +
-		"  <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\"" +
+		"  <rdf:Description rdf:about=\"\" xmlns:pdfaid=\"" + pdfaidNS + "\"" +
 		" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n" +
 		"   <pdfaid:part>2</pdfaid:part>\n" +
 		"   <pdfaid:conformance>B</pdfaid:conformance>\n")

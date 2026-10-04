@@ -124,7 +124,7 @@ func TestSignSaysSoWhenTheClaimCouldNotBeChecked(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("sign exit = %d (%s) — ADR-032: a failed check never costs the user the signature", code, stderr)
 	}
-	if !strings.Contains(stderr, "PDF/UA identification could not be checked") {
+	if !strings.Contains(stderr, "PDF/UA or PDF/A identification could not be checked") {
 		t.Errorf("the check failed and the document was signed with nothing said (stderr %q)", stderr)
 	}
 }
