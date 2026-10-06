@@ -328,16 +328,21 @@ func (s *Server) windowArrived() int64 {
 // cancelIdleExit does, and reports false when the process has ALREADY decided to exit — read under
 // the same hold that records that decision, so no hand-off can slip between the two (/pending 727).
 // A hand-off it refuses is answered with an error, and the launch then serves the document itself.
-func (s *Server) keepAliveForHandoff() bool {
+//
+// **It also reports whether a grace WAS running, and that is the session boundary (ADR-085).** A
+// grace runs only after this process's last window went, so a launch that cancels one is a user
+// starting Nib after closing it — not a reload, which comes back as a window and never passes
+// through here. Read under the hold that cancels, so the answer is the cancel's own and not a
+// second look at a timer a window could have stopped in between.
+func (s *Server) keepAliveForHandoff() (alive, afterLastWindow bool) {
 	s.idle.mu.Lock()
 	if s.idle.exited {
 		s.idle.mu.Unlock()
-		return false
+		return false, false
 	}
 	t, at := s.stopIdleExitLocked(idleExitCauseHandoff)
 	s.idle.mu.Unlock()
-	logIdleCancel(t, at, idleExitCauseHandoff)
-	return true
+	return true, logIdleCancel(t, at, idleExitCauseHandoff)
 }
 
 // cancelIdleExit stops a running grace and counts WHY. Returns whether there was one to stop, so an
@@ -446,6 +451,9 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		left := s.windows.n.Add(-1)
 		log.Printf("%s (%d open)", windowGoneMsg, left)
 		if left == 0 {
+			// Before the grace is armed, so a launch that cancels it finds the record
+			// already written and can close what it describes (ADR-085).
+			s.recordLastOpen()
 			s.armIdleExitGrace()
 		}
 	}()
@@ -555,6 +563,9 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 // server that second-guessed the answer would be a second place deciding, which is the shape the
 // close prompt's one door exists to refuse.
 func (s *Server) handleQuit(w http.ResponseWriter, r *http.Request) {
+	// Recorded HERE and not left to the window stream's close: the exit closes that stream, and the
+	// teardown does not wait for a handler to finish a vault write (ADR-085).
+	s.recordLastOpen()
 	s.RequestExit(exitCauseQuit)
 	w.WriteHeader(http.StatusNoContent)
 }

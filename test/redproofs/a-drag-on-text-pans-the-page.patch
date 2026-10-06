@@ -1,0 +1,11 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -9089,7 +9089,6 @@
+   if (panBlocked()) return;
+   if (!startedInActiveView(e)) return;
+   if (e.target.closest(PAN_NEVER)) return;
+-  if (!anywhere && e.target.closest(PAN_TEXT)) return;
+   const box = view.container;
+   if (!canPan(box)) return;
+   pan = { id: e.pointerId, box, x: e.clientX, y: e.clientY, left: box.scrollLeft, top: box.scrollTop, moved: false };

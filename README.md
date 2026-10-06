@@ -952,6 +952,12 @@ filesystem. Browsing opens the file *by path*, so it can be saved back in place
 and is listed in **Open Recent…** (the button beside Open…) — unlike dragging a file onto the window, which
 uploads a copy with nowhere to save to.
 
+**Closing Nib closes its documents.** Starting it again opens only what you asked it to open.
+What was open when you closed — the files, in tab order — is offered back as **Resume last
+session** in the empty window. It reopens them from disk: a document that never had a file
+behind it (a dragged-in copy, a combine, a conversion) and an edit you did not save are not
+part of it. Reloading the window is not closing it, and keeps everything.
+
 A file that isn't a PDF is refused with a message rather than opening an empty
 viewer — the header is looked for in the first 1024 bytes, the same window
 pdf.js allows, so a document with a little junk before its header still opens.
@@ -1116,6 +1122,13 @@ itself).
 Type in the **Find** box (or press **Ctrl/Cmd+F**) to highlight every match. Step
 through them with the **‹ ›** buttons or **Enter** / **Shift+Enter**, and the
 readout next to the box shows which match you're on out of the total (`3/12`).
+
+### Move around a zoomed page
+When the page is larger than the window, the pointer over it is a hand: press and drag to
+move the page. A drag that starts on text selects the text instead, and a field, a link or
+anything you have placed keeps its own drag. On a page that is mostly text, drag with the
+**middle mouse button** — it moves the page from anywhere. With a drawing tool armed the
+press belongs to the tool.
 
 ### Keyboard shortcuts
 - **PageUp / PageDown** — previous / next page; **Home / End** — first / last page.

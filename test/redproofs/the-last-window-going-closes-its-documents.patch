@@ -1,0 +1,11 @@
+diff --git a/internal/server/window.go b/internal/server/window.go
+--- a/internal/server/window.go
++++ b/internal/server/window.go
+@@ -454,6 +454,7 @@
+ 			// Before the grace is armed, so a launch that cancels it finds the record
+ 			// already written and can close what it describes (ADR-085).
+ 			s.recordLastOpen()
++			s.setDoc(nil)
+ 			s.armIdleExitGrace()
+ 		}
+ 	}()

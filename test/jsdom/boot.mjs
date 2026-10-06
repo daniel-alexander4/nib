@@ -66,6 +66,8 @@ export const BOOT_ROUTES = {
   '/api/status': { state: 'ready', version: 'test', autoUpdate: false, updateCheckLocked: false, ghostscript: false, libreoffice: false, advanced: { ceremony: true, discovery: true, rendezvous: true, timestamp: true } },
   '/api/images': [],
   '/api/recent': [],
+  // Asked for whenever the launch state is shown (ADR-085). Empty: nothing to resume.
+  '/api/lastopen': [],
   '/api/doc': { name: '', path: '', canSave: false, signature: { state: '' }, canUndo: false, canRedo: false },
   // On the boot path since P06.S03: the client reconciles against what the server holds
   // before it does anything else. Empty is the honest default for a harness whose server
