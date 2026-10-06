@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -2827,7 +2827,7 @@
+   // VIEW, because each open document has its own viewer and therefore its own manager.
+   v.eventBus.on('annotationeditorlayerrendered', () => armEditorHistoryHook(v));
+   v.eventBus.on('pagerendered', () => relayoutRedactMarks(v));
+-  v.eventBus.on('scalechanging', (e) => { if (v === view) reflectZoom(e.scale); }); // shared chrome, gated
++  v.eventBus.on('scalechanging', (e) => { reflectZoom(e.scale); }); // shared chrome, gated
+   v.eventBus.on('scalechanging', () => relayoutRedactMarks(v));
+   v.eventBus.on('scalechanging', () => relayoutOverlays(v));
+   v.eventBus.on('pagerendered', () => relayoutOverlays(v));

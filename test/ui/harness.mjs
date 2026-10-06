@@ -177,9 +177,9 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // the box moving again should cost one edit rather than seven.
     async gotoPage(n) {
       await this.panel('thumbs');
-      await page.fill('.pageNum', String(n));
-      await page.press('.pageNum', 'Enter');
-      await page.waitForFunction((want) => Number(document.querySelector('.pageNum').value) === want, n);
+      await page.fill('#sbPages .pageNum', String(n));
+      await page.press('#sbPages .pageNum', 'Enter');
+      await page.waitForFunction((want) => Number(document.querySelector('#sbPages .pageNum').value) === want, n);
     },
 
     async card(label) {

@@ -660,3 +660,7 @@ home today.
   pushed on the window stream and the launch opens a window only when none has it; launches that start together become
   one Nib; `?open=` is spent once; a session's end clears its locked queue. A covered window is raised on X11 when a
   helper exists and marks its title otherwise.
+- **[ADR-087 — the bar is icons, and Undo and the page position are back in it](087-the-bar-is-icons-and-undo-and-the-page-are-back-in-it.md)**
+  — supersedes ADR-024's removal of Undo/Redo and Previous/Next. Every bar control is an icon whose word stays in the
+  markup (hidden in the bar, shown in ⋯ More); Zoom is its own group with the level shown; one group appears only
+  while a tool is armed; the fold ladder is re-measured.

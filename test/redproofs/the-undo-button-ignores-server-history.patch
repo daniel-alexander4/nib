@@ -1,0 +1,12 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -12081,7 +12081,7 @@
+   // `clientHistory` rather than `overlayHistory`: it counts BOTH client stacks, and the editor
+   // one was invisible here — two drawings on screen and the Undo button read as disabled.
+   const h = view.clientHistory;
+-  $('undoBtn').disabled = !enabled || !(h.undo.length || m.canUndo);
++  $('undoBtn').disabled = !enabled || !(h.undo.length);
+   $('redoBtn').disabled = !enabled || !(h.redo.length || m.canRedo);
+   // **Evicted history is a standing fact, so it is told on the control** (ADR-003, /pending 462):
+   // `canUndo:false` reads the same for "you have made no edits" and "your edits can no longer be

@@ -92,6 +92,12 @@ const EXEMPT = new Set([
   // Gated by their own state, not by the registry: saveBtn follows canSave, the find
   // buttons follow the search results, and closeAllBtn is hidden below two documents.
   'saveBtn', 'findPrevBtn', 'findNextBtn', 'closeAllBtn',
+  // Undo/Redo are back in the bar (ADR-087) and are the same class: `reflectUndoControls` owns
+  // their `disabled`, because "a document is open" is necessary and not sufficient — there must
+  // also be something to undo. test/jsdom/toolbaricons.test.mjs holds that they are off with
+  // nothing open. `armedOffBtn` sits in a group that is HIDDEN unless a tool is armed, and no
+  // tool can be armed without a document.
+  'undoBtn', 'redoBtn', 'armedOffBtn',
   // These act on the VIEWER, not on the document. With nothing open the viewer is empty
   // and they are inert; disabling them would be a behaviour change, not a fix.
   // (`prevBtn`/`nextBtn` were here until v1.125.0 and are gone from the product — a name in an

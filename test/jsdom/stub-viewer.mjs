@@ -35,9 +35,14 @@ export class EventBus {
 // Inert, but observable: tests assert what app.js asked the viewer to do
 // (setDocument(null) on a close, the editor mode it set) rather than what was
 // painted, which jsdom could not tell them anyway.
+// viewersMade is every viewer the app constructed, oldest first — one per open document (ADR-002).
+// A test needs it to speak AS a particular document's viewer: "a background document's event must
+// not repaint shared chrome" cannot be driven through the page, which only ever touches the active one.
+export const viewersMade = [];
 export class PDFViewer {
   constructor(opts = {}) {
     Object.assign(this, opts);
+    viewersMade.push(this);
     this.pdfDocument = null;
     this._pageNumber = 1;
     this.currentScaleValue = null;

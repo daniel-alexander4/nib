@@ -146,7 +146,10 @@ echo "$Nib_out"
 #
 # 95 since ADR-086 (handoffpush.test.mjs): a launch's document arriving in the open window — its own file because it
 # boots with `?open=` and `?notice=` on the address, which no other file's boot carries.
-Nib_expect_files=95
+#
+# 96 since ADR-087 (toolbaricons.test.mjs): the icon bar — every button an icon with its word, the page buttons and
+# Undo/Redo back in the bar, the armed-tool group — its own file because it reopens one path with changing history flags.
+Nib_expect_files=96
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

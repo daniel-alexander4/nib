@@ -211,6 +211,19 @@ body { display: flex; flex-direction: column; }
 #toolbar .menutop:hover, #toolbar .menu.open .menutop { background: var(--surface0); color: var(--text); }
 #toolbar .menutop::after { content: "▾"; margin-left: 5px; opacity: 0.6; font-size: 11px; }
 #toolbar .tbsep { width: 1px; align-self: stretch; background: var(--surface1); margin: 3px 6px; }
+/* An icon's word (ADR-087). In the bar it is clipped to nothing and stays in the accessibility
+   tree — it is the button's name. In More the same span is the visible label, because a folded
+   group is MOVED there whole and a picture alone in a menu is a guess. */
+#toolbar .tblabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#toolbar .tbmore .tblabel { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+#toolbar .tbmore .tbicon, #toolbar .tbmore .tbpct { justify-content: flex-start; gap: 8px; }
+/* The zoom level. Tabular figures and a floor on the width, so 90% and 100% do not shift the bar. */
+#toolbar .tbpct { display: inline-flex; align-items: center; justify-content: center; min-width: 3.4em; font-variant-numeric: tabular-nums; }
+/* The armed tool's name, and the two standing marks a control can carry: the file changed on disk,
+   and earlier undo history was released. An outline as well as a tooltip — the tooltip is the
+   sentence, the outline is what makes anyone look for it. */
+#toolbar .tbchip { color: var(--text); font-size: 13px; padding: 0 2px 0 6px; }
+#toolbar .tbfixed > .tbgroup > button.attn { box-shadow: inset 0 0 0 1px var(--peach); color: var(--text); }
 /* Contextual highlight-color row: recent swatches + a custom picker, shown only
    while the Highlight tool is active (see setTool). */
 .hlcolors { display: inline-flex; align-items: center; gap: 4px; }
@@ -1939,7 +1952,7 @@ body.presenting .presentbar { display: flex; }
    the row, which is what `min-width: 0` on a flex child is for. */
 .doctitle {
   display: inline-flex; align-items: center; gap: 6px;
-  min-width: 0; max-width: 38ch; margin-right: 8px;
+  min-width: 0; max-width: 22ch; margin-right: 8px; /* 22ch since ADR-087: the fold ladder is summed against it, and the tab strip below carries the whole name */
   font-size: 12px; color: var(--text);
 }
 .doctitle-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

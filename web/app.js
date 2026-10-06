@@ -2827,6 +2827,7 @@ function newView() {
   // VIEW, because each open document has its own viewer and therefore its own manager.
   v.eventBus.on('annotationeditorlayerrendered', () => armEditorHistoryHook(v));
   v.eventBus.on('pagerendered', () => relayoutRedactMarks(v));
+  v.eventBus.on('scalechanging', (e) => { if (v === view) reflectZoom(e.scale); }); // shared chrome, gated
   v.eventBus.on('scalechanging', () => relayoutRedactMarks(v));
   v.eventBus.on('scalechanging', () => relayoutOverlays(v));
   v.eventBus.on('pagerendered', () => relayoutOverlays(v));
@@ -3166,6 +3167,7 @@ function repaintForActiveView() {
     : 'Save (overwrites the original)';
   all('.pageCount').forEach((s) => { s.textContent = '/ ' + (open ? view.pdfDocument.numPages : 0); });
   all('.pageNum').forEach((i) => { i.value = open ? view.viewer.currentPageNumber : 1; });
+  reflectZoom(open ? view.viewer.currentScale : 1);
   reflectDocTitle();
   updateBadge(view.lastSig, view.inCeremony, view.lastUnverified); // idempotent re-assignment; NEVER updateBadge(null) here
 
@@ -3198,6 +3200,12 @@ function repaintForActiveView() {
   reflectAnnoControls();
   els.viewerWrap.style.cursor = anyToolArmed() ? 'crosshair' : '';
   reflectPanCursor(); // the view changed, and the editor mode is per view
+}
+
+// reflectZoom writes the zoom level on the bar. `scale` is pdf.js's, 1 being actual size; with no
+// document there is nothing to measure and the readout says the size it would open at.
+function reflectZoom(scale) {
+  $('zoomPct').textContent = Math.round((scale || 1) * 100) + '%';
 }
 
 function anyToolArmed() {
@@ -3328,6 +3336,7 @@ function paintStale() {
   // the moment before the user saves. A green lie is worse than no button.
   els.staleRetry.hidden = !failed;
   els.staleReload.hidden = !changed;
+  $('reloadBtn').classList.toggle('attn', changed); // the banner says it; the control that answers it is marked
   // Both banners occupy the same spot over the document. When both are up, drop this one
   // below the signing one rather than letting z-order decide which fact goes unread.
   els.staleBanner.classList.toggle('stacked', !!view.signTotal);
@@ -9108,7 +9117,24 @@ function reflectPanCursor() {
   // An attribute and not a class: the wrap's className is `has-doc` or empty, and tests at two
   // tiers read it whole.
   els.viewerWrap.toggleAttribute('data-no-pan', panBlocked());
+  reflectArmedChip(); // the same fact, said: a tool owns the pointer, and this is which
 }
+
+// ARMED_NAMES are the words for whatever owns the pointer, by placement tool and by pdf.js mode.
+const ARMED_NAMES = {
+  redact: 'Redact', splitBox: 'Split by box', crop: 'Crop', edit: 'Edit text', marker: 'Flag',
+  border: 'Border', dropdown: 'Dropdown', radio: 'Radio button', shape: 'Shape', note: 'Note',
+  checkbox: 'Checkbox', FREETEXT: 'Text', HIGHLIGHT: 'Highlight', INK: 'Draw',
+};
+// reflectArmedChip shows the bar's one contextual group while a tool is armed (ADR-087). With the
+// sidebar shut the armed button is out of sight, and a press on the page that draws instead of
+// scrolling has nothing on screen to explain it.
+function reflectArmedChip() {
+  const tool = armedTool() || view.activeTool;
+  $('armedGroup').hidden = !tool;
+  $('armedName').textContent = tool ? (ARMED_NAMES[tool] || 'Tool') : '';
+}
+$('armedOffBtn').onclick = () => disarmEditingTools();
 new MutationObserver(reflectPanCursor).observe(els.viewerWrap, { attributes: true, attributeFilter: ['style'] });
 
 // watchPannable keeps `.can-pan` true of a view exactly while its pages overflow its scroll box,
@@ -11999,6 +12025,9 @@ const DOC_REQUIRED = [
   'extractBtn', 'insertBlankBeforeBtn', 'insertBlankBtn', 'duplicatePageBtn', 'insertPdfBtn', 'insertPdfAfterBtn', 'pageNumBtn', 'pageLabelsBtn', 'nupBtn', 'normalizeBtn', 'cropBtn',
   'redactBtn', 'redactTextBtn', 'applyRedactBtn', 'scanBtn', 'attachBtn', 'encryptBtn', 'decryptBtn', 'compareBtn', 'fillCsvBtn', 'importXfdfBtn',
   'closeBtn', 'reloadBtn',
+  // The bar's page buttons. Undo/Redo are NOT here: `reflectUndoControls` owns them, because
+  // "a document is open" is necessary for them and not sufficient.
+  'prevPageBtn', 'nextPageBtn',
   // Find opens onto the open document; with nothing open there is nothing to search.
   'findToggle',
   'finalizeBtn', 'timestampBtn', 'cosignBtn', 'sessionInitBtn', 'sessionSendBtn',
@@ -12042,12 +12071,25 @@ function reflectDocTitle() {
   if (simpleSignOpen()) refreshKeptProbe(false); // a load or a switch: asked only when the answer is not already held
 }
 
+// UNDO_RELEASED is what the Undo button says while the server has dropped this document's history.
+const UNDO_RELEASED = 'Nothing to undo — earlier history for this document was released to stay within the memory budget';
+
 // Undo/Redo enable from the server's per-document history flags (view.docMeta.canUndo/
 // canRedo, refreshed on every load); both off when no document is open.
 function reflectUndoControls(enabled) {
   const m = view.docMeta || {};
   // `clientHistory` rather than `overlayHistory`: it counts BOTH client stacks, and the editor
   // one was invisible here — two drawings on screen and the Undo button read as disabled.
+  const h = view.clientHistory;
+  $('undoBtn').disabled = !enabled || !(h.undo.length || m.canUndo);
+  $('redoBtn').disabled = !enabled || !(h.redo.length || m.canRedo);
+  // **Evicted history is a standing fact, so it is told on the control** (ADR-003, /pending 462):
+  // `canUndo:false` reads the same for "you have made no edits" and "your edits can no longer be
+  // undone", and a toast for something that happened while another document had focus is gone
+  // before anyone looks. Off again the moment there is something to undo.
+  const released = !!enabled && !!m.historyEvicted && $('undoBtn').disabled;
+  $('undoBtn').classList.toggle('attn', released);
+  $('undoBtn').title = released ? UNDO_RELEASED : 'Undo (Ctrl+Z)';
   reflectDocTitle();
 
   // Eviction is observable or it is not eviction (ADR-003). The server has always
@@ -12307,6 +12349,8 @@ function redoOverlayEdit() {
   c.redo(); view.overlayHistory.undo.push(c);
   reflectUndoControls(!!view.pdfDocument);
 }
+$('undoBtn').onclick = () => undoAny();
+$('redoBtn').onclick = () => redoAny();
 // undoAny/redoAny are the single dispatch for both Ctrl+Z and the ↶/↷ buttons:
 // drain the client overlay stack first, then fall through to the server ring.
 // The ACTIVE view's stack, deliberately: Ctrl+Z aims at the document on screen. Every command
@@ -12319,14 +12363,14 @@ function undoAny() {
   const kind = view.clientHistory.undo.pop();
   if (!kind) return doUndo(); // no client edits left; the server's own ring is older than all of them
   view.clientHistory.redo.push(kind);
-  if (kind === 'editor') return undoEditorEdit();
+  if (kind === 'editor') { undoEditorEdit(); return reflectUndoControls(!!view.pdfDocument); }
   return undoOverlayEdit();
 }
 function redoAny() {
   const kind = view.clientHistory.redo.pop();
   if (!kind) return doRedo();
   view.clientHistory.undo.push(kind);
-  if (kind === 'editor') return redoEditorEdit();
+  if (kind === 'editor') { redoEditorEdit(); return reflectUndoControls(!!view.pdfDocument); }
   return redoOverlayEdit();
 }
 
@@ -13221,8 +13265,10 @@ function fitWidestWidth(owner, fitReason = 'fit') {
     owner.hasScale = true; // it applied; activateView need not rescue this view
   }
 }
-// Previous/Next left the toolbar in v1.125.0. `prevPage`/`nextPage` stay — PageUp/PageDown and
-// Home/End call them, and they are the bounds logic the page-number input relies on.
+// Previous/Next left the toolbar in v1.125.0 and came back in v1.185.0 (ADR-087). `prevPage` and
+// `nextPage` are the bounds logic for the buttons, the keys and the page-number input alike.
+$('prevPageBtn').onclick = prevPage;
+$('nextPageBtn').onclick = nextPage;
 all('.pageNum').forEach((input) => input.addEventListener('change', () => {
   const n = Number(input.value);
   if (view.pdfDocument && n >= 1 && n <= view.pdfDocument.numPages) view.viewer.currentPageNumber = n;
@@ -13442,11 +13488,14 @@ function reflectReadAloudSettings() {
   }
 }
 
+const READ_ALOUD_TITLE = 'Read this page aloud — needs a text layer, so OCR a scan first';
 function reflectReadAloud() {
   if (!els.readAloudBtn) return;
   els.readAloudBtn.setAttribute('aria-pressed', String(readingAloud));
   setArmed(els.readAloudBtn, readingAloud);
-  els.readAloudBtn.textContent = readingAloud ? 'Stop reading' : 'Read aloud';
+  // The word is the label span's, never the button's: writing the button's text would take its icon.
+  els.readAloudBtn.querySelector('.tblabel').textContent = readingAloud ? 'Stop reading' : 'Read aloud';
+  els.readAloudBtn.title = readingAloud ? 'Stop reading' : READ_ALOUD_TITLE;
 }
 
 // readAloudSeq numbers the starts, so a start still reading its page's text when the user stops, or
@@ -13957,7 +14006,16 @@ setMode('file');
 // would assert "never folds", which is true in the bar and false in every pane.
 // `toolbargroups.test.mjs` asserts this table has exactly one reader, so the claim goes red
 // instead of stale.
-const foldThresholds = { 1: 949, 2: 899, 3: 849, 4: 749, 5: 699, 6: 649, 7: 599 };
+//
+// **Re-measured for the icon bar (ADR-087, 2026-10-06, Chromium, the tier-3 harness).** The widths
+// with their 4px gaps: Find 40, Page 161, History 93, View 200, Zoom 233; the three rank-0 groups
+// 199; the sidebar toggle and margins 74; the title at its 22ch cap 145; the More trigger 87. Each
+// rung is the sum of what is still in the bar at that point, plus 15. The order is what goes first:
+// View (1), Page (2 — the Pages tab and PageUp/PageDown still page), History (3), Zoom (4), Find (5).
+// The armed-tool group is NOT in the sums: it is there only while a tool is armed, and in the
+// ~110px above each rung the bar takes a second row for as long as it is. Ranks 6 and 7 belong to
+// no group in the bar.
+const foldThresholds = { 1: 1165, 2: 1050, 3: 890, 4: 795, 5: 565, 6: 499, 7: 449 };
 
 function buildOverflowMenus() {
   [...all('.tbtab'), ...all('#toolbar .tbfixed')].forEach((pane) => {

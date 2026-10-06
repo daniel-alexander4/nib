@@ -578,8 +578,10 @@ asks before replacing the changed file with what you have open.
 
 **Undo is one list** — **Ctrl+Z** steps back through everything you have done to the
 document, newest first, whether it was a drawing, a stamp, a note, or a page operation.
-Drawing some lines and then some shapes leaves one history, not two. There is no Undo
-button: the keyboard is the whole interface for it.
+Drawing some lines and then some shapes leaves one history, not two. The **Undo** and
+**Redo** arrows in the toolbar walk the same list; they are greyed out when there is
+nothing to undo, and Undo is outlined when earlier history had to be released to save
+memory.
 
 **Start over** — the **↻ reload** button throws away everything you have done since
 opening and re-reads the file from disk. It asks first when there is
@@ -670,7 +672,15 @@ known gap). This is a different thing, useful for proof-reading or for taking a 
 On a scanned page there is no text to read and Nib says so, pointing you at OCR rather than falling
 silent.
 
-Beside them are the zoom controls — in, out, **Fit width**, **Fit page** and **Actual size**. Fit
+**The toolbar is icons.** Hover over one for its name and shortcut; when the window is too narrow
+for all of them, the ones that do not fit move into **⋯ More**, where each is shown with its name.
+From the left: the sidebar toggle, the document's name, find, the page you are on with
+previous/next, undo/redo — and, only while a drawing or placing tool is armed, that tool's name
+with a button to put it down. On the right: the layouts above, the zoom controls, reload, print,
+save and quit.
+
+The zoom controls are out, the current zoom as a percentage (click it for **Actual size**, 100%),
+in, **Fit width** and **Fit page**. Fit
 width and Fit page both measure the *whole* document and lock a single scale, so a file whose pages
 are not all the same size does not resize under you as you scroll past the boundary.
 
@@ -1004,8 +1014,8 @@ arrange them with ↑ ↓, and they merge top-to-bottom into a new document — 
 reorder individual pages across them by dragging thumbnails. It works even with
 nothing open, and the result is a new, unsigned document (Save As to keep it).
 
-Changed your mind? **↶ Undo** / **↷ Redo** (Ctrl+Z / Ctrl+Shift+Z, on the **Edit**
-tab) step back and forth through document operations — rotate, delete, reorder,
+Changed your mind? **↶ Undo** / **↷ Redo** (the arrows in the toolbar, or Ctrl+Z /
+Ctrl+Shift+Z) step back and forth through document operations — rotate, delete, reorder,
 crop, split, page numbers, outline and metadata edits — for the open document.
 The same Ctrl+Z also undoes overlays you place — a stamp, border, shape, note,
 cover-edit, or sign/date/initial flag — and dragging or resizing one, so one
