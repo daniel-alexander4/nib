@@ -9662,8 +9662,8 @@ async function scanTextMatches(patterns, owner = view) {
         }
       }
     }
-    // Place this page's matches from the map where it can (ADR-090). The estimates above stand for whatever it
-    // cannot: a page the server cannot map, a turned run, an OCR layer.
+    // Place this page's matches from the map where it can (ADR-090; an OCR layer's words are read out to the next
+    // word, ADR-091). The estimates above stand for whatever it cannot: a page the server cannot map, a turned run.
     const map = await pageMap(owner, n);
     if (!map) continue;
     const placed = placeMatches(marks.splice(first).map((m) => [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]), matchesInMap(map, patterns));

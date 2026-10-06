@@ -67,11 +67,53 @@ test('a ligature is one glyph: a match inside it takes the whole glyph', () => {
   assert.deepEqual(pts(got[0]).filter((_, i) => i % 2 === 0), [105.25, 124.75]);
 });
 
-test('hidden text and runs without glyph boundaries are not placed from the map', () => {
-  assert.deepEqual(matchesInMap(page([run(100, 200, 'secret', { hidden: true })]), [re('secret')]), []);
+test('a run without glyph boundaries is not placed from the map', () => {
   const bare = run(100, 200, 'secret'); delete bare.cuts;
   assert.deepEqual(matchesInMap(page([bare]), [re('secret')]), []);
   assert.deepEqual(matchesInMap(null, [re('secret')]), []);
+});
+
+// An OCR layer: each word its own hidden run, starting where the scanned word starts and narrower than it.
+const ocr = (x, y, str) => run(x, y, str, { hidden: true });
+const xs = (r) => [r[0] * W, r[2] * W].map((n) => Math.round(n * 100) / 100);
+const ys = (r) => [r[1] * H, r[3] * H].map((n) => Math.round(n * 100) / 100);
+
+test('a hidden word is boxed out to the next hidden word on its line, because the scanned word is wider than its stamp', () => {
+  // "secret" is stamped 36pt wide at 100; the next word starts at 160. The scanned word ends somewhere before that.
+  const got = matchesInMap(page([ocr(100, 200, 'secret'), ocr(160, 200, 'word')]), [re('secret')]);
+  assert.equal(got.length, 1);
+  assert.deepEqual(xs(got[0]), [99.25, 160.25], 'the box stops half a point short of the next word, plus its own pad');
+  // And it is taller than the stamp: the stamp sat above the bottom of the ink. A quarter of the 10pt size each way.
+  assert.deepEqual(ys(got[0]), [197, 215]);
+});
+
+test('the stretch is never past the next word, never more than 2.5 of the stamp, and never a shrink', () => {
+  // The next word is a column away: 2.5 x 36 = 90, not the 300 to the next run.
+  assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret'), ocr(400, 200, 'word')]), [re('secret')])[0]), [99.25, 190.75]);
+  // The last word on its line has no next word to stop at: the same ceiling.
+  assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret')]), [re('secret')])[0]), [99.25, 190.75]);
+  // A layer whose glyphs already reach the next word — another tool's, stretched when it was written — has no room,
+  // and is read exactly as it is.
+  assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret'), ocr(136.5, 200, 'word')]), [re('secret')])[0]), [99.25, 136.75]);
+  // ...and one whose next word starts INSIDE it is not shrunk to fit.
+  assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret'), ocr(130, 200, 'word')]), [re('secret')])[0]), [99.25, 136.75]);
+});
+
+test('part of a hidden word is stretched in proportion, and a word on another line is not "the next word"', () => {
+  // Stretch 60/36: "cre" is glyphs 2..4, 112..130 unstretched → 100 + 12 x 59.5/36 .. 100 + 30 x 59.5/36.
+  const got = matchesInMap(page([ocr(100, 200, 'secret'), ocr(160, 200, 'word')]), [re('cre')]);
+  assert.deepEqual(xs(got[0]), [119.08, 150.33]);
+  // The run at 160 is a line lower: it bounds nothing here.
+  assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret'), ocr(160, 230, 'word')]), [re('secret')])[0]), [99.25, 190.75]);
+});
+
+test('print and an OCR layer are two layers: neither joins the other\'s line, and print is never stretched', () => {
+  // Visible "sec" directly followed by hidden "ret" on one line is not the word "secret".
+  assert.equal(matchesInMap(page([run(100, 200, 'sec'), ocr(118, 200, 'ret')]), [re('secret')]).length, 0);
+  // A hidden run to the right does not stretch print, and print does not bound a hidden run.
+  assert.deepEqual(xs(matchesInMap(page([run(100, 200, 'secret'), ocr(160, 200, 'word')]), [re('secret')])[0]), [99.25, 136.75]);
+  assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret'), run(160, 200, 'word')]), [re('secret')])[0]), [99.25, 190.75]);
+  assert.deepEqual(ys(matchesInMap(page([run(100, 200, 'secret')]), [re('secret')])[0]), [199.5, 212.5], 'print took the hidden layer\'s extra height');
 });
 
 test('an estimated box is replaced only by an exact box that holds its centre', () => {

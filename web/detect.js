@@ -905,15 +905,31 @@ export function mergeProposals(fromMap, fromPicture) {
 const MATCH_PAD_X = 0.75, MATCH_PAD_Y = 0.5; // points past the glyphs' own boxes: ink overhangs an advance, slightly
 const WORD_GAP = 0.15;                       // of the font size: a wider gap between two runs is a space
 
-// matchesInMap runs `patterns` (global RegExps) over the page's visible text as the map has it, and returns one box
-// per match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right.
+// A stamped OCR word is narrower than the scanned word it stands for. Measured on two scans (3,855 words): its width
+// is a median 0.72 of the word's, so the ink runs a median 3-4.5pt past its last glyph, 9-12pt at the ninetieth
+// percentile — and a redaction drawn to the glyphs left the end of the word showing in 30 of 40 searches. What IS
+// true of a stamped word is where it starts, so a hidden run is read as stretching toward the next hidden run on its
+// line: never past it, and never more than HIDDEN_STRETCH_MAX of its own width (the ninety-ninth percentile needed
+// 2.14). A layer whose glyphs already span their words has no room to stretch into, and is read as it is.
+const HIDDEN_STRETCH_MAX = 2.5;
+const HIDDEN_PAD_Y = 0.25; // of the font size: the stamped box sat a point above the bottom of the ink
+
+// matchesInMap runs `patterns` (global RegExps) over the page's text as the map has it, and returns one box per
+// match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right.
 //
-// Only runs whose glyph boundaries are known take part (an upright run on an unturned page), and hidden text does
-// not: an OCR layer's glyphs say where the invisible words were stamped, not where the scanned ink is. What this
-// cannot place, the estimate still does — see placeMatches.
+// Only runs whose glyph boundaries are known take part (an upright run on an unturned page). Visible text and hidden
+// text — an OCR layer — are searched as two layers, never joined into one line; a hidden run's boundaries are
+// stretched as above. What this cannot place, the estimate still does — see placeMatches.
 export function matchesInMap(map, patterns) {
   if (!map || !map.text) return [];
-  const runs = map.text.filter((t) => !t.hidden && t.cuts && t.chars && t.cuts.length === t.chars.length + 1);
+  const known = map.text.filter((t) => t.cuts && t.chars && t.cuts.length === t.chars.length + 1);
+  return [
+    ...layerMatches(map, patterns, known.filter((t) => !t.hidden), false),
+    ...layerMatches(map, patterns, known.filter((t) => t.hidden), true),
+  ];
+}
+
+function layerMatches(map, patterns, runs, hidden) {
   const rows = [];
   for (const t of runs.slice().sort((a, b) => a.rect[1] - b.rect[1])) {
     const mid = (t.rect[1] + t.rect[3]) / 2, tall = t.rect[3] - t.rect[1];
@@ -923,6 +939,15 @@ export function matchesInMap(map, patterns) {
   const out = [];
   for (const row of rows) {
     row.runs.sort((a, b) => a.rect[0] - b.rect[0]);
+    // How far each run's glyph boundaries are stretched from its start: 1 for print.
+    const stretch = row.runs.map((t, k) => {
+      if (!hidden) return 1;
+      const wide = t.rect[2] - t.rect[0];
+      const next = row.runs.slice(k + 1).find((u) => u.rect[0] > t.rect[0] + 1 / map.width);
+      const room = next ? (next.rect[0] - 0.5 / map.width - t.rect[0]) / wide : HIDDEN_STRETCH_MAX;
+      return Math.max(1, Math.min(HIDDEN_STRETCH_MAX, room));
+    });
+    const cut = (g, i) => g.t.rect[0] + (g.t.cuts[i] - g.t.rect[0]) * stretch[g.k];
     // The row as a string, each character knowing which glyph of which run drew it (null: a space between runs).
     let s = '';
     const at = [];
@@ -932,7 +957,7 @@ export function matchesInMap(map, patterns) {
         const gapPt = (t.rect[0] - prev.rect[2]) * map.width, sizePt = Math.min(t.size, prev.size) * map.height;
         if (gapPt > WORD_GAP * sizePt && !/\s$/.test(s)) { s += ' '; at.push(null); }
       }
-      t.chars.forEach((c, i) => { for (const ch of c) { s += ch; at.push({ t, i }); } });
+      t.chars.forEach((c, i) => { for (const ch of c) { s += ch; at.push({ t, i, k }); } });
     });
     for (const re of patterns) {
       re.lastIndex = 0;
@@ -943,8 +968,9 @@ export function matchesInMap(map, patterns) {
         for (let k = m.index; k < m.index + m[0].length; k++) {
           const g = at[k];
           if (!g || !s[k].trim()) continue; // a space takes no ink
-          x0 = Math.min(x0, g.t.cuts[g.i]); x1 = Math.max(x1, g.t.cuts[g.i + 1]);
-          y0 = Math.min(y0, g.t.rect[1]); y1 = Math.max(y1, g.t.rect[3]);
+          const padY = hidden ? HIDDEN_PAD_Y * g.t.size : 0;
+          x0 = Math.min(x0, cut(g, g.i)); x1 = Math.max(x1, cut(g, g.i + 1));
+          y0 = Math.min(y0, g.t.rect[1] - padY); y1 = Math.max(y1, g.t.rect[3] + padY);
         }
         if (!(x1 > x0)) continue;
         out.push([x0 - MATCH_PAD_X / map.width, y0 - MATCH_PAD_Y / map.height, x1 + MATCH_PAD_X / map.width, y1 + MATCH_PAD_Y / map.height]);
