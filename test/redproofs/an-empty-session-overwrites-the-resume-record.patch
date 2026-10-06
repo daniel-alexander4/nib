@@ -1,0 +1,12 @@
+diff --git a/internal/server/lastopen.go b/internal/server/lastopen.go
+--- a/internal/server/lastopen.go
++++ b/internal/server/lastopen.go
+@@ -42,7 +42,7 @@
+ 		paths = append(paths, d.path)
+ 	}
+ 	s.mu.Unlock()
+-	if len(paths) == 0 {
++	if len(paths) == 0 && false {
+ 		if pathless > 0 {
+ 			log.Printf("%s %d open, none with a file behind it", lastOpenSkippedMsg, pathless)
+ 		}

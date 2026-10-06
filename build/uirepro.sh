@@ -285,7 +285,9 @@ fi
 # where focus LANDS after the sheet goes, which jsdom cannot see.
 # 42 since PLAN-returned-document P03.S02 (returnedverdict.test.mjs): a document signed in-app, opened back, and the
 # sheet's verdict — the one place the whole chain (signerWhose, the route, the wording) runs for real.
-expect_files=42
+# 43 since ADR-085 (pan.test.mjs): a page dragged by a real mouse, by the distance the mouse moved, and the
+# record a real window leaves when its stream drops — neither exists without layout and a socket.
+expect_files=43
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

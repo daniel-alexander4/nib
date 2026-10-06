@@ -20,6 +20,7 @@ import (
 	"nib/internal/atomicfile"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -353,6 +354,10 @@ type Contents struct {
 	// NOT key material, and D29 does not say the vault is only for that — this file already holds
 	// the appearance and the recent highlight colours.
 	CeremonyDraft string `json:"ceremonyDraft,omitempty"`
+	// LastOpen is the file paths open when the last window closed, in tab order — what "Resume
+	// last session" reopens (ADR-085). Paths only: a document with no file behind it and an
+	// unsaved edit are both absent, and in the vault for `Recent`'s reason.
+	LastOpen []string `json:"lastOpen,omitempty"`
 }
 
 // contentsVersion is what this build writes into Contents, and the highest it will open.
@@ -1511,6 +1516,27 @@ func (v *Vault) AddRecent(path string) error {
 		}
 	}
 	return v.mutateLocked(func() { v.contents.Recent = out })
+}
+
+// LastOpen returns a copy of the file paths that were open when Nib's last window closed, in tab
+// order (ADR-085).
+func (v *Vault) LastOpen() []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]string(nil), v.contents.LastOpen...)
+}
+
+// SetLastOpen replaces the recorded set and persists. A set equal to the stored one writes
+// nothing: the window stream records on every last-window-gone, a reload included, and a reload
+// changes no answer.
+func (v *Vault) SetLastOpen(paths []string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if slices.Equal(v.contents.LastOpen, paths) {
+		return nil
+	}
+	out := append([]string(nil), paths...)
+	return v.mutateLocked(func() { v.contents.LastOpen = out })
 }
 
 func newID() string {

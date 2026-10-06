@@ -618,6 +618,7 @@ function applyStatus(st) {
           if (notice) toast(notice);
           const initial = params.get('open');
           if (initial) openOrActivate(initial).catch((e) => toast('could not open: ' + e.message));
+          refreshResume();
         });
     }
     return;
@@ -2697,6 +2698,7 @@ function newView() {
   // of truth rather than a second one.
   if (viewLayout === 'continuous') pagesEl.classList.add(CONTINUOUS_CLASS, 'nibJoined');
   v.container.appendChild(pagesEl);
+  watchPannable(v, pagesEl);
   const isFirstView = els.viewerWrap.querySelector('.viewerContainer') === null;
   els.viewerWrap.insertBefore(v.container, els.empty);
 
@@ -3191,6 +3193,7 @@ function repaintForActiveView() {
   all('[data-mode]:not(.cmmode)').forEach((t) => setArmed(t, t.dataset.mode === view.activeTool));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = anyToolArmed() ? 'crosshair' : '';
+  reflectPanCursor(); // the view changed, and the editor mode is per view
 }
 
 function anyToolArmed() {
@@ -3701,6 +3704,7 @@ function closeDocument() {
 
   // Back to the launch markup, not merely to something empty (index.html).
   els.viewerWrap.classList.remove('has-doc');
+  refreshResume();
   els.saveBtn.disabled = true;
   els.saveBtn.title = 'Save (overwrites the original)';
   all('.pageCount').forEach((s) => { s.textContent = '/ 0'; });
@@ -9025,6 +9029,93 @@ function pageAt(x, y) {
   }
   return null;
 }
+
+// ── Drag to pan ──────────────────────────────────────────────────────────────────────────────
+//
+// With no tool armed, a mouse drag on the page scrolls the view, the way a hand moves a sheet of
+// paper. It is the eleventh `pointerdown` on #viewerWrap and it answers the same two questions
+// the ten tools do — whose view, whose gesture — plus one of its own: whose DRAG. A drag that
+// starts on a run of text is a selection and stays one; on a field, a link, an editor or an
+// overlay it is that thing's. Everywhere else it is the page's, and the page moves.
+//
+// **The middle button pans from anywhere**, text included, because on a page that is mostly text
+// there may be nowhere else to take hold.
+//
+// **Nothing is cancelled at pointerdown for the left button, and that is deliberate.** Cancelling
+// it would also cancel what a plain click does — moving focus out of a form field, dropping a
+// text selection — and a click that never becomes a drag must stay a click. The one default a
+// drag must not have is starting a selection from the blank part of the text layer, and
+// `selectstart` refuses exactly that, only while a pan is pending.
+const PAN_SLOP = 4; // px the pointer travels before a press becomes a drag
+const PAN_NEVER = '.ovl, input, textarea, select, button, a, [contenteditable="true"], '
+  + '.annotationLayer section, .annotationEditorLayer > *';
+const PAN_TEXT = '.textLayer span:not(.markedContent), .textLayer br';
+let pan = null; // { id, box, x, y, left, top, moved }
+
+function canPan(box) {
+  return box.scrollWidth > box.clientWidth || box.scrollHeight > box.clientHeight;
+}
+
+// panBlocked: a tool owns the pointer. Read by the handler AND by the cursor, so the hand is never
+// offered where a press would draw.
+function panBlocked() {
+  return anyToolArmed() || !!view.activeTool;
+}
+
+// reflectPanCursor is the one place the wrap learns whether the hand may show. The ten tools each
+// write the wrap's inline cursor at their own arm and disarm sites; watching that attribute
+// reaches all of them without a call at each, and the two writers of the pdf.js editor mode call this directly.
+function reflectPanCursor() {
+  // An attribute and not a class: the wrap's className is `has-doc` or empty, and tests at two
+  // tiers read it whole.
+  els.viewerWrap.toggleAttribute('data-no-pan', panBlocked());
+}
+new MutationObserver(reflectPanCursor).observe(els.viewerWrap, { attributes: true, attributeFilter: ['style'] });
+
+// watchPannable keeps `.can-pan` true of a view exactly while its pages overflow its scroll box,
+// so the hand is shown only where a drag would move something. One observer per view, on both
+// boxes: a zoom resizes the pages, a window resize the container.
+function watchPannable(v, pagesEl) {
+  if (typeof ResizeObserver !== 'function') return; // jsdom: no layout to observe
+  const ro = new ResizeObserver(() => v.container.classList.toggle('can-pan', canPan(v.container)));
+  ro.observe(v.container);
+  ro.observe(pagesEl);
+}
+
+els.viewerWrap.addEventListener('pointerdown', (e) => {
+  const anywhere = e.button === 1;
+  if (e.button !== 0 && !anywhere) return;
+  if (e.pointerType && e.pointerType !== 'mouse') return; // touch and pen scroll natively
+  if (panBlocked()) return;
+  if (!startedInActiveView(e)) return;
+  if (e.target.closest(PAN_NEVER)) return;
+  if (!anywhere && e.target.closest(PAN_TEXT)) return;
+  const box = view.container;
+  if (!canPan(box)) return;
+  pan = { id: e.pointerId, box, x: e.clientX, y: e.clientY, left: box.scrollLeft, top: box.scrollTop, moved: false };
+  if (anywhere) e.preventDefault(); // the middle button's own autoscroll
+});
+els.viewerWrap.addEventListener('pointermove', (e) => {
+  if (!pan || e.pointerId !== pan.id) return;
+  const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+  if (!pan.moved) {
+    if (Math.abs(dx) < PAN_SLOP && Math.abs(dy) < PAN_SLOP) return;
+    pan.moved = true;
+    pan.box.classList.add('panning');
+    // Captured so the drag survives leaving the viewer; refused capture only costs that.
+    try { pan.box.setPointerCapture(pan.id); } catch { /* the pointer is already gone */ }
+  }
+  pan.box.scrollLeft = pan.left - dx;
+  pan.box.scrollTop = pan.top - dy;
+});
+function endPan(e) {
+  if (!pan || (e && e.pointerId !== pan.id)) return;
+  pan.box.classList.remove('panning');
+  pan = null;
+}
+els.viewerWrap.addEventListener('pointerup', endPan);
+els.viewerWrap.addEventListener('pointercancel', endPan);
+els.viewerWrap.addEventListener('selectstart', (e) => { if (pan) e.preventDefault(); });
 // ── Accessible names for icon-only buttons — `PLAN-accessibility.md` P02.S03, WCAG SC 4.1.2 ──
 //
 // **A `title` is a name of last resort, and for two buttons it was the only one.** The ARIA
@@ -11105,6 +11196,35 @@ async function refreshRecent() {
     list.appendChild(li);
   }
 }
+// Resume last session (ADR-085). Closing Nib closes its documents; this is how the user asks for
+// them back. The button lives in the launch state and nowhere else, and is asked for each time
+// that state is shown, so it is never stale and nothing has to refresh it in between.
+//
+// Only FILES come back, read from disk as any open reads them: a document that had no file behind
+// it, and an edit that was never saved, are not in the record.
+async function refreshResume() {
+  const btn = $('resumeBtn');
+  let last = [];
+  try {
+    const res = await apiFetch('/api/lastopen', { unpinned: true });
+    last = (res.ok ? await res.json() : []) || [];
+  } catch { /* locked or unreachable: there is nothing to offer */ }
+  btn.hidden = !last.length;
+  // The bare name when there is nothing to count: a button with no text has no accessible name,
+  // hidden or not, and the markup carries the same words for the same reason.
+  btn.textContent = 'Resume last session' + (last.length
+    ? ' — ' + last.length + (last.length === 1 ? ' document' : ' documents')
+    : '');
+  btn.title = last.map((e) => e.name).join(', ');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      // One at a time and in tab order; openPath says why any one of them did not open.
+      for (const e of last) await openOrActivate(e.path);
+    } finally { btn.disabled = false; }
+  };
+}
+
 $('openRecentBtn').onclick = async () => {
   await refreshRecent();
   $('recentModal').hidden = false;
@@ -11127,6 +11247,7 @@ function setTool(mode) {
   // and calls no door. Depth two, always.
   if (on) disarmEditingTools();
   view.activeTool = on ? mode : null;
+  reflectPanCursor();
   view.viewer.annotationEditorMode = {
     mode: view.activeTool ? pdfjsLib.AnnotationEditorType[view.activeTool] : pdfjsLib.AnnotationEditorType.NONE,
   };
@@ -12318,6 +12439,7 @@ function resetSharedDocState(owner = view) {
   if (view.redactMode) { view.redactMode = false; reflectRedact(); }
   if (view.editMode) { view.editMode = false; reflectEdit(); }
   view.activeTool = null;
+  reflectPanCursor();
   document.querySelectorAll('[data-mode]:not(.cmmode)').forEach((b) => setArmed(b, false));
   reflectAnnoControls();
   els.viewerWrap.style.cursor = '';

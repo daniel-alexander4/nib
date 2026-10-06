@@ -1,0 +1,12 @@
+diff --git a/internal/server/handoff.go b/internal/server/handoff.go
+--- a/internal/server/handoff.go
++++ b/internal/server/handoff.go
+@@ -90,7 +90,7 @@
+ 	// process would have exited and the launch would have found nothing open; arriving inside the
+ 	// grace must not be the one case where closing Nib does not close its documents. Before the
+ 	// path is read, so a file handed off here is opened from disk like any first open.
+-	if afterLastWindow {
++	if afterLastWindow && false {
+ 		s.endSessionForLaunch()
+ 	}
+ 

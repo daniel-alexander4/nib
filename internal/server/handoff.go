@@ -81,9 +81,17 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// **And a process that has already decided to exit refuses** (/pending 727): it would open the
 	// document and then tear down under it. A non-200 sends the launch on to serve the file itself
 	// (`handedOff` in cmd/nib), which is the one outcome where the document is not lost.
-	if !s.keepAliveForHandoff() {
+	alive, afterLastWindow := s.keepAliveForHandoff()
+	if !alive {
 		httpError(w, http.StatusServiceUnavailable, "this Nib is exiting")
 		return
+	}
+	// **A launch after the last window closed starts fresh (ADR-085).** Ten seconds later this
+	// process would have exited and the launch would have found nothing open; arriving inside the
+	// grace must not be the one case where closing Nib does not close its documents. Before the
+	// path is read, so a file handed off here is opened from disk like any first open.
+	if afterLastWindow {
+		s.endSessionForLaunch()
 	}
 
 	var req handoffRequest

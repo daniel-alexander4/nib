@@ -1121,6 +1121,16 @@ input.ovl-check { appearance: auto; accent-color: #1a7f37; background: transpare
   pointer-events: none;
 }
 #viewerWrap.has-doc #empty { display: none; }
+/* Resume last session: under the launch sentence, and gone with it. */
+#resumeBtn { position: absolute; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); }
+#viewerWrap.has-doc #resumeBtn { display: none; }
+
+/* Drag to pan. The hand is offered only where a press would move the page: the view overflows
+   (.can-pan, kept by a ResizeObserver) and no tool owns the pointer ([data-no-pan]). It is set on the
+   page and inherited, so text keeps pdf.js's I-beam and a link its pointer. */
+#viewerWrap:not([data-no-pan]) .viewerContainer.can-pan .page { cursor: grab; }
+#viewerWrap .viewerContainer.panning,
+#viewerWrap .viewerContainer.panning * { cursor: grabbing; user-select: none; }
 
 /* menu-bar dropdowns: shown when the parent .menu has .open */
 .menu { position: relative; }

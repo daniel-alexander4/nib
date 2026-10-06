@@ -651,3 +651,7 @@ home today.
   text became the unknown operator `TjET`; `pdfread.SeparateContents` puts a `\n` stream wherever the door separates,
   before every such call (census-guarded), so the carries read the door again. The census also sees `/Contents` key
   reads (`resourceprune.go` was invisible), and the door decodes a repeated stream once.
+- **[ADR-085 — a launch into a windowless Nib is a new session, and what was open is remembered by path](085-a-launch-into-a-windowless-nib-is-a-new-session.md)**
+  — a launch inside the 10 s exit grace was handed to the old process and reopened everything the closed window held.
+  A hand-off that cancels a grace now closes those documents; a reload keeps them. The open paths are recorded in the
+  vault when the last window goes and on Quit, and *Resume last session* reopens them.

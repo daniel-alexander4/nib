@@ -955,6 +955,9 @@
            several exist at once; the wrap is the one stable node, and it is what the
            drawing tools listen on. -->
         <div id="empty">Open a PDF to begin.</div>
+        <!-- Resume last session (ADR-085): a SIBLING of #empty, not a child, because #empty is
+             pointer-events:none and its text is the launch state three tiers assert on. -->
+        <button id="resumeBtn" type="button" hidden>Resume last session</button>
       </div>
     </div>
   </main>

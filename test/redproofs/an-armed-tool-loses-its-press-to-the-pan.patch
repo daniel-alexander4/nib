@@ -1,0 +1,11 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -9086,7 +9086,6 @@
+   const anywhere = e.button === 1;
+   if (e.button !== 0 && !anywhere) return;
+   if (e.pointerType && e.pointerType !== 'mouse') return; // touch and pen scroll natively
+-  if (panBlocked()) return;
+   if (!startedInActiveView(e)) return;
+   if (e.target.closest(PAN_NEVER)) return;
+   if (!anywhere && e.target.closest(PAN_TEXT)) return;
