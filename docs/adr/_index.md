@@ -655,3 +655,8 @@ home today.
   — a launch inside the 10 s exit grace was handed to the old process and reopened everything the closed window held.
   A hand-off that cancels a grace now closes those documents; a reload keeps them. The open paths are recorded in the
   vault when the last window goes and on Quit, and *Resume last session* reopens them.
+- **[ADR-086 — a launch into a running Nib is a tab in the window that is already open](086-a-launch-into-a-running-nib-is-a-tab-in-its-window.md)**
+  — the open window could not hear a hand-off, so every launch made another window showing everything. The hand-off is
+  pushed on the window stream and the launch opens a window only when none has it; launches that start together become
+  one Nib; `?open=` is spent once; a session's end clears its locked queue. A covered window is raised on X11 when a
+  helper exists and marks its title otherwise.

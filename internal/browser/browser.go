@@ -40,7 +40,7 @@ func Open(url string) (*exec.Cmd, error) {
 			// nib.desktop (StartupWMClass=Nib) and show the themed icon —
 			// rasterized sharply at the panel's size — instead of upscaling
 			// the small icon Chromium derives from the page favicon.
-			appArgs = append(appArgs, "--class=Nib")
+			appArgs = append(appArgs, "--class="+windowClass)
 		}
 		cmd := exec.Command(path, appArgs...)
 		if err := cmd.Start(); err == nil {

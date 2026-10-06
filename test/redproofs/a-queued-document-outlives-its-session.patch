@@ -1,0 +1,11 @@
+diff --git a/internal/server/lastopen.go b/internal/server/lastopen.go
+--- a/internal/server/lastopen.go
++++ b/internal/server/lastopen.go
+@@ -77,7 +77,6 @@
+ 	// A path handed to the closed session while it was locked belongs to that session too: left
+ 	// queued, it opens at this launch's unlock beside the one document the launch asked for.
+ 	queued := len(s.pendingOpens)
+-	s.pendingOpens = nil
+ 	s.mu.Unlock()
+ 	if queued > 0 {
+ 		log.Printf("%s %d queued while locked, dropped", sessionEndedMsg, queued)

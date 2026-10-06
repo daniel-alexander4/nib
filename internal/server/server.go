@@ -194,6 +194,10 @@ type Server struct {
 
 	// windows counts the windows currently holding a stream open; see window.go.
 	windows liveWindows
+
+	// push carries hand-offs to the open windows and remembers a window that was asked for and
+	// has not connected yet; see handoffpush.go (ADR-086).
+	push handoffPush
 	// idleExit is D2's answer for THIS process: did it launch a browser, and is it therefore
 	// waiting for a window at all. Set once at startup through `ArmIdleExit`; read by P01.S04.
 	idleExit atomic.Bool

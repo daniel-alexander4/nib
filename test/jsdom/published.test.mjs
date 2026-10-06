@@ -156,6 +156,10 @@ const PUBLISHED = [
   // `path` as the destination the user is shown — the thing the old browser-owned download could
   // never name.
   { type: 'downloadEvent', readers: ['web/app.js'] },
+  // A launch's document arriving in a window that is already open (ADR-086), the stream's third
+  // event type. Read by `applyHandoffEvent`: `result` decides between showing the document and
+  // saying the launch's notice.
+  { type: 'handoffEvent', readers: ['web/app.js'] },
   { type: 'receivedInfo', readers: ['web/app.js'] },
   // The sticky session-failure surface (P08.S08, C03). It sat in NEITHER table from v1.117.243
   // until v1.117.262 — so tier 2 was red for five commits and this scan was the thing saying so.

@@ -1,0 +1,11 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -619,7 +619,6 @@
+           if (params.has('open') || params.has('notice')) {
+             params.delete('open'); params.delete('notice');
+             const rest = params.toString();
+-            history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+           }
+           if (initial) openOrActivate(initial).catch((e) => toast('could not open: ' + e.message));
+           refreshResume();

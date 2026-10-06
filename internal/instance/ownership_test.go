@@ -184,7 +184,7 @@ func TestAHandOffThatOutlastsItsWaitIsNotAFailure(t *testing.T) {
 	defer slow.Close()
 	defer close(release)
 	rec := Record{Addr: strings.TrimPrefix(slow.URL, "http://"), Token: "t", Handoff: "h"}
-	if _, _, _, err := HandOff(rec, "/tmp/large.pdf", "test"); !errors.Is(err, ErrHandOffUnanswered) {
+	if _, err := HandOff(rec, "/tmp/large.pdf", "test"); !errors.Is(err, ErrHandOffUnanswered) {
 		t.Errorf("a hand-off that outlasted its wait returned %v, want ErrHandOffUnanswered — the launch reads any other error as \"become the primary\"", err)
 	}
 
@@ -194,7 +194,7 @@ func TestAHandOffThatOutlastsItsWaitIsNotAFailure(t *testing.T) {
 	}
 	dead := ln.Addr().String()
 	ln.Close()
-	if _, _, _, err := HandOff(Record{Addr: dead, Token: "t", Handoff: "h"}, "/tmp/x.pdf", "test"); err == nil || errors.Is(err, ErrHandOffUnanswered) {
+	if _, err := HandOff(Record{Addr: dead, Token: "t", Handoff: "h"}, "/tmp/x.pdf", "test"); err == nil || errors.Is(err, ErrHandOffUnanswered) {
 		t.Errorf("a refused hand-off returned %v; nothing has the request, so it must not read as unanswered", err)
 	}
 }

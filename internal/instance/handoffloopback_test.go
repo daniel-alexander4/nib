@@ -14,7 +14,7 @@ func TestHandOffRefusesANonLoopbackRecord(t *testing.T) {
 	// Unroutable documentation addresses only: with the check removed (the red probe) HandOff really
 	// dials, and a resolvable name would send a request off the machine.
 	for _, addr := range []string{"203.0.113.5:1234", "[2001:db8::1]:80", "no-port"} {
-		_, _, _, err := HandOff(Record{Addr: addr, Handoff: "secret"}, "", "test")
+		_, err := HandOff(Record{Addr: addr, Handoff: "secret"}, "", "test")
 		if !errors.Is(err, ErrNotLoopback) {
 			t.Errorf("HandOff to %q returned %v; it must refuse the address before sending the secret", addr, err)
 		}

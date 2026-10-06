@@ -11,7 +11,9 @@
 // session boundary must not move — the documents are still there when the page comes back.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, shutdown } from './harness.mjs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { launch, shutdown, WORK } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const A = writeFixture('pan-a.pdf', { pages: 3, label: 'pan A page' });
@@ -127,4 +129,28 @@ test('a reload keeps its documents, and what was open is offered back from the l
   const names = () => page.$$eval('#tabstrip .tab', (e) => e.map((t) => (/pan-[ab]\.pdf/.exec(t.textContent) || ['?'])[0]));
   await page.waitForFunction(() => [...document.querySelectorAll('#tabstrip .tab')].filter((t) => /pan-[ab]\.pdf/.test(t.textContent)).length === 2);
   assert.deepEqual(await names(), ['pan-a.pdf', 'pan-b.pdf'], 'the resumed documents are not the recorded ones, in tab order');
+});
+
+// ADR-086. The launch is the REAL binary, started the way a double-click starts it, against the Nib
+// this window belongs to: it must hand the file over, exit, and ask for no window — and the window
+// that is already open must show the document without being reloaded.
+test('a second launch arrives as a tab in the window that is already open', async () => {
+  const C = writeFixture('pan-c.pdf', { pages: 1, label: 'pan C page' });
+  const count = () => page.$$eval('#tabstrip .tab', (e) => e.length);
+  const before = await count();
+  assert.ok(before >= 1, 'setup: no document is open, so "a tab beside the others" is not what this would show');
+  const loads = await page.evaluate(() => performance.getEntriesByType('navigation').length);
+
+  const out = spawnSync(path.join(WORK, 'nib'), [C], {
+    env: { ...process.env, HOME: path.join(WORK, 'home'), XDG_CONFIG_HOME: path.join(WORK, 'config'), NIB_NO_BROWSER: '1', NIB_NO_UPDATE_CHECK: '1' },
+    encoding: 'utf8', timeout: 60000,
+  });
+  assert.equal(out.status, 0, 'the second launch did not hand off and exit:\n' + out.stderr);
+  assert.match(out.stderr, /its open window has the document/, 'the launch was not told a window has it:\n' + out.stderr);
+  // Headless, "opening a window" is logging its URL; a launch that still surfaces one logs this.
+  assert.doesNotMatch(out.stderr, /open Nib at/, 'the launch asked for a second window:\n' + out.stderr);
+
+  await page.waitForFunction((n) => document.querySelectorAll('#tabstrip .tab').length === n + 1, before);
+  await page.waitForFunction(() => /pan-c\.pdf/.test(document.querySelector('#tabstrip .tab[aria-selected="true"]')?.textContent || ''));
+  assert.equal(await page.evaluate(() => performance.getEntriesByType('navigation').length), loads, 'the window was reloaded to show it');
 });

@@ -1,0 +1,12 @@
+diff --git a/internal/server/handoffpush.go b/internal/server/handoffpush.go
+--- a/internal/server/handoffpush.go
++++ b/internal/server/handoffpush.go
+@@ -148,7 +148,7 @@
+ 	case n > 0:
+ 		s.push.announce(result)
+ 		log.Printf("%s %s (%d open)", handoffTakenMsg, result, n)
+-		return true
++		return false
+ 	case result != "refused" && s.push.expected():
+ 		log.Printf("%s %s", handoffAwaitsItsOwnW, result)
+ 		return true
