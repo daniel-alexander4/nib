@@ -28,6 +28,8 @@ import {
   dedupeGroups,
   buildTextRows,
   refineFields,
+  proposeFields,
+  mergeProposals,
 } from './detect.js';
 import { docLangForLocale } from './doclang.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
@@ -13039,11 +13041,15 @@ els.detectBtn.onclick = async () => {
   const map = await pageMap(owner, n);
   if (seq !== detectSeq || owner !== view) return;
   const refined = map ? refineFields(cands, map) : { fields: cands, dropped: 0 };
-  for (const c of refined.fields) {
+  // Where the page draws its own lines and text, the fields are read from those (ADR-089), and the picture adds
+  // only what the lines do not show.
+  const drawn = proposeFields(map);
+  for (const c of mergeProposals(drawn, refined.fields)) {
     makeField(c.kind, c.rect, { page: n, pageW, pageH, choices: c.choices }, pv, owner);
     added++;
   }
-  const how = map ? '' : ' (placed from the page image alone: this page could not be read for its text and lines)';
+  const how = !map ? ' (placed from the page image alone: this page could not be read for its text and lines)'
+    : drawn.length ? ' (' + drawn.length + ' read from the lines the page draws)' : '';
   toast(added ? `Added ${added} fillable field(s) — fill, then Save${how}` : 'Nothing detected on this page');
 };
 

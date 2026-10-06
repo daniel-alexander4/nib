@@ -74,14 +74,18 @@ print-only forms with no fields, the **Text** tool lets you type anywhere on the
 page.
 
 ### Smart field detection
-Press **Detect** and Nib scans the page, then drops fillable widgets where they
-belong:
+Press **Detect** and Nib drops fillable widgets where they belong. On a form made
+by a program it reads the page's own ruled lines and text — so a table cell with
+its label printed inside it becomes a field under the label, exactly as wide as
+the cell — and on a scan it reads the picture of the page:
 
 - **Blank lines** → a text box above every fill-in rule, including the faint
   light-gray lines on modern forms.
 - **Boxes** → a field inside each empty box (boxes that already contain text are
   skipped).
-- **Tables** → one input per blank cell.
+- **Tables** → one input per cell, below or beside its printed label; a cell
+  two rows deep is one field.
+- **Typed blanks** → a field over every run of underscores.
 - **Checkboxes** → click to check.
 - **Circle-the-answer choices** → `Y / N`, option sets near a "(circle one)"
   note, pipe-separated lists on their own (`$5 | $10 | $25`), a labelled run of
@@ -89,7 +93,9 @@ belong:
   "(circle one)" governs (every `Male / Female` on the page, not just the first).
 
 It's a smart proposal, not magic — move, resize, retype, or ignore anything it
-suggests.
+suggests. Measured on real forms that carry their own fields as the answer key,
+it finds about nine in ten; it does least well where a form marks its blanks
+with shading and no lines.
 
 ### Turn a flat scan into a fillable form
 Run **Detect** on a flat or scanned form, then **File → Save as → Save as fillable

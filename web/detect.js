@@ -700,3 +700,197 @@ function clearOfText(box, text, ptX, ptY) {
   offer(at, x1);
   return best ? [best[0], y0, best[1], y1] : null;
 }
+
+// ── fields proposed FROM the page map (ADR-089) ──────────────────────────────
+//
+// refineFields corrects what a picture of the page proposed. On a page whose lines and text are drawn — a form made
+// by a program, not scanned — the map can propose the fields itself, because a form says where its blanks are in what
+// it draws: a table's cell is the room between two ruled lines and the uprights that join them, with its label in
+// the top; a blank to write on is a line with nothing above it, or a run of underscores; a checkbox is a small empty
+// square, or a box drawn as a character.
+//
+// Measured on two real grid forms before this existed: the picture found 18 of 70 and 16 of 78 real fields, because
+// a cell with a label in it is not blank by ink. Read from the map: 70 of 70 and 78 of 78.
+//
+// What it does NOT read, and the picture still does (the caller adds those): a blank bounded by shading and not by
+// lines — an IRS form's amount boxes — and anything on a page whose rules are an image.
+
+// A run that is only separators — the "-" between the parts of a phone number, the "/" in a date — stands INSIDE a
+// blank. It is print, and it is not a label.
+const SEPARATORS = /^[\s\-–—\/\\().,:;|_]*$/;
+// A box drawn as a character.
+const BOX_GLYPHS = new Set(['☐', '□', '❏', '❐', '❑', '❒', '▢', '◻', '◽', '▫']);
+const FIELD_MIN_W = 14, FIELD_MIN_H = 7; // points: the smallest thing to type in — refineFields' figures
+const GAP_MIN_W = 24;                    // a cell with two blanks in it: each must be at least this wide
+const ROW_MAX_H = 45;                    // two lines of equal width this close, with no uprights, are still a row
+const ABOVE_LINE = 15;                   // a field on a bare line stands one line's height above it
+const SQUARE_MAX = 20, SQUARE_MIN = 5;   // CHECKBOX_MAX_PT's figure: a checkbox is a size on the page
+const HEAVY = 1.6;                       // a bar thicker than this divides sections; nobody writes on it
+
+const overlaps = (a, b) => a[2] > b[0] && a[0] < b[2] && a[3] > b[1] && a[1] < b[3];
+
+// ruledLines reads the map's shapes as the lines of a form: every rule, a thin filled bar (how a heavy rule is often
+// drawn), and the four sides of a large open box. Pieces that continue one another are one line — a row's top edge
+// is commonly drawn as one piece per cell, and an upright two rows tall as two.
+function ruledLines(map, ptX, ptY) {
+  const tolX = 2.5 * ptX, tolY = 2.5 * ptY;
+  const hs = [], vs = [];
+  for (const s of map.shapes) {
+    const [x0, y0, x1, y1] = s.rect;
+    const w = (x1 - x0) / ptX, h = (y1 - y0) / ptY;
+    if (s.kind === 'h' || (s.kind === 'box' && s.filled && h <= 4 && w > 8)) hs.push({ y: (y0 + y1) / 2, x0, x1, heavy: h > HEAVY });
+    else if (s.kind === 'v' || (s.kind === 'box' && s.filled && w <= 4 && h > 8)) vs.push({ x: (x0 + x1) / 2, y0, y1 });
+    else if (s.kind === 'box' && !s.filled && (w > SQUARE_MAX || h > SQUARE_MAX)) {
+      hs.push({ y: y0, x0, x1 }, { y: y1, x0, x1 });
+      vs.push({ x: x0, y0, y1 }, { x: x1, y0, y1 });
+    }
+  }
+  const H = [], V = [];
+  for (const s of hs.sort((a, b) => a.y - b.y || a.x0 - b.x0)) {
+    const l = H.find((q) => Math.abs(q.y - s.y) <= tolY / 2 && s.x0 <= q.x1 + tolX && s.x1 >= q.x0 - tolX);
+    if (l) { l.x0 = Math.min(l.x0, s.x0); l.x1 = Math.max(l.x1, s.x1); l.heavy = l.heavy || s.heavy; } else H.push({ ...s });
+  }
+  for (const s of vs.sort((a, b) => a.x - b.x || a.y0 - b.y0)) {
+    const l = V.find((q) => Math.abs(q.x - s.x) <= tolX / 2 && s.y0 <= q.y1 + tolY && s.y1 >= q.y0 - tolY);
+    if (l) { l.y0 = Math.min(l.y0, s.y0); l.y1 = Math.max(l.y1, s.y1); } else V.push({ ...s });
+  }
+  H.sort((a, b) => a.y - b.y);
+  return { H, V, tolX, tolY };
+}
+
+// blanksIn returns the parts of box a person could type in: below a label printed in its top (unless `bare` — the
+// room above a bare line has no label of its own), and beside whatever shares its band. `solid` is what stands in
+// a blank's way: print and tick boxes, as {rect}.
+function blanksIn(box, solid, ptX, ptY, bare) {
+  const [x0, , x1, y1] = box;
+  let y0 = box[1];
+  const inBox = (t) => t.rect[2] > x0 && t.rect[0] < x1 && t.rect[3] > y0 && t.rect[1] < y1;
+  if (!bare) {
+    const upper = solid.filter((t) => inBox(t) && (t.rect[1] + t.rect[3]) / 2 < y0 + 0.6 * (y1 - y0));
+    if (upper.length) {
+      // A text box is taller than its ink (it runs to the font's descent), so the blank starts a point inside it.
+      const below = Math.max(...upper.map((t) => t.rect[3])) - ptY;
+      if (y1 - below >= 8 * ptY) y0 = below;
+    }
+  }
+  if (y1 - y0 < FIELD_MIN_H * ptY) return [];
+  const blocks = solid
+    .filter((t) => inBox(t) && Math.min(t.rect[3], y1) - Math.max(t.rect[1], y0) > 0.3 * (t.rect[3] - t.rect[1]))
+    .map((t) => [t.rect[0] - 1.5 * ptX, t.rect[2] + 1.5 * ptX])
+    .sort((a, b) => a[0] - b[0]);
+  const gaps = [];
+  let at = x0;
+  for (const [a, b] of blocks) { if (Math.min(a, x1) > at) gaps.push([at, Math.min(a, x1)]); at = Math.max(at, b); }
+  if (x1 > at) gaps.push([at, x1]);
+  // Every gap wide enough to be a blank of its own ("( ___ ) ___ ext ___"); failing that, the widest, if it is a field.
+  const wide = gaps.filter((g) => g[1] - g[0] >= GAP_MIN_W * ptX);
+  const keep = wide.length ? wide
+    : gaps.filter((g) => g[1] - g[0] >= FIELD_MIN_W * ptX).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0])).slice(0, 1);
+  return keep.map((g) => [g[0], y0, g[1], y1]);
+}
+
+// proposeFields reads the page map for the fields the page itself draws. Returns {kind: 'text' | 'check', rect, from}
+// in the map's own fractions; `from` says what was read ('cell', 'line', 'underscores', 'square', 'glyph'). Nothing is
+// proposed where the document already has a field, or inside a shaded panel.
+export function proposeFields(map) {
+  if (!map || map.noText) return [];
+  const ptX = 1 / map.width, ptY = 1 / map.height;
+  const { H, V, tolX, tolY } = ruledLines(map, ptX, ptY);
+  const print = map.text.filter((t) => !t.hidden && !SEPARATORS.test(t.text));
+  const shaded = map.shapes.filter((s) => s.kind === 'box' && s.filled
+    && (s.rect[3] - s.rect[1]) / ptY > 4 && (s.rect[2] - s.rect[0]) / ptX > 4);
+  const mid = (r) => [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  const holds = (r, p) => p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3];
+  const fields = [];
+  const push = (kind, rect, from) => {
+    if (shaded.some((s) => holds(s.rect, mid(rect)))) return;
+    if ((map.widgets || []).some((w) => holds(w.rect, mid(rect)) || holds(rect, mid(w.rect)))) return;
+    fields.push({ kind, rect, from });
+  };
+
+  // Small empty squares are checkboxes — and they stand in a row the way a word does.
+  const squares = map.shapes.filter((s) => {
+    if (s.kind !== 'box' || s.filled) return false;
+    const w = (s.rect[2] - s.rect[0]) / ptX, h = (s.rect[3] - s.rect[1]) / ptY;
+    return w >= SQUARE_MIN && h >= SQUARE_MIN && w <= SQUARE_MAX && h <= SQUARE_MAX && Math.abs(w - h) < 4
+      && !print.some((t) => overlaps(t.rect, s.rect));
+  });
+  for (const s of squares) push('check', s.rect, 'square');
+  const solid = [...print, ...squares];
+
+  // Rows. Each stretch of a line is closed by the nearest line below it; a cell two rows deep, by the second.
+  // `closes` holds every line that is an edge of a row, top or bottom: a table's top edge is not a line to write on.
+  const closes = new Set();
+  const row = (T, B, x0, x1, sameWidth) => {
+    const ups = V.filter((v) => v.x > x0 - tolX && v.x < x1 + tolX && v.y0 <= T.y + tolY && v.y1 >= B.y - tolY)
+      .map((v) => v.x).sort((a, b) => a - b);
+    // No upright joins them: a row only if the two lines are one width and close. Otherwise B is a line to write on.
+    if (!ups.length && !(sameWidth && (B.y - T.y) / ptY <= ROW_MAX_H)) return;
+    closes.add(B); closes.add(T);
+    const xs = [x0, ...ups.filter((x) => x > x0 + tolX && x < x1 - tolX), x1];
+    for (let i = 0; i + 1 < xs.length; i++) {
+      const cell = [xs[i] + ptX, T.y + ptY, xs[i + 1] - ptX, B.y - ptY];
+      const w = (cell[2] - cell[0]) / ptX, h = (cell[3] - cell[1]) / ptY;
+      if (w < SQUARE_MIN || h < SQUARE_MIN) continue;
+      const inside = solid.filter((t) => overlaps(t.rect, cell));
+      if (w <= SQUARE_MAX && h <= SQUARE_MAX) { if (!inside.length) push('check', cell, 'cell'); continue; }
+      // A cell of tick boxes: what is left of it is their labels' room.
+      if (inside.some((t) => squares.includes(t))) continue;
+      if (!ups.length && !inside.length) {
+        push('text', [cell[0], Math.max(cell[1], cell[3] - ABOVE_LINE * ptY), cell[2], cell[3]], 'line');
+        continue;
+      }
+      for (const f of blanksIn(cell, solid, ptX, ptY)) push('text', f, 'cell');
+    }
+  };
+  for (const T of H) {
+    let open = [[T.x0, T.x1]];
+    for (const B of H) {
+      if (!open.length) break;
+      if (B.y <= T.y + FIELD_MIN_H * ptY) continue;
+      const whole = open.length === 1 && Math.abs(B.x0 - T.x0) <= tolX && Math.abs(B.x1 - T.x1) <= tolX;
+      const next = [];
+      for (const [a, z] of open) {
+        const x0 = Math.max(a, B.x0), x1 = Math.min(z, B.x1);
+        if (x1 - x0 <= FIELD_MIN_W * ptX) { next.push([a, z]); continue; }
+        if (x0 - a > FIELD_MIN_W * ptX) next.push([a, x0]);
+        if (z - x1 > FIELD_MIN_W * ptX) next.push([x1, z]);
+        row(T, B, x0, x1, whole);
+      }
+      open = next;
+    }
+  }
+
+  // A line that is no row's edge is a line to write on, where there is room above it.
+  for (const L of H) {
+    if (closes.has(L) || L.heavy) continue;
+    const box = [L.x0, L.y - ABOVE_LINE * ptY, L.x1, L.y - 0.5 * ptY];
+    if (fields.some((f) => overlaps(f.rect, box))) continue;
+    for (const f of blanksIn(box, solid, ptX, ptY, true)) push('text', f, 'line');
+  }
+
+  // A run of underscores is a blank drawn with the keyboard; a box drawn as a character is a checkbox.
+  for (const t of map.text) {
+    if (t.hidden) continue;
+    const chars = t.chars && t.cuts && t.cuts.length === t.chars.length + 1 ? t.chars : null;
+    if (!chars) { if (/^_{4,}$/.test(t.text.trim())) push('text', t.rect, 'underscores'); continue; }
+    for (let i = 0; i < chars.length; i++) {
+      if (BOX_GLYPHS.has(chars[i])) { push('check', [t.cuts[i], t.rect[1], t.cuts[i + 1], t.rect[3]], 'glyph'); continue; }
+      if (chars[i] !== '_') continue;
+      let j = i;
+      while (j + 1 < chars.length && chars[j + 1] === '_') j++;
+      if (j - i + 1 >= 4) push('text', [t.cuts[i], t.rect[1], t.cuts[j + 1], t.rect[3]], 'underscores');
+      i = j;
+    }
+  }
+  return fields;
+}
+
+// mergeProposals puts the two readings of one page together: what the map proposed stands, and a proposal from the
+// picture is added only where the map proposed nothing — the picture sees a blank bounded by shading, the map sees
+// one bounded by lines, and where both see it the map's edges are the page's own.
+export function mergeProposals(fromMap, fromPicture) {
+  const area = (r) => Math.max(0, r[2] - r[0]) * Math.max(0, r[3] - r[1]);
+  const shared = (a, b) => area([Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]);
+  return [...fromMap, ...fromPicture.filter((p) => !fromMap.some((m) => shared(m.rect, p.rect) > 0))];
+}

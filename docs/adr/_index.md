@@ -668,3 +668,7 @@ home today.
   — field detection scanned pixels and search-redaction estimated glyph positions; neither was measured. `pdfops.MapPage`
   gives each rule, box, glyph boundary and existing field in displayed-page fractions, and `build/accuracy.sh` scores
   detection and redaction against it on a local corpus (baseline: 61% of real fields found, 27% of proposals on labels).
+- **[ADR-089 — a field is read from the lines the page draws](089-fields-are-read-from-the-lines-the-page-draws.md)**
+  — extends ADR-088. `proposeFields` reads cells, lines to write on, underscore blanks and squares from the page map,
+  and the picture-based detector adds only where the map proposed nothing. Real fields found 62.9% → 91.2% (well
+  placed 56.0% → 84.5%); the harness's "found" and "on a label" measures are corrected in the same step.

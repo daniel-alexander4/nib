@@ -152,7 +152,10 @@ echo "$Nib_out"
 #
 # 97 since ADR-088 (refinefields.test.mjs): proposed fields corrected against the page map — a pure function, so every
 # case is stated and checked as numbers; its own file because it imports detect.js alone and boots no page.
-Nib_expect_files=97
+#
+# 98 since ADR-089 (proposefields.test.mjs): fields read from the page map itself — a table's cells, a line to write
+# on, underscores, squares — a pure function over rectangles; its own file because it states a whole form as numbers.
+Nib_expect_files=98
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

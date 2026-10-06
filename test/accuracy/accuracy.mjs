@@ -29,10 +29,32 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : nu
 // A proposed field and a real one are the same KIND of thing when both take text or both are ticked.
 const ticked = (kind) => kind === 'check' || kind === 'radio';
 
+// labelsOf is the page's print that a field must not sit on: each run's letters and digits. The "-" between the parts
+// of a phone number and the underscores of a blank drawn with the keyboard are print too, and a field belongs exactly
+// there — the real fields of the corpus's own forms cover them — so they are not labels. Where a run's glyph cuts are
+// known, its label is the stretch from its first letter to its last.
+function labelsOf(map) {
+  const out = [];
+  for (const t of map.text) {
+    if (t.hidden || !/[\p{L}\p{N}]/u.test(t.text)) continue;
+    if (!t.cuts || !t.chars || t.cuts.length !== t.chars.length + 1) { out.push(t); continue; }
+    // Split at a run of four or more underscores: "Name ______ Date ______" is two labels and two blanks.
+    let from = -1, to = -1, blank = 0;
+    const flush = () => { if (from >= 0) out.push({ ...t, rect: [t.cuts[from], t.rect[1], t.cuts[to + 1], t.rect[3]] }); from = -1; };
+    t.chars.forEach((c, i) => {
+      if (c === '_') { if (++blank === 4) flush(); return; }
+      blank = 0;
+      if (/[\p{L}\p{N}]/u.test(c)) { if (from < 0) from = i; to = i; }
+    });
+    flush();
+  }
+  return out;
+}
+
 // scoreDetection compares what Detect proposed on one page with the page's map.
 function scoreDetection(found, map) {
   const truth = map.widgets.filter((w) => w.kind !== 'button' && w.kind !== 'signature');
-  const text = map.text.filter((t) => !t.hidden);
+  const text = labelsOf(map);
   const out = { proposed: found.length, truth: truth.length };
 
   // Against the answer key: a real field is FOUND when a proposed field of its kind holds its centre or it holds
@@ -54,6 +76,10 @@ function scoreDetection(found, map) {
   }
   out.found = hit; out.kindWrong = kindWrong; out.right = used.size - kindWrong;
   out.meanIoU = mean(ious);
+  // FOUND is generous: a 15pt sliver whose centre falls inside a 200pt field finds it. foundWell asks that the two
+  // mostly coincide — the count a person would call "the field is where it belongs". (Measured: on two grid forms
+  // the generous count fell 23 -> 18 and 24 -> 16 across a change that lost no field with half its area in common.)
+  out.foundWell = ious.filter((v) => v >= 0.5).length;
   out.missedNames = missed.slice(0, 12); // which real fields nothing was proposed for, by the form's own names
   // Shaded boxes are where a form prints a heading or a "for office use" panel: context for a page that scores badly.
   out.shadedBoxes = map.shapes.filter((s) => s.kind === 'box' && s.filled).length;
@@ -231,6 +257,7 @@ const summary = {
     answerKeyPages: keyed.length,
     realFields: keyed.reduce((a, r) => a + r.detection.truth, 0),
     foundPct: pct(keyed.reduce((a, r) => a + r.detection.found, 0), keyed.reduce((a, r) => a + r.detection.truth, 0)),
+    foundWellPct: pct(keyed.reduce((a, r) => a + r.detection.foundWell, 0), keyed.reduce((a, r) => a + r.detection.truth, 0)),
     proposedOnKeyedPages: keyed.reduce((a, r) => a + r.detection.proposed, 0),
     rightPct: pct(keyed.reduce((a, r) => a + r.detection.right, 0), keyed.reduce((a, r) => a + r.detection.proposed, 0)),
     wrongKind: keyed.reduce((a, r) => a + r.detection.kindWrong, 0),
@@ -255,10 +282,10 @@ const summary = {
 fs.writeFileSync(resultsPath, JSON.stringify({ at: new Date().toISOString(), summary, results }, null, 1));
 
 const f1 = (v) => (v == null ? '—' : (Math.round(v * 100) / 100).toString());
-console.log(`\nper page (doc · page · kind | detection: proposed / real / found / right / on-label / through-rule | redaction: words / missed / mean cover / mean overreach)`);
+console.log(`\nper page (doc · page · kind | detection: proposed / real / found / found-well / right / on-label / through-rule | redaction: words / missed / mean cover / mean overreach)`);
 for (const r of rows) {
   const d = r.detection, rr = r.redaction.filter((x) => !x.missed);
-  console.log(`  ${r.doc.slice(0, 38).padEnd(38)} p${String(r.page).padEnd(3)} ${r.kind.padEnd(8)} | ${d.proposed}/${d.truth}/${d.found}/${d.right}/${d.onLabel}/${d.throughRule}`
+  console.log(`  ${r.doc.slice(0, 38).padEnd(38)} p${String(r.page).padEnd(3)} ${r.kind.padEnd(8)} | ${d.proposed}/${d.truth}/${d.found}/${d.foundWell}/${d.right}/${d.onLabel}/${d.throughRule}`
     + ` | ${r.redaction.length}/${r.redaction.length - rr.length}/${f1(mean(rr.map((x) => x.covered)))}/${f1(mean(rr.map((x) => Math.max(0, x.overLeft) + Math.max(0, x.overRight))))}`
     + (r.zoom ? ` | zoom text ${r.zoom.text.join('→')} check ${r.zoom.check.join('→')}` : ''));
 }
