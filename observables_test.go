@@ -157,7 +157,10 @@ var published = map[string][]string{
 	// ADR-086. `Reply` is the hand-off's answer as the LAUNCH holds it, read where the launch
 	// decides whether to open a window; `handoffEvent` is the same hand-off as an open window
 	// hears it on its stream.
-	"instance.Reply":      {"cmd/nib/main.go"},
+	"instance.Reply": {"cmd/nib/main.go"},
+	// ADR-088, the page map. Read today by the accuracy harness, which scores detection and redaction against it;
+	// the client becomes a reader when detection and search are driven from it.
+	"pdfops.PageMap":      {"test/accuracy/accuracy.mjs"},
 	"server.handoffEvent": {"web/app.js"},
 	"server.armRequest":   {"web/app.js", "build/ceremonyrepro.sh"},
 	// Derived from the tree, not guessed: for each shape, the files that actually mention

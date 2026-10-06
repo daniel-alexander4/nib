@@ -117,6 +117,10 @@ const productGapCap = 2
 // sent**, so that half closed for the cost of the registration filter and no new exemption row.
 func TestEveryRequestFieldAHandlerReadsIsOneSomeClientSends(t *testing.T) {
 	declared := map[string]requestField{
+		"/api/pagemap page": {harnessOnly,
+			"test/accuracy/accuracy.mjs asks for the map of each page it measures (`/api/pagemap?page=`). The client " +
+				"becomes a sender when field detection and search-redaction are driven from the map (ADR-088's later steps); " +
+				"until then the harness is the route's one caller, and it is the caller that scores them."},
 		"/api/session/send transport": {harnessOnly,
 			"build/pairrepro.sh passes `-F transport=` so a run can force one transport. ADR-010's " +
 				"own lesson is three lines below it in that file: the harness used to pass it to " +
