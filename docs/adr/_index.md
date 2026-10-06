@@ -676,3 +676,7 @@ home today.
   — extends ADR-088. `matchesInMap` boxes a search-redaction match from the map's glyph boundaries; `placeMatches`
   lets that box replace the estimate only when it holds the estimate's centre, so a match the map did not place is
   never dropped for a neighbour's sake. Overreach 2.6 → 0.37 glyph-widths; a neighbouring glyph taken 72% → 3.7%.
+- **[ADR-091 — an OCR word is redacted out to the next word](091-an-ocr-word-is-redacted-out-to-the-next-word.md)**
+  — supersedes ADR-090 §4 for hidden text. Nib's stamped OCR word is a median 0.72 of the scanned word's width, and a
+  search-redaction on an OCR'd scan left the word's end uncovered in 30 of 40 searches. A hidden run is read as
+  stretching to the next hidden run on its line, at most 2.5×: 0 of 40, and 0.5% of 2,995 words.
