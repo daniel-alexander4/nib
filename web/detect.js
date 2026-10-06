@@ -623,3 +623,80 @@ export function detectTableCells(canvas) {
   }
   return cells;
 }
+
+// refineFields corrects proposed fields against the page map (ADR-088): where the page's text, ruled lines and
+// existing form fields really are, as fractions of the displayed page.
+//
+// Detection proposes from a picture of the page, and a picture cannot tell a label from a blank: a cell with a small
+// label in its corner is "blank" by ink, and an underlined sentence is an underline. The map can. So, for each
+// proposal:
+//
+//   - one that sits where the document already has a real field is dropped — it is not a blank, it is a field;
+//   - a text field is cut at any vertical rule running through it, because a field does not span two cells;
+//   - it is moved clear of a label printed above the blank, and narrowed clear of text beside it;
+//   - and what is left is kept only if it is still big enough to type in.
+//
+// `cands` are {kind, rect: [x0, y0, x1, y1], …}; anything else on a candidate is carried through. Returns the
+// refined list and how many were dropped, so the caller can say so.
+export function refineFields(cands, map) {
+  const ptX = 1 / map.width, ptY = 1 / map.height; // one point, as a fraction of each axis
+  const text = map.text.filter((t) => !t.hidden);   // an OCR layer is not print: the blank under it is still blank
+  const vRules = map.shapes.filter((s) => s.kind === 'v');
+  const mid = (r) => [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  const holds = (r, p) => p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3];
+  const MIN_W = 14 * ptX, MIN_H = 7 * ptY;
+  const out = [];
+  let dropped = 0;
+
+  for (const c of cands) {
+    const r = c.rect;
+    if (map.widgets.some((w) => holds(w.rect, mid(r)) || holds(r, mid(w.rect)))) { dropped++; continue; }
+    if (c.kind !== 'text') { out.push(c); continue; }
+
+    // Cut at the vertical rules that run through it.
+    const xs = vRules
+      .filter((s) => {
+        const x = (s.rect[0] + s.rect[2]) / 2;
+        return x > r[0] + 3 * ptX && x < r[2] - 3 * ptX
+          && Math.min(r[3], s.rect[3]) - Math.max(r[1], s.rect[1]) > 0.6 * (r[3] - r[1]);
+      })
+      .map((s) => [s.rect[0], s.rect[2]])
+      .sort((a, b) => a[0] - b[0]);
+    const parts = [];
+    let left = r[0];
+    for (const [a, b] of xs) { parts.push([left, r[1], a - ptX, r[3]]); left = b + ptX; }
+    parts.push([left, r[1], r[2], r[3]]);
+
+    let kept = 0;
+    for (const p of parts) {
+      const f = clearOfText(p, text, ptX, ptY);
+      if (f && f[2] - f[0] >= MIN_W && f[3] - f[1] >= MIN_H) { out.push({ ...c, rect: f }); kept++; }
+    }
+    if (!kept) dropped++;
+  }
+  return { fields: out, dropped };
+}
+
+// clearOfText moves box clear of the printed text inside it, or returns null when no room is left.
+function clearOfText(box, text, ptX, ptY) {
+  let [x0, y0, x1, y1] = box;
+  const over = (t) => t.rect[2] > x0 && t.rect[0] < x1 && t.rect[3] > y0 && t.rect[1] < y1;
+  // A label printed in the top of the blank — "Last", above where the name goes — pushes the field's top below it,
+  // when there is still a line's height left underneath.
+  const upper = text.filter((t) => over(t) && (t.rect[1] + t.rect[3]) / 2 < y0 + 0.6 * (y1 - y0));
+  if (upper.length) {
+    const below = Math.max(...upper.map((t) => t.rect[3])) + ptY;
+    if (y1 - below >= 8 * ptY) y0 = below;
+  }
+  // Whatever text still shares the field's band blocks the part of its width it stands in. Text that only grazes
+  // the band — the descenders of the line above — does not.
+  const blocks = text
+    .filter((t) => over(t) && Math.min(t.rect[3], y1) - Math.max(t.rect[1], y0) > 0.3 * (t.rect[3] - t.rect[1]))
+    .map((t) => [t.rect[0] - 1.5 * ptX, t.rect[2] + 1.5 * ptX])
+    .sort((a, b) => a[0] - b[0]);
+  let best = null, at = x0;
+  const offer = (a, b) => { if (b - a > 0 && (!best || b - a > best[1] - best[0])) best = [a, b]; };
+  for (const [a, b] of blocks) { offer(at, Math.min(a, x1)); at = Math.max(at, b); }
+  offer(at, x1);
+  return best ? [best[0], y0, best[1], y1] : null;
+}

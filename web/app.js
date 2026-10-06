@@ -27,6 +27,7 @@ import {
   pixelsOf,
   dedupeGroups,
   buildTextRows,
+  refineFields,
 } from './detect.js';
 import { docLangForLocale } from './doclang.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
@@ -12979,11 +12980,14 @@ els.detectBtn.onclick = async () => {
   const aboveLine = 15 / pageH; // underline field extends one line-height above the rule
   let added = 0;
 
+  // Proposals are gathered first and made into fields at the end, so they can be corrected against the page map
+  // (ADR-088) before any of them is on screen.
+  const cands = [];
+
   // 1. Blank table cells each become their own text input.
   for (const c of cells) {
     if (c.filled) continue; // a cell with printed text / no blank space — skip
-    makeField('text', [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], { page: n, pageW, pageH }, pv, owner);
-    added++;
+    cands.push({ kind: 'text', rect: [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H] });
   }
 
   // 2. Underlines, boxes, checkboxes — but not inside the table (cells own those).
@@ -12993,13 +12997,15 @@ els.detectBtn.onclick = async () => {
     if (inCell(mx, my) || inFilledBox(mx, my)) continue;
     let fx0 = r.x / W, fx1 = (r.x + r.w) / W;
     let fy0 = r.y / H, fy1 = (r.y + r.h) / H;
-    const cssW = (fx1 - fx0) * pv.div.clientWidth, cssH = (fy1 - fy0) * pv.div.clientHeight;
+    // **In points, not in pixels on screen.** This asked whether the box was 28 CSS pixels at the CURRENT ZOOM, so
+    // the same square was a checkbox at one zoom and a text field at another (measured: 5 of 18 documents changed
+    // what was proposed when zoomed). A checkbox is a size on the page.
+    const ptW = (fx1 - fx0) * pageW, ptH = (fy1 - fy0) * pageH;
 
     let kind = 'text';
-    if (r.box && cssW <= 28 && cssH <= 28) kind = 'check';
+    if (r.box && ptW <= CHECKBOX_MAX_PT && ptH <= CHECKBOX_MAX_PT) kind = 'check';
     else if (!r.box) fy0 = fy1 - aboveLine;
-    makeField(kind, [fx0, fy0, fx1, fy1], { page: n, pageW, pageH }, pv, owner);
-    added++;
+    cands.push({ kind, rect: [fx0, fy0, fx1, fy1] });
   }
 
   // 3. "Circle one" choices (incl. Y/N) become a circle-my-answer widget: a
@@ -13024,12 +13030,34 @@ els.detectBtn.onclick = async () => {
     const cf = choices.map((c) => ({ rect: [c.x0 / W, c.y0 / H, c.x1 / W, c.y1 / H], word: !!c.word }));
     const x0 = Math.min(...cf.map((c) => c.rect[0])), y0 = Math.min(...cf.map((c) => c.rect[1]));
     const x1 = Math.max(...cf.map((c) => c.rect[2])), y1 = Math.max(...cf.map((c) => c.rect[3]));
-    makeField('circleone', [x0, y0, x1, y1], { page: n, pageW, pageH, choices: cf }, pv, owner);
-    added++;
+    cands.push({ kind: 'circleone', rect: [x0, y0, x1, y1], choices: cf });
   }
 
-  toast(added ? `Added ${added} fillable field(s) — fill, then Save` : 'Nothing detected on this page');
+  // The page map says where the page's text, rules and existing fields really are; the proposals are corrected
+  // against it. A page the server cannot map — and a scan maps to nothing — keeps the proposals as the picture gave
+  // them, and the message says which it was.
+  const map = await pageMap(owner, n);
+  if (seq !== detectSeq || owner !== view) return;
+  const refined = map ? refineFields(cands, map) : { fields: cands, dropped: 0 };
+  for (const c of refined.fields) {
+    makeField(c.kind, c.rect, { page: n, pageW, pageH, choices: c.choices }, pv, owner);
+    added++;
+  }
+  const how = map ? '' : ' (placed from the page image alone: this page could not be read for its text and lines)';
+  toast(added ? `Added ${added} fillable field(s) — fill, then Save${how}` : 'Nothing detected on this page');
 };
+
+// CHECKBOX_MAX_PT is the largest square, in points, that Detect fields proposes as a checkbox and not a text box.
+// 20pt is 28 CSS pixels at the zoom the old pixel test was tuned at.
+const CHECKBOX_MAX_PT = 20;
+
+// pageMap asks the server where page n's text, ruled lines and form fields are (ADR-088). null when it cannot say.
+async function pageMap(owner, n) {
+  try {
+    const res = await apiFetch('/api/pagemap?page=' + n, { docId: owner.docMeta && owner.docMeta.id });
+    return res.ok ? await res.json() : null;
+  } catch { return null; }
+}
 
 
 // makeField creates an auto-detected overlay widget of the given kind and rect
