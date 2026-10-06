@@ -664,3 +664,7 @@ home today.
   — supersedes ADR-024's removal of Undo/Redo and Previous/Next. Every bar control is an icon whose word stays in the
   markup (hidden in the bar, shown in ⋯ More); Zoom is its own group with the level shown; one group appears only
   while a tool is armed; the fold ladder is re-measured.
+- **[ADR-088 — where things are on a page is read from what the page draws](088-the-page-map.md)**
+  — field detection scanned pixels and search-redaction estimated glyph positions; neither was measured. `pdfops.MapPage`
+  gives each rule, box, glyph boundary and existing field in displayed-page fractions, and `build/accuracy.sh` scores
+  detection and redaction against it on a local corpus (baseline: 61% of real fields found, 27% of proposals on labels).

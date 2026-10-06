@@ -183,6 +183,8 @@ type pageRuns struct {
 	noText bool
 	// marks are the page's non-text marks, boxed — kept only by reflow's reader (`PLAN-text-reflow.md` P07.S01).
 	marks []pageMark
+	// shapes are the pieces of every painted path, kept only by the page map's reader (ADR-088).
+	shapes []pageShape
 	// sequences are the page's marked-content sequences that carry an MCID, in the order they open —
 	// those inside the forms it draws included — so a writer can find an element's content whether or
 	// not it is text (P09.S03).
@@ -220,6 +222,16 @@ func readPageGlyphRuns(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
 }
 
 func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keep bool, budget *formWalkBudget) (pageRuns, error) {
+	return readPageRunsWith(ctx, pg, keep, false, budget)
+}
+
+// readPageShapes is readPageGlyphRuns with every painted path's pieces kept as well (`pageRuns.shapes`) — the page
+// map's reader (ADR-088).
+func readPageShapes(ctx *model.Context, pg pdfread.Page) (pageRuns, error) {
+	return readPageRunsWith(ctx, pg, true, true, newFormWalkBudget(1))
+}
+
+func readPageRunsWith(ctx *model.Context, pg pdfread.Page, keep, shapes bool, budget *formWalkBudget) (pageRuns, error) {
 	pageNr := pg.Nr
 	return containRunRead(pageNr, func() (pageRuns, error) {
 		d, attrs, err := pg.Dict, pg.Attrs, pg.Err
@@ -238,13 +250,14 @@ func readPageRunsKeeping(ctx *model.Context, pg pdfread.Page, keep bool, budget 
 		budget.nextPage()
 		w.budget = budget
 		w.keepGlyphs, w.keepMarks = keep, keep
+		w.keepShapes = shapes
 		w.walk(content, res, newRunGState(), 0, map[int]bool{})
 		// Runs from a walk that stopped are the runs of part of the page: every caller would read the rest
 		// as absent, so the page is an error (`formWalkBudget`).
 		if err := w.budget.err(); err != nil {
 			return pageRuns{}, fmt.Errorf("pdfops: page %d could not be read as text: %w", pageNr, err)
 		}
-		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks}, nil
+		return pageRuns{runs: w.runs, noText: len(w.runs) == 0, sequences: w.seqs, marks: w.marks, shapes: w.shapes}, nil
 	})
 }
 
@@ -479,6 +492,11 @@ type runWalker struct {
 	// reflow's.
 	keepMarks bool
 	marks     []pageMark
+	// keepShapes asks the walk to record each PIECE of a painted path on its own — a rectangle, a straight segment
+	// (`pageShape`) — where keepMarks keeps one box for the whole path. A table ruled by one path of forty segments is
+	// one mark and forty shapes. The page map's reader, and only it (ADR-088).
+	keepShapes bool
+	shapes     []pageShape
 	// fonts holds every font the walk has loaded, keyed by its object number when the resource names an
 	// indirect font and by the dictionary's identity when it is a direct one (`/pending 723`): a direct
 	// font reloaded at every `Tf` re-parsed its `/ToUnicode` each time, 17.7 s for 14.4 KB of content.
@@ -810,6 +828,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 	// operator that ends one (`n` included) clears it. clipping says a `W` marked it as the next clip.
 	var path markBox
 	clipping := false
+	var pieces shapePath // the current path's pieces, kept only for the page map
 	// A stream's sequences end with the stream: an unbalanced `EMC` inside a form cannot close the page's
 	// sequence, and a form that leaves one open cannot tag what the page draws after it.
 	base, seqBase := len(w.mcStack), len(w.seqOpen)
@@ -904,31 +923,51 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 		case "m", "l":
 			if v, ok := numbers(2); ok {
 				path.add(gs.ctm, v...)
+				if w.keepShapes {
+					pieces.to(gs.ctm, v[0], v[1], string(tok.Bytes(src)) == "l")
+				}
 			}
 		case "c":
 			// A Bézier curve lies inside its control polygon's hull, so the control points bound it.
 			if v, ok := numbers(6); ok {
 				path.add(gs.ctm, v...)
+				pieces.curved = w.keepShapes
 			}
 		case "v", "y":
 			if v, ok := numbers(4); ok {
 				path.add(gs.ctm, v...)
+				pieces.curved = w.keepShapes
+			}
+		case "h":
+			if w.keepShapes {
+				pieces.endSub(true)
 			}
 		case "re":
 			if v, ok := numbers(4); ok {
 				path.add(gs.ctm, v[0], v[1], v[0]+v[2], v[1], v[0], v[1]+v[3], v[0]+v[2], v[1]+v[3])
+				if w.keepShapes {
+					pieces.rect(gs.ctm, v[0], v[1], v[2], v[3])
+				}
 			}
 		case "S", "s", "B", "B*", "b", "b*":
 			w.markPath(path, gs, true)
+			if w.keepShapes {
+				op := string(tok.Bytes(src))
+				w.keepPieces(&pieces, gs, true, op != "S" && op != "s", op == "s" || op == "b" || op == "b*")
+			}
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "f", "F", "f*":
 			w.markPath(path, gs, false)
+			if w.keepShapes {
+				w.keepPieces(&pieces, gs, false, true, false)
+			}
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
 		case "n":
 			gs.clip, clipping = clipTo(gs.clip, path, clipping)
 			path = markBox{}
+			pieces = shapePath{}
 		case "W", "W*":
 			clipping = true
 		case "gs":
@@ -937,7 +976,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 			// The colour is read only for a reader that re-emits it (a paragraph set on another page, P07.S05): every other
 			// reader walks past it, as it walks past every mark (P07 phase-close review — measured +0.75-1 µs per colour
 			// operator in every reader before it was gated).
-			if !w.keepGlyphs && !w.keepMarks {
+			if !w.keepGlyphs && !w.keepMarks && !w.keepShapes {
 				break
 			}
 			op := string(tok.Bytes(src))
@@ -953,7 +992,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke, gs.strokeSpace = set, space
 			}
 		case "cs", "CS":
-			if !w.keepGlyphs && !w.keepMarks {
+			if !w.keepGlyphs && !w.keepMarks && !w.keepShapes {
 				break
 			}
 			op := string(tok.Bytes(src))
@@ -974,7 +1013,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				gs.stroke, gs.strokeSpace = set, space
 			}
 		case "sc", "scn", "SC", "SCN":
-			if !w.keepGlyphs && !w.keepMarks {
+			if !w.keepGlyphs && !w.keepMarks && !w.keepShapes {
 				break
 			}
 			op := string(tok.Bytes(src))

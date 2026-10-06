@@ -264,6 +264,9 @@ func TestOnlyTheGroupingDoorReadsRuns(t *testing.T) {
 		"reflow.go": {
 			"textRun": "reflow takes the runs of a paragraph the grouping door already made (readPageGlyphLayout), to delete their show operators and re-emit the paragraph in their text state; it groups nothing (text-reflow P06.S04)",
 		},
+		"pagemap.go": {
+			"textRun": "the page map reports each run where the page sets it, with its glyph boundaries — one show operator, one entry — for placing a field or a redaction; it joins no runs into lines or paragraphs (ADR-088)",
+		},
 		"structview.go": {
 			"readPageRuns": "the structure view matches an existing tree's MCIDs to the text drawn under them, the truth reader's way, and groups nothing (P09.S01)",
 		},
