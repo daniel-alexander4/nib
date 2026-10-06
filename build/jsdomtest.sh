@@ -149,7 +149,10 @@ echo "$Nib_out"
 #
 # 96 since ADR-087 (toolbaricons.test.mjs): the icon bar — every button an icon with its word, the page buttons and
 # Undo/Redo back in the bar, the armed-tool group — its own file because it reopens one path with changing history flags.
-Nib_expect_files=96
+#
+# 97 since ADR-088 (refinefields.test.mjs): proposed fields corrected against the page map — a pure function, so every
+# case is stated and checked as numbers; its own file because it imports detect.js alone and boots no page.
+Nib_expect_files=97
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

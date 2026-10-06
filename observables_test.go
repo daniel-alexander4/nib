@@ -160,7 +160,7 @@ var published = map[string][]string{
 	"instance.Reply": {"cmd/nib/main.go"},
 	// ADR-088, the page map. Read today by the accuracy harness, which scores detection and redaction against it;
 	// the client becomes a reader when detection and search are driven from it.
-	"pdfops.PageMap":      {"test/accuracy/accuracy.mjs"},
+	"pdfops.PageMap":      {"web/detect.js", "test/accuracy/accuracy.mjs"},
 	"server.handoffEvent": {"web/app.js"},
 	"server.armRequest":   {"web/app.js", "build/ceremonyrepro.sh"},
 	// Derived from the tree, not guessed: for each shape, the files that actually mention
