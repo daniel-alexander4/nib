@@ -672,3 +672,7 @@ home today.
   — extends ADR-088. `proposeFields` reads cells, lines to write on, underscore blanks and squares from the page map,
   and the picture-based detector adds only where the map proposed nothing. Real fields found 62.9% → 91.2% (well
   placed 56.0% → 84.5%); the harness's "found" and "on a label" measures are corrected in the same step.
+- **[ADR-090 — a search match is boxed from its own glyphs](090-a-search-match-is-boxed-from-its-glyphs.md)**
+  — extends ADR-088. `matchesInMap` boxes a search-redaction match from the map's glyph boundaries; `placeMatches`
+  lets that box replace the estimate only when it holds the estimate's centre, so a match the map did not place is
+  never dropped for a neighbour's sake. Overreach 2.6 → 0.37 glyph-widths; a neighbouring glyph taken 72% → 3.7%.

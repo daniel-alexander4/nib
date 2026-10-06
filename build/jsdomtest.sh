@@ -155,7 +155,10 @@ echo "$Nib_out"
 #
 # 98 since ADR-089 (proposefields.test.mjs): fields read from the page map itself — a table's cells, a line to write
 # on, underscores, squares — a pure function over rectangles; its own file because it states a whole form as numbers.
-Nib_expect_files=98
+#
+# 99 since ADR-090 (placematches.test.mjs): a search match boxed from the map's glyph boundaries, and when that box
+# may replace the estimate — its own file because the property it holds is redaction's, not detection's.
+Nib_expect_files=99
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

@@ -114,7 +114,10 @@ function wordsToFind(map, limit) {
     t.chars.forEach((c, i) => { for (const ch of c) { s += ch; at.push(i); } });
     for (const m of s.matchAll(/[A-Za-z]{6,}/g)) {
       const w = m[0];
-      if (pageText.split(w).length !== 2) continue;                       // once on the page
+      // Once on the page — as the SEARCH counts, which folds case and matches inside longer words: "Speech" is not
+      // alone on a page that also prints "ashlandspeech". (It was counted case-sensitively, and a second hit on the
+      // same line was then scored as one box 62 glyph-widths too wide.)
+      if (pageText.toLowerCase().split(w.toLowerCase()).length !== 2) continue;
       const before = s[m.index - 1], after = s[m.index + w.length];
       if ((before && /[A-Za-z0-9]/.test(before)) || (after && /[A-Za-z0-9]/.test(after))) continue;
       const g0 = at[m.index], g1 = at[m.index + w.length - 1];
@@ -187,7 +190,12 @@ async function detect(n) {
 }
 
 async function search(n, word) {
-  const before = (await overlaysOn(n, '.redactmark')).map((m) => m.rect.map((v) => v.toFixed(4)).join());
+  // Marks stay on the page from one search to the next, so the new ones are the difference — counted, not compared:
+  // a word that is in the same place on two pages draws the same box twice once boxes are exact, and a box equal to
+  // an earlier one is still a new box. (Comparing by value scored every such word "not marked".)
+  const key = (m) => m.rect.map((v) => v.toFixed(4)).join();
+  const before = new Map();
+  for (const m of await overlaysOn(n, '.redactmark')) before.set(key(m), (before.get(key(m)) || 0) + 1);
   await page.$eval('#redactTextBtn', (b) => b.click());
   await page.waitForSelector('#redactTextModal:not([hidden])');
   await page.fill('#rtTerm', word);
@@ -196,7 +204,11 @@ async function search(n, word) {
   await page.waitForFunction(() => document.getElementById('redactTextModal').hidden || /^No matches/.test(document.getElementById('rtStatus').textContent), null, { timeout: 120000 });
   if (!(await page.$eval('#redactTextModal', (m) => m.hidden))) { await page.click('#rtCancel'); return []; }
   await page.waitForTimeout(150);
-  return (await overlaysOn(n, '.redactmark')).map((m) => m.rect).filter((r) => !before.includes(r.map((v) => v.toFixed(4)).join()));
+  return (await overlaysOn(n, '.redactmark')).filter((m) => {
+    const left = before.get(key(m)) || 0;
+    if (left) before.set(key(m), left - 1);
+    return !left;
+  }).map((m) => m.rect);
 }
 
 const results = [];
