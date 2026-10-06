@@ -443,8 +443,11 @@ Don't want to hunt for every occurrence by hand? **Redact text…** finds them f
 you: type a word or phrase, and/or tick a built-in pattern — **SSN, email, phone,
 card number** — and Nib marks every match in the document as a redaction box.
 Review the boxes (remove any you don't want), then press **Apply** to flatten
-them for real. It reads the text layer, so it works on any text-based PDF — and
-on a scan once you've run **OCR**. Matches split across the page's text runs are
+them for real. Each box is drawn from the page's own letter positions, so it
+covers the match and stops there instead of spilling onto the words either side;
+where Nib can't read those positions it falls back to a deliberately wider box
+and tells you how many. It reads the text layer, so it works on any text-based
+PDF — and on a scan once you've run **OCR**. Matches split across the page's text runs are
 still caught; matches that wrap across a line break are not (rare for the
 patterns).
 

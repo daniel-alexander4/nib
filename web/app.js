@@ -30,6 +30,8 @@ import {
   refineFields,
   proposeFields,
   mergeProposals,
+  matchesInMap,
+  placeMatches,
 } from './detect.js';
 import { docLangForLocale } from './doclang.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
@@ -9536,9 +9538,10 @@ els.applyRedactBtn.onclick = async () => {
 // --- search / pattern redaction ----------------------------------------------
 // Find every occurrence of a term or PII pattern in the text layer and mark each
 // one for redaction, feeding the SAME view.redactMarks → applyRedact pipeline as the
-// hand-drawn boxes. All client-side: pdf.js is the only place the text layer
-// lives (the Go engine can't extract text). Marks are reviewed as boxes, then the
-// user presses Apply — the existing irreversible, true-removal bake.
+// hand-drawn boxes. The text layer is searched client-side, through pdf.js, and each
+// match is then PLACED from the page map (ADR-090), which has every glyph's true
+// boundary; a match the map cannot place keeps the estimated box. Marks are reviewed
+// as boxes, then the user presses Apply — the existing irreversible, true-removal bake.
 const PII_PATTERNS = {
   // Fixed (not user-supplied), so no catastrophic-backtracking risk. Separators
   // are optional so the common formatted and bare forms both match.
@@ -9602,6 +9605,7 @@ function relayoutRedactMarks(owner) {
 async function scanTextMatches(patterns, owner = view) {
   const marks = [];
   for (let n = 1; n <= owner.pdfDocument.numPages; n++) {
+    const first = marks.length;
     const page = await owner.pdfDocument.getPage(n);
     // Match + build the box in the UNROTATED viewport, where buildTextRows' "text
     // advances horizontally" assumption holds; vp is the rendered viewport (page
@@ -9658,6 +9662,13 @@ async function scanTextMatches(patterns, owner = view) {
         }
       }
     }
+    // Place this page's matches from the map where it can (ADR-090). The estimates above stand for whatever it
+    // cannot: a page the server cannot map, a turned run, an OCR layer.
+    const map = await pageMap(owner, n);
+    if (!map) continue;
+    const placed = placeMatches(marks.splice(first).map((m) => [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]), matchesInMap(map, patterns));
+    for (const r of placed.boxes) marks.push({ page: n, fx: r[0], fy: r[1], fw: r[2] - r[0], fh: r[3] - r[1] });
+    marks.exact = (marks.exact || 0) + placed.exact;
   }
   return marks;
 }
@@ -9695,7 +9706,10 @@ els.rtFind.onclick = async () => {
   owner.redactMarks.push(...marks); // {page,fx,fy,fw,fh}; drawn per page on render
   relayoutRedactMarks(owner);
   els.redactTextModal.hidden = true;
-  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.`);
+  // Said, because the two kinds of box are not equally tight: an estimated one over-covers on purpose.
+  const est = marks.length - (marks.exact || 0);
+  const how = est ? ' ' + est + ' placed by estimate (wider on purpose).' : '';
+  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.` + how);
 };
 
 // --- split by hand-drawn regions ---------------------------------------------

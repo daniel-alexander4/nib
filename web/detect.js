@@ -894,3 +894,73 @@ export function mergeProposals(fromMap, fromPicture) {
   const shared = (a, b) => area([Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]);
   return [...fromMap, ...fromPicture.filter((p) => !fromMap.some((m) => shared(m.rect, p.rect) > 0))];
 }
+
+// ── search matches placed from the page map (ADR-090) ────────────────────────
+//
+// A search-redaction box was placed from an ESTIMATE: the characters of a text item measured in a generic sans-serif
+// and rescaled to the item's width (buildTextRows), then padded by 0.8 of a line height each side because the
+// estimate could not be trusted. Measured: a mean 2.6 glyph-widths past the word, neighbouring glyphs blacked out in
+// 72% of cases. The page map has each glyph's true boundary, from the font's own widths.
+
+const MATCH_PAD_X = 0.75, MATCH_PAD_Y = 0.5; // points past the glyphs' own boxes: ink overhangs an advance, slightly
+const WORD_GAP = 0.15;                       // of the font size: a wider gap between two runs is a space
+
+// matchesInMap runs `patterns` (global RegExps) over the page's visible text as the map has it, and returns one box
+// per match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right.
+//
+// Only runs whose glyph boundaries are known take part (an upright run on an unturned page), and hidden text does
+// not: an OCR layer's glyphs say where the invisible words were stamped, not where the scanned ink is. What this
+// cannot place, the estimate still does — see placeMatches.
+export function matchesInMap(map, patterns) {
+  if (!map || !map.text) return [];
+  const runs = map.text.filter((t) => !t.hidden && t.cuts && t.chars && t.cuts.length === t.chars.length + 1);
+  const rows = [];
+  for (const t of runs.slice().sort((a, b) => a.rect[1] - b.rect[1])) {
+    const mid = (t.rect[1] + t.rect[3]) / 2, tall = t.rect[3] - t.rect[1];
+    const row = rows.find((r) => Math.abs(r.mid - mid) <= 0.5 * Math.min(tall, r.tall));
+    if (row) row.runs.push(t); else rows.push({ mid, tall, runs: [t] });
+  }
+  const out = [];
+  for (const row of rows) {
+    row.runs.sort((a, b) => a.rect[0] - b.rect[0]);
+    // The row as a string, each character knowing which glyph of which run drew it (null: a space between runs).
+    let s = '';
+    const at = [];
+    row.runs.forEach((t, k) => {
+      if (k > 0) {
+        const prev = row.runs[k - 1];
+        const gapPt = (t.rect[0] - prev.rect[2]) * map.width, sizePt = Math.min(t.size, prev.size) * map.height;
+        if (gapPt > WORD_GAP * sizePt && !/\s$/.test(s)) { s += ' '; at.push(null); }
+      }
+      t.chars.forEach((c, i) => { for (const ch of c) { s += ch; at.push({ t, i }); } });
+    });
+    for (const re of patterns) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(s))) {
+        if (!m[0].length) { re.lastIndex++; continue; }
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (let k = m.index; k < m.index + m[0].length; k++) {
+          const g = at[k];
+          if (!g || !s[k].trim()) continue; // a space takes no ink
+          x0 = Math.min(x0, g.t.cuts[g.i]); x1 = Math.max(x1, g.t.cuts[g.i + 1]);
+          y0 = Math.min(y0, g.t.rect[1]); y1 = Math.max(y1, g.t.rect[3]);
+        }
+        if (!(x1 > x0)) continue;
+        out.push([x0 - MATCH_PAD_X / map.width, y0 - MATCH_PAD_Y / map.height, x1 + MATCH_PAD_X / map.width, y1 + MATCH_PAD_Y / map.height]);
+      }
+    }
+  }
+  return out;
+}
+
+// placeMatches puts one page's two readings together. `estimated` are the boxes the estimate drew, `exact` the map's.
+// An estimated box is REPLACED only by an exact box that holds its centre — the estimate over-covers evenly about the
+// match, so its centre is the match's — and is otherwise KEPT: a match the map did not find is never dropped because a
+// neighbouring match was found. An exact box that replaced nothing is a match the estimate missed, and is added.
+// Returns {boxes, exact, kept}: how many boxes came from the page's own glyphs, and how many are estimates.
+export function placeMatches(estimated, exact) {
+  const holds = (r, x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+  const kept = estimated.filter((e) => !exact.some((m) => holds(m, (e[0] + e[2]) / 2, (e[1] + e[3]) / 2)));
+  return { boxes: [...exact, ...kept], exact: exact.length, kept: kept.length };
+}
