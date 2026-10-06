@@ -52,14 +52,17 @@ async function openDocument(path) {
 const pageStacks = () => [...doc.querySelectorAll('.viewerContainer .pdfViewer')];
 const joined = () => pageStacks().map((el) => el.classList.contains('nibJoined'));
 
-test('the View group holds both layouts and every zoom control, in one labelled group', () => {
-  const group = doc.querySelector('.tbgroup[data-label="View"]');
-  assert.ok(group, 'there is no View group — the controls went somewhere without a label, and '
-    + 'ADR-015 keeps group labels out of the bar, so an unlabelled control has no name at all');
-  for (const id of ['viewStandardBtn', 'viewContinuousBtn', 'zoomOutBtn', 'fitBtn', 'fitPageBtn',
-    'actualSizeBtn', 'zoomInBtn']) {
-    assert.ok(group.querySelector('#' + id), `${id} is not in the View group`);
-  }
+test('the layouts sit in a labelled View group and every zoom control in a labelled Zoom group', () => {
+  // One group until ADR-087. As icons the two together were the widest thing in the bar and a
+  // group folds whole, so they are two — and each still needs its label, because ADR-015 keeps
+  // group labels out of the bar and an unlabelled control has no heading in More.
+  const within = (label, ids) => {
+    const group = doc.querySelector(`.tbgroup[data-label="${label}"]`);
+    assert.ok(group, `there is no ${label} group — its controls went somewhere without a label`);
+    for (const id of ids) assert.ok(group.querySelector('#' + id), `${id} is not in the ${label} group`);
+  };
+  within('View', ['viewStandardBtn', 'viewContinuousBtn', 'viewPresentBtn', 'fullScreenBtn']);
+  within('Zoom', ['zoomOutBtn', 'fitBtn', 'fitPageBtn', 'actualSizeBtn', 'zoomInBtn']);
   // The thing Dan asked for that must NOT have been built: a second navigation surface.
   const menus = [...doc.querySelectorAll('#menubar .menu')].filter((m) => !m.classList.contains('modemenu'));
   assert.equal(menus.length, 0,

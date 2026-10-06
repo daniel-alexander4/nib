@@ -287,7 +287,9 @@ fi
 # sheet's verdict — the one place the whole chain (signerWhose, the route, the wording) runs for real.
 # 43 since ADR-085 (pan.test.mjs): a page dragged by a real mouse, by the distance the mouse moved, and the
 # record a real window leaves when its stream drops — neither exists without layout and a socket.
-expect_files=43
+# 44 since ADR-087 (toolbaricons.test.mjs): the icon bar in a real browser — one row at nine widths, a button's word
+# out of sight in the bar and in sight inside More, and the zoom level against the page.
+expect_files=44
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

@@ -1,0 +1,12 @@
+diff --git a/web/index.html b/web/index.html
+--- a/web/index.html
++++ b/web/index.html
+@@ -196,7 +196,7 @@
+       </button>
+             </div><div class="tbgroup" data-label="Save" data-fold="0">
+ <button id="saveBtn" class="tbicon" title="Save (overwrites the original)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg><span class="tblabel">Save</span></button>
+-      <button id="quitBtn" class="tbicon" title="Quit Nib — ends this process, and says what it will end first"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg><span class="tblabel">Quit</span></button>
++      <button id="quitBtn" class="tbicon" title="Quit Nib — ends this process, and says what it will end first"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg>Quit</button>
+             </div>    </div>
+     <span class="tbsep"></span>
+ 

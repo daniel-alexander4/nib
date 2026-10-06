@@ -1,0 +1,11 @@
+diff --git a/web/app.js b/web/app.js
+--- a/web/app.js
++++ b/web/app.js
+@@ -9131,7 +9131,6 @@
+ // scrolling has nothing on screen to explain it.
+ function reflectArmedChip() {
+   const tool = armedTool() || view.activeTool;
+-  $('armedGroup').hidden = !tool;
+   $('armedName').textContent = tool ? (ARMED_NAMES[tool] || 'Tool') : '';
+ }
+ $('armedOffBtn').onclick = () => disarmEditingTools();

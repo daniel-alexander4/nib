@@ -111,27 +111,50 @@
     </button>
     <span class="tbsep"></span>
 
-    <!-- The FIXED bar, and it is now a bar of two halves. Find sits at the left edge beside the
-         sidebar toggle; Zoom, Reload and Save are pushed to the right. Undo/Redo left it in
-         v1.125.0 — Ctrl+Z is the route, and ADR-023 made that route reach every change in the
-         document — and the Previous/Next/page-number group went to the Pages tab, which is where
-         a reader who is thinking about pages already is. -->
+    <!-- The FIXED bar, and it is now a bar of two halves. Find, the page position, Undo/Redo
+         and the armed tool sit at the left edge beside the sidebar toggle; View, Reload and Save
+         are pushed to the right.
+
+         **Every control here is an icon, and its word is still in the markup** (ADR-087). The
+         `.tblabel` span is hidden in the bar and shown when the group folds into More, so it is
+         the accessible name, the label in the menu, and the text a test finds a button by. No
+         whitespace sits between an svg and its label: `textContent` is the word and nothing else.
+
+         Undo/Redo and Previous/Next left the bar in v1.125.0 (ADR-024) and came back in v1.185.0
+         (ADR-087): Ctrl+Z was the only route to undo, and a user who did not know it had none. -->
     <div class="tbfixed">
 <!-- The open document's name, at the left edge. Not inside a .tbgroup: it is not a control and
      must never fold away into ⋯ More — a bar that hides which file you are editing is worse on a
      narrow window than on a wide one. The dot beside it is the save state, and it carries the
      word as well as the colour (role="img" + aria-label), because colour alone is WCAG 1.4.1. -->
 <span id="docTitle" class="doctitle" hidden><span id="docTitleName" class="doctitle-name"></span><span id="docDirty" class="docdirty" role="img" aria-label="Saved"></span></span>
-<div class="tbgroup" data-label="Find" data-fold="3">
+<div class="tbgroup" data-label="Find" data-fold="5">
 <!-- Find collapses to a magnifier: three controls and a text field, in a bar, for something
      that is opened deliberately and closed again. Ctrl+F opens and focuses it, Escape closes
      it — the shortcut was already the way most people reach it, and the field kept its place
      in the bar whether or not anyone was searching. -->
 <button id="findToggle" class="tbicon" title="Find in document (Ctrl+F)" aria-label="Find in document" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="tblabel">Find</span>
       </button>
       <span class="tbfind" hidden><input class="searchInput" type="search" placeholder="Find in document… (Ctrl+F)" /><button id="findPrevBtn" title="Previous match (Shift+Enter)" disabled>‹</button><button id="findNextBtn" title="Next match (Enter)" disabled>›</button><span id="findCount" class="findcount"></span></span>
-          </div><div class="tbgroup tbright" data-label="View" data-fold="2">
+          </div><div class="tbgroup" data-label="Page" data-fold="2">
+<!-- Class-keyed, like the Pages tab's readout: `all('.pageNum')` and `all('.pageCount')` write both,
+     and one change listener reads either. Two places to look, one door behind them. -->
+<button id="prevPageBtn" class="tbicon" title="Previous page (PageUp)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg><span class="tblabel">Previous page</span></button>
+      <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" aria-label="Page number" /><span class="pageCount">/ 0</span></span>
+      <button id="nextPageBtn" class="tbicon" title="Next page (PageDown)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg><span class="tblabel">Next page</span></button>
+          </div><div class="tbgroup" data-label="History" data-fold="3">
+<!-- Disabled when there is nothing to undo, never hidden: a control that comes and goes moves
+     everything beside it. `reflectUndoControls` is the one writer of both, and of the standing
+     note that earlier history was released (ADR-003), which had no home while these were gone. -->
+<button id="undoBtn" class="tbicon" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg><span class="tblabel">Undo</span></button>
+      <button id="redoBtn" class="tbicon" title="Redo (Ctrl+Y)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg><span class="tblabel">Redo</span></button>
+          </div><div id="armedGroup" class="tbgroup" data-label="Tool" data-fold="5" hidden>
+<!-- The one contextual group: shown while a tool owns the pointer, and it says which. With the
+     sidebar shut nothing else on screen does. -->
+<span id="armedName" class="tbchip"></span>
+      <button id="armedOffBtn" class="tbicon" title="Put the tool down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg><span class="tblabel">Put the tool down</span></button>
+          </div><div class="tbgroup tbright" data-label="View" data-fold="1">
 
 <!-- The group was labelled "Zoom" until v1.129.4. It holds the layout modes now as well, and
      they belong beside the zoom modes rather than in a menu: **Nib has no menu bar.** The gear
@@ -144,30 +167,36 @@
      window state that is orthogonal to it, which is why it is a separate toggle rather than a
      third layout. pdf.js conflates the two (its presentation mode IS the Fullscreen API) and
      that is why Escape behaves unpredictably in most viewers. -->
-<button id="viewStandardBtn" title="Standard page view — pages shown separately" aria-pressed="true">Pages</button>
-      <button id="viewContinuousBtn" title="Continuous view — pages joined into one strip" aria-pressed="false">Continuous</button>
-      <button id="viewPresentBtn" title="Presentation — one page at a time, full screen" aria-pressed="false">Present</button>
-      <button id="fullScreenBtn" title="Full screen (F11 is the browser's; this one is Nib's)" aria-pressed="false">Full screen</button>
-      <button id="readAloudBtn" title="Read this page aloud — needs a text layer, so OCR a scan first" aria-pressed="false">Read aloud</button>
-      <button id="zoomOutBtn" title="Zoom out (Ctrl+-)">Zoom out</button>
-      <button id="fitBtn" title="Fit width (Ctrl+0)">Fit width</button>
-      <button id="fitPageBtn" title="Fit page — the tallest page fits the window">Fit page</button>
-      <button id="actualSizeBtn" title="Actual size (100%)">Actual size</button>
-      <button id="zoomInBtn" title="Zoom in (Ctrl++)">Zoom in</button>
+<button id="viewStandardBtn" class="tbicon" title="Standard page view — pages shown separately" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="7" rx="1"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg><span class="tblabel">Pages</span></button>
+      <button id="viewContinuousBtn" class="tbicon" title="Continuous view — pages joined into one strip" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="1"/><path d="M6 9h12M6 15h12"/></svg><span class="tblabel">Continuous</span></button>
+      <button id="viewPresentBtn" class="tbicon" title="Presentation — one page at a time, full screen" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="1"/><path d="M10 8.5v4l3.5-2z"/><path d="M12 17v3M8 20h8"/></svg><span class="tblabel">Present</span></button>
+      <button id="fullScreenBtn" class="tbicon" title="Full screen (F11 is the browser's; this one is Nib's)" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><span class="tblabel">Full screen</span></button>
+      <button id="readAloudBtn" class="tbicon" title="Read this page aloud — needs a text layer, so OCR a scan first" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h3l5 4V6l-5 4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg><span class="tblabel">Read aloud</span></button>
+          </div><div class="tbgroup" data-label="Zoom" data-fold="4">
+<!-- Its own group again (it was one with View from v1.129.4 to v1.184): as icons the two together
+     are the widest thing in the bar, and a group folds whole — so one group meant losing the zoom
+     to More at the first narrowing, for the sake of the layout buttons beside it. -->
+<button id="zoomOutBtn" class="tbicon" title="Zoom out (Ctrl+-)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M8 11h6"/></svg><span class="tblabel">Zoom out</span></button>
+      <!-- The zoom level, and the way back to 100%. A number is not a word: it is the one control
+           here whose face is its own state. -->
+      <button id="actualSizeBtn" class="tbpct" title="Actual size (100%)"><span id="zoomPct">100%</span><span class="tblabel">Actual size</span></button>
+      <button id="zoomInBtn" class="tbicon" title="Zoom in (Ctrl++)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M8 11h6M11 8v6"/></svg><span class="tblabel">Zoom in</span></button>
+      <button id="fitBtn" class="tbicon" title="Fit width (Ctrl+0)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M20 4v16M8 12h8M10.5 9.5 8 12l2.5 2.5M13.5 9.5 16 12l-2.5 2.5"/></svg><span class="tblabel">Fit width</span></button>
+      <button id="fitPageBtn" class="tbicon" title="Fit page — the tallest page fits the window"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16M4 20h16M12 8v8M9.5 10.5 12 8l2.5 2.5M9.5 13.5 12 16l2.5-2.5"/></svg><span class="tblabel">Fit page</span></button>
             </div><div class="tbgroup" data-label="Reload" data-fold="0">
       <button id="reloadBtn" class="tbicon" title="Reload from disk, discarding unsaved changes" aria-label="Reload from disk" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span class="tblabel">Reload from disk</span>
       </button>
             </div><div class="tbgroup" data-label="Print" data-fold="0">
       <!-- A data-forward twin of the File pane's Print…, so there is one handler and one id.
            setDocControls disables [data-forward="printBtn"] alongside printBtn itself, so this
            greys out with nothing open without being listed anywhere new. -->
       <button class="tbicon" data-forward="printBtn" title="Print (opens your browser's print dialog)" aria-label="Print" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg><span class="tblabel">Print</span>
       </button>
             </div><div class="tbgroup" data-label="Save" data-fold="0">
-<button id="saveBtn" title="Save (overwrites the original)" disabled>Save</button>
-      <button id="quitBtn" title="Quit Nib — ends this process, and says what it will end first">Quit</button>
+<button id="saveBtn" class="tbicon" title="Save (overwrites the original)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/></svg><span class="tblabel">Save</span></button>
+      <button id="quitBtn" class="tbicon" title="Quit Nib — ends this process, and says what it will end first"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg><span class="tblabel">Quit</span></button>
             </div>    </div>
     <span class="tbsep"></span>
 
@@ -633,10 +662,9 @@
 <button id="aboutBtn">About Nib…</button>
             </div>
     </div>      </div>      <div id="thumbs" class="panel active">
-        <!-- The page number and count. They were Previous/[n]/Next in the toolbar until
-             v1.125.0; the buttons are gone (PageUp/PageDown/Home/End still page, and the
-             thumbnails are a better target than a Next button) and the readout came here,
-             which is where a reader thinking about pages already is. -->
+        <!-- The page number and count, beside the thumbnails — where a reader thinking about
+             pages already is. The toolbar carries the same readout with Previous and Next
+             (ADR-087); both are written by class, so neither can disagree with the other. -->
         <div class="pagejump">Page <span class="tbpage"><input class="pageNum" type="number" min="1" value="1" /><span class="pageCount">/ 0</span></span></div>
         <div class="thumbactions">
           <button id="appendBtn" title="Append another PDF">+ Append PDF</button>

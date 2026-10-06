@@ -6575,3 +6575,7 @@ says what the replay asserts, not what a summary remembers.
 | `one-window-per-file-opened-together` — Each of several launches opens its own window (ADR-086, v1.184.0) | `go test ./internal/server/ -count=1 -run TestALaunchWaitsForAWindowAlreadyOnItsWay`, tier 1 | "one window per file" |
 | `a-queued-document-outlives-its-session` — A document queued while locked opens in the next session (ADR-086, v1.184.0) | `go test ./internal/server/ -count=1 -run TestAQueuedDocumentDoesNotOutliveItsSession`, tier 1 | "opens beside it" |
 | `a-reload-reopens-the-launch-document` — A reload brings back the document the launch opened (ADR-086, v1.184.0) | `node --test test/jsdom/handoffpush.test.mjs`, tier 2 | "still in the address" |
+| `a-bar-button-shows-its-word` — A toolbar button shows its word beside its icon (ADR-087, v1.185.0) | `node --test test/jsdom/toolbaricons.test.mjs`, tier 2 | "shows a word in the bar" |
+| `the-undo-button-ignores-server-history` — The Undo button is off although the server has history (ADR-087, v1.185.0) | `node --test test/jsdom/toolbaricons.test.mjs`, tier 2 | "the mouse has no way to undo" |
+| `an-armed-tool-is-not-named-in-the-bar` — An armed tool is not named in the bar (ADR-087, v1.185.0) | `node --test test/jsdom/toolbaricons.test.mjs`, tier 2 | "the bar says nothing" |
+| `the-zoom-level-shows-a-background-document` — The zoom level shows a background document's zoom (ADR-087, v1.185.0) | `node --test test/jsdom/toolbaricons.test.mjs`, tier 2 | "now shows ITS zoom" |
