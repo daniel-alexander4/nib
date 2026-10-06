@@ -1325,8 +1325,13 @@ as the PDF handler, which is usually not Nib; `xdg-mime default nib.desktop
 application/pdf` changes that, and it is deliberately your call rather than
 something the package does behind your back.) The second
 launch finds the running one, hands it the path, and exits; if Nib is locked at
-the time, the document opens as soon as you unlock. This works the same on every
-platform. It used to be Linux-only and it worked by killing the running process
+the time, the document opens as soon as you unlock. The document arrives as a new
+tab in the window you already have open — no second window — and opening several
+at once still gives one Nib. Nib cannot bring a window you have covered or
+minimised to the front on every desktop: on Linux under X11 it does when `wmctrl`
+or `xdotool` is installed, and elsewhere the window marks its title (●) until you
+return to it. Launching Nib again with *no* document always opens a window. The
+hand-off itself works the same on every platform. It used to be Linux-only and it worked by killing the running process
 and taking its place, which meant a second double-click could take an unsaved
 document down with it.
 

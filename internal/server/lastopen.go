@@ -60,7 +60,7 @@ func (s *Server) recordLastOpen() {
 }
 
 // endSessionForLaunch closes every document the closed window left, through the same door Close
-// uses. Called only by a hand-off that cancelled a grace.
+// uses, and drops what was queued for it. Called only by a hand-off that cancelled a grace.
 //
 // **Nothing is recorded here**: the window that went already did, before the grace this launch
 // cancelled was armed. The unsaved count is logged because it is the one thing this loses that the
@@ -74,7 +74,14 @@ func (s *Server) endSessionForLaunch() {
 			unsaved++
 		}
 	}
+	// A path handed to the closed session while it was locked belongs to that session too: left
+	// queued, it opens at this launch's unlock beside the one document the launch asked for.
+	queued := len(s.pendingOpens)
+	s.pendingOpens = nil
 	s.mu.Unlock()
+	if queued > 0 {
+		log.Printf("%s %d queued while locked, dropped", sessionEndedMsg, queued)
+	}
 	if n == 0 {
 		return
 	}

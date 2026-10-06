@@ -1,0 +1,10 @@
+diff --git a/internal/server/handoffpush.go b/internal/server/handoffpush.go
+--- a/internal/server/handoffpush.go
++++ b/internal/server/handoffpush.go
+@@ -153,6 +153,5 @@
+ 		log.Printf("%s %s", handoffAwaitsItsOwnW, result)
+ 		return true
+ 	}
+-	s.push.expect()
+ 	return false
+ }

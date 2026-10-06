@@ -320,6 +320,7 @@ func (s *Server) windowArrived() int64 {
 	}
 	n := s.windows.n.Add(1)
 	s.idle.mu.Unlock()
+	s.push.arrived()
 	logIdleCancel(t, at, idleExitCauseWindow)
 	return n
 }
@@ -482,6 +483,8 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 	// connection, never shared: a window that arrives mid-download must receive the current state
 	// on its first pass, which a server-wide "last sent" would skip.
 	var lastArmed, lastDownload string
+	// A window hears the hand-offs that arrive while it is open, never the ones before it (ADR-086).
+	lastHandoff := s.push.current()
 	for {
 		// **SUBSCRIBE BEFORE READING, and the other order was a lost wakeup (/pending 464).**
 		//
@@ -508,6 +511,7 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 		// one and then reading both would reopen exactly the window that bug lived in, for
 		// whichever channel was obtained last.
 		dlChanged := s.dl.changes()
+		hoChanged := s.push.changes()
 		// **What is armed, not merely whether.** "Names a live ceremony specifically, not
 		// generically" (P01.S06) cannot be met from a bool, and the name is the ceremony's own
 		// INTENT — the convener's words for what this proceeding is — never a fingerprint, which
@@ -542,11 +546,25 @@ func (s *Server) handleWindow(w http.ResponseWriter, r *http.Request) {
 			lastDownload = string(dlPayload)
 			flusher.Flush()
 		}
+		// A launch handed this instance a document (ADR-086). Every one is sent, by sequence: the
+		// emit-on-difference rule above would swallow the second of two identical outcomes.
+		for _, ev := range s.push.since(lastHandoff) {
+			hoPayload, hoErr := json.Marshal(handoffEvent{Result: ev.result})
+			if hoErr != nil {
+				return
+			}
+			if _, err := w.Write(append(append([]byte("event: handoff\ndata: "), hoPayload...), '\n', '\n')); err != nil {
+				return
+			}
+			lastHandoff = ev.seq
+			flusher.Flush()
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-changed:
 		case <-dlChanged:
+		case <-hoChanged:
 		}
 	}
 }

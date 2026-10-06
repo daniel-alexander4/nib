@@ -154,7 +154,12 @@ var published = map[string][]string{
 	//     harness that sets a request field is this table's idea of a reader (`lanHeardResponse`).
 	"server.lanHeard":        {"build/pairrepro.sh"},
 	"server.handoffResponse": {"internal/instance/instance.go"},
-	"server.armRequest":      {"web/app.js", "build/ceremonyrepro.sh"},
+	// ADR-086. `Reply` is the hand-off's answer as the LAUNCH holds it, read where the launch
+	// decides whether to open a window; `handoffEvent` is the same hand-off as an open window
+	// hears it on its stream.
+	"instance.Reply":      {"cmd/nib/main.go"},
+	"server.handoffEvent": {"web/app.js"},
+	"server.armRequest":   {"web/app.js", "build/ceremonyrepro.sh"},
 	// Derived from the tree, not guessed: for each shape, the files that actually mention
 	// its fields with comments stripped. A first draft of this table was written from
 	// memory and named four wrong files — the scan reporting a false orphan is worse than

@@ -610,13 +610,17 @@ function applyStatus(st) {
           // surfaced URL. If it focuses the existing one instead, that page never
           // reloads and never sees the parameter — the same reason Nib cannot promise
           // to raise a window it does not own.
-          const NOTICES = {
-            'handoff-refused': 'That document could not be opened here — Nib may be full.',
-            'handoff-queued': 'That document will open once you unlock Nib.',
-          };
-          const notice = NOTICES[params.get('notice')];
+          const notice = HANDOFF_NOTICES[params.get('notice')];
           if (notice) toast(notice);
           const initial = params.get('open');
+          // **Spent, so removed** (ADR-086). Both are one launch's message to one page load; left
+          // in the address they are replayed by every reload, and `open` then brings back a
+          // document the user closed.
+          if (params.has('open') || params.has('notice')) {
+            params.delete('open'); params.delete('notice');
+            const rest = params.toString();
+            history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+          }
           if (initial) openOrActivate(initial).catch((e) => toast('could not open: ' + e.message));
           refreshResume();
         });
@@ -3957,6 +3961,41 @@ async function installOpened(meta) {
 // It over-reports for a document saved before the reload (handleSave leaves the ring
 // alone, deliberately) — the safe direction, and the one this whole item trades on.
 function openedDirty(meta) { return !!(meta && meta.canUndo); }
+
+// HANDOFF_NOTICES are the words for a hand-off that did not open a document, by the launch's CODE.
+// One map, because the message reaches a page two ways: on the URL of a window the launch opened,
+// and on the stream of a window that was already open (ADR-086).
+const HANDOFF_NOTICES = {
+  'handoff-refused': 'That document could not be opened here — Nib may be full.',
+  'handoff-queued': 'That document will open once you unlock Nib.',
+};
+
+// baseTitle is the window's title with no mark on it.
+const baseTitle = document.title;
+// adoptHandedOff waits out a reconcile already running rather than skipping: that one may have
+// read the server before this document was installed.
+function adoptHandedOff() {
+  if (reconciling) { setTimeout(adoptHandedOff, 100); return; }
+  reconciling = true;
+  reconcileWithServer().catch(() => {}).finally(() => { reconciling = false; });
+}
+// applyHandoffEvent is a launch's document arriving in a window that was already open (ADR-086).
+//
+// The server has installed it; this window only has to look. `reconcileWithServer` is the one
+// function that makes the tabs match the server and activates what the server says is active, so
+// the new document comes up as the front tab with nothing re-derived here.
+//
+// **The window cannot bring itself to the front** — `window.focus()` is ignored for a window the
+// user is not in (measured in Chrome app mode, covered and minimised). So the title is marked until
+// the window is next focused, which is what a taskbar shows.
+function applyHandoffEvent(ev) {
+  if (ev.result === 'refused' || ev.result === 'queued') toast(HANDOFF_NOTICES['handoff-' + ev.result]);
+  if (ev.result === 'opened' || ev.result === 'focused') adoptHandedOff();
+  if (!document.hasFocus()) {
+    document.title = '● ' + baseTitle;
+    window.addEventListener('focus', () => { document.title = baseTitle; }, { once: true });
+  }
+}
 
 // restored guards the boot restore to once per page load. applyStatus runs again after
 // an unlock and after a migration, and a second restore would re-adopt every document
@@ -14783,6 +14822,10 @@ try {
   // another one would inflate that count and defeat the idle exit that fires at zero.
   windowStream.addEventListener('download', (e) => {
     try { applyDownloadEvent(JSON.parse(e.data)); } catch { /* a malformed frame is not worth a throw */ }
+  });
+  // A launch handed Nib a document while this window was open (ADR-086).
+  windowStream.addEventListener('handoff', (e) => {
+    try { applyHandoffEvent(JSON.parse(e.data)); } catch { /* a malformed frame is not worth a throw */ }
   });
   windowStream.addEventListener('armed', (e) => {
     try {

@@ -143,7 +143,10 @@ echo "$Nib_out"
 #
 # 94 since ADR-085 (pan.test.mjs): whose drag a press on the page is, and Resume last session — its own file
 # because it boots at a launch state with a recorded session, which no other file's boot has.
-Nib_expect_files=94
+#
+# 95 since ADR-086 (handoffpush.test.mjs): a launch's document arriving in the open window — its own file because it
+# boots with `?open=` and `?notice=` on the address, which no other file's boot carries.
+Nib_expect_files=95
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -197,4 +200,88 @@ func TestAStaleRecordIsTakenOverWithoutUserAction(t *testing.T) {
 	if onDisk.Token == stale.Token || onDisk.Handoff == stale.Handoff {
 		t.Error("the take-over kept the dead instance's secrets; anything that read the old record still holds a working token")
 	}
+}
+
+// TestSeveralLaunchesAtOnceBecomeOneNib — a file manager opening several documents starts one Nib
+// per file (`Exec=nib %f`), within milliseconds. Each finds no instance record, and all but one
+// lose the exclusive create; the losers used to serve anyway, one Nib per document (measured: 2
+// and 4 processes in two of six rounds of four launches). They hand off to the winner (ADR-086).
+func TestSeveralLaunchesAtOnceBecomeOneNib(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a binary")
+	}
+	bin := filepath.Join(t.TempDir(), "nib-race")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building nib: %v\n%s", err, out)
+	}
+	const launches, rounds = 4, 8
+	for round := 0; round < rounds; round++ {
+		home, cfg := t.TempDir(), t.TempDir()
+		logs := make([]*lockedBuffer, launches)
+		done := make([]chan struct{}, launches)
+		cmds := make([]*exec.Cmd, launches)
+		for i := range cmds {
+			c := exec.Command(bin, filepath.Join(home, fmt.Sprintf("doc%d.pdf", i)))
+			c.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+cfg, "NIB_NO_BROWSER=1")
+			logs[i] = &lockedBuffer{}
+			c.Stderr = logs[i]
+			cmds[i], done[i] = c, make(chan struct{})
+		}
+		for i, c := range cmds {
+			if err := c.Start(); err != nil {
+				t.Fatal(err)
+			}
+			go func() { _ = c.Wait(); close(done[i]) }()
+		}
+		// Every launch ends one of two ways: it serves, or it hands off and exits.
+		serving := 0
+		for i := range cmds {
+			settled := false
+			for deadline := time.Now().Add(30 * time.Second); !settled && time.Now().Before(deadline); {
+				select {
+				case <-done[i]:
+					settled = true
+				default:
+					if strings.Contains(logs[i].String(), "serving at") {
+						serving++
+						settled = true
+					} else {
+						time.Sleep(10 * time.Millisecond)
+					}
+				}
+			}
+			if !settled {
+				t.Fatalf("round %d: launch %d neither served nor exited:\n%s", round, i, logs[i].String())
+			}
+		}
+		for i, c := range cmds {
+			_ = c.Process.Signal(syscall.SIGTERM)
+			<-done[i]
+		}
+		if serving != 1 {
+			var all strings.Builder
+			for i := range logs {
+				fmt.Fprintf(&all, "--- launch %d\n%s", i, logs[i].String())
+			}
+			t.Fatalf("round %d: %d of %d launches are serving, want 1 — the documents are split across separate Nibs\n%s", round, serving, launches, all.String())
+		}
+	}
+}
+
+// lockedBuffer is a log sink the test can read while the process is still writing it.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }

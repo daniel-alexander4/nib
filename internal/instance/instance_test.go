@@ -219,7 +219,7 @@ func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testi
 
 	t.Run("versions differ", func(t *testing.T) {
 		rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.90.0"}
-		_, _, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		_, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 		if err == nil {
 			t.Fatal("a 404 from the running instance was not reported as a failure")
 		}
@@ -232,7 +232,7 @@ func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testi
 
 	t.Run("versions match", func(t *testing.T) {
 		rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.109.2"}
-		_, _, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		_, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 		if err == nil {
 			t.Fatal("a 404 from the running instance was not reported as a failure")
 		}
@@ -246,7 +246,7 @@ func TestHandOffRefusalNamesTheVersionsAndOnlyBlamesASkewWhenThereIsOne(t *testi
 
 	t.Run("a record with no version says so rather than reading blank", func(t *testing.T) {
 		rec := Record{Addr: addr, Token: "t", Handoff: "h"}
-		_, _, _, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+		_, err := HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 		if err == nil || !strings.Contains(err.Error(), "unknown") {
 			t.Errorf("a versionless record produced %v; want the version reported as unknown rather than as an empty string", err)
 		}
@@ -267,11 +267,35 @@ func TestHandOffConnectionFailureDoesNotBlameVersions(t *testing.T) {
 	ln.Close()
 
 	rec := Record{Addr: addr, Token: "t", Handoff: "h", Version: "1.90.0"}
-	_, _, _, err = HandOff(rec, "/tmp/doc.pdf", "1.109.2")
+	_, err = HandOff(rec, "/tmp/doc.pdf", "1.109.2")
 	if err == nil {
 		t.Fatal("handing off to a dead address succeeded")
 	}
 	if strings.Contains(err.Error(), "differ") {
 		t.Errorf("a connection failure was reported as a version mismatch: %v", err)
+	}
+}
+
+// TestAHandOffReplyWithoutSurfacedMeansOpenAWindow — the launch and the running Nib can be two
+// builds for the length of an upgrade, and a reply from one that predates the field must read as
+// what that build always meant (ADR-086).
+func TestAHandOffReplyWithoutSurfacedMeansOpenAWindow(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"result":"opened","launch":"k"}`:                 false,
+		`{"result":"opened","launch":"k","surfaced":true}`: true,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
+		}))
+		addr := strings.TrimPrefix(srv.URL, "http://")
+		got, err := HandOff(Record{Addr: addr, Token: "t", Handoff: "h"}, "/tmp/doc.pdf", "test")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if got.Result != "opened" || got.Launch != "k" || got.Surfaced != want {
+			t.Errorf("%s decoded as %+v, want surfaced=%v", body, got, want)
+		}
 	}
 }

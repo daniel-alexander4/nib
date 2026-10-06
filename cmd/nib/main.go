@@ -151,11 +151,18 @@ func run() int {
 				}
 			}()
 		case errors.Is(err, instance.ErrExists):
-			// Another instance already published. P07.S02 decides what to do about
-			// it — hand the path over, or take over a stale record. Until then this
-			// is a note rather than a behaviour change: today's launch carries on and
-			// serves, exactly as it did before the record existed.
-			log.Printf("another Nib instance is already recorded; running alongside it — this one publishes no record, so a later launch hands off to that one, never to this")
+			// **Another launch published between this one's look and its bind, so hand off to
+			// it now (ADR-086).** A file manager opening several documents starts one Nib per
+			// file within milliseconds, each finds no record, and all but one lose here; they
+			// used to carry on and serve, one Nib per document (measured: 2 and 4 processes
+			// in two of six rounds of four launches). The winner bound its listener before it
+			// published, so the probe waits on a socket that exists.
+			if handedOff(cfgDir, initialFile()) {
+				log.Printf("lost the record to another launch; handed off to it")
+				ln.Close()
+				return 0
+			}
+			log.Printf("another Nib instance is already recorded and could not be handed to; running alongside it — this one publishes no record, so a later launch hands off to that one, never to this")
 			probeToken = ""
 		default:
 			log.Printf("could not publish the instance record: %v", err)
@@ -178,6 +185,11 @@ func run() int {
 	// safe.Recover, unlike the three other detached goroutines in the tree, so a
 	// panic outside an HTTP handler took the process down with the user's unsaved
 	// document — which is what safe.Recover's own comment says it exists to prevent.
+	// Said BEFORE the first request can be served: a launch that arrives while this process's
+	// own window is still starting must not open a second one (ADR-086).
+	if os.Getenv("NIB_NO_BROWSER") == "" {
+		s.ExpectWindow()
+	}
 	serveErr := make(chan error, 1)
 	go func() {
 		defer safe.Recover("http serve")
@@ -212,6 +224,7 @@ func run() int {
 	if !noBrowser {
 		if _, openErr = browser.Open(uiURL + "#k=" + s.MintLaunchKey()); openErr != nil {
 			log.Printf("could not open a browser window: %v", openErr)
+			s.ExpectNoWindow()
 		}
 	}
 	if noBrowser || openErr != nil {
@@ -330,7 +343,8 @@ func handedOff(cfgDir, path string) bool {
 			log.Printf("a Nib is recorded at %s but did not answer within the probe's limit; leaving its record and starting a second Nib beside it", rec.Addr)
 			return false
 		}
-		result, reason, launch, err := instance.HandOff(rec, path, version)
+		reply, err := instance.HandOff(rec, path, version)
+		result, reason, launch := reply.Result, reply.Reason, reply.Launch
 		if errors.Is(err, instance.ErrHandOffUnanswered) {
 			// The running Nib has the request and is still opening the file — the route does
 			// not stop when its caller gives up — so becoming the primary here would open the
@@ -361,6 +375,18 @@ func handedOff(cfgDir, path string) bool {
 		case "queued":
 			log.Printf("Nib is locked; this document opens when you unlock it")
 			notice = "handoff-queued"
+		}
+		// **A window that is already open has it (ADR-086).** The running instance pushed the
+		// document, or the notice, to that window; opening another here is what used to leave
+		// one window per launch, each showing every document. The raise is asked for and not
+		// relied on.
+		if reply.Surfaced {
+			if os.Getenv("NIB_NO_BROWSER") == "" && browser.Raise() {
+				log.Printf("handed off to the Nib at %s; its window was asked to the front", rec.Addr)
+			} else {
+				log.Printf("handed off to the Nib at %s; its open window has the document", rec.Addr)
+			}
+			return true
 		}
 		// Surface the running instance's window. The mechanism is the one Nib already
 		// has, and its limit is recorded in ADR-006: no reliable cross-platform raise
