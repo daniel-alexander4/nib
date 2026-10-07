@@ -101,6 +101,10 @@ type textRun struct {
 	// another page re-opens only the sequence carrying the run's MCID, so it would draw the run outside that list: a
 	// hidden layer drawn unconditionally, a language lost (P07 phase-close review).
 	propsWithoutMCID bool
+	// reversed is whether the run was drawn inside a `ReversedChars` sequence (`mcFrame.reversed`): its show string
+	// holds the characters in the reverse of reading order, so text and glyphs here are in the order they are SET,
+	// left to right, and a reader of the words turns them round (`mapText`).
+	reversed bool
 	// rotated is whether the run's baseline is not upright left-to-right in user space — turned, vertical or
 	// mirrored (`baselineTurns`). Grouping measures lines as horizontal baselines, so it reports a page
 	// carrying one rather than reading it as upright (`/pending 503`).
@@ -153,6 +157,15 @@ type runGlyph struct {
 // in unrotated space reads consistently.
 func baselineTurns(m runMatrix) bool {
 	return math.Abs(math.Atan2(m[1], m[0])) > math.Pi/180
+}
+
+// reversedCharsTag is the marked-content tag for show strings set in the reverse of reading order.
+const reversedCharsTag = "ReversedChars"
+
+// inReversedChars reports whether a `ReversedChars` sequence is open.
+func (w *runWalker) inReversedChars() bool {
+	n := len(w.mcStack)
+	return n > 0 && w.mcStack[n-1].reversed
 }
 
 // inReplacement reports whether a sequence carrying replacement text is open at this point of the walk.
@@ -540,18 +553,22 @@ type mcFrame struct {
 	// props is whether this frame or any below it is a `BDC` whose property list carries no MCID (and is not an
 	// `/Artifact`'s): content a carry would take out of it (`textRun.propsWithoutMCID`).
 	props bool
+	// reversed is whether this frame or any below it is tagged `ReversedChars`: its show strings hold their characters
+	// in the reverse of reading order (ISO 32000-1 §14.8.2.3.3) — how nib sets a right-to-left OCR word, ADR-097.
+	reversed bool
 }
 
 // push opens a sequence: v as `mcFrame.v`, and seq its index into `seqs` or -1. `mcStack` and `seqOpen`
 // move in lockstep, so this is the only place either grows.
-func (w *runWalker) push(v, seq int, replaced, props bool) {
-	f := mcFrame{v: v, force: -1, seqAt: -1, replaced: replaced, props: props}
+func (w *runWalker) push(v, seq int, replaced, props, reversed bool) {
+	f := mcFrame{v: v, force: -1, seqAt: -1, replaced: replaced, props: props, reversed: reversed}
 	i := len(w.mcStack)
 	if i > 0 {
 		below := w.mcStack[i-1]
 		f.force, f.artifact, f.seqAt = below.force, below.artifact, below.seqAt
 		f.replaced = f.replaced || below.replaced
 		f.props = f.props || below.props
+		f.reversed = f.reversed || below.reversed
 	}
 	if v != -1 {
 		f.force = i
@@ -1115,20 +1132,23 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				w.show(&tm, tlm, gs, pieces, opSpan{os[0].start, tok.End}, depth > 0)
 			}
 		case "BMC":
-			entry := -1
+			entry, reversed := -1, false
 			if os := last(1); os != nil {
 				if tag, ok := os[0].name(src); ok && tag == "Artifact" {
 					entry = mcArtifact
+				} else if ok && tag == reversedCharsTag {
+					reversed = true
 				}
 			}
-			w.push(entry, -1, false, false)
+			w.push(entry, -1, false, false, reversed)
 		case "BDC":
-			entry, opener, replaced := -1, -1, false
+			entry, opener, replaced, reversed := -1, -1, false, false
 			if os := last(2); os != nil {
 				if tag, ok := os[0].name(src); ok && tag == "Artifact" {
 					entry = mcArtifact
 				} else {
 					entry = w.markedContentID(os[1], res, src)
+					reversed = ok && tag == reversedCharsTag
 				}
 				replaced = w.carriesReplacementText(os[1], res, src)
 				opener = os[0].start
@@ -1140,7 +1160,7 @@ func (w *runWalker) walk(src []byte, res types.Dict, gs runGState, depth int, vi
 				seq = len(w.seqs) - 1
 			}
 			// A property list with no MCID: `entry` is -1 only for a `BDC` that is not an `/Artifact` and names none.
-			w.push(entry, seq, replaced, opener >= 0 && entry == -1)
+			w.push(entry, seq, replaced, opener >= 0 && entry == -1, reversed)
 		case "EMC":
 			if n := len(w.mcStack); n > base {
 				w.mcStack = w.mcStack[:n-1]
@@ -1172,7 +1192,7 @@ func (w *runWalker) show(tm *runMatrix, tlm runMatrix, gs runGState, pieces []tj
 	start := tm.mul(gs.ctm)
 	run := textRun{font: gs.fontName, size: gs.size * math.Hypot(start[2], start[3]), decoded: true,
 		mcid: w.currentMCID(), span: span, inForm: inForm, stm: w.currentStm(), artifact: w.inArtifact(),
-		replaced: w.inReplacement(), propsWithoutMCID: w.inPropsWithoutMCID()}
+		replaced: w.inReplacement(), propsWithoutMCID: w.inPropsWithoutMCID(), reversed: w.inReversedChars()}
 	if gs.font != nil {
 		run.baseFont = gs.font.baseFont
 	}

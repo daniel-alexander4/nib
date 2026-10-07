@@ -118,6 +118,32 @@ test('…so the map\'s box holds its centre and replaces it: one box, and the li
   assert.deepEqual(got.boxes[0], [367.7, 205.5, 398, 216.5]);
 });
 
+// ── an item read right to left ───────────────────────────────────────────────
+// pdf.js hands a Hebrew item over in reading order and says `dir: 'rtl'`: its first character is at its RIGHT.
+test('the estimate for part of a right-to-left item is drawn at the end its letters are at', async () => {
+  const word = 'שלוםעולם'; // 8 letters, 100..148 across: the first four are the right half, 124..148
+  const rtl = (x, y, str) => ({ ...item(x, y, str), dir: 'rtl' });
+  const saved = LINE.item;
+  LINE.item = rtl;
+  try {
+    const [first] = (await scan([[100, 200, word]], [re('שלום')], null)).boxes;
+    assert.ok(first[0] > 112 && first[2] >= 148, `the first four letters are at 124..148 and the box is ${first[0]}..${first[2]}`);
+    const [last] = (await scan([[100, 200, word]], [re('עולם')], null)).boxes;
+    assert.ok(last[0] <= 100 && last[2] < 136, `the last four letters are at 100..124 and the box is ${last[0]}..${last[2]}`);
+    // With the map's exact box for a word set in reverse (ADR-097), the estimate is replaced and not kept beside it.
+    const rev = run(100, 200, word, { hidden: true, reversed: true });
+    rev.cuts.reverse();
+    const got = await scan([[100, 200, word]], [re('שלום')], mapOf([rev]));
+    assert.deepEqual(got.boxes, [[123.3, 199.5, 148.8, 212.5]]);
+  } finally { LINE.item = saved; }
+  // A word of such an item still runs from its left edge to its right, for the field detectors that read `words`.
+  const [w] = buildTextRows([{ str: word, x: 100, y: 210, w: 48, h: 10, dir: 'rtl' }])[0].words;
+  assert.deepEqual([w.x0, w.x1], [100, 148]);
+  // An item read left to right is laid out as it always was.
+  const [ltr] = (await scan([[100, 200, 'abcdefgh']], [re('abcd')], null)).boxes;
+  assert.ok(ltr[0] <= 100 && ltr[2] < 136, JSON.stringify(ltr));
+});
+
 // ── the rule itself ──────────────────────────────────────────────────────────
 const piece = (row, x0, s) => ({ row, x0, x1: x0 + 6 * s.length, s });
 const texts = (ms) => ms.map((parts) => parts.map((p) => p.piece.s.slice(p.from, p.to)));

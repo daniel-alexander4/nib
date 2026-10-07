@@ -189,6 +189,39 @@ test('part of a right-to-left OCR word takes the whole word: its letters are sta
   assert.deepEqual(xs(matchesInMap(page([fitted(100, 200, 'secret')]), [re('se')])[0]), [99.25, 112.75]);
 });
 
+// A right-to-left word as Nib stamps it since ADR-097: set last letter first and marked, so the map hands it over in
+// reading order with its cuts running from the RIGHT — letter i is 6pt wide leftward from x + 6·(n − i).
+const reversed = (x, y, str, extra = {}) => {
+  const r = run(x, y, str, { hidden: true, reversed: true, ...extra });
+  r.cuts.reverse();
+  return r;
+};
+
+test('part of a Hebrew OCR word set in reverse is boxed where its letters are, which is from the right', () => {
+  const word = 'שלום'; // at 100..124: ש at 118..124, ם at 100..106
+  const map = page([reversed(100, 200, word), reversed(160, 200, 'עולם')]);
+  assert.deepEqual(xs(matchesInMap(map, [re(word.slice(0, 2))])[0]), [111.25, 124.75], 'the first two letters are the right half');
+  assert.deepEqual(xs(matchesInMap(map, [re(word.slice(2))])[0]), [99.25, 112.75], 'the last two are the left half');
+  assert.deepEqual(xs(matchesInMap(map, [re(word.slice(1, 3))])[0]), [105.25, 118.75], 'and the middle two the middle');
+  assert.deepEqual(xs(matchesInMap(map, [re(word)])[0]), [99.25, 124.75]);
+});
+
+test('…and only that: an older layer, a short stamp, another tool\'s layer and an Arabic word are still taken whole', () => {
+  const heb = 'שלום', ara = 'محمد';
+  const whole = (t, part, why) => {
+    const [x0, x1] = xs(matchesInMap(page([t]), [re(part)])[0]);
+    assert.ok(x0 <= 100 && x1 >= 124, `${why}: the box runs ${x0}..${x1} and the word is at 100..124 — a letter asked for may be showing`);
+  };
+  for (const part of [heb.slice(0, 2), heb.slice(2)]) {
+    whole(fitted(100, 200, heb), part, 'a word stamped in reading order (before ADR-097, or by another tool)');
+    whole(reversed(100, 200, heb, { short: true }), part, 'a reversed word that could not be fitted');
+  }
+  // Arabic letters are stamped apart and printed joined: the boundaries between them are not the page's.
+  for (const part of [ara.slice(0, 2), ara.slice(2)]) whole(reversed(100, 200, ara), part, 'an Arabic word, reversed and fitted');
+  // One Arabic-script letter in a run is enough.
+  whole(reversed(100, 200, 'שלוم'), 'של', 'a run with one Arabic letter in it');
+});
+
 test('a match only the map found is added, and with no map reading the estimates stand', () => {
   assert.equal(placeMatches([], [[0.2, 0.25, 0.26, 0.27]]).boxes.length, 1);
   const est = [[0.17, 0.245, 0.29, 0.275]];

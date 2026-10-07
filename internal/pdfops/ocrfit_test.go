@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"nib/internal/testpdf"
+
+	pdffont "github.com/pdfcpu/pdfcpu/pkg/font"
 )
 
 // fitSamples is one line of words per OCR face, keyed by a language that selects it. Each face is its own entry
@@ -359,5 +361,168 @@ func TestOnlyAHiddenWordInsideAFormIsGivenItsInk(t *testing.T) {
 	}
 	if m, _ := mapText(sp, run(3, false)); len(m.Ink) != 0 {
 		t.Errorf("hidden text set straight on the page was given ink %v", m.Ink)
+	}
+}
+
+// TestARightToLeftWordIsSetWhereItsLettersAre — ADR-097. A Hebrew or Arabic word's first letter is the RIGHTMOST of
+// the scanned word, so the stamp sets the word last letter first and marks it `/ReversedChars`; the map hands the
+// word back in reading order with its glyph boundaries running from the right. Set in reading order (as it was) the
+// first letter's boundaries were the box's LEFT end, and every other reader had the word backwards.
+func TestARightToLeftWordIsSetWhereItsLettersAre(t *testing.T) {
+	base, err := testpdf.Text("scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for lang, sample := range map[string][]string{"heb": {"שלום", "ירושלים", "שָׁלוֹם"}, "ara": {"مرحبا", "بالعالم"}} {
+		words := fitWords(sample)
+		for _, stamp := range []struct {
+			name string
+			do   func() ([]byte, error)
+		}{
+			{"stamped", func() ([]byte, error) { return StampTextLayer(base, words, lang) }},
+			{"tagged", func() ([]byte, error) { out, _, err := TagOCRLayer(base, words, lang); return out, err }},
+		} {
+			out, err := stamp.do()
+			if err != nil {
+				t.Fatalf("%s %s: %v", lang, stamp.name, err)
+			}
+			pm, err := MapPage(out, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := 0
+			for _, tx := range pm.Text {
+				if !tx.Hidden {
+					continue
+				}
+				var w *Word
+				for i := range words {
+					if words[i].Text == tx.Text {
+						w = &words[i]
+					}
+				}
+				if w == nil {
+					t.Errorf("%s %s: the map reads %q, which is no word in reading order (%q)", lang, stamp.name, tx.Text, sample)
+					continue
+				}
+				found++
+				if !tx.Reversed || tx.Short {
+					t.Errorf("%s %s %q: reversed %v short %v, want a fitted word marked as set in reverse", lang, stamp.name, tx.Text, tx.Reversed, tx.Short)
+				}
+				if strings.Join(tx.Chars, "") != w.Text || len(tx.Cuts) != len(tx.Chars)+1 {
+					t.Errorf("%s %s %q: chars %q with %d cuts", lang, stamp.name, w.Text, tx.Chars, len(tx.Cuts))
+					continue
+				}
+				// The boundaries run from the box's right edge to its left, and each letter is as wide as its own
+				// advance: the first letter of the word is at the right, where the scan has it.
+				if math.Abs(tx.Cuts[0]*pm.Width-w.Rect[2]) > 0.05 || math.Abs(tx.Cuts[len(tx.Cuts)-1]*pm.Width-w.Rect[0]) > 0.05 {
+					t.Errorf("%s %s %q: cuts run %.2f..%.2f, the box is %.2f..%.2f from its right", lang, stamp.name, w.Text,
+						tx.Cuts[0]*pm.Width, tx.Cuts[len(tx.Cuts)-1]*pm.Width, w.Rect[2], w.Rect[0])
+				}
+				face, total := ocrFontFor(lang), 0.0
+				for _, r := range w.Text {
+					total += float64(pdffont.CharWidth(face, r))
+				}
+				for i, c := range tx.Chars {
+					want := float64(pdffont.CharWidth(face, []rune(c)[0])) / total * (w.Rect[2] - w.Rect[0])
+					if got := (tx.Cuts[i] - tx.Cuts[i+1]) * pm.Width; math.Abs(got-want) > 0.05 {
+						t.Errorf("%s %s %q: letter %d (%q) is %.2fpt wide leftward from its cut, want %.2f", lang, stamp.name, w.Text, i, c, got, want)
+					}
+				}
+			}
+			if found != len(words) {
+				t.Errorf("%s %s: %d of %d words read back", lang, stamp.name, found, len(words))
+			}
+			if _, err := exec.LookPath("pdftotext"); err != nil || stamp.name != "stamped" {
+				continue
+			}
+			path := filepath.Join(t.TempDir(), "layer.pdf")
+			if err := os.WriteFile(path, out, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			txt, err := exec.Command("pdftotext", path, "-").Output()
+			if err != nil {
+				t.Fatalf("pdftotext: %v", err)
+			}
+			for _, w := range words {
+				if !strings.Contains(string(txt), w.Text) {
+					t.Errorf("%s: poppler does not read %q in reading order: %q", lang, w.Text, txt)
+				}
+			}
+		}
+	}
+}
+
+// TestOnlyAWholeRightToLeftWordIsSetInReverse: a reader turns a right-to-left word round as a whole only when the
+// whole word runs one way. A digit or a Latin letter keeps its own direction inside it, and a bracket may be
+// mirrored, so those words are set as they were — in reading order, unmarked, and taken whole by a match.
+func TestOnlyAWholeRightToLeftWordIsSetInReverse(t *testing.T) {
+	for _, c := range []struct {
+		in, set  string
+		reversed bool
+	}{
+		{"שלום", "םולש", true},
+		{"مرحبا،", "،ابحرم", true}, // a mark of punctuation goes round with its word
+		{"Invoice", "Invoice", false},
+		{"123-45-6789", "123-45-6789", false},
+		{"٢٠٢٠", "٢٠٢٠", false},     // Arabic-Indic digits run left to right
+		{"ב-2020", "ב-2020", false}, // European digits inside a Hebrew word
+		{"م2", "م2", false},
+		{"م٢", "م٢", false},
+		{"שלוםabc", "שלוםabc", false},
+		{"(שלום)", "(שלום)", false},
+		{"...", "...", false},
+		{"", "", false},
+	} {
+		if set, reversed := setOrder(c.in); set != c.set || reversed != c.reversed {
+			t.Errorf("setOrder(%q) = %q, %v; want %q, %v", c.in, set, reversed, c.set, c.reversed)
+		}
+	}
+	// And such a word, stamped, is not marked: the map reads it as it is set.
+	base, err := testpdf.Text("scan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := StampTextLayer(base, []Word{{Page: 1, Text: "م2", Rect: [4]float64{60, 500, 100, 512}}}, "ara")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pm, err := MapPage(out, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, tx := range pm.Text {
+		if tx.Hidden {
+			seen = true
+			if tx.Reversed || tx.Text != "م2" || len(tx.Cuts) != 3 || tx.Cuts[0] > tx.Cuts[2] {
+				t.Errorf("a word with a digit in it reads %q reversed %v cuts %v; want it as it was stamped, from the left", tx.Text, tx.Reversed, tx.Cuts)
+			}
+		}
+	}
+	if !seen {
+		t.Error("the word is not in the layer")
+	}
+
+	// A reversed word that cannot be FITTED — a box with no height — is still marked: unmarked, it would be read in
+	// the order it is set, which is backwards.
+	out, err = StampTextLayer(base, []Word{{Page: 1, Text: "שלום", Rect: [4]float64{60, 500, 100, 500}}}, "heb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm, err = MapPage(out, 1); err != nil {
+		t.Fatal(err)
+	}
+	seen = false
+	for _, tx := range pm.Text {
+		if tx.Hidden {
+			seen = true
+			if !tx.Reversed || !tx.Short || tx.Text != "שלום" {
+				t.Errorf("an unfitted right-to-left word reads %q reversed %v short %v; want it in reading order, marked, and short", tx.Text, tx.Reversed, tx.Short)
+			}
+		}
+	}
+	if !seen {
+		t.Error("the unfitted word is not in the layer")
 	}
 }

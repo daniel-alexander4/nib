@@ -46,13 +46,17 @@ export function buildTextRows(items) {
       let sum = 0;
       for (const cc of it.str) { const a = mctx.measureText(cc).width || 1; adv.push(a); sum += a; }
       const sc = it.w / (sum || 1);
-      const edge = [it.x]; // edge[c] = x at start of char c; edge[len] = right edge
-      for (let c = 0; c < it.str.length; c++) edge.push(edge[c] + adv[c] * sc);
+      // edge[c] = x at start of char c; edge[len] = the far edge. An item pdf.js read right to left (`dir`) has its
+      // first character at its RIGHT: laid out from the left, part of a Hebrew or Arabic word was boxed at the
+      // mirrored end, and the letters searched for stayed on the page (ADR-097).
+      const rtl = it.dir === 'rtl';
+      const edge = [rtl ? it.x + it.w : it.x];
+      for (let c = 0; c < it.str.length; c++) edge.push(edge[c] + (rtl ? -1 : 1) * adv[c] * sc);
       let i = 0;
       while (i < it.str.length) { // words within the item, with pixel spans
         if (/\s/.test(it.str[i])) { i++; continue; }
         let j = i; while (j < it.str.length && !/\s/.test(it.str[j])) j++;
-        words.push({ text: it.str.slice(i, j), x0: edge[i], x1: edge[j], h: it.h, y: it.y });
+        words.push({ text: it.str.slice(i, j), x0: Math.min(edge[i], edge[j]), x1: Math.max(edge[i], edge[j]), h: it.h, y: it.y });
         i = j;
       }
       for (let c = 0; c < it.str.length; c++) { s += it.str[c]; cx.push((edge[c] + edge[c + 1]) / 2); ch.push(it.h); }
@@ -998,22 +1002,34 @@ const WORD_GAP = 0.15;                       // of the font size: a wider gap be
 const HIDDEN_STRETCH_MAX = 2.5;
 const HIDDEN_PAD_Y = 0.25; // of the font size: the stamped box sat a point above the bottom of the ink
 
-// A hidden word in a right-to-left script is written in READING order, its first letter at the LEFT — the stamp is
+// A hidden word in a right-to-left script was written in READING order, its first letter at the LEFT — the stamp is
 // set glyph after glyph and unshaped (`ocrFontFor`) — while the scanned word's first letter is at its right. So the
 // glyph boundaries say where a letter is in the stamp and not where it is on the paper: part of such a word was boxed
 // at the mirrored end, the letters asked for left showing (/pending 851 part 3). Where the letters of a scanned
 // word are is not known, so a match that takes any of the word takes all of it.
+//
+// Since ADR-097 Nib sets such a word last letter first and says so (`reversed` on the map, with its cuts running
+// from the right), so its letters ARE where the scan has them — in a script whose letters stand apart. A Hebrew word
+// written that way and fitted to its box is boxed by its glyphs. An Arabic-script word is still taken whole: its
+// letters are stamped in their separate forms and printed joined, and the boundaries between them are not the
+// page's (measured on the face it is stamped in: off by more than half a letter in 23 of 30 words). So is a word
+// stamped before ADR-097, a short stamp, and another tool's layer.
 const RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+const JOINED = /[\u0600-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/; // Arabic, Syriac, Thaana, N'Ko …: everything in RTL but Hebrew
+const lettersWhereScanned = (t) => !!t.reversed && !t.short && !JOINED.test(t.text);
 
 // matchesInMap runs `patterns` (global RegExps) over the page's text as the map has it, and returns one box per
-// match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right.
+// match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right
+// (the other way about in a run set in reverse — the box is over the matched glyphs' boundaries either way).
 //
 // Up and down a box is its runs' reach — a full size above the baseline — except over a fitted OCR word, whose own
 // ink the map carries (`ink`, ADR-093): there it is the ink, because the reach stood 1.65 times as tall as the word
 // and took the line above with it. Such a box also carries `hold`, the box it would have had from the reach.
-// placeMatches matches an estimate against THAT: pdf.js sets a fitted word's span about four points above its ink,
-// so the estimate's centre is inside the reach and, for a word with a descender, above the ink — measured, 6 of 39
-// searches on a real scan kept the estimate beside the exact box until the two boxes were told apart.
+// placeMatches matches an estimate against THAT. An estimate's centre is 0.35 of the size above its baseline, which
+// is inside the reach always and inside the ink only where the match has ink there: not for a match that is all
+// apostrophes or all full stops. (ADR-093 measured 6 of 39 searches keeping a second box and blamed pdf.js's span;
+// the estimate was being drawn on its row's first baseline, which ADR-095 fixed — re-measured with no `hold`,
+// 0 of 79 whole words keep one, ADR-097. `hold` stays for the matches whole words are not.)
 //
 // Only runs whose glyph boundaries are known take part (an upright run on an unturned page). Visible text and hidden
 // text — an OCR layer — are searched as two layers, never joined into one line; a short stamp's boundaries are
@@ -1047,7 +1063,7 @@ function layerMatches(map, patterns, runs, hidden) {
       return Math.max(1, Math.min(HIDDEN_STRETCH_MAX, room));
     });
     const cut = (g, i) => g.t.rect[0] + (g.t.cuts[i] - g.t.rect[0]) * stretch[g.k];
-    const whole = row.runs.map((t) => hidden && RTL.test(t.text)); // see RTL
+    const whole = row.runs.map((t) => hidden && RTL.test(t.text) && !lettersWhereScanned(t)); // see RTL
     // The row as a string, each character knowing which glyph of which run drew it (null: a space between runs).
     let s = '';
     const at = [];
@@ -1069,7 +1085,9 @@ function layerMatches(map, patterns, runs, hidden) {
         if (!g || !s[k].trim()) continue; // a space takes no ink
         const padY = g.t.short ? HIDDEN_PAD_Y * g.t.size : 0;
         const ink = hidden && !g.t.short && g.t.ink && g.t.ink.length === 2 ? g.t.ink : null;
-        x0 = Math.min(x0, cut(g, whole[g.k] ? 0 : g.i)); x1 = Math.max(x1, cut(g, whole[g.k] ? g.t.chars.length : g.i + 1));
+        // Both boundaries of each glyph: a reversed run's cuts run from the right.
+        const a = cut(g, whole[g.k] ? 0 : g.i), b = cut(g, whole[g.k] ? g.t.chars.length : g.i + 1);
+        x0 = Math.min(x0, a, b); x1 = Math.max(x1, a, b);
         r0 = Math.min(r0, g.t.rect[1] - padY); r1 = Math.max(r1, g.t.rect[3] + padY);
         y0 = Math.min(y0, ink ? ink[0] : g.t.rect[1] - padY); y1 = Math.max(y1, ink ? ink[1] : g.t.rect[3] + padY);
         inked = inked || !!ink;
