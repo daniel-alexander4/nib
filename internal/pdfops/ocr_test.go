@@ -73,7 +73,7 @@ func TestStampTextLayerCyrillicGreek(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s: Roboto does not cover %q — extracted %q; pull this language from the picker", lang, sample, strings.TrimSpace(txt))
 		}
 	}
@@ -110,7 +110,7 @@ func TestStampTextLayerLatinExtended(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s: Roboto does not cover %q — extracted %q; pull this language from the picker", lang, sample, strings.TrimSpace(txt))
 		}
 	}
@@ -205,4 +205,11 @@ func TestStampTextLayerUnicode(t *testing.T) {
 	if err := Validate(out); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
+}
+
+// containsWords is whether txt holds sample's words, in order, whatever space lies between them. The coverage tests
+// hand a whole phrase over as ONE word, which no engine does; a fitted word's space is as wide as its box makes it
+// (ADR-092), and poppler then reports the phrase's halves as separate words.
+func containsWords(txt, sample string) bool {
+	return strings.Contains(strings.Join(strings.Fields(txt), " "), strings.Join(strings.Fields(sample), " "))
 }

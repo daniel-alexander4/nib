@@ -62,7 +62,7 @@ func TestStampTextLayerThaiDevanagari(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s: %q did not round-trip — extracted %q (font missing or lacks glyphs)", lang, sample, strings.TrimSpace(txt))
 		}
 	}
@@ -148,7 +148,7 @@ func TestStampTextLayerCJK(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s: %q did not round-trip — extracted %q (font missing or lacks glyphs)", lang, sample, strings.TrimSpace(txt))
 		}
 	}
@@ -173,7 +173,7 @@ func TestStampTextLayerKorean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kor: StampTextLayer: %v", err)
 	}
-	if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+	if txt := pdfToText(t, out); !containsWords(txt, sample) {
 		t.Errorf("kor: %q did not round-trip — extracted %q (font missing or lacks glyphs)", sample, strings.TrimSpace(txt))
 	}
 }
@@ -208,7 +208,7 @@ func TestStampTextLayerLatinBreadth(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s: %q did not round-trip — extracted %q", lang, sample, strings.TrimSpace(txt))
 		}
 	}
@@ -238,7 +238,7 @@ func TestStampTextLayerScriptBreadth(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s: %q did not round-trip — extracted %q", lang, sample, strings.TrimSpace(txt))
 		}
 	}
@@ -273,7 +273,7 @@ func TestStampTextLayerBengali(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ben: StampTextLayer: %v", err)
 	}
-	if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+	if txt := pdfToText(t, out); !containsWords(txt, sample) {
 		t.Errorf("ben: %q did not round-trip — extracted %q (font missing or lacks glyphs)", sample, strings.TrimSpace(txt))
 	}
 }
@@ -304,7 +304,7 @@ func TestStampTextLayerSouthAsian(t *testing.T) {
 			t.Errorf("%s: StampTextLayer: %v", lang, err)
 			continue
 		}
-		if txt := pdfToText(t, out); !strings.Contains(txt, sample) {
+		if txt := pdfToText(t, out); !containsWords(txt, sample) {
 			t.Errorf("%s [%s]: %q did not round-trip — extracted %q", lang, ocrFontFor(lang), sample, strings.TrimSpace(txt))
 		}
 	}

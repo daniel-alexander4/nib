@@ -2165,6 +2165,12 @@ func StampImages(pdf []byte, stamps []Stamp) ([]byte, error) {
 // origin (`/pending 457`). The configuration is the text stamp's (`stampTextWatermarks`), so the stamp kinds read a
 // document the same way.
 func addWatermarks(pdf []byte, wms map[int][]*model.Watermark) ([]byte, error) {
+	return addWatermarksWith(pdf, wms, func(_ *model.Context, stamp func() error) error { return stamp() })
+}
+
+// addWatermarksWith is addWatermarks with the stamp handed to around, which runs it once and may read the context
+// before it and change it after — the OCR layer's fit (`fitStampedWords`) needs both, inside the one rewrite.
+func addWatermarksWith(pdf []byte, wms map[int][]*model.Watermark, around func(ctx *model.Context, stamp func() error) error) ([]byte, error) {
 	conf := model.NewDefaultConfiguration()
 	conf.Cmd = model.ADDWATERMARKS
 	conf.OptimizeDuplicateContentStreams = false
@@ -2174,7 +2180,9 @@ func addWatermarks(pdf []byte, wms map[int][]*model.Watermark) ([]byte, error) {
 				return err
 			}
 		}
-		return stampInPlace(ctx, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+		return around(ctx, func() error {
+			return stampInPlace(ctx, func() error { return pdfcpu.AddWatermarksSliceMap(ctx, wms) })
+		})
 	})
 }
 

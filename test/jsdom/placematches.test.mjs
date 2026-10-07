@@ -73,8 +73,10 @@ test('a run without glyph boundaries is not placed from the map', () => {
   assert.deepEqual(matchesInMap(null, [re('secret')]), []);
 });
 
-// An OCR layer: each word its own hidden run, starting where the scanned word starts and narrower than it.
-const ocr = (x, y, str) => run(x, y, str, { hidden: true });
+// A SHORT stamp — an OCR word as Nib wrote it before ADR-092: its own hidden run, starting where the scanned word
+// starts and narrower than it. `fitted` is a hidden run that already spans its word (ADR-092, or another tool's layer).
+const ocr = (x, y, str) => run(x, y, str, { hidden: true, short: true });
+const fitted = (x, y, str) => run(x, y, str, { hidden: true });
 const xs = (r) => [r[0] * W, r[2] * W].map((n) => Math.round(n * 100) / 100);
 const ys = (r) => [r[1] * H, r[3] * H].map((n) => Math.round(n * 100) / 100);
 
@@ -114,6 +116,24 @@ test('print and an OCR layer are two layers: neither joins the other\'s line, an
   assert.deepEqual(xs(matchesInMap(page([run(100, 200, 'secret'), ocr(160, 200, 'word')]), [re('secret')])[0]), [99.25, 136.75]);
   assert.deepEqual(xs(matchesInMap(page([ocr(100, 200, 'secret'), run(160, 200, 'word')]), [re('secret')])[0]), [99.25, 190.75]);
   assert.deepEqual(ys(matchesInMap(page([run(100, 200, 'secret')]), [re('secret')])[0]), [199.5, 212.5], 'print took the hidden layer\'s extra height');
+});
+
+test('a hidden word that is not a short stamp is read as it is written: not stretched, not made taller', () => {
+  // ADR-092: a fitted word already spans its scanned word, and its size is the line's. The next word is 24pt away
+  // and a column is further still: neither is reached for, and the box is print's height.
+  const got = matchesInMap(page([fitted(100, 200, 'secret'), fitted(160, 200, 'word')]), [re('secret')]);
+  assert.deepEqual(xs(got[0]), [99.25, 136.75], 'a fitted word was stretched toward the next one');
+  assert.deepEqual(ys(got[0]), [199.5, 212.5], 'a fitted word was made taller: on a real layer that reaches the lines either side');
+  assert.deepEqual(xs(matchesInMap(page([fitted(100, 200, 'secret')]), [re('secret')])[0]), [99.25, 136.75], 'the last word on a line took the ceiling');
+  // It is still the OCR layer, not print: it does not join print's line.
+  assert.equal(matchesInMap(page([run(100, 200, 'sec'), fitted(118, 200, 'ret')]), [re('secret')]).length, 0);
+  // One line may hold both kinds — a word that could not be fitted beside ones that were. Each is read as what it is,
+  // and a fitted word still bounds the short stamp before it.
+  const mixed = page([ocr(100, 200, 'secret'), fitted(160, 200, 'word')]);
+  assert.deepEqual(xs(matchesInMap(mixed, [re('secret')])[0]), [99.25, 160.25]);
+  assert.deepEqual(ys(matchesInMap(mixed, [re('secret')])[0]), [197, 215]);
+  assert.deepEqual(xs(matchesInMap(mixed, [re('word')])[0]), [159.25, 184.75]);
+  assert.deepEqual(ys(matchesInMap(mixed, [re('word')])[0]), [199.5, 212.5]);
 });
 
 test('an estimated box is replaced only by an exact box that holds its centre', () => {

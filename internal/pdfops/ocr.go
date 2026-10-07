@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -48,6 +49,9 @@ type Word struct {
 // copy-pasteable: this is the standard "searchable PDF" / OCR layer. The text is a
 // real (...) Tj run (not glyph outlines), so pdftotext and pdf.js Find recover it.
 //
+// Each word is then fitted to its box — its advance across it, its ink on the box's top and bottom — because pdfcpu
+// can only set it at a whole-point size and unit scale (ADR-092, ocrfit.go).
+//
 // lang is the OCR language (e.g. "eng", "tha", "hin"); it selects the font, since
 // one font can't cover every script. Thai/Devanagari use their vendored Noto face
 // (installed by InstallOCRFonts at startup); everything else falls back to Roboto.
@@ -60,16 +64,16 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 	model.NewDefaultConfiguration()
 	fontName := ocrFontFor(lang)
 	wms := map[int][]*model.Watermark{}
+	fits := map[int][]wordFit{} // beside wms: each page's stamped words, in the order they are stamped
+	unfitted := 0
 	for _, w := range words {
 		if strings.TrimSpace(w.Text) == "" {
 			continue
 		}
-		// Size the glyphs to the word-box height (in points); a small floor keeps a
-		// degenerate box's text legible to extraction.
-		pts := int(w.Rect[3] - w.Rect[1])
-		if pts < 4 {
-			pts = 4
-		}
+		// The size the word's ink fills its box at, to the nearest point — the fit carries the remainder. A word that
+		// cannot be fitted is sized to its box's height, with a small floor that keeps a degenerate box's text
+		// legible to extraction.
+		pts, fit, fitted := fitWord(fontName, w.Text, w.Rect)
 		// Anchor at the box's bottom-left, in points. No fillcolor/mode in the
 		// description string (the parser rejects mode 3) — RenderMode is set below.
 		desc := fmt.Sprintf("fontname:%s, points:%d, scalefactor:1 abs, position:bl, offset:%.2f %.2f, rotation:0",
@@ -99,13 +103,31 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 			return nil, fmt.Errorf("an OCR word names page %d; pages are numbered from 1", w.Page)
 		}
 		wms[w.Page] = append(wms[w.Page], wm)
+		fits[w.Page] = append(fits[w.Page], fit)
+		if !fitted {
+			unfitted++
+		}
 	}
 	if len(wms) == 0 {
 		return pdf, nil
 	}
-	out, err := addWatermarks(pdf, wms)
+	unpaired := 0
+	out, err := addWatermarksWith(pdf, wms, func(ctx *model.Context, stamp func() error) error {
+		pre := markersBeforeStamp(ctx, fits)
+		if err := stamp(); err != nil {
+			return err
+		}
+		var ferr error
+		unpaired, ferr = fitStampedWords(ctx, pre, fits)
+		return ferr
+	})
 	if err != nil {
 		return nil, err
+	}
+	// Two causes, two counts: a word with nothing to fit, and a page where what pdfcpu wrote could not be paired
+	// with what it was asked to write. Either way the word is in the layer, short, and ADR-091 reads it.
+	if unfitted > 0 || unpaired > 0 {
+		log.Printf("ocr: text layer left as stamped for %d word(s) with nothing to fit and %d on a page that could not be paired", unfitted, unpaired)
 	}
 	// The text layer is drawn in a font nib supplied and pdfcpu embedded, so the same rule applies
 	// here as to authored Markdown: see dropCIDSets. The scan itself is the user's document and

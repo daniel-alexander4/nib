@@ -447,9 +447,12 @@ them for real. Each box is drawn from the page's own letter positions, so it
 covers the match and stops there instead of spilling onto the words either side;
 where Nib can't read those positions it falls back to a deliberately wider box
 and tells you how many. It reads the text layer, so it works on any text-based
-PDF — and on a scan once you've run **OCR**, where each box is carried out to the
-start of the next word, because a scanned word is wider than the invisible text
-that stands for it. Matches split across the page's text runs are
+PDF — and on a scan once you've run **OCR**: each invisible word is set to the
+width and height of the scanned word it stands for, so a box drawn from it covers
+the word (in Nib, and in any other program that reads the layer). A scan OCR'd by
+a Nib before 1.189.2 has narrower invisible words; there Nib carries each box out
+to the start of the next word, but another program reading that older layer still
+sees the narrow words. Matches split across the page's text runs are
 still caught; matches that wrap across a line break are not (rare for the
 patterns).
 
