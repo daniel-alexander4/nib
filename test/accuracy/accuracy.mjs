@@ -15,6 +15,7 @@ import path from 'node:path';
 import { launch, shutdown } from '../ui/harness.mjs';
 import { matchesInMap } from '../../web/detect.js';
 import { scanWords, scanLayer, scanPicks, scoreScanWord, scanSummary, scanReport } from './scanscore.mjs';
+import * as reach from './reach.mjs';
 
 const [manifestPath, resultsPath] = process.argv.slice(2);
 const docs = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -324,6 +325,7 @@ for (const doc of docs) {
       row.redaction = [];
       for (const pick of wordsToFind(map, 6)) row.redaction.push(scoreRedaction(pick, await search(n, pick.word), map));
       row.scan = await scanColumn(doc, n, map, results.filter((r) => r.doc === name && r.scan && r.scan.words).length);
+      row.reach = reach.scorePage(doc, n, map, row.redaction); // up and down the page, against its pixels (reach.mjs)
       results.push(row);
       process.stdout.write('.');
     }
@@ -393,5 +395,9 @@ for (const r of rows) {
     + (r.zoom ? ` | zoom text ${r.zoom.text.join('→')} check ${r.zoom.check.join('→')}` : ''));
 }
 for (const line of scanReport(rows)) console.log(line);
+const reached = reach.report(rows); // the vertical-reach column: its own summary, written and printed
+summary.reach = reached.summary;
+fs.writeFileSync(resultsPath, JSON.stringify({ at: new Date().toISOString(), summary, results }, null, 1));
+console.log(reached.lines.join('\n'));
 console.log('\nsummary', JSON.stringify(summary, null, 1));
 console.log(`\nresults written to ${resultsPath}`);

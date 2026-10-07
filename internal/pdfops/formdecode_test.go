@@ -112,7 +112,8 @@ func TestFormWalkersDecodeThroughTheOneDoor(t *testing.T) {
 	}
 	// The door decodes through pdfread's capped decode (/pending 748), and no other pdfops file does.
 	allowed := map[string]int{"textrun.go": 1}
-	capped := map[string]int{"walkbudget.go": 1}
+	// fontink.go's is a font's embedded program, read once per font for its glyphs' reach (ADR-098) — no form.
+	capped := map[string]int{"walkbudget.go": 1, "fontink.go": 1}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue

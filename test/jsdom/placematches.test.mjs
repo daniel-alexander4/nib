@@ -168,9 +168,39 @@ test('a fitted OCR word is boxed by its own ink, and still replaces the estimate
   // The line above's estimate is not this word's: its centre is outside the reach too.
   const above = [232.0 / W, 121.6 / H, 267.3 / W, 132.9 / H];
   assert.equal(placeMatches([above], got).kept, 1);
-  // A short stamp's ink is not on any box, and print has none: both keep their reach.
+  // A short stamp's ink is not on any box: it keeps its reach.
   assert.deepEqual(ys(matchesInMap(page([{ ...t, short: true }]), [re('provided')])[0]), [131, 152]);
-  assert.deepEqual(ys(matchesInMap(page([{ ...t, hidden: false }]), [re('provided')])[0]), [133.5, 149.5]);
+});
+
+test('print is boxed by its font\'s own ink where the map carries it, a point clear, and never past the box its reach drew', () => {
+  // 10pt type whose reach is 200..212.5 (baseline 210): the font says its glyphs stop at 202.7 and 212.1.
+  const t = run(100, 200, 'the secret word', { ink: [202.7 / H, 212.1 / H] });
+  t.rect[3] = 212.5 / H;
+  const got = matchesInMap(page([t]), [re('secret')]);
+  // Up: the ink less a whole point — the line above's tails, which the reach's 199.5 took, are left alone.
+  // Down: a point past the ink would be 213.1, past the 213 the reach drew; ink inside the reach never draws a
+  // larger box than the reach did.
+  assert.deepEqual(ys(got[0]), [201.7, 213]);
+  assert.deepEqual(pts(got[0]).filter((_, i) => i % 2 === 0), [123.25, 160.75], 'across, nothing changes');
+  // The estimate is still matched against the reach: one drawn high, its centre above the ink, is replaced.
+  assert.deepEqual(ys(got[0].hold), [199.5, 213]);
+  const est = [120 / W, 196 / H, 164 / W, 205 / H]; // centre 200.5: inside the reach, above the ink's box
+  assert.deepEqual(placeMatches([est], got), { boxes: got, exact: 1, kept: 0 });
+  // Without ink, the reach — as every print box was drawn before.
+  const { ink, ...bare } = t;
+  assert.deepEqual(ys(matchesInMap(page([bare]), [re('secret')])[0]), [199.5, 213]);
+  // A tail deeper than the reach (an Arabic letter's, 0.45 of a size): the box grows to it, and a point past.
+  const deep = { ...t, ink: [202.7 / H, 214.5 / H] };
+  assert.deepEqual(ys(matchesInMap(page([deep]), [re('secret')])[0]), [201.7, 215.5]);
+  // Ink a hair inside the reach's top: a point clear of it would be past the reach's box, so the reach's stands.
+  assert.deepEqual(ys(matchesInMap(page([{ ...t, ink: [200.2 / H, 212.1 / H] }]), [re('secret')])[0]), [199.5, 213]);
+  // And ink above the reach likewise.
+  const tall = { ...t, ink: [198 / H, 212.1 / H] };
+  assert.deepEqual(ys(matchesInMap(page([tall]), [re('secret')])[0]), [197, 213]);
+  // A match over two runs, one with ink and one without, is as tall as the taller needs.
+  const a = run(100, 200, 'sec', { ink: [202.7 / H, 212.1 / H] }), b = run(118, 200, 'ret');
+  a.rect[3] = b.rect[3] = 212.5 / H;
+  assert.deepEqual(ys(matchesInMap(page([a, b]), [re('secret')])[0]), [199.5, 213]);
 });
 
 test('part of a right-to-left OCR word takes the whole word: its letters are stamped from the left and scanned from the right', () => {
