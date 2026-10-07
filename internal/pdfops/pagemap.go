@@ -53,7 +53,9 @@ type MapText struct {
 // MapShape is a ruled line or a box.
 type MapShape struct {
 	Rect MapRect `json:"rect"`
-	// Kind is "h" (a horizontal rule), "v" (a vertical rule) or "box" (a rectangle that is neither).
+	// Kind is "h" (a horizontal rule), "v" (a vertical rule), "box" (a rectangle that is neither) or "white" (a
+	// rectangle painted white and nothing else — the ground a form lays under a blank, ADR-096). A reader of lines
+	// and boxes never sees a "white": it is not a line, and on a white page it is not a box.
 	Kind string `json:"kind"`
 	// Filled is a box whose inside is painted with something other than white.
 	Filled bool `json:"filled,omitempty"`
@@ -104,9 +106,16 @@ func MapPage(pdf []byte, page int) (PageMap, error) {
 			m.Text = append(m.Text, t)
 		}
 	}
-	for _, s := range pr.shapes {
+	overBudget := paintedOverBudget
+	for i, s := range pr.shapes {
 		if s.white {
-			continue // painted white: on a white page it is not there, and under a field it is the field's background
+			// Painted white: on a white page it is not there as a line or a box. A white RECTANGLE is kept as what it
+			// is — the ground under a blank — and a white rule, which erases part of another, is not (ADR-096).
+			if ms, ok := mapShape(sp, s); ok && s.whiteFill && ms.Kind == "box" && !paintedOver(pr.shapes, i, &overBudget) {
+				ms.Kind, ms.Filled = "white", false
+				m.Shapes = append(m.Shapes, ms)
+			}
+			continue
 		}
 		if ms, ok := mapShape(sp, s); ok {
 			m.Shapes = append(m.Shapes, ms)
@@ -236,6 +245,30 @@ func fittedInk(r textRun) (bottom, top float64, ok bool) {
 	return r.y + b*r.size, r.y + t*r.size, true
 }
 
+// paintedOverBudget is how many pieces one page's grounds may be compared against, in all. Each ground is checked
+// against every piece painted after it, which is the square of what a page draws — and a page chooses how much it
+// draws. A form's page is a few hundred pieces (the IRS 1040: 137 grounds); past the budget a ground is taken as
+// covered and is not proposed, which costs a suggestion and never a wrong one.
+const paintedOverBudget = 4_000_000
+
+// paintedOver reports whether a later piece paints a colour over the whole of shapes[i]: a white ground under a tint
+// is not white on the page. Paths are all this sees — an image or a shading drawn over a ground is not modelled.
+// budget is what is left of paintedOverBudget; spent, the answer is "covered".
+func paintedOver(shapes []pageShape, i int, budget *int) bool {
+	const slack = 0.5 // points: a tint laid to the same edges covers it
+	b := shapes[i].box
+	if *budget -= len(shapes) - i - 1; *budget < 0 {
+		return true
+	}
+	for _, s := range shapes[i+1:] {
+		if s.filled && !s.whiteFill &&
+			s.box[0] <= b[0]+slack && s.box[1] <= b[1]+slack && s.box[2] >= b[2]-slack && s.box[3] >= b[3]-slack {
+			return true
+		}
+	}
+	return false
+}
+
 func mapShape(sp displaySpace, s pageShape) (MapShape, bool) {
 	b := s.box
 	// A stroked line is as thick as its width: grow a segment's box to what is painted.
@@ -255,7 +288,8 @@ func mapShape(sp displaySpace, s pageShape) (MapShape, bool) {
 	case wPt <= ruleMax && hPt > wPt*3:
 		out.Kind = "v"
 	case s.rect && wPt > ruleMax && hPt > ruleMax:
-		out.Kind, out.Filled = "box", s.filled
+		// A box outlined in ink and filled white is an empty box, not a shaded one.
+		out.Kind, out.Filled = "box", s.filled && !s.whiteFill
 	default:
 		return MapShape{}, false // a dot
 	}

@@ -696,3 +696,8 @@ home today.
   — extends ADR-090 and closes its declared gap. Both readings searched a row at a time, so a name split over a line
   end was found by neither; `wrappedMatches` is the one door across a line end. The estimate drew every match at its
   row's first baseline, and a row can hold two: the four words ADR-090 could not explain were estimates set 4.5–6pt high.
+- **[ADR-096 — a white rectangle is the ground under a blank](096-a-white-ground-is-a-blank.md)**
+  — extends ADR-088/089; supersedes ADR-088 §3 for white rectangles. A designer-made form lays a white rectangle under
+  each blank, and the map dropped them and then refused the page as shaded; they are now kind `white`, `Filled` means
+  a colour, and a line just under another closes it. Found 91.2% → 98.5%, well placed 84.5% → 98.2%. Nothing built
+  for symbol-font checkboxes: the corpus has none (`fda-135045`'s are bullets).

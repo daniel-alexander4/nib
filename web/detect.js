@@ -712,8 +712,11 @@ function clearOfText(box, text, ptX, ptY) {
 // Measured on two real grid forms before this existed: the picture found 18 of 70 and 16 of 78 real fields, because
 // a cell with a label in it is not blank by ink. Read from the map: 70 of 70 and 78 of 78.
 //
-// What it does NOT read, and the picture still does (the caller adds those): a blank bounded by shading and not by
-// lines — an IRS form's amount boxes — and anything on a page whose rules are an image.
+// A blank a form backs with a white rectangle is read too (ADR-096) — an IRS form made in a designer draws its amount
+// boxes that way, over a tint, and the tint used to refuse every one of them as "inside a shaded panel".
+//
+// What it does NOT read, and the picture still does (the caller adds those): a blank bounded only by shading, with no
+// ground of its own, and anything on a page whose rules are an image.
 
 // A run that is only separators — the "-" between the parts of a phone number, the "/" in a date — stands INSIDE a
 // blank. It is print, and it is not a label.
@@ -790,8 +793,8 @@ function blanksIn(box, solid, ptX, ptY, bare) {
 }
 
 // proposeFields reads the page map for the fields the page itself draws. Returns {kind: 'text' | 'check', rect, from}
-// in the map's own fractions; `from` says what was read ('cell', 'line', 'underscores', 'square', 'glyph'). Nothing is
-// proposed where the document already has a field, or inside a shaded panel.
+// in the map's own fractions; `from` says what was read ('cell', 'line', 'ground', 'underscores', 'square', 'glyph').
+// Nothing is proposed where the document already has a field, or inside a shaded panel unless on a white ground.
 export function proposeFields(map) {
   if (!map || map.noText) return [];
   const ptX = 1 / map.width, ptY = 1 / map.height;
@@ -802,8 +805,8 @@ export function proposeFields(map) {
   const mid = (r) => [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
   const holds = (r, p) => p[0] >= r[0] && p[0] <= r[2] && p[1] >= r[1] && p[1] <= r[3];
   const fields = [];
-  const push = (kind, rect, from) => {
-    if (shaded.some((s) => holds(s.rect, mid(rect)))) return;
+  const push = (kind, rect, from, overShade) => {
+    if (!overShade && shaded.some((s) => holds(s.rect, mid(rect)))) return;
     if ((map.widgets || []).some((w) => holds(w.rect, mid(rect)) || holds(rect, mid(w.rect)))) return;
     fields.push({ kind, rect, from });
   };
@@ -847,7 +850,18 @@ export function proposeFields(map) {
     let open = [[T.x0, T.x1]];
     for (const B of H) {
       if (!open.length) break;
-      if (B.y <= T.y + FIELD_MIN_H * ptY) continue;
+      if (B.y <= T.y + FIELD_MIN_H * ptY) {
+        // A line just under this one closes what it covers, with no room between them — the gap between two boxes
+        // stacked in a column, a double rule. The lower line opens its own rows; this one's do not reach past it.
+        if (B.y > T.y + tolY / 2) {
+          open = open.flatMap(([a, z]) => {
+            const x0 = Math.max(a, B.x0), x1 = Math.min(z, B.x1);
+            if (x1 - x0 <= FIELD_MIN_W * ptX) return [[a, z]];
+            return [[a, x0], [x1, z]].filter(([p, q]) => q - p > FIELD_MIN_W * ptX);
+          });
+        }
+        continue;
+      }
       const whole = open.length === 1 && Math.abs(B.x0 - T.x0) <= tolX && Math.abs(B.x1 - T.x1) <= tolX;
       const next = [];
       for (const [a, z] of open) {
@@ -869,6 +883,29 @@ export function proposeFields(map) {
     for (const f of blanksIn(box, solid, ptX, ptY, true)) push('text', f, 'line');
   }
 
+  // A white ground is a blank the form laid out for itself (ADR-096): a rectangle painted white and nothing else, which
+  // is how a form made in a designer backs each field — and on a tinted page it is the only edge the blank has. Read
+  // last among the shapes, and only where the lines proposed nothing: where both see a blank, the lines' reading has
+  // the label's room taken out of it already. A ground is the one thing proposed INSIDE a shaded panel, because it is
+  // painted over the shade (the map drops a ground that something was painted over).
+  const grounds = map.shapes.filter((s) => s.kind === 'white')
+    .map((s) => ({ rect: s.rect, w: (s.rect[2] - s.rect[0]) / ptX, h: (s.rect[3] - s.rect[1]) / ptY }))
+    .filter((g) => g.w >= SQUARE_MIN && g.h >= SQUARE_MIN && g.h <= ROW_MAX_H)
+    .sort((a, b) => a.w * a.h - b.w * b.h); // the smallest first: a tick box before the cell it stands in
+  const tick = (g) => g.w <= SQUARE_MAX && g.h <= SQUARE_MAX && Math.abs(g.w - g.h) < 4;
+  // Two grounds side by side share an edge, and print set beside a tick box touches it: what counts is a point inside.
+  const inner = (r) => [r[0] + ptX, r[1] + ptY, r[2] - ptX, r[3] - ptY];
+  const ticks = grounds.filter((g) => tick(g) && !print.some((t) => overlaps(t.rect, inner(g.rect))));
+  const taken = (r) => fields.some((f) => overlaps(f.rect, inner(r)));
+  for (const g of grounds) {
+    if (taken(g.rect)) continue;
+    if (tick(g)) { if (ticks.includes(g)) push('check', g.rect, 'ground', true); continue; }
+    // (A ground holding a tick box is taken by it: what is left of that cell is the tick box's label's room.)
+    // An upright through a ground does NOT cut it. Measured on the 1040: nine grounds are crossed by one, every one is
+    // a single real field (a comb's dividers), and cutting there lost seven well-placed fields and gained none.
+    for (const f of blanksIn(g.rect, solid, ptX, ptY)) push('text', f, 'ground', true);
+  }
+
   // A run of underscores is a blank drawn with the keyboard; a box drawn as a character is a checkbox.
   for (const t of map.text) {
     if (t.hidden) continue;
@@ -888,7 +925,7 @@ export function proposeFields(map) {
 
 // mergeProposals puts the two readings of one page together: what the map proposed stands, and a proposal from the
 // picture is added only where the map proposed nothing — the picture sees a blank bounded by shading, the map sees
-// one bounded by lines, and where both see it the map's edges are the page's own.
+// one bounded by lines or laid on a white ground, and where both see it the map's edges are the page's own.
 export function mergeProposals(fromMap, fromPicture) {
   const area = (r) => Math.max(0, r[2] - r[0]) * Math.max(0, r[3] - r[1]);
   const shared = (a, b) => area([Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]);

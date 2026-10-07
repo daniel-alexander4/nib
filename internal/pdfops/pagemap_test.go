@@ -16,7 +16,7 @@ const mapPageContent = "0.5 w 100 600 m 300 600 l S\n" + // a horizontal rule
 	"100 500 m 300 500 l 300 520 l 100 520 l h S\n" + // a box drawn as four lines
 	"72 400 200 0.8 re f\n" + // a rule drawn as a thin filled rectangle
 	"400 300 m 400 400 l 500 400 l S\n" + // ONE path, two rules: a vertical then a horizontal
-	"1 g 50 50 100 100 re f 0 g\n" + // painted white: not there
+	"1 g 50 50 100 100 re f 0 g\n" + // painted white: a ground, and no box
 	"200 200 12 12 re S\n" + // a checkbox-sized square
 	"100 100 m 300 101 l S\n" + // a line a point off level: its box is rule-thin, and it is not a rule
 	"BT /F1 10 Tf 100 700 Td (Name) Tj ET"
@@ -60,15 +60,86 @@ func TestTheMapHoldsEachRuleAndBoxWhereThePageDrawsIt(t *testing.T) {
 	findShape(t, m, "h", fx(400-0.25), fy(400+0.25)) // …two rules
 	findShape(t, m, "box", fx(200), fy(212))         // the small square
 	for _, s := range m.Shapes {
-		if mapNear(s.Rect[0], fx(50)) && mapNear(s.Rect[3], fy(50)) {
-			t.Errorf("a white-painted rectangle is in the map (%+v): on a white page it is not there", s)
+		if mapNear(s.Rect[0], fx(50)) && mapNear(s.Rect[3], fy(50)) && s.Kind != "white" {
+			t.Errorf("a white-painted rectangle is in the map as %+v: on a white page it is no box and no line", s)
 		}
 		if mapNear(s.Rect[0], fx(100)) && mapNear(s.Rect[3], fy(100)) {
 			t.Errorf("a slanted line is in the map as %+v; its box says nothing about where it is", s)
 		}
 	}
-	if got := len(m.Shapes); got != 6 {
-		t.Errorf("the map holds %d shapes, want 6: %+v", got, m.Shapes)
+	findShape(t, m, "white", fx(50), fy(150)) // the white rectangle, as the ground it is (ADR-096)
+	if got := len(m.Shapes); got != 7 {
+		t.Errorf("the map holds %d shapes, want 7: %+v", got, m.Shapes)
+	}
+}
+
+// TestAWhiteGroundIsInTheMapAsAGround — ADR-096. A form made in a designer lays a white rectangle under each blank,
+// and on a tinted page that rectangle is the only edge the blank has. It is kept as its own kind, so nothing that
+// reads lines and boxes sees it; a white RULE erases part of another and is not kept; a ground a tint was painted
+// over afterwards is not white on the page; and a box outlined in ink with a white inside is an empty box, not a
+// shaded one.
+func TestAWhiteGroundIsInTheMapAsAGround(t *testing.T) {
+	const content = "0.9 g 100 600 300 100 re f\n" + // a tinted panel
+		"1 g 120 650 80 12 re f\n" + // a white ground on it
+		"1 g 120 640 80 0.8 re f\n" + // a white rule: an eraser
+		"1 g 120 400 80 12 re f 0.9 g 100 380 300 50 re f\n" + // a white ground, then a tint over it
+		"1 g 0 G 300 300 100 30 re B\n" + // outlined in black, white inside
+		"0.9 g 300 200 100 30 re B\n" + // outlined in black, tinted inside
+		"1 1 1 rg 0 0 1 RG 300 100 100 30 re B\n" + // outlined in blue, white inside
+		"1 g 1 G 400 500 50 20 re S\n" + // outlined in white and not filled: nothing
+		"1 g 420 650 60 12 re f 1 g 410 640 80 30 re f\n" + // a white ground, then a larger WHITE one over it: both white
+		"1 g 120 500 80 12 re f 0 G 110 490 100 30 re S\n" + // a white ground, then an OUTLINE around it: still white
+		// Three grounds each under a tint that stops short of one of its sides — left, right, bottom: still white there.
+		"1 g 20 40 60 12 re f 0.9 g 30 30 60 30 re f\n" +
+		"1 g 120 40 60 12 re f 0.9 g 110 30 60 30 re f\n" +
+		"1 g 220 40 60 12 re f 0.9 g 210 45 80 30 re f\n" +
+		"BT /F1 10 Tf 100 750 Td (Name) Tj ET"
+	m, err := MapPage(pageWith(content, "", "", "", helvetica), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := func(x float64) float64 { return x / 612 }
+	fy := func(y float64) float64 { return 1 - y/792 }
+
+	g := findShape(t, m, "white", fx(120), fy(662))
+	if !mapNear(g.Rect[2], fx(200)) || !mapNear(g.Rect[3], fy(650)) || g.Filled {
+		t.Errorf("the white ground = %+v, want it to reach (%.4f, %.4f) and not be Filled — Filled is a colour", g, fx(200), fy(650))
+	}
+	whites := 0
+	for _, s := range m.Shapes {
+		if s.Kind == "white" {
+			whites++
+		}
+		if mapNear(s.Rect[0], fx(120)) && mapNear(s.Rect[3], fy(640)) {
+			t.Errorf("a white rule is in the map as %+v: it erases part of another line and is not a line", s)
+		}
+		if mapNear(s.Rect[0], fx(400)) && mapNear(s.Rect[3], fy(500)) {
+			t.Errorf("a rectangle outlined in white is in the map as %+v: it has no inside, and on a white page no outline", s)
+		}
+		if mapNear(s.Rect[0], fx(120)) && mapNear(s.Rect[3], fy(400)) {
+			t.Errorf("a white rectangle a tint was painted over is in the map as %+v: it is not white on the page", s)
+		}
+	}
+	if whites != 7 {
+		t.Errorf("the map holds %d white grounds, want 7: %+v", whites, m.Shapes)
+	}
+	for _, x := range []float64{20, 120, 220} {
+		findShape(t, m, "white", fx(x), fy(52)) // a tint over part of a ground has not painted it out
+	}
+	findShape(t, m, "white", fx(420), fy(662)) // under a larger white one: still white on the page
+	findShape(t, m, "white", fx(410), fy(670))
+	findShape(t, m, "white", fx(120), fy(512)) // inside an outline: an outline paints nothing over it
+	if b := findShape(t, m, "box", fx(300), fy(330)); b.Filled {
+		t.Errorf("a box outlined in black and filled white = %+v: Filled is something other than white", b)
+	}
+	if b := findShape(t, m, "box", fx(300), fy(130)); b.Filled {
+		t.Errorf("a box outlined in blue and filled white (rg) = %+v: Filled is something other than white", b)
+	}
+	if b := findShape(t, m, "box", fx(300), fy(230)); !b.Filled {
+		t.Errorf("a box outlined in black and tinted = %+v, want Filled", b)
+	}
+	if p := findShape(t, m, "box", fx(100), fy(700)); !p.Filled {
+		t.Errorf("the tinted panel = %+v, want Filled", p)
 	}
 }
 
@@ -225,5 +296,22 @@ func TestOnlyTheMapsReaderKeepsShapes(t *testing.T) {
 	}
 	if len(pr.shapes) == 0 || len(pr.marks) == 0 || len(pr.runs) != 1 {
 		t.Errorf("the map's reader kept %d shapes, %d marks, %d runs; want all three", len(pr.shapes), len(pr.marks), len(pr.runs))
+	}
+}
+
+// TestAGroundPastTheBudgetIsTakenAsCovered: each ground is checked against everything painted after it, and a page
+// chooses how much it paints. Past the budget the check stops and the ground is not proposed.
+func TestAGroundPastTheBudgetIsTakenAsCovered(t *testing.T) {
+	white := pageShape{box: [4]float64{10, 10, 60, 30}, rect: true, filled: true, white: true, whiteFill: true}
+	shapes := []pageShape{white, {box: [4]float64{100, 100, 110, 110}, rect: true, filled: true}}
+	budget := 1
+	if paintedOver(shapes, 0, &budget) {
+		t.Error("a ground nothing was painted over, inside the budget, was taken as covered")
+	}
+	if budget != 0 {
+		t.Errorf("one piece was looked at and the budget went from 1 to %d", budget)
+	}
+	if !paintedOver(shapes, 0, &budget) {
+		t.Error("with the budget spent, a ground was still walked against the page")
 	}
 }
