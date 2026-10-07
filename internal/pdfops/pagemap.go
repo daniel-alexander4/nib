@@ -39,6 +39,10 @@ type MapText struct {
 	Size float64 `json:"size"`
 	// Hidden is text the page sets without painting it (render mode 3) — an OCR layer.
 	Hidden bool `json:"hidden,omitempty"`
+	// Short is hidden text drawn inside a form at one scale both ways: an OCR word as Nib stamped it before ADR-092,
+	// set at the height of its word's ink and so narrower than the word. Its box ends before the word does, and the
+	// reader carries it out to the next one (ADR-091). A fitted word is scaled differently across and up.
+	Short bool `json:"short,omitempty"`
 }
 
 // MapShape is a ruled line or a box.
@@ -169,6 +173,10 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3}
 	if sp.rot == 90 || sp.rot == 270 {
 		t.Size = r.size / (sp.box[2] - sp.box[0])
+	}
+	if c := r.state.ctm; t.Hidden && r.inForm {
+		across, up := math.Hypot(c[0], c[1]), math.Hypot(c[2], c[3])
+		t.Short = math.Abs(across-up) <= 1e-4*up
 	}
 	// Glyph boundaries only where the run advances left to right ON THE DISPLAY: an upright run on an unturned page.
 	// Anything else keeps its box and is placed whole.

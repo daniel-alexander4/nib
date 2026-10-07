@@ -680,3 +680,7 @@ home today.
   — supersedes ADR-090 §4 for hidden text. Nib's stamped OCR word is a median 0.72 of the scanned word's width, and a
   search-redaction on an OCR'd scan left the word's end uncovered in 30 of 40 searches. A hidden run is read as
   stretching to the next hidden run on its line, at most 2.5×: 0 of 40, and 0.5% of 2,995 words.
+- **[ADR-092 — an OCR word is stamped to its scanned box](092-an-ocr-word-is-stamped-to-its-scanned-box.md)**
+  — step six of ADR-088; closes ADR-091's "the stamp is still narrow" and narrows its reading to a SHORT stamp. pdfcpu
+  places a word at unit scale and a whole-point size, so the fit is multiplied into the `cm` it wrote: the advance
+  across the box, the glyphs' own ink on its top and bottom. Width ÷ ink 0.72 → 1.00, in Nib's map and in poppler.

@@ -905,12 +905,14 @@ export function mergeProposals(fromMap, fromPicture) {
 const MATCH_PAD_X = 0.75, MATCH_PAD_Y = 0.5; // points past the glyphs' own boxes: ink overhangs an advance, slightly
 const WORD_GAP = 0.15;                       // of the font size: a wider gap between two runs is a space
 
-// A stamped OCR word is narrower than the scanned word it stands for. Measured on two scans (3,855 words): its width
+// A SHORT stamp (`short` on the map: an OCR word as Nib wrote it before ADR-092, or one it could not fit) is narrower
+// than the scanned word it stands for. Measured on two scans (3,855 words): its width
 // is a median 0.72 of the word's, so the ink runs a median 3-4.5pt past its last glyph, 9-12pt at the ninetieth
 // percentile — and a redaction drawn to the glyphs left the end of the word showing in 30 of 40 searches. What IS
 // true of a stamped word is where it starts, so a hidden run is read as stretching toward the next hidden run on its
 // line: never past it, and never more than HIDDEN_STRETCH_MAX of its own width (the ninety-ninth percentile needed
-// 2.14). A layer whose glyphs already span their words has no room to stretch into, and is read as it is.
+// 2.14). Any other hidden run — a word fitted to its box, another tool's layer — is read as it is written: its size is
+// the line's, and a taller box would reach the lines either side (measured: 17 of 40 boxes on a real scan).
 const HIDDEN_STRETCH_MAX = 2.5;
 const HIDDEN_PAD_Y = 0.25; // of the font size: the stamped box sat a point above the bottom of the ink
 
@@ -918,7 +920,7 @@ const HIDDEN_PAD_Y = 0.25; // of the font size: the stamped box sat a point abov
 // match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right.
 //
 // Only runs whose glyph boundaries are known take part (an upright run on an unturned page). Visible text and hidden
-// text — an OCR layer — are searched as two layers, never joined into one line; a hidden run's boundaries are
+// text — an OCR layer — are searched as two layers, never joined into one line; a short stamp's boundaries are
 // stretched as above. What this cannot place, the estimate still does — see placeMatches.
 export function matchesInMap(map, patterns) {
   if (!map || !map.text) return [];
@@ -941,7 +943,7 @@ function layerMatches(map, patterns, runs, hidden) {
     row.runs.sort((a, b) => a.rect[0] - b.rect[0]);
     // How far each run's glyph boundaries are stretched from its start: 1 for print.
     const stretch = row.runs.map((t, k) => {
-      if (!hidden) return 1;
+      if (!t.short) return 1; // print, and a hidden word that already spans its scanned word (ADR-092)
       const wide = t.rect[2] - t.rect[0];
       const next = row.runs.slice(k + 1).find((u) => u.rect[0] > t.rect[0] + 1 / map.width);
       const room = next ? (next.rect[0] - 0.5 / map.width - t.rect[0]) / wide : HIDDEN_STRETCH_MAX;
@@ -968,7 +970,7 @@ function layerMatches(map, patterns, runs, hidden) {
         for (let k = m.index; k < m.index + m[0].length; k++) {
           const g = at[k];
           if (!g || !s[k].trim()) continue; // a space takes no ink
-          const padY = hidden ? HIDDEN_PAD_Y * g.t.size : 0;
+          const padY = g.t.short ? HIDDEN_PAD_Y * g.t.size : 0;
           x0 = Math.min(x0, cut(g, g.i)); x1 = Math.max(x1, cut(g, g.i + 1));
           y0 = Math.min(y0, g.t.rect[1] - padY); y1 = Math.max(y1, g.t.rect[3] + padY);
         }
