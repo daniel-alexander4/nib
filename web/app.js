@@ -9650,7 +9650,7 @@ async function scanTextMatches(patterns, owner = view) {
     // still drops the synthetic inter-run boundary, so true mid-token splits rejoin.
     const items = tc.items.filter((it) => it.str).map((it) => {
       const t = pdfjsLib.Util.transform(vp0.transform, it.transform);
-      return { str: it.str, x: t[4], y: t[5], w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]) };
+      return { str: it.str, x: t[4], y: t[5], w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]), dir: it.dir };
     });
     // markOver marks row.s[lo..hi] — one row's share of a match.
     const markOver = (row, lo, hi) => {
@@ -13021,7 +13021,7 @@ els.detectBtn.onclick = async () => {
     const tc = await page.getTextContent();
     textItems = tc.items.filter((it) => it.str && it.str.trim()).map((it) => {
       const t = pdfjsLib.Util.transform(dvp.transform, it.transform);
-      return { str: it.str, x: t[4], y: t[5], w: it.width * dvp.scale, h: Math.abs(it.height * dvp.scale) };
+      return { str: it.str, x: t[4], y: t[5], w: it.width * dvp.scale, h: Math.abs(it.height * dvp.scale), dir: it.dir };
     });
   } catch { /* image-only PDF: no text layer, skip word matching */ }
   // A newer press owns the fields now, or the document is no longer the one on screen.

@@ -50,6 +50,13 @@ type wordFit struct {
 
 var asStamped = wordFit{sx: 1, sy: 1}
 
+// stampedWord is what is done to one word after pdfcpu stamps it: its fit, and whether it was set in the reverse of
+// reading order and so is to be marked as that (ADR-097, ocrorder.go).
+type stampedWord struct {
+	fit      wordFit
+	reversed bool
+}
+
 var ocrFaces sync.Map // font name -> *sfnt.Font, or nil for a face that would not read
 
 // ocrFace is the face a word is stamped in, read for its glyphs' boxes. pdfcpu holds the same file but keeps only
@@ -123,15 +130,17 @@ func fitWord(fontName, text string, rect [4]float64) (pts int, fit wordFit, fitt
 	return pts, fit, true
 }
 
-// fitStampedWords multiplies each word's fit into the matrix pdfcpu placed it with. pre is how many watermark markers
-// each page drew before the stamp; fits is each page's stamped words, in the order they were stamped.
+// fitStampedWords multiplies each word's fit into the matrix pdfcpu placed it with, and marks the form of each word
+// set in reverse. pre is how many watermark markers each page drew before the stamp; fits is each page's stamped
+// words, in the order they were stamped.
 //
 // **The pairing is by position, checked by count — the rule `tagOCRPage` states, for the same reason.** pdfcpu stamps
 // a page's words in slice order and appends each after the page's content, so the page's own markers are the prefix
 // and the words the suffix. pdfcpu hands back nothing that names a word's form (`addPageWatermark` takes the
 // watermark by value), so there is no identity to pair on. A page whose counts disagree — pdfcpu skips a content
-// stream it cannot decode, silently — is left as stamped, and its words are returned as unpaired.
-func fitStampedWords(ctx *model.Context, pre map[int]int, fits map[int][]wordFit) (unpaired int, err error) {
+// stream it cannot decode, silently — is left as stamped, and its words are returned as unpaired. (A reversed word
+// on such a page is then unmarked, and read as any print right-to-left word is: in the order it is set.)
+func fitStampedWords(ctx *model.Context, pre map[int]int, fits map[int][]stampedWord) (unpaired int, err error) {
 	for _, pg := range pdfread.Pages(ctx) {
 		fs := fits[pg.Nr]
 		if len(fs) == 0 {
@@ -156,13 +165,13 @@ func fitStampedWords(ctx *model.Context, pre map[int]int, fits map[int][]wordFit
 		edit := contentstream.NewEdit(src)
 		ti, changed := 0, false
 		for i, m := range markers {
-			if fs[i] == asStamped {
+			if fs[i].fit == asStamped && !fs[i].reversed {
 				continue
 			}
 			for ti < len(toks) && toks[ti].Start < m.end {
 				ti++
 			}
-			nums, ok := placementAfter(src, toks[ti:])
+			nums, after, ok := placementAfter(src, toks[ti:])
 			if !ok {
 				return 0, fmt.Errorf("pdfops: page %d: the text layer's word %d is not placed as pdfcpu places a stamp", pg.Nr, i+1)
 			}
@@ -172,7 +181,19 @@ func fitStampedWords(ctx *model.Context, pre map[int]int, fits map[int][]wordFit
 					return 0, err
 				}
 			}
-			f := fs[i]
+			if fs[i].reversed {
+				name, ok := formDrawnAfter(src, toks[ti+after:])
+				if !ok || pg.Attrs == nil {
+					return 0, fmt.Errorf("pdfops: page %d: the text layer's word %d draws no form to mark", pg.Nr, i+1)
+				}
+				if err := markReversedChars(ctx, pg.Attrs.Resources, name); err != nil {
+					return 0, err
+				}
+			}
+			f := fs[i].fit
+			if f == asStamped {
+				continue
+			}
 			edit.Replace(nums[0].Start, nums[5].End, []byte(fmt.Sprintf("%.5f %.5f %.5f %.5f %.5f %.5f",
 				f.sx*mx[0], f.sx*mx[1], f.sy*mx[2], f.sy*mx[3], f.oy*mx[2]+mx[4], f.oy*mx[3]+mx[5])))
 			changed = true
@@ -192,11 +213,11 @@ func fitStampedWords(ctx *model.Context, pre map[int]int, fits map[int][]wordFit
 }
 
 // placementAfter reads `q a b c d e f cm` — what pdfcpu writes straight after a stamp's marker — and returns the six
-// operands.
-func placementAfter(src []byte, toks []contentstream.Token) ([]contentstream.Token, bool) {
+// operands, and how many of toks that took.
+func placementAfter(src []byte, toks []contentstream.Token) ([]contentstream.Token, int, bool) {
 	var nums []contentstream.Token
 	opened := false
-	for _, tk := range toks {
+	for n, tk := range toks {
 		if tk.Kind == contentstream.Whitespace {
 			continue
 		}
@@ -204,20 +225,20 @@ func placementAfter(src []byte, toks []contentstream.Token) ([]contentstream.Tok
 		switch {
 		case !opened:
 			if tk.Kind != contentstream.Operator || s != "q" {
-				return nil, false
+				return nil, 0, false
 			}
 			opened = true
 		case tk.Kind == contentstream.Operand && len(nums) < 6:
 			nums = append(nums, tk)
 		default:
-			return nums, tk.Kind == contentstream.Operator && s == "cm" && len(nums) == 6
+			return nums, n + 1, tk.Kind == contentstream.Operator && s == "cm" && len(nums) == 6
 		}
 	}
-	return nil, false
+	return nil, 0, false
 }
 
 // markersBeforeStamp counts the watermark markers each page draws, in the context about to be stamped.
-func markersBeforeStamp(ctx *model.Context, fits map[int][]wordFit) map[int]int {
+func markersBeforeStamp(ctx *model.Context, fits map[int][]stampedWord) map[int]int {
 	pre := map[int]int{}
 	for _, pg := range pdfread.Pages(ctx) {
 		if len(fits[pg.Nr]) == 0 || pg.Err != nil || pg.Dict == nil {

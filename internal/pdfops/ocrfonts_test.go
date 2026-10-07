@@ -68,14 +68,12 @@ func TestStampTextLayerThaiDevanagari(t *testing.T) {
 	}
 }
 
-// TestStampTextLayerArabicHebrew is the coverage gate for the RTL scripts. It can't
-// use strings.Contains like the LTR gate: pdfcpu writes the invisible layer in
-// correct logical order with a correct /ToUnicode, but a bidi-aware extractor
-// (poppler/pdftotext) reverses RTL text on *display*, so the extracted string is
-// the sample reversed (plus U+202A/B bidi controls). We therefore assert a
-// rune-multiset round-trip — every glyph of the sample comes back — which proves
-// font coverage + extractability without depending on display order. (Nib's own
-// Find path, pdf.js getTextContent, reads the logical-order bytes directly.)
+// TestStampTextLayerArabicHebrew is the coverage gate for the RTL scripts: every
+// glyph of the sample comes back, asserted as a rune multiset so that it is about
+// the FACE and not about order (plus U+202A/B bidi controls in poppler's output).
+// The order is `TestARightToLeftWordIsSetWhereItsLettersAre`'s — ADR-097. (This
+// comment used to say pdf.js reads the bytes as they are; it turns a right-to-left
+// item round, as poppler does.)
 func TestStampTextLayerArabicHebrew(t *testing.T) {
 	if _, err := exec.LookPath("pdftotext"); err != nil {
 		t.Skip("pdftotext (poppler) not installed")

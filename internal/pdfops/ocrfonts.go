@@ -138,9 +138,10 @@ func OCRLangToBCP47(lang string) string { return ocrLangBCP47[lang] }
 // ocrFontFor returns the font a given OCR language must be stamped in. Latin,
 // Cyrillic and Greek languages fall through to Roboto (pdfcpu's bundled default);
 // Thai, Devanagari, Arabic and Hebrew scripts use their vendored Noto face. The
-// stamped text layer is invisible (render mode 3) and written in logical order
-// with a correct /ToUnicode, so RTL scripts stay searchable — a bidi-reordering
-// extractor (e.g. poppler) only reverses them on *display*, not in the bytes.
+// stamped text layer is invisible (render mode 3) with a correct /ToUnicode. A
+// right-to-left word is set in the reverse of reading order, as print sets one —
+// a reader turns such text round, and turned a word set in reading order
+// backwards (`setOrder`, ADR-097).
 func ocrFontFor(lang string) string {
 	switch lang {
 	case "tha":

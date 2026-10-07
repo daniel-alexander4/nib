@@ -79,6 +79,7 @@ func PagesWithTextLayer(pdf []byte) (map[int]bool, error) {
 // The page still looks exactly like the scan, but the text is searchable and
 // copy-pasteable: this is the standard "searchable PDF" / OCR layer. The text is a
 // real (...) Tj run (not glyph outlines), so pdftotext and pdf.js Find recover it.
+// A right-to-left word is set as print sets one, in the reverse of reading order (ADR-097).
 //
 // Each word is then fitted to its box — its advance across it, its ink on the box's top and bottom — because pdfcpu
 // can only set it at a whole-point size and unit scale (ADR-092, ocrfit.go).
@@ -95,7 +96,7 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 	model.NewDefaultConfiguration()
 	fontName := ocrFontFor(lang)
 	wms := map[int][]*model.Watermark{}
-	fits := map[int][]wordFit{} // beside wms: each page's stamped words, in the order they are stamped
+	fits := map[int][]stampedWord{} // beside wms: each page's stamped words, in the order they are stamped
 	unfitted := 0
 	for _, w := range words {
 		if strings.TrimSpace(w.Text) == "" {
@@ -116,7 +117,10 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 		// computes a nil bounding box and panics (nil-pointer deref deep in the stamp
 		// path). Escape every % to %% so it renders as a literal % and never triggers
 		// substitution (this also stops e.g. an OCR'd "%P" turning into a page count).
-		text, err := stampText(w.Text)
+		// A right-to-left word is set in the order it is seen, last letter first, so its letters are where the scan
+		// has them and a reader that turns such a word round gets it the right way (ADR-097, ocrorder.go).
+		set, reversed := setOrder(w.Text)
+		text, err := stampText(set)
 		if err != nil || text == "" {
 			// OCR text is a scan's own words, not something a user can retype, so an
 			// unrepresentable run is skipped rather than failing the whole layer.
@@ -134,7 +138,7 @@ func StampTextLayer(pdf []byte, words []Word, lang string) ([]byte, error) {
 			return nil, fmt.Errorf("an OCR word names page %d; pages are numbered from 1", w.Page)
 		}
 		wms[w.Page] = append(wms[w.Page], wm)
-		fits[w.Page] = append(fits[w.Page], fit)
+		fits[w.Page] = append(fits[w.Page], stampedWord{fit: fit, reversed: reversed})
 		if !fitted {
 			unfitted++
 		}

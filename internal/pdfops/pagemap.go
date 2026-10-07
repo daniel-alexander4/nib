@@ -2,6 +2,7 @@ package pdfops
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -52,6 +53,10 @@ type MapText struct {
 	// there — "MM", "DD", "YYYY" — where a label is printed in ink (ADR-099). Only for text that is filled, in a colour
 	// the walk carried. White text is faint too; on a white ground it is not there at all.
 	Faint bool `json:"faint,omitempty"`
+	// Reversed is a run the page sets in the reverse of reading order and says so (`/ReversedChars`) — a
+	// right-to-left OCR word as Nib stamps one (ADR-097). Text and Chars are then in READING order and Cuts run
+	// from the right: Cuts[i]..Cuts[i+1] is still Chars[i], with Cuts[i] the greater.
+	Reversed bool `json:"reversed,omitempty"`
 }
 
 // MapShape is a ruled line or a box.
@@ -188,7 +193,13 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 	if !rect.onPage() {
 		return MapText{}, false
 	}
-	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3}
+	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3, Reversed: r.reversed}
+	if r.reversed {
+		// Handed over in reading order, rune by rune — and glyph by glyph below, where the boundaries are known.
+		rs := []rune(r.text)
+		slices.Reverse(rs)
+		t.Text = string(rs)
+	}
 	if sp.rot == 90 || sp.rot == 270 {
 		t.Size = r.size / (sp.box[2] - sp.box[0])
 	}
@@ -217,6 +228,11 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 			pos += g.advance
 			t.Cuts = append(t.Cuts, cut(pos))
 			t.Chars = append(t.Chars, g.text)
+		}
+		if r.reversed {
+			slices.Reverse(t.Cuts)
+			slices.Reverse(t.Chars)
+			t.Text = strings.Join(t.Chars, "")
 		}
 		if bottom, top, ok := fittedInk(r); ok && t.Hidden && r.inForm && !t.Short {
 			_, y0 := sp.point(r.x, top)

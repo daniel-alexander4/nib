@@ -701,6 +701,11 @@ home today.
   each blank, and the map dropped them and then refused the page as shaded; they are now kind `white`, `Filled` means
   a colour, and a line just under another closes it. Found 91.2% → 98.5%, well placed 84.5% → 98.2%. Nothing built
   for symbol-font checkboxes: the corpus has none (`fda-135045`'s are bullets).
+- **[ADR-097 — a right-to-left OCR word is set where its letters are](097-a-right-to-left-ocr-word-is-set-where-its-letters-are.md)**
+  — extends ADR-092/093; supersedes ADR-093 rule 5 for a Hebrew word written this way. The word is set last letter
+  first inside `/ReversedChars`, as print sets it: poppler and pdf.js had been reading the old stamp backwards. Part of
+  a Hebrew word is boxed by its glyphs; Arabic stays whole (its letters are printed joined). pdf.js's span is the
+  line's em box, not a fault of the fit: nothing is built in the stamp for it.
 - **[ADR-099 — faint print in a blank is a hint, not a label; and a choice word is placed on its own baseline](099-faint-print-is-a-hint-and-a-choice-word-is-placed-on-its-own-baseline.md)**
   — extends ADR-088/089/095/096. The map says which print is faint (`MapText.Faint`, a fill at least 0.7 light and not
   white); a hint stands in no blank's way and two or more set apart divide it (`byHints`) — the 1040's six date fields.
