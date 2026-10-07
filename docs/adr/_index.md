@@ -722,3 +722,8 @@ home today.
   and the user is told which page ("check it by eye") — a redaction search must never read as complete when it was
   not. The function was also rewritten for cost with its first version kept as the test's oracle (200 × 20: 2.2 → 1.3 s
   unbounded; the densest real page 56 → 19 ms, 9,386 chains).
+- **[ADR-101 — a text layer is replaced only when asked, and only where it is Nib's own](101-a-text-layer-is-replaced-only-when-asked-and-only-where-it-is-nibs-own.md)**
+  — supersedes ADR-094's "a layer cannot be replaced" gap only. `replace` on `POST /api/ocr`, offered by the window as
+  "Read them again"; a word is Nib's when ALL of it is the stamp's shape (`ownOCRWords`) and a page when taking those
+  words out leaves no invisible text; structure goes with the content or the page is refused; a signed document is
+  refused; `GET /api/ocr/pages` says which pages are `own` by running the removal on a copy.

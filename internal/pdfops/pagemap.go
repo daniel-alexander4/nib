@@ -262,11 +262,8 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 // Only for a face nib stamps an OCR layer in, on an upright run. The name is checked against the table before the
 // face is asked for, because `ocrFace` remembers every name it is asked — and a document chooses its own font names.
 func fittedInk(r textRun) (bottom, top float64, ok bool) {
-	name := r.baseFont
-	if i := strings.IndexByte(name, '+'); i >= 0 {
-		name = name[i+1:] // a subset's tag
-	}
-	if _, known := ocrFontFiles[name]; (!known && name != ocrFont) || r.rotated {
+	name, isFace := ocrFaceName(r.baseFont) // the one test for "a face Nib stamps a layer in" (ocrreplace.go)
+	if !isFace || r.rotated {
 		return 0, 0, false
 	}
 	_, b, t, ok := wordInk(name, ocrFace(name), r.text)

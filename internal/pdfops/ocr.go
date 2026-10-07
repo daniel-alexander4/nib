@@ -59,16 +59,8 @@ func PagesWithTextLayer(pdf []byte) (map[int]bool, error) {
 	}
 	out := map[int]bool{}
 	for _, pg := range pdfread.Pages(ctx) {
-		pr, err := readPageShapes(ctx, pg)
-		if err != nil {
-			continue
-		}
-		sp := newDisplaySpace(pg)
-		for _, r := range pr.runs {
-			if t, ok := mapText(sp, r); ok && t.Hidden {
-				out[pg.Nr] = true
-				break
-			}
+		if has, herr := hiddenTextOn(ctx, pg); herr == nil && has {
+			out[pg.Nr] = true
 		}
 	}
 	return out, nil

@@ -420,7 +420,11 @@ shows up in *Find*). The OCR runs **entirely on your machine** — the recogniti
 engine is built into Nib (no install, no cloud, nothing leaves your computer) —
 so it works offline like everything else. A page that **already has a text layer** —
 from an earlier OCR, in Nib or anywhere else — is left as it is and not read again, and
-Nib says how many pages that was; to redo a page's OCR, **Undo** the first one. Pick the scan's language from the
+Nib says how many pages that was. Where the text layer is one **Nib itself added**, Nib offers to
+**read those pages again**: say yes and the old layer is taken out and a new one put in its place, in the
+language and quality chosen now — the way to fix a scan read in the wrong language, or to bring a file
+OCR'd by an older Nib up to date. Another program's text layer is never replaced, and neither is one in a
+signed document. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian, Czech,
 Dutch, Hungarian, Polish, Portuguese, Romanian, Swedish, Turkish, Vietnamese,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,

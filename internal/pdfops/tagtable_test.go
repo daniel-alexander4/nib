@@ -145,6 +145,21 @@ var tagFates = map[string]tagFate{
 		}}, "eng")
 		return out, err
 	}},
+	"ReplaceOCRLayer": {verdict: "carried", drive: func(b []byte) ([]byte, error) {
+		// Driven over a layer it has to take OUT first (ADR-101): the census fixture is tagged, so this measures
+		// removing a described layer's elements from a tree that holds a document's own beside them — the path
+		// that could take the wrong ones. A drive that replaced nothing would be `TagOCRLayer`'s row again.
+		word := []Word{{Page: 1, Rect: [4]float64{72, 700, 140, 712}, Text: "Invoice", Block: 1, Para: 1, Line: 1}}
+		layered, _, err := TagOCRLayer(b, word, "eng")
+		if err != nil {
+			return nil, err
+		}
+		out, _, replaced, left, err := ReplaceOCRLayer(layered, word, "eng")
+		if err == nil && len(replaced) != 1 {
+			return nil, fmt.Errorf("the fixture's layer was not replaced (left %v), so this row measured nothing of the removal", left)
+		}
+		return out, err
+	}},
 	"TitleFromName": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return TitleFromName(b, "report.pdf") }},
 	"StripMetadata": {verdict: "carried", drive: func(b []byte) ([]byte, error) { return StripMetadata(b) }},
 	// text-reflow P06.S05: a reflow rewrites a paragraph INSIDE the sequence that encloses it, or refuses (`tagged`) when
