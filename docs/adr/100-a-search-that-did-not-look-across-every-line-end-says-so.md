@@ -36,8 +36,8 @@ thread, for each page, twice (the estimate's reading and the map's).
    never affected.
 2. **A call that left chains out says so**: its result carries `skipped`. `matchesInMap` carries it up from either
    layer, `scanTextMatches` names the page (`marks.skipped`), and the Redact text dialog tells the user which pages
-   — in the toast when matches were marked, and beside "No matches found" when none were: *"Page 3: too many columns
-   to search for a match split across lines — check it by eye."*
+   — in the toast when matches were marked, and beside "No matches found" when none were: *"Page 3: check by eye
+   for a name or number split across lines — this page is too dense to search across line ends."*
 3. **The safe answer for a search is to be told, not to be given more or fewer boxes.** A detector past its budget
    can refuse (ADR-096's `paintedOverBudget` takes a ground as covered and proposes nothing). A redaction search
    cannot refuse the page — the matches inside each line are found and must be marked — and cannot over-cover what it

@@ -30,7 +30,7 @@ user's.
 ## Decision
 
 1. **Replacing is asked for, never implied.** `POST /api/ocr` takes `replace: true`; without it ADR-094 is the whole
-   behaviour. The window asks the user — "N pages already have a text layer that Nib added. Read them again?" —
+   behaviour. The window asks the user — "N pages already have a searchable text layer that Nib added. Run OCR on them again?" —
    before it spends a recognition pass, and only says yes on their behalf when they do.
 2. **A word is Nib's own only when all of it is the stamp's shape** (`ownOCRWords`, internal/pdfops/ocrreplace.go):
    the marker (pdfcpu's watermark marker by `watermarkArtifactSpans`, or an MCID), the placement and the draw by the

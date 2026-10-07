@@ -154,11 +154,11 @@ test('a page with a text layer is not read, and nothing is asked when none of th
 test('the user is offered to read Nib\'s own layered pages again, and saying yes sends them with replace', async () => {
   const got = await run({ layered: [1, 2], own: [2] }, true, { replaced: [2] });
   assert.equal(got.asked.length, 1, 'the offer to read the page again was not made exactly once');
-  assert.match(got.asked[0], /already has a text layer that Nib added\. Read it again\?/);
+  assert.match(got.asked[0], /already has a searchable text layer that Nib added\. Run OCR on it again\?/);
   assert.ok(got.posted, 'the OCR request never went out');
   assert.deepEqual(pagesOf(got.posted), [2, 3], 'page 2 (Nib\'s own layer, read again) and page 3 (no layer) are what is read; page 1 is another program\'s');
   assert.equal(got.posted.replace, true, 'the pages were read again and the server was not asked to replace their layer — it would skip them');
-  assert.match(got.said, /Read 1 page again and replaced its text layer\. 1 page already had a text layer and was left as it is/);
+  assert.match(got.said, /Ran OCR again on 1 page and replaced its text layer\. 1 page already had a text layer and was left as it is/);
 });
 
 test('saying no leaves every layered page unread and asks the server for nothing new', async () => {
@@ -172,7 +172,7 @@ test('saying no leaves every layered page unread and asks the server for nothing
 test('a page the server would not replace because its tags were changed is said so, in those words', async () => {
   const got = await run({ layered: [1, 2], own: [1, 2] }, true, { replaced: [1], skipped: [2], causes: { 2: 'structure' } });
   assert.ok(got.posted && got.posted.replace === true, 'the replace never went out');
-  assert.match(got.said, /Read 1 page again and replaced its text layer\. 1 page already had a text layer and was left as it is\. 1 page was not read again: the tags on its text layer have been changed/);
+  assert.match(got.said, /Ran OCR again on 1 page and replaced its text layer\. 1 page already had a text layer and was left as it is\. 1 page was not read again: the tags on its text layer have been changed/);
   // And a page left for the other cause gets no such sentence.
   const other = await run({ layered: [1, 2], own: [1, 2] }, true, { replaced: [1], skipped: [2], causes: { 2: 'not-nibs-layer' } });
   assert.doesNotMatch(other.said, /tags/);
@@ -182,7 +182,7 @@ test('with every page layered and the offer declined, nothing is read and nothin
   const before = recognised.length;
   const got = await run({ layered: [1, 2, 3], own: [1, 2, 3] }, false);
   assert.equal(got.asked.length, 1);
-  assert.match(got.asked[0], /3 pages already have a text layer that Nib added\. Read them again\?/);
+  assert.match(got.asked[0], /3 pages already have a searchable text layer that Nib added\. Run OCR on them again\?/);
   assert.equal(got.posted, null, 'a request went out with nothing to add');
   assert.equal(recognised.length, before, 'a page was recognised although every page keeps its layer');
   assert.match(got.said, /Every page already has a text layer/);

@@ -8115,15 +8115,15 @@ function ocrLayeredSentence(left, total) {
 // Asked, never assumed — a plain second OCR still leaves every layered page as it is — and only for pages the
 // server says are Nib's own: another program's layer is not Nib's to take out.
 function ocrReadAgainQuestion(own, total) {
-  const what = total === 1 ? 'This page already has a text layer that Nib added. Read it again?'
-    : own === 1 ? '1 page already has a text layer that Nib added. Read it again?'
-      : `${own} pages already have a text layer that Nib added. Read them again?`;
-  return `${what}\n\nThe old text layer on ${own === 1 ? 'that page' : 'those pages'} is replaced by a new one, in the language and quality chosen now. Cancel leaves ${own === 1 ? 'it' : 'them'} as ${own === 1 ? 'it is' : 'they are'}.`;
+  const what = total === 1 ? 'This page already has a searchable text layer that Nib added. Run OCR on it again?'
+    : own === 1 ? '1 page already has a searchable text layer that Nib added. Run OCR on it again?'
+      : `${own} pages already have a searchable text layer that Nib added. Run OCR on them again?`;
+  return `${what}\n\nThe old text layer on ${own === 1 ? 'that page' : 'those pages'} is replaced by a new one, in the language and quality chosen now — useful if search or redaction misses words. Cancel leaves ${own === 1 ? 'it' : 'them'} as ${own === 1 ? 'it is' : 'they are'}.`;
 }
 
 // ocrDoneSentence says what an OCR run did: pages read again, pages left as they were, or words added.
 function ocrDoneSentence(replaced, left, total, words) {
-  const again = replaced === 1 ? 'Read 1 page again and replaced its text layer' : `Read ${replaced} pages again and replaced their text layer`;
+  const again = replaced === 1 ? 'Ran OCR again on 1 page and replaced its text layer' : `Ran OCR again on ${replaced} pages and replaced their text layer`;
   if (replaced) return left ? `${again}. ${ocrLayeredSentence(left, total)}` : again;
   return left ? `Added a searchable text layer. ${ocrLayeredSentence(left, total)}` : `Added a searchable text layer (${words} words)`;
 }
@@ -9796,7 +9796,8 @@ els.rtFind.onclick = async () => {
 function wrapNote(pages) {
   if (!pages || !pages.length) return '';
   const shown = pages.slice(0, 8).join(', ') + (pages.length > 8 ? ` and ${pages.length - 8} more` : '');
-  return ` Page${pages.length > 1 ? 's' : ''} ${shown}: too many columns to search for a match split across lines — check ${pages.length > 1 ? 'them' : 'it'} by eye.`;
+  const many = pages.length > 1;
+  return ` Page${many ? 's' : ''} ${shown}: check by eye for a name or number split across lines — ${many ? 'these pages are' : 'this page is'} too dense to search across line ends.`;
 }
 
 // --- split by hand-drawn regions ---------------------------------------------
