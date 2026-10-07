@@ -8092,7 +8092,7 @@ async function renderPageCanvas(doc, n, scale) {
 // server. The scan still looks identical; its text becomes selectable + findable.
 let tesseractReady = false;
 function loadTesseract() {
-  if (tesseractReady) return Promise.resolve();
+  if (tesseractReady || window.Tesseract) return Promise.resolve(); // already loaded, by this function or not
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = './vendor/tesseract/tesseract.min.js';
@@ -8108,6 +8108,24 @@ function loadTesseract() {
 function ocrLayeredSentence(left, total) {
   if (left >= total) return total === 1 ? 'This page already has a text layer — nothing to add' : 'Every page already has a text layer — nothing to add';
   return left === 1 ? '1 page already had a text layer and was left as it is' : `${left} pages already had a text layer and were left as they are`;
+}
+
+// ocrReadAgainQuestion offers to read again the pages whose text layer Nib itself added (ADR-101): the way to
+// change the language or quality of a page already read, and to bring a layer from an older Nib up to date.
+// Asked, never assumed — a plain second OCR still leaves every layered page as it is — and only for pages the
+// server says are Nib's own: another program's layer is not Nib's to take out.
+function ocrReadAgainQuestion(own, total) {
+  const what = total === 1 ? 'This page already has a text layer that Nib added. Read it again?'
+    : own === 1 ? '1 page already has a text layer that Nib added. Read it again?'
+      : `${own} pages already have a text layer that Nib added. Read them again?`;
+  return `${what}\n\nThe old text layer on ${own === 1 ? 'that page' : 'those pages'} is replaced by a new one, in the language and quality chosen now. Cancel leaves ${own === 1 ? 'it' : 'them'} as ${own === 1 ? 'it is' : 'they are'}.`;
+}
+
+// ocrDoneSentence says what an OCR run did: pages read again, pages left as they were, or words added.
+function ocrDoneSentence(replaced, left, total, words) {
+  const again = replaced === 1 ? 'Read 1 page again and replaced its text layer' : `Read ${replaced} pages again and replaced their text layer`;
+  if (replaced) return left ? `${again}. ${ocrLayeredSentence(left, total)}` : again;
+  return left ? `Added a searchable text layer. ${ocrLayeredSentence(left, total)}` : `Added a searchable text layer (${words} words)`;
 }
 
 async function runOCR() {
@@ -8127,6 +8145,25 @@ async function runOCR() {
   btn.disabled = true;
   let worker;
   try {
+    const n = owner.pdfDocument.numPages;
+    // A page that already has a text layer is not read again: a second OCR ADDED a second layer, every word
+    // twice (/pending 851 part 4). The server holds the rule and applies it whatever is sent; asking first is
+    // what saves the recognition pass, which is the slow part — and the engine's load, when there is nothing to read.
+    let has = new Set(), layered = 0, again = false;
+    try {
+      const lr = await apiFetch('/api/ocr/pages', { docId: doc && doc.id });
+      if (lr.ok) {
+        const told = await lr.json();
+        has = new Set(told.layered || []);
+        // The layered pages Nib's own layer is on can be read again, if the user says so (ADR-101).
+        const own = (told.own || []).filter((p) => has.has(p));
+        if (own.length && confirm(ocrReadAgainQuestion(own.length, n))) {
+          again = true;
+          for (const p of own) has.delete(p);
+        }
+      }
+    } catch { /* not known: every page is read, and the server still decides */ }
+    if (has.size >= n) { toast(ocrLayeredSentence(n, n)); return; }
     btn.textContent = 'Loading OCR…';
     await loadTesseract();
     // Absolute URLs (resolved against the page): tesseract.js runs its worker from
@@ -8151,15 +8188,6 @@ async function runOCR() {
     // (a wrong guess skews its layout/word-spacing heuristics); matches ocrScale.
     await worker.setParameters({ user_defined_dpi: String(dpi) });
     const words = [];
-    const n = owner.pdfDocument.numPages;
-    // A page that already has a text layer is not read again: a second OCR ADDED a second layer, every word
-    // twice (/pending 851 part 4). The server holds the rule and applies it whatever is sent; asking first is
-    // what saves the recognition pass, which is the slow part.
-    let has = new Set(), layered = 0;
-    try {
-      const lr = await apiFetch('/api/ocr/pages', { docId: doc && doc.id });
-      if (lr.ok) has = new Set((await lr.json()).layered || []);
-    } catch { /* not known: every page is read, and the server still decides */ }
     for (let p = 1; p <= n; p++) {
       if (has.has(p)) { layered++; continue; }
       btn.textContent = `OCR ${p}/${n}…`;
@@ -8197,14 +8225,19 @@ async function runOCR() {
     }
     if (!words.length) { toast(layered ? ocrLayeredSentence(layered, n) : 'No text found to add'); return; }
     btn.textContent = 'Saving…';
-    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang, words }), docId: doc && doc.id });
+    const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(again ? { lang, words, replace: true } : { lang, words }), docId: doc && doc.id });
     if (!res.ok) { toast('Could not add the text layer'); return; }
-    // What the SERVER left alone, which is what happened: it may know of a layer this window did not ask about.
+    // What the SERVER did, which is what happened: it may know of a layer this window did not ask about, and it
+    // decides for itself which pages' layers are Nib's own to replace.
     let facts = {};
     try { facts = JSON.parse(res.headers.get('X-Nib-OCR') || '{}'); } catch { /* worded as none skipped */ }
-    const left = Math.max(layered, (facts.skipped || []).length + (facts.more || 0));
+    const left = layered + (facts.skipped || []).length + (facts.more || 0);
     await setDocumentFromServer(await res.json(), owner);
-    toast(left ? `Added a searchable text layer. ${ocrLayeredSentence(left, n)}` : `Added a searchable text layer (${words.length} words)`);
+    // Why the server would not replace a page it was asked to: the one cause worth a sentence of its own is a
+    // layer whose tags no longer match its words (edited since) — the page keeps the layer it has.
+    const tagged = Object.values(facts.causes || {}).filter((c) => c === 'structure').length;
+    toast(ocrDoneSentence((facts.replaced || []).length, left, n, words.length)
+      + (tagged ? `. ${tagged === 1 ? '1 page was' : `${tagged} pages were`} not read again: the tags on ${tagged === 1 ? 'its' : 'their'} text layer have been changed since it was added` : ''));
   } catch (e) {
     toast(e.message || 'OCR failed');
   } finally {
