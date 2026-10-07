@@ -1080,7 +1080,8 @@ func TestREADMENavigationPathsStartAtRealTabs(t *testing.T) {
 // all. Both are cheap and both were absent.
 
 func TestSupersededADRsSaySoAndEveryADRIsIndexed(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("docs", "adr", "0*.md"))
+	// Every file that begins with a digit. This read `0*.md`, which stopped seeing ADRs at the hundredth.
+	files, err := filepath.Glob(filepath.Join("docs", "adr", "[0-9]*.md"))
 	if err != nil || len(files) < 10 {
 		t.Fatalf("globbed %d ADRs; this repo has more than ten. The scan is broken, so a clean "+
 			"result would mean nothing.", len(files))
