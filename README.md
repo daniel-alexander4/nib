@@ -455,8 +455,11 @@ the word (in Nib, and in any other program that reads the layer). A scan OCR'd b
 a Nib before 1.189.2 has narrower invisible words; there Nib carries each box out
 to the start of the next word, but another program reading that older layer still
 sees the narrow words. Matches split across the page's text runs are
-still caught; matches that wrap across a line break are not (rare for the
-patterns).
+still caught, and so is a match that wraps onto the next line — a name whose
+first word ends one line and whose second begins the next, a number broken
+after a hyphen, a word hyphenated at the line end: it gets one box on each
+line. A match that runs over a **page** break, or over more than three lines,
+is not found — search for its parts.
 
 ### Compare two versions
 Wondering what changed between draft v3 and v4 of a contract? **File → Compare…**

@@ -768,12 +768,43 @@ test('no handler reads an export name it did not capture', () => {
 // about a real identifier; the false negative it replaces was a dead code path on the one
 // flow this slice exists to fix. When a false positive appears, add the name to KNOWN below
 // with a reason rather than loosening the scan.
+//
+// stripNonCode takes comments and literals out of a source text, leaving code. ONE pass, so a comment or a literal is
+// read from where it STARTS: whichever opens first owns everything up to its own close. It was five passes — block
+// comments, line comments, then '…', "…" and `…` in turn — and each pass read the whole file as though the kinds
+// after it did not exist. An apostrophe inside a template (`it's`) then opened a '…' string that ran to the next
+// apostrophe on the line, swallowing the code between and laying a later string's contents open as code. Measured on
+// a probe: a call inside a quoted string was reported undeclared (the guard accusing the product), and a real call
+// after 'a /* b' or '//x' was not read at all (the guard blind, which is the direction it exists to prevent).
+//
+// What it still cannot read: a regular-expression literal holding a quote (/['"]/ opens a string), and code inside
+// a template's ${…} (taken out with the template, so a call there is not checked). Both need a tokenizer.
+const stripNonCode = (text) => text.replace(
+  /\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+  (m) => (m[0] === '/' ? '' : '""'),
+);
+const bareCalls = (code) => [...code.matchAll(/(?<![.\w$])([a-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+
+test('the scan reads a comment or a literal from where it starts, whatever it holds', () => {
+  const calls = (text) => bareCalls(stripNonCode(text));
+  // An apostrophe in a template is not the start of a string: the quoted text after it stays a string.
+  assert.deepEqual(calls("const a = `it's here`; const b = 'ghostCall(1)';\n"), []);
+  assert.deepEqual(calls('const a = `say "hi`; const b = "ghostCall(1)";\n'), []);
+  // …and the code between two such templates stays code.
+  assert.deepEqual(calls("t(`don't`); u(`won't ghostCall(`);\n"), ['t', 'u']);
+  // A comment mark inside a string is not a comment: the call after it is still read.
+  assert.deepEqual(calls("const u = 'a /* b'; realOne(); const v = 'c */ d';\n"), ['realOne']);
+  assert.deepEqual(calls("const p = '//x'; realTwo();\n"), ['realTwo']);
+  assert.deepEqual(calls('const p = `//x`; realTwo();\n'), ['realTwo']);
+  // A quote inside a comment is not a string, and a URL's slashes are not a comment.
+  assert.deepEqual(calls("// it's a comment\nrealThree('x'); /* don't */ realFour();\n"), ['realThree', 'realFour']);
+  assert.deepEqual(calls('go(http://x); after();\n'), ['go', 'after']);
+  // An escaped quote does not close its string.
+  assert.deepEqual(calls("const q = 'it\\'s ghostCall('; realFive();\n"), ['realFive']);
+});
+
 test('every bare function call resolves to something app.js declares', () => {
-  let src = APP.replace(/\/\*[\s\S]*?\*\//g, '');       // block comments
-  src = src.replace(/(?<!:)\/\/[^\n]*/g, '');              // line comments (not URLs)
-  src = src.replace(/'(?:[^'\\\n]|\\.)*'/g, '""');       // string literals
-  src = src.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
-  src = src.replace(/`(?:[^`\\]|\\.)*`/g, '""');          // templates
+  const src = stripNonCode(APP);
 
   const declared = new Set();
   const add = (n) => { const t = String(n).trim().split(/[\s=[\]{}:.]/)[0]; if (t) declared.add(t); };
@@ -809,8 +840,7 @@ test('every bare function call resolves to something app.js declares', () => {
   ]);
 
   const unresolved = new Set();
-  for (const m of src.matchAll(/(?<![.\w$])([a-z_$][\w$]*)\s*\(/g)) {
-    const n = m[1];
+  for (const n of bareCalls(src)) {
     if (declared.has(n) || KEYWORDS.has(n) || BROWSER.has(n) || KNOWN.has(n)) continue;
     unresolved.add(n);
   }

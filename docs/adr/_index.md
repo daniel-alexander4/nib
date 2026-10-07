@@ -692,3 +692,7 @@ home today.
   — a second OCR stamped every word twice. One rule (`pdfops.PagesWithTextLayer`), applied by the route whatever it is
   sent and asked by the window first (`GET /api/ocr/pages`), so no recognition pass is spent. Replacing a layer is the
   declared gap.
+- **[ADR-095 — a match that wraps a line is found, and an estimate is drawn on its own line](095-a-match-that-wraps-a-line-is-found-and-an-estimate-is-drawn-on-its-own-line.md)**
+  — extends ADR-090 and closes its declared gap. Both readings searched a row at a time, so a name split over a line
+  end was found by neither; `wrappedMatches` is the one door across a line end. The estimate drew every match at its
+  row's first baseline, and a row can hold two: the four words ADR-090 could not explain were estimates set 4.5–6pt high.
