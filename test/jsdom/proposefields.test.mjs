@@ -11,7 +11,7 @@
 // rule drawn as a filled bar, "-" printed inside a phone number's blank).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { proposeFields, mergeProposals } from '../../web/detect.js';
+import { proposeFields, mergeProposals, findYesNo, findCircleOne, findPipeChoices, findSlashTemplates, findRunChoices } from '../../web/detect.js';
 
 // A letter page: one point is 1/612 across and 1/792 down.
 const X = (pt) => pt / 612, Y = (pt) => pt / 792;
@@ -226,4 +226,111 @@ test('boxes stacked in a column are one field each: the gap between two is not a
   // A second rule under the left half of a line closes that half only: the right half is still a row to the line below.
   const half = proposeFields(page({ shapes: [h(100, 400, 100), h(100, 250, 103), h(100, 400, 124)] }));
   assert.ok(half.some((f) => about(pts(f), [251, 109, 399, 123])), `got ${JSON.stringify(shapesOf(half))}`);
+});
+
+// ── hints (ADR-099) ──────────────────────────────────────────────────────────
+// The IRS 1040's two dates, as its designer wrote them: one white ground 64.8 x 12 holding "MM     ", "DD     " and
+// "YYYY" in 7pt Helvetica painted 0.753 grey — and three real fields, 417.6-432, 439.2-453.6 and 460.8-482.4. Before
+// the map said which print is faint, all six were missed: the ground held print, so it was a label's.
+const spelled = (x, y0, y1, str, widths, extra = {}) => {
+  const chars = [...str], cuts = [x];
+  for (const c of chars) cuts.push(cuts[cuts.length - 1] + widths[c]);
+  return { rect: rect(x, y0, cuts[cuts.length - 1], y1), text: str, size: Y(7), chars, cuts: cuts.map(X), ...extra };
+};
+const HELV7 = { M: 5.831, D: 5.054, Y: 4.669, ' ': 1.946, a: 3.9, b: 3.9 };
+const dateGround = white(417.6, 60, 482.4, 72);
+const dateHints = (extra) => [spelled(418.6, 62, 70.7, 'MM     ', HELV7, extra), spelled(441.5, 62, 70.7, 'DD     ', HELV7, extra), spelled(462.1, 62, 70.7, 'YYYY', HELV7, extra)];
+
+test('hints set apart in one ground are one field each: as wide as the hint, the outer two to the ground\'s edges', () => {
+  const got = proposeFields(page({ shapes: [box(91.6, 54, 583.2, 762, true), dateGround], text: dateHints({ faint: true }) }));
+  assert.deepEqual(got.map((f) => [f.kind, f.from]), [['text', 'ground'], ['text', 'ground'], ['text', 'ground']], JSON.stringify(shapesOf(got)));
+  // MM's letters end at 430.26 and DD's run 441.5..451.61; YYYY starts at 462.1. HINT_PAD is 1.5.
+  const want = [[417.6, 60, 431.8, 72], [440, 60, 453.1, 72], [460.6, 60, 482.4, 72]];
+  got.forEach((f, i) => assert.ok(about(pts(f), want[i], 0.11), `field ${i} is ${pts(f)}, want ${want[i]}`));
+});
+
+test('the same print in ink is a label and the ground is no field; labels set apart in a cell\'s top do not divide it', () => {
+  assert.deepEqual(proposeFields(page({ shapes: [dateGround], text: dateHints({}) })), []);
+  assert.deepEqual(proposeFields(page({ shapes: [dateGround], text: dateHints({ faint: false }) })), []);
+  // "Last" and "First" over one blank, in ink: the blank starts a point inside their boxes, and is still one blank.
+  const two = proposeFields(page({ shapes: rowOf(100, 400), text: [label(104, 101, 130, 112, 'Last'), label(254, 101, 280, 112, 'First')] }));
+  assert.ok(about(sole(two, 'text'), [101, 111, 399, 123]), JSON.stringify(shapesOf(two)));
+});
+
+test('one hint leaves the blank whole, however many words it is; a separator between two hints is not one', () => {
+  const ground = white(100, 200, 316, 212);
+  // "aa bb": the space is nearer than the hint's own size, so it is one hint.
+  const one = sole(proposeFields(page({ shapes: [ground], text: [spelled(104, 202, 210.7, 'aa bb', HELV7, { faint: true })] })), 'text');
+  assert.deepEqual(one, [100, 200, 316, 212]);
+  // Two hints 7.1pt apart at 7pt are two; 6.9pt apart, one.
+  const apart = (gap) => proposeFields(page({ shapes: [ground], text: [spelled(104, 202, 210.7, 'aa', HELV7, { faint: true }), spelled(111.8 + gap, 202, 210.7, 'bb', HELV7, { faint: true })] }));
+  assert.equal(apart(7.1).length, 2, JSON.stringify(shapesOf(apart(7.1))));
+  assert.equal(apart(6.9).length, 1);
+  // A hint whose glyph boundaries are not known is taken whole — its trailing spaces with it.
+  const blunt = proposeFields(page({ shapes: [dateGround], text: dateHints({ faint: true }).map(({ chars, cuts, ...t }) => t) }));
+  assert.deepEqual(sole(blunt, 'text'), [417.6, 60, 482.4, 72], 'the runs touch, so they read as one hint');
+  const bluntApart = proposeFields(page({ shapes: [ground], text: [label(104, 202, 112, 210.7, 'aa', { faint: true }), label(204, 202, 212, 210.7, 'bb', { faint: true })] }));
+  assert.deepEqual(bluntApart.map(pts), [[100, 200, 113.5, 212], [202.5, 200, 316, 212]]);
+  // A hint in another blank's band divides nothing here.
+  const other = proposeFields(page({ shapes: [ground], text: [spelled(104, 230, 238.7, 'aa', HELV7, { faint: true }), spelled(204, 230, 238.7, 'bb', HELV7, { faint: true })] }));
+  assert.deepEqual(sole(other, 'text'), [100, 200, 316, 212]);
+});
+
+test('hints divide a ruled cell and the room over a bare line too, beside whatever label is printed there', () => {
+  const text = [label(104, 108, 130, 120, 'Date'), spelled(204, 110, 118.7, 'MM', HELV7, { faint: true }), spelled(264, 110, 118.7, 'DD', HELV7, { faint: true })];
+  const cell = proposeFields(page({ shapes: rowOf(100, 400), text }));
+  assert.deepEqual(cell.map((f) => f.from), ['cell', 'cell'], JSON.stringify(shapesOf(cell)));
+  // The blank beside the label starts 1.5pt past it; the first entry runs from there to its hint's end.
+  assert.ok(about(pts(cell[0]), [131.5, 101, 217.2, 123], 0.11) && about(pts(cell[1]), [262.5, 101, 399, 123], 0.11), JSON.stringify(shapesOf(cell)));
+  const line = proposeFields(page({ shapes: [h(100, 400, 300)], text: [spelled(204, 288, 296.7, 'MM', HELV7, { faint: true }), spelled(264, 288, 296.7, 'DD', HELV7, { faint: true })] }));
+  assert.deepEqual(line.map((f) => f.from), ['line', 'line'], JSON.stringify(shapesOf(line)));
+});
+
+// ── a choice word on its own baseline (ADR-099) ──────────────────────────────
+// buildTextRows puts an item in a row when its baseline is within 6 (or 0.6 of its height) of the row's first item's,
+// and row.y is that first item's. Every choice detector drew its boxes at row.y, so a choice set a few points lower
+// than the first thing on its row was circled that much too high — the box's foot above the word's baseline.
+globalThis.document ||= { createElement: () => ({ getContext: () => ({ measureText: () => ({ width: 8 }) }) }) };
+const it = (x, y, str) => ({ str, x, y, w: 5 * str.length, h: 8 });
+const boxedAt = (c, y) => Math.abs(c.y0 - (y - 8.8)) < 1e-6 && Math.abs(c.y1 - (y + 2.24)) < 1e-6; // choiceBox at 8 high
+const rowsOf = (cs) => cs.map((c) => Math.round((c.y1 - 2.24) * 10) / 10);
+
+test('Y/N, a piped list, a marked list and a slash pair are each circled on the baseline of the item they are in', () => {
+  const yn = findYesNo([it(10, 100, 'Smoker'), it(200, 105, 'Y / N')]);
+  assert.equal(yn.length, 1);
+  assert.ok(yn[0].choices.every((c) => boxedAt(c, 105)), `Y and N are boxed on ${rowsOf(yn[0].choices)}, want 105`);
+  // Y and N drawn by two items a point apart: each on its own.
+  const split = findYesNo([it(10, 100, 'Smoker'), it(200, 104, 'Y /'), it(230, 105, 'N')]);
+  assert.deepEqual(rowsOf(split[0].choices), [104, 105]);
+
+  const piped = findPipeChoices([it(10, 100, 'Dues'), it(200, 105, 'Red | Green | Blue')]);
+  assert.equal(piped.length, 1);
+  assert.deepEqual(rowsOf(piped[0].choices), [105, 105, 105]);
+
+  const marked = findCircleOne([it(10, 100, '(circle one)'), it(200, 105, 'Male/Female')]);
+  assert.deepEqual(rowsOf(marked[0].choices), [105, 105]);
+
+  const items = [it(10, 50, '(circle one)'), it(200, 50, 'Male/Female'), it(10, 200, 'Sex'), it(300, 205, 'Male/Female')];
+  assert.deepEqual(findSlashTemplates(items).map((g) => rowsOf(g.choices)), [[50, 50], [205, 205]]);
+});
+
+test('how near the next row is to "(circle one)" is measured from the marker\'s own baseline', () => {
+  // The marker is on 106 in a row whose first item is on 100; the choices are on 123: 17 from the marker (within
+  // 2.2 heights, 17.6) and 23 from the row's first baseline.
+  const near = findCircleOne([it(10, 100, 'Gender'), it(100, 106, '(circle one)'), it(100, 123, 'Male/Female')]);
+  assert.equal(near.length, 1, 'the row under the marker was not read');
+  assert.deepEqual(rowsOf(near[0].choices), [123, 123]);
+  // And the other way, a row above: 12 from the row's first baseline, 18 from the marker's — too far.
+  assert.deepEqual(findCircleOne([it(10, 100, 'Gender'), it(100, 106, '(circle one)'), it(100, 88, 'Male/Female')]), []);
+});
+
+test('a run of choices is boxed, and tested against the table\'s cells, on its own baseline', () => {
+  const items = [it(10, 100, 'Membership:'), it(100, 105, 'Youth'), it(140, 105, 'Teen'), it(175, 105, 'Adult')];
+  const run = findRunChoices(items, []);
+  assert.equal(run.length, 1);
+  assert.deepEqual(rowsOf(run[0].choices), [105, 105, 105]);
+  // A cell that holds the words' baseline (105) and not the row's first (100) refuses the run; one that holds only
+  // the row's first does not.
+  assert.deepEqual(findRunChoices(items.slice(), [{ x0: 90, x1: 210, y0: 104, y1: 112 }]), []);
+  assert.equal(findRunChoices(items.slice(), [{ x0: 90, x1: 210, y0: 90, y1: 100.5 }]).length, 1);
 });

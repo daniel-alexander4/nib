@@ -48,6 +48,10 @@ type MapText struct {
 	// set at the height of its word's ink and so narrower than the word. Its box ends before the word does, and the
 	// reader carries it out to the next one (ADR-091). A fitted word is scaled differently across and up.
 	Short bool `json:"short,omitempty"`
+	// Faint is print painted in a light colour (`faintFrom`): the hint a form prints INSIDE a blank to say what goes
+	// there — "MM", "DD", "YYYY" — where a label is printed in ink (ADR-099). Only for text that is filled, in a colour
+	// the walk carried. White text is faint too; on a white ground it is not there at all.
+	Faint bool `json:"faint,omitempty"`
 }
 
 // MapShape is a ruled line or a box.
@@ -187,6 +191,10 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 	t := MapText{Rect: rect, Text: r.text, Size: r.size / (sp.box[3] - sp.box[1]), Hidden: r.state.tr == 3}
 	if sp.rot == 90 || sp.rot == 270 {
 		t.Size = r.size / (sp.box[2] - sp.box[0])
+	}
+	// Filled text only (render modes 0 and 2, and their clipping twins): an outline's colour is its stroke's.
+	if l, ok := paintLightness(r.state.fill); ok && !t.Hidden && r.state.tr%4 != 1 {
+		t.Faint = l >= faintFrom && l < 1-1e-6 // white print is a heading on a dark bar, set to be read
 	}
 	if c := r.state.ctm; t.Hidden && r.inForm {
 		across, up := math.Hypot(c[0], c[1]), math.Hypot(c[2], c[3])
