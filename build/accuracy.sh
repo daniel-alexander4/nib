@@ -16,7 +16,9 @@
 # What it does: builds nib; maps each document's busiest pages and writes a copy with its form fields removed
 # (`TestAccuracyPrep` — a document's own fields are the answer key, and the copy is the form as someone without them
 # has it); opens each copy in the real app in a real browser, presses Detect fields and runs a search-redaction for
-# words whose true extent the map knows; and scores what came back (`test/accuracy/accuracy.mjs`).
+# words whose true extent the map knows; and scores what came back (`test/accuracy/accuracy.mjs`). Up and down the
+# page a box is scored against the page's PIXELS, not the map (`test/accuracy/reach.mjs`, ADR-098): that column
+# needs poppler's `pdftoppm` and says so, scoring nothing, where it is absent.
 #
 # Usage: ./build/accuracy.sh [results.json]     (default: dist/accuracy/<version>.json)
 set -uo pipefail

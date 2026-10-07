@@ -989,6 +989,11 @@ export function mergeProposals(fromMap, fromPicture) {
 // 72% of cases. The page map has each glyph's true boundary, from the font's own widths.
 
 const MATCH_PAD_X = 0.75, MATCH_PAD_Y = 0.5; // points past the glyphs' own boxes: ink overhangs an advance, slightly
+// Print drawn to its font's own ink (ADR-098) has no slack but the pad, where the reach had a quarter of a size:
+// and the ink is the glyph's OUTLINE, which a renderer sets on its own pixel grid — measured at 300 dpi, ink stood up
+// to 0.36pt past the outline, and a pixel on a screen is 0.75pt. So such a box gets a whole point. Measured cost over
+// the corpus's 6,490 words against half a point: two more boxes touch the line above, none the line below.
+const INK_PAD_Y = 1.0;
 const WORD_GAP = 0.15;                       // of the font size: a wider gap between two runs is a space
 
 // A SHORT stamp (`short` on the map: an OCR word as Nib wrote it before ADR-092, or one it could not fit) is narrower
@@ -1022,9 +1027,11 @@ const lettersWhereScanned = (t) => !!t.reversed && !t.short && !JOINED.test(t.te
 // match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right
 // (the other way about in a run set in reverse — the box is over the matched glyphs' boundaries either way).
 //
-// Up and down a box is its runs' reach — a full size above the baseline — except over a fitted OCR word, whose own
-// ink the map carries (`ink`, ADR-093): there it is the ink, because the reach stood 1.65 times as tall as the word
-// and took the line above with it. Such a box also carries `hold`, the box it would have had from the reach.
+// Up and down a box is its runs' reach — a full size above the baseline — except over a run whose own ink the map
+// carries (`ink`): a fitted OCR word (ADR-093), where the reach stood 1.65 times as tall as the word and took the
+// line above with it, and print whose font's own glyphs say how far it reaches (ADR-098), where the reach took the
+// tails of the line above for one word in eight and stopped short of a deep descender. Such a box also carries
+// `hold`, the box it would have had from the reach.
 // placeMatches matches an estimate against THAT. An estimate's centre is 0.35 of the size above its baseline, which
 // is inside the reach always and inside the ink only where the match has ink there: not for a match that is all
 // apostrophes or all full stops. (ADR-093 measured 6 of 39 searches keeping a second box and blamed pdf.js's span;
@@ -1080,22 +1087,27 @@ function layerMatches(map, patterns, runs, hidden) {
     });
     // The box over s[from, to): null when it holds no ink.
     const boxOf = (from, to) => {
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r0 = Infinity, r1 = -Infinity, inked = false;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r0 = Infinity, r1 = -Infinity, inked = false, print = false;
       for (let k = from; k < to; k++) {
         const g = at[k];
         if (!g || !s[k].trim()) continue; // a space takes no ink
         const padY = g.t.short ? HIDDEN_PAD_Y * g.t.size : 0;
-        const ink = hidden && !g.t.short && g.t.ink && g.t.ink.length === 2 ? g.t.ink : null;
+        const ink = !g.t.short && g.t.ink && g.t.ink.length === 2 ? g.t.ink : null;
         // Both boundaries of each glyph: a reversed run's cuts run from the right.
         const a = cut(g, whole[g.k] ? 0 : g.i), b = cut(g, whole[g.k] ? g.t.chars.length : g.i + 1);
         x0 = Math.min(x0, a, b); x1 = Math.max(x1, a, b);
         r0 = Math.min(r0, g.t.rect[1] - padY); r1 = Math.max(r1, g.t.rect[3] + padY);
         y0 = Math.min(y0, ink ? ink[0] : g.t.rect[1] - padY); y1 = Math.max(y1, ink ? ink[1] : g.t.rect[3] + padY);
         inked = inked || !!ink;
+        print = print || (!!ink && !hidden);
       }
       if (!(x1 > x0)) return null;
-      const px = MATCH_PAD_X / map.width, py = MATCH_PAD_Y / map.height;
-      const box = [x0 - px, y0 - py, x1 + px, y1 + py];
+      const px = MATCH_PAD_X / map.width, py = MATCH_PAD_Y / map.height, iy = (print ? INK_PAD_Y : MATCH_PAD_Y) / map.height;
+      const box = [x0 - px, y0 - iy, x1 + px, y1 + iy];
+      // Ink inside the reach never draws a box past the one the reach drew: the wider pad is room for the ink, and
+      // where the font's glyphs stop only a hair short of the reach it would otherwise make the box LARGER.
+      if (print && y0 >= r0) box[1] = Math.max(box[1], r0 - py);
+      if (print && y1 <= r1) box[3] = Math.min(box[3], r1 + py);
       if (inked) box.hold = [x0 - px, r0 - py, x1 + px, r1 + py];
       return box;
     };

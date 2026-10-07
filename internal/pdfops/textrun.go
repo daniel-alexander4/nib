@@ -350,6 +350,9 @@ type runFont struct {
 	simple     func(byte) (rune, bool)
 	// drawing is textFor inverted — text to the codes that draw it — built on first use by `codesFor`.
 	drawing map[string][][]byte
+	// ink is where the font's embedded program can be read for how far its glyphs reach (fontink.go), or nil. Read
+	// only when a reader asks, and once.
+	ink *inkSource
 }
 
 // codesFor answers which codes of this font draw text — `PLAN-text-reflow.md` P06.S02, D8's trigger. It is `textFor`
@@ -403,7 +406,7 @@ func loadRunFont(xt *model.XRefTable, obj types.Object) *runFont {
 	if err != nil || d == nil {
 		return nil
 	}
-	f := &runFont{widths: readFontWidths(xt, d), splittable: true}
+	f := &runFont{widths: readFontWidths(xt, d), splittable: true, ink: inkSourceFor(xt, d)}
 	if bf := d.NameEntry("BaseFont"); bf != nil {
 		f.baseFont = *bf
 	}

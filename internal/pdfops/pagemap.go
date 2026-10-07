@@ -9,6 +9,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
 
+	"nib/internal/fontcode"
 	"nib/internal/pdfread"
 )
 
@@ -40,10 +41,12 @@ type MapText struct {
 	Size float64 `json:"size"`
 	// Hidden is text the page sets without painting it (render mode 3) — an OCR layer.
 	Hidden bool `json:"hidden,omitempty"`
-	// Ink is a fitted OCR word's own ink up the page, [top, bottom] as fractions of its height: the scanned word's box
-	// (ADR-093). Rect stays the line's reach — a full size above the baseline — which is what a reader groups runs
-	// into lines by and what an estimated box is matched against; Ink is what a redaction of the word covers. Set
-	// only where Cuts are.
+	// Ink is the run's own ink up the page, [top, bottom] as fractions of its height: for a fitted OCR word the
+	// scanned word's box (ADR-093), for print what the font's embedded program says its glyphs reach (ADR-098,
+	// `printInk`). Rect stays the line's reach — a full size above the baseline — which is what a reader groups runs
+	// into lines by and what an estimated box is matched against; Ink is what a redaction of the run covers, and for
+	// print it may be deeper than Rect. Set only where Cuts are, and only where the ink is known: a run without it is
+	// covered to its Rect.
 	Ink []float64 `json:"ink,omitempty"`
 	// Short is hidden text drawn inside a form at one scale both ways: an OCR word as Nib stamped it before ADR-092,
 	// set at the height of its word's ink and so narrower than the word. Its box ends before the word does, and the
@@ -238,6 +241,10 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 			_, y0 := sp.point(r.x, top)
 			_, y1 := sp.point(r.x, bottom)
 			t.Ink = []float64{y0, y1}
+		} else if bottom, top, ok := printInk(r); ok { // never a hidden run: printInk reads only filled text
+			_, y0 := sp.point(r.x, top)
+			_, y1 := sp.point(r.x, bottom)
+			t.Ink = []float64{y0, y1}
 		}
 	}
 	return t, true
@@ -267,6 +274,41 @@ func fittedInk(r textRun) (bottom, top float64, ok bool) {
 		return 0, 0, false
 	}
 	return r.y + b*r.size, r.y + t*r.size, true
+}
+
+// printInk is how far a run of print's own ink reaches, in user space, from its font's embedded program (ADR-098,
+// fontink.go) — or ok false where the font gives nothing, and the run is covered to its box as before.
+func printInk(r textRun) (bottom, top float64, ok bool) {
+	if r.face == nil || r.rotated || r.state.tr != 0 || r.size <= 0 {
+		return 0, 0, false
+	}
+	ink := r.face.ink.read()
+	if ink == nil {
+		return 0, 0, false
+	}
+	lo, hi := ink.lo, ink.hi
+	if ink.byCode {
+		lo, hi = math.Inf(1), math.Inf(-1)
+		for _, g := range r.glyphs {
+			if len(g.code) != 2 {
+				return 0, 0, false
+			}
+			n := fontcode.Value(g.code)
+			if n >= len(ink.glyphs) {
+				n = 0 // a glyph the program does not have is drawn as its first
+			}
+			if ink.inked[n] {
+				lo, hi = math.Min(lo, ink.glyphs[n][0]), math.Max(hi, ink.glyphs[n][1])
+			}
+		}
+	} else {
+		// Every glyph of the program, not this run's: it may only tighten the line's reach, never widen it.
+		lo, hi = math.Max(lo, -descentEm), math.Min(hi, ascentEm)
+	}
+	if !(hi > lo) || math.IsInf(lo, 0) || math.IsInf(hi, 0) {
+		return 0, 0, false
+	}
+	return r.y + lo*r.size, r.y + hi*r.size, true
 }
 
 // paintedOverBudget is how many pieces one page's grounds may be compared against, in all. Each ground is checked

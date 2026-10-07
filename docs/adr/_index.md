@@ -706,6 +706,12 @@ home today.
   first inside `/ReversedChars`, as print sets it: poppler and pdf.js had been reading the old stamp backwards. Part of
   a Hebrew word is boxed by its glyphs; Arabic stays whole (its letters are printed joined). pdf.js's span is the
   line's em box, not a fault of the fit: nothing is built in the stamp for it.
+- **[ADR-098 — print is boxed by the ink its font's own glyphs reach](098-print-is-boxed-by-the-ink-its-fonts-own-glyphs-reach.md)**
+  — extends ADR-093 to print. A search-redaction's box was a line's reach, and took the tails of the line above for
+  774 of 6,490 corpus words. A run now carries its own ink where an embedded TrueType program says what it is — the
+  run's own glyphs where a code is a glyph number, else every glyph of the program and only to tighten. Descriptors
+  and a constant were refused by measurement. 774 → 399, ink outside a box 0 → 0. `build/accuracy.sh` gains the
+  vertical-reach column that measured it. CFF and Type 1 programs are the declared gap.
 - **[ADR-099 — faint print in a blank is a hint, not a label; and a choice word is placed on its own baseline](099-faint-print-is-a-hint-and-a-choice-word-is-placed-on-its-own-baseline.md)**
   — extends ADR-088/089/095/096. The map says which print is faint (`MapText.Faint`, a fill at least 0.7 light and not
   white); a hint stands in no blank's way and two or more set apart divide it (`byHints`) — the 1040's six date fields.
