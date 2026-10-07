@@ -127,7 +127,7 @@ const waitVerdict = (clause, verdict) => page.waitForFunction(async ([c, v]) =>
 after(async () => {
   try {
     h.answerDialogs(true);
-    for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) await h.closeDocument();
+    for (let i = 0; i < 8 && await h.hasDocument(); i++) await h.closeDocument();
   } catch { /* the assertion that already failed is the one worth reporting */ }
   await shutdown(h);
   fs.rmSync(DIR, { recursive: true, force: true });

@@ -143,7 +143,7 @@ test('a named field announces the name the user typed, and a repeat gets a new i
   // same way.
   h.answerDialogs(true);
   await h.closeDocument();
-  await page.waitForFunction(() => document.getElementById('viewerWrap').className !== 'has-doc');
+  await h.documentClosed();
   await h.openDocument(out, 1);
   await h.topOfDocument();
   await page.waitForFunction(
@@ -187,7 +187,7 @@ test('a named field announces the name the user typed, and a repeat gets a new i
 test('this file leaves the shared server as it found it', async () => {
   const openPages = (await h.counts()).pages;
   h.answerDialogs(true);
-  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+  for (let i = 0; i < 8 && await h.hasDocument(); i++) {
     await h.closeDocument();
   }
   const left = await page.evaluate(() => document.querySelectorAll('.viewerContainer .page').length);

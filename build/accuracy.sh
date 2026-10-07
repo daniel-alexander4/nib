@@ -8,6 +8,11 @@
 #
 # One path per line. With no list this skips cleanly, like a tier whose dependency is absent.
 #
+# A scan that has been OCR'd is scored for search-redaction too (the `scan` rows) when the OCR engine's word boxes
+# are kept beside it — `<name>.words.json` next to `<name>.pdf`, the `words` of the /api/ocr request that made its
+# layer; they are the only truth for where a scanned word's ink is. Without that file a scan is scored as before,
+# and with no such scan in the list there is no `scan` column. See test/accuracy/scanscore.mjs.
+#
 # What it does: builds nib; maps each document's busiest pages and writes a copy with its form fields removed
 # (`TestAccuracyPrep` — a document's own fields are the answer key, and the copy is the form as someone without them
 # has it); opens each copy in the real app in a real browser, presses Detect fields and runs a search-redaction for

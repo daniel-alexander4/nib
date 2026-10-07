@@ -55,6 +55,9 @@ const TOKENS = {
   [process.env.NIB_UI_LOCKED_BASE]: process.env.NIB_UI_LOCKED_CSRF,
 };
 
+// DOC_OPEN runs in the page: the viewer has a document. See `hasDocument`.
+const DOC_OPEN = () => document.getElementById('viewerWrap').classList.contains('has-doc');
+
 async function mintLaunchKey(base) {
   const res = await fetch(base + '/api/launch/key', { method: 'POST', headers: { 'X-CSRF-Token': TOKENS[base] || '' } });
   if (!res.ok) throw new Error(`could not mint a launch key on ${base}: ${res.status} — uirepro.sh exports NIB_UI_CSRF / NIB_UI_LOCKED_CSRF`);
@@ -224,6 +227,13 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // while looking like it read the new one. Waiting for the new page count is a
     // transition check rather than a state check — the same distinction this whole
     // phase keeps turning on, and this helper got it wrong first time.
+    //
+    // The class is asked whether it HAS `has-doc` (`hasDocument`), not whether it IS `has-doc`. It was compared
+    // whole, on the reading that the wrap's class is `has-doc` or empty — and a document that carries a sign-here
+    // request opens locked, with `signing-locked` beside it (app.js `applySignLock`). So the wait never came true
+    // for one, and this helper could not open a signing document at all: thirty seconds and a TimeoutError naming
+    // nothing. What the comparison was there to tell — a document is open — is the same either way; what tells a
+    // NEW document from the old one is still the page count below.
     async openDocument(file, pages) {
       await this.mode('file');
       // Since v1.124.0 the file lifecycle is a set of sidebar CARDS rather than toolbar groups,
@@ -233,7 +243,7 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
       await page.click('#openMenuItem');
       await page.fill('#pathInput', file);
       await page.click('#openGo');
-      await page.waitForFunction(() => document.getElementById('viewerWrap').className === 'has-doc');
+      await page.waitForFunction(DOC_OPEN);
       await page.waitForFunction(
         (n) => document.querySelector('.pageCount').textContent === `/ ${n}`,
         pages,
@@ -388,6 +398,18 @@ export async function launch({ routes = null, waitFor = '#empty', base = BASE, l
     // (anything but a 401 from `/api/docs`, or a refused close) throws, and `shutdown` lets it.
     async closeAll() {
       return page.evaluate(closeAllInPage);
+    },
+
+    // hasDocument is the ONE reading of "a document is open" for this tier, and documentClosed the one wait for
+    // its going. Twenty close loops and waits each compared the wrap's whole class with 'has-doc'; with a signing
+    // document open that is false, so a loop meant to close whatever a failed test left open closed nothing, and a
+    // wait for the close returned at once. (A test that asserts the whole class of an ORDINARY document —
+    // lifecycle, tabs — is saying something else, that nothing but `has-doc` is there, and still compares it whole.)
+    hasDocument() {
+      return page.evaluate(DOC_OPEN);
+    },
+    async documentClosed() {
+      await page.waitForFunction(() => !document.getElementById('viewerWrap').classList.contains('has-doc'));
     },
 
     // closeDocument clicks Close — from File mode, for the reason above.

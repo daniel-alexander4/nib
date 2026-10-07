@@ -287,7 +287,7 @@ test('the convene is bound to the document the setup was started on', async () =
   await page.waitForSelector('#viewerWrap:not([hidden])');
   // The same loop this file's cleanup test uses. A single closeDocument() is not enough to assert
   // against: it returns after a fixed 400 ms and the class is the state the app itself reads.
-  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+  for (let i = 0; i < 8 && await h.hasDocument(); i++) {
     await h.closeDocument();
   }
   assert.equal(await page.evaluate(() => document.querySelectorAll('.viewerContainer .page').length), 0,
@@ -335,7 +335,7 @@ test('the convene is bound to the document the setup was started on', async () =
 // the unbound build gets.
 test('a setup opened with no document binds to the one the excursion opens', async () => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+  for (let i = 0; i < 8 && await h.hasDocument(); i++) {
     await h.closeDocument();
   }
   assert.equal(await page.$eval('#viewerWrap', (el) => el.className), '',
@@ -372,7 +372,7 @@ test('a setup opened with no document binds to the one the excursion opens', asy
   // after whatever is current and gets 404.
   await page.click('#cerSeeDoc');
   await page.waitForSelector('#viewerWrap:not([hidden])');
-  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+  for (let i = 0; i < 8 && await h.hasDocument(); i++) {
     await h.closeDocument();
   }
   await page.click('.modetab[data-tab="collaborate"]');
@@ -427,7 +427,7 @@ test('this file leaves the shared server as it found it', async () => {
     `clearing this file's ceremony draft answered ${cleared}; a draft left in the vault survives a `
     + 'page reload, so the next file in this tier would find a setup sheet that is not empty');
   const openPages = (await h.counts()).pages;
-  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+  for (let i = 0; i < 8 && await h.hasDocument(); i++) {
     await h.closeDocument();
   }
   const left = await page.evaluate(() => document.querySelectorAll('.viewerContainer .page').length);

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -30,7 +31,11 @@ type accuracyDoc struct {
 	Stripped string    `json:"stripped"`
 	Pages    int       `json:"pages"`
 	Maps     []PageMap `json:"maps"`
-	Error    string    `json:"error,omitempty"`
+	// Words is the OCR engine's word boxes for a scan that has been OCR'd, where the corpus keeps them beside it:
+	// `<name>.words.json` next to `<name>.pdf`. They are the only truth there is for where a scanned word's ink is,
+	// and with them the harness scores search-redaction on the scan (test/accuracy/scanscore.mjs).
+	Words string `json:"words,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 func TestAccuracyPrep(t *testing.T) {
@@ -67,6 +72,9 @@ const accuracyPagesPerDoc = 3
 
 func prepAccuracyDoc(src, dst string) (doc accuracyDoc) {
 	doc = accuracyDoc{Source: src, Stripped: dst}
+	if words := strings.TrimSuffix(src, filepath.Ext(src)) + ".words.json"; fileIsThere(words) {
+		doc.Words = words
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			doc.Error = fmt.Sprint(r)
@@ -111,10 +119,22 @@ func prepAccuracyDoc(src, dst string) (doc accuracyDoc) {
 		doc.Error = "strip: " + err.Error()
 		return doc
 	}
+	// A document saved for signing carries its sign-here request (NibFlags) and opens LOCKED — editing off, so
+	// neither Detect nor the search can be driven on it. The request is not the form: the copy goes without it,
+	// as it goes without its fields, and the page under it is measured like any other.
+	if stripped, err = ClearFlags(stripped); err != nil {
+		doc.Error = "sign-here request: " + err.Error()
+		return doc
+	}
 	if err := os.WriteFile(dst, stripped, 0o600); err != nil {
 		doc.Error = err.Error()
 	}
 	return doc
+}
+
+func fileIsThere(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular()
 }
 
 // withoutFormFields writes ctx with every widget annotation and the form itself removed.

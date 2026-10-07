@@ -33,7 +33,7 @@ const { page } = h;
 
 after(async () => {
   try {
-    for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+    for (let i = 0; i < 8 && await h.hasDocument(); i++) {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
