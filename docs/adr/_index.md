@@ -688,3 +688,7 @@ home today.
   — extends ADR-092 and ADR-090. The map gave a fitted word the line's reach (a full size up, a quarter down), 1.65
   times its ink, and a redaction reached the line above; it is now boxed by its own glyphs' ink, which is the scanned
   box. Part of a right-to-left OCR word takes the whole word: the stamp runs from the left, the scan from the right.
+- **[ADR-094 — a page that already has a text layer is not OCR'd again](094-a-page-with-a-text-layer-is-not-ocrd-again.md)**
+  — a second OCR stamped every word twice. One rule (`pdfops.PagesWithTextLayer`), applied by the route whatever it is
+  sent and asked by the window first (`GET /api/ocr/pages`), so no recognition pass is spent. Replacing a layer is the
+  declared gap.

@@ -138,8 +138,10 @@ func TestEveryDocumentResolutionIsHandled(t *testing.T) {
 	// read-only, `handleDocumentCeremonyCopy`'s shape.
 	// 38: `handlePageMap` (ADR-088) reads the open document's bytes for one page's map — read-only, `handleParagraphs`'s
 	// shape.
-	if resolveSites != 38 {
-		t.Errorf("expected 38 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
+	// 39: `handleOCRPages` (/pending 851 part 4) reads the open document's bytes for which pages already have a text
+	// layer — read-only, `handlePageMap`'s shape.
+	if resolveSites != 39 {
+		t.Errorf("expected 39 resolveDoc sites, found %d — update this deliberately if intended", resolveSites)
 	}
 	// 8, not 7: P06.S02's handleCloseView resolves with docFor rather than resolveDoc,
 	// because its not-found branch is a 409 ("that document is no longer open") and

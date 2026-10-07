@@ -3,6 +3,7 @@ package pdfops
 import (
 	"fmt"
 	"log"
+	"nib/internal/pdfread"
 	"strings"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
@@ -41,6 +42,36 @@ type Word struct {
 	Block int `json:"block,omitempty"`
 	Para  int `json:"para,omitempty"`
 	Line  int `json:"line,omitempty"`
+}
+
+// PagesWithTextLayer is the pages of pdf that already carry invisible text — an OCR layer, nib's or another tool's —
+// as the page map reads it (`MapText.Hidden`): the one rule for "this page has been OCR'd", asked here by the OCR
+// route and, through `GET /api/ocr/pages`, by the window before it spends a recognition pass.
+//
+// It exists because a second OCR ADDED a second layer (/pending 851 part 4, measured: one word, two hidden runs):
+// nothing recognised the first, so every word was found twice by search, copied twice, and a file stamped short
+// before ADR-092 kept its short words under the fitted ones. A page that will not read is reported as having none;
+// the stamp is what decides about that page.
+func PagesWithTextLayer(pdf []byte) (map[int]bool, error) {
+	ctx, err := pdfread.Validated(pdf, model.NewDefaultConfiguration())
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]bool{}
+	for _, pg := range pdfread.Pages(ctx) {
+		pr, err := readPageShapes(ctx, pg)
+		if err != nil {
+			continue
+		}
+		sp := newDisplaySpace(pg)
+		for _, r := range pr.runs {
+			if t, ok := mapText(sp, r); ok && t.Hidden {
+				out[pg.Nr] = true
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 // StampTextLayer bakes an invisible, selectable text layer onto pdf — one text run

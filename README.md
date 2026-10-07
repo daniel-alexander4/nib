@@ -418,7 +418,9 @@ and adds an **invisible text layer** underneath the scan, so the page still look
 exactly the same but the text is now **selectable, copyable, and findable** (and
 shows up in *Find*). The OCR runs **entirely on your machine** — the recognition
 engine is built into Nib (no install, no cloud, nothing leaves your computer) —
-so it works offline like everything else. Pick the scan's language from the
+so it works offline like everything else. A page that **already has a text layer** —
+from an earlier OCR, in Nib or anywhere else — is left as it is and not read again, and
+Nib says how many pages that was; to redo a page's OCR, **Undo** the first one. Pick the scan's language from the
 dropdown next to the button (**English, French, German, Spanish, Italian, Czech,
 Dutch, Hungarian, Polish, Portuguese, Romanian, Swedish, Turkish, Vietnamese,
 Russian, Ukrainian, Bulgarian, Serbian, Macedonian, Belarusian, Greek, Thai,

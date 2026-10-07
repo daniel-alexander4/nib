@@ -522,6 +522,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sanitize", s.requireUnlocked(s.handleSanitize))
 	mux.HandleFunc("GET /api/paragraphs", s.requireUnlocked(s.handleParagraphs))
 	mux.HandleFunc("GET /api/pagemap", s.requireUnlocked(s.handlePageMap))
+	mux.HandleFunc("GET /api/ocr/pages", s.requireUnlocked(s.handleOCRPages))
 	mux.HandleFunc("POST /api/reflow", s.requireUnlocked(s.handleReflow))
 	mux.HandleFunc("POST /api/encrypt", s.requireUnlocked(s.handleEncrypt))
 	mux.HandleFunc("POST /api/decrypt", s.requireUnlocked(s.handleDecrypt))
