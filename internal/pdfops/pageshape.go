@@ -23,6 +23,9 @@ type pageShape struct {
 	// fields, a white rule erasing part of another. Unknown colours (a pattern, a separation) are NOT white — a piece
 	// is hidden only when it is known to be.
 	white bool
+	// whiteFill is a rectangle whose INSIDE is painted white, whatever its outline is painted with: the ground a form
+	// lays under a blank (ADR-096). A white piece with whiteFill is that ground and nothing else.
+	whiteFill bool
 }
 
 // shapePath gathers the current path's pieces between the operator that starts it and the one that paints it.
@@ -120,6 +123,7 @@ func (w *runWalker) keepPieces(p *shapePath, gs runGState, stroked, filled, clos
 			continue
 		}
 		s.stroked, s.filled, s.lw, s.white = stroked, filled && s.rect, lw, white
+		s.whiteFill = s.filled && isWhitePaint(gs.fill)
 		w.shapes = append(w.shapes, s)
 	}
 	*p = shapePath{}

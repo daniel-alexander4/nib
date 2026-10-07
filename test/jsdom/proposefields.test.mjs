@@ -20,6 +20,7 @@ const page = (over = {}) => ({ page: 1, width: 612, height: 792, text: [], shape
 const h = (x0, x1, y) => ({ kind: 'h', rect: rect(x0, y - 0.25, x1, y + 0.25) });
 const v = (x, y0, y1) => ({ kind: 'v', rect: rect(x - 0.25, y0, x + 0.25, y1) });
 const box = (x0, y0, x1, y1, filled = false) => ({ kind: 'box', rect: rect(x0, y0, x1, y1), filled });
+const white = (x0, y0, x1, y1) => ({ kind: 'white', rect: rect(x0, y0, x1, y1) });
 const label = (x0, y0, x1, y1, text = 'Label', extra = {}) => ({ rect: rect(x0, y0, x1, y1), text, size: Y(y1 - y0), ...extra });
 const pts = (f) => [f.rect[0] * 612, f.rect[1] * 792, f.rect[2] * 612, f.rect[3] * 792].map((n) => Math.round(n * 10) / 10);
 const about = (got, want, slack = 1.6) => got.every((n, i) => Math.abs(n - want[i]) <= slack);
@@ -152,4 +153,77 @@ test('two lines with no upright between them are a row only when they are one wi
 test('print standing in the room above a bare line leaves no blank there: an underlined sentence is not a field', () => {
   // The sentence's box reaches 6pt into the 15pt above the line. Under a cell's rule that would be a label to step below.
   assert.deepEqual(proposeFields(page({ shapes: [h(100, 400, 300)], text: [label(100, 281, 400, 291, 'A sentence that is underlined.')] })), []);
+});
+
+// ── white grounds (ADR-096) ──────────────────────────────────────────────────
+// The shapes are an IRS 1040's as a form designer wrote it: a tint over the page, a white rectangle under each blank
+// (72 x 12 for an amount, 8 x 8 for a tick box, 24 deep with the label in its top), neighbours sharing an edge.
+const shapesOf = (fields) => fields.map((f) => [f.kind, f.from, pts(f)]);
+
+test('a white ground on a tinted panel is a field: the whole of it, or below the label printed in its top', () => {
+  const panel = box(50, 50, 560, 700, true);
+  const got = sole(proposeFields(page({ shapes: [panel, white(504, 450, 576, 462)] })), 'text');
+  assert.ok(about(got, [504, 450, 576, 462], 0.1), `the field is ${got}, want the ground itself`);
+
+  const labelled = proposeFields(page({ shapes: [panel, white(100, 200, 316, 224)], text: [label(104, 201, 160, 210, 'First name')] }));
+  const f = sole(labelled, 'text');
+  assert.ok(about(f, [100, 209, 316, 224]), `the field is ${f}, want it below the label`);
+  assert.equal(labelled[0].from, 'ground');
+
+  assert.equal(sole(proposeFields(page({ shapes: [panel, white(97, 206, 105, 214)] })), 'check').join(), '97,206,105,214');
+
+  // The same blank drawn with lines inside the panel is still refused: a ground is the one thing read over a shade.
+  assert.deepEqual(proposeFields(page({ shapes: [panel, ...rowOf(100, 400)] })), []);
+});
+
+test('a small white square is a tick box, and the ground it stands in gets no text field', () => {
+  const got = proposeFields(page({ shapes: [white(36, 60, 151, 72), white(36, 62, 44, 70)], text: [label(48, 61, 90, 70, 'Single')] }));
+  assert.equal(sole(got, 'check').join(), '36,62,44,70');
+  // A square too large to tick is typed in, and one that is not square is not ticked.
+  assert.equal(sole(proposeFields(page({ shapes: [white(100, 100, 122, 120)] })), 'text').join(), '100,100,122,120');
+  assert.deepEqual(proposeFields(page({ shapes: [white(100, 100, 118, 106)] })), [], 'an 18 x 6 sliver is neither a tick box nor room to type');
+  assert.equal(sole(proposeFields(page({ shapes: [white(100, 100, 120, 122)] })), 'text').join(), '100,100,120,122', '22 deep is past a tick box');
+});
+
+test('print that only touches a tick box does not refuse it, and print standing in it does', () => {
+  const tick = white(568, 146, 576, 154);
+  assert.equal(proposeFields(page({ shapes: [tick], text: [label(470, 146, 568.7, 154, 'was in')] })).length, 1);
+  assert.deepEqual(proposeFields(page({ shapes: [tick], text: [label(470, 146, 573, 154, 'was in')] })), []);
+});
+
+test('two grounds sharing an edge are two fields, and a ground the lines already read is not proposed again', () => {
+  const pair = proposeFields(page({ shapes: [white(100, 100, 200.2, 112), white(200, 100, 300, 112)] }));
+  assert.equal(pair.length, 2, `got ${JSON.stringify(shapesOf(pair))}`);
+
+  const once = proposeFields(page({ shapes: [...rowOf(100, 400), white(100.5, 100.5, 399.5, 123.5)] }));
+  assert.ok(about(sole(once, 'text'), [101, 101, 399, 123]));
+  assert.equal(once[0].from, 'cell', 'where both see the blank, the lines\' reading stands');
+});
+
+test('a ground deeper than a row is a panel and not a blank, a speck is nothing, and a ground inside a ground is the blank', () => {
+  assert.deepEqual(proposeFields(page({ shapes: [white(100, 100, 400, 200)] })), []);
+  assert.deepEqual(proposeFields(page({ shapes: [white(100, 100, 104, 107)] })), [], '4 across is a speck');
+  assert.deepEqual(proposeFields(page({ shapes: [white(100, 100, 107, 104)] })), [], '4 deep is a speck');
+  const nested = proposeFields(page({ shapes: [white(100, 100, 400, 130), white(250, 105, 390, 125)] }));
+  assert.equal(sole(nested, 'text').join(), '250,105,390,125');
+});
+
+test('a ground is not read on a page with no text, nor where the document already has a field', () => {
+  assert.deepEqual(proposeFields(page({ shapes: [white(504, 450, 576, 462)], noText: true })), []);
+  assert.deepEqual(proposeFields(page({ shapes: [white(504, 450, 576, 462)], widgets: [{ kind: 'text', rect: rect(504, 450, 576, 462) }] })), []);
+});
+
+test('boxes stacked in a column are one field each: the gap between two is not a line to write on', () => {
+  // An attendance sheet's column: a 12pt box per row, 6pt apart, each outlined on its own.
+  const got = proposeFields(page({ shapes: [box(60, 220, 124, 232), box(60, 238, 124, 250), box(60, 256, 124, 268)] }));
+  assert.equal(got.length, 3, `got ${JSON.stringify(shapesOf(got))}`);
+  got.forEach((f, i) => assert.ok(about(pts(f), [61, 221 + 18 * i, 123, 231 + 18 * i]), `field ${i} is ${pts(f)}`));
+
+  // A short stray line just under a cell's top edge closes nothing: the cell is still one field, edge to edge.
+  const stray = proposeFields(page({ shapes: [...rowOf(100, 400), h(200, 210, 103)] }));
+  assert.ok(about(sole(stray, 'text'), [101, 101, 399, 123]), `got ${JSON.stringify(shapesOf(stray))}`);
+
+  // A second rule under the left half of a line closes that half only: the right half is still a row to the line below.
+  const half = proposeFields(page({ shapes: [h(100, 400, 100), h(100, 250, 103), h(100, 400, 124)] }));
+  assert.ok(half.some((f) => about(pts(f), [251, 109, 399, 123])), `got ${JSON.stringify(shapesOf(half))}`);
 });
