@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 
 	"nib/internal/pdfops"
 )
@@ -13,6 +14,9 @@ import (
 // Word structs and a long document is stamped page by page, so 32 MiB clears any
 // real request by a wide margin while still bounding the decode.
 const maxOCRWordsBytes = 32 << 20
+
+// maxOCRSkippedListed is how many skipped pages the X-Nib-OCR header names.
+const maxOCRSkippedListed = 64
 
 // handleOCR bakes an invisible, searchable text layer onto the current document
 // from OCR results the browser produced. The browser rasterizes each page and
@@ -62,6 +66,43 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 	// between, so the undo entry records the NEW bytes as the state to return to and a
 	// later undo restores a document that never existed.
 	before := s.docBytes(doc)
+	// **A page that already has a text layer does not get a second one** (/pending 851 part 4). The rule is
+	// `pdfops.PagesWithTextLayer`, asked here whatever the window did: the window asks the same reader page by page so
+	// as not to spend a recognition pass, and a window that did not ask must not be able to double a layer.
+	words, skipped := body.Words, []int{}
+	if layered, lerr := pdfops.PagesWithTextLayer(before); lerr == nil && len(layered) > 0 {
+		words = make([]pdfops.Word, 0, len(body.Words))
+		seen := map[int]bool{}
+		for _, wd := range body.Words {
+			if !layered[wd.Page] {
+				words = append(words, wd)
+			} else if !seen[wd.Page] {
+				seen[wd.Page] = true
+				skipped = append(skipped, wd.Page)
+			}
+		}
+		sort.Ints(skipped)
+	}
+	// A fact about the returned bytes rides in a header (ADR-072): which pages were left as they were. Capped, so a
+	// long document cannot grow the header; `more` says how many are not listed.
+	if len(skipped) > 0 {
+		facts := struct {
+			Skipped []int `json:"skipped"`
+			More    int   `json:"more,omitempty"`
+		}{Skipped: skipped}
+		if len(skipped) > maxOCRSkippedListed {
+			facts.Skipped, facts.More = skipped[:maxOCRSkippedListed], len(skipped)-maxOCRSkippedListed
+		}
+		if hdr, jerr := json.Marshal(facts); jerr == nil {
+			w.Header().Set("X-Nib-OCR", string(hdr))
+		}
+		log.Printf("ocr: %d page(s) already had a text layer and were left as they are", len(skipped))
+	}
+	if len(words) == 0 {
+		writeJSON(w, s.docResponse(doc))
+		return
+	}
+	body.Words = words
 	// No wroteStampTextError here, deliberately: StampTextLayer cannot produce that error.
 	// It SKIPS an unrepresentable word rather than failing the layer (pdfops/ocr.go), because
 	// OCR text is the scan's own words and there is nothing for the user to retype. A door
@@ -107,4 +148,28 @@ func (s *Server) handleOCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.docResponse(doc))
+}
+
+// handleOCRPages answers which pages of the open document already have a text layer, so the window does not spend a
+// recognition pass on a page the OCR route would leave alone. One read of the document for all of them: asking the
+// page map page by page re-reads the whole file each time (measured on a 14-page, 10.7 MB OCR'd scan: 1.2 s a page
+// against 2.3 s for every page here). The rule is `pdfops.PagesWithTextLayer`, the one handleOCR applies.
+func (s *Server) handleOCRPages(w http.ResponseWriter, r *http.Request) {
+	doc, ok := s.resolveDoc(w, r)
+	if !ok {
+		return
+	}
+	layered, err := pdfops.PagesWithTextLayer(s.docBytes(doc))
+	if err != nil {
+		// The document was well-formed enough to open and cannot be read for this (ADR-072). The window carries on
+		// as though no page had a layer, and the OCR route decides.
+		writeJSONStatus(w, http.StatusUnprocessableEntity, map[string]string{"cause": "document-unreadable", "error": err.Error()})
+		return
+	}
+	pages := make([]int, 0, len(layered))
+	for p := range layered {
+		pages = append(pages, p)
+	}
+	sort.Ints(pages)
+	writeJSON(w, map[string]any{"layered": pages})
 }

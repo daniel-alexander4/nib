@@ -8096,6 +8096,13 @@ function loadTesseract() {
 }
 
 
+// ocrLayeredSentence says how many pages OCR left as they were, in the user's terms. A page with a text layer can
+// be searched and redacted already; running OCR on it again cannot improve it and used to double it.
+function ocrLayeredSentence(left, total) {
+  if (left >= total) return total === 1 ? 'This page already has a text layer — nothing to add' : 'Every page already has a text layer — nothing to add';
+  return left === 1 ? '1 page already had a text layer and was left as it is' : `${left} pages already had a text layer and were left as they are`;
+}
+
 async function runOCR() {
   if (!view.pdfDocument || !confirmSignatureLoss()) return;
   // CAPTURED before the first await (D7). OCR is the longest operation in the app —
@@ -8138,7 +8145,16 @@ async function runOCR() {
     await worker.setParameters({ user_defined_dpi: String(dpi) });
     const words = [];
     const n = owner.pdfDocument.numPages;
+    // A page that already has a text layer is not read again: a second OCR ADDED a second layer, every word
+    // twice (/pending 851 part 4). The server holds the rule and applies it whatever is sent; asking first is
+    // what saves the recognition pass, which is the slow part.
+    let has = new Set(), layered = 0;
+    try {
+      const lr = await apiFetch('/api/ocr/pages', { docId: doc && doc.id });
+      if (lr.ok) has = new Set((await lr.json()).layered || []);
+    } catch { /* not known: every page is read, and the server still decides */ }
     for (let p = 1; p <= n; p++) {
+      if (has.has(p)) { layered++; continue; }
       btn.textContent = `OCR ${p}/${n}…`;
       const { blob, h } = await renderPageBlob(owner.pdfDocument, p, ocrScale, null, 'image/png');
       const { data } = await worker.recognize(blob);
@@ -8172,12 +8188,16 @@ async function runOCR() {
         });
       }
     }
-    if (!words.length) { toast('No text found to add'); return; }
+    if (!words.length) { toast(layered ? ocrLayeredSentence(layered, n) : 'No text found to add'); return; }
     btn.textContent = 'Saving…';
     const res = await apiFetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang, words }), docId: doc && doc.id });
     if (!res.ok) { toast('Could not add the text layer'); return; }
+    // What the SERVER left alone, which is what happened: it may know of a layer this window did not ask about.
+    let facts = {};
+    try { facts = JSON.parse(res.headers.get('X-Nib-OCR') || '{}'); } catch { /* worded as none skipped */ }
+    const left = Math.max(layered, (facts.skipped || []).length + (facts.more || 0));
     await setDocumentFromServer(await res.json(), owner);
-    toast(`Added a searchable text layer (${words.length} words)`);
+    toast(left ? `Added a searchable text layer. ${ocrLayeredSentence(left, n)}` : `Added a searchable text layer (${words.length} words)`);
   } catch (e) {
     toast(e.message || 'OCR failed');
   } finally {
