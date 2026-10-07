@@ -916,8 +916,22 @@ const WORD_GAP = 0.15;                       // of the font size: a wider gap be
 const HIDDEN_STRETCH_MAX = 2.5;
 const HIDDEN_PAD_Y = 0.25; // of the font size: the stamped box sat a point above the bottom of the ink
 
+// A hidden word in a right-to-left script is written in READING order, its first letter at the LEFT — the stamp is
+// set glyph after glyph and unshaped (`ocrFontFor`) — while the scanned word's first letter is at its right. So the
+// glyph boundaries say where a letter is in the stamp and not where it is on the paper: part of such a word was boxed
+// at the mirrored end, the letters asked for left showing (/pending 851 part 3). Where the letters of a scanned
+// word are is not known, so a match that takes any of the word takes all of it.
+const RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
 // matchesInMap runs `patterns` (global RegExps) over the page's text as the map has it, and returns one box per
 // match, [x0, y0, x1, y1] in the map's fractions, from the first matched glyph's left cut to the last one's right.
+//
+// Up and down a box is its runs' reach — a full size above the baseline — except over a fitted OCR word, whose own
+// ink the map carries (`ink`, ADR-093): there it is the ink, because the reach stood 1.65 times as tall as the word
+// and took the line above with it. Such a box also carries `hold`, the box it would have had from the reach.
+// placeMatches matches an estimate against THAT: pdf.js sets a fitted word's span about four points above its ink,
+// so the estimate's centre is inside the reach and, for a word with a descender, above the ink — measured, 6 of 39
+// searches on a real scan kept the estimate beside the exact box until the two boxes were told apart.
 //
 // Only runs whose glyph boundaries are known take part (an upright run on an unturned page). Visible text and hidden
 // text — an OCR layer — are searched as two layers, never joined into one line; a short stamp's boundaries are
@@ -950,6 +964,7 @@ function layerMatches(map, patterns, runs, hidden) {
       return Math.max(1, Math.min(HIDDEN_STRETCH_MAX, room));
     });
     const cut = (g, i) => g.t.rect[0] + (g.t.cuts[i] - g.t.rect[0]) * stretch[g.k];
+    const whole = row.runs.map((t) => hidden && RTL.test(t.text)); // see RTL
     // The row as a string, each character knowing which glyph of which run drew it (null: a space between runs).
     let s = '';
     const at = [];
@@ -966,16 +981,22 @@ function layerMatches(map, patterns, runs, hidden) {
       let m;
       while ((m = re.exec(s))) {
         if (!m[0].length) { re.lastIndex++; continue; }
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r0 = Infinity, r1 = -Infinity, inked = false;
         for (let k = m.index; k < m.index + m[0].length; k++) {
           const g = at[k];
           if (!g || !s[k].trim()) continue; // a space takes no ink
           const padY = g.t.short ? HIDDEN_PAD_Y * g.t.size : 0;
-          x0 = Math.min(x0, cut(g, g.i)); x1 = Math.max(x1, cut(g, g.i + 1));
-          y0 = Math.min(y0, g.t.rect[1] - padY); y1 = Math.max(y1, g.t.rect[3] + padY);
+          const ink = hidden && !g.t.short && g.t.ink && g.t.ink.length === 2 ? g.t.ink : null;
+          x0 = Math.min(x0, cut(g, whole[g.k] ? 0 : g.i)); x1 = Math.max(x1, cut(g, whole[g.k] ? g.t.chars.length : g.i + 1));
+          r0 = Math.min(r0, g.t.rect[1] - padY); r1 = Math.max(r1, g.t.rect[3] + padY);
+          y0 = Math.min(y0, ink ? ink[0] : g.t.rect[1] - padY); y1 = Math.max(y1, ink ? ink[1] : g.t.rect[3] + padY);
+          inked = inked || !!ink;
         }
         if (!(x1 > x0)) continue;
-        out.push([x0 - MATCH_PAD_X / map.width, y0 - MATCH_PAD_Y / map.height, x1 + MATCH_PAD_X / map.width, y1 + MATCH_PAD_Y / map.height]);
+        const px = MATCH_PAD_X / map.width, py = MATCH_PAD_Y / map.height;
+        const box = [x0 - px, y0 - py, x1 + px, y1 + py];
+        if (inked) box.hold = [x0 - px, r0 - py, x1 + px, r1 + py];
+        out.push(box);
       }
     }
   }
@@ -989,6 +1010,6 @@ function layerMatches(map, patterns, runs, hidden) {
 // Returns {boxes, exact, kept}: how many boxes came from the page's own glyphs, and how many are estimates.
 export function placeMatches(estimated, exact) {
   const holds = (r, x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
-  const kept = estimated.filter((e) => !exact.some((m) => holds(m, (e[0] + e[2]) / 2, (e[1] + e[3]) / 2)));
+  const kept = estimated.filter((e) => !exact.some((m) => holds(m.hold || m, (e[0] + e[2]) / 2, (e[1] + e[3]) / 2)));
   return { boxes: [...exact, ...kept], exact: exact.length, kept: kept.length };
 }

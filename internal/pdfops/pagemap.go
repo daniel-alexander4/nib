@@ -39,6 +39,11 @@ type MapText struct {
 	Size float64 `json:"size"`
 	// Hidden is text the page sets without painting it (render mode 3) — an OCR layer.
 	Hidden bool `json:"hidden,omitempty"`
+	// Ink is a fitted OCR word's own ink up the page, [top, bottom] as fractions of its height: the scanned word's box
+	// (ADR-093). Rect stays the line's reach — a full size above the baseline — which is what a reader groups runs
+	// into lines by and what an estimated box is matched against; Ink is what a redaction of the word covers. Set
+	// only where Cuts are.
+	Ink []float64 `json:"ink,omitempty"`
 	// Short is hidden text drawn inside a form at one scale both ways: an OCR word as Nib stamped it before ADR-092,
 	// set at the height of its word's ink and so narrower than the word. Its box ends before the word does, and the
 	// reader carries it out to the next one (ADR-091). A fitted word is scaled differently across and up.
@@ -196,8 +201,39 @@ func mapText(sp displaySpace, r textRun) (MapText, bool) {
 			t.Cuts = append(t.Cuts, cut(pos))
 			t.Chars = append(t.Chars, g.text)
 		}
+		if bottom, top, ok := fittedInk(r); ok && t.Hidden && r.inForm && !t.Short {
+			_, y0 := sp.point(r.x, top)
+			_, y1 := sp.point(r.x, bottom)
+			t.Ink = []float64{y0, y1}
+		}
 	}
 	return t, true
+}
+
+// fittedInk is how far a fitted OCR word's ink reaches up the page, in user space: the ink of its own glyphs, which
+// is the scanned word's box, because that is what the fit put them on (ADR-092, `fitWord`).
+//
+// `runBox` gives every run a full size above its baseline and a quarter below, which is a line's reach and right for
+// reflow. A fitted word is set at its true em, a median 1.32 of its ink's height, so that box stood 1.65 times as tall
+// as the word and a redaction drawn to it reached the line above (measured on two real scans: 13 of 40 and 5 of 39
+// boxes, /pending 851 part 1) — and it still stopped a quarter em down, short of an Arabic descender (part 2). The
+// face is nib's own and the text is the run's, so the ink is measured, not bounded.
+//
+// Only for a face nib stamps an OCR layer in, on an upright run. The name is checked against the table before the
+// face is asked for, because `ocrFace` remembers every name it is asked — and a document chooses its own font names.
+func fittedInk(r textRun) (bottom, top float64, ok bool) {
+	name := r.baseFont
+	if i := strings.IndexByte(name, '+'); i >= 0 {
+		name = name[i+1:] // a subset's tag
+	}
+	if _, known := ocrFontFiles[name]; (!known && name != ocrFont) || r.rotated {
+		return 0, 0, false
+	}
+	_, b, t, ok := wordInk(name, ocrFace(name), r.text)
+	if !ok {
+		return 0, 0, false
+	}
+	return r.y + b*r.size, r.y + t*r.size, true
 }
 
 func mapShape(sp displaySpace, s pageShape) (MapShape, bool) {

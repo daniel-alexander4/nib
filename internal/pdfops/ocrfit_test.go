@@ -1,12 +1,15 @@
 package pdfops
 
 import (
+	"bytes"
+	"log"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"nib/internal/testpdf"
@@ -59,6 +62,9 @@ type hiddenRun struct {
 	text                 string
 	x0, y0, x1, y1, size float64
 	short                bool
+	// ink0, ink1 is the run's own ink up the page, where the map gives one (ADR-093); inked says it did.
+	ink0, ink1 float64
+	inked      bool
 }
 
 func hiddenRuns(t *testing.T, pdf []byte) []hiddenRun {
@@ -70,8 +76,12 @@ func hiddenRuns(t *testing.T, pdf []byte) []hiddenRun {
 	var out []hiddenRun
 	for _, tx := range pm.Text {
 		if tx.Hidden {
-			out = append(out, hiddenRun{tx.Text, tx.Rect[0] * pm.Width, (1 - tx.Rect[3]) * pm.Height, tx.Rect[2] * pm.Width,
-				(1 - tx.Rect[1]) * pm.Height, tx.Size * pm.Height, tx.Short})
+			r := hiddenRun{text: tx.Text, x0: tx.Rect[0] * pm.Width, y0: (1 - tx.Rect[3]) * pm.Height, x1: tx.Rect[2] * pm.Width,
+				y1: (1 - tx.Rect[1]) * pm.Height, size: tx.Size * pm.Height, short: tx.Short}
+			if len(tx.Ink) == 2 {
+				r.ink0, r.ink1, r.inked = (1-tx.Ink[1])*pm.Height, (1-tx.Ink[0])*pm.Height, true
+			}
+			out = append(out, r)
 		}
 	}
 	return out
@@ -127,6 +137,12 @@ func TestAStampedWordSpansItsScannedBox(t *testing.T) {
 			if baseline, want := got.y0+descentEm*got.size, w.Rect[1]-bottom*em; math.Abs(baseline-want) > tol {
 				t.Errorf("%s %q: baseline at %.2f, and its ink sits on the box's bottom from %.2f", lang, w.Text, baseline, want)
 			}
+			// The map gives a fitted word its own ink beside the line's reach, and the fit put that ink on the scanned
+			// box's bottom and top — so the ink read back IS the box handed in (ADR-093; /pending 851 parts 1 and 2:
+			// the line's reach stood over the line above and short of a descender).
+			if !got.inked || math.Abs(got.ink0-w.Rect[1]) > tol || math.Abs(got.ink1-w.Rect[3]) > tol {
+				t.Errorf("%s %q: the map has its ink %.2f..%.2f up the page (given: %v), its scanned box %.2f..%.2f", lang, w.Text, got.ink0, got.ink1, got.inked, w.Rect[1], w.Rect[3])
+			}
 			if got.short {
 				t.Errorf("%s %q: a fitted word is marked as stamped short", lang, w.Text)
 			}
@@ -159,6 +175,10 @@ func TestAWordThatCannotBeFittedIsStampedAsBefore(t *testing.T) {
 	}
 	if !flat.short || math.Abs(flat.size-12) > 0.01 {
 		t.Errorf("the unfittable word: short=%v at %.2fpt, want the old stamp — short, at its box's 12pt", flat.short, flat.size)
+	}
+	// A short stamp has no ink of its own on the map: it was put on no box, and ADR-091's reading starts from its reach.
+	if flat.inked {
+		t.Errorf("the unfittable word was given ink %.2f..%.2f, as though it had been fitted", flat.ink0, flat.ink1)
 	}
 	if inv := seen["Invoice"]; inv.short || math.Abs(inv.x1-280) > 0.3 {
 		t.Errorf("its neighbour was not fitted: short=%v, ends at %.2f", inv.short, inv.x1)
@@ -243,5 +263,101 @@ func TestTheFitKeepsATurnedPagesPlacement(t *testing.T) {
 		if long := math.Max(newW, newH); math.Abs(long-80) > 0.5 {
 			t.Errorf("turned %d: the fitted word is %.2f long, its box 80", deg, long)
 		}
+	}
+}
+
+// TestOnlyAnUprightRunInAnOCRFaceHasItsInkMeasured: the ink is measured from nib's own copy of the face, so it is
+// the ink of nothing else — another font's hidden text has only the line's reach — and a height about the baseline
+// means nothing for a run that does not read across.
+func TestOnlyAnUprightRunInAnOCRFaceHasItsInkMeasured(t *testing.T) {
+	run := func(font, text string, rotated bool) textRun {
+		return textRun{text: text, baseFont: font, size: 10, x: 50, y: 100, width: 40, rotated: rotated}
+	}
+	for _, font := range []string{ocrFont, "ABCDEF+" + ocrFont} {
+		// "Invoice" in Roboto at 10pt: no descender, a capital's height.
+		bottom, top, ok := fittedInk(run(font, "Invoice", false))
+		if !ok || math.Abs(bottom-100) > 0.2 || math.Abs(top-107.2) > 0.2 {
+			t.Errorf("%s: ink %.2f..%.2f (ok=%v), want 100..107.2", font, bottom, top, ok)
+		}
+	}
+	// A face named in the table, not only the default one — and a descender below the baseline.
+	if bottom, top, ok := fittedInk(run("NotoSansArabic-Regular", "مرحبا", false)); !ok || !(top > 100 && bottom < 100) {
+		t.Errorf("an Arabic word in nib's Arabic face: ink %.2f..%.2f (ok=%v), want ink either side of the baseline at 100", bottom, top, ok)
+	}
+	if _, _, ok := fittedInk(run("Helvetica", "Invoice", false)); ok {
+		t.Error("a run in a face nib does not stamp was measured by Roboto's ink")
+	}
+	if _, kept := ocrFaces.Load("Helvetica"); kept {
+		t.Error("a font name from a document was remembered as a face: the table is what bounds that cache")
+	}
+	if _, _, ok := fittedInk(run(ocrFont, "Invoice", true)); ok {
+		t.Error("a turned run was given a height about its baseline")
+	}
+}
+
+// TestAPageWhoseContentCannotBeDecodedRefusesTheLayerAndNeverLosesItQuietly settles /pending 851 part 5 by running
+// it. pdfcpu has a branch that skips a content stream behind a filter it does not implement — JBIG2 and JPX, which are
+// image filters — with no stamp and no error (`patchFirstContentStreamForWatermark`). Driven through nib, that is not
+// what answers. Where the stream pdfcpu must patch cannot be decoded, the whole stamp is REFUSED. Where a readable
+// stream comes first, the words are stamped, the page cannot be read back to pair them, and they are COUNTED — the
+// one input found that makes ADR-092's `unpaired` count fire — while every other page is fitted as usual.
+func TestAPageWhoseContentCannotBeDecodedRefusesTheLayerAndNeverLosesItQuietly(t *testing.T) {
+	doc := func(contents string) []byte {
+		return assembleFixture(map[int]string{
+			1: "<< /Type /Catalog /Pages 2 0 R >>",
+			2: "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+			3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents " + contents + " >>",
+			4: "<< /Length 4 /Filter /JPXDecode >>\nstream\nabcd\nendstream",
+			5: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 6 0 R >>",
+			6: "<< /Length 0 >>\nstream\n\nendstream",
+		})
+	}
+	words := []Word{
+		{Page: 1, Text: "lost", Rect: [4]float64{100, 400, 140, 412}},
+		{Page: 2, Text: "Invoice", Rect: [4]float64{200, 400, 280, 412}},
+	}
+	for _, contents := range []string{"4 0 R", "[4 0 R]"} {
+		if out, err := StampTextLayer(doc(contents), words, "eng"); err == nil {
+			t.Errorf("/Contents %s: the layer was written (%d bytes) over a page whose content cannot be read", contents, len(out))
+		}
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	out, err := StampTextLayer(doc("[6 0 R 4 0 R]"), words, "eng")
+	if err != nil {
+		t.Fatalf("a readable stream comes first, and the layer was refused: %v", err)
+	}
+	if !strings.Contains(logged.String(), "0 word(s) with nothing to fit and 1 on a page that could not be paired") {
+		t.Errorf("the word on the page that cannot be read back was not counted; logged %q", logged.String())
+	}
+	pm, err := MapPage(out, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pm.Text) != 1 || !pm.Text[0].Hidden || pm.Text[0].Short || math.Abs(pm.Text[0].Rect[2]*pm.Width-280) > 0.3 {
+		t.Errorf("the readable page's word was not written and fitted: %+v", pm.Text)
+	}
+}
+
+// TestOnlyAHiddenWordInsideAFormIsGivenItsInk: the ink is what the FIT put on a box, and the fit is written only for
+// a hidden word drawn through a form. The same face set as print, or hidden straight on the page, was fitted to
+// nothing — its glyphs' ink says where the glyphs are, not where a scanned word is.
+func TestOnlyAHiddenWordInsideAFormIsGivenItsInk(t *testing.T) {
+	sp := displaySpace{box: [4]float64{0, 0, 612, 792}, w: 612, h: 792}
+	run := func(tr int, inForm bool) textRun {
+		r := textRun{text: "I", baseFont: ocrFont, size: 10, x: 50, y: 100, width: 3, inForm: inForm,
+			glyphs: []runGlyph{{text: "I", advance: 3}}}
+		r.state.tr, r.state.ctm = tr, runMatrix{2, 0, 0, 1, 0, 0} // wider than tall: a fitted word, not a short one
+		return r
+	}
+	if m, ok := mapText(sp, run(3, true)); !ok || len(m.Ink) != 2 || len(m.Cuts) != 2 {
+		t.Fatalf("a fitted word has no ink on the map: %+v (ok=%v)", m, ok)
+	}
+	if m, _ := mapText(sp, run(0, true)); len(m.Ink) != 0 {
+		t.Errorf("print inside a form was given ink %v", m.Ink)
+	}
+	if m, _ := mapText(sp, run(3, false)); len(m.Ink) != 0 {
+		t.Errorf("hidden text set straight on the page was given ink %v", m.Ink)
 	}
 }
