@@ -289,7 +289,9 @@ fi
 # record a real window leaves when its stream drops — neither exists without layout and a socket.
 # 44 since ADR-087 (toolbaricons.test.mjs): the icon bar in a real browser — one row at nine widths, a button's word
 # out of sight in the bar and in sight inside More, and the zoom level against the page.
-expect_files=44
+# 45 since /pending 850 (zoomanchor.test.mjs): the point under the pointer staying under it through a zoom is two
+# bounding rectangles and a scroll offset, and every one of them is 0 at tier 2.
+expect_files=45
 nib_population "browser UI" test/ui "$expect_files" "$out" || exit $?
 
 exit "$code"

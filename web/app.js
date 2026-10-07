@@ -13254,8 +13254,46 @@ function setUserScale(owner, value, why) {
   owner.container.dataset.userScaleLog = log.slice(-8).join('|');
 }
 
-function zoomIn() { setUserScale(view, true, 'zoomIn'); scaleFrom(view, 'zoomIn'); view.viewer.currentScale = view.viewer.currentScale * 1.15; }
-function zoomOut() { setUserScale(view, true, 'zoomOut'); scaleFrom(view, 'zoomOut'); view.viewer.currentScale = view.viewer.currentScale / 1.15; }
+// zoomAt is the ONE door a zoom the user asked for goes through (ADR-009), and it holds the
+// point of the page at window position (x, y) where it is: the wheel and the pinch pass the
+// pointer, the buttons and the keyboard — which have none — pass nothing and hold the middle
+// of the view.
+//
+// **The anchor is read off the page, before and after, and pdf.js's own `origin` is not used.**
+// pdf.js corrects the scroll by `origin - container.offsetLeft/offsetTop`, and a view's
+// container is `position: absolute; inset: 0` inside #viewerWrap, so both offsets are 0 while
+// the pointer is measured from the window's corner. Every notch therefore over-scrolled by
+// (the sidebar's width, the bars' height) × the change in scale. Measured at tier 3 before
+// this (/pending 850): 25px to the right and 16px down per notch with the sidebar open, 4px
+// and 18px with it shut — the "drags to the right" Dan reported — and the buttons, which
+// passed no origin at all, kept the view's top-left corner and moved its middle 83px.
+//
+// So the point is recorded as a fraction of its page's own rectangle, pdf.js rescales and
+// scrolls however it likes, and the view is then moved by however far that fraction now is
+// from where it was. That is right whatever sits beside the container, and whatever does not
+// scale with the page (its border, the gap to the next one). A page narrower than the view
+// cannot be scrolled sideways, so there the page stays centred and only the height is held.
+function zoomAt(owner, why, factor, x, y, drawingDelay) {
+  if (!owner.pdfDocument) return;
+  const box = owner.container;
+  const r = box.getBoundingClientRect();
+  x = x === undefined ? r.left + box.clientWidth / 2 : Math.min(Math.max(x, r.left), r.left + box.clientWidth);
+  y = y === undefined ? r.top + box.clientHeight / 2 : Math.min(Math.max(y, r.top), r.top + box.clientHeight);
+  // The page under the point, or — over a gap, a margin or something drawn on top — the page
+  // the viewer is on. The fraction may fall outside 0..1 and still names the same paper.
+  const under = document.elementFromPoint(x, y)?.closest('.page');
+  const div = under && box.contains(under) ? under : owner.viewer.getPageView(owner.viewer.currentPageNumber - 1)?.div;
+  const was = div?.getBoundingClientRect();
+  setUserScale(owner, true, why);
+  scaleFrom(owner, why);
+  owner.viewer.updateScale({ scaleFactor: factor, drawingDelay });
+  if (!was || !was.width || !was.height) return;
+  const now = div.getBoundingClientRect();
+  box.scrollLeft += now.left + (x - was.left) / was.width * now.width - x;
+  box.scrollTop += now.top + (y - was.top) / was.height * now.height - y;
+}
+function zoomIn() { zoomAt(view, 'zoomIn', 1.15); }
+function zoomOut() { zoomAt(view, 'zoomOut', 1 / 1.15); }
 function fitWidth() { setUserScale(view, false, 'fitWidthButton'); view.fitMode = 'width'; fitWidestWidth(view, 'fitWidthButton'); }
 
 // applyFit is the ONE door the automatic re-fits go through, and it exists because there is now
@@ -13735,9 +13773,9 @@ window.addEventListener('keydown', (e) => {
 // wheel) zooms the DOCUMENT, not the browser. Left to the browser, ctrl+wheel
 // scales the whole UI — menus crowd out the page — and pdf.js never re-renders
 // for the new devicePixelRatio, so the document also goes permanently blurry.
-// Routed into pdf.js's own updateScale instead: cursor-anchored, and drawingDelay
-// CSS-scales during the gesture with one sharp redraw after the last tick (the
-// official viewer's wheel behavior). Must be window-level and non-passive:
+// Routed into pdf.js's own updateScale instead, through `zoomAt`, which holds the point
+// under the cursor; drawingDelay CSS-scales during the gesture with one sharp redraw
+// after the last tick (the official viewer's wheel behavior). Must be window-level and non-passive:
 // hovering the toolbar shouldn't fall back to browser zoom, and preventDefault
 // is what suppresses it. Keyboard Ctrl+=/Ctrl+0 stays untouched as the escape
 // hatch for deliberately scaling the whole UI.
@@ -13755,13 +13793,10 @@ window.addEventListener('wheel', (e) => {
   if (!e.ctrlKey && !e.metaKey) return; // plain scroll: not ours
   e.preventDefault();
   if (!view.pdfDocument || !e.deltaY) return;
-  const origin = [e.clientX, e.clientY];
   const pixelMode = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL;
   if (pixelMode && !ctrlHeld) {
     // Trackpad pinch: continuous factor per event.
-    setUserScale(view, true, 'pinch'); // the user choosing a scale, same as the buttons
-    scaleFrom(view, 'pinch');
-    view.viewer.updateScale({ scaleFactor: 2 ** (-e.deltaY / 100), origin, drawingDelay: 400 });
+    zoomAt(view, 'pinch', 2 ** (-e.deltaY / 100), e.clientX, e.clientY, 400);
   } else {
     // Notched wheel: one zoom step per notch, same 1.15 factor as the buttons.
     wheelTicks += -e.deltaY / (pixelMode ? 100 : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 3 : 1);
@@ -13771,9 +13806,7 @@ window.addEventListener('wheel', (e) => {
       // Inside `if (steps)`, not above it: a fraction of a notch moves nothing, and
       // marking the view user-scaled for it would suppress the widest-page refine
       // over a gesture that changed no scale at all.
-      setUserScale(view, true, 'ctrlWheel');
-      scaleFrom(view, 'ctrlWheel');
-      view.viewer.updateScale({ scaleFactor: 1.15 ** steps, origin, drawingDelay: 400 });
+      zoomAt(view, 'ctrlWheel', 1.15 ** steps, e.clientX, e.clientY, 400);
     }
   }
 }, { passive: false });
