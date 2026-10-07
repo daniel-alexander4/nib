@@ -386,8 +386,8 @@ test('a search names the page it could not look across the line ends of, from ei
   const wrapNote = new Function(APP.slice(from, APP.indexOf('\n}\n', from) + 2) + '\nreturn wrapNote;')();
   assert.equal(wrapNote(undefined), '');
   assert.equal(wrapNote([]), '');
-  assert.equal(wrapNote([3]), ' Page 3: too many columns to search for a match split across lines — check it by eye.');
-  assert.equal(wrapNote([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), ' Pages 1, 2, 3, 4, 5, 6, 7, 8 and 2 more: too many columns to search for a match split across lines — check them by eye.');
+  assert.equal(wrapNote([3]), ' Page 3: check by eye for a name or number split across lines — this page is too dense to search across line ends.');
+  assert.equal(wrapNote([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), ' Pages 1, 2, 3, 4, 5, 6, 7, 8 and 2 more: check by eye for a name or number split across lines — these pages are too dense to search across line ends.');
   const find = APP.slice(APP.indexOf('els.rtFind.onclick'), from);
   assert.match(find, /No matches found[^\n]*wrapNote\(marks\.skipped\)/, 'a search that found nothing does not say which pages it could not fully search');
   assert.match(find, /toast\([^\n]*wrapNote\(marks\.skipped\)/, 'a search that marked matches does not say which pages it could not fully search');
