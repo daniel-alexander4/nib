@@ -1343,7 +1343,12 @@ func TestACeremonyDeadlineHasACeiling(t *testing.T) {
 	// A convener who signed a ten-year deadline is a misconfiguration and the fix is theirs;
 	// one who did not sign at all is an attacker, and that is the sentence a user needs.
 	forged := sign(MaxCeremonyLife + time.Hour)
-	forged.Roster[1].Fingerprint = afp[:len(afp)-2] + "ff"
+	// A tail the fingerprint does not already have: one key in 256 ends in "ff", and that record was not forged at all.
+	tail := "ff"
+	if strings.HasSuffix(afp, tail) {
+		tail = "00"
+	}
+	forged.Roster[1].Fingerprint = afp[:len(afp)-2] + tail
 	if err := forged.Verify(now); errors.Is(err, ErrCeremonyTooLong) {
 		t.Errorf("a record with a broken roster AND an over-long deadline was reported as "+
 			"too long; the signature failure is the one that matters and must be reported "+

@@ -447,7 +447,7 @@ func (rm *layerRemoval) removeFrom(pg pdfread.Page) (TextLayerKind, error) {
 	edited = peelStampWrappers(edited, len(words))
 	// The content first, and read back by the rule that found the layer: if invisible text is still there, the
 	// page holds words Nib did not stamp, and it is put back as it was.
-	was, had := pg.Dict["Contents"]
+	was, had := pg.Dict["Contents"] //pagecontent:key the entry itself, kept to put the page back; the content is read above
 	if err := setPageContent(rm.ctx, pg.Dict, edited); err != nil {
 		return "", err
 	}
