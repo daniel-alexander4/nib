@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { launch, shutdown } from '../ui/harness.mjs';
+import { matchesInMap } from '../../web/detect.js';
 
 const [manifestPath, resultsPath] = process.argv.slice(2);
 const docs = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -129,27 +130,66 @@ function wordsToFind(map, limit) {
   return picks.filter((_, i) => i % step === 0).slice(0, limit);
 }
 
+// sourceOf says where a box the app drew came from: 'exact' when it is one of the boxes the page map gives for this
+// word (the app runs the same matchesInMap over the same map), 'estimate' when it is not — a box pdf.js's text layer
+// placed and placeMatches kept. Read off the page rather than reported by the app, so the product carries nothing for
+// the instrument. The tolerance is the overlay's own rounding: its edges are whole CSS pixels of a page some 800 wide,
+// and an estimate differs from its exact box by most of a line height each side.
+const SAME = 0.004;
+const sourceOf = (box, exact) => (exact.some((e) => e.every((v, i) => Math.abs(v - box[i]) <= SAME)) ? 'exact' : 'estimate');
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const r5 = (r) => r.map((v) => Math.round(v * 1e5) / 1e5);
+
 // scoreRedaction compares the boxes a search drew for one word with the word's true extent.
 function scoreRedaction(pick, boxes, map) {
-  const row = boxes.filter((b) => Math.min(b[3], pick.rect[3]) - Math.max(b[1], pick.rect[1]) > 0.3 * (pick.rect[3] - pick.rect[1]));
-  if (!row.length) return { word: pick.word, missed: true };
+  const exact = matchesInMap(map, [new RegExp(escapeRe(pick.word), 'gi')]);
+  // A box read off the page has whole-pixel edges — up to a pixel, some 0.8pt, wider than the mark the app holds and
+  // will apply. Where a drawn box IS one of the map's, it is scored as the map has it. Of the three words that "took
+  // one neighbouring glyph" at v1.189.0, two were a glyph whose centre lay between the mark's edge and the pixel's;
+  // the third is real (a 1.39pt-wide glyph in 5pt type, its centre inside the mark's 0.75pt pad). ADR-095.
+  const seen = boxes; // as drawn, for extraSeen below
+  boxes = boxes.map((b) => exact.find((e) => e.every((v, i) => Math.abs(v - b[i]) <= SAME)) || b);
+  const tall = pick.rect[3] - pick.rect[1], midY = (pick.rect[1] + pick.rect[3]) / 2;
+  const row = boxes.filter((b) => Math.min(b[3], pick.rect[3]) - Math.max(b[1], pick.rect[1]) > 0.3 * tall);
+  // Every box the search drew anywhere on the page, by source: a box off the word's row is a second place the word
+  // was "found" — the estimate of a match the map boxed elsewhere, or a match the harness did not expect.
+  const drawn = boxes.map((b) => ({ src: sourceOf(b, exact), onRow: row.includes(b), rect: r5(b) }));
+  if (!row.length) return { word: pick.word, missed: true, mapPlaced: exact.length, drawn };
   const x0 = Math.min(...row.map((b) => b[0])), x1 = Math.max(...row.map((b) => b[2]));
   const covered = Math.max(0, Math.min(x1, pick.rect[2]) - Math.max(x0, pick.rect[0])) / (pick.rect[2] - pick.rect[0]);
   const box = [x0, Math.min(...row.map((b) => b[1])), x1, Math.max(...row.map((b) => b[3]))];
-  // Other glyphs whose centre the box blacks out: what the redaction takes that nobody asked it to.
-  let extra = 0;
+  // Other glyphs whose centre the box blacks out: what the redaction takes that nobody asked it to. Counted against
+  // the UNION of the row's boxes, as before, and each one also laid to the box that holds it: which kind of box took
+  // it, on the word's own line or another, and to which side.
+  // extraSeen is the same count against the boxes as the page DREW them (the figure before the boxes were scored as
+  // the app holds them): the difference between the two is what the pixel grid adds, and no redaction takes it.
+  const seenRow = seen.filter((_, i) => row.includes(boxes[i]));
+  const seenBox = [Math.min(...seenRow.map((b) => b[0])), Math.min(...seenRow.map((b) => b[1])), Math.max(...seenRow.map((b) => b[2])), Math.max(...seenRow.map((b) => b[3]))];
+  let extra = 0, extraSeen = 0; const taken = [];
   for (const t of map.text) {
     if (t.hidden || !t.cuts) continue;
     for (let i = 0; i + 1 < t.cuts.length; i++) {
       if (!(t.chars[i] || '').trim()) continue;
       const c = [(t.cuts[i] + t.cuts[i + 1]) / 2, (t.rect[1] + t.rect[3]) / 2];
-      if (holds(box, c) && !holds(pick.rect, c)) extra++;
+      if (holds(seenBox, c) && !holds(pick.rect, c)) extraSeen++;
+      if (!holds(box, c) || holds(pick.rect, c)) continue;
+      extra++;
+      const by = row.filter((b) => holds(b, c)).map((b) => sourceOf(b, exact));
+      taken.push({
+        by: by.length ? [...new Set(by)].sort().join('+') : 'union-only', // inside the union, in no one box
+        lines: Math.round(10 * (c[1] - midY) / tall) / 10, // 0: the word's own line
+        side: c[0] < pick.rect[0] ? 'left' : c[0] > pick.rect[2] ? 'right' : 'over',
+        glyphsOff: Math.round(10 * (c[0] < pick.rect[0] ? pick.rect[0] - c[0] : c[0] - pick.rect[2]) / pick.glyph) / 10,
+        widthPt: Math.round(100 * (t.cuts[i + 1] - t.cuts[i]) * map.width) / 100, sizePt: Math.round(10 * t.size * map.height) / 10,
+      });
     }
   }
   return {
     word: pick.word, covered,
     // how far the box runs past the word on each side, in the word's own average glyph widths
-    overLeft: (pick.rect[0] - x0) / pick.glyph, overRight: (x1 - pick.rect[2]) / pick.glyph, extra,
+    overLeft: (pick.rect[0] - x0) / pick.glyph, overRight: (x1 - pick.rect[2]) / pick.glyph, extra, extraSeen,
+    mapPlaced: exact.length, sources: [...new Set(row.map((b) => sourceOf(b, exact)))].sort().join('+'),
+    drawn, taken, pick: r5(pick.rect), exact: exact.map(r5),
   };
 }
 
@@ -211,6 +251,20 @@ async function search(n, word) {
   }).map((m) => m.rect);
 }
 
+// open opens a document to work on — or says why it is not one. A document that carries a sign-here request opens
+// LOCKED (app.js: `signLocked = docHadFlags`): editing is off, so Detect and the search cannot be driven, and
+// `signing-locked` joins the viewer's class — which the tier-3 helper's wait for a class of exactly "has-doc" never
+// sees. That read as "openDocument: Timeout 30000ms exceeded" for thirty seconds a run and named nothing.
+async function open(doc) {
+  const opened = h.openDocument(doc.stripped, doc.pages).then(() => 'open');
+  opened.catch(() => {}); // when the lock is seen first, the helper's own wait is left to time out unheard
+  const locked = page.waitForFunction(() => document.getElementById('viewerWrap').classList.contains('signing-locked'), null, { timeout: 35000 })
+    .then(() => 'locked', () => new Promise(() => {})); // never locked: this side says nothing
+  if (await Promise.race([opened, locked]) === 'locked') {
+    throw new Error('not scored: it opens in signing mode (it carries a sign-here request, and Nib locks editing on such a document)');
+  }
+}
+
 const results = [];
 for (const doc of docs) {
   const name = path.basename(doc.source);
@@ -219,7 +273,7 @@ for (const doc of docs) {
     await h.closeAll();
     await page.reload();
     await page.waitForSelector('#empty');
-    await h.openDocument(doc.stripped, doc.pages);
+    await open(doc);
     for (const [i, prepared] of doc.maps.entries()) {
       const n = prepared.page;
       await goto(n);
@@ -288,6 +342,13 @@ const summary = {
     meanOverreachGlyphs: mean(hits.map((r) => Math.max(0, r.overLeft) + Math.max(0, r.overRight))),
     takesOtherGlyphsPct: pct(hits.filter((r) => r.extra > 0).length, hits.length),
     meanOtherGlyphs: mean(hits.map((r) => r.extra)),
+    takesOtherGlyphs: hits.filter((r) => r.extra > 0).length,
+    takesOtherGlyphsAsDrawn: hits.filter((r) => r.extraSeen > 0).length, // against whole-pixel boxes: the figure up to v1.189.0
+    // Where each word's boxes came from, and — for the words that take a neighbour — the same split.
+    bySource: Object.fromEntries(['exact', 'estimate', 'estimate+exact'].map((k) => [k, hits.filter((r) => r.sources === k).length])),
+    takesOtherBySource: Object.fromEntries(['exact', 'estimate', 'estimate+exact'].map((k) => [k, hits.filter((r) => r.extra > 0 && r.sources === k).length])),
+    mapPlacedNone: red.filter((r) => r.mapPlaced === 0).length,
+    boxesOffTheRow: red.reduce((a, r) => a + r.drawn.filter((b) => !b.onRow).length, 0),
   },
   errors: results.filter((r) => r.error).map((r) => `${r.doc}: ${r.error}`),
 };

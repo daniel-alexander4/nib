@@ -32,6 +32,9 @@ import {
   mergeProposals,
   matchesInMap,
   placeMatches,
+  wrappedMatches,
+  rowPieces,
+  rowBaselines,
 } from './detect.js';
 import { docLangForLocale } from './doclang.js';
 import { diffWords } from './vendor/diff/diff.min.mjs';
@@ -3634,7 +3637,11 @@ async function setDocumentFromServer(meta, target = view) {
   // Sidebars are non-essential; a build failure must not break the load. Ungated since
   // P05.S05: each view owns its grid and list, so a background load renders into its own
   // and is ready the moment the user switches to it.
-  buildThumbnails(gen, target).catch((e) => console.error('thumbnails failed', e));
+  // A render CANCELLED is not a build that failed: closing or reloading a document cancels the page render in
+  // flight and pdf.js throws RenderingCancelledException through here (measured, see the teardown). Logged as an
+  // error it read as a defect — and failed "no console errors" at tier 3 whenever a close raced the thumbnails
+  // (/pending 475, seen at five gates).
+  buildThumbnails(gen, target).catch((e) => { if (!e || e.name !== 'RenderingCancelledException') console.error('thumbnails failed', e); });
   buildOutline(gen, target).catch((e) => console.error('outline failed', e));
   // The tree panel is shared chrome: it follows a reload of the document it shows (an edit, an undo).
   if (target === view && tagTreeShowing()) loadTagTree();
@@ -9645,7 +9652,37 @@ async function scanTextMatches(patterns, owner = view) {
       const t = pdfjsLib.Util.transform(vp0.transform, it.transform);
       return { str: it.str, x: t[4], y: t[5], w: it.width, h: it.height || Math.hypot(it.transform[2], it.transform[3]) };
     });
-    for (const row of buildTextRows(items)) {
+    // markOver marks row.s[lo..hi] — one row's share of a match.
+    const markOver = (row, lo, hi) => {
+      const cy = rowBaselines(row);
+      let x0 = Infinity, x1 = -Infinity, hh = 0, y0 = Infinity, y1 = -Infinity;
+      for (let k = lo; k <= hi; k++) {
+        if (Number.isNaN(row.cx[k])) continue;
+        x0 = Math.min(x0, row.cx[k]); x1 = Math.max(x1, row.cx[k]); hh = Math.max(hh, row.ch[k]);
+        y0 = Math.min(y0, cy[k]); y1 = Math.max(y1, cy[k]);
+      }
+      if (!isFinite(x0)) return;
+      // cx are glyph centres and the advance is an estimate, so pad generously:
+      // redaction must over-cover, never leave an edge of the match showing.
+      const bx0 = x0 - hh * 0.8, bx1 = x1 + hh * 0.8;
+      // Up and down from the baseline of the items the match is IN (y-down; ± ascender/descender) — not from row.y,
+      // which is the row's first item's: a row can hold two baselines, and the box was drawn on the wrong one.
+      const by0 = y0 - hh * 1.15, by1 = y1 + hh * 0.45;
+      // Map the unrotated box to the rendered viewport (vp0 → PDF → vp) so it
+      // lands on the glyphs on a rotated page; the axis-aligned bounding box of
+      // the four mapped corners is the redaction rect. Identity when /Rotate 0.
+      let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+      for (const p of [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]]) {
+        const pdf = vp0.convertToPdfPoint(p[0], p[1]);     // unrotated viewport → PDF
+        const r = vp.convertToViewportPoint(pdf[0], pdf[1]); // PDF → rendered viewport
+        rx0 = Math.min(rx0, r[0]); ry0 = Math.min(ry0, r[1]);
+        rx1 = Math.max(rx1, r[0]); ry1 = Math.max(ry1, r[1]);
+      }
+      marks.push({ page: n, fx: rx0 / vp.width, fy: ry0 / vp.height,
+        fw: (rx1 - rx0) / vp.width, fh: (ry1 - ry0) / vp.height });
+    };
+    const rows = buildTextRows(items);
+    for (const row of rows) {
       let compact = ''; const map = [];
       for (let k = 0; k < row.s.length; k++) {
         if (Number.isNaN(row.cx[k])) continue; // injected inter-run boundary space
@@ -9656,31 +9693,14 @@ async function scanTextMatches(patterns, owner = view) {
         let m;
         while ((m = re.exec(compact))) {
           if (!m[0].length) { re.lastIndex++; continue; } // zero-width guard
-          const lo = map[m.index], hi = map[m.index + m[0].length - 1];
-          let x0 = Infinity, x1 = -Infinity, hh = 0;
-          for (let k = lo; k <= hi; k++) {
-            if (Number.isNaN(row.cx[k])) continue;
-            x0 = Math.min(x0, row.cx[k]); x1 = Math.max(x1, row.cx[k]); hh = Math.max(hh, row.ch[k]);
-          }
-          if (!isFinite(x0)) continue;
-          // cx are glyph centres and the advance is an estimate, so pad generously:
-          // redaction must over-cover, never leave an edge of the match showing.
-          const bx0 = x0 - hh * 0.8, bx1 = x1 + hh * 0.8;
-          const by0 = row.y - hh * 1.15, by1 = row.y + hh * 0.45; // baseline (y-down) ± ascender/descender
-          // Map the unrotated box to the rendered viewport (vp0 → PDF → vp) so it
-          // lands on the glyphs on a rotated page; the axis-aligned bounding box of
-          // the four mapped corners is the redaction rect. Identity when /Rotate 0.
-          let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
-          for (const p of [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]]) {
-            const pdf = vp0.convertToPdfPoint(p[0], p[1]);     // unrotated viewport → PDF
-            const r = vp.convertToViewportPoint(pdf[0], pdf[1]); // PDF → rendered viewport
-            rx0 = Math.min(rx0, r[0]); ry0 = Math.min(ry0, r[1]);
-            rx1 = Math.max(rx1, r[0]); ry1 = Math.max(ry1, r[1]);
-          }
-          marks.push({ page: n, fx: rx0 / vp.width, fy: ry0 / vp.height,
-            fw: (rx1 - rx0) / vp.width, fh: (ry1 - ry0) / vp.height });
+          markOver(row, map[m.index], map[m.index + m[0].length - 1]);
         }
       }
+    }
+    // A match that wraps a line (ADR-095) is on no one row: it was found by neither this reading nor the map's, and
+    // the name it was searched for stayed on the page. One mark on each line it is on.
+    for (const parts of wrappedMatches(rowPieces(rows), patterns)) {
+      for (const p of parts) markOver(p.piece.ref, p.piece.k[p.from], p.piece.k[p.to - 1]);
     }
     // Place this page's matches from the map where it can (ADR-090; an OCR layer's words are read out to the next
     // word, ADR-091). The estimates above stand for whatever it cannot: a page the server cannot map, a turned run.

@@ -158,7 +158,10 @@ echo "$Nib_out"
 #
 # 99 since ADR-090 (placematches.test.mjs): a search match boxed from the map's glyph boundaries, and when that box
 # may replace the estimate — its own file because the property it holds is redaction's, not detection's.
-Nib_expect_files=99
+#
+# 100 since ADR-095 (wrappedmatch.test.mjs): a search match that wraps a line, found by both readings — its own file
+# because it drives scanTextMatches end to end, which no other file does, over a pdf.js page it makes.
+Nib_expect_files=100
 nib_population jsdom test/jsdom "$Nib_expect_files" "$Nib_out" || exit $?
 
 exit "$Nib_code"

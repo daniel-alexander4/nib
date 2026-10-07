@@ -953,7 +953,8 @@ function layerMatches(map, patterns, runs, hidden) {
     if (row) row.runs.push(t); else rows.push({ mid, tall, runs: [t] });
   }
   const out = [];
-  for (const row of rows) {
+  const pieces = []; // each row's stretches of text, for the matches that wrap a line (wrappedMatches)
+  for (const [line, row] of rows.entries()) {
     row.runs.sort((a, b) => a.rect[0] - b.rect[0]);
     // How far each run's glyph boundaries are stretched from its start: 1 for print.
     const stretch = row.runs.map((t, k) => {
@@ -968,38 +969,163 @@ function layerMatches(map, patterns, runs, hidden) {
     // The row as a string, each character knowing which glyph of which run drew it (null: a space between runs).
     let s = '';
     const at = [];
+    const starts = [0]; // where in s a stretch begins: the row's start, and after each gap a column would leave
     row.runs.forEach((t, k) => {
       if (k > 0) {
         const prev = row.runs[k - 1];
         const gapPt = (t.rect[0] - prev.rect[2]) * map.width, sizePt = Math.min(t.size, prev.size) * map.height;
         if (gapPt > WORD_GAP * sizePt && !/\s$/.test(s)) { s += ' '; at.push(null); }
+        if (gapPt > WRAP_GAP * sizePt) starts.push(s.length);
       }
       t.chars.forEach((c, i) => { for (const ch of c) { s += ch; at.push({ t, i, k }); } });
     });
+    // The box over s[from, to): null when it holds no ink.
+    const boxOf = (from, to) => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r0 = Infinity, r1 = -Infinity, inked = false;
+      for (let k = from; k < to; k++) {
+        const g = at[k];
+        if (!g || !s[k].trim()) continue; // a space takes no ink
+        const padY = g.t.short ? HIDDEN_PAD_Y * g.t.size : 0;
+        const ink = hidden && !g.t.short && g.t.ink && g.t.ink.length === 2 ? g.t.ink : null;
+        x0 = Math.min(x0, cut(g, whole[g.k] ? 0 : g.i)); x1 = Math.max(x1, cut(g, whole[g.k] ? g.t.chars.length : g.i + 1));
+        r0 = Math.min(r0, g.t.rect[1] - padY); r1 = Math.max(r1, g.t.rect[3] + padY);
+        y0 = Math.min(y0, ink ? ink[0] : g.t.rect[1] - padY); y1 = Math.max(y1, ink ? ink[1] : g.t.rect[3] + padY);
+        inked = inked || !!ink;
+      }
+      if (!(x1 > x0)) return null;
+      const px = MATCH_PAD_X / map.width, py = MATCH_PAD_Y / map.height;
+      const box = [x0 - px, y0 - py, x1 + px, y1 + py];
+      if (inked) box.hold = [x0 - px, r0 - py, x1 + px, r1 + py];
+      return box;
+    };
     for (const re of patterns) {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(s))) {
         if (!m[0].length) { re.lastIndex++; continue; }
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, r0 = Infinity, r1 = -Infinity, inked = false;
-        for (let k = m.index; k < m.index + m[0].length; k++) {
-          const g = at[k];
-          if (!g || !s[k].trim()) continue; // a space takes no ink
-          const padY = g.t.short ? HIDDEN_PAD_Y * g.t.size : 0;
-          const ink = hidden && !g.t.short && g.t.ink && g.t.ink.length === 2 ? g.t.ink : null;
-          x0 = Math.min(x0, cut(g, whole[g.k] ? 0 : g.i)); x1 = Math.max(x1, cut(g, whole[g.k] ? g.t.chars.length : g.i + 1));
-          r0 = Math.min(r0, g.t.rect[1] - padY); r1 = Math.max(r1, g.t.rect[3] + padY);
-          y0 = Math.min(y0, ink ? ink[0] : g.t.rect[1] - padY); y1 = Math.max(y1, ink ? ink[1] : g.t.rect[3] + padY);
-          inked = inked || !!ink;
-        }
-        if (!(x1 > x0)) continue;
-        const px = MATCH_PAD_X / map.width, py = MATCH_PAD_Y / map.height;
-        const box = [x0 - px, y0 - py, x1 + px, y1 + py];
-        if (inked) box.hold = [x0 - px, r0 - py, x1 + px, r1 + py];
-        out.push(box);
+        const box = boxOf(m.index, m.index + m[0].length);
+        if (box) out.push(box);
       }
     }
+    starts.forEach((from, n) => {
+      const to = n + 1 < starts.length ? starts[n + 1] : s.length;
+      const drawn = at.slice(from, to).filter(Boolean);
+      if (!drawn.length) return;
+      pieces.push({ row: line, x0: drawn[0].t.rect[0], x1: drawn[drawn.length - 1].t.rect[2], s: s.slice(from, to), boxOf: (a, b) => boxOf(from + a, from + b) });
+    });
   }
+  // A match that wraps a line: one box on each line it is on.
+  for (const parts of wrappedMatches(pieces, patterns)) {
+    for (const p of parts) { const box = p.piece.boxOf(p.from, p.to); if (box) out.push(box); }
+  }
+  return out;
+}
+
+// ── A match that wraps a line ────────────────────────────────────────────────────────────────────────────────────────
+// Both readings of a page search it a row at a time, so a phrase whose first word ends one line and whose second
+// begins the next was found by neither: no box, no count, and a search that said "No matches" over a name in plain
+// sight (measured through scanTextMatches, test/jsdom/wrappedmatch.test.mjs). For a redaction that is the dangerous
+// direction, so both readings now also search ACROSS the line end, through this one door.
+//
+// `pieces` are a page's stretches of text: {row, x0, x1, s} — `row` counts lines down the page, x0..x1 is the
+// stretch's extent across it, in any one unit. A row is one piece unless a gap wider than WRAP_GAP of the font size
+// splits it: that is a column's gutter or a table's cell, and text wraps from the end of ITS column, not from the end
+// of the row. Text carries on from a piece in the next row down that has a piece beginning left of this one's end —
+// in every such piece of that row, because which of them is the same column is not known; a wrong guess costs a
+// search over two strings and can only add a box.
+//
+// A line end is read three ways: as a space; and where the line ends in a hyphen, as nothing ("123-45-" + "6789") and
+// as nothing with the hyphen dropped ("confi-" + "dential"). A match counts when it has ink on every line of the
+// chain, the first and the last included — so a match inside one piece is left to the row's own search and is not
+// found twice. Returns one entry per match: its parts, [{piece, from, to}], indices into each piece's own `s`.
+//
+// Not found: a match that wraps a PAGE, and one that runs over more than WRAP_LINES lines.
+const WRAP_GAP = 1.0, WRAP_LINES = 3;
+const LINE_HYPHEN = /[-\u00AD\u2010\u2011]$/; // a hyphen, a soft hyphen, and the two Unicode hyphens
+
+export function wrappedMatches(pieces, patterns) {
+  pieces = pieces.filter((p) => p.s.trim());
+  const out = [], seen = new Set();
+  const carriesOn = (a) => {
+    const later = pieces.filter((b) => b.row > a.row && b.x0 < a.x1);
+    const row = Math.min(...later.map((b) => b.row));
+    return later.filter((b) => b.row === row);
+  };
+  const search = (chain) => {
+    for (const mode of ['space', 'joined', 'dehyphenated']) {
+      let s = '', hyphened = false;
+      const at = []; // for each character of s: which piece of the chain, and where in it (null: a line end)
+      chain.forEach((p, n) => {
+        const last = n === chain.length - 1;
+        const from = n ? p.s.length - p.s.trimStart().length : 0;
+        let to = last ? p.s.length : p.s.trimEnd().length;
+        const hyphen = !last && mode !== 'space' && LINE_HYPHEN.test(p.s.slice(0, to));
+        if (hyphen && mode === 'dehyphenated') to--;
+        for (let i = from; i < to; i++) { s += p.s[i]; at.push({ n, i }); }
+        if (hyphen) hyphened = true; else if (!last) { s += ' '; at.push(null); }
+      });
+      if (mode !== 'space' && !hyphened) continue; // no line of this chain ends in a hyphen: the same string again
+      for (const re of patterns) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(s))) {
+          if (!m[0].length) { re.lastIndex++; continue; }
+          const parts = chain.map((piece) => ({ piece, from: Infinity, to: -Infinity }));
+          for (let k = m.index; k < m.index + m[0].length; k++) {
+            const g = at[k];
+            if (!g || !s[k].trim()) continue;
+            parts[g.n].from = Math.min(parts[g.n].from, g.i); parts[g.n].to = Math.max(parts[g.n].to, g.i + 1);
+          }
+          if (parts.some((p) => !(p.to > p.from))) continue; // not on every line of this chain: another chain's, or a row's own
+          const key = parts.map((p) => [pieces.indexOf(p.piece), p.from, p.to].join(':')).join('|');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(parts);
+        }
+      }
+    }
+  };
+  const walk = (chain) => {
+    if (chain.length > 1) search(chain);
+    if (chain.length < WRAP_LINES) for (const b of carriesOn(chain[chain.length - 1])) walk([...chain, b]);
+  };
+  for (const a of pieces) walk([a]);
+  return out;
+}
+
+// rowBaselines says, for each character of a buildTextRows row's string, the baseline of the item that drew it (NaN
+// for the space between two items). A row is NOT one line: buildTextRows puts an item in a row when its baseline is
+// within 6 points (or 0.6 of its height) of the row's FIRST item's, and `row.y` is that first item's. Small type set
+// in two columns a few points out of step, or closely leaded, is therefore one row on two baselines — and the
+// estimate drew every match in it at row.y. Measured on five words of the accuracy corpus (5–8pt type): the word's
+// own baseline was 4.5–6pt below row.y, so the box was drawn that much too high. Its centre fell above the exact
+// box, so the estimate was KEPT beside it and blacked out 4–10 glyphs of the line above; and where there is no map
+// to place the word, the box stopped 2–3 points above the word's baseline and left the feet of its letters showing.
+export function rowBaselines(row) {
+  const ys = [];
+  row.items.forEach((it, n) => {
+    if (n) ys.push(NaN);
+    for (let c = 0; c < it.str.length; c++) ys.push(it.y);
+  });
+  return ys;
+}
+
+// rowPieces turns buildTextRows' rows — the ESTIMATE's reading of a page — into wrappedMatches' pieces. A piece's
+// text is its items' text with nothing between (as scanTextMatches' own per-row search has it), and `k` says where in
+// the row's string each of its characters is, so a part [from, to) of a piece is row.s[k[from]] .. row.s[k[to - 1]].
+export function rowPieces(rows) {
+  const out = [];
+  rows.slice().sort((a, b) => a.y - b.y).forEach((row, line) => {
+    let piece = null, at = 0;
+    row.items.forEach((it, n) => {
+      const prev = row.items[n - 1];
+      if (n) at++; // the space buildTextRows put between two items
+      if (!piece || it.x - (prev.x + prev.w) > WRAP_GAP * Math.min(it.h, prev.h)) out.push(piece = { row: line, ref: row, x0: it.x, x1: it.x, s: '', k: [] });
+      for (let c = 0; c < it.str.length; c++) { piece.s += it.str[c]; piece.k.push(at + c); }
+      at += it.str.length;
+      piece.x1 = it.x + it.w;
+    });
+  });
   return out;
 }
 
