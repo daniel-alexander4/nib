@@ -1,6 +1,10 @@
 package pdfops
 
-import "math"
+import (
+	"math"
+	"strconv"
+	"strings"
+)
 
 // The pieces of a painted path (ADR-088).
 //
@@ -137,4 +141,34 @@ func isWhitePaint(op string) bool {
 		return true
 	}
 	return false
+}
+
+// faintFrom is how light a colour must be for print in it to be FAINT, 0 black to 1 white (ADR-099). The hint a form
+// prints where an entry goes — "MM", "DD", "YYYY" in the IRS 1040's date blanks — is drawn at 0.753, where its
+// labels are black.
+const faintFrom = 0.7
+
+// paintLightness reads op — a device-space colour operator as the walk keeps it (`0.75 g`, `1 0 0 rg`, `0 0 0 0.2 k`,
+// `/DeviceRGB cs 0.5 0.5 0.5 sc`) — as how light the colour is, 0 black to 1 white. Not ok for "" (a colour the walk
+// could not carry) or for anything but one, three or four numbers before the operator.
+func paintLightness(op string) (float64, bool) {
+	f := strings.Fields(op)
+	var v []float64
+	for i := len(f) - 2; i >= 0; i-- { // the numbers just before the operator, last first
+		x, err := strconv.ParseFloat(f[i], 64)
+		if err != nil {
+			break
+		}
+		v = append(v, math.Max(0, math.Min(1, x)))
+	}
+	switch len(v) {
+	case 1:
+		return v[0], true
+	case 3: // v is b, g, r
+		return 0.299*v[2] + 0.587*v[1] + 0.114*v[0], true
+	case 4: // v is k, y, m, c
+		k := 1 - v[0]
+		return (0.299*(1-v[3]) + 0.587*(1-v[2]) + 0.114*(1-v[1])) * k, true
+	}
+	return 0, false
 }

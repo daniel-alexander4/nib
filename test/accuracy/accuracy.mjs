@@ -89,10 +89,11 @@ function scoreDetection(found, map) {
   const pt = 1 / map.height; // one point, as a fraction of the page's height
   const textFields = found.filter((f) => !ticked(f.kind));
   out.textFields = textFields.length;
-  out.onLabel = textFields.filter((f) => text.some((t) => {
-    const i = inter(f.rect, t.rect);
-    return area(i) > 0.25 * area(t.rect) || holds(f.rect, centre(t.rect));
-  })).length;
+  const on = (f, t) => area(inter(f.rect, t.rect)) > 0.25 * area(t.rect) || holds(f.rect, centre(t.rect));
+  // Faint print is a hint, not a label (ADR-099): "MM" in grey where a month goes, which the form's own field
+  // covers. A field on one is counted beside the labels and not among them.
+  out.onLabel = textFields.filter((f) => text.some((t) => !t.faint && on(f, t))).length;
+  out.onHint = textFields.filter((f) => text.some((t) => t.faint && on(f, t))).length;
   out.throughRule = textFields.filter((f) => map.shapes.some((s) => {
     if (s.kind !== 'v') return false;
     const x = (s.rect[0] + s.rect[2]) / 2;
@@ -330,6 +331,7 @@ const summary = {
     meanIoU: mean(keyed.filter((r) => r.detection.meanIoU != null).map((r) => r.detection.meanIoU)),
     textFields: sum((r) => r.detection.textFields),
     onLabelPct: pct(sum((r) => r.detection.onLabel), sum((r) => r.detection.textFields)),
+    onHint: sum((r) => r.detection.onHint),
     throughRulePct: pct(sum((r) => r.detection.throughRule), sum((r) => r.detection.textFields)),
     zoomDisagrees: rows.filter((r) => r.zoom && (r.zoom.text[0] !== r.zoom.text[1] || r.zoom.check[0] !== r.zoom.check[1])).length,
     zoomTried: rows.filter((r) => r.zoom).length,

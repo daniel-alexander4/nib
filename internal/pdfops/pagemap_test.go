@@ -315,3 +315,51 @@ func TestAGroundPastTheBudgetIsTakenAsCovered(t *testing.T) {
 		t.Error("with the budget spent, a ground was still walked against the page")
 	}
 }
+
+// TestFaintPrintIsMarkedOnTheMap — ADR-099. A form prints a hint inside a blank in a light colour ("MM", "DD", "YYYY"
+// at 0.753 in the IRS 1040's date blanks) and its labels in ink; the map says which a run is, from the colour it was
+// filled with. White is not faint (a heading on a dark bar), nor is text that is not filled, nor an OCR layer.
+func TestFaintPrintIsMarkedOnTheMap(t *testing.T) {
+	const content = "BT /F1 10 Tf 100 750 Td\n" +
+		"0.753 0.753 0.753 rg (Hint) Tj 0 -20 Td\n" +
+		"0 0 0 rg (Ink) Tj 0 -20 Td\n" +
+		"0.651 g (Grey) Tj 0 -20 Td\n" + // a greyed revision date on a corpus form: still a label
+		"0.7 g (Edge) Tj 0 -20 Td\n" +
+		"0.69 g (Under) Tj 0 -20 Td\n" +
+		"1 1 1 rg (White) Tj 0 -20 Td\n" +
+		"1 g (Blank) Tj 0 -20 Td\n" +
+		"0 0 0 0.2 k (Cmyk) Tj 0 -20 Td\n" +
+		"0 0 0 0.9 k (Dark) Tj 0 -20 Td\n" +
+		"1 1 0 rg (Yellow) Tj 0 -20 Td\n" + // light, though no channel is grey
+		"0 0 1 rg (Blue) Tj 0 -20 Td\n" +
+		"0 1 1 0 k (Red) Tj 0 -20 Td\n" +
+		"0 0.9 1 rg (Cyan) Tj 0 -20 Td\n" + // 0.64: green and blue weigh what they weigh, not what red does
+		"0 0.1 0.1 0.5 k (Mid) Tj 0 -20 Td\n" + // light inks under half black
+		"0 0 0.6 0 k (Lemon) Tj 0 -20 Td\n" +
+		"1 0.1 0 0 k (Sky) Tj 0 -20 Td\n" + // 0.64: cyan takes out the red, magenta some green
+		"/DeviceGray cs 0.8 sc (Space) Tj 0 -20 Td\n" +
+		"0.9 g 0 G 1 Tr (Outline) Tj 0 -20 Td\n" + // stroked only: its colour is the stroke's
+		"0.9 g 3 Tr (Layer) Tj 0 Tr ET"
+	m, err := MapPage(pageWith(content, "", "", "", helvetica), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"Hint": true, "Ink": false, "Grey": false, "Edge": true, "Under": false, "White": false,
+		"Blank": false, "Cmyk": true, "Dark": false, "Yellow": true, "Blue": false, "Red": false, "Cyan": false, "Mid": false, "Lemon": true, "Sky": false, "Space": true,
+		"Outline": false, "Layer": false}
+	seen := 0
+	for _, r := range m.Text {
+		w, ok := want[r.Text]
+		if !ok {
+			t.Errorf("an unexpected run %q", r.Text)
+			continue
+		}
+		seen++
+		if r.Faint != w {
+			t.Errorf("%q: faint = %v, want %v", r.Text, r.Faint, w)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("the map holds %d of the %d runs: %+v", seen, len(want), m.Text)
+	}
+}

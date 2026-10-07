@@ -7,6 +7,11 @@
 // buildTextRows groups text items into rows; per row it gives a reconstructed
 // string `s` with per-char x-centre `cx` and height `ch`, plus a `words` list
 // with pixel x-spans. Shared by the circle-a-choice detectors below.
+//
+// A row is NOT one line (ADR-095, ADR-099): an item joins a row when its baseline is within 6 (or 0.6 of its height)
+// of the row's FIRST item's, and `row.y` is that first item's — good for telling rows apart and wrong for placing
+// anything in one. So each word carries `y`, the baseline of the item that drew it, and a character's is
+// rowBaselines(row)[i]. Nothing is drawn at `row.y`.
 export function buildTextRows(items) {
   // One-entry memo keyed on the ARRAY IDENTITY. Five detectors (findYesNo,
   // findCircleOne, findPipeChoices, findSlashTemplates, findRunChoices) each call this
@@ -47,7 +52,7 @@ export function buildTextRows(items) {
       while (i < it.str.length) { // words within the item, with pixel spans
         if (/\s/.test(it.str[i])) { i++; continue; }
         let j = i; while (j < it.str.length && !/\s/.test(it.str[j])) j++;
-        words.push({ text: it.str.slice(i, j), x0: edge[i], x1: edge[j], h: it.h });
+        words.push({ text: it.str.slice(i, j), x0: edge[i], x1: edge[j], h: it.h, y: it.y });
         i = j;
       }
       for (let c = 0; c < it.str.length; c++) { s += it.str[c]; cx.push((edge[c] + edge[c + 1]) / 2); ch.push(it.h); }
@@ -118,13 +123,14 @@ export function findYesNo(items) {
   const out = [];
   for (const row of buildTextRows(items)) {
     const re = /\bY\s*\/\s*N\b/gi;
+    const cy = rowBaselines(row);
     let m;
     while ((m = re.exec(row.s))) {
       const yi = m.index, ni = m.index + m[0].length - 1;
       const yx = row.cx[yi], nx = row.cx[ni];
       if (isNaN(yx) || isNaN(nx)) continue;
       const hh = row.ch[yi] || row.ch[ni] || 14;
-      out.push({ choices: [choiceBox(yx, yx, row.y, hh), choiceBox(nx, nx, row.y, hh)] });
+      out.push({ choices: [choiceBox(yx, yx, cy[yi], hh), choiceBox(nx, nx, cy[ni], hh)] });
     }
   }
   return out;
@@ -147,8 +153,11 @@ export function findCircleOne(items) {
     let choices = extractChoices(row, mx0, mx1);
     let marker = [mx0, mx1]; // same row → exclude marker when snapping to ink
     if (choices.length < 2) { // marker alone — look at the adjacent rows
+      // How far the other row is, is measured from the MARKER's own baseline to the nearest thing in that row: either
+      // row may hold two baselines, and the rows' first ones can be 6 further apart, or nearer, than the words are.
+      const my = rowBaselines(row)[row.s.search(/circle\s+one/i)];
       for (const dr of [rows[ri + 1], rows[ri - 1]]) {
-        if (!dr || Math.abs(dr.y - row.y) > row.h * 2.2) continue;
+        if (!dr || Math.min(...dr.items.map((it) => Math.abs(it.y - my))) > row.h * 2.2) continue;
         const c2 = extractChoices(dr, mx0, mx1);
         if (c2.length >= 2) { choices = c2; marker = null; break; } // marker is on another row
       }
@@ -172,9 +181,9 @@ export function extractChoices(row, mx0, mx1, markerless) {
       const parts = w.text.split('/'), cw = (w.x1 - w.x0) / w.text.length;
       let off = 0;
       for (let pi = 0; pi < parts.length; pi++) {
-        words.push({ text: parts[pi], x0: w.x0 + cw * off, x1: w.x0 + cw * (off + parts[pi].length), h: w.h });
+        words.push({ text: parts[pi], x0: w.x0 + cw * off, x1: w.x0 + cw * (off + parts[pi].length), h: w.h, y: w.y });
         off += parts[pi].length;
-        if (pi < parts.length - 1) { words.push({ text: '/', x0: w.x0 + cw * off, x1: w.x0 + cw * (off + 1), h: w.h, delim: true }); off++; }
+        if (pi < parts.length - 1) { words.push({ text: '/', x0: w.x0 + cw * off, x1: w.x0 + cw * (off + 1), h: w.h, y: w.y, delim: true }); off++; }
       }
     } else words.push({ ...w, delim: w.text === '|' || w.text === '/' });
   }
@@ -202,7 +211,7 @@ export function extractChoices(row, mx0, mx1, markerless) {
     if (d < bestD) { bestD = d; best = cs; }
   }
   if (markerless && best.length) best[0] = trimLeadIn(best[0]);
-  return best.map((seg) => choiceBox(Math.min(...seg.map((w) => w.x0)), Math.max(...seg.map((w) => w.x1)), row.y, seg[0].h));
+  return best.map((seg) => choiceBox(Math.min(...seg.map((w) => w.x0)), Math.max(...seg.map((w) => w.x1)), seg[0].y, seg[0].h));
 }
 
 // trimLeadIn drops carrier words preceding the first option in a marker-free
@@ -261,7 +270,7 @@ export function findSlashTemplates(items) {
   }
   const out = [];
   if (!templates.size) return out;
-  for (const row of rows) for (const w of row.words) if (templates.has(w.text)) out.push({ choices: splitSlash(w, row.y), marker: null });
+  for (const row of rows) for (const w of row.words) if (templates.has(w.text)) out.push({ choices: splitSlash(w, w.y), marker: null });
   return out;
 }
 
@@ -293,13 +302,14 @@ export function findRunChoices(items, cells) {
       const run = ws.slice(i, j + 1);
       if (run.length >= 3) {
         const gmin = Math.min(...gaps), gmax = Math.max(...gaps), h = run[0].h;
-        const inCell = cells.some((c) => run[0].x0 < c.x1 && run[run.length - 1].x1 > c.x0 && row.y > c.y0 - 2 && row.y < c.y1 + 2);
+        const ry = run[0].y;
+        const inCell = cells.some((c) => run[0].x0 < c.x1 && run[run.length - 1].x1 > c.x0 && ry > c.y0 - 2 && ry < c.y1 + 2);
         // A real choice set has DISTINCT options; a run with a repeated word is a
         // field-caption row ("Signature Date Signature Date" — two signature
         // blocks side by side), not choices. Reject duplicates (case-insensitive).
         const distinct = new Set(run.map((w) => w.text.toLowerCase())).size === run.length;
         if (distinct && gmin > h * 0.8 && gmax < gmin * 2.6 && !inCell && labeled(row, ri, run)) {
-          out.push({ choices: run.map((w) => choiceBox(w.x0, w.x1, row.y, w.h)), marker: null });
+          out.push({ choices: run.map((w) => choiceBox(w.x0, w.x1, w.y, w.h)), marker: null });
         }
       }
       i = j; // don't rescan inside the run
@@ -729,6 +739,7 @@ const ROW_MAX_H = 45;                    // two lines of equal width this close,
 const ABOVE_LINE = 15;                   // a field on a bare line stands one line's height above it
 const SQUARE_MAX = 20, SQUARE_MIN = 5;   // CHECKBOX_MAX_PT's figure: a checkbox is a size on the page
 const HEAVY = 1.6;                       // a bar thicker than this divides sections; nobody writes on it
+const HINT_PAD = 1.5;                    // a blank marked by a hint reaches this far past the hint's letters
 
 const overlaps = (a, b) => a[2] > b[0] && a[0] < b[2] && a[3] > b[1] && a[1] < b[3];
 
@@ -763,8 +774,9 @@ function ruledLines(map, ptX, ptY) {
 
 // blanksIn returns the parts of box a person could type in: below a label printed in its top (unless `bare` — the
 // room above a bare line has no label of its own), and beside whatever shares its band. `solid` is what stands in
-// a blank's way: print and tick boxes, as {rect}.
-function blanksIn(box, solid, ptX, ptY, bare) {
+// a blank's way: print and tick boxes, as {rect}. `hints` is the page's faint print, which stands in nobody's way and
+// says how a blank is divided (byHints).
+function blanksIn(box, solid, ptX, ptY, bare, hints) {
   const [x0, , x1, y1] = box;
   let y0 = box[1];
   const inBox = (t) => t.rect[2] > x0 && t.rect[0] < x1 && t.rect[3] > y0 && t.rect[1] < y1;
@@ -789,7 +801,38 @@ function blanksIn(box, solid, ptX, ptY, bare) {
   const wide = gaps.filter((g) => g[1] - g[0] >= GAP_MIN_W * ptX);
   const keep = wide.length ? wide
     : gaps.filter((g) => g[1] - g[0] >= FIELD_MIN_W * ptX).sort((a, b) => (b[1] - b[0]) - (a[1] - a[0])).slice(0, 1);
-  return keep.map((g) => [g[0], y0, g[1], y1]);
+  return keep.flatMap((g) => byHints([g[0], y0, g[1], y1], hints || [], ptX, ptY));
+}
+
+// byHints divides a blank by the hints printed in it (ADR-099). A hint is FAINT print (`faint` on the map: painted
+// light, where a label is in ink) — what a form prints inside a blank to say what goes there. One hint, however many
+// words, leaves the blank whole: "First name" in grey is one entry. Two or more set apart along it are one entry
+// each — the IRS 1040's dates are a single white ground holding "MM", "DD" and "YYYY", and three fields. Each entry
+// is as wide as its hint's letters and HINT_PAD more (the form sized the hint to the entry), and the outer two reach
+// the blank's own edges.
+function byHints(blank, hints, ptX, ptY) {
+  const [x0, y0, x1, y1] = blank;
+  const ink = [];
+  for (const t of hints) {
+    if (!(t.rect[2] > x0 && t.rect[0] < x1 && t.rect[3] > y0 && t.rect[1] < y1)) continue;
+    const em = (t.size / ptY) * ptX; // the hint's size, as a fraction of the page's width
+    // The letters themselves, where their boundaries are known: a run is often set with the spaces that carry it to
+    // the next entry ("MM     ").
+    if (!(t.chars && t.cuts && t.cuts.length === t.chars.length + 1)) { ink.push({ a: t.rect[0], z: t.rect[2], em }); continue; }
+    t.chars.forEach((c, i) => { if (!SEPARATORS.test(c)) ink.push({ a: t.cuts[i], z: t.cuts[i + 1], em }); });
+  }
+  ink.sort((p, q) => p.a - q.a);
+  const marks = [];
+  for (const k of ink) {
+    const last = marks[marks.length - 1];
+    if (last && k.a - last.z < Math.max(k.em, last.em)) last.z = Math.max(last.z, k.z); // nearer than its own size: one hint
+    else marks.push({ ...k });
+  }
+  if (marks.length < 2) return [blank];
+  return marks.map((m, i) => [
+    i ? Math.max(x0, m.a - HINT_PAD * ptX) : x0, y0,
+    i < marks.length - 1 ? Math.min(x1, m.z + HINT_PAD * ptX) : x1, y1,
+  ]);
 }
 
 // proposeFields reads the page map for the fields the page itself draws. Returns {kind: 'text' | 'check', rect, from}
@@ -799,7 +842,9 @@ export function proposeFields(map) {
   if (!map || map.noText) return [];
   const ptX = 1 / map.width, ptY = 1 / map.height;
   const { H, V, tolX, tolY } = ruledLines(map, ptX, ptY);
-  const print = map.text.filter((t) => !t.hidden && !SEPARATORS.test(t.text));
+  // Faint print is a hint, not a label (ADR-099): it stands in no blank's way, and it says how one is divided.
+  const print = map.text.filter((t) => !t.hidden && !t.faint && !SEPARATORS.test(t.text));
+  const hints = map.text.filter((t) => t.faint && !SEPARATORS.test(t.text)); // (the map marks no hidden text faint)
   const shaded = map.shapes.filter((s) => s.kind === 'box' && s.filled
     && (s.rect[3] - s.rect[1]) / ptY > 4 && (s.rect[2] - s.rect[0]) / ptX > 4);
   const mid = (r) => [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
@@ -843,7 +888,7 @@ export function proposeFields(map) {
         push('text', [cell[0], Math.max(cell[1], cell[3] - ABOVE_LINE * ptY), cell[2], cell[3]], 'line');
         continue;
       }
-      for (const f of blanksIn(cell, solid, ptX, ptY)) push('text', f, 'cell');
+      for (const f of blanksIn(cell, solid, ptX, ptY, false, hints)) push('text', f, 'cell');
     }
   };
   for (const T of H) {
@@ -880,7 +925,7 @@ export function proposeFields(map) {
     if (closes.has(L) || L.heavy) continue;
     const box = [L.x0, L.y - ABOVE_LINE * ptY, L.x1, L.y - 0.5 * ptY];
     if (fields.some((f) => overlaps(f.rect, box))) continue;
-    for (const f of blanksIn(box, solid, ptX, ptY, true)) push('text', f, 'line');
+    for (const f of blanksIn(box, solid, ptX, ptY, true, hints)) push('text', f, 'line');
   }
 
   // A white ground is a blank the form laid out for itself (ADR-096): a rectangle painted white and nothing else, which
@@ -903,7 +948,7 @@ export function proposeFields(map) {
     // (A ground holding a tick box is taken by it: what is left of that cell is the tick box's label's room.)
     // An upright through a ground does NOT cut it. Measured on the 1040: nine grounds are crossed by one, every one is
     // a single real field (a comb's dividers), and cutting there lost seven well-placed fields and gained none.
-    for (const f of blanksIn(g.rect, solid, ptX, ptY)) push('text', f, 'ground', true);
+    for (const f of blanksIn(g.rect, solid, ptX, ptY, false, hints)) push('text', f, 'ground', true);
   }
 
   // A run of underscores is a blank drawn with the keyboard; a box drawn as a character is a checkbox.
@@ -1146,7 +1191,6 @@ export function rowBaselines(row) {
   });
   return ys;
 }
-
 // rowPieces turns buildTextRows' rows — the ESTIMATE's reading of a page — into wrappedMatches' pieces. A piece's
 // text is its items' text with nothing between (as scanTextMatches' own per-row search has it), and `k` says where in
 // the row's string each of its characters is, so a part [from, to) of a piece is row.s[k[from]] .. row.s[k[to - 1]].
