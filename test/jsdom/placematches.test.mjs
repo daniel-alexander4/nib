@@ -156,6 +156,39 @@ test('a match the map did not place keeps its estimate, even when its wide box o
   assert.equal(placeMatches([[0.17, 0.445, 0.29, 0.475]], exact).kept, 1);
 });
 
+test('a fitted OCR word is boxed by its own ink, and still replaces the estimate pdf.js drew above it', () => {
+  // "provided" on a real scan (points, top-left): its reach 134.0..149.0, its ink 141.4..148.1, and the estimate —
+  // from pdf.js's span, which sits high under the fit's matrix — 133.1..144.4, whose centre is ABOVE the ink.
+  const t = run(235.4, 134, 'provided', { hidden: true, ink: [141.4 / H, 148.1 / H] });
+  t.rect[3] = 149 / H;
+  const got = matchesInMap(page([t]), [re('provided')]);
+  assert.deepEqual(ys(got[0]), [140.9, 148.6], 'the ink, plus the half-point pad');
+  const est = [232.0 / W, 133.1 / H, 267.3 / W, 144.4 / H];
+  assert.deepEqual(placeMatches([est], got), { boxes: got, exact: 1, kept: 0 }, 'the estimate is replaced, not kept beside it');
+  // The line above's estimate is not this word's: its centre is outside the reach too.
+  const above = [232.0 / W, 121.6 / H, 267.3 / W, 132.9 / H];
+  assert.equal(placeMatches([above], got).kept, 1);
+  // A short stamp's ink is not on any box, and print has none: both keep their reach.
+  assert.deepEqual(ys(matchesInMap(page([{ ...t, short: true }]), [re('provided')])[0]), [131, 152]);
+  assert.deepEqual(ys(matchesInMap(page([{ ...t, hidden: false }]), [re('provided')])[0]), [133.5, 149.5]);
+});
+
+test('part of a right-to-left OCR word takes the whole word: its letters are stamped from the left and scanned from the right', () => {
+  // "שלום" at 100..124. Its first two letters are stamped at 100..112 — and are on the paper at 112..124.
+  const word = 'שלום';
+  // Both ends: the first letters are stamped at the left, the last at the right, and neither is where it is scanned.
+  for (const [make, part] of [fitted, ocr].flatMap((m) => [[m, word.slice(0, 2)], [m, word.slice(2)]])) {
+    const got = matchesInMap(page([make(100, 200, word), make(160, 200, 'word')]), [re(part)]);
+    assert.equal(got.length, 1);
+    const [x0, x1] = xs(got[0]);
+    assert.ok(x0 <= 100 && x1 >= 124, `the box runs ${x0}..${x1}, and the word is at 100..124`);
+    assert.ok(x1 <= 160.25, `and it stops at the next word, which starts at 160: ${x1}`); // a short stamp's own reach, plus the pad
+  }
+  // The same letters in PRINT are where the page set them, and a left-to-right OCR word is where its glyphs are.
+  assert.deepEqual(xs(matchesInMap(page([run(100, 200, word)]), [re(word.slice(0, 2))])[0]), [99.25, 112.75]);
+  assert.deepEqual(xs(matchesInMap(page([fitted(100, 200, 'secret')]), [re('se')])[0]), [99.25, 112.75]);
+});
+
 test('a match only the map found is added, and with no map reading the estimates stand', () => {
   assert.equal(placeMatches([], [[0.2, 0.25, 0.26, 0.27]]).boxes.length, 1);
   const est = [[0.17, 0.245, 0.29, 0.275]];

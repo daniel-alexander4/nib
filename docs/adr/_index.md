@@ -684,3 +684,7 @@ home today.
   — step six of ADR-088; closes ADR-091's "the stamp is still narrow" and narrows its reading to a SHORT stamp. pdfcpu
   places a word at unit scale and a whole-point size, so the fit is multiplied into the `cm` it wrote: the advance
   across the box, the glyphs' own ink on its top and bottom. Width ÷ ink 0.72 → 1.00, in Nib's map and in poppler.
+- **[ADR-093 — a fitted OCR word is boxed by its ink](093-a-fitted-ocr-word-is-boxed-by-its-ink.md)**
+  — extends ADR-092 and ADR-090. The map gave a fitted word the line's reach (a full size up, a quarter down), 1.65
+  times its ink, and a redaction reached the line above; it is now boxed by its own glyphs' ink, which is the scanned
+  box. Part of a right-to-left OCR word takes the whole word: the stamp runs from the left, the scan from the right.
