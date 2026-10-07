@@ -54,7 +54,7 @@ after(async () => {
     // **ADR-037 shows the strip at one document, so that particular trap is gone** — and the
     // condition stays as it is, because `has-doc` asks the question this loop actually means
     // ("is a document still open") rather than a proxy for it that a later change can move again.
-    for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+    for (let i = 0; i < 8 && await h.hasDocument(); i++) {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }

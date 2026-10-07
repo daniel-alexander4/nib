@@ -177,7 +177,7 @@ test('the reload icon discards unsaved work, and asks first', async () => {
   // The test above leaves its document OPEN, and re-opening a path Nib already holds is not a
   // fresh open — it is reported as the same file in another tab, so `openDocument` would wait
   // for a `has-doc` transition that never comes. Found exactly that way.
-  if (await page.evaluate(() => document.getElementById('viewerWrap').className === 'has-doc')) {
+  if (await h.hasDocument()) {
     h.answerDialogs(true);
     await h.closeDocument();
   }

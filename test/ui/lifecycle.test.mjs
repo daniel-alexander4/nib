@@ -10,7 +10,9 @@
 //     overlay, which needs layout).
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, shutdown } from './harness.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { launch, shutdown, BASE } from './harness.mjs';
 import { writeFixture } from './fixtures.mjs';
 
 const h = await launch();
@@ -469,4 +471,36 @@ test('the toolbar names the open document and says whether it is saved', async (
   await closeDoc();
   assert.equal((await state()).hidden, true,
     'the title survives the document being closed, naming a file that is no longer open');
+});
+
+// A document saved for signing carries its sign-here request and opens LOCKED: `signing-locked` joins the viewer's
+// class. The tier's own helpers read that class WHOLE — `=== 'has-doc'` — so `openDocument` waited thirty seconds
+// for a document that was already open and threw, and every close loop took a signing document for no document.
+// No tier-3 test could open one (/pending 851); the accuracy harness named one corpus file and skipped it.
+test('a document that opens in signing mode is opened, seen and closed by the tier\'s own helpers', async () => {
+  // Made as Nib makes one: the request embedded by the route Save-for-signing uses.
+  const plain = writeFixture('tosign-plain.pdf', { pages: 2, label: 'to sign page' });
+  const form = new FormData();
+  form.append('pdf', new Blob([fs.readFileSync(plain)], { type: 'application/pdf' }), 'doc.pdf');
+  form.append('flags', JSON.stringify([{ page: 1, frac: [0.2, 0.3, 0.5, 0.36], type: 'date' }]));
+  const res = await fetch(BASE + '/api/flags', { method: 'POST', headers: { 'X-CSRF-Token': process.env.NIB_UI_CSRF }, body: form });
+  assert.equal(res.status, 200, 'setup: the sign-here request could not be embedded');
+  const SIGNING = path.join(path.dirname(plain), 'tosign.pdf');
+  fs.writeFileSync(SIGNING, Buffer.from(await res.arrayBuffer()));
+
+  await assert.doesNotReject(h.openDocument(SIGNING, 2), 'openDocument cannot open a document that opens in signing mode');
+  await page.waitForFunction(() => document.getElementById('viewerWrap').classList.contains('signing-locked'));
+  assert.equal((await chrome()).wrap, 'has-doc signing-locked', 'setup: the document is not locked, so nothing here is tested');
+  assert.equal((await h.counts()).markers, 1, 'the sign-here flag the document carries is not on the page');
+  assert.equal(await h.hasDocument(), true, 'a locked document reads as no document: a close loop would leave it open for the next test');
+  // The wait for a close must still be WAITING while the locked document is open.
+  const closed = h.documentClosed().then(() => 'closed');
+  closed.catch(() => {});
+  assert.equal(await Promise.race([closed, page.waitForTimeout(700).then(() => 'still open')]), 'still open',
+    'the wait for a close returned with a locked document still open');
+  h.answerDialogs(true);
+  await closeDoc();
+  assert.equal(await closed, 'closed');
+  assert.equal(await h.hasDocument(), false);
+  assert.equal((await chrome()).wrap, '', 'the lock outlived its document');
 });

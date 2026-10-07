@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { launch, shutdown } from '../ui/harness.mjs';
 import { matchesInMap } from '../../web/detect.js';
+import { scanWords, scanLayer, scanPicks, scoreScanWord, scanSummary, scanReport } from './scanscore.mjs';
 
 const [manifestPath, resultsPath] = process.argv.slice(2);
 const docs = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -252,16 +253,41 @@ async function search(n, word) {
   }).map((m) => m.rect);
 }
 
+// ── scan redaction: the `scan` column (scanscore.mjs) ──────────────────────
+// Bounded, because every search maps every page of the document (a 14-page scan: some seconds a search):
+// SCAN_PAGES pages a scan, SCAN_WORDS words a page.
+const SCAN_PAGES = 2, SCAN_WORDS = Number(process.env.NIB_ACCURACY_SCAN_WORDS || 10);
+const scanTruth = new Map(); // a words file -> its words
+let scanSeconds = 0;
+
+// scanColumn scores page n of an OCR'd scan — the page is on screen — or returns nothing for a page that is not one:
+// a document with no saved word boxes, a page with no hidden text, a scan that has had its SCAN_PAGES.
+async function scanColumn(doc, n, map, done) {
+  if (!doc.words || done >= SCAN_PAGES || !map.text.some((t) => t.hidden)) return undefined;
+  const started = Date.now();
+  if (!scanTruth.has(doc.words)) scanTruth.set(doc.words, JSON.parse(fs.readFileSync(doc.words, 'utf8')));
+  const words = scanWords(scanTruth.get(doc.words), n, map), layer = scanLayer(words, map);
+  if (!layer.ok) return { layer, error: 'the saved word boxes do not line up with this page\'s text layer' };
+  const rows = [];
+  for (const w of scanPicks(words, map, SCAN_WORDS)) {
+    // Scored as the app holds each box, not as the pixel grid drew it — as the print column does.
+    const exact = matchesInMap(map, [new RegExp(escapeRe(w.text), 'gi')]);
+    const boxes = (await search(n, w.text)).map((b) => exact.find((x) => x.every((v, i) => Math.abs(v - b[i]) <= SAME)) || b);
+    rows.push(scoreScanWord(w, boxes, map, words));
+  }
+  scanSeconds += (Date.now() - started) / 1000;
+  return { layer, words: rows };
+}
+
 // open opens a document to work on — or says why it is not one. A document that carries a sign-here request opens
-// LOCKED (app.js: `signLocked = docHadFlags`): editing is off, so Detect and the search cannot be driven, and
-// `signing-locked` joins the viewer's class — which the tier-3 helper's wait for a class of exactly "has-doc" never
-// sees. That read as "openDocument: Timeout 30000ms exceeded" for thirty seconds a run and named nothing.
+// LOCKED (app.js: `signLocked = docHadFlags`): editing is off, so Detect and the search cannot be driven. The prepared
+// copy goes without the request (`TestAccuracyPrep`), so none should — and one that does is named, not left to fail
+// at the first disabled button. (The helper could not open such a document at all until it asked whether the
+// viewer's class HAS `has-doc`; that was this harness's thirty-second "openDocument: Timeout" on one corpus file.)
 async function open(doc) {
-  const opened = h.openDocument(doc.stripped, doc.pages).then(() => 'open');
-  opened.catch(() => {}); // when the lock is seen first, the helper's own wait is left to time out unheard
-  const locked = page.waitForFunction(() => document.getElementById('viewerWrap').classList.contains('signing-locked'), null, { timeout: 35000 })
-    .then(() => 'locked', () => new Promise(() => {})); // never locked: this side says nothing
-  if (await Promise.race([opened, locked]) === 'locked') {
+  await h.openDocument(doc.stripped, doc.pages);
+  await page.waitForTimeout(300); // the lock is applied after the first page is up
+  if (await page.evaluate(() => document.getElementById('viewerWrap').classList.contains('signing-locked'))) {
     throw new Error('not scored: it opens in signing mode (it carries a sign-here request, and Nib locks editing on such a document)');
   }
 }
@@ -297,6 +323,7 @@ for (const doc of docs) {
       }
       row.redaction = [];
       for (const pick of wordsToFind(map, 6)) row.redaction.push(scoreRedaction(pick, await search(n, pick.word), map));
+      row.scan = await scanColumn(doc, n, map, results.filter((r) => r.doc === name && r.scan && r.scan.words).length);
       results.push(row);
       process.stdout.write('.');
     }
@@ -352,6 +379,7 @@ const summary = {
     mapPlacedNone: red.filter((r) => r.mapPlaced === 0).length,
     boxesOffTheRow: red.reduce((a, r) => a + r.drawn.filter((b) => !b.onRow).length, 0),
   },
+  scan: scanSummary(rows, scanSeconds),
   errors: results.filter((r) => r.error).map((r) => `${r.doc}: ${r.error}`),
 };
 fs.writeFileSync(resultsPath, JSON.stringify({ at: new Date().toISOString(), summary, results }, null, 1));
@@ -364,5 +392,6 @@ for (const r of rows) {
     + ` | ${r.redaction.length}/${r.redaction.length - rr.length}/${f1(mean(rr.map((x) => x.covered)))}/${f1(mean(rr.map((x) => Math.max(0, x.overLeft) + Math.max(0, x.overRight))))}`
     + (r.zoom ? ` | zoom text ${r.zoom.text.join('→')} check ${r.zoom.check.join('→')}` : ''));
 }
+for (const line of scanReport(rows)) console.log(line);
 console.log('\nsummary', JSON.stringify(summary, null, 1));
 console.log(`\nresults written to ${resultsPath}`);

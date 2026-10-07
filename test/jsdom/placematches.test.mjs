@@ -227,3 +227,123 @@ test('a match only the map found is added, and with no map reading the estimates
   const est = [[0.17, 0.245, 0.29, 0.275]];
   assert.deepEqual(placeMatches(est, []), { boxes: est, exact: 0, kept: 1 });
 });
+
+// ── the accuracy harness's `scan` column (test/accuracy/scanscore.mjs) ───────
+// Not product code: the instrument that says whether a search-redaction over an OCR'd scan leaves ink showing. Held
+// here because its figures are quoted as facts, and a scorer nobody has made fail can only be believed.
+const scan = await import(new URL('../../test/accuracy/scanscore.mjs', import.meta.url));
+// The engine's word as the harness holds it: a box in points from the top-left.
+const word = (text, x0, y0, x1, y1) => ({ text, box: [x0, y0, x1, y1] });
+const frac = (x0, y0, x1, y1) => [x0 / W, y0 / H, x1 / W, y1 / H];
+
+test('scan column: the engine\'s boxes are turned top-left, and a page whose words do not line up with its layer is not scored', () => {
+  const truth = [{ page: 1, text: 'Smith', rect: [100, 560, 130, 570] }, { page: 2, text: 'other', rect: [100, 560, 130, 570] },
+    { page: 1, text: 'empty', rect: [50, 50, 50, 60] }, { page: 1, text: 'norect' }];
+  const m = page([run(100, 222, 'Smith', { hidden: true })]);
+  const words = scan.scanWords(truth, 1, m);
+  assert.deepEqual(words, [{ text: 'Smith', box: [100, 222, 130, 232] }]);
+  // The run is 30 wide over ink 30 wide; a short stamp of 21.6 reads 0.72.
+  assert.deepEqual(scan.scanLayer(words, m), { engineWords: 1, lineUp: 1, widthOverInk: [1, 1, 1], ok: true });
+  const short = page([{ ...run(100, 222, 'Smith', { hidden: true }), rect: [100 / W, 222 / H, 121.6 / W, 234 / H] }]);
+  assert.deepEqual(scan.scanLayer(words, short).widthOverInk, [0.72, 0.72, 0.72]);
+  // The same words over a layer that is somewhere else, over print, and over nothing: not lined up.
+  assert.equal(scan.scanLayer(words, page([run(300, 222, 'Smith', { hidden: true })])).ok, false);
+  assert.equal(scan.scanLayer(words, page([run(100, 400, 'Smith', { hidden: true })])).ok, false);
+  assert.equal(scan.scanLayer(words, page([run(100, 222, 'Smyth', { hidden: true })])).ok, false);
+  assert.equal(scan.scanLayer(words, page([run(100, 222, 'Smith')])).ok, false, 'print was taken for the OCR layer');
+  assert.equal(scan.scanLayer([], m).ok, false);
+  // Half is enough; less is not.
+  const four = ['aaaa', 'bbbb', 'cccc', 'dddd'].map((t, i) => word(t, 100, 222 + 20 * i, 124, 232 + 20 * i));
+  assert.equal(scan.scanLayer(four, page([run(100, 222, 'aaaa', { hidden: true }), run(100, 242, 'bbbb', { hidden: true })])).ok, true);
+  assert.equal(scan.scanLayer(four, page([run(100, 222, 'aaaa', { hidden: true })])).ok, false);
+});
+
+test('scan column: the words searched are whole, four letters or more, and on the page once as the search counts', () => {
+  const texts = ['Smith', 'smithy', 'Jones', 'tax', 'A-1234', 'Wages', 'wages', 'Total', 'Form1040'];
+  const words = texts.map((t, i) => word(t, 100, 100 + 20 * i, 160, 110 + 20 * i));
+  const m = page(texts.map((t, i) => run(100, 100 + 20 * i, t, { hidden: true })));
+  // 'Smith' is inside 'smithy'; 'Wages' is there twice; 'tax' is short; 'A-1234' is not one word.
+  assert.deepEqual(scan.scanPicks(words, m, 10).map((w) => w.text), ['smithy', 'Jones', 'Total', 'Form1040']);
+  // Once among the engine's words but twice in the layer (another tool's words under it): not searched.
+  const twice = page([...m.text, run(300, 100, 'jones again', { hidden: true })]);
+  assert.deepEqual(scan.scanPicks(words, twice, 10).map((w) => w.text), ['smithy', 'Total', 'Form1040']);
+  // Twice among the engine's words and once in the layer (a word the stamp dropped): which box is its is not known.
+  assert.deepEqual(scan.scanPicks([...words, word('Total', 300, 100, 330, 110)], m, 10).map((w) => w.text), ['smithy', 'Jones', 'Form1040']);
+  // PRINT that repeats the word is not the layer's, and does not take it out.
+  assert.equal(scan.scanPicks(words, page([...m.text, run(300, 100, 'Jones')]), 10).length, 4);
+  // A limit takes them spread down the page, not the first few.
+  assert.deepEqual(scan.scanPicks(words, m, 2).map((w) => w.text), ['smithy', 'Total']);
+});
+
+test('scan column: ink outside the box is measured on each side, and a word with no box over it is missed', () => {
+  const w = word('Smith', 100, 222, 130, 232), m = page([]);
+  const got = (...boxes) => scan.scoreScanWord(w, boxes.map((b) => frac(...b)), m, [w]);
+  assert.deepEqual(got([99, 221, 131, 233]), { word: 'Smith', boxes: 1, inkOutside: 0, left: -1, right: -1, above: -1, below: -1, pastRight: 1, tall: 1.2, reaches: 0, specks: 0 });
+  assert.equal(got([99, 221, 126, 233]).inkOutside, 4, 'the end of the word shows');
+  assert.equal(got([99, 221, 126, 233]).right, 4);
+  assert.equal(got([103, 221, 131, 233]).left, 3);
+  assert.equal(got([103, 221, 131, 233]).inkOutside, 3, 'the start of the word shows');
+  assert.equal(got([99, 224, 131, 233]).above, 2);
+  assert.equal(got([99, 224, 131, 233]).inkOutside, 2, 'the top of the word shows');
+  assert.equal(got([99, 221, 131, 230.5]).below, 1.5);
+  assert.equal(got([99, 221, 131, 230.5]).inkOutside, 1.5);
+  // Two boxes that cover it between them: nothing shows, and the count says there were two.
+  const two = got([99, 221, 115, 233], [114, 221, 131, 233]);
+  assert.deepEqual([two.boxes, two.inkOutside], [2, 0]);
+  // No box, and a box that is somewhere else (beside it, and on the next line).
+  assert.deepEqual(got(), { word: 'Smith', missed: true, boxes: 0 });
+  assert.deepEqual(got([140, 221, 170, 233]), { word: 'Smith', missed: true, boxes: 1 });
+  assert.deepEqual(got([99, 240, 131, 252]), { word: 'Smith', missed: true, boxes: 1 });
+  // A second box elsewhere does not widen the one over the word.
+  assert.equal(got([99, 221, 131, 233], [300, 221, 330, 233]).pastRight, 1);
+});
+
+test('scan column: a box reaches another line only where a real word of another line is under it', () => {
+  const w = word('Smith', 100, 222, 130, 232), m = page([]);
+  const above = word('Above', 100, 208, 130, 218), beside = word('next', 133, 222, 160, 232), far = word('Far', 300, 208, 330, 218);
+  const got = (box, others) => scan.scoreScanWord(w, [frac(...box)], m, [w, ...others]);
+  // The line above ends at 218: a box from 221 clears it, one from 215 is 3pt into it.
+  assert.equal(got([99, 221, 131, 233], [above, beside, far]).reaches, 0);
+  assert.equal(got([99, 215, 131, 233], [above, beside, far]).reaches, 1);
+  // 0.3pt into it is the same edge; a little more is not.
+  assert.equal(got([99, 217.7, 131, 233], [above]).reaches, 0);
+  assert.equal(got([99, 217.6, 131, 233], [above]).reaches, 1);
+  // The neighbour on the word's own line is not another line, however far the box runs into it.
+  assert.equal(got([99, 221, 150, 233], [beside]).reaches, 0);
+  // The three the probe counted, each a speck of OCR noise in or on the word's own box: none is another line.
+  const dot = word('.', 110, 226, 111, 226.3), slash = word('/', 120, 229, 121.1, 229.3), za = word('za', 128.5, 221.5, 131, 231.5);
+  assert.deepEqual([got([99, 221, 131, 233], [dot, slash, za]).reaches, got([99, 221, 131, 233], [dot, slash, za]).specks], [0, 0]);
+  // A word whose middle is inside this one's height is on its line even when this one's middle is not inside its:
+  // the probe asked one way only.
+  assert.equal(got([99, 221, 131, 233], [word('x', 105, 229.5, 112, 231.5)]).reaches, 0);
+  // A speck on the line above that the box does reach is counted, apart from words.
+  const speck = word('\'', 110, 216, 111, 216.8), thin = word('|', 110, 208, 111, 218);
+  assert.deepEqual([got([99, 215, 131, 233], [speck]).reaches, got([99, 215, 131, 233], [speck]).specks], [0, 1]);
+  assert.deepEqual([got([99, 215, 131, 233], [thin]).reaches, got([99, 215, 131, 233], [thin]).specks], [0, 1]);
+  const flat = word('_', 105, 216, 115, 216.8); // wide enough, and too flat to be a word
+  assert.deepEqual([got([99, 215, 131, 233], [flat]).reaches, got([99, 215, 131, 233], [flat]).specks], [0, 1]);
+  // …and one way round the other: a tall mark this word's middle is inside, whose own middle is below the word.
+  assert.equal(got([99, 221, 131, 233], [word('[', 105, 226, 112, 260)]).reaches, 0);
+  assert.deepEqual([got([99, 215, 131, 233], [above, speck]).reaches, got([99, 215, 131, 233], [above, speck]).specks], [1, 1]);
+});
+
+test('scan column: the summary counts what must be zero, and a corpus with no scan has no column', () => {
+  assert.equal(scan.scanSummary([{ doc: 'form.pdf', page: 1 }], 0), null);
+  assert.deepEqual(scan.scanReport([{ doc: 'form.pdf', page: 1 }]), []);
+  const layer = { engineWords: 4, lineUp: 4, widthOverInk: [0.9, 1, 1], ok: true };
+  const rows = [
+    { doc: 'scan.pdf', page: 1, scan: { layer, words: [
+      { word: 'a', boxes: 1, inkOutside: 0, pastRight: 0.7, tall: 1.1, reaches: 0, specks: 0 },
+      { word: 'b', boxes: 2, inkOutside: 0.3, pastRight: 0.8, tall: 1.2, reaches: 1, specks: 2 },
+      { word: 'c', boxes: 1, inkOutside: 2.5, pastRight: -2.5, tall: 1.3, reaches: 0, specks: 1 },
+      { word: 'd', missed: true, boxes: 0 }] } },
+    { doc: 'scan.pdf', page: 2, scan: { layer: { ...layer, widthOverInk: [null, null, null], ok: false }, error: 'does not line up' } },
+    { doc: 'form.pdf', page: 1 },
+  ];
+  assert.deepEqual(scan.scanSummary(rows, 12.4), { pages: 1, words: 4, missed: 1, notOneBox: 1, inkOutside: 1, maxInkOutsidePt: 2.5, reachesAnotherLine: 1,
+    reachesOnlySpecks: 1, boxPastInkRightMedPt: 0.7, boxOverInkHeightMed: 1.2, layerWidthOverInkMed: 1, notScored: ['scan.pdf p2: does not line up'], seconds: 12 });
+  const lines = scan.scanReport(rows);
+  assert.equal(lines.length, 4);
+  assert.match(lines[2], /scan\.pdf\s+p1\s+\| 4\/1\/1\/1\/1\/1 \| 0\.7 \| 1$/);
+  assert.match(lines[3], /p2\s+\| not scored: does not line up$/);
+});

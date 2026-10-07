@@ -40,7 +40,7 @@ const { page } = h;
 
 after(async () => {
   try {
-    for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+    for (let i = 0; i < 8 && await h.hasDocument(); i++) {
       await h.closeDocument();
     }
   } catch { /* the assertion that already failed is the one worth reporting */ }
@@ -169,7 +169,7 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
   // looking like it read the new one. A state check where a transition check is needed:
   // the same shape that cost this repo four sessions on the zoom flake.
   await h.closeDocument();
-  await page.waitForFunction(() => document.getElementById('viewerWrap').className !== 'has-doc');
+  await h.documentClosed();
   await h.openDocument(out, 1);
   await h.topOfDocument();
   await canvasPainted();
@@ -194,7 +194,7 @@ test('a stamp bakes where it was placed, not mirrored up the page', async () => 
 
 test('this file leaves the shared server as it found it', async () => {
   const openPages = (await h.counts()).pages;
-  for (let i = 0; i < 8 && await page.$eval('#viewerWrap', (el) => el.className) === 'has-doc'; i++) {
+  for (let i = 0; i < 8 && await h.hasDocument(); i++) {
     await h.closeDocument();
   }
   const left = await page.evaluate(() => document.querySelectorAll('.viewerContainer .page').length);
