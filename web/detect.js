@@ -1037,10 +1037,11 @@ const lettersWhereScanned = (t) => !!t.reversed && !t.short && !JOINED.test(t.te
 export function matchesInMap(map, patterns) {
   if (!map || !map.text) return [];
   const known = map.text.filter((t) => t.cuts && t.chars && t.cuts.length === t.chars.length + 1);
-  return [
-    ...layerMatches(map, patterns, known.filter((t) => !t.hidden), false),
-    ...layerMatches(map, patterns, known.filter((t) => t.hidden), true),
-  ];
+  const print = layerMatches(map, patterns, known.filter((t) => !t.hidden), false);
+  const under = layerMatches(map, patterns, known.filter((t) => t.hidden), true);
+  const out = [...print, ...under];
+  if (print.skipped || under.skipped) out.skipped = true; // not every line end was searched across: see WRAP_BUDGET
+  return out;
 }
 
 function layerMatches(map, patterns, runs, hidden) {
@@ -1115,9 +1116,11 @@ function layerMatches(map, patterns, runs, hidden) {
     });
   }
   // A match that wraps a line: one box on each line it is on.
-  for (const parts of wrappedMatches(pieces, patterns)) {
+  const wrapped = wrappedMatches(pieces, patterns);
+  for (const parts of wrapped) {
     for (const p of parts) { const box = p.piece.boxOf(p.from, p.to); if (box) out.push(box); }
   }
+  if (wrapped.skipped) out.skipped = true;
   return out;
 }
 
@@ -1140,44 +1143,96 @@ function layerMatches(map, patterns, runs, hidden) {
 // found twice. Returns one entry per match: its parts, [{piece, from, to}], indices into each piece's own `s`.
 //
 // Not found: a match that wraps a PAGE, and one that runs over more than WRAP_LINES lines.
-const WRAP_GAP = 1.0, WRAP_LINES = 3;
+//
+// WRAP_BUDGET (ADR-100) is the most chains one call will search. Past it the chains of three lines are left out, and
+// if those of two lines alone are still past it, all of them — and the result says so (`skipped`), because a search
+// that looked in fewer places and said nothing would be a redaction that reads as complete. The caller tells the
+// user which page. The densest page of the accuracy corpus makes 9,386 chains (a tax form with 25 stretches on one
+// line; 27 ms); the budget is 21 times that, and about a second of searching for five patterns (4–5 µs a chain).
+const WRAP_GAP = 1.0, WRAP_LINES = 3, WRAP_BUDGET = 200000;
 const LINE_HYPHEN = /[-\u00AD\u2010\u2011]$/; // a hyphen, a soft hyphen, and the two Unicode hyphens
 
+//
+// Cost. A piece is joined to every piece of the next row that begins left of its end, so a table of S cells a line
+// makes about S²/2 chains of two lines and S³/6 of three for each line, and each chain is one run of each pattern
+// over its text — that count IS the rule, and no chain can be dropped without knowing what a pattern could match.
+// What is paid per chain is kept to that run: which row a piece carries into is looked up by row, not found by
+// reading every piece on the page; a chain's text is its pieces' own trimmed strings put end to end, and where a
+// match's characters are in each piece is worked out from the offsets, only for a match that reaches the chain's
+// first and last lines. (As first written each chain read the whole page and built its text a character at a time:
+// 200 lines of 20 cells took 2.2–3.2 s for five patterns; times beside the differential test in
+// test/jsdom/wrappedmatch.test.mjs, which holds that version as the oracle.)
 export function wrappedMatches(pieces, patterns) {
   pieces = pieces.filter((p) => p.s.trim());
   const out = [], seen = new Set();
+  // Each piece once: its place in `pieces`, and its text as each position in a chain reads it.
+  const info = new Map();
+  pieces.forEach((p, idx) => {
+    const lead = p.s.length - p.s.trimStart().length, end = p.s.trimEnd().length;
+    info.set(p, { idx, lead, end, hyphen: LINE_HYPHEN.test(p.s.slice(0, end)), on: null });
+  });
+  // The rows, down the page: the pieces of each (in the order given) and the leftmost start among them.
+  const byRow = new Map();
+  for (const p of pieces) {
+    if (!(p.row === p.row)) continue;
+    let r = byRow.get(p.row);
+    if (!r) byRow.set(p.row, r = { row: p.row, min: Infinity, pieces: [] });
+    r.pieces.push(p);
+    if (p.x0 < r.min) r.min = p.x0;
+  }
+  const rows = [...byRow.values()].sort((a, b) => a.row - b.row);
+  rows.forEach((r, n) => { r.n = n; });
+  // The pieces text carries on into from `a`: those of the first row below it with a piece beginning left of a's end.
   const carriesOn = (a) => {
-    const later = pieces.filter((b) => b.row > a.row && b.x0 < a.x1);
-    const row = Math.min(...later.map((b) => b.row));
-    return later.filter((b) => b.row === row);
+    const ia = info.get(a);
+    if (ia.on) return ia.on;
+    ia.on = [];
+    const at = byRow.get(a.row);
+    if (!at) return ia.on;
+    for (let n = at.n + 1; n < rows.length; n++) {
+      if (!(rows[n].min < a.x1)) continue;
+      ia.on = rows[n].pieces.filter((b) => b.x0 < a.x1);
+      break;
+    }
+    return ia.on;
   };
   const search = (chain) => {
+    const infos = chain.map((p) => info.get(p));
+    const hyphened = infos.some((f, n) => n < chain.length - 1 && f.hyphen);
     for (const mode of ['space', 'joined', 'dehyphenated']) {
-      let s = '', hyphened = false;
-      const at = []; // for each character of s: which piece of the chain, and where in it (null: a line end)
-      chain.forEach((p, n) => {
-        const last = n === chain.length - 1;
-        const from = n ? p.s.length - p.s.trimStart().length : 0;
-        let to = last ? p.s.length : p.s.trimEnd().length;
-        const hyphen = !last && mode !== 'space' && LINE_HYPHEN.test(p.s.slice(0, to));
-        if (hyphen && mode === 'dehyphenated') to--;
-        for (let i = from; i < to; i++) { s += p.s[i]; at.push({ n, i }); }
-        if (hyphen) hyphened = true; else if (!last) { s += ' '; at.push(null); }
-      });
       if (mode !== 'space' && !hyphened) continue; // no line of this chain ends in a hyphen: the same string again
+      // The chain's text, and for each piece: where its share starts in the text (at), and which of its own
+      // characters that is (from) up to which (to).
+      let s = '';
+      const at = [], from = [], to = [];
+      chain.forEach((p, n) => {
+        const f = infos[n], last = n === chain.length - 1;
+        const hyphen = !last && mode !== 'space' && f.hyphen;
+        from.push(n ? f.lead : 0);
+        to.push((last ? p.s.length : f.end) - (hyphen && mode === 'dehyphenated' ? 1 : 0));
+        at.push(s.length);
+        s += p.s.slice(from[n], to[n]);
+        if (!hyphen && !last) s += ' ';
+      });
+      const lastAt = at[at.length - 1], firstEnd = at[0] + to[0] - from[0];
       for (const re of patterns) {
         re.lastIndex = 0;
         let m;
         while ((m = re.exec(s))) {
           if (!m[0].length) { re.lastIndex++; continue; }
-          const parts = chain.map((piece) => ({ piece, from: Infinity, to: -Infinity }));
-          for (let k = m.index; k < m.index + m[0].length; k++) {
-            const g = at[k];
-            if (!g || !s[k].trim()) continue;
-            parts[g.n].from = Math.min(parts[g.n].from, g.i); parts[g.n].to = Math.max(parts[g.n].to, g.i + 1);
+          const m0 = m.index, m1 = m.index + m[0].length;
+          if (m0 >= firstEnd || m1 <= lastAt) continue; // not on the first line, or not on the last
+          // The ink of the match in each piece: its first and last characters there that are not spaces.
+          const parts = [];
+          for (let n = 0; n < chain.length; n++) {
+            let lo = Math.max(m0, at[n]), hi = Math.min(m1, at[n] + to[n] - from[n]);
+            while (lo < hi && !s[lo].trim()) lo++;
+            while (hi > lo && !s[hi - 1].trim()) hi--;
+            if (!(hi > lo)) break; // not on every line of this chain: another chain's, or a row's own
+            parts.push({ piece: chain[n], from: from[n] + lo - at[n], to: from[n] + hi - at[n] });
           }
-          if (parts.some((p) => !(p.to > p.from))) continue; // not on every line of this chain: another chain's, or a row's own
-          const key = parts.map((p) => [pieces.indexOf(p.piece), p.from, p.to].join(':')).join('|');
+          if (parts.length < chain.length) continue;
+          const key = parts.map((p, n) => infos[n].idx + ':' + p.from + ':' + p.to).join('|');
           if (seen.has(key)) continue;
           seen.add(key);
           out.push(parts);
@@ -1185,9 +1240,21 @@ export function wrappedMatches(pieces, patterns) {
       }
     }
   };
+  // How many chains there are of two lines, of three, …: counted before any is searched, which costs a sum and no
+  // pattern. `lines` is how many lines a chain may run over with the count still inside WRAP_BUDGET.
+  let lines = 1, total = 0;
+  let ends = new Map(); // how many chains of the length being counted end at each piece
+  for (const a of pieces) ends.set(a, (ends.get(a) || 0) + 1);
+  while (lines < WRAP_LINES) {
+    const next = new Map();
+    let n = 0;
+    for (const [p, c] of ends) for (const b of carriesOn(p)) { next.set(b, (next.get(b) || 0) + c); n += c; }
+    if (total + n > WRAP_BUDGET) { out.skipped = true; break; }
+    total += n; ends = next; lines++;
+  }
   const walk = (chain) => {
     if (chain.length > 1) search(chain);
-    if (chain.length < WRAP_LINES) for (const b of carriesOn(chain[chain.length - 1])) walk([...chain, b]);
+    if (chain.length < lines) for (const b of carriesOn(chain[chain.length - 1])) walk([...chain, b]);
   };
   for (const a of pieces) walk([a]);
   return out;

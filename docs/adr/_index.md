@@ -710,3 +710,9 @@ home today.
   — extends ADR-088/089/095/096. The map says which print is faint (`MapText.Faint`, a fill at least 0.7 light and not
   white); a hint stands in no blank's way and two or more set apart divide it (`byHints`) — the 1040's six date fields.
   The choice detectors drew at `row.y`, ADR-095's defect in code it did not touch: each word now carries its own baseline.
+- **[ADR-100 — a search that did not look across every line end says so](100-a-search-that-did-not-look-across-every-line-end-says-so.md)**
+  — extends ADR-095. The chains `wrappedMatches` searches are cubic in stretches per line and none can be dropped
+  without changing what is found, so they are bounded: `WRAP_BUDGET` 200,000 a call, three-line chains left out first,
+  and the user is told which page ("check it by eye") — a redaction search must never read as complete when it was
+  not. The function was also rewritten for cost with its first version kept as the test's oracle (200 × 20: 2.2 → 1.3 s
+  unbounded; the densest real page 56 → 19 ms, 9,386 chains).

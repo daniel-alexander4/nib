@@ -238,3 +238,157 @@ test('the map splits a row at a gutter too, and a wrapped match over an OCR laye
   // Print and the OCR layer are still two layers: a word of one does not wrap into a word of the other.
   assert.equal(matchesInMap(mapOf([run(100, 200, 'John'), run(100, 214, 'Smith', { hidden: true })]), [re('john smith')]).length, 0);
 });
+
+// ── the cost of the rule, and its budget (ADR-100) ───────────────────────────
+// wrappedMatches as it was first written (v1.189.6, ADR-095), kept here as the ORACLE: the function was rewritten for
+// cost — each chain read every piece on the page to find its next row, and built its text a character at a time — and
+// this is a redaction path, so "the same matches, in the same order" is the whole acceptance. Measured on one machine,
+// five patterns, tables of lines × stretches a line, first version → this one: 60 × 12, 172 → 113 ms; 120 × 12,
+// 311 → 200 ms; 200 × 20 with the budget lifted, 2,177 → 1,283 ms; the densest corpus page, 56 → 19 ms.
+function asFirstWritten(pieces, patterns) {
+  const LINE_HYPHEN = /[-­‐‑]$/, WRAP_LINES = 3;
+  pieces = pieces.filter((p) => p.s.trim());
+  const out = [], seen = new Set();
+  const carriesOn = (a) => {
+    const later = pieces.filter((b) => b.row > a.row && b.x0 < a.x1);
+    const row = Math.min(...later.map((b) => b.row));
+    return later.filter((b) => b.row === row);
+  };
+  const search = (chain) => {
+    for (const mode of ['space', 'joined', 'dehyphenated']) {
+      let s = '', hyphened = false;
+      const at = [];
+      chain.forEach((p, n) => {
+        const last = n === chain.length - 1;
+        const from = n ? p.s.length - p.s.trimStart().length : 0;
+        let to = last ? p.s.length : p.s.trimEnd().length;
+        const hyphen = !last && mode !== 'space' && LINE_HYPHEN.test(p.s.slice(0, to));
+        if (hyphen && mode === 'dehyphenated') to--;
+        for (let i = from; i < to; i++) { s += p.s[i]; at.push({ n, i }); }
+        if (hyphen) hyphened = true; else if (!last) { s += ' '; at.push(null); }
+      });
+      if (mode !== 'space' && !hyphened) continue;
+      for (const pattern of patterns) {
+        pattern.lastIndex = 0;
+        let m;
+        while ((m = pattern.exec(s))) {
+          if (!m[0].length) { pattern.lastIndex++; continue; }
+          const parts = chain.map((piece) => ({ piece, from: Infinity, to: -Infinity }));
+          for (let k = m.index; k < m.index + m[0].length; k++) {
+            const g = at[k];
+            if (!g || !s[k].trim()) continue;
+            parts[g.n].from = Math.min(parts[g.n].from, g.i); parts[g.n].to = Math.max(parts[g.n].to, g.i + 1);
+          }
+          if (parts.some((p) => !(p.to > p.from))) continue;
+          const key = parts.map((p) => [pieces.indexOf(p.piece), p.from, p.to].join(':')).join('|');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(parts);
+        }
+      }
+    }
+  };
+  const walk = (chain) => {
+    if (chain.length > 1) search(chain);
+    if (chain.length < WRAP_LINES) for (const b of carriesOn(chain[chain.length - 1])) walk([...chain, b]);
+  };
+  for (const a of pieces) walk([a]);
+  return out;
+}
+
+// The dialog's own patterns (app.js PII_PATTERNS) and two phrases, plus six that lean on what a rewrite could get
+// wrong: a match that may be empty, one that reads past its own end, one that swallows the spaces at a line end, one
+// loose enough to match across almost any line end, one that BEGINS with a space on its first line, and one that
+// needs the spaces pdf.js left at the end of its last.
+const SEARCHES = () => [re('john smith'), re('confidential'), /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g, /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g,
+  /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, /\b(?:\d[ -]?){13,19}\b/g, /\d*/g, /smith(?=\s+the)/gi, /\s*total\s*/gi, /[a-z]+-?\s?[a-z]+/gi,
+  /\s(john|total)\s+(smith|b)/gi, /(the|b|smith) john\s\s/gi];
+const CELLS = ['pay John', 'Smith the sum', 'SSN 123-45-', '6789 on file', 'confi-', 'dential', 'confi­', 'co-nfi', ' Total ', '  ', 'a@b.', 'co.uk x',
+  '4111 1111 1111', '1111 ok', '555-', '867-5309', '-', 'b', 'John  ', '  Smith', 'the', 'Smith', '1,234.00', 'x‐', '(555) 010-', '0199'];
+// A page of pieces from a seed: rows down the page with gaps in their numbering, stretches at random places across
+// — some overlapping, some out of order in the list — and now and then the same piece listed twice.
+function pageOf(seed, lines, across) {
+  let r = seed;
+  const rnd = (n) => (r = (Math.imul(r, 1103515245) + 12345) & 0x7fffffff) % n;
+  const ps = [];
+  for (let l = 0, row = 0; l < lines; l++, row += 1 + (rnd(5) === 0 ? rnd(3) : 0)) {
+    for (let c = rnd(across) ? 0 : 1, n = 1 + rnd(across); c < n; c++) {
+      const s = CELLS[rnd(CELLS.length)], x0 = c * 90 + rnd(60) - 20;
+      ps.push({ row, x0, x1: x0 + 6 * s.length, s });
+      if (rnd(40) === 0) ps.push(ps[rnd(ps.length)]);
+    }
+  }
+  if (seed % 3 === 0) ps.reverse();
+  if (seed % 7 === 0) ps.sort((a, b) => a.x0 - b.x0);
+  return ps;
+}
+const shape = (ps, ms) => ms.map((parts) => parts.map((p) => [ps.indexOf(p.piece), p.from, p.to].join(':')).join('|'));
+
+test('the rewrite for cost finds exactly what the first version found, in the same order, on generated pages', () => {
+  let matches = 0, threeLines = 0;
+  for (let seed = 1; seed <= 400; seed++) {
+    const ps = pageOf(seed, 3 + seed % 14, 1 + seed % 9);
+    const want = asFirstWritten(ps, SEARCHES()), got = wrappedMatches(ps, SEARCHES());
+    assert.deepEqual(shape(ps, got), shape(ps, want), `seed ${seed}`);
+    assert.equal(got.skipped, undefined, `seed ${seed}: a small page was past the budget`);
+    matches += want.length; threeLines += want.filter((p) => p.length === 3).length;
+  }
+  // Alone, because on the pages above a looser pattern finds the same two words first: the last line of a chain keeps
+  // the spaces at its end, for a pattern that asks for them.
+  const spaced = [piece(0, 100, 'the'), piece(1, 100, 'John  ')];
+  assert.deepEqual(texts(wrappedMatches(spaced, [/the john\s\s/gi])), [['the', 'John']]);
+  assert.deepEqual(texts(asFirstWritten(spaced, [/the john\s\s/gi])), [['the', 'John']]);
+  // The oracle is only worth its agreement if the pages make it find things, three-line chains among them.
+  assert.ok(matches > 5000 && threeLines > 300, `the generated pages found ${matches} matches, ${threeLines} over three lines`);
+});
+
+// A table of `lines` lines × `across` cells, every cell the same text.
+const grid = (lines, across, s) => Array.from({ length: lines * across }, (_, i) => ({ row: Math.floor(i / across), x0: (i % across) * 100, x1: (i % across) * 100 + 80, s }));
+
+test('past the budget the three-line chains are left out, then all of them — and the result says so each time', () => {
+  // A cell carries on into the cells at or left of it on the next line: 210 chains of two lines for each pair of
+  // lines of 20 cells, 1,540 of three for each three lines.
+  // 30 × 20: 6,090 chains of two lines and 43,120 of three — inside the budget (200,000). Everything is searched.
+  const all = wrappedMatches(grid(30, 20, 'b c a'), [re('a b c a b')]);
+  assert.equal(all.skipped, undefined);
+  assert.equal(all.length, 43120, 'the count of three-line chains this test rests on');
+  // 120 × 20: 24,990 of two lines, 181,720 of three: together past the budget. Two lines are searched, three are not.
+  const two = wrappedMatches(grid(120, 20, 'b c a'), [re('a b c a b'), re('c a b')]);
+  assert.equal(two.skipped, true, 'a search that left chains out did not say so');
+  assert.equal(two.length, 24990, 'every two-line chain is still searched');
+  assert.ok(two.every((parts) => parts.length === 2));
+  // 45 × 100: 222,200 chains of two lines alone. None is searched; a match on ONE line is the row's own search's.
+  const vast = wrappedMatches(grid(45, 100, 'Smith x John'), [re('john smith')]);
+  assert.equal(vast.skipped, true);
+  assert.equal(vast.length, 0);
+  // The map's reading says so too, through matchesInMap: a page of 45 lines × 100 runs a gutter apart.
+  const text = [];
+  for (let l = 0; l < 45; l++) for (let c = 0; c < 100; c++) text.push(run(c * 40, 100 + 14 * l, 'ab'));
+  assert.equal(matchesInMap(mapOf(text), [re('ab ab')]).skipped, true);
+  assert.equal(matchesInMap(mapOf(text.map((t) => ({ ...t, hidden: true }))), [re('ab ab')]).skipped, true, 'an OCR layer past the budget did not say so');
+  assert.equal(matchesInMap(mapOf(LINES.map((l) => run(...l))), [re('john smith')]).skipped, undefined);
+});
+
+test('a search names the page it could not look across the line ends of, from either reading, and the dialog says it', async () => {
+  // 45 lines of 100 two-letter cells, as pdf.js has them and as the map has them.
+  const dense = [], runs = [];
+  for (let l = 0; l < 45; l++) for (let c = 0; c < 100; c++) { dense.push([c * 40, 100 + 14 * l, 'ab']); runs.push(run(c * 40, 100 + 14 * l, 'ab')); }
+  const skipped = async (lines, map) => {
+    const owner = { pdfDocument: { numPages: 1, getPage: async () => ({ getViewport: () => viewport, getTextContent: async () => ({ items: lines.map((l) => item(...l)) }) }) } };
+    const fn = new Function('pdfjsLib', 'buildTextRows', 'pageMap', 'placeMatches', 'matchesInMap', 'wrappedMatches', 'rowPieces', 'rowBaselines', 'view', scanText + '\nreturn scanTextMatches;');
+    return (await fn(pdfjsLib, buildTextRows, async () => map, placeMatches, matchesInMap, wrappedMatches, rowPieces, detect.rowBaselines, owner)([re('john smith')], owner)).skipped;
+  };
+  assert.deepEqual(await skipped(dense, null), [1], 'the estimate\'s reading was past the budget and the page was not named');
+  assert.deepEqual(await skipped(LINES, mapOf(runs)), [1], 'the map\'s reading was past the budget and the page was not named');
+  assert.equal(await skipped(LINES, mapOf(LINES.map((l) => run(...l)))), undefined);
+  // The words, and both places the dialog can end: with marks (the toast) and with none (its status line).
+  const from = APP.indexOf('function wrapNote(');
+  const wrapNote = new Function(APP.slice(from, APP.indexOf('\n}\n', from) + 2) + '\nreturn wrapNote;')();
+  assert.equal(wrapNote(undefined), '');
+  assert.equal(wrapNote([]), '');
+  assert.equal(wrapNote([3]), ' Page 3: too many columns to search for a match split across lines — check it by eye.');
+  assert.equal(wrapNote([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), ' Pages 1, 2, 3, 4, 5, 6, 7, 8 and 2 more: too many columns to search for a match split across lines — check them by eye.');
+  const find = APP.slice(APP.indexOf('els.rtFind.onclick'), from);
+  assert.match(find, /No matches found[^\n]*wrapNote\(marks\.skipped\)/, 'a search that found nothing does not say which pages it could not fully search');
+  assert.match(find, /toast\([^\n]*wrapNote\(marks\.skipped\)/, 'a search that marked matches does not say which pages it could not fully search');
+});

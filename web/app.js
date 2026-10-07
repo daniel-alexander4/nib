@@ -9146,8 +9146,8 @@ function panBlocked() {
 // write the wrap's inline cursor at their own arm and disarm sites; watching that attribute
 // reaches all of them without a call at each, and the two writers of the pdf.js editor mode call this directly.
 function reflectPanCursor() {
-  // An attribute and not a class: the wrap's className is `has-doc` or empty, and tests at two
-  // tiers read it whole.
+  // An attribute and not a class: tests at two tiers read the wrap's className whole — `has-doc` or
+  // empty, with `signing-locked` beside it on a locked document (applySignLock).
   els.viewerWrap.toggleAttribute('data-no-pan', panBlocked());
   reflectArmedChip(); // the same fact, said: a tool owns the pointer, and this is which
 }
@@ -9699,14 +9699,19 @@ async function scanTextMatches(patterns, owner = view) {
     }
     // A match that wraps a line (ADR-095) is on no one row: it was found by neither this reading nor the map's, and
     // the name it was searched for stayed on the page. One mark on each line it is on.
-    for (const parts of wrappedMatches(rowPieces(rows), patterns)) {
+    const wrapped = wrappedMatches(rowPieces(rows), patterns);
+    for (const parts of wrapped) {
       for (const p of parts) markOver(p.piece.ref, p.piece.k[p.from], p.piece.k[p.to - 1]);
     }
     // Place this page's matches from the map where it can (ADR-090; an OCR layer's words are read out to the next
     // word, ADR-091). The estimates above stand for whatever it cannot: a page the server cannot map, a turned run.
     const map = await pageMap(owner, n);
+    const inMap = map ? matchesInMap(map, patterns) : [];
+    // A page with more columns than either reading will search across the line ends of (ADR-100) is NAMED: a match
+    // that wraps a line there may be unmarked, and the search must not read as complete.
+    if (wrapped.skipped || inMap.skipped) (marks.skipped ||= []).push(n);
     if (!map) continue;
-    const placed = placeMatches(marks.splice(first).map((m) => [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]), matchesInMap(map, patterns));
+    const placed = placeMatches(marks.splice(first).map((m) => [m.fx, m.fy, m.fx + m.fw, m.fy + m.fh]), inMap);
     for (const r of placed.boxes) marks.push({ page: n, fx: r[0], fy: r[1], fw: r[2] - r[0], fh: r[3] - r[1] });
     marks.exact = (marks.exact || 0) + placed.exact;
   }
@@ -9739,7 +9744,7 @@ els.rtFind.onclick = async () => {
   const marks = await scanTextMatches(patterns, owner);
   if (owner !== view) return;
   if (!marks.length) {
-    els.rtStatus.textContent = 'No matches found in the text layer (a scan? run OCR first).';
+    els.rtStatus.textContent = 'No matches found in the text layer (a scan? run OCR first).' + wrapNote(marks.skipped);
     return;
   }
   const pages = new Set(marks.map((m) => m.page));
@@ -9749,8 +9754,17 @@ els.rtFind.onclick = async () => {
   // Said, because the two kinds of box are not equally tight: an estimated one over-covers on purpose.
   const est = marks.length - (marks.exact || 0);
   const how = est ? ' ' + est + ' placed by estimate (wider on purpose).' : '';
-  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.` + how);
+  toast(`${marks.length} match(es) marked on ${pages.size} page(s) — review the boxes (scroll to see them all), then “Apply redactions”.` + how + wrapNote(marks.skipped));
 };
+
+// wrapNote names the pages a search did not fully look across the line ends of (ADR-100): a table with so many
+// columns that joining the end of each to the start of each on the next line is past the search's budget. A match
+// inside one line is found there as anywhere; one that wraps a line may not be, and the user is told where to look.
+function wrapNote(pages) {
+  if (!pages || !pages.length) return '';
+  const shown = pages.slice(0, 8).join(', ') + (pages.length > 8 ? ` and ${pages.length - 8} more` : '');
+  return ` Page${pages.length > 1 ? 's' : ''} ${shown}: too many columns to search for a match split across lines — check ${pages.length > 1 ? 'them' : 'it'} by eye.`;
+}
 
 // --- split by hand-drawn regions ---------------------------------------------
 // Draw rectangles on the current page; on Apply, each becomes its own page (the
