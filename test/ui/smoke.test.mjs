@@ -68,3 +68,17 @@ test('the app boots without console errors it should not have', async () => {
   const unexpected = consoleErrors.filter((e) => !/vendor\/pdfjs\/images\//.test(e));
   assert.deepEqual(unexpected, [], 'unexpected console errors during boot');
 });
+
+// Mark Up leads with OCR: a scan has no text until it is read, and detecting fields, editing text and searching to
+// redact all work on that text. Entering a mode opens its first card, so this is also what Mark Up lands on.
+test('Mark Up lists Recognize Text (OCR) first, and lands on it', async () => {
+  await h.showSidebar();
+  await h.mode('markup');
+  const got = await page.evaluate(() => ({
+    labels: [...document.querySelectorAll('.tbtab[data-tab="markup"] > .tbgroup')].map((g) => g.dataset.label),
+    open: [...document.querySelectorAll('.sbhead.groupcard[aria-expanded="true"]')].map((x) => x.textContent.trim()),
+  }));
+  assert.deepEqual(got.labels, ['Recognize Text (OCR)', 'Detect & Fill Fields', 'Edit Page Text', 'Annotate & Draw', 'Fill Forms from Data']);
+  assert.deepEqual(got.open, ['Recognize Text (OCR)'], 'entering Mark Up did not open its first card');
+  await h.mode('file');
+});
