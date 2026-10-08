@@ -8,9 +8,11 @@
 
 **A complete PDF toolkit that runs entirely on your own machine.** Fill any form,
 make scans searchable with on-device OCR in 41 languages, truly redact, compare
-revisions visually, sign and timestamp, convert to and from Office and PDF/A,
-pull tables out to spreadsheets, and reshape pages — all from a desktop-style app
-*or* a scriptable command line.
+revisions visually, rewrite a paragraph and have it re-wrap in the document's own
+font, tag a document for screen readers and check it against PDF/UA, sign and
+timestamp — alone, with one peer, or in a ceremony of up to 32 — convert to and
+from Office and PDF/A, pull tables out to spreadsheets, and reshape pages — all
+from a desktop-style app *or* a scriptable command line.
 
 And it's **yours**: free and open source under the AGPL, a single self-contained
 binary with no installer, no account, no subscription, and no cloud. Nothing you
@@ -31,11 +33,16 @@ How Nib's feature set lines up against the three best-known PDF editors.
 | On-device OCR *(41 languages)* | ✅ | ✅ | ✅ | ✅ |
 | True redaction + pattern / PII search-and-redact | ✅ | ✅ | ✅ | ✅ |
 | Visual **and** text document compare | ✅ | ✅ | ✅ | 🟡 |
-| Edit existing text with paragraph reflow | 🟡 *(cover & replace)* | ✅ | ✅ | ✅ |
+| Edit existing text with paragraph reflow ¶ | ✅ | ✅ | ✅ | ✅ |
+| Accessibility check against PDF/UA ◊ | ✅ | ✅ | ✅ | ✅ |
+| Tag an untagged document automatically ◊ | 🟡 *(headings, paragraphs, lists)* | ✅ | ✅ | ❌ |
+| Review and correct the tag tree and reading order ◊ | 🟡 *(no new or deleted tags)* | ✅ | ✅ | ✅ |
 | Digital signature with your own certificate | ✅ | ✅ | ✅ | ✅ |
 | RFC-3161 trusted timestamp | ✅ | ✅ | ✅ | ✅ |
 | **OpenTimestamps** (Bitcoin) proof of *when* | ✅ | ❌ | ❌ | ❌ |
-| **Peer-to-peer co-signing**, no server | ✅ | ❌ | ❌ | ❌ |
+| **Peer-to-peer co-signing**, no server \* | ✅ | ❌ | ❌ | ❌ |
+| **Multi-party signing ceremony** (3–32), no server or account \* | ✅ | ❌ | ❌ | ❌ |
+| **Send a document out to be signed**, no cloud \* | ✅ | ❌ | ❌ | ❌ |
 | PDF/A archival export | ✅ | ✅ | ✅ | ✅ |
 | Office ↔ PDF conversion † | ✅ | ✅ | ✅ | 🟡 |
 | Table → spreadsheet (XLSX / ODS / CSV) | ✅ | ✅ | ✅ | 🟡 |
@@ -49,10 +56,11 @@ How Nib's feature set lines up against the three best-known PDF editors.
 
 <sub>† Office conversion uses LibreOffice if it's installed — optional, detected at runtime, never bundled. ‡ One portable binary for Linux / macOS / Windows (PDF-XChange Editor is Windows-only). § No account, no telemetry, no analytics, and every editing feature works with no network at all. A few features do reach the network — timestamping, timestamp verification, opening a document by URL, remote co-signing, and the update check — each one started by you and never in the background. All of them are listed in [What leaves your computer](#what-leaves-your-computer).</sub>
 
-**Accessibility is compared separately**, with Acrobat Pro only, in
-[docs/accessibility-parity.md](docs/accessibility-parity.md). There, feature by feature, each Acrobat claim
-is quoted from Adobe's documentation, each Nib claim names the test that shows it, and every gap is listed.
-It has no row in the table above because Foxit and PDF-XChange were not measured.
+<sub>¶ [Reflow a paragraph](#reflow-a-paragraph) re-sets changed words in the document's own font, size, spacing and justification, removes the old words rather than covering them, and carries the text below — and what is anchored to it — down the page and onto the next. It changes only what it can set exactly: a paragraph it cannot rewrite faithfully is refused with the reason, and the older cover-and-replace [Edit text](#edit-existing-text) is there for those.</sub>
+
+<sub>◊ The three accessibility rows are summaries. Nib's checker covers 105 of the 106 PDF/UA-1 rules the reference validator veraPDF evaluates and never shows a clause it could not check as a pass; it has no WCAG check and offers no automatic fix. Its tagger proposes headings, paragraphs and list items for you to review before anything is written — no tables or figures — and refuses a document that is already tagged. Its tree editor changes an element's type, alt text, header scope and place, and marks decoration; it cannot add or delete a tag. For Acrobat Pro every one of these is laid out feature by feature in [docs/accessibility-parity.md](docs/accessibility-parity.md), each Acrobat claim quoted from Adobe's documentation, each Nib claim naming the test that shows it, and every gap listed. The Foxit and PDF-XChange columns are read from those vendors' own feature lists, not measured: PDF-XChange Editor Plus lists a tags pane, a reading-order pane and an accessibility check, and no automatic tagging.</sub>
+
+<sub>\* The three signing rows are about doing it *without a service*. Acrobat and Foxit both offer send-to-sign and multi-party workflows — through Acrobat Sign and Foxit eSign, which means their servers, their accounts, and your document on someone else's machine. Nib's equivalents run between the signers' own copies of Nib, pinned to keys the signers compared themselves.</sub>
 
 Acrobat, Foxit and PDF-XChange are mature commercial editors that do plenty Nib
 doesn't aim to — full WYSIWYG content editing, prepress, cloud collaboration. The
