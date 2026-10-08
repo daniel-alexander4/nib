@@ -468,6 +468,14 @@ input[type="search"] { width: 100%; }
    text on a lighter ground again. Same rule that keeps the active tab's label --text: colour as the
    indicator, text as the message. The focus ring is spelled out because the stylesheet has no
    global a:focus-visible (the only other anchor rule is #outline a). */
+/* Settings → Updates → Download folder (ADR-102). A card is a wrapping flex COLUMN, so one child
+   wider than the card widens the whole column and everything in it runs off the card's edge:
+   measured at the default 200px sidebar, the text box's own 260px did exactly that, and cut the
+   line that says which folder is in use — the one thing the field is there to show. So nothing in
+   this card is wider than the card, the box fills it, and a path breaks wherever it has to. */
+.tbgroup[data-label="Updates"] > * { max-width: 100%; }
+#downloadDirInput { display: block; width: 100%; min-width: 0; margin-top: 4px; }
+#downloadDirWhere, #downloadDirError { overflow-wrap: anywhere; }
 .libhint a { color: var(--text); text-decoration: underline; }
 .libhint a:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
 /* The setup sheet's "which document" line (/pending 413). Larger than .libhint because it is the

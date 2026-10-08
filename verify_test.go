@@ -795,6 +795,11 @@ func TestNoBuildTaggedSiblingIsAStub(t *testing.T) {
 		// Windows has no single filesystem root; off Windows "/" is one and no jump list is needed.
 		"internal/server/roots_windows.go": "GetLogicalDrives",
 		"internal/server/roots_other.go":   "already contains every mounted",
+		// The system Downloads folder and the default browser (ADR-102): Windows asks the shell and
+		// the registry; elsewhere the desktop's own file is parsed, and macOS's unread default
+		// browser is a gap the file declares.
+		"internal/browser/sysfolders_windows.go": "KnownFolderPath",
+		"internal/browser/sysfolders_other.go":   "xdgUserDir",
 	}
 	for path, want := range must {
 		b, err := os.ReadFile(path)

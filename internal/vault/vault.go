@@ -181,6 +181,11 @@ type Settings struct {
 	// voice, which is the harmless class, not the ceremony-secrets class the version exists for.
 	ReadAloudVoice string  `json:"readAloudVoice,omitempty"`
 	ReadAloudRate  float64 `json:"readAloudRate,omitempty"`
+	// DownloadDir is the folder a downloaded update is written to (ADR-102). Empty — the default and
+	// the absence, per ViewLayout's rule — means "wherever the browser Nib's window runs in downloads
+	// to". Stored absolute and cleaned; the server checks it is still a folder each time it is used,
+	// and a build that drops the key returns the user to the browser's folder.
+	DownloadDir string `json:"downloadDir,omitempty"`
 	// HiddenModes are the main-menu tabs this user has switched OFF (ADR-036). Empty means every
 	// mode shows, which is the default and the absence, per ViewLayout's rule above.
 	//

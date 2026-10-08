@@ -139,9 +139,9 @@ const els = {
   encryptPw2: $('encryptPw2'), encryptGo: $('encryptGo'), encryptCancel: $('encryptCancel'), encryptError: $('encryptError'),
   backupBtn: $('backupBtn'), restoreInput: $('restoreInput'),
   updatePill: $('updatePill'), updateGet: $('updateGet'), updateDismiss: $('updateDismiss'),
-  downloadModal: $('downloadModal'), dlWhat: $('dlWhat'), dlDir: $('dlDir'), dlWhere: $('dlWhere'),
+  downloadModal: $('downloadModal'), dlWhat: $('dlWhat'), dlWhere: $('dlWhere'),
   dlProgress: $('dlProgress'), dlError: $('dlError'), dlCancel: $('dlCancel'),
-  dlReveal: $('dlReveal'), dlGo: $('dlGo'),
+  dlReveal: $('dlReveal'),
   manageKeysBtn: $('manageKeysBtn'), keysModal: $('keysModal'), keysList: $('keysList'),
   keyCandidates: $('keyCandidates'), keyPaste: $('keyPaste'), keyAddPath: $('keyAddPath'),
   keyAddBtn: $('keyAddBtn'), keyCreateBtn: $('keyCreateBtn'), keysClose: $('keysClose'),
@@ -241,6 +241,7 @@ const els = {
   openModal: $('openModal'), openDir: $('openDir'), openHere: $('openHere'),
   openUp: $('openUp'), openList: $('openList'), openCancel: $('openCancel'),
   autoUpdateChk: $('autoUpdateChk'),
+  downloadDirInput: $('downloadDirInput'), downloadDirWhere: $('downloadDirWhere'), downloadDirError: $('downloadDirError'),
   aboutBtn: $('aboutBtn'), aboutModal: $('aboutModal'), aboutTitle: $('aboutTitle'),
   aboutMain: $('aboutMain'), aboutDocText: $('aboutDocText'), aboutVersion: $('aboutVersion'),
   aboutLicenseBtn: $('aboutLicenseBtn'), aboutNoticesBtn: $('aboutNoticesBtn'),
@@ -589,6 +590,7 @@ function applyStatus(st) {
     els.autoUpdateChk.checked = st.autoUpdate;
     els.autoUpdateChk.disabled = st.updateCheckLocked;
     els.autoUpdateChk.parentElement.title = st.updateCheckLocked ? 'Forced off by NIB_NO_UPDATE_CHECK' : '';
+    applyDownloadPlace(st);
     // Always show the installed version, yellow (status unknown) until a check
     // runs; a check turns it green (up to date) or red (update available).
     showVersionBadge(st.version);
@@ -857,7 +859,7 @@ function showVersionBadge(version) {
   els.updatePill.hidden = false;
 }
 
-// startDownload opens the download dialog (ADR-039).
+// startDownload downloads the offered release and says where it is going (ADR-039, ADR-102).
 //
 // **It used to be `location.assign(d.downloadUrl)`** — the BROWSER fetched the asset, so Nib never
 // saw the bytes and could report neither progress nor where the file went. The page cannot fix that
@@ -865,43 +867,55 @@ function showVersionBadge(version) {
 // hop, so fetching it here to watch the bytes is blocked outright. The server does the transfer and
 // pushes progress on the window stream.
 //
+// **It asks nothing (ADR-102).** ADR-039's dialog had a Folder box and a Download button; Dan,
+// 2026-10-07: *"It should not ask me where I want to download it. It should pop up a message saying
+// Downloading to <folder>."* The request carries no folder — the server resolves it (Settings, else
+// the browser's own download folder) and its answer is what the popup names.
+//
 // The no-asset case is unchanged: no build matches this OS/arch, so there is nothing to download
 // and the release page opens in a tab.
-function startDownload(d) {
+async function startDownload(d) {
   if (!d.downloadUrl) {
     window.open(d.url, '_blank', 'noopener');
     return;
   }
-  dlLatest = d.latest;
   els.dlWhat.textContent = `Nib v${d.latest} for this computer. You have v${d.current}.`;
-  els.dlProgress.textContent = '';
+  els.dlWhere.textContent = '';
+  els.dlProgress.textContent = 'Starting…';
+  dlShownText = 'Starting…';
+  dlEnded = false;
   els.dlError.hidden = true;
   els.dlReveal.hidden = true;
-  els.dlGo.hidden = false;
-  els.dlGo.disabled = false;
-  dlShownText = '';
   els.downloadModal.hidden = false;
-  // The folder the file will land in, resolved by the server so the path shown is the path
-  // written — the same door the Save As dialog uses, and the reason this dialog can name a
-  // destination at all where `downloadBlob` can only say "check your Downloads folder".
-  showDownloadDir(els.dlDir.value);
-}
-
-// dlLatest is the version the open dialog is offering; dlShownText is the last progress line
-// actually rendered, so an unchanged line is never written back into an aria-live region.
-let dlLatest = '';
-let dlShownText = '';
-
-// showDownloadDir asks the server what folder a path resolves to and displays it. An empty box
-// means ~/nib, which the server fills in — the client never guesses a path or joins one.
-async function showDownloadDir(path) {
+  const refuse = (msg) => {
+    els.dlError.textContent = msg;
+    els.dlError.hidden = false;
+    els.dlProgress.textContent = '';
+    dlShownText = '';
+  };
   try {
-    const res = await apiFetch(`/api/listdir?path=${encodeURIComponent(path || '')}`);
-    if (!res.ok) return;
-    const info = await res.json();
-    els.dlWhere.textContent = `Saves to ${info.path}`;
-  } catch { /* the dialog still works; the destination line just stays as it was */ }
+    const res = await apiFetch('/api/update/download', { method: 'POST' });
+    if (!res.ok) {
+      refuse(await errText(res, 'Could not start the download.'));
+      // 412 is "that file is already in the folder": the sentence names both, and the server
+      // remembers which folder it meant, so it can be shown without this page naming a path.
+      if (res.status === 412) els.dlReveal.hidden = false;
+      return;
+    }
+    // Progress arrives on the window stream, not in this response: the request returns as soon as
+    // the transfer is under way, so a ~95 MB download does not hold a request open in silence.
+    const started = await res.json();
+    // A small file can finish before this answer is read; "Downloaded to …" then stands alone.
+    if (!dlEnded) els.dlWhere.textContent = `Downloading to ${started.dir}`;
+  } catch {
+    refuse('Could not start the download.');
+  }
 }
+
+// dlShownText is the last progress line actually rendered, so an unchanged line is never written
+// back into an aria-live region; dlEnded is whether this popup's download has reached an end.
+let dlShownText = '';
+let dlEnded = false;
 
 // applyDownloadEvent renders a `download` event from the window stream.
 //
@@ -913,21 +927,27 @@ function applyDownloadEvent(ev) {
   let line = '';
   if (ev.status === 'running') {
     // With no stated length there is no percent, only bytes so far (/pending 646).
-    if (ev.total > 0) line = `Downloading — ${ev.percent}% of ${Math.round(ev.total / 1048576)} MB`;
-    else if (ev.done >= 1048576) line = `Downloading — ${Math.floor(ev.done / 1048576)} MB so far`;
-    else line = 'Downloading…';
+    // The line above this one already says "Downloading to <folder>" (ADR-102), so this is the
+    // amount alone.
+    if (ev.total > 0) line = `${ev.percent}% of ${Math.round(ev.total / 1048576)} MB`;
+    else if (ev.done >= 1048576) line = `${Math.floor(ev.done / 1048576)} MB so far`;
+    else line = 'Starting…';
   } else if (ev.status === 'done') {
     line = `Downloaded to ${ev.path}`;
     els.dlReveal.hidden = false;
-    els.dlGo.hidden = true;
   } else if (ev.status === 'cancelled') {
     line = 'Download cancelled.';
-    els.dlGo.disabled = false;
   } else if (ev.status === 'failed') {
     line = '';
-    els.dlError.textContent = ev.problem || 'The download did not finish.';
+    // No button to press again: the pill is how a download starts, and it starts a fresh one.
+    const why = ev.problem || "the download did not finish";
+    els.dlError.textContent = `${why.charAt(0).toUpperCase()}${why.slice(1)}. Close this and click the version number again to retry.`;
     els.dlError.hidden = false;
-    els.dlGo.disabled = false;
+  }
+  if (ev.status !== 'running') {
+    // "Downloading to …" is no longer true once it has ended, however it ended.
+    dlEnded = true;
+    els.dlWhere.textContent = '';
   }
   if (line !== dlShownText) {
     els.dlProgress.textContent = line;
@@ -977,6 +997,7 @@ async function runUpdateCheck(auto) {
   // `confirm()` on the rule that custom modals are for structured input only — and a yes/no was all
   // the old flow had to ask, because the browser did the rest. This one reports progress, names a
   // destination and offers a next step, which is structured output the idiom cannot carry.
+  // Since ADR-102 it asks nothing at all: the click on the pill IS the request to download.
   if (!auto) startDownload(d);
 }
 
@@ -993,44 +1014,12 @@ els.dlCancel.onclick = async () => {
   } catch { /* the dialog is closed either way; the server stops on its own context */ }
 };
 
-els.dlGo.onclick = async () => {
-  els.dlGo.disabled = true;
-  els.dlError.hidden = true;
-  dlShownText = '';
-  els.dlProgress.textContent = 'Starting…';
-  const body = new FormData();
-  body.append('dir', els.dlDir.value.trim());
-  try {
-    const res = await apiFetch('/api/update/download', { method: 'POST', body });
-    if (!res.ok) {
-      els.dlError.textContent = await errText(res, 'Could not start the download.');
-      els.dlError.hidden = false;
-      els.dlProgress.textContent = '';
-      dlShownText = '';
-      els.dlGo.disabled = false;
-      return;
-    }
-    // Progress arrives on the window stream, not in this response: the request returns as soon as
-    // the transfer is under way, so a ~95 MB download does not hold a request open in silence.
-    const started = await res.json();
-    els.dlWhere.textContent = `Saves to ${started.path}`;
-  } catch {
-    els.dlError.textContent = 'Could not start the download.';
-    els.dlError.hidden = false;
-    els.dlGo.disabled = false;
-  }
-};
-
 els.dlReveal.onclick = async () => {
   try {
     const res = await apiFetch('/api/update/reveal', { method: 'POST' });
     if (!res.ok) toast(await errText(res, 'Could not open that folder.'));
   } catch { toast('Could not open that folder.'); }
 };
-
-// Re-resolve the destination as the user edits it, so the line under the box is always the folder
-// the server would actually write to rather than the text typed at it.
-els.dlDir.onchange = () => showDownloadDir(els.dlDir.value);
 
 els.updateDismiss.onclick = () => { els.updatePill.hidden = true; };
 // The pill is the manual check: any click (yellow, green, or red) re-checks —
@@ -7827,7 +7816,9 @@ const saveAsDirEls = () => ({ dir: els.saveAsDir, here: els.saveAsHere, up: els.
 // over two near-identical browsers, both joining with "/" — which is why a
 // Windows path displayed and behaved inconsistently.
 async function browseDir(path, t = saveAsDirEls(), onFile = null) {
-  const res = await apiFetch('/api/listdir' + (path ? '?path=' + encodeURIComponent(path) : ''));
+  // One literal, so the request-field guard can read `path` off it: until ADR-102 the only sender
+  // it could see was the download dialog's, and an empty `path` is the server's default either way.
+  const res = await apiFetch(`/api/listdir?path=${encodeURIComponent(path || '')}`);
   if (!res.ok) return toast('could not list folder');
   const info = await res.json();
   t.dir.value = info.path;
@@ -11140,6 +11131,44 @@ async function saveSettings(body) {
   } catch { toast('Could not save settings'); }
 }
 els.autoUpdateChk.onchange = () => saveSettings({ checkUpdatesOnStartup: els.autoUpdateChk.checked });
+
+// ── Settings → Updates → Download folder (ADR-102) ───────────────────────────
+//
+// applyDownloadPlace shows what the server resolved: the folder an update will be written to and
+// where that folder came from. The page words the source and decides nothing — the four names are
+// the server's (`downloadDirFrom`), and so is the folder.
+function applyDownloadPlace(st) {
+  els.downloadDirInput.value = st.downloadDirSet || '';
+  if (!st.downloadDir) { els.downloadDirWhere.textContent = ''; return; }
+  const from = st.downloadDirFrom;
+  let why;
+  if (from === 'setting') why = 'set here';
+  else if (from === 'browser') why = `${st.downloadDirBrowser || 'your browser'}’s download folder`;
+  else if (from === 'system') why = 'your Downloads folder';
+  else why = 'Nib’s own folder, because no Downloads folder was found';
+  // A folder set here and since removed is skipped, not recreated, and the line says so.
+  const lead = (st.downloadDirSet && from !== 'setting')
+    ? `${st.downloadDirSet} is no longer there, so updates download to`
+    : 'Updates download to';
+  els.downloadDirWhere.textContent = `${lead} ${st.downloadDir} — ${why}.`;
+}
+
+// Not `saveSettings`: that one toasts "Could not save settings", and this refusal is a sentence
+// about what was typed, which belongs beside the box. On success the line is read back from the
+// server, because the folder now in use is its answer and not the text in the box.
+els.downloadDirInput.onchange = async () => {
+  const fail = (msg) => { els.downloadDirError.textContent = msg; els.downloadDirError.hidden = false; };
+  try {
+    const res = await apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ downloadDir: els.downloadDirInput.value.trim() }),
+    });
+    if (!res.ok) { fail(await errText(res, 'Could not save that folder.')); return; }
+    els.downloadDirError.hidden = true;
+    const st = await apiFetch('/api/status', { unpinned: true });
+    if (st.ok) applyDownloadPlace(await st.json());
+  } catch { fail('Could not save that folder.'); }
+};
 
 // ── Advanced features (`/pending 451`) ───────────────────────────────────────
 //

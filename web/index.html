@@ -586,6 +586,14 @@
             </div>
       <div class="tbgroup" data-label="Updates" data-fold="3">
 <label class="menuitem"><input id="autoUpdateChk" type="checkbox" /> Check for updates on startup</label>
+      <!-- Where an update is downloaded to (ADR-102). Empty follows the browser Nib's window is
+           running in; the line under the box is the folder that will actually be used and where
+           that came from, both from the server. A folder that is not there is refused with a
+           sentence shown here, never stored. -->
+      <label class="menuitem">Download folder
+        <input id="downloadDirInput" type="text" placeholder="Same as your browser" aria-describedby="downloadDirWhere" /></label>
+      <p id="downloadDirWhere" class="libhint"></p>
+      <p id="downloadDirError" class="cererror" role="alert" hidden></p>
             </div>
       <!-- Advanced features (`/pending 451`). Dan, 2026-09-10: "default off. menus hidden."
 
@@ -1605,9 +1613,13 @@
     </div>
   </div>
 
-  <!-- Downloading a new release (ADR-039). The pill used to hand the URL to the browser, which
-       meant no progress, no destination and no next step — a page cannot watch a transfer it does
-       not own, and cannot read the browser's download folder.
+  <!-- Downloading a new release (ADR-039, ADR-102). The pill used to hand the URL to the browser,
+       which meant no progress, no destination and no next step — a page cannot watch a transfer
+       it does not own.
+
+       **It asks nothing (ADR-102).** Clicking the pill starts the download and this says where it
+       is going: the browser's own download folder unless Settings names another. The folder is the
+       server's answer, never typed here and never worked out here.
 
        **It offers "Show in folder", never "Run".** `build.sh` publishes no checksum and no
        signature, so nothing can verify the bytes; Nib writes the file non-executable and stops
@@ -1619,10 +1631,10 @@
        abort: Escape CLICKS that button rather than hiding the dialog, so the cleanup runs. -->
   <div id="downloadModal" hidden>
     <div class="sigcard">
-      <h3>Download Nib</h3>
+      <h3>Nib update</h3>
       <p id="dlWhat" class="libhint"></p>
-      <label>Folder <input id="dlDir" type="text" placeholder="~/nib" /></label>
-      <p id="dlWhere" class="libhint"></p>
+      <!-- "Downloading to <folder>" — written once per download, when the server has said where. -->
+      <p id="dlWhere" role="status" aria-live="polite"></p>
       <!-- role="status" + aria-live="polite", and the client dedupes on rendered text before
            writing here — the same guard `#srvWaitTiers` carries, so a percentage tick does not
            re-announce the region on every frame. -->
@@ -1632,7 +1644,6 @@
         <span class="grow"></span>
         <button id="dlCancel">Cancel</button>
         <button id="dlReveal" hidden>Show in folder</button>
-        <button id="dlGo" class="primary">Download</button>
       </div>
     </div>
   </div>

@@ -43,10 +43,14 @@ import (
 // itself") stands, and the UI offers "Show in folder" rather than "Run".
 //
 // ── The URL is the SERVER's, never the client's ──────────────────────────────
-// The request carries a destination folder and nothing else. The asset URL is re-resolved here by
-// the same `latestRelease` + `assetURL` the check uses. Accepting a URL from the client would turn
-// an authenticated loopback route into a general "fetch this and write it to my disk" primitive —
-// the request body would choose both the host and the path.
+// The asset URL is re-resolved here by the same `latestRelease` + `assetURL` the check uses.
+// Accepting a URL from the client would turn an authenticated loopback route into a general "fetch
+// this and write it to my disk" primitive — the request body would choose both the host and the path.
+//
+// ── And so is the FOLDER (ADR-102) ───────────────────────────────────────────
+// The request carries nothing. Until ADR-102 it carried a destination folder the dialog asked for;
+// now `downloadDir` decides — Settings, else the browser's own download folder, else the system's —
+// and a `dir` a client still sends is not read.
 
 // maxAssetBytes bounds what this route will write. The largest published asset today is ~95 MB
 // (measured: 94,658,744 bytes for a linux-amd64 build); 512 MiB is the same ceiling ADR-005 puts on
@@ -85,6 +89,31 @@ type downloadState struct {
 	ev     downloadEvent
 	watch  chan struct{}
 	cancel context.CancelFunc
+	// present is the file a download was REFUSED for because it is already there (the route's 412),
+	// so reveal can show its folder (ADR-102). Server-resolved, like `ev.Path`; cleared when a
+	// download begins.
+	present string
+}
+
+// sawPresent records the file the last refused download found in its way.
+func (d *downloadState) sawPresent(path string) {
+	d.mu.Lock()
+	d.present = path
+	d.mu.Unlock()
+}
+
+// revealable is the file whose folder reveal may open: the one a refusal just named, else the
+// finished download. "" when there is neither.
+func (d *downloadState) revealable() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.present != "" {
+		return d.present
+	}
+	if d.ev.Status == "done" {
+		return d.ev.Path
+	}
+	return ""
 }
 
 func (d *downloadState) changedLocked() {
@@ -128,6 +157,7 @@ func (d *downloadState) begin(cancel context.CancelFunc, path string, total int6
 	}
 	d.ev = downloadEvent{Status: "running", Path: path, Total: total}
 	d.cancel = cancel
+	d.present = ""
 	d.changedLocked()
 	return true
 }
@@ -238,16 +268,14 @@ func assetName(rawURL string) (string, bool) {
 	return last, true
 }
 
-// handleUpdateDownload fetches the release asset for this machine into a folder the user chose.
+// handleUpdateDownload fetches the release asset for this machine into the folder `downloadDir`
+// resolves (ADR-102). Nothing in the request chooses it.
 //
 // **`requireUnlocked` + CSRF, and NOT the check route's `requirePublicLoopback`.** That route is
 // public because it only queries out; this one writes bytes into the user's filesystem, which is the
 // same act `POST /api/write` performs and takes the same guard.
 func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
-	dir, ok := destDir(w, r)
-	if !ok {
-		return
-	}
+	dir := downloadDir(vaultFrom(r).Settings()).Dir
 	// Resolved HERE, never taken from the request — see the file header.
 	rel, err := latestRelease()
 	if err != nil {
@@ -282,7 +310,12 @@ func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
 	// 409, the same split `handleWriteFile` draws: 409 means "the server no longer holds this
 	// document" and the client hooks it to reconcile.
 	if _, err := os.Stat(target); err == nil {
-		httpError(w, http.StatusPreconditionFailed, "a file of that name is already there")
+		// The sentence names the file and the folder, because the popup has nothing else to say
+		// and nothing to choose (ADR-102) — and the server remembers which file it meant, so
+		// "Show in folder" can be offered without the request naming a path.
+		s.dl.sawPresent(target)
+		httpError(w, http.StatusPreconditionFailed,
+			name+" is already in "+dir+". Nothing was downloaded — move or delete that file to download it again.")
 		return
 	}
 	// SELF-OVERWRITE EXEMPT: this route replaces NOTHING, and there is no source to protect.
@@ -353,7 +386,9 @@ func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
 	// window stream. A synchronous response would hold a request open for ~95 MB and tell the user
 	// nothing until it ended.
 	go s.runDownload(resp, target)
-	writeJSON(w, map[string]any{"status": "started", "name": name, "path": target})
+	// `dir` is the folder the popup names ("Downloading to …"). Sent, so the page never works a
+	// folder out of a path — only the server knows the separator.
+	writeJSON(w, map[string]any{"status": "started", "name": name, "path": target, "dir": dir})
 }
 
 // runDownload streams the body to disk, reporting progress, and leaves exactly one terminal state.
@@ -432,23 +467,29 @@ func (s *Server) handleUpdateDownloadCancel(w http.ResponseWriter, r *http.Reque
 // **It takes no path from the request**, for the reason the download takes no URL: a route that
 // opened whatever folder a caller named would be a general "show me this directory" primitive
 // reachable from any page in the user's browser that got past the guard. The only folder it will
-// open is the one holding the download this process just wrote.
+// open is the one holding the download this process just wrote — or, since ADR-102, the one it
+// just refused to write into because the file is already there. Both are folders the SERVER
+// resolved; neither is a caller's.
 //
 // **And it opens the folder, never the file.** `browser.OpenFolder` cannot express the latter; a
 // desktop asked to open a binary or a .deb may run it or hand it to an installer, which is the act
 // this feature refuses while nothing verifies the bytes.
 func (s *Server) handleUpdateReveal(w http.ResponseWriter, r *http.Request) {
-	ev := s.dl.snapshot()
-	if ev.Status != "done" || ev.Path == "" {
+	path := s.dl.revealable()
+	if path == "" {
 		httpError(w, http.StatusConflict, "there is no finished download to show")
 		return
 	}
-	if err := nibbrowser.OpenFolder(filepath.Dir(ev.Path)); err != nil {
+	if err := openFolder(filepath.Dir(path)); err != nil {
 		httpError(w, http.StatusInternalServerError, "could not open that folder")
 		return
 	}
 	writeJSON(w, map[string]any{"status": "ok"})
 }
+
+// openFolder is the desktop's file manager. A var so a test can see which folder reveal asked for
+// without one opening.
+var openFolder = nibbrowser.OpenFolder
 
 // marshalDownload is the stream's payload for this state.
 func marshalDownload(ev downloadEvent) ([]byte, error) { return json.Marshal(ev) }

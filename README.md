@@ -1403,11 +1403,22 @@ the version pill still checks either way). Nib only notifies and downloads — i
 itself; you apply the update the way you installed (`apt` / `install.sh`, or by
 swapping the binary).
 
-When a newer release exists, clicking the pill opens a download window: it shows **which folder the
-file will land in** (`~/nib` unless you change it), reports progress while it downloads, and when it
-finishes gives you **Show in folder**. Nib fetches the build itself rather than handing the job to
-your browser, which is what lets it tell you where the file went — a web page cannot see your
-browser's download folder.
+When a newer release exists, clicking the pill downloads it. Nib does not ask where: a window says
+**Downloading to** and the folder, reports progress, and when it finishes gives you **Show in
+folder**. The folder is **your browser's own download folder** — the one set in the browser Nib's
+window is running in (Chrome, Chromium, Edge, Brave or Firefox), or your system's Downloads folder
+when that browser has none set or Nib does not know the browser. To use a different folder, type it
+in **Settings → Updates → Download folder**; the line under the box always shows the folder that
+will be used and where it came from. If a file of that name is already in the folder, Nib says so
+and downloads nothing.
+
+To learn the browser's folder, Nib reads **only these settings and nothing else** from the browser's
+own files on your computer: which profile was last used and that profile's download folder (Chrome
+and its relatives: `profile.last_used`, `download.default_directory`); the default profile and its
+download-folder choice (Firefox: `browser.download.folderList`, `browser.download.dir`). It does not
+read history, bookmarks, passwords or anything else, keeps nothing it read except the folder, and
+sends it nowhere. Nib still fetches the build itself rather than handing the job to your browser,
+which is what lets it show progress and tell you where the file went.
 
 **It stops at the file, deliberately.** Nib does not run or install what it downloaded, and writes it
 without the execute bit. Nib's releases are published without checksums or signatures, so there is

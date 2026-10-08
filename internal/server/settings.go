@@ -25,6 +25,8 @@ type settingsRequest struct {
 	// the speed, 1 for the default (/pending 482). Both are stored as absence when they are the default.
 	ReadAloudVoice *string  `json:"readAloudVoice"`
 	ReadAloudRate  *float64 `json:"readAloudRate"`
+	// DownloadDir is the folder updates download to (ADR-102); "" returns the choice to the browser.
+	DownloadDir *string `json:"downloadDir"`
 	// HiddenModes is the whole set of switched-off main-menu tabs, sent as one list (ADR-036).
 	//
 	// A list rather than one id and a bool, for `Advanced`'s reason one field down: a partial
@@ -190,6 +192,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "invalid readAloudRate")
 			return
 		}
+	}
+	if req.DownloadDir != nil {
+		// Refused rather than stored when it is not a folder that is there, and the sentence is the
+		// one the field shows. Empty is stored as absence: "follow the browser" is the default.
+		dir, problem := checkDownloadDirSetting(*req.DownloadDir)
+		if problem != "" {
+			httpError(w, http.StatusBadRequest, problem)
+			return
+		}
+		apply(func(s *vault.Settings) { s.DownloadDir = dir })
 	}
 	if req.HiddenModes != nil {
 		// Refused rather than filtered, for the reason `viewLayout` above is: a request naming a

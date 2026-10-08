@@ -252,6 +252,14 @@ type statusResponse struct {
 	ViewLayout        string   `json:"viewLayout,omitempty"`     // pages (default, sent as empty) | continuous
 	ReadAloudVoice    string   `json:"readAloudVoice,omitempty"` // a browser voice name; empty is the browser default
 	ReadAloudRate     float64  `json:"readAloudRate,omitempty"`  // read-aloud speed; 0 is the default (1)
+	// Where a downloaded update goes, from the one door that decides it (ADR-102): the folder, which
+	// rung it came from (setting | browser | system | nib), the browser's name when it is known, and
+	// the text stored in Settings ("" when the browser is being followed). Sent once the vault is
+	// open — the setting lives in it.
+	DownloadDir        string `json:"downloadDir,omitempty"`
+	DownloadDirFrom    string `json:"downloadDirFrom,omitempty"`
+	DownloadDirBrowser string `json:"downloadDirBrowser,omitempty"`
+	DownloadDirSet     string `json:"downloadDirSet,omitempty"`
 	// Advanced is which exotic subsystems are switched on. **Always sent, never omitted** — the
 	// client hides a surface when a feature is off, and an absent object would be read as "the
 	// server did not say", which is a third state nothing implements. Nil before the seed runs,
@@ -293,6 +301,9 @@ func (s *Server) currentStatus() statusResponse {
 			}
 		}
 		st.HiddenModes = set.HiddenModes
+		place := downloadDir(set)
+		st.DownloadDir, st.DownloadDirFrom, st.DownloadDirBrowser = place.Dir, place.From, place.Browser
+		st.DownloadDirSet = set.DownloadDir
 		st.RecentHighlightColors = set.RecentHighlightColors
 		if set.DisableAutoUpdate {
 			st.AutoUpdate = false

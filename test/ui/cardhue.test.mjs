@@ -83,3 +83,40 @@ test('this file leaves the shared server as it found it', async () => {
   assert.equal(await page.evaluate(() => document.documentElement.dataset.cardhue), undefined,
     'the rotation did not come back — `all` is the ABSENCE of the attribute, and a leftover value follows this server into the next file');
 });
+
+// Settings → Updates → Download folder (ADR-102). Here rather than in a file of its own because
+// this file already drives the Settings cards, and a new file moves the harness's file-count pin.
+//
+// **Only a browser can see this.** The card is a wrapping flex column, so one child wider than the
+// card widens the column and its contents run off the edge. Measured before the stylesheet rule:
+// the box was 260px in a 199px card and the line naming the folder in use was cut mid-path. jsdom
+// has no layout, so its tests of the same field were green throughout.
+test('the Download folder field, its folder line and its refusal all fit inside the card', async () => {
+  await h.mode('settings');
+  await h.card('Updates');
+  // The line is the real server's answer for this machine, whatever folder that is.
+  await page.waitForFunction(() => /^Updates download to .+ — .+\.$/.test(document.getElementById('downloadDirWhere').textContent),
+    null, { timeout: 15000 });
+  // A folder that is not there: refused by the real route, in a sentence shown beside the box.
+  await page.fill('#downloadDirInput', '/no/such/folder/anywhere');
+  await page.dispatchEvent('#downloadDirInput', 'change');
+  await page.waitForFunction(() => !document.getElementById('downloadDirError').hidden, null, { timeout: 15000 });
+  const m = await page.evaluate(() => {
+    const g = document.getElementById('downloadDirInput').closest('.tbgroup');
+    const right = (el) => Math.round(el.getBoundingClientRect().right);
+    return {
+      error: document.getElementById('downloadDirError').textContent,
+      scroll: g.scrollWidth, client: g.clientWidth, edge: right(g),
+      parts: ['downloadDirInput', 'downloadDirWhere', 'downloadDirError'].map((id) => [id, right(document.getElementById(id))]),
+    };
+  });
+  assert.match(m.error, /could not find that folder/, `the refusal shown is not the server's sentence: "${m.error}"`);
+  assert.ok(m.scroll <= m.client, `the Updates card's contents are ${m.scroll}px wide in a ${m.client}px card — they run off its edge`);
+  for (const [id, r] of m.parts) {
+    assert.ok(r <= m.edge, `#${id} ends at ${r}px, past the card's edge at ${m.edge}px — what it says is cut off`);
+  }
+  // Clearing the box returns to the browser's folder and takes the refusal away.
+  await page.fill('#downloadDirInput', '');
+  await page.dispatchEvent('#downloadDirInput', 'change');
+  await page.waitForFunction(() => document.getElementById('downloadDirError').hidden, null, { timeout: 15000 });
+});
